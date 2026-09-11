@@ -242,6 +242,90 @@ final class GoBridgeCriticalTaskTests: XCTestCase {
         )
     }
 
+    func test_notificationLockNestedLeasesEndIndependentlyExactlyOnce() {
+        let manager = FakeBackgroundTaskManager()
+        let bridge = makeBridge(manager: manager)
+        let first = invoke(bridge, "notificationLockBegin") as? Int
+        let second = invoke(bridge, "notificationLockBegin") as? Int
+
+        XCTAssertEqual(first, 100)
+        XCTAssertEqual(second, 101)
+        XCTAssertEqual(manager.begunTaskNames, [
+            "mknoon.notificationLock", "mknoon.notificationLock",
+        ])
+        XCTAssertTrue(manager.endedTaskIds.isEmpty)
+        _ = invoke(bridge, "notificationLockEnd", arguments: second)
+        XCTAssertEqual(manager.endedTaskIds.map(\.rawValue), [101])
+        _ = invoke(bridge, "notificationLockEnd", arguments: first)
+        _ = invoke(bridge, "notificationLockEnd", arguments: second)
+        XCTAssertEqual(manager.endedTaskIds.map(\.rawValue), [101, 100])
+    }
+
+    func test_notificationLockRefusalDoesNotAdmitAnInvalidLease() {
+        let manager = FakeBackgroundTaskManager(refuseBegins: true)
+        let bridge = makeBridge(manager: manager)
+
+        XCTAssertNil(invoke(bridge, "notificationLockBegin"))
+        XCTAssertEqual(manager.begunTaskNames, ["mknoon.notificationLock"])
+        XCTAssertTrue(manager.endedTaskIds.isEmpty)
+    }
+
+    func test_notificationLockExpiryDuringRegistrationDoesNotAdmitAStaleLease() {
+        let manager = FakeBackgroundTaskManager(expireBeforeBeginReturns: true)
+        let bridge = makeBridge(manager: manager)
+
+        XCTAssertNil(invoke(bridge, "notificationLockBegin"))
+        XCTAssertEqual(manager.endedTaskIds.map(\.rawValue), [100])
+        _ = invoke(bridge, "notificationLockEnd", arguments: 100)
+        XCTAssertEqual(manager.endedTaskIds.map(\.rawValue), [100])
+    }
+
+    func test_notificationLockExpiryThenLateReleaseEndsOnlyOnce() {
+        let manager = FakeBackgroundTaskManager()
+        let bridge = makeBridge(manager: manager)
+        let taskId = invoke(bridge, "notificationLockBegin") as? Int
+        XCTAssertEqual(taskId, 100)
+
+        manager.expire(UIBackgroundTaskIdentifier(rawValue: 100))
+        XCTAssertEqual(manager.endedTaskIds.map(\.rawValue), [100])
+        _ = invoke(bridge, "notificationLockEnd", arguments: taskId)
+        XCTAssertEqual(manager.endedTaskIds.map(\.rawValue), [100])
+    }
+
+    func test_notificationLockLivenessTracksExpiryEndAndUnknownHandles() {
+        let manager = FakeBackgroundTaskManager()
+        let bridge = makeBridge(manager: manager)
+        let first = invoke(bridge, "notificationLockBegin") as? Int
+        let second = invoke(bridge, "notificationLockBegin") as? Int
+        XCTAssertEqual(invoke(bridge, "notificationLockIsActive", arguments: first) as? Bool, true)
+        XCTAssertEqual(invoke(bridge, "notificationLockIsActive", arguments: second) as? Bool, true)
+        manager.expire(UIBackgroundTaskIdentifier(rawValue: 100))
+        XCTAssertEqual(invoke(bridge, "notificationLockIsActive", arguments: first) as? Bool, false)
+        XCTAssertEqual(invoke(bridge, "notificationLockIsActive", arguments: second) as? Bool, true)
+        _ = invoke(bridge, "notificationLockEnd", arguments: second)
+        XCTAssertEqual(invoke(bridge, "notificationLockIsActive", arguments: second) as? Bool, false)
+        XCTAssertEqual(invoke(bridge, "notificationLockIsActive", arguments: 999) as? Bool, false)
+        XCTAssertEqual(invoke(bridge, "notificationLockIsActive") as? Bool, false)
+        XCTAssertEqual(manager.endedTaskIds.map(\.rawValue), [100, 101])
+    }
+
+    private func invoke(
+        _ bridge: GoBridge,
+        _ method: String,
+        arguments: Any? = nil
+    ) -> Any? {
+        let returned = expectation(description: method)
+        var value: Any?
+        bridge.handleMethodCall(FlutterMethodCall(
+            methodName: method, arguments: arguments
+        )) { result in
+            value = result
+            returned.fulfill()
+        }
+        waitForExpectations(timeout: 1)
+        return value
+    }
+
     // MARK: - Helpers
 
     private func makeBridge(manager: BackgroundTaskManaging) -> GoBridge {

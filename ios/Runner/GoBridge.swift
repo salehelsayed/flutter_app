@@ -1,6 +1,3 @@
-#if canImport(GoMknoon)
-import Flutter
-import GoMknoon
 import UIKit
 
 /// Small UIApplication seam used by the process-wide critical-task registry.
@@ -92,6 +89,22 @@ final class CriticalTaskRegistry {
         return taskId
     }
 
+    /// Notification file-lock admission requires a currently live assertion.
+    /// An expiration delivered before `begin` returns must not admit work with
+    /// a handle that the registry has already ended. A later expiration still
+    /// ends the OS assertion; callers retain their lock until their work exits.
+    func beginIfLive(withName taskName: String) -> UIBackgroundTaskIdentifier? {
+        let taskId = begin(withName: taskName)
+        return isLive(taskId) ? taskId : nil
+    }
+
+    func isLive(_ taskId: UIBackgroundTaskIdentifier) -> Bool {
+        lock.lock()
+        let isLive = liveTasks[taskId.rawValue] != nil
+        lock.unlock()
+        return isLive
+    }
+
     func end(_ taskId: UIBackgroundTaskIdentifier) {
         guard taskId != .invalid else { return }
 
@@ -141,6 +154,10 @@ final class CriticalTaskRegistry {
         }
     }
 }
+
+#if canImport(GoMknoon)
+import Flutter
+import GoMknoon
 
 /// Bridges Flutter MethodChannel/EventChannel to the Go native library.
 ///
@@ -407,6 +424,31 @@ class GoBridge: NSObject {
             runOnBackground({ BridgeGroupInboxRetrieveCursor(args ?? "") }, result: result)
         case "groupAcknowledgeRecovery":
             runOnBackground({ BridgeGroupAcknowledgeRecovery() }, result: result)
+
+        // Notification ownership: acquire before flock, end after unlock. Keep
+        // this admission contract separate from the existing send-task bridge.
+        case "notificationLockBegin":
+            let taskId = criticalTaskRegistry.beginIfLive(
+                withName: "mknoon.notificationLock"
+            )
+            result(taskId?.rawValue)
+
+        case "notificationLockEnd":
+            if let rawValue = call.arguments as? Int {
+                criticalTaskRegistry.end(
+                    UIBackgroundTaskIdentifier(rawValue: rawValue)
+                )
+            }
+            result(nil)
+
+        case "notificationLockIsActive":
+            if let rawValue = call.arguments as? Int {
+                result(criticalTaskRegistry.isLive(
+                    UIBackgroundTaskIdentifier(rawValue: rawValue)
+                ))
+            } else {
+                result(false)
+            }
 
         // Background task (Dart-initiated)
         case "bgBegin":

@@ -9,6 +9,12 @@ import 'package:path_provider_platform_interface/path_provider_platform_interfac
 import 'package:plugin_platform_interface/plugin_platform_interface.dart';
 
 import 'package:flutter_app/core/constants/media_constants.dart';
+import 'package:flutter_app/core/database/helpers/group_messages_db_helpers.dart';
+import 'package:flutter_app/core/database/helpers/group_message_local_deletions_db_helpers.dart';
+import 'package:flutter_app/core/database/helpers/groups_db_helpers.dart';
+import 'package:flutter_app/core/database/helpers/group_media_key_snapshot.dart';
+import 'package:flutter_app/core/media/media_attachment_lifecycle_lock.dart';
+import 'package:flutter_app/features/groups/data/repositories/group_message_repository_impl.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/config/direct_linked_event_fanout_flag.dart';
 import 'package:flutter_app/core/config/direct_linked_devices_flag.dart';
@@ -1205,11 +1211,17 @@ void main() {
         'tc366-strict-group-forward-',
       );
       addTearDown(() => root.delete(recursive: true));
-      final fixture = await MediaRepositoryRealDbFixture.create();
+      final lifecycleLock = MediaAttachmentLifecycleLock();
+      final fixture = await MediaRepositoryRealDbFixture.create(
+        lifecycleLock: lifecycleLock,
+      );
       addTearDown(fixture.dispose);
       final identity = _makeIdentity();
       final groups = InMemoryGroupRepository();
-      final messages = InMemoryGroupMessageRepository();
+      final messages = _strictGroupMessagesForMediaFixture(
+        fixture,
+        lifecycleLock: lifecycleLock,
+      );
       final sourceGroup = _makeGroup(
         'group-tc366-forward-source',
         'Forward source',
@@ -1220,6 +1232,7 @@ void main() {
       );
       for (final group in <GroupModel>[sourceGroup, targetGroup]) {
         await groups.saveGroup(group);
+        await dbInsertGroup(fixture.db, group.toMap());
         await _saveLatestGroupKey(groups, group.id);
       }
       await _seedGroupMembers(groups, sourceGroup.id);
@@ -1306,7 +1319,7 @@ void main() {
         owner: MediaOwnerLane.group,
       );
 
-      final p2p = _DirectMediaCustodyFakeP2PService(
+      final p2p = _StrictGroupMediaCustodyFakeP2PService(
         initialState: const NodeState(
           isStarted: true,
           peerId: 'transport-current',
@@ -1429,6 +1442,17 @@ void main() {
         groupId: targetGroup.id,
       ).operationDedupKey;
 
+      GroupMessage? preparedBeforeDispatch;
+      List<MediaAttachment>? mediaBeforeDispatch;
+      p2p.onStoreInInbox = (recipient, envelope, {timeoutMs}) async {
+        preparedBeforeDispatch = await messages.getMessage(expectedOperation);
+        mediaBeforeDispatch = await fixture.repo.getAttachmentsForMessage(
+          expectedOperation,
+          owner: MediaOwnerLane.group,
+        );
+        return true;
+      };
+
       final result = await coordinator.deliverGroupMediaForward(
         request: GroupMediaForwardRequest(
           groupId: sourceGroup.id,
@@ -1444,7 +1468,33 @@ void main() {
       );
 
       expect(result.failureCount, 0, reason: result.results.single.detail);
-      expect(result.sentCount + result.queuedCount, 1);
+      expect(result.sentCount, 1);
+      expect(result.queuedCount, 0);
+      expect(preparedBeforeDispatch, isNotNull);
+      expect(preparedBeforeDispatch!.isForwarded, isTrue);
+      expect(preparedBeforeDispatch!.inboxStored, isFalse);
+      expect(preparedBeforeDispatch!.inboxRetryPayload, isNotEmpty);
+      expect(mediaBeforeDispatch, hasLength(1));
+      expect(
+        mediaBeforeDispatch!.single.groupMediaBlobCustodyFingerprint,
+        isNotEmpty,
+      );
+      expect(p2p.storeInInboxCallCount, 1);
+      expect(p2p.lastStoreInInboxPeerId, 'transport-tc366-remote');
+      expect(p2p.groupContentExpiryCeilings, <int>[
+        DateTime.utc(2036, 8, 14).millisecondsSinceEpoch,
+      ]);
+      final dispatched = jsonDecode(p2p.lastStoreInInboxMessage!) as Map;
+      expect(dispatched['custodyKind'], 'group_content_v1');
+      expect(dispatched['contentEventId'], expectedOperation);
+      final dispatchedContent =
+          jsonDecode(dispatched['ciphertext'] as String) as Map;
+      expect(dispatchedContent['isForwarded'], isTrue);
+      expect(dispatchedContent['logicalDeliveryId'], expectedOperation);
+      expect(dispatchedContent['text'], 'forwarded caption');
+      expect(dispatched['recipientPeerIds'], <String>[
+        'transport-tc366-remote',
+      ]);
       expect(preprocessingCalls, 1);
       expect(strictRecipients, <String>['transport-tc366-remote']);
       final savedRows = await fixture.db.query(
@@ -1458,14 +1508,10 @@ void main() {
       expect(saved['logical_delivery_id'], expectedOperation);
       expect(saved['is_forwarded'], 1);
       expect(saved['text'], 'forwarded caption');
-      final coordinatorSource = File(
-        'lib/features/share/application/share_batch_delivery_coordinator.dart',
-      ).readAsStringSync();
-      expect(
-        coordinatorSource,
-        contains('isForwarded: shareIntent.forwardProvenance != null,'),
-        reason: 'the strict prepared parent must carry admitted provenance',
-      );
+      expect(saved['status'], 'sent');
+      expect(saved['inbox_stored'], 1);
+      expect(saved['inbox_retry_payload'], isNull);
+      expect(saved['wire_envelope'], isNull);
       final attachments = await fixture.repo.getAttachmentsForMessage(
         expectedOperation,
         owner: MediaOwnerLane.group,
@@ -1492,17 +1538,46 @@ void main() {
         isFalse,
       );
 
+      const privateMessageId = 'msg-tc366-protected-source';
+      const privateAttachmentId = 'att-tc366-protected-source';
       await messages.saveMessage(
         (await messages.getMessage(sourceMessageId))!.copyWith(
+          id: privateMessageId,
           privateMediaPolicy: const GroupPrivateMediaPolicy.protected(),
         ),
+      );
+      final privateFile = File(
+        await fileManager.localPathForAttachment(
+          contactPeerId: sourceGroup.id,
+          blobId: privateAttachmentId,
+          mime: 'image/jpeg',
+        ),
+      )..writeAsBytesSync(sourceBytes);
+      addTearDown(() async {
+        if (await privateFile.exists()) await privateFile.delete();
+      });
+      final sourceAttachment = (await fixture.repo.getAttachmentsForMessage(
+        sourceMessageId,
+        owner: MediaOwnerLane.group,
+      )).single;
+      await fixture.repo.saveAttachment(
+        sourceAttachment.copyWith(
+          id: privateAttachmentId,
+          messageId: privateMessageId,
+          localPath: privateFile.path,
+        ),
+        owner: MediaOwnerLane.group,
+      );
+      expect(
+        (await messages.getMessage(privateMessageId))!.privateMediaPolicy,
+        const GroupPrivateMediaPolicy.protected(),
       );
       final preprocessingBeforeDenied = preprocessingCalls;
       final denied = await coordinator.deliverGroupMediaForward(
         request: GroupMediaForwardRequest(
           groupId: sourceGroup.id,
-          messageId: sourceMessageId,
-          attachmentId: sourceAttachmentId,
+          messageId: privateMessageId,
+          attachmentId: privateAttachmentId,
           initialCaption: 'source caption',
           provenance: const ForwardProvenance(
             operationDedupKey: 'tc366-private-denied-operation',
@@ -6425,6 +6500,148 @@ class _ExactRowAwaitMutationRepository
     exactRowReadCount++;
     await onExactRowAwait?.call(exactRowReadCount);
     return row;
+  }
+}
+
+GroupMessageRepositoryImpl _strictGroupMessagesForMediaFixture(
+  MediaRepositoryRealDbFixture fixture, {
+  required MediaAttachmentLifecycleLock lifecycleLock,
+}) {
+  final db = fixture.db;
+  final keyAccess = GroupMediaKeyAccess(
+    secureKeyStore: fixture.secureKeyStore,
+    lifecycleLock: lifecycleLock,
+  );
+  return GroupMessageRepositoryImpl(
+    dbInsertGroupMessage: (row) => dbInsertGroupMessage(db, row),
+    dbLoadGroupMessagesPage: (groupId, {limit = 50, offset = 0}) =>
+        dbLoadGroupMessagesPage(db, groupId, limit: limit, offset: offset),
+    dbLoadGroupMessage: (id) => dbLoadGroupMessage(db, id),
+    dbLoadGroupMessageLocalDeletionFn: (id) =>
+        dbLoadGroupMessageLocalDeletion(db, id),
+    dbLoadLatestGroupMessage: (groupId) =>
+        dbLoadLatestGroupMessage(db, groupId),
+    dbUpdateGroupMessageStatus: (id, status) =>
+        dbUpdateGroupMessageStatus(db, id, status),
+    dbCountGroupMessages: (groupId) => dbCountGroupMessages(db, groupId),
+    dbCountUnreadGroupMessages: (groupId) =>
+        dbCountUnreadGroupMessages(db, groupId),
+    dbCountTotalUnreadGroupMessages: () => dbCountTotalUnreadGroupMessages(db),
+    dbMarkGroupMessagesAsRead: (groupId) =>
+        dbMarkGroupMessagesAsRead(db, groupId),
+    dbDeleteGroupMessage: (id) => dbDeleteGroupMessage(db, id),
+    dbExistsGroupMessageByContent: (groupId, senderPeerId, text, timestamp) =>
+        dbExistsGroupMessageByContent(
+          db,
+          groupId,
+          senderPeerId,
+          text,
+          timestamp,
+        ),
+    dbDeleteGroupMessagesForGroup: (groupId) =>
+        dbDeleteGroupMessagesForGroup(db, groupId),
+    dbLoadGroupThreadSummaries: (groupIds) =>
+        dbLoadGroupThreadSummaries(db, groupIds),
+    dbCompleteGroupContentInboxStoreRetryIfExactFn:
+        ({
+          required expected,
+          required sourcePeerId,
+          required sourceEventId,
+          required sourceTimestamp,
+          required eventPayload,
+        }) => dbCompleteGroupContentInboxStoreRetryIfExact(
+          db,
+          expected: expected,
+          sourcePeerId: sourcePeerId,
+          sourceEventId: sourceEventId,
+          sourceTimestamp: sourceTimestamp,
+          eventPayload: eventPayload,
+          mediaKeyAccess: keyAccess,
+        ),
+    dbStageAndCompleteLocalGroupContentMessageFn:
+        ({
+          required expected,
+          required sourcePeerId,
+          required sourceEventId,
+          required sourceTimestamp,
+          required eventPayload,
+        }) => dbStageAndCompleteLocalGroupContentMessage(
+          db,
+          expected: expected,
+          sourcePeerId: sourcePeerId,
+          sourceEventId: sourceEventId,
+          sourceTimestamp: sourceTimestamp,
+          eventPayload: eventPayload,
+          mediaKeyAccess: keyAccess,
+        ),
+    dbStagePreparedLocalGroupContentMessageFn:
+        ({
+          required expected,
+          required sourcePeerId,
+          required sourceEventId,
+          required sourceTimestamp,
+          required preparedEventPayload,
+        }) => dbStagePreparedLocalGroupContentMessage(
+          db,
+          expected: expected,
+          sourcePeerId: sourcePeerId,
+          sourceEventId: sourceEventId,
+          sourceTimestamp: sourceTimestamp,
+          preparedEventPayload: preparedEventPayload,
+          mediaKeyAccess: keyAccess,
+        ),
+    dbTerminalizePreparedLocalGroupContentMessageIfExactFn:
+        ({
+          required expected,
+          required preparedEventPayload,
+          required terminalSourcePeerId,
+          required terminalSourceEventId,
+          required terminalSourceTimestamp,
+          required terminalEventPayload,
+        }) => dbTerminalizePreparedLocalGroupContentMessageIfExact(
+          db,
+          expected: expected,
+          preparedEventPayload: preparedEventPayload,
+          terminalSourcePeerId: terminalSourcePeerId,
+          terminalSourceEventId: terminalSourceEventId,
+          terminalSourceTimestamp: terminalSourceTimestamp,
+          terminalEventPayload: terminalEventPayload,
+          mediaKeyAccess: keyAccess,
+        ),
+    dbHasExactPreparedLocalGroupContentMessageFn:
+        ({required expected, required eventPayload}) =>
+            dbHasExactPreparedLocalGroupContentMessage(
+              db,
+              expected: expected,
+              eventPayload: eventPayload,
+              mediaKeyAccess: keyAccess,
+            ),
+  );
+}
+
+class _StrictGroupMediaCustodyFakeP2PService
+    extends _DirectMediaCustodyFakeP2PService
+    implements GroupContentExpiryBoundedInboxStore {
+  _StrictGroupMediaCustodyFakeP2PService({required super.initialState});
+
+  final groupContentExpiryCeilings = <int>[];
+
+  @override
+  Future<InboxStoreOutcome> storeInGroupContentExpiryBoundedInboxDetailed(
+    String toPeerId,
+    String message, {
+    required int custodyExpiresAtOrBeforeMs,
+    int? timeoutMs,
+  }) async {
+    groupContentExpiryCeilings.add(custodyExpiresAtOrBeforeMs);
+    final stored = await storeInInbox(toPeerId, message, timeoutMs: timeoutMs);
+    return InboxStoreOutcome(
+      status: stored ? InboxStoreStatus.stored : InboxStoreStatus.failed,
+      errorCode: stored ? null : 'STORE_RETURNED_FALSE',
+      storeStatus: stored ? 'stored' : null,
+      custodyContract: stored ? ackOrExpiryInboxCustodyContract : null,
+      expiresAtMs: stored ? custodyExpiresAtOrBeforeMs : null,
+    );
   }
 }
 

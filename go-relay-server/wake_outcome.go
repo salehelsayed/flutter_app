@@ -88,15 +88,16 @@ func wakeOutcomePolicyForProducer(producer wakeOutcomeProducerKind) (wakeOutcome
 }
 
 type wakeOutcomeAdmission struct {
-	recipientPeerID                  string
-	correlation                      string
-	producer                         wakeOutcomeProducerKind
-	policy                           wakeOutcomeRoutePolicy
-	groupMessageDispatchAdmissionKey string
-	route                            pushRouteLease
-	storedAtMs                       int64
-	eventExpiresAtMs                 int64
-	androidRichMaterial              []byte
+	recipientPeerID                   string
+	correlation                       string
+	producer                          wakeOutcomeProducerKind
+	policy                            wakeOutcomeRoutePolicy
+	groupMessageDispatchAdmissionKey  string
+	directMessageDispatchAdmissionKey string
+	route                             pushRouteLease
+	storedAtMs                        int64
+	eventExpiresAtMs                  int64
+	androidRichMaterial               []byte
 }
 
 func (a wakeOutcomeAdmission) RecipientPeerID() string { return a.recipientPeerID }
@@ -421,16 +422,17 @@ const (
 )
 
 type redisWakeOutcomeRecord struct {
-	State                            wakeOutcomeState       `json:"state"`
-	Revision                         uint64                 `json:"revision"`
-	DueAtMs                          int64                  `json:"due_at_ms,omitempty"`
-	ClaimUntilMs                     int64                  `json:"claim_until_ms,omitempty"`
-	ClaimToken                       string                 `json:"claim_token,omitempty"`
-	RetryCount                       int                    `json:"retry_count"`
-	ExpiresAtMs                      int64                  `json:"expires_at_ms"`
-	Policy                           wakeOutcomeRoutePolicy `json:"policy"`
-	GroupMessageDispatchAdmissionKey string                 `json:"group_message_dispatch_admission_key,omitempty"`
-	AndroidRichDigest                string                 `json:"android_rich_digest,omitempty"`
+	State                             wakeOutcomeState       `json:"state"`
+	Revision                          uint64                 `json:"revision"`
+	DueAtMs                           int64                  `json:"due_at_ms,omitempty"`
+	ClaimUntilMs                      int64                  `json:"claim_until_ms,omitempty"`
+	ClaimToken                        string                 `json:"claim_token,omitempty"`
+	RetryCount                        int                    `json:"retry_count"`
+	ExpiresAtMs                       int64                  `json:"expires_at_ms"`
+	Policy                            wakeOutcomeRoutePolicy `json:"policy"`
+	GroupMessageDispatchAdmissionKey  string                 `json:"group_message_dispatch_admission_key,omitempty"`
+	DirectMessageDispatchAdmissionKey string                 `json:"direct_message_dispatch_admission_key,omitempty"`
+	AndroidRichDigest                 string                 `json:"android_rich_digest,omitempty"`
 }
 
 func (record redisWakeOutcomeRecord) validate() error {
@@ -443,6 +445,12 @@ func (record redisWakeOutcomeRecord) validate() error {
 	if record.GroupMessageDispatchAdmissionKey != "" &&
 		!canonicalGroupMessageDispatchAdmissionStorageKey(record.GroupMessageDispatchAdmissionKey) {
 		return errors.New("wake outcome group-message dispatch admission key is invalid")
+	}
+	if record.DirectMessageDispatchAdmissionKey != "" &&
+		(!canonicalGroupMessageDispatchAdmissionStorageKey(record.DirectMessageDispatchAdmissionKey) ||
+			record.Policy != wakeOutcomePolicyNone || record.GroupMessageDispatchAdmissionKey != "" ||
+			record.AndroidRichDigest != "") {
+		return errors.New("wake outcome direct-message dispatch admission key is invalid")
 	}
 	switch record.State {
 	case wakeOutcomeStatePending:
@@ -882,7 +890,8 @@ func (s *redisWakeOutcomeStore) prepareAdmission(
 	records[admission.correlation] = redisWakeOutcomeRecord{
 		State: wakeOutcomeStatePending, Revision: 1, DueAtMs: dueAtMs,
 		ExpiresAtMs: expiresAtMs, Policy: admission.policy,
-		GroupMessageDispatchAdmissionKey: admission.groupMessageDispatchAdmissionKey,
+		GroupMessageDispatchAdmissionKey:  admission.groupMessageDispatchAdmissionKey,
+		DirectMessageDispatchAdmissionKey: admission.directMessageDispatchAdmissionKey,
 	}
 	if len(admission.androidRichMaterial) > 0 {
 		var material androidRichPushMaterial
@@ -1351,13 +1360,14 @@ func (b *redisInboxBackend) StoreAckCustodyWithWakeOutcome(
 }
 
 type wakeOutcomeClaim struct {
-	peerID                           string
-	correlation                      string
-	policy                           wakeOutcomeRoutePolicy
-	token                            string
-	revision                         uint64
-	groupMessageDispatchAdmissionKey string
-	androidRichDigest                string
+	peerID                            string
+	correlation                       string
+	policy                            wakeOutcomeRoutePolicy
+	token                             string
+	revision                          uint64
+	groupMessageDispatchAdmissionKey  string
+	directMessageDispatchAdmissionKey string
+	androidRichDigest                 string
 }
 
 func (s *redisWakeOutcomeStore) newClaimToken() (string, error) {
@@ -1463,8 +1473,9 @@ func (s *redisWakeOutcomeStore) claimOne(
 			result = wakeOutcomeClaim{
 				peerID: peerID, correlation: correlation, policy: record.Policy,
 				token: token, revision: record.Revision,
-				groupMessageDispatchAdmissionKey: record.GroupMessageDispatchAdmissionKey,
-				androidRichDigest:                record.AndroidRichDigest,
+				groupMessageDispatchAdmissionKey:  record.GroupMessageDispatchAdmissionKey,
+				directMessageDispatchAdmissionKey: record.DirectMessageDispatchAdmissionKey,
+				androidRichDigest:                 record.AndroidRichDigest,
 			}
 		}
 		if !dirty {
@@ -1590,6 +1601,7 @@ type wakeOutcomeCoordinator struct {
 	backend         *redisWakeOutcomeStore
 	send            wakeOutcomeSendFunc
 	sendGroup       wakeOutcomeGroupSendFunc
+	sendDirect      wakeOutcomeGroupSendFunc
 	sendAndroidRich func(context.Context, wakeOutcomeClaim) pushDeliveryResult
 	now             func() time.Time
 	startOnce       sync.Once
@@ -1675,6 +1687,12 @@ func (c *wakeOutcomeCoordinator) runClaim(ctx context.Context, claim wakeOutcome
 		// Keep the existing iOS group provider-admission boundary intact.
 		if c.sendGroup != nil {
 			result = c.sendGroup(providerCtx, claim.peerID, claim.policy, claim.groupMessageDispatchAdmissionKey)
+		}
+	case claim.directMessageDispatchAdmissionKey != "":
+		// Preserve the original message's notification identity through delayed
+		// mailbox wakes, including a rich-to-opaque route change after inbox ACK.
+		if c.sendDirect != nil {
+			result = c.sendDirect(providerCtx, claim.peerID, claim.policy, claim.directMessageDispatchAdmissionKey)
 		}
 	default:
 		if c.send != nil {

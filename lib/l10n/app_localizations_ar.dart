@@ -3970,6 +3970,10 @@ class AppLocalizationsAr extends AppLocalizations {
   String get settings_diagnostics_preview_report => 'معاينة تقرير الدعم';
 
   @override
+  String get settings_diagnostics_preview_truncated =>
+      'يُعرض جزء من التقرير. يشمل النسخ التقرير كاملاً.';
+
+  @override
   String get settings_diagnostics_report_copied => 'تم نسخ تقرير الدعم';
 
   @override

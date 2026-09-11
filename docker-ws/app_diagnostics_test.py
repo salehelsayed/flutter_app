@@ -1,4 +1,5 @@
 import importlib.util
+import hashlib
 import json
 import pathlib
 import tempfile
@@ -158,5 +159,41 @@ class AppDiagnosticsTests(unittest.TestCase):
         dashboard=MODULE.dashboard(report)
         self.assertIn('App diagnostics',dashboard);self.assertNotIn(self.owner,dashboard)
         self.assertNotIn('<script',dashboard)
+
+    def test_class_only_fingerprints_are_explicit_and_preserve_error_classes(self):
+        for kind in ['platform', 'state']:
+            for values in [{'errorClass':kind}, {'errorClass':kind,'fingerprint':hashlib.sha256((kind+'|').encode()).hexdigest()}]:
+                self.record([self.event(feature='runtime',stage='process',outcome='failed',reason='unhandled_error',values=values)])
+        result=MODULE.report(self.directory,now_ms=self.now)
+        self.assertEqual(len(result['errors']),2)
+        self.assertEqual({e['errorClass'] for e in result['errors']},{'platform','state'})
+        for error in result['errors']:
+            self.assertIsNone(error['fingerprint'])
+            self.assertEqual(error['fingerprintSpecificity'],'class_only')
+            self.assertEqual(error['eventReports'],2)
+
+    def test_native_error_codes_are_distinct_without_inventing_fingerprints(self):
+        for code in [1, 2]:
+            for _ in range(3):
+                self.record([self.event(feature='push',stage='presentation',outcome='failed',reason='prepare_failed',values={'errorClass':'platform','osReasonCode':code})])
+        result=MODULE.report(self.directory,now_ms=self.now)
+        self.assertEqual(len(result['errors']),2)
+        self.assertEqual({e['osReasonCode'] for e in result['errors']},{1,2})
+        self.assertTrue(all(e['eventReports']==3 and e['fingerprint'] is None for e in result['errors']))
+        self.assertEqual({a['osReasonCode'] for a in result['alerts'] if a['kind']=='new_error_signature'},{1,2})
+
+    def test_legacy_class_only_baseline_does_not_become_a_new_error(self):
+        old=self.event(feature='runtime',stage='process',outcome='failed',reason='unhandled_error',values={'errorClass':'platform','fingerprint':hashlib.sha256(b'platform|').hexdigest()})
+        self.record([old])
+        path=self.directory/(format(self.count,'064x')+'.json')
+        record=json.loads(path.read_text())
+        record['events'][0]['receivedAtMs']=self.now-2*3600000
+        path.write_text(json.dumps(record))
+        for _ in range(3):
+            self.record([self.event(feature='runtime',stage='process',outcome='failed',reason='unhandled_error',values={'errorClass':'platform'})])
+        result=MODULE.report(self.directory,hours=1,now_ms=self.now)
+        self.assertEqual(len(result['errors']),1)
+        self.assertFalse(result['errors'][0]['newInRetainedBaseline'])
+        self.assertFalse(any(a['kind']=='new_error_signature' for a in result['alerts']))
 
 if __name__=='__main__':unittest.main()

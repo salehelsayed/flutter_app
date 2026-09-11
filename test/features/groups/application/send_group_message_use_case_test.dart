@@ -610,6 +610,29 @@ class _StrictContentInboxStore implements AckOrExpiryInboxStore {
   }
 }
 
+class _StrictMediaContentInboxStore extends _StrictContentInboxStore
+    implements GroupContentExpiryBoundedInboxStore {
+  @override
+  Future<InboxStoreOutcome> storeInGroupContentExpiryBoundedInboxDetailed(
+    String toPeerId,
+    String message, {
+    required int custodyExpiresAtOrBeforeMs,
+    int? timeoutMs,
+  }) async {
+    await storeInAckCustodyInboxDetailed(
+      toPeerId,
+      message,
+      custodyKind: AckCustodyKind.groupContentV1,
+    );
+    return InboxStoreOutcome(
+      status: InboxStoreStatus.stored,
+      storeStatus: 'stored',
+      custodyContract: ackOrExpiryInboxCustodyContract,
+      expiresAtMs: custodyExpiresAtOrBeforeMs,
+    );
+  }
+}
+
 class _DriftingStrictGroupRepository extends InMemoryGroupRepository {
   int memberReads = 0;
 
@@ -6167,6 +6190,191 @@ void main() {
         );
       },
     );
+
+    for (final waveformCase
+        in <
+          ({
+            String name,
+            List<double>? attachment,
+            List<double>? commitment,
+            bool accepted,
+          })
+        >[
+          (
+            name: 'absent image',
+            attachment: null,
+            commitment: null,
+            accepted: true,
+          ),
+          (
+            name: 'empty image',
+            attachment: const <double>[],
+            commitment: null,
+            accepted: true,
+          ),
+          (
+            name: 'matching voice',
+            attachment: const <double>[0.1, 0.5],
+            commitment: const <double>[0.1, 0.5],
+            accepted: true,
+          ),
+          (
+            name: 'different voice samples',
+            attachment: const <double>[0.1, 0.4],
+            commitment: const <double>[0.1, 0.5],
+            accepted: false,
+          ),
+          (
+            name: 'missing committed voice samples',
+            attachment: null,
+            commitment: const <double>[0.1, 0.5],
+            accepted: false,
+          ),
+          (
+            name: 'uncommitted voice samples',
+            attachment: const <double>[0.1, 0.5],
+            commitment: null,
+            accepted: false,
+          ),
+        ]) {
+      test('strict media waveform boundary: ${waveformCase.name}', () async {
+        const messageId = 'strict-media-waveform';
+        final isVoice = waveformCase.name.contains('voice');
+        final strictRepo = _StrictContentMessageRepository();
+        final strictStore = _StrictMediaContentInboxStore();
+        await groupRepo.saveMember(
+          GroupMember(
+            groupId: 'group-1',
+            peerId: 'peer-1',
+            role: MemberRole.admin,
+            publicKey: 'pk-1',
+            devices: const <GroupMemberDeviceIdentity>[
+              GroupMemberDeviceIdentity(
+                deviceId: 'device-current',
+                transportPeerId: 'transport-current',
+                deviceSigningPublicKey: 'pk-current',
+              ),
+              GroupMemberDeviceIdentity(
+                deviceId: 'device-sibling',
+                transportPeerId: 'transport-sibling',
+                deviceSigningPublicKey: 'pk-sibling',
+              ),
+            ],
+            joinedAt: DateTime.utc(2026, 8, 1),
+          ),
+        );
+        final attachment = testAttachment.copyWith(
+          messageId: messageId,
+          ownerLane: MediaOwnerLane.group,
+          mime: isVoice ? 'audio/mp4' : 'image/jpeg',
+          mediaType: isVoice ? 'audio' : 'image',
+          waveform: waveformCase.attachment,
+          clearWaveform: waveformCase.attachment == null,
+        );
+        await mediaRepo.saveAttachment(attachment, owner: MediaOwnerLane.group);
+        final manifest = ProtectedGroupMediaManifest(
+          groupId: 'group-1',
+          messageId: messageId,
+          attachments: <ProtectedGroupMediaAttachmentCommitment>[
+            ProtectedGroupMediaAttachmentCommitment(
+              attachmentId: attachment.id,
+              custodyBlobId: 'waveform-test-blob',
+              ciphertextSha256: attachment.contentHash!,
+              ciphertextSize: attachment.size + 16,
+              mime: attachment.mime,
+              mediaType: attachment.mediaType,
+              encryptionKeyBase64: attachment.encryptionKeyBase64!,
+              encryptionNonce: attachment.encryptionNonce!,
+              waveform: waveformCase.commitment,
+              caption: 'strict media',
+              targets: <GroupMediaBlobTargetCommitment>[
+                GroupMediaBlobTargetCommitment(
+                  recipientPeerId: 'transport-sibling',
+                  expiresAtMs: 2000000000000,
+                ),
+              ],
+            ),
+          ],
+        );
+        var durableVerifications = 0;
+        late (SendGroupMessageResult, GroupMessage?) result;
+        final events = await captureFlowEvents(() async {
+          result = await sendGroupMessage(
+            bridge: bridge,
+            groupRepo: groupRepo,
+            msgRepo: strictRepo,
+            groupId: 'group-1',
+            text: 'strict media',
+            senderPeerId: 'peer-1',
+            senderPublicKey: 'pk-current',
+            senderPrivateKey: 'sk-current',
+            senderUsername: 'Alice',
+            senderDeviceId: 'device-current',
+            senderTransportPeerId: 'transport-current',
+            messageId: messageId,
+            mediaAttachments: <MediaAttachment>[attachment],
+            mediaAttachmentRepo: mediaRepo,
+            groupContentAuthoring: GroupContentAuthoringContext(
+              directLinkedDeviceSelector:
+                  const DirectLinkedDeviceSelector.enabled(),
+              multiDeviceSyncEnabled: true,
+              authorityVersion: GroupContentAuthorityVersion(
+                eventAt: DateTime.utc(2026, 8, 13, 11),
+                eventId: 'authority.waveform',
+                keyEpoch: 1,
+              ),
+              inboxStore: strictStore,
+            ),
+            preparedGroupMediaManifest: PreparedGroupMediaManifestAuthority(
+              manifest: manifest,
+              verifyDurableAuthority: (candidate) async {
+                durableVerifications++;
+                expect(candidate.encode(), manifest.encode());
+                return true;
+              },
+            ),
+          );
+        });
+        if (waveformCase.accepted) {
+          expect(result.$1, SendGroupMessageResult.success);
+          expect(result.$2?.status, 'sent');
+          expect(result.$2?.inboxStored, isTrue);
+          expect(durableVerifications, 1);
+          expect(strictStore.recipients, <String>['transport-sibling']);
+          final frozen = GroupContentRetryPayload.decode(
+            strictRepo.initiallyPersistedRetryPayload!,
+          );
+          final envelope = jsonDecode(frozen.message) as Map<String, dynamic>;
+          expect(envelope['mediaManifest'], manifest.encode());
+          expect(envelope['mediaManifestHash'], manifest.fingerprintSha256);
+          expect(
+            (await mediaRepo.getAttachmentById(attachment.id))?.waveform,
+            waveformCase.attachment,
+            reason: 'wire normalization must not rewrite durable metadata',
+          );
+        } else {
+          expect(result.$1, SendGroupMessageResult.authorityUnavailable);
+          expect(result.$2, isNull);
+          expect(durableVerifications, 0);
+          expect(strictRepo.count, 0);
+          expect(strictStore.recipients, isEmpty);
+          final timing = events.singleWhere(
+            (event) => event['event'] == 'GROUP_SEND_MSG_TIMING',
+          );
+          expect(
+            (timing['details'] as Map)['reason'],
+            'strict_group_media_manifest_mismatch',
+          );
+        }
+        expect(
+          bridge.commandLog.where(
+            (command) =>
+                command == 'group:publish' || command == 'group:sendReliable',
+          ),
+          isEmpty,
+        );
+      });
+    }
 
     test(
       'persists stamped done attachments before the pre-persist row save and publish',

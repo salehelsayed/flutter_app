@@ -1,0 +1,75 @@
+{
+  "fixedOutcomeMetrics": [
+    {
+      "delta": 0.0,
+      "first": 0.0,
+      "labels": {
+        "__name__": "relay_inbox_custody_store_total",
+        "result": "disabled"
+      },
+      "last": 0.0
+    },
+    {
+      "delta": 0.0,
+      "first": 0.0,
+      "labels": {
+        "__name__": "relay_inbox_custody_store_total",
+        "result": "duplicate"
+      },
+      "last": 0.0
+    },
+    {
+      "delta": 0.0,
+      "first": 0.0,
+      "labels": {
+        "__name__": "relay_inbox_custody_store_total",
+        "result": "failed"
+      },
+      "last": 0.0
+    },
+    {
+      "delta": 0.0,
+      "first": 0.0,
+      "labels": {
+        "__name__": "relay_inbox_custody_store_total",
+        "result": "identity_conflict"
+      },
+      "last": 0.0
+    },
+    {
+      "delta": 0.0,
+      "first": 0.0,
+      "labels": {
+        "__name__": "relay_inbox_custody_store_total",
+        "result": "ineligible"
+      },
+      "last": 0.0
+    },
+    {
+      "delta": 0.0,
+      "first": 0.0,
+      "labels": {
+        "__name__": "relay_inbox_custody_store_total",
+        "result": "rejected_full"
+      },
+      "last": 0.0
+    },
+    {
+      "delta": 89.0,
+      "first": 34.0,
+      "labels": {
+        "__name__": "relay_inbox_custody_store_total",
+        "result": "stored"
+      },
+      "last": 123.0
+    }
+  ],
+  "scope": "Exact three-second error classification and fixed-cardinality outcome/stream counters. No raw journal message or identity returned.",
+  "storeErrorClassification": [
+    {
+      "atUtc": "2026-09-08T18:35:31.570+00:00",
+      "classification": "unknown_redacted",
+      "event": "inbox_store_failed"
+    }
+  ]
+}

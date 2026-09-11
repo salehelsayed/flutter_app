@@ -223,7 +223,16 @@
       "relay_probe",
       "peer_dial",
       "peer_disconnect",
+      "notification_flock",
       "other"
+    ],
+    "appLifecycle": [
+      "unknown",
+      "resumed",
+      "inactive",
+      "hidden",
+      "paused",
+      "detached"
     ]
   },
   "hashValues": [

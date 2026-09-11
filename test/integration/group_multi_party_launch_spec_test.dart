@@ -10,12 +10,15 @@ import '../../integration_test/_support/group_multi_party_verdict_handshake.dart
 import '../../integration_test/_support/signal_files.dart';
 import '../../integration_test/scripts/group_multi_party_runtime_config.dart';
 import '../../integration_test/scripts/run_group_multi_party_device_real.dart';
+import '../../integration_test/scripts/run_b1b_sibling_device_convergence.dart';
 
 final class _FakeAndroidAppFileTransport implements AndroidAppFileTransport {
   bool packageInstalled = true;
   String? processId;
   String appDataDirectoryValue = '/data/user/0/com.mknoon.app';
   final List<String> events = <String>[];
+  Future<void> Function(String deviceId, String directory, String name)?
+  afterWrite;
   final Set<String> unavailableDeviceIds = <String>{};
   final Map<String, Map<String, Map<String, List<int>>>> _files =
       <String, Map<String, Map<String, List<int>>>>{};
@@ -134,10 +137,259 @@ final class _FakeAndroidAppFileTransport implements AndroidAppFileTransport {
     _requireAvailable(deviceId);
     events.add('write:$deviceId:$relativeDirectory:$fileName');
     seed(deviceId, relativeDirectory, fileName, bytes);
+    await afterWrite?.call(deviceId, relativeDirectory, fileName);
   }
 }
 
 void main() {
+  group('B1b terminal host capture', () {
+    test('launch arguments require capture in both actual role builds', () {
+      for (final role in <String>['primary', 'sibling']) {
+        final args = buildB1bHarnessArguments(
+          role: role,
+          deviceId: 'device-$role',
+          sharedDir: Directory('/data/user/0/disposable/cache/run'),
+          runId: 'run-1',
+          plan365GroupMedia: true,
+        );
+        expect(args, contains('--dart-define=B1B_REQUIRE_HOST_CAPTURE=true'));
+        expect(args, contains('--dart-define=MD004_ROLE=$role'));
+        expect(
+          args,
+          contains('--dart-define=B1B_ENABLE_PLAN365_GROUP_MEDIA=true'),
+        );
+        expect(args.last, 'device-$role');
+        expect(
+          args,
+          contains('integration_test/group_multi_device_real_harness.dart'),
+        );
+      }
+    });
+
+    for (final proofPassed in <bool>[true, false]) {
+      test(
+        'dependent completion survives immediate uninstall; captured proof=$proofPassed',
+        () async {
+          final dir = await Directory.systemTemp.createTemp(
+            'b1b-terminal-barrier-',
+          );
+          addTearDown(() => dir.delete(recursive: true));
+          final transport = _FakeAndroidAppFileTransport();
+          const devices = <String, String>{
+            'primary': 'physical',
+            'sibling': 'emulator',
+          };
+          const remote = 'cache/b1b-terminal';
+          final signals = SignalDir.forDirectory(
+            dir,
+            prefix: 'md004_',
+            runId: 'run-1_',
+          );
+          String name(String value) =>
+              File(signals.path(value)).uri.pathSegments.last;
+          final linkedBytes = utf8.encode(
+            jsonEncode(<String, dynamic>{
+              'proof': proofPassed,
+              'role': 'linked',
+            }),
+          );
+          final ordinaryBytes = utf8.encode(
+            jsonEncode(<String, dynamic>{
+              'proof': proofPassed,
+              'role': 'ordinary',
+            }),
+          );
+          final completeReceived = Completer<void>();
+          final acknowledged = <String, Completer<void>>{
+            'primary': Completer<void>(),
+            'sibling': Completer<void>(),
+          };
+          final exits = <String, Completer<int>>{
+            'primary': Completer<int>(),
+            'sibling': Completer<int>(),
+          };
+          transport.afterWrite = (device, _, fileName) async {
+            if (device == devices['sibling'] &&
+                fileName == name('linked_complete') &&
+                !completeReceived.isCompleted) {
+              completeReceived.complete();
+            }
+            for (final role in devices.keys) {
+              if (device == devices[role] &&
+                  fileName == name('${role}_verdict_host_captured')) {
+                expect(
+                  File(signals.path('linked_verdict.json')).readAsBytesSync(),
+                  linkedBytes,
+                );
+                expect(
+                  File(signals.path('ordinary_verdict.json')).readAsBytesSync(),
+                  ordinaryBytes,
+                );
+                acknowledged[role]!.complete();
+                // Model Flutter removing this sandbox before the next ACK.
+                await exits[role]!.future;
+              }
+            }
+          };
+          Future<void> actor(String role) async {
+            if (role == 'sibling') await completeReceived.future;
+            await writeGroupMultiPartyVerdictAndAwaitHostCapture(
+              role: role,
+              requireHostCapture: true,
+              writeVerdict: () {
+                transport.seed(
+                  devices[role]!,
+                  remote,
+                  name(
+                    role == 'primary'
+                        ? 'linked_verdict.json'
+                        : 'ordinary_verdict.json',
+                  ),
+                  role == 'primary' ? linkedBytes : ordinaryBytes,
+                );
+                if (role == 'primary') {
+                  transport.seed(
+                    devices[role]!,
+                    remote,
+                    name('linked_complete'),
+                    utf8.encode('ok'),
+                  );
+                }
+              },
+              waitForSignal: (signal) {
+                expect(signal, '${role}_verdict_host_captured');
+                return acknowledged[role]!.future;
+              },
+            );
+            transport.events.add('uninstalled:${devices[role]}');
+            transport.unavailableDeviceIds.add(devices[role]!);
+            exits[role]!.complete(0);
+          }
+
+          final primary = actor('primary');
+          final sibling = actor('sibling');
+          final broker = AndroidAppSignalBroker(
+            transport: transport,
+            deviceIds: devices.values.toList(),
+            hostDirectory: dir,
+            remoteDirectory: remote,
+            filePrefix: 'md004_run-1_',
+            pollInterval: Duration.zero,
+            stableReadDelay: Duration.zero,
+          );
+          final brokerRun = broker.run();
+          final verdicts = await captureB1bTerminalVerdicts(
+            signals: signals,
+            broker: broker,
+            brokerRun: brokerRun,
+            roleDevices: devices,
+            roleExits: exits.map((role, exit) => MapEntry(role, exit.future)),
+            verdictTimeout: const Duration(seconds: 2),
+          );
+          await Future.wait(<Future<void>>[primary, sibling]);
+          expect(completeReceived.isCompleted, isTrue);
+          expect(verdicts, <Map<String, dynamic>>[
+            <String, dynamic>{'proof': proofPassed, 'role': 'linked'},
+            <String, dynamic>{'proof': proofPassed, 'role': 'ordinary'},
+          ]);
+          for (final device in devices.values) {
+            final uninstall = transport.events.indexOf('uninstalled:$device');
+            expect(uninstall, isNonNegative);
+            expect(
+              transport.events
+                  .skip(uninstall + 1)
+                  .where((event) => event.contains(device)),
+              isEmpty,
+            );
+          }
+          expect(
+            transport.readCounts.keys.where(
+              (key) => key.endsWith('verdict_host_captured'),
+            ),
+            isEmpty,
+          );
+        },
+      );
+    }
+
+    for (final failure in <String>[
+      'early exit',
+      'missing capture',
+      'conflicting capture',
+    ]) {
+      test('$failure never acknowledges and stops the broker', () async {
+        final dir = await Directory.systemTemp.createTemp(
+          'b1b-terminal-failure-',
+        );
+        addTearDown(() => dir.delete(recursive: true));
+        final transport = _FakeAndroidAppFileTransport();
+        const devices = <String, String>{
+          'primary': 'physical',
+          'sibling': 'emulator',
+        };
+        const remote = 'cache/b1b-terminal';
+        final signals = SignalDir.forDirectory(
+          dir,
+          prefix: 'md004_',
+          runId: 'run-1_',
+        );
+        final exits = <String, Completer<int>>{
+          'primary': Completer<int>(),
+          'sibling': Completer<int>(),
+        };
+        if (failure == 'early exit') exits['primary']!.complete(0);
+        if (failure == 'conflicting capture') {
+          signals.writeJson('linked_verdict.json', <String, dynamic>{
+            'proof': false,
+          });
+          transport.seed(
+            'physical',
+            remote,
+            'md004_run-1_linked_verdict.json',
+            utf8.encode('{"proof":true}'),
+          );
+        }
+        final broker = AndroidAppSignalBroker(
+          transport: transport,
+          deviceIds: devices.values.toList(),
+          hostDirectory: dir,
+          remoteDirectory: remote,
+          filePrefix: 'md004_run-1_',
+          pollInterval: Duration.zero,
+          stableReadDelay: Duration.zero,
+        );
+        final brokerRun = broker.run();
+        await expectLater(
+          captureB1bTerminalVerdicts(
+            signals: signals,
+            broker: broker,
+            brokerRun: brokerRun,
+            roleDevices: devices,
+            roleExits: exits.map((role, exit) => MapEntry(role, exit.future)),
+            verdictTimeout: const Duration(milliseconds: 30),
+          ),
+          throwsA(
+            anyOf(isA<StateError>(), isA<AndroidSignalProtocolException>()),
+          ),
+        );
+        if (failure == 'conflicting capture') {
+          await expectLater(
+            brokerRun,
+            throwsA(isA<AndroidSignalProtocolException>()),
+          );
+        } else {
+          await brokerRun;
+        }
+        expect(
+          transport.events.where(
+            (event) => event.contains('verdict_host_captured'),
+          ),
+          isEmpty,
+        );
+      });
+    }
+  });
+
   group('strict Android verdict host-capture handshake', () {
     test(
       'keeps the harness alive until its role acknowledgement arrives',
@@ -244,11 +496,10 @@ void main() {
 
         captured['charlie']!.complete(<String, dynamic>{'role': 'charlie'});
         await Future<void>.delayed(Duration.zero);
-        expect(
-          lifecycleEvents,
-          <String>['capture:charlie', 'capture:bob'],
-          reason: 'no acknowledgement may release a role before all verdicts',
-        );
+        expect(lifecycleEvents, <String>[
+          'capture:charlie',
+          'capture:bob',
+        ], reason: 'no acknowledgement may release a role before all verdicts');
 
         captured['bob']!.complete(<String, dynamic>{'role': 'bob'});
         expect(await lifecycle, <Map<String, dynamic>>[

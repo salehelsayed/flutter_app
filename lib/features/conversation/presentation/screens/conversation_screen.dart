@@ -475,10 +475,13 @@ class ConversationScreen extends StatefulWidget {
 
 class _ConversationScreenState extends State<ConversationScreen>
     with RouteAware {
-  bool _wasEmpty = true;
   bool _shouldRequestComposerFocus = false;
-  // Keeps stateful media content mounted when a new row later sheds its
-  // temporary entrance-animation wrapper.
+  // Initial history is static. Live additions keep their wrapper for as long
+  // as the row is retained, so later rebuilds cannot interrupt the animation
+  // or reparent playing media. Consume the pending entrance once so scrolling
+  // a row out of view and back does not replay it.
+  final Set<String> _messageEntranceIds = {};
+  final Set<String> _pendingMessageEntranceIds = {};
   final Map<String, GlobalKey> _messageContentKeys = {};
   final Set<DirectPrivateMediaViewerIdentity> _privateOpenInFlight = {};
   final Map<DirectPrivateMediaViewerIdentity, DirectPrivateMediaOpenResult>
@@ -502,14 +505,13 @@ class _ConversationScreenState extends State<ConversationScreen>
   // pass. The key is list-reference identity (the wired layer reallocates
   // `widget.messages` on ANY content change — an edit/status flip/insert yields
   // a new ref, invalidating for free) PLUS the scalars the ref does NOT capture:
-  // `_wasEmpty` (entrance flag), pagination flags, and the locale + today-token
+  // pagination flags and the locale + today-token
   // that drive the day-separator labels (`_formatDateLabel` reads both).
   List<_DisplayItem>? _cachedDisplayItems;
   List<ConversationMessage>? _cachedMessagesRef;
   List<ConversationCallTimelineEntry>? _cachedCallEntriesRef;
   List<ConversationCallTimelineEntry>? _cachedVisibleCallsRef;
   List<ConversationCallTimelineEntry>? _cachedVisibleCalls;
-  bool? _cachedWasEmpty;
   bool? _cachedHasMoreOlderMessages;
   bool? _cachedIsLoadingMore;
   String? _cachedLocale;
@@ -541,8 +543,25 @@ class _ConversationScreenState extends State<ConversationScreen>
   @override
   void didUpdateWidget(ConversationScreen oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.messages.isEmpty && widget.messages.isNotEmpty) {
-      _wasEmpty = true;
+    if (oldWidget.contactPeerId != widget.contactPeerId) {
+      _messageEntranceIds.clear();
+      _pendingMessageEntranceIds.clear();
+    } else if (oldWidget.initialLoadDone &&
+        widget.initialLoadDone &&
+        widget.messages.isNotEmpty) {
+      final newestId = widget.messages.last.id;
+      final route = ModalRoute.of(context);
+      final routeAnimation = route?.animation;
+      final routeSettled =
+          routeAnimation == null ||
+          routeAnimation.status == AnimationStatus.completed;
+      if ((route?.isCurrent ?? true) &&
+          routeSettled &&
+          !MediaQuery.disableAnimationsOf(context) &&
+          !oldWidget.messages.any((message) => message.id == newestId)) {
+        _messageEntranceIds.add(newestId);
+        _pendingMessageEntranceIds.add(newestId);
+      }
     }
     final retainedMessageIds = widget.messages
         .map((message) => message.id)
@@ -550,6 +569,8 @@ class _ConversationScreenState extends State<ConversationScreen>
     _messageContentKeys.removeWhere(
       (messageId, _) => !retainedMessageIds.contains(messageId),
     );
+    _messageEntranceIds.retainAll(retainedMessageIds);
+    _pendingMessageEntranceIds.retainAll(retainedMessageIds);
     if (!identical(
       oldWidget.protectionCoordinator,
       widget.protectionCoordinator,
@@ -809,14 +830,12 @@ class _ConversationScreenState extends State<ConversationScreen>
           // flight. Outside the message ListView so it never shifts the scroll
           // position; distinct from the older-pagination spinner.
           if (widget.isSyncingNewMessages) const _ConversationSyncingBanner(),
-          // Body with animated transition
+          // Show loaded history directly. Crossfading the entire list here
+          // overlaps the route slide and keeps the loading shell painting.
           Expanded(
-            child: AnimatedSwitcher(
-              duration: const Duration(milliseconds: 400),
-              child: widget.messages.isEmpty && _visibleCallEntries.isEmpty
-                  ? _buildEmptyOrLoadingState()
-                  : _buildMessageList(),
-            ),
+            child: widget.messages.isEmpty && _visibleCallEntries.isEmpty
+                ? _buildEmptyOrLoadingState()
+                : _buildMessageList(),
           ),
           if (widget.composerStateListenable == null)
             _buildComposerSection(_legacyComposerState)
@@ -990,7 +1009,6 @@ class _ConversationScreenState extends State<ConversationScreen>
             );
           case _ItemType.message:
             final message = item.message!;
-            final isNew = item.isLastAndWasEmpty;
 
             // System messages render as centered muted bubbles
             if (message.transport == 'system') {
@@ -1457,13 +1475,12 @@ class _ConversationScreenState extends State<ConversationScreen>
               ),
             );
 
-            // 156 QW-11 (lists-scrolling-4): entrance-animate ONLY a genuinely
-            // new (appended) message, not every row on the initial paint.
-            Widget bubble = isNew
+            Widget bubble = _messageEntranceIds.contains(message.id)
                 ? _AnimatedLetterCard(
                     key: ValueKey(message.id),
-                    delayMs: 0,
-                    isNewMessage: true,
+                    animate: _pendingMessageEntranceIds.contains(message.id),
+                    onStarted: () =>
+                        _pendingMessageEntranceIds.remove(message.id),
                     child: letterCard,
                   )
                 : letterCard;
@@ -1510,7 +1527,7 @@ class _ConversationScreenState extends State<ConversationScreen>
   /// for the reversed ListView (index 0 = bottom = newest).
   ///
   /// 159: memoized on [_ConversationScreenState]. Recomputes ONLY when a
-  /// run-affecting input changes (the `widget.messages` reference, `_wasEmpty`,
+  /// run-affecting input changes (the message and call list references,
   /// the pagination flags, the locale, or the day token); otherwise returns the
   /// cached list instance unchanged.
   List<_DisplayItem> _buildDisplayItems() {
@@ -1520,7 +1537,6 @@ class _ConversationScreenState extends State<ConversationScreen>
     if (cached != null &&
         identical(widget.messages, _cachedMessagesRef) &&
         identical(widget.callEntries, _cachedCallEntriesRef) &&
-        _cachedWasEmpty == _wasEmpty &&
         _cachedHasMoreOlderMessages == widget.hasMoreOlderMessages &&
         _cachedIsLoadingMore == widget.isLoadingMore &&
         _cachedLocale == locale &&
@@ -1595,11 +1611,9 @@ class _ConversationScreenState extends State<ConversationScreen>
         prevBreaks: prevBreaks,
       );
 
-      final isNew = row.messageIndex == widget.messages.length - 1 && _wasEmpty;
       items.add(
         _DisplayItem.message(
           message,
-          isLastAndWasEmpty: isNew,
           isFirstInGroup: isFirstInGroup,
           // Finalized by the second pass below.
           isLastInGroup: true,
@@ -1640,18 +1654,10 @@ class _ConversationScreenState extends State<ConversationScreen>
       );
     }
 
-    // Reset transition state after build
-    if (_wasEmpty && widget.messages.isNotEmpty) {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) _wasEmpty = false;
-      });
-    }
-
     final result = items.reversed.toList();
     _cachedDisplayItems = result;
     _cachedMessagesRef = widget.messages;
     _cachedCallEntriesRef = widget.callEntries;
-    _cachedWasEmpty = _wasEmpty;
     _cachedHasMoreOlderMessages = widget.hasMoreOlderMessages;
     _cachedIsLoadingMore = widget.isLoadingMore;
     _cachedLocale = locale;
@@ -1695,8 +1701,7 @@ class _ConversationScreenState extends State<ConversationScreen>
     final calls = _visibleCallEntries;
     if (calls.isEmpty) {
       return <_TimelineRow>[
-        for (var i = 0; i < widget.messages.length; i++)
-          _TimelineRow.message(widget.messages[i], i),
+        for (final message in widget.messages) _TimelineRow.message(message),
       ];
     }
     final rows = <_TimelineRow>[];
@@ -1712,7 +1717,7 @@ class _ConversationScreenState extends State<ConversationScreen>
           callIndex++;
         }
       }
-      rows.add(_TimelineRow.message(message, i));
+      rows.add(_TimelineRow.message(message));
     }
     while (callIndex < calls.length) {
       rows.add(_TimelineRow.call(calls[callIndex]));
@@ -2694,20 +2699,17 @@ class _ConversationSyncingBanner extends StatelessWidget {
   }
 }
 
-/// Animated wrapper for letter cards.
-///
-/// Applies staggered entry animation (translateY + opacity)
-/// matching spec section 6b (400ms ease, 50ms stagger).
+/// Runs a live message's entrance once and retains its subtree on updates.
 class _AnimatedLetterCard extends StatefulWidget {
   final Widget child;
-  final int delayMs;
-  final bool isNewMessage;
+  final bool animate;
+  final VoidCallback onStarted;
 
   const _AnimatedLetterCard({
     super.key,
     required this.child,
-    this.delayMs = 0,
-    this.isNewMessage = false,
+    required this.animate,
+    required this.onStarted,
   });
 
   @override
@@ -2725,30 +2727,24 @@ class _AnimatedLetterCardState extends State<_AnimatedLetterCard>
   void initState() {
     super.initState();
 
-    final duration = widget.isNewMessage ? 400 : 400;
-    final translateStart = widget.isNewMessage ? 20.0 : 12.0;
-    final scaleStart = widget.isNewMessage ? 0.97 : 1.0;
-
     _controller = AnimationController(
       vsync: this,
-      duration: Duration(milliseconds: duration),
+      duration: const Duration(milliseconds: 400),
+      value: widget.animate ? 0 : 1,
     );
 
     final curve = CurvedAnimation(
       parent: _controller,
-      curve: widget.isNewMessage ? const Cubic(0.16, 1, 0.3, 1) : Curves.ease,
+      curve: const Cubic(0.16, 1, 0.3, 1),
     );
 
     _opacity = Tween<double>(begin: 0, end: 1).animate(curve);
-    _translateY = Tween<double>(begin: translateStart, end: 0).animate(curve);
-    _scale = Tween<double>(begin: scaleStart, end: 1).animate(curve);
+    _translateY = Tween<double>(begin: 20, end: 0).animate(curve);
+    _scale = Tween<double>(begin: 0.97, end: 1).animate(curve);
 
-    if (widget.isNewMessage) {
-      Future.delayed(Duration(milliseconds: widget.delayMs), () {
-        if (mounted) _controller.forward();
-      });
-    } else {
-      _controller.value = 1;
+    if (widget.animate) {
+      widget.onStarted();
+      _controller.forward();
     }
   }
 
@@ -2781,20 +2777,13 @@ enum _ItemType { originMarker, dateSeparator, message, call, loadingIndicator }
 /// 405: one row of the merged conversation sequence. Exactly one of
 /// [message] and [call] is non-null.
 final class _TimelineRow {
-  const _TimelineRow.message(
-    ConversationMessage this.message,
-    this.messageIndex,
-  ) : call = null;
+  const _TimelineRow.message(ConversationMessage this.message) : call = null;
 
   const _TimelineRow.call(ConversationCallTimelineEntry this.call)
-    : message = null,
-      messageIndex = -1;
+    : message = null;
 
   final ConversationMessage? message;
   final ConversationCallTimelineEntry? call;
-
-  /// Index into `widget.messages`, or -1 for a call row.
-  final int messageIndex;
 }
 
 class _DisplayItem {
@@ -2802,7 +2791,6 @@ class _DisplayItem {
   final ConversationMessage? message;
   final ConversationCallTimelineEntry? call;
   final String? dateLabel;
-  final bool isLastAndWasEmpty;
 
   /// 136 Phase 3: whether this message row is the FIRST balloon of its run
   /// (consecutive same-sender messages within [kMessageRunGapThreshold] that
@@ -2818,7 +2806,6 @@ class _DisplayItem {
     this.message,
     this.call,
     this.dateLabel,
-    this.isLastAndWasEmpty = false,
     this.isFirstInGroup = true,
     this.isLastInGroup = true,
   });
@@ -2837,13 +2824,11 @@ class _DisplayItem {
 
   factory _DisplayItem.message(
     ConversationMessage msg, {
-    bool isLastAndWasEmpty = false,
     bool isFirstInGroup = true,
     bool isLastInGroup = true,
   }) => _DisplayItem._(
     type: _ItemType.message,
     message: msg,
-    isLastAndWasEmpty: isLastAndWasEmpty,
     isFirstInGroup: isFirstInGroup,
     isLastInGroup: isLastInGroup,
   );
@@ -2855,7 +2840,6 @@ class _DisplayItem {
     message: message,
     call: call,
     dateLabel: dateLabel,
-    isLastAndWasEmpty: isLastAndWasEmpty,
     isFirstInGroup: isFirstInGroup,
     isLastInGroup: value,
   );

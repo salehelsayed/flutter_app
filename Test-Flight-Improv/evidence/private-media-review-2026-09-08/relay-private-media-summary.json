@@ -1,0 +1,436 @@
+{
+  "blobTimelines": {
+    "blob1": [
+      {
+        "atUtc": "2026-09-08T18:05:00.169+00:00",
+        "blob": "blob1",
+        "bytes": 907808,
+        "event": "media_uploaded",
+        "recipient": "peer2",
+        "sender": "peer1"
+      },
+      {
+        "atUtc": "2026-09-08T18:07:07.319+00:00",
+        "blob": "blob1",
+        "bytes": 907808,
+        "event": "media_uploaded",
+        "recipient": "peer2",
+        "sender": "peer1"
+      },
+      {
+        "atUtc": "2026-09-08T18:12:42.390+00:00",
+        "blob": "blob1",
+        "bytes": 907808,
+        "event": "media_uploaded",
+        "recipient": "peer2",
+        "sender": "peer1"
+      },
+      {
+        "atUtc": "2026-09-08T18:16:57.012+00:00",
+        "blob": "blob1",
+        "bytes": 907808,
+        "event": "media_uploaded",
+        "recipient": "peer2",
+        "sender": "peer1"
+      },
+      {
+        "atUtc": "2026-09-08T18:21:13.223+00:00",
+        "blob": "blob1",
+        "bytes": 907808,
+        "event": "media_uploaded",
+        "recipient": "peer2",
+        "sender": "peer1"
+      },
+      {
+        "atUtc": "2026-09-08T18:25:17.392+00:00",
+        "blob": "blob1",
+        "bytes": 907808,
+        "event": "media_uploaded",
+        "recipient": "peer2",
+        "sender": "peer1"
+      },
+      {
+        "atUtc": "2026-09-08T18:26:29.955+00:00",
+        "blob": "blob1",
+        "bytes": 907808,
+        "event": "media_uploaded",
+        "recipient": "peer2",
+        "sender": "peer1"
+      },
+      {
+        "atUtc": "2026-09-08T18:30:31.704+00:00",
+        "blob": "blob1",
+        "bytes": 907808,
+        "event": "media_uploaded",
+        "recipient": "peer2",
+        "sender": "peer1"
+      },
+      {
+        "atUtc": "2026-09-08T18:35:10.326+00:00",
+        "blob": "blob1",
+        "bytes": 907808,
+        "event": "media_uploaded",
+        "recipient": "peer2",
+        "sender": "peer1"
+      }
+    ],
+    "blob2": [
+      {
+        "atUtc": "2026-09-08T18:05:06.938+00:00",
+        "blob": "blob2",
+        "bytes": 3150038,
+        "event": "media_uploaded",
+        "recipient": "peer5",
+        "sender": "peer1"
+      },
+      {
+        "atUtc": "2026-09-08T18:05:15.436+00:00",
+        "blob": "blob2",
+        "bytes": 3150038,
+        "event": "media_downloaded",
+        "recipient": "peer5"
+      },
+      {
+        "atUtc": "2026-09-08T18:05:15.572+00:00",
+        "blob": "blob2",
+        "event": "media_deleted",
+        "recipient": "peer5"
+      }
+    ],
+    "blob3": [
+      {
+        "atUtc": "2026-09-08T18:05:13.583+00:00",
+        "blob": "blob3",
+        "bytes": 2557788,
+        "event": "media_downloaded",
+        "recipient": "peer5"
+      },
+      {
+        "atUtc": "2026-09-08T18:05:13.895+00:00",
+        "blob": "blob3",
+        "event": "media_deleted",
+        "recipient": "peer5"
+      }
+    ],
+    "blob4": [
+      {
+        "atUtc": "2026-09-08T18:06:11.824+00:00",
+        "blob": "blob4",
+        "bytes": 4634918,
+        "event": "media_uploaded",
+        "recipient": "peer5",
+        "sender": "peer1"
+      },
+      {
+        "atUtc": "2026-09-08T18:06:51.553+00:00",
+        "blob": "blob4",
+        "bytes": 4634918,
+        "event": "media_downloaded",
+        "recipient": "peer5"
+      }
+    ],
+    "blob5": [
+      {
+        "atUtc": "2026-09-08T18:06:59.737+00:00",
+        "blob": "blob5",
+        "bytes": 4401190,
+        "event": "media_uploaded",
+        "recipient": "peer5",
+        "sender": "peer1"
+      },
+      {
+        "atUtc": "2026-09-08T18:07:04.644+00:00",
+        "blob": "blob5",
+        "bytes": 4401190,
+        "event": "media_downloaded",
+        "recipient": "peer5"
+      }
+    ],
+    "blob6": [
+      {
+        "atUtc": "2026-09-08T18:07:56.492+00:00",
+        "blob": "blob6",
+        "bytes": 496683,
+        "event": "media_uploaded",
+        "recipient": "peer1",
+        "sender": "peer5"
+      },
+      {
+        "atUtc": "2026-09-08T18:07:59.507+00:00",
+        "blob": "blob6",
+        "bytes": 496683,
+        "event": "media_downloaded",
+        "recipient": "peer1"
+      },
+      {
+        "atUtc": "2026-09-08T18:08:14.518+00:00",
+        "blob": "blob6",
+        "bytes": 496683,
+        "event": "media_downloaded",
+        "recipient": "peer1"
+      },
+      {
+        "atUtc": "2026-09-08T18:08:14.900+00:00",
+        "blob": "blob6",
+        "event": "media_deleted",
+        "recipient": "peer1"
+      }
+    ],
+    "blob7": [
+      {
+        "atUtc": "2026-09-08T18:13:44.470+00:00",
+        "blob": "blob7",
+        "bytes": 1178492,
+        "event": "media_uploaded",
+        "recipient": "peer1",
+        "sender": "peer5"
+      },
+      {
+        "atUtc": "2026-09-08T18:13:48.192+00:00",
+        "blob": "blob7",
+        "bytes": 1178492,
+        "event": "media_downloaded",
+        "recipient": "peer1"
+      },
+      {
+        "atUtc": "2026-09-08T18:14:11.771+00:00",
+        "blob": "blob7",
+        "bytes": 1178492,
+        "event": "media_downloaded",
+        "recipient": "peer1"
+      },
+      {
+        "atUtc": "2026-09-08T18:14:12.226+00:00",
+        "blob": "blob7",
+        "event": "media_deleted",
+        "recipient": "peer1"
+      }
+    ]
+  },
+  "conclusion": "The user-confirmed20:06/20:07 Berlin timestamps strongly correlate the photo pair with blob4/blob5 and screenshot with blob6. Each photo has one completed upload and matching-byte download, no same-ID retry/replacement/deletion in retained current-service history, and its relay file remains at original size/mtime. Legacy metadata contains no ciphertext hash or privacy policy. Relay evidence cannot distinguish receiver integrity rejection from local durable-commit failure or another receiver validation state.",
+  "eventListTruncated": false,
+  "exactPhotoMetadataCheck": {
+    "blobs": [
+      {
+        "blobAlias": "blob4",
+        "downloadCompletionCount": 1,
+        "explicitDeleteCount": 0,
+        "history": [
+          {
+            "atUtc": "2026-09-08T18:06:11.824+00:00",
+            "bytes": 4634918,
+            "event": "upload_completed"
+          },
+          {
+            "atUtc": "2026-09-08T18:06:51.553+00:00",
+            "bytes": 4634918,
+            "event": "download_completed"
+          }
+        ],
+        "metadata": [
+          {
+            "blobExists": true,
+            "blobFileSize": 4634918,
+            "blobFileSizeMatchesDeclared": true,
+            "blobFileSizeMatchesUploaded": true,
+            "blobModifiedAtUtc": "2026-09-08T18:06:11.811+00:00",
+            "cipherHashFieldPresent": false,
+            "createdAtUtc": "2026-09-08T18:06:11.823+00:00",
+            "declaredSize": 4634918,
+            "metadataIdMatchesExactLoggedBlob": true,
+            "mime": "application/octet-stream",
+            "privacyPolicyFieldPresent": false,
+            "sidecarFound": true,
+            "sidecarModifiedAtUtc": "2026-09-08T18:06:11.821+00:00"
+          }
+        ],
+        "metadataRootLocatedFromServiceStartup": true,
+        "uploadCompletionCount": 1
+      },
+      {
+        "blobAlias": "blob5",
+        "downloadCompletionCount": 1,
+        "explicitDeleteCount": 0,
+        "history": [
+          {
+            "atUtc": "2026-09-08T18:06:59.737+00:00",
+            "bytes": 4401190,
+            "event": "upload_completed"
+          },
+          {
+            "atUtc": "2026-09-08T18:07:04.644+00:00",
+            "bytes": 4401190,
+            "event": "download_completed"
+          }
+        ],
+        "metadata": [
+          {
+            "blobExists": true,
+            "blobFileSize": 4401190,
+            "blobFileSizeMatchesDeclared": true,
+            "blobFileSizeMatchesUploaded": true,
+            "blobModifiedAtUtc": "2026-09-08T18:06:59.724+00:00",
+            "cipherHashFieldPresent": false,
+            "createdAtUtc": "2026-09-08T18:06:59.734+00:00",
+            "declaredSize": 4401190,
+            "metadataIdMatchesExactLoggedBlob": true,
+            "mime": "application/octet-stream",
+            "privacyPolicyFieldPresent": false,
+            "sidecarFound": true,
+            "sidecarModifiedAtUtc": "2026-09-08T18:06:59.734+00:00"
+          }
+        ],
+        "metadataRootLocatedFromServiceStartup": true,
+        "uploadCompletionCount": 1
+      }
+    ],
+    "capturedAtUtc": "2026-09-08T18:47:50.095353+00:00",
+    "exactTargetCount": 2,
+    "historyWindowEndUtc": "2026-09-08T18:47:50.095353+00:00",
+    "historyWindowStartUtc": "2026-09-08T16:19:00+00:00",
+    "privacy": "Only exact two blobs identified by known log timestamps; JSON sidecar fields and filesystem stat metadata inspected. Image/ciphertext files were not opened, read or hashed. No identifiers, keys, hashes, paths or payloads exported."
+  },
+  "explicitDeletes": 4,
+  "initialCandidatePairsBeforeUserTiming": [
+    {
+      "blobAliases": [
+        "blob4",
+        "blob5"
+      ],
+      "confidence": "temporal/directional candidate only; no user-identity or policy-mode binding",
+      "direction": "peer1\u2192peer5"
+    },
+    {
+      "blobAliases": [
+        "blob6",
+        "blob7"
+      ],
+      "confidence": "temporal/directional candidate only; no user-identity or policy-mode binding",
+      "direction": "peer5\u2192peer1"
+    }
+  ],
+  "journalRecordCount": 7886,
+  "legacyInboxStoreError": [
+    {
+      "atUtc": "2026-09-08T18:35:31.570+00:00",
+      "classification": "unknown_redacted",
+      "event": "inbox_store_failed"
+    }
+  ],
+  "mediaDownloadCompletions": 8,
+  "mediaTransferErrorEvents": [],
+  "mediaUploadCompletions": 14,
+  "protectedBlobCustodyAdmissionEnabledThroughoutWindow": false,
+  "protectedBlobCustodyRequestObserved": false,
+  "protectedInboxOutcomes": [
+    {
+      "delta": 0.0,
+      "first": 0.0,
+      "labels": {
+        "__name__": "relay_inbox_custody_store_total",
+        "result": "disabled"
+      },
+      "last": 0.0
+    },
+    {
+      "delta": 0.0,
+      "first": 0.0,
+      "labels": {
+        "__name__": "relay_inbox_custody_store_total",
+        "result": "duplicate"
+      },
+      "last": 0.0
+    },
+    {
+      "delta": 0.0,
+      "first": 0.0,
+      "labels": {
+        "__name__": "relay_inbox_custody_store_total",
+        "result": "failed"
+      },
+      "last": 0.0
+    },
+    {
+      "delta": 0.0,
+      "first": 0.0,
+      "labels": {
+        "__name__": "relay_inbox_custody_store_total",
+        "result": "identity_conflict"
+      },
+      "last": 0.0
+    },
+    {
+      "delta": 0.0,
+      "first": 0.0,
+      "labels": {
+        "__name__": "relay_inbox_custody_store_total",
+        "result": "ineligible"
+      },
+      "last": 0.0
+    },
+    {
+      "delta": 0.0,
+      "first": 0.0,
+      "labels": {
+        "__name__": "relay_inbox_custody_store_total",
+        "result": "rejected_full"
+      },
+      "last": 0.0
+    },
+    {
+      "delta": 89.0,
+      "first": 34.0,
+      "labels": {
+        "__name__": "relay_inbox_custody_store_total",
+        "result": "stored"
+      },
+      "last": 123.0
+    }
+  ],
+  "reportedPhotoPair": {
+    "blobAliases": [
+      "blob4",
+      "blob5"
+    ],
+    "correlationConfidence": "strong temporal/directional correlation from user-confirmed send and screenshot times",
+    "direction": "peer1\u2192peer5",
+    "plaintextOrCryptographicMessageIdentityVerified": false,
+    "privateModeAssignedPerBlob": false
+  },
+  "returnedScreenshotCorrelation": {
+    "blobAlias": "blob6",
+    "correlationConfidence": "strong temporal/directional correlation with user report; content not inspected",
+    "direction": "peer5\u2192peer1"
+  },
+  "scope": "Aliases are capture-local and derived from logged truncated peer prefixes. Upload/download counts include retries and unrelated traffic; ciphertext type, image content, privacy mode, client version and recipient UI state are not exported or inferred.",
+  "serviceHealth": {
+    "coturn.service": {
+      "ActiveEnterTimestamp": "Tue 2026-09-08 11:09:01 UTC",
+      "ActiveState": "active",
+      "NRestarts": "0",
+      "SubState": "running"
+    },
+    "prometheus.service": {
+      "ActiveEnterTimestamp": "Thu 2026-03-19 22:48:42 UTC",
+      "ActiveState": "active",
+      "NRestarts": "0",
+      "SubState": "running"
+    },
+    "relay-server.service": {
+      "ActiveEnterTimestamp": "Tue 2026-09-08 16:19:10 UTC",
+      "ActiveState": "active",
+      "NRestarts": "0",
+      "SubState": "running"
+    }
+  },
+  "uniqueUploadedBlobAliases": 6,
+  "userTimingClarification": {
+    "photoSentBerlinLocal": "2026-09-08 20:06",
+    "photoSentUtcMinute": "2026-09-08T18:06Z",
+    "returnedScreenshotBerlinLocal": "2026-09-08 20:07",
+    "returnedScreenshotUtcMinute": "2026-09-08T18:07Z",
+    "source": "User report relayed by parent investigator"
+  },
+  "windowEndUtc": "2026-09-08T18:40:10.920212+00:00",
+  "windowStartUtc": "2026-09-08T18:05:00+00:00"
+}

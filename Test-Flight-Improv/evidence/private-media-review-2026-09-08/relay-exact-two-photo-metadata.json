@@ -1,0 +1,81 @@
+{
+  "blobs": [
+    {
+      "blobAlias": "blob4",
+      "downloadCompletionCount": 1,
+      "explicitDeleteCount": 0,
+      "history": [
+        {
+          "atUtc": "2026-09-08T18:06:11.824+00:00",
+          "bytes": 4634918,
+          "event": "upload_completed"
+        },
+        {
+          "atUtc": "2026-09-08T18:06:51.553+00:00",
+          "bytes": 4634918,
+          "event": "download_completed"
+        }
+      ],
+      "metadata": [
+        {
+          "blobExists": true,
+          "blobFileSize": 4634918,
+          "blobFileSizeMatchesDeclared": true,
+          "blobFileSizeMatchesUploaded": true,
+          "blobModifiedAtUtc": "2026-09-08T18:06:11.811+00:00",
+          "cipherHashFieldPresent": false,
+          "createdAtUtc": "2026-09-08T18:06:11.823+00:00",
+          "declaredSize": 4634918,
+          "metadataIdMatchesExactLoggedBlob": true,
+          "mime": "application/octet-stream",
+          "privacyPolicyFieldPresent": false,
+          "sidecarFound": true,
+          "sidecarModifiedAtUtc": "2026-09-08T18:06:11.821+00:00"
+        }
+      ],
+      "metadataRootLocatedFromServiceStartup": true,
+      "uploadCompletionCount": 1
+    },
+    {
+      "blobAlias": "blob5",
+      "downloadCompletionCount": 1,
+      "explicitDeleteCount": 0,
+      "history": [
+        {
+          "atUtc": "2026-09-08T18:06:59.737+00:00",
+          "bytes": 4401190,
+          "event": "upload_completed"
+        },
+        {
+          "atUtc": "2026-09-08T18:07:04.644+00:00",
+          "bytes": 4401190,
+          "event": "download_completed"
+        }
+      ],
+      "metadata": [
+        {
+          "blobExists": true,
+          "blobFileSize": 4401190,
+          "blobFileSizeMatchesDeclared": true,
+          "blobFileSizeMatchesUploaded": true,
+          "blobModifiedAtUtc": "2026-09-08T18:06:59.724+00:00",
+          "cipherHashFieldPresent": false,
+          "createdAtUtc": "2026-09-08T18:06:59.734+00:00",
+          "declaredSize": 4401190,
+          "metadataIdMatchesExactLoggedBlob": true,
+          "mime": "application/octet-stream",
+          "privacyPolicyFieldPresent": false,
+          "sidecarFound": true,
+          "sidecarModifiedAtUtc": "2026-09-08T18:06:59.734+00:00"
+        }
+      ],
+      "metadataRootLocatedFromServiceStartup": true,
+      "uploadCompletionCount": 1
+    }
+  ],
+  "capturedAtUtc": "2026-09-08T18:47:50.095353+00:00",
+  "exactTargetCount": 2,
+  "historyWindowEndUtc": "2026-09-08T18:47:50.095353+00:00",
+  "historyWindowStartUtc": "2026-09-08T16:19:00+00:00",
+  "privacy": "Only exact two blobs identified by known log timestamps; JSON sidecar fields and filesystem stat metadata inspected. Image/ciphertext files were not opened, read or hashed. No identifiers, keys, hashes, paths or payloads exported."
+}

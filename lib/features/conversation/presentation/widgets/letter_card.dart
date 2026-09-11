@@ -198,9 +198,10 @@ class LetterCard extends StatelessWidget {
       status == 'sending' &&
       media.any(
         (attachment) =>
-            attachment.mediaType == 'image' ||
-            attachment.mediaType == 'video' ||
-            attachment.mediaType == 'audio',
+            attachment.downloadStatus == 'upload_pending' &&
+            (attachment.mediaType == 'image' ||
+                attachment.mediaType == 'video' ||
+                attachment.mediaType == 'audio'),
       );
 
   /// 155 (1:1 only): whether to draw the INCOMING transport glyph (the channel
@@ -950,7 +951,7 @@ class LetterCard extends StatelessWidget {
     final l10n = AppLocalizations.of(context)!;
     final progress = messageUploadProgress;
     final title = progress == null
-        ? l10n.upload_progress_title
+        ? l10n.post_media_pending_upload
         : l10n.media_sending_automatically;
     final detail = progress == null
         ? l10n.post_media_pending_upload_desc
@@ -962,18 +963,25 @@ class LetterCard extends StatelessWidget {
       label: '$title. $detail',
       child: Row(
         key: progress == null
-            ? null
+            ? const ValueKey('message-media-pending-note')
             : ValueKey('message-upload-progress-${progress.messageId}'),
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const SizedBox(
-            width: 16,
-            height: 16,
-            child: CircularProgressIndicator(
-              strokeWidth: 2,
-              color: Color(0xFF4ecdc4),
+          if (progress == null)
+            Icon(
+              Icons.schedule_rounded,
+              size: 16,
+              color: readableColors.textMuted,
+            )
+          else
+            const SizedBox(
+              width: 16,
+              height: 16,
+              child: CircularProgressIndicator(
+                strokeWidth: 2,
+                color: Color(0xFF4ecdc4),
+              ),
             ),
-          ),
           const SizedBox(width: 8),
           Expanded(
             child: Column(

@@ -1,0 +1,165 @@
+{
+  "probe": "Independent Python TLS TURN client with buffered frame boundaries and exact synthetic-payload validation",
+  "results": [
+    {
+      "family": "IPv4",
+      "transport": "TLS",
+      "intervalMs": 0,
+      "messagesPerEndpoint": 50,
+      "hostnameVerified": true,
+      "startedAt": "2026-09-08T11:28:05.811258+00:00",
+      "sent": 100,
+      "received": 100,
+      "endpoints": [
+        {
+          "receivedFrames": 50,
+          "uniquePayloads": 50,
+          "payloadsMatchExactly": true,
+          "TLSReadChunkHistogram": {
+            "104": 14,
+            "208": 12,
+            "312": 4
+          },
+          "remainingBufferedBytes": 0
+        },
+        {
+          "receivedFrames": 50,
+          "uniquePayloads": 50,
+          "payloadsMatchExactly": true,
+          "TLSReadChunkHistogram": {
+            "312": 3,
+            "208": 8,
+            "104": 25
+          },
+          "remainingBufferedBytes": 0
+        }
+      ],
+      "tlsVersions": [
+        "TLSv1.2",
+        "TLSv1.2"
+      ],
+      "strictPass": true,
+      "finishedAt": "2026-09-08T11:28:06.558685+00:00"
+    },
+    {
+      "family": "IPv6",
+      "transport": "TLS",
+      "intervalMs": 0,
+      "messagesPerEndpoint": 50,
+      "hostnameVerified": true,
+      "startedAt": "2026-09-08T11:28:06.559614+00:00",
+      "sent": 100,
+      "received": 100,
+      "endpoints": [
+        {
+          "receivedFrames": 50,
+          "uniquePayloads": 50,
+          "payloadsMatchExactly": true,
+          "TLSReadChunkHistogram": {
+            "104": 3,
+            "312": 2,
+            "208": 16,
+            "520": 1,
+            "416": 1
+          },
+          "remainingBufferedBytes": 0
+        },
+        {
+          "receivedFrames": 50,
+          "uniquePayloads": 50,
+          "payloadsMatchExactly": true,
+          "TLSReadChunkHistogram": {
+            "104": 30,
+            "208": 10
+          },
+          "remainingBufferedBytes": 0
+        }
+      ],
+      "tlsVersions": [
+        "TLSv1.2",
+        "TLSv1.2"
+      ],
+      "strictPass": true,
+      "finishedAt": "2026-09-08T11:28:07.235086+00:00"
+    },
+    {
+      "family": "IPv4",
+      "transport": "TLS",
+      "intervalMs": 20,
+      "messagesPerEndpoint": 50,
+      "hostnameVerified": true,
+      "startedAt": "2026-09-08T11:28:07.236770+00:00",
+      "sent": 100,
+      "received": 100,
+      "endpoints": [
+        {
+          "receivedFrames": 50,
+          "uniquePayloads": 50,
+          "payloadsMatchExactly": true,
+          "TLSReadChunkHistogram": {
+            "104": 32,
+            "208": 6,
+            "312": 2
+          },
+          "remainingBufferedBytes": 0
+        },
+        {
+          "receivedFrames": 50,
+          "uniquePayloads": 50,
+          "payloadsMatchExactly": true,
+          "TLSReadChunkHistogram": {
+            "104": 17,
+            "208": 15,
+            "312": 1
+          },
+          "remainingBufferedBytes": 0
+        }
+      ],
+      "tlsVersions": [
+        "TLSv1.2",
+        "TLSv1.2"
+      ],
+      "strictPass": true,
+      "finishedAt": "2026-09-08T11:28:09.115062+00:00"
+    },
+    {
+      "family": "IPv6",
+      "transport": "TLS",
+      "intervalMs": 20,
+      "messagesPerEndpoint": 50,
+      "hostnameVerified": true,
+      "startedAt": "2026-09-08T11:28:09.115841+00:00",
+      "sent": 100,
+      "received": 100,
+      "endpoints": [
+        {
+          "receivedFrames": 50,
+          "uniquePayloads": 50,
+          "payloadsMatchExactly": true,
+          "TLSReadChunkHistogram": {
+            "104": 38,
+            "208": 6
+          },
+          "remainingBufferedBytes": 0
+        },
+        {
+          "receivedFrames": 50,
+          "uniquePayloads": 50,
+          "payloadsMatchExactly": true,
+          "TLSReadChunkHistogram": {
+            "104": 40,
+            "208": 5
+          },
+          "remainingBufferedBytes": 0
+        }
+      ],
+      "tlsVersions": [
+        "TLSv1.2",
+        "TLSv1.2"
+      ],
+      "strictPass": true,
+      "finishedAt": "2026-09-08T11:28:10.953656+00:00"
+    }
+  ],
+  "limits": "A bounded synthetic relay test, not an audio call. No tokens, raw endpoints, payload bytes or provider response bodies are persisted."
+}

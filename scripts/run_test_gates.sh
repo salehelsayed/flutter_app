@@ -83,6 +83,7 @@ readonly ONE_TO_ONE_TESTS=(
   "test/features/call/infrastructure/call_rtp_progress_sampler_test.dart"
   "test/features/settings/presentation/widgets/call_diagnostics_settings_section_test.dart"
   "test/core/diagnostics/app_diagnostics_test.dart"
+  "test/core/diagnostics/diagnostic_archive_writer_test.dart"
   "test/core/diagnostics/app_diagnostic_error_handlers_test.dart"
   "test/core/diagnostics/app_diagnostic_transport_test.dart"
   "test/core/diagnostics/production_app_diagnostics_test.dart"
@@ -139,6 +140,8 @@ readonly ONE_TO_ONE_TESTS=(
   "test/features/conversation/integration/quote_reply_thread_test.dart"
   "test/features/conversation/integration/edit_retry_round_trip_test.dart"
   "test/features/conversation/presentation/navigation/conversation_route_transition_test.dart"
+  "test/features/conversation/presentation/navigation/conversation_open_transition_test.dart"
+  "test/shared/widgets/media/media_video_lifecycle_test.dart"
   "test/core/database/migrations/077_message_relay_custody_test.dart"
   "test/core/inbox/inbox_round_trip_test.dart"
   "test/core/lifecycle/handle_app_resumed_upload_ordering_test.dart"
@@ -156,6 +159,7 @@ readonly ONE_TO_ONE_TESTS=(
   "test/features/conversation/application/delete_message_use_case_test.dart"
   "test/features/conversation/application/handle_incoming_message_deletion_use_case_test.dart"
   "test/features/conversation/application/handle_delivery_receipt_use_case_test.dart"
+  "test/features/conversation/application/early_delivery_receipt_test.dart"
   "test/features/conversation/application/send_delivery_receipt_use_case_test.dart"
   "test/features/conversation/application/verify_inbox_custody_use_case_test.dart"
   "test/core/database/helpers/inbox_staging_db_helpers_test.dart"
@@ -193,6 +197,7 @@ readonly ONE_TO_ONE_TESTS=(
   "test/features/conversation/domain/utils/message_run_grouping_test.dart"
   "test/features/conversation/presentation/widgets/letter_card_test.dart"
   "test/features/conversation/presentation/screens/conversation_screen_test.dart"
+  "test/features/conversation/presentation/screens/conversation_wired_call_timeline_refresh_test.dart"
   "test/features/conversation/presentation/screens/conversation_wired_test.dart"
   "test/features/conversation/presentation/screens/direct_conversation_route_authority_contract_test.dart"
   # 405: terminal call rows in the 1:1 conversation timeline.
@@ -528,6 +533,7 @@ readonly FEED_TESTS=(
   "test/features/feed/presentation/screens/feed_reduced_motion_test.dart"
   "test/features/feed/presentation/screens/feed_screen_test.dart"
   "test/features/feed/presentation/screens/feed_wired_test.dart"
+  "test/features/feed/presentation/screens/feed_async_state_regression_test.dart"
   # 331: one app-shell registration-health owner spans Feed/Orbit/Settings/
   # Posts, keeps short-screen actions reachable, and clears live.
   "test/features/push/presentation/push_registration_health_surface_test.dart"
@@ -632,6 +638,7 @@ readonly GROUP_TESTS=(
   "test/features/conversation/domain/utils/message_run_grouping_test.dart"
   "test/features/conversation/presentation/widgets/letter_card_test.dart"
   "test/features/groups/presentation/group_conversation_screen_test.dart"
+  "test/shared/widgets/media/media_video_lifecycle_test.dart"
   "test/features/groups/presentation/group_conversation_wired_test.dart"
   # 294 DTR-15: the same shared controller contracts must stay reachable from
   # the curated group lane as well as both 1:1 inventories.
@@ -642,6 +649,7 @@ readonly GROUP_TESTS=(
   "test/features/conversation/presentation/controllers/conversation_reaction_projection_controller_test.dart"
   "test/features/groups/presentation/group_info_wired_test.dart"
   "test/features/orbit/presentation/screens/orbit_wired_test.dart"
+  "test/features/orbit/presentation/screens/orbit_refresh_ordering_test.dart"
   # 261: Orbit sole-admin exit policy, staged actions, recovery sheet, and
   # active-Leave/dissolved-Delete swipe semantics.
   "test/features/groups/application/group_exit_policy_test.dart"

@@ -1,6 +1,11 @@
 import Foundation
 import UIKit
 
+struct IosAppVisibilityReadProtection {
+  let isActive: () -> Bool
+  let finish: () -> Void
+}
+
 /// Runner's sole native owner for app-visibility lifecycle projection. UIKit
 /// and scene notifications deliberately converge on the same semantic writer,
 /// so duplicate callbacks cannot advance the generation or clear an
@@ -11,6 +16,7 @@ final class IosAppVisibilityCoordinator {
     case scene
   }
 
+  private let beginReadProtection: () -> IosAppVisibilityReadProtection?
   private let store: IosAppVisibilitySnapshotStore
   private let notificationCenter: NotificationCenter
   private let queue = DispatchQueue(label: "mknoon.app_visibility.ios")
@@ -25,9 +31,11 @@ final class IosAppVisibilityCoordinator {
 
   init(
     store: IosAppVisibilitySnapshotStore,
-    notificationCenter: NotificationCenter = .default
+    notificationCenter: NotificationCenter = .default,
+    beginReadProtection: (() -> IosAppVisibilityReadProtection?)? = nil
   ) {
     self.store = store
+    self.beginReadProtection = beginReadProtection ?? Self.beginDefaultReadProtection
     self.notificationCenter = notificationCenter
     queue.setSpecific(key: queueKey, value: ())
   }
@@ -61,7 +69,28 @@ final class IosAppVisibilityCoordinator {
   }
 
   func readSnapshot() -> IosAppVisibilitySnapshotEnvelope? {
-    synchronized { store.readSnapshot() }
+    // The shared visibility flock is separate from Dart notification locks.
+    // Admit the read before waiting for this queue, then recheck after queue
+    // and file-lock admission. A refused read uses the existing unavailable
+    // result, which allows notifications;
+    // lifecycle writes must not be dropped as a side effect of read refusal.
+    guard let protection = beginReadProtection() else { return nil }
+    defer { protection.finish() }
+    return synchronized {
+      guard protection.isActive() else { return nil }
+      return store.readSnapshot(admissionIsActive: protection.isActive)
+    }
+  }
+
+  private static func beginDefaultReadProtection()
+    -> IosAppVisibilityReadProtection? {
+    let registry = CriticalTaskRegistry.shared
+    guard let task = registry.beginIfLive(withName: "mknoon.appVisibilityRead")
+    else { return nil }
+    return IosAppVisibilityReadProtection(
+      isActive: { registry.isLive(task) },
+      finish: { registry.end(task) }
+    )
   }
 
   func publishVisibleConversation(

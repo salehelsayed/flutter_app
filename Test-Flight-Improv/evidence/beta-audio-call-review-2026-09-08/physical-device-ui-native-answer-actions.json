@@ -1,0 +1,399 @@
+{
+  "schema": "mknoon.lab-call-ui-evidence.v1",
+  "recordedAt": "2026-09-08T12:26:46.811115+00:00",
+  "timestampSemantics": "capturedAt=command start; completedAt=command completion; startPostcondition samples independently timestamp observed caller state",
+  "actions": [
+    {
+      "capturedAt": "2026-09-08T12:21:58.433951+00:00",
+      "action": "open-chat",
+      "platform": "ios",
+      "ok": true,
+      "result": {
+        "existingLabChatOpen": true,
+        "locator": "accessibility-id"
+      },
+      "completedAt": "2026-09-08T12:22:00.460748+00:00"
+    },
+    {
+      "capturedAt": "2026-09-08T12:21:58.433618+00:00",
+      "action": "open-chat",
+      "platform": "android",
+      "ok": true,
+      "result": {
+        "existingLabChatOpen": true,
+        "locator": "fresh-hierarchy-bounds"
+      },
+      "completedAt": "2026-09-08T12:22:03.738380+00:00"
+    },
+    {
+      "capturedAt": "2026-09-08T12:22:11.649371+00:00",
+      "action": "start-call",
+      "platform": "ios",
+      "ok": true,
+      "result": {
+        "callActionRequested": "start-call",
+        "caller": "ios",
+        "labPairVerified": true,
+        "locator": "accessibility-id",
+        "waitedForTerminalNotice": false,
+        "preTapSourceStoredLocally": "/tmp/beta-call-review-20260908/dual-phone-ui-ios-before-start-1788870132202269000.xml",
+        "startPostcondition": {
+          "callerStartObserved": true,
+          "proofMeaning": "New caller UI surface after tap; relay admission and RTP require separate evidence",
+          "samples": [
+            {
+              "observedAt": "2026-09-08T12:22:13.437743+00:00",
+              "callerSurface": {
+                "observed": false,
+                "labPeerNameVisible": true,
+                "callerStateLabels": [],
+                "callControlsVisible": false,
+                "endControlVisible": false,
+                "cancelControlVisible": false,
+                "incomingControlsVisible": false
+              },
+              "newAllowlistedErrorText": [],
+              "unclassifiedErrorLikeTextPresent": false
+            },
+            {
+              "observedAt": "2026-09-08T12:22:14.672792+00:00",
+              "callerSurface": {
+                "observed": true,
+                "labPeerNameVisible": true,
+                "callerStateLabels": [
+                  "calling"
+                ],
+                "callControlsVisible": false,
+                "endControlVisible": false,
+                "cancelControlVisible": true,
+                "incomingControlsVisible": false
+              },
+              "newAllowlistedErrorText": [],
+              "unclassifiedErrorLikeTextPresent": false
+            }
+          ],
+          "fullSourcesStoredLocally": [
+            "/tmp/beta-call-review-20260908/dual-phone-ui-ios-start-1788870132747722000-0.xml",
+            "/tmp/beta-call-review-20260908/dual-phone-ui-ios-start-1788870132747722000-1.xml"
+          ],
+          "containsPrivateMaterial": false,
+          "sanitizedEvidencePath": "/tmp/beta-call-review-20260908/dual-phone-ui-ios-start-1788870132747722000.json"
+        }
+      },
+      "completedAt": "2026-09-08T12:22:14.677265+00:00"
+    },
+    {
+      "capturedAt": "2026-09-08T12:22:14.747795+00:00",
+      "action": "answer",
+      "platform": "android",
+      "ok": true,
+      "result": {
+        "callActionRequested": "answer",
+        "labPairVerified": true,
+        "locator": "fresh-hierarchy-bounds"
+      },
+      "completedAt": "2026-09-08T12:22:16.974160+00:00"
+    },
+    {
+      "capturedAt": "2026-09-08T12:22:57.284510+00:00",
+      "action": "end",
+      "platform": "android",
+      "ok": true,
+      "result": {
+        "callActionRequested": "end",
+        "labPairVerified": true,
+        "locator": "fresh-hierarchy-bounds"
+      },
+      "completedAt": "2026-09-08T12:23:02.079261+00:00"
+    },
+    {
+      "capturedAt": "2026-09-08T12:23:08.272083+00:00",
+      "action": "background",
+      "platform": "ios",
+      "ok": true,
+      "result": {
+        "backgrounded": true
+      },
+      "completedAt": "2026-09-08T12:23:08.644451+00:00"
+    },
+    {
+      "capturedAt": "2026-09-08T12:23:08.717975+00:00",
+      "action": "start-call",
+      "platform": "android",
+      "ok": true,
+      "result": {
+        "callActionRequested": "start-call",
+        "caller": "android",
+        "labPairVerified": true,
+        "locator": "fresh-hierarchy-bounds",
+        "waitedForTerminalNotice": false,
+        "preTapSourceStoredLocally": "/tmp/beta-call-review-20260908/dual-phone-ui-android-before-start-1788870190881275000.xml",
+        "startPostcondition": {
+          "callerStartObserved": true,
+          "proofMeaning": "New caller UI surface after tap; relay admission and RTP require separate evidence",
+          "samples": [
+            {
+              "observedAt": "2026-09-08T12:23:14.765222+00:00",
+              "callerSurface": {
+                "observed": true,
+                "labPeerNameVisible": true,
+                "callerStateLabels": [
+                  "ringing"
+                ],
+                "callControlsVisible": false,
+                "endControlVisible": false,
+                "cancelControlVisible": true,
+                "incomingControlsVisible": false
+              },
+              "newAllowlistedErrorText": [],
+              "unclassifiedErrorLikeTextPresent": false
+            }
+          ],
+          "fullSourcesStoredLocally": [
+            "/tmp/beta-call-review-20260908/dual-phone-ui-android-start-1788870190937633000-0.xml"
+          ],
+          "containsPrivateMaterial": false,
+          "sanitizedEvidencePath": "/tmp/beta-call-review-20260908/dual-phone-ui-android-start-1788870190937633000.json"
+        }
+      },
+      "completedAt": "2026-09-08T12:23:14.770414+00:00"
+    },
+    {
+      "capturedAt": "2026-09-08T12:23:14.839387+00:00",
+      "action": "answer",
+      "platform": "ios",
+      "ok": true,
+      "result": {
+        "callActionRequested": "answer",
+        "labPairVerified": true,
+        "locator": "accessibility-id"
+      },
+      "completedAt": "2026-09-08T12:23:29.029827+00:00"
+    },
+    {
+      "capturedAt": "2026-09-08T12:24:16.738459+00:00",
+      "action": "end",
+      "platform": "android",
+      "ok": true,
+      "result": {
+        "callActionRequested": "end",
+        "labPairVerified": true,
+        "locator": "fresh-hierarchy-bounds"
+      },
+      "completedAt": "2026-09-08T12:24:20.627546+00:00"
+    },
+    {
+      "capturedAt": "2026-09-08T12:24:26.800024+00:00",
+      "action": "start-call",
+      "platform": "ios",
+      "ok": true,
+      "result": {
+        "callActionRequested": "start-call",
+        "caller": "ios",
+        "labPairVerified": true,
+        "locator": "accessibility-id",
+        "waitedForTerminalNotice": true,
+        "preTapSourceStoredLocally": "/tmp/beta-call-review-20260908/dual-phone-ui-ios-before-start-1788870268743480000.xml",
+        "startPostcondition": {
+          "callerStartObserved": true,
+          "proofMeaning": "New caller UI surface after tap; relay admission and RTP require separate evidence",
+          "samples": [
+            {
+              "observedAt": "2026-09-08T12:24:30.181326+00:00",
+              "callerSurface": {
+                "observed": false,
+                "labPeerNameVisible": true,
+                "callerStateLabels": [],
+                "callControlsVisible": false,
+                "endControlVisible": false,
+                "cancelControlVisible": false,
+                "incomingControlsVisible": false
+              },
+              "newAllowlistedErrorText": [],
+              "unclassifiedErrorLikeTextPresent": false
+            },
+            {
+              "observedAt": "2026-09-08T12:24:31.165179+00:00",
+              "callerSurface": {
+                "observed": true,
+                "labPeerNameVisible": true,
+                "callerStateLabels": [
+                  "calling"
+                ],
+                "callControlsVisible": false,
+                "endControlVisible": false,
+                "cancelControlVisible": true,
+                "incomingControlsVisible": false
+              },
+              "newAllowlistedErrorText": [],
+              "unclassifiedErrorLikeTextPresent": false
+            }
+          ],
+          "fullSourcesStoredLocally": [
+            "/tmp/beta-call-review-20260908/dual-phone-ui-ios-start-1788870269280441000-0.xml",
+            "/tmp/beta-call-review-20260908/dual-phone-ui-ios-start-1788870269280441000-1.xml"
+          ],
+          "containsPrivateMaterial": false,
+          "sanitizedEvidencePath": "/tmp/beta-call-review-20260908/dual-phone-ui-ios-start-1788870269280441000.json"
+        }
+      },
+      "completedAt": "2026-09-08T12:24:31.169553+00:00"
+    },
+    {
+      "capturedAt": "2026-09-08T12:24:31.239275+00:00",
+      "action": "decline",
+      "platform": "android",
+      "ok": true,
+      "result": {
+        "callActionRequested": "decline",
+        "labPairVerified": true,
+        "locator": "fresh-hierarchy-bounds"
+      },
+      "completedAt": "2026-09-08T12:24:33.479593+00:00"
+    },
+    {
+      "capturedAt": "2026-09-08T12:24:47.803588+00:00",
+      "action": "start-call",
+      "platform": "ios",
+      "ok": true,
+      "result": {
+        "callActionRequested": "start-call",
+        "caller": "ios",
+        "labPairVerified": true,
+        "locator": "accessibility-id",
+        "waitedForTerminalNotice": false,
+        "preTapSourceStoredLocally": "/tmp/beta-call-review-20260908/dual-phone-ui-ios-before-start-1788870288354784000.xml",
+        "startPostcondition": {
+          "callerStartObserved": true,
+          "proofMeaning": "New caller UI surface after tap; relay admission and RTP require separate evidence",
+          "samples": [
+            {
+              "observedAt": "2026-09-08T12:24:49.673694+00:00",
+              "callerSurface": {
+                "observed": true,
+                "labPeerNameVisible": true,
+                "callerStateLabels": [
+                  "calling"
+                ],
+                "callControlsVisible": false,
+                "endControlVisible": false,
+                "cancelControlVisible": true,
+                "incomingControlsVisible": false
+              },
+              "newAllowlistedErrorText": [],
+              "unclassifiedErrorLikeTextPresent": false
+            }
+          ],
+          "fullSourcesStoredLocally": [
+            "/tmp/beta-call-review-20260908/dual-phone-ui-ios-start-1788870288898194000-0.xml"
+          ],
+          "containsPrivateMaterial": false,
+          "sanitizedEvidencePath": "/tmp/beta-call-review-20260908/dual-phone-ui-ios-start-1788870288898194000.json"
+        }
+      },
+      "completedAt": "2026-09-08T12:24:49.678194+00:00"
+    },
+    {
+      "capturedAt": "2026-09-08T12:24:49.748102+00:00",
+      "action": "answer",
+      "platform": "android",
+      "ok": true,
+      "result": {
+        "callActionRequested": "answer",
+        "labPairVerified": true,
+        "locator": "fresh-hierarchy-bounds"
+      },
+      "completedAt": "2026-09-08T12:24:52.371482+00:00"
+    },
+    {
+      "capturedAt": "2026-09-08T12:25:19.216798+00:00",
+      "action": "end",
+      "platform": "android",
+      "ok": true,
+      "result": {
+        "callActionRequested": "end",
+        "labPairVerified": true,
+        "locator": "fresh-hierarchy-bounds"
+      },
+      "completedAt": "2026-09-08T12:25:24.335928+00:00"
+    },
+    {
+      "capturedAt": "2026-09-08T12:25:26.885968+00:00",
+      "action": "wait",
+      "platform": "android",
+      "ok": true,
+      "result": {
+        "phase": "ended",
+        "observed": true,
+        "state": {
+          "platform": "android",
+          "target": "21071FDF600CSC",
+          "labConversationVisible": true,
+          "labPeerNameVisible": true,
+          "callHeaderEnabled": true,
+          "callUnavailable": false,
+          "debugLaunchError": false,
+          "callControls": {
+            "start-call": 1,
+            "answer": 0,
+            "decline": 0,
+            "end": 0
+          },
+          "snapshotStoredLocally": true
+        }
+      },
+      "completedAt": "2026-09-08T12:25:29.048250+00:00"
+    },
+    {
+      "capturedAt": "2026-09-08T12:25:29.127003+00:00",
+      "action": "wait",
+      "platform": "ios",
+      "ok": true,
+      "result": {
+        "phase": "ended",
+        "observed": true,
+        "state": {
+          "platform": "ios",
+          "target": "00008030-001A6D2801BB802E",
+          "labConversationVisible": true,
+          "labPeerNameVisible": true,
+          "callHeaderEnabled": true,
+          "callUnavailable": false,
+          "debugLaunchError": false,
+          "callControls": {
+            "start-call": 1,
+            "answer": 0,
+            "decline": 0,
+            "end": 0
+          },
+          "snapshotStoredLocally": true
+        }
+      },
+      "completedAt": "2026-09-08T12:25:29.688605+00:00"
+    },
+    {
+      "capturedAt": "2026-09-08T12:26:33.502502+00:00",
+      "action": "status",
+      "platform": "android",
+      "ok": true,
+      "result": {
+        "platform": "android",
+        "target": "21071FDF600CSC",
+        "labConversationVisible": false,
+        "labPeerNameVisible": false,
+        "callHeaderEnabled": null,
+        "callUnavailable": false,
+        "debugLaunchError": false,
+        "callControls": {
+          "start-call": 0,
+          "answer": 0,
+          "decline": 0,
+          "end": 0
+        },
+        "snapshotStoredLocally": true
+      },
+      "completedAt": "2026-09-08T12:26:35.740384+00:00"
+    }
+  ],
+  "containsPrivateMaterial": false
+}

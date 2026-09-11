@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/database/helpers/group_event_log_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/group_messages_db_helpers.dart';
+import 'package:flutter_app/core/database/helpers/group_media_key_snapshot.dart';
 import 'package:flutter_app/core/database/helpers/group_reaction_replay_outbox_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/protected_group_content_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/protected_group_reaction_target_db_helpers.dart';
@@ -46,11 +47,13 @@ final class ProductionCanonicalProtectedGroupAuthoritySupport {
     required this.database,
     required this.bridge,
     required this.groupRepository,
+    this.mediaKeyAccess,
   });
 
   final Database database;
   final Bridge bridge;
   final GroupRepository groupRepository;
+  final GroupMediaKeyAccess? mediaKeyAccess;
 
   Future<ProtectedGroupContentAuthority?> loadContentAuthority(
     String groupId,
@@ -148,6 +151,7 @@ final class ProductionCanonicalProtectedGroupAuthoritySupport {
             required terminalSourceEventId,
             required terminalSourceTimestamp,
             required terminalEventPayload,
+            mediaKeySnapshot,
           }) async {
             if (ownerId != contentEventId) return false;
             if (payloadType == groupOfflineReplayPayloadTypeMessage &&
@@ -167,6 +171,7 @@ final class ProductionCanonicalProtectedGroupAuthoritySupport {
                     terminalSourceEventId: terminalSourceEventId,
                     terminalSourceTimestamp: terminalSourceTimestamp,
                     terminalEventPayload: terminalEventPayload,
+                    mediaKeySnapshot: mediaKeySnapshot,
                   );
             }
             if (payloadType == groupOfflineReplayPayloadTypeReaction &&
@@ -217,6 +222,7 @@ final class ProductionCanonicalProtectedGroupAuthoritySupport {
                 ) ==
                 true;
           },
+      mediaKeyAccess: mediaKeyAccess,
     ),
   );
 

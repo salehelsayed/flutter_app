@@ -1,20 +1,62 @@
 import Foundation
 import XCTest
+#if canImport(Runner)
 @testable import Runner
+#endif
 
 final class MknoonCallDiagnosticSpoolTests: XCTestCase {
   private final class Memory: MknoonCallDiagnosticBackend {
     var data: Data?
     var fail = false
+    var writes = 0
     func read() throws -> Data? { data }
     func replace(_ data: Data) throws {
       if fail { throw CocoaError(.fileWriteUnknown) }
-      self.data = data
+      self.data = data; writes += 1
     }
   }
   private let handle = "123e4567-e89b-42d3-a456-426614174000"
   private let trace = "223e4567-e89b-42d3-a456-426614174001"
   private func events(_ store: MknoonCallDiagnosticSpool) -> [[String: Any]] { store.drain(64)["events"] as! [[String: Any]] }
+
+  func testQueuedCallObservationsShareWriteAndPreserveTerminalAndBinding() {
+    let memory = Memory()
+    let active = MknoonCallDiagnosticSpool(backend: memory)
+    XCTAssertTrue(active.configure(true)); XCTAssertTrue(active.bind(handle, traceId: trace))
+    let writes = memory.writes
+    for _ in 0..<63 { XCTAssertTrue(active.append(handle: handle, stage: "audio", action: "snapshot", outcome: "ok", deferPersistence: true)) }
+    XCTAssertTrue(active.append(handle: handle, stage: "terminal", action: "commit", outcome: "ok", deferPersistence: true))
+    XCTAssertEqual(memory.writes, writes); XCTAssertTrue(active.persistPending()); XCTAssertEqual(memory.writes, writes + 1)
+    let rows = events(active); XCTAssertEqual(rows.count, 64); XCTAssertEqual(rows.last?["stage"] as? String, "terminal")
+    XCTAssertTrue(rows.allSatisfy { $0["traceId"] as? String == trace })
+  }
+  func testDeferredSinkFailureDropsOnlyUncommittedObservations() {
+    let memory = Memory()
+    let active = MknoonCallDiagnosticSpool(backend: memory); XCTAssertTrue(active.configure(true))
+    active.append(handle: handle, stage: "answer", action: "commit", outcome: "ok")
+    for _ in 0..<64 { active.append(handle: handle, stage: "audio", action: "snapshot", outcome: "ok", deferPersistence: true) }
+    memory.fail = true; XCTAssertFalse(active.persistPending())
+    XCTAssertEqual(events(active).count, 1); XCTAssertEqual(active.drain(64)["droppedEvents"] as? Int, 64)
+  }
+  func testOptOutBeforeQueuedFlushCannotResurrectCallEvidence() {
+    let memory = Memory()
+    let active = MknoonCallDiagnosticSpool(backend: memory); XCTAssertTrue(active.configure(true, consentEpoch: 10))
+    active.append(handle: handle, stage: "answer", action: "commit", outcome: "ok", deferPersistence: true); active.recordDropped(20)
+    XCTAssertTrue(active.configure(false, consentEpoch: 11)); XCTAssertTrue(active.persistPending())
+    XCTAssertTrue(events(MknoonCallDiagnosticSpool(backend: memory)).isEmpty); XCTAssertEqual(active.drain(64)["droppedEvents"] as? Int, 0)
+  }
+  func testDeferredAppendReplacesExpiredBindingBeforeRecordingFreshCall() {
+    var now: Int64 = 1_900_000_000_000
+    let active = MknoonCallDiagnosticSpool(backend: Memory(), now: { now }, elapsed: { 1 })
+    XCTAssertTrue(active.configure(true)); XCTAssertTrue(active.bind(handle, traceId: trace))
+    now += MknoonCallDiagnosticSpool.retentionMs + 1
+    active.append(handle: handle, stage: "answer", action: "commit", outcome: "ok", deferPersistence: true)
+    XCTAssertTrue(active.persistPending())
+    let fresh = events(active).first?["traceId"] as? String
+    XCTAssertNotEqual(fresh, trace); XCTAssertEqual(active.lookup(handle)["traceId"] as? String, fresh)
+    active.append(handle: handle, stage: "audio", action: "activate", outcome: "ok", deferPersistence: true)
+    XCTAssertTrue(active.persistPending()); XCTAssertTrue(events(active).allSatisfy { $0["traceId"] as? String == fresh })
+  }
 
   func testBuildIsStampedAtCreationAndNeverRewrittenOnRestart() {
     let memory = Memory()

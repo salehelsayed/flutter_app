@@ -1,0 +1,12 @@
+00:00 +41: /Volumes/CrucialX9/flutter_app/test/features/conversation/presentation/screens/direct_private_media_viewer_test.dart: view-once image Back consumes and cleans exactly once
+00:00 +42: /Volumes/CrucialX9/flutter_app/test/features/conversation/presentation/screens/direct_private_media_viewer_test.dart: ordinary direct and group viewers remain unchanged when private callbacks are absent
+00:00 +43: /Volumes/CrucialX9/flutter_app/test/features/conversation/presentation/screens/direct_private_media_viewer_test.dart: post-enter authority loss builds no route and never claims safe rollback
+00:00 +44: /Volumes/CrucialX9/flutter_app/test/features/conversation/presentation/screens/direct_private_media_viewer_test.dart: view-once image placeholder uses one minimal tile as its sole open control
+00:00 +45: /Volumes/CrucialX9/flutter_app/test/features/conversation/presentation/screens/direct_private_media_viewer_test.dart: private card title renders the protected media kind
+00:01 +46: /Volumes/CrucialX9/flutter_app/test/features/conversation/presentation/screens/direct_private_media_viewer_test.dart: sender protected keeps its button while view-once image uses a minimal tile
+00:01 +47: /Volumes/CrucialX9/flutter_app/test/features/conversation/presentation/screens/direct_private_media_viewer_test.dart: typed open failure copy claims safety only for exact rollback
+00:01 +48: /Volumes/CrucialX9/flutter_app/test/features/conversation/presentation/screens/direct_private_media_viewer_test.dart: consumed view-once terminal is eye-off plus localized Photo only
+00:01 +49: /Volumes/CrucialX9/flutter_app/test/features/conversation/presentation/screens/direct_private_media_viewer_test.dart: attachmentless expired and non-view-once consumed parents retain generic terminal actions
+00:01 +50: /Volumes/CrucialX9/flutter_app/test/features/conversation/presentation/screens/direct_private_media_viewer_test.dart: private open opening viewing terminal unsupported and capture copy are localized small and RTL safe
+00:01 +51: /Volumes/CrucialX9/flutter_app/test/features/conversation/presentation/screens/direct_private_media_viewer_test.dart: wired route reuses one lifecycle lock and engine and denies missing runtime capabilities
+00:01 +52: All tests passed!

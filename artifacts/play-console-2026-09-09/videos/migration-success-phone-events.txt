@@ -1,0 +1,4 @@
+I/flutter (10220): [FLOW] {"ts":"2026-09-09T10:55:13.937429Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"ACCOUNT_MIGRATION_OLD_PHONE_SCAN_START","details":{}}
+I/flutter (10220): [FLOW] {"ts":"2026-09-09T10:55:16.335537Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"ACCOUNT_MIGRATION_OLD_PHONE_QR_AUTHORIZE_START","details":{"source":"scanner"}}
+I/flutter (10220): [FLOW] {"ts":"2026-09-09T10:55:16.566307Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"ACCOUNT_MIGRATION_OLD_PHONE_CONFIRMATION_READY","details":{"sessionId":"0e4b4330-879e-41f4-8420-85d0d85b6e9e"}}
+I/flutter (10220): [FLOW] {"ts":"2026-09-09T10:56:09.125025Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"ACCOUNT_MIGRATION_KEEPALIVE_STOPPED","details":{"reason":"old_phone_transfer"}}

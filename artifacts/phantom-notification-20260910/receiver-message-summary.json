@@ -1,0 +1,105 @@
+{
+  "runId": "bfcc66fb-1dc8-4699-93b3-7d4b7c45d179",
+  "ownerMatchedToPreviouslyVerifiedUser": true,
+  "timelineTruncated": 0,
+  "messageFinishes": [
+    {
+      "receivedAtBerlin": "2026-09-10T09:57:55.968000+02:00",
+      "traceId": "7140856f-0dfb-499a-be5f-2349fa047f6b",
+      "attemptId": "eccd5645-154d-424a-b0a1-95ad369e17c0",
+      "reason": "duplicate",
+      "outcome": "success",
+      "values": {
+        "committed": false,
+        "direction": "incoming",
+        "durationMs": 9
+      }
+    },
+    {
+      "receivedAtBerlin": "2026-09-10T09:57:55.981000+02:00",
+      "traceId": "2757b04e-3dc9-462e-8ea2-dc6eee40461b",
+      "attemptId": "2b8cd71d-be9f-45e9-8f47-155c788fc4e2",
+      "reason": "none",
+      "outcome": "success",
+      "values": {
+        "committed": true,
+        "direction": "incoming",
+        "durationMs": 32
+      }
+    },
+    {
+      "receivedAtBerlin": "2026-09-10T09:57:55.987000+02:00",
+      "traceId": "c031872d-e1f9-4d8c-b994-28bfacf83163",
+      "attemptId": "5bcda60b-1f16-482f-a94c-6616f0f57892",
+      "reason": "duplicate",
+      "outcome": "success",
+      "values": {
+        "committed": false,
+        "direction": "incoming",
+        "durationMs": 4
+      }
+    },
+    {
+      "receivedAtBerlin": "2026-09-10T09:57:55.993000+02:00",
+      "traceId": "37d7e595-3e71-4ec3-973c-6074726ce44a",
+      "attemptId": "dae42dea-36be-46e8-8d3e-9649a55f1bba",
+      "reason": "duplicate",
+      "outcome": "success",
+      "values": {
+        "committed": false,
+        "direction": "incoming",
+        "durationMs": 6
+      }
+    },
+    {
+      "receivedAtBerlin": "2026-09-10T09:58:11.356000+02:00",
+      "traceId": "a6175d33-dab2-4062-9161-6283ec4213c9",
+      "attemptId": "b16c008a-869a-4258-9a88-773190278c61",
+      "reason": "none",
+      "outcome": "success",
+      "values": {
+        "acknowledged": true,
+        "committed": true,
+        "direction": "outgoing",
+        "durationMs": 381
+      }
+    },
+    {
+      "receivedAtBerlin": "2026-09-10T09:58:21.396000+02:00",
+      "traceId": "d2cf00cc-a153-41c5-8756-fd5487df6cfd",
+      "attemptId": "2c602efa-bb73-4f2a-84c2-78c1c208e995",
+      "reason": "none",
+      "outcome": "success",
+      "values": {
+        "committed": true,
+        "direction": "incoming",
+        "durationMs": 30
+      }
+    },
+    {
+      "receivedAtBerlin": "2026-09-10T09:58:21.405000+02:00",
+      "traceId": "55ff75d5-10b3-4cd7-b886-1b8fd51292ac",
+      "attemptId": "13b82e55-df22-47d8-ab1f-2e048b30dbee",
+      "reason": "duplicate",
+      "outcome": "success",
+      "values": {
+        "committed": false,
+        "direction": "incoming",
+        "durationMs": 11
+      }
+    },
+    {
+      "receivedAtBerlin": "2026-09-10T09:58:31.335000+02:00",
+      "traceId": "8c599610-ff69-46ed-9e83-31d58a827334",
+      "attemptId": "143f597d-edf4-4ed5-ae5d-52ae41a8a371",
+      "reason": "none",
+      "outcome": "success",
+      "values": {
+        "acknowledged": true,
+        "committed": true,
+        "direction": "outgoing",
+        "durationMs": 234
+      }
+    }
+  ]
+}

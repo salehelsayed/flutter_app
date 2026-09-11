@@ -1,0 +1,11 @@
+The16:22:16 UTC iOS-to-Android probe ended as caller-reported `no_answer`; the relay snapshot does not show a connected call or a joined callee admission record.
+
+At16:24:00.529 UTC, caller trace `a1be4767-de23-47c7-9e81-d3d120d624a5` contained84 records:38 relay,41 Flutter caller and5 iOS caller. Relay mailbox commit was recorded at16:22:17.109; the Android provider was invoked at17.118 and returned success at17.369. A later committed envelope/provider invocation was recorded at16:22:47.153/47.215. Encrypted payload contents were not inspected, so the later envelope is not assigned a message type here.
+
+The caller terminal is `no_answer`. No answer, media, callee terminal or admission-stage report is present in this trace. Its modern drop count, legacy refusal-attempt count and invalid/unreadable count are all0. One authority-operation reference remains unresolved. Bounded resolved ancestry includes server-confirmed endpoint/wake-grant publication and current iOS token/endpoint publication, with native/Flutter/relay provenance retained separately.
+
+The first relay-received failed phase is the caller's direct-signaling `transport_failed` report. Mailbox commit and provider submission succeeded, so that direct-leg failure alone does not explain why the call was unanswered. Provider success establishes submission, not device presentation or media.
+
+The device controller separately captured Android provisional trace `c7cc7b75-c633-4320-a926-391a29165ed2`, with an admission result `deferred`, database closed, lease released and required persistence incomplete. Those records were still locally queued and absent from the bounded relay trace list. They therefore have not been joined automatically to the caller trace. A false completion bit by itself does not establish a specific persistence failure; the native producer's reason classification is being reviewed separately.
+
+The strict projection is saved in `final-native-probe-relay-proof.json`, extracted from `relay-operator-live-20260908T162401Z.json`. It contains no private author maps, protocol handles, device logs, tokens or addresses. This is an honest partial trace with a reported terminal outcome, not a claim that all endpoint logs have arrived.

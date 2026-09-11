@@ -18,6 +18,7 @@ import 'package:flutter_app/core/media/group_media_integrity_policy.dart';
 import 'package:flutter_app/core/media/group_media_blob_artifact_store.dart';
 import 'package:flutter_app/core/media/group_media_mime_policy.dart';
 import 'package:flutter_app/core/media/group_media_size_policy.dart';
+import 'package:flutter_app/core/media/group_upload_retry_signal.dart';
 import 'package:flutter_app/core/permissions/mic_permission_gateway.dart';
 import 'package:flutter_app/core/permissions/mic_permission_prompt.dart';
 import 'package:flutter_app/core/media/image_processor.dart';
@@ -2789,6 +2790,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
     List<MediaAttachment>? optimisticMedia;
     var optimisticDisplayed = false;
     MediaUploadLease? uploadLease;
+    var retryMediaUpload = false;
 
     if (mediaToUpload.isNotEmpty) {
       final createdAt = now.toIso8601String();
@@ -2948,6 +2950,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
             }
             if (!strictResult.preparation.isComplete) {
               if (strictResult.preparation.hasDurableAuthority) {
+                retryMediaUpload = true;
                 optimisticMedia = await mediaRepository
                     .getAttachmentsForMessage(
                       messageId,
@@ -3071,6 +3074,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
               }
               if (uploadedAttachments == null) {
                 if (sendLane.uploadRetryProjectionRepository != null) {
+                  retryMediaUpload = !_lastUploadProjectionTerminal;
                   await _applyProjectedGroupUploadFailureUi(
                     composerSnapshot,
                     messageId: messageId,
@@ -3176,6 +3180,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
                     messageId: messageId,
                     terminal: projected.isTerminal,
                   );
+                  retryMediaUpload = !projected.isTerminal;
                   return;
                 }
                 if (await _cancelActiveAttachmentUploadIfRequested(
@@ -3364,6 +3369,10 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
         if (lease != null) {
           mediaUploadInFlightTracker.release(lease);
         }
+        if (_isCurrentSendLane(sendLane)) {
+          _updateComposerState(isUploading: false);
+        }
+        if (retryMediaUpload) requestGroupUploadRetry();
         _endSendFlow();
       }
     }
@@ -5090,6 +5099,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
     if (!_tryBeginSendFlow()) return;
     MediaUploadLease? voiceUploadLease;
     GroupContentAuthoringAdmission? voiceMediaAdmission;
+    var retryVoiceUpload = false;
 
     try {
       final quotedMessageId = _activeQuoteMessageId;
@@ -5395,6 +5405,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
         if (strictVoiceSend != null &&
             !strictVoiceSend.preparation.isComplete) {
           if (strictVoiceSend.preparation.hasDurableAuthority) {
+            retryVoiceUpload = true;
             await _markOutgoingMessageQueuedOffline(messageId);
             _showOfflineQueuedSnackBar();
           } else {
@@ -5421,6 +5432,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
         if (stableVoiceAttachment == null) {
           final projected = voiceUpload?.failureProjection;
           if (projected != null) {
+            retryVoiceUpload = !projected.isTerminal;
             if (mounted) {
               _updateComposerState(isUploading: false);
               _updateLocalMessageStatus(
@@ -5580,15 +5592,36 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
             _restoreActiveQuoteIfNeeded(quotedMessageId);
           }
         } catch (_) {}
+      } catch (error) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'GROUP_CONV_FL_VOICE_SEND_ERROR',
+          details: {'errorType': error.runtimeType.toString()},
+        );
+        // The upload leaf may have committed its pending row before throwing.
+        // Let the durable retry owner re-check it; never discard the recording.
+        retryVoiceUpload = true;
+        if (mounted && _isCurrentVoiceSendLane(voiceLane, outcome)) {
+          _showFloatingSnackBar(
+            AppLocalizations.of(context)!.offline_retry_delayed,
+          );
+        }
       } finally {
-        await _stopRelayUploadTracking(voiceOperation);
-        await _endBackgroundTaskGuarded(bgTaskId, bridge: voiceLane.bridge);
+        try {
+          await _stopRelayUploadTracking(voiceOperation);
+        } finally {
+          if (mounted && _isCurrentVoiceSendLane(voiceLane, outcome)) {
+            _updateComposerState(isUploading: false);
+          }
+          await _endBackgroundTaskGuarded(bgTaskId, bridge: voiceLane.bridge);
+        }
       }
     } finally {
       final lease = voiceUploadLease;
       if (lease != null) {
         mediaUploadInFlightTracker.release(lease);
       }
+      if (retryVoiceUpload) requestGroupUploadRetry();
       _endSendFlow();
     }
   }

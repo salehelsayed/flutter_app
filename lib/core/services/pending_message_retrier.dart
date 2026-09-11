@@ -92,6 +92,8 @@ class PendingMessageRetrier {
   /// debounce (~8s, report 192 S3). Null (default) keeps node-edge-only
   /// behavior.
   final Stream<void>? networkRestoredSignal;
+  final Stream<void>? directUploadRetrySignal;
+  final Stream<void>? groupUploadRetrySignal;
   final Duration retryDebounce;
   final Duration networkRestoredDebounce;
   final Duration periodicRetryInterval;
@@ -107,6 +109,14 @@ class PendingMessageRetrier {
 
   StreamSubscription? _stateSubscription;
   StreamSubscription? _networkRestoredSubscription;
+  StreamSubscription<void>? _directUploadRetrySubscription;
+  Timer? _directUploadRetryTimer;
+  bool _directUploadRetryRequested = false;
+  bool _isRetryingDirectUpload = false;
+  StreamSubscription<void>? _groupUploadRetrySubscription;
+  Timer? _groupUploadRetryTimer;
+  bool _groupUploadRetryRequested = false;
+  bool _isRetryingGroupUpload = false;
   Timer? _debounceTimer;
   Timer? _networkRestoredDebounceTimer;
   Timer? _periodicTimer;
@@ -151,6 +161,8 @@ class PendingMessageRetrier {
     this.verifyInboxCustodyFn,
     this.drainNotificationCompletedOutcomesFn,
     this.networkRestoredSignal,
+    this.directUploadRetrySignal,
+    this.groupUploadRetrySignal,
     this.retryDebounce = defaultRetryDebounce,
     this.networkRestoredDebounce = defaultNetworkRestoredDebounce,
     this.periodicRetryInterval = defaultPeriodicRetryInterval,
@@ -222,6 +234,15 @@ class PendingMessageRetrier {
     if (_wasOnline || _wasGroupRecoveryReady) {
       _startOnlineTimers();
     }
+
+    _directUploadRetrySubscription = directUploadRetrySignal?.listen((_) {
+      _directUploadRetryRequested = true;
+      _scheduleDirectUploadRetry();
+    });
+    _groupUploadRetrySubscription = groupUploadRetrySignal?.listen((_) {
+      _groupUploadRetryRequested = true;
+      _scheduleGroupUploadRetry();
+    });
 
     // 195: OS restored edge → short-debounced LIGHT flush (1:1 unacked only),
     // deliberately NOT gated on the node's online state — the whole point is
@@ -311,6 +332,93 @@ class PendingMessageRetrier {
       }
     } finally {
       _isNetworkRestoredFlushing = false;
+    }
+  }
+
+  void _scheduleDirectUploadRetry() {
+    if (!_directUploadRetryRequested ||
+        _isRetryingDirectUpload ||
+        _directUploadRetryTimer?.isActive == true) {
+      return;
+    }
+    _directUploadRetryTimer = Timer(retryDebounce, _retryRequestedDirectUpload);
+  }
+
+  Future<void> _retryRequestedDirectUpload() async {
+    _directUploadRetryTimer = null;
+    if (!_directUploadRetryRequested) return;
+    if (_networkRestoredMediaPassHasPriority) {
+      _scheduleDirectUploadRetry();
+      return;
+    }
+    _directUploadRetryRequested = false;
+    _isRetryingDirectUpload = true;
+    try {
+      // Reuse the OS-connectivity-checked, lease-owning media lane. An
+      // individual failed upload must not wait behind group recovery or a
+      // five-minute full sweep. No polling is added when no send requests it.
+      final retry =
+          retryIncompleteUploadsPeriodicFn ?? retryIncompleteUploadsFn;
+      if (retry != null) await retry();
+    } catch (error) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'PENDING_RETRIER_REQUESTED_UPLOAD_ERROR',
+        details: {'errorType': error.runtimeType.toString()},
+      );
+    } finally {
+      _isRetryingDirectUpload = false;
+      _scheduleDirectUploadRetry();
+    }
+  }
+
+  void _scheduleGroupUploadRetry() {
+    if (!_groupUploadRetryRequested ||
+        _isRetryingGroupUpload ||
+        _groupUploadRetryTimer?.isActive == true) {
+      return;
+    }
+    _groupUploadRetryTimer = Timer(retryDebounce, _retryRequestedGroupUpload);
+  }
+
+  Future<void> _retryRequestedGroupUpload() async {
+    _groupUploadRetryTimer = null;
+    if (!_groupUploadRetryRequested) return;
+    if (!_isGroupRecoveryEnabled()) {
+      _groupUploadRetryRequested = false;
+      return;
+    }
+    if (_networkRestoredMediaPassHasPriority ||
+        _isExternalRecoveryInProgressFn?.call() == true ||
+        isGroupRecoveryInProgress()) {
+      _scheduleGroupUploadRetry();
+      return;
+    }
+    _groupUploadRetryRequested = false;
+    _isRetryingGroupUpload = true;
+    try {
+      // Keep group recovery serialized and reuse the production callback's
+      // account/connectivity checks and exact upload leases.
+      final retry =
+          retryIncompleteGroupUploadsPeriodicFn ??
+          retryIncompleteGroupUploadsFn;
+      if (retry != null) {
+        final pass = runWithGroupRecoveryGateOrSkip(retry);
+        if (pass == null) {
+          _groupUploadRetryRequested = true;
+        } else {
+          await pass;
+        }
+      }
+    } catch (error) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'PENDING_RETRIER_REQUESTED_GROUP_UPLOAD_ERROR',
+        details: {'errorType': error.runtimeType.toString()},
+      );
+    } finally {
+      _isRetryingGroupUpload = false;
+      _scheduleGroupUploadRetry();
     }
   }
 
@@ -927,5 +1035,15 @@ class PendingMessageRetrier {
     _stateSubscription = null;
     _networkRestoredSubscription?.cancel();
     _networkRestoredSubscription = null;
+    _directUploadRetrySubscription?.cancel();
+    _directUploadRetrySubscription = null;
+    _directUploadRetryRequested = false;
+    _directUploadRetryTimer?.cancel();
+    _directUploadRetryTimer = null;
+    _groupUploadRetrySubscription?.cancel();
+    _groupUploadRetrySubscription = null;
+    _groupUploadRetryRequested = false;
+    _groupUploadRetryTimer?.cancel();
+    _groupUploadRetryTimer = null;
   }
 }

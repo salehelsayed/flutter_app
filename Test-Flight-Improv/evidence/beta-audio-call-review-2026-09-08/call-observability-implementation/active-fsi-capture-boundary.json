@@ -1,0 +1,55 @@
+{
+  "notificationRecords": [
+    {
+      "id": "504",
+      "contentIntent": "null",
+      "mImportance": "LOW",
+      "mIntercept": "false",
+      "mSuppressedVisualEffects": "0",
+      "mIsInterruptive": "true",
+      "mCreationTimeMs": "1788882803418",
+      "mUpdateTimeMs": "1788882803418",
+      "hasAnswerAction": false,
+      "hasDeclineAction": false,
+      "isCallStyle": false,
+      "channel": "mknoon_calls_admission_v1"
+    }
+  ],
+  "mainActivityMentioned": true,
+  "mainActivityResumed": false,
+  "openIncomingIntentInActivityDump": false,
+  "keyguard": [
+    "mKeyguardOccluded=false",
+    "showing=true",
+    "occluded=false",
+    "secure=true"
+  ],
+  "mainActivityInFocusBookkeeping": true,
+  "schemaVersion": 1,
+  "scope": "One authorized active notification capture attempt, existing locked Pixel and current iOS caller",
+  "timing": {
+    "callerMarkerAt": "2026-09-08T15:53:20.409846+00:00",
+    "captureStartedAt": "2026-09-08T15:53:22.663904+00:00",
+    "captureFinishedAt": "2026-09-08T15:53:23.754635+00:00",
+    "callerEndRequestedAt": "2026-09-08T15:53:24.786273+00:00",
+    "callerEndControl": "Cancel call",
+    "oneAttemptOnly": true,
+    "answerRequested": false,
+    "passcodeBypass": false
+  },
+  "androidSourceStamp": "181a39528fd16ea2",
+  "androidBuildStamp": "4e3b67cb88cc8ccc",
+  "iosBuildStamp": "447d22a1e20fb7ae",
+  "precondition": "MainActivity launched behind keyguard and20seconds allowed for bootstrap; no unlock or passcode bypass",
+  "interpretation": "The captured504 notification was the low-importance admission placeholder. It does not show the later ringing notification or whether a full-screen PendingIntent was attached or launched. MainActivity focus bookkeeping is not proof of visibility above secure keyguard. Caller was canceled before timeout; no Answer action or media success was claimed.",
+  "nextRequiredEvidence": "Capture when the actual incoming presentation/ringing notification is observed, then inspect fullScreenIntent and Activity/keyguard state within the same attempt. No further call authorized or attempted by this worker.",
+  "deviceOwnershipReturnedToRoot": true,
+  "privateEvidenceFingerprints": {
+    "fsi-active-activity-private.txt": "a5527af5be233fca3ba5c5e1af9bb22e399ef25520db6bf24225a5a83780dcc6",
+    "fsi-active-baseline-window-private.txt": "988cd98e1f0f9ccbb0bd03f5beed11c95096a4f78c60430d417b4ce2fa61aa0f",
+    "fsi-active-notifications-private.txt": "1d9a6e562d4a2fd78cc7fec8d832d37a5b79edccec1bcc18cdbbb31438fa61f7",
+    "fsi-active-policy-private.txt": "988cd98e1f0f9ccbb0bd03f5beed11c95096a4f78c60430d417b4ce2fa61aa0f",
+    "fsi-active-screen-private.png": "c01648169630112f2c869154e4283e28944481ab00bb7c84a5a058038cfea407",
+    "fsi-active-window-private.txt": "34f6a8359284c2030cc957325b03ffa1b763ffd738069b64ee836d17c30ba6d6"
+  }
+}

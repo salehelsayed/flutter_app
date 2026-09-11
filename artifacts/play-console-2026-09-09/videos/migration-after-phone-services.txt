@@ -1,0 +1,55 @@
+ACTIVITY MANAGER SERVICES (dumpsys activity services)
+  User 0 active services:
+  * ServiceRecord{2648ae8 u0 com.mknoon.app/com.baseflow.geolocator.GeolocatorLocationService c:com.mknoon.app}
+    intent={cmp=com.mknoon.app/com.baseflow.geolocator.GeolocatorLocationService}
+    packageName=com.mknoon.app
+    processName=com.mknoon.app
+    targetSdkVersion=36
+    baseDir=/data/app/~~ptpwjUgrUYHYO7y3qTmMUQ==/com.mknoon.app-2CeJpD3x2-54KJgqTS81rw==/base.apk
+    dataDir=/data/user/0/com.mknoon.app
+    app=ProcessRecord{434aa49 10220:com.mknoon.app/u0a1220}
+    useNewWiuLogic_forCapabilities()=true
+    useNewWiuLogic_forStart()=true
+    useNewBfslLogic()=true
+    mAllowWiu_noBinding=DENIED
+    mAllowWiu_inBindService=PROC_STATE_TOP
+    mAllowWiu_byBindings=DENIED
+    getFgsAllowWiu_legacy=PROC_STATE_TOP
+    getFgsAllowWiu_new=DENIED
+    getFgsAllowWiu_forStart=DENIED
+    getFgsAllowWiu_forCapabilities=DENIED
+    allowUiJobScheduling=false
+    recentCallingPackage=com.mknoon.app
+    recentCallingUid=11220
+    mAllowStart_noBinding=DENIED
+    mAllowStart_inBindService=PROC_STATE_TOP
+    mAllowStart_byBindings=DENIED
+    getFgsAllowStart_legacy=PROC_STATE_TOP
+    getFgsAllowStart_new=DENIED
+    getFgsAllowStart=DENIED
+    startForegroundCount=0
+    infoAllowStartForeground=[callingPackage: com.mknoon.app; callingUid: 11220; uidState: TOP ; uidBFSL: [BFSL]; BFGS denied: false; intent: Intent { xflg=0x4 cmp=com.mknoon.app/com.baseflow.geolocator.GeolocatorLocationService }; code:PROC_STATE_TOP; tempAllowListReason:<null>; allowWiu:12; targetSdkVersion:36; callerTargetSdkVersion:36; startForegroundCount:0; bindFromPackage:null; isBindService:true]
+    createTime=-52m20s910ms startingBgTimeout=--
+    lastActivity=-52m18s553ms restartTime=-52m20s910ms createdFromFg=true
+    Bindings:
+    * IntentBindRecord{4a2089a CREATE}:
+      intent={xflg=0x4 cmp=com.mknoon.app/com.baseflow.geolocator.GeolocatorLocationService}
+      binder=android.os.BinderProxy@8b8c5cb
+      requested=true received=true hasBound=true doRebind=false
+      * Client AppBindRecord{8f241a8 ProcessRecord{434aa49 10220:com.mknoon.app/u0a1220}}
+        Per-process Connections:
+          ConnectionRecord{a997083 u0 CR com.mknoon.app/com.baseflow.geolocator.GeolocatorLocationService:@df44b32 flags=0x1}
+          ConnectionRecord{b4d6c0b u0 CR com.mknoon.app/com.baseflow.geolocator.GeolocatorLocationService:@2245fda flags=0x1}
+    All Connections:
+      ConnectionRecord{b4d6c0b u0 CR com.mknoon.app/com.baseflow.geolocator.GeolocatorLocationService:@2245fda flags=0x1}
+      ConnectionRecord{a997083 u0 CR com.mknoon.app/com.baseflow.geolocator.GeolocatorLocationService:@df44b32 flags=0x1}
+
+  Connection bindings to services:
+  * ConnectionRecord{b4d6c0b u0 CR com.mknoon.app/com.baseflow.geolocator.GeolocatorLocationService:@2245fda flags=0x1}
+    binding=AppBindRecord{8f241a8 com.mknoon.app/com.baseflow.geolocator.GeolocatorLocationService:com.mknoon.app}
+    conn=android.os.BinderProxy@2245fda flags=0x1
+    ongoingCalls=false
+  * ConnectionRecord{a997083 u0 CR com.mknoon.app/com.baseflow.geolocator.GeolocatorLocationService:@df44b32 flags=0x1}
+    binding=AppBindRecord{8f241a8 com.mknoon.app/com.baseflow.geolocator.GeolocatorLocationService:com.mknoon.app}
+    conn=android.os.BinderProxy@df44b32 flags=0x1
+    ongoingCalls=false

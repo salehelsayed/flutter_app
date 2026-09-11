@@ -33,6 +33,36 @@ const Map<String, String> groupMediaReliabilityRenderLabelsByKind =
       'voice': 'P269 receiver voice player ready',
     };
 
+const String groupMediaReliabilityAuthorityModeDefine =
+    'P269_GROUP_MEDIA_AUTHORITY_MODE';
+const String configuredGroupMediaReliabilityAuthorityModeName =
+    String.fromEnvironment(
+      groupMediaReliabilityAuthorityModeDefine,
+      defaultValue: 'distinctAccountAndTransport',
+    );
+
+GroupMediaReliabilityAuthorityMode parseGroupMediaReliabilityAuthorityMode(
+  String name,
+) {
+  for (final mode in GroupMediaReliabilityAuthorityMode.values) {
+    if (mode.name == name) return mode;
+  }
+  throw const FormatException('group-media authority mode rejected');
+}
+
+bool groupMediaReliabilityIdentityMatches({
+  required GroupMediaReliabilityAuthorityMode mode,
+  required String accountPeerId,
+  required String transportPeerId,
+}) =>
+    accountPeerId.isNotEmpty &&
+    accountPeerId.trim() == accountPeerId &&
+    transportPeerId.isNotEmpty &&
+    transportPeerId.trim() == transportPeerId &&
+    (mode == GroupMediaReliabilityAuthorityMode.accountBoundLegacy
+        ? accountPeerId == transportPeerId
+        : accountPeerId != transportPeerId);
+
 enum GroupMediaReliabilityAuthorityMode {
   distinctAccountAndTransport,
   accountBoundLegacy,
@@ -248,6 +278,7 @@ Future<Map<String, Object?>> runGroupMediaReliabilityE2EAction({
   String installedProfileId = const String.fromEnvironment(
     'SIMS_BUILD_PROFILE_ID',
   ),
+  String authorityModeName = configuredGroupMediaReliabilityAuthorityModeName,
 }) async {
   final request = GroupMediaReliabilityE2ERequest.fromConfig(config);
   if (!controller.enabled ||
@@ -256,7 +287,11 @@ Future<Map<String, Object?>> runGroupMediaReliabilityE2EAction({
       'group-media reliability requires android.e2e.group_media_269',
     );
   }
+  final authorityMode = parseGroupMediaReliabilityAuthorityMode(
+    authorityModeName,
+  );
   final base = <String, Object?>{
+    'authorityMode': authorityMode.name,
     'schema': groupMediaReliabilityE2EResultSchema,
     'status': 'complete',
     'success': true,
@@ -438,7 +473,8 @@ String _groupMediaReliabilityE2EFailureCode(Object error) {
   return switch (message) {
     'group-media disposable identity authority did not settle' =>
       'identity_authority',
-    'group-media sender lacks distinct account/transport authority' =>
+    'group-media sender lacks distinct account/transport authority' ||
+    'group-media sender lacks configured account/transport authority' =>
       'sender_authority',
     'group-media sender group/invite setup did not settle' =>
       'sender_group_invite_settle',

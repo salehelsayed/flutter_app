@@ -1,0 +1,7 @@
+{
+  "checkedTraceProjectionCount": 8,
+  "forbiddenPrivateFieldCount": 0,
+  "invalidOrUnreadableRecordCount": 0,
+  "scope": "Checks exported projection keys; relies on closed-schema validation for event values. Does not inspect or export private authority maps.",
+  "sourceArtifact": "relay-operator-live-20260908T160225Z.json"
+}

@@ -1,0 +1,27 @@
+{
+  "scope": "1to1",
+  "command": "PATH=/Users/I560101/development/flutter-3.47.2/bin:$PATH GOTOOLCHAIN=go1.25.0 ./scripts/run_host_test_gates.sh 1to1 --batch-flutter --concurrency 4 --reporter failures-only",
+  "sourceStamp": "f1899f0d63e1724b",
+  "testedSourceManifest": "final-tested-source-manifest.json",
+  "testedSourceManifestSha256": "645360f363c69d6cc9a963983e5d6b62364eee74e724b2b4b5b61ae30fbdf463",
+  "sourceInputs": 58,
+  "sourceHashesVerifiedBeforeAndAfter": true,
+  "schemaSha256": "6ea59e2bf718345f110a3fffc03b8ecbc18bcea7bd3b7e48d6d4ced559f247db",
+  "flutterVersion": "3.47.2",
+  "goToolchain": "go1.25.0",
+  "concurrency": 4,
+  "testPaths": 212,
+  "passed": 3544,
+  "skipped": 4,
+  "failed": 0,
+  "exitCode": 0,
+  "ranBeforeFinalMobilePackaging": true,
+  "rawLog": "/tmp/call-observability-20260908/curated-1to1-final-admission-cause.log",
+  "warnings": {
+    "count": 6,
+    "kind": "widget hit-test warnings"
+  },
+  "historicalCorrelationQuotaResult": "curated-correlation-quota-final-result.json",
+  "overlapNote": "Focused runtime invocations overlap this curated run; do not add them as unique tests. Production-headless and entrypoint files were also tested separately.",
+  "liveProof": false
+}

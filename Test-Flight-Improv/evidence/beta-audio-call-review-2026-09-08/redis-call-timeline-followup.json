@@ -1,0 +1,18 @@
+{
+  "source": "Production Redis incremental AOF parsed in place; only allowlisted sanitized call mailbox metadata exported.",
+  "collectedAt": "2026-09-08T11:06:30.467013+00:00",
+  "aofBytes": 1573896,
+  "parsedCommands": 93,
+  "totalHistoricalCallMailboxes": 0,
+  "window": "2026-09-08T00:00:00Z onward",
+  "limitations": [
+    "Encrypted event envelopes were not exported or interpreted.",
+    "An event ACK does not prove media connection or user acceptance.",
+    "A pending tombstone after all events were acknowledged is normal until TTL; absence of canceled state is not proof of an active call.",
+    "Call aliases group equal opaque handles, whose semantics require source verification. Recipient and sender identities are replaced with stable per-run aliases."
+  ],
+  "latestRegistrationsBeforeFirstIncidentCall": [],
+  "registrationMutationsDuringCallWindow": [],
+  "registrationTimingLimit": "Registration rows have no receipt timestamp. Bounds are adjacent observed call-event/terminal timestamps in AOF command order, not exact registration times. Delete may be explicit revocation or expiry; source/circumstances must distinguish.",
+  "mailboxes": []
+}

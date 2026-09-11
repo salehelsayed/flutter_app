@@ -20,7 +20,9 @@ const String _coturnInstanceDigestEnvironment =
 const String androidProductionAudioCallPionOracleEnvironment =
     'PLAN399_PION_ORACLE_ATTESTATION_B64';
 const String _profileEnvironment = 'SIMS_ARTIFACT_PROFILE_ID';
-const String androidProductionAudioCallAppPackage = 'com.mknoon.app';
+// The local relay/coturn campaign must never replace a tester's personal app.
+const String androidProductionAudioCallAppPackage =
+    'com.mknoon.sims.productionaudio';
 const String androidProductionAudioCallReadinessOperation = 'readiness';
 const int _maximumUiDumpBytes = 4 * 1024 * 1024;
 const int _maximumSavedTextBytes = 1024 * 1024;
@@ -151,7 +153,7 @@ void validateAndroidProductionAudioCallTopology(
 void validateAndroidProductionAudioCallAppPackage(String packageName) {
   if (packageName != androidProductionAudioCallAppPackage) {
     throw const FormatException(
-      'Production audio-call app controls require com.mknoon.app ownership.',
+      'Production audio-call controls require the fixed disposable app owner.',
     );
   }
 }
@@ -2007,7 +2009,7 @@ final class SystemAndroidProductionAudioCallCampaignDriver
       'start',
       '-W',
       '-n',
-      '$packageName/.MainActivity',
+      '$packageName/com.mknoon.app.MainActivity',
     ], timeout: _coldAppLaunchTimeout);
   }
 
@@ -2019,7 +2021,7 @@ final class SystemAndroidProductionAudioCallCampaignDriver
       '-W',
       '--activity-reorder-to-front',
       '-n',
-      '$packageName/.MainActivity',
+      '$packageName/com.mknoon.app.MainActivity',
     ]);
   }
 

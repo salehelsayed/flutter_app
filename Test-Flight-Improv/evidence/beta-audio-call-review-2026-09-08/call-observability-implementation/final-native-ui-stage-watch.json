@@ -1,0 +1,176 @@
+{
+  "schemaVersion": 1,
+  "scope": "One final-build native notification-stage watcher attempt",
+  "androidBuild": "4e3b67cb88cc8ccc",
+  "iosBuild": "e9811addae2ee7a4",
+  "sourceStamp": "181a39528fd16ea2",
+  "startedAt": "2026-09-08T15:59:25.404553+00:00",
+  "callerStartObservedAt": "2026-09-08T15:59:27.946146+00:00",
+  "callerEndRequestedAt": "2026-09-08T15:59:48.971262+00:00",
+  "outcome": "ringing_stage_not_observed_within_20_seconds",
+  "notificationSamples": {
+    "count": 62,
+    "first": {
+      "recordPresent": true,
+      "channel": "mknoon_calls_admission_v1",
+      "callStyle": false,
+      "answerActionInRecord": false,
+      "declineActionInRecord": false,
+      "ringingStageObserved": false,
+      "fullScreenIntent": "not_printed",
+      "publicVersion": "not_printed",
+      "publicVersionCallStylePrinted": false,
+      "publicVersionActionCountPrinted": null,
+      "observedAt": "2026-09-08T15:59:28.029072+00:00"
+    },
+    "last": {
+      "recordPresent": true,
+      "channel": "mknoon_calls_admission_v1",
+      "callStyle": false,
+      "answerActionInRecord": false,
+      "declineActionInRecord": false,
+      "ringingStageObserved": false,
+      "fullScreenIntent": "not_printed",
+      "publicVersion": "not_printed",
+      "publicVersionCallStylePrinted": false,
+      "publicVersionActionCountPrinted": null,
+      "observedAt": "2026-09-08T15:59:47.773610+00:00"
+    },
+    "allChannels": [
+      "mknoon_calls_admission_v1"
+    ],
+    "anyRingingStageObserved": false
+  },
+  "iosCallerTraceId": "f47d37a1-eb4a-45f0-8158-cbe2ae6ac403",
+  "androidProvisionalTraceId": "9e103f26-e65f-4605-9404-15977728cbbf",
+  "androidAttemptEvents": [
+    {
+      "schemaVersion": 1,
+      "eventId": "71c1d975-6183-4320-9008-939f2ca49d05",
+      "source": "android",
+      "role": "callee",
+      "runId": "7e9b11a5-57fe-4969-9d65-73f0448e1aa3",
+      "sequence": 71,
+      "occurredAtMs": 1788883169257,
+      "elapsedMs": 488162577,
+      "stage": "push",
+      "action": "receive",
+      "outcome": "ok",
+      "reason": "none",
+      "values": {},
+      "traceId": "9e103f26-e65f-4605-9404-15977728cbbf"
+    },
+    {
+      "schemaVersion": 1,
+      "eventId": "7e2704c5-6f2f-46f0-9169-dff54f357617",
+      "source": "android",
+      "role": "callee",
+      "runId": "7e9b11a5-57fe-4969-9d65-73f0448e1aa3",
+      "sequence": 72,
+      "occurredAtMs": 1788883191125,
+      "elapsedMs": 488184445,
+      "stage": "push",
+      "action": "receive",
+      "outcome": "ok",
+      "reason": "none",
+      "values": {},
+      "traceId": "9e103f26-e65f-4605-9404-15977728cbbf"
+    }
+  ],
+  "iosCallerTerminals": [
+    {
+      "schemaVersion": 1,
+      "eventId": "8dfbcc36-6373-443c-bfb2-7ab683f0e455",
+      "source": "flutter",
+      "role": "caller",
+      "runId": "2d939f75-279d-40a2-b031-7c9665714c76",
+      "sequence": 55,
+      "occurredAtMs": 1788883188765,
+      "elapsedMs": 58270,
+      "stage": "terminal",
+      "action": "cancel",
+      "outcome": "started",
+      "reason": "user_action",
+      "values": {},
+      "build": "1.0.1+111-e9811addae2ee7a4",
+      "traceId": "f47d37a1-eb4a-45f0-8158-cbe2ae6ac403"
+    },
+    {
+      "schemaVersion": 1,
+      "eventId": "e4e7d79a-4e6f-4d85-a6c6-bf101abc50ce",
+      "source": "flutter",
+      "role": "caller",
+      "runId": "2d939f75-279d-40a2-b031-7c9665714c76",
+      "sequence": 56,
+      "occurredAtMs": 1788883188774,
+      "elapsedMs": 58279,
+      "stage": "terminal",
+      "action": "commit",
+      "outcome": "ok",
+      "reason": "canceled",
+      "values": {
+        "state": "ended",
+        "accepted": false,
+        "connected": false,
+        "terminal": true
+      },
+      "build": "1.0.1+111-e9811addae2ee7a4",
+      "traceId": "f47d37a1-eb4a-45f0-8158-cbe2ae6ac403"
+    },
+    {
+      "schemaVersion": 1,
+      "eventId": "5deb85ae-48ee-4dd0-820c-d43d26a568a8",
+      "source": "flutter",
+      "role": "caller",
+      "runId": "2d939f75-279d-40a2-b031-7c9665714c76",
+      "sequence": 57,
+      "occurredAtMs": 1788883188774,
+      "elapsedMs": 58279,
+      "stage": "terminal",
+      "action": "finish",
+      "outcome": "canceled",
+      "reason": "canceled",
+      "values": {
+        "connected": false,
+        "accepted": false,
+        "mediaFlowVerified": false,
+        "durationMs": 22241,
+        "terminal": true
+      },
+      "build": "1.0.1+111-e9811addae2ee7a4",
+      "traceId": "f47d37a1-eb4a-45f0-8158-cbe2ae6ac403"
+    },
+    {
+      "occurredAtMs": 1788883188799,
+      "values": {
+        "nativeCommitted": true,
+        "terminal": true
+      },
+      "operationId": "f1dcacb1-3197-4459-95fe-9b107115cad5",
+      "role": "caller",
+      "action": "commit",
+      "stage": "terminal",
+      "elapsedMs": 355718048,
+      "sequence": 70,
+      "outcome": "ok",
+      "eventId": "ff13acd1-8b0c-4f81-a8e6-eeb76d03afa6",
+      "reason": "local_user",
+      "runId": "ce7e6c8d-a215-4bb5-a5bb-98d291575025",
+      "traceId": "f47d37a1-eb4a-45f0-8158-cbe2ae6ac403",
+      "requestId": "b486c532-3d7d-47e7-9147-44e7d398e84c",
+      "source": "ios",
+      "schemaVersion": 1
+    }
+  ],
+  "answerRequested": false,
+  "mediaVerified": false,
+  "noConsentOrPasscodeChange": true,
+  "noAdditionalAttempt": true,
+  "interpretation": "The native watcher never observed the actual ringing notification. The current Android diagnostic archive contains push-receive events only for this provisional trace, while the caller ended through the explicit harness cancellation. This cannot establish full-screen intent/public lock-screen action behavior or a native presentation cause.",
+  "privateEvidenceFingerprints": {
+    "androidArchive": "5abd7b28e1a3c459915e0efae875ba3a2acccfca4084c9f37620154f99342425",
+    "iosArchive": "e5c330a45b727c1088815e9838ab821cfc1b6412ca5a961d513bef0a5b9ad9a5",
+    "helperProof": "a22e96d8662df77f8c37ee4ba9958a5e95ac0498cbc6fa7ef55b318a69108626"
+  },
+  "deviceOwnershipReturnedToRoot": true
+}

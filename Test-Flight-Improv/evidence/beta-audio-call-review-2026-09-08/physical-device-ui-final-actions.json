@@ -1,0 +1,237 @@
+{
+  "recordedAt": "2026-09-08T12:02:26.465288+00:00",
+  "timestampSemantics": "capturedAt=command start; completedAt=command completion",
+  "actions": [
+    {
+      "capturedAt": "2026-09-08T11:58:44.531245+00:00",
+      "action": "status",
+      "platform": "ios",
+      "ok": true,
+      "result": {
+        "platform": "ios",
+        "target": "00008030-001A6D2801BB802E",
+        "labConversationVisible": false,
+        "labPeerNameVisible": false,
+        "callHeaderEnabled": null,
+        "callUnavailable": false,
+        "debugLaunchError": false,
+        "callControls": {
+          "start-call": 0,
+          "answer": 0,
+          "decline": 0,
+          "end": 0
+        },
+        "snapshotStoredLocally": true
+      },
+      "completedAt": "2026-09-08T11:58:45.087350+00:00"
+    },
+    {
+      "capturedAt": "2026-09-08T11:58:44.531036+00:00",
+      "action": "status",
+      "platform": "android",
+      "ok": true,
+      "result": {
+        "platform": "android",
+        "target": "21071FDF600CSC",
+        "labConversationVisible": false,
+        "labPeerNameVisible": false,
+        "callHeaderEnabled": null,
+        "callUnavailable": false,
+        "debugLaunchError": false,
+        "callControls": {
+          "start-call": 0,
+          "answer": 0,
+          "decline": 0,
+          "end": 0
+        },
+        "snapshotStoredLocally": true
+      },
+      "completedAt": "2026-09-08T11:58:46.707097+00:00"
+    },
+    {
+      "capturedAt": "2026-09-08T11:58:51.917151+00:00",
+      "action": "open-chat",
+      "platform": "ios",
+      "ok": true,
+      "result": {
+        "existingLabChatOpen": true,
+        "locator": "accessibility-id"
+      },
+      "completedAt": "2026-09-08T11:58:53.735621+00:00"
+    },
+    {
+      "capturedAt": "2026-09-08T11:58:53.080871+00:00",
+      "action": "open-chat",
+      "platform": "android",
+      "ok": true,
+      "result": {
+        "existingLabChatOpen": true,
+        "locator": "fresh-hierarchy-bounds"
+      },
+      "completedAt": "2026-09-08T11:58:58.223937+00:00"
+    },
+    {
+      "capturedAt": "2026-09-08T11:59:04.320837+00:00",
+      "action": "background",
+      "platform": "ios",
+      "ok": true,
+      "result": {
+        "backgrounded": true
+      },
+      "completedAt": "2026-09-08T11:59:04.647957+00:00"
+    },
+    {
+      "capturedAt": "2026-09-08T11:59:08.388658+00:00",
+      "action": "start-call",
+      "platform": "android",
+      "ok": true,
+      "result": {
+        "callActionRequested": "start-call",
+        "caller": "android",
+        "labPairVerified": true,
+        "locator": "fresh-hierarchy-bounds"
+      },
+      "completedAt": "2026-09-08T11:59:10.663022+00:00"
+    },
+    {
+      "capturedAt": "2026-09-08T11:59:10.735143+00:00",
+      "action": "answer",
+      "platform": "ios",
+      "ok": true,
+      "result": {
+        "callActionRequested": "answer",
+        "labPairVerified": true,
+        "locator": "accessibility-id"
+      },
+      "completedAt": "2026-09-08T11:59:37.663699+00:00"
+    },
+    {
+      "capturedAt": "2026-09-08T11:59:47.122903+00:00",
+      "action": "status",
+      "platform": "android",
+      "ok": true,
+      "result": {
+        "platform": "android",
+        "target": "21071FDF600CSC",
+        "labConversationVisible": true,
+        "labPeerNameVisible": true,
+        "callHeaderEnabled": true,
+        "callUnavailable": false,
+        "debugLaunchError": false,
+        "callControls": {
+          "start-call": 1,
+          "answer": 0,
+          "decline": 0,
+          "end": 1
+        },
+        "snapshotStoredLocally": true
+      },
+      "completedAt": "2026-09-08T11:59:52.049620+00:00"
+    },
+    {
+      "capturedAt": "2026-09-08T12:00:20.058406+00:00",
+      "action": "end",
+      "platform": "android",
+      "ok": true,
+      "result": {
+        "callActionRequested": "end",
+        "labPairVerified": true,
+        "locator": "fresh-hierarchy-bounds"
+      },
+      "completedAt": "2026-09-08T12:00:23.833178+00:00"
+    },
+    {
+      "capturedAt": "2026-09-08T12:00:29.060500+00:00",
+      "action": "start-call",
+      "platform": "ios",
+      "ok": true,
+      "result": {
+        "callActionRequested": "start-call",
+        "caller": "ios",
+        "labPairVerified": true,
+        "locator": "accessibility-id"
+      },
+      "completedAt": "2026-09-08T12:00:30.140326+00:00"
+    },
+    {
+      "capturedAt": "2026-09-08T12:00:30.208535+00:00",
+      "action": "answer",
+      "platform": "android",
+      "ok": false,
+      "reason": "Bounded incoming/control wait elapsed",
+      "completedAt": "2026-09-08T12:00:57.450335+00:00"
+    },
+    {
+      "capturedAt": "2026-09-08T12:01:34.136190+00:00",
+      "action": "status",
+      "platform": "ios",
+      "ok": true,
+      "result": {
+        "platform": "ios",
+        "target": "00008030-001A6D2801BB802E",
+        "labConversationVisible": true,
+        "labPeerNameVisible": true,
+        "callHeaderEnabled": true,
+        "callUnavailable": false,
+        "debugLaunchError": false,
+        "callControls": {
+          "start-call": 1,
+          "answer": 0,
+          "decline": 0,
+          "end": 0
+        },
+        "snapshotStoredLocally": true
+      },
+      "completedAt": "2026-09-08T12:01:34.679335+00:00"
+    },
+    {
+      "capturedAt": "2026-09-08T12:01:38.511608+00:00",
+      "action": "start-call",
+      "platform": "ios",
+      "ok": true,
+      "result": {
+        "callActionRequested": "start-call",
+        "caller": "ios",
+        "labPairVerified": true,
+        "locator": "accessibility-id"
+      },
+      "completedAt": "2026-09-08T12:01:39.617833+00:00"
+    },
+    {
+      "capturedAt": "2026-09-08T12:01:39.688949+00:00",
+      "action": "answer",
+      "platform": "android",
+      "ok": true,
+      "result": {
+        "callActionRequested": "answer",
+        "labPairVerified": true,
+        "locator": "fresh-hierarchy-bounds"
+      },
+      "completedAt": "2026-09-08T12:01:42.692293+00:00"
+    },
+    {
+      "capturedAt": "2026-09-08T12:01:44.456897+00:00",
+      "action": "status",
+      "platform": "ios",
+      "ok": true,
+      "result": {
+        "platform": "ios",
+        "target": "00008030-001A6D2801BB802E",
+        "labConversationVisible": true,
+        "labPeerNameVisible": true,
+        "callHeaderEnabled": true,
+        "callUnavailable": false,
+        "debugLaunchError": false,
+        "callControls": {
+          "start-call": 1,
+          "answer": 0,
+          "decline": 0,
+          "end": 0
+        },
+        "snapshotStoredLocally": true
+      },
+      "completedAt": "2026-09-08T12:01:44.986676+00:00"
+    }
+  ],
+  "containsPrivateMaterial": false
+}

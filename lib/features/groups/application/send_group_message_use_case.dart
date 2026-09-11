@@ -1437,7 +1437,12 @@ bool _preparedGroupMediaManifestMatchesAttachments({
         attachment.encryptionKeyBase64 != commitment.encryptionKeyBase64 ||
         attachment.encryptionNonce != commitment.encryptionNonce ||
         attachment.encryptionScheme != commitment.encryptionScheme ||
-        !_sameWaveform(attachment.waveform, commitment.waveform)) {
+        // The signed manifest canonicalizes absent waveform samples to [].
+        // Keep durable-row equality exact; normalize only at this boundary.
+        !_sameWaveform(
+          attachment.waveform ?? const <double>[],
+          commitment.waveform,
+        )) {
       return false;
     }
   }

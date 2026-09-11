@@ -1,0 +1,131 @@
+{
+  "sourceStamp": "f1899f0d63e1724b",
+  "platformBuilds": {
+    "android": "58b1ba6035e82327",
+    "ios": "8bc9c8a8e32d3a38"
+  },
+  "changes": [
+    "Optional closed diagnosticCause crosses Dart/native completion independently of mandatory admission authority fields. Unknown or malformed diagnostic metadata is omitted/ignored.",
+    "False requiredPersistenceComplete is pending with supplied closed cause or unknown, without claiming a failed write. Presentation and custody decisions unchanged.",
+    "Native end/decline terminal events use scoped diagnostic cause or unknown instead of assuming local_user.",
+    "New native events receive installed version+build at creation; persisted historical events retain their original build or missing legacy field."
+  ],
+  "tests": {
+    "android": {
+      "passed": 101,
+      "failed": 0,
+      "skipped": 0,
+      "suites": [
+        {
+          "name": "com.mknoon.app.call.MknoonCallNativeBridgeTest",
+          "tests": "19",
+          "failures": "0",
+          "errors": "0",
+          "skipped": "0"
+        },
+        {
+          "name": "com.mknoon.app.call.MknoonCallDiagnosticSpoolTest",
+          "tests": "16",
+          "failures": "0",
+          "errors": "0",
+          "skipped": "0"
+        },
+        {
+          "name": "com.mknoon.app.call.HeadlessCallAdmissionWorkerTest",
+          "tests": "21",
+          "failures": "0",
+          "errors": "0",
+          "skipped": "0"
+        },
+        {
+          "name": "com.mknoon.app.MknoonFirebaseMessagingServiceTest",
+          "tests": "12",
+          "failures": "0",
+          "errors": "0",
+          "skipped": "0"
+        },
+        {
+          "name": "com.mknoon.app.call.MknoonCallLifecycleControllerTest",
+          "tests": "33",
+          "failures": "0",
+          "errors": "0",
+          "skipped": "0"
+        }
+      ]
+    },
+    "swiftHost": {
+      "passed": 15,
+      "failed": 0
+    },
+    "dartEntrypoint": {
+      "passed": 7,
+      "failed": 0,
+      "analyzer": "clean"
+    },
+    "curated": {
+      "passed": 3544,
+      "skipped": 4,
+      "failed": 0,
+      "testPaths": 212,
+      "sourceStamp": "f1899f0d63e1724b",
+      "manifest": "mobile-source-manifest-f1899f0d63e1724b.json",
+      "all58ProductionHashesVerifiedBeforeAndAfter": true
+    }
+  },
+  "redProofs": {
+    "entrypoint": "Known cause missing from completion before forwarding patch.",
+    "nativeCause": "Optional diagnostic field rejected; false persistence incorrectly labeled native_persistence_failed.",
+    "nativeBuild": "New records lacked build before creation stamp.",
+    "nativeTerminal": "Existing endRequested journal mapping returned local_user for known no_answer and missing/invalid cause."
+  },
+  "logs": {
+    "admission-cause-entrypoint-red.log": {
+      "path": "/tmp/call-observability-20260908/admission-cause-entrypoint-red.log",
+      "sha256": "7e7582107c7a704d79aca93dc4a16a7239e25cb443694b3c42e971dfeb99e9c2"
+    },
+    "admission-cause-entrypoint-green.log": {
+      "path": "/tmp/call-observability-20260908/admission-cause-entrypoint-green.log",
+      "sha256": "fc66d68cb43a91c7579327d1bd040a70ce4620a2fb32a17caebea2006fbf78b3"
+    },
+    "admission-cause-entrypoint-analyze.log": {
+      "path": "/tmp/call-observability-20260908/admission-cause-entrypoint-analyze.log",
+      "sha256": "67e5500e6c629f450b6937bbdf375350789900c3d9ad78e0fd43c1e69e19523f"
+    },
+    "admission-cause-native-red.log": {
+      "path": "/tmp/call-observability-20260908/admission-cause-native-red.log",
+      "sha256": "f21c8b126a03a60e9d915b7f25e9ed166e0bf5682ed787f8254cd0ebc7259b5e"
+    },
+    "native-build-stamp-red.log": {
+      "path": "/tmp/call-observability-20260908/native-build-stamp-red.log",
+      "sha256": "a6794f944c080511022f47b9a98dcd9678a18784d67e7630b2971d19d1677637"
+    },
+    "native-build-stamp-swift-red.log": {
+      "path": "/tmp/call-observability-20260908/native-build-stamp-swift-red.log",
+      "sha256": "2dfc9d3405946fc429e5e809090df68fb37f37b5249503c384c9f71cd95f9a0c"
+    },
+    "native-terminal-origin-red.log": {
+      "path": "/tmp/call-observability-20260908/native-terminal-origin-red.log",
+      "sha256": "c871315555fdeb60383eb907e940fa58e57b64f39a6d44149fe6f8e3c0f9b633"
+    },
+    "native-terminal-origin-swift-red.log": {
+      "path": "/tmp/call-observability-20260908/native-terminal-origin-swift-red.log",
+      "sha256": "31c83d9ce2a3b9073b167a2dcd62ce35384c02d29a3a8dc2793b50f778ac3051"
+    },
+    "native-cause-build-final.log": {
+      "path": "/tmp/call-observability-20260908/native-cause-build-final.log",
+      "sha256": "cc41b32632850c6e5612566618a48efcf3b37fabb5c937e512ba87425808e321"
+    },
+    "native-cause-build-swift-green.log": {
+      "path": "/tmp/call-observability-20260908/native-cause-build-swift-green.log",
+      "sha256": "2173fe3cd452c50e1bb658b3d94d26b35cdddb9faad30b3332e687a43bcb5eb0"
+    },
+    "curated-1to1-final-admission-cause.log": {
+      "path": "/tmp/call-observability-20260908/curated-1to1-final-admission-cause.log",
+      "sha256": "81a8573ea40f1e386f715fc0a5eb052a6488ab8a3e3980ec1cf217f8b6eada4a"
+    }
+  },
+  "graphAffected": "c612587c4a8f462a",
+  "deviceValidation": "Pending final matching packages; root owns one bounded reverse diagnostic probe.",
+  "callBehavior": "No admission, ownership, WorkManager or CallKit behavior change in this batch.",
+  "stores": "Unpublished"
+}

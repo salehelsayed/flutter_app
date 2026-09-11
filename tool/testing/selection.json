@@ -1,0 +1,2065 @@
+{
+  "schema_version": 1,
+  "fast": [
+    "workflow",
+    "bootstrap",
+    "contacts"
+  ],
+  "mandatory": [
+    "bootstrap",
+    "startup",
+    "contacts",
+    "direct-chat",
+    "offline-recovery",
+    "small-group",
+    "media-bytes",
+    "media-viewer",
+    "notifications",
+    "migration",
+    "bridge",
+    "call-signaling",
+    "diagnostics",
+    "device-reconnect",
+    "device-media",
+    "device-group-media",
+    "device-notifications-android",
+    "device-notifications-ios",
+    "device-group-mute",
+    "device-audio",
+    "signed-startup-contacts",
+    "signed-chat-group-media",
+    "signed-notifications",
+    "signed-upgrade-compat",
+    "signed-audio",
+    "signed-full-review",
+    "notification-lock-diagnostics",
+    "strict-group-media-manifest"
+  ],
+  "checks": {
+    "bootstrap": {
+      "kind": "flutter",
+      "paths": [
+        "test/core/bootstrap/application_bootstrap_test.dart",
+        "test/unit/dtr18_layering_relocation_contract_test.dart"
+      ],
+      "boundary": "Bootstrap ordering, failure propagation and reviewed app-layer ownership",
+      "limitations": "Fake host phase owners plus structural source fingerprints; fingerprints are not runtime proof and this check does not launch a signed build",
+      "timeout_seconds": 900,
+      "estimated_seconds": null,
+      "requirements": [
+        "flutter"
+      ],
+      "investigate": [
+        "lib/app/bootstrap/"
+      ],
+      "inspected": true
+    },
+    "startup": {
+      "kind": "flutter",
+      "paths": [
+        "test/features/identity/presentation/screens/startup_router_recovery_test.dart"
+      ],
+      "boundary": "Returning-identity route, blocked authority, direct/group cold recovery completion",
+      "limitations": "Fake repositories, bridge and recovery callbacks; device secure storage is separate",
+      "timeout_seconds": 900,
+      "estimated_seconds": 8,
+      "requirements": [
+        "flutter"
+      ],
+      "investigate": [
+        "lib/features/identity/",
+        "lib/features/account_migration/",
+        "lib/core/bootstrap/"
+      ],
+      "inspected": true,
+      "runtime_basis": {
+        "kind": "measured",
+        "seconds": 7.194,
+        "status": "FAIL",
+        "source_sha256": "531120e4323b7346d0e6d48a97c31da476046c2619c9b6cd40e6f7eadb956e4a",
+        "evidence": ".codex-test-logs/workflow-compatible-host/results.json",
+        "environment": "macOS ARM64, Flutter 3.47.2; warm resolved packages; host only"
+      }
+    },
+    "contacts": {
+      "kind": "flutter",
+      "paths": [
+        "test/features/contact_request/integration/contact_request_one_scan_mutual_test.dart"
+      ],
+      "boundary": "One-scan mutual contact convergence: one row each, one reciprocal, no loop",
+      "limitations": "Static decrypt fake and pre-added scanned contact; camera/QR scan and real crypto separate",
+      "timeout_seconds": 900,
+      "estimated_seconds": 3,
+      "requirements": [
+        "flutter"
+      ],
+      "investigate": [
+        "lib/features/contact_request/",
+        "lib/features/contacts/"
+      ],
+      "inspected": true,
+      "runtime_basis": {
+        "kind": "measured",
+        "seconds": 2.396,
+        "status": "PASS",
+        "source_sha256": "531120e4323b7346d0e6d48a97c31da476046c2619c9b6cd40e6f7eadb956e4a",
+        "evidence": ".codex-test-logs/workflow-compatible-host/results.json",
+        "environment": "macOS ARM64, Flutter 3.47.2; warm resolved packages; host only"
+      }
+    },
+    "direct-chat": {
+      "kind": "flutter",
+      "paths": [
+        "test/features/conversation/integration/two_user_message_exchange_test.dart"
+      ],
+      "boundary": "Bidirectional received content, delivery state, message order and duplicate counts",
+      "limitations": "Fake network/crypto and in-memory persistence; no disk restart or actual delivery-path proof",
+      "timeout_seconds": 900,
+      "estimated_seconds": 5,
+      "requirements": [
+        "flutter"
+      ],
+      "investigate": [
+        "lib/features/conversation/application/",
+        "lib/core/services/"
+      ],
+      "inspected": true,
+      "runtime_basis": {
+        "kind": "measured",
+        "seconds": 4.357,
+        "status": "PASS",
+        "source_sha256": "531120e4323b7346d0e6d48a97c31da476046c2619c9b6cd40e6f7eadb956e4a",
+        "evidence": ".codex-test-logs/workflow-compatible-host/results.json",
+        "environment": "macOS ARM64, Flutter 3.47.2; warm resolved packages; host only"
+      }
+    },
+    "offline-recovery": {
+      "kind": "flutter",
+      "paths": [
+        "test/features/conversation/integration/offline_inbox_roundtrip_test.dart"
+      ],
+      "boundary": "Concurrent inbox custody, offline drain, retry and canonical deduplication",
+      "limitations": "Shared fake P2P/bridge/repositories; real disconnection and relay restart separate",
+      "timeout_seconds": 900,
+      "estimated_seconds": 5,
+      "requirements": [
+        "flutter"
+      ],
+      "investigate": [
+        "lib/core/inbox/",
+        "lib/core/lifecycle/",
+        "lib/core/services/",
+        "lib/features/conversation/application/"
+      ],
+      "inspected": true,
+      "runtime_basis": {
+        "kind": "measured",
+        "seconds": 4.184,
+        "status": "PASS",
+        "source_sha256": "531120e4323b7346d0e6d48a97c31da476046c2619c9b6cd40e6f7eadb956e4a",
+        "evidence": ".codex-test-logs/workflow-compatible-host/results.json",
+        "environment": "macOS ARM64, Flutter 3.47.2; warm resolved packages; host only"
+      }
+    },
+    "small-group": {
+      "kind": "flutter",
+      "paths": [
+        "test/features/groups/integration/group_messaging_smoke_test.dart"
+      ],
+      "boundary": "Three-member content/fanout/counts, truthful sent state, route-away reload and inbox recovery",
+      "limitations": "Fake pubsub/crypto/in-memory storage. Selected named scenarios, remaining group tests are affected/full",
+      "timeout_seconds": 900,
+      "estimated_seconds": 4,
+      "requirements": [
+        "flutter"
+      ],
+      "investigate": [
+        "lib/features/groups/"
+      ],
+      "inspected": true,
+      "names": [
+        "3 users: basic fan-out",
+        "DE-006 full live fanout remains sent not delivered",
+        "UP-013 route-unmounted recipient persists incoming message for reopen",
+        "GE-010 zero live topic peers use durable inbox fallback and receivers recover"
+      ],
+      "runtime_basis": {
+        "kind": "measured",
+        "seconds": 3.152,
+        "status": "PASS",
+        "source_sha256": "531120e4323b7346d0e6d48a97c31da476046c2619c9b6cd40e6f7eadb956e4a",
+        "evidence": ".codex-test-logs/workflow-compatible-host/results.json",
+        "environment": "macOS ARM64, Flutter 3.47.2; warm resolved packages; host only"
+      }
+    },
+    "media-bytes": {
+      "kind": "flutter",
+      "paths": [
+        "test/features/conversation/integration/one_to_one_media_encryption_round_trip_test.dart"
+      ],
+      "boundary": "Upload ciphertext differs, envelope hydrates key metadata, receiver downloaded file equals original bytes; legacy envelope fixture",
+      "limitations": "Content-transforming fake crypto and relay; does not prove native cipher, received viewer, or actual old binary",
+      "timeout_seconds": 900,
+      "estimated_seconds": 4,
+      "requirements": [
+        "flutter"
+      ],
+      "investigate": [
+        "lib/features/conversation/application/",
+        "lib/core/bridge/",
+        "lib/core/media/"
+      ],
+      "inspected": true,
+      "runtime_basis": {
+        "kind": "measured",
+        "seconds": 3.365,
+        "status": "PASS",
+        "source_sha256": "531120e4323b7346d0e6d48a97c31da476046c2619c9b6cd40e6f7eadb956e4a",
+        "evidence": ".codex-test-logs/workflow-compatible-host/results.json",
+        "environment": "macOS ARM64, Flutter 3.47.2; warm resolved packages; host only"
+      }
+    },
+    "media-viewer": {
+      "kind": "flutter",
+      "paths": [
+        "test/features/conversation/presentation/screens/conversation_received_media_actions_test.dart"
+      ],
+      "boundary": "Received attachment opens typed viewer with correct item identity, paging, close/reopen and actions",
+      "limitations": "Widget fixture and stubbed action callbacks; separate from actual peer transfer and native video decoding",
+      "timeout_seconds": 900,
+      "estimated_seconds": 6,
+      "requirements": [
+        "flutter"
+      ],
+      "investigate": [
+        "lib/features/conversation/presentation/",
+        "lib/shared/widgets/media/"
+      ],
+      "inspected": true,
+      "runtime_basis": {
+        "kind": "measured",
+        "seconds": 5.671,
+        "status": "FAIL",
+        "source_sha256": "531120e4323b7346d0e6d48a97c31da476046c2619c9b6cd40e6f7eadb956e4a",
+        "evidence": ".codex-test-logs/workflow-compatible-host/results.json",
+        "environment": "macOS ARM64, Flutter 3.47.2; warm resolved packages; host only"
+      }
+    },
+    "notifications": {
+      "kind": "flutter",
+      "paths": [
+        "test/features/push/application/show_notification_use_case_test.dart",
+        "test/core/notifications/app_root_notification_open_test.dart"
+      ],
+      "boundary": "Foreground/background presentation policy and exact warm/cold tap route targets with ordering",
+      "limitations": "Fake notification service/visibility and callback route harness; actual OS tray, mute behavior and device tap need evidence",
+      "timeout_seconds": 900,
+      "estimated_seconds": 4,
+      "requirements": [
+        "flutter"
+      ],
+      "investigate": [
+        "lib/features/push/",
+        "lib/core/notifications/",
+        "lib/app/"
+      ],
+      "inspected": true,
+      "runtime_basis": {
+        "kind": "measured",
+        "seconds": 3.851,
+        "status": "PASS",
+        "source_sha256": "531120e4323b7346d0e6d48a97c31da476046c2619c9b6cd40e6f7eadb956e4a",
+        "evidence": ".codex-test-logs/workflow-compatible-host/results.json",
+        "environment": "macOS ARM64, Flutter 3.47.2; warm resolved packages; host only"
+      }
+    },
+    "migration": {
+      "kind": "flutter",
+      "paths": [
+        "test/core/database/integration/full_migration_chain_test.dart"
+      ],
+      "boundary": "Real SQLite FFI migration schema/data preservation, seeded identities/contacts/messages/groups and post-upgrade writes",
+      "limitations": "Host SQLite and fake secure keystore; actual previous published signed-build upgrade separate",
+      "timeout_seconds": 900,
+      "estimated_seconds": 4,
+      "requirements": [
+        "flutter"
+      ],
+      "investigate": [
+        "lib/core/database/",
+        "lib/core/secure_storage/"
+      ],
+      "inspected": true,
+      "runtime_basis": {
+        "kind": "measured",
+        "seconds": 3.854,
+        "status": "PASS",
+        "source_sha256": "531120e4323b7346d0e6d48a97c31da476046c2619c9b6cd40e6f7eadb956e4a",
+        "evidence": ".codex-test-logs/workflow-compatible-host/results.json",
+        "environment": "macOS ARM64, Flutter 3.47.2; warm resolved packages; host only"
+      }
+    },
+    "bridge": {
+      "kind": "flutter",
+      "paths": [
+        "test/core/bridge/go_bridge_client_test.dart"
+      ],
+      "boundary": "Dart command/method channel mapping and event dispatch/error boundaries",
+      "limitations": "Mock native method/event channel; no native Go binding or legacy JS execution",
+      "timeout_seconds": 900,
+      "estimated_seconds": 3,
+      "requirements": [
+        "flutter"
+      ],
+      "investigate": [
+        "lib/core/bridge/",
+        "go-mknoon/bridge/"
+      ],
+      "inspected": true,
+      "runtime_basis": {
+        "kind": "measured",
+        "seconds": 2.561,
+        "status": "PASS",
+        "source_sha256": "531120e4323b7346d0e6d48a97c31da476046c2619c9b6cd40e6f7eadb956e4a",
+        "evidence": ".codex-test-logs/workflow-compatible-host/results.json",
+        "environment": "macOS ARM64, Flutter 3.47.2; warm resolved packages; host only"
+      }
+    },
+    "call-signaling": {
+      "kind": "flutter",
+      "paths": [
+        "test/features/call/integration/call_direct_mailbox_convergence_test.dart",
+        "test/features/call/application/call_negotiation_test.dart"
+      ],
+      "boundary": "Direct/mailbox old-generation hangup convergence/cleanup, negotiation material generation and privacy",
+      "limitations": "Fake crypto/transports/native lifecycle; no microphone/RTP/audible audio evidence",
+      "timeout_seconds": 900,
+      "estimated_seconds": 3,
+      "requirements": [
+        "flutter"
+      ],
+      "investigate": [
+        "lib/features/call/"
+      ],
+      "inspected": true,
+      "runtime_basis": {
+        "kind": "measured",
+        "seconds": 2.357,
+        "status": "PASS",
+        "source_sha256": "531120e4323b7346d0e6d48a97c31da476046c2619c9b6cd40e6f7eadb956e4a",
+        "evidence": ".codex-test-logs/workflow-compatible-host/results.json",
+        "environment": "macOS ARM64, Flutter 3.47.2; warm resolved packages; host only"
+      }
+    },
+    "diagnostics": {
+      "kind": "flutter",
+      "paths": [
+        "test/core/diagnostics/",
+        "test/features/call/diagnostics/call_diagnostics_test.dart",
+        "test/features/settings/presentation/widgets/app_diagnostics_settings_section_test.dart",
+        "test/features/settings/presentation/widgets/call_diagnostics_settings_section_test.dart"
+      ],
+      "boundary": "Closed schemas/privacy, bounded app/call recording and persistence, nonblocking bootstrap, and bounded settings previews",
+      "limitations": "Host tests; synthetic admission benchmarks do not measure device frame pacing or battery, and telemetry correlation alone does not prove custody/content",
+      "timeout_seconds": 900,
+      "estimated_seconds": null,
+      "requirements": [
+        "flutter"
+      ],
+      "investigate": [
+        "lib/core/diagnostics/",
+        "docker-ws/app_diagnostics.py",
+        "lib/features/call/diagnostics/",
+        "lib/features/settings/presentation/widgets/call_diagnostics_settings_section.dart"
+      ],
+      "inspected": true
+    },
+    "affected-conversation": {
+      "kind": "flutter",
+      "paths": [
+        "test/features/conversation/"
+      ],
+      "boundary": "Message send/receive, receipts, editing, media and route consumers",
+      "limitations": "Discovered directory selection; only representative assertions inspected. Entire existing directory runs, runtime unknown",
+      "timeout_seconds": 7200,
+      "estimated_seconds": null,
+      "requirements": [
+        "flutter"
+      ],
+      "investigate": [
+        "lib/features/conversation/*"
+      ],
+      "inspected": false
+    },
+    "affected-groups": {
+      "kind": "flutter",
+      "paths": [
+        "test/features/groups/"
+      ],
+      "boundary": "Membership, key epochs, replay and group notification consumers",
+      "limitations": "Discovered directory selection; only representative assertions inspected. Entire existing directory runs, runtime unknown",
+      "timeout_seconds": 7200,
+      "estimated_seconds": null,
+      "requirements": [
+        "flutter"
+      ],
+      "investigate": [
+        "lib/features/groups/*"
+      ],
+      "inspected": false
+    },
+    "affected-push": {
+      "kind": "flutter",
+      "paths": [
+        "test/features/push/",
+        "test/core/notifications/"
+      ],
+      "boundary": "Visibility, shared message events, mute and route ordering affect both conversation families",
+      "limitations": "Discovered directory selection; only representative assertions inspected. Entire existing directory runs, runtime unknown",
+      "timeout_seconds": 7200,
+      "estimated_seconds": null,
+      "requirements": [
+        "flutter"
+      ],
+      "investigate": [
+        "lib/features/push/*",
+        "lib/core/notifications/*"
+      ],
+      "inspected": false
+    },
+    "affected-identity": {
+      "kind": "flutter",
+      "paths": [
+        "test/features/identity/",
+        "test/features/contacts/",
+        "test/features/contact_request/",
+        "test/features/qr_code/"
+      ],
+      "boundary": "Trusted identity/contact/key state feeds all peer communication",
+      "limitations": "Discovered directory selection; only representative assertions inspected. Entire existing directory runs, runtime unknown",
+      "timeout_seconds": 7200,
+      "estimated_seconds": null,
+      "requirements": [
+        "flutter"
+      ],
+      "investigate": [
+        "lib/features/identity/*",
+        "lib/features/contacts/*",
+        "lib/features/contact_request/*",
+        "lib/features/qr_code/*"
+      ],
+      "inspected": false
+    },
+    "affected-storage": {
+      "kind": "flutter",
+      "paths": [
+        "test/core/database/",
+        "test/core/secure_storage/",
+        "test/features/account_migration/"
+      ],
+      "boundary": "Schema and secure authority are shared by identity, chat, groups, calls and upgrade recovery",
+      "limitations": "Discovered directory selection; only representative assertions inspected. Entire existing directory runs, runtime unknown",
+      "timeout_seconds": 7200,
+      "estimated_seconds": null,
+      "requirements": [
+        "flutter"
+      ],
+      "investigate": [
+        "lib/core/database/*",
+        "lib/core/secure_storage/*",
+        "lib/features/account_migration/*"
+      ],
+      "inspected": false
+    },
+    "affected-transport": {
+      "kind": "flutter",
+      "paths": [
+        "test/core/bridge/",
+        "test/core/services/",
+        "test/core/inbox/",
+        "test/core/lifecycle/",
+        "test/core/local_discovery/"
+      ],
+      "boundary": "Bridge/events/transport/lifecycle fan out to direct/group/media/notification/call consumers",
+      "limitations": "Discovered directory selection; only representative assertions inspected. Entire existing directory runs, runtime unknown",
+      "timeout_seconds": 7200,
+      "estimated_seconds": null,
+      "requirements": [
+        "flutter"
+      ],
+      "investigate": [
+        "lib/core/bridge/*",
+        "lib/core/services/*",
+        "lib/core/inbox/*",
+        "lib/core/lifecycle/*",
+        "lib/core/local_discovery/*",
+        "lib/features/p2p/*"
+      ],
+      "inspected": false
+    },
+    "affected-calls": {
+      "kind": "flutter",
+      "paths": [
+        "test/features/call/"
+      ],
+      "boundary": "Call signaling, native lifecycle, audio state and local history",
+      "limitations": "Discovered directory selection; only representative assertions inspected. Entire existing directory runs, runtime unknown",
+      "timeout_seconds": 7200,
+      "estimated_seconds": null,
+      "requirements": [
+        "flutter"
+      ],
+      "investigate": [
+        "lib/features/call/*"
+      ],
+      "inspected": false
+    },
+    "affected-media": {
+      "kind": "flutter",
+      "paths": [
+        "test/core/media/",
+        "test/shared/widgets/media/",
+        "test/features/share/"
+      ],
+      "boundary": "Shared media owner, viewer and egress serve direct/group/share journeys",
+      "limitations": "Discovered directory selection; only representative assertions inspected. Entire existing directory runs, runtime unknown",
+      "timeout_seconds": 7200,
+      "estimated_seconds": null,
+      "requirements": [
+        "flutter"
+      ],
+      "investigate": [
+        "lib/core/media/*",
+        "lib/shared/widgets/media/*",
+        "lib/features/share/*"
+      ],
+      "inspected": false
+    },
+    "affected-surfaces": {
+      "kind": "flutter",
+      "paths": [
+        "test/features/home/",
+        "test/features/orbit/",
+        "test/features/posts/",
+        "test/features/introduction/",
+        "test/features/settings/"
+      ],
+      "boundary": "Existing home/orbit/posts/introduction/settings surfaces remain affected/full obligations",
+      "limitations": "Discovered directory selection; only representative assertions inspected. Entire existing directory runs, runtime unknown",
+      "timeout_seconds": 7200,
+      "estimated_seconds": null,
+      "requirements": [
+        "flutter"
+      ],
+      "investigate": [
+        "lib/features/home/*",
+        "lib/features/orbit/*",
+        "lib/features/posts/*",
+        "lib/features/introduction/*",
+        "lib/features/settings/*"
+      ],
+      "inspected": false
+    },
+    "workflow": {
+      "kind": "python",
+      "paths": [
+        "scripts/test/mknoon_checks_test.py",
+        "scripts/test/testing_inventory_test.py"
+      ],
+      "boundary": "Selector, inventory, evidence and runner safety contracts",
+      "timeout_seconds": 120,
+      "estimated_seconds": 7,
+      "requirements": [
+        "python3"
+      ],
+      "investigate": [
+        "scripts/mknoon_checks.py",
+        "scripts/testing_inventory.py"
+      ],
+      "runtime_basis": {
+        "kind": "measured",
+        "seconds": 6.076,
+        "status": "PASS",
+        "source_sha256": "531120e4323b7346d0e6d48a97c31da476046c2619c9b6cd40e6f7eadb956e4a",
+        "evidence": ".codex-test-logs/workflow-compatible-host/results.json",
+        "environment": "macOS ARM64, Flutter 3.47.2; warm resolved packages; host only"
+      }
+    },
+    "provider-schema": {
+      "kind": "node",
+      "paths": [
+        "scripts/test/send_fcm_provider_probe_contract_test.js"
+      ],
+      "boundary": "Closed-schema provider result redaction and error classification; no live FCM sends",
+      "timeout_seconds": 60,
+      "estimated_seconds": 1,
+      "requirements": [
+        "node"
+      ],
+      "investigate": [
+        "scripts/send_fcm_provider_probe.js"
+      ],
+      "runtime_basis": {
+        "kind": "measured",
+        "seconds": 0.127,
+        "status": "PASS",
+        "source_sha256": "531120e4323b7346d0e6d48a97c31da476046c2619c9b6cd40e6f7eadb956e4a",
+        "evidence": ".codex-test-logs/workflow-compatible-host/results.json",
+        "environment": "macOS ARM64, Flutter 3.47.2; warm resolved packages; host only"
+      }
+    },
+    "diagnostics-python": {
+      "kind": "python",
+      "paths": [
+        "docker-ws/app_diagnostics_test.py",
+        "docker-ws/app_diagnostics_monitor_test.py",
+        "docker-ws/call_diagnostics_test.py"
+      ],
+      "boundary": "Existing diagnostic ingest/redaction/checkpoint contracts using local fixtures",
+      "timeout_seconds": 120,
+      "estimated_seconds": 1,
+      "requirements": [
+        "python3"
+      ],
+      "investigate": [
+        "docker-ws/app_diagnostics.py",
+        "docker-ws/call_diagnostics.py"
+      ],
+      "runtime_basis": {
+        "kind": "measured",
+        "seconds": 0.732,
+        "status": "PASS",
+        "source_sha256": "531120e4323b7346d0e6d48a97c31da476046c2619c9b6cd40e6f7eadb956e4a",
+        "evidence": ".codex-test-logs/workflow-compatible-host/results.json",
+        "environment": "macOS ARM64, Flutter 3.47.2; warm resolved packages; host only"
+      }
+    },
+    "affected-feed": {
+      "kind": "flutter",
+      "paths": [
+        "test/features/feed/"
+      ],
+      "boundary": "Existing feed host suite; fake and unit boundaries vary",
+      "timeout_seconds": 7200,
+      "estimated_seconds": null,
+      "requirements": [
+        "flutter"
+      ],
+      "inspected": false,
+      "investigate": [
+        "lib/features/feed/"
+      ]
+    },
+    "device-reconnect": {
+      "kind": "sims",
+      "capability": "android.connectivity_restore_inbox_drain",
+      "boundary": "android.os-network.relay-drain-rewarm",
+      "timeout_seconds": 7200,
+      "estimated_seconds": null,
+      "requirements": [
+        "dart",
+        "flutter",
+        "adb"
+      ],
+      "device_roles": [
+        "android_physical",
+        "android_emulator"
+      ],
+      "references": [
+        "tool/sims/critical_features.json"
+      ],
+      "investigate": [
+        "p2p"
+      ],
+      "limitations": "Source/debug/profile campaign; does not attest signed distribution artifact. Existing SIMS owns service preflight, build identity, assertions and diagnostics."
+    },
+    "device-media": {
+      "kind": "sims",
+      "capability": "android.direct_media_blob_custody",
+      "boundary": "android.two-peer.direct-media-blob-custody",
+      "timeout_seconds": 7200,
+      "estimated_seconds": null,
+      "requirements": [
+        "dart",
+        "flutter",
+        "adb"
+      ],
+      "device_roles": [
+        "android_physical",
+        "android_emulator"
+      ],
+      "references": [
+        "tool/sims/critical_features.json"
+      ],
+      "investigate": [
+        "conversation"
+      ],
+      "limitations": "Source/debug/profile campaign; does not attest signed distribution artifact. Existing SIMS owns service preflight, build identity, assertions and diagnostics."
+    },
+    "device-group-media": {
+      "kind": "sims",
+      "capability": "groups.media_send_reliability",
+      "boundary": "android.group-media.real-relay-process-recovery",
+      "timeout_seconds": 7200,
+      "estimated_seconds": null,
+      "requirements": [
+        "dart",
+        "flutter",
+        "adb"
+      ],
+      "device_roles": [
+        "android_physical",
+        "android_emulator"
+      ],
+      "references": [
+        "tool/sims/critical_features.json"
+      ],
+      "investigate": [
+        "groups"
+      ],
+      "limitations": "Source/debug/profile campaign; does not attest signed distribution artifact. Existing SIMS owns service preflight, build identity, assertions and diagnostics."
+    },
+    "device-notifications-android": {
+      "kind": "sims",
+      "capability": "notifications.android_payload_campaign",
+      "boundary": "android.relay-fcm.notification-payload-custody-campaign",
+      "timeout_seconds": 7200,
+      "estimated_seconds": null,
+      "requirements": [
+        "dart",
+        "flutter",
+        "adb"
+      ],
+      "device_roles": [
+        "android_physical",
+        "android_emulator"
+      ],
+      "references": [
+        "tool/sims/critical_features.json"
+      ],
+      "investigate": [
+        "notifications"
+      ],
+      "limitations": "Source/debug/profile campaign; does not attest signed distribution artifact. Existing SIMS owns service preflight, build identity, assertions and diagnostics."
+    },
+    "device-notifications-ios": {
+      "kind": "sims",
+      "capability": "notifications.ios_payload_fast_path",
+      "boundary": "ios.apns-nse.notification-tap-and-exact-recovery",
+      "timeout_seconds": 7200,
+      "estimated_seconds": null,
+      "requirements": [
+        "dart",
+        "flutter",
+        "xcrun"
+      ],
+      "device_roles": [
+        "ios_physical"
+      ],
+      "references": [
+        "tool/sims/critical_features.json"
+      ],
+      "investigate": [
+        "notifications"
+      ],
+      "limitations": "Source/debug/profile campaign; does not attest signed distribution artifact. Existing SIMS owns service preflight, build identity, assertions and diagnostics."
+    },
+    "device-group-mute": {
+      "kind": "sims",
+      "capability": "groups.muted_notification_campaign",
+      "boundary": "android.group-muted-notification-suppression",
+      "timeout_seconds": 7200,
+      "estimated_seconds": null,
+      "requirements": [
+        "dart",
+        "flutter",
+        "adb"
+      ],
+      "device_roles": [
+        "android_physical",
+        "android_emulator"
+      ],
+      "references": [
+        "tool/sims/critical_features.json"
+      ],
+      "investigate": [
+        "groups"
+      ],
+      "limitations": "Source/debug/profile campaign; does not attest signed distribution artifact. Existing SIMS owns service preflight, build identity, assertions and diagnostics."
+    },
+    "device-audio": {
+      "kind": "sims",
+      "capability": "android.production_1to1_audio_call",
+      "boundary": "android.two-peer.production-1to1-audio-call",
+      "timeout_seconds": 7200,
+      "estimated_seconds": null,
+      "requirements": [
+        "dart",
+        "flutter",
+        "adb"
+      ],
+      "device_roles": [
+        "android_physical",
+        "android_emulator"
+      ],
+      "references": [
+        "tool/sims/critical_features.json"
+      ],
+      "investigate": [
+        "call"
+      ],
+      "limitations": "Source/debug/profile campaign; does not attest signed distribution artifact. Existing SIMS owns service preflight, build identity, assertions and diagnostics."
+    },
+    "signed-startup-contacts": {
+      "kind": "manual",
+      "assertions": [
+        "existing_identity",
+        "contacts_groups_history",
+        "one_scan_mutual_contact",
+        "start_conversation"
+      ],
+      "boundary": "Signed candidate startup/reopen and supported one-scan contact flow",
+      "timeout_seconds": 1,
+      "estimated_seconds": null,
+      "investigate": [
+        "docs/testing/TESTING.md"
+      ],
+      "limitations": "Required signed-candidate observation; cannot be satisfied by host fakes."
+    },
+    "signed-chat-group-media": {
+      "kind": "manual",
+      "assertions": [
+        "direct_a_to_b_content",
+        "direct_b_to_a_content",
+        "delivery_state",
+        "no_duplicates",
+        "reopen_persistence",
+        "direct_path_observed",
+        "relay_inbox_path_observed",
+        "group_three_members",
+        "offline_member_catchup",
+        "recipient_opens_image",
+        "recipient_plays_audio_or_video",
+        "pending_reconnect_recovery"
+      ],
+      "boundary": "Signed Android/iOS representative messaging in both directions; record path and real recipient open",
+      "timeout_seconds": 1,
+      "estimated_seconds": null,
+      "investigate": [
+        "docs/testing/TESTING.md"
+      ],
+      "limitations": "Required signed-candidate observation; cannot be satisfied by host fakes."
+    },
+    "signed-notifications": {
+      "kind": "manual",
+      "assertions": [
+        "background_notification",
+        "tap_exact_conversation",
+        "foreground_policy",
+        "muted_suppressed",
+        "android_and_ios",
+        "ios_notification_locks_released_before_suspension",
+        "ios_existing_install_ledger_preserved"
+      ],
+      "boundary": "Signed Android/iOS background, foreground, mute and tap behavior",
+      "timeout_seconds": 1,
+      "estimated_seconds": null,
+      "investigate": [
+        "docs/testing/TESTING.md"
+      ],
+      "limitations": "Required signed-candidate observation; cannot be satisfied by host fakes. iOS suspension evidence must correlate lock ownership and lifecycle; a passing host test or absent later crash export does not satisfy it."
+    },
+    "signed-upgrade-compat": {
+      "kind": "manual",
+      "assertions": [
+        "previous_published_revision_verified",
+        "upgrade_preserves_identity_contacts_groups_history",
+        "old_to_new_message",
+        "new_to_old_message"
+      ],
+      "boundary": "Upgrade actual previous published binary; old/new peer interoperability using isolated history",
+      "timeout_seconds": 1,
+      "estimated_seconds": null,
+      "investigate": [
+        "docs/testing/TESTING.md"
+      ],
+      "limitations": "Required signed-candidate observation; cannot be satisfied by host fakes."
+    },
+    "signed-audio": {
+      "kind": "manual",
+      "assertions": [
+        "connected",
+        "a_to_b_audio_observed",
+        "b_to_a_audio_observed",
+        "ended_and_released",
+        "ios_disabled_capability_voip_wake_completed",
+        "ios_each_required_push_callkit_report_completed"
+      ],
+      "boundary": "Short signed-candidate bidirectional audio and hangup; candidate includes call feature",
+      "timeout_seconds": 1,
+      "estimated_seconds": null,
+      "investigate": [
+        "docs/testing/TESTING.md"
+      ],
+      "limitations": "Required signed-candidate observation; cannot be satisfied by host fakes. Include disabled-capability cold launch and queued/coalesced incoming VoIP pushes; every required CallKit report completion must be observed."
+    },
+    "go-core": {
+      "kind": "go",
+      "packages": [
+        "./..."
+      ],
+      "cwd": "go-mknoon",
+      "boundary": "Existing go-mknoon Go host package suites",
+      "timeout_seconds": 3600,
+      "estimated_seconds": null,
+      "requirements": [
+        "go"
+      ],
+      "references": [
+        "go-mknoon/go.mod"
+      ],
+      "investigate": [
+        "go-mknoon"
+      ],
+      "limitations": "Go test process evidence, not deployed relay/device parity; skips remain incomplete."
+    },
+    "go-relay": {
+      "kind": "go",
+      "packages": [
+        "./..."
+      ],
+      "cwd": "go-relay-server",
+      "boundary": "Existing go-relay-server Go host package suites",
+      "timeout_seconds": 3600,
+      "estimated_seconds": null,
+      "requirements": [
+        "go"
+      ],
+      "references": [
+        "go-relay-server/go.mod"
+      ],
+      "investigate": [
+        "go-relay-server"
+      ],
+      "limitations": "Go test process evidence, not deployed relay/device parity; skips remain incomplete."
+    },
+    "signed-full-review": {
+      "kind": "manual",
+      "assertions": [
+        "known_full_failures_reviewed",
+        "same_revision_partitions_checked",
+        "untested_conditions_recorded"
+      ],
+      "boundary": "Review outstanding full-regression evidence without combining unrelated revisions",
+      "timeout_seconds": 1,
+      "estimated_seconds": null,
+      "investigate": [
+        "docs/testing/TESTING.md"
+      ],
+      "limitations": "Release reviewer attestation; prior failures remain in the report even after a newer run passes."
+    },
+    "ios-build-provenance": {
+      "kind": "python",
+      "paths": [
+        "scripts/test/ios_build_provenance_test.py"
+      ],
+      "boundary": "Retained iOS artifact identity, filtered dirty source reconstruction, source-input change detection, symbol/UUID metadata and immutable build directories",
+      "limitations": "Synthetic build products; does not build, sign or upload an IPA. Private source snapshots omit ignored configuration, excluded credentials and external inputs; legacy captures may contain hashes only.",
+      "timeout_seconds": 120,
+      "estimated_seconds": null,
+      "requirements": [
+        "python3"
+      ],
+      "investigate": [
+        "scripts/build_ios_appstore_ipa.sh",
+        "scripts/ios_build_provenance.py"
+      ],
+      "inspected": true
+    },
+    "group-media-schema-contract": {
+      "kind": "flutter",
+      "paths": [
+        "test/core/debug/group_media_reliability_e2e_test.dart",
+        "test/integration/android_group_media_reliability_controller_test.dart",
+        "test/integration/group_media_reliability_runner_contract_test.dart",
+        "test/integration/group_media_ios_background_recovery_test.dart",
+        "test/features/groups/integration/group_media_reliability_criteria_test.dart",
+        "test/core/debug/debug_e2e_composition_root_test.dart"
+      ],
+      "boundary": "Group media proof admission requires the current identity database schema, explicit matching authority mode and production-coherent ordinary-primary setup while preserving cipher, role, media, retry and receipt checks",
+      "limitations": "Host database/receipt fixtures protect the proof contract; real group media delivery requires the separate device campaign.",
+      "timeout_seconds": 900,
+      "estimated_seconds": null,
+      "requirements": [
+        "flutter"
+      ],
+      "investigate": [
+        "lib/core/debug/group_media_reliability_e2e_main_actions.dart",
+        "lib/core/database/app_database_version.dart",
+        "integration_test/scripts/android_group_media_reliability_controller.dart",
+        "integration_test/scripts/group_media_reliability_criteria.dart",
+        "integration_test/scripts/group_media_ios_background_recovery_evidence.dart",
+        "lib/core/debug/group_media_reliability_e2e.dart",
+        "lib/debug/debug_e2e_composition_root.dart",
+        "integration_test/scripts/group_media_reliability_runner_contract.dart"
+      ],
+      "inspected": true
+    },
+    "connectivity-launch-contract": {
+      "kind": "flutter",
+      "paths": [
+        "test/integration/android_connectivity_restore_campaign_test.dart"
+      ],
+      "boundary": "Android activity launch status, live process admission and bounded reconnect readiness contract",
+      "limitations": "Injected adb results verify harness admission; the actual phone/emulator reconnect campaign remains separate.",
+      "timeout_seconds": 900,
+      "estimated_seconds": null,
+      "requirements": [
+        "flutter"
+      ],
+      "investigate": [
+        "integration_test/scripts/run_connectivity_restore_sims.dart",
+        "integration_test/support/android_connectivity_restore_campaign.dart"
+      ],
+      "inspected": true
+    },
+    "notification-lock-diagnostics": {
+      "kind": "flutter",
+      "paths": [
+        "test/core/notifications/bounded_posix_flock_test.dart",
+        "test/core/diagnostics/app_diagnostics_test.dart",
+        "test/features/conversation/application/direct_notification_display_outbox_wiring_test.dart",
+        "test/core/notifications/app_visibility_authority_test.dart",
+        "test/core/notifications/app_visibility_snapshot_test.dart",
+        "test/core/notifications/app_visibility_snapshot_wiring_test.dart",
+        "test/core/notifications/app_visibility_route_binding_test.dart"
+      ],
+      "boundary": "Notification lock observation, iOS background lease admission/release, persisted direct outbox retry after denied admission, and unavailable visibility reads clearing cached suppression",
+      "limitations": "Host POSIX ownership and controlled method-channel tests. Native lease, visibility admission and badge lock behavior require existing RunnerTests/GoBridgeCriticalTaskTests, run_app_visibility_native_371.sh and run_ios_nse_native_373.sh separately. Physical background scope evidence is separate; admitted I/O may outlive expiration and unidentified suspension locks remain unresolved.",
+      "timeout_seconds": 900,
+      "estimated_seconds": null,
+      "requirements": [
+        "flutter"
+      ],
+      "investigate": [
+        "lib/core/notifications/bounded_posix_flock.dart",
+        "lib/core/diagnostics/app_diagnostic_events.dart",
+        "lib/core/diagnostics/app_diagnostics.dart",
+        "ios/Runner/IosAppVisibilityCoordinator.swift",
+        "ios/NotificationService/IosAppVisibilitySnapshot.swift",
+        "ios/Runner/GoBridge.swift",
+        "lib/core/notifications/app_visibility_authority.dart"
+      ],
+      "inspected": true
+    },
+    "production-audio-harness-contract": {
+      "kind": "flutter",
+      "paths": [
+        "test/integration/android_production_audio_call_campaign_test.dart",
+        "test/tool/sims/sims_build_cache_test.dart",
+        "test/integration/android_app_package_test.dart",
+        "test/tool/sims/sims_ios_group_media_269_profile_test.dart",
+        "test/tool/sims/sims_verification_test.dart"
+      ],
+      "boundary": "Local audio proof binds a disposable package across prepared APK, cache, app-owned controls and native activity launch; shared iOS cache identity includes native compilation conditions and preserves Release settings",
+      "limitations": "Host command and semantic UI fixtures preserve campaign safety; actual bidirectional audio and cleanup still require device-audio. This profile does not exercise FCM delivery.",
+      "timeout_seconds": 900,
+      "estimated_seconds": null,
+      "requirements": [
+        "flutter"
+      ],
+      "investigate": [
+        "integration_test/scripts/android_production_audio_call_campaign.dart",
+        "integration_test/scripts/run_production_audio_call_sims.dart",
+        "tool/sims/build_orchestrator.dart"
+      ],
+      "inspected": true
+    },
+    "direct-media-contact-handoff-contract": {
+      "kind": "flutter",
+      "paths": [
+        "test/features/conversation/integration/android_direct_media_blob_custody_campaign_test.dart",
+        "test/debug/android_direct_media_blob_custody_e2e_test.dart"
+      ],
+      "boundary": "Cold action handoffs verify old processes absent before staging requests; bounded sender-recovery failure receipts preserve disposition and ownership facts without relaxing media success admission",
+      "limitations": "Controlled process callbacks reproduce fixture races; closed diagnostic receipt tests preserve failure semantics. Real restart, media bytes and custody remain separate device assertions.",
+      "timeout_seconds": 900,
+      "estimated_seconds": null,
+      "requirements": [
+        "flutter"
+      ],
+      "investigate": [
+        "integration_test/scripts/android_direct_media_blob_custody_device_action.dart",
+        "lib/debug/android_direct_media_blob_custody_e2e.dart"
+      ],
+      "inspected": true
+    },
+    "group-harness-contract": {
+      "kind": "flutter",
+      "paths": [
+        "test/core/database/helpers/group_messages_db_helpers_reliability_test.dart",
+        "test/features/groups/application/send_group_reaction_use_case_test.dart",
+        "test/integration/group_multi_device_shared_path_test.dart",
+        "test/features/groups/application/remove_group_reaction_use_case_test.dart",
+        "test/features/groups/application/send_group_message_use_case_test.dart",
+        "test/core/utils/flow_event_emitter_test.dart",
+        "test/integration/group_multi_party_launch_spec_test.dart"
+      ],
+      "boundary": "Shared linked-group fixture preserves strict media/reaction dependencies, bounded failure observations and terminal verdict capture before either device exits",
+      "limitations": "Real SQLite and host use-case/observer checks cover fixture dependencies and refusal semantics; actual two-device content, media and cleanup remain separately evidenced by the linked campaign.",
+      "timeout_seconds": 900,
+      "estimated_seconds": null,
+      "requirements": [
+        "flutter"
+      ],
+      "investigate": [
+        "integration_test/group_multi_device_real_harness.dart",
+        "lib/features/groups/data/repositories/group_reaction_replay_outbox_repository_impl.dart",
+        "integration_test/scripts/run_b1b_sibling_device_convergence.dart",
+        "integration_test/_support/android_app_file_broker.dart"
+      ],
+      "inspected": true
+    },
+    "strict-group-media-manifest": {
+      "kind": "flutter",
+      "paths": [
+        "test/features/groups/application/send_group_message_use_case_test.dart",
+        "test/features/conversation/application/upload_media_use_case_test.dart",
+        "test/features/conversation/domain/repositories/media_attachment_repository_impl_test.dart",
+        "test/core/services/p2p_service_inbox_ack_ordering_test.dart",
+        "test/features/conversation/application/download_media_use_case_test.dart",
+        "test/features/groups/application/delete_group_media_for_me_use_case_test.dart",
+        "test/features/share/application/share_batch_delivery_coordinator_test.dart"
+      ],
+      "names": [
+        "strict media waveform boundary:",
+        "TC-365-02a strict group authoring preserves GIF video audio and voice descriptors across discussion and admin policy",
+        "strict DB key boundary",
+        "strict DB key scope",
+        "TC-364-03a protected content applies in authenticated authority order before exact ACK",
+        "incoming group key boundary",
+        "TC-365-03a strict group blob ACK follows durable plaintext",
+        "TC-365-03a delete before download",
+        "TC-366-03b admitted strict group forward preserves provenance through dispatch"
+      ],
+      "boundary": "Strict group media canonical descriptors, exact secure-key resolution under media ownership, atomic protected reconciliation, incoming download/deletion before ACK, and forwarded provenance through durable dispatch",
+      "limitations": "Host use-case checks plus real SQLite/storage fixtures with fake secure keystore; native keystore, real byte custody and process recovery require separate device evidence.",
+      "timeout_seconds": 900,
+      "estimated_seconds": null,
+      "requirements": [
+        "flutter"
+      ],
+      "investigate": [
+        "lib/features/groups/application/send_group_message_use_case.dart",
+        "lib/features/groups/domain/models/protected_group_media_manifest.dart",
+        "lib/features/conversation/application/upload_media_use_case.dart",
+        "lib/core/database/helpers/group_media_key_snapshot.dart",
+        "lib/core/database/helpers/group_messages_db_helpers.dart",
+        "lib/features/groups/application/protected_group_content_reconciliation.dart",
+        "lib/app/bootstrap/production_canonical_group_replay_composition.dart",
+        "lib/features/conversation/data/repositories/media_attachment_repository_impl.dart",
+        "lib/features/share/application/share_batch_delivery_coordinator.dart"
+      ],
+      "inspected": true
+    },
+    "group-media-storage-preservation": {
+      "kind": "flutter",
+      "paths": [
+        "test/features/conversation/domain/repositories/media_attachment_repository_impl_test.dart",
+        "test/core/services/p2p_service_inbox_ack_ordering_test.dart",
+        "test/core/bootstrap/production_canonical_inbox_projection_composition_contract_test.dart",
+        "test/core/bootstrap/production_headless_canonical_recovery_test.dart",
+        "test/core/bootstrap/production_application_bootstrap_phase_contract_test.dart",
+        "test/features/conversation/application/download_media_use_case_test.dart",
+        "test/features/groups/application/delete_group_media_for_me_use_case_test.dart",
+        "test/features/conversation/domain/repositories/media_attachment_repository_descriptors_test.dart"
+      ],
+      "boundary": "Complete existing media repository, descriptors, download, group local deletion and canonical inbox/recovery suites preserve key ownership, metadata-only previews, durable files, source-pinned ACK and atomic replay",
+      "limitations": "Host real SQLite fixtures with fake secure storage and transport; actual native media/keystore and background lifecycle remain device proof boundaries. Bootstrap source contracts supplement behavioral repository/replay tests.",
+      "timeout_seconds": 1800,
+      "estimated_seconds": null,
+      "requirements": [
+        "flutter"
+      ],
+      "investigate": [
+        "lib/core/database/helpers/group_media_key_snapshot.dart",
+        "lib/core/database/helpers/group_messages_db_helpers.dart",
+        "lib/app/bootstrap/production_canonical_inbox_projection_composition.dart",
+        "lib/app/bootstrap/production_canonical_group_replay_composition.dart",
+        "lib/features/conversation/data/repositories/media_attachment_repository_impl.dart"
+      ],
+      "inspected": true
+    }
+  },
+  "areas": [
+    {
+      "id": "conversation",
+      "patterns": [
+        "lib/features/conversation/*",
+        "test/features/conversation/*"
+      ],
+      "checks": [
+        "direct-chat",
+        "offline-recovery",
+        "media-bytes",
+        "media-viewer",
+        "notifications",
+        "affected-conversation"
+      ],
+      "why": "Message send/receive, receipts, editing, media and route consumers"
+    },
+    {
+      "id": "groups",
+      "patterns": [
+        "lib/features/groups/*",
+        "test/features/groups/*"
+      ],
+      "checks": [
+        "small-group",
+        "notifications",
+        "affected-groups"
+      ],
+      "why": "Membership, key epochs, replay and group notification consumers"
+    },
+    {
+      "id": "push",
+      "patterns": [
+        "lib/features/push/*",
+        "lib/core/notifications/*",
+        "test/features/push/*",
+        "test/core/notifications/*"
+      ],
+      "checks": [
+        "notifications",
+        "direct-chat",
+        "small-group",
+        "affected-push",
+        "provider-schema"
+      ],
+      "why": "Visibility, shared message events, mute and route ordering affect both conversation families"
+    },
+    {
+      "id": "identity",
+      "patterns": [
+        "lib/features/identity/*",
+        "lib/features/contacts/*",
+        "lib/features/contact_request/*",
+        "lib/features/qr_code/*",
+        "test/features/identity/*",
+        "test/features/contacts/*",
+        "test/features/contact_request/*",
+        "test/features/qr_code/*"
+      ],
+      "checks": [
+        "startup",
+        "contacts",
+        "direct-chat",
+        "small-group",
+        "media-bytes",
+        "call-signaling",
+        "affected-identity",
+        "affected-conversation",
+        "affected-groups",
+        "affected-push",
+        "affected-calls",
+        "affected-media"
+      ],
+      "why": "Trusted identity/contact/key state feeds all peer communication"
+    },
+    {
+      "id": "storage",
+      "patterns": [
+        "lib/core/database/*",
+        "lib/core/secure_storage/*",
+        "lib/features/account_migration/*",
+        "test/core/database/*",
+        "test/core/secure_storage/*",
+        "test/features/account_migration/*"
+      ],
+      "checks": [
+        "migration",
+        "startup",
+        "direct-chat",
+        "small-group",
+        "media-bytes",
+        "call-signaling",
+        "affected-storage",
+        "affected-conversation",
+        "affected-groups",
+        "affected-push",
+        "affected-calls",
+        "affected-media"
+      ],
+      "why": "Schema and secure authority are shared by identity, chat, groups, calls and upgrade recovery"
+    },
+    {
+      "id": "transport",
+      "patterns": [
+        "lib/core/bridge/*",
+        "lib/core/services/*",
+        "lib/core/inbox/*",
+        "lib/core/lifecycle/*",
+        "lib/core/local_discovery/*",
+        "lib/features/p2p/*",
+        "test/core/bridge/*",
+        "test/core/services/*",
+        "test/core/inbox/*",
+        "test/core/lifecycle/*",
+        "test/core/local_discovery/*",
+        "test/features/p2p/*"
+      ],
+      "checks": [
+        "bridge",
+        "direct-chat",
+        "offline-recovery",
+        "small-group",
+        "media-bytes",
+        "notifications",
+        "call-signaling",
+        "affected-transport",
+        "affected-conversation",
+        "affected-groups",
+        "affected-push",
+        "affected-calls",
+        "affected-media",
+        "go-core",
+        "go-relay"
+      ],
+      "why": "Bridge/events/transport/lifecycle fan out to direct/group/media/notification/call consumers"
+    },
+    {
+      "id": "calls",
+      "patterns": [
+        "lib/features/call/*",
+        "test/features/call/*"
+      ],
+      "checks": [
+        "call-signaling",
+        "notifications",
+        "affected-calls"
+      ],
+      "why": "Call signaling, native lifecycle, audio state and local history"
+    },
+    {
+      "id": "media",
+      "patterns": [
+        "lib/core/media/*",
+        "lib/shared/widgets/media/*",
+        "lib/features/share/*",
+        "test/core/media/*",
+        "test/shared/widgets/media/*",
+        "test/features/share/*"
+      ],
+      "checks": [
+        "media-bytes",
+        "media-viewer",
+        "direct-chat",
+        "small-group",
+        "affected-media"
+      ],
+      "why": "Shared media owner, viewer and egress serve direct/group/share journeys"
+    },
+    {
+      "id": "surfaces",
+      "patterns": [
+        "lib/features/home/*",
+        "lib/features/orbit/*",
+        "lib/features/posts/*",
+        "lib/features/introduction/*",
+        "lib/features/settings/*",
+        "test/features/home/*",
+        "test/features/orbit/*",
+        "test/features/posts/*",
+        "test/features/introduction/*",
+        "test/features/settings/*"
+      ],
+      "checks": [
+        "startup",
+        "notifications",
+        "affected-surfaces"
+      ],
+      "why": "Existing home/orbit/posts/introduction/settings surfaces remain affected/full obligations"
+    },
+    {
+      "id": "bootstrap",
+      "patterns": [
+        "lib/app/*",
+        "lib/main.dart",
+        "lib/core/bootstrap/*",
+        "test/app/*",
+        "test/main.dart",
+        "test/core/bootstrap/*"
+      ],
+      "checks": [
+        "bootstrap",
+        "startup",
+        "direct-chat",
+        "small-group",
+        "media-bytes",
+        "notifications",
+        "call-signaling",
+        "migration",
+        "affected-conversation",
+        "affected-groups",
+        "affected-push",
+        "affected-calls",
+        "affected-media"
+      ],
+      "why": "Composition owns startup and shared receive/event/lifecycle wiring"
+    },
+    {
+      "id": "diagnostics",
+      "patterns": [
+        "lib/core/diagnostics/*",
+        "docker-ws/app_diagnostics*",
+        "test/core/diagnostics/*",
+        "docker-ws/call_diagnostics*",
+        "lib/features/call/diagnostics/*",
+        "test/features/call/diagnostics/*",
+        "lib/features/settings/presentation/widgets/*diagnostics*",
+        "test/features/settings/presentation/widgets/*diagnostics*",
+        "android/app/src/main/kotlin/com/mknoon/app/diagnostics/*",
+        "android/app/src/test/kotlin/com/mknoon/app/diagnostics/*",
+        "android/app/src/main/kotlin/com/mknoon/app/call/*Diagnostic*",
+        "android/app/src/test/kotlin/com/mknoon/app/call/*Diagnostic*",
+        "ios/Runner/Mknoon*Diagnostic*",
+        "ios/RunnerTests/Mknoon*Diagnostic*"
+      ],
+      "checks": [
+        "diagnostics",
+        "diagnostics-python"
+      ],
+      "why": "Diagnostics schemas, admission/persistence and preview controls affect observation costs and privacy across every journey"
+    },
+    {
+      "id": "feed",
+      "patterns": [
+        "lib/features/feed/*",
+        "test/features/feed/*",
+        "test/features/feed/*"
+      ],
+      "checks": [
+        "affected-feed"
+      ],
+      "why": "Feed async projection and subscription lifetime have independent host regressions"
+    },
+    {
+      "id": "workflow",
+      "patterns": [
+        "scripts/mknoon_checks.py",
+        "scripts/testing_inventory.py",
+        "scripts/test/mknoon_checks_test.py",
+        "scripts/test/testing_inventory_test.py",
+        "tool/testing/*",
+        ".agents/skills/mknoon-*/SKILL.md",
+        ".github/workflows/mknoon-checks.yml",
+        ".gitignore"
+      ],
+      "checks": [
+        "workflow",
+        "provider-schema"
+      ],
+      "why": "Selection/report/inventory changes must preserve conservative failure semantics"
+    },
+    {
+      "id": "shared-fixtures",
+      "patterns": [
+        "test/shared/*",
+        "test/helpers/*",
+        "test/support/*",
+        "test/fixtures/*",
+        "test/flutter_test_config.dart",
+        "dart_test.yaml",
+        "integration_test/support/*"
+      ],
+      "checks": [
+        "affected-conversation",
+        "affected-groups",
+        "affected-push",
+        "affected-identity",
+        "affected-storage",
+        "affected-transport",
+        "affected-calls",
+        "affected-media",
+        "affected-surfaces",
+        "affected-feed",
+        "go-core",
+        "go-relay",
+        "workflow",
+        "provider-schema"
+      ],
+      "why": "Shared fixtures/config may hide failures across consuming features"
+    },
+    {
+      "id": "core-go",
+      "patterns": [
+        "go-mknoon/*"
+      ],
+      "checks": [
+        "affected-conversation",
+        "affected-groups",
+        "affected-push",
+        "affected-identity",
+        "affected-storage",
+        "affected-transport",
+        "affected-calls",
+        "affected-media",
+        "affected-surfaces",
+        "affected-feed",
+        "go-core",
+        "go-relay",
+        "workflow",
+        "provider-schema"
+      ],
+      "why": "Native Go bridge/events, encrypted payloads and transport affect every communication consumer"
+    },
+    {
+      "id": "relay",
+      "patterns": [
+        "go-relay-server/*"
+      ],
+      "checks": [
+        "affected-conversation",
+        "affected-groups",
+        "affected-push",
+        "affected-identity",
+        "affected-storage",
+        "affected-transport",
+        "affected-calls",
+        "affected-media",
+        "affected-surfaces",
+        "affected-feed",
+        "go-core",
+        "go-relay",
+        "workflow",
+        "provider-schema"
+      ],
+      "why": "Relay custody, notification wake, key and mailbox behavior crosses chat/group/media/calls"
+    },
+    {
+      "id": "platform-build",
+      "patterns": [
+        "android/*",
+        "ios/*",
+        "macos/*",
+        "linux/*",
+        "windows/*",
+        "web/*",
+        "packages/*",
+        "third_party/*",
+        "assets/*",
+        "lib/core/config/*",
+        "lib/core/permissions/*",
+        "lib/core/constants/*",
+        "lib/shared/*",
+        "pubspec.*",
+        "package*.json",
+        "info.plist",
+        "tool/build/*",
+        "scripts/run*",
+        "scripts/check*",
+        "docker-ws/*build*.sh"
+      ],
+      "checks": [
+        "affected-conversation",
+        "affected-groups",
+        "affected-push",
+        "affected-identity",
+        "affected-storage",
+        "affected-transport",
+        "affected-calls",
+        "affected-media",
+        "affected-surfaces",
+        "affected-feed",
+        "go-core",
+        "go-relay",
+        "workflow",
+        "provider-schema",
+        "bootstrap",
+        "startup",
+        "contacts",
+        "direct-chat",
+        "offline-recovery",
+        "small-group",
+        "media-bytes",
+        "media-viewer",
+        "notifications",
+        "migration",
+        "bridge",
+        "call-signaling",
+        "diagnostics",
+        "device-reconnect",
+        "device-media",
+        "device-group-media",
+        "device-notifications-android",
+        "device-notifications-ios",
+        "device-group-mute",
+        "device-audio",
+        "signed-startup-contacts",
+        "signed-chat-group-media",
+        "signed-notifications",
+        "signed-upgrade-compat",
+        "signed-audio"
+      ],
+      "why": "Native permissions, bundled assets, dependency versions and build flags can invalidate all runtime consumers and signed-artifact proof"
+    },
+    {
+      "id": "group-media-schema-harness",
+      "patterns": [
+        "lib/core/debug/group_media_reliability_e2e_main_actions.dart",
+        "lib/core/database/app_database_version.dart",
+        "integration_test/scripts/android_group_media_reliability_controller.dart",
+        "integration_test/scripts/group_media_reliability_criteria.dart",
+        "integration_test/scripts/group_media_ios_background_recovery_evidence.dart",
+        "test/core/debug/group_media_reliability_e2e_test.dart",
+        "test/integration/android_group_media_reliability_controller_test.dart",
+        "test/integration/group_media_reliability_runner_contract_test.dart",
+        "test/integration/group_media_ios_background_recovery_test.dart",
+        "test/features/groups/integration/group_media_reliability_criteria_test.dart",
+        "lib/core/debug/group_media_reliability_e2e.dart",
+        "lib/debug/debug_e2e_composition_root.dart",
+        "integration_test/scripts/group_media_reliability_runner_contract.dart",
+        "test/core/debug/debug_e2e_composition_root_test.dart"
+      ],
+      "checks": [
+        "group-media-schema-contract",
+        "device-group-media"
+      ],
+      "why": "Schema, debug startup and declared authority-mode changes must preserve production-coherent setup and media proof admission before the real device journey can execute"
+    },
+    {
+      "id": "connectivity-launch-harness",
+      "patterns": [
+        "integration_test/scripts/run_connectivity_restore_sims.dart",
+        "integration_test/support/android_connectivity_restore_campaign.dart",
+        "test/integration/android_connectivity_restore_campaign_test.dart"
+      ],
+      "checks": [
+        "connectivity-launch-contract",
+        "device-reconnect"
+      ],
+      "why": "Launch status must distinguish a live slow-starting app from a failed launch before the bounded device recovery journey"
+    },
+    {
+      "id": "other-test-infrastructure",
+      "patterns": [
+        "test/tool/*",
+        "tool/sims/*",
+        "scripts/test/*",
+        "integration_test/*",
+        "test_driver/*"
+      ],
+      "checks": [
+        "affected-conversation",
+        "affected-groups",
+        "affected-push",
+        "affected-identity",
+        "affected-storage",
+        "affected-transport",
+        "affected-calls",
+        "affected-media",
+        "affected-surfaces",
+        "affected-feed",
+        "go-core",
+        "go-relay",
+        "workflow",
+        "provider-schema"
+      ],
+      "why": "Runner/fixture changes need host consumers; changed device tests require current SIMS or explicit new mapping review"
+    },
+    {
+      "id": "localization",
+      "patterns": [
+        "lib/l10n/*"
+      ],
+      "checks": [
+        "affected-conversation",
+        "affected-groups",
+        "affected-push",
+        "affected-identity",
+        "affected-storage",
+        "affected-transport",
+        "affected-calls",
+        "affected-media",
+        "affected-surfaces",
+        "affected-feed",
+        "go-core",
+        "go-relay",
+        "workflow",
+        "provider-schema",
+        "bootstrap",
+        "startup",
+        "contacts",
+        "direct-chat",
+        "offline-recovery",
+        "small-group",
+        "media-bytes",
+        "media-viewer",
+        "notifications",
+        "migration",
+        "bridge",
+        "call-signaling",
+        "diagnostics",
+        "device-reconnect",
+        "device-media",
+        "device-group-media",
+        "device-notifications-android",
+        "device-notifications-ios",
+        "device-group-mute",
+        "device-audio",
+        "signed-startup-contacts",
+        "signed-chat-group-media",
+        "signed-notifications",
+        "signed-upgrade-compat",
+        "signed-audio"
+      ],
+      "why": "Localized strings and generated localization APIs are shared by all app surfaces; retain the conservative selection for any localization change"
+    },
+    {
+      "id": "ios-build-provenance",
+      "patterns": [
+        "scripts/build_ios_appstore_ipa.sh",
+        "scripts/ios_build_provenance.py",
+        "scripts/test/ios_build_provenance_test.py"
+      ],
+      "checks": [
+        "ios-build-provenance",
+        "workflow"
+      ],
+      "why": "The existing iOS build entry point must preserve the exact artifact and build-input evidence without overwriting prior symbols"
+    },
+    {
+      "id": "notification-lock-observation",
+      "patterns": [
+        "lib/core/notifications/bounded_posix_flock.dart",
+        "lib/core/diagnostics/app_diagnostic_events.dart",
+        "lib/core/diagnostics/app_diagnostics.dart",
+        "test/core/notifications/bounded_posix_flock_test.dart",
+        "test/core/diagnostics/app_diagnostics_test.dart",
+        "ios/Runner/GoBridge.swift",
+        "ios/RunnerTests/GoBridgeCriticalTaskTests.swift",
+        "ios/Runner/IosAppVisibilityCoordinator.swift",
+        "ios/NotificationService/IosAppVisibilitySnapshot.swift",
+        "ios/RunnerTests/IosAppVisibilitySnapshotTests.swift",
+        "lib/core/notifications/app_visibility_authority.dart",
+        "test/core/notifications/app_visibility_authority_test.dart",
+        "scripts/test/run_app_visibility_native_371.sh",
+        "scripts/test/run_ios_nse_native_373.sh"
+      ],
+      "checks": [
+        "notification-lock-diagnostics",
+        "diagnostics",
+        "affected-push"
+      ],
+      "why": "Lock admission and observation must preserve ownership, unlock-before-completion ordering, fail-notify visibility and notification consumers; native scripts retain actual file-lock regressions separately from host channel tests"
+    },
+    {
+      "id": "diagnostic-schema",
+      "patterns": [
+        "tool/app_diagnostics/*",
+        "lib/core/diagnostics/app_diagnostic_schema.dart",
+        "ios/Runner/MknoonAppDiagnosticSchema.swift",
+        "android/app/src/main/kotlin/com/mknoon/app/diagnostics/MknoonAppDiagnosticSchema.kt",
+        "go-relay-server/app_diagnostics_schema_v1.json",
+        "docker-ws/app_diagnostics_schema_v1.json",
+        "go-relay-server/app_diagnostics_test.go"
+      ],
+      "checks": [
+        "diagnostics",
+        "diagnostics-python",
+        "notification-lock-diagnostics",
+        "go-relay"
+      ],
+      "why": "Closed diagnostic vocabulary and legacy upload compatibility must preserve client/server admission and existing aggregate event delivery"
+    },
+    {
+      "id": "production-audio-disposable-harness",
+      "patterns": [
+        "integration_test/scripts/android_production_audio_call_campaign.dart",
+        "integration_test/scripts/run_production_audio_call_sims.dart",
+        "test/integration/android_production_audio_call_campaign_test.dart",
+        "tool/sims/build_orchestrator.dart",
+        "test/tool/sims/sims_build_cache_test.dart",
+        "test/tool/sims/sims_ios_group_media_269_profile_test.dart"
+      ],
+      "checks": [
+        "production-audio-harness-contract",
+        "device-audio"
+      ],
+      "why": "Changes to the local audio build or driver must preserve exact disposable package ownership and real audio assertions before device execution"
+    },
+    {
+      "id": "direct-media-contact-handoff",
+      "patterns": [
+        "integration_test/scripts/android_direct_media_blob_custody_device_action.dart",
+        "test/features/conversation/integration/android_direct_media_blob_custody_campaign_test.dart",
+        "lib/debug/android_direct_media_blob_custody_e2e.dart",
+        "test/debug/android_direct_media_blob_custody_e2e_test.dart"
+      ],
+      "checks": [
+        "direct-media-contact-handoff-contract",
+        "device-media"
+      ],
+      "why": "Cold process handoffs and retained sender-recovery observations must remain valid before the device campaign can establish restart/media custody"
+    },
+    {
+      "id": "group-harness-wiring",
+      "patterns": [
+        "integration_test/group_multi_device_real_harness.dart",
+        "test/core/database/helpers/group_messages_db_helpers_reliability_test.dart",
+        "test/integration/group_multi_device_shared_path_test.dart",
+        "integration_test/scripts/run_b1b_sibling_device_convergence.dart",
+        "test/integration/group_multi_party_launch_spec_test.dart"
+      ],
+      "checks": [
+        "group-harness-contract",
+        "device-group-media"
+      ],
+      "why": "Linked-device proof requires strict authoring/reaction dependencies, bounded failure evidence and capture of each real terminal verdict before app teardown"
+    },
+    {
+      "id": "strict-group-media-manifest",
+      "patterns": [
+        "lib/features/groups/application/send_group_message_use_case.dart",
+        "lib/features/groups/domain/models/protected_group_media_manifest.dart",
+        "lib/features/conversation/application/upload_media_use_case.dart",
+        "test/features/groups/application/send_group_message_use_case_test.dart",
+        "test/features/conversation/application/upload_media_use_case_test.dart",
+        "lib/core/database/helpers/group_media_key_snapshot.dart",
+        "lib/core/database/helpers/group_messages_db_helpers.dart",
+        "lib/features/groups/application/protected_group_content_reconciliation.dart",
+        "lib/app/bootstrap/production_canonical_group_replay_composition.dart",
+        "lib/app/bootstrap/production_canonical_inbox_projection_composition.dart",
+        "lib/app/bootstrap/production_application_bootstrap.dart",
+        "test/features/conversation/domain/repositories/media_attachment_repository_impl_test.dart",
+        "test/core/services/p2p_service_inbox_ack_ordering_test.dart",
+        "lib/features/conversation/data/repositories/media_attachment_repository_impl.dart",
+        "test/features/conversation/application/download_media_use_case_test.dart",
+        "test/features/groups/application/delete_group_media_for_me_use_case_test.dart",
+        "lib/features/share/application/share_batch_delivery_coordinator.dart",
+        "test/features/share/application/share_batch_delivery_coordinator_test.dart"
+      ],
+      "checks": [
+        "strict-group-media-manifest",
+        "group-media-storage-preservation"
+      ],
+      "why": "Strict group media admission, incoming commit and reconciliation must preserve legacy and secure key representations, canonical descriptors, durable plaintext or deletion before ACK, and owned pretransaction snapshots across foreground/headless/retry paths"
+    },
+    {
+      "id": "bootstrap-relocation-guard",
+      "patterns": [
+        "test/unit/dtr18_layering_relocation_contract_test.dart"
+      ],
+      "checks": [
+        "bootstrap"
+      ],
+      "why": "A reviewed bootstrap fingerprint must stay synchronized without weakening relocation, import and scoped-callback ownership assertions"
+    }
+  ],
+  "documentation_only": [
+    "*.md",
+    "artifacts/*",
+    "crash-report/*",
+    "graphify-out/*",
+    "graphify-arch/graphify-out/*",
+    "codex-memory/state/*",
+    "mockups/*",
+    "Test-Flight-Improv/evidence/*",
+    "docker-ws/*_result.txt"
+  ],
+  "evidence_exclusions": [
+    "*.md",
+    "artifacts/*",
+    "crash-report/*",
+    "graphify-out/*",
+    "graphify-arch/graphify-out/*",
+    "codex-memory/state/*",
+    "mockups/*",
+    "Test-Flight-Improv/evidence/*",
+    "docker-ws/*_result.txt"
+  ],
+  "conservative": [
+    "affected-conversation",
+    "affected-groups",
+    "affected-push",
+    "affected-identity",
+    "affected-storage",
+    "affected-transport",
+    "affected-calls",
+    "affected-media",
+    "affected-surfaces",
+    "affected-feed",
+    "go-core",
+    "go-relay",
+    "workflow",
+    "provider-schema",
+    "bootstrap",
+    "startup",
+    "contacts",
+    "direct-chat",
+    "offline-recovery",
+    "small-group",
+    "media-bytes",
+    "media-viewer",
+    "notifications",
+    "migration",
+    "bridge",
+    "call-signaling",
+    "diagnostics",
+    "device-reconnect",
+    "device-media",
+    "device-group-media",
+    "device-notifications-android",
+    "device-notifications-ios",
+    "device-group-mute",
+    "device-audio",
+    "signed-startup-contacts",
+    "signed-chat-group-media",
+    "signed-notifications",
+    "signed-upgrade-compat",
+    "signed-audio"
+  ],
+  "full_commands": [
+    {
+      "id": "full-sims-major",
+      "kind": "sims",
+      "capability": "*",
+      "sims_mode": "major",
+      "command": [
+        "dart",
+        "tool/sims/sims.dart",
+        "major",
+        "--prepare-builds",
+        "--continue-on-failure",
+        "--format",
+        "json"
+      ],
+      "boundary": "Existing SIMS host/native/Go/device/performance capabilities",
+      "timeout_seconds": 259200,
+      "requirements": [
+        "dart",
+        "flutter"
+      ]
+    },
+    {
+      "id": "full-sims",
+      "kind": "sims",
+      "capability": "reliability.full.cleaned_legacy",
+      "sims_mode": "full",
+      "command": [
+        "dart",
+        "tool/sims/sims.dart",
+        "full",
+        "--only",
+        "reliability.full.cleaned_legacy",
+        "--prepare-builds",
+        "--continue-on-failure",
+        "--format",
+        "json"
+      ],
+      "boundary": "Existing complete SIMS reliability inventory",
+      "timeout_seconds": 259200,
+      "requirements": [
+        "dart",
+        "flutter"
+      ]
+    },
+    {
+      "id": "full-legacy",
+      "kind": "legacy",
+      "command": [
+        "bash",
+        "scripts/run_flutter_full_regression.sh"
+      ],
+      "boundary": "Existing fixed 95-route full regression entry point",
+      "timeout_seconds": 345600,
+      "requirements": [
+        "bash",
+        "dart",
+        "flutter",
+        "adb",
+        "xcrun"
+      ],
+      "device_roles": [
+        "android_physical",
+        "ios_simulator"
+      ]
+    },
+    {
+      "kind": "python",
+      "paths": [
+        "scripts/test/mknoon_checks_test.py",
+        "scripts/test/testing_inventory_test.py"
+      ],
+      "boundary": "Selector, inventory, evidence and runner safety contracts",
+      "timeout_seconds": 120,
+      "estimated_seconds": null,
+      "requirements": [
+        "python3"
+      ],
+      "investigate": [
+        "scripts/mknoon_checks.py",
+        "scripts/testing_inventory.py"
+      ],
+      "id": "full-workflow",
+      "command": [
+        "python3",
+        "-m",
+        "unittest",
+        "-v",
+        "scripts/test/mknoon_checks_test.py",
+        "scripts/test/testing_inventory_test.py"
+      ]
+    },
+    {
+      "kind": "node",
+      "paths": [
+        "scripts/test/send_fcm_provider_probe_contract_test.js"
+      ],
+      "boundary": "Closed-schema provider result redaction and error classification; no live FCM sends",
+      "timeout_seconds": 60,
+      "estimated_seconds": null,
+      "requirements": [
+        "node"
+      ],
+      "investigate": [
+        "scripts/send_fcm_provider_probe.js"
+      ],
+      "id": "full-provider-schema",
+      "command": [
+        "node",
+        "--test",
+        "--test-reporter=tap",
+        "scripts/test/send_fcm_provider_probe_contract_test.js"
+      ]
+    },
+    {
+      "kind": "python",
+      "paths": [
+        "docker-ws/app_diagnostics_test.py",
+        "docker-ws/app_diagnostics_monitor_test.py",
+        "docker-ws/call_diagnostics_test.py"
+      ],
+      "boundary": "Existing diagnostic ingest/redaction/checkpoint contracts using local fixtures",
+      "timeout_seconds": 120,
+      "estimated_seconds": null,
+      "requirements": [
+        "python3"
+      ],
+      "investigate": [
+        "docker-ws/app_diagnostics.py",
+        "docker-ws/call_diagnostics.py"
+      ],
+      "id": "full-diagnostics-python",
+      "command": [
+        "python3",
+        "-m",
+        "unittest",
+        "-v",
+        "docker-ws/app_diagnostics_test.py",
+        "docker-ws/app_diagnostics_monitor_test.py",
+        "docker-ws/call_diagnostics_test.py"
+      ]
+    }
+  ]
+}

@@ -415,7 +415,9 @@ final class IosAppVisibilitySnapshotStore {
     self.commitFault = commitFault
   }
 
-  func readSnapshot() -> IosAppVisibilitySnapshotEnvelope? {
+  func readSnapshot(
+    admissionIsActive: () -> Bool = { true }
+  ) -> IosAppVisibilitySnapshotEnvelope? {
     operationLock.lock()
     defer { operationLock.unlock() }
     guard currentProcessEligible,
@@ -425,6 +427,9 @@ final class IosAppVisibilitySnapshotStore {
       return nil
     }
     return withFileLock(defaultValue: nil) {
+      // Admission may expire while waiting for the shared inode. Refuse before
+      // reading persisted state; an already-entered synchronous read still owns its lock.
+      guard admissionIsActive() else { return nil }
       switch loadStateUnlocked() {
       case let .valid(snapshot):
         return IosAppVisibilitySnapshotEnvelope(

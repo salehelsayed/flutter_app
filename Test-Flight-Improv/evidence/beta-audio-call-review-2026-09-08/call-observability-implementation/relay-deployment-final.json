@@ -1,0 +1,19 @@
+{
+  "deployedAtUtc": "2026-09-08T16:19:09Z",
+  "relaySha256": "d19ec7efeccf0a3624ec07b8312c737895fc2d5b79763328d8df20a89c5f73b3",
+  "relayBuildDigest": "7c70c5616c335ee1a3435730a153946466b73b636a138a1fef3ae78732900865",
+  "operatorSha256": "e9fb9371ec2d8c0dabc25de8484b9ecf0d5c026aa4e3895d287844a46cd636cc",
+  "canonicalSchemaSha256": "6ea59e2bf718345f110a3fffc03b8ecbc18bcea7bd3b7e48d6d4ced559f247db",
+  "backupDirectory": "/var/backups/mknoon-relay/diagnostics-20260908T161909Z",
+  "checks": {
+    "installedHashesMatch": true,
+    "relayActive": true,
+    "monitorTimerActive": true,
+    "diagnosticStorageReady": true
+  },
+  "monitorIntervalSeconds": 60,
+  "externalNotificationsConfigured": false,
+  "storeReleasePublished": false,
+  "rawDeploymentLog": "/tmp/call-observability-20260908/relay-deployment-admission-final.log",
+  "rawHealthLog": "/tmp/call-observability-20260908/relay-health-admission-final.log"
+}

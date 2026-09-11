@@ -147,16 +147,25 @@ void main() {
     );
   });
 
-  test('production app semantic ownership cannot be overridden', () {
-    expect(
-      () => validateAndroidProductionAudioCallAppPackage('com.evil.overlay'),
-      throwsFormatException,
-    );
-    expect(
-      () => validateAndroidProductionAudioCallAppPackage('com.mknoon.app'),
-      returnsNormally,
-    );
-  });
+  test(
+    'disposable audio app semantic ownership cannot target personal app',
+    () {
+      expect(
+        () => validateAndroidProductionAudioCallAppPackage('com.mknoon.app'),
+        throwsFormatException,
+      );
+      expect(
+        () => validateAndroidProductionAudioCallAppPackage('com.evil.overlay'),
+        throwsFormatException,
+      );
+      expect(
+        () => validateAndroidProductionAudioCallAppPackage(
+          'com.mknoon.sims.productionaudio',
+        ),
+        returnsNormally,
+      );
+    },
+  );
 
   test(
     'semantic selector accepts exactly one enabled clickable exact label',
@@ -164,10 +173,10 @@ void main() {
       const xml = '''
 <hierarchy>
   <node content-desc="Start voice call" clickable="true" enabled="true"
-      visible-to-user="true" package="com.mknoon.app"
+      visible-to-user="true" package="com.mknoon.sims.productionaudio"
       bounds="[100,200][300,400]" />
   <node content-desc="Start voice calling help" clickable="true" enabled="true"
-      visible-to-user="true" package="com.mknoon.app"
+      visible-to-user="true" package="com.mknoon.sims.productionaudio"
       bounds="[400,200][600,400]" />
 </hierarchy>
 ''';
@@ -175,7 +184,7 @@ void main() {
       final node = selectExactAndroidProductionAudioSemanticNode(
         xml,
         label: 'Start voice call',
-        allowedPackages: const <String>{'com.mknoon.app'},
+        allowedPackages: const <String>{'com.mknoon.sims.productionaudio'},
       );
       expect((node.centerX, node.centerY), (200, 300));
       expect(node.label, 'Start voice call');
@@ -239,7 +248,7 @@ void main() {
         xml,
         label: 'Answer',
         allowedPackages: const <String>{
-          'com.mknoon.app',
+          'com.mknoon.sims.productionaudio',
           'com.android.systemui',
         },
       ),
@@ -273,14 +282,14 @@ void main() {
     const appOwned = '''
 <hierarchy>
   <node text="Answer" content-desc="" clickable="true" enabled="true"
-      visible-to-user="true" package="com.mknoon.app"
+      visible-to-user="true" package="com.mknoon.sims.productionaudio"
       bounds="[0,0][100,100]" />
 </hierarchy>
 ''';
     expect(
       () => selectExactAndroidProductionAudioNativeAnswerNode(
         appOwned,
-        allowedPackages: const <String>{'com.mknoon.app'},
+        allowedPackages: const <String>{'com.mknoon.sims.productionaudio'},
       ),
       throwsA(isA<AndroidProductionAudioCallSelectorException>()),
     );
@@ -310,7 +319,7 @@ void main() {
   <node text="MKnoon call" package="com.android.systemui" />
   <node text="Incoming call" package="com.android.systemui" />
   <node text="Answer" package="com.android.systemui" />
-  <node content-desc="Answer" package="com.mknoon.app" />
+  <node content-desc="Answer" package="com.mknoon.sims.productionaudio" />
   <node text="Answer" package="com.evil.overlay" />
   <node text="private contact value" package="com.android.systemui" />
 </hierarchy>
@@ -417,7 +426,7 @@ void main() {
             '-W',
             '--activity-reorder-to-front',
             '-n',
-            '$androidProductionAudioCallAppPackage/.MainActivity',
+            '$androidProductionAudioCallAppPackage/com.mknoon.app.MainActivity',
           ]),
         ),
       );
@@ -460,7 +469,7 @@ void main() {
       'start',
       '-W',
       '-n',
-      '$androidProductionAudioCallAppPackage/.MainActivity',
+      '$androidProductionAudioCallAppPackage/com.mknoon.app.MainActivity',
     ]);
     expect(
       invocation.timeout.compareTo(const Duration(minutes: 5)),
@@ -521,7 +530,7 @@ void main() {
             '-W',
             '--activity-reorder-to-front',
             '-n',
-            '$androidProductionAudioCallAppPackage/.MainActivity',
+            '$androidProductionAudioCallAppPackage/com.mknoon.app.MainActivity',
           ]),
         ),
       );
@@ -1307,15 +1316,15 @@ safe lifecycle marker
       androidProductionAudioCallNativeStateReleased('''
 Call TC@1:
   state=ACTIVE
-  targetPhoneAccount=com.mknoon.app/.MknoonConnectionService
-''', packageName: 'com.mknoon.app'),
+  targetPhoneAccount=com.mknoon.sims.productionaudio/.MknoonConnectionService
+''', packageName: 'com.mknoon.sims.productionaudio'),
       isFalse,
     );
     expect(
       androidProductionAudioCallNativeStateReleased('''
-PhoneAccount: com.mknoon.app/.MknoonConnectionService
+PhoneAccount: com.mknoon.sims.productionaudio/.MknoonConnectionService
 Calls:
-''', packageName: 'com.mknoon.app'),
+''', packageName: 'com.mknoon.sims.productionaudio'),
       isTrue,
     );
   });
@@ -1333,8 +1342,8 @@ Calls:
   Call TC@399:
     state=ACTIVE
 $filler
-    targetPhoneAccount=com.mknoon.app/.MknoonConnectionService
-''', packageName: 'com.mknoon.app'),
+    targetPhoneAccount=com.mknoon.sims.productionaudio/.MknoonConnectionService
+''', packageName: 'com.mknoon.sims.productionaudio'),
         isFalse,
       );
 
@@ -1346,8 +1355,8 @@ Calls:
     targetPhoneAccount=com.example.other/.ConnectionService
   Call TC@399:
     state=DISCONNECTED
-    targetPhoneAccount=com.mknoon.app/.MknoonConnectionService
-''', packageName: 'com.mknoon.app'),
+    targetPhoneAccount=com.mknoon.sims.productionaudio/.MknoonConnectionService
+''', packageName: 'com.mknoon.sims.productionaudio'),
         isTrue,
       );
     },
@@ -1380,7 +1389,7 @@ Calls:
   Call TC@$state:
     mState=STATE_$state
 $distantFields
-    targetPhoneAccount=com.mknoon.app/.MknoonConnectionService
+    targetPhoneAccount=com.mknoon.sims.productionaudio/.MknoonConnectionService
 ''', packageName: androidProductionAudioCallAppPackage),
         isFalse,
         reason: '$state must remain a live/nonterminal Telecom state',
@@ -1394,7 +1403,7 @@ $distantFields
 Calls:
   Call TC@future:
     state=FUTURE_ANDROID_CALL_STATE
-    targetPhoneAccount=com.mknoon.app/.MknoonConnectionService
+    targetPhoneAccount=com.mknoon.sims.productionaudio/.MknoonConnectionService
 ''', packageName: androidProductionAudioCallAppPackage),
       isFalse,
     );
@@ -1469,6 +1478,9 @@ Calls:
         mode: 'major',
         environment: const <String, String>{
           'GOTOOLCHAIN': 'auto',
+          'ANDROID_APP_PACKAGE': 'com.mknoon.app',
+          'SIMS_APP_ID': 'com.mknoon.app',
+          'ORG_GRADLE_PROJECT_androidApplicationId': 'com.mknoon.app',
           'RELIABILITY_MULTI_DEVICE_IDS': 'pixel,emulator-5554',
           'TURN_CREDENTIAL_URLS': 'turn:203.0.113.10:3478?transport=udp',
           'TURN_CREDENTIAL_PRIMARY_SECRET_B64':
@@ -1480,6 +1492,15 @@ Calls:
       expect(result, 0);
       expect(fixtureStops, 1);
       expect(centralEnvironments, hasLength(2));
+      for (final child in centralEnvironments) {
+        for (final name in <String>[
+          'ANDROID_APP_PACKAGE',
+          'SIMS_APP_ID',
+          'ORG_GRADLE_PROJECT_androidApplicationId',
+        ]) {
+          expect(child[name], 'com.mknoon.sims.productionaudio');
+        }
+      }
       final everyChild = <Map<String, String>>[
         fixtureEnvironment!,
         ...centralEnvironments,
@@ -1642,7 +1663,7 @@ SystemAndroidProductionAudioCallCampaignDriver _driverForStartDispatch(
 const _startVoiceCallUi = '''
 <hierarchy>
   <node text="" content-desc="Start voice call" clickable="true"
-      enabled="true" visible-to-user="true" package="com.mknoon.app"
+      enabled="true" visible-to-user="true" package="com.mknoon.sims.productionaudio"
       bounds="[100,200][300,400]" />
 </hierarchy>
 ''';
@@ -1650,7 +1671,7 @@ const _startVoiceCallUi = '''
 const _startingVoiceCallUi = '''
 <hierarchy>
   <node text="" content-desc="Starting voice call" clickable="false"
-      enabled="false" visible-to-user="true" package="com.mknoon.app"
+      enabled="false" visible-to-user="true" package="com.mknoon.sims.productionaudio"
       bounds="[100,200][300,400]" />
 </hierarchy>
 ''';
@@ -1658,7 +1679,7 @@ const _startingVoiceCallUi = '''
 const _cancelCallUi = '''
 <hierarchy>
   <node text="" content-desc="Cancel call" clickable="true"
-      enabled="true" visible-to-user="true" package="com.mknoon.app"
+      enabled="true" visible-to-user="true" package="com.mknoon.sims.productionaudio"
       bounds="[100,200][300,400]" />
 </hierarchy>
 ''';
@@ -1667,7 +1688,7 @@ const _startVoiceCallFailureUi = '''
 <hierarchy>
   <node text="Couldn&apos;t start voice call. Please try again."
       content-desc="" clickable="false" enabled="true"
-      visible-to-user="true" package="com.mknoon.app"
+      visible-to-user="true" package="com.mknoon.sims.productionaudio"
       bounds="[10,20][600,120]" />
 </hierarchy>
 ''';

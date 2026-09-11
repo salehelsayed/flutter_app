@@ -1,0 +1,3119 @@
+{
+  "capturedAt": "2026-09-08T16:51:53.025050+00:00",
+  "deviceContextProvidedByRoot": {
+    "androidAdmissionCause": "bridge_unavailable",
+    "androidAdmissionDisposition": "deferred",
+    "androidAdmissionDurationMs": 949,
+    "androidDroppedEventCount": 0,
+    "androidFinishDurationMs": 981,
+    "androidFinishOutcome": "pending",
+    "androidProvisionalTraceId": "0e714018-ba56-4aa6-8b8c-863af7c896e4",
+    "androidQueuedEventCount": 209,
+    "installedSourceDigest": "f1899f0d63e1724b",
+    "iosDroppedEventCount": 0,
+    "iosQueuedEventCount": 0,
+    "scope": "Device observations reported by the parent QA owner; not independently present in the relay projection at capture time.",
+    "secondWakeSameCause": true
+  },
+  "health": {
+    "metricStatus": "success",
+    "metrics": [
+      {
+        "labels": {
+          "__name__": "relay_call_diagnostics_events_total",
+          "outcome": "accepted"
+        },
+        "scrapeAtEpochSeconds": 1788886312.022,
+        "value": "122"
+      },
+      {
+        "labels": {
+          "__name__": "relay_call_diagnostics_events_total",
+          "outcome": "queue_full"
+        },
+        "scrapeAtEpochSeconds": 1788886312.022,
+        "value": "0"
+      },
+      {
+        "labels": {
+          "__name__": "relay_call_diagnostics_events_total",
+          "outcome": "quota_exceeded"
+        },
+        "scrapeAtEpochSeconds": 1788886312.022,
+        "value": "0"
+      },
+      {
+        "labels": {
+          "__name__": "relay_call_diagnostics_events_total",
+          "outcome": "rejected"
+        },
+        "scrapeAtEpochSeconds": 1788886312.022,
+        "value": "0"
+      },
+      {
+        "labels": {
+          "__name__": "relay_call_diagnostics_events_total",
+          "outcome": "sink_unavailable"
+        },
+        "scrapeAtEpochSeconds": 1788886312.022,
+        "value": "0"
+      },
+      {
+        "labels": {
+          "__name__": "relay_call_diagnostics_storage_ready"
+        },
+        "scrapeAtEpochSeconds": 1788886312.022,
+        "value": "1"
+      }
+    ],
+    "services": [
+      {
+        "ActiveEnterTimestamp": "",
+        "ActiveState": "inactive",
+        "Id": "call-diagnostics-monitor.service",
+        "NRestarts": "0",
+        "SubState": "dead"
+      },
+      {
+        "ActiveEnterTimestamp": "Tue 2026-09-08 11:09:01 UTC",
+        "ActiveState": "active",
+        "Id": "coturn.service",
+        "NRestarts": "0",
+        "SubState": "running"
+      },
+      {
+        "ActiveEnterTimestamp": "Thu 2026-03-19 22:48:42 UTC",
+        "ActiveState": "active",
+        "Id": "prometheus.service",
+        "NRestarts": "0",
+        "SubState": "running"
+      },
+      {
+        "ActiveEnterTimestamp": "Tue 2026-09-08 16:19:10 UTC",
+        "ActiveState": "active",
+        "Id": "relay-server.service",
+        "NRestarts": "0",
+        "SubState": "running"
+      },
+      {
+        "ActiveEnterTimestamp": "Tue 2026-09-08 14:53:09 UTC",
+        "ActiveState": "active",
+        "Id": "call-diagnostics-monitor.timer",
+        "SubState": "waiting"
+      }
+    ]
+  },
+  "lookbackHours": 3,
+  "overview": {
+    "alerts": [],
+    "anyEndpointReportedMediaTraceCount": 1,
+    "atRecordLimit": false,
+    "bothEndpointsReportedMediaTraceCount": 0,
+    "bothEndpointsTerminalTraceCount": 0,
+    "calleeTerminalTraceCount": 1,
+    "callerTerminalTraceCount": 8,
+    "counts": {
+      "discardLedgerSaturatedRecords": 0,
+      "droppedEvents": 0,
+      "legacyQuotaRejectionAttempts": 1062,
+      "providerInvocations": 20,
+      "recordsWithUnknownHistoricalLoss": 1,
+      "retainedEvents": 1096,
+      "turnCredentialsMinted": 4
+    },
+    "evidenceIncomplete": true,
+    "invalidOrUnreadableRecordCount": 0,
+    "legacyTraceCount": 0,
+    "lossCountScope": "droppedEvents counts durable distinct permanent trace-cap refusals within a bounded ledger. Saturated ledgers are a lower bound. Legacy quota-rejection attempts include retries and do not establish a unique lost-event count.",
+    "mailboxAdmittedTraceCount": 8,
+    "missingEndpointTerminalTraceCount": 10,
+    "neutralTerminalTraceCount": 7,
+    "observedTraceCount": 10,
+    "phaseFailureEventCounts": {
+      "audio": 5,
+      "authority": 8,
+      "cleanup": 3,
+      "presentation": 3,
+      "signaling": 14,
+      "terminal": 1
+    },
+    "preflightRateScope": "Distinct traces with a failed preflight phase or client terminal preflight_failed, divided by observed client attempt/caller traces plus any preflight-failure traces. Duplicate phase/terminal reports count once. Missing attempts remain outside this retained-evidence denominator.",
+    "rates": {
+      "answered_without_verified_media": {
+        "alertEligible": true,
+        "alertThreshold": 0.1,
+        "denominator": 9,
+        "minimumSamples": 5,
+        "numerator": 0,
+        "rate": 0.0
+      },
+      "cleanup_failure": {
+        "alertEligible": true,
+        "alertThreshold": 0.2,
+        "denominator": 8,
+        "minimumSamples": 5,
+        "numerator": 0,
+        "rate": 0.0
+      },
+      "credential_failure": {
+        "alertEligible": false,
+        "alertThreshold": 0.2,
+        "denominator": 2,
+        "minimumSamples": 5,
+        "numerator": 0,
+        "rate": 0.0
+      },
+      "drop_after_media": {
+        "alertEligible": false,
+        "alertThreshold": 0.1,
+        "denominator": 1,
+        "minimumSamples": 5,
+        "numerator": 0,
+        "rate": 0.0
+      },
+      "preflight_rejection": {
+        "alertEligible": true,
+        "alertThreshold": 0.2,
+        "denominator": 9,
+        "minimumSamples": 5,
+        "numerator": 1,
+        "rate": 0.1111111111111111
+      },
+      "provider_failure": {
+        "alertEligible": true,
+        "alertThreshold": 0.2,
+        "denominator": 20,
+        "minimumSamples": 5,
+        "numerator": 0,
+        "rate": 0.0
+      },
+      "technical_setup_failure": {
+        "alertEligible": false,
+        "alertThreshold": 0.2,
+        "denominator": 1,
+        "minimumSamples": 5,
+        "numerator": 0,
+        "rate": 0.0
+      },
+      "telemetry_loss": {
+        "alertEligible": true,
+        "alertThreshold": 1e-06,
+        "denominator": 1096,
+        "minimumSamples": 5,
+        "numerator": 0,
+        "rate": 0.0,
+        "rateIsLowerBound": true
+      },
+      "withdrawal_unknown_origin": {
+        "alertEligible": false,
+        "alertThreshold": 0.2,
+        "denominator": 4,
+        "minimumSamples": 5,
+        "numerator": 0,
+        "rate": 0.0
+      }
+    },
+    "recordLimit": 100,
+    "registrationWithdrawalOperationsByOrigin": {
+      "native_lifecycle_failed": 4
+    },
+    "schemaVersion": 1,
+    "scope": "Opted-in retained records only. Client media is reported evidence; relay admission, push submission, and TURN minting do not prove audio. Coturn allocations remain aggregate.",
+    "technicalRateScope": "Post-preflight signaling/native-answer/media setup failures among distinct opted-in client-reported classified terminal traces. Preflight-only failures and declines/cancels/busy/no-answer are excluded from this denominator. Phase failures can recover and are counted separately. Minimum5 observations before rate alerts.",
+    "telemetryLossCountExact": false,
+    "terminalRecordOutcomes": {
+      "canceled": 2,
+      "completed_after_media": 1,
+      "no_answer": 5,
+      "preflight_failed": 1
+    },
+    "tracesWithoutTerminalRecord": 1,
+    "unclassifiedTerminalTraceCount": 0,
+    "unknownEndpointRoleTraceCount": 1
+  },
+  "proofSummary": {
+    "ackEventCount": 0,
+    "androidAdmissionEvidencePresent": false,
+    "forbiddenExportKeyCount": 0,
+    "nativeProvisionalRecordPresent": false,
+    "providerInvocationCount": 2,
+    "schemaRejectedRecordCount": 0,
+    "serverCommitCount": 2,
+    "serverTimeline": [
+      {
+        "action": "commit",
+        "occurredAt": "2026-09-08T16:49:06.542+00:00",
+        "outcome": "ok",
+        "reason": "none",
+        "receivedAt": "2026-09-08T16:49:06.559+00:00",
+        "stage": "signaling",
+        "values": {
+          "eventCount": 1,
+          "storeCommitted": true
+        }
+      },
+      {
+        "action": "dispatch",
+        "occurredAt": "2026-09-08T16:49:06.544+00:00",
+        "outcome": "started",
+        "reason": "none",
+        "receivedAt": "2026-09-08T16:49:06.569+00:00",
+        "stage": "push",
+        "values": {
+          "platform": "android",
+          "providerInvoked": true,
+          "retry": 0
+        }
+      },
+      {
+        "action": "dispatch",
+        "occurredAt": "2026-09-08T16:49:06.637+00:00",
+        "outcome": "ok",
+        "reason": "none",
+        "receivedAt": "2026-09-08T16:49:06.637+00:00",
+        "stage": "push",
+        "values": {
+          "platform": "android",
+          "providerInvoked": true,
+          "retry": 0
+        }
+      },
+      {
+        "action": "finish",
+        "occurredAt": "2026-09-08T16:49:06.637+00:00",
+        "outcome": "ok",
+        "reason": "none",
+        "receivedAt": "2026-09-08T16:49:06.647+00:00",
+        "stage": "push",
+        "values": {}
+      },
+      {
+        "action": "response",
+        "occurredAt": "2026-09-08T16:49:06.637+00:00",
+        "outcome": "ok",
+        "reason": "none",
+        "receivedAt": "2026-09-08T16:49:06.666+00:00",
+        "stage": "signaling",
+        "values": {
+          "responseWritten": true
+        }
+      },
+      {
+        "action": "commit",
+        "occurredAt": "2026-09-08T16:49:36.568+00:00",
+        "outcome": "ok",
+        "reason": "none",
+        "receivedAt": "2026-09-08T16:49:36.585+00:00",
+        "stage": "signaling",
+        "values": {
+          "eventCount": 2,
+          "storeCommitted": true
+        }
+      },
+      {
+        "action": "dispatch",
+        "occurredAt": "2026-09-08T16:49:36.570+00:00",
+        "outcome": "started",
+        "reason": "none",
+        "receivedAt": "2026-09-08T16:49:36.596+00:00",
+        "stage": "push",
+        "values": {
+          "platform": "android",
+          "providerInvoked": true,
+          "retry": 0
+        }
+      },
+      {
+        "action": "dispatch",
+        "occurredAt": "2026-09-08T16:49:36.639+00:00",
+        "outcome": "ok",
+        "reason": "none",
+        "receivedAt": "2026-09-08T16:49:36.645+00:00",
+        "stage": "push",
+        "values": {
+          "platform": "android",
+          "providerInvoked": true,
+          "retry": 0
+        }
+      },
+      {
+        "action": "finish",
+        "occurredAt": "2026-09-08T16:49:36.639+00:00",
+        "outcome": "ok",
+        "reason": "none",
+        "receivedAt": "2026-09-08T16:49:36.667+00:00",
+        "stage": "push",
+        "values": {}
+      },
+      {
+        "action": "response",
+        "occurredAt": "2026-09-08T16:49:36.640+00:00",
+        "outcome": "ok",
+        "reason": "none",
+        "receivedAt": "2026-09-08T16:49:36.711+00:00",
+        "stage": "signaling",
+        "values": {
+          "responseWritten": true
+        }
+      }
+    ],
+    "sourceRoleCounts": [
+      {
+        "count": 41,
+        "role": "caller",
+        "source": "flutter"
+      },
+      {
+        "count": 5,
+        "role": "caller",
+        "source": "ios"
+      },
+      {
+        "count": 38,
+        "role": "server",
+        "source": "relay"
+      }
+    ],
+    "turnStageEventCount": 0
+  },
+  "scope": "One read-only bounded operator capture, exact two diagnostic trace IDs, 3-hour aggregate and fixed health fields. No private author maps, raw payloads, credentials or phone logs.",
+  "traces": [
+    {
+      "recordExists": true,
+      "report": {
+        "admissionReported": false,
+        "alerts": [],
+        "answerReported": false,
+        "anyEndpointReportedMediaTraceCount": 0,
+        "atRecordLimit": false,
+        "authorityJoinAtRecordLimit": false,
+        "authorityJoinInvalidRecordCount": 0,
+        "bothEndpointsReportedMediaTraceCount": 0,
+        "bothEndpointsTerminalTraceCount": 0,
+        "calleeTerminalTraceCount": 0,
+        "callerTerminalTraceCount": 1,
+        "cleanupReported": true,
+        "counts": {
+          "discardLedgerSaturatedRecords": 0,
+          "droppedEvents": 0,
+          "legacyQuotaRejectionAttempts": 0,
+          "providerInvocations": 2,
+          "recordsWithUnknownHistoricalLoss": 0,
+          "retainedEvents": 84
+        },
+        "endpointCompleteness": {
+          "calleeReportedMedia": false,
+          "calleeTerminal": false,
+          "callerReportedMedia": false,
+          "callerTerminal": true,
+          "legacy": false
+        },
+        "events": [
+          {
+            "event": {
+              "action": "lookup",
+              "build": "7c70c5616c335ee1a3435730a153946466b73b636a138a1fef3ae78732900865",
+              "elapsedMs": 0,
+              "eventId": "d1be8b26-c6fe-490d-96c2-6745e9e96f67",
+              "occurredAtMs": 1788886146102,
+              "outcome": "started",
+              "reason": "none",
+              "requestId": "a186f226-8879-4ed1-a0cd-30b6053d8301",
+              "role": "server",
+              "runId": "6fde0178-e86d-43dc-9e76-b8510e0709b8",
+              "schemaVersion": 1,
+              "sequence": 39,
+              "source": "relay",
+              "stage": "authority",
+              "traceId": "5879d7e3-35a3-49b7-9bcb-4760b9d124c3",
+              "values": {
+                "authorityKind": "endpoint"
+              }
+            },
+            "receivedAtMs": 1788886146107
+          },
+          {
+            "event": {
+              "action": "lookup",
+              "build": "7c70c5616c335ee1a3435730a153946466b73b636a138a1fef3ae78732900865",
+              "elapsedMs": 0,
+              "eventId": "336b18bb-11f6-4fca-8d15-9cf33f2c2d3d",
+              "occurredAtMs": 1788886146103,
+              "outcome": "ok",
+              "parentOperationId": "23ce49d2-1837-4959-a63a-574763152d26",
+              "reason": "none",
+              "requestId": "a186f226-8879-4ed1-a0cd-30b6053d8301",
+              "role": "server",
+              "runId": "6fde0178-e86d-43dc-9e76-b8510e0709b8",
+              "schemaVersion": 1,
+              "sequence": 40,
+              "source": "relay",
+              "stage": "authority",
+              "traceId": "5879d7e3-35a3-49b7-9bcb-4760b9d124c3",
+              "values": {
+                "authorityKind": "endpoint",
+                "found": true
+              }
+            },
+            "receivedAtMs": 1788886146118
+          },
+          {
+            "event": {
+              "action": "response",
+              "build": "7c70c5616c335ee1a3435730a153946466b73b636a138a1fef3ae78732900865",
+              "elapsedMs": 0,
+              "eventId": "77092303-a5f9-4c57-9b06-a27a89c6fce9",
+              "occurredAtMs": 1788886146103,
+              "outcome": "ok",
+              "parentOperationId": "23ce49d2-1837-4959-a63a-574763152d26",
+              "reason": "none",
+              "requestId": "a186f226-8879-4ed1-a0cd-30b6053d8301",
+              "role": "server",
+              "runId": "6fde0178-e86d-43dc-9e76-b8510e0709b8",
+              "schemaVersion": 1,
+              "sequence": 41,
+              "source": "relay",
+              "stage": "authority",
+              "traceId": "5879d7e3-35a3-49b7-9bcb-4760b9d124c3",
+              "values": {
+                "authorityKind": "endpoint",
+                "responseWritten": true
+              }
+            },
+            "receivedAtMs": 1788886146128
+          },
+          {
+            "event": {
+              "action": "publish",
+              "build": "7c70c5616c335ee1a3435730a153946466b73b636a138a1fef3ae78732900865",
+              "elapsedMs": 0,
+              "eventId": "ffc9a4dd-816b-484a-83c2-d995d2ced919",
+              "occurredAtMs": 1788886146160,
+              "operationId": "b7f61a0b-1ec2-4bf6-88d9-6ba8892f1f92",
+              "outcome": "started",
+              "reason": "resume_refresh",
+              "requestId": "0bcaf8a5-ce95-4a1d-a2c0-0d9bc4d0f089",
+              "role": "server",
+              "runId": "6fde0178-e86d-43dc-9e76-b8510e0709b8",
+              "schemaVersion": 1,
+              "sequence": 42,
+              "source": "relay",
+              "stage": "authority",
+              "traceId": "5879d7e3-35a3-49b7-9bcb-4760b9d124c3",
+              "values": {
+                "authorityKind": "ios_voip_token"
+              }
+            },
+            "receivedAtMs": 1788886146161
+          },
+          {
+            "event": {
+              "action": "publish",
+              "build": "7c70c5616c335ee1a3435730a153946466b73b636a138a1fef3ae78732900865",
+              "elapsedMs": 0,
+              "eventId": "d4636c70-58b4-4699-b509-53d19742eefd",
+              "occurredAtMs": 1788886146161,
+              "operationId": "b7f61a0b-1ec2-4bf6-88d9-6ba8892f1f92",
+              "outcome": "ok",
+              "reason": "resume_refresh",
+              "requestId": "0bcaf8a5-ce95-4a1d-a2c0-0d9bc4d0f089",
+              "role": "server",
+              "runId": "6fde0178-e86d-43dc-9e76-b8510e0709b8",
+              "schemaVersion": 1,
+              "sequence": 43,
+              "source": "relay",
+              "stage": "authority",
+              "traceId": "5879d7e3-35a3-49b7-9bcb-4760b9d124c3",
+              "values": {
+                "authorityKind": "ios_voip_token"
+              }
+            },
+            "receivedAtMs": 1788886146176
+          },
+          {
+            "event": {
+              "action": "response",
+              "build": "7c70c5616c335ee1a3435730a153946466b73b636a138a1fef3ae78732900865",
+              "elapsedMs": 0,
+              "eventId": "7d42a797-5160-4e52-90d8-6bb3da44c3c2",
+              "occurredAtMs": 1788886146161,
+              "operationId": "b7f61a0b-1ec2-4bf6-88d9-6ba8892f1f92",
+              "outcome": "ok",
+              "reason": "none",
+              "requestId": "0bcaf8a5-ce95-4a1d-a2c0-0d9bc4d0f089",
+              "role": "server",
+              "runId": "6fde0178-e86d-43dc-9e76-b8510e0709b8",
+              "schemaVersion": 1,
+              "sequence": 44,
+              "source": "relay",
+              "stage": "authority",
+              "traceId": "5879d7e3-35a3-49b7-9bcb-4760b9d124c3",
+              "values": {
+                "authorityKind": "ios_voip_token",
+                "responseWritten": true
+              }
+            },
+            "receivedAtMs": 1788886146185
+          },
+          {
+            "event": {
+              "action": "publish",
+              "build": "7c70c5616c335ee1a3435730a153946466b73b636a138a1fef3ae78732900865",
+              "elapsedMs": 0,
+              "eventId": "3814b633-bcb6-4a3e-b3d5-fe36290fe03b",
+              "occurredAtMs": 1788886146208,
+              "operationId": "b7f61a0b-1ec2-4bf6-88d9-6ba8892f1f92",
+              "outcome": "started",
+              "reason": "resume_refresh",
+              "requestId": "4308ec79-e7d5-4a48-ad4d-0a2f99f057f3",
+              "role": "server",
+              "runId": "6fde0178-e86d-43dc-9e76-b8510e0709b8",
+              "schemaVersion": 1,
+              "sequence": 45,
+              "source": "relay",
+              "stage": "authority",
+              "traceId": "5879d7e3-35a3-49b7-9bcb-4760b9d124c3",
+              "values": {
+                "authorityKind": "wake_grant"
+              }
+            },
+            "receivedAtMs": 1788886146208
+          },
+          {
+            "event": {
+              "action": "publish",
+              "build": "7c70c5616c335ee1a3435730a153946466b73b636a138a1fef3ae78732900865",
+              "elapsedMs": 0,
+              "eventId": "7cf6a67f-4710-4ad9-8bf8-4f9e3b5f82d9",
+              "occurredAtMs": 1788886146208,
+              "operationId": "b7f61a0b-1ec2-4bf6-88d9-6ba8892f1f92",
+              "outcome": "ok",
+              "reason": "resume_refresh",
+              "requestId": "4308ec79-e7d5-4a48-ad4d-0a2f99f057f3",
+              "role": "server",
+              "runId": "6fde0178-e86d-43dc-9e76-b8510e0709b8",
+              "schemaVersion": 1,
+              "sequence": 46,
+              "source": "relay",
+              "stage": "authority",
+              "traceId": "5879d7e3-35a3-49b7-9bcb-4760b9d124c3",
+              "values": {
+                "authorityKind": "wake_grant"
+              }
+            },
+            "receivedAtMs": 1788886146226
+          },
+          {
+            "event": {
+              "action": "response",
+              "build": "7c70c5616c335ee1a3435730a153946466b73b636a138a1fef3ae78732900865",
+              "elapsedMs": 0,
+              "eventId": "314b1d4f-e2a8-48a6-b1b7-4dbd90a98fba",
+              "occurredAtMs": 1788886146208,
+              "operationId": "b7f61a0b-1ec2-4bf6-88d9-6ba8892f1f92",
+              "outcome": "ok",
+              "reason": "none",
+              "requestId": "4308ec79-e7d5-4a48-ad4d-0a2f99f057f3",
+              "role": "server",
+              "runId": "6fde0178-e86d-43dc-9e76-b8510e0709b8",
+              "schemaVersion": 1,
+              "sequence": 47,
+              "source": "relay",
+              "stage": "authority",
+              "traceId": "5879d7e3-35a3-49b7-9bcb-4760b9d124c3",
+              "values": {
+                "authorityKind": "wake_grant",
+                "responseWritten": true
+              }
+            },
+            "receivedAtMs": 1788886146235
+          },
+          {
+            "event": {
+              "action": "publish",
+              "build": "7c70c5616c335ee1a3435730a153946466b73b636a138a1fef3ae78732900865",
+              "elapsedMs": 0,
+              "eventId": "d1008c6f-545d-4d68-b625-3344654567f1",
+              "occurredAtMs": 1788886146253,
+              "operationId": "b7f61a0b-1ec2-4bf6-88d9-6ba8892f1f92",
+              "outcome": "started",
+              "reason": "resume_refresh",
+              "requestId": "5c5560dc-8632-44af-b35e-c5748f7c5733",
+              "role": "server",
+              "runId": "6fde0178-e86d-43dc-9e76-b8510e0709b8",
+              "schemaVersion": 1,
+              "sequence": 48,
+              "source": "relay",
+              "stage": "authority",
+              "traceId": "5879d7e3-35a3-49b7-9bcb-4760b9d124c3",
+              "values": {
+                "authorityKind": "endpoint"
+              }
+            },
+            "receivedAtMs": 1788886146253
+          },
+          {
+            "event": {
+              "action": "publish",
+              "build": "7c70c5616c335ee1a3435730a153946466b73b636a138a1fef3ae78732900865",
+              "elapsedMs": 0,
+              "eventId": "2e3b587b-0eb4-4c02-b1cb-72604cc96efc",
+              "occurredAtMs": 1788886146254,
+              "operationId": "b7f61a0b-1ec2-4bf6-88d9-6ba8892f1f92",
+              "outcome": "ok",
+              "reason": "resume_refresh",
+              "requestId": "5c5560dc-8632-44af-b35e-c5748f7c5733",
+              "role": "server",
+              "runId": "6fde0178-e86d-43dc-9e76-b8510e0709b8",
+              "schemaVersion": 1,
+              "sequence": 49,
+              "source": "relay",
+              "stage": "authority",
+              "traceId": "5879d7e3-35a3-49b7-9bcb-4760b9d124c3",
+              "values": {
+                "authorityKind": "endpoint"
+              }
+            },
+            "receivedAtMs": 1788886146269
+          },
+          {
+            "event": {
+              "action": "response",
+              "build": "7c70c5616c335ee1a3435730a153946466b73b636a138a1fef3ae78732900865",
+              "elapsedMs": 0,
+              "eventId": "95b4ceff-1570-4a0e-bb4c-aafea1c8e6ad",
+              "occurredAtMs": 1788886146254,
+              "operationId": "b7f61a0b-1ec2-4bf6-88d9-6ba8892f1f92",
+              "outcome": "ok",
+              "reason": "none",
+              "requestId": "5c5560dc-8632-44af-b35e-c5748f7c5733",
+              "role": "server",
+              "runId": "6fde0178-e86d-43dc-9e76-b8510e0709b8",
+              "schemaVersion": 1,
+              "sequence": 50,
+              "source": "relay",
+              "stage": "authority",
+              "traceId": "5879d7e3-35a3-49b7-9bcb-4760b9d124c3",
+              "values": {
+                "authorityKind": "endpoint",
+                "responseWritten": true
+              }
+            },
+            "receivedAtMs": 1788886146278
+          },
+          {
+            "event": {
+              "action": "lookup",
+              "build": "7c70c5616c335ee1a3435730a153946466b73b636a138a1fef3ae78732900865",
+              "elapsedMs": 0,
+              "eventId": "fcc27f38-05b6-4de4-b262-737e9f5769af",
+              "occurredAtMs": 1788886146300,
+              "outcome": "started",
+              "reason": "none",
+              "requestId": "93d0b3d6-7183-4549-b4ce-a537e35b1fe4",
+              "role": "server",
+              "runId": "6fde0178-e86d-43dc-9e76-b8510e0709b8",
+              "schemaVersion": 1,
+              "sequence": 51,
+              "source": "relay",
+              "stage": "authority",
+              "traceId": "5879d7e3-35a3-49b7-9bcb-4760b9d124c3",
+              "values": {
+                "authorityKind": "endpoint"
+              }
+            },
+            "receivedAtMs": 1788886146301
+          },
+          {
+            "event": {
+              "action": "lookup",
+              "build": "7c70c5616c335ee1a3435730a153946466b73b636a138a1fef3ae78732900865",
+              "elapsedMs": 0,
+              "eventId": "ec6be7b9-53c1-41f2-8eed-2f5541b9514b",
+              "occurredAtMs": 1788886146300,
+              "outcome": "ok",
+              "parentOperationId": "23ce49d2-1837-4959-a63a-574763152d26",
+              "reason": "none",
+              "requestId": "93d0b3d6-7183-4549-b4ce-a537e35b1fe4",
+              "role": "server",
+              "runId": "6fde0178-e86d-43dc-9e76-b8510e0709b8",
+              "schemaVersion": 1,
+              "sequence": 52,
+              "source": "relay",
+              "stage": "authority",
+              "traceId": "5879d7e3-35a3-49b7-9bcb-4760b9d124c3",
+              "values": {
+                "authorityKind": "endpoint",
+                "found": true
+              }
+            },
+            "receivedAtMs": 1788886146310
+          },
+          {
+            "event": {
+              "action": "response",
+              "build": "7c70c5616c335ee1a3435730a153946466b73b636a138a1fef3ae78732900865",
+              "elapsedMs": 0,
+              "eventId": "e612071a-a845-4b1a-9344-d79760839918",
+              "occurredAtMs": 1788886146301,
+              "outcome": "ok",
+              "parentOperationId": "23ce49d2-1837-4959-a63a-574763152d26",
+              "reason": "none",
+              "requestId": "93d0b3d6-7183-4549-b4ce-a537e35b1fe4",
+              "role": "server",
+              "runId": "6fde0178-e86d-43dc-9e76-b8510e0709b8",
+              "schemaVersion": 1,
+              "sequence": 53,
+              "source": "relay",
+              "stage": "authority",
+              "traceId": "5879d7e3-35a3-49b7-9bcb-4760b9d124c3",
+              "values": {
+                "authorityKind": "endpoint",
+                "responseWritten": true
+              }
+            },
+            "receivedAtMs": 1788886146322
+          },
+          {
+            "event": {
+              "action": "lookup",
+              "build": "7c70c5616c335ee1a3435730a153946466b73b636a138a1fef3ae78732900865",
+              "elapsedMs": 0,
+              "eventId": "3f568e05-b25f-4e91-a756-75efe855298e",
+              "occurredAtMs": 1788886146354,
+              "outcome": "started",
+              "reason": "none",
+              "requestId": "f9243d84-cbb3-41ad-a895-5d0c51892578",
+              "role": "server",
+              "runId": "6fde0178-e86d-43dc-9e76-b8510e0709b8",
+              "schemaVersion": 1,
+              "sequence": 54,
+              "source": "relay",
+              "stage": "authority",
+              "traceId": "5879d7e3-35a3-49b7-9bcb-4760b9d124c3",
+              "values": {
+                "authorityKind": "endpoint"
+              }
+            },
+            "receivedAtMs": 1788886146355
+          },
+          {
+            "event": {
+              "action": "lookup",
+              "build": "7c70c5616c335ee1a3435730a153946466b73b636a138a1fef3ae78732900865",
+              "elapsedMs": 0,
+              "eventId": "440314ed-071d-46f7-883f-9709e0353fa5",
+              "occurredAtMs": 1788886146355,
+              "outcome": "ok",
+              "parentOperationId": "23ce49d2-1837-4959-a63a-574763152d26",
+              "reason": "none",
+              "requestId": "f9243d84-cbb3-41ad-a895-5d0c51892578",
+              "role": "server",
+              "runId": "6fde0178-e86d-43dc-9e76-b8510e0709b8",
+              "schemaVersion": 1,
+              "sequence": 55,
+              "source": "relay",
+              "stage": "authority",
+              "traceId": "5879d7e3-35a3-49b7-9bcb-4760b9d124c3",
+              "values": {
+                "authorityKind": "endpoint",
+                "found": true
+              }
+            },
+            "receivedAtMs": 1788886146365
+          },
+          {
+            "event": {
+              "action": "response",
+              "build": "7c70c5616c335ee1a3435730a153946466b73b636a138a1fef3ae78732900865",
+              "elapsedMs": 0,
+              "eventId": "fa485f11-74fa-4a80-9b1c-3b5b2f3e9868",
+              "occurredAtMs": 1788886146355,
+              "outcome": "ok",
+              "parentOperationId": "23ce49d2-1837-4959-a63a-574763152d26",
+              "reason": "none",
+              "requestId": "f9243d84-cbb3-41ad-a895-5d0c51892578",
+              "role": "server",
+              "runId": "6fde0178-e86d-43dc-9e76-b8510e0709b8",
+              "schemaVersion": 1,
+              "sequence": 56,
+              "source": "relay",
+              "stage": "authority",
+              "traceId": "5879d7e3-35a3-49b7-9bcb-4760b9d124c3",
+              "values": {
+                "authorityKind": "endpoint",
+                "responseWritten": true
+              }
+            },
+            "receivedAtMs": 1788886146374
+          },
+          {
+            "event": {
+              "action": "lookup",
+              "build": "7c70c5616c335ee1a3435730a153946466b73b636a138a1fef3ae78732900865",
+              "elapsedMs": 0,
+              "eventId": "1474632a-6ed1-4954-81c5-13a22f1a240b",
+              "occurredAtMs": 1788886146443,
+              "outcome": "started",
+              "reason": "none",
+              "requestId": "704b73e9-7afe-4113-aa23-21dea9ff69d1",
+              "role": "server",
+              "runId": "6fde0178-e86d-43dc-9e76-b8510e0709b8",
+              "schemaVersion": 1,
+              "sequence": 57,
+              "source": "relay",
+              "stage": "authority",
+              "traceId": "5879d7e3-35a3-49b7-9bcb-4760b9d124c3",
+              "values": {
+                "authorityKind": "endpoint"
+              }
+            },
+            "receivedAtMs": 1788886146444
+          },
+          {
+            "event": {
+              "action": "lookup",
+              "build": "7c70c5616c335ee1a3435730a153946466b73b636a138a1fef3ae78732900865",
+              "elapsedMs": 0,
+              "eventId": "2aa7d3f7-6966-47ea-ac6b-4c78d4b79292",
+              "occurredAtMs": 1788886146444,
+              "outcome": "ok",
+              "parentOperationId": "23ce49d2-1837-4959-a63a-574763152d26",
+              "reason": "none",
+              "requestId": "704b73e9-7afe-4113-aa23-21dea9ff69d1",
+              "role": "server",
+              "runId": "6fde0178-e86d-43dc-9e76-b8510e0709b8",
+              "schemaVersion": 1,
+              "sequence": 58,
+              "source": "relay",
+              "stage": "authority",
+              "traceId": "5879d7e3-35a3-49b7-9bcb-4760b9d124c3",
+              "values": {
+                "authorityKind": "endpoint",
+                "found": true
+              }
+            },
+            "receivedAtMs": 1788886146454
+          },
+          {
+            "event": {
+              "action": "response",
+              "build": "7c70c5616c335ee1a3435730a153946466b73b636a138a1fef3ae78732900865",
+              "elapsedMs": 0,
+              "eventId": "e3ece25e-c447-4cdd-8807-5e238d7db26b",
+              "occurredAtMs": 1788886146444,
+              "outcome": "ok",
+              "parentOperationId": "23ce49d2-1837-4959-a63a-574763152d26",
+              "reason": "none",
+              "requestId": "704b73e9-7afe-4113-aa23-21dea9ff69d1",
+              "role": "server",
+              "runId": "6fde0178-e86d-43dc-9e76-b8510e0709b8",
+              "schemaVersion": 1,
+              "sequence": 59,
+              "source": "relay",
+              "stage": "authority",
+              "traceId": "5879d7e3-35a3-49b7-9bcb-4760b9d124c3",
+              "values": {
+                "authorityKind": "endpoint",
+                "responseWritten": true
+              }
+            },
+            "receivedAtMs": 1788886146465
+          },
+          {
+            "event": {
+              "action": "store",
+              "build": "7c70c5616c335ee1a3435730a153946466b73b636a138a1fef3ae78732900865",
+              "elapsedMs": 0,
+              "eventId": "d6760db4-9672-423e-ba29-fea25b1ffe0c",
+              "occurredAtMs": 1788886146541,
+              "outcome": "started",
+              "reason": "none",
+              "requestId": "efc3a49d-9693-434e-92d8-5e8226ddf940",
+              "role": "server",
+              "runId": "6fde0178-e86d-43dc-9e76-b8510e0709b8",
+              "schemaVersion": 1,
+              "sequence": 60,
+              "source": "relay",
+              "stage": "signaling",
+              "traceId": "5879d7e3-35a3-49b7-9bcb-4760b9d124c3",
+              "values": {}
+            },
+            "receivedAtMs": 1788886146541
+          },
+          {
+            "event": {
+              "action": "commit",
+              "build": "7c70c5616c335ee1a3435730a153946466b73b636a138a1fef3ae78732900865",
+              "elapsedMs": 1,
+              "eventId": "0273d804-6b8b-4677-a461-315e9c5aae11",
+              "occurredAtMs": 1788886146542,
+              "outcome": "ok",
+              "reason": "none",
+              "requestId": "efc3a49d-9693-434e-92d8-5e8226ddf940",
+              "role": "server",
+              "runId": "6fde0178-e86d-43dc-9e76-b8510e0709b8",
+              "schemaVersion": 1,
+              "sequence": 61,
+              "source": "relay",
+              "stage": "signaling",
+              "traceId": "5879d7e3-35a3-49b7-9bcb-4760b9d124c3",
+              "values": {
+                "eventCount": 1,
+                "storeCommitted": true
+              }
+            },
+            "receivedAtMs": 1788886146559
+          },
+          {
+            "event": {
+              "action": "dispatch",
+              "build": "7c70c5616c335ee1a3435730a153946466b73b636a138a1fef3ae78732900865",
+              "elapsedMs": 2,
+              "eventId": "7119a0e3-6f35-4f02-8829-b8d412e4e142",
+              "occurredAtMs": 1788886146544,
+              "outcome": "started",
+              "reason": "none",
+              "requestId": "efc3a49d-9693-434e-92d8-5e8226ddf940",
+              "role": "server",
+              "runId": "6fde0178-e86d-43dc-9e76-b8510e0709b8",
+              "schemaVersion": 1,
+              "sequence": 62,
+              "source": "relay",
+              "stage": "push",
+              "traceId": "5879d7e3-35a3-49b7-9bcb-4760b9d124c3",
+              "values": {
+                "platform": "android",
+                "providerInvoked": true,
+                "retry": 0
+              }
+            },
+            "receivedAtMs": 1788886146569
+          },
+          {
+            "event": {
+              "action": "dispatch",
+              "build": "7c70c5616c335ee1a3435730a153946466b73b636a138a1fef3ae78732900865",
+              "elapsedMs": 95,
+              "eventId": "85f4c159-da4c-453c-995f-94c9159fac4b",
+              "occurredAtMs": 1788886146637,
+              "outcome": "ok",
+              "reason": "none",
+              "requestId": "efc3a49d-9693-434e-92d8-5e8226ddf940",
+              "role": "server",
+              "runId": "6fde0178-e86d-43dc-9e76-b8510e0709b8",
+              "schemaVersion": 1,
+              "sequence": 63,
+              "source": "relay",
+              "stage": "push",
+              "traceId": "5879d7e3-35a3-49b7-9bcb-4760b9d124c3",
+              "values": {
+                "platform": "android",
+                "providerInvoked": true,
+                "retry": 0
+              }
+            },
+            "receivedAtMs": 1788886146637
+          },
+          {
+            "event": {
+              "action": "finish",
+              "build": "7c70c5616c335ee1a3435730a153946466b73b636a138a1fef3ae78732900865",
+              "elapsedMs": 95,
+              "eventId": "d6d95df4-4c57-4b92-babb-9118adfe7d83",
+              "occurredAtMs": 1788886146637,
+              "outcome": "ok",
+              "reason": "none",
+              "requestId": "efc3a49d-9693-434e-92d8-5e8226ddf940",
+              "role": "server",
+              "runId": "6fde0178-e86d-43dc-9e76-b8510e0709b8",
+              "schemaVersion": 1,
+              "sequence": 64,
+              "source": "relay",
+              "stage": "push",
+              "traceId": "5879d7e3-35a3-49b7-9bcb-4760b9d124c3",
+              "values": {}
+            },
+            "receivedAtMs": 1788886146647
+          },
+          {
+            "event": {
+              "action": "store",
+              "build": "7c70c5616c335ee1a3435730a153946466b73b636a138a1fef3ae78732900865",
+              "elapsedMs": 96,
+              "eventId": "848ee930-4ef6-4144-baed-baaabbab9a61",
+              "occurredAtMs": 1788886146637,
+              "outcome": "ok",
+              "reason": "none",
+              "requestId": "efc3a49d-9693-434e-92d8-5e8226ddf940",
+              "role": "server",
+              "runId": "6fde0178-e86d-43dc-9e76-b8510e0709b8",
+              "schemaVersion": 1,
+              "sequence": 65,
+              "source": "relay",
+              "stage": "signaling",
+              "traceId": "5879d7e3-35a3-49b7-9bcb-4760b9d124c3",
+              "values": {}
+            },
+            "receivedAtMs": 1788886146657
+          },
+          {
+            "event": {
+              "action": "response",
+              "build": "7c70c5616c335ee1a3435730a153946466b73b636a138a1fef3ae78732900865",
+              "elapsedMs": 96,
+              "eventId": "52f575a5-f844-4bdc-b15f-fc4dcc1043ec",
+              "occurredAtMs": 1788886146637,
+              "outcome": "ok",
+              "reason": "none",
+              "requestId": "efc3a49d-9693-434e-92d8-5e8226ddf940",
+              "role": "server",
+              "runId": "6fde0178-e86d-43dc-9e76-b8510e0709b8",
+              "schemaVersion": 1,
+              "sequence": 66,
+              "source": "relay",
+              "stage": "signaling",
+              "traceId": "5879d7e3-35a3-49b7-9bcb-4760b9d124c3",
+              "values": {
+                "responseWritten": true
+              }
+            },
+            "receivedAtMs": 1788886146666
+          },
+          {
+            "event": {
+              "action": "start",
+              "build": "1.0.1+111-8bc9c8a8e32d3a38",
+              "elapsedMs": 26060,
+              "eventId": "180d8154-f604-435c-aed8-f090f3267591",
+              "occurredAtMs": 1788886146001,
+              "outcome": "started",
+              "reason": "none",
+              "role": "caller",
+              "runId": "41f71da8-8d08-4c90-b3be-df631016ffda",
+              "schemaVersion": 1,
+              "sequence": 25,
+              "source": "flutter",
+              "stage": "attempt",
+              "traceId": "5879d7e3-35a3-49b7-9bcb-4760b9d124c3",
+              "values": {}
+            },
+            "receivedAtMs": 1788886150125
+          },
+          {
+            "event": {
+              "action": "lookup",
+              "build": "1.0.1+111-8bc9c8a8e32d3a38",
+              "elapsedMs": 26077,
+              "eventId": "ad57e655-1cbc-4a8e-8142-346614b75dde",
+              "occurredAtMs": 1788886146018,
+              "outcome": "started",
+              "reason": "none",
+              "requestId": "a186f226-8879-4ed1-a0cd-30b6053d8301",
+              "role": "caller",
+              "runId": "41f71da8-8d08-4c90-b3be-df631016ffda",
+              "schemaVersion": 1,
+              "sequence": 26,
+              "source": "flutter",
+              "stage": "authority",
+              "traceId": "5879d7e3-35a3-49b7-9bcb-4760b9d124c3",
+              "values": {}
+            },
+            "receivedAtMs": 1788886150137
+          },
+          {
+            "event": {
+              "action": "lookup",
+              "build": "1.0.1+111-8bc9c8a8e32d3a38",
+              "elapsedMs": 26129,
+              "eventId": "a9b8d07b-7dea-4150-8b6e-690b9aaf5600",
+              "occurredAtMs": 1788886146070,
+              "outcome": "ok",
+              "reason": "none",
+              "requestId": "a186f226-8879-4ed1-a0cd-30b6053d8301",
+              "role": "caller",
+              "runId": "41f71da8-8d08-4c90-b3be-df631016ffda",
+              "schemaVersion": 1,
+              "sequence": 27,
+              "source": "flutter",
+              "stage": "authority",
+              "traceId": "5879d7e3-35a3-49b7-9bcb-4760b9d124c3",
+              "values": {}
+            },
+            "receivedAtMs": 1788886150147
+          },
+          {
+            "event": {
+              "action": "lookup",
+              "build": "1.0.1+111-8bc9c8a8e32d3a38",
+              "elapsedMs": 26133,
+              "eventId": "d63e7930-3c58-42a7-86ba-04ef65d57455",
+              "occurredAtMs": 1788886146074,
+              "outcome": "ok",
+              "reason": "none",
+              "role": "caller",
+              "runId": "41f71da8-8d08-4c90-b3be-df631016ffda",
+              "schemaVersion": 1,
+              "sequence": 28,
+              "source": "flutter",
+              "stage": "preflight",
+              "traceId": "5879d7e3-35a3-49b7-9bcb-4760b9d124c3",
+              "values": {}
+            },
+            "receivedAtMs": 1788886150156
+          },
+          {
+            "event": {
+              "action": "check",
+              "build": "1.0.1+111-8bc9c8a8e32d3a38",
+              "elapsedMs": 26138,
+              "eventId": "fc1cf987-3a24-4cf7-9650-87310720401b",
+              "occurredAtMs": 1788886146079,
+              "outcome": "ok",
+              "reason": "none",
+              "role": "caller",
+              "runId": "41f71da8-8d08-4c90-b3be-df631016ffda",
+              "schemaVersion": 1,
+              "sequence": 29,
+              "source": "flutter",
+              "stage": "preflight",
+              "traceId": "5879d7e3-35a3-49b7-9bcb-4760b9d124c3",
+              "values": {
+                "microphoneAllowed": true
+              }
+            },
+            "receivedAtMs": 1788886150166
+          },
+          {
+            "event": {
+              "action": "start",
+              "build": "1.0.1+111-8bc9c8a8e32d3a38",
+              "elapsedMs": 26138,
+              "eventId": "780bbc89-2f9c-4827-87b0-2329b060994e",
+              "occurredAtMs": 1788886146079,
+              "operationId": "b7f61a0b-1ec2-4bf6-88d9-6ba8892f1f92",
+              "outcome": "started",
+              "reason": "resume_refresh",
+              "role": "caller",
+              "runId": "41f71da8-8d08-4c90-b3be-df631016ffda",
+              "schemaVersion": 1,
+              "sequence": 30,
+              "source": "flutter",
+              "stage": "authority",
+              "traceId": "5879d7e3-35a3-49b7-9bcb-4760b9d124c3",
+              "values": {}
+            },
+            "receivedAtMs": 1788886150175
+          },
+          {
+            "event": {
+              "action": "publish",
+              "build": "1.0.1+111-8bc9c8a8e32d3a38",
+              "elapsedMs": 26142,
+              "eventId": "d09d59e5-e5f3-4ba7-b48c-b232809e5c04",
+              "occurredAtMs": 1788886146083,
+              "operationId": "b7f61a0b-1ec2-4bf6-88d9-6ba8892f1f92",
+              "outcome": "started",
+              "reason": "none",
+              "requestId": "0bcaf8a5-ce95-4a1d-a2c0-0d9bc4d0f089",
+              "role": "caller",
+              "runId": "41f71da8-8d08-4c90-b3be-df631016ffda",
+              "schemaVersion": 1,
+              "sequence": 31,
+              "source": "flutter",
+              "stage": "authority",
+              "traceId": "5879d7e3-35a3-49b7-9bcb-4760b9d124c3",
+              "values": {}
+            },
+            "receivedAtMs": 1788886150185
+          },
+          {
+            "event": {
+              "action": "publish",
+              "build": "1.0.1+111-8bc9c8a8e32d3a38",
+              "elapsedMs": 26184,
+              "eventId": "fe62763e-d786-45fa-96cd-e925995fdbbc",
+              "occurredAtMs": 1788886146125,
+              "operationId": "b7f61a0b-1ec2-4bf6-88d9-6ba8892f1f92",
+              "outcome": "ok",
+              "reason": "none",
+              "requestId": "0bcaf8a5-ce95-4a1d-a2c0-0d9bc4d0f089",
+              "role": "caller",
+              "runId": "41f71da8-8d08-4c90-b3be-df631016ffda",
+              "schemaVersion": 1,
+              "sequence": 32,
+              "source": "flutter",
+              "stage": "authority",
+              "traceId": "5879d7e3-35a3-49b7-9bcb-4760b9d124c3",
+              "values": {}
+            },
+            "receivedAtMs": 1788886150195
+          },
+          {
+            "event": {
+              "action": "publish",
+              "build": "1.0.1+111-8bc9c8a8e32d3a38",
+              "elapsedMs": 26191,
+              "eventId": "9085f6b7-d6bd-4bdd-80da-cdec332aa4a1",
+              "occurredAtMs": 1788886146132,
+              "operationId": "b7f61a0b-1ec2-4bf6-88d9-6ba8892f1f92",
+              "outcome": "started",
+              "reason": "none",
+              "requestId": "4308ec79-e7d5-4a48-ad4d-0a2f99f057f3",
+              "role": "caller",
+              "runId": "41f71da8-8d08-4c90-b3be-df631016ffda",
+              "schemaVersion": 1,
+              "sequence": 33,
+              "source": "flutter",
+              "stage": "authority",
+              "traceId": "5879d7e3-35a3-49b7-9bcb-4760b9d124c3",
+              "values": {}
+            },
+            "receivedAtMs": 1788886150208
+          },
+          {
+            "event": {
+              "action": "publish",
+              "build": "1.0.1+111-8bc9c8a8e32d3a38",
+              "elapsedMs": 26231,
+              "eventId": "35748d05-798b-467c-801e-5a2fa7573519",
+              "occurredAtMs": 1788886146172,
+              "operationId": "b7f61a0b-1ec2-4bf6-88d9-6ba8892f1f92",
+              "outcome": "ok",
+              "reason": "none",
+              "requestId": "4308ec79-e7d5-4a48-ad4d-0a2f99f057f3",
+              "role": "caller",
+              "runId": "41f71da8-8d08-4c90-b3be-df631016ffda",
+              "schemaVersion": 1,
+              "sequence": 34,
+              "source": "flutter",
+              "stage": "authority",
+              "traceId": "5879d7e3-35a3-49b7-9bcb-4760b9d124c3",
+              "values": {}
+            },
+            "receivedAtMs": 1788886150217
+          },
+          {
+            "event": {
+              "action": "publish",
+              "build": "1.0.1+111-8bc9c8a8e32d3a38",
+              "elapsedMs": 26235,
+              "eventId": "ee105f0f-699f-4a7f-b4dd-12b59b858d90",
+              "occurredAtMs": 1788886146176,
+              "operationId": "b7f61a0b-1ec2-4bf6-88d9-6ba8892f1f92",
+              "outcome": "started",
+              "reason": "none",
+              "requestId": "5c5560dc-8632-44af-b35e-c5748f7c5733",
+              "role": "caller",
+              "runId": "41f71da8-8d08-4c90-b3be-df631016ffda",
+              "schemaVersion": 1,
+              "sequence": 35,
+              "source": "flutter",
+              "stage": "authority",
+              "traceId": "5879d7e3-35a3-49b7-9bcb-4760b9d124c3",
+              "values": {}
+            },
+            "receivedAtMs": 1788886150227
+          },
+          {
+            "event": {
+              "action": "publish",
+              "build": "1.0.1+111-8bc9c8a8e32d3a38",
+              "elapsedMs": 26277,
+              "eventId": "0702b3ae-3fd0-4c8d-894e-a059438e95ed",
+              "occurredAtMs": 1788886146218,
+              "operationId": "b7f61a0b-1ec2-4bf6-88d9-6ba8892f1f92",
+              "outcome": "ok",
+              "reason": "none",
+              "requestId": "5c5560dc-8632-44af-b35e-c5748f7c5733",
+              "role": "caller",
+              "runId": "41f71da8-8d08-4c90-b3be-df631016ffda",
+              "schemaVersion": 1,
+              "sequence": 36,
+              "source": "flutter",
+              "stage": "authority",
+              "traceId": "5879d7e3-35a3-49b7-9bcb-4760b9d124c3",
+              "values": {}
+            },
+            "receivedAtMs": 1788886150237
+          },
+          {
+            "event": {
+              "action": "lookup",
+              "build": "1.0.1+111-8bc9c8a8e32d3a38",
+              "elapsedMs": 26284,
+              "eventId": "aff832cf-8c03-4e6b-a50e-37557296ad1a",
+              "occurredAtMs": 1788886146224,
+              "outcome": "started",
+              "reason": "none",
+              "requestId": "93d0b3d6-7183-4549-b4ce-a537e35b1fe4",
+              "role": "caller",
+              "runId": "41f71da8-8d08-4c90-b3be-df631016ffda",
+              "schemaVersion": 1,
+              "sequence": 37,
+              "source": "flutter",
+              "stage": "authority",
+              "traceId": "5879d7e3-35a3-49b7-9bcb-4760b9d124c3",
+              "values": {}
+            },
+            "receivedAtMs": 1788886150246
+          },
+          {
+            "event": {
+              "action": "lookup",
+              "build": "1.0.1+111-8bc9c8a8e32d3a38",
+              "elapsedMs": 26331,
+              "eventId": "51223eb1-bced-4c07-9e56-f653b1169359",
+              "occurredAtMs": 1788886146272,
+              "outcome": "ok",
+              "reason": "none",
+              "requestId": "93d0b3d6-7183-4549-b4ce-a537e35b1fe4",
+              "role": "caller",
+              "runId": "41f71da8-8d08-4c90-b3be-df631016ffda",
+              "schemaVersion": 1,
+              "sequence": 38,
+              "source": "flutter",
+              "stage": "authority",
+              "traceId": "5879d7e3-35a3-49b7-9bcb-4760b9d124c3",
+              "values": {}
+            },
+            "receivedAtMs": 1788886150256
+          },
+          {
+            "event": {
+              "action": "lookup",
+              "build": "1.0.1+111-8bc9c8a8e32d3a38",
+              "elapsedMs": 26335,
+              "eventId": "b59c62e1-8d1b-491a-b3e9-bfd3f5b7b7ef",
+              "occurredAtMs": 1788886146276,
+              "outcome": "ok",
+              "reason": "none",
+              "role": "caller",
+              "runId": "41f71da8-8d08-4c90-b3be-df631016ffda",
+              "schemaVersion": 1,
+              "sequence": 39,
+              "source": "flutter",
+              "stage": "preflight",
+              "traceId": "5879d7e3-35a3-49b7-9bcb-4760b9d124c3",
+              "values": {}
+            },
+            "receivedAtMs": 1788886150269
+          },
+          {
+            "event": {
+              "action": "commit",
+              "build": "1.0.1+111-8bc9c8a8e32d3a38",
+              "elapsedMs": 26336,
+              "eventId": "2099e93d-5c92-4181-89e3-27da26902dc9",
+              "occurredAtMs": 1788886146277,
+              "outcome": "ok",
+              "reason": "none",
+              "role": "caller",
+              "runId": "41f71da8-8d08-4c90-b3be-df631016ffda",
+              "schemaVersion": 1,
+              "sequence": 40,
+              "source": "flutter",
+              "stage": "signaling",
+              "traceId": "5879d7e3-35a3-49b7-9bcb-4760b9d124c3",
+              "values": {
+                "accepted": false,
+                "connected": false,
+                "state": "outgoing_preparing",
+                "terminal": false
+              }
+            },
+            "receivedAtMs": 1788886150278
+          },
+          {
+            "event": {
+              "action": "lookup",
+              "build": "1.0.1+111-8bc9c8a8e32d3a38",
+              "elapsedMs": 26338,
+              "eventId": "a8752bbb-1cc4-4033-88b8-d9708967dfbf",
+              "occurredAtMs": 1788886146279,
+              "outcome": "started",
+              "reason": "none",
+              "requestId": "f9243d84-cbb3-41ad-a895-5d0c51892578",
+              "role": "caller",
+              "runId": "41f71da8-8d08-4c90-b3be-df631016ffda",
+              "schemaVersion": 1,
+              "sequence": 41,
+              "source": "flutter",
+              "stage": "authority",
+              "traceId": "5879d7e3-35a3-49b7-9bcb-4760b9d124c3",
+              "values": {}
+            },
+            "receivedAtMs": 1788886150288
+          },
+          {
+            "event": {
+              "action": "lookup",
+              "build": "1.0.1+111-8bc9c8a8e32d3a38",
+              "elapsedMs": 26379,
+              "eventId": "3d822ed1-9c2f-4144-8264-f9c0a6651a33",
+              "occurredAtMs": 1788886146319,
+              "outcome": "ok",
+              "reason": "none",
+              "requestId": "f9243d84-cbb3-41ad-a895-5d0c51892578",
+              "role": "caller",
+              "runId": "41f71da8-8d08-4c90-b3be-df631016ffda",
+              "schemaVersion": 1,
+              "sequence": 42,
+              "source": "flutter",
+              "stage": "authority",
+              "traceId": "5879d7e3-35a3-49b7-9bcb-4760b9d124c3",
+              "values": {}
+            },
+            "receivedAtMs": 1788886150298
+          },
+          {
+            "event": {
+              "action": "lookup",
+              "build": "1.0.1+111-8bc9c8a8e32d3a38",
+              "elapsedMs": 26383,
+              "eventId": "16e72c2b-7025-48b5-916b-1ed436e875c4",
+              "occurredAtMs": 1788886146324,
+              "outcome": "ok",
+              "reason": "none",
+              "role": "caller",
+              "runId": "41f71da8-8d08-4c90-b3be-df631016ffda",
+              "schemaVersion": 1,
+              "sequence": 43,
+              "source": "flutter",
+              "stage": "preflight",
+              "traceId": "5879d7e3-35a3-49b7-9bcb-4760b9d124c3",
+              "values": {}
+            },
+            "receivedAtMs": 1788886150308
+          },
+          {
+            "event": {
+              "action": "commit",
+              "build": "1.0.1+111-8bc9c8a8e32d3a38",
+              "elapsedMs": 26410,
+              "eventId": "747793bf-100a-45e0-8f52-e8fc1a041833",
+              "occurredAtMs": 1788886146351,
+              "outcome": "ok",
+              "reason": "none",
+              "role": "caller",
+              "runId": "41f71da8-8d08-4c90-b3be-df631016ffda",
+              "schemaVersion": 1,
+              "sequence": 44,
+              "source": "flutter",
+              "stage": "signaling",
+              "traceId": "5879d7e3-35a3-49b7-9bcb-4760b9d124c3",
+              "values": {
+                "accepted": false,
+                "connected": false,
+                "state": "inviting",
+                "terminal": false
+              }
+            },
+            "receivedAtMs": 1788886150318
+          },
+          {
+            "event": {
+              "action": "lookup",
+              "build": "1.0.1+111-8bc9c8a8e32d3a38",
+              "elapsedMs": 26423,
+              "eventId": "4708d6b1-f0f5-4b82-95d0-17ec4c496659",
+              "occurredAtMs": 1788886146364,
+              "outcome": "started",
+              "reason": "none",
+              "requestId": "704b73e9-7afe-4113-aa23-21dea9ff69d1",
+              "role": "caller",
+              "runId": "41f71da8-8d08-4c90-b3be-df631016ffda",
+              "schemaVersion": 1,
+              "sequence": 45,
+              "source": "flutter",
+              "stage": "authority",
+              "traceId": "5879d7e3-35a3-49b7-9bcb-4760b9d124c3",
+              "values": {}
+            },
+            "receivedAtMs": 1788886150330
+          },
+          {
+            "event": {
+              "action": "lookup",
+              "build": "1.0.1+111-8bc9c8a8e32d3a38",
+              "elapsedMs": 26499,
+              "eventId": "efbb13a2-1060-4d98-855e-0a59c7b346f6",
+              "occurredAtMs": 1788886146440,
+              "outcome": "ok",
+              "reason": "none",
+              "requestId": "704b73e9-7afe-4113-aa23-21dea9ff69d1",
+              "role": "caller",
+              "runId": "41f71da8-8d08-4c90-b3be-df631016ffda",
+              "schemaVersion": 1,
+              "sequence": 46,
+              "source": "flutter",
+              "stage": "authority",
+              "traceId": "5879d7e3-35a3-49b7-9bcb-4760b9d124c3",
+              "values": {}
+            },
+            "receivedAtMs": 1788886150340
+          },
+          {
+            "event": {
+              "action": "lookup",
+              "build": "1.0.1+111-8bc9c8a8e32d3a38",
+              "elapsedMs": 26502,
+              "eventId": "c74ec152-e7b7-452e-9f60-b4437c61e299",
+              "occurredAtMs": 1788886146443,
+              "outcome": "ok",
+              "reason": "none",
+              "role": "caller",
+              "runId": "41f71da8-8d08-4c90-b3be-df631016ffda",
+              "schemaVersion": 1,
+              "sequence": 47,
+              "source": "flutter",
+              "stage": "preflight",
+              "traceId": "5879d7e3-35a3-49b7-9bcb-4760b9d124c3",
+              "values": {}
+            },
+            "receivedAtMs": 1788886150350
+          },
+          {
+            "event": {
+              "action": "send_direct",
+              "build": "1.0.1+111-8bc9c8a8e32d3a38",
+              "elapsedMs": 26505,
+              "eventId": "9fd4b175-0eba-4c9b-9abf-f50e8075bad6",
+              "occurredAtMs": 1788886146446,
+              "outcome": "started",
+              "reason": "none",
+              "role": "caller",
+              "runId": "41f71da8-8d08-4c90-b3be-df631016ffda",
+              "schemaVersion": 1,
+              "sequence": 48,
+              "source": "flutter",
+              "stage": "signaling",
+              "traceId": "5879d7e3-35a3-49b7-9bcb-4760b9d124c3",
+              "values": {}
+            },
+            "receivedAtMs": 1788886150360
+          },
+          {
+            "event": {
+              "action": "store",
+              "build": "1.0.1+111-8bc9c8a8e32d3a38",
+              "elapsedMs": 26506,
+              "eventId": "cc75b04c-50ea-49fb-aba2-0b8cf3fb5d29",
+              "occurredAtMs": 1788886146446,
+              "outcome": "started",
+              "reason": "none",
+              "requestId": "efc3a49d-9693-434e-92d8-5e8226ddf940",
+              "role": "caller",
+              "runId": "41f71da8-8d08-4c90-b3be-df631016ffda",
+              "schemaVersion": 1,
+              "sequence": 49,
+              "source": "flutter",
+              "stage": "signaling",
+              "traceId": "5879d7e3-35a3-49b7-9bcb-4760b9d124c3",
+              "values": {}
+            },
+            "receivedAtMs": 1788886150370
+          },
+          {
+            "event": {
+              "action": "store",
+              "build": "1.0.1+111-8bc9c8a8e32d3a38",
+              "elapsedMs": 26672,
+              "eventId": "6a1ffee6-1af5-4dbe-af79-6dc3cd3edea9",
+              "occurredAtMs": 1788886146613,
+              "outcome": "ok",
+              "reason": "none",
+              "requestId": "efc3a49d-9693-434e-92d8-5e8226ddf940",
+              "role": "caller",
+              "runId": "41f71da8-8d08-4c90-b3be-df631016ffda",
+              "schemaVersion": 1,
+              "sequence": 50,
+              "source": "flutter",
+              "stage": "signaling",
+              "traceId": "5879d7e3-35a3-49b7-9bcb-4760b9d124c3",
+              "values": {}
+            },
+            "receivedAtMs": 1788886150383
+          },
+          {
+            "event": {
+              "action": "commit",
+              "build": "1.0.1+111-8bc9c8a8e32d3a38",
+              "elapsedMs": 26676,
+              "eventId": "11f6db86-ad33-48ad-99b1-0e3dab2c07cc",
+              "occurredAtMs": 1788886146617,
+              "outcome": "ok",
+              "reason": "none",
+              "role": "caller",
+              "runId": "41f71da8-8d08-4c90-b3be-df631016ffda",
+              "schemaVersion": 1,
+              "sequence": 51,
+              "source": "flutter",
+              "stage": "signaling",
+              "traceId": "5879d7e3-35a3-49b7-9bcb-4760b9d124c3",
+              "values": {
+                "storeCommitted": true
+              }
+            },
+            "receivedAtMs": 1788886150393
+          },
+          {
+            "event": {
+              "action": "commit",
+              "build": "1.0.1+111-8bc9c8a8e32d3a38",
+              "elapsedMs": 26677,
+              "eventId": "4a5fa63b-4be0-4df8-b7e2-b8c3d6950e3b",
+              "occurredAtMs": 1788886146617,
+              "outcome": "ok",
+              "reason": "none",
+              "role": "caller",
+              "runId": "41f71da8-8d08-4c90-b3be-df631016ffda",
+              "schemaVersion": 1,
+              "sequence": 52,
+              "source": "flutter",
+              "stage": "signaling",
+              "traceId": "5879d7e3-35a3-49b7-9bcb-4760b9d124c3",
+              "values": {
+                "accepted": false,
+                "connected": false,
+                "state": "ringing",
+                "terminal": false
+              }
+            },
+            "receivedAtMs": 1788886150403
+          },
+          {
+            "event": {
+              "action": "finish",
+              "build": "1.0.1+111-8bc9c8a8e32d3a38",
+              "elapsedMs": 26677,
+              "eventId": "f2787087-db69-4080-b5b8-d8c317d1cb55",
+              "occurredAtMs": 1788886146618,
+              "outcome": "ok",
+              "reason": "none",
+              "role": "caller",
+              "runId": "41f71da8-8d08-4c90-b3be-df631016ffda",
+              "schemaVersion": 1,
+              "sequence": 53,
+              "source": "flutter",
+              "stage": "preflight",
+              "traceId": "5879d7e3-35a3-49b7-9bcb-4760b9d124c3",
+              "values": {}
+            },
+            "receivedAtMs": 1788886150413
+          },
+          {
+            "event": {
+              "action": "send_direct",
+              "build": "1.0.1+111-8bc9c8a8e32d3a38",
+              "elapsedMs": 26805,
+              "eventId": "2cff344f-0154-4f66-9393-206121f66281",
+              "occurredAtMs": 1788886146745,
+              "outcome": "failed",
+              "reason": "transport_failed",
+              "role": "caller",
+              "runId": "41f71da8-8d08-4c90-b3be-df631016ffda",
+              "schemaVersion": 1,
+              "sequence": 54,
+              "source": "flutter",
+              "stage": "signaling",
+              "traceId": "5879d7e3-35a3-49b7-9bcb-4760b9d124c3",
+              "values": {}
+            },
+            "receivedAtMs": 1788886150423
+          },
+          {
+            "event": {
+              "action": "present",
+              "build": "1.0.1+111",
+              "elapsedMs": 358675645,
+              "eventId": "d88dc516-d798-467f-aaa6-23a000392ed0",
+              "occurredAtMs": 1788886146351,
+              "operationId": "01bab111-bf1d-47f4-9ebf-293f7b128ec9",
+              "outcome": "started",
+              "reason": "none",
+              "requestId": "2ddf0950-df92-41ab-8964-ce6da9a20449",
+              "role": "caller",
+              "runId": "9f0e367e-681e-4362-aa5a-0d5fff0b0803",
+              "schemaVersion": 1,
+              "sequence": 82,
+              "source": "ios",
+              "stage": "presentation",
+              "traceId": "5879d7e3-35a3-49b7-9bcb-4760b9d124c3",
+              "values": {}
+            },
+            "receivedAtMs": 1788886150434
+          },
+          {
+            "event": {
+              "action": "commit",
+              "build": "1.0.1+111",
+              "elapsedMs": 358676210,
+              "eventId": "c92a76f4-1c45-48ab-b1ba-9e0edb67712d",
+              "occurredAtMs": 1788886146917,
+              "operationId": "01bab111-bf1d-47f4-9ebf-293f7b128ec9",
+              "outcome": "ok",
+              "reason": "none",
+              "requestId": "2ddf0950-df92-41ab-8964-ce6da9a20449",
+              "role": "caller",
+              "runId": "9f0e367e-681e-4362-aa5a-0d5fff0b0803",
+              "schemaVersion": 1,
+              "sequence": 83,
+              "source": "ios",
+              "stage": "presentation",
+              "traceId": "5879d7e3-35a3-49b7-9bcb-4760b9d124c3",
+              "values": {
+                "nativeCommitted": true,
+                "terminal": false
+              }
+            },
+            "receivedAtMs": 1788886150446
+          },
+          {
+            "event": {
+              "action": "present",
+              "build": "1.0.1+111",
+              "elapsedMs": 358676222,
+              "eventId": "a0dc78f9-7598-4643-b55a-20af1461ece0",
+              "occurredAtMs": 1788886146928,
+              "operationId": "01bab111-bf1d-47f4-9ebf-293f7b128ec9",
+              "outcome": "ok",
+              "reason": "none",
+              "requestId": "2ddf0950-df92-41ab-8964-ce6da9a20449",
+              "role": "caller",
+              "runId": "9f0e367e-681e-4362-aa5a-0d5fff0b0803",
+              "schemaVersion": 1,
+              "sequence": 84,
+              "source": "ios",
+              "stage": "presentation",
+              "traceId": "5879d7e3-35a3-49b7-9bcb-4760b9d124c3",
+              "values": {
+                "accepted": true
+              }
+            },
+            "receivedAtMs": 1788886150457
+          },
+          {
+            "event": {
+              "action": "commit",
+              "build": "1.0.1+111",
+              "elapsedMs": 358676273,
+              "eventId": "6f2f0829-7821-4e92-92ce-9026a11288f7",
+              "occurredAtMs": 1788886146979,
+              "operationId": "01bab111-bf1d-47f4-9ebf-293f7b128ec9",
+              "outcome": "ok",
+              "reason": "none",
+              "requestId": "2ddf0950-df92-41ab-8964-ce6da9a20449",
+              "role": "caller",
+              "runId": "9f0e367e-681e-4362-aa5a-0d5fff0b0803",
+              "schemaVersion": 1,
+              "sequence": 85,
+              "source": "ios",
+              "stage": "audio",
+              "traceId": "5879d7e3-35a3-49b7-9bcb-4760b9d124c3",
+              "values": {
+                "nativeCommitted": true,
+                "terminal": false
+              }
+            },
+            "receivedAtMs": 1788886150467
+          },
+          {
+            "event": {
+              "action": "lookup",
+              "build": "7c70c5616c335ee1a3435730a153946466b73b636a138a1fef3ae78732900865",
+              "elapsedMs": 0,
+              "eventId": "631c218c-6266-4481-9e14-78ea2cb0aeb6",
+              "occurredAtMs": 1788886176504,
+              "outcome": "started",
+              "reason": "none",
+              "requestId": "8f181abf-af65-4502-8c74-3bb3dd4bb511",
+              "role": "server",
+              "runId": "6fde0178-e86d-43dc-9e76-b8510e0709b8",
+              "schemaVersion": 1,
+              "sequence": 67,
+              "source": "relay",
+              "stage": "authority",
+              "traceId": "5879d7e3-35a3-49b7-9bcb-4760b9d124c3",
+              "values": {
+                "authorityKind": "endpoint"
+              }
+            },
+            "receivedAtMs": 1788886176505
+          },
+          {
+            "event": {
+              "action": "lookup",
+              "build": "7c70c5616c335ee1a3435730a153946466b73b636a138a1fef3ae78732900865",
+              "elapsedMs": 0,
+              "eventId": "3be04339-e3b7-44a2-8c39-060ff106956c",
+              "occurredAtMs": 1788886176505,
+              "outcome": "ok",
+              "parentOperationId": "23ce49d2-1837-4959-a63a-574763152d26",
+              "reason": "none",
+              "requestId": "8f181abf-af65-4502-8c74-3bb3dd4bb511",
+              "role": "server",
+              "runId": "6fde0178-e86d-43dc-9e76-b8510e0709b8",
+              "schemaVersion": 1,
+              "sequence": 68,
+              "source": "relay",
+              "stage": "authority",
+              "traceId": "5879d7e3-35a3-49b7-9bcb-4760b9d124c3",
+              "values": {
+                "authorityKind": "endpoint",
+                "found": true
+              }
+            },
+            "receivedAtMs": 1788886176518
+          },
+          {
+            "event": {
+              "action": "response",
+              "build": "7c70c5616c335ee1a3435730a153946466b73b636a138a1fef3ae78732900865",
+              "elapsedMs": 0,
+              "eventId": "49417e6a-418d-42ad-90f7-80ec865af784",
+              "occurredAtMs": 1788886176505,
+              "outcome": "ok",
+              "parentOperationId": "23ce49d2-1837-4959-a63a-574763152d26",
+              "reason": "none",
+              "requestId": "8f181abf-af65-4502-8c74-3bb3dd4bb511",
+              "role": "server",
+              "runId": "6fde0178-e86d-43dc-9e76-b8510e0709b8",
+              "schemaVersion": 1,
+              "sequence": 69,
+              "source": "relay",
+              "stage": "authority",
+              "traceId": "5879d7e3-35a3-49b7-9bcb-4760b9d124c3",
+              "values": {
+                "authorityKind": "endpoint",
+                "responseWritten": true
+              }
+            },
+            "receivedAtMs": 1788886176528
+          },
+          {
+            "event": {
+              "action": "store",
+              "build": "7c70c5616c335ee1a3435730a153946466b73b636a138a1fef3ae78732900865",
+              "elapsedMs": 0,
+              "eventId": "bb6cbec2-cd1d-4de6-9013-6517fffbe402",
+              "occurredAtMs": 1788886176567,
+              "outcome": "started",
+              "reason": "none",
+              "requestId": "8e5a2496-1fe7-453d-99cc-83261042af88",
+              "role": "server",
+              "runId": "6fde0178-e86d-43dc-9e76-b8510e0709b8",
+              "schemaVersion": 1,
+              "sequence": 70,
+              "source": "relay",
+              "stage": "signaling",
+              "traceId": "5879d7e3-35a3-49b7-9bcb-4760b9d124c3",
+              "values": {}
+            },
+            "receivedAtMs": 1788886176567
+          },
+          {
+            "event": {
+              "action": "commit",
+              "build": "7c70c5616c335ee1a3435730a153946466b73b636a138a1fef3ae78732900865",
+              "elapsedMs": 1,
+              "eventId": "226781aa-9ef3-4173-9f56-959b888a0f70",
+              "occurredAtMs": 1788886176568,
+              "outcome": "ok",
+              "reason": "none",
+              "requestId": "8e5a2496-1fe7-453d-99cc-83261042af88",
+              "role": "server",
+              "runId": "6fde0178-e86d-43dc-9e76-b8510e0709b8",
+              "schemaVersion": 1,
+              "sequence": 71,
+              "source": "relay",
+              "stage": "signaling",
+              "traceId": "5879d7e3-35a3-49b7-9bcb-4760b9d124c3",
+              "values": {
+                "eventCount": 2,
+                "storeCommitted": true
+              }
+            },
+            "receivedAtMs": 1788886176585
+          },
+          {
+            "event": {
+              "action": "dispatch",
+              "build": "7c70c5616c335ee1a3435730a153946466b73b636a138a1fef3ae78732900865",
+              "elapsedMs": 2,
+              "eventId": "41f0dc56-f7ad-4e4d-9715-4773f39d9b2d",
+              "occurredAtMs": 1788886176570,
+              "outcome": "started",
+              "reason": "none",
+              "requestId": "8e5a2496-1fe7-453d-99cc-83261042af88",
+              "role": "server",
+              "runId": "6fde0178-e86d-43dc-9e76-b8510e0709b8",
+              "schemaVersion": 1,
+              "sequence": 72,
+              "source": "relay",
+              "stage": "push",
+              "traceId": "5879d7e3-35a3-49b7-9bcb-4760b9d124c3",
+              "values": {
+                "platform": "android",
+                "providerInvoked": true,
+                "retry": 0
+              }
+            },
+            "receivedAtMs": 1788886176596
+          },
+          {
+            "event": {
+              "action": "commit",
+              "build": "1.0.1+111-8bc9c8a8e32d3a38",
+              "elapsedMs": 56420,
+              "eventId": "90ab2de9-2d6c-429c-87c9-6be8afb4ad62",
+              "occurredAtMs": 1788886176361,
+              "outcome": "ok",
+              "reason": "no_answer",
+              "role": "caller",
+              "runId": "41f71da8-8d08-4c90-b3be-df631016ffda",
+              "schemaVersion": 1,
+              "sequence": 55,
+              "source": "flutter",
+              "stage": "terminal",
+              "traceId": "5879d7e3-35a3-49b7-9bcb-4760b9d124c3",
+              "values": {
+                "accepted": false,
+                "connected": false,
+                "state": "ended",
+                "terminal": true
+              }
+            },
+            "receivedAtMs": 1788886176623
+          },
+          {
+            "event": {
+              "action": "finish",
+              "build": "1.0.1+111-8bc9c8a8e32d3a38",
+              "elapsedMs": 56434,
+              "eventId": "87e5d7fd-7abf-40c8-8d67-f970164e1be3",
+              "occurredAtMs": 1788886176374,
+              "outcome": "no_answer",
+              "reason": "no_answer",
+              "role": "caller",
+              "runId": "41f71da8-8d08-4c90-b3be-df631016ffda",
+              "schemaVersion": 1,
+              "sequence": 56,
+              "source": "flutter",
+              "stage": "terminal",
+              "traceId": "5879d7e3-35a3-49b7-9bcb-4760b9d124c3",
+              "values": {
+                "accepted": false,
+                "connected": false,
+                "durationMs": 30083,
+                "mediaFlowVerified": false,
+                "terminal": true
+              }
+            },
+            "receivedAtMs": 1788886176635
+          },
+          {
+            "event": {
+              "action": "dispatch",
+              "build": "7c70c5616c335ee1a3435730a153946466b73b636a138a1fef3ae78732900865",
+              "elapsedMs": 72,
+              "eventId": "bef624e3-b2fb-423d-b9b5-cc4a4489ad01",
+              "occurredAtMs": 1788886176639,
+              "outcome": "ok",
+              "reason": "none",
+              "requestId": "8e5a2496-1fe7-453d-99cc-83261042af88",
+              "role": "server",
+              "runId": "6fde0178-e86d-43dc-9e76-b8510e0709b8",
+              "schemaVersion": 1,
+              "sequence": 73,
+              "source": "relay",
+              "stage": "push",
+              "traceId": "5879d7e3-35a3-49b7-9bcb-4760b9d124c3",
+              "values": {
+                "platform": "android",
+                "providerInvoked": true,
+                "retry": 0
+              }
+            },
+            "receivedAtMs": 1788886176645
+          },
+          {
+            "event": {
+              "action": "lookup",
+              "build": "1.0.1+111-8bc9c8a8e32d3a38",
+              "elapsedMs": 56479,
+              "eventId": "b202becf-0f63-4ea4-95b7-5e6f50d1b869",
+              "occurredAtMs": 1788886176420,
+              "outcome": "started",
+              "reason": "none",
+              "requestId": "8f181abf-af65-4502-8c74-3bb3dd4bb511",
+              "role": "caller",
+              "runId": "41f71da8-8d08-4c90-b3be-df631016ffda",
+              "schemaVersion": 1,
+              "sequence": 57,
+              "source": "flutter",
+              "stage": "authority",
+              "traceId": "5879d7e3-35a3-49b7-9bcb-4760b9d124c3",
+              "values": {}
+            },
+            "receivedAtMs": 1788886176656
+          },
+          {
+            "event": {
+              "action": "finish",
+              "build": "7c70c5616c335ee1a3435730a153946466b73b636a138a1fef3ae78732900865",
+              "elapsedMs": 72,
+              "eventId": "ada52711-93cb-45cb-a151-e4e85247526b",
+              "occurredAtMs": 1788886176639,
+              "outcome": "ok",
+              "reason": "none",
+              "requestId": "8e5a2496-1fe7-453d-99cc-83261042af88",
+              "role": "server",
+              "runId": "6fde0178-e86d-43dc-9e76-b8510e0709b8",
+              "schemaVersion": 1,
+              "sequence": 74,
+              "source": "relay",
+              "stage": "push",
+              "traceId": "5879d7e3-35a3-49b7-9bcb-4760b9d124c3",
+              "values": {}
+            },
+            "receivedAtMs": 1788886176667
+          },
+          {
+            "event": {
+              "action": "lookup",
+              "build": "1.0.1+111-8bc9c8a8e32d3a38",
+              "elapsedMs": 56531,
+              "eventId": "605ca66e-9c1b-40ef-adbf-df45a356032b",
+              "occurredAtMs": 1788886176472,
+              "outcome": "ok",
+              "reason": "none",
+              "requestId": "8f181abf-af65-4502-8c74-3bb3dd4bb511",
+              "role": "caller",
+              "runId": "41f71da8-8d08-4c90-b3be-df631016ffda",
+              "schemaVersion": 1,
+              "sequence": 58,
+              "source": "flutter",
+              "stage": "authority",
+              "traceId": "5879d7e3-35a3-49b7-9bcb-4760b9d124c3",
+              "values": {}
+            },
+            "receivedAtMs": 1788886176678
+          },
+          {
+            "event": {
+              "action": "store",
+              "build": "7c70c5616c335ee1a3435730a153946466b73b636a138a1fef3ae78732900865",
+              "elapsedMs": 73,
+              "eventId": "bcc019b2-f90b-431a-974b-a771d17580b0",
+              "occurredAtMs": 1788886176640,
+              "outcome": "ok",
+              "reason": "none",
+              "requestId": "8e5a2496-1fe7-453d-99cc-83261042af88",
+              "role": "server",
+              "runId": "6fde0178-e86d-43dc-9e76-b8510e0709b8",
+              "schemaVersion": 1,
+              "sequence": 75,
+              "source": "relay",
+              "stage": "signaling",
+              "traceId": "5879d7e3-35a3-49b7-9bcb-4760b9d124c3",
+              "values": {}
+            },
+            "receivedAtMs": 1788886176689
+          },
+          {
+            "event": {
+              "action": "lookup",
+              "build": "1.0.1+111-8bc9c8a8e32d3a38",
+              "elapsedMs": 56532,
+              "eventId": "682a497e-c2f1-48fc-91bf-a58602ba6c72",
+              "occurredAtMs": 1788886176473,
+              "outcome": "ok",
+              "reason": "none",
+              "role": "caller",
+              "runId": "41f71da8-8d08-4c90-b3be-df631016ffda",
+              "schemaVersion": 1,
+              "sequence": 59,
+              "source": "flutter",
+              "stage": "preflight",
+              "traceId": "5879d7e3-35a3-49b7-9bcb-4760b9d124c3",
+              "values": {}
+            },
+            "receivedAtMs": 1788886176700
+          },
+          {
+            "event": {
+              "action": "response",
+              "build": "7c70c5616c335ee1a3435730a153946466b73b636a138a1fef3ae78732900865",
+              "elapsedMs": 73,
+              "eventId": "19934c17-ed86-4b17-9f52-ed497c783e25",
+              "occurredAtMs": 1788886176640,
+              "outcome": "ok",
+              "reason": "none",
+              "requestId": "8e5a2496-1fe7-453d-99cc-83261042af88",
+              "role": "server",
+              "runId": "6fde0178-e86d-43dc-9e76-b8510e0709b8",
+              "schemaVersion": 1,
+              "sequence": 76,
+              "source": "relay",
+              "stage": "signaling",
+              "traceId": "5879d7e3-35a3-49b7-9bcb-4760b9d124c3",
+              "values": {
+                "responseWritten": true
+              }
+            },
+            "receivedAtMs": 1788886176711
+          },
+          {
+            "event": {
+              "action": "send_direct",
+              "build": "1.0.1+111-8bc9c8a8e32d3a38",
+              "elapsedMs": 56534,
+              "eventId": "f4f90477-a862-4e47-94c3-2ac26375ec81",
+              "occurredAtMs": 1788886176475,
+              "outcome": "started",
+              "reason": "none",
+              "role": "caller",
+              "runId": "41f71da8-8d08-4c90-b3be-df631016ffda",
+              "schemaVersion": 1,
+              "sequence": 60,
+              "source": "flutter",
+              "stage": "signaling",
+              "traceId": "5879d7e3-35a3-49b7-9bcb-4760b9d124c3",
+              "values": {}
+            },
+            "receivedAtMs": 1788886176722
+          },
+          {
+            "event": {
+              "action": "store",
+              "build": "1.0.1+111-8bc9c8a8e32d3a38",
+              "elapsedMs": 56535,
+              "eventId": "64d44fc4-15b7-4d20-828c-f983c5f0ef31",
+              "occurredAtMs": 1788886176475,
+              "outcome": "started",
+              "reason": "none",
+              "requestId": "8e5a2496-1fe7-453d-99cc-83261042af88",
+              "role": "caller",
+              "runId": "41f71da8-8d08-4c90-b3be-df631016ffda",
+              "schemaVersion": 1,
+              "sequence": 61,
+              "source": "flutter",
+              "stage": "signaling",
+              "traceId": "5879d7e3-35a3-49b7-9bcb-4760b9d124c3",
+              "values": {}
+            },
+            "receivedAtMs": 1788886176732
+          },
+          {
+            "event": {
+              "action": "send_direct",
+              "build": "1.0.1+111-8bc9c8a8e32d3a38",
+              "elapsedMs": 56549,
+              "eventId": "c6786ef7-fe56-490b-9504-f4a0683a3e46",
+              "occurredAtMs": 1788886176490,
+              "outcome": "failed",
+              "reason": "transport_failed",
+              "role": "caller",
+              "runId": "41f71da8-8d08-4c90-b3be-df631016ffda",
+              "schemaVersion": 1,
+              "sequence": 62,
+              "source": "flutter",
+              "stage": "signaling",
+              "traceId": "5879d7e3-35a3-49b7-9bcb-4760b9d124c3",
+              "values": {}
+            },
+            "receivedAtMs": 1788886176745
+          },
+          {
+            "event": {
+              "action": "commit",
+              "build": "1.0.1+111",
+              "elapsedMs": 358705699,
+              "eventId": "0d88da25-a35d-404b-ab09-a78387960473",
+              "occurredAtMs": 1788886176405,
+              "operationId": "01bab111-bf1d-47f4-9ebf-293f7b128ec9",
+              "outcome": "ok",
+              "reason": "unknown",
+              "requestId": "2ddf0950-df92-41ab-8964-ce6da9a20449",
+              "role": "caller",
+              "runId": "9f0e367e-681e-4362-aa5a-0d5fff0b0803",
+              "schemaVersion": 1,
+              "sequence": 86,
+              "source": "ios",
+              "stage": "terminal",
+              "traceId": "5879d7e3-35a3-49b7-9bcb-4760b9d124c3",
+              "values": {
+                "nativeCommitted": true,
+                "terminal": true
+              }
+            },
+            "receivedAtMs": 1788886180122
+          },
+          {
+            "event": {
+              "action": "store",
+              "build": "1.0.1+111-8bc9c8a8e32d3a38",
+              "elapsedMs": 56664,
+              "eventId": "a58b0f4e-14aa-4688-9669-108519d28d3a",
+              "occurredAtMs": 1788886176605,
+              "outcome": "ok",
+              "reason": "none",
+              "requestId": "8e5a2496-1fe7-453d-99cc-83261042af88",
+              "role": "caller",
+              "runId": "41f71da8-8d08-4c90-b3be-df631016ffda",
+              "schemaVersion": 1,
+              "sequence": 63,
+              "source": "flutter",
+              "stage": "signaling",
+              "traceId": "5879d7e3-35a3-49b7-9bcb-4760b9d124c3",
+              "values": {}
+            },
+            "receivedAtMs": 1788886180134
+          },
+          {
+            "event": {
+              "action": "commit",
+              "build": "1.0.1+111-8bc9c8a8e32d3a38",
+              "elapsedMs": 56672,
+              "eventId": "b54698fa-09c5-44fc-a3b0-a1e2badef9b9",
+              "occurredAtMs": 1788886176613,
+              "outcome": "ok",
+              "reason": "none",
+              "role": "caller",
+              "runId": "41f71da8-8d08-4c90-b3be-df631016ffda",
+              "schemaVersion": 1,
+              "sequence": 64,
+              "source": "flutter",
+              "stage": "signaling",
+              "traceId": "5879d7e3-35a3-49b7-9bcb-4760b9d124c3",
+              "values": {
+                "storeCommitted": true
+              }
+            },
+            "receivedAtMs": 1788886180145
+          },
+          {
+            "event": {
+              "action": "finish",
+              "build": "1.0.1+111-8bc9c8a8e32d3a38",
+              "elapsedMs": 56673,
+              "eventId": "a59cc3ab-468e-4ac6-8e3c-69f0fad0f320",
+              "occurredAtMs": 1788886176614,
+              "outcome": "ok",
+              "reason": "none",
+              "role": "caller",
+              "runId": "41f71da8-8d08-4c90-b3be-df631016ffda",
+              "schemaVersion": 1,
+              "sequence": 65,
+              "source": "flutter",
+              "stage": "cleanup",
+              "traceId": "5879d7e3-35a3-49b7-9bcb-4760b9d124c3",
+              "values": {
+                "cleanupRemaining": 0,
+                "complete": true
+              }
+            },
+            "receivedAtMs": 1788886180155
+          }
+        ],
+        "evidenceIncomplete": false,
+        "failureOrderingScope": "First relay-received failed phase; different device clocks and delayed uploads do not establish global causal order. Missing stages may be normal for declined/canceled/preflight-only or legacy calls.",
+        "firstMissingStageReport": "answer",
+        "firstReceivedFailure": {
+          "action": "send_direct",
+          "outcome": "failed",
+          "reason": "transport_failed",
+          "receivedAtMs": 1788886150423,
+          "source": "flutter",
+          "stage": "signaling"
+        },
+        "hasRetainedEvents": true,
+        "invalidOrUnreadableRecordCount": 0,
+        "legacyTraceCount": 0,
+        "lossCountScope": "droppedEvents counts durable distinct permanent trace-cap refusals within a bounded ledger. Saturated ledgers are a lower bound. Legacy quota-rejection attempts include retries and do not establish a unique lost-event count.",
+        "mailboxAdmittedTraceCount": 1,
+        "missingEndpointTerminalTraceCount": 1,
+        "missingStageReports": [
+          "answer",
+          "media"
+        ],
+        "neutralTerminalTraceCount": 1,
+        "observedTraceCount": 1,
+        "operationChain": [
+          {
+            "action": "lookup",
+            "occurredAtMs": 1788886146103,
+            "outcome": "ok",
+            "parentOperationId": "23ce49d2-1837-4959-a63a-574763152d26",
+            "reason": "none",
+            "receivedAtMs": 1788886146118,
+            "source": "relay",
+            "stage": "authority"
+          },
+          {
+            "action": "response",
+            "occurredAtMs": 1788886146103,
+            "outcome": "ok",
+            "parentOperationId": "23ce49d2-1837-4959-a63a-574763152d26",
+            "reason": "none",
+            "receivedAtMs": 1788886146128,
+            "source": "relay",
+            "stage": "authority"
+          },
+          {
+            "action": "publish",
+            "occurredAtMs": 1788886146160,
+            "operationId": "b7f61a0b-1ec2-4bf6-88d9-6ba8892f1f92",
+            "outcome": "started",
+            "reason": "resume_refresh",
+            "receivedAtMs": 1788886146161,
+            "source": "relay",
+            "stage": "authority"
+          },
+          {
+            "action": "publish",
+            "occurredAtMs": 1788886146161,
+            "operationId": "b7f61a0b-1ec2-4bf6-88d9-6ba8892f1f92",
+            "outcome": "ok",
+            "reason": "resume_refresh",
+            "receivedAtMs": 1788886146176,
+            "source": "relay",
+            "stage": "authority"
+          },
+          {
+            "action": "response",
+            "occurredAtMs": 1788886146161,
+            "operationId": "b7f61a0b-1ec2-4bf6-88d9-6ba8892f1f92",
+            "outcome": "ok",
+            "reason": "none",
+            "receivedAtMs": 1788886146185,
+            "source": "relay",
+            "stage": "authority"
+          },
+          {
+            "action": "publish",
+            "occurredAtMs": 1788886146208,
+            "operationId": "b7f61a0b-1ec2-4bf6-88d9-6ba8892f1f92",
+            "outcome": "started",
+            "reason": "resume_refresh",
+            "receivedAtMs": 1788886146208,
+            "source": "relay",
+            "stage": "authority"
+          },
+          {
+            "action": "publish",
+            "occurredAtMs": 1788886146208,
+            "operationId": "b7f61a0b-1ec2-4bf6-88d9-6ba8892f1f92",
+            "outcome": "ok",
+            "reason": "resume_refresh",
+            "receivedAtMs": 1788886146226,
+            "source": "relay",
+            "stage": "authority"
+          },
+          {
+            "action": "response",
+            "occurredAtMs": 1788886146208,
+            "operationId": "b7f61a0b-1ec2-4bf6-88d9-6ba8892f1f92",
+            "outcome": "ok",
+            "reason": "none",
+            "receivedAtMs": 1788886146235,
+            "source": "relay",
+            "stage": "authority"
+          },
+          {
+            "action": "publish",
+            "occurredAtMs": 1788886146253,
+            "operationId": "b7f61a0b-1ec2-4bf6-88d9-6ba8892f1f92",
+            "outcome": "started",
+            "reason": "resume_refresh",
+            "receivedAtMs": 1788886146253,
+            "source": "relay",
+            "stage": "authority"
+          },
+          {
+            "action": "publish",
+            "occurredAtMs": 1788886146254,
+            "operationId": "b7f61a0b-1ec2-4bf6-88d9-6ba8892f1f92",
+            "outcome": "ok",
+            "reason": "resume_refresh",
+            "receivedAtMs": 1788886146269,
+            "source": "relay",
+            "stage": "authority"
+          },
+          {
+            "action": "response",
+            "occurredAtMs": 1788886146254,
+            "operationId": "b7f61a0b-1ec2-4bf6-88d9-6ba8892f1f92",
+            "outcome": "ok",
+            "reason": "none",
+            "receivedAtMs": 1788886146278,
+            "source": "relay",
+            "stage": "authority"
+          },
+          {
+            "action": "lookup",
+            "occurredAtMs": 1788886146300,
+            "outcome": "ok",
+            "parentOperationId": "23ce49d2-1837-4959-a63a-574763152d26",
+            "reason": "none",
+            "receivedAtMs": 1788886146310,
+            "source": "relay",
+            "stage": "authority"
+          },
+          {
+            "action": "response",
+            "occurredAtMs": 1788886146301,
+            "outcome": "ok",
+            "parentOperationId": "23ce49d2-1837-4959-a63a-574763152d26",
+            "reason": "none",
+            "receivedAtMs": 1788886146322,
+            "source": "relay",
+            "stage": "authority"
+          },
+          {
+            "action": "lookup",
+            "occurredAtMs": 1788886146355,
+            "outcome": "ok",
+            "parentOperationId": "23ce49d2-1837-4959-a63a-574763152d26",
+            "reason": "none",
+            "receivedAtMs": 1788886146365,
+            "source": "relay",
+            "stage": "authority"
+          },
+          {
+            "action": "response",
+            "occurredAtMs": 1788886146355,
+            "outcome": "ok",
+            "parentOperationId": "23ce49d2-1837-4959-a63a-574763152d26",
+            "reason": "none",
+            "receivedAtMs": 1788886146374,
+            "source": "relay",
+            "stage": "authority"
+          },
+          {
+            "action": "lookup",
+            "occurredAtMs": 1788886146444,
+            "outcome": "ok",
+            "parentOperationId": "23ce49d2-1837-4959-a63a-574763152d26",
+            "reason": "none",
+            "receivedAtMs": 1788886146454,
+            "source": "relay",
+            "stage": "authority"
+          },
+          {
+            "action": "response",
+            "occurredAtMs": 1788886146444,
+            "outcome": "ok",
+            "parentOperationId": "23ce49d2-1837-4959-a63a-574763152d26",
+            "reason": "none",
+            "receivedAtMs": 1788886146465,
+            "source": "relay",
+            "stage": "authority"
+          },
+          {
+            "action": "start",
+            "occurredAtMs": 1788886146079,
+            "operationId": "b7f61a0b-1ec2-4bf6-88d9-6ba8892f1f92",
+            "outcome": "started",
+            "reason": "resume_refresh",
+            "receivedAtMs": 1788886150175,
+            "source": "flutter",
+            "stage": "authority"
+          },
+          {
+            "action": "publish",
+            "occurredAtMs": 1788886146083,
+            "operationId": "b7f61a0b-1ec2-4bf6-88d9-6ba8892f1f92",
+            "outcome": "started",
+            "reason": "none",
+            "receivedAtMs": 1788886150185,
+            "source": "flutter",
+            "stage": "authority"
+          },
+          {
+            "action": "publish",
+            "occurredAtMs": 1788886146125,
+            "operationId": "b7f61a0b-1ec2-4bf6-88d9-6ba8892f1f92",
+            "outcome": "ok",
+            "reason": "none",
+            "receivedAtMs": 1788886150195,
+            "source": "flutter",
+            "stage": "authority"
+          },
+          {
+            "action": "publish",
+            "occurredAtMs": 1788886146132,
+            "operationId": "b7f61a0b-1ec2-4bf6-88d9-6ba8892f1f92",
+            "outcome": "started",
+            "reason": "none",
+            "receivedAtMs": 1788886150208,
+            "source": "flutter",
+            "stage": "authority"
+          },
+          {
+            "action": "publish",
+            "occurredAtMs": 1788886146172,
+            "operationId": "b7f61a0b-1ec2-4bf6-88d9-6ba8892f1f92",
+            "outcome": "ok",
+            "reason": "none",
+            "receivedAtMs": 1788886150217,
+            "source": "flutter",
+            "stage": "authority"
+          },
+          {
+            "action": "publish",
+            "occurredAtMs": 1788886146176,
+            "operationId": "b7f61a0b-1ec2-4bf6-88d9-6ba8892f1f92",
+            "outcome": "started",
+            "reason": "none",
+            "receivedAtMs": 1788886150227,
+            "source": "flutter",
+            "stage": "authority"
+          },
+          {
+            "action": "publish",
+            "occurredAtMs": 1788886146218,
+            "operationId": "b7f61a0b-1ec2-4bf6-88d9-6ba8892f1f92",
+            "outcome": "ok",
+            "reason": "none",
+            "receivedAtMs": 1788886150237,
+            "source": "flutter",
+            "stage": "authority"
+          },
+          {
+            "action": "present",
+            "occurredAtMs": 1788886146351,
+            "operationId": "01bab111-bf1d-47f4-9ebf-293f7b128ec9",
+            "outcome": "started",
+            "reason": "none",
+            "receivedAtMs": 1788886150434,
+            "source": "ios",
+            "stage": "presentation"
+          },
+          {
+            "action": "commit",
+            "occurredAtMs": 1788886146917,
+            "operationId": "01bab111-bf1d-47f4-9ebf-293f7b128ec9",
+            "outcome": "ok",
+            "reason": "none",
+            "receivedAtMs": 1788886150446,
+            "source": "ios",
+            "stage": "presentation"
+          },
+          {
+            "action": "present",
+            "occurredAtMs": 1788886146928,
+            "operationId": "01bab111-bf1d-47f4-9ebf-293f7b128ec9",
+            "outcome": "ok",
+            "reason": "none",
+            "receivedAtMs": 1788886150457,
+            "source": "ios",
+            "stage": "presentation"
+          },
+          {
+            "action": "commit",
+            "occurredAtMs": 1788886146979,
+            "operationId": "01bab111-bf1d-47f4-9ebf-293f7b128ec9",
+            "outcome": "ok",
+            "reason": "none",
+            "receivedAtMs": 1788886150467,
+            "source": "ios",
+            "stage": "audio"
+          },
+          {
+            "action": "lookup",
+            "occurredAtMs": 1788886176505,
+            "outcome": "ok",
+            "parentOperationId": "23ce49d2-1837-4959-a63a-574763152d26",
+            "reason": "none",
+            "receivedAtMs": 1788886176518,
+            "source": "relay",
+            "stage": "authority"
+          },
+          {
+            "action": "response",
+            "occurredAtMs": 1788886176505,
+            "outcome": "ok",
+            "parentOperationId": "23ce49d2-1837-4959-a63a-574763152d26",
+            "reason": "none",
+            "receivedAtMs": 1788886176528,
+            "source": "relay",
+            "stage": "authority"
+          },
+          {
+            "action": "commit",
+            "occurredAtMs": 1788886176405,
+            "operationId": "01bab111-bf1d-47f4-9ebf-293f7b128ec9",
+            "outcome": "ok",
+            "reason": "unknown",
+            "receivedAtMs": 1788886180122,
+            "source": "ios",
+            "stage": "terminal"
+          }
+        ],
+        "phaseFailureEventCounts": {
+          "signaling": 2
+        },
+        "preflightRateScope": "Distinct traces with a failed preflight phase or client terminal preflight_failed, divided by observed client attempt/caller traces plus any preflight-failure traces. Duplicate phase/terminal reports count once. Missing attempts remain outside this retained-evidence denominator.",
+        "presentationReported": true,
+        "rates": {
+          "answered_without_verified_media": {
+            "alertEligible": false,
+            "alertThreshold": 0.1,
+            "denominator": 1,
+            "minimumSamples": 5,
+            "numerator": 0,
+            "rate": 0.0
+          },
+          "cleanup_failure": {
+            "alertEligible": false,
+            "alertThreshold": 0.2,
+            "denominator": 1,
+            "minimumSamples": 5,
+            "numerator": 0,
+            "rate": 0.0
+          },
+          "credential_failure": {
+            "alertEligible": false,
+            "alertThreshold": 0.2,
+            "denominator": 0,
+            "minimumSamples": 5,
+            "numerator": 0,
+            "rate": null
+          },
+          "drop_after_media": {
+            "alertEligible": false,
+            "alertThreshold": 0.1,
+            "denominator": 0,
+            "minimumSamples": 5,
+            "numerator": 0,
+            "rate": null
+          },
+          "preflight_rejection": {
+            "alertEligible": false,
+            "alertThreshold": 0.2,
+            "denominator": 1,
+            "minimumSamples": 5,
+            "numerator": 0,
+            "rate": 0.0
+          },
+          "provider_failure": {
+            "alertEligible": false,
+            "alertThreshold": 0.2,
+            "denominator": 2,
+            "minimumSamples": 5,
+            "numerator": 0,
+            "rate": 0.0
+          },
+          "technical_setup_failure": {
+            "alertEligible": false,
+            "alertThreshold": 0.2,
+            "denominator": 0,
+            "minimumSamples": 5,
+            "numerator": 0,
+            "rate": null
+          },
+          "telemetry_loss": {
+            "alertEligible": true,
+            "alertThreshold": 1e-06,
+            "denominator": 84,
+            "minimumSamples": 5,
+            "numerator": 0,
+            "rate": 0.0,
+            "rateIsLowerBound": false
+          },
+          "withdrawal_unknown_origin": {
+            "alertEligible": false,
+            "alertThreshold": 0.2,
+            "denominator": 0,
+            "minimumSamples": 5,
+            "numerator": 0,
+            "rate": null
+          }
+        },
+        "recordLimit": 100,
+        "registrationWithdrawalOperationsByOrigin": {},
+        "relatedAuthorityOperations": [
+          {
+            "action": "publish",
+            "occurredAtMs": 1788886146160,
+            "operationId": "b7f61a0b-1ec2-4bf6-88d9-6ba8892f1f92",
+            "outcome": "started",
+            "reason": "resume_refresh",
+            "receivedAtMs": 1788886146161,
+            "role": "server",
+            "source": "relay",
+            "stage": "authority",
+            "values": {
+              "authorityKind": "ios_voip_token"
+            }
+          },
+          {
+            "action": "publish",
+            "occurredAtMs": 1788886146161,
+            "operationId": "b7f61a0b-1ec2-4bf6-88d9-6ba8892f1f92",
+            "outcome": "ok",
+            "reason": "resume_refresh",
+            "receivedAtMs": 1788886146176,
+            "role": "server",
+            "source": "relay",
+            "stage": "authority",
+            "values": {
+              "authorityKind": "ios_voip_token"
+            }
+          },
+          {
+            "action": "response",
+            "occurredAtMs": 1788886146161,
+            "operationId": "b7f61a0b-1ec2-4bf6-88d9-6ba8892f1f92",
+            "outcome": "ok",
+            "reason": "none",
+            "receivedAtMs": 1788886146185,
+            "role": "server",
+            "source": "relay",
+            "stage": "authority",
+            "values": {
+              "authorityKind": "ios_voip_token",
+              "responseWritten": true
+            }
+          },
+          {
+            "action": "publish",
+            "occurredAtMs": 1788886146208,
+            "operationId": "b7f61a0b-1ec2-4bf6-88d9-6ba8892f1f92",
+            "outcome": "started",
+            "reason": "resume_refresh",
+            "receivedAtMs": 1788886146208,
+            "role": "server",
+            "source": "relay",
+            "stage": "authority",
+            "values": {
+              "authorityKind": "wake_grant"
+            }
+          },
+          {
+            "action": "publish",
+            "occurredAtMs": 1788886146208,
+            "operationId": "b7f61a0b-1ec2-4bf6-88d9-6ba8892f1f92",
+            "outcome": "ok",
+            "reason": "resume_refresh",
+            "receivedAtMs": 1788886146226,
+            "role": "server",
+            "source": "relay",
+            "stage": "authority",
+            "values": {
+              "authorityKind": "wake_grant"
+            }
+          },
+          {
+            "action": "response",
+            "occurredAtMs": 1788886146208,
+            "operationId": "b7f61a0b-1ec2-4bf6-88d9-6ba8892f1f92",
+            "outcome": "ok",
+            "reason": "none",
+            "receivedAtMs": 1788886146235,
+            "role": "server",
+            "source": "relay",
+            "stage": "authority",
+            "values": {
+              "authorityKind": "wake_grant",
+              "responseWritten": true
+            }
+          },
+          {
+            "action": "publish",
+            "occurredAtMs": 1788886146253,
+            "operationId": "b7f61a0b-1ec2-4bf6-88d9-6ba8892f1f92",
+            "outcome": "started",
+            "reason": "resume_refresh",
+            "receivedAtMs": 1788886146253,
+            "role": "server",
+            "source": "relay",
+            "stage": "authority",
+            "values": {
+              "authorityKind": "endpoint"
+            }
+          },
+          {
+            "action": "publish",
+            "occurredAtMs": 1788886146254,
+            "operationId": "b7f61a0b-1ec2-4bf6-88d9-6ba8892f1f92",
+            "outcome": "ok",
+            "reason": "resume_refresh",
+            "receivedAtMs": 1788886146269,
+            "role": "server",
+            "source": "relay",
+            "stage": "authority",
+            "values": {
+              "authorityKind": "endpoint"
+            }
+          },
+          {
+            "action": "response",
+            "occurredAtMs": 1788886146254,
+            "operationId": "b7f61a0b-1ec2-4bf6-88d9-6ba8892f1f92",
+            "outcome": "ok",
+            "reason": "none",
+            "receivedAtMs": 1788886146278,
+            "role": "server",
+            "source": "relay",
+            "stage": "authority",
+            "values": {
+              "authorityKind": "endpoint",
+              "responseWritten": true
+            }
+          },
+          {
+            "action": "start",
+            "occurredAtMs": 1788886146079,
+            "operationId": "b7f61a0b-1ec2-4bf6-88d9-6ba8892f1f92",
+            "outcome": "started",
+            "reason": "resume_refresh",
+            "receivedAtMs": 1788886150175,
+            "role": "caller",
+            "source": "flutter",
+            "stage": "authority",
+            "values": {}
+          },
+          {
+            "action": "publish",
+            "occurredAtMs": 1788886146083,
+            "operationId": "b7f61a0b-1ec2-4bf6-88d9-6ba8892f1f92",
+            "outcome": "started",
+            "reason": "none",
+            "receivedAtMs": 1788886150185,
+            "role": "caller",
+            "source": "flutter",
+            "stage": "authority",
+            "values": {}
+          },
+          {
+            "action": "publish",
+            "occurredAtMs": 1788886146125,
+            "operationId": "b7f61a0b-1ec2-4bf6-88d9-6ba8892f1f92",
+            "outcome": "ok",
+            "reason": "none",
+            "receivedAtMs": 1788886150195,
+            "role": "caller",
+            "source": "flutter",
+            "stage": "authority",
+            "values": {}
+          },
+          {
+            "action": "publish",
+            "occurredAtMs": 1788886146132,
+            "operationId": "b7f61a0b-1ec2-4bf6-88d9-6ba8892f1f92",
+            "outcome": "started",
+            "reason": "none",
+            "receivedAtMs": 1788886150208,
+            "role": "caller",
+            "source": "flutter",
+            "stage": "authority",
+            "values": {}
+          },
+          {
+            "action": "publish",
+            "occurredAtMs": 1788886146172,
+            "operationId": "b7f61a0b-1ec2-4bf6-88d9-6ba8892f1f92",
+            "outcome": "ok",
+            "reason": "none",
+            "receivedAtMs": 1788886150217,
+            "role": "caller",
+            "source": "flutter",
+            "stage": "authority",
+            "values": {}
+          },
+          {
+            "action": "publish",
+            "occurredAtMs": 1788886146176,
+            "operationId": "b7f61a0b-1ec2-4bf6-88d9-6ba8892f1f92",
+            "outcome": "started",
+            "reason": "none",
+            "receivedAtMs": 1788886150227,
+            "role": "caller",
+            "source": "flutter",
+            "stage": "authority",
+            "values": {}
+          },
+          {
+            "action": "publish",
+            "occurredAtMs": 1788886146218,
+            "operationId": "b7f61a0b-1ec2-4bf6-88d9-6ba8892f1f92",
+            "outcome": "ok",
+            "reason": "none",
+            "receivedAtMs": 1788886150237,
+            "role": "caller",
+            "source": "flutter",
+            "stage": "authority",
+            "values": {}
+          },
+          {
+            "action": "publish",
+            "occurredAtMs": 1788881635365,
+            "operationId": "23ce49d2-1837-4959-a63a-574763152d26",
+            "outcome": "started",
+            "reason": "resume_refresh",
+            "receivedAtMs": 1788881635366,
+            "role": "server",
+            "source": "relay",
+            "stage": "authority",
+            "values": {
+              "authorityKind": "wake_grant"
+            }
+          },
+          {
+            "action": "publish",
+            "occurredAtMs": 1788881635366,
+            "operationId": "23ce49d2-1837-4959-a63a-574763152d26",
+            "outcome": "ok",
+            "reason": "resume_refresh",
+            "receivedAtMs": 1788881635378,
+            "role": "server",
+            "source": "relay",
+            "stage": "authority",
+            "values": {
+              "authorityKind": "wake_grant"
+            }
+          },
+          {
+            "action": "response",
+            "occurredAtMs": 1788881635366,
+            "operationId": "23ce49d2-1837-4959-a63a-574763152d26",
+            "outcome": "ok",
+            "reason": "none",
+            "receivedAtMs": 1788881635384,
+            "role": "server",
+            "source": "relay",
+            "stage": "authority",
+            "values": {
+              "authorityKind": "wake_grant",
+              "responseWritten": true
+            }
+          },
+          {
+            "action": "publish",
+            "occurredAtMs": 1788881635423,
+            "operationId": "23ce49d2-1837-4959-a63a-574763152d26",
+            "outcome": "started",
+            "reason": "resume_refresh",
+            "receivedAtMs": 1788881635423,
+            "role": "server",
+            "source": "relay",
+            "stage": "authority",
+            "values": {
+              "authorityKind": "endpoint"
+            }
+          },
+          {
+            "action": "publish",
+            "occurredAtMs": 1788881635423,
+            "operationId": "23ce49d2-1837-4959-a63a-574763152d26",
+            "outcome": "ok",
+            "reason": "resume_refresh",
+            "receivedAtMs": 1788881635435,
+            "role": "server",
+            "source": "relay",
+            "stage": "authority",
+            "values": {
+              "authorityKind": "endpoint"
+            }
+          },
+          {
+            "action": "response",
+            "occurredAtMs": 1788881635423,
+            "operationId": "23ce49d2-1837-4959-a63a-574763152d26",
+            "outcome": "ok",
+            "reason": "none",
+            "receivedAtMs": 1788881635441,
+            "role": "server",
+            "source": "relay",
+            "stage": "authority",
+            "values": {
+              "authorityKind": "endpoint",
+              "responseWritten": true
+            }
+          },
+          {
+            "action": "start",
+            "occurredAtMs": 1788881637159,
+            "operationId": "23ce49d2-1837-4959-a63a-574763152d26",
+            "outcome": "started",
+            "reason": "resume_refresh",
+            "receivedAtMs": 1788881639701,
+            "role": "caller",
+            "source": "flutter",
+            "stage": "authority",
+            "values": {}
+          },
+          {
+            "action": "publish",
+            "occurredAtMs": 1788881637232,
+            "operationId": "23ce49d2-1837-4959-a63a-574763152d26",
+            "outcome": "started",
+            "reason": "none",
+            "receivedAtMs": 1788881639710,
+            "role": "caller",
+            "source": "flutter",
+            "stage": "authority",
+            "values": {}
+          },
+          {
+            "action": "publish",
+            "occurredAtMs": 1788881637282,
+            "operationId": "23ce49d2-1837-4959-a63a-574763152d26",
+            "outcome": "ok",
+            "reason": "none",
+            "receivedAtMs": 1788881639718,
+            "role": "caller",
+            "source": "flutter",
+            "stage": "authority",
+            "values": {}
+          },
+          {
+            "action": "publish",
+            "occurredAtMs": 1788881637289,
+            "operationId": "23ce49d2-1837-4959-a63a-574763152d26",
+            "outcome": "started",
+            "reason": "none",
+            "receivedAtMs": 1788881639727,
+            "role": "caller",
+            "source": "flutter",
+            "stage": "authority",
+            "values": {}
+          },
+          {
+            "action": "publish",
+            "occurredAtMs": 1788881637339,
+            "operationId": "23ce49d2-1837-4959-a63a-574763152d26",
+            "outcome": "ok",
+            "reason": "none",
+            "receivedAtMs": 1788881639735,
+            "role": "caller",
+            "source": "flutter",
+            "stage": "authority",
+            "values": {}
+          }
+        ],
+        "schemaVersion": 1,
+        "scope": "Opted-in retained records only. Client media is reported evidence; relay admission, push submission, and TURN minting do not prove audio. Coturn allocations remain aggregate.",
+        "technicalRateScope": "Post-preflight signaling/native-answer/media setup failures among distinct opted-in client-reported classified terminal traces. Preflight-only failures and declines/cancels/busy/no-answer are excluded from this denominator. Phase failures can recover and are counted separately. Minimum5 observations before rate alerts.",
+        "telemetryLossCountExact": true,
+        "terminalRecordOutcomes": {
+          "no_answer": 1
+        },
+        "traceId": "5879d7e3-35a3-49b7-9bcb-4760b9d124c3",
+        "tracesWithoutTerminalRecord": 0,
+        "unclassifiedTerminalTraceCount": 0,
+        "unknownEndpointRoleTraceCount": 0,
+        "unresolvedOperationReferenceCount": 1
+      },
+      "traceId": "5879d7e3-35a3-49b7-9bcb-4760b9d124c3"
+    },
+    {
+      "recordExists": false,
+      "report": null,
+      "traceId": "0e714018-ba56-4aa6-8b8c-863af7c896e4"
+    }
+  ]
+}

@@ -1,6 +1,8 @@
 import 'dart:async';
+import 'dart:collection';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:isolate';
 import 'dart:math';
 
 import 'package:flutter/foundation.dart';
@@ -8,10 +10,66 @@ import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 
 import '../../../core/bridge/bridge.dart';
+import '../../../core/diagnostics/diagnostic_archive_writer.dart';
 import 'call_diagnostic_schema.dart';
 
 typedef CallDiagnosticUpload =
     Future<Set<String>> Function(List<Map<String, Object?>> events);
+
+typedef CallDiagnosticPersist =
+    Future<void> Function(String path, Map<String, Object?> state);
+
+final _callDiagnosticJsonBytes = DiagnosticJsonByteCounter(
+  cachedStrings: [
+    for (final options in CallDiagnostics._schemaSets.values) ...options,
+    for (final entry in CallDiagnostics._enumValues.entries) ...[
+      entry.key,
+      ...entry.value,
+    ],
+  ],
+);
+
+Future<String> _encodeCallDiagnosticPreview(Map<String, Object?> state) =>
+    Isolate.run(() => const JsonEncoder.withIndent('  ').convert(state));
+
+Future<String> _readCallDiagnosticPreview(
+  String path,
+  Map<String, Object?> header,
+) => Isolate.run(() async {
+  final raw = jsonDecode(await File(path).readAsString());
+  if (raw is! Map || raw['schemaVersion'] != 1 || raw['events'] is! List) {
+    throw const FormatException('diagnostic state');
+  }
+  // Storage-only metadata is deliberately excluded from the support export.
+  final events = (raw['events'] as List)
+      .map(CallDiagnostics.validateEvent)
+      .whereType<Map<String, Object?>>()
+      .toList();
+  return const JsonEncoder.withIndent(
+    '  ',
+  ).convert({...header, 'events': events});
+});
+
+Future<dynamic> _readCallDiagnosticState(String path) => Isolate.run(() async {
+  final raw = jsonDecode(await File(path).readAsString());
+  if (raw is Map && raw['events'] is List) {
+    final events = (raw['events'] as List)
+        .map(CallDiagnostics.validateEvent)
+        .whereType<Map<String, Object?>>()
+        .toList();
+    raw['events'] = events;
+    raw['_loadedEventSizes'] = <String, int>{
+      for (final event in events)
+        event['eventId']! as String: _callDiagnosticJsonBytes.count(event),
+    };
+  }
+  return raw;
+});
+
+final class _CallDiagnosticGroup {
+  final events = SplayTreeMap<int, Map<String, Object?>>();
+  int bytes = 0;
+}
 
 /// A bounded diagnostic archive. It never participates in call authority.
 /// Protocol identities are used only as transient, private binding keys.
@@ -28,6 +86,22 @@ final class CallDiagnostics with WidgetsBindingObserver {
   static final RegExp _uuid = RegExp(
     r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-4[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$',
   );
+  static final _buildPattern = RegExp(r'^[0-9A-Za-z.+_-]{1,80}$');
+  static final _uppercase = RegExp(r'[A-Z]');
+  static final Map<String, Set<String>> _schemaSets = {
+    for (final entry in callDiagnosticSchemaV1.entries)
+      if (entry.value is List) entry.key: Set<String>.from(entry.value as List),
+  };
+  static final Map<String, Set<String>> _enumValues = {
+    for (final entry
+        in (callDiagnosticSchemaV1['enumValues'] as Map<String, dynamic>)
+            .entries)
+      entry.key: Set<String>.from(entry.value as List),
+  };
+  static final _eventKeys = {
+    ..._schemaSets['required']!,
+    ..._schemaSets['optional']!,
+  };
   static const int _maxBytes = 4 * 1024 * 1024; // Native gets a separate 1 MiB.
   static const int _maxAttempts = 100;
   static const int _maxEvents = 256;
@@ -35,8 +109,17 @@ final class CallDiagnostics with WidgetsBindingObserver {
   static const Duration _retention = Duration(days: 7);
 
   final ValueNotifier<bool> _enabled = ValueNotifier<bool>(false);
-  final List<Map<String, Object?>> _events = [];
+  final Map<String, Map<String, Object?>> _eventsById = {};
+  Iterable<Map<String, Object?>> get _events => _eventsById.values;
+  final Map<String, _CallDiagnosticGroup> _groups = {};
+  final Map<String, int> _eventOrder = {};
+  int _nextEventOrder = 0;
+  int _retainedBytes = 0;
+  int? _nextExpiryMs;
   final Set<String> _uploaded = {};
+  Set<String> _uploadedAdditions = {};
+  Set<String> _uploadedRemovals = {};
+  bool _fullMetadataRequired = true;
   final Set<String> _uploading = {};
   final Set<String> _resolvingTraces = {};
   final Map<String, int> _eventSizes = {};
@@ -54,9 +137,12 @@ final class CallDiagnostics with WidgetsBindingObserver {
   final Stopwatch _elapsed = Stopwatch();
   final Random _random = Random.secure();
   Directory? _directory;
+  DiagnosticArchiveWriter? _archiveWriter;
+  bool _ready = false;
   Bridge? _bridge;
   Future<bool> Function()? _networkAllowed;
   CallDiagnosticUpload? _testUpload;
+  CallDiagnosticPersist? _testPersist;
   Future<dynamic> Function(String method, Map<String, Object?> data)?
   _testNative;
   DateTime Function() _now = DateTime.now;
@@ -80,6 +166,8 @@ final class CallDiagnostics with WidgetsBindingObserver {
   bool _disposed = false;
   bool _storageHealthy = true;
   bool _dirty = false;
+  bool _urgentWriteRequested = false;
+  Timer? _persistTimer;
   bool _flushing = false;
   Completer<void>? _flushDone;
   bool _observing = false;
@@ -113,10 +201,14 @@ final class CallDiagnostics with WidgetsBindingObserver {
       return;
     }
     _directory = directory;
+    if (_testPersist == null) {
+      _archiveWriter = DiagnosticArchiveWriter(
+        _stateFile.path,
+        validateEvent: CallDiagnostics.validateEvent,
+      );
+    }
     _native = useNative && !kIsWeb && (Platform.isIOS || Platform.isAndroid);
-    _build = RegExp(r'^[0-9A-Za-z.+_-]{1,80}$').hasMatch(build)
-        ? build
-        : 'unknown';
+    _build = _buildPattern.hasMatch(build) ? build : 'unknown';
     _runId = _newId();
     _elapsed.start();
     try {
@@ -126,7 +218,7 @@ final class CallDiagnostics with WidgetsBindingObserver {
         if (await file.length() > _maxBytes + 1024 * 1024) {
           throw const FormatException('diagnostic quota');
         }
-        final raw = jsonDecode(await file.readAsString());
+        final raw = await _readCallDiagnosticState(file.path);
         if (raw is Map && raw['schemaVersion'] == 1) {
           _enabled.value = raw['enabled'] == true;
           _consentEpoch = _boundedInt(raw['consentEpoch']);
@@ -153,9 +245,11 @@ final class CallDiagnostics with WidgetsBindingObserver {
           }
           final records = raw['events'];
           if (records is List) {
+            _eventSizes.addAll(
+              Map<String, int>.from(raw['_loadedEventSizes'] as Map),
+            );
             for (final value in records) {
-              final event = validateEvent(value);
-              if (event != null) _events.add(event);
+              _indexEvent(value as Map<String, Object?>);
             }
           }
           for (final event in _events) {
@@ -190,10 +284,15 @@ final class CallDiagnostics with WidgetsBindingObserver {
       }
       if (enabledOverride != null) _enabled.value = enabledOverride;
       if (_consentEpoch == 0) _consentEpoch = _nowMs;
-      _prune();
+      _prune(force: true);
       if (!enabled) {
         _clearMemory();
-      } else {
+      }
+      // The writer loads retained rows privately once. Only subsequent event
+      // changes cross its isolate boundary during normal collection.
+      _archiveWriter?.initializeRetainedEvents(_eventsById.keys);
+      _ready = true;
+      if (enabled) {
         for (final traceId in List<String>.of(_open.keys)) {
           if (_finished.contains(traceId)) {
             _open.remove(traceId);
@@ -213,12 +312,16 @@ final class CallDiagnostics with WidgetsBindingObserver {
           );
         }
       }
-      await _persist();
+      await _persist(force: true);
     } catch (_) {
       _storageHealthy = false;
       _lastError = 'sink_unavailable';
       _enabled.value = false;
       _clearMemory();
+      if (!_ready) {
+        _archiveWriter?.initializeRetainedEvents(const <String>[]);
+        _ready = true;
+      }
     }
     _nativeConsentPending = true;
     await _syncNativeConsent();
@@ -243,6 +346,7 @@ final class CallDiagnostics with WidgetsBindingObserver {
     bool? enabled = true,
     DateTime Function()? now,
     CallDiagnosticUpload? upload,
+    CallDiagnosticPersist? persist,
     Bridge? bridge,
     Future<bool> Function()? networkAllowed,
     Future<dynamic> Function(String method, Map<String, Object?> data)? native,
@@ -252,6 +356,7 @@ final class CallDiagnostics with WidgetsBindingObserver {
     _instance = value;
     if (now != null) value._now = now;
     value._testUpload = upload;
+    value._testPersist = persist;
     value._testNative = native;
     await value.initialize(
       directory:
@@ -529,7 +634,7 @@ final class CallDiagnostics with WidgetsBindingObserver {
     if (!value) _nativeClearPending = true;
     _enabled.value = value;
     if (!value) _clearMemory();
-    await _persist();
+    await _persist(force: true);
     if (!_storageHealthy && value) _enabled.value = false;
     await _syncNativeConsent();
     _lastConfigureAtMs = 0;
@@ -552,7 +657,7 @@ final class CallDiagnostics with WidgetsBindingObserver {
     _nativeConsentPending = true;
     _nativeClearPending = true;
     _clearMemory();
-    await _persist();
+    await _persist(force: true);
     await _syncNativeConsent();
     await _syncConsent();
   }
@@ -560,9 +665,7 @@ final class CallDiagnostics with WidgetsBindingObserver {
   Future<Map<String, Object?>> status() async => {
     'enabled': enabled,
     'retainedEvents': _events.length,
-    'queuedEvents': _events
-        .where((e) => !_uploaded.contains(e['eventId']))
-        .length,
+    'queuedEvents': _eventsById.length - _uploaded.length,
     'droppedEvents': _dropped,
     'storageHealthy': _storageHealthy && _nativeHealthy,
     'nativeStorageHealthy': _nativeHealthy,
@@ -573,21 +676,28 @@ final class CallDiagnostics with WidgetsBindingObserver {
         _clearPending,
     'lastUploadAtMs': _lastUploadAtMs,
     'lastError': _lastError,
-    'traceCodes': _events
-        .map((e) => e['traceId'])
-        .whereType<String>()
-        .toSet()
-        .toList(),
+    'traceCodes': _groups.keys.toList(),
   };
 
   Future<String> exportPreview() async {
     await _persist();
-    return const JsonEncoder.withIndent('  ').convert({
+    final header = <String, Object?>{
       'schemaVersion': 1,
       'exportedAtMs': _nowMs,
       'retentionDays': 7,
       'droppedEvents': _dropped,
-      'events': _events,
+    };
+    if (_testPersist == null && _storageHealthy && _directory != null) {
+      try {
+        // Only a path and a small public header cross the UI isolate boundary.
+        return await _readCallDiagnosticPreview(_stateFile.path, header);
+      } catch (_) {
+        // Retained in-memory evidence remains useful if storage disappears.
+      }
+    }
+    return _encodeCallDiagnosticPreview({
+      ...header,
+      'events': _eventSnapshot(),
     });
   }
 
@@ -598,7 +708,12 @@ final class CallDiagnostics with WidgetsBindingObserver {
 
   Future<void> flush() async {
     if (_flushing) {
-      await _flushDone?.future;
+      // Joining an earlier upload also persists events admitted since its
+      // snapshot. The existing upload future alone cannot provide that barrier.
+      await Future.wait<void>([
+        if (_flushDone case final done?) done.future,
+        _persist(),
+      ]);
       return;
     }
     if (!enabled &&
@@ -660,7 +775,7 @@ final class CallDiagnostics with WidgetsBindingObserver {
             .toSet();
         for (final event in batch) {
           if (rejected.contains(event['eventId'])) {
-            if (_uploaded.add(event['eventId']! as String)) {
+            if (_addUploaded(event['eventId']! as String)) {
               acknowledged++;
               _dropped++;
             }
@@ -670,8 +785,14 @@ final class CallDiagnostics with WidgetsBindingObserver {
       if (!enabled || epoch != _consentEpoch) return;
       for (final event in batch) {
         if (accepted.contains(event['eventId'])) {
-          if (_uploaded.add(event['eventId']! as String)) acknowledged++;
+          if (_addUploaded(event['eventId']! as String)) acknowledged++;
         }
+      }
+      // Rows can be evicted while their upload is pending. Retain completion
+      // accounting without leaving obsolete IDs in the persisted index.
+      for (final event in batch) {
+        final id = event['eventId']! as String;
+        if (!_eventsById.containsKey(id)) _removeUploaded(id);
       }
       if (acknowledged == 0) {
         _uploadFailed('bridge_unavailable');
@@ -681,7 +802,7 @@ final class CallDiagnostics with WidgetsBindingObserver {
         _nextUploadAtMs = 0;
         _lastError = 'none';
       }
-      await _persist();
+      await _persist(force: acknowledged > 0);
     } catch (_) {
       _uploadFailed('sink_unavailable');
     } finally {
@@ -729,16 +850,19 @@ final class CallDiagnostics with WidgetsBindingObserver {
       _nextUploadAtMs = 0;
       unawaited(flush());
     } else {
-      _schedulePersist();
+      unawaited(_persist());
     }
   }
 
   Future<void> dispose() async {
     if (_disposed) return;
     _timer?.cancel();
+    _persistTimer?.cancel();
     if (_observing) WidgetsBinding.instance.removeObserver(this);
+    await _flushDone?.future;
     await _persist();
     _disposed = true;
+    await _archiveWriter?.dispose();
   }
 
   void _append(Map<String, Object?> event) {
@@ -755,15 +879,15 @@ final class CallDiagnostics with WidgetsBindingObserver {
       _eventSizes.remove(event['eventId']);
     }
     final trace = event['traceId'];
-    final group = _events
-        .where((e) => trace != null && e['traceId'] == trace)
-        .toList();
+    if (_eventsById.containsKey(event['eventId'])) return;
+    if ((event['occurredAtMs'] as int) < _nowMs - _retention.inMilliseconds) {
+      return;
+    }
+    final group = trace is String ? _groups[trace] : null;
     final terminal = event['stage'] == 'terminal';
     if (!terminal &&
-        (group.length >= _maxEvents ||
-            group.fold<int>(0, (n, e) => n + _eventSize(e)) +
-                    _eventSize(event) >
-                _maxAttemptBytes)) {
+        ((group?.events.length ?? 0) >= _maxEvents ||
+            (group?.bytes ?? 0) + _eventSize(event) > _maxAttemptBytes)) {
       _dropped++;
       if (trace is String) {
         _traceDropped[trace] = (_traceDropped[trace] ?? 0) + 1;
@@ -774,15 +898,12 @@ final class CallDiagnostics with WidgetsBindingObserver {
     }
     if (terminal) {
       // Reserve room for the terminal summary even when stage events hit quota.
-      var groupBytes = group.fold<int>(0, (n, e) => n + _eventSize(e));
       final eventBytes = _eventSize(event);
-      while ((group.length >= _maxEvents ||
-              groupBytes + eventBytes + 256 > _maxAttemptBytes) &&
-          group.isNotEmpty) {
-        final removed = group.removeAt(0);
-        groupBytes -= _eventSize(removed);
-        _events.remove(removed);
-        _uploaded.remove(removed['eventId']);
+      while (group != null &&
+          (group.events.length >= _maxEvents ||
+              group.bytes + eventBytes + 256 > _maxAttemptBytes) &&
+          group.events.isNotEmpty) {
+        _removeEvent(group.events.values.first);
         _dropped++;
         if (trace is String) {
           _traceDropped[trace] = (_traceDropped[trace] ?? 0) + 1;
@@ -798,9 +919,73 @@ final class CallDiagnostics with WidgetsBindingObserver {
         _eventSizes.remove(event['eventId']);
       }
     }
-    _events.add(event);
-    _prune();
+    _indexEvent(event);
+    _enforceArchiveQuota();
     _schedulePersist();
+  }
+
+  void _indexEvent(Map<String, Object?> event) {
+    final id = event['eventId']! as String;
+    if (_eventsById.containsKey(id)) return;
+    final order = _nextEventOrder++;
+    _eventsById[id] = event;
+    _eventOrder[id] = order;
+    final expiry =
+        (event['occurredAtMs']! as int) + _retention.inMilliseconds + 1;
+    if (_nextExpiryMs == null || expiry < _nextExpiryMs!) {
+      _nextExpiryMs = expiry;
+    }
+    final bytes = _eventSize(event);
+    _retainedBytes += bytes;
+    if (event['traceId'] case final String trace) {
+      final group = _groups.putIfAbsent(trace, _CallDiagnosticGroup.new);
+      group.events[order] = event;
+      group.bytes += bytes;
+    }
+    if (_ready) _archiveWriter?.stageEvent(event);
+  }
+
+  void _removeEvent(Map<String, Object?> event) {
+    final id = event['eventId']! as String;
+    if (_eventsById.remove(id) == null) return;
+    final bytes = _eventSizes.remove(id) ?? 0;
+    final order = _eventOrder.remove(id);
+    _retainedBytes -= bytes;
+    _removeUploaded(id);
+    if (_ready) _archiveWriter?.removeEvent(id);
+    if (event['traceId'] case final String trace) {
+      final group = _groups[trace]!;
+      group.events.remove(order);
+      group.bytes -= bytes;
+      if (group.events.isEmpty) {
+        _groups.remove(trace);
+        _cleanupTraceMetadata(trace);
+      }
+    }
+    _dirty = true;
+  }
+
+  void _enforceArchiveQuota() {
+    while (_groups.length > _maxAttempts) {
+      // At most 101 groups are inspected, regardless of retained event count.
+      final first = _groups.entries.reduce(
+        (a, b) =>
+            a.value.events.firstKey()! < b.value.events.firstKey()! ? a : b,
+      );
+      final trace = first.key;
+      _dropped += first.value.events.length;
+      for (final event in first.value.events.values.toList()) {
+        _removeEvent(event);
+      }
+      _open.remove(trace);
+      _cleanupTraceMetadata(trace);
+      _calls.removeWhere((_, id) => id == trace);
+      _handles.removeWhere((_, id) => id == trace);
+    }
+    while (_retainedBytes > _maxBytes - 128 * 1024 && _events.isNotEmpty) {
+      _removeEvent(_events.first);
+      _dropped++;
+    }
   }
 
   void _rebind(String from, String to) {
@@ -809,13 +994,25 @@ final class CallDiagnostics with WidgetsBindingObserver {
     if (_traceAliases.length > 200) {
       _traceAliases.remove(_traceAliases.keys.first);
     }
-    for (final event in _events) {
-      if (event['traceId'] == from &&
-          !_uploaded.contains(event['eventId']) &&
+    final sourceGroup = _groups[from];
+    for (final event
+        in sourceGroup?.events.values.toList() ??
+            const <Map<String, Object?>>[]) {
+      if (!_uploaded.contains(event['eventId']) &&
           !_uploading.contains(event['eventId'])) {
+        final id = event['eventId']! as String;
+        final bytes = _eventSize(event);
+        final order = _eventOrder[id]!;
+        sourceGroup!.events.remove(order);
+        sourceGroup.bytes -= bytes;
         event['traceId'] = to;
+        final target = _groups.putIfAbsent(to, _CallDiagnosticGroup.new);
+        target.events[order] = event;
+        target.bytes += bytes;
+        if (_ready) _archiveWriter?.stageEvent(event);
       }
     }
+    if (sourceGroup?.events.isEmpty == true) _groups.remove(from);
     final open = _open.remove(from);
     final dropped = _traceDropped.remove(from);
     if (dropped != null) _traceDropped[to] = (_traceDropped[to] ?? 0) + dropped;
@@ -829,45 +1026,68 @@ final class CallDiagnostics with WidgetsBindingObserver {
     _schedulePersist();
   }
 
-  void _prune() {
-    final cutoff = _nowMs - _retention.inMilliseconds;
-    _events.removeWhere((e) => (e['occurredAtMs'] as int) < cutoff);
-    final traceOrder = <String>{};
-    for (final e in _events) {
-      if (e['traceId'] case final String id) traceOrder.add(id);
+  void _cleanupTraceMetadata(String trace) {
+    if (_groups.containsKey(trace) || _open.containsKey(trace)) return;
+    _roles.remove(trace);
+    _finished.remove(trace);
+    _traceDropped.remove(trace);
+    _traceAliases.removeWhere((_, id) => id == trace);
+  }
+
+  void _prune({bool force = false}) {
+    final now = _nowMs;
+    if (!force && (_nextExpiryMs == null || now < _nextExpiryMs!)) return;
+    final cutoff = now - _retention.inMilliseconds;
+    // Periodic writes do not revisit retained history until an actual expiry.
+    _nextExpiryMs = null;
+    for (final event
+        in _events.where((e) => (e['occurredAtMs'] as int) < cutoff).toList()) {
+      _removeEvent(event);
     }
-    while (traceOrder.length > _maxAttempts) {
-      final first = traceOrder.first;
-      traceOrder.remove(first);
-      _dropped += _events.where((e) => e['traceId'] == first).length;
-      _events.removeWhere((e) => e['traceId'] == first);
-      _open.remove(first);
-      _roles.remove(first);
-      _finished.remove(first);
-      _calls.removeWhere((_, id) => id == first);
-      _handles.removeWhere((_, id) => id == first);
+    _enforceArchiveQuota();
+    for (final trace in _open.keys.toList()) {
+      if ((_open[trace]!['startedAtMs'] as int) >= cutoff) continue;
+      _open.remove(trace);
+      _cleanupTraceMetadata(trace);
+      _dirty = true;
     }
-    var bytes = _events.fold<int>(0, (n, e) => n + _eventSize(e));
-    while (bytes > _maxBytes - 128 * 1024 && _events.isNotEmpty) {
-      bytes -= _eventSize(_events.removeAt(0));
-      _dropped++;
+    for (final event in _events) {
+      final expiry =
+          (event['occurredAtMs']! as int) + _retention.inMilliseconds + 1;
+      if (_nextExpiryMs == null || expiry < _nextExpiryMs!) {
+        _nextExpiryMs = expiry;
+      }
     }
-    final ids = _events.map((e) => e['eventId']).toSet();
-    _eventSizes.removeWhere((id, _) => !ids.contains(id));
-    _uploaded.removeWhere((id) => !ids.contains(id));
-    _open.removeWhere((_, e) => (e['startedAtMs'] as int) < cutoff);
-    final retained =
-        _events.map((e) => e['traceId']).whereType<String>().toSet()
-          ..addAll(_open.keys);
-    _roles.removeWhere((id, _) => !retained.contains(id));
-    _finished.removeWhere((id) => !retained.contains(id));
-    _traceDropped.removeWhere((id, _) => !retained.contains(id));
-    _traceAliases.removeWhere((_, id) => !retained.contains(id));
+    for (final open in _open.values) {
+      final expiry =
+          (open['startedAtMs']! as int) + _retention.inMilliseconds + 1;
+      if (_nextExpiryMs == null || expiry < _nextExpiryMs!) {
+        _nextExpiryMs = expiry;
+      }
+    }
+    if (force) {
+      // Saved metadata may contain obsolete IDs. Runtime removals already keep
+      // these indexes current and do not need a whole-archive reconciliation.
+      _uploaded.removeWhere((id) => !_eventsById.containsKey(id));
+      final retained = {..._groups.keys, ..._open.keys};
+      _roles.removeWhere((id, _) => !retained.contains(id));
+      _finished.removeWhere((id) => !retained.contains(id));
+      _traceDropped.removeWhere((id, _) => !retained.contains(id));
+      _traceAliases.removeWhere((_, id) => !retained.contains(id));
+    }
   }
 
   void _clearMemory() {
-    _events.clear();
+    if (_ready) _archiveWriter?.clearEvents();
+    _eventsById.clear();
+    _groups.clear();
+    _eventOrder.clear();
+    _retainedBytes = 0;
+    _nextExpiryMs = null;
     _uploaded.clear();
+    _uploadedAdditions.clear();
+    _uploadedRemovals.clear();
+    _fullMetadataRequired = true;
     _eventSizes.clear();
     _traceDropped.clear();
     _resolvingTraces.clear();
@@ -881,6 +1101,19 @@ final class CallDiagnostics with WidgetsBindingObserver {
     _operationParents.clear();
     _dropped = 0;
     _nativeDroppedSeen = 0;
+  }
+
+  bool _addUploaded(String id) {
+    if (!_uploaded.add(id)) return false;
+    if (!_uploadedRemovals.remove(id)) _uploadedAdditions.add(id);
+    _dirty = true;
+    return true;
+  }
+
+  void _removeUploaded(String id) {
+    if (!_uploaded.remove(id)) return;
+    if (!_uploadedAdditions.remove(id)) _uploadedRemovals.add(id);
+    _dirty = true;
   }
 
   void _uploadFailed(String reason) {
@@ -901,7 +1134,7 @@ final class CallDiagnostics with WidgetsBindingObserver {
 
   int _eventSize(Map<String, Object?> event) => _eventSizes.putIfAbsent(
     event['eventId']! as String,
-    () => utf8.encode(jsonEncode(event)).length,
+    () => _callDiagnosticJsonBytes.count(event),
   );
 
   Future<Map<String, dynamic>?> _diagnosticRequest(
@@ -956,7 +1189,7 @@ final class CallDiagnostics with WidgetsBindingObserver {
         return false;
       }
       _clearPending = false;
-      await _persist();
+      await _persist(force: true);
     }
     final configured = await _diagnosticRequest('configure', {});
     if (epoch != _consentEpoch ||
@@ -967,7 +1200,7 @@ final class CallDiagnostics with WidgetsBindingObserver {
     }
     _consentPending = false;
     _lastConfigureAtMs = _nowMs;
-    await _persist();
+    await _persist(force: true);
     return true;
   }
 
@@ -991,7 +1224,7 @@ final class CallDiagnostics with WidgetsBindingObserver {
     if (_nativeHealthy && _lastError == 'native_persistence_failed') {
       _lastError = 'none';
     }
-    await _persist();
+    await _persist(force: true);
   }
 
   Future<dynamic> _nativeInvoke(
@@ -1029,6 +1262,7 @@ final class CallDiagnostics with WidgetsBindingObserver {
     }
     final nativeDropped = _boundedInt(result['droppedEvents']);
     final newlyDropped = max(0, nativeDropped - _nativeDroppedSeen);
+    if (nativeDropped != _nativeDroppedSeen) _dirty = true;
     _dropped += newlyDropped;
     _nativeDroppedSeen = nativeDropped;
     if (newlyDropped > 0) {
@@ -1040,13 +1274,13 @@ final class CallDiagnostics with WidgetsBindingObserver {
         values: {'dropped': newlyDropped, 'truncated': true},
       );
     }
-    final existing = _events.map((e) => e['eventId']).toSet();
     final ack = <String>[];
     for (final raw in (result['events'] as List).take(64)) {
       final event = validateEvent(raw);
       if (event == null ||
           (event['source'] != 'ios' && event['source'] != 'android')) {
         _dropped++;
+        _dirty = true;
         if (raw is Map) {
           final id = _validId(raw['eventId']);
           if (id != null) ack.add(id);
@@ -1054,7 +1288,7 @@ final class CallDiagnostics with WidgetsBindingObserver {
         continue;
       }
       final id = event['eventId']! as String;
-      if (existing.add(id)) _append(event);
+      if (!_eventsById.containsKey(id)) _append(event);
       ack.add(id);
     }
     await _persist();
@@ -1067,23 +1301,52 @@ final class CallDiagnostics with WidgetsBindingObserver {
   }
 
   File get _stateFile => File('${_directory!.path}/state.json');
-  int get _nowMs => _now().toUtc().millisecondsSinceEpoch;
+  int get _nowMs => _now().millisecondsSinceEpoch;
 
   void _schedulePersist() {
-    if (_directory != null && !_disposed) unawaited(_persist());
+    if (_directory == null || _disposed) return;
+    _dirty = true;
+    // A fixed window bounds both write amplification and crash-loss exposure
+    // during sustained samples. Explicit flush/consent/lifecycle bypasses it.
+    _persistTimer ??= Timer(const Duration(seconds: 1), () {
+      _persistTimer = null;
+      unawaited(_persist());
+    });
   }
 
-  Future<void> _persist() {
+  List<Map<String, Object?>> _eventSnapshot() =>
+      _events.map((event) => Map<String, Object?>.from(event)).toList();
+
+  Future<void> _persist({bool force = false}) {
     if (_directory == null || _disposed) return Future<void>.value();
-    _dirty = true;
-    if (_writing != null) return _writing!;
+    _persistTimer?.cancel();
+    _persistTimer = null;
+    if (force) _dirty = true;
+    _prune();
+    if (_writing case final writing?) {
+      if (_dirty) _urgentWriteRequested = true;
+      return writing;
+    }
+    if (!_dirty) return Future<void>.value();
     final completer = Completer<void>();
     _writing = completer.future;
     unawaited(() async {
       try {
-        while (_dirty) {
+        while (_dirty &&
+            (_persistTimer == null || _urgentWriteRequested) &&
+            !_disposed) {
+          _persistTimer?.cancel();
+          _persistTimer = null;
+          _urgentWriteRequested = false;
+          _prune();
           _dirty = false;
-          final text = jsonEncode({
+          final fullMetadata = _fullMetadataRequired;
+          final uploadedAdditions = _uploadedAdditions;
+          final uploadedRemovals = _uploadedRemovals;
+          _fullMetadataRequired = false;
+          _uploadedAdditions = {};
+          _uploadedRemovals = {};
+          final snapshot = <String, Object?>{
             'schemaVersion': 1,
             'enabled': _enabled.value,
             'consentEpoch': _consentEpoch,
@@ -1093,18 +1356,44 @@ final class CallDiagnostics with WidgetsBindingObserver {
             'lastUploadAtMs': _lastUploadAtMs,
             'dropped': _dropped,
             'nativeDroppedSeen': _nativeDroppedSeen,
-            'traceDropped': _traceDropped,
-            'traceAliases': _traceAliases,
-            'events': _events,
-            'uploaded': _uploaded.toList(),
-            'open': _open,
-          });
-          final temporary = File('${_stateFile.path}.new');
-          await temporary.writeAsString(text, flush: true);
-          await temporary.rename(_stateFile.path);
+            'traceDropped': Map<String, int>.of(_traceDropped),
+            'traceAliases': Map<String, String>.of(_traceAliases),
+            if (fullMetadata || _testPersist != null)
+              'uploaded': _uploaded.toList(),
+            'open': {
+              for (final entry in _open.entries)
+                entry.key: Map<String, Object?>.of(entry.value),
+            },
+          };
+          if (_testPersist case final persist?) {
+            await persist(_stateFile.path, {
+              ...snapshot,
+              'events': _eventSnapshot(),
+            });
+          } else {
+            // Ordinary writes transfer only changed ACK IDs. The worker keeps
+            // applied deltas through recoverable sink failures, just like rows.
+            await _archiveWriter!.persist(
+              snapshot,
+              metadataDelta: fullMetadata
+                  ? null
+                  : DiagnosticArchiveMetadataDelta(
+                      setAdditions: {
+                        if (uploadedAdditions.isNotEmpty)
+                          'uploaded': uploadedAdditions.toList(growable: false),
+                      },
+                      setRemovals: {
+                        if (uploadedRemovals.isNotEmpty)
+                          'uploaded': uploadedRemovals.toList(growable: false),
+                      },
+                    ),
+            );
+          }
           _storageHealthy = true;
         }
       } catch (_) {
+        _dirty = true;
+        _fullMetadataRequired = true;
         _storageHealthy = false;
         _lastError = 'sink_unavailable';
       } finally {
@@ -1116,48 +1405,64 @@ final class CallDiagnostics with WidgetsBindingObserver {
   }
 
   String _newId() {
-    final bytes = List<int>.generate(16, (_) => _random.nextInt(256));
-    bytes[6] = (bytes[6] & 15) | 64;
-    bytes[8] = (bytes[8] & 63) | 128;
-    final hex = bytes.map((b) => b.toRadixString(16).padLeft(2, '0')).join();
-    return '${hex.substring(0, 8)}-${hex.substring(8, 12)}-${hex.substring(12, 16)}-${hex.substring(16, 20)}-${hex.substring(20)}';
+    const hex = '0123456789abcdef';
+    final codeUnits = Uint8List(36);
+    var output = 0;
+    var randomWord = 0;
+    for (var index = 0; index < 16; index++) {
+      // Four secure 32-bit draws provide the same 128 random bits with fewer
+      // native entropy calls. UUID version/variant still reserve only six bits.
+      if ((index & 3) == 0) randomWord = _random.nextInt(0x100000000);
+      var byte = randomWord & 255;
+      randomWord >>= 8;
+      if (index == 6) byte = (byte & 15) | 64;
+      if (index == 8) byte = (byte & 63) | 128;
+      if (index == 4 || index == 6 || index == 8 || index == 10) {
+        codeUnits[output++] = 45;
+      }
+      codeUnits[output++] = hex.codeUnitAt(byte >> 4);
+      codeUnits[output++] = hex.codeUnitAt(byte & 15);
+    }
+    return String.fromCharCodes(codeUnits);
   }
 
   static String? _validId(Object? value) =>
       value is String && _uuid.hasMatch(value) ? value.toLowerCase() : null;
   static int _boundedInt(Object? value) =>
       value is int && value >= 0 && value <= 9007199254740991 ? value : 0;
-  static String _snake(String value) => value.replaceAllMapped(
-    RegExp(r'[A-Z]'),
-    (m) => '_${m[0]!.toLowerCase()}',
-  );
+  static String _snake(String value) =>
+      value.replaceAllMapped(_uppercase, (m) => '_${m[0]!.toLowerCase()}');
   static String _closed(String field, Object? value, String fallback) {
     if (value is! String) return fallback;
+    final options = _schemaSets[field]!;
+    if (options.contains(value)) return value;
     final normalized = _snake(value);
-    return (callDiagnosticSchemaV1[field] as List).contains(normalized)
-        ? normalized
-        : fallback;
+    return options.contains(normalized) ? normalized : fallback;
   }
 
   static Map<String, Object?> _safeValues(Map values) {
     final result = <String, Object?>{};
-    final enums = callDiagnosticSchemaV1['enumValues'] as Map;
+    final booleans = _schemaSets['booleanValues']!;
+    final integers = _schemaSets['integerValues']!;
     for (final entry in values.entries) {
       final key = entry.key, value = entry.value;
-      if ((callDiagnosticSchemaV1['booleanValues'] as List).contains(key) &&
-          value is bool) {
+      if (booleans.contains(key) && value is bool) {
         result[key as String] = value;
       }
-      if ((callDiagnosticSchemaV1['integerValues'] as List).contains(key) &&
+      if (integers.contains(key) &&
           value is int &&
           value >= 0 &&
           value <= 9007199254740991) {
         result[key as String] = value;
       }
-      if (enums[key] is List &&
-          value is String &&
-          (enums[key] as List).contains(_snake(value))) {
-        result[key as String] = _snake(value);
+      final options = _enumValues[key];
+      if (options != null && value is String) {
+        if (options.contains(value)) {
+          result[key as String] = value;
+        } else {
+          final normalized = _snake(value);
+          if (options.contains(normalized)) result[key as String] = normalized;
+        }
       }
     }
     return result;
@@ -1167,15 +1472,13 @@ final class CallDiagnostics with WidgetsBindingObserver {
   static Map<String, Object?>? validateEvent(Object? raw) {
     if (raw is! Map || raw['schemaVersion'] != 1) return null;
     try {
-      final keys = {
-        ...callDiagnosticSchemaV1['required'] as List,
-        ...callDiagnosticSchemaV1['optional'] as List,
-      };
-      if (raw.keys.any((k) => k is! String || !keys.contains(k))) return null;
-      for (final key in callDiagnosticSchemaV1['required'] as List) {
+      if (raw.keys.any((k) => k is! String || !_eventKeys.contains(k))) {
+        return null;
+      }
+      for (final key in _schemaSets['required']!) {
         if (!raw.containsKey(key)) return null;
       }
-      for (final key in callDiagnosticSchemaV1['uuidFields'] as List) {
+      for (final key in _schemaSets['uuidFields']!) {
         if (raw.containsKey(key) && _validId(raw[key]) == null) return null;
       }
       for (final key in [
@@ -1186,7 +1489,7 @@ final class CallDiagnostics with WidgetsBindingObserver {
         'outcome',
         'reason',
       ]) {
-        if (!(callDiagnosticSchemaV1[key] as List).contains(raw[key])) {
+        if (!_schemaSets[key]!.contains(raw[key])) {
           return null;
         }
       }
@@ -1198,12 +1501,10 @@ final class CallDiagnostics with WidgetsBindingObserver {
       if (jsonEncode(safe) != jsonEncode(raw['values'])) return null;
       if (raw.containsKey('build') &&
           (raw['build'] is! String ||
-              !RegExp(
-                r'^[0-9A-Za-z.+_-]{1,80}$',
-              ).hasMatch(raw['build'] as String))) {
+              !_buildPattern.hasMatch(raw['build'] as String))) {
         return null;
       }
-      if (utf8.encode(jsonEncode(raw)).length > 4096) return null;
+      if (_callDiagnosticJsonBytes.count(raw) > 4096) return null;
       return Map<String, Object?>.from(raw);
     } catch (_) {
       return null;

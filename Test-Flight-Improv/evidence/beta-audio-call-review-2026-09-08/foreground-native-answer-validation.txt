@@ -1,0 +1,26 @@
+Foreground native Answer fix
+Device evidence: Pixel at 12:01:44.450 accepted from foreground app Answer, then 12:01:44.568 ended/mediaFailed and 12:01:44.570 audioSessionFailed, before TURN/negotiation.
+Source cause: ProductionCallSignalingGraph.answer dispatched Android acceptance directly in Dart; Android native audio correctly requires a persisted native ANSWER_REQUESTED. MknoonCallNativeBridge lacked the answer command already defined by the Dart adapter.
+Fix:
+- Native-backed Android/iOS graph Answer invokes the native answer method for the exact current call.
+- Native refusal/exception cannot fall back to direct Dart acceptance.
+- Native answer journal event drives canonical Dart acceptance.
+- Kotlin bridge exposes strict version/callHandle -> controller.answer (implemented by call_signaling_review).
+- Direct Dart acceptance is retained only when no native lifecycle exists.
+Regression evidence:
+- Before fix, three Android native-routing scenarios failed; iOS refusal and exception also failed. Successful iOS native-answer control passed.
+- After fix, all six native cases pass; wrong call IDs invoke no native action; successful callback leaves ringing until native journal delivery.
+- Non-native acceptance preservation passes.
+Checks:
+- Focused composition/production graph/Android/iOS adapters: 171 passed.
+- Native bridge: 18 passed (reported by native owner).
+- Curated 1to1: 3494 passed, 4 skipped, 0 failed; 209 files; 01:39 elapsed; six nonfatal widget hit-test warnings.
+- Diff check clean.
+- Analyzer: unchanged HEAD warning at android_call_lifecycle_adapter.dart:1398, unawaited_return_in_try_block; no issues reported for graph/test. Adapter edit is comment-only.
+- Combined affected: d45c3f04afff4b78 covers five source/test paths.
+Logs:
+/tmp/beta-call-review-20260908/call-native-foreground-answer-red.log
+/tmp/beta-call-review-20260908/call-native-foreground-answer-green.log
+/tmp/beta-call-review-20260908/call-native-foreground-answer-focused.log
+/tmp/beta-call-review-20260908/one-to-one-host-gate-native-answer-final.log
+Rebuild/device proof remains owned by root/build/QA agents.

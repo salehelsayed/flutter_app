@@ -105,7 +105,10 @@ def read_records(directory, since_ms, trace=None, limit=1000, now_ms=None, _loss
                 continue
             events = []
             seen = set()
-            for row in record.get('events', []) + list(record.get('summaries', {}).values()):
+            event_rows = record.get('events', [])
+            if event_rows is None:  # Go encodes an empty nil slice as JSON null.
+                event_rows = []
+            for row in event_rows + list(record.get('summaries', {}).values()):
                 event, received = row.get('event'), row.get('receivedAtMs')
                 if not valid_event(event) or type(received) is not int:
                     rejected += 1

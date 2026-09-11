@@ -31,18 +31,20 @@ void main() {
     expect(payload['wakeToken'], 'tok-for-B');
   });
 
-  test('omits wakeToken key entirely when null (NET-REL-07 byte-identity)',
-      () async {
-    final bridge = FakeBridge();
-    bridge.responses['inbox:store'] = {'ok': true, 'stored': true};
+  test(
+    'omits wakeToken key entirely when null (NET-REL-07 byte-identity)',
+    () async {
+      final bridge = FakeBridge();
+      bridge.responses['inbox:store'] = {'ok': true, 'stored': true};
 
-    await callP2PInboxStore(bridge, toPeerId: 'peerB', message: 'hello');
+      await callP2PInboxStore(bridge, toPeerId: 'peerB', message: 'hello');
 
-    final payload = storePayload(bridge);
-    expect(payload.containsKey('wakeToken'), isFalse);
-    // The raw frame must not contain the key at all.
-    expect(bridge.sentMessages.single.contains('wakeToken'), isFalse);
-  });
+      final payload = storePayload(bridge);
+      expect(payload.containsKey('wakeToken'), isFalse);
+      // The raw frame must not contain the key at all.
+      expect(bridge.sentMessages.single.contains('wakeToken'), isFalse);
+    },
+  );
 
   test('omits wakeToken key entirely when empty string', () async {
     final bridge = FakeBridge();
@@ -58,4 +60,62 @@ void main() {
     final payload = storePayload(bridge);
     expect(payload.containsKey('wakeToken'), isFalse);
   });
+
+  test(
+    'notification suppression preserves exact STORE bytes and custody fields',
+    () async {
+      final bridge = FakeBridge();
+      bridge.responses['inbox:store'] = {'ok': true, 'stored': true};
+      const envelope =
+          ' { "messageId": "historic-message", '
+          '"ciphertext": "AQIDBA==" }\n';
+
+      await callP2PInboxStore(
+        bridge,
+        toPeerId: 'peerB',
+        message: envelope,
+        timeoutMs: 5000,
+        wakeToken: 'tok-for-B',
+        suppressNotification: true,
+        custodyContract: 'ack_or_expiry_v1',
+        custodyKind: 'direct_text_v108',
+        custodyExpiresAtOrBeforeMs: 2000000123456,
+      );
+
+      expect(storePayload(bridge), <String, dynamic>{
+        'toPeerId': 'peerB',
+        'message': envelope,
+        'timeoutMs': 5000,
+        'wakeToken': 'tok-for-B',
+        'suppressNotification': true,
+        'custodyContract': 'ack_or_expiry_v1',
+        'custodyKind': 'direct_text_v108',
+        'custodyExpiresAtOrBeforeMs': 2000000123456,
+      });
+    },
+  );
+
+  test(
+    'false and absent suppression preserve the legacy STORE frame',
+    () async {
+      final absent = FakeBridge();
+      final explicitFalse = FakeBridge();
+      absent.responses['inbox:store'] = {'ok': true, 'stored': true};
+      explicitFalse.responses['inbox:store'] = {'ok': true, 'stored': true};
+
+      await callP2PInboxStore(absent, toPeerId: 'peerB', message: 'hello');
+      await callP2PInboxStore(
+        explicitFalse,
+        toPeerId: 'peerB',
+        message: 'hello',
+        suppressNotification: false,
+      );
+
+      expect(explicitFalse.sentMessages.single, absent.sentMessages.single);
+      expect(
+        storePayload(explicitFalse).containsKey('suppressNotification'),
+        isFalse,
+      );
+    },
+  );
 }

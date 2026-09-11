@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:crypto/crypto.dart';
+import 'package:flutter_app/core/database/app_database_version.dart';
 
 import 'group_media_reliability_criteria.dart';
 
@@ -708,7 +709,13 @@ void _validateDatabaseObservation(
       '$path.cipher_version must report a concrete SQLCipher version',
     );
   }
-  _expect(value, 'user_version', 104, path, failures);
+  _expect(
+    value,
+    'user_version',
+    currentIdentityDatabaseVersion,
+    path,
+    failures,
+  );
   final expectedBarrier = switch (expectedPhase) {
     'a' => 'background_receive_started',
     'b_claim' => 'durable_post_claim_pre_commit',

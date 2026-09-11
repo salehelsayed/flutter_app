@@ -1,0 +1,80 @@
+{
+  "schema": "mknoon.lab-call-ui-evidence.v1",
+  "recordedAt": "2026-09-08T11:51:21.904019+00:00",
+  "timestampSemantics": "capturedAt is command start, not exact tap time; successful return proves requested UI action completed. Subsequent helper versions add completedAt.",
+  "labPair": {
+    "android": "Pixel USB",
+    "ios": "iPhone 11 USB"
+  },
+  "actions": [
+    {
+      "capturedAt": "2026-09-08T11:46:39.086471+00:00",
+      "action": "start-call",
+      "platform": "android",
+      "ok": true,
+      "result": {
+        "callActionRequested": "start-call",
+        "caller": "android",
+        "labPairVerified": true,
+        "locator": "fresh-hierarchy-bounds"
+      }
+    },
+    {
+      "capturedAt": "2026-09-08T11:46:41.377312+00:00",
+      "action": "answer",
+      "platform": "ios",
+      "ok": true,
+      "result": {
+        "callActionRequested": "answer",
+        "labPairVerified": true,
+        "locator": "accessibility-id"
+      }
+    },
+    {
+      "capturedAt": "2026-09-08T11:48:12.471631+00:00",
+      "action": "end",
+      "platform": "android",
+      "ok": true,
+      "result": {
+        "callActionRequested": "end",
+        "labPairVerified": true,
+        "locator": "fresh-hierarchy-bounds"
+      }
+    },
+    {
+      "capturedAt": "2026-09-08T11:49:45.789190+00:00",
+      "action": "start-call",
+      "platform": "ios",
+      "ok": true,
+      "result": {
+        "callActionRequested": "start-call",
+        "caller": "ios",
+        "labPairVerified": true,
+        "locator": "accessibility-id"
+      }
+    },
+    {
+      "capturedAt": "2026-09-08T11:49:46.925687+00:00",
+      "action": "answer",
+      "platform": "android",
+      "ok": true,
+      "result": {
+        "callActionRequested": "answer",
+        "labPairVerified": true,
+        "locator": "fresh-hierarchy-bounds"
+      }
+    },
+    {
+      "capturedAt": "2026-09-08T11:50:12.815303+00:00",
+      "action": "end",
+      "platform": "android",
+      "ok": true,
+      "result": {
+        "callActionRequested": "end",
+        "labPairVerified": true,
+        "locator": "fresh-hierarchy-bounds"
+      }
+    }
+  ],
+  "containsPrivateMaterial": false
+}

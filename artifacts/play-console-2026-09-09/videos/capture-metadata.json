@@ -1,0 +1,67 @@
+{
+  "status": "published_and_declaration_saved",
+  "devices": {
+    "phone": {
+      "serial": "21071FDF600CSC",
+      "model": "Pixel 6",
+      "android": "17 (API 37)",
+      "installedVersionCode": 111,
+      "installedVersionName": "1.0.1",
+      "debug": true
+    },
+    "emulator": {
+      "serial": "emulator-5554",
+      "avd": "Pixel_7",
+      "android": "17 (API 37)",
+      "installedVersionCode": 111,
+      "installedVersionName": "1.0.1",
+      "debug": true
+    }
+  },
+  "accountAuthorization": "Owner confirmed existing accounts are test accounts and may be used.",
+  "plannedRecordings": [
+    "Incoming call, answer, background ongoing call and end",
+    "User-initiated Move Account transfer with background notification and completion"
+  ],
+  "recordingStatus": "No successful demonstration recorded yet",
+  "matchingApkSha256": "de42656e4aba9e51cccdff78d9d8e06469eedea3ed601105443116ee665526be",
+  "notes": [
+    "Emulator updated in place from the physical device APK, retaining its test account.",
+    "Emulator cold booted without loading its stalled snapshot."
+  ],
+  "completedAt": "2026-09-09",
+  "videos": [
+    {
+      "file": "mknoon-background-calls.mp4",
+      "durationSeconds": 47.666667,
+      "bytes": 2316678,
+      "sha256": "4a2b1925ba3bcf7962cb3d251fc4726cdfbbafd63bdc3bfb48dad2d15d20d187"
+    },
+    {
+      "file": "mknoon-account-transfer.mp4",
+      "durationSeconds": 47.4,
+      "bytes": 1805830,
+      "sha256": "a92abb41310a568abb78cc3df70bd950f87ceaa229beeacfb4109a470be7b31b"
+    }
+  ],
+  "verifiedBehavior": [
+    "Connected call, mute/unmute, background ongoing-call card and microphone indicator, return and end",
+    "User-confirmed account transfer, advancing data progress and Android Moving account notification, Transfer complete, original @pixel identity on emulator",
+    "MigrationKeepAliveService and call foreground service observed while active; migration service absent after completion"
+  ],
+  "editingNotes": [
+    "Silent actual screen recordings, no generated app footage",
+    "Setup and idle gaps removed from transfer video; completion shown as captured still frames",
+    "Pairing QR and unrelated notifications masked"
+  ],
+  "migrationNetwork": "Temporary ADB USB tunnel through Mac, 128 KiB/s sender rate; removed after success",
+  "deviceStateAfter": "Pixel test account transferred to emulator; original pixel peer ID verified in emulator settings. Physical phone shows Transfer complete.",
+  "limitations": [
+    "Installed build111 (1.0.1), no new build created",
+    "No captured two-way audio track",
+    "Earlier incoming-call attempt while receiving phone was already backgrounded did not show a visible incoming call; final call demonstration covers an answered call continuing in background"
+  ],
+  "reviewPage": "https://mknoon.space/review-videos/",
+  "playConsoleForegroundServiceDeclaration": "Saved successfully; awaiting review submission with the intended app build",
+  "publicVerification": "Both unauthenticated MP4 requests returned HTTP 200, video/mp4, matching SHA-256; browser players loaded both at 1600x1860 without errors."
+}

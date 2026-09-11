@@ -1,0 +1,308 @@
+{
+  "alerts": [
+    {
+      "clientReportedDroppedEvents": 36,
+      "droppedEvents": 0,
+      "invalidEvents": 0,
+      "invalidRecords": 4,
+      "kind": "telemetry_coverage_gap",
+      "lossCountIsLowerBound": false,
+      "scope": "retained_lifetime_and_validation"
+    }
+  ],
+  "attempts": [
+    {
+      "attemptId": null,
+      "build": "1.0.1+114",
+      "completeness": "missing_final",
+      "crossRunRecovery": false,
+      "durationMs": null,
+      "endpointAlias": "endpoint-1",
+      "eventCount": 3,
+      "feature": "startup",
+      "finalObserved": false,
+      "firstFailureReason": null,
+      "firstFailureStage": null,
+      "firstReceivedAtMs": 1788982219854,
+      "lastObservedStage": "bridge",
+      "lastReceivedAtMs": 1788982219869,
+      "outcome": "incomplete",
+      "platform": "ios",
+      "reason": "interrupted_before_final_record",
+      "runId": "a0bed3aa-0cfe-4655-8367-782261215de5",
+      "runIds": [
+        "a0bed3aa-0cfe-4655-8367-782261215de5"
+      ],
+      "sources": [
+        "ios"
+      ],
+      "startObserved": true,
+      "traceId": null
+    }
+  ],
+  "attemptsObserved": 1,
+  "attemptsTruncated": 0,
+  "errors": [],
+  "eventReports": 10,
+  "evidenceIncomplete": true,
+  "evidenceScope": "Authenticated endpoint reports; receipt time is server-observed. UUID joins are diagnostic correlation, not proof of message custody, participants or content. Missing/disabled/offline/legacy endpoint records remain unknown.",
+  "generatedAtMs": 1788985187904,
+  "groups": [
+    {
+      "attemptsObserved": 1,
+      "build": "1.0.1+114",
+      "expectedOutcomesExcludedFromTechnicalRate": 0,
+      "feature": "startup",
+      "missingFinal": 1,
+      "missingStart": 0,
+      "outcomes": {
+        "incomplete": 1
+      },
+      "platform": "ios",
+      "technicalFailureRate": null,
+      "technicalFailures": 0,
+      "technicalRateDenominator": 0
+    }
+  ],
+  "health": {
+    "clientReportedDroppedEvents": 36,
+    "collectorState": "readable",
+    "consentingOwners": 24,
+    "droppedEvents": 0,
+    "invalidRecords": 4,
+    "lossCountLowerBound": 0,
+    "recordFiles": 1933,
+    "retainedOwnerCount": 24
+  },
+  "loss": {
+    "retainedLifetime": {
+      "clientReportedDroppedEvents": 36,
+      "droppedEvents": 0,
+      "lossCountIsLowerBound": false,
+      "scope": "Server counters over retained records; latest retained client cumulative snapshot per owner. Client and server counters are separate and must not be summed or divided by window event counts."
+    },
+    "window": {
+      "newDroppedEvents": null,
+      "scope": "A standalone projection has no comparable monitor baseline; cumulative snapshot values do not establish current-window loss."
+    }
+  },
+  "retentionDays": 14,
+  "schemaVersion": 1,
+  "timeline": [
+    {
+      "build": "1.0.1+114",
+      "elapsedMs": 107794403,
+      "endpointAlias": "endpoint-1",
+      "eventId": "26c27ed2-9b36-4ac3-8399-ff1bad192f92",
+      "feature": "runtime",
+      "occurredAtMs": 1788982218866,
+      "outcome": "interrupted_unknown",
+      "platform": "ios",
+      "reason": "interrupted_before_final_record",
+      "receivedAtMs": 1788982219848,
+      "reportingRunId": "92967673-12f8-41fa-aff7-5b836b90bd72",
+      "runId": "a0bed3aa-0cfe-4655-8367-782261215de5",
+      "schemaVersion": 1,
+      "sequence": 2,
+      "source": "ios",
+      "stage": "recover",
+      "values": {}
+    },
+    {
+      "build": "1.0.1+114",
+      "elapsedMs": 107794430,
+      "endpointAlias": "endpoint-1",
+      "eventId": "869f19da-b9ed-4926-b24d-063a49c52c12",
+      "feature": "startup",
+      "occurredAtMs": 1788982218894,
+      "outcome": "started",
+      "platform": "ios",
+      "reason": "bootstrap",
+      "receivedAtMs": 1788982219854,
+      "reportingRunId": "92967673-12f8-41fa-aff7-5b836b90bd72",
+      "runId": "a0bed3aa-0cfe-4655-8367-782261215de5",
+      "schemaVersion": 1,
+      "sequence": 3,
+      "source": "ios",
+      "stage": "launch",
+      "values": {}
+    },
+    {
+      "build": "1.0.1+114",
+      "elapsedMs": 107794432,
+      "endpointAlias": "endpoint-1",
+      "eventId": "1a0e44cd-6234-4b48-af71-cb5f15016ed7",
+      "feature": "startup",
+      "occurredAtMs": 1788982218895,
+      "outcome": "ok",
+      "platform": "ios",
+      "reason": "bootstrap",
+      "receivedAtMs": 1788982219861,
+      "reportingRunId": "92967673-12f8-41fa-aff7-5b836b90bd72",
+      "runId": "a0bed3aa-0cfe-4655-8367-782261215de5",
+      "schemaVersion": 1,
+      "sequence": 4,
+      "source": "ios",
+      "stage": "bridge",
+      "values": {
+        "phase": "bridge_initialized"
+      }
+    },
+    {
+      "build": "1.0.1+114",
+      "elapsedMs": 107794483,
+      "endpointAlias": "endpoint-1",
+      "eventId": "988e152a-c36d-4cd7-a0fc-fdd48798b368",
+      "feature": "startup",
+      "occurredAtMs": 1788982218947,
+      "outcome": "ok",
+      "platform": "ios",
+      "reason": "bootstrap",
+      "receivedAtMs": 1788982219869,
+      "reportingRunId": "92967673-12f8-41fa-aff7-5b836b90bd72",
+      "runId": "a0bed3aa-0cfe-4655-8367-782261215de5",
+      "schemaVersion": 1,
+      "sequence": 5,
+      "source": "ios",
+      "stage": "bridge",
+      "values": {}
+    },
+    {
+      "build": "1.0.1+114",
+      "elapsedMs": 107794663,
+      "endpointAlias": "endpoint-1",
+      "eventId": "f8674669-f12f-4b05-9f3e-ad57e35c6721",
+      "feature": "runtime",
+      "occurredAtMs": 1788982219127,
+      "outcome": "started",
+      "platform": "ios",
+      "reason": "none",
+      "receivedAtMs": 1788982220123,
+      "reportingRunId": "92967673-12f8-41fa-aff7-5b836b90bd72",
+      "runId": "a0bed3aa-0cfe-4655-8367-782261215de5",
+      "schemaVersion": 1,
+      "sequence": 6,
+      "source": "ios",
+      "stage": "bridge",
+      "traceId": "cdebecae-efd6-4cf7-99de-df4f19bddf29",
+      "values": {
+        "operation": "node_start"
+      }
+    },
+    {
+      "build": "1.0.1+114",
+      "elapsedMs": 107794693,
+      "endpointAlias": "endpoint-1",
+      "eventId": "72ff2fbd-4a5e-4abb-8534-01e0c3def117",
+      "feature": "runtime",
+      "occurredAtMs": 1788982219156,
+      "outcome": "ok",
+      "platform": "ios",
+      "reason": "none",
+      "receivedAtMs": 1788982220132,
+      "reportingRunId": "92967673-12f8-41fa-aff7-5b836b90bd72",
+      "runId": "a0bed3aa-0cfe-4655-8367-782261215de5",
+      "schemaVersion": 1,
+      "sequence": 7,
+      "source": "ios",
+      "stage": "bridge",
+      "traceId": "cdebecae-efd6-4cf7-99de-df4f19bddf29",
+      "values": {
+        "durationMs": 29,
+        "operation": "node_start"
+      }
+    },
+    {
+      "build": "1.0.1+114",
+      "elapsedMs": 107795126,
+      "endpointAlias": "endpoint-1",
+      "eventId": "e6f3d563-0997-47dc-864d-3d33be3edbb0",
+      "feature": "runtime",
+      "occurredAtMs": 1788982219589,
+      "outcome": "started",
+      "platform": "ios",
+      "reason": "none",
+      "receivedAtMs": 1788982229128,
+      "reportingRunId": "92967673-12f8-41fa-aff7-5b836b90bd72",
+      "runId": "a0bed3aa-0cfe-4655-8367-782261215de5",
+      "schemaVersion": 1,
+      "sequence": 8,
+      "source": "ios",
+      "stage": "bridge",
+      "traceId": "1244de32-fd26-4afa-8299-6acd92af6f3a",
+      "values": {
+        "operation": "other"
+      }
+    },
+    {
+      "build": "1.0.1+114",
+      "elapsedMs": 107795127,
+      "endpointAlias": "endpoint-1",
+      "eventId": "e224bd74-5485-4c35-b98f-75cd5cb1354a",
+      "feature": "runtime",
+      "occurredAtMs": 1788982219591,
+      "outcome": "ok",
+      "platform": "ios",
+      "reason": "none",
+      "receivedAtMs": 1788982229134,
+      "reportingRunId": "92967673-12f8-41fa-aff7-5b836b90bd72",
+      "runId": "a0bed3aa-0cfe-4655-8367-782261215de5",
+      "schemaVersion": 1,
+      "sequence": 9,
+      "source": "ios",
+      "stage": "bridge",
+      "traceId": "1244de32-fd26-4afa-8299-6acd92af6f3a",
+      "values": {
+        "durationMs": 0,
+        "operation": "other"
+      }
+    },
+    {
+      "build": "1.0.1+114",
+      "elapsedMs": 107795129,
+      "endpointAlias": "endpoint-1",
+      "eventId": "efd40135-f245-49dc-a608-62d62f95cb6d",
+      "feature": "runtime",
+      "occurredAtMs": 1788982219592,
+      "outcome": "started",
+      "platform": "ios",
+      "reason": "none",
+      "receivedAtMs": 1788982229140,
+      "reportingRunId": "92967673-12f8-41fa-aff7-5b836b90bd72",
+      "runId": "a0bed3aa-0cfe-4655-8367-782261215de5",
+      "schemaVersion": 1,
+      "sequence": 10,
+      "source": "ios",
+      "stage": "bridge",
+      "traceId": "182a50f1-f613-499f-a64e-659fe2e895fa",
+      "values": {
+        "operation": "other"
+      }
+    },
+    {
+      "build": "1.0.1+114",
+      "elapsedMs": 107795131,
+      "endpointAlias": "endpoint-1",
+      "eventId": "0910557b-6d85-4b8c-8071-fcdb559bf1b4",
+      "feature": "runtime",
+      "occurredAtMs": 1788982219594,
+      "outcome": "ok",
+      "platform": "ios",
+      "reason": "none",
+      "receivedAtMs": 1788982229151,
+      "reportingRunId": "92967673-12f8-41fa-aff7-5b836b90bd72",
+      "runId": "a0bed3aa-0cfe-4655-8367-782261215de5",
+      "schemaVersion": 1,
+      "sequence": 11,
+      "source": "ios",
+      "stage": "bridge",
+      "traceId": "182a50f1-f613-499f-a64e-659fe2e895fa",
+      "values": {
+        "durationMs": 0,
+        "operation": "other"
+      }
+    }
+  ],
+  "timelineTruncated": 0,
+  "windowHours": 3.0
+}

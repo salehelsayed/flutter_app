@@ -727,11 +727,12 @@ private final class VoipPushCompletionGate {
 
   init(_ completion: @escaping () -> Void) { self.completion = completion }
 
-  func complete() {
+  func complete(after recording: () -> Void = {}) {
     lock.lock()
     guard !completed else { lock.unlock(); return }
     completed = true
     lock.unlock()
+    recording()
     completion()
   }
 }
@@ -749,6 +750,8 @@ internal final class MknoonVoipPushRegistry: NSObject, PKPushRegistryDelegate {
   private let bundleIdentifier: () -> String?
   private let runtimeWake: () -> Void
   private let diagnosticSink: MknoonVoipPushDiagnosticSink
+  private let appPresentationRecorder: (String, String, [String: Any], String) -> Void
+  private let callPresentationRecorder: (String, String, String, [String: Any]) -> Void
 
   init(
     controller: MknoonIncomingCallReporting,
@@ -761,6 +764,12 @@ internal final class MknoonVoipPushRegistry: NSObject, PKPushRegistryDelegate {
     runtimeWake: @escaping () -> Void = {},
     diagnosticSink: @escaping MknoonVoipPushDiagnosticSink = { event in
       mknoonCallKitDiag(event.logLine)
+    },
+    appPresentationRecorder: @escaping (String, String, [String: Any], String) -> Void = { outcome, reason, values, trace in
+      MknoonAppDiagnostics.shared.record("push", "presentation", outcome, reason, values: values, traceId: trace)
+    },
+    callPresentationRecorder: @escaping (String, String, String, [String: Any]) -> Void = { handle, outcome, reason, context in
+      MknoonCallDiagnostics.shared.record(handle: handle, stage: "presentation", action: "present", outcome: outcome, reason: reason, context: context)
     }
   ) {
     self.controller = controller
@@ -773,6 +782,8 @@ internal final class MknoonVoipPushRegistry: NSObject, PKPushRegistryDelegate {
     self.bundleIdentifier = bundleIdentifier
     self.runtimeWake = runtimeWake
     self.diagnosticSink = diagnosticSink
+    self.appPresentationRecorder = appPresentationRecorder
+    self.callPresentationRecorder = callPresentationRecorder
     super.init()
   }
 
@@ -908,6 +919,8 @@ internal final class MknoonVoipPushRegistry: NSObject, PKPushRegistryDelegate {
     MknoonAppDiagnostics.shared.record("push", "receive", "ok", values: ["direction": "incoming"], traceId: appTrace)
     let gate = VoipPushCompletionGate(completion)
     let emitDiagnostic = diagnosticSink
+    let recordAppPresentation = appPresentationRecorder
+    let recordCallPresentation = callPresentationRecorder
     let (authorityPayload, diagnosticTrace) = MknoonCallDiagnostics.pushMetadata(dictionary)
     let diagnosticContext: [String: Any] = diagnosticTrace.map { ["traceId": $0, "role": "callee"] } ?? ["role": "callee"]
     MknoonCallDiagnostics.shared.record(stage: "push", action: "receive", outcome: "ok", context: diagnosticContext)
@@ -937,13 +950,39 @@ internal final class MknoonVoipPushRegistry: NSObject, PKPushRegistryDelegate {
       return
     }
     let completePresentation: (MknoonCallPresentationResult) -> Void = { result in
-      MknoonAppDiagnostics.shared.record("push", "presentation", result == .presented ? "ok" : result == .duplicate ? "ok" : "failed",
-                                       result == .presented || result == .duplicate ? "none" : "unknown", values: ["committed": result == .presented], traceId: appTrace)
-      emitDiagnostic(.presentation(result))
-      MknoonCallDiagnostics.shared.record(handle: payload.callHandle, stage: "presentation", action: "present",
-                                          outcome: result == .presented ? "ok" : result == .duplicate ? "duplicate" : "failed",
-                                          reason: result == .presented || result == .duplicate ? "none" : "native_lifecycle_failed", context: diagnosticContext)
-      gate.complete()
+      gate.complete {
+        let appOutcome: String, appReason: String, callOutcome: String, callReason: String
+        var values: [String: Any] = ["committed": result == .presented]
+        switch result {
+        case .presented:
+          (appOutcome, appReason, callOutcome, callReason) = ("ok", "none", "ok", "none")
+        case .duplicate:
+          (appOutcome, appReason, callOutcome, callReason) = ("ok", "duplicate", "duplicate", "none")
+        case .busy:
+          (appOutcome, appReason, callOutcome, callReason) = ("blocked", "authority_rejected", "busy", "busy")
+        case .disabled:
+          (appOutcome, appReason, callOutcome, callReason) = ("blocked", "authority_rejected", "blocked", "calls_disabled")
+        case .invalid:
+          (appOutcome, appReason, callOutcome, callReason) = ("rejected", "invalid_request", "rejected", "invalid_request")
+        case .persistenceFailure:
+          (appOutcome, appReason, callOutcome, callReason) = ("failed", "native_write_failed", "failed", "native_persistence_failed")
+        case .callKitFailure:
+          let scope = MknoonCallDiagnosticScope.current
+          let providerFailed = scope["incomingCallProviderError"] as? Bool == true
+          (appOutcome, appReason, callOutcome, callReason) = providerFailed
+            ? ("failed", "prepare_failed", "failed", "provider_error")
+            : ("failed", "lifecycle_interrupted", "failed", "native_lifecycle_failed")
+          if providerFailed {
+            values["errorClass"] = "platform"
+            if let code = scope["incomingCallOsReasonCode"] as? Int, (0...7).contains(code) {
+              values["osReasonCode"] = code
+            }
+          }
+        }
+        recordAppPresentation(appOutcome, appReason, values, appTrace)
+        emitDiagnostic(.presentation(result))
+        recordCallPresentation(payload.callHandle, callOutcome, callReason, diagnosticContext)
+      }
     }
     guard effectiveCapabilityEnabled else {
       // A failed disable persistence write may leave the durable capability

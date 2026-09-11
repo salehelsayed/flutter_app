@@ -1,0 +1,43 @@
+{
+  "authorityEntryCount": 0,
+  "capturedAtMs": 1788881222569,
+  "consentEntries": 2,
+  "consentUpdatedAtMs": [
+    1788880643549,
+    1788881157502
+  ],
+  "desiredPushTraceEntries": 2,
+  "enabledConsentEntries": 2,
+  "metrics": [
+    {
+      "name": "relay_call_diagnostics_events_total",
+      "outcome": "accepted",
+      "value": "45"
+    },
+    {
+      "name": "relay_call_diagnostics_events_total",
+      "outcome": "queue_full",
+      "value": "0"
+    },
+    {
+      "name": "relay_call_diagnostics_events_total",
+      "outcome": "quota_exceeded",
+      "value": "0"
+    },
+    {
+      "name": "relay_call_diagnostics_events_total",
+      "outcome": "rejected",
+      "value": "0"
+    },
+    {
+      "name": "relay_call_diagnostics_events_total",
+      "outcome": "sink_unavailable",
+      "value": "0"
+    },
+    {
+      "name": "relay_call_diagnostics_storage_ready",
+      "outcome": null,
+      "value": "1"
+    }
+  ]
+}

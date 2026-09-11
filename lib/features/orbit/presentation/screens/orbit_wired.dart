@@ -653,6 +653,14 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
     milliseconds: 32,
   );
 
+  // Refreshes have several independent awaits. Even FIFO database queries can
+  // let a later missing-contact result finish before an older full snapshot.
+  // Track ownership per peer so unrelated row updates can still finish, and
+  // retain newer rows when an older whole-roster load publishes its segments.
+  int _friendRefreshRevision = 0;
+  int _friendRosterLoadRevision = 0;
+  final Map<String, int> _friendRefreshRevisions = {};
+
   bool _introsDirty = false;
   bool _invitesDirty = false;
   bool _wasOrbitActive = true;
@@ -872,6 +880,8 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
   }
 
   Future<void> _loadOrbitData() async {
+    final revision = ++_friendRefreshRevision;
+    _friendRosterLoadRevision = revision;
     try {
       final active = await loadOrbitData(
         contactRepo: widget.contactRepo,
@@ -879,9 +889,13 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
         mediaAttachmentRepo: widget.mediaAttachmentRepo,
         callActivitySource: widget.callActivitySource,
       );
-      if (!mounted) return;
+      if (!mounted || revision != _friendRosterLoadRevision) return;
 
-      _activeFriends = active;
+      _activeFriends = _mergeLoadedFriends(
+        active,
+        current: _activeFriends,
+        revision: revision,
+      );
       _activeFriendsLoaded = true;
       _blockedPeerIds = _collectBlockedPeerIds(
         activeFriends: _activeFriends,
@@ -889,7 +903,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
       );
       _publishAllProjections();
     } catch (e) {
-      if (mounted) {
+      if (mounted && revision == _friendRosterLoadRevision) {
         _activeFriendsLoaded = true;
         _publishAllProjections();
       }
@@ -900,6 +914,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
       );
     }
 
+    if (!mounted || revision != _friendRosterLoadRevision) return;
     try {
       final archived = await loadOrbitData(
         contactRepo: widget.contactRepo,
@@ -908,9 +923,13 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
         callActivitySource: widget.callActivitySource,
         includeArchived: true,
       );
-      if (!mounted) return;
+      if (!mounted || revision != _friendRosterLoadRevision) return;
 
-      _archivedFriends = archived;
+      _archivedFriends = _mergeLoadedFriends(
+        archived,
+        current: _archivedFriends,
+        revision: revision,
+      );
       _archivedFriendsLoaded = true;
       _blockedPeerIds = _collectBlockedPeerIds(
         activeFriends: _activeFriends,
@@ -918,7 +937,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
       );
       _publishAllProjections();
     } catch (e) {
-      if (mounted) {
+      if (mounted && revision == _friendRosterLoadRevision) {
         _archivedFriendsLoaded = true;
         _publishAllProjections();
       }
@@ -929,6 +948,26 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
       );
     }
   }
+
+  List<OrbitFriend> _mergeLoadedFriends(
+    List<OrbitFriend> loaded, {
+    required List<OrbitFriend> current,
+    required int revision,
+  }) {
+    bool hasNewerRefresh(OrbitFriend friend) =>
+        (_friendRefreshRevisions[friend.peerId] ?? 0) > revision;
+    final merged = <OrbitFriend>[
+      ...loaded.where((friend) => !hasNewerRefresh(friend)),
+      ...current.where(hasNewerRefresh),
+    ];
+    _sortFriends(merged);
+    return merged;
+  }
+
+  bool _ownsFriendRefresh(String peerId, int revision) =>
+      mounted &&
+      _friendRefreshRevisions[peerId] == revision &&
+      revision > _friendRosterLoadRevision;
 
   Future<void> _loadGroupData() async {
     final groupRepository = widget.groupRepository;
@@ -1215,6 +1254,8 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
   }
 
   Future<void> _refreshOrbitFriend(String peerId) async {
+    final revision = ++_friendRefreshRevision;
+    _friendRefreshRevisions[peerId] = revision;
     try {
       final friend = await loadOrbitFriendSnapshot(
         contactRepo: widget.contactRepo,
@@ -1223,7 +1264,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
         mediaAttachmentRepo: widget.mediaAttachmentRepo,
         callActivitySource: widget.callActivitySource,
       );
-      if (!mounted) return;
+      if (!_ownsFriendRefresh(peerId, revision)) return;
 
       final activeFriends = List<OrbitFriend>.from(_activeFriends)
         ..removeWhere((entry) => entry.peerId == peerId);
@@ -1249,6 +1290,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
       _blockedPeerIds = blockedPeerIds;
       _publishAllProjections();
     } catch (e) {
+      if (!_ownsFriendRefresh(peerId, revision)) return;
       emitFlowEvent(
         layer: 'FL',
         event: 'ORBIT_FL_FRIEND_REFRESH_ERROR',

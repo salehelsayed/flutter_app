@@ -1,10 +1,105 @@
+import 'dart:io';
+
 import 'package:flutter_test/flutter_test.dart';
 
+import '../../integration_test/scripts/run_connectivity_restore_sims.dart';
 import '../../integration_test/support/android_connectivity_restore_campaign.dart';
 import '../../integration_test/support/android_transport_campaign.dart';
 import '../../integration_test/support/sims_runtime_protocol.dart';
 
 void main() {
+  group('Android connectivity launcher', () {
+    const package = 'com.mknoon.sims.fixture';
+    const component = '$package/com.mknoon.app.MainActivity';
+
+    for (final status in <String>['ok', 'timeout']) {
+      test('$status requires the launched application process', () async {
+        final commands = <List<String>>[];
+        final result = await launchConnectivityRestoreApp(
+          packageName: package,
+          runAdb: (arguments) async {
+            commands.add(arguments);
+            if (arguments.contains('start')) {
+              return ProcessResult(
+                1,
+                0,
+                'Starting: Intent { cmp=$component }\n'
+                    'Status: $status\nActivity: $component\n',
+                '',
+              );
+            }
+            return ProcessResult(2, 0, '12345\n', '');
+          },
+        );
+
+        expect(result, isTrue);
+        expect(commands, <List<String>>[
+          <String>['shell', 'am', 'start', '-W', '-n', component],
+          <String>['shell', 'pidof', package],
+        ]);
+      });
+    }
+
+    test('timeout without a valid live PID remains a launch failure', () async {
+      for (final pid in <String>['', '0', 'not-a-pid']) {
+        expect(
+          await launchConnectivityRestoreApp(
+            packageName: package,
+            runAdb: (arguments) async => arguments.contains('start')
+                ? ProcessResult(
+                    1,
+                    0,
+                    'Status: timeout\nActivity: $component\n',
+                    '',
+                  )
+                : ProcessResult(2, 0, pid, ''),
+          ),
+          isFalse,
+          reason: 'pidof output: $pid',
+        );
+      }
+      expect(
+        await launchConnectivityRestoreApp(
+          packageName: package,
+          runAdb: (arguments) async => arguments.contains('start')
+              ? ProcessResult(1, 0, 'Status: ok\nActivity: $component\n', '')
+              : ProcessResult(2, 1, '12345', ''),
+        ),
+        isFalse,
+      );
+    });
+
+    test('real launch failures never advance to the PID probe', () async {
+      for (final launch in <ProcessResult>[
+        ProcessResult(1, 1, 'Status: ok\nActivity: $component\n', ''),
+        ProcessResult(
+          1,
+          0,
+          'Status: timeout\nActivity: $component\n',
+          'Error: denied',
+        ),
+        ProcessResult(1, 0, 'Status: error\nActivity: $component\n', ''),
+        ProcessResult(1, 0, 'Activity: $component\n', ''),
+        ProcessResult(1, 0, 'Status: ok\nActivity: other/MainActivity\n', ''),
+        ProcessResult(1, 0, 'Status: ok\nActivity: ${component}Other\n', ''),
+      ]) {
+        var calls = 0;
+        expect(
+          await launchConnectivityRestoreApp(
+            packageName: package,
+            runAdb: (arguments) async {
+              calls += 1;
+              return launch;
+            },
+          ),
+          isFalse,
+          reason: '${launch.stdout} ${launch.stderr}',
+        );
+        expect(calls, 1);
+      }
+    });
+  });
+
   group('Android connectivity-restore endpoint prerequisites', () {
     test(
       'binds the shared main APK digest and physical/emulator role topology',

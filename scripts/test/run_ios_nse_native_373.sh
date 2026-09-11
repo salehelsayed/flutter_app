@@ -54,6 +54,13 @@ readonly -a XCODE_TESTS=(
   RunnerTests/NotificationServiceConfigurationTests/testRunnerAndNotificationServiceEntitlementsShareAppGroupAndKeychainGroup
   RunnerTests/NotificationServiceConfigurationTests/testNotificationServiceInfoPlistUsesUserNotificationsServicePoint
   RunnerTests/IosNotificationRecoveryTests/testProductionHandoffSeamClaimsBeforeHandlerAndCommitsAfter
+  RunnerTests/IosNotificationRecoveryTests/testSerializedBadgeWriterRereadsAfterInFlightStateChange
+  RunnerTests/IosNotificationRecoveryTests/testSerializedBadgeWriterReleasesFileLockWhileCompletionIsPending
+  RunnerTests/IosNotificationRecoveryTests/testSerializedBadgeWritersOverlapWithoutWaitingForFirstCompletion
+  RunnerTests/IosNotificationRecoveryTests/testSerializedBadgeWriterDoesNotRestartExhaustedLatestRevisionFromStaleCompletion
+  RunnerTests/IosNotificationRecoveryTests/testSerializedBadgeWriterRetriesTransientSetterFailure
+  RunnerTests/IosNotificationRecoveryTests/testSerializedBadgeWriterBoundsFailuresAndReleasesLock
+  RunnerTests/IosNotificationRecoveryTests/testSerializedBadgeWriterPrefersNewRevisionAfterSetterFailure
   RunnerTests/IosNotificationRecoveryTests/testTC395ExactGroupInviteRetirementIsSurgicalAndIdempotent
   RunnerTests/IosNotificationRecoveryTests/testTC398GroupInventoryFiltersBeforeBoundAndMapsClosedDiagnostics
   RunnerTests/IosNotificationRecoveryTests/testTC398GroupObservationPassRequiresCanonicalRequestIdentifier
@@ -184,7 +191,7 @@ assert_unique_exact_count() {
 
 assert_unique_exact_count 4 "${FOCUSED_GO_TESTS[@]}"
 assert_unique_exact_count 4 "${PRESERVATION_GO_TESTS[@]}"
-assert_unique_exact_count 21 "${XCODE_TESTS[@]}"
+assert_unique_exact_count 28 "${XCODE_TESTS[@]}"
 
 run_go_test() {
   (
@@ -864,7 +871,7 @@ else
   )
   final_test_command+=("${only_testing_args[@]}")
   final_test_command+=(CODE_SIGNING_ALLOWED=NO test)
-  run_logged "the exact 21-method non-parallel Plan 373/398 XCTest set on $simulator_id" \
+  run_logged "the exact 28-method non-parallel Plan 373/398/badge XCTest set on $simulator_id" \
     "$RUNNER_BUILD_LOG" \
     "${final_test_command[@]}"
 
@@ -880,12 +887,12 @@ else
     >"$RESULT_DIR/ios-xctest-summary.json"
   jq -e '
     .result == "Passed" and
-    .totalTestCount == 21 and
-    .passedTests == 21 and
+    .totalTestCount == 28 and
+    .passedTests == 28 and
     .failedTests == 0 and
     .skippedTests == 0
   ' "$RESULT_DIR/ios-xctest-summary.json" >/dev/null ||
-    fail "Plan 373/398 XCTest summary was not exactly 21 passes and zero skips"
+    fail "Plan 373/398/badge XCTest summary was not exactly 28 passes and zero skips"
   xcrun xcresulttool get test-results tests \
     --path "$xctest_result" --compact \
     >"$RESULT_DIR/ios-xctest-tests.json"
@@ -896,7 +903,7 @@ else
   assert_xcresult_method_set "$RESULT_DIR/ios-xctest-tests.json" Passed \
     "${expected_method_names[@]}"
   verify_built_products "$xctest_derived"
-  printf 'PASS: 21/21 on %s\n' "$simulator_id" >"$IOS_DISPOSITION"
+  printf 'PASS: 28/28 on %s\n' "$simulator_id" >"$IOS_DISPOSITION"
 fi
 
 binding_digest_after="$(gomobile_binding_input_digest "$REPO_ROOT" ios)"
@@ -916,7 +923,7 @@ framework_digest_after="$(framework_content_digest)"
 
 [[ "$(wc -l <"$IOS_DISPOSITION" | tr -d '[:space:]')" -eq 1 ]] ||
   fail "iOS XCTest disposition must contain exactly one line"
-rg -x 'PASS: 21/21 on [0-9A-Fa-f-]{36}|N/A \(target unavailable by project policy\): no available iPhone simulator' \
+rg -x 'PASS: 28/28 on [0-9A-Fa-f-]{36}|N/A \(target unavailable by project policy\): no available iPhone simulator' \
   "$IOS_DISPOSITION" >/dev/null ||
   fail "iOS XCTest disposition is not the frozen PASS/N/A literal"
 [[ -s "$RUNNER_BUILD_LOG" ]] || fail "Runner simulator build log is empty"

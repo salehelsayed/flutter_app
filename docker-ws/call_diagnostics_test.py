@@ -15,6 +15,82 @@ class CallDiagnosticsOperatorTests(unittest.TestCase):
     def event(self, trace, role='caller', source='flutter', action='finish', media=True):
         return {'schemaVersion': 1, 'eventId': str(uuid.uuid4()), 'traceId': trace, 'source': source, 'role': role, 'runId': str(uuid.uuid4()), 'sequence': 1, 'occurredAtMs': int(time.time()*1000), 'elapsedMs': 1, 'stage': 'terminal' if action == 'finish' else 'signaling', 'action': action, 'outcome': 'completed_after_media' if media else 'ok', 'reason': 'none', 'values': {'mediaFlowVerified': media}}
 
+    def test_null_events_preserve_valid_terminal_summary(self):
+        now = int(time.time()*1000)
+        trace = str(uuid.uuid4())
+        event = self.event(trace)
+        self.assertTrue(module.valid_event(event))
+        for events in (None, []):
+            with self.subTest(events=events), tempfile.TemporaryDirectory() as directory:
+                path = pathlib.Path(directory)
+                record = {'createdAtMs': now, 'events': events,
+                          'summaries': {'terminal': {'event': event, 'receivedAtMs': now}},
+                          'dropAccountingVersion': 1, 'dropped': 0}
+                (path / (trace+'.json')).write_text(json.dumps(record))
+                rows, rejected = module.read_records(path, now-1000, now_ms=now)
+                self.assertEqual(rejected, 0)
+                output = module.report(rows, rejected, trace, since_ms=now-1000, now_ms=now)
+                self.assertEqual(output['observedTraceCount'], 1)
+                self.assertEqual(output['terminalRecordOutcomes'], {'completed_after_media': 1})
+                self.assertEqual(output['events'], [{'event': event, 'receivedAtMs': now}])
+
+    def test_null_events_preserve_empty_and_loss_only_records(self):
+        now = int(time.time()*1000)
+        for dropped in (0, 4):
+            with self.subTest(dropped=dropped), tempfile.TemporaryDirectory() as directory:
+                path = pathlib.Path(directory)
+                trace = str(uuid.uuid4())
+                record = {'createdAtMs': now, 'events': None, 'summaries': {},
+                          'dropAccountingVersion': 1, 'dropped': dropped,
+                          'droppedFirstAtMs': now, 'droppedUpdatedAtMs': now}
+                (path / (trace+'.json')).write_text(json.dumps(record))
+                samples = {}
+                rows, rejected = module.read_records(path, now-1000, now_ms=now, _loss_samples=samples)
+                self.assertEqual(rejected, 0)
+                self.assertEqual(len(rows), 1 if dropped else 0)
+                self.assertEqual(list(samples.values()), [{'count': dropped, 'lowerBound': False}])
+                output = module.report(rows, rejected, since_ms=now-1000, now_ms=now)
+                self.assertEqual(output['loss']['window']['droppedEvents'], dropped)
+
+    def test_null_events_keep_summary_validation_receipt_window_and_trace_filters(self):
+        now = int(time.time()*1000)
+        trace = str(uuid.uuid4())
+        valid = self.event(trace)
+        invalid = self.event(trace)
+        invalid['token'] = 'private-canary'
+        summaries = {
+            'valid': {'event': valid, 'receivedAtMs': now},
+            'duplicate': {'event': valid, 'receivedAtMs': now},
+            'old': {'event': self.event(trace), 'receivedAtMs': now-1001},
+            'future': {'event': self.event(trace), 'receivedAtMs': now+1},
+            'other-trace': {'event': self.event(str(uuid.uuid4())), 'receivedAtMs': now},
+            'invalid': {'event': invalid, 'receivedAtMs': now},
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            path = pathlib.Path(directory)
+            record = {'createdAtMs': now, 'events': None, 'summaries': summaries,
+                      'owner': 'private-canary', 'dropAccountingVersion': 1, 'dropped': 0}
+            (path / (trace+'.json')).write_text(json.dumps(record))
+            rows, rejected = module.read_records(path, now-1000, trace, now_ms=now)
+            output = module.report(rows, rejected, trace, since_ms=now-1000, now_ms=now)
+        self.assertEqual(rejected, 1)
+        self.assertEqual(output['events'], [{'event': valid, 'receivedAtMs': now}])
+        self.assertNotIn('private-canary', json.dumps(output))
+
+    def test_non_null_non_list_events_still_reject_entire_record(self):
+        now = int(time.time()*1000)
+        trace = str(uuid.uuid4())
+        event = self.event(trace)
+        for events in (False, True, 0, 1, '', 'invalid', {}, {'unexpected': []}):
+            with self.subTest(events=events), tempfile.TemporaryDirectory() as directory:
+                path = pathlib.Path(directory)
+                record = {'createdAtMs': now, 'events': events,
+                          'summaries': {'terminal': {'event': event, 'receivedAtMs': now}}}
+                (path / (trace+'.json')).write_text(json.dumps(record))
+                rows, rejected = module.read_records(path, now-1000, now_ms=now)
+                self.assertEqual(rejected, 1)
+                self.assertEqual(rows, [])
+
     def test_historical_counter_is_not_a_current_window_loss_rate(self):
         event=self.event(str(uuid.uuid4()))
         output=module.report([{'events':[{'receivedAtMs':1,'event':event}],'droppedEvents':500}],0)

@@ -1,0 +1,33 @@
+{
+  "capturedAtUtc": "2026-09-08T12:23:16.976363+00:00",
+  "services": [
+    {
+      "NRestarts": "0",
+      "Id": "relay-server.service",
+      "ActiveState": "active",
+      "SubState": "running",
+      "ActiveEnterTimestamp": "Tue 2026-09-08 11:16:19 UTC"
+    },
+    {
+      "NRestarts": "0",
+      "Id": "coturn.service",
+      "ActiveState": "active",
+      "SubState": "running",
+      "ActiveEnterTimestamp": "Tue 2026-09-08 11:09:01 UTC"
+    }
+  ],
+  "relayBinarySha256": "576185104855bfda08ad89c27675825209e76ded0a63074fda7dcf431ace54ec",
+  "callControlMetrics": [
+    "relay_call_control_requests_total{action=\"call_ack_v1\",outcome=\"acked\",wake=\"not_applicable\"} 68",
+    "relay_call_control_requests_total{action=\"call_endpoint_get_v1\",outcome=\"found\",wake=\"not_applicable\"} 129",
+    "relay_call_control_requests_total{action=\"call_endpoint_set_v1\",outcome=\"ok\",wake=\"not_applicable\"} 40",
+    "relay_call_control_requests_total{action=\"call_retrieve_v1\",outcome=\"empty\",wake=\"not_applicable\"} 391",
+    "relay_call_control_requests_total{action=\"call_retrieve_v1\",outcome=\"events\",wake=\"not_applicable\"} 41",
+    "relay_call_control_requests_total{action=\"call_store_v1\",outcome=\"CALL_REPLAY\",wake=\"not_attempted\"} 3",
+    "relay_call_control_requests_total{action=\"call_store_v1\",outcome=\"stored\",wake=\"dispatched\"} 46",
+    "relay_call_control_requests_total{action=\"call_store_v1\",outcome=\"stored\",wake=\"not_attempted\"} 28",
+    "relay_call_control_requests_total{action=\"call_token_set_v1\",outcome=\"ok\",wake=\"not_applicable\"} 22",
+    "relay_call_control_requests_total{action=\"call_wake_handle_set_v1\",outcome=\"ok\",wake=\"not_applicable\"} 40"
+  ],
+  "scope": "Read-only production health and fixed-cardinality call-control totals. Counters include all traffic, not just lab tests."
+}

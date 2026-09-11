@@ -843,9 +843,10 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
           SendChatMessageResult.nodeNotRunning => 'offline',
           SendChatMessageResult.invalidMessage => 'invalid_payload',
           SendChatMessageResult.invalidPrivateMedia => 'unsupported',
-          SendChatMessageResult.encryptionRequired => 'recipient_key_missing',
+          SendChatMessageResult.encryptionRequired =>
+            bridge == null ? 'bridge_unavailable' : 'recipient_key_missing',
           SendChatMessageResult.mediaEncryptionRequired => 'metadata_invalid',
-          SendChatMessageResult.peerNotFound => 'authority_rejected',
+          SendChatMessageResult.peerNotFound => 'network_unavailable',
           SendChatMessageResult.dialFailed ||
           SendChatMessageResult.sendFailed => 'send_failed',
         };
@@ -968,7 +969,9 @@ _sendChatMessageDiagnosed({
       feature: 'message',
       stage: outcome == 'success'
           ? 'send'
-          : outcome.contains('encrypt')
+          : outcome.contains('encrypt') &&
+                outcome != 'encryption_required' &&
+                outcome != 'media_encryption_required'
           ? 'encrypt'
           : 'preflight',
       outcome: outcome == 'success'
@@ -978,6 +981,12 @@ _sendChatMessageDiagnosed({
           : 'failed',
       reason: outcome == 'success'
           ? 'none'
+          : outcome == 'media_encryption_required'
+          ? 'metadata_invalid'
+          : outcome == 'encryption_required'
+          ? bridge == null
+                ? 'bridge_unavailable'
+                : 'recipient_key_missing'
           : outcome.contains('encrypt')
           ? 'encryption_failed'
           : outcome == 'invalid_private_media'

@@ -110,6 +110,9 @@ class _CallDiagnosticsSheet extends StatefulWidget {
 }
 
 class _CallDiagnosticsSheetState extends State<_CallDiagnosticsSheet> {
+  // Bound text layout independently of the archive size. Keep the complete
+  // export for the explicit copy action so support evidence is not lost.
+  static const _previewCharacterLimit = 8 * 1024;
   bool _busy = false;
   String? _preview;
   _DiagnosticsMessage? _message;
@@ -273,9 +276,17 @@ class _CallDiagnosticsSheetState extends State<_CallDiagnosticsSheet> {
                 child: Text(l10n.settings_diagnostics_preview_report),
               ),
               if (_preview case final preview?) ...<Widget>[
+                if (preview.length > _previewCharacterLimit)
+                  Text(l10n.settings_diagnostics_preview_truncated),
                 ConstrainedBox(
                   constraints: const BoxConstraints(maxHeight: 180),
-                  child: SingleChildScrollView(child: SelectableText(preview)),
+                  child: SingleChildScrollView(
+                    child: SelectableText(
+                      preview.length > _previewCharacterLimit
+                          ? '${preview.substring(0, _previewCharacterLimit)}\n…'
+                          : preview,
+                    ),
+                  ),
                 ),
                 TextButton(
                   onPressed: _busy

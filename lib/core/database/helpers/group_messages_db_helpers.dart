@@ -6,17 +6,61 @@ import 'package:sqflite_sqlcipher/sqflite.dart';
 import '../../media/group_media_blob_custody.dart';
 import '../../notifications/deterministic_notification_id.dart';
 import '../../services/protected_group_content_contract.dart';
+import '../../secure_storage/secret_storage_references.dart';
 import '../../utils/flow_event_emitter.dart';
 import '../direct_media_blob_custody.dart';
 import '../db_write_transaction.dart';
 import 'direct_media_blob_custody_db_helpers.dart';
 import 'group_message_local_deletions_db_helpers.dart';
+import 'group_media_key_snapshot.dart';
 import 'group_event_log_db_helpers.dart';
 import 'group_notification_display_outbox_db_helpers.dart';
 import 'group_notification_read_acknowledgement_db_helpers.dart';
 import 'group_notification_reconciliation_outbox_db_helpers.dart';
 import 'group_parent_write_guard.dart';
 import 'protected_group_content_db_helpers.dart';
+
+bool _expectedDeclaresProtectedMedia(Map<String, Object?> expected) {
+  final retry = expected['inbox_retry_payload'];
+  if (retry is String && retry.isNotEmpty) {
+    try {
+      return ProtectedGroupContentRetryManifest.decode(retry).mediaManifest !=
+          null;
+    } on FormatException {
+      return false; // The existing SQL admission rejects malformed wrappers.
+    }
+  }
+  final wire = expected['wire_envelope'];
+  if (wire is! String || wire.isEmpty) return false;
+  try {
+    final decoded = jsonDecode(wire);
+    return decoded is Map && decoded['mediaManifest'] is String;
+  } on FormatException {
+    return false;
+  }
+}
+
+bool _matchesProtectedGroupMediaKey({
+  required DatabaseExecutor db,
+  required GroupMediaKeySnapshot? snapshot,
+  required String attachmentId,
+  required String messageId,
+  required Object? storedKey,
+  required String committedKey,
+}) {
+  if (storedKey is! String) return false;
+  // Existing plaintext rows remain supported. Secure references need the
+  // exact resolved key and canonical slot captured under media ownership.
+  if (!isSecureStoreReference(storedKey)) return storedKey == committedKey;
+  return snapshot?.matches(
+        db: db,
+        attachmentId: attachmentId,
+        messageId: messageId,
+        storedKey: storedKey,
+        committedKey: committedKey,
+      ) ??
+      false;
+}
 
 const _groupRemovalCutoffMessageIdLike = 'sys-member_removed_cutoff:%';
 
@@ -1722,8 +1766,25 @@ bool _isExactStrictRetryRecipientShrink(
 Future<bool> dbReplaceGroupInboxRetryPayloadIfExact(
   Database db,
   Map<String, Object?> expected,
-  String replacement,
-) async {
+  String replacement, {
+  GroupMediaKeyAccess? mediaKeyAccess,
+  GroupMediaKeySnapshot? mediaKeySnapshot,
+}) async {
+  if (mediaKeyAccess != null &&
+      mediaKeySnapshot == null &&
+      _expectedDeclaresProtectedMedia(expected)) {
+    return mediaKeyAccess.run(
+      db: db,
+      messageIds: <String>[expected['id'] as String? ?? ''],
+      action: (snapshot) => dbReplaceGroupInboxRetryPayloadIfExact(
+        db,
+        expected,
+        replacement,
+        mediaKeySnapshot: snapshot,
+      ),
+    );
+  }
+
   try {
     return await dbWriteTransaction(db, (txn) async {
       final messageId = expected['id'] as String? ?? '';
@@ -1770,6 +1831,7 @@ Future<bool> dbReplaceGroupInboxRetryPayloadIfExact(
       if (hasProtectedMedia) {
         exactMedia = await _loadExactProtectedGroupMediaAuthority(
           txn,
+          mediaKeySnapshot: mediaKeySnapshot,
           retryManifest: previousManifest,
           expectedParent: expected,
           recipientsRequiringStoredRows: previousManifest
@@ -1816,6 +1878,7 @@ Future<bool> dbReplaceGroupInboxRetryPayloadIfExact(
             ) ||
             await _loadExactProtectedGroupMediaAuthority(
                   txn,
+                  mediaKeySnapshot: mediaKeySnapshot,
                   retryManifest: replacementManifest,
                   expectedParent: replacementExpected,
                   recipientsRequiringStoredRows: replacementManifest
@@ -1891,7 +1954,27 @@ Future<bool> dbCompleteGroupContentInboxStoreRetryIfExact(
   required String sourceEventId,
   required String sourceTimestamp,
   required Map<String, Object?> eventPayload,
+  GroupMediaKeyAccess? mediaKeyAccess,
+  GroupMediaKeySnapshot? mediaKeySnapshot,
 }) async {
+  if (mediaKeyAccess != null &&
+      mediaKeySnapshot == null &&
+      _expectedDeclaresProtectedMedia(expected)) {
+    return mediaKeyAccess.run(
+      db: db,
+      messageIds: <String>[expected['id'] as String? ?? ''],
+      action: (snapshot) => dbCompleteGroupContentInboxStoreRetryIfExact(
+        db,
+        expected: expected,
+        sourcePeerId: sourcePeerId,
+        sourceEventId: sourceEventId,
+        sourceTimestamp: sourceTimestamp,
+        eventPayload: eventPayload,
+        mediaKeySnapshot: snapshot,
+      ),
+    );
+  }
+
   try {
     return await dbWriteTransaction(db, (txn) async {
       final messageId = expected['id'] as String? ?? '';
@@ -1954,6 +2037,7 @@ Future<bool> dbCompleteGroupContentInboxStoreRetryIfExact(
       if (hasProtectedMedia) {
         final exactMedia = await _loadExactProtectedGroupMediaAuthority(
           txn,
+          mediaKeySnapshot: mediaKeySnapshot,
           retryManifest: retryManifest,
           expectedParent: expected,
           recipientsRequiringStoredRows: retryManifest.pendingRecipientPeerIds
@@ -2033,7 +2117,27 @@ Future<bool> dbStageAndCompleteLocalGroupContentMessage(
   required String sourceEventId,
   required String sourceTimestamp,
   required Map<String, Object?> eventPayload,
+  GroupMediaKeyAccess? mediaKeyAccess,
+  GroupMediaKeySnapshot? mediaKeySnapshot,
 }) async {
+  if (mediaKeyAccess != null &&
+      mediaKeySnapshot == null &&
+      _expectedDeclaresProtectedMedia(expected)) {
+    return mediaKeyAccess.run(
+      db: db,
+      messageIds: <String>[expected['id'] as String? ?? ''],
+      action: (snapshot) => dbStageAndCompleteLocalGroupContentMessage(
+        db,
+        expected: expected,
+        sourcePeerId: sourcePeerId,
+        sourceEventId: sourceEventId,
+        sourceTimestamp: sourceTimestamp,
+        eventPayload: eventPayload,
+        mediaKeySnapshot: snapshot,
+      ),
+    );
+  }
+
   try {
     return await dbWriteTransaction(db, (txn) async {
       final messageId = expected['id'] as String? ?? '';
@@ -2117,6 +2221,7 @@ Future<bool> dbStageAndCompleteLocalGroupContentMessage(
         final exactMedia =
             await _loadExactZeroTargetProtectedGroupMediaAuthority(
               txn,
+              mediaKeySnapshot: mediaKeySnapshot,
               groupId: groupId,
               messageId: messageId,
               expectedParent: expected,
@@ -2184,7 +2289,27 @@ Future<bool> dbStagePreparedLocalGroupContentMessage(
   required String sourceEventId,
   required String sourceTimestamp,
   required Map<String, Object?> preparedEventPayload,
+  GroupMediaKeyAccess? mediaKeyAccess,
+  GroupMediaKeySnapshot? mediaKeySnapshot,
 }) {
+  if (mediaKeyAccess != null &&
+      mediaKeySnapshot == null &&
+      _expectedDeclaresProtectedMedia(expected)) {
+    return mediaKeyAccess.run(
+      db: db,
+      messageIds: <String>[expected['id'] as String? ?? ''],
+      action: (snapshot) => dbStagePreparedLocalGroupContentMessage(
+        db,
+        expected: expected,
+        sourcePeerId: sourcePeerId,
+        sourceEventId: sourceEventId,
+        sourceTimestamp: sourceTimestamp,
+        preparedEventPayload: preparedEventPayload,
+        mediaKeySnapshot: snapshot,
+      ),
+    );
+  }
+
   return dbWriteTransaction(db, (txn) async {
     final messageId = expected['id'] as String? ?? '';
     final groupId = expected['group_id'] as String? ?? '';
@@ -2262,6 +2387,7 @@ Future<bool> dbStagePreparedLocalGroupContentMessage(
     if (hasProtectedMedia) {
       final exactMedia = await _loadExactProtectedGroupMediaAuthority(
         txn,
+        mediaKeySnapshot: mediaKeySnapshot,
         retryManifest: retryManifest,
         expectedParent: expected,
         recipientsRequiringStoredRows: retryManifest.pendingRecipientPeerIds
@@ -2643,6 +2769,7 @@ _loadExactProtectedGroupMediaAuthority(
   required ProtectedGroupContentRetryManifest retryManifest,
   required Map<String, Object?> expectedParent,
   required Set<String> recipientsRequiringStoredRows,
+  GroupMediaKeySnapshot? mediaKeySnapshot,
 }) async {
   final projection = _parseProtectedGroupMediaProjection(
     retryManifest: retryManifest,
@@ -2689,12 +2816,20 @@ _loadExactProtectedGroupMediaAuthority(
         row['width'] != commitment.width ||
         row['height'] != commitment.height ||
         row['duration_ms'] != commitment.durationMs ||
-        row['waveform'] !=
-            (commitment.waveform.isEmpty
-                ? null
-                : jsonEncode(commitment.waveform)) ||
+        (row['waveform'] !=
+                (commitment.waveform.isEmpty
+                    ? null
+                    : jsonEncode(commitment.waveform)) &&
+            !(commitment.waveform.isEmpty && row['waveform'] == '[]')) ||
         row['content_hash'] != commitment.ciphertextSha256 ||
-        row['encryption_key_base64'] != commitment.encryptionKeyBase64 ||
+        !_matchesProtectedGroupMediaKey(
+          db: txn,
+          snapshot: mediaKeySnapshot,
+          attachmentId: commitment.attachmentId,
+          messageId: projection.messageId,
+          storedKey: row['encryption_key_base64'],
+          committedKey: commitment.encryptionKeyBase64,
+        ) ||
         row['encryption_nonce'] != commitment.encryptionNonce ||
         row['encryption_scheme'] != commitment.encryptionScheme ||
         row['group_media_blob_custody_fingerprint'] != fingerprint ||
@@ -2774,6 +2909,7 @@ _loadExactZeroTargetProtectedGroupMediaAuthority(
   required String messageId,
   required Map<String, Object?> expectedParent,
   required Map<String, Object?> eventPayload,
+  GroupMediaKeySnapshot? mediaKeySnapshot,
 }) async {
   final plaintext = _protectedMediaStringMap(eventPayload['payload']);
   final rawManifest = plaintext?['mediaManifest'];
@@ -2816,6 +2952,7 @@ _loadExactZeroTargetProtectedGroupMediaAuthority(
   );
   return _loadExactProtectedGroupMediaAuthority(
     txn,
+    mediaKeySnapshot: mediaKeySnapshot,
     retryManifest: synthetic,
     expectedParent: expectedParent,
     recipientsRequiringStoredRows: const <String>{},
@@ -2886,13 +3023,36 @@ Future<bool> dbTerminalizePreparedLocalGroupContentMessageIfExact(
   required String terminalSourceEventId,
   required String terminalSourceTimestamp,
   required Map<String, Object?> terminalEventPayload,
+  GroupMediaKeyAccess? mediaKeyAccess,
+  GroupMediaKeySnapshot? mediaKeySnapshot,
 }) async {
+  if (mediaKeyAccess != null &&
+      mediaKeySnapshot == null &&
+      _expectedDeclaresProtectedMedia(expected)) {
+    return mediaKeyAccess.run(
+      db: db,
+      messageIds: <String>[expected['id'] as String? ?? ''],
+      action: (snapshot) =>
+          dbTerminalizePreparedLocalGroupContentMessageIfExact(
+            db,
+            expected: expected,
+            preparedEventPayload: preparedEventPayload,
+            terminalSourcePeerId: terminalSourcePeerId,
+            terminalSourceEventId: terminalSourceEventId,
+            terminalSourceTimestamp: terminalSourceTimestamp,
+            terminalEventPayload: terminalEventPayload,
+            mediaKeySnapshot: snapshot,
+          ),
+    );
+  }
+
   try {
     return await dbWriteTransaction(
       db,
       (txn) =>
           dbTerminalizePreparedLocalGroupContentMessageIfExactInTransaction(
             txn,
+            mediaKeySnapshot: mediaKeySnapshot,
             expected: expected,
             preparedEventPayload: preparedEventPayload,
             terminalSourcePeerId: terminalSourcePeerId,
@@ -2919,6 +3079,7 @@ Future<bool> dbTerminalizePreparedLocalGroupContentMessageIfExactInTransaction(
   required String terminalSourceEventId,
   required String terminalSourceTimestamp,
   required Map<String, Object?> terminalEventPayload,
+  GroupMediaKeySnapshot? mediaKeySnapshot,
 }) async {
   final messageId = expected['id'] as String? ?? '';
   final groupId = expected['group_id'] as String? ?? '';
@@ -2982,6 +3143,7 @@ Future<bool> dbTerminalizePreparedLocalGroupContentMessageIfExactInTransaction(
   if (retryManifest.mediaManifest != null) {
     exactMedia = await _loadExactProtectedGroupMediaAuthority(
       txn,
+      mediaKeySnapshot: mediaKeySnapshot,
       retryManifest: retryManifest,
       expectedParent: expected,
       recipientsRequiringStoredRows: retryManifest.pendingRecipientPeerIds
@@ -3038,7 +3200,24 @@ Future<bool> dbHasExactPreparedLocalGroupContentMessage(
   DatabaseExecutor db, {
   required Map<String, Object?> expected,
   required Map<String, Object?> eventPayload,
+  GroupMediaKeyAccess? mediaKeyAccess,
+  GroupMediaKeySnapshot? mediaKeySnapshot,
 }) async {
+  if (mediaKeyAccess != null &&
+      mediaKeySnapshot == null &&
+      _expectedDeclaresProtectedMedia(expected)) {
+    return mediaKeyAccess.run(
+      db: db,
+      messageIds: <String>[expected['id'] as String? ?? ''],
+      action: (snapshot) => dbHasExactPreparedLocalGroupContentMessage(
+        db,
+        expected: expected,
+        eventPayload: eventPayload,
+        mediaKeySnapshot: snapshot,
+      ),
+    );
+  }
+
   final messageId = expected['id'] as String? ?? '';
   final groupId = expected['group_id'] as String? ?? '';
   final retryWrapper = expected['inbox_retry_payload'] as String? ?? '';
@@ -3082,6 +3261,7 @@ Future<bool> dbHasExactPreparedLocalGroupContentMessage(
   }
   return await _loadExactProtectedGroupMediaAuthority(
         db,
+        mediaKeySnapshot: mediaKeySnapshot,
         retryManifest: retryManifest,
         expectedParent: expected,
         recipientsRequiringStoredRows: retryManifest.pendingRecipientPeerIds

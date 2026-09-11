@@ -13,31 +13,40 @@ final class NotificationServiceConfigurationTests: XCTestCase {
     )
   }
 
-  func testRunnerImportCompilationConditionIsRunnerTestsDebugOnly() throws {
+  func testRunnerImportCompilationConditionIsRunnerTestsOnlyInEveryConfiguration() throws {
     let root = URL(fileURLWithPath: #filePath)
       .deletingLastPathComponent()
       .deletingLastPathComponent()
-    let project = try String(
-      contentsOf: root.appendingPathComponent(
-        "Runner.xcodeproj/project.pbxproj"
-      ),
-      encoding: .utf8
+    let project = try XCTUnwrap(
+      PropertyListSerialization.propertyList(
+        from: Data(contentsOf: root.appendingPathComponent("Runner.xcodeproj/project.pbxproj")),
+        options: [],
+        format: nil
+      ) as? [String: Any]
     )
-    let markerSettings = project
-      .components(separatedBy: .newlines)
-      .filter {
-        $0.contains("SWIFT_ACTIVE_COMPILATION_CONDITIONS") &&
-          $0.contains("MKNOON_RUNNER_TESTS")
+    let objects = try XCTUnwrap(project["objects"] as? [String: [String: Any]])
+    let target = try XCTUnwrap(objects.values.first {
+      $0["isa"] as? String == "PBXNativeTarget" && $0["name"] as? String == "RunnerTests"
+    })
+    let listId = try XCTUnwrap(target["buildConfigurationList"] as? String)
+    let configIds = try XCTUnwrap(objects[listId]?["buildConfigurations"] as? [String])
+    XCTAssertEqual(Set(configIds.compactMap { objects[$0]?["name"] as? String }), ["Debug", "Release", "Profile"])
+    for (id, object) in objects where object["isa"] as? String == "XCBuildConfiguration" {
+      let settings = try XCTUnwrap(object["buildSettings"] as? [String: Any])
+      let flags = settings["OTHER_SWIFT_FLAGS"] as? String ?? ""
+      let conditions = settings["SWIFT_ACTIVE_COMPILATION_CONDITIONS"] as? String ?? ""
+      if configIds.contains(id) {
+        XCTAssertTrue(flags.contains("$(inherited)"))
+        XCTAssertTrue(flags.split(separator: " ").contains("-DMKNOON_RUNNER_TESTS"))
+        if object["name"] as? String != "Debug" {
+          XCTAssertFalse(flags.split(separator: " ").contains("-DDEBUG"))
+          XCTAssertFalse(conditions.split(separator: " ").contains("DEBUG"))
+        }
+      } else {
+        XCTAssertFalse(flags.contains("MKNOON_RUNNER_TESTS"))
+        XCTAssertFalse(conditions.contains("MKNOON_RUNNER_TESTS"))
       }
-      .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-
-    XCTAssertEqual(
-      markerSettings,
-      [
-        "SWIFT_ACTIVE_COMPILATION_CONDITIONS = \"DEBUG MKNOON_RUNNER_TESTS $(inherited)\";"
-      ],
-      "the Runner test import marker must exist only in RunnerTests Debug"
-    )
+    }
   }
 
   func testRunnerAndNotificationServiceEntitlementsShareAppGroupAndKeychainGroup() throws {
@@ -101,7 +110,7 @@ final class NotificationServiceConfigurationTests: XCTestCase {
       contentsOf: root.appendingPathComponent(relativePath),
       encoding: .utf8
     )
-    let expected = "#if DEBUG && MKNOON_RUNNER_TESTS && canImport(Runner)\n  @testable import Runner\n#endif"
+    let expected = "#if MKNOON_RUNNER_TESTS && canImport(Runner)\n  @testable import Runner\n#endif"
 
     XCTAssertEqual(
       source.components(separatedBy: "@testable import Runner").count - 1,
@@ -112,7 +121,7 @@ final class NotificationServiceConfigurationTests: XCTestCase {
     )
     XCTAssertTrue(
       source.contains(expected),
-      "\(relativePath) must make the Runner import unreachable outside Debug RunnerTests",
+      "\(relativePath) must make the Runner import unreachable outside RunnerTests",
       file: file,
       line: line
     )

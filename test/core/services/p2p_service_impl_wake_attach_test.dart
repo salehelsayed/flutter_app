@@ -1,9 +1,11 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:crypto/crypto.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/secure_storage/secure_key_store.dart';
+import 'package:flutter_app/core/services/inbox_store_outcome.dart';
 import 'package:flutter_app/core/services/p2p_service_impl.dart';
 import 'package:flutter_app/features/push/infrastructure/received_wake_token_store_impl.dart';
 
@@ -76,6 +78,17 @@ class _CapturingBridge extends Bridge {
 }
 
 void main() {
+  const initialEnvelope =
+      ' { "type": "chat_message", "version": "2", '
+      '"id": "historical-message", "senderPeerId": "self-peer", '
+      '"encrypted": { "kem": "kem", "ciphertext": "ciphertext", '
+      '"nonce": "nonce" } }\n';
+  const acceptedCustody = <String, Object?>{
+    'ok': true,
+    'storeStatus': 'stored',
+    'custodyContract': ackOrExpiryInboxCustodyContract,
+  };
+
   test('threads token by toPeerId; empty when absent; served from cache '
       '(no per-message SecureKeyStore read)', () async {
     final counting = _CountingSecureKeyStore();
@@ -182,6 +195,178 @@ void main() {
         'observer-must-not-change-outcome',
       );
       expect(outcome.accepted, isTrue);
+    },
+  );
+
+  test(
+    'awaits a fresh history decision before each exact direct STORE',
+    () async {
+      final received = ReceivedWakeTokenStoreImpl(
+        secureKeyStore: FakeSecureKeyStore(),
+      );
+      await received.writeTokenFor(
+        'peerB',
+        'tok-B',
+        '2026-07-06T00:00:00.000Z',
+      );
+      final bridge = _CapturingBridge(storeResponse: acceptedCustody);
+      final checks = <(String, String)>[];
+      final firstCheckEntered = Completer<void>();
+      var decision = Completer<bool>();
+      final service = P2PServiceImpl(
+        bridge: bridge,
+        inboxStagingRepository: InMemoryInboxStagingRepository(),
+        receivedWakeTokenStore: received,
+        shouldSuppressDirectInboxNotification: (peerId, wireEnvelope) {
+          checks.add((peerId, wireEnvelope));
+          if (!firstCheckEntered.isCompleted) firstCheckEntered.complete();
+          return decision.future;
+        },
+      );
+      addTearDown(service.dispose);
+      await _startService(service);
+
+      final pendingStore = service.storeInAckCustodyInboxDetailed(
+        'peerB',
+        initialEnvelope,
+        custodyKind: AckCustodyKind.directTextV108,
+      );
+      await firstCheckEntered.future;
+      expect(bridge.lastStorePayload, isNull);
+      decision.complete(true);
+      expect((await pendingStore).ackOrExpiryAccepted, isTrue);
+      expect(bridge.lastStorePayload, <String, dynamic>{
+        'toPeerId': 'peerB',
+        'message': initialEnvelope,
+        'wakeToken': 'tok-B',
+        'suppressNotification': true,
+        'custodyContract': ackOrExpiryInboxCustodyContract,
+        'custodyKind': 'direct_text_v108',
+      });
+
+      decision = Completer<bool>()..complete(false);
+      final retry = await service.storeInAckCustodyInboxDetailed(
+        'peerB',
+        initialEnvelope,
+        custodyKind: AckCustodyKind.directTextV108,
+      );
+      expect(retry.ackOrExpiryAccepted, isTrue);
+      expect(checks, <(String, String)>[
+        ('peerB', initialEnvelope),
+        ('peerB', initialEnvelope),
+      ]);
+      expect(bridge.lastStorePayload?['message'], initialEnvelope);
+      expect(bridge.lastStorePayload?['wakeToken'], 'tok-B');
+      expect(
+        bridge.lastStorePayload?.containsKey('suppressNotification'),
+        isFalse,
+      );
+    },
+  );
+
+  for (final mode in ['absent', 'false', 'throws']) {
+    test(
+      '$mode history callback preserves accepted custody without suppression',
+      () async {
+        final bridge = _CapturingBridge(storeResponse: acceptedCustody);
+        var checks = 0;
+        final service = P2PServiceImpl(
+          bridge: bridge,
+          inboxStagingRepository: InMemoryInboxStagingRepository(),
+          shouldSuppressDirectInboxNotification: mode == 'absent'
+              ? null
+              : (peerId, wireEnvelope) async {
+                  checks++;
+                  expect(peerId, 'peerB');
+                  expect(wireEnvelope, initialEnvelope);
+                  if (mode == 'throws') throw StateError('history unavailable');
+                  return false;
+                },
+        );
+        addTearDown(service.dispose);
+        await _startService(service);
+
+        final outcome = await service.storeInAckCustodyInboxDetailed(
+          'peerB',
+          initialEnvelope,
+          custodyKind: AckCustodyKind.directTextV108,
+        );
+
+        expect(outcome.ackOrExpiryAccepted, isTrue);
+        expect(checks, mode == 'absent' ? 0 : 1);
+        expect(bridge.lastStorePayload, <String, dynamic>{
+          'toPeerId': 'peerB',
+          'message': initialEnvelope,
+          'custodyContract': ackOrExpiryInboxCustodyContract,
+          'custodyKind': 'direct_text_v108',
+        });
+      },
+    );
+  }
+
+  test(
+    'other custody kinds and edits never consult initial-message history',
+    () async {
+      final bridge = _CapturingBridge(storeResponse: acceptedCustody);
+      var checks = 0;
+      final service = P2PServiceImpl(
+        bridge: bridge,
+        inboxStagingRepository: InMemoryInboxStagingRepository(),
+        shouldSuppressDirectInboxNotification: (_, _) async {
+          checks++;
+          return true;
+        },
+      );
+      addTearDown(service.dispose);
+      await _startService(service);
+
+      for (final kind in [
+        AckCustodyKind.directMutationV109,
+        AckCustodyKind.groupContentV1,
+      ]) {
+        final outcome = await service.storeInAckCustodyInboxDetailed(
+          'peerB',
+          initialEnvelope,
+          custodyKind: kind,
+        );
+        expect(outcome.ackOrExpiryAccepted, isTrue);
+        expect(bridge.lastStorePayload?['message'], initialEnvelope);
+        expect(bridge.lastStorePayload?['custodyKind'], kind.wireValue);
+        expect(
+          bridge.lastStorePayload?.containsKey('suppressNotification'),
+          isFalse,
+        );
+      }
+
+      for (final eventId in ['edit-event', null]) {
+        final mutationEnvelope = jsonEncode({
+          ...jsonDecode(initialEnvelope) as Map<String, dynamic>,
+          'eventId': eventId,
+        });
+        final outcome = await service.storeInAckCustodyInboxDetailed(
+          'peerB',
+          mutationEnvelope,
+          custodyKind: AckCustodyKind.directTextV108,
+        );
+        expect(outcome.ackOrExpiryAccepted, isTrue);
+        expect(bridge.lastStorePayload?['message'], mutationEnvelope);
+        expect(
+          bridge.lastStorePayload?.containsKey('suppressNotification'),
+          isFalse,
+        );
+      }
+
+      final legacy = await service.storeInInboxDetailed(
+        'peerB',
+        initialEnvelope,
+      );
+      expect(legacy.accepted, isTrue);
+      expect(bridge.lastStorePayload?['message'], initialEnvelope);
+      expect(
+        bridge.lastStorePayload?.containsKey('suppressNotification'),
+        isFalse,
+      );
+      expect(checks, 0);
     },
   );
 }

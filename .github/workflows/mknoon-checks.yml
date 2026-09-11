@@ -1,0 +1,106 @@
+name: Mknoon checks
+
+on:
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      mode:
+        type: choice
+        options: [change, release, full]
+        default: change
+      baseline:
+        description: Explicit comparison SHA; release requires actual published SHA
+        required: true
+      build_label:
+        description: Intended candidate version (not artifact proof)
+        default: ''
+  schedule:
+    - cron: '23 2 * * 0'
+
+permissions:
+  contents: read
+
+jobs:
+  metadata:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Validate rules and workflow contracts
+        run: |
+          python3 scripts/mknoon_checks.py validate
+          python3 -m unittest discover -s scripts/test -p '*checks_test.py'
+          python3 -m unittest discover -s scripts/test -p 'testing_inventory_test.py'
+      - name: Preserve metadata diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: metadata-${{ github.sha }}-${{ github.run_attempt }}
+          path: .codex-test-logs/
+          if-no-files-found: ignore
+
+  selected:
+    needs: metadata
+    # Provision a disposable runner with Flutter/Go/native toolchains and isolated
+    # fixtures first. Fork code must never run on a credentialed device host.
+    if: vars.MKNOON_TEST_RUNNER_ENABLED == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: [self-hosted, mknoon-test]
+    timeout-minutes: 4320
+    concurrency:
+      group: mknoon-shared-test-devices
+      cancel-in-progress: false
+      queue: max
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Run the same local selector
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          REQUESTED_MODE: ${{ inputs.mode }}
+          EXPLICIT_BASE: ${{ inputs.baseline }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          BUILD_LABEL: ${{ inputs.build_label }}
+          DEVICE_CONFIG: ${{ vars.MKNOON_TEST_DEVICE_CONFIG }}
+          CANDIDATE_ARTIFACT: ${{ vars.MKNOON_CANDIDATE_ARTIFACT }}
+          MANUAL_EVIDENCE: ${{ vars.MKNOON_MANUAL_EVIDENCE }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          args=()
+          mode="${REQUESTED_MODE:-change}"
+          if [[ "$EVENT_NAME" == pull_request ]]; then
+            base="$(git merge-base HEAD "$PR_BASE")"
+          elif [[ "$EVENT_NAME" == schedule ]]; then
+            mode=full
+            base="$(git rev-parse HEAD)"
+          else
+            base="$EXPLICIT_BASE"
+          fi
+          if [[ -n "$DEVICE_CONFIG" ]]; then args+=(--device-config "$DEVICE_CONFIG"); fi
+          if [[ -n "$CANDIDATE_ARTIFACT" ]]; then args+=(--candidate-artifact "$CANDIDATE_ARTIFACT"); fi
+          if [[ -n "$MANUAL_EVIDENCE" ]]; then args+=(--evidence "$MANUAL_EVIDENCE"); fi
+          flutter pub get
+          python3 scripts/mknoon_checks.py validate
+          if [[ "$mode" == full ]]; then
+            python3 scripts/mknoon_checks.py full --base "$base" --output .codex-test-logs/ci-run "${args[@]}"
+          else
+            python3 scripts/mknoon_checks.py run --mode "$mode" --base "$base" --build-label "$BUILD_LABEL" --output .codex-test-logs/ci-run "${args[@]}"
+          fi
+      - name: Preserve first attempts and incomplete full runs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: checks-${{ github.sha }}-${{ github.run_attempt }}
+          path: |
+            .codex-test-logs/ci-run/plan.json
+            .codex-test-logs/ci-run/results.json
+            .codex-test-logs/ci-run/partial.json
+            .codex-test-logs/ci-run/summary.txt
+            .codex-test-logs/ci-run/error.json
+          if-no-files-found: error
+          retention-days: 90

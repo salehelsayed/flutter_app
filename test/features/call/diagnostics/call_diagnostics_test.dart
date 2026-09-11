@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:fake_async/fake_async.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/bridge/go_bridge_client.dart';
@@ -58,13 +59,455 @@ void main() {
   Future<CallDiagnostics> install({
     bool? enabled = true,
     CallDiagnosticUpload? upload,
+    CallDiagnosticPersist? persist,
     Bridge? bridge,
   }) => CallDiagnostics.installForTesting(
     directory: directory,
     enabled: enabled,
     now: () => now,
     upload: upload,
+    persist: persist,
     bridge: bridge,
+  );
+
+  test('new trace and event IDs retain the UUIDv4 wire contract', () async {
+    final diagnostics = await install(
+      upload: (_) async => {},
+      persist: (_, _) async {},
+    );
+    final traces = <String>[];
+    for (var i = 0; i < 128; i++) {
+      traces.add(diagnostics.beginAttempt()!);
+    }
+    final uuidV4 = RegExp(
+      r'^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$',
+    );
+    expect(traces.toSet(), hasLength(traces.length));
+    expect(traces.every(uuidV4.hasMatch), true);
+    final events = await diagnostics.eventsForTesting();
+    expect(
+      events.every((event) => uuidV4.hasMatch(event['eventId']! as String)),
+      true,
+    );
+    expect(
+      events.map((event) => event['eventId']).toSet(),
+      hasLength(events.length),
+    );
+    expect(
+      events.every((event) => CallDiagnostics.validateEvent(event) != null),
+      true,
+    );
+  });
+
+  test(
+    'closed-value normalization preserves private-input filtering and snapshots',
+    () async {
+      final diagnostics = await install(persist: (_, _) async {});
+      final values = <String, Object?>{
+        'transport': 'turnTls',
+        'route': 'wiredHeadset',
+        'network': 'wifi',
+        'durationMs': 9007199254740991,
+        'foreground': true,
+        'unknown': 'PRIVATE_VALUE',
+        'retry': -1,
+      };
+      diagnostics.record(
+        stage: 'media',
+        action: 'snapshot',
+        outcome: 'mediaFlowVerified',
+        reason: 'userAction',
+        values: values,
+      );
+      values
+        ..clear()
+        ..['transport'] = 'PRIVATE_MUTATION';
+      diagnostics.record(
+        stage: 'PRIVATE_STAGE',
+        action: 'PRIVATE_ACTION',
+        outcome: 'PRIVATE_OUTCOME',
+        reason: 'PRIVATE_REASON',
+        values: {'route': 'PRIVATE_ROUTE', 'foreground': 'PRIVATE_BOOLEAN'},
+      );
+      final events = await diagnostics.eventsForTesting();
+      final normalized = events.first;
+      expect(normalized['stage'], 'media');
+      expect(normalized['action'], 'snapshot');
+      expect(normalized['outcome'], 'media_flow_verified');
+      expect(normalized['reason'], 'user_action');
+      expect(normalized['values'], {
+        'transport': 'turn_tls',
+        'route': 'wired_headset',
+        'network': 'wifi',
+        'durationMs': 9007199254740991,
+        'foreground': true,
+      });
+      expect(events.last['stage'], 'runtime');
+      expect(events.last['action'], 'snapshot');
+      expect(events.last['outcome'], 'unknown');
+      expect(events.last['reason'], 'unknown');
+      expect(events.last['values'], isEmpty);
+      expect(await diagnostics.exportPreview(), isNot(contains('PRIVATE_')));
+      expect(CallDiagnostics.validateEvent(normalized), isNotNull);
+      expect(
+        CallDiagnostics.validateEvent({
+          ...normalized,
+          'values': {'transport': 'turnTls'},
+        }),
+        isNull,
+        reason:
+            'foreign rows must remain strictly closed, without normalization',
+      );
+    },
+  );
+
+  test(
+    'large closed value maps obey the exact UTF8 attempt byte quota',
+    () async {
+      final diagnostics = await install(
+        upload: (_) async => {},
+        persist: (_, _) async {},
+      );
+      final values = <String, Object?>{
+        for (final key in callDiagnosticSchemaV1['booleanValues'] as List)
+          key as String: true,
+        for (final key in callDiagnosticSchemaV1['integerValues'] as List)
+          key as String: 9007199254740991,
+        for (final entry
+            in (callDiagnosticSchemaV1['enumValues'] as Map<String, dynamic>)
+                .entries)
+          entry.key: (entry.value as List).cast<String>().reduce(
+            (a, b) => a.length >= b.length ? a : b,
+          ),
+      };
+      final trace = diagnostics.beginAttempt()!;
+      for (var i = 0; i < 128; i++) {
+        diagnostics.record(
+          traceId: trace,
+          stage: 'media',
+          action: 'snapshot',
+          outcome: 'ok',
+          values: values,
+        );
+      }
+      final retained = await diagnostics.eventsForTesting();
+      final bytes = retained.fold<int>(
+        0,
+        (total, event) => total + utf8.encode(jsonEncode(event)).length,
+      );
+      expect(bytes, lessThanOrEqualTo(64 * 1024));
+      expect(retained.length, lessThan(128));
+      expect((await diagnostics.status())['droppedEvents'], greaterThan(0));
+      expect(
+        64 * 1024 - bytes,
+        lessThan(utf8.encode(jsonEncode(retained.last)).length + 16),
+      );
+      diagnostics.finishAttempt(
+        traceId: trace,
+        outcome: 'media_failed',
+        reason: 'media_stalled',
+      );
+      final completed = await diagnostics.eventsForTesting();
+      expect(completed.last['stage'], 'terminal');
+      expect(
+        completed.last['values'],
+        containsPair('completeness', 'truncated'),
+      );
+      expect(
+        completed.fold<int>(
+          0,
+          (total, event) => total + utf8.encode(jsonEncode(event)).length,
+        ),
+        lessThanOrEqualTo(64 * 1024),
+      );
+    },
+  );
+
+  test('call milestones share one fixed-window persistence batch', () async {
+    final saved = <Map<String, Object?>>[];
+    final diagnostics = await install(
+      upload: (_) async => {},
+      persist: (_, state) async => saved.add(state),
+    );
+    saved.clear();
+    fakeAsync((clock) {
+      for (var i = 0; i < 40; i++) {
+        final trace = diagnostics.beginAttempt();
+        diagnostics.record(
+          traceId: trace,
+          stage: 'media',
+          action: 'snapshot',
+          outcome: 'ok',
+        );
+        diagnostics.finishAttempt(traceId: trace, outcome: 'success');
+      }
+      clock.flushMicrotasks();
+      expect(saved, isEmpty);
+      clock.elapse(const Duration(milliseconds: 999));
+      expect(saved, isEmpty);
+      clock.elapse(const Duration(milliseconds: 1));
+      expect(saved, hasLength(1));
+      expect(saved.single['events'], hasLength(120));
+      expect(saved.single['open'], isEmpty);
+      clock.elapse(const Duration(seconds: 5));
+      expect(saved, hasLength(1));
+    });
+  });
+
+  test(
+    'explicit flush persists promptly without rewriting an idle archive',
+    () async {
+      final saved = <Map<String, Object?>>[];
+      final diagnostics = await install(
+        persist: (_, state) async => saved.add(state),
+      );
+      saved.clear();
+      fakeAsync((clock) {
+        diagnostics.beginAttempt();
+        var flushed = false;
+        unawaited(diagnostics.flush().then((_) => flushed = true));
+        clock.flushMicrotasks();
+        expect(flushed, true);
+        expect(saved, hasLength(1));
+        expect(saved.single['events'], hasLength(1));
+        for (var i = 0; i < 3; i++) {
+          unawaited(diagnostics.flush());
+          clock.flushMicrotasks();
+        }
+        clock.elapse(const Duration(seconds: 2));
+        expect(saved, hasLength(1));
+      });
+    },
+  );
+
+  test(
+    'a pending sink never owns the call and a joined flush persists new events',
+    () async {
+      Completer<void>? release;
+      final saved = <Map<String, Object?>>[];
+      final diagnostics = await install(
+        persist: (_, state) async {
+          saved.add(state);
+          if (release != null) await release!.future;
+        },
+      );
+      saved.clear();
+      fakeAsync((clock) {
+        release = Completer<void>();
+        try {
+          final first = diagnostics.beginAttempt();
+          var initialCompleted = false;
+          unawaited(diagnostics.flush().then((_) => initialCompleted = true));
+          clock.flushMicrotasks();
+          expect(saved, hasLength(1));
+          expect(initialCompleted, false);
+          final result = diagnostics.runWithTrace(first, () {
+            diagnostics.record(
+              stage: 'media',
+              action: 'snapshot',
+              outcome: 'ok',
+            );
+            return 'call connected';
+          });
+          expect(result, 'call connected');
+          var joined = false;
+          unawaited(diagnostics.flush().then((_) => joined = true));
+          clock.flushMicrotasks();
+          expect(joined, false);
+          // Later samples may schedule another timer but cannot defer the
+          // explicit flush's required snapshot behind that timer.
+          diagnostics.record(stage: 'media', action: 'snapshot', outcome: 'ok');
+          release!.complete();
+          clock.flushMicrotasks();
+          expect(joined, true);
+          expect(saved.last['events'], hasLength(3));
+          clock.elapse(const Duration(seconds: 1));
+          expect(saved, hasLength(2));
+        } finally {
+          if (!release!.isCompleted) release!.complete();
+          clock.flushMicrotasks();
+          clock.elapse(const Duration(seconds: 1));
+          release = null;
+        }
+      });
+    },
+  );
+
+  for (final disable in [false, true]) {
+    test('pending call snapshot cannot restore evidence after '
+        '${disable ? 'opt-out' : 'clear'}', () async {
+      Completer<void>? release;
+      final saved = <Map<String, Object?>>[];
+      final diagnostics = await install(
+        persist: (_, state) async {
+          if (release != null && (state['events'] as List).isNotEmpty) {
+            await release!.future;
+          }
+          saved.add(state);
+        },
+      );
+      final originalEpoch = saved.last['consentEpoch'];
+      saved.clear();
+      fakeAsync((clock) {
+        release = Completer<void>();
+        try {
+          diagnostics.beginAttempt();
+          clock.elapse(const Duration(seconds: 1));
+          expect(saved, isEmpty);
+          var cleared = false;
+          unawaited(
+            (disable ? diagnostics.setEnabled(false) : diagnostics.clear())
+                .then((_) => cleared = true),
+          );
+          clock.flushMicrotasks();
+          expect(cleared, false);
+          release!.complete();
+          clock.flushMicrotasks();
+          expect(cleared, true);
+          expect(saved.last['events'], isEmpty);
+          expect(saved.last['open'], isEmpty);
+          expect(saved.last['traceAliases'], isEmpty);
+          expect(saved.last['enabled'], !disable);
+          expect(saved.last['consentEpoch'], isNot(originalEpoch));
+        } finally {
+          if (!release!.isCompleted) release!.complete();
+          clock.flushMicrotasks();
+          clock.elapse(const Duration(seconds: 1));
+          release = null;
+        }
+      });
+    });
+  }
+
+  test(
+    'incremental archive preserves loaded rows and writes rebinds and clear',
+    () async {
+      final diagnostics = await install(upload: (_) async => {});
+      final provisional = diagnostics.beginAttempt(role: 'callee')!;
+      diagnostics.bindCall(
+        callHandle: 'PRIVATE_CALL_HANDLE',
+        traceId: provisional,
+        role: 'callee',
+      );
+      final original = (await diagnostics.eventsForTesting()).single;
+      const resolved = '00000000-0000-4000-8000-000000000001';
+      diagnostics.bindCall(
+        callHandle: 'PRIVATE_CALL_HANDLE',
+        traceId: resolved,
+        role: 'callee',
+      );
+      diagnostics.finishAttempt(traceId: resolved, outcome: 'media_failed');
+      await diagnostics.dispose();
+      final savedFile = File('${directory.path}/state.json');
+      final saved = jsonDecode(await savedFile.readAsString()) as Map;
+      expect(
+        (saved['events'] as List).singleWhere(
+          (event) => event['eventId'] == original['eventId'],
+        )['traceId'],
+        resolved,
+      );
+      expect(
+        await savedFile.readAsString(),
+        isNot(contains('PRIVATE_CALL_HANDLE')),
+      );
+      final oldIds = (saved['events'] as List).map((e) => e['eventId']).toSet();
+      // A rejected duplicate must not replace the validated row when the
+      // persistent writer loads the same file independently.
+      await savedFile.writeAsString(
+        jsonEncode({
+          ...saved,
+          'events': [
+            ...saved['events'] as List,
+            {
+              ...(saved['events'] as List).first as Map,
+              'privateField': 'PRIVATE_REJECTED_ROW',
+            },
+          ],
+        }),
+      );
+
+      final reopened = await install(upload: (_) async => {});
+      reopened.record(stage: 'runtime', action: 'snapshot', outcome: 'ok');
+      await reopened.eventsForTesting();
+      final updated = jsonDecode(await savedFile.readAsString()) as Map;
+      final rows = updated['events'] as List;
+      expect(rows, hasLength(oldIds.length + 1));
+      expect(rows.map((e) => e['eventId']), containsAll(oldIds));
+      expect(
+        await savedFile.readAsString(),
+        isNot(contains('PRIVATE_REJECTED_ROW')),
+      );
+      await reopened.clear();
+      expect(
+        (jsonDecode(await savedFile.readAsString()) as Map)['events'],
+        isEmpty,
+      );
+    },
+  );
+
+  test(
+    'event expiry removes only expired worker rows after a later write',
+    () async {
+      final diagnostics = await install(upload: (_) async => {});
+      final trace = diagnostics.beginAttempt()!;
+      final originalId =
+          (await diagnostics.eventsForTesting()).single['eventId'];
+      now = now.add(const Duration(days: 4));
+      diagnostics.record(
+        traceId: trace,
+        stage: 'media',
+        action: 'snapshot',
+        outcome: 'ok',
+      );
+      await diagnostics.eventsForTesting();
+      now = now.add(const Duration(days: 3, milliseconds: 1));
+      await diagnostics.flush();
+      final saved =
+          jsonDecode(await File('${directory.path}/state.json').readAsString())
+              as Map;
+      expect(saved['events'], hasLength(1));
+      expect((saved['events'] as List).single['eventId'], isNot(originalId));
+      expect(saved['open'], isEmpty);
+    },
+  );
+
+  test(
+    'file-based preview validates rows and excludes storage metadata',
+    () async {
+      final diagnostics = await install(upload: (_) async => {});
+      diagnostics.beginAttempt();
+      final original = (await diagnostics.eventsForTesting()).single;
+      final savedFile = File('${directory.path}/state.json');
+      final saved = jsonDecode(await savedFile.readAsString()) as Map;
+      await savedFile.writeAsString(
+        jsonEncode({
+          ...saved,
+          'privateMetadata': 'PRIVATE_ARCHIVE_METADATA',
+          'events': [
+            original,
+            {...original, 'privateField': 'PRIVATE_REJECTED_ROW'},
+          ],
+        }),
+      );
+      final preview = await diagnostics.exportPreview();
+      final exported = jsonDecode(preview) as Map;
+      expect(
+        exported.keys,
+        unorderedEquals([
+          'schemaVersion',
+          'exportedAtMs',
+          'retentionDays',
+          'droppedEvents',
+          'events',
+        ]),
+      );
+      expect(exported['events'], [original]);
+      expect(preview, isNot(contains('PRIVATE_')));
+      await savedFile.delete();
+      // A missing file still permits support export from retained safe evidence.
+      final fallback = jsonDecode(await diagnostics.exportPreview()) as Map;
+      expect(fallback['events'], [original]);
+    },
   );
 
   test(
@@ -622,6 +1065,82 @@ void main() {
   );
 
   test(
+    'uploaded metadata survives event patches and removes expired and cleared IDs',
+    () async {
+      var acknowledge = true;
+      Future<Set<String>> upload(List<Map<String, Object?>> events) async =>
+          acknowledge
+          ? events.map((event) => event['eventId']! as String).toSet()
+          : {};
+      Future<Map<String, dynamic>> saved() async =>
+          jsonDecode(await File('${directory.path}/state.json').readAsString())
+              as Map<String, dynamic>;
+
+      var diagnostics = await install(upload: upload);
+      diagnostics.record(stage: 'runtime', action: 'snapshot', outcome: 'ok');
+      final oldId = (await diagnostics.eventsForTesting()).single['eventId'];
+      await diagnostics.flush();
+      expect((await saved())['uploaded'], [oldId]);
+
+      acknowledge = false;
+      now = now.add(const Duration(days: 6));
+      diagnostics.record(stage: 'runtime', action: 'snapshot', outcome: 'ok');
+      final newId = (await diagnostics.eventsForTesting()).last['eventId'];
+      expect((await saved())['uploaded'], [oldId]);
+
+      diagnostics = await install(enabled: null, upload: upload);
+      expect((await saved())['uploaded'], [oldId]);
+      expect((await diagnostics.status())['queuedEvents'], 1);
+
+      now = now.add(const Duration(days: 2));
+      final retained = await diagnostics.eventsForTesting();
+      expect(retained.single['eventId'], newId);
+      expect((await saved())['uploaded'], isEmpty);
+
+      acknowledge = true;
+      await diagnostics.flush();
+      expect((await saved())['uploaded'], [newId]);
+      await diagnostics.clear();
+      expect((await saved())['uploaded'], isEmpty);
+      expect((await saved())['events'], isEmpty);
+      diagnostics = await install(enabled: null, upload: upload);
+      expect((await saved())['uploaded'], isEmpty);
+      expect(await diagnostics.eventsForTesting(), isEmpty);
+    },
+  );
+
+  test(
+    'failed ACK metadata writes recover without resending acknowledged events',
+    () async {
+      var uploads = 0;
+      Future<Set<String>> upload(List<Map<String, Object?>> events) async {
+        uploads++;
+        // The event snapshot is durable before upload; fail its ACK write.
+        if (uploads == 1) await directory.delete(recursive: true);
+        return events.map((event) => event['eventId']! as String).toSet();
+      }
+
+      var diagnostics = await install(upload: upload);
+      diagnostics.record(stage: 'runtime', action: 'snapshot', outcome: 'ok');
+      final id = (await diagnostics.eventsForTesting()).single['eventId'];
+      await diagnostics.flush();
+      expect((await diagnostics.status())['storageHealthy'], false);
+      expect(uploads, 1);
+      await directory.create();
+      await diagnostics.flush();
+      expect((await diagnostics.status())['storageHealthy'], true);
+      final saved =
+          jsonDecode(await File('${directory.path}/state.json').readAsString())
+              as Map;
+      expect(saved['uploaded'], [id]);
+      expect((saved['events'] as List).single['eventId'], id);
+      diagnostics = await install(enabled: null, upload: upload);
+      expect((await diagnostics.status())['queuedEvents'], 0);
+      expect(uploads, 1);
+    },
+  );
+
+  test(
     'offline queue retries and only acknowledged records stop uploading across restart',
     () async {
       var online = false;
@@ -1099,18 +1618,23 @@ void main() {
   );
 
   test(
-    'storage failure is contained and never changes the call action result',
+    'storage failure preserves the call result and recovers after restoring the sink',
     () async {
       final diagnostics = await install();
       await directory.delete(recursive: true);
-      final result = diagnostics.runWithTrace(
-        diagnostics.beginAttempt(),
-        () => 42,
-      );
+      final trace = diagnostics.beginAttempt();
+      final result = diagnostics.runWithTrace(trace, () => 42);
       expect(result, 42);
       await diagnostics.flush();
       expect((await diagnostics.status())['storageHealthy'], false);
       await directory.create();
+      await diagnostics.flush();
+      expect((await diagnostics.status())['storageHealthy'], true);
+      final saved =
+          jsonDecode(await File('${directory.path}/state.json').readAsString())
+              as Map;
+      expect(saved['events'], hasLength(1));
+      expect((saved['events'] as List).single['traceId'], trace);
     },
   );
 }

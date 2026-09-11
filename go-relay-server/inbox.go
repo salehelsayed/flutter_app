@@ -89,6 +89,7 @@ type PushService struct {
 	newGroupMessageDispatchID          groupMessageDispatchIDGenerator
 	journalGroupMessageProviderAttempt groupMessageProviderAttemptJournal
 	groupMessageDispatchAdmission      groupMessageDispatchAdmissionBackend
+	directMessageDispatchAdmission     messageDispatchAdmissionBackend
 }
 
 type pushMessageFactory func() *messaging.Message
@@ -365,6 +366,9 @@ func newPushServiceWithTokenBackend(
 		groupMessageDispatchAdmission: newMemoryGroupMessageDispatchAdmissionBackend(
 			groupMessageDispatchAdmissionTTL,
 		),
+		directMessageDispatchAdmission: newMemoryDirectMessageDispatchAdmissionBackend(
+			directMessageDispatchAdmissionTTL,
+		),
 	}
 
 	opt := option.WithCredentialsFile(serviceAccountPath)
@@ -395,6 +399,9 @@ func NewPushServiceWithBackend(tokenBackend PushTokenBackend) *PushService {
 		journalGroupMessageProviderAttempt: defaultGroupMessageProviderAttemptJournal,
 		groupMessageDispatchAdmission: newMemoryGroupMessageDispatchAdmissionBackend(
 			groupMessageDispatchAdmissionTTL,
+		),
+		directMessageDispatchAdmission: newMemoryDirectMessageDispatchAdmissionBackend(
+			directMessageDispatchAdmissionTTL,
 		),
 	}
 }
@@ -488,39 +495,69 @@ func (ps *PushService) sendPushRouteThroughGateway(
 		)
 	}
 
-	var admissionLease *groupMessageDispatchAdmissionLease
+	var admissionLease *messageDispatchAdmissionLease
+	var admissionBackend messageDispatchAdmissionBackend
+	directAdmission := admissionIdentity != nil && admissionIdentity.direct
+	recordAdmission := func(metricOutcome, logOutcome string) {
+		if directAdmission {
+			pushSentCounter.WithLabelValues("direct_admission_" + metricOutcome).Inc()
+			log.Printf("[DIRECT_MESSAGE_DISPATCH_ADMISSION] outcome=%s", logOutcome)
+		} else {
+			groupMessageDispatchAdmissionCounter.WithLabelValues(metricOutcome).Inc()
+			if metricOutcome != "acquired" {
+				log.Printf("[GROUP_MESSAGE_DISPATCH_ADMISSION] outcome=%s", logOutcome)
+			}
+		}
+	}
 	if admissionIdentity != nil && strings.EqualFold(strings.TrimSpace(target.Platform), "ios") {
-		if ps.groupMessageDispatchAdmission == nil {
-			groupMessageDispatchAdmissionCounter.WithLabelValues("error").Inc()
-			log.Printf("[GROUP_MESSAGE_DISPATCH_ADMISSION] outcome=backend_unavailable")
-			return errPushDeliverySuppressed
+		admissionBackend = ps.groupMessageDispatchAdmission
+		if directAdmission {
+			admissionBackend = ps.directMessageDispatchAdmission
 		}
-		lease, acquired, acquireErr := ps.groupMessageDispatchAdmission.TryAcquire(
-			ctx,
-			*admissionIdentity,
-		)
-		if acquireErr != nil {
-			groupMessageDispatchAdmissionCounter.WithLabelValues("error").Inc()
-			log.Printf("[GROUP_MESSAGE_DISPATCH_ADMISSION] outcome=claim_failed")
-			return errPushDeliverySuppressed
+		if admissionBackend == nil {
+			recordAdmission("error", "backend_unavailable")
+			if !directAdmission {
+				return errPushDeliverySuppressed
+			}
+		} else {
+			lease, acquired, acquireErr := admissionBackend.TryAcquire(ctx, *admissionIdentity)
+			if acquireErr != nil {
+				recordAdmission("error", "claim_failed")
+				if !directAdmission {
+					return errPushDeliverySuppressed
+				}
+			} else if !acquired {
+				recordAdmission("suppressed", "duplicate_suppressed")
+				return errPushDeliverySuppressed
+			} else {
+				recordAdmission("acquired", "acquired")
+				admissionLease = &lease
+			}
 		}
-		if !acquired {
-			groupMessageDispatchAdmissionCounter.WithLabelValues("suppressed").Inc()
-			log.Printf("[GROUP_MESSAGE_DISPATCH_ADMISSION] outcome=duplicate_suppressed")
-			return errPushDeliverySuppressed
-		}
-		groupMessageDispatchAdmissionCounter.WithLabelValues("acquired").Inc()
-		admissionLease = &lease
+		// Ordinary direct custody is already committed and has no durable rich
+		// push retry. If its admission store is unavailable, preserve delivery
+		// rather than silently consume this message's only notification attempt.
 	}
 
 	result := ps.sendWithRetry(ctx, &providerMessage, target.Route, allowStrictFallback)
-	if admissionLease != nil && result == pushDeliveryPermanent {
-		if err := ps.groupMessageDispatchAdmission.Release(ctx, *admissionLease); err != nil {
-			groupMessageDispatchAdmissionCounter.WithLabelValues("release_failed").Inc()
-			log.Printf("[GROUP_MESSAGE_DISPATCH_ADMISSION] outcome=release_failed")
+	if admissionLease != nil &&
+		(result == pushDeliveryPermanent || (directAdmission && result != pushDeliveryAccepted)) {
+		releaseContext := ctx
+		if directAdmission {
+			// A cancelled provider attempt must not leave a seven-day claim just
+			// because the same cancelled context cannot release it in Redis.
+			var cancel context.CancelFunc
+			releaseContext, cancel = context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+			defer cancel()
+		}
+		if err := admissionBackend.Release(releaseContext, *admissionLease); err != nil {
+			recordAdmission("release_failed", "release_failed")
 		} else {
-			groupMessageDispatchAdmissionCounter.WithLabelValues("released").Inc()
-			log.Printf("[GROUP_MESSAGE_DISPATCH_ADMISSION] outcome=released_definitive_rejection")
+			if directAdmission {
+				recordAdmission("released", "released_unsuccessful_attempt")
+			} else {
+				recordAdmission("released", "released_definitive_rejection")
+			}
 		}
 	}
 	return pushDeliveryResultError(result)
@@ -787,6 +824,50 @@ func (ps *PushService) sendGroupWakeOutcomeThroughGateway(
 	return result
 }
 
+// Delayed direct wakes retain the same hashed notification identity as rich
+// sends, including across route changes and relay process restarts.
+func (ps *PushService) sendDirectWakeOutcomeThroughGateway(
+	ctx context.Context,
+	recipientPeerID string,
+	policy wakeOutcomeRoutePolicy,
+	directMessageDispatchAdmissionKey string,
+) pushDeliveryResult {
+	requiredCapability, validPolicy := wakeOutcomeRequiredCapability(policy)
+	if !validPolicy {
+		return pushDeliveryRetryable
+	}
+	route, err := ps.selectPushRoute(recipientPeerID, requiredCapability)
+	if err != nil || route == nil {
+		return pushDeliveryRetryable
+	}
+	return ps.sendDirectOpaqueWakeThroughGateway(
+		ctx, recipientPeerID, *route, policy, directMessageDispatchAdmissionKey,
+	)
+}
+
+func (ps *PushService) sendDirectOpaqueWakeThroughGateway(
+	ctx context.Context,
+	recipientPeerID string,
+	route pushRouteLease,
+	policy wakeOutcomeRoutePolicy,
+	directMessageDispatchAdmissionKey string,
+) pushDeliveryResult {
+	identity, validIdentity := directMessageDispatchAdmissionIdentityFromStorageKey(
+		directMessageDispatchAdmissionKey,
+	)
+	requiredCapability, validPolicy := wakeOutcomeRequiredCapability(policy)
+	if !validIdentity || !validPolicy {
+		return pushDeliveryRetryable
+	}
+	opaque, eligible := classifySelectedPushRoute(route, requiredCapability)
+	if !eligible || !opaque {
+		return pushDeliveryRetryable
+	}
+	return ps.sendSelectedPushThroughGatewayWithAdmission(
+		ctx, recipientPeerID, route, requiredCapability, nil, &identity,
+	)
+}
+
 // sendOpaqueWakeThroughGateway is the one additional Plan-370 caller of the
 // Plan-368 selected gateway. It is shared by due coordinator sends and
 // capacity fallbacks that retain their exact CAS-valid route.
@@ -932,12 +1013,17 @@ func (ps *PushService) sendRichNotification(
 			},
 		}
 	}
-	ps.sendSelectedPushThroughGateway(
+	var admissionIdentity *messageDispatchAdmissionIdentity
+	if identity, valid := newDirectMessageDispatchAdmissionIdentity(toPeerID, fromPeerID, message); valid {
+		admissionIdentity = &identity
+	}
+	ps.sendSelectedPushThroughGatewayWithAdmission(
 		ctx,
 		toPeerID,
 		*route,
 		"",
 		func() *messaging.Message { return buildPushMessage("", fromPeerID, message) },
+		admissionIdentity,
 		projectMessage...,
 	)
 }
@@ -2394,6 +2480,9 @@ type inboxMessage struct {
 	// never persisted or returned in a retrieve). Read once at store time for the
 	// access-token wake gate; the durable message shape is unchanged.
 	WakeToken string `json:"-"`
+	// Sender-requested notification policy for exact delivered-original recovery;
+	// never part of the immutable stored envelope or retrieval/ACK contract.
+	SuppressNotification bool `json:"-"`
 }
 
 func ensureInboxMessageID(entry inboxMessage) inboxMessage {
@@ -2581,7 +2670,9 @@ func (is *InboxStore) Store(toPeerId string, entry inboxMessage) (InboxStoreResu
 		}
 	}
 
-	result, err = is.backend.Store(toPeerId, entry)
+	storageEntry := entry
+	storageEntry.SuppressNotification = false
+	result, err = is.backend.Store(toPeerId, storageEntry)
 	if err != nil {
 		log.Printf("[INBOX] Store failed for %s from %s: %v",
 			toPeerId[:min(20, len(toPeerId))],
@@ -2589,6 +2680,7 @@ func (is *InboxStore) Store(toPeerId string, entry inboxMessage) (InboxStoreResu
 			err)
 		return "", err
 	}
+	is.rememberDirectNotificationCustodyOnly(toPeerId, entry, result)
 	if result == InboxStoreResultDuplicate {
 		// Duplicate — do not fire push notification.
 		log.Printf("[INBOX] Duplicate message for %s from %s — skipped",
@@ -2728,6 +2820,11 @@ func (is *InboxStore) preflightDirectWakeOutcome(
 		entry.Timestamp,
 		directWakeOutcomeExpiryMs(entry),
 	)
+	if admitted && producer == wakeOutcomeProducerDirectMessage {
+		if identity, valid := newDirectMessageDispatchAdmissionIdentity(toPeerID, entry.From, entry.Message); valid {
+			admission.directMessageDispatchAdmissionKey = identity.storageKey()
+		}
+	}
 	return fallback, admission, admitted
 }
 
@@ -2735,7 +2832,7 @@ func (is *InboxStore) directWakeOutcomeProducer(
 	toPeerID string,
 	entry inboxMessage,
 ) (wakeOutcomeProducerKind, string, string, bool) {
-	if is == nil || is.push == nil {
+	if is == nil || is.push == nil || directNotificationCustodyOnly(toPeerID, entry) {
 		return 0, "", "", false
 	}
 	if reaction, recognized, eligible := extractDirectReactionPushMetadata(entry.Message); recognized {
@@ -2792,6 +2889,9 @@ func (is *InboxStore) recordStoredWithoutPush(toPeerId string, entry inboxMessag
 }
 
 func (is *InboxStore) launchStoredDirectPush(toPeerId string, entry inboxMessage) {
+	if directNotificationCustodyOnly(toPeerId, entry) {
+		return
+	}
 	// Fire push only for supported user-visible envelope types (the existing
 	// ShouldNotify type filter) AND only when the sender is authorized to wake the
 	// recipient (FDC-09 §12 access-token gate — LAYERED ON TOP of ShouldNotify,
@@ -2958,6 +3058,9 @@ func (is *InboxStore) launchStoredDirectPushAfterPreflight(
 	entry inboxMessage,
 	fallback wakeOutcomePreflightFallback,
 ) {
+	if directNotificationCustodyOnly(toPeerID, entry) {
+		return
+	}
 	if fallback.kind == wakeOutcomePreflightNotAttempted {
 		is.launchStoredDirectPush(toPeerID, entry)
 		return
@@ -3015,10 +3118,10 @@ func (is *InboxStore) launchStoredDirectPushAfterPreflight(
 
 func (is *InboxStore) launchDirectPushForWakeAdmission(
 	toPeerID string,
-	_ inboxMessage,
+	entry inboxMessage,
 	admission wakeOutcomeAdmission,
 ) {
-	if is == nil || is.push == nil {
+	if is == nil || is.push == nil || directNotificationCustodyOnly(toPeerID, entry) {
 		return
 	}
 	if len(admission.androidRichMaterial) > 0 {
@@ -3026,6 +3129,16 @@ func (is *InboxStore) launchDirectPushForWakeAdmission(
 		return
 	}
 	route := admission.Route()
+	if admission.directMessageDispatchAdmissionKey != "" {
+		go is.push.sendDirectOpaqueWakeThroughGateway(
+			context.Background(),
+			toPeerID,
+			route,
+			admission.policy,
+			admission.directMessageDispatchAdmissionKey,
+		)
+		return
+	}
 	go is.push.sendOpaqueWakeThroughGateway(
 		context.Background(),
 		toPeerID,
@@ -4148,8 +4261,9 @@ type inboxRequest struct {
 	// SENDER presents on `store` to authorize waking the recipient; WakeTokens is
 	// the SET a RECIPIENT registers via `register_wake_tokens`. omitempty keeps
 	// every other action's frame byte-identical (NET-REL-07).
-	WakeToken  string   `json:"wakeToken,omitempty"`
-	WakeTokens []string `json:"wakeTokens,omitempty"`
+	WakeToken            string   `json:"wakeToken,omitempty"`
+	WakeTokens           []string `json:"wakeTokens,omitempty"`
+	SuppressNotification bool     `json:"suppressNotification,omitempty"`
 	// Plan 344 additive selectors. Legacy actions ignore these fields, and old
 	// decoders ignore them under the existing lenient JSON contract.
 	CustodyKind     string `json:"custodyKind,omitempty"`
@@ -4321,11 +4435,12 @@ func HandleInboxStream(
 				// Direct inbox attribution is always the authenticated libp2p peer.
 				// A caller-supplied `from` is legacy input only and cannot forge push
 				// routing or durable sender custody.
-				From:      remotePeer,
-				Message:   req.Message,
-				Timestamp: time.Now().UnixMilli(),
-				Metadata:  req.Metadata,
-				WakeToken: req.WakeToken, // FDC-09 §12: presented opaque wake-token (transient)
+				From:                 remotePeer,
+				Message:              req.Message,
+				Timestamp:            time.Now().UnixMilli(),
+				Metadata:             req.Metadata,
+				WakeToken:            req.WakeToken, // FDC-09 §12: presented opaque wake-token (transient)
+				SuppressNotification: req.SuppressNotification,
 			}
 			result, err := inbox.Store(req.To, entry)
 			if err != nil {
@@ -4373,11 +4488,12 @@ func HandleInboxStream(
 			}
 		} else {
 			entry := inboxMessage{
-				From:      remotePeer,
-				Message:   req.Message,
-				Timestamp: storeNow.UnixMilli(),
-				Metadata:  req.Metadata,
-				WakeToken: req.WakeToken,
+				From:                 remotePeer,
+				Message:              req.Message,
+				Timestamp:            storeNow.UnixMilli(),
+				Metadata:             req.Metadata,
+				WakeToken:            req.WakeToken,
+				SuppressNotification: req.SuppressNotification,
 			}
 			if req.CustodyExpiresAtOrBeforeMs != nil {
 				entry.ExpiresAtMs = *req.CustodyExpiresAtOrBeforeMs

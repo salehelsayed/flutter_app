@@ -1,0 +1,307 @@
+{
+  "capturedAt": "2026-09-08T15:31:52.721285+00:00",
+  "overview": {
+    "alerts": [],
+    "anyEndpointReportedMediaTraceCount": 0,
+    "atRecordLimit": false,
+    "bothEndpointsReportedMediaTraceCount": 0,
+    "bothEndpointsTerminalTraceCount": 0,
+    "calleeTerminalTraceCount": 0,
+    "callerTerminalTraceCount": 1,
+    "counts": {
+      "droppedEvents": 0,
+      "retainedEvents": 59
+    },
+    "evidenceIncomplete": false,
+    "invalidOrUnreadableRecordCount": 0,
+    "legacyTraceCount": 0,
+    "mailboxAdmittedTraceCount": 0,
+    "missingEndpointTerminalTraceCount": 1,
+    "neutralTerminalTraceCount": 0,
+    "observedTraceCount": 1,
+    "phaseFailureEventCounts": {
+      "authority": 8,
+      "cleanup": 3,
+      "terminal": 1
+    },
+    "rates": {
+      "answered_without_verified_media": {
+        "alertEligible": false,
+        "alertThreshold": 0.1,
+        "denominator": 0,
+        "minimumSamples": 5,
+        "numerator": 0,
+        "rate": null
+      },
+      "cleanup_failure": {
+        "alertEligible": false,
+        "alertThreshold": 0.2,
+        "denominator": 0,
+        "minimumSamples": 5,
+        "numerator": 0,
+        "rate": null
+      },
+      "credential_failure": {
+        "alertEligible": false,
+        "alertThreshold": 0.2,
+        "denominator": 0,
+        "minimumSamples": 5,
+        "numerator": 0,
+        "rate": null
+      },
+      "drop_after_media": {
+        "alertEligible": false,
+        "alertThreshold": 0.1,
+        "denominator": 0,
+        "minimumSamples": 5,
+        "numerator": 0,
+        "rate": null
+      },
+      "preflight_rejection": {
+        "alertEligible": false,
+        "alertThreshold": 0.2,
+        "denominator": 1,
+        "minimumSamples": 5,
+        "numerator": 0,
+        "rate": 0.0
+      },
+      "provider_failure": {
+        "alertEligible": false,
+        "alertThreshold": 0.2,
+        "denominator": 0,
+        "minimumSamples": 5,
+        "numerator": 0,
+        "rate": null
+      },
+      "technical_setup_failure": {
+        "alertEligible": false,
+        "alertThreshold": 0.2,
+        "denominator": 1,
+        "minimumSamples": 5,
+        "numerator": 1,
+        "rate": 1.0
+      },
+      "telemetry_loss": {
+        "alertEligible": true,
+        "alertThreshold": 1e-06,
+        "denominator": 59,
+        "minimumSamples": 5,
+        "numerator": 0,
+        "rate": 0.0
+      },
+      "withdrawal_unknown_origin": {
+        "alertEligible": false,
+        "alertThreshold": 0.2,
+        "denominator": 4,
+        "minimumSamples": 5,
+        "numerator": 0,
+        "rate": 0.0
+      }
+    },
+    "recordLimit": 100,
+    "registrationWithdrawalOperationsByOrigin": {
+      "native_lifecycle_failed": 4
+    },
+    "schemaVersion": 1,
+    "scope": "Opted-in retained records only. Client media is reported evidence; relay admission, push submission, and TURN minting do not prove audio. Coturn allocations remain aggregate.",
+    "technicalRateScope": "Distinct opted-in client-reported terminal traces; declines/cancels/busy/no-answer are excluded from the technical denominator. Phase failures can recover and are counted separately. Minimum5 observations before rate alerts.",
+    "terminalRecordOutcomes": {
+      "preflight_failed": 1
+    },
+    "tracesWithoutTerminalRecord": 0,
+    "unclassifiedTerminalTraceCount": 0,
+    "unknownEndpointRoleTraceCount": 0
+  },
+  "scope": "Sanitized production operator projections only; no private author maps or raw device logs.",
+  "traceLimit": 20,
+  "traceListTruncated": false,
+  "traces": [
+    {
+      "report": {
+        "alerts": [],
+        "answerReported": false,
+        "anyEndpointReportedMediaTraceCount": 0,
+        "atRecordLimit": false,
+        "bothEndpointsReportedMediaTraceCount": 0,
+        "bothEndpointsTerminalTraceCount": 0,
+        "calleeTerminalTraceCount": 0,
+        "callerTerminalTraceCount": 1,
+        "cleanupReported": false,
+        "counts": {
+          "droppedEvents": 0,
+          "retainedEvents": 2
+        },
+        "endpointCompleteness": {
+          "calleeReportedMedia": false,
+          "calleeTerminal": false,
+          "callerReportedMedia": false,
+          "callerTerminal": true,
+          "legacy": false
+        },
+        "events": [
+          {
+            "event": {
+              "action": "start",
+              "build": "1.0.1+111-447d22a1e20fb7ae",
+              "elapsedMs": 425081,
+              "eventId": "2f992857-cc5d-4391-aaba-73d612d54bf2",
+              "occurredAtMs": 1788881050351,
+              "outcome": "started",
+              "reason": "none",
+              "role": "caller",
+              "runId": "a02e6a10-0763-400d-97ad-c5e38fa93c04",
+              "schemaVersion": 1,
+              "sequence": 7,
+              "source": "flutter",
+              "stage": "attempt",
+              "traceId": "eec02a59-40f7-44c5-9568-34cf7f191518",
+              "values": {}
+            },
+            "receivedAtMs": 1788881393669
+          },
+          {
+            "event": {
+              "action": "finish",
+              "build": "1.0.1+111-447d22a1e20fb7ae",
+              "elapsedMs": 425082,
+              "eventId": "ce989836-d85a-4c2d-beaf-9cc90f364b78",
+              "occurredAtMs": 1788881050353,
+              "outcome": "preflight_failed",
+              "reason": "graph_unavailable",
+              "role": "caller",
+              "runId": "a02e6a10-0763-400d-97ad-c5e38fa93c04",
+              "schemaVersion": 1,
+              "sequence": 8,
+              "source": "flutter",
+              "stage": "terminal",
+              "traceId": "eec02a59-40f7-44c5-9568-34cf7f191518",
+              "values": {
+                "terminal": true
+              }
+            },
+            "receivedAtMs": 1788881393674
+          }
+        ],
+        "evidenceIncomplete": false,
+        "failureOrderingScope": "First relay-received failed phase; different device clocks and delayed uploads do not establish global causal order. Missing stages may be normal for declined/canceled/preflight-only or legacy calls.",
+        "firstMissingStageReport": "preflight",
+        "firstReceivedFailure": {
+          "action": "finish",
+          "outcome": "preflight_failed",
+          "reason": "graph_unavailable",
+          "receivedAtMs": 1788881393674,
+          "source": "flutter",
+          "stage": "terminal"
+        },
+        "hasRetainedEvents": true,
+        "invalidOrUnreadableRecordCount": 0,
+        "legacyTraceCount": 0,
+        "mailboxAdmittedTraceCount": 0,
+        "missingEndpointTerminalTraceCount": 1,
+        "missingStageReports": [
+          "preflight",
+          "signaling",
+          "presentation",
+          "answer",
+          "media",
+          "cleanup"
+        ],
+        "neutralTerminalTraceCount": 0,
+        "observedTraceCount": 1,
+        "operationChain": [],
+        "phaseFailureEventCounts": {
+          "terminal": 1
+        },
+        "presentationReported": false,
+        "rates": {
+          "answered_without_verified_media": {
+            "alertEligible": false,
+            "alertThreshold": 0.1,
+            "denominator": 0,
+            "minimumSamples": 5,
+            "numerator": 0,
+            "rate": null
+          },
+          "cleanup_failure": {
+            "alertEligible": false,
+            "alertThreshold": 0.2,
+            "denominator": 0,
+            "minimumSamples": 5,
+            "numerator": 0,
+            "rate": null
+          },
+          "credential_failure": {
+            "alertEligible": false,
+            "alertThreshold": 0.2,
+            "denominator": 0,
+            "minimumSamples": 5,
+            "numerator": 0,
+            "rate": null
+          },
+          "drop_after_media": {
+            "alertEligible": false,
+            "alertThreshold": 0.1,
+            "denominator": 0,
+            "minimumSamples": 5,
+            "numerator": 0,
+            "rate": null
+          },
+          "preflight_rejection": {
+            "alertEligible": false,
+            "alertThreshold": 0.2,
+            "denominator": 1,
+            "minimumSamples": 5,
+            "numerator": 0,
+            "rate": 0.0
+          },
+          "provider_failure": {
+            "alertEligible": false,
+            "alertThreshold": 0.2,
+            "denominator": 0,
+            "minimumSamples": 5,
+            "numerator": 0,
+            "rate": null
+          },
+          "technical_setup_failure": {
+            "alertEligible": false,
+            "alertThreshold": 0.2,
+            "denominator": 1,
+            "minimumSamples": 5,
+            "numerator": 1,
+            "rate": 1.0
+          },
+          "telemetry_loss": {
+            "alertEligible": false,
+            "alertThreshold": 1e-06,
+            "denominator": 2,
+            "minimumSamples": 5,
+            "numerator": 0,
+            "rate": 0.0
+          },
+          "withdrawal_unknown_origin": {
+            "alertEligible": false,
+            "alertThreshold": 0.2,
+            "denominator": 0,
+            "minimumSamples": 5,
+            "numerator": 0,
+            "rate": null
+          }
+        },
+        "recordLimit": 100,
+        "registrationWithdrawalOperationsByOrigin": {},
+        "schemaVersion": 1,
+        "scope": "Opted-in retained records only. Client media is reported evidence; relay admission, push submission, and TURN minting do not prove audio. Coturn allocations remain aggregate.",
+        "technicalRateScope": "Distinct opted-in client-reported terminal traces; declines/cancels/busy/no-answer are excluded from the technical denominator. Phase failures can recover and are counted separately. Minimum5 observations before rate alerts.",
+        "terminalRecordOutcomes": {
+          "preflight_failed": 1
+        },
+        "traceId": "eec02a59-40f7-44c5-9568-34cf7f191518",
+        "tracesWithoutTerminalRecord": 0,
+        "unclassifiedTerminalTraceCount": 0,
+        "unknownEndpointRoleTraceCount": 0,
+        "unresolvedOperationReferenceCount": 0
+      },
+      "traceId": "eec02a59-40f7-44c5-9568-34cf7f191518"
+    }
+  ]
+}

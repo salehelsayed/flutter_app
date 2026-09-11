@@ -139,6 +139,23 @@ void main() {
         arguments,
         contains('--android-project-arg=enableAndroidNativeCalls=true'),
       );
+      expect(
+        arguments,
+        contains(
+          '--android-project-arg=disableGoogleServicesForDisposableProof=true',
+        ),
+      );
+      expect(
+        effectiveSimsApplicationId(
+          profile,
+          environment: const <String, String>{
+            'ANDROID_APP_PACKAGE': 'com.mknoon.app',
+            'SIMS_APP_ID': 'com.mknoon.app',
+            'ORG_GRADLE_PROJECT_androidApplicationId': 'com.mknoon.app',
+          },
+        ),
+        'com.mknoon.sims.productionaudio',
+      );
       expect(arguments, contains('--target=lib/main.dart'));
       for (final define in defines.entries) {
         expect(
@@ -221,6 +238,34 @@ void main() {
       }
     },
   );
+
+  test('iOS device cache identity retains native compilation conditions', () {
+    final manifest = SimsManifest.loadSync(
+      File('tool/sims/critical_features.json'),
+    );
+    for (final profileAndCondition in const <String, String>{
+      'ios.device.production': 'MKNOON_SIMS_IOS_RECEIVER_BOOTSTRAP',
+      'ios.device.group_media_269': 'MKNOON_SIMS_GROUP_MEDIA_269',
+    }.entries) {
+      final arguments = effectiveSimsBuildArguments(
+        manifest.buildProfileById(profileAndCondition.key)!,
+        environment: const <String, String>{},
+      );
+      expect(
+        arguments.where(
+          (argument) =>
+              argument.startsWith('SWIFT_ACTIVE_COMPILATION_CONDITIONS='),
+        ),
+        <String>[
+          r'SWIFT_ACTIVE_COMPILATION_CONDITIONS=$(inherited) '
+              '${profileAndCondition.value}',
+        ],
+        reason: 'the native entry point must participate in cache identity',
+      );
+      expect(arguments, contains('-configuration=Release'));
+      expect(arguments.any((argument) => argument.contains('DEBUG')), isFalse);
+    }
+  });
 
   test('device E2E artifacts attest only a configured relay boundary', () {
     final manifest = SimsManifest.loadSync(

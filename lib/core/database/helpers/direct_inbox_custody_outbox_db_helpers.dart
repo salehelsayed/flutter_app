@@ -25,6 +25,55 @@ final _legacyDiagnosticTraceId = RegExp(
 const int kDirectInboxCustodyOutboxCapacity = 512;
 const int kDirectInboxCustodyOutboxMaxLoadBatch = 50;
 
+/// Proves that an exact scalar initial custody replay has already been
+/// delivered. This reads the existing owner and parent in one SQLite snapshot,
+/// so historical rows need no notification-history backfill or migration.
+///
+/// The result controls notification presentation only. The immutable envelope
+/// must still reach relay custody, including when this proof is unavailable.
+Future<bool> dbShouldSuppressDeliveredDirectInboxNotification(
+  DatabaseExecutor db, {
+  required String recipientPeerId,
+  required String wireEnvelope,
+}) async {
+  if (recipientPeerId.trim().isEmpty) return false;
+  final Object? decoded;
+  try {
+    decoded = jsonDecode(wireEnvelope);
+  } on FormatException {
+    return false;
+  }
+  if (decoded is! Map<String, dynamic>) return false;
+  final messageId = decoded['id'];
+  final senderPeerId = decoded['senderPeerId'];
+  if (!_isNonBlankString(messageId) ||
+      !_isNonBlankString(senderPeerId) ||
+      !isExactV2DirectChatInitialEnvelope(
+        wireEnvelope,
+        messageId: messageId as String,
+        senderPeerId: senderPeerId,
+      )) {
+    return false;
+  }
+
+  final rows = await db.rawQuery(
+    'SELECT m.* FROM $_table AS o '
+    'JOIN messages AS m ON m.id = o.message_id '
+    'WHERE o.recipient_peer_id = ? AND o.message_id = ? '
+    'AND o.wire_envelope = ? AND m.sender_peer_id = ? '
+    'AND m.contact_peer_id = o.recipient_peer_id AND m.is_incoming = 0 '
+    'AND m.created_at = o.created_at '
+    'AND o.contact_account_peer_id IS NULL '
+    'AND m.direct_event_fanout_generation_id IS NULL '
+    'AND m.deleted_at IS NULL AND m.deleted_by_peer_id IS NULL '
+    'AND m.hidden_at IS NULL '
+    'AND (SELECT COUNT(*) FROM $_table AS sibling '
+    'WHERE sibling.message_id = o.message_id) = 1 LIMIT 1',
+    <Object?>[recipientPeerId, messageId, wireEnvelope, senderPeerId],
+  );
+  return rows.length == 1 && _isCanonicalDeliveredSuccessor(rows.single);
+}
+
 /// Atomically stages a fresh ordinary message and its immutable relay-inbox
 /// custody. No message row is allowed to commit without its companion row.
 ///
@@ -206,9 +255,10 @@ Future<Map<String, Object?>?> dbLoadDirectInboxCustodyOutboxOwnerForMessageId(
 }
 
 /// Build 113 put the diagnostic UUID outside ciphertext. That exact shape can
-/// never acquire protected relay custody. Repair only unchanged scalar text
-/// owners and their matching pending parent, together, before exposing retry
-/// authority. Ciphertext, identity, incarnation and all delivery state survive.
+/// never acquire protected relay custody. Repair unchanged scalar text owners
+/// independently of stronger or newer parent state. A matching pending parent
+/// is repaired in the same transaction; other parent projections stay intact.
+/// Ciphertext, identity, incarnation and all delivery state survive.
 /// Old in-flight handles remain fenced by the changed exact envelope bytes.
 Future<List<Map<String, Object?>>> _repairLegacyDiagnosticCustodyRows(
   DatabaseExecutor db,
@@ -257,30 +307,40 @@ Future<List<Map<String, Object?>>> _repairLegacyDiagnosticCustodyRows(
         whereArgs: [current['message_id'], MediaOwnerLane.direct.dbValue],
         limit: 1,
       );
-      if (parent == null || owners.length != 1 ||
-          parent['contact_peer_id'] != current['recipient_peer_id'] ||
-          parent['sender_peer_id'] != envelope['senderPeerId'] ||
-          parent['wire_envelope'] != current['wire_envelope'] ||
-          _asInt(parent['is_incoming']) != 0 ||
-          !const {
+      // Text and media share the outer envelope shape. Keep this repair in
+      // the original scalar ordinary-text class whenever other authority is
+      // still present; a newer delivery status does not relax that boundary.
+      if (owners.length != 1 ||
+          media.isNotEmpty ||
+          (parent != null &&
+              (parent['contact_peer_id'] != current['recipient_peer_id'] ||
+                  parent['sender_peer_id'] != envelope['senderPeerId'] ||
+                  _asInt(parent['is_incoming']) != 0 ||
+                  parent['direct_event_fanout_generation_id'] != null ||
+                  parent['direct_media_custody_intent_id'] != null ||
+                  _asInt(parent['private_media_policy_version']) != 0 ||
+                  parent['private_media_mode'] != 'ordinary'))) {
+        result.add(current);
+        continue;
+      }
+      // The custody owner outlives direct delivery, edits and local removal.
+      // Its exact rejected envelope still needs normalization so the normal
+      // accepted-custody completion can retire it. Only an unchanged pending
+      // projection should have its parent bytes changed along with the owner.
+      final repairParent =
+          parent != null &&
+          parent['wire_envelope'] == current['wire_envelope'] &&
+          const {
             'queued',
             'sending',
             'sent',
             'failed',
             'inboxed',
-          }.contains(parent['status']) ||
-          parent['read_at'] != null ||
-          parent['edited_at'] != null ||
-          parent['deleted_at'] != null ||
-          parent['hidden_at'] != null ||
-          parent['direct_event_fanout_generation_id'] != null ||
-          parent['direct_media_custody_intent_id'] != null ||
-          _asInt(parent['private_media_policy_version']) != 0 ||
-          parent['private_media_mode'] != 'ordinary' ||
-          media.isNotEmpty) {
-        result.add(current);
-        continue;
-      }
+          }.contains(parent['status']) &&
+          parent['read_at'] == null &&
+          parent['edited_at'] == null &&
+          parent['deleted_at'] == null &&
+          parent['hidden_at'] == null;
       final repaired = jsonEncode(envelope..remove('diagnosticTraceId'));
       final ownerChanged = await txn.update(
         _table,
@@ -295,14 +355,19 @@ Future<List<Map<String, Object?>>> _repairLegacyDiagnosticCustodyRows(
           current['wire_envelope'],
         ],
       );
-      final parentChanged = await txn.update(
-        'messages',
-        {'wire_envelope': repaired},
-        where: 'id = ? AND wire_envelope = ?',
-        whereArgs: [current['message_id'], current['wire_envelope']],
-      );
-      if (ownerChanged != 1 || parentChanged != 1) {
+      if (ownerChanged != 1) {
         throw StateError('legacy diagnostic custody repair lost authority');
+      }
+      if (repairParent) {
+        final parentChanged = await txn.update(
+          'messages',
+          {'wire_envelope': repaired},
+          where: 'id = ? AND wire_envelope = ?',
+          whereArgs: [current['message_id'], current['wire_envelope']],
+        );
+        if (parentChanged != 1) {
+          throw StateError('legacy diagnostic custody repair lost authority');
+        }
       }
       result.add({...current, 'wire_envelope': repaired});
     }

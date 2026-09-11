@@ -1,0 +1,256 @@
+{
+  "native-bridge-red.jsonl": {
+    "sha256": "311c04e99aca1c5d66e9e9964a3aef47c2ca10792a8dfb837713c6c50e1dae15",
+    "counts": {
+      "fail": {
+        "topLevel": 3,
+        "subtests": 9
+      }
+    },
+    "tests": [
+      {
+        "package": "github.com/mknoon/go-mknoon/bridge",
+        "test": "TestBlobDecryptWrongKeyFails",
+        "outcome": "fail"
+      },
+      {
+        "package": "github.com/mknoon/go-mknoon/bridge",
+        "test": "TestBlobDecryptOperationalFailureCanRetryValidCiphertext",
+        "outcome": "fail"
+      },
+      {
+        "package": "github.com/mknoon/go-mknoon/bridge",
+        "test": "TestBlobDecryptFailureCodesRemainFailClosed/missing_input_file",
+        "outcome": "fail"
+      },
+      {
+        "package": "github.com/mknoon/go-mknoon/bridge",
+        "test": "TestBlobDecryptFailureCodesRemainFailClosed/invalid_key_base64",
+        "outcome": "fail"
+      },
+      {
+        "package": "github.com/mknoon/go-mknoon/bridge",
+        "test": "TestBlobDecryptFailureCodesRemainFailClosed/empty_key",
+        "outcome": "fail"
+      },
+      {
+        "package": "github.com/mknoon/go-mknoon/bridge",
+        "test": "TestBlobDecryptFailureCodesRemainFailClosed/short_key",
+        "outcome": "fail"
+      },
+      {
+        "package": "github.com/mknoon/go-mknoon/bridge",
+        "test": "TestBlobDecryptFailureCodesRemainFailClosed/invalid_nonce_base64",
+        "outcome": "fail"
+      },
+      {
+        "package": "github.com/mknoon/go-mknoon/bridge",
+        "test": "TestBlobDecryptFailureCodesRemainFailClosed/empty_nonce",
+        "outcome": "fail"
+      },
+      {
+        "package": "github.com/mknoon/go-mknoon/bridge",
+        "test": "TestBlobDecryptFailureCodesRemainFailClosed/short_nonce",
+        "outcome": "fail"
+      },
+      {
+        "package": "github.com/mknoon/go-mknoon/bridge",
+        "test": "TestBlobDecryptFailureCodesRemainFailClosed/long_nonce",
+        "outcome": "fail"
+      },
+      {
+        "package": "github.com/mknoon/go-mknoon/bridge",
+        "test": "TestBlobDecryptFailureCodesRemainFailClosed/tampered_authentication_tag",
+        "outcome": "fail"
+      },
+      {
+        "package": "github.com/mknoon/go-mknoon/bridge",
+        "test": "TestBlobDecryptFailureCodesRemainFailClosed",
+        "outcome": "fail"
+      }
+    ]
+  },
+  "native-crypto-bridge-final-green.jsonl": {
+    "sha256": "56b68505cadea456447e08cfb3aeafb27e539a9f132c159e1d9d085b23e060ef",
+    "counts": {
+      "pass": {
+        "topLevel": 11,
+        "subtests": 20
+      }
+    },
+    "tests": [
+      {
+        "package": "github.com/mknoon/go-mknoon/crypto",
+        "test": "TestGenerateSymmetricKey",
+        "outcome": "pass"
+      },
+      {
+        "package": "github.com/mknoon/go-mknoon/crypto",
+        "test": "TestEncryptDecryptFileRoundTrip",
+        "outcome": "pass"
+      },
+      {
+        "package": "github.com/mknoon/go-mknoon/crypto",
+        "test": "TestDecryptWithWrongKeyFails",
+        "outcome": "pass"
+      },
+      {
+        "package": "github.com/mknoon/go-mknoon/crypto",
+        "test": "TestDecryptCorruptedCiphertextFails",
+        "outcome": "pass"
+      },
+      {
+        "package": "github.com/mknoon/go-mknoon/crypto",
+        "test": "TestDecryptFileIOPreservesCauseAndAllowsRetry",
+        "outcome": "pass"
+      },
+      {
+        "package": "github.com/mknoon/go-mknoon/crypto",
+        "test": "TestDecryptFileRejectsMetadataBeforeFileIO/empty_key",
+        "outcome": "pass"
+      },
+      {
+        "package": "github.com/mknoon/go-mknoon/crypto",
+        "test": "TestDecryptFileRejectsMetadataBeforeFileIO/invalid_key_encoding",
+        "outcome": "pass"
+      },
+      {
+        "package": "github.com/mknoon/go-mknoon/crypto",
+        "test": "TestDecryptFileRejectsMetadataBeforeFileIO/short_key",
+        "outcome": "pass"
+      },
+      {
+        "package": "github.com/mknoon/go-mknoon/crypto",
+        "test": "TestDecryptFileRejectsMetadataBeforeFileIO/long_key",
+        "outcome": "pass"
+      },
+      {
+        "package": "github.com/mknoon/go-mknoon/crypto",
+        "test": "TestDecryptFileRejectsMetadataBeforeFileIO/empty_nonce",
+        "outcome": "pass"
+      },
+      {
+        "package": "github.com/mknoon/go-mknoon/crypto",
+        "test": "TestDecryptFileRejectsMetadataBeforeFileIO/invalid_nonce_encoding",
+        "outcome": "pass"
+      },
+      {
+        "package": "github.com/mknoon/go-mknoon/crypto",
+        "test": "TestDecryptFileRejectsMetadataBeforeFileIO/short_nonce",
+        "outcome": "pass"
+      },
+      {
+        "package": "github.com/mknoon/go-mknoon/crypto",
+        "test": "TestDecryptFileRejectsMetadataBeforeFileIO/long_nonce",
+        "outcome": "pass"
+      },
+      {
+        "package": "github.com/mknoon/go-mknoon/crypto",
+        "test": "TestDecryptFileRejectsMetadataBeforeFileIO",
+        "outcome": "pass"
+      },
+      {
+        "package": "github.com/mknoon/go-mknoon/crypto",
+        "test": "TestLargeFileRoundTrip/five_mebibytes",
+        "outcome": "pass"
+      },
+      {
+        "package": "github.com/mknoon/go-mknoon/crypto",
+        "test": "TestLargeFileRoundTrip/reported_cipher_size_4634918",
+        "outcome": "pass"
+      },
+      {
+        "package": "github.com/mknoon/go-mknoon/crypto",
+        "test": "TestLargeFileRoundTrip/reported_cipher_size_4401190",
+        "outcome": "pass"
+      },
+      {
+        "package": "github.com/mknoon/go-mknoon/crypto",
+        "test": "TestLargeFileRoundTrip",
+        "outcome": "pass"
+      },
+      {
+        "package": "github.com/mknoon/go-mknoon/bridge",
+        "test": "TestBlobKeygenEncryptDecryptRoundTrip",
+        "outcome": "pass"
+      },
+      {
+        "package": "github.com/mknoon/go-mknoon/bridge",
+        "test": "TestBlobDecryptWrongKeyFails",
+        "outcome": "pass"
+      },
+      {
+        "package": "github.com/mknoon/go-mknoon/bridge",
+        "test": "TestBlobDecryptOperationalFailureCanRetryValidCiphertext",
+        "outcome": "pass"
+      },
+      {
+        "package": "github.com/mknoon/go-mknoon/bridge",
+        "test": "TestBlobDecryptFailureCodesRemainFailClosed/missing_input_file",
+        "outcome": "pass"
+      },
+      {
+        "package": "github.com/mknoon/go-mknoon/bridge",
+        "test": "TestBlobDecryptFailureCodesRemainFailClosed/invalid_key_base64",
+        "outcome": "pass"
+      },
+      {
+        "package": "github.com/mknoon/go-mknoon/bridge",
+        "test": "TestBlobDecryptFailureCodesRemainFailClosed/empty_key",
+        "outcome": "pass"
+      },
+      {
+        "package": "github.com/mknoon/go-mknoon/bridge",
+        "test": "TestBlobDecryptFailureCodesRemainFailClosed/short_key",
+        "outcome": "pass"
+      },
+      {
+        "package": "github.com/mknoon/go-mknoon/bridge",
+        "test": "TestBlobDecryptFailureCodesRemainFailClosed/invalid_nonce_base64",
+        "outcome": "pass"
+      },
+      {
+        "package": "github.com/mknoon/go-mknoon/bridge",
+        "test": "TestBlobDecryptFailureCodesRemainFailClosed/empty_nonce",
+        "outcome": "pass"
+      },
+      {
+        "package": "github.com/mknoon/go-mknoon/bridge",
+        "test": "TestBlobDecryptFailureCodesRemainFailClosed/short_nonce",
+        "outcome": "pass"
+      },
+      {
+        "package": "github.com/mknoon/go-mknoon/bridge",
+        "test": "TestBlobDecryptFailureCodesRemainFailClosed/long_nonce",
+        "outcome": "pass"
+      },
+      {
+        "package": "github.com/mknoon/go-mknoon/bridge",
+        "test": "TestBlobDecryptFailureCodesRemainFailClosed/tampered_authentication_tag",
+        "outcome": "pass"
+      },
+      {
+        "package": "github.com/mknoon/go-mknoon/bridge",
+        "test": "TestBlobDecryptFailureCodesRemainFailClosed",
+        "outcome": "pass"
+      }
+    ]
+  },
+  "sourceManifest": {
+    "capturedAt": "2026-09-08T19:06:18.439259+00:00",
+    "paths": {
+      "go-mknoon/crypto/file_crypto.go": "e35a4448605ef6a8412182a0318c0a32b69f410fdff3756a462678a772f4eb86",
+      "go-mknoon/crypto/file_crypto_test.go": "1496624a7a6168e1891837b36bf90e17ccd325d3d0897db4f5c3f77151bbc7b2",
+      "go-mknoon/bridge/bridge.go": "26ffe4d17f3f4358e984166ccbac33ab7dd2e6adc0a5f24a4eb6fc5e78b17faf",
+      "go-mknoon/bridge/bridge_test.go": "06605857991092d337109eb8944ac2431302c882bd28293095974649b5980e72"
+    },
+    "toolchain": "go1.25.0",
+    "affectedQueryId": "46aa76ad36b442b5",
+    "cryptoBranchQueryId": "465de64666ae4b9e",
+    "cryptoEvidenceDigest": "5592fa7a0d77046e",
+    "buildQueryId": "b2f6a36a9f774a8f",
+    "buildEvidenceDigest": "eef9976f705442db"
+  },
+  "greenCommand": "GOTOOLCHAIN=go1.25.0 go test ./crypto ./bridge -run '^Test(GenerateSymmetricKey|EncryptDecryptFileRoundTrip|DecryptWithWrongKeyFails|DecryptCorruptedCiphertextFails|LargeFileRoundTrip|DecryptFile.*|Blob.*)$' -count=1 -json",
+  "workingDirectory": "go-mknoon"
+}

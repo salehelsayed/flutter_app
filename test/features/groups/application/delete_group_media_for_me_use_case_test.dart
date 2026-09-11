@@ -11,6 +11,7 @@ import 'package:flutter_app/core/database/production_migration_registry.dart';
 import 'package:flutter_app/core/media/group_media_blob_custody.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
+import 'package:flutter_app/core/secure_storage/secret_storage_references.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
 import 'package:flutter_app/features/groups/application/delete_group_media_for_me_use_case.dart';
@@ -474,170 +475,207 @@ void main() {
     },
   );
 
-  test(
-    'TC-365-03a delete before download terminalizes only local blob custody',
-    () async {
-      final fixture = await MediaRepositoryRealDbFixture.create();
-      addTearDown(fixture.dispose);
-      final mediaRoot = await Directory.systemTemp.createTemp(
-        'tc365-group-delete-',
-      );
-      addTearDown(() => mediaRoot.delete(recursive: true));
-      const groupId = 'tc365-delete-group';
-      const messageId = 'tc365-delete-message';
-      const attachmentId = 'tc365-delete-attachment';
-      const custodyBlobId = 'gmb1_tc365_delete_blob';
-      const expiresAtMs = 1_930_100_000_000;
-      const ciphertext = <int>[8, 6, 7, 5, 3, 0, 9];
-      final contentHash = sha256.convert(ciphertext).toString();
-      final fingerprint = computeGroupMediaBlobCustodyFingerprint(
-        groupId: groupId,
-        messageId: messageId,
-        attachmentId: attachmentId,
-        custodyBlobId: custodyBlobId,
-        contentHash: contentHash,
-        ciphertextSize: ciphertext.length,
-        recipientPeerIds: const <String>['local-device', 'remote-device'],
-      );
-      final attachment = MediaAttachment(
-        id: attachmentId,
-        messageId: messageId,
-        mime: 'audio/mp4',
-        size: 2048,
-        mediaType: 'audio',
-        durationMs: 900,
-        downloadStatus: 'pending',
-        createdAt: '2026-08-14T09:00:00.000Z',
-        contentHash: contentHash,
-        groupMediaBlobCustodyFingerprint: fingerprint,
-        ownerLane: MediaOwnerLane.group,
-      );
-      final custody = DirectMediaBlobCustodyRow(
-        attachmentId: attachmentId,
-        messageId: messageId,
-        ownerLane: MediaBlobCustodyOwnerLane.group,
-        groupId: groupId,
-        custodyBlobId: custodyBlobId,
-        direction: DirectMediaBlobCustodyDirection.incoming,
-        state: DirectMediaBlobCustodyState.incomingCommitted,
-        inboxCustodyIncarnationId: null,
-        recipientPeerId: null,
-        ciphertextRelativePath: null,
-        custodyKind: kGroupMediaBlobCustodyKind,
-        contentHash: contentHash,
-        ciphertextSize: ciphertext.length,
-        expiresAtMs: expiresAtMs,
-        custodyRelayPeerId: null,
-        lastAttemptAt: null,
-        nextAttemptAt: null,
-        createdAt: '2026-08-14T09:00:00.000Z',
-        updatedAt: '2026-08-14T09:00:00.000Z',
-      );
-      await fixture.seedGroupParent(messageId, groupId: groupId);
-      await fixture.repo.saveAttachment(
-        attachment,
-        owner: MediaOwnerLane.group,
-      );
-      await fixture.db.insert(kDirectMediaBlobCustodyTable, custody.toMap());
-
-      final bridge = _WritingGroupDeleteBridge(ciphertext)
-        ..responses['media:download'] = <String, dynamic>{
-          'ok': true,
-          'id': custodyBlobId,
-          'custodyKind': kGroupMediaBlobCustodyKind,
-          'custodyContract': kDirectMediaBlobCustodyContract,
-          'contentHash': contentHash,
-          'size': ciphertext.length,
-          'mime': kDirectMediaBlobTransportMime,
-          'expiresAtMs': expiresAtMs,
-          'custodyRelayPeerId': 'relay-delete-tc365',
+  for (final keyStorage in const <String>['keyless', 'raw', 'secure']) {
+    test(
+      'TC-365-03a delete before download terminalizes only local blob custody ($keyStorage)',
+      () async {
+        final fixture = await MediaRepositoryRealDbFixture.create();
+        addTearDown(fixture.dispose);
+        final mediaRoot = await Directory.systemTemp.createTemp(
+          'tc365-group-delete-',
+        );
+        addTearDown(() => mediaRoot.delete(recursive: true));
+        const groupId = 'tc365-delete-group';
+        const messageId = 'tc365-delete-message';
+        const attachmentId = 'tc365-delete-attachment';
+        const custodyBlobId = 'gmb1_tc365_delete_blob';
+        const expiresAtMs = 1_930_100_000_000;
+        const ciphertext = <int>[8, 6, 7, 5, 3, 0, 9];
+        final contentHash = sha256.convert(ciphertext).toString();
+        final fingerprint = computeGroupMediaBlobCustodyFingerprint(
+          groupId: groupId,
+          messageId: messageId,
+          attachmentId: attachmentId,
+          custodyBlobId: custodyBlobId,
+          contentHash: contentHash,
+          ciphertextSize: ciphertext.length,
+          recipientPeerIds: const <String>['local-device', 'remote-device'],
+        );
+        final attachment = MediaAttachment(
+          id: attachmentId,
+          messageId: messageId,
+          mime: 'audio/mp4',
+          size: 2048,
+          mediaType: 'audio',
+          durationMs: 900,
+          downloadStatus: 'pending',
+          createdAt: '2026-08-14T09:00:00.000Z',
+          contentHash: contentHash,
+          encryptionKeyBase64: keyStorage == 'keyless'
+              ? null
+              : base64Encode(List<int>.filled(32, 7)),
+          encryptionNonce: keyStorage == 'keyless'
+              ? null
+              : base64Encode(List<int>.filled(12, 8)),
+          encryptionScheme: keyStorage == 'keyless'
+              ? null
+              : kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+          groupMediaBlobCustodyFingerprint: fingerprint,
+          ownerLane: MediaOwnerLane.group,
+        );
+        final custody = DirectMediaBlobCustodyRow(
+          attachmentId: attachmentId,
+          messageId: messageId,
+          ownerLane: MediaBlobCustodyOwnerLane.group,
+          groupId: groupId,
+          custodyBlobId: custodyBlobId,
+          direction: DirectMediaBlobCustodyDirection.incoming,
+          state: DirectMediaBlobCustodyState.incomingCommitted,
+          inboxCustodyIncarnationId: null,
+          recipientPeerId: null,
+          ciphertextRelativePath: null,
+          custodyKind: kGroupMediaBlobCustodyKind,
+          contentHash: contentHash,
+          ciphertextSize: ciphertext.length,
+          expiresAtMs: expiresAtMs,
+          custodyRelayPeerId: null,
+          lastAttemptAt: null,
+          nextAttemptAt: null,
+          createdAt: '2026-08-14T09:00:00.000Z',
+          updatedAt: '2026-08-14T09:00:00.000Z',
+        );
+        await fixture.seedGroupParent(messageId, groupId: groupId);
+        if (keyStorage == 'raw') {
+          // Protected receive inserts this exact model projection atomically.
+          await fixture.db.insert('media_attachments', attachment.toMap());
+        } else {
+          await fixture.repo.saveAttachment(
+            attachment,
+            owner: MediaOwnerLane.group,
+          );
         }
-        ..responses['media:delete'] = <String, dynamic>{
-          'ok': true,
-          'id': custodyBlobId,
-          'ackStatus': 'acked',
-          'custodyKind': kGroupMediaBlobCustodyKind,
-          'custodyContract': kDirectMediaBlobCustodyContract,
-          'contentHash': contentHash,
-          'size': ciphertext.length,
-          'mime': kDirectMediaBlobTransportMime,
-          'expiresAtMs': expiresAtMs,
-          'custodyRelayPeerId': 'relay-delete-tc365',
-        };
-      final owner = StrictGroupMediaBlobDownloadAckOwner(
-        bridge: bridge,
-        mediaAttachmentRepository: fixture.repo,
-        mediaFileManager: _DeleteTestMediaFileManager(mediaRoot.path),
-        now: () => DateTime.fromMillisecondsSinceEpoch(
-          expiresAtMs - 1000,
-          isUtc: true,
-        ),
-        beforeSourcePinnedAck: (row) async {
-          expect(row.state, DirectMediaBlobCustodyState.incomingAckPending);
-          expect(
-            await fixture.db.query(
-              'group_messages',
-              where: 'id = ? AND group_id = ?',
-              whereArgs: <Object?>[messageId, groupId],
-            ),
-            isEmpty,
-            reason: 'local suppression precedes ACK',
-          );
-          expect(
-            await fixture.db.query(
-              'group_message_local_deletions',
-              where: 'message_id = ? AND group_id = ?',
-              whereArgs: <Object?>[messageId, groupId],
-            ),
-            hasLength(1),
-          );
-          final persisted = await fixture.rawAttachmentRow(attachmentId);
-          expect(persisted!['download_status'], 'download_failed');
-        },
-      );
-      var cleanupRuns = 0;
-      final useCase = DeleteGroupMediaForMeUseCase(
-        prepare:
-            ({
-              required String groupId,
-              required String messageId,
-              required String operationId,
-            }) => dbPrepareGroupMediaDeleteForMe(
-              fixture.db,
-              groupId: groupId,
-              messageId: messageId,
-              operationId: operationId,
-            ),
-        terminalizeStrictCustody: owner.terminalizeLocallyDeletedMessage,
-        runCleanup: () async {
-          cleanupRuns++;
-        },
-        operationIdFactory: () => 'tc365-delete-operation',
-      );
+        final expectedStoredKey = keyStorage == 'secure'
+            ? secureStoreReferenceForKey(
+                mediaAttachmentEncryptionKeyStoreName(attachmentId),
+              )
+            : attachment.encryptionKeyBase64;
+        expect(
+          (await fixture.rawAttachmentRow(
+            attachmentId,
+          ))!['encryption_key_base64'],
+          expectedStoredKey,
+        );
+        await fixture.db.insert(kDirectMediaBlobCustodyTable, custody.toMap());
 
-      await useCase.deleteForMe(groupId: groupId, messageId: messageId);
+        final bridge = _WritingGroupDeleteBridge(ciphertext)
+          ..responses['media:download'] = <String, dynamic>{
+            'ok': true,
+            'id': custodyBlobId,
+            'custodyKind': kGroupMediaBlobCustodyKind,
+            'custodyContract': kDirectMediaBlobCustodyContract,
+            'contentHash': contentHash,
+            'size': ciphertext.length,
+            'mime': kDirectMediaBlobTransportMime,
+            'expiresAtMs': expiresAtMs,
+            'custodyRelayPeerId': 'relay-delete-tc365',
+          }
+          ..responses['media:delete'] = <String, dynamic>{
+            'ok': true,
+            'id': custodyBlobId,
+            'ackStatus': 'acked',
+            'custodyKind': kGroupMediaBlobCustodyKind,
+            'custodyContract': kDirectMediaBlobCustodyContract,
+            'contentHash': contentHash,
+            'size': ciphertext.length,
+            'mime': kDirectMediaBlobTransportMime,
+            'expiresAtMs': expiresAtMs,
+            'custodyRelayPeerId': 'relay-delete-tc365',
+          };
+        final owner = StrictGroupMediaBlobDownloadAckOwner(
+          bridge: bridge,
+          mediaAttachmentRepository: fixture.repo,
+          mediaFileManager: _DeleteTestMediaFileManager(mediaRoot.path),
+          now: () => DateTime.fromMillisecondsSinceEpoch(
+            expiresAtMs - 1000,
+            isUtc: true,
+          ),
+          beforeSourcePinnedAck: (row) async {
+            expect(row.state, DirectMediaBlobCustodyState.incomingAckPending);
+            expect(
+              await fixture.db.query(
+                'group_messages',
+                where: 'id = ? AND group_id = ?',
+                whereArgs: <Object?>[messageId, groupId],
+              ),
+              isEmpty,
+              reason: 'local suppression precedes ACK',
+            );
+            expect(
+              await fixture.db.query(
+                'group_message_local_deletions',
+                where: 'message_id = ? AND group_id = ?',
+                whereArgs: <Object?>[messageId, groupId],
+              ),
+              hasLength(1),
+            );
+            expect(
+              await fixture.db.query(
+                'group_media_deletion_journal',
+                where: 'attachment_id = ? AND message_id = ? AND group_id = ?',
+                whereArgs: <Object?>[attachmentId, messageId, groupId],
+              ),
+              hasLength(1),
+              reason: 'the exact deletion journal remains authority before ACK',
+            );
+            final persisted = await fixture.rawAttachmentRow(attachmentId);
+            expect(persisted!['encryption_key_base64'], expectedStoredKey);
+            expect(persisted['download_status'], 'download_failed');
+          },
+        );
+        var cleanupRuns = 0;
+        final useCase = DeleteGroupMediaForMeUseCase(
+          prepare:
+              ({
+                required String groupId,
+                required String messageId,
+                required String operationId,
+              }) => dbPrepareGroupMediaDeleteForMe(
+                fixture.db,
+                groupId: groupId,
+                messageId: messageId,
+                operationId: operationId,
+              ),
+          terminalizeStrictCustody: owner.terminalizeLocallyDeletedMessage,
+          runCleanup: () async {
+            cleanupRuns++;
+          },
+          operationIdFactory: () => 'tc365-delete-operation',
+        );
 
-      expect(bridge.commandLog, <String>['media:download', 'media:delete']);
-      expect(cleanupRuns, 1);
-      expect(
-        await (fixture.repo as GroupMediaBlobCustodyRepository)
-            .loadGroupMediaBlobCustodyForTarget(
-              groupId: groupId,
-              attachmentId: attachmentId,
-              custodyBlobId: custodyBlobId,
-              direction: DirectMediaBlobCustodyDirection.incoming,
-            ),
-        isNull,
-      );
-      expect(
-        (await fixture.rawAttachmentRow(
-          attachmentId,
-        ))!['group_media_blob_custody_fingerprint'],
-        fingerprint,
-        reason: 'local terminalization keeps the no-demotion fingerprint',
-      );
-    },
-  );
+        await useCase.deleteForMe(groupId: groupId, messageId: messageId);
+
+        expect(bridge.commandLog, <String>['media:download', 'media:delete']);
+        expect(cleanupRuns, 1);
+        expect(
+          await (fixture.repo as GroupMediaBlobCustodyRepository)
+              .loadGroupMediaBlobCustodyForTarget(
+                groupId: groupId,
+                attachmentId: attachmentId,
+                custodyBlobId: custodyBlobId,
+                direction: DirectMediaBlobCustodyDirection.incoming,
+              ),
+          isNull,
+        );
+        expect(
+          (await fixture.rawAttachmentRow(
+            attachmentId,
+          ))!['group_media_blob_custody_fingerprint'],
+          fingerprint,
+          reason: 'local terminalization keeps the no-demotion fingerprint',
+        );
+      },
+    );
+  }
 }
 
 final class _WritingGroupDeleteBridge extends FakeBridge {

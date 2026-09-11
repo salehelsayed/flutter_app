@@ -17,7 +17,8 @@ enum OutgoingOrdinarySettlementMode {
   live,
 
   /// A currently accepted peer-bound delivery receipt. This mode accepts only
-  /// `inboxed`, `sent`, and `failed` predecessors and may settle an eligible
+  /// `sending` with an exact non-empty staged envelope, plus `inboxed`, `sent`,
+  /// and `failed` predecessors. Those later states may settle an eligible
   /// legacy row whose envelope is null. Peer correlation is not authentication.
   receipt,
 }

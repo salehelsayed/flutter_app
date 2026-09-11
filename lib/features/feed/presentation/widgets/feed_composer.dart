@@ -36,12 +36,16 @@ class FeedComposer extends StatefulWidget {
   /// Invoked on every keystroke with the raw (untrimmed) text.
   final ValueChanged<String>? onDraftChanged;
 
+  /// Text retained by the host for this thread, including across focus changes.
+  final String draftText;
+
   const FeedComposer({
     super.key,
     required this.hintText,
     required this.addAnotherHint,
     required this.onSend,
     this.onDraftChanged,
+    this.draftText = '',
   });
 
   @override
@@ -58,11 +62,31 @@ class _FeedComposerState extends State<FeedComposer> {
   @override
   void initState() {
     super.initState();
+    _controller.text = widget.draftText;
+    _hasText = widget.draftText.trim().isNotEmpty;
+    _inputDirection = detectTextDirection(widget.draftText);
     _controller.addListener(_onTextChanged);
     // Request focus once mounted so the keyboard rises with the composer.
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) _focusNode.requestFocus();
     });
+  }
+
+  @override
+  void didUpdateWidget(covariant FeedComposer oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.draftText == widget.draftText ||
+        _controller.text == widget.draftText) {
+      return;
+    }
+    _controller.removeListener(_onTextChanged);
+    _controller.value = TextEditingValue(
+      text: widget.draftText,
+      selection: TextSelection.collapsed(offset: widget.draftText.length),
+    );
+    _hasText = widget.draftText.trim().isNotEmpty;
+    _inputDirection = detectTextDirection(widget.draftText);
+    _controller.addListener(_onTextChanged);
   }
 
   void _onTextChanged() {

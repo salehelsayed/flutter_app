@@ -279,14 +279,14 @@ void main() {
       expect(await loadMessage('same-inboxed-envelope'), sameInboxed);
 
       final receiptSending = await insertMessage(
-        messageRow(id: 'receipt-sending', wireEnvelope: 'receipt-envelope'),
+        messageRow(id: 'receipt-sending', wireEnvelope: null),
       );
       expect(
         await dbSettleOutgoingOrdinaryTransport(
           db,
           messageId: 'receipt-sending',
           expectedContactPeerId: 'peer-a',
-          expectedEnvelope: 'receipt-envelope',
+          expectedEnvelope: null,
           status: 'delivered',
           transport: 'direct',
           relayExpiresAt: null,
@@ -321,6 +321,101 @@ void main() {
       expect(legacyDelivered['status'], 'delivered');
       expect(legacyDelivered['transport'], isNull);
       expect(legacyDelivered['wire_envelope'], isNull);
+    },
+  );
+
+  test(
+    'early receipt settles the exact staged sending attempt before late transport results',
+    () async {
+      for (final lateStatus in <String>['sent', 'failed', 'inboxed']) {
+        final id = 'early-receipt-before-$lateStatus';
+        const envelope = 'durably-staged-envelope';
+        final before = await insertMessage(
+          messageRow(id: id, wireEnvelope: envelope),
+        );
+        expect(
+          await dbSettleOutgoingOrdinaryTransport(
+            db,
+            messageId: id,
+            expectedContactPeerId: 'peer-a',
+            expectedEnvelope: envelope,
+            status: 'delivered',
+            transport: null,
+            relayExpiresAt: null,
+            mode: OutgoingOrdinarySettlementMode.receipt,
+          ),
+          OutgoingOrdinaryMutationOutcome.applied,
+        );
+        final delivered = Map<String, Object?>.from(before)
+          ..['status'] = 'delivered'
+          ..['wire_envelope'] = null;
+        expect(await loadMessage(id), delivered);
+
+        // The native result may lack its own ACK, or relay storage may fail
+        // after this independent delivery proof. Neither can resurrect retry.
+        final fields = candidateFields(lateStatus);
+        expect(
+          await dbSettleOutgoingOrdinaryTransport(
+            db,
+            messageId: id,
+            expectedContactPeerId: 'peer-a',
+            expectedEnvelope: envelope,
+            status: lateStatus,
+            transport: fields.transport,
+            relayExpiresAt: fields.relayExpiresAt,
+            mode: OutgoingOrdinarySettlementMode.live,
+          ),
+          OutgoingOrdinaryMutationOutcome.preserved,
+        );
+        expect(await loadMessage(id), delivered);
+      }
+    },
+  );
+
+  test(
+    'early receipt cannot settle an unstaged foreign or replaced sending generation',
+    () async {
+      for (final scenario in <String>[
+        'unstaged',
+        'foreign',
+        'replaced-envelope',
+        'stale-fanout',
+      ]) {
+        final id = 'early-receipt-$scenario';
+        final row = messageRow(
+          id: id,
+          wireEnvelope: scenario == 'unstaged' ? null : 'current-envelope',
+        );
+        if (scenario == 'stale-fanout') {
+          row['direct_event_fanout_generation_id'] = 'current-generation';
+        }
+        final before = await insertMessage(row);
+        final outcome = await dbSettleOutgoingOrdinaryTransport(
+          db,
+          messageId: id,
+          expectedContactPeerId: scenario == 'foreign' ? 'peer-b' : 'peer-a',
+          expectedEnvelope: switch (scenario) {
+            'unstaged' => null,
+            'replaced-envelope' => 'old-envelope',
+            _ => 'current-envelope',
+          },
+          status: 'delivered',
+          transport: 'direct',
+          relayExpiresAt: null,
+          mode: OutgoingOrdinarySettlementMode.receipt,
+          expectedDirectEventFanoutGenerationId: scenario == 'stale-fanout'
+              ? 'old-generation'
+              : null,
+        );
+        expect(
+          outcome,
+          scenario == 'foreign'
+              ? OutgoingOrdinaryMutationOutcome.refused
+              : OutgoingOrdinaryMutationOutcome.preserved,
+          reason: scenario,
+        );
+        expect(await loadMessage(id), before, reason: scenario);
+      }
     },
   );
 

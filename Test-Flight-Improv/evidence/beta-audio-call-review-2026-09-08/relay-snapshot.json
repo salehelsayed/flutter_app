@@ -1,0 +1,1002 @@
+{
+  "active_endpoint_metadata": [
+    {
+      "capabilities": [
+        "voice_call_v1"
+      ],
+      "expiresAtMs": 1788884242966,
+      "platform": "ios",
+      "preferenceEpoch": 1788862642966
+    },
+    {
+      "capabilities": [
+        "voice_call_v1"
+      ],
+      "expiresAtMs": 1788872853374,
+      "platform": "ios",
+      "preferenceEpoch": 1788851253374
+    },
+    {
+      "capabilities": [
+        "voice_call_v1"
+      ],
+      "expiresAtMs": 1788884225503,
+      "platform": "android",
+      "preferenceEpoch": 1788862625503
+    },
+    {
+      "capabilities": [
+        "voice_call_v1"
+      ],
+      "expiresAtMs": 1788883933927,
+      "platform": "ios",
+      "preferenceEpoch": 1788862333927
+    }
+  ],
+  "call_key_categories": {
+    "endpoint": 4,
+    "endpoint-device": 4,
+    "endpoint-tombstone": 19,
+    "token": 18,
+    "token-generation": 11,
+    "wake": 68,
+    "wake-directory": 6
+  },
+  "call_metrics": [
+    "relay_apns_voip_push_attempts_total{outcome=\"auth_error\"} 0",
+    "relay_apns_voip_push_attempts_total{outcome=\"canceled\"} 0",
+    "relay_apns_voip_push_attempts_total{outcome=\"expired\"} 0",
+    "relay_apns_voip_push_attempts_total{outcome=\"invalid_token\"} 0",
+    "relay_apns_voip_push_attempts_total{outcome=\"network\"} 0",
+    "relay_apns_voip_push_attempts_total{outcome=\"provider_error\"} 0",
+    "relay_apns_voip_push_attempts_total{outcome=\"rate_limited\"} 0",
+    "relay_apns_voip_push_attempts_total{outcome=\"rejected_payload\"} 0",
+    "relay_apns_voip_push_attempts_total{outcome=\"rejected_route\"} 0",
+    "relay_apns_voip_push_attempts_total{outcome=\"sent\"} 13",
+    "relay_apns_voip_push_attempts_total{outcome=\"sent_cross_environment\"} 0",
+    "relay_apns_voip_push_attempts_total{outcome=\"server_error\"} 0",
+    "relay_apns_voip_push_enabled 1",
+    "relay_turn_credential_issuer_enabled 1",
+    "relay_turn_credential_requests_total{outcome=\"issued\"} 4"
+  ],
+  "call_push_history": [
+    {
+      "metric": {
+        "__name__": "relay_apns_voip_push_attempts_total",
+        "instance": "localhost:2112",
+        "job": "relay-server",
+        "outcome": "sent"
+      },
+      "values": [
+        [
+          1788862140,
+          "0"
+        ],
+        [
+          1788862155,
+          "0"
+        ],
+        [
+          1788862170,
+          "0"
+        ],
+        [
+          1788862185,
+          "0"
+        ],
+        [
+          1788862200,
+          "0"
+        ],
+        [
+          1788862215,
+          "1"
+        ],
+        [
+          1788862230,
+          "3"
+        ],
+        [
+          1788862245,
+          "3"
+        ],
+        [
+          1788862260,
+          "3"
+        ],
+        [
+          1788862275,
+          "3"
+        ],
+        [
+          1788862290,
+          "3"
+        ],
+        [
+          1788862305,
+          "5"
+        ],
+        [
+          1788862320,
+          "5"
+        ],
+        [
+          1788862335,
+          "7"
+        ],
+        [
+          1788862350,
+          "7"
+        ],
+        [
+          1788862365,
+          "8"
+        ],
+        [
+          1788862380,
+          "8"
+        ],
+        [
+          1788862395,
+          "9"
+        ],
+        [
+          1788862410,
+          "9"
+        ],
+        [
+          1788862425,
+          "9"
+        ],
+        [
+          1788862440,
+          "9"
+        ],
+        [
+          1788862455,
+          "9"
+        ],
+        [
+          1788862470,
+          "9"
+        ],
+        [
+          1788862485,
+          "9"
+        ],
+        [
+          1788862500,
+          "9"
+        ],
+        [
+          1788862515,
+          "9"
+        ],
+        [
+          1788862530,
+          "10"
+        ],
+        [
+          1788862545,
+          "10"
+        ],
+        [
+          1788862560,
+          "10"
+        ],
+        [
+          1788862575,
+          "11"
+        ],
+        [
+          1788862590,
+          "12"
+        ],
+        [
+          1788862605,
+          "12"
+        ],
+        [
+          1788862620,
+          "12"
+        ],
+        [
+          1788862635,
+          "13"
+        ],
+        [
+          1788862650,
+          "13"
+        ],
+        [
+          1788862665,
+          "13"
+        ],
+        [
+          1788862680,
+          "13"
+        ],
+        [
+          1788862695,
+          "13"
+        ],
+        [
+          1788862710,
+          "13"
+        ],
+        [
+          1788862725,
+          "13"
+        ],
+        [
+          1788862740,
+          "13"
+        ]
+      ]
+    }
+  ],
+  "captured_at_utc": "2026-09-08T10:38:48.985302+00:00",
+  "endpoint_tombstones": [
+    {
+      "active_endpoint": false,
+      "preference_epoch": "1788811846962"
+    },
+    {
+      "active_endpoint": false,
+      "preference_epoch": "1788797464170"
+    },
+    {
+      "active_endpoint": false,
+      "preference_epoch": "1788559425361"
+    },
+    {
+      "active_endpoint": false,
+      "preference_epoch": "1788633824282"
+    },
+    {
+      "active_endpoint": false,
+      "preference_epoch": "1788793121958"
+    },
+    {
+      "active_endpoint": true,
+      "preference_epoch": "1788862333927"
+    },
+    {
+      "active_endpoint": false,
+      "preference_epoch": "1788814699648"
+    },
+    {
+      "active_endpoint": false,
+      "preference_epoch": "1788780202273"
+    },
+    {
+      "active_endpoint": false,
+      "preference_epoch": "1788566119354"
+    },
+    {
+      "active_endpoint": false,
+      "preference_epoch": "1788641269168"
+    },
+    {
+      "active_endpoint": true,
+      "preference_epoch": "1788862625503"
+    },
+    {
+      "active_endpoint": false,
+      "preference_epoch": "1788811034436"
+    },
+    {
+      "active_endpoint": true,
+      "preference_epoch": "1788862642966"
+    },
+    {
+      "active_endpoint": false,
+      "preference_epoch": "1788817102162"
+    },
+    {
+      "active_endpoint": false,
+      "preference_epoch": "1788814768718"
+    },
+    {
+      "active_endpoint": true,
+      "preference_epoch": "1788851253374"
+    },
+    {
+      "active_endpoint": false,
+      "preference_epoch": "1788566008243"
+    },
+    {
+      "active_endpoint": false,
+      "preference_epoch": "1788633274916"
+    },
+    {
+      "active_endpoint": false,
+      "preference_epoch": "1788784511943"
+    }
+  ],
+  "note": "Only allowlisted aggregate metadata; no tokens, account IDs, call handles, grants, credentials, envelopes or media.",
+  "relay_binary_sha256": "d933c15e8dfca516de560312640bab137016215d6f59a5c7145207afd200b6d9",
+  "scrape_jobs": [
+    {
+      "metric": {
+        "__name__": "up",
+        "instance": "localhost:2112",
+        "job": "relay-server"
+      },
+      "values": [
+        [
+          1788862140,
+          "1"
+        ],
+        [
+          1788862155,
+          "1"
+        ],
+        [
+          1788862170,
+          "1"
+        ],
+        [
+          1788862185,
+          "1"
+        ],
+        [
+          1788862200,
+          "1"
+        ],
+        [
+          1788862215,
+          "1"
+        ],
+        [
+          1788862230,
+          "1"
+        ],
+        [
+          1788862245,
+          "1"
+        ],
+        [
+          1788862260,
+          "1"
+        ],
+        [
+          1788862275,
+          "1"
+        ],
+        [
+          1788862290,
+          "1"
+        ],
+        [
+          1788862305,
+          "1"
+        ],
+        [
+          1788862320,
+          "1"
+        ],
+        [
+          1788862335,
+          "1"
+        ],
+        [
+          1788862350,
+          "1"
+        ],
+        [
+          1788862365,
+          "1"
+        ],
+        [
+          1788862380,
+          "1"
+        ],
+        [
+          1788862395,
+          "1"
+        ],
+        [
+          1788862410,
+          "1"
+        ],
+        [
+          1788862425,
+          "1"
+        ],
+        [
+          1788862440,
+          "1"
+        ],
+        [
+          1788862455,
+          "1"
+        ],
+        [
+          1788862470,
+          "1"
+        ],
+        [
+          1788862485,
+          "1"
+        ],
+        [
+          1788862500,
+          "1"
+        ],
+        [
+          1788862515,
+          "1"
+        ],
+        [
+          1788862530,
+          "1"
+        ],
+        [
+          1788862545,
+          "1"
+        ],
+        [
+          1788862560,
+          "1"
+        ],
+        [
+          1788862575,
+          "1"
+        ],
+        [
+          1788862590,
+          "1"
+        ],
+        [
+          1788862605,
+          "1"
+        ],
+        [
+          1788862620,
+          "1"
+        ],
+        [
+          1788862635,
+          "1"
+        ],
+        [
+          1788862650,
+          "1"
+        ],
+        [
+          1788862665,
+          "1"
+        ],
+        [
+          1788862680,
+          "1"
+        ],
+        [
+          1788862695,
+          "1"
+        ],
+        [
+          1788862710,
+          "1"
+        ],
+        [
+          1788862725,
+          "1"
+        ],
+        [
+          1788862740,
+          "1"
+        ]
+      ]
+    },
+    {
+      "metric": {
+        "__name__": "up",
+        "instance": "localhost:9100",
+        "job": "node"
+      },
+      "values": [
+        [
+          1788862140,
+          "1"
+        ],
+        [
+          1788862155,
+          "1"
+        ],
+        [
+          1788862170,
+          "1"
+        ],
+        [
+          1788862185,
+          "1"
+        ],
+        [
+          1788862200,
+          "1"
+        ],
+        [
+          1788862215,
+          "1"
+        ],
+        [
+          1788862230,
+          "1"
+        ],
+        [
+          1788862245,
+          "1"
+        ],
+        [
+          1788862260,
+          "1"
+        ],
+        [
+          1788862275,
+          "1"
+        ],
+        [
+          1788862290,
+          "1"
+        ],
+        [
+          1788862305,
+          "1"
+        ],
+        [
+          1788862320,
+          "1"
+        ],
+        [
+          1788862335,
+          "1"
+        ],
+        [
+          1788862350,
+          "1"
+        ],
+        [
+          1788862365,
+          "1"
+        ],
+        [
+          1788862380,
+          "1"
+        ],
+        [
+          1788862395,
+          "1"
+        ],
+        [
+          1788862410,
+          "1"
+        ],
+        [
+          1788862425,
+          "1"
+        ],
+        [
+          1788862440,
+          "1"
+        ],
+        [
+          1788862455,
+          "1"
+        ],
+        [
+          1788862470,
+          "1"
+        ],
+        [
+          1788862485,
+          "1"
+        ],
+        [
+          1788862500,
+          "1"
+        ],
+        [
+          1788862515,
+          "1"
+        ],
+        [
+          1788862530,
+          "1"
+        ],
+        [
+          1788862545,
+          "1"
+        ],
+        [
+          1788862560,
+          "1"
+        ],
+        [
+          1788862575,
+          "1"
+        ],
+        [
+          1788862590,
+          "1"
+        ],
+        [
+          1788862605,
+          "1"
+        ],
+        [
+          1788862620,
+          "1"
+        ],
+        [
+          1788862635,
+          "1"
+        ],
+        [
+          1788862650,
+          "1"
+        ],
+        [
+          1788862665,
+          "1"
+        ],
+        [
+          1788862680,
+          "1"
+        ],
+        [
+          1788862695,
+          "1"
+        ],
+        [
+          1788862710,
+          "1"
+        ],
+        [
+          1788862725,
+          "1"
+        ],
+        [
+          1788862740,
+          "1"
+        ]
+      ]
+    },
+    {
+      "metric": {
+        "__name__": "up",
+        "instance": "localhost:9121",
+        "job": "redis"
+      },
+      "values": [
+        [
+          1788862140,
+          "1"
+        ],
+        [
+          1788862155,
+          "1"
+        ],
+        [
+          1788862170,
+          "1"
+        ],
+        [
+          1788862185,
+          "1"
+        ],
+        [
+          1788862200,
+          "1"
+        ],
+        [
+          1788862215,
+          "1"
+        ],
+        [
+          1788862230,
+          "1"
+        ],
+        [
+          1788862245,
+          "1"
+        ],
+        [
+          1788862260,
+          "1"
+        ],
+        [
+          1788862275,
+          "1"
+        ],
+        [
+          1788862290,
+          "1"
+        ],
+        [
+          1788862305,
+          "1"
+        ],
+        [
+          1788862320,
+          "1"
+        ],
+        [
+          1788862335,
+          "1"
+        ],
+        [
+          1788862350,
+          "1"
+        ],
+        [
+          1788862365,
+          "1"
+        ],
+        [
+          1788862380,
+          "1"
+        ],
+        [
+          1788862395,
+          "1"
+        ],
+        [
+          1788862410,
+          "1"
+        ],
+        [
+          1788862425,
+          "1"
+        ],
+        [
+          1788862440,
+          "1"
+        ],
+        [
+          1788862455,
+          "1"
+        ],
+        [
+          1788862470,
+          "1"
+        ],
+        [
+          1788862485,
+          "1"
+        ],
+        [
+          1788862500,
+          "1"
+        ],
+        [
+          1788862515,
+          "1"
+        ],
+        [
+          1788862530,
+          "1"
+        ],
+        [
+          1788862545,
+          "1"
+        ],
+        [
+          1788862560,
+          "1"
+        ],
+        [
+          1788862575,
+          "1"
+        ],
+        [
+          1788862590,
+          "1"
+        ],
+        [
+          1788862605,
+          "1"
+        ],
+        [
+          1788862620,
+          "1"
+        ],
+        [
+          1788862635,
+          "1"
+        ],
+        [
+          1788862650,
+          "1"
+        ],
+        [
+          1788862665,
+          "1"
+        ],
+        [
+          1788862680,
+          "1"
+        ],
+        [
+          1788862695,
+          "1"
+        ],
+        [
+          1788862710,
+          "1"
+        ],
+        [
+          1788862725,
+          "1"
+        ],
+        [
+          1788862740,
+          "1"
+        ]
+      ]
+    }
+  ],
+  "services": "NRestarts=0\nId=relay-server.service\nActiveState=active\nActiveEnterTimestamp=Mon 2026-09-07 19:55:16 UTC\n\nNRestarts=0\nId=coturn.service\nActiveState=active\nActiveEnterTimestamp=Fri 2026-09-04 22:01:11 UTC",
+  "token_counts": [
+    {
+      "count": 7,
+      "environment": "none",
+      "kind": "standard_call",
+      "platform": "android"
+    },
+    {
+      "count": 5,
+      "environment": "production",
+      "kind": "ios_voip",
+      "platform": "ios"
+    },
+    {
+      "count": 6,
+      "environment": "sandbox",
+      "kind": "ios_voip",
+      "platform": "ios"
+    }
+  ],
+  "turn_advertised_urls": "turn:mknoun.xyz:3478?transport=udp,turn:mknoun.xyz:3478?transport=tcp",
+  "turn_issuance_history": [
+    {
+      "metric": {
+        "__name__": "relay_turn_credential_requests_total",
+        "instance": "localhost:2112",
+        "job": "relay-server",
+        "outcome": "issued"
+      },
+      "values": [
+        [
+          1788862305,
+          "2"
+        ],
+        [
+          1788862320,
+          "2"
+        ],
+        [
+          1788862335,
+          "4"
+        ],
+        [
+          1788862350,
+          "4"
+        ],
+        [
+          1788862365,
+          "4"
+        ],
+        [
+          1788862380,
+          "4"
+        ],
+        [
+          1788862395,
+          "4"
+        ],
+        [
+          1788862410,
+          "4"
+        ],
+        [
+          1788862425,
+          "4"
+        ],
+        [
+          1788862440,
+          "4"
+        ],
+        [
+          1788862455,
+          "4"
+        ],
+        [
+          1788862470,
+          "4"
+        ],
+        [
+          1788862485,
+          "4"
+        ],
+        [
+          1788862500,
+          "4"
+        ],
+        [
+          1788862515,
+          "4"
+        ],
+        [
+          1788862530,
+          "4"
+        ],
+        [
+          1788862545,
+          "4"
+        ],
+        [
+          1788862560,
+          "4"
+        ],
+        [
+          1788862575,
+          "4"
+        ],
+        [
+          1788862590,
+          "4"
+        ],
+        [
+          1788862605,
+          "4"
+        ],
+        [
+          1788862620,
+          "4"
+        ],
+        [
+          1788862635,
+          "4"
+        ],
+        [
+          1788862650,
+          "4"
+        ],
+        [
+          1788862665,
+          "4"
+        ],
+        [
+          1788862680,
+          "4"
+        ],
+        [
+          1788862695,
+          "4"
+        ],
+        [
+          1788862710,
+          "4"
+        ],
+        [
+          1788862725,
+          "4"
+        ],
+        [
+          1788862740,
+          "4"
+        ]
+      ]
+    }
+  ],
+  "turn_network_config": [
+    "listening-port=3478",
+    "external-ip=13.60.15.36",
+    "min-port=49152",
+    "max-port=50175",
+    "allowed-peer-ip=172.31.34.24",
+    "log-file=/var/log/turnserver/turnserver.log"
+  ]
+}

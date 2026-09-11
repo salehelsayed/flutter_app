@@ -16,6 +16,16 @@ readonly NSE_PRIVACY="$REPO_ROOT/ios/NotificationService/PrivacyInfo.xcprivacy"
 readonly XCODE_TEST_CLASS="RunnerTests/IosAppVisibilitySnapshotTests"
 readonly XCODE_TEST_ATOMIC="testTC37106AtomicSnapshotLifecycleAndPrivacyContract"
 readonly XCODE_TEST_COALESCING="testTC37106DuplicateUIApplicationAndUISceneActiveDoesNotClearInterleavedRouteCAS"
+readonly -a XCODE_TEST_METHODS=(
+  "$XCODE_TEST_ATOMIC"
+  "$XCODE_TEST_COALESCING"
+  "testVisibilityReadProtectionBracketsActualNativeFlock"
+  "testVisibilityReadRefusalDoesNotSkipLifecycleWritesOrReadPersistedState"
+  "testVisibilityReadRechecksExpiredAdmissionAfterWaitingForCoordinatorQueue"
+  "testVisibilityReadEnteredOperationKeepsOwnershipUntilReturnAfterExpiry"
+  "testVisibilityReadUnavailableResultEndsLiveProtectionExactlyOnce"
+  "testVisibilityReadRechecksExpirationAfterContendedFlockBeforeLoadingState"
+)
 readonly JVM_STORE_PATTERN="com.mknoon.app.AppVisibilitySnapshotStoreTest.TC-371-07 v1 store is atomic fresh and fail-notify"
 readonly JVM_LIFECYCLE_PATTERN="com.mknoon.app.MainActivityAppVisibilityTest.TC-371-07 lifecycle and stale route CAS preserve newest state"
 
@@ -327,8 +337,12 @@ else
   xctest_derived="$(mktemp -d "$RESULT_DIR/xctest-derived.XXXXXX")"
   xctest_result="$RESULT_DIR/ios-xctest-$(date -u +%Y%m%dT%H%M%SZ)-$$.xcresult"
   xctest_log="$RESULT_DIR/ios-xctest.log"
+  xcode_test_selectors=()
+  for method in "${XCODE_TEST_METHODS[@]}"; do
+    xcode_test_selectors+=("-only-testing:$XCODE_TEST_CLASS/$method")
+  done
   run_logged \
-    "the exact two-method TC-371-06 XCTest owner on $simulator_id" \
+    "the exact eight-method visibility XCTest owner on $simulator_id" \
     "$xctest_log" \
     xcodebuild -quiet \
       -derivedDataPath "$xctest_derived" \
@@ -338,8 +352,7 @@ else
       -destination "platform=iOS Simulator,id=$simulator_id" \
       -parallel-testing-enabled NO \
       -resultBundlePath "$xctest_result" \
-      -only-testing:"$XCODE_TEST_CLASS/$XCODE_TEST_ATOMIC" \
-      -only-testing:"$XCODE_TEST_CLASS/$XCODE_TEST_COALESCING" \
+      "${xcode_test_selectors[@]}" \
       CODE_SIGNING_ALLOWED=NO \
       test
 
@@ -369,31 +382,27 @@ else
     >"$RESULT_DIR/ios-xctest-summary.json"
   jq -e '
     .result == "Passed" and
-    .totalTestCount == 2 and
-    .passedTests == 2 and
+    .totalTestCount == 8 and
+    .passedTests == 8 and
     .failedTests == 0 and
     .skippedTests == 0
   ' "$RESULT_DIR/ios-xctest-summary.json" >/dev/null ||
-    fail "TC-371-06 XCTest summary was not exactly two passes and zero skips"
+    fail "visibility XCTest summary was not exactly eight passes and zero skips"
 
   xcrun xcresulttool get test-results tests \
     --path "$xctest_result" --compact \
     >"$RESULT_DIR/ios-xctest-tests.json"
   jq -e \
-    --arg atomic "$XCODE_TEST_ATOMIC" \
-    --arg coalescing "$XCODE_TEST_COALESCING" '
+    --argjson methods "$(printf '%s\n' "${XCODE_TEST_METHODS[@]}" | jq -R . | jq -s .)" '
       [
         .. | objects |
         select(.nodeType? == "Test Case") |
         {name: (.name | sub("\\(\\)$"; "")), result}
       ] | sort_by(.name) == (
-        [
-          {name: $atomic, result: "Passed"},
-          {name: $coalescing, result: "Passed"}
-        ] | sort_by(.name)
+        $methods | map({name: ., result: "Passed"}) | sort_by(.name)
       )
     ' "$RESULT_DIR/ios-xctest-tests.json" >/dev/null ||
-    fail "XCTest result did not contain exactly the two named TC-371-06 methods"
+    fail "XCTest result did not contain exactly the eight named visibility methods"
   remove_owned_derived_data "$xctest_derived"
   printf 'PASS: exact TC-371-06 XCTest owner on %s\n' "$simulator_id" \
     >"$IOS_DISPOSITION"

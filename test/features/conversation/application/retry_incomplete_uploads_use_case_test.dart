@@ -2640,7 +2640,13 @@ void main() {
           uploadMediaFn: fakeUploadFn.call,
         );
 
-        expect(absentBlobRepo.blobLoads, 1);
+        expect(
+          absentBlobRepo.blobLoads,
+          2,
+          reason:
+              'The survivor-first lookup and later retry-admission guard '
+              'each check persisted custody.',
+        );
         expect(absentBlobRepo.blobStages, 0);
         expect(fakeUploadFn.callCount, 1);
         expect(fakeUploadFn.lastBlobId, pendingId);

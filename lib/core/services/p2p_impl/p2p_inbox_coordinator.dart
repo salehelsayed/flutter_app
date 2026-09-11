@@ -18,6 +18,7 @@ class _P2PInboxPort {
     String? custodyContract,
     String? custodyKind,
     int? custodyExpiresAtOrBeforeMs,
+    bool suppressNotification,
   })
   storeInbox;
   final Future<Map<String, dynamic>> Function({int? timeoutMs}) retrieveInbox;
@@ -62,6 +63,29 @@ class _P2PInboxPort {
 }
 
 class _P2PInboxCoordinator {
+  static bool _isInitialDirectNotificationEnvelope(String message) {
+    try {
+      final decoded = jsonDecode(message);
+      if (decoded is! Map<String, dynamic> ||
+          decoded['type'] != 'chat_message' ||
+          decoded['version'] != '2' ||
+          decoded.containsKey('eventId')) {
+        return false;
+      }
+      final encrypted = decoded['encrypted'];
+      return encrypted is Map<String, dynamic> &&
+          <Object?>[
+            decoded['id'],
+            decoded['senderPeerId'],
+            encrypted['kem'],
+            encrypted['ciphertext'],
+            encrypted['nonce'],
+          ].every((value) => value is String && value.trim().isNotEmpty);
+    } on FormatException {
+      return false;
+    }
+  }
+
   static const _confirmedVisibleDuplicateReasonCode =
       'duplicate_confirmed_visible';
 
@@ -89,6 +113,8 @@ class _P2PInboxCoordinator {
   final ReceivedWakeTokenStore? _receivedWakeTokenStore;
   final AcceptedInboxWakeTokenHashObserver? _acceptedInboxWakeTokenHashObserver;
   final InboxStagingRepository _inboxStagingRepository;
+  final Future<bool> Function(String recipientPeerId, String wireEnvelope)?
+  _shouldSuppressDirectInboxNotification;
   final ReplayRecoveredInboxChatMessage? _replayRecoveredInboxChatMessage;
   final ReplayRecoveredInboxChatMessage? _replayLiveLanChatMessage;
   final ReplayRecoveredInboxChatMessage? _replayLiveDirectChatMessage;
@@ -126,6 +152,8 @@ class _P2PInboxCoordinator {
   _P2PInboxCoordinator({
     required _P2PInboxPort port,
     required InboxStagingRepository inboxStagingRepository,
+    Future<bool> Function(String recipientPeerId, String wireEnvelope)?
+    shouldSuppressDirectInboxNotification,
     ReceivedWakeTokenStore? receivedWakeTokenStore,
     AcceptedInboxWakeTokenHashObserver? acceptedInboxWakeTokenHashObserver,
     ReplayRecoveredInboxChatMessage? replayRecoveredInboxChatMessage,
@@ -149,6 +177,8 @@ class _P2PInboxCoordinator {
     bool recoveryOnly = false,
   }) : _port = port,
        _inboxStagingRepository = inboxStagingRepository,
+       _shouldSuppressDirectInboxNotification =
+           shouldSuppressDirectInboxNotification,
        _receivedWakeTokenStore = receivedWakeTokenStore,
        _acceptedInboxWakeTokenHashObserver = acceptedInboxWakeTokenHashObserver,
        _replayRecoveredInboxChatMessage = replayRecoveredInboxChatMessage,
@@ -2543,6 +2573,19 @@ class _P2PInboxCoordinator {
     }
 
     try {
+      var suppressNotification = false;
+      final proveDelivered = _shouldSuppressDirectInboxNotification;
+      if (custodyKind == AckCustodyKind.directTextV108 &&
+          proveDelivered != null &&
+          _isInitialDirectNotificationEnvelope(message)) {
+        try {
+          suppressNotification = await proveDelivered(toPeerId, message);
+        } on Object {
+          // Missing local proof must never prevent relay custody or silence
+          // an undelivered message. Keep the default notification behavior.
+          suppressNotification = false;
+        }
+      }
       final response = await _port.storeInbox(
         toPeerId: toPeerId,
         message: message,
@@ -2553,6 +2596,7 @@ class _P2PInboxCoordinator {
             : ackOrExpiryInboxCustodyContract,
         custodyKind: custodyKind?.wireValue,
         custodyExpiresAtOrBeforeMs: custodyExpiresAtOrBeforeMs,
+        suppressNotification: suppressNotification,
       );
       var outcome = custodyKind == null
           ? InboxStoreOutcome.fromBridgeResponse(response)

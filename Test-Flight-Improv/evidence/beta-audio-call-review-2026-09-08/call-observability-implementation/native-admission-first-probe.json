@@ -1,0 +1,213 @@
+{
+  "probeStartedAtUtc": "2026-09-08T16:22:16Z",
+  "androidBuild": "edee78303c4a1823",
+  "iosBuild": "e9811addae2ee7a4",
+  "androidDiagnosticTraceId": "c7cc7b75-c633-4320-a926-391a29165ed2",
+  "callerDiagnosticTraceId": "a1be4767-de23-47c7-9e81-d3d120d624a5",
+  "sharedTraceEstablishedOnAndroid": false,
+  "nativeAdmissionEvents": [
+    {
+      "schemaVersion": 1,
+      "eventId": "f8d92bb7-d71c-43ff-a956-33b124b8fcfd",
+      "source": "android",
+      "role": "callee",
+      "runId": "08df9ed8-e69c-4da9-a688-e4ff63d2dae3",
+      "sequence": 75,
+      "occurredAtMs": 1788884540572,
+      "elapsedMs": 489533893,
+      "stage": "admission",
+      "action": "start",
+      "outcome": "started",
+      "reason": "none",
+      "values": {
+        "attemptCount": 0,
+        "durationMs": 1
+      },
+      "traceId": "c7cc7b75-c633-4320-a926-391a29165ed2",
+      "operationId": "96c89c0e-52ca-4e53-ba08-79fa7306b3dd"
+    },
+    {
+      "schemaVersion": 1,
+      "eventId": "be744daa-8b60-4ccb-9ff0-e1295b168cd2",
+      "source": "android",
+      "role": "callee",
+      "runId": "08df9ed8-e69c-4da9-a688-e4ff63d2dae3",
+      "sequence": 76,
+      "occurredAtMs": 1788884541467,
+      "elapsedMs": 489534788,
+      "stage": "admission",
+      "action": "response",
+      "outcome": "completed",
+      "reason": "none",
+      "values": {
+        "admissionDisposition": "deferred",
+        "requiredPersistenceComplete": false,
+        "databaseClosed": true,
+        "leaseReleased": true,
+        "durationMs": 895
+      },
+      "traceId": "c7cc7b75-c633-4320-a926-391a29165ed2",
+      "operationId": "96c89c0e-52ca-4e53-ba08-79fa7306b3dd"
+    },
+    {
+      "schemaVersion": 1,
+      "eventId": "6a287c3b-8afd-4e5c-9d8d-837e92d3f060",
+      "source": "android",
+      "role": "callee",
+      "runId": "08df9ed8-e69c-4da9-a688-e4ff63d2dae3",
+      "sequence": 77,
+      "occurredAtMs": 1788884541500,
+      "elapsedMs": 489534820,
+      "stage": "admission",
+      "action": "finish",
+      "outcome": "rejected",
+      "reason": "native_persistence_failed",
+      "values": {
+        "admissionDisposition": "deferred",
+        "requiredPersistenceComplete": false,
+        "databaseClosed": true,
+        "leaseReleased": true,
+        "durationMs": 928
+      },
+      "traceId": "c7cc7b75-c633-4320-a926-391a29165ed2",
+      "operationId": "96c89c0e-52ca-4e53-ba08-79fa7306b3dd"
+    },
+    {
+      "schemaVersion": 1,
+      "eventId": "d7506ef4-d2f8-4073-92f0-56a80c9a243e",
+      "source": "android",
+      "role": "callee",
+      "runId": "08df9ed8-e69c-4da9-a688-e4ff63d2dae3",
+      "sequence": 79,
+      "occurredAtMs": 1788884569396,
+      "elapsedMs": 489562716,
+      "stage": "admission",
+      "action": "start",
+      "outcome": "started",
+      "reason": "none",
+      "values": {
+        "attemptCount": 0,
+        "durationMs": 1
+      },
+      "traceId": "c7cc7b75-c633-4320-a926-391a29165ed2",
+      "operationId": "3e21c995-dfe0-497c-8c38-0fd9cd2c173b"
+    },
+    {
+      "schemaVersion": 1,
+      "eventId": "cb7cecb6-3ab8-4f08-8013-8756c464a312",
+      "source": "android",
+      "role": "callee",
+      "runId": "08df9ed8-e69c-4da9-a688-e4ff63d2dae3",
+      "sequence": 80,
+      "occurredAtMs": 1788884570311,
+      "elapsedMs": 489563631,
+      "stage": "admission",
+      "action": "response",
+      "outcome": "completed",
+      "reason": "none",
+      "values": {
+        "admissionDisposition": "deferred",
+        "requiredPersistenceComplete": false,
+        "databaseClosed": true,
+        "leaseReleased": true,
+        "durationMs": 917
+      },
+      "traceId": "c7cc7b75-c633-4320-a926-391a29165ed2",
+      "operationId": "3e21c995-dfe0-497c-8c38-0fd9cd2c173b"
+    },
+    {
+      "schemaVersion": 1,
+      "eventId": "968242e9-8708-4297-a742-f14e4205f12c",
+      "source": "android",
+      "role": "callee",
+      "runId": "08df9ed8-e69c-4da9-a688-e4ff63d2dae3",
+      "sequence": 81,
+      "occurredAtMs": 1788884570352,
+      "elapsedMs": 489563672,
+      "stage": "admission",
+      "action": "finish",
+      "outcome": "rejected",
+      "reason": "native_persistence_failed",
+      "values": {
+        "admissionDisposition": "deferred",
+        "requiredPersistenceComplete": false,
+        "databaseClosed": true,
+        "leaseReleased": true,
+        "durationMs": 953
+      },
+      "traceId": "c7cc7b75-c633-4320-a926-391a29165ed2",
+      "operationId": "3e21c995-dfe0-497c-8c38-0fd9cd2c173b"
+    }
+  ],
+  "callerTerminalEvents": [
+    {
+      "schemaVersion": 1,
+      "eventId": "0e098dfc-806b-4a1f-b8ae-b6dbb60941f9",
+      "source": "flutter",
+      "role": "caller",
+      "runId": "2d939f75-279d-40a2-b031-7c9665714c76",
+      "sequence": 97,
+      "occurredAtMs": 1788884566905,
+      "elapsedMs": 1436452,
+      "stage": "terminal",
+      "action": "commit",
+      "outcome": "ok",
+      "reason": "no_answer",
+      "values": {
+        "state": "ended",
+        "accepted": false,
+        "connected": false,
+        "terminal": true
+      },
+      "build": "1.0.1+111-e9811addae2ee7a4",
+      "traceId": "a1be4767-de23-47c7-9e81-d3d120d624a5"
+    },
+    {
+      "schemaVersion": 1,
+      "eventId": "faf35f41-298c-4283-960e-759eef2bb4db",
+      "source": "flutter",
+      "role": "caller",
+      "runId": "2d939f75-279d-40a2-b031-7c9665714c76",
+      "sequence": 98,
+      "occurredAtMs": 1788884566916,
+      "elapsedMs": 1436462,
+      "stage": "terminal",
+      "action": "finish",
+      "outcome": "no_answer",
+      "reason": "no_answer",
+      "values": {
+        "connected": false,
+        "accepted": false,
+        "mediaFlowVerified": false,
+        "durationMs": 30087,
+        "terminal": true
+      },
+      "build": "1.0.1+111-e9811addae2ee7a4",
+      "traceId": "a1be4767-de23-47c7-9e81-d3d120d624a5"
+    },
+    {
+      "stage": "terminal",
+      "reason": "local_user",
+      "eventId": "6056932a-6656-47e3-801e-e1dd7fcdf01d",
+      "occurredAtMs": 1788884567044,
+      "role": "caller",
+      "sequence": 75,
+      "requestId": "7d0ac373-63e7-400f-b934-509f0b615254",
+      "source": "ios",
+      "elapsedMs": 357096336,
+      "outcome": "ok",
+      "operationId": "27440f8b-68da-4334-b53b-09f4078c3f37",
+      "values": {
+        "nativeCommitted": true,
+        "terminal": true
+      },
+      "traceId": "a1be4767-de23-47c7-9e81-d3d120d624a5",
+      "runId": "ce7e6c8d-a215-4bb5-a5bb-98d291575025",
+      "schemaVersion": 1,
+      "action": "commit"
+    }
+  ],
+  "interpretation": "Admission deferred in895ms with requiredPersistenceComplete=false, databaseClosed=true and leaseReleased=true. This does not prove an attempted persistence write failed. The observed finish reason native_persistence_failed is a diagnostic classification defect, being corrected. Upstream deferral cause was not yet recorded by this build.",
+  "actualAnswerOrMediaProven": false,
+  "manualEndControlAvailableAt162233": false
+}

@@ -1,8 +1,11 @@
 import 'dart:io';
 
+import 'package:flutter_app/core/database/helpers/group_event_log_db_helpers.dart';
+
 import 'package:flutter/services.dart' show rootBundle;
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/bridge/bridge_group_helpers.dart';
+import 'package:flutter_app/core/database/app_database_version.dart';
 import 'package:flutter_app/core/debug/group_media_reliability_e2e.dart';
 import 'package:flutter_app/core/media/audio_recorder_service.dart';
 import 'package:flutter_app/core/media/group_media_integrity_policy.dart';
@@ -43,6 +46,9 @@ Future<Map<String, Object?>> setupGroupMediaReliabilitySender({
   required ContactRepository contactRepository,
   required GroupRepository groupRepository,
   GroupInviteDeliveryAttemptRepository? inviteDeliveryAttemptRepository,
+  AppendGroupEventLogEntry? appendGroupEventLogEntry,
+  GroupMediaReliabilityAuthorityMode authorityMode =
+      GroupMediaReliabilityAuthorityMode.distinctAccountAndTransport,
 }) async {
   final identity = await identityRepository.loadIdentity();
   final receiver = await contactRepository.getContact(receiverAccountPeerId);
@@ -53,10 +59,19 @@ Future<Map<String, Object?>> setupGroupMediaReliabilitySender({
       receiver.mlKemPublicKey!.trim().isEmpty ||
       transport == null ||
       transport.isEmpty ||
-      identity.peerId == transport ||
-      receiverAccountPeerId == receiverTransportPeerId) {
+      identity.peerId == receiverAccountPeerId ||
+      !groupMediaReliabilityIdentityMatches(
+        mode: authorityMode,
+        accountPeerId: identity.peerId,
+        transportPeerId: transport,
+      ) ||
+      !groupMediaReliabilityIdentityMatches(
+        mode: authorityMode,
+        accountPeerId: receiverAccountPeerId,
+        transportPeerId: receiverTransportPeerId,
+      )) {
     throw StateError(
-      'group-media sender lacks distinct account/transport authority',
+      'group-media sender lacks configured account/transport authority',
     );
   }
   final result = await createGroupWithMembers(
@@ -67,19 +82,23 @@ Future<Map<String, Object?>> setupGroupMediaReliabilitySender({
     selectedContacts: [receiver],
     type: GroupType.chat,
     name: 'P269 ${DateTime.now().toUtc().microsecondsSinceEpoch}',
-    selectedContactDeviceBindings: <String, GroupMemberDeviceIdentity>{
-      receiverAccountPeerId: GroupMemberDeviceIdentity(
-        deviceId: receiverTransportPeerId,
-        transportPeerId: receiverTransportPeerId,
-        deviceSigningPublicKey: receiver.publicKey,
-        mlKemPublicKey: receiver.mlKemPublicKey,
-        keyPackageId: defaultGroupWelcomeKeyPackageIdForDevice(
-          receiverTransportPeerId,
-        ),
-        keyPackagePublicMaterial: receiver.mlKemPublicKey,
-      ),
-    },
+    selectedContactDeviceBindings:
+        authorityMode == GroupMediaReliabilityAuthorityMode.accountBoundLegacy
+        ? const <String, GroupMemberDeviceIdentity>{}
+        : <String, GroupMemberDeviceIdentity>{
+            receiverAccountPeerId: GroupMemberDeviceIdentity(
+              deviceId: receiverTransportPeerId,
+              transportPeerId: receiverTransportPeerId,
+              deviceSigningPublicKey: receiver.publicKey,
+              mlKemPublicKey: receiver.mlKemPublicKey,
+              keyPackageId: defaultGroupWelcomeKeyPackageIdForDevice(
+                receiverTransportPeerId,
+              ),
+              keyPackagePublicMaterial: receiver.mlKemPublicKey,
+            ),
+          },
     inviteDeliveryAttemptRepo: inviteDeliveryAttemptRepository,
+    appendGroupEventLogEntry: appendGroupEventLogEntry,
   );
   if (result.membersAdded != 1 ||
       result.invitesSent != 1 ||
@@ -597,7 +616,7 @@ Future<Map<String, Object?>> probeGroupMediaReliabilityRoleDatabase({
   if (cipherVersion is! String ||
       cipherVersion.trim().isEmpty ||
       transportPeerId.trim().isEmpty ||
-      userVersion != 104) {
+      userVersion != currentIdentityDatabaseVersion) {
     throw StateError('group-media role SQLCipher facts rejected');
   }
   final rows = <Map<String, Object?>>[];

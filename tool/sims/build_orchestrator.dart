@@ -12,6 +12,10 @@ import 'report.dart';
 const String _iosDeviceProductionProfileId = 'ios.device.production';
 const String _iosDeviceGroupMedia269ProfileId = 'ios.device.group_media_269';
 const String _iosDeviceGroupMedia269BundleId = 'com.mknoon.sims.groupmedia269';
+const String _androidProductionAudioCallProfileId =
+    'android.e2e.production_call_local';
+const String _androidProductionAudioCallApplicationId =
+    'com.mknoon.sims.productionaudio';
 const String _androidGroupMedia269ProfileId = 'android.e2e.group_media_269';
 const String _androidGroupMedia269ApplicationId =
     'com.mknoon.sims.groupmedia269';
@@ -1156,11 +1160,9 @@ List<String> effectiveSimsBuildArguments(
         '-allowProvisioningUpdates',
       'ENABLE_TESTABILITY=YES',
       '-destination=generic/platform=iOS',
-      if (profile.id == _iosDeviceGroupMedia269ProfileId) ...<String>[
-        'SWIFT_ACTIVE_COMPILATION_CONDITIONS='
-            '${iosDeviceConfiguration.swiftCompilationConditions}',
-        ...iosDeviceConfiguration.buildSettings,
-      ],
+      'SWIFT_ACTIVE_COMPILATION_CONDITIONS='
+          '${iosDeviceConfiguration.swiftCompilationConditions}',
+      ...iosDeviceConfiguration.buildSettings,
       'FLUTTER_TARGET=$entrypoint',
       if (encodedDefines.isNotEmpty) 'DART_DEFINES=$encodedDefines',
     ];
@@ -1172,8 +1174,10 @@ List<String> effectiveSimsBuildArguments(
       '--debug',
       '--target-platform=android-arm64',
       '--android-project-arg=simsAndroidAbi=arm64-v8a',
-      if (profile.id == 'android.e2e.production_call_local')
+      if (profile.id == _androidProductionAudioCallProfileId) ...const <String>[
         '--android-project-arg=enableAndroidNativeCalls=true',
+        '--android-project-arg=disableGoogleServicesForDisposableProof=true',
+      ],
       if (profile.id == _androidGroupMedia269ProfileId) ...const <String>[
         '--android-project-arg=disableGoogleServicesForDisposableProof=true',
         '--android-project-arg=enableGroupMedia269DisposableProof=true',
@@ -1257,6 +1261,9 @@ String effectiveSimsApplicationId(
   final effectiveEnvironment = environment ?? Platform.environment;
   if (profile.id == _iosDeviceGroupMedia269ProfileId) {
     return _iosDeviceGroupMedia269BundleId;
+  }
+  if (profile.id == _androidProductionAudioCallProfileId) {
+    return _androidProductionAudioCallApplicationId;
   }
   if (profile.id == _androidGroupMedia269ProfileId) {
     return _androidGroupMedia269ApplicationId;

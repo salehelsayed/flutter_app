@@ -197,6 +197,89 @@ void main() {
   });
 
   group('handleDeliveryReceipt', () {
+    test(
+      'early receipts require a staged envelope and current mutation generation',
+      () async {
+        const editId = 'early-current-edit';
+        const fanoutId = 'early-current-fanout';
+        const editEvent = '34900000-0000-4000-8000-000000000016';
+        const fanoutEvent = '34900000-0000-4000-8000-000000000017';
+        final editEnvelope = jsonEncode(<String, Object?>{
+          'type': 'chat_message',
+          'version': '2',
+          'id': editId,
+          'eventId': editEvent,
+          'senderPeerId': 'my-peer',
+          'encrypted': const <String, Object?>{
+            'kem': 'kem',
+            'ciphertext': 'cipher',
+            'nonce': 'nonce',
+          },
+        });
+        messageRepo.seed(<ConversationMessage>[
+          makeInboxedOutgoing(
+            id: 'early-unstaged',
+            status: 'sending',
+          ).copyWith(wireEnvelope: null),
+          makeInboxedOutgoing(
+            id: 'early-foreign',
+            status: 'sending',
+            contactPeerId: 'peer-y',
+          ),
+          makeInboxedOutgoing(id: editId, status: 'sending').copyWith(
+            editedAt: '2026-06-13T11:30:00.000Z',
+            wireEnvelope: editEnvelope,
+          ),
+          makeInboxedOutgoing(
+            id: fanoutId,
+            status: 'sending',
+          ).copyWith(directEventFanoutGenerationId: fanoutEvent),
+        ]);
+
+        const ids = <String>[
+          'early-unstaged',
+          'early-foreign',
+          editId,
+          fanoutId,
+        ];
+        // A message-ID-only receipt cannot deliver a newer edit or fanout.
+        await handleDeliveryReceipt(
+          message: buildReceipt(messageIds: ids),
+          messageRepo: messageRepo,
+        );
+        for (final id in ids) {
+          expect((await messageRepo.getMessage(id))!.status, 'sending');
+        }
+        expect(
+          (await messageRepo.getMessage(editId))!.wireEnvelope,
+          editEnvelope,
+        );
+
+        // Exact generation proof can settle before the native callback.
+        await handleDeliveryReceipt(
+          message: buildReceipt(
+            messageIds: const <String>[editId, fanoutId],
+            mutationEventIds: const <String, String>{
+              editId: editEvent,
+              fanoutId: fanoutEvent,
+            },
+          ),
+          messageRepo: messageRepo,
+        );
+        for (final id in <String>[editId, fanoutId]) {
+          final row = (await messageRepo.getMessage(id))!;
+          expect(row.status, 'delivered');
+          expect(row.wireEnvelope, isNull);
+        }
+        expect(
+          (await messageRepo.getMessage(
+            fanoutId,
+          ))!.directEventFanoutGenerationId,
+          fanoutEvent,
+        );
+      },
+    );
+
     test('TC-361-03a a linked origin receipt settles only the exact current '
         'generation of the logical contact row', () async {
       const messageId = 'msg-linked-receipt';
@@ -693,12 +776,12 @@ void main() {
           'receipt-inboxed',
           'receipt-legacy-null-envelope',
           'receipt-failed',
+          'receipt-sending',
         ]) {
           final settled = await repo.getMessage(id);
           expect(settled!.status, 'delivered', reason: id);
           expect(settled.wireEnvelope, isNull, reason: id);
         }
-        expect((await repo.getMessage('receipt-sending'))!.status, 'sending');
         expect((await repo.getMessage('receipt-foreign'))!.status, 'inboxed');
         final settledTombstone = await repo.getMessage('receipt-tombstone');
         expect(settledTombstone!.status, 'delivered');

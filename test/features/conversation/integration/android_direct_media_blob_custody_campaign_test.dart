@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 
 import '../../../../integration_test/scripts/android_direct_media_blob_custody_campaign.dart';
+import '../../../../integration_test/scripts/android_direct_media_blob_custody_device_action.dart';
 import '../../../../integration_test/support/android_direct_media_blob_custody_evidence.dart';
 
 const String _ciphertextSha256 =
@@ -38,6 +39,153 @@ void main() {
   tearDown(() {
     if (temporary.existsSync()) temporary.deleteSync(recursive: true);
   });
+
+  test('host retains bounded voice disposition before app restoration', () {
+    for (final result in [
+      'success',
+      'invalidRecording',
+      'uploadFailed',
+      'uploadQueued',
+      'sendFailed',
+    ]) {
+      for (final returnedMessage in [false, true]) {
+        for (final uploadLeaseHeld in [false, true]) {
+          expect(
+            androidDirectMediaVoiceSendFailureDetails({
+              'voiceSendResult': result,
+              'voiceSendReturnedMessage': returnedMessage,
+              'voiceSendUploadLeaseHeld': uploadLeaseHeld,
+              'messageId': 'must-not-appear',
+              'error': 'must-not-appear',
+            }),
+            '; voiceSendResult=$result; '
+            'voiceSendReturnedMessage=$returnedMessage; '
+            'voiceSendUploadLeaseHeld=$uploadLeaseHeld',
+          );
+        }
+      }
+    }
+  });
+
+  test('host excludes malformed or absent voice observation values', () {
+    expect(androidDirectMediaVoiceSendFailureDetails({}), isEmpty);
+    for (final invalid in <Map<String, Object?>>[
+      {'voiceSendResult': 'sendFailed\nprivate-content'},
+      {
+        'voiceSendResult': 'sendFailed',
+        'voiceSendReturnedMessage': 'private-content',
+        'voiceSendUploadLeaseHeld': true,
+      },
+      {'voiceSendUploadLeaseHeld': false},
+    ]) {
+      expect(
+        androidDirectMediaVoiceSendFailureDetails(invalid),
+        '; voiceObservation=invalid',
+      );
+    }
+  });
+
+  test(
+    'contact commands survive old pollers and complete in replacement processes',
+    () async {
+      final oldRunning = [true, true];
+      final staged = [false, false];
+      final completed = [false, false];
+      final consumedByOldProcess = <int>[];
+      AndroidDirectMediaContactEndpoint endpoint(int index) => (
+        stopAndWait: () async {
+          oldRunning[index] = false;
+        },
+        stage: () async {
+          staged[index] = true;
+          // A live poller consumes and deletes its command before awaiting P2P.
+          if (oldRunning[index]) {
+            staged[index] = false;
+            consumedByOldProcess.add(index);
+          }
+        },
+        start: () async {
+          if (staged[index]) {
+            staged[index] = false;
+            completed[index] = true;
+          }
+        },
+        waitForResult: () async {
+          if (!completed[index]) {
+            throw StateError('stale receipt from killed poller');
+          }
+        },
+      );
+      await exchangeAndroidDirectMediaContacts(
+        sender: endpoint(0),
+        receiver: endpoint(1),
+      );
+      expect(consumedByOldProcess, isEmpty);
+      expect(completed, [true, true]);
+      expect(staged, [false, false]);
+    },
+  );
+
+  test(
+    'failed process-stop verification leaves both contact commands unstaged',
+    () async {
+      final failure = StateError('receiver process still present');
+      final staged = <int>[];
+      final started = <int>[];
+      AndroidDirectMediaContactEndpoint endpoint(int index) => (
+        stopAndWait: () async {
+          if (index == 1) throw failure;
+        },
+        stage: () async {
+          staged.add(index);
+        },
+        start: () async {
+          started.add(index);
+        },
+        waitForResult: () async {},
+      );
+      await expectLater(
+        exchangeAndroidDirectMediaContacts(
+          sender: endpoint(0),
+          receiver: endpoint(1),
+        ),
+        throwsA(same(failure)),
+      );
+      expect(staged, isEmpty);
+      expect(started, isEmpty);
+    },
+  );
+
+  for (final oldActionFails in [false, true]) {
+    test(
+      'initial media handoff excludes old-process work (prompt failure: $oldActionFails)',
+      () async {
+        var oldRunning = true;
+        var requestStaged = false;
+        var oldEffects = 0;
+        var replacementEffects = 0;
+        await launchAndroidDirectMediaInitialAction(
+          stopAndWait: () async {
+            oldRunning = false;
+          },
+          stage: () async {
+            requestStaged = true;
+            if (oldRunning) {
+              oldEffects++;
+              // A prompt failure runs the old dispatcher's config cleanup.
+              if (oldActionFails) requestStaged = false;
+            }
+          },
+          start: () async {
+            if (requestStaged) replacementEffects++;
+          },
+        );
+        expect(requestStaged, isTrue);
+        expect(oldEffects, 0);
+        expect(replacementEffects, 1);
+      },
+    );
+  }
 
   test('TC-347-09 exact hash-only evidence accepts the Android-pair proof', () {
     final validation = validateAndroidDirectMediaBlobCustodyEvidence(

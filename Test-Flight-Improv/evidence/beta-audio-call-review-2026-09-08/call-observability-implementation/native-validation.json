@@ -1,0 +1,283 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-09-08T16:47:34.026489+00:00",
+  "scope": "Final native observability validation and package provenance only",
+  "source": {
+    "stamp": "f1899f0d63e1724b",
+    "productionFiles": 58,
+    "manifest": "mobile-source-manifest.json",
+    "manifestSha256": "645360f363c69d6cc9a963983e5d6b62364eee74e724b2b4b5b61ae30fbdf463",
+    "allProductionFilesMatchedAtPostBuildVerification": true
+  },
+  "androidNative": {
+    "tests": 101,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "suites": [
+      {
+        "suite": "com.mknoon.app.call.MknoonCallNativeBridgeTest",
+        "tests": 19,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      {
+        "suite": "com.mknoon.app.call.MknoonCallDiagnosticSpoolTest",
+        "tests": 16,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      {
+        "suite": "com.mknoon.app.call.HeadlessCallAdmissionWorkerTest",
+        "tests": 21,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      {
+        "suite": "com.mknoon.app.MknoonFirebaseMessagingServiceTest",
+        "tests": 12,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      {
+        "suite": "com.mknoon.app.call.MknoonCallLifecycleControllerTest",
+        "tests": 33,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      }
+    ],
+    "command": "./gradlew :app:testDebugUnitTest --tests 'com.mknoon.app.call.MknoonCallNativeBridgeTest' --tests 'com.mknoon.app.call.MknoonCallDiagnosticSpoolTest' --tests 'com.mknoon.app.call.HeadlessCallAdmissionWorkerTest' --tests 'com.mknoon.app.MknoonFirebaseMessagingServiceTest' --tests 'com.mknoon.app.call.MknoonCallLifecycleControllerTest' -PenableAndroidNativeCalls=true -x :app:compileFlutterBuildDebug",
+    "workingDirectory": "android",
+    "flutterCompileExcludedForFocusedNativeTests": true
+  },
+  "swiftHost": {
+    "tests": 15,
+    "failures": 0,
+    "unexpectedFailures": 0,
+    "spoolTests": 13,
+    "tokenCausalityTests": 2,
+    "source": "Actual native spool and token authority source, with minimal Flutter type stubs in a temporary SwiftPM harness",
+    "sharedWireFixture": "tool/call_diagnostics/wire_fixtures_v1.json",
+    "boundary": "Host execution does not prove live PushKit, actual Flutter channel attachment, or execution of the iOS RunnerTests wrapper test. The actual iOS app target separately compiled successfully."
+  },
+  "causalProofs": {
+    "causeInterop": {
+      "before": "Android shared-fixture sanitizer and actual native capability wrapper: two tests failed. Swift shared-fixture test: two assertion failures across attempt and authority contexts.",
+      "after": "Closed wire cause maps to internal reason; dedicated trace/request/operation/parent IDs survive; legacy internal reason remains supported; private unknown values are discarded."
+    },
+    "consentRetry": {
+      "before": "Failed native configure(true,E) prevented the identical request from retrying after storage recovered.",
+      "after": "Requested consent is separate from effective capture. Capture stays disabled after failed writes; identical request can retry, while stale/equal-conflicting re-enable remains refused."
+    },
+    "retentionAndAuthority": [
+      "Native drain is non-destructive until durable diagnostic ACK; canonical call-journal ACK cannot remove diagnostic evidence.",
+      "Protected private trace lookup survives diagnostic ACK and restart, normalizes compact/canonical private handles, and refuses disabled or expired bindings.",
+      "Diagnostic sink failures preserve canonical answer persistence and audio admission.",
+      "Malformed optional push diagnostics do not alter the existing strict call authority parser.",
+      "Native schema copies match the shared allowlists, including authorityKind."
+    ],
+    "finalDiagnosticCauseAndVersion": {
+      "evidence": "final-native-cause-validation.json",
+      "headless": "Closed optional causes do not change disposition, identity/custody validation, or presentation. False requiredPersistenceComplete is pending, not evidence of a failed write.",
+      "nativeTerminal": "Known scoped terminal cause is retained; missing or invalid origin is unknown, never inferred local_user.",
+      "nativeBuild": "Native creation stamps installed version+build, independently of Flutter. Restart/drain preserves original or missing legacy build fields."
+    }
+  },
+  "packages": {
+    "android": {
+      "status": "final_built_native_flag_verified",
+      "mode": "debug",
+      "localPath": "/tmp/call-observability-20260908/app-call-diagnostics-debug.apk",
+      "bytes": 353346349,
+      "sha256": "de42656e4aba9e51cccdff78d9d8e06469eedea3ed601105443116ee665526be",
+      "buildLog": "android-build-58b1ba6035e82327.log",
+      "sourceStamp": "f1899f0d63e1724b",
+      "buildStamp": "58b1ba6035e82327",
+      "nativeGradleProperties": {
+        "enableAndroidNativeCalls": true
+      },
+      "packagedVerification": {
+        "buildConfigNativeCallsEnabled": true,
+        "setterRetainsSdkGuardAndPersistedEnablePath": true,
+        "diagnosticBuildStampPresentInKernel": true
+      },
+      "buildFingerprint": "android-build-fingerprint.json",
+      "artifactMetadata": "android-artifact.json"
+    },
+    "ios": {
+      "status": "final_built",
+      "mode": "profile",
+      "localPath": "/tmp/call-observability-20260908/Runner-profile.app",
+      "bytes": 110847592,
+      "files": 188,
+      "runnerSha256": "13f41e7ba0a8390431b9b29cd83a2428794b2d9969c77d163f72decfc3b164c9",
+      "treeSha256": "0bdb7af7c092ad33d920aecd0819f5841e86f93848f249d15265ab82fb876261",
+      "treeHashAlgorithm": "SHA256 of sorted relative file path + NUL + lowercase file SHA256 + newline for each file in the app tree",
+      "actualTargetCompilation": "passed",
+      "xcodeBuildSeconds": 81.9,
+      "apsEnvironment": "development",
+      "getTaskAllow": true,
+      "buildLog": "ios-build-8bc9c8a8e32d3a38.log",
+      "buildStamp": "8bc9c8a8e32d3a38",
+      "sourceStamp": "f1899f0d63e1724b",
+      "buildFingerprint": "ios-build-fingerprint.json",
+      "artifactMetadata": "ios-profile-artifact.json",
+      "installedVersion": "1.0.1+111"
+    }
+  },
+  "flags": {
+    "VOICE_CALL_CAPABILITY_V1": true,
+    "VOICE_CALL_OUTGOING_ENABLED": true,
+    "VOICE_CALL_INCOMING_ENABLED": true,
+    "VOICE_CALL_TURN_ENABLED": true,
+    "VOICE_CALL_ANDROID_NATIVE_ENABLED": true,
+    "VOICE_CALL_IOS_NATIVE_ENABLED": true,
+    "VOICE_CALL_ALWAYS_RELAY_ENABLED": true
+  },
+  "callDiagnosticsBuild": {
+    "android": "58b1ba6035e82327",
+    "ios": "8bc9c8a8e32d3a38"
+  },
+  "deviceValidation": {
+    "callStatus": "pending_final_matching_source_probe",
+    "owner": "root",
+    "includedInNativeTestVerdict": false,
+    "boundedWorkerActions": "Earlier authorized lab calls and private OS captures are recorded separately. Final same-source admission-cause/build/terminal-origin probe is owned by root; native/unit/package results do not claim connected media.",
+    "offlineTrace": "eec02a59-40f7-44c5-9568-34cf7f191518",
+    "networkRestoredAt": "2026-09-08T15:25:04.147870Z"
+  },
+  "distribution": {
+    "stores": "unpublished",
+    "appStore": "This observability build has not been published",
+    "playStore": "This observability build has not been published",
+    "labInstalls": "Performed by root; this worker built packages only"
+  },
+  "limitations": [
+    "Actual RunnerTests iOS wrapper test is added with the shared fixture bundled; it was not executed by the host Swift harness.",
+    "When native persistence fails, capture is disabled in memory and synchronization remains pending; durable opt-out is not claimed until persistence succeeds.",
+    "Successful packaging and native tests alone do not prove end-to-end call or telemetry delivery."
+  ],
+  "logs": [
+    {
+      "label": "Android native preservation",
+      "localPath": "/tmp/call-observability-20260908/native-final-preservation.log",
+      "sha256": "2ce1ca7b462481a8198d38b85e2731d5cd812a3e40cab73503f067a827e7c1d0",
+      "lineCount": 919
+    },
+    {
+      "label": "Android causal pre-fix failure",
+      "localPath": "/tmp/call-observability-20260908/native-cause-shared-red.log",
+      "sha256": "0a9218a2c42f90a812342ffca23b6511d69c80414c578f5538a0a97ff22bbb18",
+      "lineCount": 941
+    },
+    {
+      "label": "Android causal repaired pass",
+      "localPath": "/tmp/call-observability-20260908/native-cause-shared-green.log",
+      "sha256": "fb25bb23d2cd3177afcfa4663ec92fc708bcb4962f6048ecc7cfc1a8e6d9e084",
+      "lineCount": 919
+    },
+    {
+      "label": "Swift shared fixture pre-fix failure",
+      "localPath": "/tmp/call-observability-20260908/native-cause-swift-red.log",
+      "sha256": "d3d72d115a620e7f9fbb91828fee01ad1764588e48b021b1412517b9255c60a7",
+      "lineCount": 46
+    },
+    {
+      "label": "Swift host repaired pass",
+      "localPath": "/tmp/call-observability-20260908/native-cause-swift-green.log",
+      "sha256": "9544b2d4bc395c1d76a7281b0d4ec6760f3676485a774a524be745873a6763bf",
+      "lineCount": 52
+    },
+    {
+      "label": "Final Android debug packaging",
+      "localPath": "/tmp/call-observability-20260908/android-build-4e3b67cb88cc8ccc.log",
+      "sha256": "ba3b780357af07fc18a8536cfc1e14387be05be9a7db47953bb0ee37de034060",
+      "lineCount": 15
+    },
+    {
+      "label": "Final iOS profile packaging",
+      "localPath": "/tmp/call-observability-20260908/ios-build-e9811addae2ee7a4.log",
+      "sha256": "b8710397935b368b0a98b51471dd95960529c6737774f52e7d616b53b2ead65b",
+      "lineCount": 16
+    },
+    {
+      "label": "Final Android native cause/build preservation",
+      "localPath": "/tmp/call-observability-20260908/native-cause-build-final.log",
+      "sha256": "cc41b32632850c6e5612566618a48efcf3b37fabb5c937e512ba87425808e321",
+      "lineCount": 919
+    },
+    {
+      "label": "Final Swift host cause/build preservation",
+      "localPath": "/tmp/call-observability-20260908/native-cause-build-swift-green.log",
+      "sha256": "2173fe3cd452c50e1bb658b3d94d26b35cdddb9faad30b3332e687a43bcb5eb0",
+      "lineCount": 56
+    },
+    {
+      "label": "Final Android package",
+      "localPath": "/tmp/call-observability-20260908/android-build-58b1ba6035e82327.log",
+      "sha256": "92cd1cf4154fab3771ed267acac6e30fa95635d40143c92d59cac9ff4f45ac37",
+      "lineCount": 15
+    },
+    {
+      "label": "Final iOS profile package",
+      "localPath": "/tmp/call-observability-20260908/ios-build-8bc9c8a8e32d3a38.log",
+      "sha256": "c05ce0867f3af45270ad6ae031e74dd4a0b87f15545ca8e84c089ed20e2164d0",
+      "lineCount": 16
+    },
+    {
+      "label": "Final curated1to1",
+      "localPath": "/tmp/call-observability-20260908/curated-1to1-final-admission-cause.log",
+      "sha256": "81a8573ea40f1e386f715fc0a5eb052a6488ab8a3e3980ec1cf217f8b6eada4a",
+      "lineCount": 13738
+    }
+  ],
+  "graphify": {
+    "finalNativeAffected": "c612587c4a8f462a"
+  },
+  "packageStatus": "final_built_manifest_verified",
+  "supersededPackages": {
+    "sourceStamp": "3bd50f6245570708",
+    "androidSha256": "7cbc232621516c0c907b854c4d23ecf7f354f56a339c2189059683051d33bc83",
+    "iosTreeSha256": "0df9e36f612db8522a4e4b81dde7b1645104e0400ab4e03b58d9d7cbe0dad4a7",
+    "reason": "Dart-to-Go request envelope and diagnostics status display corrected before final packages."
+  },
+  "supersededAndroidNativeDisabled": {
+    "sourceStamp": "447d22a1e20fb7ae",
+    "diagnosticsBuild": "447d22a1e20fb7ae",
+    "sha256": "2d2711d4bc65708d0c0a2feff589103a5a299ac405bea4c4adbadbac6040e7de",
+    "nativeGradleProperties": {
+      "enableAndroidNativeCalls": false
+    },
+    "reason": "Lab APK packaging omitted the existing explicit native Gradle enable flag. The original working deploy recipe supplies this flag; native production defaults remain unchanged. This is not attributed to the original beta incident.",
+    "preservedPath": "/tmp/call-observability-20260908/android-native-disabled-447d22a1e20fb7ae.apk"
+  },
+  "dartEntrypoint": {
+    "passed": 7,
+    "failed": 0,
+    "analyzer": "clean"
+  },
+  "curated": {
+    "passed": 3544,
+    "skipped": 4,
+    "failed": 0,
+    "paths": 212,
+    "sourceStamp": "f1899f0d63e1724b",
+    "all58ProductionHashesUnchangedBeforeAndAfter": true,
+    "log": "curated-1to1-final-admission-cause.log"
+  },
+  "nativeEventBuild": {
+    "android": "1.0.1+111",
+    "ios": "1.0.1+111",
+    "assignedAt": "creation only; historical events are never relabeled"
+  },
+  "finalDiagnosticBatch": {
+    "sourceStamp": "f1899f0d63e1724b",
+    "authorityBehaviorChanged": false,
+    "evidence": "final-native-cause-validation.json"
+  }
+}

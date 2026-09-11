@@ -250,6 +250,72 @@ func TestAppDiagnosticHandlerAcknowledgesOnlyDurableOrPermanent(t *testing.T) {
 	}
 }
 
+func TestAppDiagnosticLegacySchemaAcceptsProjectedLockInMixedBatch(t *testing.T) {
+
+	// Exercise the real handler/store with the pre-lock-observation vocabulary.
+	// No production receiver upgrade or capability negotiation is assumed.
+	originalRules := appDiagnosticRules
+	var legacyRules appDiagnosticSchema
+	if err := json.Unmarshal(appDiagnosticSchemaJSON, &legacyRules); err != nil {
+		t.Fatal(err)
+	}
+	delete(legacyRules.EnumValues, "appLifecycle")
+	operations := []string{}
+	for _, operation := range legacyRules.EnumValues["operation"] {
+		if operation != "notification_flock" {
+			operations = append(operations, operation)
+		}
+	}
+	legacyRules.EnumValues["operation"] = operations
+	appDiagnosticRules = legacyRules
+	t.Cleanup(func() { appDiagnosticRules = originalRules })
+
+	s := appTestStore(t)
+	if err := s.configure("a", true, 1, false); err != nil {
+		t.Fatal(err)
+	}
+	original := appTestEvent()
+	rich := appTestEvent()
+	rich["feature"], rich["stage"], rich["outcome"] = "push", "snapshot", "pending"
+	rich["values"] = map[string]any{
+		"operation": "notification_flock", "appLifecycle": "paused",
+		"count": 1, "queuedEvents": 0, "durationMs": 40,
+		"droppedEvents": 0, "cleanupComplete": false,
+	}
+	if _, err := validateAppDiagnosticEvent(appJSON(rich), false); err == nil {
+		t.Fatal("legacy schema unexpectedly admitted the rich local vocabulary")
+	}
+	var projected map[string]any
+	if err := json.Unmarshal(appJSON(rich), &projected); err != nil {
+		t.Fatal(err)
+	}
+	values := projected["values"].(map[string]any)
+	values["operation"] = "other"
+	delete(values, "appLifecycle")
+	response := appDiagnosticResponse(appJSON(map[string]any{
+		"action": appDiagnosticsAction, "op": "upload", "consentEpoch": 1,
+		"events": []any{original, projected},
+	}), "a", s)
+	data := response["data"].(map[string]any)
+	accepted := data["acceptedEventIds"].([]string)
+	if response["status"] != "OK" || len(accepted) != 2 ||
+		accepted[0] != original["eventId"] || accepted[1] != rich["eventId"] ||
+		len(data["rejectedEventIds"].([]string)) != 0 {
+		t.Fatal("legacy receiver failed mixed-batch admission with original event IDs")
+	}
+	for _, event := range []map[string]any{original, projected} {
+		record := s.records[appDiagnosticBucket(appDiagnosticOwner("a"), event)]
+		if record == nil || len(record.Events) != 1 ||
+			string(record.Events[0].Event) != string(appJSON(event)) {
+			t.Fatal("receiver changed or lost an admitted event")
+		}
+	}
+	if rich["values"].(map[string]any)["appLifecycle"] != "paused" ||
+		rich["values"].(map[string]any)["operation"] != "notification_flock" {
+		t.Fatal("projection mutated rich local evidence")
+	}
+}
+
 func TestAppDiagnosticOriginalRunAndMultipleOSReportsRemainDistinct(t *testing.T) {
 	s := appTestStore(t)
 	_ = s.configure("a", true, 1, false)

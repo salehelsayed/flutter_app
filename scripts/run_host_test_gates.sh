@@ -66,6 +66,7 @@ readonly ONE_TO_ONE_HOST_TESTS=(
   "test/features/call/infrastructure/call_rtp_progress_sampler_test.dart"
   "test/features/settings/presentation/widgets/call_diagnostics_settings_section_test.dart"
   "test/core/diagnostics/app_diagnostics_test.dart"
+  "test/core/diagnostics/diagnostic_archive_writer_test.dart"
   "test/core/diagnostics/app_diagnostic_error_handlers_test.dart"
   "test/core/diagnostics/app_diagnostic_transport_test.dart"
   "test/core/diagnostics/production_app_diagnostics_test.dart"
@@ -135,6 +136,7 @@ readonly ONE_TO_ONE_HOST_TESTS=(
   "test/features/conversation/application/delete_message_use_case_test.dart"
   "test/features/conversation/application/handle_incoming_message_deletion_use_case_test.dart"
   "test/features/conversation/application/handle_delivery_receipt_use_case_test.dart"
+  "test/features/conversation/application/early_delivery_receipt_test.dart"
   "test/features/conversation/application/send_delivery_receipt_use_case_test.dart"
   "test/features/conversation/application/verify_inbox_custody_use_case_test.dart"
   "test/core/database/helpers/inbox_staging_db_helpers_test.dart"
@@ -199,6 +201,8 @@ readonly ONE_TO_ONE_HOST_TESTS=(
   "test/core/notifications/missed_call_notification_channel_test.dart"
   "test/features/conversation/presentation/widgets/conversation_header_test.dart"
   "test/features/conversation/presentation/navigation/conversation_route_transition_test.dart"
+  "test/features/conversation/presentation/navigation/conversation_open_transition_test.dart"
+  "test/shared/widgets/media/media_video_lifecycle_test.dart"
   # 294 DTR-15: shared compositional conversation-controller ownership,
   # lane-neutral mechanics, lifecycle, and exact facade/gate contracts.
   "test/features/conversation/presentation/controllers/conversation_controller_composition_contract_test.dart"
@@ -285,6 +289,7 @@ readonly ONE_TO_ONE_HOST_TESTS=(
   "test/features/groups/integration/announcement_private_reply_no_auto_send_test.dart"
   "test/features/conversation/presentation/widgets/letter_card_test.dart"
   "test/features/conversation/presentation/screens/conversation_screen_test.dart"
+  "test/features/conversation/presentation/screens/conversation_wired_call_timeline_refresh_test.dart"
   # 233: 1:1 shared media library — strict direct-scoped paging/filters/
   # cursors, cross-message typed viewer + lazy continuation, scoped-page
   # bookmarks, batch save/share with the ten-item ceiling, confirmed

@@ -210,22 +210,28 @@ void main() {
         groupMediaAndroidDisposableBuildProfile,
       );
 
-      final orchestrator = File(
-        'tool/sims/build_orchestrator.dart',
-      ).readAsStringSync();
-      expect(
-        _occurrences(
-          orchestrator,
-          '--android-project-arg=disableGoogleServicesForDisposableProof=true',
-        ),
-        1,
+      final arguments = effectiveSimsBuildArguments(
+        profile,
+        environment: const <String, String>{},
+      );
+      for (final flag in <String>[
+        '--android-project-arg=disableGoogleServicesForDisposableProof=true',
+        '--android-project-arg=enableGroupMedia269DisposableProof=true',
+      ]) {
+        expect(arguments.where((argument) => argument == flag), hasLength(1));
+      }
+      final fcmArguments = effectiveSimsBuildArguments(
+        manifest.buildProfileById('android.production_fcm')!,
+        environment: const <String, String>{},
       );
       expect(
-        _occurrences(
-          orchestrator,
-          '--android-project-arg=enableGroupMedia269DisposableProof=true',
+        fcmArguments,
+        isNot(
+          contains(
+            '--android-project-arg=disableGoogleServicesForDisposableProof=true',
+          ),
         ),
-        1,
+        reason: 'Disposable audio/group flags must not disable provider proof',
       );
 
       final gradle = File('android/app/build.gradle.kts').readAsStringSync();

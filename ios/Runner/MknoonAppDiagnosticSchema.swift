@@ -17,6 +17,7 @@ internal enum MknoonAppDiagnosticSchema {
     "direction": ["incoming", "outgoing"],
     "transport": ["direct", "relay", "unknown"],
     "errorClass": ["state", "format", "argument", "timeout", "platform", "file_system", "other"],
-    "operation": ["node_start", "node_stop", "relay_reconnect", "relay_probe", "peer_dial", "peer_disconnect", "other"]
+    "operation": ["node_start", "node_stop", "relay_reconnect", "relay_probe", "peer_dial", "peer_disconnect", "notification_flock", "other"],
+    "appLifecycle": ["unknown", "resumed", "inactive", "hidden", "paused", "detached"]
   ]
 }

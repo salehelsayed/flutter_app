@@ -1,0 +1,41 @@
+{
+  "verified_at_utc": "2026-09-09T15:02:42.489632+00:00",
+  "app": "mknoon",
+  "package": "com.mknoon.app",
+  "track": "mknoon-track-1",
+  "track_id": "4697806336001008061",
+  "release_id": "3",
+  "version_code": 115,
+  "version_name": "1.0.1",
+  "source": "Existing app bundle library; same build already uploaded to internal testing",
+  "old_release_observation": "Track had no releases at the start of this task; build 92 had already been removed before this task made changes.",
+  "release_review": "Ready to release; no errors or warnings shown on Preview and confirm",
+  "release_status": "Saved to Publishing overview; Not yet sent for review",
+  "release_notes": {
+    "en-GB": "fixed few bugs"
+  },
+  "tester_list": "mknoon-List-1",
+  "tester_count": 30,
+  "countries": [
+    "Egypt",
+    "Germany"
+  ],
+  "closed_test_opt_in_url": "https://play.google.com/apps/testing/com.mknoon.app",
+  "android_store_url": "https://play.google.com/store/apps/details?id=com.mknoon.app",
+  "child_safety": {
+    "status": "Saved; incomplete-declaration blocker no longer shown",
+    "standards_url": "https://mknoon.space/child-safety",
+    "contact": "saleh.m.elsayed@proton.me",
+    "in_app_reporting": true,
+    "compliance_and_authority_reporting": true,
+    "basis": "User-approved published standards and user confirmation that Safety & support works in build 115",
+    "public_page_check": "Loaded in Chrome; curl HEAD returned HTTP 200"
+  },
+  "publishing": {
+    "pending_changes": 14,
+    "submit_button_enabled": true,
+    "automatic_checks": "Running",
+    "review_submission_performed": false,
+    "managed_publishing": false
+  }
+}

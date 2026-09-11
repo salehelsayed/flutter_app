@@ -1,4 +1,26 @@
+import 'package:flutter_app/core/database/app_database_version.dart';
 import 'package:flutter_app/core/debug/group_media_ios_disposable_profile.dart';
+
+const String groupMediaDistinctAuthorityMode = 'distinctAccountAndTransport';
+const String groupMediaAccountBoundAuthorityMode = 'accountBoundLegacy';
+
+bool groupMediaAuthorityModeIsValid(String mode) =>
+    mode == groupMediaDistinctAuthorityMode ||
+    mode == groupMediaAccountBoundAuthorityMode;
+
+bool groupMediaRoleIdentityMatches(
+  String mode,
+  String account,
+  String transport,
+) =>
+    groupMediaAuthorityModeIsValid(mode) &&
+    account.isNotEmpty &&
+    account.trim() == account &&
+    transport.isNotEmpty &&
+    transport.trim() == transport &&
+    (mode == groupMediaAccountBoundAuthorityMode
+        ? account == transport
+        : account != transport);
 
 const String groupMediaReliabilityArtifactSchema =
     'mknoon.group-media-reliability.v1';
@@ -93,7 +115,24 @@ GroupMediaReliabilityValidation validateGroupMediaReliabilityArtifact(
   final artifact = _object(value, r'$', failures);
   if (artifact == null) return GroupMediaReliabilityValidation(failures);
 
-  _expectExactKeys(artifact, _artifactKeys, r'$', failures);
+  _expectExactKeys(
+    artifact,
+    <String>{
+      ..._artifactKeys,
+      if (artifact.containsKey('authority_mode')) 'authority_mode',
+    },
+    r'$',
+    failures,
+  );
+  final rawMode = artifact.containsKey('authority_mode')
+      ? artifact['authority_mode']
+      : groupMediaDistinctAuthorityMode;
+  final authorityMode = rawMode is String ? rawMode : '';
+  if (!groupMediaAuthorityModeIsValid(authorityMode)) {
+    failures.add(
+      r'$.authority_mode must name an exact supported authority mode',
+    );
+  }
   _expectValue(
     artifact,
     'schema',
@@ -118,6 +157,7 @@ GroupMediaReliabilityValidation validateGroupMediaReliabilityArtifact(
   final identityDigests = _validateIdentityFingerprints(
     artifact['identity_fingerprints'],
     failures,
+    authorityMode,
   );
   for (final role in const <String>['sender', 'receiver']) {
     final activeDevice = deviceDigests[role];
@@ -135,6 +175,7 @@ GroupMediaReliabilityValidation validateGroupMediaReliabilityArtifact(
     artifact['account_vs_transport_discriminator'],
     identityDigests,
     failures,
+    authorityMode,
   );
   _validateAcl(artifact['acl_entries'], identityDigests, failures);
   _validateMedia(artifact['media'], failures);
@@ -223,6 +264,7 @@ Map<String, String> _validateDeviceRoles(Object? value, List<String> failures) {
 Map<String, Map<String, String>> _validateIdentityFingerprints(
   Object? value,
   List<String> failures,
+  String authorityMode,
 ) {
   const path = r'$.identity_fingerprints';
   final identities = _object(value, path, failures);
@@ -259,14 +301,18 @@ Map<String, Map<String, String>> _validateIdentityFingerprints(
       failures,
     );
     if (account != null && transport != null) {
-      if (account == transport) {
-        failures.add('$rolePath must discriminate account and transport');
+      if (!groupMediaRoleIdentityMatches(authorityMode, account, transport)) {
+        failures.add(
+          '$rolePath must match the declared account/transport authority mode',
+        );
       }
       result[role] = <String, String>{
         'account': account,
         'transport': transport,
       };
-      if (!allDigests.add(account) || !allDigests.add(transport)) {
+      if (!allDigests.add(account) ||
+          (authorityMode == groupMediaDistinctAuthorityMode &&
+              !allDigests.add(transport))) {
         failures.add('$path fingerprints must be unique across both roles');
       }
     }
@@ -278,6 +324,7 @@ void _validateDiscriminator(
   Object? value,
   Map<String, Map<String, String>> identities,
   List<String> failures,
+  String authorityMode,
 ) {
   const path = r'$.account_vs_transport_discriminator';
   final discriminator = _object(value, path, failures);
@@ -289,9 +336,20 @@ void _validateDiscriminator(
     failures,
   );
   for (final role in const <String>['sender', 'receiver']) {
-    _expectValue(discriminator, role, true, path, failures);
+    _expectValue(
+      discriminator,
+      role,
+      authorityMode == groupMediaDistinctAuthorityMode,
+      path,
+      failures,
+    );
     final identity = identities[role];
-    if (identity != null && identity['account'] == identity['transport']) {
+    if (identity != null &&
+        !groupMediaRoleIdentityMatches(
+          authorityMode,
+          identity['account']!,
+          identity['transport']!,
+        )) {
       failures.add('$path.$role contradicts the identity fingerprints');
     }
   }
@@ -441,7 +499,13 @@ void _validateRoleDatabases(
         cipherVersion.contains(RegExp(r'[\r\n]'))) {
       failures.add('$rolePath.cipher_version must be a safe non-empty string');
     }
-    _expectValue(database, 'user_version', 104, rolePath, failures);
+    _expectValue(
+      database,
+      'user_version',
+      currentIdentityDatabaseVersion,
+      rolePath,
+      failures,
+    );
     _expectValue(database, 'reopened', true, rolePath, failures);
     roleRows[role] = _validateDatabaseRows(
       database['rows'],

@@ -13,6 +13,27 @@ internal protocol MknoonAppDiagnosticBackend {
   func replace(_ data: Data) throws
 }
 
+/// Bounds pending observations independently from archive size and disk speed.
+internal final class MknoonAppDiagnosticAdmission {
+  private let lock = NSLock()
+  private let limit: Int
+  private var pending = 0
+  private var dropped: Int64 = 0
+  init(limit: Int = 64) { self.limit = limit }
+  func enqueue(_ submit: (@escaping () -> Void) -> Void, work: @escaping (Int64) -> Void) {
+    lock.lock()
+    guard pending < limit else {
+      dropped = min(dropped + 1, 9_007_199_254_740_991); lock.unlock(); return
+    }
+    pending += 1; lock.unlock()
+    submit { [self] in
+      lock.lock(); let lost = dropped; dropped = 0; lock.unlock()
+      defer { lock.lock(); pending -= 1; lock.unlock() }
+      work(lost)
+    }
+  }
+}
+
 internal enum MknoonAppDiagnosticBridgeResponse {
   static let operations = ["startNode": "node_start", "stopNode": "node_stop", "relayReconnect": "relay_reconnect", "relayProbe": "relay_probe",
     "connectToPeer": "peer_dial", "disconnectPeer": "peer_disconnect", "nodeStatus": "other", "blobDecrypt": "other", "blobEncrypt": "other"]
@@ -170,7 +191,7 @@ internal final class MknoonAppDiagnosticSpool {
   }
   @discardableResult
   func append(_ feature: String, _ stage: String, _ outcome: String, _ reason: String = "none", values: [String: Any] = [:],
-              traceId: String? = nil, occurredAt: Int64? = nil, eventBuild: String? = nil) -> Bool {
+              traceId: String? = nil, occurredAt: Int64? = nil, eventBuild: String? = nil, deferPersistence: Bool = false) -> Bool {
     guard enabled, MknoonAppDiagnosticSchema.feature.contains(feature), MknoonAppDiagnosticSchema.stage.contains(stage),
           MknoonAppDiagnosticSchema.outcome.contains(outcome), MknoonAppDiagnosticSchema.reason.contains(reason) else { return false }
     let sequence = Self.integer(state["sequence"]) ?? 0
@@ -181,7 +202,7 @@ internal final class MknoonAppDiagnosticSpool {
       "feature": feature, "stage": stage, "outcome": outcome, "reason": reason, "build": Self.build(eventBuild ?? installedBuild), "values": Self.values(values)]
     if Self.uuid(traceId) { event["traceId"] = traceId!.lowercased() }
     guard Self.valid(event) else { return false }
-    events.append(event); enforceCaps(); return persist()
+    events.append(event); return deferPersistence || persist()
   }
   func importOsReport(crash: Bool, timestamp: Int64, intervalStart: Int64? = nil, durationMs: Int64 = 0, signal: Int64 = 0, reportBuild: String? = nil, fingerprint: String? = nil, reportIndex: Int = 0) -> Bool {
     let since = Self.integer(state["enabledSince"]) ?? 0
@@ -214,6 +235,10 @@ internal final class MknoonAppDiagnosticSpool {
     enforceCaps()
     return ["version": 1, "events": Array(events.prefix(max(1, min(64, limit)))), "droppedEvents": Self.integer(state["dropped"]) ?? 0]
   }
+  func recordDropped(_ count: Int64) {
+    guard enabled, count > 0 else { return }
+    state["dropped"] = min((Self.integer(state["dropped"]) ?? 0) + min(count, 9_007_199_254_740_991), 9_007_199_254_740_991)
+  }
   func ack(_ ids: [String]) -> Bool {
     guard ids.count <= 64, ids.allSatisfy(Self.uuid) else { return false }
     let previous = events; events.removeAll { ids.contains($0["eventId"] as? String ?? "") }
@@ -242,16 +267,19 @@ internal final class MknoonAppDiagnosticSpool {
     while !events.isEmpty && ((try? encoded())?.count ?? Self.maxBytes + 1) > Self.maxBytes { events.removeFirst(); drop(1) }
   }
   private func encoded() throws -> Data { try JSONSerialization.data(withJSONObject: ["version": 1, "state": state, "events": events, "osReports": osReports], options: .sortedKeys) }
+  func persistPending() -> Bool { persist() }
   private func persist() -> Bool {
     guard loaded else { return false }
-    do { let data = try encoded(); guard data.count <= Self.maxBytes else { return false }; try backend.replace(data); return true } catch { return false }
+    do { enforceCaps(); let data = try encoded(); guard data.count <= Self.maxBytes else { return false }; try backend.replace(data); return true } catch { return false }
   }
 }
 
 internal final class MknoonAppDiagnostics: NSObject {
   static let shared = MknoonAppDiagnostics()
   private let queue = DispatchQueue(label: "com.mknoon.app-diagnostics", qos: .utility)
+  private let admission = MknoonAppDiagnosticAdmission()
   private var spool: MknoonAppDiagnosticSpool?
+  private var persistenceScheduled = false // Accessed only by queue.
   private var sharedInbox: MknoonNseAppDiagnosticInbox?
   private static let installedBuild: String = {
     guard let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String,
@@ -266,7 +294,19 @@ internal final class MknoonAppDiagnostics: NSObject {
 #endif
   }
   func record(_ feature: String, _ stage: String, _ outcome: String, _ reason: String = "none", values: [String: Any] = [:], traceId: String? = nil) {
-    queue.async { [weak self] in self?.spool?.append(feature, stage, outcome, reason, values: values, traceId: traceId) }
+    admission.enqueue({ work in queue.async { work() } }) { [weak self] dropped in
+      guard let self else { return }
+      self.spool?.recordDropped(dropped)
+      if self.spool?.append(feature, stage, outcome, reason, values: values, traceId: traceId, deferPersistence: true) == true,
+         !self.persistenceScheduled {
+        self.persistenceScheduled = true
+        // FIFO preserves consent/ACK ordering while coalescing queued observations.
+        self.queue.async { [weak self] in
+          self?.persistenceScheduled = false
+          _ = self?.spool?.persistPending()
+        }
+      }
+    }
   }
   private func importExtensionEvents() -> Int64? {
     if sharedInbox == nil { sharedInbox = MknoonNseAppDiagnosticInbox.production() }

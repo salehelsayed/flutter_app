@@ -219,6 +219,11 @@ Future<int> runAndroidProductionAudioCallSimsAdapter({
     }
     final centralEnvironment = <String, String>{
       ...environment,
+      // Bind both APK preparation and app controls to the isolated campaign.
+      'ANDROID_APP_PACKAGE': androidProductionAudioCallAppPackage,
+      'SIMS_APP_ID': androidProductionAudioCallAppPackage,
+      'ORG_GRADLE_PROJECT_androidApplicationId':
+          androidProductionAudioCallAppPackage,
       'GOTOOLCHAIN': androidProductionAudioCallGoToolchain,
       'RELIABILITY_MULTI_DEVICE_IDS': devices.join(','),
       'SIMS_ANDROID_PHYSICAL_DEVICE_ID': devices.first,

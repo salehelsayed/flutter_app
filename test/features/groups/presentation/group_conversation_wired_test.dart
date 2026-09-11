@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'package:flutter_app/core/media/group_upload_retry_signal.dart';
 import 'dart:convert';
 import 'dart:io';
 
@@ -1033,6 +1034,7 @@ class _CompletionAwareGroupMessageRepository
 
   final CountingMediaAttachmentRepository mediaRepo;
   Object? completionError;
+  Object? projectionError;
   bool completionResult = true;
   Future<void> Function(MediaAttachment expectedAttachment)?
   beforeFalseCompletion;
@@ -1126,6 +1128,7 @@ class _CompletionAwareGroupMessageRepository
     required UploadMediaFailed failure,
   }) async {
     projectionCalls++;
+    if (projectionError != null) throw projectionError!;
     projectedFailures.add(failure);
     final expected = _expectedByAttachmentId[attachmentId];
     final current = await mediaRepo.getAttachmentById(attachmentId);
@@ -2567,6 +2570,11 @@ void main() {
         )..completionError = StateError('simulated completion persistence');
         final fileManager = TrackingDurableMediaFileManager(tempDir);
         var uploadCalls = 0;
+        final retryLeaseCounts = <int>[];
+        final retrySubscription = groupUploadRetryRequests.listen((_) {
+          retryLeaseCounts.add(mediaUploadInFlightTracker.inFlightCount);
+        });
+        addTearDown(retrySubscription.cancel);
 
         await tester.pumpWidget(
           buildWidget(
@@ -2610,6 +2618,9 @@ void main() {
         expect(completionRepo.completionCalls, 1);
         expect(completionRepo.projectionCalls, 1);
         expect(completionRepo.appliedProjectionCalls, 1);
+        expect(retryLeaseCounts, [
+          0,
+        ], reason: 'retry after releasing the lease');
         expect(completionRepo.projectedFailures, hasLength(1));
         final projectedFailure = completionRepo.projectedFailures.isEmpty
             ? null
@@ -15922,14 +15933,14 @@ void main() {
           )).single.downloadStatus,
           'upload_pending',
         );
-        // 149: the upload-pending feedback moved INLINE — the MediaGridCell
-        // upload-pending placeholder ("Uploading media") conveys it, so the
-        // redundant transient snackbar is dropped.
+        // Retained metadata conveys pending work, without claiming that bytes
+        // are currently uploading or adding a redundant transient snackbar.
         expect(
           find.text('Media upload is still finishing. It will retry soon.'),
           findsNothing,
         );
-        expect(find.text('Uploading media'), findsOneWidget);
+        expect(find.text('Media pending upload'), findsOneWidget);
+        expect(find.text('Uploading media'), findsNothing);
         expect(find.text('Could not retry media message.'), findsNothing);
       },
     );
@@ -16885,6 +16896,120 @@ void main() {
         await pumpUntilFuturesComplete(tester, [stopFuture]);
         await pumpFrames(tester, count: 20);
         expect(mediaUploadInFlightTracker.inFlightCount, 0);
+      },
+    );
+
+    testWidgets(
+      'voice upload projection exception clears busy UI and retains retry data',
+      (tester) async {
+        final group = makeChatGroup();
+        await groupRepo.saveGroup(group);
+        await saveActiveGroupMembers(groupRepo, group);
+        final tempDir = Directory.systemTemp.createTempSync(
+          'group-voice-stall-',
+        );
+        addTearDown(() => tempDir.deleteSync(recursive: true));
+        final source = File(p.join(tempDir.path, 'voice.m4a'))
+          ..writeAsStringSync('voice');
+        final recorder = FakeAudioRecorderService()
+          ..fakeDurationMs = 2800
+          ..fakeSizeBytes = 44100
+          ..fakeOutputPath = source.path;
+        final repository = _CompletionAwareGroupMessageRepository(
+          mediaRepo: mediaAttachmentRepo,
+        )..projectionError = StateError('projection storage failure');
+        final fileManager = TrackingDurableMediaFileManager(tempDir);
+        final uploadStarted = Completer<void>();
+        final uploadGate = Completer<void>();
+        addTearDown(() {
+          if (!uploadGate.isCompleted) uploadGate.complete();
+        });
+        final retryLeaseCounts = <int>[];
+        final retrySubscription = groupUploadRetryRequests.listen((_) {
+          retryLeaseCounts.add(mediaUploadInFlightTracker.inFlightCount);
+        });
+        addTearDown(retrySubscription.cancel);
+        await tester.pumpWidget(
+          buildWidget(
+            group: group,
+            messageRepo: repository,
+            mediaRepo: mediaAttachmentRepo,
+            mediaFileManager: fileManager,
+            audioRecorderService: recorder,
+            uploadMediaFn:
+                ({
+                  required bridge,
+                  required localFilePath,
+                  required mime,
+                  required recipientPeerId,
+                  String? blobId,
+                  mediaFileManager,
+                  width,
+                  height,
+                  durationMs,
+                  waveform,
+                  allowedPeers,
+                  deleteSourceWhenDone = false,
+                  preparedArtifact,
+                }) async {
+                  uploadStarted.complete();
+                  await uploadGate.future;
+                  return null;
+                },
+          ),
+        );
+        await pumpFrames(tester, count: 20);
+        final screen = tester.widget<GroupConversationScreen>(
+          find.byType(GroupConversationScreen),
+        );
+        await (screen.onRecordStart! as Future<void> Function())();
+        await tester.pump();
+        Object? escapedError;
+        final stop = (screen.onRecordStop! as Future<void> Function())()
+            .catchError((Object error) {
+              escapedError = error;
+            });
+        await pumpUntilAsyncWorkSettles(
+          tester,
+          () => uploadStarted.isCompleted,
+        );
+        expect(uploadStarted.isCompleted, isTrue);
+        expect(
+          tester
+              .widget<GroupConversationScreen>(
+                find.byType(GroupConversationScreen),
+              )
+              .composerStateListenable!
+              .value
+              .isUploading,
+          isTrue,
+        );
+        uploadGate.complete();
+        await pumpUntilFuturesComplete(tester, [stop]);
+        await pumpFrames(tester, count: 20);
+        expect(
+          tester
+              .widget<GroupConversationScreen>(
+                find.byType(GroupConversationScreen),
+              )
+              .composerStateListenable!
+              .value
+              .isUploading,
+          isFalse,
+        );
+        expect(escapedError, isNull);
+        expect(retryLeaseCounts, [0]);
+        final pending = await mediaAttachmentRepo.getUploadPendingAttachments(
+          owner: MediaOwnerLane.group,
+        );
+        expect(pending, hasLength(1));
+        expect(
+          File(
+            await fileManager.resolveStoredPath(pending.single.localPath!),
+          ).existsSync(),
+          isTrue,
+        );
+        expect(groupPublishPayloads(bridge), isEmpty);
       },
     );
 
@@ -18128,6 +18253,11 @@ void main() {
           ..fakeOutputPath = tempVoice.path;
         final gatedBridge = _GatedBackgroundTaskBridge();
         bridge = gatedBridge;
+        addTearDown(() {
+          if (!gatedBridge.beginGate.isCompleted) {
+            gatedBridge.beginGate.complete();
+          }
+        });
 
         await tester.pumpWidget(
           buildWidget(
@@ -18151,25 +18281,20 @@ void main() {
         final recordingScreen = tester.widget<GroupConversationScreen>(
           find.byType(GroupConversationScreen),
         );
-        late Future<void> stopFuture;
-        await tester.runAsync(() async {
-          stopFuture =
-              (recordingScreen.onRecordStop! as Future<void> Function())();
-          await Future<void>.delayed(const Duration(milliseconds: 200));
-        });
-        await pumpUntil(
+        final stopFuture =
+            (recordingScreen.onRecordStop! as Future<void> Function())();
+        // Durable file work crosses real I/O and widget fake time. Wait for
+        // the exact begin boundary instead of assuming a 200ms head start.
+        await pumpUntilAsyncWorkSettles(
           tester,
           () => gatedBridge.beginStarted.isCompleted,
-          maxPumps: 240,
         );
         expect(gatedBridge.beginStarted.isCompleted, isTrue);
 
         await tester.pumpWidget(const SizedBox.shrink());
         await tester.pump();
         gatedBridge.beginGate.complete();
-        await tester.runAsync(() async {
-          await stopFuture.timeout(const Duration(seconds: 10));
-        });
+        await pumpUntilFuturesComplete(tester, [stopFuture]);
 
         expect(gatedBridge.endCalls, 1);
       },

@@ -1,0 +1,22 @@
+{
+  "operatorSha256": "d6f936c20d36379697851981e5dc81fe842497cd579c6c0510a092461037f0cf",
+  "postPreflightTechnicalSetupFailure": {
+    "alertEligible": false,
+    "alertThreshold": 0.2,
+    "denominator": 0,
+    "minimumSamples": 5,
+    "numerator": 0,
+    "rate": null
+  },
+  "preflightRejection": {
+    "alertEligible": false,
+    "alertThreshold": 0.2,
+    "denominator": 1,
+    "minimumSamples": 5,
+    "numerator": 1,
+    "rate": 1.0
+  },
+  "sourceOnlyReplay": true,
+  "sourceSnapshot": "relay-operator-live-20260908T153152Z.json",
+  "traceId": "eec02a59-40f7-44c5-9568-34cf7f191518"
+}

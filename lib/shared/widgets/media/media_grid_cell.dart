@@ -265,17 +265,14 @@ class MediaGridCell extends StatelessWidget {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              const SizedBox(
-                width: 20,
-                height: 20,
-                child: CircularProgressIndicator(
-                  strokeWidth: 2,
-                  color: Color(0xFF4ecdc4),
-                ),
+              const Icon(
+                Icons.schedule_rounded,
+                size: 20,
+                color: Color.fromRGBO(255, 255, 255, 0.58),
               ),
               const SizedBox(height: 8),
               Text(
-                l10n.upload_progress_title,
+                l10n.post_media_pending_upload,
                 textAlign: TextAlign.center,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,

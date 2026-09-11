@@ -1,0 +1,226 @@
+{
+  "alerts": [
+    {
+      "clientReportedDroppedEvents": 36,
+      "droppedEvents": 0,
+      "invalidEvents": 0,
+      "invalidRecords": 4,
+      "kind": "telemetry_coverage_gap",
+      "lossCountIsLowerBound": false,
+      "scope": "retained_lifetime_and_validation"
+    }
+  ],
+  "attempts": [
+    {
+      "attemptId": "69765552-cc95-4522-a5a0-8d9429960690",
+      "build": "1.0.1+114",
+      "completeness": "start_and_final",
+      "crossRunRecovery": false,
+      "durationMs": 2,
+      "endpointAlias": "endpoint-1",
+      "eventCount": 6,
+      "feature": "message",
+      "finalObserved": true,
+      "firstFailureReason": null,
+      "firstFailureStage": null,
+      "firstReceivedAtMs": 1788982219792,
+      "lastObservedStage": "receipt",
+      "lastReceivedAtMs": 1788982220139,
+      "outcome": "success",
+      "platform": "ios",
+      "reason": "duplicate",
+      "runId": "92967673-12f8-41fa-aff7-5b836b90bd72",
+      "runIds": [
+        "92967673-12f8-41fa-aff7-5b836b90bd72"
+      ],
+      "sources": [
+        "flutter"
+      ],
+      "startObserved": true,
+      "traceId": "eaadb345-273f-4438-887b-7269bdfc660b"
+    }
+  ],
+  "attemptsObserved": 1,
+  "attemptsTruncated": 0,
+  "errors": [],
+  "eventReports": 6,
+  "evidenceIncomplete": true,
+  "evidenceScope": "Authenticated endpoint reports; receipt time is server-observed. UUID joins are diagnostic correlation, not proof of message custody, participants or content. Missing/disabled/offline/legacy endpoint records remain unknown.",
+  "generatedAtMs": 1788985088861,
+  "groups": [
+    {
+      "attemptsObserved": 1,
+      "build": "1.0.1+114",
+      "expectedOutcomesExcludedFromTechnicalRate": 0,
+      "feature": "message",
+      "missingFinal": 0,
+      "missingStart": 0,
+      "outcomes": {
+        "success": 1
+      },
+      "platform": "ios",
+      "technicalFailureRate": 0.0,
+      "technicalFailures": 0,
+      "technicalRateDenominator": 1
+    }
+  ],
+  "health": {
+    "clientReportedDroppedEvents": 36,
+    "collectorState": "readable",
+    "consentingOwners": 24,
+    "droppedEvents": 0,
+    "invalidRecords": 4,
+    "lossCountLowerBound": 0,
+    "recordFiles": 1922,
+    "retainedOwnerCount": 24
+  },
+  "loss": {
+    "retainedLifetime": {
+      "clientReportedDroppedEvents": 36,
+      "droppedEvents": 0,
+      "lossCountIsLowerBound": false,
+      "scope": "Server counters over retained records; latest retained client cumulative snapshot per owner. Client and server counters are separate and must not be summed or divided by window event counts."
+    },
+    "window": {
+      "newDroppedEvents": null,
+      "scope": "A standalone projection has no comparable monitor baseline; cumulative snapshot values do not establish current-window loss."
+    }
+  },
+  "retentionDays": 14,
+  "schemaVersion": 1,
+  "timeline": [
+    {
+      "attemptId": "69765552-cc95-4522-a5a0-8d9429960690",
+      "build": "1.0.1+114",
+      "elapsedMs": 146,
+      "endpointAlias": "endpoint-1",
+      "eventId": "5d857959-7b89-405d-9d31-db9e5f82d3e3",
+      "feature": "message",
+      "occurredAtMs": 1788982219083,
+      "outcome": "success",
+      "platform": "ios",
+      "reason": "duplicate",
+      "receivedAtMs": 1788982219792,
+      "runId": "92967673-12f8-41fa-aff7-5b836b90bd72",
+      "schemaVersion": 1,
+      "sequence": 25,
+      "source": "flutter",
+      "stage": "finish",
+      "traceId": "eaadb345-273f-4438-887b-7269bdfc660b",
+      "values": {
+        "committed": false,
+        "direction": "incoming",
+        "durationMs": 2
+      }
+    },
+    {
+      "attemptId": "69765552-cc95-4522-a5a0-8d9429960690",
+      "build": "1.0.1+114",
+      "elapsedMs": 144,
+      "endpointAlias": "endpoint-1",
+      "eventId": "66e83589-59df-4254-9eae-c23bf3eaf25e",
+      "feature": "message",
+      "occurredAtMs": 1788982219081,
+      "outcome": "started",
+      "platform": "ios",
+      "reason": "none",
+      "receivedAtMs": 1788982219995,
+      "runId": "92967673-12f8-41fa-aff7-5b836b90bd72",
+      "schemaVersion": 1,
+      "sequence": 21,
+      "source": "flutter",
+      "stage": "start",
+      "traceId": "eaadb345-273f-4438-887b-7269bdfc660b",
+      "values": {}
+    },
+    {
+      "attemptId": "69765552-cc95-4522-a5a0-8d9429960690",
+      "build": "1.0.1+114",
+      "elapsedMs": 144,
+      "endpointAlias": "endpoint-1",
+      "eventId": "a72a5a7e-ae09-42c0-aa0f-7dacd4d73fca",
+      "feature": "message",
+      "occurredAtMs": 1788982219081,
+      "outcome": "started",
+      "platform": "ios",
+      "reason": "none",
+      "receivedAtMs": 1788982220003,
+      "runId": "92967673-12f8-41fa-aff7-5b836b90bd72",
+      "schemaVersion": 1,
+      "sequence": 22,
+      "source": "flutter",
+      "stage": "preflight",
+      "traceId": "eaadb345-273f-4438-887b-7269bdfc660b",
+      "values": {
+        "direction": "incoming"
+      }
+    },
+    {
+      "attemptId": "69765552-cc95-4522-a5a0-8d9429960690",
+      "build": "1.0.1+114",
+      "elapsedMs": 144,
+      "endpointAlias": "endpoint-1",
+      "eventId": "88a6ef0e-1e50-43ba-9ef2-75bcdb615cf0",
+      "feature": "message",
+      "occurredAtMs": 1788982219081,
+      "outcome": "ok",
+      "platform": "ios",
+      "reason": "none",
+      "receivedAtMs": 1788982220009,
+      "runId": "92967673-12f8-41fa-aff7-5b836b90bd72",
+      "schemaVersion": 1,
+      "sequence": 23,
+      "source": "flutter",
+      "stage": "decrypt",
+      "traceId": "eaadb345-273f-4438-887b-7269bdfc660b",
+      "values": {
+        "direction": "incoming"
+      }
+    },
+    {
+      "attemptId": "69765552-cc95-4522-a5a0-8d9429960690",
+      "build": "1.0.1+114",
+      "elapsedMs": 146,
+      "endpointAlias": "endpoint-1",
+      "eventId": "b5ad1631-3ebb-4487-8c56-2be61d069f20",
+      "feature": "message",
+      "occurredAtMs": 1788982219083,
+      "outcome": "started",
+      "platform": "ios",
+      "reason": "none",
+      "receivedAtMs": 1788982220017,
+      "runId": "92967673-12f8-41fa-aff7-5b836b90bd72",
+      "schemaVersion": 1,
+      "sequence": 24,
+      "source": "flutter",
+      "stage": "receipt",
+      "traceId": "eaadb345-273f-4438-887b-7269bdfc660b",
+      "values": {}
+    },
+    {
+      "attemptId": "69765552-cc95-4522-a5a0-8d9429960690",
+      "build": "1.0.1+114",
+      "elapsedMs": 590,
+      "endpointAlias": "endpoint-1",
+      "eventId": "6f6334a3-f7cb-4fa7-9aa5-8126fc50f5ce",
+      "feature": "message",
+      "occurredAtMs": 1788982219527,
+      "outcome": "ok",
+      "platform": "ios",
+      "reason": "none",
+      "receivedAtMs": 1788982220139,
+      "runId": "92967673-12f8-41fa-aff7-5b836b90bd72",
+      "schemaVersion": 1,
+      "sequence": 39,
+      "source": "flutter",
+      "stage": "receipt",
+      "traceId": "eaadb345-273f-4438-887b-7269bdfc660b",
+      "values": {
+        "acknowledged": true,
+        "direction": "incoming"
+      }
+    }
+  ],
+  "timelineTruncated": 0,
+  "windowHours": 336.0
+}

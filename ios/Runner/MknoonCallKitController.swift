@@ -294,11 +294,43 @@ internal final class MknoonCallKitController: NSObject, CXProviderDelegate {
     }
   }
 
+  /// Only fixed diagnostic provenance crosses a deferred presentation callback.
+  /// Never retain NSError, its domain text, or userInfo in a call waiter.
+  private struct IncomingReportDiagnostics {
+    let providerFailed: Bool
+    let osReasonCode: Int?
+
+    init(error: Error?) {
+      providerFailed = error != nil
+      let native = error as NSError?
+      // Closed CXErrorDomainIncomingCall vocabulary in the supported SDK.
+      osReasonCode = native.flatMap {
+        $0.domain == CXErrorDomainIncomingCall && (0...7).contains($0.code) ? $0.code : nil
+      }
+    }
+
+    init(scope: [String: Any]) {
+      providerFailed = scope["incomingCallProviderError"] as? Bool == true
+      let code = scope["incomingCallOsReasonCode"] as? Int
+      osReasonCode = providerFailed ? code.flatMap { (0...7).contains($0) ? $0 : nil } : nil
+    }
+
+    func withScope(_ action: () -> Void) {
+      var context = MknoonCallDiagnosticScope.current
+      context.removeValue(forKey: "incomingCallProviderError")
+      context.removeValue(forKey: "incomingCallOsReasonCode")
+      if providerFailed { context["incomingCallProviderError"] = true }
+      if let osReasonCode { context["incomingCallOsReasonCode"] = osReasonCode }
+      MknoonCallDiagnosticScope.withContext(context, action)
+    }
+  }
+
   /// A coalesced push needs the application presentation result and its own
   /// CallKit report callback, in either order, before completing PushKit.
   private final class CoalescedPushReportCompletion {
     private let lock = NSLock()
     private var result: MknoonCallPresentationResult?
+    private var diagnostics = IncomingReportDiagnostics(error: nil)
     private var reportClaimed = false
     private var reportFinished = false
     private var completion: ((MknoonCallPresentationResult) -> Void)?
@@ -309,7 +341,10 @@ internal final class MknoonCallKitController: NSObject, CXProviderDelegate {
 
     func resolve(_ result: MknoonCallPresentationResult) {
       lock.lock()
-      if self.result == nil { self.result = result }
+      if self.result == nil {
+        self.result = result
+        diagnostics = IncomingReportDiagnostics(scope: MknoonCallDiagnosticScope.current)
+      }
       let ready = takeReadyCompletion()
       lock.unlock()
       ready?()
@@ -331,7 +366,8 @@ internal final class MknoonCallKitController: NSObject, CXProviderDelegate {
     private func takeReadyCompletion() -> (() -> Void)? {
       guard reportFinished, let result, let completion else { return nil }
       self.completion = nil
-      return { completion(result) }
+      let captured = diagnostics
+      return { captured.withScope { completion(result) } }
     }
   }
 
@@ -1446,14 +1482,17 @@ internal final class MknoonCallKitController: NSObject, CXProviderDelegate {
         if error == nil {
           reportingProvider.reportCall(with: payload.nativeCallId, endedAt: Date(), reason: .failed)
         }
-        for waiter in batch.takeWaiters() { waiter.completion(.callKitFailure) }
+        for waiter in batch.takeWaiters() {
+          IncomingReportDiagnostics(error: nil).withScope { waiter.completion(.callKitFailure) }
+        }
         return
       }
-      let outcome: (MknoonCallPresentationResult, [IncomingReportWaiter]) = self.synchronized {
+      let outcome: (MknoonCallPresentationResult, [IncomingReportWaiter], IncomingReportDiagnostics) = self.synchronized {
         let ownConcurrentReport = batch.waiters.contains { $0.coalesced && $0.reportedForPush }
         let adoptedExistingCall = (acceptsAlreadyReportedCall || ownConcurrentReport)
           && error.map(Self.isAlreadyReportedCallError) == true
         let result: MknoonCallPresentationResult
+        var diagnosticError: Error?
         let live = self.store.snapshot()
         if !self.callsEnabled || live?.nativeCallId != payload.nativeCallId || live?.terminalEvent != nil {
           if error == nil {
@@ -1462,7 +1501,7 @@ internal final class MknoonCallKitController: NSObject, CXProviderDelegate {
           _ = self.terminate(payload.nativeCallId, type: .nativeFailure, reason: .failed)
           result = self.callsEnabled ? .callKitFailure : .disabled
         } else if let error, !adoptedExistingCall {
-          _ = error
+          diagnosticError = error
           _ = self.terminate(payload.nativeCallId, type: .nativeFailure, reason: .failed)
           result = .callKitFailure
         } else if !self.record(payload.nativeCallId, .presented) {
@@ -1473,13 +1512,13 @@ internal final class MknoonCallKitController: NSObject, CXProviderDelegate {
           result = adoptedExistingCall ? .duplicate : .presented
         }
         self.incomingReportWaiters.removeValue(forKey: payload.nativeCallId)
-        return (result, batch.takeWaiters())
+        return (result, batch.takeWaiters(), IncomingReportDiagnostics(error: diagnosticError))
       }
       for waiter in outcome.1 {
         let result = outcome.0 == .presented && waiter.coalesced
           ? MknoonCallPresentationResult.duplicate
           : outcome.0
-        waiter.completion(result)
+        outcome.2.withScope { waiter.completion(result) }
       }
     }
   }

@@ -47,16 +47,17 @@ type controlPlaneStores struct {
 	Push        *PushService
 	CallControl *CallControlService
 
-	RendezvousBackend                    RendezvousBackend
-	InboxBackend                         InboxBackend
-	GroupInboxBackend                    GroupInboxBackend
-	PushTokenBackend                     PushTokenBackend
-	GroupMessageDispatchAdmissionBackend groupMessageDispatchAdmissionBackend
-	WakeOutcomeBackend                   *redisWakeOutcomeStore
-	WakeOutcomeCoordinator               *wakeOutcomeCoordinator
-	CallControlBackend                   *redisCallControlStore
-	APNSVoIPPushEnabled                  bool
-	APNSVoIPEnvironment                  string
+	RendezvousBackend                     RendezvousBackend
+	InboxBackend                          InboxBackend
+	GroupInboxBackend                     GroupInboxBackend
+	PushTokenBackend                      PushTokenBackend
+	GroupMessageDispatchAdmissionBackend  groupMessageDispatchAdmissionBackend
+	DirectMessageDispatchAdmissionBackend messageDispatchAdmissionBackend
+	WakeOutcomeBackend                    *redisWakeOutcomeStore
+	WakeOutcomeCoordinator                *wakeOutcomeCoordinator
+	CallControlBackend                    *redisCallControlStore
+	APNSVoIPPushEnabled                   bool
+	APNSVoIPEnvironment                   string
 
 	closeFn func() error
 }
@@ -113,6 +114,10 @@ func newControlPlaneStores(
 			groupMessageDispatchAdmissionTTL,
 		)
 		push.groupMessageDispatchAdmission = groupMessageDispatchAdmissionBackend
+		directMessageDispatchAdmissionBackend := newMemoryDirectMessageDispatchAdmissionBackend(
+			directMessageDispatchAdmissionTTL,
+		)
+		push.directMessageDispatchAdmission = directMessageDispatchAdmissionBackend
 		rzBackend := newMemoryRendezvousBackend()
 		inboxBackend := newMemoryInboxBackendWithLimits(limits.MaxInboxMessagesPerPeer)
 		groupInboxBackend := newMemoryGroupInboxBackend(
@@ -128,13 +133,14 @@ func newControlPlaneStores(
 				push,
 				limits.MaxInboxMessagesPerPeer,
 			),
-			GroupInbox:                           groupInbox,
-			Push:                                 push,
-			RendezvousBackend:                    rzBackend,
-			InboxBackend:                         inboxBackend,
-			GroupInboxBackend:                    groupInboxBackend,
-			PushTokenBackend:                     pushBackend,
-			GroupMessageDispatchAdmissionBackend: groupMessageDispatchAdmissionBackend,
+			GroupInbox:                            groupInbox,
+			Push:                                  push,
+			RendezvousBackend:                     rzBackend,
+			InboxBackend:                          inboxBackend,
+			GroupInboxBackend:                     groupInboxBackend,
+			PushTokenBackend:                      pushBackend,
+			GroupMessageDispatchAdmissionBackend:  groupMessageDispatchAdmissionBackend,
+			DirectMessageDispatchAdmissionBackend: directMessageDispatchAdmissionBackend,
 		}
 		stores.Inbox.SetAckCustodyAdmissionEnabled(cfg.AckCustodyAdmissionEnabled)
 		stores.Inbox.SetWakeOutcomeAdmissionEnabled(false)
@@ -163,6 +169,12 @@ func newControlPlaneStores(
 			groupMessageDispatchAdmissionTTL,
 		)
 		push.groupMessageDispatchAdmission = groupMessageDispatchAdmissionBackend
+		directMessageDispatchAdmissionBackend := newRedisDirectMessageDispatchAdmissionBackend(
+			client,
+			cfg.RedisPrefix,
+			directMessageDispatchAdmissionTTL,
+		)
+		push.directMessageDispatchAdmission = directMessageDispatchAdmissionBackend
 		rzBackend := newRedisRendezvousBackend(client, cfg.RedisPrefix)
 		inboxBackend := newRedisInboxBackend(
 			client,
@@ -186,6 +198,7 @@ func newControlPlaneStores(
 			time.Now,
 		)
 		wakeOutcomeCoordinator.sendGroup = push.sendGroupWakeOutcomeThroughGateway
+		wakeOutcomeCoordinator.sendDirect = push.sendDirectWakeOutcomeThroughGateway
 		wakeOutcomeCoordinator.sendAndroidRich = func(ctx context.Context, claim wakeOutcomeClaim) pushDeliveryResult {
 			return push.sendAndroidRichRecovery(ctx, wakeOutcomeBackend, claim)
 		}
@@ -212,20 +225,21 @@ func newControlPlaneStores(
 				push,
 				limits.MaxInboxMessagesPerPeer,
 			),
-			GroupInbox:                           groupInbox,
-			Push:                                 push,
-			RendezvousBackend:                    rzBackend,
-			InboxBackend:                         inboxBackend,
-			GroupInboxBackend:                    groupInboxBackend,
-			PushTokenBackend:                     pushBackend,
-			GroupMessageDispatchAdmissionBackend: groupMessageDispatchAdmissionBackend,
-			WakeOutcomeBackend:                   wakeOutcomeBackend,
-			WakeOutcomeCoordinator:               wakeOutcomeCoordinator,
-			CallControl:                          callControl,
-			CallControlBackend:                   callControlBackend,
-			APNSVoIPPushEnabled:                  apnsVoIPConfig.Enabled,
-			APNSVoIPEnvironment:                  apnsVoIPConfig.Environment,
-			closeFn:                              client.Close,
+			GroupInbox:                            groupInbox,
+			Push:                                  push,
+			RendezvousBackend:                     rzBackend,
+			InboxBackend:                          inboxBackend,
+			GroupInboxBackend:                     groupInboxBackend,
+			PushTokenBackend:                      pushBackend,
+			GroupMessageDispatchAdmissionBackend:  groupMessageDispatchAdmissionBackend,
+			DirectMessageDispatchAdmissionBackend: directMessageDispatchAdmissionBackend,
+			WakeOutcomeBackend:                    wakeOutcomeBackend,
+			WakeOutcomeCoordinator:                wakeOutcomeCoordinator,
+			CallControl:                           callControl,
+			CallControlBackend:                    callControlBackend,
+			APNSVoIPPushEnabled:                   apnsVoIPConfig.Enabled,
+			APNSVoIPEnvironment:                   apnsVoIPConfig.Environment,
+			closeFn:                               client.Close,
 		}
 		stores.Inbox.SetAckCustodyAdmissionEnabled(cfg.AckCustodyAdmissionEnabled)
 		stores.Inbox.SetWakeOutcomeAdmissionEnabled(true)

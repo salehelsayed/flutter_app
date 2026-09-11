@@ -1,0 +1,297 @@
+{
+  "method": "Single authenticated receiver partition; schema-validated push events only; owner identifiers omitted",
+  "events": [
+    {
+      "receivedAtMs": 1789027076233,
+      "build": "1.0.1+116",
+      "elapsedMs": 317884561,
+      "eventId": "f5553d84-d383-4c85-a4a0-58be50d7435a",
+      "feature": "push",
+      "occurredAtMs": 1789027051250,
+      "outcome": "ok",
+      "platform": "ios",
+      "reason": "none",
+      "reportingRunId": "bfcc66fb-1dc8-4699-93b3-7d4b7c45d179",
+      "runId": "59c27f39-c0c6-4baf-b26a-c8d6e4745c09",
+      "schemaVersion": 1,
+      "sequence": 197,
+      "source": "ios",
+      "stage": "receive",
+      "traceId": "0a88f0b7-6b06-4df3-bef1-5746a9290880",
+      "values": {
+        "extensionProcess": true
+      }
+    },
+    {
+      "receivedAtMs": 1789027076239,
+      "build": "1.0.1+116",
+      "elapsedMs": 317884561,
+      "eventId": "9c5f50ef-bf16-4a4e-8079-d961d0260436",
+      "feature": "push",
+      "occurredAtMs": 1789027051250,
+      "outcome": "started",
+      "platform": "ios",
+      "reason": "none",
+      "reportingRunId": "bfcc66fb-1dc8-4699-93b3-7d4b7c45d179",
+      "runId": "59c27f39-c0c6-4baf-b26a-c8d6e4745c09",
+      "schemaVersion": 1,
+      "sequence": 198,
+      "source": "ios",
+      "stage": "process",
+      "traceId": "0a88f0b7-6b06-4df3-bef1-5746a9290880",
+      "values": {
+        "extensionProcess": true
+      }
+    },
+    {
+      "receivedAtMs": 1789027076246,
+      "build": "1.0.1+116",
+      "elapsedMs": 317884573,
+      "eventId": "fd261eed-fad0-4a6c-b28b-afe3c52a6c56",
+      "feature": "push",
+      "occurredAtMs": 1789027051262,
+      "outcome": "ok",
+      "platform": "ios",
+      "reason": "none",
+      "reportingRunId": "bfcc66fb-1dc8-4699-93b3-7d4b7c45d179",
+      "runId": "59c27f39-c0c6-4baf-b26a-c8d6e4745c09",
+      "schemaVersion": 1,
+      "sequence": 199,
+      "source": "ios",
+      "stage": "process",
+      "traceId": "0a88f0b7-6b06-4df3-bef1-5746a9290880",
+      "values": {
+        "extensionProcess": true
+      }
+    },
+    {
+      "receivedAtMs": 1789027076252,
+      "build": "1.0.1+116",
+      "elapsedMs": 317884576,
+      "eventId": "b3ba0873-14d1-4a89-b5bc-6f1b2fe543c6",
+      "feature": "push",
+      "occurredAtMs": 1789027051265,
+      "outcome": "pending",
+      "platform": "ios",
+      "reason": "none",
+      "reportingRunId": "bfcc66fb-1dc8-4699-93b3-7d4b7c45d179",
+      "runId": "59c27f39-c0c6-4baf-b26a-c8d6e4745c09",
+      "schemaVersion": 1,
+      "sequence": 200,
+      "source": "ios",
+      "stage": "presentation",
+      "traceId": "0a88f0b7-6b06-4df3-bef1-5746a9290880",
+      "values": {
+        "extensionProcess": true
+      }
+    },
+    {
+      "receivedAtMs": 1789027101515,
+      "build": "1.0.1+116",
+      "elapsedMs": 317931363,
+      "eventId": "29a2e390-1bf0-40a9-93e1-fb15d1ad0a5f",
+      "feature": "push",
+      "occurredAtMs": 1789027098053,
+      "outcome": "ok",
+      "platform": "ios",
+      "reason": "none",
+      "reportingRunId": "bfcc66fb-1dc8-4699-93b3-7d4b7c45d179",
+      "runId": "10a80369-4afe-49b3-a823-3642234f7e90",
+      "schemaVersion": 1,
+      "sequence": 968,
+      "source": "ios",
+      "stage": "receive",
+      "traceId": "f733f51f-7d8a-4734-9fb7-89afa4d0d90f",
+      "values": {
+        "direction": "incoming"
+      }
+    },
+    {
+      "receivedAtMs": 1789027101521,
+      "build": "1.0.1+116",
+      "elapsedMs": 317931370,
+      "eventId": "7f4ac9f9-9f6f-486e-834b-e39d0191aab3",
+      "feature": "push",
+      "occurredAtMs": 1789027098059,
+      "outcome": "blocked",
+      "platform": "ios",
+      "reason": "lifecycle_interrupted",
+      "reportingRunId": "bfcc66fb-1dc8-4699-93b3-7d4b7c45d179",
+      "runId": "10a80369-4afe-49b3-a823-3642234f7e90",
+      "schemaVersion": 1,
+      "sequence": 969,
+      "source": "ios",
+      "stage": "presentation",
+      "traceId": "f733f51f-7d8a-4734-9fb7-89afa4d0d90f",
+      "values": {}
+    },
+    {
+      "receivedAtMs": 1789027076176,
+      "build": "1.0.1+116",
+      "elapsedMs": 317895052,
+      "eventId": "6752a966-f78f-4a5a-98d8-765f78391278",
+      "feature": "push",
+      "occurredAtMs": 1789027061741,
+      "outcome": "pending",
+      "platform": "ios",
+      "reason": "none",
+      "reportingRunId": "bfcc66fb-1dc8-4699-93b3-7d4b7c45d179",
+      "runId": "59c27f39-c0c6-4baf-b26a-c8d6e4745c09",
+      "schemaVersion": 1,
+      "sequence": 204,
+      "source": "ios",
+      "stage": "presentation",
+      "traceId": "0f0719ae-d2b9-46bc-abfd-4128bfaba2d9",
+      "values": {
+        "extensionProcess": true
+      }
+    },
+    {
+      "receivedAtMs": 1789027076261,
+      "build": "1.0.1+116",
+      "elapsedMs": 317895034,
+      "eventId": "d4e02da9-c4f2-45dc-ad7f-b868f4e672d1",
+      "feature": "push",
+      "occurredAtMs": 1789027061723,
+      "outcome": "ok",
+      "platform": "ios",
+      "reason": "none",
+      "reportingRunId": "bfcc66fb-1dc8-4699-93b3-7d4b7c45d179",
+      "runId": "59c27f39-c0c6-4baf-b26a-c8d6e4745c09",
+      "schemaVersion": 1,
+      "sequence": 201,
+      "source": "ios",
+      "stage": "receive",
+      "traceId": "0f0719ae-d2b9-46bc-abfd-4128bfaba2d9",
+      "values": {
+        "extensionProcess": true
+      }
+    },
+    {
+      "receivedAtMs": 1789027076270,
+      "build": "1.0.1+116",
+      "elapsedMs": 317895034,
+      "eventId": "930d3d18-2a5d-4081-a350-d41b140350f4",
+      "feature": "push",
+      "occurredAtMs": 1789027061723,
+      "outcome": "started",
+      "platform": "ios",
+      "reason": "none",
+      "reportingRunId": "bfcc66fb-1dc8-4699-93b3-7d4b7c45d179",
+      "runId": "59c27f39-c0c6-4baf-b26a-c8d6e4745c09",
+      "schemaVersion": 1,
+      "sequence": 202,
+      "source": "ios",
+      "stage": "process",
+      "traceId": "0f0719ae-d2b9-46bc-abfd-4128bfaba2d9",
+      "values": {
+        "extensionProcess": true
+      }
+    },
+    {
+      "receivedAtMs": 1789027076276,
+      "build": "1.0.1+116",
+      "elapsedMs": 317895045,
+      "eventId": "0978a5ca-85eb-487b-8779-19af03fdff8b",
+      "feature": "push",
+      "occurredAtMs": 1789027061734,
+      "outcome": "ok",
+      "platform": "ios",
+      "reason": "none",
+      "reportingRunId": "bfcc66fb-1dc8-4699-93b3-7d4b7c45d179",
+      "runId": "59c27f39-c0c6-4baf-b26a-c8d6e4745c09",
+      "schemaVersion": 1,
+      "sequence": 203,
+      "source": "ios",
+      "stage": "process",
+      "traceId": "0f0719ae-d2b9-46bc-abfd-4128bfaba2d9",
+      "values": {
+        "extensionProcess": true
+      }
+    },
+    {
+      "receivedAtMs": 1789027101541,
+      "build": "1.0.1+116",
+      "elapsedMs": 317931326,
+      "eventId": "8a839e38-bd9b-4eac-8d98-8e157bfae194",
+      "feature": "push",
+      "occurredAtMs": 1789027098015,
+      "outcome": "ok",
+      "platform": "ios",
+      "reason": "none",
+      "reportingRunId": "bfcc66fb-1dc8-4699-93b3-7d4b7c45d179",
+      "runId": "59c27f39-c0c6-4baf-b26a-c8d6e4745c09",
+      "schemaVersion": 1,
+      "sequence": 205,
+      "source": "ios",
+      "stage": "receive",
+      "traceId": "847d2f91-ff7e-4033-8ddb-7158615c0637",
+      "values": {
+        "extensionProcess": true
+      }
+    },
+    {
+      "receivedAtMs": 1789027101547,
+      "build": "1.0.1+116",
+      "elapsedMs": 317931326,
+      "eventId": "b57047bb-0150-4354-896d-6e78cbf2fe95",
+      "feature": "push",
+      "occurredAtMs": 1789027098015,
+      "outcome": "started",
+      "platform": "ios",
+      "reason": "none",
+      "reportingRunId": "bfcc66fb-1dc8-4699-93b3-7d4b7c45d179",
+      "runId": "59c27f39-c0c6-4baf-b26a-c8d6e4745c09",
+      "schemaVersion": 1,
+      "sequence": 206,
+      "source": "ios",
+      "stage": "process",
+      "traceId": "847d2f91-ff7e-4033-8ddb-7158615c0637",
+      "values": {
+        "extensionProcess": true
+      }
+    },
+    {
+      "receivedAtMs": 1789027101557,
+      "build": "1.0.1+116",
+      "elapsedMs": 317931339,
+      "eventId": "8181fae6-2bc1-4d2b-982d-0300c8f7e191",
+      "feature": "push",
+      "occurredAtMs": 1789027098028,
+      "outcome": "ok",
+      "platform": "ios",
+      "reason": "none",
+      "reportingRunId": "bfcc66fb-1dc8-4699-93b3-7d4b7c45d179",
+      "runId": "59c27f39-c0c6-4baf-b26a-c8d6e4745c09",
+      "schemaVersion": 1,
+      "sequence": 207,
+      "source": "ios",
+      "stage": "process",
+      "traceId": "847d2f91-ff7e-4033-8ddb-7158615c0637",
+      "values": {
+        "extensionProcess": true
+      }
+    },
+    {
+      "receivedAtMs": 1789027101565,
+      "build": "1.0.1+116",
+      "elapsedMs": 317931345,
+      "eventId": "b9a4ace1-1b13-4a86-b936-4ae6b64dad47",
+      "feature": "push",
+      "occurredAtMs": 1789027098034,
+      "outcome": "pending",
+      "platform": "ios",
+      "reason": "none",
+      "reportingRunId": "bfcc66fb-1dc8-4699-93b3-7d4b7c45d179",
+      "runId": "59c27f39-c0c6-4baf-b26a-c8d6e4745c09",
+      "schemaVersion": 1,
+      "sequence": 208,
+      "source": "ios",
+      "stage": "presentation",
+      "traceId": "847d2f91-ff7e-4033-8ddb-7158615c0637",
+      "values": {
+        "extensionProcess": true
+      }
+    }
+  ]
+}

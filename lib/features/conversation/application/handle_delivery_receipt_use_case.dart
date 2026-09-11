@@ -22,8 +22,8 @@ const Set<String> _trustedDeliveryReceiptTransports = <String>{
 };
 
 /// Applies an incoming `'delivery_receipt'` envelope: flips matching
-/// outgoing `'inboxed'`, unconfirmed `'sent'`, or (185) `'failed'` rows to
-/// `'delivered'` and clears the retained wire envelope.
+/// outgoing staged `'sending'`, `'inboxed'`, unconfirmed `'sent'`, or (185)
+/// `'failed'` rows to `'delivered'` and clears the retained wire envelope.
 ///
 /// This is G4 allowed minting site (a) — the ONLY place relay-inbox custody
 /// becomes 'delivered'. Every ordinary transition uses one atomic typed

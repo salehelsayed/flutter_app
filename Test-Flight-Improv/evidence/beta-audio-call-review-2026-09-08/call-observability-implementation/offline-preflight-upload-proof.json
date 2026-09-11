@@ -1,0 +1,82 @@
+{
+  "answerReported": false,
+  "deviceControllerObservedAutomaticRetry": true,
+  "deviceControllerReportedFinalDroppedEvents": 0,
+  "deviceControllerReportedFinalUnackedEvents": 0,
+  "deviceControllerReportedRestartReinstallOrManualFlushBetweenRestoreAndAck": false,
+  "eventIdComparisons": [
+    {
+      "deviceArtifactName": "android-state-offline-attempt.json",
+      "exactEventIdsMatchRelay": true,
+      "lastUploadAtMs": [
+        1788880645658
+      ]
+    },
+    {
+      "deviceArtifactName": "android-state-online-after-failure.json",
+      "exactEventIdsMatchRelay": true,
+      "lastUploadAtMs": [
+        1788880645658
+      ]
+    },
+    {
+      "deviceArtifactName": "android-state-retry-five-minutes.json",
+      "exactEventIdsMatchRelay": true,
+      "lastUploadAtMs": [
+        1788881395627
+      ]
+    }
+  ],
+  "events": [
+    {
+      "event": {
+        "action": "start",
+        "build": "1.0.1+111-447d22a1e20fb7ae",
+        "elapsedMs": 425081,
+        "eventId": "2f992857-cc5d-4391-aaba-73d612d54bf2",
+        "occurredAtMs": 1788881050351,
+        "outcome": "started",
+        "reason": "none",
+        "role": "caller",
+        "runId": "a02e6a10-0763-400d-97ad-c5e38fa93c04",
+        "schemaVersion": 1,
+        "sequence": 7,
+        "source": "flutter",
+        "stage": "attempt",
+        "traceId": "eec02a59-40f7-44c5-9568-34cf7f191518",
+        "values": {}
+      },
+      "receivedAtMs": 1788881393669
+    },
+    {
+      "event": {
+        "action": "finish",
+        "build": "1.0.1+111-447d22a1e20fb7ae",
+        "elapsedMs": 425082,
+        "eventId": "ce989836-d85a-4c2d-beaf-9cc90f364b78",
+        "occurredAtMs": 1788881050353,
+        "outcome": "preflight_failed",
+        "reason": "graph_unavailable",
+        "role": "caller",
+        "runId": "a02e6a10-0763-400d-97ad-c5e38fa93c04",
+        "schemaVersion": 1,
+        "sequence": 8,
+        "source": "flutter",
+        "stage": "terminal",
+        "traceId": "eec02a59-40f7-44c5-9568-34cf7f191518",
+        "values": {
+          "terminal": true
+        }
+      },
+      "receivedAtMs": 1788881393674
+    }
+  ],
+  "mailboxAdmitted": false,
+  "mediaReported": false,
+  "networkRestoredAt": "2026-09-08T15:25:04.147870Z",
+  "schemaVersion": 1,
+  "scope": "Durable preflight-attempt upload during an offline interval; graph_unavailable came from the then-installed call-graph-disabled build. This does not claim the network caused the preflight rejection or that audio was attempted.",
+  "secondsFromNetworkRestorationToRelayReceipt": 289.521,
+  "sourceSnapshot": "relay-operator-live-20260908T153152Z.json",
+  "traceId": "eec02a59-40f7-44c5-9568-34cf7f191518"
+}

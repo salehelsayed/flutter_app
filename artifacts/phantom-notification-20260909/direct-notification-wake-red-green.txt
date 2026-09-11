@@ -1,0 +1,18 @@
+Direct iOS wake replay regression, 2026-09-09
+Command (go-relay-server): go test -run '^TestDirectNotificationWakeReplayAfterAckDoesNotResendIOS$' -count=1 .
+Test: go-relay-server/direct_notification_wake_replay_test.go
+
+RED before durable direct admission identity propagation (immediate rich admission already present):
+  delayed_completed: PASS (existing wake-outcome terminal record already suppresses replay).
+  capacity_fallback: FAIL, provider attempts=2, want 1.
+  rich_then_delayed: FAIL, provider attempts=2, want 1.
+  Overall: FAIL github.com/mknoon/relay-server 13.331s; exit 1.
+
+GREEN after direct key propagation through delayed coordinator and capacity fallback:
+  All three scenarios PASS: ok github.com/mknoon/relay-server 13.732s; exit 0.
+
+FINAL GREEN after strengthening asynchronous capacity test to await direct_admission_suppressed metric delta instead of a fixed sleep:
+  All three scenarios PASS: ok github.com/mknoon/relay-server 0.805s; exit 0.
+
+Each scenario proves old custody ACK succeeds, replay obtains a new stored custody row with exact original ciphertext, and provider sends remain one. The delayed-completed case demonstrates pre-existing 7-day outcome memory; the other cases causally expose the shared admission bypass.
+Android recovery excluded from this defect: android_rich_push_recovery.go sendAndroidRichMaterial rejects resolved non-Android platform inside provider message factory before sending; existing ios-rotation test covers that boundary.

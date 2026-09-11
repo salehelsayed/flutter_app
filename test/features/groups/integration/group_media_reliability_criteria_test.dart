@@ -1,10 +1,82 @@
 import 'dart:convert';
 
+import 'package:flutter_app/core/database/app_database_version.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import '../../../../integration_test/scripts/group_media_reliability_criteria.dart';
 
 void main() {
+  test(
+    'P269 mode accepts legacy absence but rejects malformed declarations and identities',
+    () {
+      expect(
+        validateGroupMediaReliabilityArtifact(_artifactFixture()).ok,
+        isTrue,
+      );
+      for (final value in <Object?>[null, 1, false, '', 'unknown']) {
+        final artifact = _artifactFixture()..['authority_mode'] = value;
+        expect(
+          validateGroupMediaReliabilityArtifact(artifact).ok,
+          isFalse,
+          reason: '$value',
+        );
+      }
+      for (final identity in <String>['', ' account', 'account ']) {
+        expect(
+          groupMediaRoleIdentityMatches(
+            groupMediaAccountBoundAuthorityMode,
+            identity,
+            identity,
+          ),
+          isFalse,
+        );
+        expect(
+          groupMediaRoleIdentityMatches(
+            groupMediaDistinctAuthorityMode,
+            identity,
+            'transport',
+          ),
+          isFalse,
+        );
+      }
+    },
+  );
+
+  test(
+    'P269 ordinary-primary artifact retains exact account and transport binding',
+    () {
+      final artifact = _artifactFixture();
+      artifact['authority_mode'] = 'accountBoundLegacy';
+      final identities = _map(artifact, 'identity_fingerprints');
+      final peers = <Object?>[];
+      for (final role in <String>['sender', 'receiver']) {
+        final identity = _map(identities, role);
+        identity['transport_sha256'] = identity['account_sha256'];
+        _nestedMap(artifact, 'device_roles', role)['device_sha256'] =
+            identity['account_sha256'];
+        _map(artifact, 'account_vs_transport_discriminator')[role] = false;
+        peers.add(identity['account_sha256']);
+      }
+      artifact['acl_entries'] = peers;
+      final result = validateGroupMediaReliabilityArtifact(artifact);
+      expect(result.ok, isTrue, reason: result.detail);
+    },
+  );
+
+  test('role database criteria require the exact current schema', () {
+    final accepted = validateGroupMediaReliabilityArtifact(_artifactFixture());
+    expect(accepted.ok, isTrue, reason: accepted.detail);
+    for (final role in <String>['sender', 'receiver']) {
+      for (final version in <int>[104, currentIdentityDatabaseVersion + 1]) {
+        final artifact = _artifactFixture();
+        _nestedMap(artifact, 'role_databases', role)['user_version'] = version;
+        final result = validateGroupMediaReliabilityArtifact(artifact);
+        expect(result.ok, isFalse, reason: '$role schema $version');
+        expect(result.detail, contains('role_databases.$role.user_version'));
+      }
+    }
+  });
+
   test(
     'P269 reliability criteria bind exact v1 group media artifact schema',
     () {
@@ -561,7 +633,7 @@ Map<String, Object?> _artifactFixture() {
         'role_db_path': 'sender/group-media.sqlite',
         'database_path_sha256': _digest('$runId-sender-database'),
         'cipher_version': 'SQLCipher 4.6.1',
-        'user_version': 104,
+        'user_version': currentIdentityDatabaseVersion,
         'reopened': true,
         'rows': senderRows,
       },
@@ -569,7 +641,7 @@ Map<String, Object?> _artifactFixture() {
         'role_db_path': 'receiver/group-media.sqlite',
         'database_path_sha256': _digest('$runId-receiver-database'),
         'cipher_version': 'SQLCipher 4.6.1',
-        'user_version': 104,
+        'user_version': currentIdentityDatabaseVersion,
         'reopened': true,
         'rows': receiverRows,
       },

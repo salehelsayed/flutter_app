@@ -3903,6 +3903,10 @@ class AppLocalizationsEn extends AppLocalizations {
   String get settings_diagnostics_preview_report => 'Preview support report';
 
   @override
+  String get settings_diagnostics_preview_truncated =>
+      'Showing part of the report. Copy includes the full report.';
+
+  @override
   String get settings_diagnostics_report_copied => 'Support report copied';
 
   @override

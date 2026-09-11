@@ -40,6 +40,7 @@ import 'package:flutter_app/core/media/media_picker.dart';
 import 'package:flutter_app/core/media/upload_retry_projection.dart';
 import 'package:flutter_app/core/permissions/mic_permission_gateway.dart';
 import 'package:flutter_app/core/media/media_upload_in_flight_tracker.dart';
+import 'package:flutter_app/core/media/direct_upload_retry_signal.dart';
 import 'package:flutter_app/core/media/video_process_result.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/local_discovery/local_discovery_service.dart';
@@ -1001,8 +1002,16 @@ class FakeMessageRepository
         current,
       );
     }
+    if (mode == OutgoingOrdinarySettlementMode.receipt &&
+        current.status == 'sending' &&
+        (expectedEnvelope == null || expectedEnvelope.trim().isEmpty)) {
+      return _ordinaryResult(
+        OutgoingOrdinaryMutationOutcome.preserved,
+        current,
+      );
+    }
     final predecessors = mode == OutgoingOrdinarySettlementMode.receipt
-        ? const <String>{'inboxed', 'sent', 'failed'}
+        ? const <String>{'sending', 'inboxed', 'sent', 'failed'}
         : switch (status) {
             'delivered' => const <String>{
               'sending',
@@ -6306,6 +6315,11 @@ void main() {
         final mediaAttachmentRepo = FakeMediaAttachmentRepository();
         final legacyProjection = _RecordingComposerUploadProjection();
         var exactProjectionCalls = 0;
+        final retryLeaseCounts = <int>[];
+        final retrySubscription = directUploadRetryRequests.listen((_) {
+          retryLeaseCounts.add(mediaUploadInFlightTracker.inFlightCount);
+        });
+        addTearDown(retrySubscription.cancel);
         ConversationMessage? exactParent;
         List<MediaAttachment>? exactAttachments;
         String? exactFailedAttachmentId;
@@ -6376,6 +6390,10 @@ void main() {
         await tester.pump(const Duration(milliseconds: 300));
         await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
         await pumpUntil(tester, () => exactProjectionCalls == 1);
+        await tester.pump();
+        expect(retryLeaseCounts, [
+          0,
+        ], reason: 'retry after releasing the lease');
 
         expect(exactProjectionCalls, 1);
         expect(legacyProjection.callCount, 0);
@@ -12842,6 +12860,125 @@ void main() {
         await tester.pump();
       },
     );
+
+    for (final throws in [true, false])
+      testWidgets(
+        'voice ${throws ? 'send exception' : 'queued upload'} releases uploading UI and keeps its pending recording',
+        (tester) async {
+          final messageRepo = FakeMessageRepository();
+          final mediaRepo = FakeMediaAttachmentRepository();
+          final voiceDir = Directory.systemTemp.createTempSync(
+            'voice_stall_ui_',
+          );
+          addTearDown(() => voiceDir.deleteSync(recursive: true));
+          final voiceFile = File('${voiceDir.path}/voice.m4a')
+            ..writeAsBytesSync(List<int>.filled(2048, 9));
+          final recorder = FakeAudioRecorderService()
+            ..fakeDurationMs = 1200
+            ..fakeSizeBytes = 2048
+            ..fakeOutputPath = voiceFile.path;
+          final pending =
+              Completer<(SendVoiceMessageResult, ConversationMessage?)>();
+          String? capturedBlobId;
+          final retryLeaseStates = <bool>[];
+          final retrySub = directUploadRetryRequests.listen((_) {
+            retryLeaseStates.add(
+              mediaUploadInFlightTracker.isInFlight(capturedBlobId!),
+            );
+          });
+          addTearDown(retrySub.cancel);
+          Future<(SendVoiceMessageResult, ConversationMessage?)> sendVoiceFn({
+            required P2PService p2pService,
+            required MessageRepository messageRepo,
+            required String targetPeerId,
+            required String senderPeerId,
+            required String senderUsername,
+            required AudioRecording recording,
+            required Bridge bridge,
+            String? recipientMlKemPublicKey,
+            MediaAttachmentRepository? mediaAttachmentRepo,
+            MediaFileManager? mediaFileManager,
+            String? text,
+            String? quotedMessageId,
+            List<double>? waveform,
+            String? messageId,
+            String? timestamp,
+            String? blobId,
+            EncryptedMediaArtifact? preparedArtifact,
+            mediaAdmission,
+          }) {
+            capturedBlobId = blobId;
+            return pending.future;
+          }
+
+          await pumpScreen(
+            tester,
+            identityRepo: FakeIdentityRepository(makeIdentity()),
+            messageRepo: messageRepo,
+            chatListener: ChatMessageListener(
+              chatMessageStream: const Stream.empty(),
+              messageRepo: messageRepo,
+              contactRepo: FakeContactRepository(),
+            ),
+            sendFn: _instantSuccessSendFn,
+            bridge: FakeBridge(),
+            audioRecorderService: recorder,
+            mediaAttachmentRepo: mediaRepo,
+            sendVoiceMessageFn: sendVoiceFn,
+          );
+          ConversationScreen screen() => tester.widget<ConversationScreen>(
+            find.byType(ConversationScreen),
+          );
+          await (screen().onRecordStart! as Future<void> Function())();
+          await tester.pump(const Duration(milliseconds: 100));
+          Object? sendError;
+          final stopped = (screen().onRecordStop! as Future<void> Function())()
+              .catchError((Object error) {
+                sendError = error;
+              });
+          await pumpUntil(tester, () => capturedBlobId != null);
+          expect(screen().composerStateListenable!.value.isUploading, isTrue);
+          expect(
+            mediaUploadInFlightTracker.isInFlight(capturedBlobId!),
+            isTrue,
+          );
+
+          if (throws) {
+            pending.completeError(StateError('upload callback failed'));
+          } else {
+            pending.complete((SendVoiceMessageResult.uploadQueued, null));
+          }
+          await stopped;
+          await tester.pump();
+          expect(screen().composerStateListenable!.value.isUploading, isFalse);
+          expect(
+            mediaUploadInFlightTracker.isInFlight(capturedBlobId!),
+            isFalse,
+          );
+          expect(
+            sendError,
+            isNull,
+            reason: 'the UI must handle the failed send',
+          );
+          expect(retryLeaseStates, [
+            false,
+          ], reason: 'retry follows lease release');
+          expect(find.text('Uploading media'), findsNothing);
+          expect(find.text('Media pending upload'), findsOneWidget);
+          expect(
+            find.byKey(const ValueKey('upload-progress-banner')),
+            findsNothing,
+          );
+          final attachments = await mediaRepo.getUploadPendingAttachments(
+            owner: MediaOwnerLane.direct,
+          );
+          expect(attachments.single.id, capturedBlobId);
+          expect(File(attachments.single.localPath!).existsSync(), isTrue);
+          expect(messageRepo.store.values.single.status, 'sending');
+          await tester.pumpWidget(const SizedBox.shrink());
+          await tester.pump();
+        },
+      );
 
     testWidgets(
       'voice relay fallback passes optimistic attachment id to sendVoiceMessage',

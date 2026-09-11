@@ -1,0 +1,2 @@
+PROVENANCE version=1.0.1+114 name=1.0.1 build=114 sha=d8b919c5b branch=feat/ipv6-happy-eyeballs dirty_files=197 date=2026-09-09 10:32:47
+PLAY OK build/app/outputs/bundle/release/app-release.aab (200 MB) versionName=1.0.1 versionCode=114

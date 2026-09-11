@@ -1,0 +1,33 @@
+{
+  "generatedAtUtc": "2026-09-08T14:55:01.237300+00:00",
+  "binaryPath": "/tmp/beta-call-review-20260908/relay-call-diagnostics-linux-amd64-final",
+  "sha256": "df4412361360f4707723ac26e9bbf9dc92023595e53c8a35102dd09301ad72ae",
+  "commandArgs": [
+    "go",
+    "build",
+    "-trimpath",
+    "-ldflags",
+    "-X main.callDiagnosticBuild=8f1df9c50ce0d6db7c11c36858b45af9ebaeb3d6821b956c6018a22f0d310cb2",
+    "-o",
+    "/tmp/beta-call-review-20260908/relay-call-diagnostics-linux-amd64-final",
+    "."
+  ],
+  "buildEnvironment": {
+    "GOTOOLCHAIN": "go1.25.0",
+    "GOOS": "linux",
+    "GOARCH": "amd64",
+    "CGO_ENABLED": "0"
+  },
+  "workingDirectory": "go-relay-server",
+  "sourceInputDigest": "8f1df9c50ce0d6db7c11c36858b45af9ebaeb3d6821b956c6018a22f0d310cb2",
+  "eventBuildField": "8f1df9c50ce0d6db7c11c36858b45af9ebaeb3d6821b956c6018a22f0d310cb2",
+  "sourceInputFileCount": 45,
+  "sourceInputHashRule": "sorted relative path + NUL + raw SHA256 bytes, production module-root Go plus go.mod/go.sum/embedded schema",
+  "sourceEditedAfterBuild": [],
+  "schemaSHA256": "4ca526a5cc58343c0f57e77aab68d1488caf968f2a6d379dabfb5cccb33c1887",
+  "vcsRevision": "d8b919c5b34575d570a78eb5fbbc4203f56f875b",
+  "vcsModified": true,
+  "deploymentPerformed": false,
+  "includesPrivateAuthorityErasure": true,
+  "includesLegacyPushCapabilityInvalidation": true
+}

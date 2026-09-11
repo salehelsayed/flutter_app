@@ -1,0 +1,12 @@
+{
+  "backupDirectory": "/var/backups/mknoon-relay/20260908T111619Z",
+  "metadataMethod": "go version -m (only allowlisted build fields retained)",
+  "sha256": "d933c15e8dfca516de560312640bab137016215d6f59a5c7145207afd200b6d9",
+  "matchesOriginalRelaySnapshotSha256": true,
+  "vcsRevision": "298934482b0a30960dee47dd1adfd5c4d8e4f40d",
+  "vcsModified": true,
+  "auditedBaselineRevision": "d8b919c5b34575d570a78eb5fbbc4203f56f875b",
+  "matchesAuditedBaselineRevision": false,
+  "limit": "Archived binary identity is verified, but its dirty source state is unavailable; audited baseline source semantics are not proven to match this historical artifact.",
+  "readOnlyRemoteCheck": true
+}

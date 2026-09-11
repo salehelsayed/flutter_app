@@ -4,6 +4,7 @@ import 'package:crypto/crypto.dart';
 import 'package:sqflite_sqlcipher/sqflite.dart';
 
 import 'package:flutter_app/core/database/db_write_transaction.dart';
+import 'package:flutter_app/core/database/helpers/group_media_key_snapshot.dart';
 import 'package:flutter_app/core/database/helpers/group_event_log_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/group_notification_display_outbox_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/group_notification_reconciliation_outbox_db_helpers.dart';
@@ -64,6 +65,7 @@ typedef ValidateProtectedContentHistoricalAuthority =
 
 typedef TerminalizePreparedProtectedGroupContent =
     Future<bool> Function({
+      GroupMediaKeySnapshot? mediaKeySnapshot,
       required DatabaseExecutor txn,
       required String groupId,
       required String payloadType,
@@ -325,6 +327,7 @@ Future<bool> reconcileProtectedGroupContentForAuthority({
   required ValidateProtectedContentHistoricalAuthority
   validateHistoricalAuthority,
   TerminalizePreparedProtectedGroupContent? terminalizePreparedContent,
+  GroupMediaKeyAccess? mediaKeyAccess,
   bool allowDominatingProjection = false,
   int pageSize = 200,
   int? stopAfterCommittedPages,
@@ -436,11 +439,14 @@ Future<bool> reconcileProtectedGroupContentForAuthority({
       );
     }
 
-    await dbWriteTransaction(db, (txn) async {
+    Future<void> commitPage(
+      GroupMediaKeySnapshot? mediaKeySnapshot,
+    ) => dbWriteTransaction<void>(db, (txn) async {
       for (final prepared in invalidPrepared) {
         final terminalize = terminalizePreparedContent;
         if (terminalize == null ||
             !await terminalize(
+              mediaKeySnapshot: mediaKeySnapshot,
               txn: txn,
               groupId: authority.groupId,
               payloadType: prepared.fact.payloadType,
@@ -502,6 +508,26 @@ Future<bool> reconcileProtectedGroupContentForAuthority({
         },
       );
     }, exclusive: true);
+    final mediaOwnerIds = invalidPrepared
+        .where(
+          (prepared) =>
+              prepared.fact.payloadType ==
+                  groupOfflineReplayPayloadTypeMessage &&
+              prepared.ownerKind == 'group_message',
+        )
+        .map((prepared) => prepared.ownerId)
+        .toSet();
+    if (mediaKeyAccess != null && mediaOwnerIds.isNotEmpty) {
+      // Resolve keys for this bounded page before SQLite owns a transaction,
+      // and retain the shared media lifecycle scope until its commit/rollback.
+      await mediaKeyAccess.run<void>(
+        db: db,
+        messageIds: mediaOwnerIds,
+        action: commitPage,
+      );
+    } else {
+      await commitPage(null);
+    }
     cursor = lastSequence;
     afterSourceTimestamp = lastSourceTimestamp;
     afterSourceEventId = lastSourceEventId;

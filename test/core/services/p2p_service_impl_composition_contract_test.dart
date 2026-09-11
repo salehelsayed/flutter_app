@@ -45,6 +45,8 @@ const _constructorParameters = <String>[
   'AccountMigrationNetworkGate accountMigrationNetworkGate = '
       'allowAccountMigrationNetworkSideEffects',
   'required InboxStagingRepository inboxStagingRepository',
+  'Future<bool> Function(String recipientPeerId, String wireEnvelope)? '
+      'shouldSuppressDirectInboxNotification',
   'ReplayRecoveredInboxChatMessage? replayRecoveredInboxChatMessage',
   'ReplayRecoveredInboxChatMessage? replayLiveLanChatMessage',
   'ReplayRecoveredInboxChatMessage? replayLiveDirectChatMessage',
@@ -180,6 +182,7 @@ const _inboxFields = <String>{
   '_receivedWakeTokenStore',
   '_acceptedInboxWakeTokenHashObserver',
   '_inboxStagingRepository',
+  '_shouldSuppressDirectInboxNotification',
   '_replayRecoveredInboxChatMessage',
   '_replayLiveLanChatMessage',
   '_replayLiveDirectChatMessage',
@@ -199,6 +202,7 @@ const _inboxFields = <String>{
 };
 
 const _inboxMethods = <String>{
+  '_isInitialDirectNotificationEnvelope',
   'setProtectedGroupReplayHandler',
   '_normalizeInboxTimestamp',
   '_messageTypeFromEnvelope',
@@ -662,7 +666,11 @@ String _publicApiFingerprint(ClassDeclaration facade) {
 // 374: repinned for the opt-in recovery-only construction flag, exact node
 // start/status methods, global admission seal/await boundary, typed protected
 // fixed-point result and the latched post-seal-refusal proof.
-const _expectedFacadeApiFingerprint = 'e468f002';
+//
+// Historical notification repair: one optional constructor callback supplies
+// exact delivered-owner proof from each production lifetime's scoped database.
+// Public STORE methods and custody function signatures retain their shape.
+const _expectedFacadeApiFingerprint = '15fe5f1e';
 
 void _expectCallbackOwnership(ClassDeclaration facade, String facadeSource) {
   final constructorBody = _compact(
@@ -906,7 +914,7 @@ void main() {
             .toList(growable: false),
         _constructorParameters,
       );
-      expect(constructor.parameters.parameters, hasLength(27));
+      expect(constructor.parameters.parameters, hasLength(28));
       expect(
         _fieldNames(facade).where((name) => !name.startsWith('_')).toSet(),
         _publicFields,
@@ -944,6 +952,46 @@ void main() {
             '374 permits one foreground and one recovery-only P2P lifetime; '
             'no other production construction site may appear',
       );
+      for (final creation in creations) {
+        final arguments = switch (creation.creation) {
+          InstanceCreationExpression(:final argumentList) =>
+            argumentList.arguments,
+          MethodInvocation(:final argumentList) => argumentList.arguments,
+          _ => throw TestFailure('unexpected P2P construction AST'),
+        };
+        final suppression = arguments.whereType<NamedExpression>().singleWhere(
+          (argument) =>
+              argument.name.label.name ==
+              'shouldSuppressDirectInboxNotification',
+        );
+        expect(suppression.expression, isA<FunctionExpression>());
+        final callback = suppression.expression as FunctionExpression;
+        expect(callback.body, isA<ExpressionFunctionBody>());
+        final proof = (callback.body as ExpressionFunctionBody).expression;
+        expect(proof, isA<MethodInvocation>());
+        final proofCall = proof as MethodInvocation;
+        expect(proofCall.target, isNull);
+        expect(
+          proofCall.methodName.name,
+          'dbShouldSuppressDeliveredDirectInboxNotification',
+        );
+        final ownsForegroundDatabase =
+            File(creation.path).absolute.path ==
+            File(_bootstrapPath).absolute.path;
+        expect(
+          proofCall.argumentList.arguments
+              .map((argument) => _compact(argument.toSource()))
+              .toList(),
+          <String>[
+            ownsForegroundDatabase ? 'db' : 'database',
+            'recipientPeerId: recipientPeerId',
+            'wireEnvelope: wireEnvelope',
+          ],
+          reason:
+              'each P2P lifetime must consult its owned database for exact '
+              'delivery proof without substituting recipient or envelope',
+        );
+      }
 
       final rootSource = _compact(
         File(_applicationRootPath).readAsStringSync(),

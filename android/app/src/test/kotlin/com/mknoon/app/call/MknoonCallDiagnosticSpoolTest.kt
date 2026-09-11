@@ -13,13 +13,50 @@ class MknoonCallDiagnosticSpoolTest {
     private class Memory : MknoonCallDiagnosticBackend {
         var bytes: ByteArray? = null
         var fail = false
+        var writes = 0
         override fun read() = bytes
-        override fun replace(bytes: ByteArray) { check(!fail); this.bytes = bytes.copyOf() }
+        override fun replace(bytes: ByteArray) { check(!fail); this.bytes = bytes.copyOf(); writes++ }
     }
     private val handle = "123e4567-e89b-42d3-a456-426614174000"
     private val trace = "223e4567-e89b-42d3-a456-426614174001"
     @Suppress("UNCHECKED_CAST")
     private fun events(store: MknoonCallDiagnosticSpool) = store.drain(64)["events"] as List<Map<String, Any>>
+
+    @Test fun queuedCallObservationsShareWriteAndPreserveTerminalAndBinding() {
+        val memory = Memory(); val store = MknoonCallDiagnosticSpool(memory)
+        assertTrue(store.configure(true)); assertTrue(store.bind(handle, trace))
+        val writes = memory.writes
+        repeat(63) { assertTrue(store.append(handle, "audio", "snapshot", "ok", deferPersistence = true)) }
+        assertTrue(store.append(handle, "terminal", "commit", "ok", deferPersistence = true))
+        assertEquals(writes, memory.writes); assertTrue(store.persistPending()); assertEquals(writes + 1, memory.writes)
+        val rows = events(store); assertEquals(64, rows.size); assertEquals("terminal", rows.last()["stage"])
+        assertTrue(rows.all { it["traceId"] == trace })
+    }
+    @Test fun deferredSinkFailureDropsOnlyUncommittedObservations() {
+        val memory = Memory(); val store = MknoonCallDiagnosticSpool(memory); store.configure(true)
+        store.append(handle, "answer", "commit", "ok")
+        repeat(64) { store.append(handle, "audio", "snapshot", "ok", deferPersistence = true) }
+        memory.fail = true; assertFalse(store.persistPending())
+        assertEquals(1, events(store).size); assertEquals(64L, store.drain(64)["droppedEvents"])
+    }
+    @Test fun optOutBeforeQueuedFlushCannotResurrectCallEvidence() {
+        val memory = Memory(); val store = MknoonCallDiagnosticSpool(memory); store.configure(true, 10)
+        store.append(handle, "answer", "commit", "ok", deferPersistence = true); store.recordDropped(20)
+        assertTrue(store.configure(false, 11)); assertTrue(store.persistPending())
+        assertTrue(events(MknoonCallDiagnosticSpool(memory)).isEmpty()); assertEquals(0L, store.drain(64)["droppedEvents"])
+    }
+    @Test fun deferredAppendReplacesExpiredBindingBeforeRecordingFreshCall() {
+        var now = 1_900_000_000_000L
+        val store = MknoonCallDiagnosticSpool(Memory(), { now }, { 1 })
+        store.configure(true); store.bind(handle, trace)
+        now += MknoonCallDiagnosticSpool.RETENTION_MS + 1
+        store.append(handle, "answer", "commit", "ok", deferPersistence = true)
+        assertTrue(store.persistPending())
+        val fresh = events(store).single()["traceId"]
+        assertNotEquals(trace, fresh); assertEquals(fresh, store.lookup(handle)["traceId"])
+        store.append(handle, "audio", "activate", "ok", deferPersistence = true)
+        assertTrue(store.persistPending()); assertTrue(events(store).all { it["traceId"] == fresh })
+    }
 
     @Test fun buildIsStampedAtCreationAndNeverRewrittenOnRestart() {
         val memory = Memory()

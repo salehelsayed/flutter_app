@@ -1,0 +1,25 @@
+{
+  "source": "/var/log/turnserver/turnserver_2026-09-08.log",
+  "lineCount": 79,
+  "preRestartRecordCount": 1,
+  "preRestartRecord": {
+    "relativeSeconds": 266329,
+    "fixedEvent": "log-open",
+    "wallTimeDerivedFromPriorProcessStartUtc": "2026-09-08T00:00:00Z"
+  },
+  "remainderAfterKnownRestartUtc": "2026-09-08T11:09:01Z",
+  "allocationOrUsageRows": 0,
+  "onlyErrorRelativeToNewProcessSeconds": 943,
+  "onlyErrorDerivedUtc": "2026-09-08T11:24:44Z",
+  "incidentWindowAllocationOrErrorRecordsRecovered": 0,
+  "fcmWakeMetrics": {
+    "query": "{__name__=~\"relay_.*(fcm|wake).*\"}",
+    "status": "success",
+    "series": []
+  },
+  "limits": [
+    "Current dated log retained one midnight-open line for the prior process; subsequent lines belong to later repair restart.",
+    "Quiet/nonverbose logging prevents inferring absence of allocations or failures from missing per-session records.",
+    "No client addresses/session IDs/credentials/log text exported."
+  ]
+}

@@ -1,6 +1,6 @@
 FROM golang:1.25.0-bookworm AS go
 
-FROM node:22-bullseye
+FROM node:22-bookworm
 
 COPY --from=go /usr/local/go /usr/local/go
 

@@ -304,7 +304,17 @@ const _productionBootstrapNormalizedSha256 =
     // Reliability repair starts optional call diagnostics concurrently so a
     // slow sink cannot hold bridge composition. The same bootstrap owner and
     // account-network gate remain; pending-sink regressions cover startup.
-    '51480e4eb0a0942e5e05d1b96d6a1ba11ba502094e0522a4ffbfd4465980930a';
+    // Historical notification repair injects one exact delivered-owner proof
+    // from this lifetime's existing database. Removing only that callback
+    // preserves the separately fingerprinted remainder, asserted below.
+    // Group-media secure-key ownership now enters the existing SQL callbacks
+    // and protected replay composition here. Direct/group upload retry signals
+    // also enter the existing retrier here. These reviewed additions move no
+    // owner or relocation URI; their behavior has separate causal tests.
+    'f03a4924221fa5b6fbfa4b9f545caea0a34e5a9d2ad376362631131fddffa5ad';
+
+const _productionBootstrapWithoutHistoricalNotificationSha256 =
+    '5a9ff4140f3e24ed0bc98a6b2fcbcd755f5c57120d7414bff0ec59ce0fa971c4';
 
 const _reviewedResumeExceptionTargets = <String>{
   'lib/features/account_migration/application/'
@@ -436,8 +446,11 @@ Set<String> _featureImportTargets(String source) {
   ).allMatches(source).map((match) => 'lib/${match.group(1)!}').toSet();
 }
 
-String _normalizedConsumerSha256(Directory root, String path) {
-  var normalized = _source(root, path)
+String _normalizedConsumerSha256(Directory root, String path) =>
+    _normalizedConsumerSourceSha256(_source(root, path));
+
+String _normalizedConsumerSourceSha256(String source) {
+  var normalized = source
       .replaceAll(_newResumeUri, _oldResumeUri)
       .replaceAll(_newContactUri, _oldContactUri)
       .replaceAll(_newPrivacyUri, _oldPrivacyUri);
@@ -449,6 +462,30 @@ String _normalizedConsumerSha256(Directory root, String path) {
 
 void main() {
   final root = _repositoryRoot();
+
+  test('DTR-18 historical notification proof preserves the reviewed bootstrap '
+      'outside its scoped database callback', () {
+    final source = _source(
+      root,
+      'lib/app/bootstrap/production_application_bootstrap.dart',
+    );
+    const callback =
+        '      shouldSuppressDirectInboxNotification: (recipientPeerId, wireEnvelope) =>\n'
+        '          dbShouldSuppressDeliveredDirectInboxNotification(\n'
+        '            db,\n'
+        '            recipientPeerId: recipientPeerId,\n'
+        '            wireEnvelope: wireEnvelope,\n'
+        '          ),\n';
+    expect(RegExp(RegExp.escape(callback)).allMatches(source), hasLength(1));
+    expect(
+      _normalizedConsumerSourceSha256(source.replaceFirst(callback, '')),
+      _productionBootstrapWithoutHistoricalNotificationSha256,
+      reason:
+          'only the existing app-owned database proof injection may differ '
+          'from the reviewed remainder; its P2P ownership is AST-checked '
+          'by TC-295-02',
+    );
+  });
 
   test('DTR-18 relocates resume orchestration to app without a core shim', () {
     expect(File('${root.path}/$_newResumePath').existsSync(), isTrue);

@@ -1,5 +1,7 @@
 package com.mknoon.app.call
 
+import com.mknoon.app.diagnostics.MknoonAppDiagnosticAdmission
+
 import android.content.Context
 import com.mknoon.app.BuildConfig
 import android.os.Handler
@@ -137,6 +139,7 @@ internal class MknoonCallDiagnosticSpool(
     private var requestedEnabled = false
     private var openRun: String? = null
     private val events = mutableListOf<JSONObject>()
+    private val pendingEvents = mutableSetOf<String>()
     private val bindings = linkedMapOf<String, JSONObject>()
 
     init {
@@ -189,12 +192,13 @@ internal class MknoonCallDiagnosticSpool(
         return if (trace == null) mapOf("version" to 1) else mapOf("version" to 1, "traceId" to trace)
     }
     fun append(handle: String? = null, stage: String, action: String, outcome: String, reason: String = "none",
-               values: Map<String, Any?> = emptyMap(), context: Map<String, Any?> = emptyMap()) {
-        if (!enabled || !loaded || sequence == Long.MAX_VALUE) return
-        prune()
+               values: Map<String, Any?> = emptyMap(), context: Map<String, Any?> = emptyMap(), deferPersistence: Boolean = false): Boolean {
+        if (!enabled || !loaded || sequence == Long.MAX_VALUE) return false
+        if (!deferPersistence) prune()
         val metadata = mutableMapOf<String, Any>()
         if (handle != null && handle(handle)) {
             val key = canonical(handle)
+            if ((bindings[key]?.optLong("at") ?: Long.MAX_VALUE) < (now() - RETENTION_MS).coerceAtLeast(0)) bindings.remove(key)
             metadata.putAll(jsonMap(bindings.getOrPut(key) { JSONObject().put("traceId", UUID.randomUUID().toString()).put("at", now()) }))
         }
         metadata.putAll(context(context))
@@ -210,8 +214,11 @@ internal class MknoonCallDiagnosticSpool(
         }
         // Stamp only newly created records; loading/draining preserves historical builds.
         installedBuild?.takeIf(::validBuild)?.let { event.put("build", it) }
-        if (!validEvent(event)) return
-        events.add(event); enforceCaps(); if (!persist() && events.isNotEmpty()) { events.removeAt(events.lastIndex); dropped++ }
+        if (!validEvent(event)) return false
+        events.add(event)
+        if (deferPersistence) { pendingEvents.add(event.getString("eventId")); return true }
+        if (persist()) return true
+        events.remove(event); dropped++; return false
     }
     fun drain(limit: Int): Map<String, Any> {
         prune(); persist()
@@ -258,7 +265,19 @@ internal class MknoonCallDiagnosticSpool(
     }
     private fun encoded(): ByteArray = JSONObject().put("version", 1).put("enabled", enabled).put("requestedEnabled", requestedEnabled).put("consentEpoch", consentEpoch).put("sequence", sequence).put("dropped", dropped)
         .put("openRun", openRun ?: JSONObject.NULL).put("events", JSONArray(events)).put("bindings", JSONObject(bindings)).toString().toByteArray(Charsets.UTF_8)
-    private fun persist(): Boolean = loaded && runCatching { val bytes = encoded(); require(bytes.size <= MAX_BYTES); backend.replace(bytes); true }.getOrDefault(false)
+    fun recordDropped(count: Long) {
+        if (enabled && count > 0) dropped = (dropped + count.coerceAtMost(9_007_199_254_740_991L)).coerceAtMost(9_007_199_254_740_991L)
+    }
+    fun persistPending(): Boolean {
+        if (persist()) return true
+        val before = events.size
+        events.removeAll { it.optString("eventId") in pendingEvents }
+        dropped += before - events.size; pendingEvents.clear(); return false
+    }
+    private fun persist(): Boolean = loaded && runCatching {
+        prune(); enforceCaps(); val bytes = encoded(); require(bytes.size <= MAX_BYTES)
+        backend.replace(bytes); pendingEvents.clear(); true
+    }.getOrDefault(false)
 }
 
 /** One asynchronous writer shared by pre-Flutter FCM/Telecom and the Dart bridge. */
@@ -270,13 +289,21 @@ internal class MknoonCallDiagnostics private constructor(context: Context) {
         }
     }
     private val writer = Executors.newSingleThreadExecutor { task -> Thread(task, "mknoon-call-diagnostics").apply { isDaemon = true } }
+    private val admission = MknoonAppDiagnosticAdmission()
     private val backend = AndroidCallDiagnosticBackend(context)
     private var spool: MknoonCallDiagnosticSpool? = null
+    private var persistenceScheduled = false
     init { writer.execute { runCatching { spool = MknoonCallDiagnosticSpool(backend, installedBuild = "${BuildConfig.VERSION_NAME}+${BuildConfig.VERSION_CODE}") } } }
     fun record(handle: String? = null, stage: String, action: String, outcome: String, reason: String = "none",
                values: Map<String, Any?> = emptyMap(), context: Map<String, Any?> = emptyMap()) {
         val captured = MknoonCallDiagnosticScope.current() + context
-        runCatching { writer.execute { runCatching { spool?.append(handle, stage, action, outcome, reason, values, captured) } } }
+        admission.enqueue({ work -> writer.execute(work) }) { dropped ->
+            spool?.recordDropped(dropped)
+            if (spool?.append(handle, stage, action, outcome, reason, values, captured, deferPersistence = true) == true && !persistenceScheduled) {
+                persistenceScheduled = true
+                writer.execute { persistenceScheduled = false; spool?.persistPending() }
+            }
+        }
     }
     fun bind(handle: String, trace: String, context: Map<String, Any?> = emptyMap()) { runCatching { writer.execute { runCatching { spool?.bind(handle, trace, context) } } } }
     fun journal(handle: String, type: PendingNativeCallEventType) {

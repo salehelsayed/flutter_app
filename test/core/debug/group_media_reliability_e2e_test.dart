@@ -1,11 +1,266 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_app/core/debug/group_media_reliability_e2e.dart';
+import 'package:flutter_app/core/debug/group_media_reliability_e2e_main_actions.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
+import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
+import 'package:flutter_app/core/database/app_database_version.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:sqflite_sqlcipher/sqflite.dart';
+
+import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
+import 'package:flutter_app/features/groups/domain/models/group_invite_payload.dart';
+import 'package:flutter_app/features/groups/domain/models/pending_group_invite.dart';
+import 'package:flutter_app/features/groups/application/accept_pending_group_invite_use_case.dart';
+import '../../shared/fakes/in_memory_pending_group_invite_repository.dart';
+import '../../shared/fakes/in_memory_group_message_repository.dart';
+import 'package:flutter_app/features/p2p/domain/models/node_state.dart';
+import '../bridge/fake_bridge.dart';
+import '../services/fake_p2p_service.dart';
+import '../../shared/fakes/in_memory_group_repository.dart';
+import '../../shared/fakes/in_memory_contact_repository.dart';
+import '../../features/identity/domain/repositories/fake_identity_repository.dart';
 
 void main() {
+  test(
+    'P269 ordinary-primary setup uses signed creation and exact uninitialized member roster',
+    () async {
+      final identity = FakeIdentityRepository.makeIdentity(
+        peerId: 'account-author',
+        mlKemPublicKey: 'mlkem-author',
+      );
+      final identities = FakeIdentityRepository()..seed(identity);
+      final contacts = InMemoryContactRepository()
+        ..addTestContact(
+          ContactModel(
+            peerId: 'account-receiver',
+            publicKey: 'pk-receiver',
+            mlKemPublicKey: 'mlkem-receiver',
+            rendezvous: '/dns4/relay.invalid/tcp/443',
+            username: 'Receiver',
+            signature: 'signed-contact',
+            scannedAt: DateTime.utc(2026, 9, 11).toIso8601String(),
+          ),
+        );
+      final bridge = PassthroughCryptoBridge();
+      bridge.responses['group:create'] = <String, dynamic>{
+        'ok': true,
+        'groupId': 'group-primary-proof',
+        'topicName': 'topic-primary-proof',
+        'groupKey': 'group-key',
+        'keyEpoch': 1,
+      };
+      final p2p = FakeP2PService(
+        initialState: const NodeState(
+          isStarted: true,
+          peerId: 'account-author',
+        ),
+      );
+      final groups = InMemoryGroupRepository();
+      final events = <({String type, Map<String, Object?> payload})>[];
+      final result = await setupGroupMediaReliabilitySender(
+        receiverAccountPeerId: 'account-receiver',
+        receiverTransportPeerId: 'account-receiver',
+        bridge: bridge,
+        p2pService: p2p,
+        identityRepository: identities,
+        contactRepository: contacts,
+        groupRepository: groups,
+        authorityMode: GroupMediaReliabilityAuthorityMode.accountBoundLegacy,
+        appendGroupEventLogEntry:
+            ({
+              required groupId,
+              required eventType,
+              required sourcePeerId,
+              required sourceEventId,
+              required sourceTimestamp,
+              required payload,
+              createdAt,
+            }) async {
+              events.add((type: eventType, payload: payload));
+              return <String, Object?>{};
+            },
+      );
+      final members = await groups.getMembers(result['groupId']! as String);
+      expect(members.map((member) => member.peerId).toSet(), <String>{
+        'account-author',
+        'account-receiver',
+      });
+      expect(
+        members.every(
+          (member) =>
+              !member.hasInitializedDeviceAuthority && member.devices.isEmpty,
+        ),
+        isTrue,
+      );
+      expect(events.single.type, 'group_created');
+      expect(events.single.payload['signature'], isNotEmpty);
+      expect(
+        (events.single.payload['signedPayload']! as Map)['createdBy'],
+        'account-author',
+      );
+      expect(p2p.lastSendMessagePeerId, 'account-receiver');
+      expect(bridge.commandLog, contains('message.encrypt'));
+      final encrypted = bridge.sentMessages
+          .map((text) => jsonDecode(text) as Map)
+          .lastWhere((message) => message['cmd'] == 'message.encrypt');
+      final invite = GroupInvitePayload.fromInnerJson(
+        (encrypted['payload']! as Map)['plaintext']! as String,
+      );
+      expect(invite, isNotNull);
+      expect(invite!.hasDeviceBoundRecipient, isFalse);
+      expect(
+        invite.isBoundToRecipientDevice(ownPeerId: 'account-receiver'),
+        isTrue,
+      );
+      expect(
+        invite.isBoundToRecipientDevice(ownPeerId: 'other-account'),
+        isFalse,
+      );
+      expect(invite.invitePolicy.allowedDevices, <String>['account-receiver']);
+      final receiverGroups = InMemoryGroupRepository();
+      final pending = InMemoryPendingGroupInviteRepository();
+      await pending.savePendingInvite(
+        PendingGroupInvite.fromPayload(
+          invite,
+          receivedAt: DateTime.now().toUtc(),
+        ),
+      );
+      final accepted = await acceptPendingGroupInvite(
+        pendingInviteRepo: pending,
+        groupRepo: receiverGroups,
+        contactRepo: contacts,
+        msgRepo: InMemoryGroupMessageRepository(),
+        bridge: bridge,
+        groupId: invite.groupId,
+        senderPeerId: 'account-receiver',
+        senderPublicKey: 'pk-receiver',
+        senderPrivateKey: 'sk-receiver',
+        senderUsername: 'Receiver',
+        ownMlKemPublicKey: 'mlkem-receiver',
+        ownKeyPackagePublicMaterial: 'mlkem-receiver',
+      );
+      expect(accepted.$1, AcceptPendingGroupInviteResult.success);
+      final acceptedMembers = await receiverGroups.getMembers(invite.groupId);
+      expect(acceptedMembers.map((member) => member.peerId).toSet(), <String>{
+        'account-author',
+        'account-receiver',
+      });
+      expect(
+        acceptedMembers.every(
+          (member) =>
+              member.devices.isEmpty && !member.hasInitializedDeviceAuthority,
+        ),
+        isTrue,
+      );
+      expect(await receiverGroups.getLatestKey(invite.groupId), isNotNull);
+      expect(await pending.getPendingInvite(invite.groupId), isNull);
+
+      expect(result['transportPeerId'], identity.peerId);
+      final publishes = bridge.sentMessages
+          .map((text) => jsonDecode(text) as Map)
+          .where((message) => message['cmd'] == 'group:publish');
+      expect(publishes, isNotEmpty);
+    },
+  );
+
+  test(
+    'P269 ordinary-primary mode cannot accept distinct or malformed transports',
+    () {
+      for (final transport in <String>[
+        'other-transport',
+        '',
+        ' account-author',
+      ]) {
+        expect(
+          groupMediaReliabilityIdentityMatches(
+            mode: GroupMediaReliabilityAuthorityMode.accountBoundLegacy,
+            accountPeerId: 'account-author',
+            transportPeerId: transport,
+          ),
+          isFalse,
+        );
+      }
+      expect(
+        () => parseGroupMediaReliabilityAuthorityMode('unknown'),
+        throwsFormatException,
+      );
+    },
+  );
+
+  test('group role database probe accepts the exact current schema', () async {
+    for (final role in <String>['sender', 'receiver']) {
+      final database = _RoleProbeDatabase(currentIdentityDatabaseVersion);
+      final result = await probeGroupMediaReliabilityRoleDatabase(
+        role: role,
+        runId: 'schema-proof-run',
+        transportPeerId: '$role-transport',
+        messageIds: const {},
+        attachmentIds: const {},
+        database: database,
+        mediaAttachmentRepository: _UnusedRoleMediaRepository(),
+      );
+      expect(result['user_version'], currentIdentityDatabaseVersion);
+      expect(result['cipher_version'], 'SQLCipher fixture');
+      expect(result['role_db_path'], '$role/group-media.sqlite');
+      expect(result['rows'], isEmpty);
+      expect(
+        result['database_path_sha256'],
+        groupMediaReliabilityDatabasePathFingerprint(
+          runId: 'schema-proof-run',
+          transportPeerId: '$role-transport',
+          databasePath: database.path,
+        ),
+      );
+      expect(database.queries, [
+        'PRAGMA cipher_version',
+        'PRAGMA user_version',
+      ]);
+    }
+  });
+
+  test(
+    'group role database probe rejects obsolete and future schemas',
+    () async {
+      for (final version in <int>[104, currentIdentityDatabaseVersion + 1]) {
+        await expectLater(
+          probeGroupMediaReliabilityRoleDatabase(
+            role: 'sender',
+            runId: 'schema-proof-run',
+            transportPeerId: 'sender-transport',
+            messageIds: const {},
+            attachmentIds: const {},
+            database: _RoleProbeDatabase(version),
+            mediaAttachmentRepository: _UnusedRoleMediaRepository(),
+          ),
+          throwsStateError,
+        );
+      }
+    },
+  );
+
+  test('current schema cannot bypass cipher and transport evidence', () async {
+    for (final missingCipher in <bool>[true, false]) {
+      await expectLater(
+        probeGroupMediaReliabilityRoleDatabase(
+          role: 'sender',
+          runId: 'schema-proof-run',
+          transportPeerId: missingCipher ? 'sender-transport' : '',
+          messageIds: const {},
+          attachmentIds: const {},
+          database: _RoleProbeDatabase(
+            currentIdentityDatabaseVersion,
+            cipherVersion: missingCipher ? '' : 'SQLCipher fixture',
+          ),
+          mediaAttachmentRepository: _UnusedRoleMediaRepository(),
+        ),
+        throwsStateError,
+      );
+    }
+  });
+
   group('group-media fixture authority policy', () {
     test('Plan 330 account-bound mode accepts only exact legacy authority', () {
       expect(
@@ -171,7 +426,7 @@ void main() {
   });
 
   test(
-    'P269 Android endpoint exports and forwards distinct account transport identities',
+    'P269 Android endpoint exports exact selected authority mode and identities',
     () async {
       final directory = await Directory.systemTemp.createTemp(
         'p269-identity-endpoint-',
@@ -185,14 +440,19 @@ void main() {
       String? setupAccount;
       String? setupTransport;
 
+      var mode = GroupMediaReliabilityAuthorityMode.distinctAccountAndTransport;
       Future<Map<String, Object?>> invoke(Map<String, dynamic> config) =>
           runGroupMediaReliabilityE2EAction(
             config: config,
             controller: controller,
+            authorityModeName: mode.name,
             loadAttachment: (_) async => null,
             probeIdentity: (role) async => <String, Object?>{
               'accountPeerId': '$role-account',
-              'transportPeerId': '$role-transport',
+              'transportPeerId':
+                  mode == GroupMediaReliabilityAuthorityMode.accountBoundLegacy
+                  ? '$role-account'
+                  : '$role-transport',
             },
             setupSender: (account, transport) async {
               setupAccount = account;
@@ -212,6 +472,16 @@ void main() {
       );
       expect(identity['accountPeerId'], 'receiver-account');
       expect(identity['transportPeerId'], 'receiver-transport');
+      expect(identity['authorityMode'], 'distinctAccountAndTransport');
+      mode = GroupMediaReliabilityAuthorityMode.accountBoundLegacy;
+      final ordinaryIdentity = await invoke(
+        _command(phase: groupMediaReliabilityIdentityPhase, role: 'receiver'),
+      );
+      expect(ordinaryIdentity['authorityMode'], 'accountBoundLegacy');
+      expect(
+        ordinaryIdentity['accountPeerId'],
+        ordinaryIdentity['transportPeerId'],
+      );
 
       await invoke(
         _command(phase: groupMediaReliabilitySenderSetupPhase, role: 'sender'),
@@ -781,3 +1051,37 @@ MediaAttachment _attachment({
   encryptionScheme: 'blob_aes_gcm_v1',
   contentHash: List<String>.filled(64, 'a').join(),
 );
+
+final class _RoleProbeDatabase extends Fake implements Database {
+  _RoleProbeDatabase(
+    this.userVersion, {
+    this.cipherVersion = 'SQLCipher fixture',
+  });
+
+  final int userVersion;
+  final String cipherVersion;
+  final List<String> queries = [];
+
+  @override
+  String get path => '/synthetic/role-database.sqlite';
+
+  @override
+  Future<List<Map<String, Object?>>> rawQuery(
+    String sql, [
+    List<Object?>? arguments,
+  ]) async {
+    queries.add(sql);
+    return switch (sql) {
+      'PRAGMA cipher_version' => [
+        {'cipher_version': cipherVersion},
+      ],
+      'PRAGMA user_version' => [
+        {'user_version': userVersion},
+      ],
+      _ => throw StateError('Unexpected role database query'),
+    };
+  }
+}
+
+final class _UnusedRoleMediaRepository extends Fake
+    implements MediaAttachmentRepository {}

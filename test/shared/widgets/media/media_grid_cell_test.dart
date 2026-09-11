@@ -430,7 +430,7 @@ void main() {
     expect(find.text('GIF'), findsNothing);
   });
 
-  testWidgets('renders upload_pending media as an explicit upload state', (
+  testWidgets('renders upload_pending media as waiting without an active spinner', (
     tester,
   ) async {
     await tester.pumpWidget(
@@ -453,7 +453,10 @@ void main() {
     );
     await tester.pump();
 
-    expect(find.text('Uploading media'), findsOneWidget);
+    expect(find.text('Media pending upload'), findsOneWidget);
+    expect(find.text('Uploading media'), findsNothing);
+    expect(find.byType(CircularProgressIndicator), findsNothing);
+    expect(find.byIcon(Icons.schedule_rounded), findsOneWidget);
     expect(
       find.text('Recipients will receive this after the upload finishes.'),
       findsOneWidget,

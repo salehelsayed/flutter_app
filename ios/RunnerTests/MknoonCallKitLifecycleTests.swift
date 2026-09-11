@@ -11,6 +11,74 @@ final class MknoonCallKitLifecycleTests: XCTestCase {
   private let callB = UUID(uuidString: "323e4567-e89b-42d3-a456-426614174002")!
   private let contact = "223e4567-e89b-42d3-a456-426614174001"
 
+  func testIncomingProviderErrorScopeIsBoundedAndCannotLeakIntoAnotherCallback() {
+    let cases = (0...7).map { (CXErrorDomainIncomingCall, $0, Optional($0)) }
+      + [(CXErrorDomainIncomingCall, 8, nil), (CXErrorDomainIncomingCall, -1, nil), ("private-domain", 3, nil)]
+    for (domain, code, expectedCode) in cases {
+      let rig = makeRig()
+      rig.provider.delayedReportCompletion = { _ in }
+      var result: MknoonCallPresentationResult?
+      var captured: [String: Any] = [:]
+      rig.controller.presentIncoming(payload(callA)) {
+        result = $0
+        captured = MknoonCallDiagnosticScope.current
+        let next = self.makeRig()
+        next.controller.presentIncoming(self.payload(self.callB)) { _ in
+          XCTAssertNil(MknoonCallDiagnosticScope.current["incomingCallOsReasonCode"])
+          XCTAssertNil(MknoonCallDiagnosticScope.current["incomingCallProviderError"])
+        }
+      }
+      rig.provider.delayedReportCompletion?(NSError(domain: domain, code: code,
+        userInfo: [NSLocalizedDescriptionKey: "private-error-text"]))
+      XCTAssertEqual(result, .callKitFailure)
+      XCTAssertEqual(captured["incomingCallProviderError"] as? Bool, true)
+      XCTAssertEqual(captured["incomingCallOsReasonCode"] as? Int, expectedCode)
+      XCTAssertFalse(String(describing: captured).contains("private-error-text"))
+      XCTAssertEqual(rig.store.snapshot()?.terminalEvent?.type, .nativeFailure)
+      XCTAssertEqual(rig.provider.endReports.count, 1)
+      XCTAssertTrue(MknoonCallDiagnosticScope.current.isEmpty)
+    }
+  }
+
+  func testCoalescedPushRetainsPrimaryProviderErrorUntilItsOwnReportCompletes() {
+    for primaryFirst in [false, true] {
+      let rig = makeRig()
+      rig.provider.delayedReportCompletion = { _ in }
+      rig.controller.presentIncoming(payload(callA)) { _ in }
+      var results: [MknoonCallPresentationResult] = []
+      var errorCode: Int?
+      rig.controller.presentIncoming(payload(callA), reportPolicy: .legacyRequired) {
+        results.append($0)
+        errorCode = MknoonCallDiagnosticScope.current["incomingCallOsReasonCode"] as? Int
+      }
+      let callbacks = rig.provider.delayedReportCompletions
+      let providerError = NSError(domain: CXErrorDomainIncomingCall, code: 3)
+      if primaryFirst { callbacks[0](providerError) } else { callbacks[1](nil) }
+      XCTAssertTrue(results.isEmpty)
+      if primaryFirst { callbacks[1](nil) } else { callbacks[0](providerError) }
+      callbacks[0](providerError); callbacks[1](nil)
+      XCTAssertEqual(results, [.callKitFailure])
+      XCTAssertEqual(errorCode, 3)
+      XCTAssertTrue(MknoonCallDiagnosticScope.current.isEmpty)
+    }
+  }
+
+  func testAlreadyReportedCallAdoptionDoesNotInheritProviderFailureDiagnostics() {
+    let rig = makeRig()
+    _ = rig.store.create(payload(callA))
+    rig.provider.nextReportError = NSError(domain: CXErrorDomainIncomingCall, code: 2)
+    var result: MknoonCallPresentationResult?
+    rig.controller.presentIncoming(payload(callA)) {
+      result = $0
+      XCTAssertNil(MknoonCallDiagnosticScope.current["incomingCallProviderError"])
+      XCTAssertNil(MknoonCallDiagnosticScope.current["incomingCallOsReasonCode"])
+    }
+    XCTAssertEqual(result, .duplicate)
+    XCTAssertEqual(rig.store.snapshot()?.presented, true)
+    XCTAssertNil(rig.store.snapshot()?.terminalEvent)
+    XCTAssertTrue(rig.provider.endReports.isEmpty)
+  }
+
   func testReportsExactlyOneIncomingCallAndDuplicateAdoptsSameUUID() throws {
     let rig = makeRig()
     XCTAssertEqual(present(rig, payload(callA)), .presented)

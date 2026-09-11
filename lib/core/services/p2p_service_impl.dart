@@ -374,6 +374,8 @@ class P2PServiceImpl
     AccountMigrationNetworkGate accountMigrationNetworkGate =
         allowAccountMigrationNetworkSideEffects,
     required InboxStagingRepository inboxStagingRepository,
+    Future<bool> Function(String recipientPeerId, String wireEnvelope)?
+    shouldSuppressDirectInboxNotification,
     ReplayRecoveredInboxChatMessage? replayRecoveredInboxChatMessage,
     ReplayRecoveredInboxChatMessage? replayLiveLanChatMessage,
     ReplayRecoveredInboxChatMessage? replayLiveDirectChatMessage,
@@ -439,6 +441,7 @@ class P2PServiceImpl
               String? custodyContract,
               String? custodyKind,
               int? custodyExpiresAtOrBeforeMs,
+              bool suppressNotification = false,
             }) => callP2PInboxStore(
               _bridge,
               toPeerId: toPeerId,
@@ -448,6 +451,7 @@ class P2PServiceImpl
               custodyContract: custodyContract,
               custodyKind: custodyKind,
               custodyExpiresAtOrBeforeMs: custodyExpiresAtOrBeforeMs,
+              suppressNotification: suppressNotification,
             ),
         retrieveInbox: ({int? timeoutMs}) =>
             callP2PInboxRetrieve(_bridge, timeoutMs: timeoutMs),
@@ -496,6 +500,8 @@ class P2PServiceImpl
             },
       ),
       inboxStagingRepository: inboxStagingRepository,
+      shouldSuppressDirectInboxNotification:
+          shouldSuppressDirectInboxNotification,
       receivedWakeTokenStore: receivedWakeTokenStore,
       acceptedInboxWakeTokenHashObserver: acceptedInboxWakeTokenHashObserver,
       replayRecoveredInboxChatMessage: replayRecoveredInboxChatMessage,

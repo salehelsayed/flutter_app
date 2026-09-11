@@ -1,0 +1,18 @@
+{
+  "requestedSinceUtc": "2026-09-07T22:00:00Z",
+  "requestedUntilUtc": "2026-09-08T12:32:19.496383+00:00",
+  "journalExitCode": 0,
+  "retainedUnitEntryCount": 49215,
+  "firstRetainedEntryUtc": "2026-09-07T22:00:13.475128+00:00",
+  "lastRetainedEntryUtc": "2026-09-08T12:32:14.964109+00:00",
+  "all15CalendarHourBucketsPresent": true,
+  "matchingSelectiveActionLogLineCount": 6,
+  "matchingActionLogFirstUtc": "2026-09-08T11:48:17.502761+00:00",
+  "matchingActionLogLastUtc": "2026-09-08T12:31:25.299153+00:00",
+  "limits": [
+    "Journal-entry and selective-log counts are not counts of calls.",
+    "Retained hourly coverage does not prove every request or outcome was logged.",
+    "Original AOF export filtered UTC midnight onward, excluding the first two hours of the Berlin day.",
+    "No raw journal messages, account IDs, tokens, call handles, or encrypted contents exported."
+  ]
+}

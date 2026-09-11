@@ -1,0 +1,1217 @@
+{
+  "alerts": [
+    {
+      "build": "1.0.1+116",
+      "count": 10,
+      "denominator": 22,
+      "feature": "network",
+      "kind": "technical_failure_rate",
+      "minimumSamples": 5,
+      "platform": "ios",
+      "threshold": 0.2
+    },
+    {
+      "build": "1.0.1+116",
+      "count": 2,
+      "denominator": 5,
+      "feature": "startup",
+      "kind": "missing_final_rate",
+      "minimumSamples": 5,
+      "platform": "ios",
+      "threshold": 0.2
+    },
+    {
+      "baselineEventCount": 8355,
+      "build": "1.0.1+116",
+      "eventReports": 10,
+      "feature": "network",
+      "fingerprint": null,
+      "fingerprintSpecificity": "none",
+      "kind": "new_error_signature",
+      "minimumReports": 3,
+      "newInRetainedBaseline": true,
+      "operation": "peer_dial",
+      "platform": "ios",
+      "reason": "route_failed",
+      "stage": "finish"
+    },
+    {
+      "baselineEventCount": 8355,
+      "build": "1.0.1+116",
+      "eventReports": 35,
+      "feature": "runtime",
+      "fingerprint": null,
+      "fingerprintSpecificity": "none",
+      "kind": "new_error_signature",
+      "minimumReports": 3,
+      "newInRetainedBaseline": true,
+      "operation": "other",
+      "platform": "ios",
+      "reason": "bridge_rejected",
+      "stage": "bridge"
+    },
+    {
+      "clientReportedDroppedEvents": 83,
+      "droppedEvents": 0,
+      "invalidEvents": 0,
+      "invalidRecords": 18,
+      "kind": "telemetry_coverage_gap",
+      "lossCountIsLowerBound": false,
+      "scope": "retained_lifetime_and_validation"
+    }
+  ],
+  "attempts": [
+    {
+      "attemptId": "6c586737-c75d-4d9b-9443-be8a751407f5",
+      "build": "1.0.1+116",
+      "completeness": "start_and_final",
+      "crossRunRecovery": false,
+      "durationMs": 29,
+      "endpointAlias": "endpoint-1",
+      "eventCount": 2,
+      "feature": "network",
+      "finalObserved": true,
+      "firstFailureReason": null,
+      "firstFailureStage": null,
+      "firstReceivedAtMs": 1789026076145,
+      "lastObservedStage": "start",
+      "lastReceivedAtMs": 1789026076484,
+      "outcome": "success",
+      "platform": "ios",
+      "reason": "none",
+      "runId": "0cc54645-289c-4a9c-8c0a-87f9bc4a6aee",
+      "runIds": [
+        "0cc54645-289c-4a9c-8c0a-87f9bc4a6aee"
+      ],
+      "sources": [
+        "flutter"
+      ],
+      "startObserved": true,
+      "traceId": "727f57f1-3091-422c-a45f-d7daa60512ca"
+    },
+    {
+      "attemptId": "7360575e-707d-4d15-a744-5c75e8f9d245",
+      "build": "1.0.1+116",
+      "completeness": "start_and_final",
+      "crossRunRecovery": false,
+      "durationMs": 97,
+      "endpointAlias": "endpoint-1",
+      "eventCount": 15,
+      "feature": "startup",
+      "finalObserved": true,
+      "firstFailureReason": null,
+      "firstFailureStage": null,
+      "firstReceivedAtMs": 1789026076151,
+      "lastObservedStage": "process",
+      "lastReceivedAtMs": 1789026076631,
+      "outcome": "success",
+      "platform": "ios",
+      "reason": "none",
+      "runId": "0cc54645-289c-4a9c-8c0a-87f9bc4a6aee",
+      "runIds": [
+        "0cc54645-289c-4a9c-8c0a-87f9bc4a6aee"
+      ],
+      "sources": [
+        "flutter"
+      ],
+      "startObserved": true,
+      "traceId": "0cc54645-289c-4a9c-8c0a-87f9bc4a6aee"
+    },
+    {
+      "attemptId": null,
+      "build": "1.0.1+116",
+      "completeness": "missing_final",
+      "crossRunRecovery": false,
+      "durationMs": null,
+      "endpointAlias": "endpoint-1",
+      "eventCount": 3,
+      "feature": "startup",
+      "finalObserved": false,
+      "firstFailureReason": null,
+      "firstFailureStage": null,
+      "firstReceivedAtMs": 1789026076293,
+      "lastObservedStage": "bridge",
+      "lastReceivedAtMs": 1789026076317,
+      "outcome": "incomplete",
+      "platform": "ios",
+      "reason": "interrupted_before_final_record",
+      "runId": "d89c2067-6e72-48e1-a6d8-869b903598d4",
+      "runIds": [
+        "d89c2067-6e72-48e1-a6d8-869b903598d4"
+      ],
+      "sources": [
+        "ios"
+      ],
+      "startObserved": true,
+      "traceId": null
+    },
+    {
+      "attemptId": "d82c7e11-2e00-4d3f-9612-492e6f06a645",
+      "build": "1.0.1+116",
+      "completeness": "start_and_final",
+      "crossRunRecovery": false,
+      "durationMs": 3,
+      "endpointAlias": "endpoint-1",
+      "eventCount": 2,
+      "feature": "network",
+      "finalObserved": true,
+      "firstFailureReason": "route_failed",
+      "firstFailureStage": "finish",
+      "firstReceivedAtMs": 1789026083374,
+      "lastObservedStage": "start",
+      "lastReceivedAtMs": 1789026083434,
+      "outcome": "failed",
+      "platform": "ios",
+      "reason": "route_failed",
+      "runId": "0cc54645-289c-4a9c-8c0a-87f9bc4a6aee",
+      "runIds": [
+        "0cc54645-289c-4a9c-8c0a-87f9bc4a6aee"
+      ],
+      "sources": [
+        "flutter"
+      ],
+      "startObserved": true,
+      "traceId": "b76f923c-3071-4e58-94ac-cd4205ad6d2e"
+    },
+    {
+      "attemptId": "3c7957a0-79a0-43d9-82db-485e48d9139a",
+      "build": "1.0.1+116",
+      "completeness": "start_and_final",
+      "crossRunRecovery": false,
+      "durationMs": 162,
+      "endpointAlias": "endpoint-2",
+      "eventCount": 2,
+      "feature": "network",
+      "finalObserved": true,
+      "firstFailureReason": null,
+      "firstFailureStage": null,
+      "firstReceivedAtMs": 1789026449157,
+      "lastObservedStage": "start",
+      "lastReceivedAtMs": 1789026449339,
+      "outcome": "success",
+      "platform": "ios",
+      "reason": "none",
+      "runId": "ffc7efdc-d429-4b88-8854-48ee85182dcf",
+      "runIds": [
+        "ffc7efdc-d429-4b88-8854-48ee85182dcf"
+      ],
+      "sources": [
+        "flutter"
+      ],
+      "startObserved": true,
+      "traceId": "6bdc36ac-d4f0-402b-86bb-8d0326babe25"
+    },
+    {
+      "attemptId": "5d8b92f9-dbe6-4037-b3ff-18383bd15f07",
+      "build": "1.0.1+116",
+      "completeness": "start_and_final",
+      "crossRunRecovery": false,
+      "durationMs": 508,
+      "endpointAlias": "endpoint-2",
+      "eventCount": 22,
+      "feature": "startup",
+      "finalObserved": true,
+      "firstFailureReason": null,
+      "firstFailureStage": null,
+      "firstReceivedAtMs": 1789026449163,
+      "lastObservedStage": "process",
+      "lastReceivedAtMs": 1789026505233,
+      "outcome": "success",
+      "platform": "ios",
+      "reason": "none",
+      "runId": "ffc7efdc-d429-4b88-8854-48ee85182dcf",
+      "runIds": [
+        "ffc7efdc-d429-4b88-8854-48ee85182dcf"
+      ],
+      "sources": [
+        "flutter"
+      ],
+      "startObserved": true,
+      "traceId": "ffc7efdc-d429-4b88-8854-48ee85182dcf"
+    },
+    {
+      "attemptId": "59b7bc44-89f7-4d34-b87b-f84b18a21312",
+      "build": "1.0.1+116",
+      "completeness": "start_and_final",
+      "crossRunRecovery": false,
+      "durationMs": 211,
+      "endpointAlias": "endpoint-2",
+      "eventCount": 2,
+      "feature": "network",
+      "finalObserved": true,
+      "firstFailureReason": null,
+      "firstFailureStage": null,
+      "firstReceivedAtMs": 1789026449169,
+      "lastObservedStage": "start",
+      "lastReceivedAtMs": 1789026449400,
+      "outcome": "success",
+      "platform": "ios",
+      "reason": "none",
+      "runId": "ffc7efdc-d429-4b88-8854-48ee85182dcf",
+      "runIds": [
+        "ffc7efdc-d429-4b88-8854-48ee85182dcf"
+      ],
+      "sources": [
+        "flutter"
+      ],
+      "startObserved": true,
+      "traceId": "d76f1d31-bc5e-40cd-abba-3799db5b76c8"
+    },
+    {
+      "attemptId": "dc5e1b3c-8a54-45a9-8ea0-8ffdb5f1fdad",
+      "build": "1.0.1+116",
+      "completeness": "start_and_final",
+      "crossRunRecovery": false,
+      "durationMs": 7,
+      "endpointAlias": "endpoint-1",
+      "eventCount": 2,
+      "feature": "network",
+      "finalObserved": true,
+      "firstFailureReason": "route_failed",
+      "firstFailureStage": "finish",
+      "firstReceivedAtMs": 1789027075064,
+      "lastObservedStage": "start",
+      "lastReceivedAtMs": 1789027075301,
+      "outcome": "failed",
+      "platform": "ios",
+      "reason": "route_failed",
+      "runId": "bfcc66fb-1dc8-4699-93b3-7d4b7c45d179",
+      "runIds": [
+        "bfcc66fb-1dc8-4699-93b3-7d4b7c45d179"
+      ],
+      "sources": [
+        "flutter"
+      ],
+      "startObserved": true,
+      "traceId": "9a6497df-f40c-4d11-99ad-baf6af1d0a0e"
+    },
+    {
+      "attemptId": "422b08b7-6329-49a7-8462-7709f0ba2420",
+      "build": "1.0.1+116",
+      "completeness": "start_and_final",
+      "crossRunRecovery": false,
+      "durationMs": 4,
+      "endpointAlias": "endpoint-1",
+      "eventCount": 2,
+      "feature": "network",
+      "finalObserved": true,
+      "firstFailureReason": "route_failed",
+      "firstFailureStage": "finish",
+      "firstReceivedAtMs": 1789027075072,
+      "lastObservedStage": "start",
+      "lastReceivedAtMs": 1789027075175,
+      "outcome": "failed",
+      "platform": "ios",
+      "reason": "route_failed",
+      "runId": "0cc54645-289c-4a9c-8c0a-87f9bc4a6aee",
+      "runIds": [
+        "0cc54645-289c-4a9c-8c0a-87f9bc4a6aee"
+      ],
+      "sources": [
+        "flutter"
+      ],
+      "startObserved": true,
+      "traceId": "36ceba15-809c-4358-b8eb-3c69ddd2ea09"
+    },
+    {
+      "attemptId": "285654a7-b147-42ba-b5d9-5504ee52c92b",
+      "build": "1.0.1+116",
+      "completeness": "start_and_final",
+      "crossRunRecovery": false,
+      "durationMs": 3,
+      "endpointAlias": "endpoint-1",
+      "eventCount": 2,
+      "feature": "network",
+      "finalObserved": true,
+      "firstFailureReason": "route_failed",
+      "firstFailureStage": "finish",
+      "firstReceivedAtMs": 1789027075077,
+      "lastObservedStage": "start",
+      "lastReceivedAtMs": 1789027075150,
+      "outcome": "failed",
+      "platform": "ios",
+      "reason": "route_failed",
+      "runId": "0cc54645-289c-4a9c-8c0a-87f9bc4a6aee",
+      "runIds": [
+        "0cc54645-289c-4a9c-8c0a-87f9bc4a6aee"
+      ],
+      "sources": [
+        "flutter"
+      ],
+      "startObserved": true,
+      "traceId": "98bbbd21-c65f-4168-9bb4-502fa16a77b7"
+    },
+    {
+      "attemptId": "da6559d0-e999-4a22-bde1-5d8e6a5c1756",
+      "build": "1.0.1+116",
+      "completeness": "start_and_final",
+      "crossRunRecovery": false,
+      "durationMs": 71,
+      "endpointAlias": "endpoint-1",
+      "eventCount": 15,
+      "feature": "startup",
+      "finalObserved": true,
+      "firstFailureReason": null,
+      "firstFailureStage": null,
+      "firstReceivedAtMs": 1789027075083,
+      "lastObservedStage": "process",
+      "lastReceivedAtMs": 1789027075266,
+      "outcome": "success",
+      "platform": "ios",
+      "reason": "none",
+      "runId": "bfcc66fb-1dc8-4699-93b3-7d4b7c45d179",
+      "runIds": [
+        "bfcc66fb-1dc8-4699-93b3-7d4b7c45d179"
+      ],
+      "sources": [
+        "flutter"
+      ],
+      "startObserved": true,
+      "traceId": "bfcc66fb-1dc8-4699-93b3-7d4b7c45d179"
+    },
+    {
+      "attemptId": "1c68c8cb-334c-4ea2-967b-1e163714be25",
+      "build": "1.0.1+116",
+      "completeness": "start_and_final",
+      "crossRunRecovery": false,
+      "durationMs": 22,
+      "endpointAlias": "endpoint-1",
+      "eventCount": 2,
+      "feature": "network",
+      "finalObserved": true,
+      "firstFailureReason": null,
+      "firstFailureStage": null,
+      "firstReceivedAtMs": 1789027075088,
+      "lastObservedStage": "start",
+      "lastReceivedAtMs": 1789027075234,
+      "outcome": "success",
+      "platform": "ios",
+      "reason": "none",
+      "runId": "bfcc66fb-1dc8-4699-93b3-7d4b7c45d179",
+      "runIds": [
+        "bfcc66fb-1dc8-4699-93b3-7d4b7c45d179"
+      ],
+      "sources": [
+        "flutter"
+      ],
+      "startObserved": true,
+      "traceId": "d8fe8a0d-5ebb-40cb-862b-d7d9683b0107"
+    },
+    {
+      "attemptId": null,
+      "build": "1.0.1+116",
+      "completeness": "missing_final",
+      "crossRunRecovery": false,
+      "durationMs": null,
+      "endpointAlias": "endpoint-1",
+      "eventCount": 3,
+      "feature": "startup",
+      "finalObserved": false,
+      "firstFailureReason": null,
+      "firstFailureStage": null,
+      "firstReceivedAtMs": 1789027075100,
+      "lastObservedStage": "bridge",
+      "lastReceivedAtMs": 1789027075112,
+      "outcome": "incomplete",
+      "platform": "ios",
+      "reason": "interrupted_before_final_record",
+      "runId": "10a80369-4afe-49b3-a823-3642234f7e90",
+      "runIds": [
+        "10a80369-4afe-49b3-a823-3642234f7e90"
+      ],
+      "sources": [
+        "ios"
+      ],
+      "startObserved": true,
+      "traceId": null
+    },
+    {
+      "attemptId": "938bfc67-91a4-495d-a51e-a969576ce620",
+      "build": "1.0.1+116",
+      "completeness": "start_and_final",
+      "crossRunRecovery": false,
+      "durationMs": 642,
+      "endpointAlias": "endpoint-1",
+      "eventCount": 2,
+      "feature": "network",
+      "finalObserved": true,
+      "firstFailureReason": null,
+      "firstFailureStage": null,
+      "firstReceivedAtMs": 1789027075406,
+      "lastObservedStage": "finish",
+      "lastReceivedAtMs": 1789027075974,
+      "outcome": "success",
+      "platform": "ios",
+      "reason": "none",
+      "runId": "bfcc66fb-1dc8-4699-93b3-7d4b7c45d179",
+      "runIds": [
+        "bfcc66fb-1dc8-4699-93b3-7d4b7c45d179"
+      ],
+      "sources": [
+        "flutter"
+      ],
+      "startObserved": true,
+      "traceId": "ab0c85b5-18a8-4c4e-9792-a24a2df6697e"
+    },
+    {
+      "attemptId": "48900ae9-85f7-4672-b172-90d57238d59b",
+      "build": "1.0.1+116",
+      "completeness": "start_and_final",
+      "crossRunRecovery": false,
+      "durationMs": 644,
+      "endpointAlias": "endpoint-1",
+      "eventCount": 2,
+      "feature": "network",
+      "finalObserved": true,
+      "firstFailureReason": null,
+      "firstFailureStage": null,
+      "firstReceivedAtMs": 1789027075412,
+      "lastObservedStage": "finish",
+      "lastReceivedAtMs": 1789027075960,
+      "outcome": "success",
+      "platform": "ios",
+      "reason": "none",
+      "runId": "bfcc66fb-1dc8-4699-93b3-7d4b7c45d179",
+      "runIds": [
+        "bfcc66fb-1dc8-4699-93b3-7d4b7c45d179"
+      ],
+      "sources": [
+        "flutter"
+      ],
+      "startObserved": true,
+      "traceId": "30f8e83e-f07c-46c2-b570-7be9d7a0b847"
+    },
+    {
+      "attemptId": "eccd5645-154d-424a-b0a1-95ad369e17c0",
+      "build": "1.0.1+116",
+      "completeness": "start_and_final",
+      "crossRunRecovery": false,
+      "durationMs": 8,
+      "endpointAlias": "endpoint-1",
+      "eventCount": 6,
+      "feature": "message",
+      "finalObserved": true,
+      "firstFailureReason": null,
+      "firstFailureStage": null,
+      "firstReceivedAtMs": 1789027075968,
+      "lastObservedStage": "receipt",
+      "lastReceivedAtMs": 1789027081422,
+      "outcome": "success",
+      "platform": "ios",
+      "reason": "duplicate",
+      "runId": "bfcc66fb-1dc8-4699-93b3-7d4b7c45d179",
+      "runIds": [
+        "bfcc66fb-1dc8-4699-93b3-7d4b7c45d179"
+      ],
+      "sources": [
+        "flutter"
+      ],
+      "startObserved": true,
+      "traceId": "7140856f-0dfb-499a-be5f-2349fa047f6b"
+    },
+    {
+      "attemptId": "2b8cd71d-be9f-45e9-8f47-155c788fc4e2",
+      "build": "1.0.1+116",
+      "completeness": "start_and_final",
+      "crossRunRecovery": false,
+      "durationMs": 31,
+      "endpointAlias": "endpoint-1",
+      "eventCount": 8,
+      "feature": "message",
+      "finalObserved": true,
+      "firstFailureReason": null,
+      "firstFailureStage": null,
+      "firstReceivedAtMs": 1789027075981,
+      "lastObservedStage": "receipt",
+      "lastReceivedAtMs": 1789027081442,
+      "outcome": "success",
+      "platform": "ios",
+      "reason": "none",
+      "runId": "bfcc66fb-1dc8-4699-93b3-7d4b7c45d179",
+      "runIds": [
+        "bfcc66fb-1dc8-4699-93b3-7d4b7c45d179"
+      ],
+      "sources": [
+        "flutter"
+      ],
+      "startObserved": true,
+      "traceId": "2757b04e-3dc9-462e-8ea2-dc6eee40461b"
+    },
+    {
+      "attemptId": "5bcda60b-1f16-482f-a94c-6616f0f57892",
+      "build": "1.0.1+116",
+      "completeness": "start_and_final",
+      "crossRunRecovery": false,
+      "durationMs": 4,
+      "endpointAlias": "endpoint-1",
+      "eventCount": 6,
+      "feature": "message",
+      "finalObserved": true,
+      "firstFailureReason": null,
+      "firstFailureStage": null,
+      "firstReceivedAtMs": 1789027075987,
+      "lastObservedStage": "receipt",
+      "lastReceivedAtMs": 1789027081434,
+      "outcome": "success",
+      "platform": "ios",
+      "reason": "duplicate",
+      "runId": "bfcc66fb-1dc8-4699-93b3-7d4b7c45d179",
+      "runIds": [
+        "bfcc66fb-1dc8-4699-93b3-7d4b7c45d179"
+      ],
+      "sources": [
+        "flutter"
+      ],
+      "startObserved": true,
+      "traceId": "c031872d-e1f9-4d8c-b994-28bfacf83163"
+    },
+    {
+      "attemptId": "dae42dea-36be-46e8-8d3e-9649a55f1bba",
+      "build": "1.0.1+116",
+      "completeness": "start_and_final",
+      "crossRunRecovery": false,
+      "durationMs": 7,
+      "endpointAlias": "endpoint-1",
+      "eventCount": 6,
+      "feature": "message",
+      "finalObserved": true,
+      "firstFailureReason": null,
+      "firstFailureStage": null,
+      "firstReceivedAtMs": 1789027075993,
+      "lastObservedStage": "receipt",
+      "lastReceivedAtMs": 1789027081450,
+      "outcome": "success",
+      "platform": "ios",
+      "reason": "duplicate",
+      "runId": "bfcc66fb-1dc8-4699-93b3-7d4b7c45d179",
+      "runIds": [
+        "bfcc66fb-1dc8-4699-93b3-7d4b7c45d179"
+      ],
+      "sources": [
+        "flutter"
+      ],
+      "startObserved": true,
+      "traceId": "37d7e595-3e71-4ec3-973c-6074726ce44a"
+    },
+    {
+      "attemptId": "d6d88b0c-e431-4b37-b1db-93e245ff264c",
+      "build": "1.0.1+116",
+      "completeness": "start_and_final",
+      "crossRunRecovery": false,
+      "durationMs": 1125,
+      "endpointAlias": "endpoint-1",
+      "eventCount": 2,
+      "feature": "network",
+      "finalObserved": true,
+      "firstFailureReason": null,
+      "firstFailureStage": null,
+      "firstReceivedAtMs": 1789027076052,
+      "lastObservedStage": "finish",
+      "lastReceivedAtMs": 1789027081401,
+      "outcome": "success",
+      "platform": "ios",
+      "reason": "none",
+      "runId": "bfcc66fb-1dc8-4699-93b3-7d4b7c45d179",
+      "runIds": [
+        "bfcc66fb-1dc8-4699-93b3-7d4b7c45d179"
+      ],
+      "sources": [
+        "flutter"
+      ],
+      "startObserved": true,
+      "traceId": "6410f437-7d87-4239-ac8d-4af35a3e27dc"
+    },
+    {
+      "attemptId": "f5ea33e1-5b4b-4693-aee8-35e5ba3cf3a8",
+      "build": "1.0.1+116",
+      "completeness": "start_and_final",
+      "crossRunRecovery": false,
+      "durationMs": 2,
+      "endpointAlias": "endpoint-1",
+      "eventCount": 2,
+      "feature": "network",
+      "finalObserved": true,
+      "firstFailureReason": null,
+      "firstFailureStage": null,
+      "firstReceivedAtMs": 1789027081408,
+      "lastObservedStage": "start",
+      "lastReceivedAtMs": 1789027081464,
+      "outcome": "success",
+      "platform": "ios",
+      "reason": "none",
+      "runId": "bfcc66fb-1dc8-4699-93b3-7d4b7c45d179",
+      "runIds": [
+        "bfcc66fb-1dc8-4699-93b3-7d4b7c45d179"
+      ],
+      "sources": [
+        "flutter"
+      ],
+      "startObserved": true,
+      "traceId": "f90d0244-622b-4e2a-bb0a-ccb3b4134599"
+    },
+    {
+      "attemptId": "4becf6bf-dc68-4b4f-a9d7-b8f93bb4f13e",
+      "build": "1.0.1+116",
+      "completeness": "start_and_final",
+      "crossRunRecovery": false,
+      "durationMs": 2022,
+      "endpointAlias": "endpoint-1",
+      "eventCount": 2,
+      "feature": "network",
+      "finalObserved": true,
+      "firstFailureReason": "route_failed",
+      "firstFailureStage": "finish",
+      "firstReceivedAtMs": 1789027081414,
+      "lastObservedStage": "start",
+      "lastReceivedAtMs": 1789027081457,
+      "outcome": "failed",
+      "platform": "ios",
+      "reason": "route_failed",
+      "runId": "bfcc66fb-1dc8-4699-93b3-7d4b7c45d179",
+      "runIds": [
+        "bfcc66fb-1dc8-4699-93b3-7d4b7c45d179"
+      ],
+      "sources": [
+        "flutter"
+      ],
+      "startObserved": true,
+      "traceId": "c78bfa0a-246d-4b85-9db9-4bbde205fcdc"
+    },
+    {
+      "attemptId": "2735cebc-85b8-4aed-bea0-c0ec3cb9a0ae",
+      "build": "1.0.1+116",
+      "completeness": "start_and_final",
+      "crossRunRecovery": false,
+      "durationMs": 2,
+      "endpointAlias": "endpoint-1",
+      "eventCount": 2,
+      "feature": "network",
+      "finalObserved": true,
+      "firstFailureReason": null,
+      "firstFailureStage": null,
+      "firstReceivedAtMs": 1789027091336,
+      "lastObservedStage": "start",
+      "lastReceivedAtMs": 1789027091362,
+      "outcome": "success",
+      "platform": "ios",
+      "reason": "none",
+      "runId": "bfcc66fb-1dc8-4699-93b3-7d4b7c45d179",
+      "runIds": [
+        "bfcc66fb-1dc8-4699-93b3-7d4b7c45d179"
+      ],
+      "sources": [
+        "flutter"
+      ],
+      "startObserved": true,
+      "traceId": "922b5ca8-a252-4027-a755-e55734190a43"
+    },
+    {
+      "attemptId": "33c7f320-7b68-44bd-a798-0733a6d58399",
+      "build": "1.0.1+116",
+      "completeness": "start_and_final",
+      "crossRunRecovery": false,
+      "durationMs": 2,
+      "endpointAlias": "endpoint-1",
+      "eventCount": 2,
+      "feature": "network",
+      "finalObserved": true,
+      "firstFailureReason": null,
+      "firstFailureStage": null,
+      "firstReceivedAtMs": 1789027091344,
+      "lastObservedStage": "start",
+      "lastReceivedAtMs": 1789027091369,
+      "outcome": "success",
+      "platform": "ios",
+      "reason": "none",
+      "runId": "bfcc66fb-1dc8-4699-93b3-7d4b7c45d179",
+      "runIds": [
+        "bfcc66fb-1dc8-4699-93b3-7d4b7c45d179"
+      ],
+      "sources": [
+        "flutter"
+      ],
+      "startObserved": true,
+      "traceId": "26ff31b8-f315-4ec4-9f73-29d19a545f3a"
+    },
+    {
+      "attemptId": "ee56800c-ded3-4cb7-8338-09d67318093c",
+      "build": "1.0.1+116",
+      "completeness": "start_and_final",
+      "crossRunRecovery": false,
+      "durationMs": 4,
+      "endpointAlias": "endpoint-1",
+      "eventCount": 2,
+      "feature": "network",
+      "finalObserved": true,
+      "firstFailureReason": null,
+      "firstFailureStage": null,
+      "firstReceivedAtMs": 1789027091350,
+      "lastObservedStage": "start",
+      "lastReceivedAtMs": 1789027091409,
+      "outcome": "success",
+      "platform": "ios",
+      "reason": "none",
+      "runId": "bfcc66fb-1dc8-4699-93b3-7d4b7c45d179",
+      "runIds": [
+        "bfcc66fb-1dc8-4699-93b3-7d4b7c45d179"
+      ],
+      "sources": [
+        "flutter"
+      ],
+      "startObserved": true,
+      "traceId": "51d43be4-19d6-4242-9d58-64662482f17c"
+    },
+    {
+      "attemptId": "b16c008a-869a-4258-9a88-773190278c61",
+      "build": "1.0.1+116",
+      "completeness": "start_and_final",
+      "crossRunRecovery": false,
+      "durationMs": 382,
+      "endpointAlias": "endpoint-1",
+      "eventCount": 12,
+      "feature": "message",
+      "finalObserved": true,
+      "firstFailureReason": "send_failed",
+      "firstFailureStage": "send",
+      "firstReceivedAtMs": 1789027091356,
+      "lastObservedStage": "store",
+      "lastReceivedAtMs": 1789027091463,
+      "outcome": "success",
+      "platform": "ios",
+      "reason": "none",
+      "runId": "bfcc66fb-1dc8-4699-93b3-7d4b7c45d179",
+      "runIds": [
+        "bfcc66fb-1dc8-4699-93b3-7d4b7c45d179"
+      ],
+      "sources": [
+        "flutter"
+      ],
+      "startObserved": true,
+      "traceId": "a6175d33-dab2-4062-9161-6283ec4213c9"
+    },
+    {
+      "attemptId": "7492f2a7-28f4-45e5-b011-c9d7403cd641",
+      "build": "1.0.1+116",
+      "completeness": "start_and_final",
+      "crossRunRecovery": false,
+      "durationMs": 2006,
+      "endpointAlias": "endpoint-1",
+      "eventCount": 2,
+      "feature": "network",
+      "finalObserved": true,
+      "firstFailureReason": "route_failed",
+      "firstFailureStage": "finish",
+      "firstReceivedAtMs": 1789027091473,
+      "lastObservedStage": "finish",
+      "lastReceivedAtMs": 1789027101381,
+      "outcome": "failed",
+      "platform": "ios",
+      "reason": "route_failed",
+      "runId": "bfcc66fb-1dc8-4699-93b3-7d4b7c45d179",
+      "runIds": [
+        "bfcc66fb-1dc8-4699-93b3-7d4b7c45d179"
+      ],
+      "sources": [
+        "flutter"
+      ],
+      "startObserved": true,
+      "traceId": "08da84d4-b830-490b-ac0b-39b55bad253c"
+    },
+    {
+      "attemptId": "4385e780-1bb0-4fbc-9164-70b117f80010",
+      "build": "1.0.1+116",
+      "completeness": "start_and_final",
+      "crossRunRecovery": false,
+      "durationMs": 2006,
+      "endpointAlias": "endpoint-1",
+      "eventCount": 2,
+      "feature": "network",
+      "finalObserved": true,
+      "firstFailureReason": "route_failed",
+      "firstFailureStage": "finish",
+      "firstReceivedAtMs": 1789027101389,
+      "lastObservedStage": "start",
+      "lastReceivedAtMs": 1789027101417,
+      "outcome": "failed",
+      "platform": "ios",
+      "reason": "route_failed",
+      "runId": "bfcc66fb-1dc8-4699-93b3-7d4b7c45d179",
+      "runIds": [
+        "bfcc66fb-1dc8-4699-93b3-7d4b7c45d179"
+      ],
+      "sources": [
+        "flutter"
+      ],
+      "startObserved": true,
+      "traceId": "730199e8-f976-44cf-ac13-603b510e0742"
+    },
+    {
+      "attemptId": "2c602efa-bb73-4f2a-84c2-78c1c208e995",
+      "build": "1.0.1+116",
+      "completeness": "start_and_final",
+      "crossRunRecovery": false,
+      "durationMs": 30,
+      "endpointAlias": "endpoint-1",
+      "eventCount": 8,
+      "feature": "message",
+      "finalObserved": true,
+      "firstFailureReason": null,
+      "firstFailureStage": null,
+      "firstReceivedAtMs": 1789027101396,
+      "lastObservedStage": "receipt",
+      "lastReceivedAtMs": 1789027101467,
+      "outcome": "success",
+      "platform": "ios",
+      "reason": "none",
+      "runId": "bfcc66fb-1dc8-4699-93b3-7d4b7c45d179",
+      "runIds": [
+        "bfcc66fb-1dc8-4699-93b3-7d4b7c45d179"
+      ],
+      "sources": [
+        "flutter"
+      ],
+      "startObserved": true,
+      "traceId": "d2cf00cc-a153-41c5-8756-fd5487df6cfd"
+    },
+    {
+      "attemptId": "13b82e55-df22-47d8-ab1f-2e048b30dbee",
+      "build": "1.0.1+116",
+      "completeness": "start_and_final",
+      "crossRunRecovery": false,
+      "durationMs": 12,
+      "endpointAlias": "endpoint-1",
+      "eventCount": 6,
+      "feature": "message",
+      "finalObserved": true,
+      "firstFailureReason": null,
+      "firstFailureStage": null,
+      "firstReceivedAtMs": 1789027101405,
+      "lastObservedStage": "receipt",
+      "lastReceivedAtMs": 1789027101502,
+      "outcome": "success",
+      "platform": "ios",
+      "reason": "duplicate",
+      "runId": "bfcc66fb-1dc8-4699-93b3-7d4b7c45d179",
+      "runIds": [
+        "bfcc66fb-1dc8-4699-93b3-7d4b7c45d179"
+      ],
+      "sources": [
+        "flutter"
+      ],
+      "startObserved": true,
+      "traceId": "55ff75d5-10b3-4cd7-b886-1b8fd51292ac"
+    },
+    {
+      "attemptId": "95ae391a-a8c1-438d-9ca0-b54a0574b62a",
+      "build": "1.0.1+116",
+      "completeness": "start_and_final",
+      "crossRunRecovery": false,
+      "durationMs": 2,
+      "endpointAlias": "endpoint-1",
+      "eventCount": 2,
+      "feature": "network",
+      "finalObserved": true,
+      "firstFailureReason": null,
+      "firstFailureStage": null,
+      "firstReceivedAtMs": 1789027101411,
+      "lastObservedStage": "start",
+      "lastReceivedAtMs": 1789027101509,
+      "outcome": "success",
+      "platform": "ios",
+      "reason": "none",
+      "runId": "bfcc66fb-1dc8-4699-93b3-7d4b7c45d179",
+      "runIds": [
+        "bfcc66fb-1dc8-4699-93b3-7d4b7c45d179"
+      ],
+      "sources": [
+        "flutter"
+      ],
+      "startObserved": true,
+      "traceId": "98bd9195-725b-46fa-ad07-72519decea02"
+    },
+    {
+      "attemptId": "143f597d-edf4-4ed5-ae5d-52ae41a8a371",
+      "build": "1.0.1+116",
+      "completeness": "start_and_final",
+      "crossRunRecovery": false,
+      "durationMs": 235,
+      "endpointAlias": "endpoint-1",
+      "eventCount": 9,
+      "feature": "message",
+      "finalObserved": true,
+      "firstFailureReason": null,
+      "firstFailureStage": null,
+      "firstReceivedAtMs": 1789027111335,
+      "lastObservedStage": "store",
+      "lastReceivedAtMs": 1789027111409,
+      "outcome": "success",
+      "platform": "ios",
+      "reason": "none",
+      "runId": "bfcc66fb-1dc8-4699-93b3-7d4b7c45d179",
+      "runIds": [
+        "bfcc66fb-1dc8-4699-93b3-7d4b7c45d179"
+      ],
+      "sources": [
+        "flutter"
+      ],
+      "startObserved": true,
+      "traceId": "8c599610-ff69-46ed-9e83-31d58a827334"
+    },
+    {
+      "attemptId": "b7deca4b-f277-4db6-9d98-6e4c90a6d1a2",
+      "build": "1.0.1+116",
+      "completeness": "start_and_final",
+      "crossRunRecovery": false,
+      "durationMs": 2008,
+      "endpointAlias": "endpoint-1",
+      "eventCount": 2,
+      "feature": "network",
+      "finalObserved": true,
+      "firstFailureReason": "route_failed",
+      "firstFailureStage": "finish",
+      "firstReceivedAtMs": 1789027111341,
+      "lastObservedStage": "start",
+      "lastReceivedAtMs": 1789027111396,
+      "outcome": "failed",
+      "platform": "ios",
+      "reason": "route_failed",
+      "runId": "bfcc66fb-1dc8-4699-93b3-7d4b7c45d179",
+      "runIds": [
+        "bfcc66fb-1dc8-4699-93b3-7d4b7c45d179"
+      ],
+      "sources": [
+        "flutter"
+      ],
+      "startObserved": true,
+      "traceId": "46e8cf70-2d92-4b23-874e-0881d3f2864b"
+    },
+    {
+      "attemptId": "c9cf32b4-1769-473d-8f52-ee86f33d2b40",
+      "build": "1.0.1+116",
+      "completeness": "start_and_final",
+      "crossRunRecovery": false,
+      "durationMs": 2000,
+      "endpointAlias": "endpoint-1",
+      "eventCount": 2,
+      "feature": "network",
+      "finalObserved": true,
+      "firstFailureReason": "route_failed",
+      "firstFailureStage": "finish",
+      "firstReceivedAtMs": 1789027121316,
+      "lastObservedStage": "start",
+      "lastReceivedAtMs": 1789027121329,
+      "outcome": "failed",
+      "platform": "ios",
+      "reason": "route_failed",
+      "runId": "bfcc66fb-1dc8-4699-93b3-7d4b7c45d179",
+      "runIds": [
+        "bfcc66fb-1dc8-4699-93b3-7d4b7c45d179"
+      ],
+      "sources": [
+        "flutter"
+      ],
+      "startObserved": true,
+      "traceId": "8284be5c-1c11-4685-86da-e4fd09b5f3da"
+    },
+    {
+      "attemptId": "13f57a1d-217d-4d89-a587-436d1aad23a0",
+      "build": "1.0.1+116",
+      "completeness": "start_and_final",
+      "crossRunRecovery": false,
+      "durationMs": 2008,
+      "endpointAlias": "endpoint-1",
+      "eventCount": 2,
+      "feature": "network",
+      "finalObserved": true,
+      "firstFailureReason": "route_failed",
+      "firstFailureStage": "finish",
+      "firstReceivedAtMs": 1789027121322,
+      "lastObservedStage": "start",
+      "lastReceivedAtMs": 1789027121336,
+      "outcome": "failed",
+      "platform": "ios",
+      "reason": "route_failed",
+      "runId": "bfcc66fb-1dc8-4699-93b3-7d4b7c45d179",
+      "runIds": [
+        "bfcc66fb-1dc8-4699-93b3-7d4b7c45d179"
+      ],
+      "sources": [
+        "flutter"
+      ],
+      "startObserved": true,
+      "traceId": "8e11cb62-860e-433b-b1e7-5dca44d2e9bb"
+    }
+  ],
+  "attemptsObserved": 35,
+  "attemptsTruncated": 0,
+  "errors": [
+    {
+      "baselineEventCount": 8355,
+      "build": "1.0.1+116",
+      "eventReports": 2,
+      "feature": "message",
+      "fingerprint": null,
+      "fingerprintSpecificity": "none",
+      "newInRetainedBaseline": true,
+      "platform": "ios",
+      "reason": "send_failed",
+      "stage": "send"
+    },
+    {
+      "baselineEventCount": 8355,
+      "build": "1.0.1+116",
+      "eventReports": 10,
+      "feature": "network",
+      "fingerprint": null,
+      "fingerprintSpecificity": "none",
+      "newInRetainedBaseline": true,
+      "operation": "peer_dial",
+      "platform": "ios",
+      "reason": "route_failed",
+      "stage": "finish"
+    },
+    {
+      "baselineEventCount": 8355,
+      "build": "1.0.1+116",
+      "eventReports": 35,
+      "feature": "runtime",
+      "fingerprint": null,
+      "fingerprintSpecificity": "none",
+      "newInRetainedBaseline": true,
+      "operation": "other",
+      "platform": "ios",
+      "reason": "bridge_rejected",
+      "stage": "bridge"
+    },
+    {
+      "baselineEventCount": 8355,
+      "build": "1.0.1+116",
+      "eventReports": 2,
+      "feature": "runtime",
+      "fingerprint": null,
+      "fingerprintSpecificity": "none",
+      "newInRetainedBaseline": true,
+      "operation": "other",
+      "platform": "ios",
+      "reason": "malformed_response",
+      "stage": "bridge"
+    },
+    {
+      "baselineEventCount": 8355,
+      "build": "1.0.1+116",
+      "errorClass": "other",
+      "eventReports": 1,
+      "feature": "runtime",
+      "fingerprint": "a639c3774d7b7d174cec450005666be4ee9025b5d8b2f385c55358d6bc40d544",
+      "fingerprintSpecificity": "reported",
+      "newInRetainedBaseline": true,
+      "platform": "ios",
+      "reason": "unhandled_error",
+      "stage": "process"
+    },
+    {
+      "baselineEventCount": 8355,
+      "build": "1.0.1+116",
+      "errorClass": "other",
+      "eventReports": 1,
+      "feature": "runtime",
+      "fingerprint": "b9ba3689aa9ada556688e2c7de5760d141768b088f08d0f2aa3491efb2a41a70",
+      "fingerprintSpecificity": "reported",
+      "newInRetainedBaseline": true,
+      "platform": "ios",
+      "reason": "unhandled_error",
+      "stage": "process"
+    },
+    {
+      "baselineEventCount": 8355,
+      "build": "1.0.1+116",
+      "errorClass": "other",
+      "eventReports": 1,
+      "feature": "runtime",
+      "fingerprint": "f5a81d74ba0f50250ad8029d3ab9f20c2c7594594abc2ea5696adcd85bf0b486",
+      "fingerprintSpecificity": "reported",
+      "newInRetainedBaseline": true,
+      "platform": "ios",
+      "reason": "unhandled_error",
+      "stage": "process"
+    }
+  ],
+  "eventReports": 299,
+  "evidenceIncomplete": true,
+  "evidenceScope": "Authenticated endpoint reports; receipt time is server-observed. UUID joins are diagnostic correlation, not proof of message custody, participants or content. Missing/disabled/offline/legacy endpoint records remain unknown.",
+  "generatedAtMs": 1789027413549,
+  "groups": [
+    {
+      "attemptsObserved": 8,
+      "build": "1.0.1+116",
+      "expectedOutcomesExcludedFromTechnicalRate": 0,
+      "feature": "message",
+      "missingFinal": 0,
+      "missingStart": 0,
+      "outcomes": {
+        "success": 8
+      },
+      "platform": "ios",
+      "technicalFailureRate": 0.0,
+      "technicalFailures": 0,
+      "technicalRateDenominator": 8
+    },
+    {
+      "attemptsObserved": 22,
+      "build": "1.0.1+116",
+      "expectedOutcomesExcludedFromTechnicalRate": 0,
+      "feature": "network",
+      "missingFinal": 0,
+      "missingStart": 0,
+      "outcomes": {
+        "failed": 10,
+        "success": 12
+      },
+      "platform": "ios",
+      "technicalFailureRate": 0.45454545454545453,
+      "technicalFailures": 10,
+      "technicalRateDenominator": 22
+    },
+    {
+      "attemptsObserved": 5,
+      "build": "1.0.1+116",
+      "expectedOutcomesExcludedFromTechnicalRate": 0,
+      "feature": "startup",
+      "missingFinal": 2,
+      "missingStart": 0,
+      "outcomes": {
+        "incomplete": 2,
+        "success": 3
+      },
+      "platform": "ios",
+      "technicalFailureRate": 0.0,
+      "technicalFailures": 0,
+      "technicalRateDenominator": 3
+    }
+  ],
+  "health": {
+    "clientReportedDroppedEvents": 83,
+    "collectorState": "readable",
+    "consentingOwners": 28,
+    "droppedEvents": 0,
+    "invalidRecords": 18,
+    "lossCountLowerBound": 0,
+    "recordFiles": 2136,
+    "retainedOwnerCount": 28
+  },
+  "loss": {
+    "retainedLifetime": {
+      "clientReportedDroppedEvents": 83,
+      "droppedEvents": 0,
+      "lossCountIsLowerBound": false,
+      "scope": "Server counters over retained records; latest retained client cumulative snapshot per owner. Client and server counters are separate and must not be summed or divided by window event counts."
+    },
+    "window": {
+      "newDroppedEvents": null,
+      "scope": "A standalone projection has no comparable monitor baseline; cumulative snapshot values do not establish current-window loss."
+    }
+  },
+  "retentionDays": 14,
+  "schemaVersion": 1,
+  "windowHours": 0.5
+}

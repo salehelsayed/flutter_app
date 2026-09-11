@@ -1,0 +1,116 @@
+{
+  "capturedAt": "2026-09-08T15:17:24.313541+00:00",
+  "overview": {
+    "alerts": [],
+    "anyEndpointReportedMediaTraceCount": 0,
+    "atRecordLimit": false,
+    "bothEndpointsReportedMediaTraceCount": 0,
+    "bothEndpointsTerminalTraceCount": 0,
+    "calleeTerminalTraceCount": 0,
+    "callerTerminalTraceCount": 0,
+    "counts": {
+      "droppedEvents": 0,
+      "retainedEvents": 14
+    },
+    "evidenceIncomplete": false,
+    "invalidOrUnreadableRecordCount": 0,
+    "legacyTraceCount": 0,
+    "mailboxAdmittedTraceCount": 0,
+    "missingEndpointTerminalTraceCount": 0,
+    "neutralTerminalTraceCount": 0,
+    "observedTraceCount": 0,
+    "phaseFailureEventCounts": {
+      "authority": 4,
+      "cleanup": 1
+    },
+    "rates": {
+      "answered_without_verified_media": {
+        "alertEligible": false,
+        "alertThreshold": 0.1,
+        "denominator": 0,
+        "minimumSamples": 5,
+        "numerator": 0,
+        "rate": null
+      },
+      "cleanup_failure": {
+        "alertEligible": false,
+        "alertThreshold": 0.2,
+        "denominator": 0,
+        "minimumSamples": 5,
+        "numerator": 0,
+        "rate": null
+      },
+      "credential_failure": {
+        "alertEligible": false,
+        "alertThreshold": 0.2,
+        "denominator": 0,
+        "minimumSamples": 5,
+        "numerator": 0,
+        "rate": null
+      },
+      "drop_after_media": {
+        "alertEligible": false,
+        "alertThreshold": 0.1,
+        "denominator": 0,
+        "minimumSamples": 5,
+        "numerator": 0,
+        "rate": null
+      },
+      "preflight_rejection": {
+        "alertEligible": false,
+        "alertThreshold": 0.2,
+        "denominator": 0,
+        "minimumSamples": 5,
+        "numerator": 0,
+        "rate": null
+      },
+      "provider_failure": {
+        "alertEligible": false,
+        "alertThreshold": 0.2,
+        "denominator": 0,
+        "minimumSamples": 5,
+        "numerator": 0,
+        "rate": null
+      },
+      "technical_setup_failure": {
+        "alertEligible": false,
+        "alertThreshold": 0.2,
+        "denominator": 0,
+        "minimumSamples": 5,
+        "numerator": 0,
+        "rate": null
+      },
+      "telemetry_loss": {
+        "alertEligible": true,
+        "alertThreshold": 1e-06,
+        "denominator": 14,
+        "minimumSamples": 5,
+        "numerator": 0,
+        "rate": 0.0
+      },
+      "withdrawal_unknown_origin": {
+        "alertEligible": false,
+        "alertThreshold": 0.2,
+        "denominator": 2,
+        "minimumSamples": 5,
+        "numerator": 0,
+        "rate": 0.0
+      }
+    },
+    "recordLimit": 100,
+    "registrationWithdrawalOperationsByOrigin": {
+      "native_lifecycle_failed": 2
+    },
+    "schemaVersion": 1,
+    "scope": "Opted-in retained records only. Client media is reported evidence; relay admission, push submission, and TURN minting do not prove audio. Coturn allocations remain aggregate.",
+    "technicalRateScope": "Distinct opted-in client-reported terminal traces; declines/cancels/busy/no-answer are excluded from the technical denominator. Phase failures can recover and are counted separately. Minimum5 observations before rate alerts.",
+    "terminalRecordOutcomes": {},
+    "tracesWithoutTerminalRecord": 0,
+    "unclassifiedTerminalTraceCount": 0,
+    "unknownEndpointRoleTraceCount": 0
+  },
+  "scope": "Sanitized production operator projections only; no private author maps or raw device logs.",
+  "traceLimit": 20,
+  "traceListTruncated": false,
+  "traces": []
+}

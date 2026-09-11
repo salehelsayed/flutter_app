@@ -1,0 +1,28 @@
+{
+  "generatedAtUtc": "2026-09-08T14:38:53.521175+00:00",
+  "goToolchain": "go1.25.0",
+  "commands": [
+    "bash scripts/ensure_go_android_bindings.sh",
+    "bash scripts/ensure_go_ios_bindings.sh"
+  ],
+  "artifacts": [
+    {
+      "path": "android/app/libs/GoMknoon.aar",
+      "sha256": "a8ab5f6a75d03dadfa1802084e4dc28b7ef7a40e1d3ed88c521818fbd6e1c008",
+      "hashKind": "file"
+    },
+    {
+      "path": "ios/Runner/GoMknoon.xcframework",
+      "sha256": "4d5ae14e55f5fdc638bb5e59df9a1a63be141f8d3a2cb95939d3f5b5040f6e4c",
+      "hashKind": "ordered-relative-path-and-file-sha256"
+    },
+    {
+      "path": "ios/Runner/GoMknoonNSE.xcframework",
+      "sha256": "cdb1169f2219e16a3b3f7b64a5c0a93067e669591cade028150c8e0ac3c2e5ec",
+      "hashKind": "ordered-relative-path-and-file-sha256"
+    }
+  ],
+  "wireContextKey": "cause",
+  "androidInputDigest": "a8e8cdd0d4abce70bef2ec606134405ef62d63838489ac821de74044467af942",
+  "iosInputDigest": "8e34f391050f6da20bd39eb6bd51c1d308e9183f10e1e9ccaba9513048a05a64"
+}

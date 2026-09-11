@@ -24,12 +24,24 @@ const (
 	groupMessageDispatchAdmissionTTL = 7 * 24 * time.Hour
 )
 
-type groupMessageDispatchAdmissionIdentity struct {
+type messageDispatchAdmissionIdentity struct {
+	direct          bool
+	senderPeerID    string
+	contentDigest   string
 	recipientPeerID string
 	groupID         string
 	messageID       string
 	prehashedKey    string
 }
+
+// Group adapters keep their existing API and Redis identity while ordinary
+// direct messages share the owner-checked, expiring provider claim mechanics.
+type groupMessageDispatchAdmissionIdentity = messageDispatchAdmissionIdentity
+type groupMessageDispatchAdmissionLease = messageDispatchAdmissionLease
+type groupMessageDispatchAdmissionBackend = messageDispatchAdmissionBackend
+type memoryGroupMessageDispatchAdmissionClaim = memoryMessageDispatchAdmissionClaim
+type memoryGroupMessageDispatchAdmissionBackend = memoryMessageDispatchAdmissionBackend
+type redisGroupMessageDispatchAdmissionBackend = redisMessageDispatchAdmissionBackend
 
 func newGroupMessageDispatchAdmissionIdentity(
 	recipientPeerID string,
@@ -66,46 +78,54 @@ func groupMessageDispatchAdmissionIdentityFromStorageKey(
 	return groupMessageDispatchAdmissionIdentity{prehashedKey: storageKey}, true
 }
 
-func writeGroupMessageDispatchAdmissionComponent(digest hash.Hash, value string) {
+func writeMessageDispatchAdmissionComponent(digest hash.Hash, value string) {
 	var size [8]byte
 	binary.BigEndian.PutUint64(size[:], uint64(len([]byte(value))))
 	_, _ = digest.Write(size[:])
 	_, _ = digest.Write([]byte(value))
 }
 
-func (identity groupMessageDispatchAdmissionIdentity) storageKey() string {
+func (identity messageDispatchAdmissionIdentity) storageKey() string {
 	if identity.prehashedKey != "" {
 		return identity.prehashedKey
 	}
 	digest := sha256.New()
-	writeGroupMessageDispatchAdmissionComponent(digest, groupMessageDispatchAdmissionDomain)
-	writeGroupMessageDispatchAdmissionComponent(digest, identity.recipientPeerID)
-	writeGroupMessageDispatchAdmissionComponent(digest, identity.groupID)
-	writeGroupMessageDispatchAdmissionComponent(digest, identity.messageID)
+	if identity.direct {
+		writeMessageDispatchAdmissionComponent(digest, directMessageDispatchAdmissionDomain)
+		writeMessageDispatchAdmissionComponent(digest, identity.recipientPeerID)
+		writeMessageDispatchAdmissionComponent(digest, identity.senderPeerID)
+		writeMessageDispatchAdmissionComponent(digest, identity.messageID)
+		writeMessageDispatchAdmissionComponent(digest, identity.contentDigest)
+	} else {
+		writeMessageDispatchAdmissionComponent(digest, groupMessageDispatchAdmissionDomain)
+		writeMessageDispatchAdmissionComponent(digest, identity.recipientPeerID)
+		writeMessageDispatchAdmissionComponent(digest, identity.groupID)
+		writeMessageDispatchAdmissionComponent(digest, identity.messageID)
+	}
 	return hex.EncodeToString(digest.Sum(nil))
 }
 
-type groupMessageDispatchAdmissionLease struct {
+type messageDispatchAdmissionLease struct {
 	key   string
 	owner string
 }
 
-type groupMessageDispatchAdmissionBackend interface {
+type messageDispatchAdmissionBackend interface {
 	TryAcquire(
 		ctx context.Context,
-		identity groupMessageDispatchAdmissionIdentity,
-	) (lease groupMessageDispatchAdmissionLease, acquired bool, err error)
-	Release(ctx context.Context, lease groupMessageDispatchAdmissionLease) error
+		identity messageDispatchAdmissionIdentity,
+	) (lease messageDispatchAdmissionLease, acquired bool, err error)
+	Release(ctx context.Context, lease messageDispatchAdmissionLease) error
 }
 
-type memoryGroupMessageDispatchAdmissionClaim struct {
+type memoryMessageDispatchAdmissionClaim struct {
 	owner     string
 	expiresAt time.Time
 }
 
-type memoryGroupMessageDispatchAdmissionBackend struct {
+type memoryMessageDispatchAdmissionBackend struct {
 	mu        sync.Mutex
-	claims    map[string]memoryGroupMessageDispatchAdmissionClaim
+	claims    map[string]memoryMessageDispatchAdmissionClaim
 	ttl       time.Duration
 	now       func() time.Time
 	nextOwner uint64
@@ -114,26 +134,30 @@ type memoryGroupMessageDispatchAdmissionBackend struct {
 func newMemoryGroupMessageDispatchAdmissionBackend(
 	ttl time.Duration,
 ) *memoryGroupMessageDispatchAdmissionBackend {
-	return &memoryGroupMessageDispatchAdmissionBackend{
-		claims: make(map[string]memoryGroupMessageDispatchAdmissionClaim),
+	return newMemoryMessageDispatchAdmissionBackend(ttl)
+}
+
+func newMemoryMessageDispatchAdmissionBackend(ttl time.Duration) *memoryMessageDispatchAdmissionBackend {
+	return &memoryMessageDispatchAdmissionBackend{
+		claims: make(map[string]memoryMessageDispatchAdmissionClaim),
 		ttl:    ttl,
 		now:    time.Now,
 	}
 }
 
-func (b *memoryGroupMessageDispatchAdmissionBackend) nowTime() time.Time {
+func (b *memoryMessageDispatchAdmissionBackend) nowTime() time.Time {
 	if b != nil && b.now != nil {
 		return b.now()
 	}
 	return time.Now()
 }
 
-func (b *memoryGroupMessageDispatchAdmissionBackend) TryAcquire(
+func (b *memoryMessageDispatchAdmissionBackend) TryAcquire(
 	_ context.Context,
-	identity groupMessageDispatchAdmissionIdentity,
-) (groupMessageDispatchAdmissionLease, bool, error) {
+	identity messageDispatchAdmissionIdentity,
+) (messageDispatchAdmissionLease, bool, error) {
 	if b == nil || b.ttl <= 0 {
-		return groupMessageDispatchAdmissionLease{}, false, errors.New("group message admission backend unavailable")
+		return messageDispatchAdmissionLease{}, false, errors.New("message dispatch admission backend unavailable")
 	}
 	key := identity.storageKey()
 	now := b.nowTime()
@@ -145,23 +169,23 @@ func (b *memoryGroupMessageDispatchAdmissionBackend) TryAcquire(
 		}
 	}
 	if claim, exists := b.claims[key]; exists && now.Before(claim.expiresAt) {
-		return groupMessageDispatchAdmissionLease{}, false, nil
+		return messageDispatchAdmissionLease{}, false, nil
 	}
 	b.nextOwner++
 	owner := strconv.FormatUint(b.nextOwner, 10)
-	b.claims[key] = memoryGroupMessageDispatchAdmissionClaim{
+	b.claims[key] = memoryMessageDispatchAdmissionClaim{
 		owner:     owner,
 		expiresAt: now.Add(b.ttl),
 	}
-	return groupMessageDispatchAdmissionLease{key: key, owner: owner}, true, nil
+	return messageDispatchAdmissionLease{key: key, owner: owner}, true, nil
 }
 
-func (b *memoryGroupMessageDispatchAdmissionBackend) Release(
+func (b *memoryMessageDispatchAdmissionBackend) Release(
 	_ context.Context,
-	lease groupMessageDispatchAdmissionLease,
+	lease messageDispatchAdmissionLease,
 ) error {
 	if b == nil {
-		return errors.New("group message admission backend unavailable")
+		return errors.New("message dispatch admission backend unavailable")
 	}
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -172,11 +196,12 @@ func (b *memoryGroupMessageDispatchAdmissionBackend) Release(
 	return nil
 }
 
-type redisGroupMessageDispatchAdmissionBackend struct {
-	client   *redis.Client
-	prefix   string
-	ttl      time.Duration
-	newOwner func() (string, error)
+type redisMessageDispatchAdmissionBackend struct {
+	namespace string
+	client    *redis.Client
+	prefix    string
+	ttl       time.Duration
+	newOwner  func() (string, error)
 }
 
 func newRedisGroupMessageDispatchAdmissionBackend(
@@ -184,10 +209,20 @@ func newRedisGroupMessageDispatchAdmissionBackend(
 	prefix string,
 	ttl time.Duration,
 ) *redisGroupMessageDispatchAdmissionBackend {
-	return &redisGroupMessageDispatchAdmissionBackend{
-		client: client,
-		prefix: prefix,
-		ttl:    ttl,
+	return newRedisMessageDispatchAdmissionBackend(client, prefix, "group-message-provider-dispatch:v1:", ttl)
+}
+
+func newRedisMessageDispatchAdmissionBackend(
+	client *redis.Client,
+	prefix string,
+	namespace string,
+	ttl time.Duration,
+) *redisMessageDispatchAdmissionBackend {
+	return &redisMessageDispatchAdmissionBackend{
+		client:    client,
+		prefix:    prefix,
+		namespace: namespace,
+		ttl:       ttl,
 		newOwner: func() (string, error) {
 			owner, err := uuid.NewRandom()
 			if err != nil {
@@ -198,56 +233,60 @@ func newRedisGroupMessageDispatchAdmissionBackend(
 	}
 }
 
-func (b *redisGroupMessageDispatchAdmissionBackend) redisKey(storageKey string) string {
-	return b.prefix + "group-message-provider-dispatch:v1:" + storageKey
+func (b *redisMessageDispatchAdmissionBackend) redisKey(storageKey string) string {
+	namespace := b.namespace
+	if namespace == "" {
+		namespace = "group-message-provider-dispatch:v1:"
+	}
+	return b.prefix + namespace + storageKey
 }
 
-func (b *redisGroupMessageDispatchAdmissionBackend) TryAcquire(
+func (b *redisMessageDispatchAdmissionBackend) TryAcquire(
 	ctx context.Context,
-	identity groupMessageDispatchAdmissionIdentity,
-) (groupMessageDispatchAdmissionLease, bool, error) {
+	identity messageDispatchAdmissionIdentity,
+) (messageDispatchAdmissionLease, bool, error) {
 	if b == nil || b.client == nil || b.ttl <= 0 || b.newOwner == nil {
-		return groupMessageDispatchAdmissionLease{}, false, errors.New("group message admission backend unavailable")
+		return messageDispatchAdmissionLease{}, false, errors.New("message dispatch admission backend unavailable")
 	}
 	owner, err := b.newOwner()
 	if err != nil || owner == "" {
-		return groupMessageDispatchAdmissionLease{}, false, fmt.Errorf("create group message admission owner: %w", err)
+		return messageDispatchAdmissionLease{}, false, fmt.Errorf("create message dispatch admission owner: %w", err)
 	}
 	key := identity.storageKey()
 	acquired, err := b.client.SetNX(ctx, b.redisKey(key), owner, b.ttl).Result()
 	if err != nil {
-		return groupMessageDispatchAdmissionLease{}, false, fmt.Errorf("claim group message provider dispatch: %w", err)
+		return messageDispatchAdmissionLease{}, false, fmt.Errorf("claim message provider dispatch: %w", err)
 	}
 	if !acquired {
-		return groupMessageDispatchAdmissionLease{}, false, nil
+		return messageDispatchAdmissionLease{}, false, nil
 	}
-	return groupMessageDispatchAdmissionLease{key: key, owner: owner}, true, nil
+	return messageDispatchAdmissionLease{key: key, owner: owner}, true, nil
 }
 
-var releaseRedisGroupMessageDispatchAdmission = redis.NewScript(`
+var releaseRedisMessageDispatchAdmission = redis.NewScript(`
 if redis.call("GET", KEYS[1]) == ARGV[1] then
   return redis.call("DEL", KEYS[1])
 end
 return 0
 `)
 
-func (b *redisGroupMessageDispatchAdmissionBackend) Release(
+func (b *redisMessageDispatchAdmissionBackend) Release(
 	ctx context.Context,
-	lease groupMessageDispatchAdmissionLease,
+	lease messageDispatchAdmissionLease,
 ) error {
 	if b == nil || b.client == nil {
-		return errors.New("group message admission backend unavailable")
+		return errors.New("message dispatch admission backend unavailable")
 	}
 	if lease.key == "" || lease.owner == "" {
 		return nil
 	}
-	if err := releaseRedisGroupMessageDispatchAdmission.Run(
+	if err := releaseRedisMessageDispatchAdmission.Run(
 		ctx,
 		b.client,
 		[]string{b.redisKey(lease.key)},
 		lease.owner,
 	).Err(); err != nil {
-		return fmt.Errorf("release group message provider dispatch: %w", err)
+		return fmt.Errorf("release message provider dispatch: %w", err)
 	}
 	return nil
 }

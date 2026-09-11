@@ -3191,9 +3191,3 @@ func TestHandleInboxStream_RetrievePendingTrimsOversizedResponses(t *testing.T) 
 		t.Fatal("expected hasMore=true after trimming oversized retrieve_pending response")
 	}
 }
-
-// --- Phase B: Top-level Notification field tests ---
-
-func TestBuildChatPushMessage_TopLevelNotification(t *testing.T) {
-	t.Skip("top-level notification payload coverage belongs to later notification work, not Section 4")
-}

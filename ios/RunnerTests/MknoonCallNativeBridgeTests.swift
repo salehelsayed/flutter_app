@@ -6,6 +6,31 @@ import XCTest
 @testable import Runner
 
 final class MknoonCallNativeBridgeTests: XCTestCase {
+  func testBadArgumentsRecordInvalidRequestWithoutChangingFlutterError() throws {
+    let spool = MknoonCallDiagnosticSpool(backend: PresentationDiagnosticMemory(), now: { self.now })
+    XCTAssertTrue(spool.configure(true))
+    let bridge = MknoonCallNativeBridge(controller: makeBridgeRig().controller, messenger: nil,
+      diagnosticRecorder: { handle, stage, action, outcome, reason, values, context in
+        spool.append(handle: handle, stage: stage, action: action, outcome: outcome, reason: reason, values: values, context: context)
+      })
+    for method in ["answer", "activateAudio", "deactivateAudio", "setCapabilityEnabled", "presentAuthenticated",
+                   "registerOutgoingAuthenticated", "end", "failClosed", "remoteCancel", "expire"] {
+      let error = try XCTUnwrap(invoke(bridge, method, ["version": 999]) as? FlutterError)
+      XCTAssertEqual(error.code, "bad_args")
+      XCTAssertEqual(error.message, "invalid native call arguments")
+      XCTAssertNil(error.details)
+    }
+    let events = try XCTUnwrap(spool.drain(64)["events"] as? [[String: Any]])
+    XCTAssertEqual(events.count, 20)
+    let failures = events.filter { $0["outcome"] as? String == "failed" }
+    XCTAssertEqual(failures.count, 10)
+    XCTAssertTrue(failures.allSatisfy { $0["reason"] as? String == "invalid_request" })
+    for pair in stride(from: 0, to: events.count, by: 2) {
+      XCTAssertEqual(events[pair]["operationId"] as? String, events[pair + 1]["operationId"] as? String)
+    }
+    XCTAssertTrue(MknoonCallDiagnosticScope.current.isEmpty)
+  }
+
   func testSharedWireContextSurvivesCapabilityWrapperWithoutChangingAuthorityFields() throws {
     for wire in try nativeDiagnosticWireContexts().values {
       let rig = makeBridgeRig()

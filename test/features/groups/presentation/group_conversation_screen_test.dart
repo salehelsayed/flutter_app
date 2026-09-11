@@ -175,6 +175,7 @@ void main() {
     BackgroundPreference backgroundPreference =
         BackgroundPreference.defaultBackground,
     String? highlightedMessageId,
+    GlobalKey? highlightAnchorKey,
     Locale locale = const Locale('en'),
   }) {
     return MaterialApp(
@@ -225,6 +226,7 @@ void main() {
           securityStatus: securityStatus,
           backgroundPreference: backgroundPreference,
           highlightedMessageId: highlightedMessageId,
+          highlightAnchorKey: highlightAnchorKey,
         ),
       ),
     );
@@ -1210,93 +1212,137 @@ void main() {
     );
   }
 
-  testWidgets(
-    'incoming group message preserves the active voice player without reloading',
-    (tester) async {
-      final originalPlatform = JustAudioPlatform.instance;
-      final fakePlatform = _TrackingFakeJustAudioPlatform();
-      JustAudioPlatform.instance = fakePlatform;
-      addTearDown(() async {
-        await fakePlatform.disposeAllPlayers(DisposeAllPlayersRequest());
-        JustAudioPlatform.instance = originalPlatform;
-      });
+  for (final repliesEnabled in [false, true]) {
+    testWidgets(
+      'incoming group message and highlight changes preserve the active voice '
+      'player without reloading (replies=$repliesEnabled)',
+      (tester) async {
+        final originalPlatform = JustAudioPlatform.instance;
+        final fakePlatform = _TrackingFakeJustAudioPlatform();
+        JustAudioPlatform.instance = fakePlatform;
+        addTearDown(() async {
+          await fakePlatform.disposeAllPlayers(DisposeAllPlayersRequest());
+          JustAudioPlatform.instance = originalPlatform;
+        });
 
-      final timestamp = DateTime.utc(2026, 8, 26, 18);
-      final voice = GroupMessage(
-        id: 'group-voice-message',
-        groupId: testGroup.id,
-        senderPeerId: 'peer-2',
-        senderUsername: 'Alice',
-        text: '',
-        timestamp: timestamp,
-        createdAt: timestamp,
-        isIncoming: true,
-        media: [
-          makeAudioAttachment(
-            id: 'group-voice-attachment',
-            messageId: 'group-voice-message',
-            downloadStatus: 'done',
-            localPath: '/tmp/group_voice_message.m4a',
+        final timestamp = DateTime.utc(2026, 8, 26, 18);
+        final voice = GroupMessage(
+          id: 'group-voice-message',
+          groupId: testGroup.id,
+          senderPeerId: 'peer-2',
+          senderUsername: 'Alice',
+          text: '',
+          timestamp: timestamp,
+          createdAt: timestamp,
+          isIncoming: true,
+          media: [
+            makeAudioAttachment(
+              id: 'group-voice-attachment',
+              messageId: 'group-voice-message',
+              downloadStatus: 'done',
+              localPath: '/tmp/group_voice_message.m4a',
+            ),
+          ],
+        );
+        final incomingText = GroupMessage(
+          id: 'group-incoming-text',
+          groupId: testGroup.id,
+          senderPeerId: 'peer-2',
+          senderUsername: 'Alice',
+          text: 'New group message while listening',
+          timestamp: timestamp.add(const Duration(minutes: 1)),
+          createdAt: timestamp.add(const Duration(minutes: 1)),
+          isIncoming: true,
+        );
+
+        final sourceLoad = fakePlatform.enqueueLoad(
+          reportedDuration: const Duration(milliseconds: 4200),
+        );
+        await tester.pumpWidget(
+          buildTestWidget(
+            messages: [voice],
+            initialLoadDone: true,
+            onQuoteReply: repliesEnabled ? (_) {} : null,
           ),
-        ],
-      );
-      final incomingText = GroupMessage(
-        id: 'group-incoming-text',
-        groupId: testGroup.id,
-        senderPeerId: 'peer-2',
-        senderUsername: 'Alice',
-        text: 'New group message while listening',
-        timestamp: timestamp.add(const Duration(minutes: 1)),
-        createdAt: timestamp.add(const Duration(minutes: 1)),
-        isIncoming: true,
-      );
+        );
+        await tester.pump();
+        await sourceLoad.started;
+        sourceLoad.complete();
+        await _flushAsyncPlayerTasks(tester);
 
-      final sourceLoad = fakePlatform.enqueueLoad(
-        reportedDuration: const Duration(milliseconds: 4200),
-      );
-      await tester.pumpWidget(
-        buildTestWidget(messages: [voice], initialLoadDone: true),
-      );
-      await tester.pump();
-      await sourceLoad.started;
-      sourceLoad.complete();
-      await _flushAsyncPlayerTasks(tester);
+        expect(fakePlatform.activePlayerIds, hasLength(1));
+        expect(fakePlatform.loadedUris, hasLength(1));
+        final originalPlayerId = fakePlatform.activePlayerIds.single;
+        final originalPlayer = fakePlatform.player(originalPlayerId);
 
-      expect(fakePlatform.activePlayerIds, hasLength(1));
-      expect(fakePlatform.loadedUris, hasLength(1));
-      final originalPlayerId = fakePlatform.activePlayerIds.single;
-      final originalPlayer = fakePlatform.player(originalPlayerId);
+        // Drive the exact platform player owned by the visible voice control
+        // into the playing state, then verify the UI reflects that state.
+        await originalPlayer.play(PlayRequest());
+        await _flushAsyncPlayerTasks(tester);
 
-      // Drive the exact platform player owned by the visible voice control
-      // into the playing state, then verify the UI reflects that state.
-      await originalPlayer.play(PlayRequest());
-      await _flushAsyncPlayerTasks(tester);
+        expect(fakePlatform.playCallCount, 1);
+        expect(find.byIcon(Icons.pause_rounded), findsOneWidget);
 
-      expect(fakePlatform.playCallCount, 1);
-      expect(find.byIcon(Icons.pause_rounded), findsOneWidget);
+        await tester.pumpWidget(
+          buildTestWidget(
+            messages: [voice, incomingText],
+            initialLoadDone: true,
+            onQuoteReply: repliesEnabled ? (_) {} : null,
+          ),
+        );
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 1));
 
-      await tester.pumpWidget(
-        buildTestWidget(messages: [voice, incomingText], initialLoadDone: true),
-      );
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 1));
+        expect(find.text('New group message while listening'), findsOneWidget);
+        expect(fakePlatform.initCallCount, 1);
+        expect(fakePlatform.disposePlayerCallCount, 0);
+        expect(fakePlatform.loadedUris, hasLength(1));
+        expect(fakePlatform.activePlayerIds.single, originalPlayerId);
+        expect(
+          identical(fakePlatform.player(originalPlayerId), originalPlayer),
+          isTrue,
+        );
+        expect(fakePlatform.playCallCount, 1);
+        expect(find.byIcon(Icons.pause_rounded), findsOneWidget);
 
-      expect(find.text('New group message while listening'), findsOneWidget);
-      expect(fakePlatform.initCallCount, 1);
-      expect(fakePlatform.disposePlayerCallCount, 0);
-      expect(fakePlatform.loadedUris, hasLength(1));
-      expect(fakePlatform.activePlayerIds.single, originalPlayerId);
-      expect(
-        identical(fakePlatform.player(originalPlayerId), originalPlayer),
-        isTrue,
-      );
-      expect(fakePlatform.playCallCount, 1);
-      expect(find.byIcon(Icons.pause_rounded), findsOneWidget);
+        // Notification/shared-media focus can move between rows or clear while
+        // the same voice note is playing. Keep the real scroll anchor in this
+        // fixture, since its conditional wrapper also changes the row tree.
+        final highlightAnchor = GlobalKey();
+        for (final highlightedId in [voice.id, incomingText.id, null]) {
+          await tester.pumpWidget(
+            buildTestWidget(
+              messages: [voice, incomingText],
+              initialLoadDone: true,
+              onQuoteReply: repliesEnabled ? (_) {} : null,
+              highlightedMessageId: highlightedId,
+              highlightAnchorKey: highlightAnchor,
+            ),
+          );
+          await _flushAsyncPlayerTasks(tester);
+          await tester.pump(const Duration(milliseconds: 1));
 
-      await tester.pumpWidget(const SizedBox.shrink());
-      await tester.pump();
-    },
-  );
+          expect(fakePlatform.initCallCount, 1);
+          expect(fakePlatform.disposePlayerCallCount, 0);
+          expect(fakePlatform.loadedUris, hasLength(1));
+          expect(fakePlatform.activePlayerIds.single, originalPlayerId);
+          expect(fakePlatform.player(originalPlayerId), same(originalPlayer));
+          expect(fakePlatform.playCallCount, 1);
+          expect(find.byIcon(Icons.pause_rounded), findsOneWidget);
+          if (highlightedId == null) {
+            expect(highlightAnchor.currentContext, isNull);
+          } else {
+            expect(highlightAnchor.currentContext, isNotNull);
+            expectSingleRowFocusCue(tester, highlightedId);
+          }
+        }
+
+        await tester.pumpWidget(const SizedBox.shrink());
+        await _flushAsyncPlayerTasks(tester);
+        await tester.pump(const Duration(milliseconds: 1));
+      },
+    );
+  }
 
   testWidgets('passes isSending through to the compose send affordance', (
     tester,

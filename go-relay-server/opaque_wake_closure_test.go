@@ -758,7 +758,9 @@ func TestRelayNotificationClosure_OpaqueWakeRouteSelectionAndLegacyCompatibility
 			t.Fatalf("glob production Go: %v", err)
 		}
 		fileSet := token.NewFileSet()
-		var lookupOwners, resolveOwners, selectionCallers, groupSelectionCallers, directAdapterCallers []string
+		var lookupOwners, resolveOwners, selectionCallers, admissionSelectionCallers, groupSelectionCallers, directAdapterCallers []string
+		retryOwners := make(map[string]bool)
+		providerSendOwners := make(map[string]bool)
 		for _, path := range paths {
 			if strings.HasSuffix(path, "_test.go") {
 				continue
@@ -771,6 +773,15 @@ func TestRelayNotificationClosure_OpaqueWakeRouteSelectionAndLegacyCompatibility
 				function, ok := declaration.(*ast.FuncDecl)
 				if !ok || function.Body == nil {
 					continue
+				}
+				pushServiceReceiver := ""
+				if function.Recv != nil && len(function.Recv.List) == 1 {
+					receiver := function.Recv.List[0]
+					if pointer, ok := receiver.Type.(*ast.StarExpr); ok && len(receiver.Names) == 1 {
+						if receiverType, ok := pointer.X.(*ast.Ident); ok && receiverType.Name == "PushService" {
+							pushServiceReceiver = receiver.Names[0].Name
+						}
+					}
 				}
 				ast.Inspect(function.Body, func(node ast.Node) bool {
 					call, ok := node.(*ast.CallExpr)
@@ -788,10 +799,19 @@ func TestRelayNotificationClosure_OpaqueWakeRouteSelectionAndLegacyCompatibility
 						resolveOwners = append(resolveOwners, function.Name.Name)
 					case "sendSelectedPushThroughGateway":
 						selectionCallers = append(selectionCallers, function.Name.Name)
+					case "sendSelectedPushThroughGatewayWithAdmission":
+						admissionSelectionCallers = append(admissionSelectionCallers, function.Name.Name)
 					case "sendSelectedGroupPushThroughGateway":
 						groupSelectionCallers = append(groupSelectionCallers, function.Name.Name)
 					case "sendRichNotification":
 						directAdapterCallers = append(directAdapterCallers, function.Name.Name)
+					case "sendWithRetry":
+						retryOwners[function.Name.Name] = true
+					case "send":
+						if receiver, ok := selector.X.(*ast.Ident); ok &&
+							pushServiceReceiver != "" && receiver.Name == pushServiceReceiver {
+							providerSendOwners[function.Name.Name] = true
+						}
 					}
 					return true
 				})
@@ -803,14 +823,17 @@ func TestRelayNotificationClosure_OpaqueWakeRouteSelectionAndLegacyCompatibility
 		if !reflect.DeepEqual(resolveOwners, []string{"sendPushRouteThroughGateway"}) {
 			t.Fatalf("production ResolveRoute owners = %#v, want private gateway only", resolveOwners)
 		}
+		if len(retryOwners) != 1 || !retryOwners["sendPushRouteThroughGateway"] {
+			t.Fatalf("provider retry owners = %#v, want private route/admission gateway only", retryOwners)
+		}
+		if len(providerSendOwners) != 1 || !providerSendOwners["sendWithRetry"] {
+			t.Fatalf("provider send owners = %#v, want shared outcome/retry loop only", providerSendOwners)
+		}
 		sort.Strings(selectionCallers)
 		wantCallers := []string{
 			"sendGroupReactionNotificationForRoute",
 			"sendOpaqueWakeThroughGateway",
 			"sendReactionNotificationForRoute",
-			// TC-395: public direct sends and stored-custody direct sends
-			// converge before route selection in this one rich adapter.
-			"sendRichNotification",
 			// Exact group-message provider admission is centralized here;
 			// the three group-message entrypoints below share this wrapper.
 			"sendSelectedGroupPushThroughGateway",
@@ -821,6 +844,21 @@ func TestRelayNotificationClosure_OpaqueWakeRouteSelectionAndLegacyCompatibility
 				selectionCallers,
 				wantCallers,
 			)
+		}
+		// Ordinary direct messages carry their logical dispatch identity through
+		// the admission-bearing selector. Rich and delayed opaque paths must
+		// retain the same shared route selection and provider outcome boundary.
+		sort.Strings(admissionSelectionCallers)
+		wantAdmissionSelectionCallers := []string{
+			"sendDirectOpaqueWakeThroughGateway",
+			"sendGroupWakeOutcomeThroughGateway",
+			"sendRichNotification",
+			"sendSelectedGroupPushThroughGateway",
+			"sendSelectedPushThroughGateway",
+		}
+		if !reflect.DeepEqual(admissionSelectionCallers, wantAdmissionSelectionCallers) {
+			t.Fatalf("admission selection callers = %#v, want shared direct/group/outcome adapters %#v",
+				admissionSelectionCallers, wantAdmissionSelectionCallers)
 		}
 		sort.Strings(groupSelectionCallers)
 		wantGroupSelectionCallers := []string{

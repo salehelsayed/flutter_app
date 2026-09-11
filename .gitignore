@@ -186,10 +186,18 @@ graphify-arch/tdd-overlay.json
 # SIMS iOS notification external inputs (credential-adjacent) — never commit.
 /docker-ws/sims-ios-notification/
 
-# Local credential backups (APNs auth key, relay SSH key, upload keystore).
-# Secret-bearing — never commit.
+# Signing credentials and local credential backups (APNs auth keys, relay SSH
+# key, Play upload keystore). This repo is PUBLIC — never commit any of these.
 /backup/
-/APPLE/*.p8
+*.p8
+*.p12
+*.jks
+*.keystore
+*.mobileprovision
+APPLE/*.p8
+APPLE/*.jks
+APPLE/*.keystore
+android/key.properties
 graphify-arch/graphify-out/20*/
 
 # Device log captures — large, session-local.
@@ -226,3 +234,51 @@ docker-ws/deploy-captures/
 # databases (hundreds of MB). Keep the filtered .log/.txt summaries only.
 artifacts/**/*.logarchive/
 artifacts/**/*-logarchive-*.tar
+
+# Keep the shared testing workflow discoverable and version-controlled even on
+# machines with broad .git/info/exclude rules for local agent configuration.
+!/AGENTS.md
+!/.agents/
+/.agents/*
+!/.agents/skills/
+/.agents/skills/*
+!/.agents/skills/mknoon-change-check/
+!/.agents/skills/mknoon-release-check/
+!/.agents/skills/mknoon-test-maintenance/
+
+# Signed app exports and store artifacts — build outputs, never source.
+*.ipa
+*.aab
+*.apk
+/APPLE/Runner */
+/ios/Runner/Runner */
+
+# Compiled Go binaries (rebuilt by make / go build).
+/go-relay-server/relay-server-linux
+/go-mknoon/testpeer
+/go-mknoon/bin/
+
+# Large raw device-log captures.
+/docker-ws/fresh4.txt
+/docker-ws/tap2.txt
+
+# Store-review videos, archives and binaries under artifacts/. Keep the
+# filtered logs/JSON summaries; drop the multi-MB media and executables.
+artifacts/**/*.mp4
+artifacts/**/*.zip
+/artifacts/phantom-notification-20260910/relay-server-history-fix
+
+# TestFlight crash/feedback exports (tester data).
+/crash-report/
+
+# Derived graphify outputs — rebuilt by graphify-arch/refresh_arch_graph.sh.
+# graph.json alone was 90 MB per refresh. The curated labels
+# (.graphify_labels.json + .sig) and GRAPH_REPORT.md stay tracked.
+graphify-arch/graphify-out/graph.json
+graphify-arch/graphify-out/graph.html
+graphify-arch/graphify-out/manifest.json
+graphify-arch/graphify-out/.graphify_analysis.json
+
+# Unreferenced large test fixtures (11 PNGs of 10-50 MB) and design mockups.
+/image-test-files/
+/mockups/

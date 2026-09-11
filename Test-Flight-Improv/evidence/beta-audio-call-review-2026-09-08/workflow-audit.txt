@@ -1,0 +1,8 @@
+Graphify workflow closure audit, 2026-09-08
+Result: 4/6 diagnostic workflow gates passed.
+Passed: telemetry parity (21/21), raw browse cadence (maximum 5; no over-budget cells), broad refinement (4/4), fallback follow-up (0 required).
+Historical misses: one document-to-code browse lacked an intervening code-only query; three of fourteen branch markers were not Graphify-first.
+Pending affected paths: none. The combined native-answer affected query d45c3f04afff4b78 covered five source/test paths; the architecture graph incremental refresh completed after that batch.
+These workflow misses were retained in the record; application test results are recorded separately in host-validation-summary.txt.
+Final root query_id: b6614be10716462e
+Final root evidence_digest: ec4a2ccde5795398

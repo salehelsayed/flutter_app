@@ -1,0 +1,41 @@
+{
+  "binaryPath": "/tmp/beta-call-review-20260908/relay-call-diagnostics-quota-linux-amd64",
+  "buildEnvironment": {
+    "CGO_ENABLED": "0",
+    "GOARCH": "amd64",
+    "GOOS": "linux",
+    "GOTOOLCHAIN": "go1.25.0"
+  },
+  "commandArgs": [
+    "go",
+    "build",
+    "-trimpath",
+    "-ldflags",
+    "-X main.callDiagnosticBuild=859e8da128e980ab51ae6a6fca80fac73a79b4c1e2ed981bdf955a97320f60e5",
+    "-o",
+    "/tmp/beta-call-review-20260908/relay-call-diagnostics-quota-linux-amd64",
+    "."
+  ],
+  "deploymentPerformed": false,
+  "discardLedgerIDs": 256,
+  "eventBuildField": "859e8da128e980ab51ae6a6fca80fac73a79b4c1e2ed981bdf955a97320f60e5",
+  "generatedAtUtc": "2026-09-08T15:52:00.290202+00:00",
+  "globalBytes": 67108864,
+  "legacyDropAttemptsSeparated": true,
+  "operatorSHA256": "bb980a57015e559b369d0de5b0cd4e41568835ff0ddd6c8e8c14c53cb7e6d1fe",
+  "ordinaryTraceEventLimit": 768,
+  "ordinaryTracePayloadBytes": 196608,
+  "ownerBytes": 5242880,
+  "reservedFirstEndpointMediaAndTerminal": true,
+  "retentionDays": 14,
+  "schemaSHA256": "4ca526a5cc58343c0f57e77aab68d1488caf968f2a6d379dabfb5cccb33c1887",
+  "serializedRecordBytes": 327680,
+  "sha256": "9a771c4bdbc8adf02f9864d7e5d619b8ed368fd693901b42bfb6fb9b70a659eb",
+  "sourceEditedAfterBuild": [],
+  "sourceInputDigest": "859e8da128e980ab51ae6a6fca80fac73a79b4c1e2ed981bdf955a97320f60e5",
+  "sourceInputFileCount": 45,
+  "sourceInputHashRule": "sorted module-root relative path + NUL + raw SHA256 bytes; production Go, go.mod/go.sum, embedded schema",
+  "vcsModified": true,
+  "vcsRevision": "d8b919c5b34575d570a78eb5fbbc4203f56f875b",
+  "workingDirectory": "go-relay-server"
+}

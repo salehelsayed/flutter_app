@@ -1,0 +1,12 @@
+01:42 +3536 ~4: /Volumes/CrucialX9/flutter_app/test/features/conversation/presentation/screens/conversation_wired_sender_finalize_canonical_path_test.dart: protected optimistic parent-save failure aborts before transfer claim or plaintext copy
+01:43 +3537 ~4: /Volumes/CrucialX9/flutter_app/test/features/conversation/presentation/screens/conversation_wired_sender_finalize_canonical_path_test.dart: contact deletion wins before first private parent publication without resurrection
+01:43 +3538 ~4: /Volumes/CrucialX9/flutter_app/test/features/conversation/presentation/screens/conversation_wired_sender_finalize_canonical_path_test.dart: failed-media delete active protected viewer has truthful row/file/parent/key effects
+01:46 +3539 ~4: /Volumes/CrucialX9/flutter_app/test/features/conversation/presentation/screens/conversation_wired_sender_finalize_canonical_path_test.dart: failed-media delete active view-once viewer has truthful row/file/parent/key effects
+01:46 +3540 ~4: /Volumes/CrucialX9/flutter_app/test/features/conversation/presentation/screens/conversation_wired_sender_finalize_canonical_path_test.dart: failed-media delete active protected upload custody has truthful row/file/parent/key effects
+01:47 +3541 ~4: /Volumes/CrucialX9/flutter_app/test/features/conversation/presentation/screens/conversation_wired_sender_finalize_canonical_path_test.dart: failed-media delete available protected file-delete failure has truthful row/file/parent/key effects
+01:48 +3542 ~4: /Volumes/CrucialX9/flutter_app/test/features/conversation/presentation/screens/conversation_wired_sender_finalize_canonical_path_test.dart: failed-media delete available protected failed-media intent has truthful row/file/parent/key effects
+01:50 +3543 ~4: /Volumes/CrucialX9/flutter_app/test/features/conversation/presentation/screens/conversation_wired_sender_finalize_canonical_path_test.dart: Plan 354 private canonical deferred and terminal handoff TC-354-02c private canonical deferred and terminal handoff preserve incumbent transport
+01:50 +3544 ~4: All tests passed!
+PASS: Flutter batch (212 test paths)
+
+PASS: host tests completed for scope: 1to1

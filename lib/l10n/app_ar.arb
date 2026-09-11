@@ -1866,6 +1866,7 @@
   "settings_diagnostics_support_code_copied": "تم نسخ رمز الدعم. شاركه عند الإبلاغ عن مشكلة.",
   "settings_diagnostics_copy_support_code": "نسخ رمز الدعم",
   "settings_diagnostics_preview_report": "معاينة تقرير الدعم",
+  "settings_diagnostics_preview_truncated": "يُعرض جزء من التقرير. يشمل النسخ التقرير كاملاً.",
   "settings_diagnostics_report_copied": "تم نسخ تقرير الدعم",
   "settings_diagnostics_copy_report": "نسخ تقرير الدعم",
   "settings_diagnostics_cleared": "المشاركة متوقفة وتم مسح التقارير المحلية",

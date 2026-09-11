@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:isolate';
 import 'dart:math';
 
 import 'package:crypto/crypto.dart';
@@ -11,9 +12,54 @@ import 'package:flutter/widgets.dart';
 import '../bridge/bridge.dart';
 import 'app_diagnostic_schema.dart';
 import 'app_diagnostic_events.dart';
+import 'diagnostic_archive_writer.dart';
 
 typedef AppDiagnosticUpload =
     Future<Set<String>> Function(List<Map<String, Object?>> events);
+
+typedef AppDiagnosticPersist =
+    Future<void> Function(String path, Map<String, Object?> state);
+
+Future<String> _encodeDiagnosticPreview(Map<String, Object?> state) =>
+    Isolate.run(() => const JsonEncoder.withIndent('  ').convert(state));
+
+Future<String> _diagnosticPreviewFromFile(
+  String path,
+  Map<String, Object?> header,
+) => Isolate.run(() async {
+  final saved = jsonDecode(await File(path).readAsString()) as Map;
+  final events = (saved['events'] as List)
+      .map(AppDiagnostics.validateEvent)
+      .whereType<Map<String, Object?>>()
+      .toList();
+  // Local binding salts/indexes are deliberately excluded from the export.
+  return const JsonEncoder.withIndent(
+    '  ',
+  ).convert({...header, 'events': events});
+});
+
+Future<dynamic> _readDiagnosticState(String path) => Isolate.run(() async {
+  final raw = jsonDecode(await File(path).readAsString());
+  if (raw is Map && raw['events'] is List) {
+    raw['events'] = (raw['events'] as List)
+        .map(AppDiagnostics.validateEvent)
+        .whereType<Map<String, Object?>>()
+        .toList();
+  }
+  return raw;
+});
+
+final class _DiagnosticGroup {
+  final events = <String, Map<String, Object?>>{};
+  int bytes = 0;
+}
+
+final class _NotificationFileLockObservation {
+  _NotificationFileLockObservation(this.phase, this.startedMs);
+
+  NotificationFileLockPhase phase;
+  int startedMs;
+}
 
 /// Observation only: bounded, consent-controlled reports never own an operation.
 /// Private operation keys exist only in memory; the archive accepts a closed
@@ -30,15 +76,46 @@ final class AppDiagnostics with WidgetsBindingObserver {
   );
   static final _buildPattern = RegExp(r'^[0-9A-Za-z][0-9A-Za-z.+_-]{0,79}$');
   static final _hashPattern = RegExp(r'^[0-9a-f]{64}$');
+  static final _allowedFields = <Object?>{
+    ...appDiagnosticSchemaV1['required'] as List,
+    ...appDiagnosticSchemaV1['optional'] as List,
+  };
+  static final _closedFields = <String, Set<Object?>>{
+    for (final entry in appDiagnosticSchemaV1.entries)
+      if (entry.value is List)
+        entry.key: Set<Object?>.from(entry.value as List),
+  };
+  static final _valueEnums = <Object?, Set<Object?>>{
+    for (final entry in (appDiagnosticSchemaV1['enumValues'] as Map).entries)
+      entry.key: Set<Object?>.from(entry.value as List),
+  };
+  static final _byteCounter = DiagnosticJsonByteCounter(
+    cachedStrings: <String>{
+      ..._allowedFields.cast<String>(),
+      for (final values in _closedFields.values) ...values.whereType<String>(),
+      for (final entry in _valueEnums.entries) entry.key as String,
+      for (final values in _valueEnums.values) ...values.whereType<String>(),
+    },
+  );
   static const _maxBytes = 4 * 1024 * 1024;
   static const _retentionMs = 7 * 24 * 60 * 60 * 1000;
   final _random = Random.secure();
   final _enabled = ValueNotifier(false);
-  final _events = <Map<String, Object?>>[];
+  final _eventsById = <String, Map<String, Object?>>{};
+  Iterable<Map<String, Object?>> get _events => _eventsById.values;
+  final _groups = <String, _DiagnosticGroup>{};
+  int _retainedBytes = 0;
+  int? _nextEventExpiryMs;
   final _eventSizes = <String, int>{};
   final _uploaded = <String>{};
   final _bindings = <String, String>{};
   final _bindingTimes = <String, int>{};
+  int? _nextBindingExpiryMs;
+  bool _fullMetadataRequired = true;
+  final _bindingUpserts = <String, Object?>{};
+  final _bindingRemovals = <String>{};
+  final _uploadedAdditions = <String>{};
+  final _uploadedRemovals = <String>{};
   String _bindingSalt = '';
   final _attempts = <String, String>{};
   final _open = <String, Map<String, Object?>>{};
@@ -46,12 +123,16 @@ final class AppDiagnostics with WidgetsBindingObserver {
   final _elapsed = Stopwatch();
   DateTime Function() _now = DateTime.now;
   Directory? _directory;
+  DiagnosticArchiveWriter? _archiveWriter;
   Bridge? _bridge;
   Future<bool> Function()? _networkAllowed;
   AppDiagnosticUpload? _testUpload;
+  AppDiagnosticPersist? _testPersist;
   Future<dynamic> Function(String, Map<String, Object?>)? _testNative;
   Future<void>? _writing;
   bool _writeRequested = false;
+  bool _urgentWriteRequested = false;
+  Timer? _persistTimer;
   Future<void>? _flushFuture;
   Timer? _timer;
   bool _native = false;
@@ -79,6 +160,14 @@ final class AppDiagnostics with WidgetsBindingObserver {
   int _storageSuccesses = 0;
   int _storageMaxDuration = 0;
   void Function(bool, int)? _storageObserver;
+  void Function(Object, NotificationFileLockPhase)? _notificationLockObserver;
+  final _notificationLocks = <Object, _NotificationFileLockObservation>{};
+  static const _maxObservedNotificationLocks = 128;
+  int _notificationLockDropped = 0;
+  bool _notificationLockDirty = false;
+  bool _notificationLockInactive = false;
+  AppLifecycleState? _notificationLockLifecycle;
+  Timer? _notificationLockSnapshotTimer;
 
   bool get enabled => _enabled.value && !_disposed;
   ValueListenable<bool> get enabledListenable => _enabled;
@@ -89,11 +178,23 @@ final class AppDiagnostics with WidgetsBindingObserver {
       value is String && _uuid.hasMatch(value);
 
   String _newId() {
-    final bytes = List<int>.generate(16, (_) => _random.nextInt(256));
-    bytes[6] = (bytes[6] & 15) | 64;
-    bytes[8] = (bytes[8] & 63) | 128;
-    final hex = bytes.map((b) => b.toRadixString(16).padLeft(2, '0')).join();
-    return '${hex.substring(0, 8)}-${hex.substring(8, 12)}-${hex.substring(12, 16)}-${hex.substring(16, 20)}-${hex.substring(20)}';
+    // Keep all 122 UUIDv4 random bits, requesting the same 16 secure bytes in
+    // four native entropy calls instead of one call per byte.
+    final chars = Uint8List(36);
+    var offset = 0;
+    for (var word = 0; word < 4; word++) {
+      var bits = _random.nextInt(0x100000000);
+      if (word == 1) bits = (bits & 0xffff0fff) | 0x00004000;
+      if (word == 2) bits = (bits & 0x3fffffff) | 0x80000000;
+      for (var shift = 28; shift >= 0; shift -= 4) {
+        if (offset == 8 || offset == 13 || offset == 18 || offset == 23) {
+          chars[offset++] = 45;
+        }
+        final digit = (bits >>> shift) & 15;
+        chars[offset++] = digit < 10 ? 48 + digit : 87 + digit;
+      }
+    }
+    return String.fromCharCodes(chars);
   }
 
   Future<void> initialize({
@@ -110,6 +211,10 @@ final class AppDiagnostics with WidgetsBindingObserver {
       return;
     }
     _directory = directory;
+    _archiveWriter = DiagnosticArchiveWriter(
+      _file.path,
+      validateEvent: AppDiagnostics.validateEvent,
+    );
     // Application bootstrap may attach the transport while optional storage
     // initialization is still pending. Preserve that transport and its privacy
     // gate when initialization has no newer configuration to supply.
@@ -129,7 +234,7 @@ final class AppDiagnostics with WidgetsBindingObserver {
         if (await _file.length() > _maxBytes + 1024 * 1024) {
           throw const FormatException('quota');
         }
-        final raw = jsonDecode(await _file.readAsString());
+        final raw = await _readDiagnosticState(_file.path);
         if (raw is! Map ||
             raw['schemaVersion'] != 1 ||
             raw['enabled'] is! bool) {
@@ -156,15 +261,22 @@ final class AppDiagnostics with WidgetsBindingObserver {
                 if (at >= _nowMs - _retentionMs && at <= _nowMs) {
                   _bindings[entry.key as String] = value['traceId'] as String;
                   _bindingTimes[entry.key as String] = at;
+                  final expiry = at + _retentionMs + 1;
+                  _nextBindingExpiryMs = min(
+                    _nextBindingExpiryMs ?? expiry,
+                    expiry,
+                  );
                 }
               }
             }
           }
         }
         if (raw['events'] case final List records) {
-          for (final item in records) {
-            final event = validateEvent(item);
-            if (event != null) _events.add(event);
+          for (var index = 0; index < records.length; index++) {
+            _append(records[index] as Map<String, Object?>);
+            // Rebuilding bounded indexes must also leave room for startup
+            // frames when recovering a full archive.
+            if (index % 64 == 63) await Future<void>.delayed(Duration.zero);
           }
         }
         if (raw['uploaded'] case final List ids) {
@@ -190,6 +302,8 @@ final class AppDiagnostics with WidgetsBindingObserver {
       }
       if (enabledOverride != null) _enabled.value = enabledOverride;
       if (_epoch == 0) _epoch = max(1, _nowMs);
+      _archiveWriter!.initializeRetainedEvents(_eventsById.keys);
+      _uploaded.removeWhere((id) => !_eventsById.containsKey(id));
       _ready = true;
       _finished.addAll(
         _events
@@ -214,6 +328,8 @@ final class AppDiagnostics with WidgetsBindingObserver {
         }
       };
       AppDiagnosticEvents.onStorageTransaction = _storageObserver;
+      _notificationLockObserver = _observeNotificationFileLock;
+      AppDiagnosticEvents.onNotificationFileLock = _notificationLockObserver;
       if (!enabled) {
         _clearMemory();
       } else {
@@ -230,7 +346,7 @@ final class AppDiagnostics with WidgetsBindingObserver {
           );
         }
       }
-      await _persist();
+      await _persist(force: true);
     } catch (_) {
       _storageHealthy = false;
       _lastError = 'sink_unavailable';
@@ -239,6 +355,10 @@ final class AppDiagnostics with WidgetsBindingObserver {
     }
     await _syncNative();
     if (useNative) {
+      _notificationLockLifecycle = WidgetsBinding.instance.lifecycleState;
+      _notificationLockInactive =
+          _notificationLockLifecycle != null &&
+          _notificationLockLifecycle != AppLifecycleState.resumed;
       WidgetsBinding.instance.addObserver(this);
       _observing = true;
       _timer = Timer.periodic(const Duration(seconds: 10), (_) {
@@ -264,6 +384,7 @@ final class AppDiagnostics with WidgetsBindingObserver {
     bool? enabled = true,
     DateTime Function()? now,
     AppDiagnosticUpload? upload,
+    AppDiagnosticPersist? persist,
     Bridge? bridge,
     Future<bool> Function()? networkAllowed,
     Future<dynamic> Function(String, Map<String, Object?>)? native,
@@ -273,6 +394,7 @@ final class AppDiagnostics with WidgetsBindingObserver {
     _instance = instance;
     if (now != null) instance._now = now;
     instance._testUpload = upload;
+    instance._testPersist = persist;
     instance._testNative = native;
     await instance.initialize(
       directory:
@@ -297,20 +419,26 @@ final class AppDiagnostics with WidgetsBindingObserver {
       utf8.encode(_bindingSalt),
     ).convert(utf8.encode(privateKey)).toString();
     if ((_bindingTimes[key] ?? _nowMs) < _nowMs - _retentionMs) {
-      _bindings.remove(key);
-      _bindingTimes.remove(key);
+      _removeBinding(key);
     }
     if (isValidTraceId(propagatedTraceId)) {
       _bindings[key] = propagatedTraceId!;
     }
     final result = _bindings.putIfAbsent(key, _newId);
     _bindingTimes[key] = _nowMs;
+    _bindingUpserts[key] = {
+      'traceId': result,
+      'updatedAtMs': _bindingTimes[key],
+    };
+    // Keep a prior removal in this batch: removing then re-adding an expired
+    // binding must also move it to the end of the durable eviction order.
+    final expiry = _nowMs + _retentionMs + 1;
+    _nextBindingExpiryMs = min(_nextBindingExpiryMs ?? expiry, expiry);
     while (_bindings.length > 1000) {
       final oldest = _bindings.keys.first;
-      _bindings.remove(oldest);
-      _bindingTimes.remove(oldest);
+      _removeBinding(oldest);
     }
-    unawaited(_persist());
+    _schedulePersist();
     return result;
   }
 
@@ -394,7 +522,7 @@ final class AppDiagnostics with WidgetsBindingObserver {
     if (!enabled || !_ready || !_storageHealthy) return false;
     try {
       final attempt = _attemptFor(feature, traceId);
-      final event = validateEvent({
+      final event = _validateEventAndSize({
         'schemaVersion': 1,
         'eventId': _newId(),
         'source': 'flutter',
@@ -414,10 +542,11 @@ final class AppDiagnostics with WidgetsBindingObserver {
       });
       if (event == null) {
         _dropped++;
+        _schedulePersist();
         return false;
       }
-      final retained = _append(event);
-      unawaited(_persist());
+      final retained = _append(event.event, encodedSize: event.bytes);
+      _schedulePersist();
       return retained;
     } catch (_) {
       _dropped++;
@@ -447,7 +576,7 @@ final class AppDiagnostics with WidgetsBindingObserver {
     if (retained) {
       _finished.add(attempt);
       _open.remove(attempt);
-      unawaited(_persist());
+      _schedulePersist();
     }
   }
 
@@ -456,6 +585,7 @@ final class AppDiagnostics with WidgetsBindingObserver {
     StackTrace? stack, {
     String reason = 'unhandled_error',
   }) {
+    if (!enabled || !_ready || !_storageHealthy) return;
     // Only static app source locations enter the fingerprint input. Never
     // stringify the exception: messages commonly contain file paths or content.
     final kind = switch (error) {
@@ -480,7 +610,12 @@ final class AppDiagnostics with WidgetsBindingObserver {
       reason: reason,
       values: {
         'errorClass': kind,
-        'fingerprint': sha256.convert(utf8.encode('$kind|$frames')).toString(),
+        // A class-only hash cannot identify a source boundary. Keep the class
+        // observation, but leave the optional fingerprint absent in that case.
+        if (frames.isNotEmpty)
+          'fingerprint': sha256
+              .convert(utf8.encode('$kind|$frames'))
+              .toString(),
       },
     );
   }
@@ -496,7 +631,7 @@ final class AppDiagnostics with WidgetsBindingObserver {
       _clearMemory();
     }
     _retryAt = 0;
-    await _persist();
+    await _persist(force: true);
     await _syncNative();
     await _syncConsent(_epoch);
     if (enabled) unawaited(flush());
@@ -511,14 +646,18 @@ final class AppDiagnostics with WidgetsBindingObserver {
     _nativeConsentPending = true;
     _clearMemory();
     _retryAt = 0;
-    await _persist();
+    await _persist(force: true);
     await _syncNative();
     await _syncConsent(_epoch);
     if (enabled) unawaited(flush());
   }
 
   void _clearMemory() {
-    _events.clear();
+    _archiveWriter?.clearEvents();
+    _eventsById.clear();
+    _groups.clear();
+    _retainedBytes = 0;
+    _nextEventExpiryMs = null;
     _eventSizes.clear();
     _uploaded.clear();
     _open.clear();
@@ -526,6 +665,12 @@ final class AppDiagnostics with WidgetsBindingObserver {
     _finished.clear();
     _bindings.clear();
     _bindingTimes.clear();
+    _nextBindingExpiryMs = null;
+    _fullMetadataRequired = true;
+    _bindingUpserts.clear();
+    _bindingRemovals.clear();
+    _uploadedAdditions.clear();
+    _uploadedRemovals.clear();
     _bindingSalt = List.generate(
       32,
       (_) => _random.nextInt(256),
@@ -535,14 +680,17 @@ final class AppDiagnostics with WidgetsBindingObserver {
     _nativeDroppedSeen = 0;
     _storageSuccesses = 0;
     _storageMaxDuration = 0;
+    _notificationLocks.clear();
+    _notificationLockDropped = 0;
+    _notificationLockDirty = false;
+    _notificationLockSnapshotTimer?.cancel();
+    _notificationLockSnapshotTimer = null;
   }
 
   Future<Map<String, Object?>> status() async => {
     'enabled': enabled,
     'retainedEvents': _events.length,
-    'queuedEvents': _events
-        .where((e) => !_uploaded.contains(e['eventId']))
-        .length,
+    'queuedEvents': _eventsById.length - _uploaded.length,
     'droppedEvents': _dropped,
     'lastUploadAtMs': _lastUpload,
     'storageHealthy': _storageHealthy && _ready,
@@ -555,12 +703,19 @@ final class AppDiagnostics with WidgetsBindingObserver {
 
   Future<String> exportPreview() async {
     await _persist();
-    return const JsonEncoder.withIndent('  ').convert({
+    final header = <String, Object?>{
       'schemaVersion': 1,
       'runId': _runId,
       'status': await status(),
-      'events': _events,
-    });
+    };
+    if (_testPersist == null && _storageHealthy && _directory != null) {
+      try {
+        return await _diagnosticPreviewFromFile(_file.path, header);
+      } catch (_) {
+        // Keep a report available when the optional disk archive is unavailable.
+      }
+    }
+    return _encodeDiagnosticPreview({...header, 'events': _events.toList()});
   }
 
   Future<List<Map<String, Object?>>> eventsForTesting() async {
@@ -571,7 +726,11 @@ final class AppDiagnostics with WidgetsBindingObserver {
   Future<void> flush() {
     if (_disposed || !_ready) return Future.value();
     final existing = _flushFuture;
-    if (existing != null) return existing;
+    if (existing != null) {
+      // Joining a network flush must still persist events admitted since its
+      // snapshot, even when their regular write window has not elapsed yet.
+      return Future.wait<void>([existing, _persist()]).then((_) {});
+    }
     final future = _flush();
     _flushFuture = future;
     return future.whenComplete(() {
@@ -584,6 +743,7 @@ final class AppDiagnostics with WidgetsBindingObserver {
       await _syncNative();
       final epoch = _epoch;
       if (enabled) await _drainNative(epoch);
+      _prune();
       await _persist();
       if (epoch != _epoch || !_storageHealthy || _nowMs < _retryAt) return;
       if (_testUpload == null) {
@@ -619,9 +779,7 @@ final class AppDiagnostics with WidgetsBindingObserver {
           stage: 'snapshot',
           outcome: 'ok',
           values: {
-            'queuedEvents': _events
-                .where((e) => !_uploaded.contains(e['eventId']))
-                .length,
+            'queuedEvents': _eventsById.length - _uploaded.length,
             'droppedEvents': _dropped,
             'storageHealthy': _storageHealthy,
             'nativeHealthy': _nativeHealthy,
@@ -629,16 +787,13 @@ final class AppDiagnostics with WidgetsBindingObserver {
           },
         );
       }
-      final pending =
-          _events.where((e) => !_uploaded.contains(e['eventId'])).toList()
-            ..sort(
-              (a, b) => (a['stage'] == 'finish' ? 0 : 1).compareTo(
-                b['stage'] == 'finish' ? 0 : 1,
-              ),
-            );
-      final batch = pending
+      // Prioritize terminal observations without sorting/copying the backlog.
+      final pending = _events.where((e) => !_uploaded.contains(e['eventId']));
+      final terminal = pending.where((e) => e['stage'] == 'finish').take(64);
+      final batch = terminal
+          .followedBy(pending.where((e) => e['stage'] != 'finish'))
           .take(64)
-          .map((e) => Map<String, Object?>.from(e))
+          .map(_legacyRelayProjection)
           .toList();
       if (batch.isEmpty) return;
       final Set<String> accepted;
@@ -666,7 +821,15 @@ final class AppDiagnostics with WidgetsBindingObserver {
       for (final event in batch) {
         final id = event['eventId'] as String;
         if (accepted.contains(id) || rejected.contains(id)) {
+          // An in-flight upload may finish after retention evicted its row.
+          // Keep the acknowledgment index a subset of the retained archive.
+          if (!_eventsById.containsKey(id)) {
+            acknowledged++;
+            continue;
+          }
           if (_uploaded.add(id)) {
+            _uploadedAdditions.add(id);
+            _uploadedRemovals.remove(id);
             acknowledged++;
             if (rejected.contains(id)) _dropped++;
           }
@@ -680,10 +843,30 @@ final class AppDiagnostics with WidgetsBindingObserver {
         _retryAt = 0;
         _lastError = 'none';
       }
-      await _persist();
+      await _persist(force: true);
     } catch (_) {
       _backoff('bridge_unavailable');
     }
+  }
+
+  // A deployed v1 relay may predate lock observation vocabulary. Keep rich
+  // operation/lifecycle evidence locally and in exports, while uploads retain
+  // the old aggregate shape until receiver support is explicitly negotiated.
+  // Preserve event identity so retries/ACKs still refer to the local record.
+  static Map<String, Object?> _legacyRelayProjection(
+    Map<String, Object?> event,
+  ) {
+    final projected = Map<String, Object?>.from(event);
+    final values = event['values'];
+    if (event['feature'] == 'push' &&
+        event['stage'] == 'snapshot' &&
+        values is Map &&
+        values['operation'] == 'notification_flock') {
+      projected['values'] = Map<String, Object?>.from(values)
+        ..['operation'] = 'other'
+        ..remove('appLifecycle');
+    }
+    return projected;
   }
 
   Future<Map<String, dynamic>?> _request(
@@ -742,7 +925,7 @@ final class AppDiagnostics with WidgetsBindingObserver {
       }
       _consentPending = false;
       _lastConfigure = _nowMs;
-      await _persist();
+      await _persist(force: true);
       return true;
     } catch (_) {
       return false;
@@ -797,19 +980,20 @@ final class AppDiagnostics with WidgetsBindingObserver {
       return;
     }
     final dropped = _integer(result['droppedEvents']);
+    if (dropped != _nativeDroppedSeen) _writeRequested = true;
     _dropped += max(0, dropped - _nativeDroppedSeen);
     _nativeDroppedSeen = dropped;
-    final known = _events.map((e) => e['eventId']).toSet();
     final ack = <String>[];
     for (final raw in (result['events'] as List).take(64)) {
       final event = validateEvent(raw);
       if (event != null &&
           (event['source'] == 'android' || event['source'] == 'ios')) {
         event['reportingRunId'] = _runId;
-        if (known.add(event['eventId'])) _append(event);
+        if (!_eventsById.containsKey(event['eventId'])) _append(event);
         ack.add(event['eventId'] as String);
       } else {
         _dropped++;
+        _writeRequested = true;
         if (raw is Map && isValidTraceId(raw['eventId'])) {
           ack.add(raw['eventId'] as String);
         }
@@ -822,91 +1006,160 @@ final class AppDiagnostics with WidgetsBindingObserver {
 
   int _eventSize(Map<String, Object?> event) => _eventSizes.putIfAbsent(
     event['eventId'] as String,
-    () => utf8.encode(jsonEncode(event)).length,
+    () => _byteCounter.count(event),
   );
 
-  bool _append(Map<String, Object?> event) {
-    final attempt = event['attemptId'] ?? event['traceId'] ?? event['runId'];
-    final group = _events
-        .where((e) => (e['attemptId'] ?? e['traceId'] ?? e['runId']) == attempt)
-        .toList();
-    var size = group.fold<int>(0, (n, e) => n + _eventSize(e));
-    final incomingSize = _eventSize(event);
-    while (group.length >= 255 || size + incomingSize > 64000) {
-      if (event['stage'] != 'finish' || group.isEmpty) {
+  String _groupKey(Map<String, Object?> event) =>
+      (event['attemptId'] ?? event['traceId'] ?? event['runId']) as String;
+
+  bool _append(Map<String, Object?> event, {int? encodedSize}) {
+    final id = event['eventId'] as String;
+    if (_eventsById.containsKey(id)) return true;
+    if (_integer(event['occurredAtMs']) < _nowMs - _retentionMs) return false;
+    _writeRequested = true;
+    final key = _groupKey(event);
+    final group = _groups[key] ?? _DiagnosticGroup();
+    final incomingSize = encodedSize == null
+        ? _eventSize(event)
+        : (_eventSizes[id] = encodedSize);
+    while (group.events.length >= 255 || group.bytes + incomingSize > 64000) {
+      if (event['stage'] != 'finish' || group.events.isEmpty) {
         _dropped++;
-        _eventSizes.remove(event['eventId']);
+        _eventSizes.remove(id);
         return false;
       }
-      final old = group.removeAt(0);
-      size -= _eventSize(old);
-      _events.remove(old);
-      // Acknowledged rows were uploaded or already counted as rejected;
-      // evicting their local copy does not lose additional evidence.
-      if (!_uploaded.remove(old['eventId'])) _dropped++;
+      _removeEvent(group.events.values.first, countDropped: true);
     }
-    _events.add(event);
-    _prune();
-    return _events.contains(event);
+    _eventsById[id] = event;
+    if (_ready) _archiveWriter?.stageEvent(event);
+    final expiry = _integer(event['occurredAtMs']) + _retentionMs + 1;
+    _nextEventExpiryMs = min(_nextEventExpiryMs ?? expiry, expiry);
+    group.events[id] = event;
+    group.bytes += incomingSize;
+    _retainedBytes += incomingSize;
+    // Access order matches the most recently admitted event in each attempt.
+    // Admission touches only this group and any rows actually evicted, never
+    // rescanning the retained archive on a message or media interaction.
+    _groups.remove(key);
+    _groups[key] = group;
+    while (_groups.length > 100) {
+      final oldest = _groups.values.first;
+      for (final old in oldest.events.values.toList()) {
+        _removeEvent(old, countDropped: true);
+      }
+    }
+    while (_retainedBytes > _maxBytes - 128 * 1024) {
+      _removeEvent(_events.first, countDropped: true);
+    }
+    return _eventsById.containsKey(id);
+  }
+
+  void _removeEvent(Map<String, Object?> event, {bool countDropped = false}) {
+    final id = event['eventId'] as String;
+    if (_eventsById.remove(id) == null) return;
+    _archiveWriter?.removeEvent(id);
+    final size = _eventSizes.remove(id) ?? 0;
+    _retainedBytes -= size;
+    if (_uploaded.remove(id)) {
+      _uploadedAdditions.remove(id);
+      _uploadedRemovals.add(id);
+    } else if (countDropped) {
+      _dropped++;
+    }
+    final key = _groupKey(event);
+    final group = _groups[key]!;
+    group.events.remove(id);
+    group.bytes -= size;
+    if (group.events.isEmpty) {
+      _groups.remove(key);
+      _finished.remove(key);
+      _open.remove(key);
+      _attempts.removeWhere((_, attempt) => attempt == key);
+    }
+  }
+
+  void _removeBinding(String key) {
+    if (_bindings.remove(key) == null) return;
+    _bindingTimes.remove(key);
+    _bindingUpserts.remove(key);
+    _bindingRemovals.add(key);
   }
 
   void _prune() {
-    final expiredBindings = _bindingTimes.entries
-        .where((entry) => entry.value < _nowMs - _retentionMs)
-        .map((entry) => entry.key)
-        .toList();
-    for (final key in expiredBindings) {
-      _bindings.remove(key);
-      _bindingTimes.remove(key);
+    final cutoff = _nowMs - _retentionMs;
+    if (_nextBindingExpiryMs case final expiry? when _nowMs >= expiry) {
+      _nextBindingExpiryMs = null;
+      final expiredBindings = <String>[];
+      for (final entry in _bindingTimes.entries) {
+        if (entry.value < cutoff) {
+          expiredBindings.add(entry.key);
+        } else {
+          final next = entry.value + _retentionMs + 1;
+          _nextBindingExpiryMs = min(_nextBindingExpiryMs ?? next, next);
+        }
+      }
+      for (final key in expiredBindings) {
+        _removeBinding(key);
+        _writeRequested = true;
+      }
     }
-    _events.removeWhere(
-      (e) => _integer(e['occurredAtMs']) < _nowMs - _retentionMs,
-    );
-    final groups = <String>{};
-    for (final event in _events.reversed) {
-      groups.add(
-        (event['attemptId'] ?? event['traceId'] ?? event['runId']) as String,
-      );
+    // Do not walk a near-full archive every second when nothing can expire.
+    // Recompute the deadline only when the earliest possible expiry is due.
+    if (_nextEventExpiryMs case final expiry? when _nowMs >= expiry) {
+      _nextEventExpiryMs = null;
+      for (final event in _events.toList()) {
+        final at = _integer(event['occurredAtMs']);
+        if (at < cutoff) {
+          _removeEvent(event);
+          _writeRequested = true;
+        } else {
+          final next = at + _retentionMs + 1;
+          _nextEventExpiryMs = min(_nextEventExpiryMs ?? next, next);
+        }
+      }
     }
-    final keep = groups.take(100).toSet();
-    _events.removeWhere((e) {
-      final remove = !keep.contains(
-        e['attemptId'] ?? e['traceId'] ?? e['runId'],
-      );
-      if (remove && !_uploaded.contains(e['eventId'])) _dropped++;
-      return remove;
-    });
-    var bytes = _events.fold<int>(0, (n, e) => n + _eventSize(e));
-    while (bytes > _maxBytes - 128 * 1024 && _events.isNotEmpty) {
-      final old = _events.removeAt(0);
-      bytes -= _eventSize(old);
-      if (!_uploaded.contains(old['eventId'])) _dropped++;
-    }
-    final ids = _events.map((e) => e['eventId']).toSet();
-    _eventSizes.removeWhere((id, _) => !ids.contains(id));
-    _uploaded.removeWhere((id) => !ids.contains(id));
-    final attempts = _events
-        .map((e) => e['attemptId'])
-        .whereType<String>()
-        .toSet();
-    _finished.removeWhere((id) => !attempts.contains(id));
-    _open.removeWhere((id, _) => !attempts.contains(id));
-    _attempts.removeWhere((_, id) => !attempts.contains(id));
+    _finished.removeWhere((id) => !_groups.containsKey(id));
+    _open.removeWhere((id, _) => !_groups.containsKey(id));
+    _attempts.removeWhere((_, id) => !_groups.containsKey(id));
   }
 
-  Future<void> _persist() {
-    if (_directory == null || !_ready || _disposed) return Future.value();
+  void _schedulePersist() {
+    if (_directory == null || !_ready || _disposed) return;
     _writeRequested = true;
+    // A fixed window (not a sliding debounce) also bounds loss on termination
+    // during a sustained burst. Explicit flush/consent/lifecycle bypass it.
+    _persistTimer ??= Timer(const Duration(seconds: 1), () {
+      _persistTimer = null;
+      unawaited(_persist());
+    });
+  }
+
+  Future<void> _persist({bool force = false}) {
+    if (_directory == null || !_ready || _disposed) return Future.value();
+    _persistTimer?.cancel();
+    _persistTimer = null;
+    if (force) _writeRequested = true;
+    _prune();
     final active = _writing;
-    if (active != null) return active;
+    if (active != null) {
+      if (_writeRequested) _urgentWriteRequested = true;
+      return active;
+    }
+    if (!_writeRequested) return Future.value();
     final completed = Completer<void>();
     _writing = completed.future;
     unawaited(() async {
-      while (_writeRequested && !_disposed) {
-        _writeRequested = false;
+      while (_writeRequested &&
+          (_persistTimer == null || _urgentWriteRequested) &&
+          !_disposed) {
         try {
+          _persistTimer?.cancel();
+          _persistTimer = null;
+          _urgentWriteRequested = false;
           _prune();
-          final data = jsonEncode({
+          _writeRequested = false;
+          final fullMetadata = _fullMetadataRequired || _testPersist != null;
+          final snapshot = <String, Object?>{
             'schemaVersion': 1,
             'enabled': enabled,
             'consentEpoch': _epoch,
@@ -916,21 +1169,48 @@ final class AppDiagnostics with WidgetsBindingObserver {
             'nativeDroppedSeen': _nativeDroppedSeen,
             'lastUploadAtMs': _lastUpload,
             'bindingSalt': _bindingSalt,
-            'bindings': {
-              for (final entry in _bindings.entries)
-                entry.key: {
-                  'traceId': entry.value,
-                  'updatedAtMs': _bindingTimes[entry.key],
-                },
-            },
-            'events': _events,
-            'uploaded': _uploaded.toList(),
+            if (fullMetadata)
+              'bindings': {
+                for (final entry in _bindings.entries)
+                  entry.key: {
+                    'traceId': entry.value,
+                    'updatedAtMs': _bindingTimes[entry.key],
+                  },
+              },
+            if (fullMetadata) 'uploaded': _uploaded.toList(),
             'open': _open.values.toList(),
-          });
-          final temporary = File('${_file.path}.new');
-          await temporary.writeAsString(data, flush: true);
-          await temporary.rename(_file.path);
+          };
+          final Future<void> write;
+          if (_testPersist case final persist?) {
+            write = persist(_file.path, {
+              ...snapshot,
+              'events': _events.toList(),
+            });
+          } else {
+            write = _archiveWriter!.persist(
+              snapshot,
+              metadataDelta: fullMetadata
+                  ? null
+                  : DiagnosticArchiveMetadataDelta(
+                      mapUpserts: {'bindings': _bindingUpserts},
+                      mapRemovals: {'bindings': _bindingRemovals.toList()},
+                      setAdditions: {'uploaded': _uploadedAdditions.toList()},
+                      setRemovals: {'uploaded': _uploadedRemovals.toList()},
+                    ),
+            );
+          }
+          // persist detaches both row and metadata deltas before its first
+          // await. New mutations stay pending while the worker commits; an IO
+          // retry retains the worker's already merged state. Clear requests a
+          // full replacement so no old binding or acknowledgment can return.
+          _fullMetadataRequired = false;
+          _bindingUpserts.clear();
+          _bindingRemovals.clear();
+          _uploadedAdditions.clear();
+          _uploadedRemovals.clear();
+          await write;
         } catch (_) {
+          _fullMetadataRequired = true;
           _storageHealthy = false;
           _enabled.value = false;
           _lastError = 'sink_unavailable';
@@ -943,8 +1223,93 @@ final class AppDiagnostics with WidgetsBindingObserver {
     return completed.future;
   }
 
+  void _observeNotificationFileLock(
+    Object owner,
+    NotificationFileLockPhase phase,
+  ) {
+    if (!enabled || !_ready) return;
+    final existing = _notificationLocks[owner];
+    switch (phase) {
+      case NotificationFileLockPhase.waiting:
+        if (existing != null) return;
+        if (_notificationLocks.length >= _maxObservedNotificationLocks) {
+          _notificationLockDropped = min(
+            _notificationLockDropped + 1,
+            1000000000,
+          );
+        } else {
+          _notificationLocks[owner] = _NotificationFileLockObservation(
+            phase,
+            _elapsed.elapsedMilliseconds,
+          );
+        }
+      case NotificationFileLockPhase.held:
+        if (existing == null) return;
+        existing.phase = phase;
+        existing.startedMs = _elapsed.elapsedMilliseconds;
+      case NotificationFileLockPhase.released:
+        if (existing == null) return;
+        _notificationLocks.remove(owner);
+    }
+    _notificationLockDirty = true;
+    // No event construction or persistence on an acquisition's critical path.
+    // While inactive, one isolate-local timer coalesces all owner changes.
+    if (_notificationLockInactive && _notificationLockSnapshotTimer == null) {
+      _notificationLockSnapshotTimer = Timer(const Duration(seconds: 1), () {
+        _notificationLockSnapshotTimer = null;
+        _recordNotificationFileLockSnapshot();
+      });
+    }
+  }
+
+  void _recordNotificationFileLockSnapshot() {
+    if (!_notificationLockDirty && _notificationLocks.isEmpty) return;
+    _notificationLockDirty = false;
+    var held = 0;
+    var waiting = 0;
+    var oldestMs = 0;
+    for (final owner in _notificationLocks.values) {
+      if (owner.phase == NotificationFileLockPhase.held) {
+        held++;
+      } else {
+        waiting++;
+      }
+      oldestMs = max(oldestMs, _elapsed.elapsedMilliseconds - owner.startedMs);
+    }
+    // The existing closed schema represents this fixed snapshot kind. Counts
+    // cover this Dart isolate's notification flock helper, not SQLite/Go/NSE.
+    // Dropped owners explicitly make the observation incomplete. This is a
+    // sampled breadcrumb, never proof of which lock caused an OS termination.
+    // cleanupComplete describes only owners observed since this collector was
+    // enabled; it cannot clear owners begun while disabled or before install.
+    record(
+      feature: 'push',
+      stage: 'snapshot',
+      outcome: _notificationLockDropped > 0
+          ? 'unknown'
+          : held + waiting > 0
+          ? 'pending'
+          : 'ok',
+      reason: _notificationLockDropped > 0 ? 'quota_exceeded' : 'none',
+      values: {
+        'operation': 'notification_flock',
+        'appLifecycle': _notificationLockLifecycle?.name ?? 'unknown',
+        'count': held,
+        'queuedEvents': waiting,
+        'durationMs': oldestMs,
+        'droppedEvents': _notificationLockDropped,
+        'cleanupComplete': held + waiting == 0 && _notificationLockDropped == 0,
+      },
+    );
+  }
+
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
+    _notificationLockLifecycle = state;
+    _notificationLockInactive = state != AppLifecycleState.resumed;
+    _notificationLockSnapshotTimer?.cancel();
+    _notificationLockSnapshotTimer = null;
+    _recordNotificationFileLockSnapshot();
     if (state == AppLifecycleState.resumed) {
       _retryAt = 0;
       unawaited(flush());
@@ -956,28 +1321,39 @@ final class AppDiagnostics with WidgetsBindingObserver {
   Future<void> dispose() async {
     if (_disposed) return;
     _timer?.cancel();
+    _persistTimer?.cancel();
+    _notificationLockSnapshotTimer?.cancel();
     if (identical(AppDiagnosticEvents.onStorageTransaction, _storageObserver)) {
       AppDiagnosticEvents.onStorageTransaction = null;
     }
+    if (identical(
+      AppDiagnosticEvents.onNotificationFileLock,
+      _notificationLockObserver,
+    )) {
+      AppDiagnosticEvents.onNotificationFileLock = null;
+    }
+    _notificationLocks.clear();
     if (_observing) WidgetsBinding.instance.removeObserver(this);
     await _flushFuture;
     await _persist();
     _disposed = true;
+    await _archiveWriter?.dispose();
   }
 
   static int _integer(Object? value) =>
       value is int && value >= 0 && value <= 9007199254740991 ? value : 0;
   static bool _closed(String field, Object? value) =>
-      (appDiagnosticSchemaV1[field] as List).contains(value);
+      _closedFields[field]?.contains(value) ?? false;
 
-  static Map<String, Object?>? validateEvent(Object? raw) {
+  static Map<String, Object?>? validateEvent(Object? raw) =>
+      _validateEventAndSize(raw)?.event;
+
+  static ({Map<String, Object?> event, int bytes})? _validateEventAndSize(
+    Object? raw,
+  ) {
     if (raw is! Map || raw['schemaVersion'] != 1) return null;
     try {
-      final allowed = {
-        ...appDiagnosticSchemaV1['required'] as List,
-        ...appDiagnosticSchemaV1['optional'] as List,
-      };
-      if (raw.keys.any((k) => !allowed.contains(k))) return null;
+      if (raw.keys.any((k) => !_allowedFields.contains(k))) return null;
       if ((appDiagnosticSchemaV1['required'] as List).any(
         (k) => !raw.containsKey(k),
       )) {
@@ -986,7 +1362,7 @@ final class AppDiagnostics with WidgetsBindingObserver {
       for (final key in appDiagnosticSchemaV1['uuidFields'] as List) {
         if (raw.containsKey(key) && !isValidTraceId(raw[key])) return null;
       }
-      for (final key in [
+      for (final key in const [
         'source',
         'platform',
         'feature',
@@ -996,7 +1372,7 @@ final class AppDiagnostics with WidgetsBindingObserver {
       ]) {
         if (!_closed(key, raw[key])) return null;
       }
-      for (final key in ['sequence', 'occurredAtMs', 'elapsedMs']) {
+      for (final key in const ['sequence', 'occurredAtMs', 'elapsedMs']) {
         if (raw[key] is! int || _integer(raw[key]) != raw[key]) return null;
       }
       if (raw['build'] is! String ||
@@ -1006,34 +1382,28 @@ final class AppDiagnostics with WidgetsBindingObserver {
       final values = raw['values'];
       if (values is! Map || values.length > 16) return null;
       for (final entry in values.entries) {
-        if ((appDiagnosticSchemaV1['booleanValues'] as List).contains(
-          entry.key,
-        )) {
+        if (_closed('booleanValues', entry.key)) {
           if (entry.value is! bool) return null;
-        } else if ((appDiagnosticSchemaV1['integerValues'] as List).contains(
-          entry.key,
-        )) {
+        } else if (_closed('integerValues', entry.key)) {
           if (entry.value is! int || _integer(entry.value) != entry.value) {
             return null;
           }
-        } else if ((appDiagnosticSchemaV1['hashValues'] as List).contains(
-          entry.key,
-        )) {
+        } else if (_closed('hashValues', entry.key)) {
           if (entry.value is! String ||
               !_hashPattern.hasMatch(entry.value as String)) {
             return null;
           }
         } else {
-          final options =
-              (appDiagnosticSchemaV1['enumValues'] as Map)[entry.key];
-          if (options is! List || !options.contains(entry.value)) return null;
+          if (!(_valueEnums[entry.key]?.contains(entry.value) ?? false)) {
+            return null;
+          }
         }
       }
-      if (utf8.encode(jsonEncode(raw)).length > 4096) return null;
-      return {
-        ...Map<String, Object?>.from(raw),
-        'values': Map<String, Object?>.from(values),
-      };
+      final bytes = _byteCounter.count(raw);
+      if (bytes > 4096) return null;
+      final event = Map<String, Object?>.from(raw);
+      event['values'] = Map<String, Object?>.from(values);
+      return (event: event, bytes: bytes);
     } catch (_) {
       return null;
     }

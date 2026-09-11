@@ -1,0 +1,147 @@
+{
+  "createdAt": "2026-09-08T19:11:11.999500+00:00",
+  "status": "passed",
+  "scope": "Native blob-decrypt error-classification build dependency only; no full apps, installs, uploads or relay deployment",
+  "toolchain": "go1.25.0",
+  "gitHead": "d8b919c5b34575d570a78eb5fbbc4203f56f875b",
+  "sourceModified": true,
+  "sourceManifest": {
+    "capturedAt": "2026-09-08T19:06:18.439259+00:00",
+    "paths": {
+      "go-mknoon/crypto/file_crypto.go": "e35a4448605ef6a8412182a0318c0a32b69f410fdff3756a462678a772f4eb86",
+      "go-mknoon/crypto/file_crypto_test.go": "1496624a7a6168e1891837b36bf90e17ccd325d3d0897db4f5c3f77151bbc7b2",
+      "go-mknoon/bridge/bridge.go": "26ffe4d17f3f4358e984166ccbac33ab7dd2e6adc0a5f24a4eb6fc5e78b17faf",
+      "go-mknoon/bridge/bridge_test.go": "06605857991092d337109eb8944ac2431302c882bd28293095974649b5980e72"
+    },
+    "toolchain": "go1.25.0",
+    "affectedQueryId": "46aa76ad36b442b5",
+    "cryptoBranchQueryId": "465de64666ae4b9e",
+    "cryptoEvidenceDigest": "5592fa7a0d77046e",
+    "buildQueryId": "b2f6a36a9f774a8f",
+    "buildEvidenceDigest": "eef9976f705442db"
+  },
+  "commands": [
+    {
+      "command": "GOTOOLCHAIN=go1.25.0 bash scripts/ensure_go_android_bindings.sh",
+      "exitCode": 0,
+      "apiGuard": "scripts/verify_gomobile_bindings.sh android; invoked by ensure script; passed",
+      "log": "native-android-bindings-build.log",
+      "logSha256": "0ca6009d37acfd254e334ac67b98153b9dae8dcc320913435414bbed39cc7c28"
+    },
+    {
+      "command": "GOTOOLCHAIN=go1.25.0 bash scripts/ensure_go_ios_bindings.sh",
+      "exitCode": 0,
+      "apiGuard": "scripts/verify_gomobile_bindings.sh ios; invoked by ensure script; passed",
+      "log": "native-ios-bindings-build.log",
+      "logSha256": "da76839a7d14fc7c0a73fe727a89cbaf09062905112e9d2c4258dd6974d46124"
+    }
+  ],
+  "inputDigests": {
+    "android/app/libs/GoMknoon.inputs.sha256": "ab6163b0be52c52ee97e20f8760aed4a39c3f298a1d6110587e89cbfed25e552",
+    "ios/Runner/GoMknoon.inputs.sha256": "6029ed5d2ebc5bd251fbc08bf2bb86aca74563c0b3dfa62ec3f605a5662d7628"
+  },
+  "buildScriptSha256": {
+    "scripts/ensure_go_android_bindings.sh": "ebe94d732557be3907bff1f23ad832cababb9435ad6ffed101fef8ea650b6730",
+    "scripts/ensure_go_ios_bindings.sh": "8b3a29c96c31d35280d4514af3c6de2f80216f86ffd12d8f677907606589be73",
+    "scripts/verify_gomobile_bindings.sh": "8ff257d8e99f4eb39e3df7b68b3df15a83b5033aed04e48afe3874f1fa0a1e99",
+    "scripts/gomobile_binding_inputs.sh": "6cd1ef8c01ef5036ac112b942560df4e01f02e9da0e904ade7442b6a31ff0d1c",
+    "go-mknoon/Makefile": "81d1280a98d438ca8fe543009dabef1a97a7e7f5846e07c685b00079d82a48dc"
+  },
+  "artifacts": [
+    {
+      "path": "android/app/libs/GoMknoon.aar",
+      "sha256": "095954a738d1dd1f1fe03baa34affffbc4cd10e5e81ee28b331396fc6f06f581",
+      "hashKind": "file-sha256",
+      "bytes": 83257269
+    },
+    {
+      "path": "android/app/libs/GoMknoon-sources.jar",
+      "sha256": "88ac1f16cb932e448fdadcb28531e1fdf58169a54eaa4cea4fa8e151f25e7364",
+      "hashKind": "file-sha256",
+      "bytes": 13150
+    },
+    {
+      "path": "ios/Runner/GoMknoon.xcframework",
+      "sha256": "a9ac44e648652d21f28e7a2bf9d4e9504265bbe01e2079ad5e731d2af9a65c78",
+      "hashKind": "ordered-relative-path-NUL-and-raw-file-sha256",
+      "bytes": 213137672
+    },
+    {
+      "path": "ios/Runner/GoMknoonNSE.xcframework",
+      "sha256": "5a8d973d5aca00b10346c82f13380655253e4ad0ddf3f93d60f2f0f469198ce9",
+      "hashKind": "ordered-relative-path-NUL-and-raw-file-sha256",
+      "bytes": 9827634
+    }
+  ],
+  "compiledCodePresence": {
+    "android": [
+      {
+        "entry": "jni/arm64-v8a/libgojni.so",
+        "classificationCodesPresent": true
+      },
+      {
+        "entry": "jni/armeabi-v7a/libgojni.so",
+        "classificationCodesPresent": true
+      },
+      {
+        "entry": "jni/x86/libgojni.so",
+        "classificationCodesPresent": true
+      },
+      {
+        "entry": "jni/x86_64/libgojni.so",
+        "classificationCodesPresent": true
+      }
+    ],
+    "iosFull": [
+      {
+        "path": "ios/Runner/GoMknoon.xcframework/ios-arm64/GoMknoon.framework/GoMknoon",
+        "classificationCodesPresent": true
+      },
+      {
+        "path": "ios/Runner/GoMknoon.xcframework/ios-arm64_x86_64-simulator/GoMknoon.framework/GoMknoon",
+        "classificationCodesPresent": true
+      }
+    ],
+    "iosNSE": "nsebridge does not export BlobDecrypt; regenerated and API guard passed"
+  },
+  "backup": {
+    "createdAt": "2026-09-08T19:04:27.718885+00:00",
+    "backupDirectory": "/Volumes/CrucialX9/flutter_app/build/private-media-fix-backups/20260908T190426Z-before-decrypt-classification",
+    "artifacts": [
+      {
+        "path": "android/app/libs/GoMknoon.aar",
+        "sha256": "a8ab5f6a75d03dadfa1802084e4dc28b7ef7a40e1d3ed88c521818fbd6e1c008",
+        "hashKind": "file-sha256"
+      },
+      {
+        "path": "android/app/libs/GoMknoon-sources.jar",
+        "sha256": "88ac1f16cb932e448fdadcb28531e1fdf58169a54eaa4cea4fa8e151f25e7364",
+        "hashKind": "file-sha256"
+      },
+      {
+        "path": "android/app/libs/GoMknoon.inputs.sha256",
+        "sha256": "885057a8b4bc59d836bb09e204f9dfb712ad86b06db73545a2f5dae8ba856593",
+        "hashKind": "file-sha256"
+      },
+      {
+        "path": "ios/Runner/GoMknoon.xcframework",
+        "sha256": "4d5ae14e55f5fdc638bb5e59df9a1a63be141f8d3a2cb95939d3f5b5040f6e4c",
+        "hashKind": "ordered-relative-path-NUL-and-raw-file-sha256"
+      },
+      {
+        "path": "ios/Runner/GoMknoonNSE.xcframework",
+        "sha256": "cdb1169f2219e16a3b3f7b64a5c0a93067e669591cade028150c8e0ac3c2e5ec",
+        "hashKind": "ordered-relative-path-NUL-and-raw-file-sha256"
+      },
+      {
+        "path": "ios/Runner/GoMknoon.inputs.sha256",
+        "sha256": "42b08403c40a0943ed3d4c9af787c963d20c2de49629f956c865bbad8b112b3e",
+        "hashKind": "file-sha256"
+      }
+    ],
+    "deliveredStore112": "untouched"
+  },
+  "tests": "native-classification-tests.json",
+  "deliveredStore112": "untouched; existing112 AAB/IPA/archive do not contain this later fix",
+  "historicalIncidentCausation": "not established without the original client failure reason"
+}

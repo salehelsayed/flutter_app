@@ -22,6 +22,19 @@
   ],
   "externalEntrypoints": [
     {
+      "path": "artifacts/phantom-notification-20260909/early_receipt_counterexample_test.dart",
+      "owner": "messaging / reliability investigation",
+      "reason": "Retained 2026-09-09 isolated early delivery-receipt counterexample; fake transport and repository fixtures exercise production send and receipt handling.",
+      "condition": "Preserve with the dated incident evidence. Reclassify only after reviewing its historical assertions and replacement regressions; this artifact is not an active release gate.",
+      "seedsTooling": false,
+      "evidence": [
+        {
+          "kind": "dart-main",
+          "source": "artifacts/phantom-notification-20260909/early_receipt_counterexample_test.dart"
+        }
+      ]
+    },
+    {
       "path": "integration_test/android_background_crypto_preflight_app.dart",
       "owner": "QA / release",
       "reason": "Non-convention Dart main remains visible pending exact invocation ownership.",

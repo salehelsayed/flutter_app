@@ -1059,6 +1059,7 @@ Future<Map<String, dynamic>> callP2PInboxStore(
   String? custodyContract,
   String? custodyKind,
   int? custodyExpiresAtOrBeforeMs,
+  bool suppressNotification = false,
 }) async {
   emitFlowEvent(
     layer: 'FL',
@@ -1076,6 +1077,7 @@ Future<Map<String, dynamic>> callP2PInboxStore(
       'custodyContract': ?custodyContract,
       'custodyKind': ?custodyKind,
       'custodyExpiresAtOrBeforeMs': ?custodyExpiresAtOrBeforeMs,
+      if (suppressNotification) 'suppressNotification': true,
     },
   };
 

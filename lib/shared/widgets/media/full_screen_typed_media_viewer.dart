@@ -1184,6 +1184,16 @@ class _TypedVideoPageState extends State<_TypedVideoPage>
   bool _failureReported = false;
   bool _revealAuthorized = false;
   int _adapterGeneration = 0;
+  int _playbackRequestGeneration = 0;
+  late AppLifecycleState _appLifecycleState;
+  bool _autoplayRequested = false;
+  Future<void>? _resumeRestoreFuture;
+
+  bool get _mayAutoplay =>
+      mounted &&
+      _autoplayRequested &&
+      _appLifecycleState == AppLifecycleState.resumed &&
+      canStartPictureInPicture;
 
   bool get canStartPictureInPicture =>
       widget.isActive &&
@@ -1196,6 +1206,8 @@ class _TypedVideoPageState extends State<_TypedVideoPage>
   @override
   void initState() {
     super.initState();
+    _appLifecycleState =
+        WidgetsBinding.instance.lifecycleState ?? AppLifecycleState.resumed;
     _installPlaybackOwner(widget.item);
     WidgetsBinding.instance.addObserver(this);
     unawaited(_initialize(_adapterGeneration));
@@ -1203,6 +1215,10 @@ class _TypedVideoPageState extends State<_TypedVideoPage>
 
   void _installPlaybackOwner(MediaViewerItem item) {
     _adapterGeneration++;
+    _playbackRequestGeneration++;
+    _autoplayRequested =
+        widget.isActive && _appLifecycleState == AppLifecycleState.resumed;
+    _resumeRestoreFuture = null;
     _playbackItem = item;
     _adapter = widget.adapterFactory(item);
     _resume = MediaVideoResumeController(
@@ -1221,7 +1237,6 @@ class _TypedVideoPageState extends State<_TypedVideoPage>
     MediaPictureInPictureRestore? restore,
   }) async {
     final adapter = _adapter;
-    final resume = _resume;
     try {
       await adapter.initialize();
       if (!mounted ||
@@ -1236,22 +1251,18 @@ class _TypedVideoPageState extends State<_TypedVideoPage>
         _pictureInPictureTransferPending = false;
       });
       widget.onPlaybackStateChanged();
-      // Never start a non-current page.
       if (widget.isActive) {
-        if (restore == null) {
-          await resume.restore();
-        } else {
+        if (restore != null) {
           final durationMs = adapter.duration.inMilliseconds;
           final boundedPosition = durationMs > 0
               ? restore.positionMs.clamp(0, durationMs)
               : restore.positionMs.clamp(0, 0x7fffffff);
-          await adapter.seekTo(Duration(milliseconds: boundedPosition));
+          _resumeRestoreFuture = adapter.seekTo(
+            Duration(milliseconds: boundedPosition),
+          );
+          _autoplayRequested = _autoplayRequested && restore.shouldPlay;
         }
-        if (!mounted || generation != _adapterGeneration) return;
-        if (restore?.shouldPlay == true ||
-            (restore == null && widget.onFirstRenderedFrame == null)) {
-          await adapter.play();
-        }
+        await _restoreAndMaybePlay();
       }
     } catch (error) {
       if (!mounted || generation != _adapterGeneration) return;
@@ -1260,6 +1271,31 @@ class _TypedVideoPageState extends State<_TypedVideoPage>
       setState(() => _error = error);
       widget.onPreFrameFailure();
       widget.onPlaybackStateChanged();
+    }
+  }
+
+  Future<void> _restoreAndMaybePlay() async {
+    if (!mounted || !_initialized || !_ownsPlaybackAdapter) return;
+    final adapter = _adapter;
+    final request = ++_playbackRequestGeneration;
+    try {
+      // Every activation waits for the same restore, including a page that is
+      // left and revisited while its stored position is still loading.
+      await (_resumeRestoreFuture ??= _resume.restore());
+      if (request != _playbackRequestGeneration ||
+          !identical(adapter, _adapter) ||
+          !_mayAutoplay) {
+        return;
+      }
+      if (widget.onFirstRenderedFrame == null || _revealAuthorized) {
+        await adapter.play();
+      }
+    } catch (error) {
+      if (mounted &&
+          request == _playbackRequestGeneration &&
+          identical(adapter, _adapter)) {
+        _handleSurfaceFailure(error);
+      }
     }
   }
 
@@ -1273,6 +1309,7 @@ class _TypedVideoPageState extends State<_TypedVideoPage>
       return MediaPictureInPictureStartOutcome.denied;
     }
     final transferredAdapter = _adapter;
+    _playbackRequestGeneration++;
     setState(() => _pictureInPictureTransferPending = true);
     widget.onPlaybackStateChanged();
     late final MediaPictureInPictureStartOutcome outcome;
@@ -1359,16 +1396,25 @@ class _TypedVideoPageState extends State<_TypedVideoPage>
   Future<void> _authorizeRevealAndPlayback() async {
     final authorize = widget.onFirstRenderedFrame;
     if (authorize == null || _revealAuthorized || !mounted) return;
+    final generation = _adapterGeneration;
     final accepted = await authorize();
-    if (!accepted || !mounted || _error != null) return;
-    if (widget.isActive) await _adapter.play();
-    if (mounted) setState(() => _revealAuthorized = true);
+    if (!accepted ||
+        !mounted ||
+        generation != _adapterGeneration ||
+        _error != null) {
+      return;
+    }
+    setState(() => _revealAuthorized = true);
+    if (widget.isActive) await _restoreAndMaybePlay();
   }
 
   @override
   void didUpdateWidget(_TypedVideoPage oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.isActive == widget.isActive) return;
+    _playbackRequestGeneration++;
+    _autoplayRequested =
+        widget.isActive && _appLifecycleState == AppLifecycleState.resumed;
     // The parent app bar rebuild that changes the current index runs before
     // this child receives its new [isActive] value. Notify it once after this
     // frame so a ready newly-current playback owner can enable PiP without
@@ -1376,12 +1422,9 @@ class _TypedVideoPageState extends State<_TypedVideoPage>
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) widget.onPlaybackStateChanged();
     });
-    if (!_initialized || _error != null) return;
+    if (!_initialized || !_ownsPlaybackAdapter || _error != null) return;
     if (widget.isActive) {
-      _resume.restore();
-      if (widget.onFirstRenderedFrame == null || _revealAuthorized) {
-        _adapter.play();
-      }
+      unawaited(_restoreAndMaybePlay());
     } else {
       _resume.flush();
       _adapter.pause();
@@ -1390,18 +1433,17 @@ class _TypedVideoPageState extends State<_TypedVideoPage>
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (!widget.isActive || !_initialized || _error != null) return;
-    switch (state) {
-      case AppLifecycleState.paused:
-      case AppLifecycleState.inactive:
-      case AppLifecycleState.detached:
-      case AppLifecycleState.hidden:
-        _resume.flush();
-        _adapter.pause();
-        break;
-      case AppLifecycleState.resumed:
-        // Foreground alone does not auto-play.
-        break;
+    _appLifecycleState = state;
+    // Cancel even while initialization/restore/authorization is pending. Merely
+    // returning to the foreground does not renew this playback request.
+    if (state == AppLifecycleState.resumed) return;
+    _playbackRequestGeneration++;
+    _autoplayRequested = false;
+    if (_initialized &&
+        _ownsPlaybackAdapter &&
+        !_pictureInPictureTransferPending) {
+      _resume.flush();
+      _adapter.pause();
     }
   }
 
@@ -1409,6 +1451,7 @@ class _TypedVideoPageState extends State<_TypedVideoPage>
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _adapterGeneration++;
+    _playbackRequestGeneration++;
     if (_ownsPlaybackAdapter) {
       _adapter.removeListener(_onAdapterTick);
       _resume.flush();

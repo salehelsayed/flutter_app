@@ -76,6 +76,7 @@ internal final class MknoonCallDiagnosticSpool {
   let runId = UUID().uuidString.lowercased()
   private var state: [String: Any] = ["enabled": false, "sequence": Int64(0), "dropped": 0]
   private var events: [[String: Any]] = []
+  private var pendingEvents: Set<String> = []
   // Only this private, protected state contains authority handles. drain never returns it.
   private var bindings: [String: [String: Any]] = [:]
   private var loaded = false
@@ -152,20 +153,24 @@ internal final class MknoonCallDiagnosticSpool {
     return ["version": 1, "traceId": trace]
   }
 
+  @discardableResult
   func append(handle: String? = nil, stage: String, action: String, outcome: String,
-              reason: String = "none", values: [String: Any] = [:], context: [String: Any] = [:]) {
-    guard enabled else { return }
-    prune()
+              reason: String = "none", values: [String: Any] = [:], context: [String: Any] = [:], deferPersistence: Bool = false) -> Bool {
+    guard enabled else { return false }
+    if !deferPersistence { prune() }
     var metadata = Self.context(context)
     if let handle, Self.handle(handle) {
       let key = Self.canonical(handle)
+      if let at = (bindings[key]?["at"] as? NSNumber)?.int64Value, at < max(0, now() - Self.retentionMs) {
+        bindings.removeValue(forKey: key)
+      }
       if bindings[key] == nil {
         bindings[key] = ["traceId": UUID().uuidString.lowercased(), "at": now()]
       }
       metadata = (bindings[key] ?? [:]).merging(metadata) { _, new in new }
     }
     let sequence = (state["sequence"] as? NSNumber)?.int64Value ?? 0
-    guard sequence < Int64.max else { return }
+    guard sequence < Int64.max else { return false }
     state["sequence"] = sequence + 1
     var event: [String: Any] = [
       "schemaVersion": 1, "eventId": UUID().uuidString.lowercased(), "source": "ios",
@@ -184,10 +189,13 @@ internal final class MknoonCallDiagnosticSpool {
     if let role = context["role"] as? String, ["caller", "callee", "local"].contains(role) { event["role"] = role }
     // Only new records receive this installed build; drain never relabels history.
     if let installedBuild, Self.validBuild(installedBuild) { event["build"] = installedBuild }
-    guard Self.validEvent(event) else { return }
+    guard Self.validEvent(event) else { return false }
     events.append(event)
-    enforceCaps()
-    if !persist() { events.removeLast(); state["dropped"] = ((state["dropped"] as? Int) ?? 0) + 1 }
+    if deferPersistence { pendingEvents.insert(event["eventId"] as! String); return true }
+    if persist() { return true }
+    events.removeAll { $0["eventId"] as? String == event["eventId"] as? String }
+    state["dropped"] = ((state["dropped"] as? Int) ?? 0) + 1
+    return false
   }
 
   func drain(_ limit: Int) -> [String: Any] {
@@ -248,8 +256,21 @@ internal final class MknoonCallDiagnosticSpool {
     try? JSONSerialization.data(withJSONObject: ["version": 1, "state": state, "events": events, "bindings": bindings], options: [.sortedKeys])
   }
   private func persist() -> Bool {
-    guard loaded, let data = encoded(), data.count <= Self.maxBytes else { return false }
-    do { try backend.replace(data); return true } catch { return false }
+    guard loaded else { return false }
+    prune(); enforceCaps()
+    guard let data = encoded(), data.count <= Self.maxBytes else { return false }
+    do { try backend.replace(data); pendingEvents = []; return true } catch { return false }
+  }
+  func recordDropped(_ count: Int64) {
+    guard enabled, count > 0 else { return }
+    state["dropped"] = min(((state["dropped"] as? Int) ?? 0) + Int(min(count, 9_007_199_254_740_991)), 9_007_199_254_740_991)
+  }
+  func persistPending() -> Bool {
+    if persist() { return true }
+    let before = events.count
+    events.removeAll { pendingEvents.contains($0["eventId"] as? String ?? "") }
+    state["dropped"] = ((state["dropped"] as? Int) ?? 0) + before - events.count
+    pendingEvents = []; return false
   }
   static func uuid(_ value: String) -> Bool {
     value.count == 36 && UUID(uuidString: value)?.uuidString.lowercased() == value.lowercased()
@@ -332,7 +353,9 @@ internal final class MknoonCallDiagnosticSpool {
 internal final class MknoonCallDiagnostics {
   static let shared = MknoonCallDiagnostics()
   private let queue = DispatchQueue(label: "com.mknoon.call-diagnostics", qos: .utility)
+  private let admission = MknoonAppDiagnosticAdmission()
   private var spool: MknoonCallDiagnosticSpool?
+  private var persistenceScheduled = false
   private static let installedBuild: String? = {
     guard let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String,
           let number = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String
@@ -349,7 +372,18 @@ internal final class MknoonCallDiagnostics {
   func record(handle: String? = nil, stage: String, action: String, outcome: String,
               reason: String = "none", values: [String: Any] = [:], context: [String: Any] = [:]) {
     let captured = MknoonCallDiagnosticScope.current.merging(context) { _, new in new }
-    queue.async { [weak self] in self?.spool?.append(handle: handle, stage: stage, action: action, outcome: outcome, reason: reason, values: values, context: captured) }
+    admission.enqueue({ work in queue.async { work() } }) { [weak self] dropped in
+      guard let self else { return }
+      self.spool?.recordDropped(dropped)
+      if self.spool?.append(handle: handle, stage: stage, action: action, outcome: outcome, reason: reason, values: values, context: captured, deferPersistence: true) == true,
+         !self.persistenceScheduled {
+        self.persistenceScheduled = true
+        self.queue.async { [weak self] in
+          self?.persistenceScheduled = false
+          _ = self?.spool?.persistPending()
+        }
+      }
+    }
   }
   func bind(handle: String, traceId: String, context: [String: Any] = [:]) {
     queue.async { [weak self] in _ = self?.spool?.bind(handle, traceId: traceId, context: context) }

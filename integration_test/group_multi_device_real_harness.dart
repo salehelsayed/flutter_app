@@ -37,6 +37,7 @@ import 'package:flutter_app/core/database/helpers/group_invite_delivery_attempts
 import 'package:flutter_app/core/database/helpers/group_members_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/group_message_local_deletions_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/group_messages_db_helpers.dart';
+import 'package:flutter_app/core/database/helpers/group_media_key_snapshot.dart';
 import 'package:flutter_app/core/database/helpers/pending_group_broadcasts_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/pending_sibling_devices_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/linked_group_bootstrap_db_helpers.dart';
@@ -139,6 +140,7 @@ import 'package:flutter_app/features/identity/data/repositories/identity_reposit
 import 'package:flutter_app/l10n/app_localizations.dart';
 
 import '_support/invite_reliability_runner_contract.dart';
+import '_support/group_multi_party_verdict_handshake.dart';
 import '_support/canonical_runtime_device_test_lease.dart';
 import '../test/shared/fakes/fake_notification_service.dart';
 import '../test/shared/fakes/in_memory_inbox_staging_repository.dart';
@@ -184,6 +186,10 @@ const configuredMode = String.fromEnvironment(
 );
 const configuredB1bPlan365GroupMedia = bool.fromEnvironment(
   'B1B_ENABLE_PLAN365_GROUP_MEDIA',
+  defaultValue: false,
+);
+const configuredB1bRequireHostCapture = bool.fromEnvironment(
+  'B1B_REQUIRE_HOST_CAPTURE',
   defaultValue: false,
 );
 const configuredKeyRotationGracePeriodMs = int.fromEnvironment(
@@ -540,6 +546,119 @@ class RecordingGoBridgeClient extends GoBridgeClient {
   int get groupLeaveCommandCount => commandCount('group:leave');
 }
 
+/// Closed observations from only one owner invocation; raw exchanges stay local.
+Map<String, Object> summarizeGroupMediaDownloadObservation({
+  required List<String> sentMessages,
+  required List<Map<String, String>> bridgeExchanges,
+  required int sentStart,
+  required int exchangeStart,
+}) {
+  Map<String, dynamic>? decode(String? value) {
+    if (value == null) return null;
+    try {
+      final decoded = jsonDecode(value);
+      return decoded is Map<String, dynamic> ? decoded : null;
+    } on FormatException {
+      return null;
+    }
+  }
+
+  const errorCodes = <String>{
+    'MEDIA_CUSTODY_ADMISSION_DISABLED',
+    'MEDIA_CUSTODY_FULL',
+    'MEDIA_CUSTODY_UNSUPPORTED',
+    'MEDIA_CUSTODY_IDENTITY_CONFLICT',
+    'MEDIA_CUSTODY_INELIGIBLE',
+    'MEDIA_CUSTODY_NOT_AUTHORIZED',
+    'MEDIA_CUSTODY_HASH_MISMATCH',
+    'MEDIA_CUSTODY_ALREADY_ACKED',
+    'MEDIA_CUSTODY_CLEANUP_PENDING',
+    'MEDIA_CUSTODY_STORAGE_ERROR',
+    'MEDIA_CUSTODY_NOT_FOUND',
+    'MEDIA_CUSTODY_COMMIT_INDETERMINATE',
+    'DECRYPT_AUTH_ERROR',
+    'DECRYPT_METADATA_ERROR',
+    'DECRYPT_IO_ERROR',
+    'DECRYPT_ERROR',
+    'INVALID_INPUT',
+    'INTERNAL_ERROR',
+  };
+  final result = <String, Object>{};
+  for (final (command, label) in const <(String, String)>[
+    ('media:download', 'download'),
+    ('blob:decrypt', 'decrypt'),
+    ('media:delete', 'ack'),
+  ]) {
+    final requests = sentMessages
+        .skip(sentStart)
+        .where((raw) => decode(raw)?['cmd'] == command);
+    final exchanges = bridgeExchanges
+        .skip(exchangeStart)
+        .where((item) => decode(item['request'])?['cmd'] == command)
+        .take(2)
+        .toList(growable: false);
+    final requestCount = requests.take(2).length;
+    result['${label}Requests'] = requestCount;
+    result['${label}Responses'] = exchanges.length;
+    final exact = requestCount == 1 && exchanges.length == 1
+        ? exchanges.single
+        : null;
+    final request = decode(exact?['request']);
+    final payload = request?['payload'];
+    final response = decode(exact?['response']);
+    final ok = response?['ok'] == true;
+    result['${label}Ok'] = ok;
+    final code = response?['errorCode'];
+    result['${label}ErrorCode'] = exchanges.isEmpty
+        ? 'unobserved'
+        : exchanges.length > 1 || requestCount != 1
+        ? 'ambiguous'
+        : response == null ||
+              (response['ok'] != true && response['ok'] != false)
+        ? 'malformed'
+        : ok
+        ? 'none'
+        : code is String && errorCodes.contains(code)
+        ? code
+        : 'unknown';
+    if (command == 'media:download') {
+      final relay = response?['custodyRelayPeerId'];
+      result['receiptMatchesRequest'] =
+          ok &&
+          payload is Map &&
+          const <String>[
+            'id',
+            'custodyKind',
+            'custodyContract',
+            'contentHash',
+            'mime',
+          ].every(
+            (key) =>
+                payload[key] is String &&
+                (payload[key] as String).isNotEmpty &&
+                response?[key] == payload[key],
+          ) &&
+          const <String>['size', 'expiresAtMs'].every(
+            (key) =>
+                payload[key] is int &&
+                (payload[key] as int) > 0 &&
+                response?[key] == payload[key],
+          ) &&
+          relay is String &&
+          relay.trim().isNotEmpty &&
+          relay == relay.trim();
+    } else if (command == 'blob:decrypt') {
+      final filePath = payload is Map ? payload['filePath'] : null;
+      result['decryptPathMatchesRequest'] =
+          ok &&
+          filePath is String &&
+          filePath.isNotEmpty &&
+          response?['decryptedPath'] == '$filePath.dec';
+    }
+  }
+  return result;
+}
+
 /// Android f1b568bca (canonical-runtime ownership): MainActivity no longer
 /// constructs the native GoBridge eagerly. The `com.mknoon/go_bridge`
 /// Method/EventChannels are only registered once the Dart side acquires the
@@ -588,6 +707,166 @@ Future<void> ensureCanonicalRuntimeAttachedForTest() async {
   print(
     '[STACK-DIAG] canonical runtime lease '
     '${alreadyOwned ? 'joined' : 'acquired'} + Go runtime attached',
+  );
+}
+
+/// The device stack and host SQLite regression share this exact wiring.
+GroupReactionReplayOutboxRepositoryImpl
+createGroupMultiDeviceReactionReplayOutbox(Database db) {
+  return GroupReactionReplayOutboxRepositoryImpl(
+    dbUpsertGroupReactionReplayOutboxEntry: (row) =>
+        dbUpsertGroupReactionReplayOutboxEntry(db, row),
+    dbAttachGroupReactionReplayOutboxPayload:
+        ({
+          required reactionId,
+          required inboxRetryPayload,
+          required updatedAt,
+        }) => dbAttachGroupReactionReplayOutboxPayload(
+          db,
+          reactionId: reactionId,
+          inboxRetryPayload: inboxRetryPayload,
+          updatedAt: updatedAt,
+        ),
+    dbLoadGroupReactionReplayOutboxEntry: (reactionId) =>
+        dbLoadGroupReactionReplayOutboxEntry(db, reactionId),
+    dbLoadLatestGroupReactionReplayOutboxEntryForTarget:
+        ({
+          required String groupId,
+          required String messageId,
+          required String senderPeerId,
+        }) => dbLoadLatestGroupReactionReplayOutboxEntryForTarget(
+          db,
+          groupId: groupId,
+          messageId: messageId,
+          senderPeerId: senderPeerId,
+        ),
+    dbLoadRetryableGroupReactionReplayOutboxEntries:
+        ({int limit = 20, bool strictContentOnly = false, int offset = 0}) =>
+            dbLoadRetryableGroupReactionReplayOutboxEntries(
+              db,
+              limit: limit,
+              strictContentOnly: strictContentOnly,
+              offset: offset,
+            ),
+    dbUpdateGroupReactionReplayOutboxEntryStatus:
+        (
+          reactionId, {
+          required deliveryStatus,
+          lastError,
+          required updatedAt,
+        }) => dbUpdateGroupReactionReplayOutboxEntryStatus(
+          db,
+          reactionId,
+          deliveryStatus: deliveryStatus,
+          lastError: lastError,
+          updatedAt: updatedAt,
+        ),
+    dbUpdateGroupReactionReplayOutboxEntryStatusIfExact:
+        ({
+          required expected,
+          required deliveryStatus,
+          lastError,
+          required updatedAt,
+        }) => dbUpdateGroupReactionReplayOutboxEntryStatusIfExact(
+          db,
+          expected: expected,
+          deliveryStatus: deliveryStatus,
+          lastError: lastError,
+          updatedAt: updatedAt,
+        ),
+    dbReplaceGroupReactionReplayOutboxPayloadIfExact:
+        ({required expected, required replacement, required updatedAt}) =>
+            dbReplaceGroupReactionReplayOutboxPayloadIfExact(
+              db,
+              expected: expected,
+              replacement: replacement,
+              updatedAt: updatedAt,
+            ),
+    dbCompleteGroupReactionContentIfExact:
+        ({
+          required expected,
+          required reactionRow,
+          required action,
+          required transitionId,
+          required sourcePeerId,
+          required sourceEventId,
+          required sourceTimestamp,
+          required eventPayload,
+          required updatedAt,
+        }) => dbCompleteGroupReactionContentIfExact(
+          db,
+          expected: expected,
+          reactionRow: reactionRow,
+          action: action,
+          transitionId: transitionId,
+          sourcePeerId: sourcePeerId,
+          sourceEventId: sourceEventId,
+          sourceTimestamp: sourceTimestamp,
+          eventPayload: eventPayload,
+          updatedAt: updatedAt,
+        ),
+    dbStageAndCompleteLocalGroupReactionContentFn:
+        ({
+          required expected,
+          required reactionRow,
+          required action,
+          required transitionId,
+          required sourcePeerId,
+          required sourceEventId,
+          required sourceTimestamp,
+          required eventPayload,
+        }) => dbStageAndCompleteLocalGroupReactionContent(
+          db,
+          expected: expected,
+          reactionRow: reactionRow,
+          action: action,
+          transitionId: transitionId,
+          sourcePeerId: sourcePeerId,
+          sourceEventId: sourceEventId,
+          sourceTimestamp: sourceTimestamp,
+          eventPayload: eventPayload,
+        ),
+    dbStagePreparedLocalGroupReactionContentFn:
+        ({
+          required expected,
+          required sourcePeerId,
+          required sourceEventId,
+          required sourceTimestamp,
+          required preparedEventPayload,
+        }) => dbStagePreparedLocalGroupReactionContent(
+          db,
+          expected: expected,
+          sourcePeerId: sourcePeerId,
+          sourceEventId: sourceEventId,
+          sourceTimestamp: sourceTimestamp,
+          preparedEventPayload: preparedEventPayload,
+        ),
+    dbTerminalizePreparedLocalGroupReactionIfExactFn:
+        ({
+          required expected,
+          required preparedEventPayload,
+          required terminalSourcePeerId,
+          required terminalSourceEventId,
+          required terminalSourceTimestamp,
+          required terminalEventPayload,
+        }) => dbTerminalizePreparedLocalGroupReactionIfExact(
+          db,
+          expected: expected,
+          preparedEventPayload: preparedEventPayload,
+          terminalSourcePeerId: terminalSourcePeerId,
+          terminalSourceEventId: terminalSourceEventId,
+          terminalSourceTimestamp: terminalSourceTimestamp,
+          terminalEventPayload: terminalEventPayload,
+        ),
+    dbHasExactPreparedLocalGroupReactionFn:
+        ({required expected, required eventPayload}) =>
+            dbHasExactPreparedLocalGroupReaction(
+              db,
+              expected: expected,
+              eventPayload: eventPayload,
+            ),
+    dbDeleteGroupReactionReplayOutboxEntry: (reactionId) =>
+        dbDeleteGroupReactionReplayOutboxEntry(db, reactionId),
   );
 }
 
@@ -1095,6 +1374,9 @@ Future<GroupMultiDeviceTestStack> setupGroupMultiDeviceStack({
       return row?['state'] == 'cleanup_pending';
     },
   );
+  final groupMediaKeyAccess = GroupMediaKeyAccess(
+    secureKeyStore: secureKeyStore,
+  );
   GroupMessageRepositoryImpl createGroupMessageRepository(
     dynamic executor, {
     bool enableInboxPageTransactions = false,
@@ -1172,6 +1454,7 @@ Future<GroupMultiDeviceTestStack> setupGroupMultiDeviceStack({
             sourceEventId: sourceEventId,
             sourceTimestamp: sourceTimestamp,
             eventPayload: eventPayload,
+            mediaKeyAccess: groupMediaKeyAccess,
           ),
       dbStageAndCompleteLocalGroupContentMessageFn: identical(executor, db)
           ? ({
@@ -1187,6 +1470,7 @@ Future<GroupMultiDeviceTestStack> setupGroupMultiDeviceStack({
               sourceEventId: sourceEventId,
               sourceTimestamp: sourceTimestamp,
               eventPayload: eventPayload,
+              mediaKeyAccess: groupMediaKeyAccess,
             )
           : null,
       dbStagePreparedLocalGroupContentMessageFn: identical(executor, db)
@@ -1203,6 +1487,7 @@ Future<GroupMultiDeviceTestStack> setupGroupMultiDeviceStack({
               sourceEventId: sourceEventId,
               sourceTimestamp: sourceTimestamp,
               preparedEventPayload: preparedEventPayload,
+              mediaKeyAccess: groupMediaKeyAccess,
             )
           : null,
       dbTerminalizePreparedLocalGroupContentMessageIfExactFn:
@@ -1222,6 +1507,7 @@ Future<GroupMultiDeviceTestStack> setupGroupMultiDeviceStack({
               terminalSourceEventId: terminalSourceEventId,
               terminalSourceTimestamp: terminalSourceTimestamp,
               terminalEventPayload: terminalEventPayload,
+              mediaKeyAccess: groupMediaKeyAccess,
             )
           : null,
       dbHasExactPreparedLocalGroupContentMessageFn:
@@ -1230,11 +1516,19 @@ Future<GroupMultiDeviceTestStack> setupGroupMultiDeviceStack({
                 executor,
                 expected: expected,
                 eventPayload: eventPayload,
+                mediaKeyAccess: executor is Database
+                    ? groupMediaKeyAccess
+                    : null,
               ),
       dbIsStrictGroupReactionTargetEligibleFn: (expected) =>
           dbIsStrictGroupReactionTargetEligible(executor, expected),
       dbReplaceGroupInboxRetryPayloadIfExactFn: (expected, replacement) =>
-          dbReplaceGroupInboxRetryPayloadIfExact(db, expected, replacement),
+          dbReplaceGroupInboxRetryPayloadIfExact(
+            db,
+            expected,
+            replacement,
+            mediaKeyAccess: groupMediaKeyAccess,
+          ),
       dbLoadGroupInboxCursorFn: (groupId) async {
         final row = await dbLoadGroupInboxCursor(executor, groupId);
         return row?['cursor'] as String?;
@@ -1876,100 +2170,8 @@ Future<GroupMultiDeviceTestStack> setupGroupMultiDeviceStack({
     dbDeleteReactionsForContact: (contactPeerId) =>
         dbDeleteReactionsForContact(db, contactPeerId),
   );
-  final reactionReplayOutboxRepo = GroupReactionReplayOutboxRepositoryImpl(
-    dbUpsertGroupReactionReplayOutboxEntry: (row) =>
-        dbUpsertGroupReactionReplayOutboxEntry(db, row),
-    dbAttachGroupReactionReplayOutboxPayload:
-        ({
-          required reactionId,
-          required inboxRetryPayload,
-          required updatedAt,
-        }) => dbAttachGroupReactionReplayOutboxPayload(
-          db,
-          reactionId: reactionId,
-          inboxRetryPayload: inboxRetryPayload,
-          updatedAt: updatedAt,
-        ),
-    dbLoadGroupReactionReplayOutboxEntry: (reactionId) =>
-        dbLoadGroupReactionReplayOutboxEntry(db, reactionId),
-    dbLoadLatestGroupReactionReplayOutboxEntryForTarget:
-        ({
-          required String groupId,
-          required String messageId,
-          required String senderPeerId,
-        }) => dbLoadLatestGroupReactionReplayOutboxEntryForTarget(
-          db,
-          groupId: groupId,
-          messageId: messageId,
-          senderPeerId: senderPeerId,
-        ),
-    dbLoadRetryableGroupReactionReplayOutboxEntries:
-        ({int limit = 20, bool strictContentOnly = false, int offset = 0}) =>
-            dbLoadRetryableGroupReactionReplayOutboxEntries(
-              db,
-              limit: limit,
-              strictContentOnly: strictContentOnly,
-              offset: offset,
-            ),
-    dbUpdateGroupReactionReplayOutboxEntryStatus:
-        (
-          reactionId, {
-          required deliveryStatus,
-          lastError,
-          required updatedAt,
-        }) => dbUpdateGroupReactionReplayOutboxEntryStatus(
-          db,
-          reactionId,
-          deliveryStatus: deliveryStatus,
-          lastError: lastError,
-          updatedAt: updatedAt,
-        ),
-    dbUpdateGroupReactionReplayOutboxEntryStatusIfExact:
-        ({
-          required expected,
-          required deliveryStatus,
-          lastError,
-          required updatedAt,
-        }) => dbUpdateGroupReactionReplayOutboxEntryStatusIfExact(
-          db,
-          expected: expected,
-          deliveryStatus: deliveryStatus,
-          lastError: lastError,
-          updatedAt: updatedAt,
-        ),
-    dbReplaceGroupReactionReplayOutboxPayloadIfExact:
-        ({required expected, required replacement, required updatedAt}) =>
-            dbReplaceGroupReactionReplayOutboxPayloadIfExact(
-              db,
-              expected: expected,
-              replacement: replacement,
-              updatedAt: updatedAt,
-            ),
-    dbCompleteGroupReactionContentIfExact:
-        ({
-          required expected,
-          required reactionRow,
-          required action,
-          required transitionId,
-          required sourcePeerId,
-          required sourceEventId,
-          required sourceTimestamp,
-          required eventPayload,
-          required updatedAt,
-        }) => dbCompleteGroupReactionContentIfExact(
-          db,
-          expected: expected,
-          reactionRow: reactionRow,
-          action: action,
-          transitionId: transitionId,
-          sourcePeerId: sourcePeerId,
-          sourceEventId: sourceEventId,
-          sourceTimestamp: sourceTimestamp,
-          eventPayload: eventPayload,
-          updatedAt: updatedAt,
-        ),
-    dbDeleteGroupReactionReplayOutboxEntry: (reactionId) =>
-        dbDeleteGroupReactionReplayOutboxEntry(db, reactionId),
+  final reactionReplayOutboxRepo = createGroupMultiDeviceReactionReplayOutbox(
+    db,
   );
 
   await ensureCanonicalRuntimeAttachedForTest();
@@ -4690,6 +4892,7 @@ void _installB1bProtectedReplayHandler(GroupMultiDeviceTestStack stack) {
                 required terminalSourceEventId,
                 required terminalSourceTimestamp,
                 required terminalEventPayload,
+                mediaKeySnapshot,
               }) async {
                 if (ownerId != contentEventId) return false;
                 if (payloadType == groupOfflineReplayPayloadTypeMessage &&
@@ -4709,6 +4912,7 @@ void _installB1bProtectedReplayHandler(GroupMultiDeviceTestStack stack) {
                         terminalSourceEventId: terminalSourceEventId,
                         terminalSourceTimestamp: terminalSourceTimestamp,
                         terminalEventPayload: terminalEventPayload,
+                        mediaKeySnapshot: mediaKeySnapshot,
                       );
                 }
                 if (payloadType == groupOfflineReplayPayloadTypeReaction &&
@@ -4760,6 +4964,9 @@ void _installB1bProtectedReplayHandler(GroupMultiDeviceTestStack stack) {
                     ) ==
                     true;
               },
+          mediaKeyAccess: GroupMediaKeyAccess(
+            secureKeyStore: stack.secureKeyStore,
+          ),
         );
       },
     );
@@ -4828,6 +5035,7 @@ GroupPendingBroadcastRunner _b1bProtectedRunner(
                 ) ==
                 true;
           },
+      mediaKeyAccess: GroupMediaKeyAccess(secureKeyStore: stack.secureKeyStore),
     );
   });
   return GroupPendingBroadcastRunner(
@@ -5008,28 +5216,80 @@ Future<Map<String, dynamic>> _b1bAuthorPlan365MediaAndVoice({
       createdAt: authoredAt.toIso8601String(),
       ownerLane: MediaOwnerLane.group,
     );
-    final result = await coordinator.prepareAndSend(
-      bridge: stack.bridge,
-      groupRepository: stack.groupRepo,
-      messageRepository: stack.groupMsgRepo,
-      mediaAttachmentRepository: stack.mediaAttachmentRepo,
-      identityPeerId: stack.identity.peerId,
-      senderPublicKey: stack.identity.publicKey,
-      senderPrivateKey: stack.identity.privateKey,
-      senderUsername: stack.identity.username,
-      senderDeviceId: stack.identity.peerId,
-      senderTransportPeerId: stack.identity.peerId,
-      parent: parent,
-      sources: <PreparedGroupMediaBlobSource>[
-        PreparedGroupMediaBlobSource(
-          attachment: attachment,
-          plaintextPath: plaintextPath,
-        ),
-      ],
-      inviteDeliveryAttemptRepository: stack.groupInviteDeliveryAttemptRepo,
+    // Preserve the existing send failure reason before debugPrint's buffered
+    // output is lost when the device test ends. Capture only closed labels.
+    var mediaTimingMatches = 0;
+    var mediaSendOutcome = 'unobserved';
+    var mediaSendReason = 'unobserved';
+    const observedOutcomes = <String>{
+      'unauthorized',
+      'strict_custody_complete',
+    };
+    const observedReasons = <String>{
+      'strict_group_content_authority_unavailable',
+      'strict_group_content_not_qualified',
+      'strict_group_content_order_invalid',
+      'strict_group_content_missing_credential',
+      'strict_group_content_ambiguous_sender_binding',
+      'strict_group_media_manifest_mismatch',
+      'strict_group_content_crypto_failed',
+    };
+    final observation = installScopedE2EFlowEventSink((event) {
+      if (event['event'] != 'GROUP_SEND_MSG_TIMING') return;
+      final details = event['details'];
+      if (details is! Map || details['hasMedia'] != true) return;
+      if (mediaTimingMatches > 0) {
+        mediaTimingMatches = 2; // Saturated: two or more events are ambiguous.
+        mediaSendOutcome = 'ambiguous';
+        mediaSendReason = 'ambiguous';
+        return;
+      }
+      mediaTimingMatches = 1;
+      final outcome = details['outcome'];
+      final reason = details['reason'];
+      mediaSendOutcome = outcome is String && observedOutcomes.contains(outcome)
+          ? outcome
+          : 'unclassified';
+      mediaSendReason = reason == null
+          ? 'none'
+          : reason is String && observedReasons.contains(reason)
+          ? reason
+          : 'unclassified';
+    });
+    late PreparedGroupMediaSendResult result;
+    try {
+      result = await coordinator.prepareAndSend(
+        bridge: stack.bridge,
+        groupRepository: stack.groupRepo,
+        messageRepository: stack.groupMsgRepo,
+        mediaAttachmentRepository: stack.mediaAttachmentRepo,
+        identityPeerId: stack.identity.peerId,
+        senderPublicKey: stack.identity.publicKey,
+        senderPrivateKey: stack.identity.privateKey,
+        senderUsername: stack.identity.username,
+        senderDeviceId: stack.identity.peerId,
+        senderTransportPeerId: stack.identity.peerId,
+        parent: parent,
+        sources: <PreparedGroupMediaBlobSource>[
+          PreparedGroupMediaBlobSource(
+            attachment: attachment,
+            plaintextPath: plaintextPath,
+          ),
+        ],
+        inviteDeliveryAttemptRepository: stack.groupInviteDeliveryAttemptRepo,
+      );
+    } finally {
+      observation.release();
+    }
+    final failureContext =
+        '$modality; timingMatchesCappedAt2=$mediaTimingMatches; '
+        'sendOutcome=$mediaSendOutcome; sendReason=$mediaSendReason';
+    expect(result.preparation.isComplete, isTrue, reason: failureContext);
+    expect(
+      result.sendResult,
+      SendGroupMessageResult.success,
+      reason: failureContext,
     );
-    expect(result.preparation.isComplete, isTrue, reason: modality);
-    expect(result.sendResult, SendGroupMessageResult.success, reason: modality);
     expect(result.message?.status, 'sent', reason: modality);
     final completed = result.preparation.attachments.single;
     expect(completed.groupMediaBlobCustodyFingerprint, isNotNull);
@@ -5125,11 +5385,22 @@ Future<Map<String, dynamic>> _b1bRecoverPlan365MediaAndVoice({
           messageId,
           owner: MediaOwnerLane.group,
         )).single;
+    final recordingBridge = stack.bridge as RecordingGoBridgeClient;
+    final sentStart = recordingBridge.sentMessages.length;
+    final exchangeStart = recordingBridge.bridgeExchanges.length;
     final downloaded = await owner.downloadAndAcknowledge(
       attachment: attachment,
       groupId: groupId,
     );
-    expect(downloaded, isNotNull);
+    // The fatal assertion uses synchronous print; buffered flow events can be
+    // lost when Flutter terminates the integration-test app after a failure.
+    final observation = summarizeGroupMediaDownloadObservation(
+      sentMessages: recordingBridge.sentMessages,
+      bridgeExchanges: recordingBridge.bridgeExchanges,
+      sentStart: sentStart,
+      exchangeStart: exchangeStart,
+    );
+    expect(downloaded, isNotNull, reason: jsonEncode(observation));
     expect(downloaded!.downloadStatus, 'done');
     expect(downloaded.groupMediaBlobCustodyFingerprint, isNotNull);
     final localPath = await stack.mediaFileManager.resolveStoredPath(
@@ -5455,44 +5726,54 @@ Future<void> _runB1bConvergencePrimary() async {
       ),
       isTrue,
     );
-    writeSharedJson(_signalName('linked_verdict.json'), {
-      'groupId': groupId,
-      'linkedTransportPeerId': stableTransport,
-      'emptyRepositoryBeforeBootstrap': true,
-      'bootstrapMaterialized': true,
-      'preservedStorageReopened': true,
-      'offlineBlobFreeDiscussionApplied': true,
-      'strictReactionAddApplied': true,
-      'strictReactionRemoveApplied': true,
-      'productionContentIngressGateInvoked':
-          _b1bContentIngressAuthorityGateInvocations > 0,
-      'productionAuthorityReconcileInvoked':
-          _b1bAuthorityReconcileInvocations > 0,
-      'contentMessageId': contentMessageId,
-      'reactionAddTransitionId': addTransitionId,
-      'reactionRemoveTransitionId': removeTransitionId,
-      'terminalReadOnlyDissolve': true,
-      if (configuredB1bPlan365GroupMedia) ...<String, dynamic>{
-        'plan365MediaAndVoiceApplied': plan365LinkedProof != null,
-        'plan365FingerprintDescriptorsVerified':
-            plan365LinkedProof?['fingerprintedDescriptorsVerified'] == true,
-        'plan365LocalPlaintextVerified':
-            plan365LinkedProof?['localPlaintextBytesVerified'] == true,
-        'plan365StrictBlobAckConverged':
-            plan365LinkedProof?['strictBlobAckConverged'] == true,
-        'plan365ProductionDownloadOwnerInvoked':
-            plan365LinkedProof?['productionDownloadOwnerInvoked'] == true,
-        'plan365RestrictedFixedPointInvoked':
-            plan365LinkedProof?['restrictedFixedPointInvoked'] == true,
-        'plan365StrictDownloadActionsObserved':
-            plan365LinkedProof?['strictDownloadActionsObserved'] == true,
-        'plan365StrictDeleteActionsObserved':
-            plan365LinkedProof?['strictDeleteActionsObserved'] == true,
-        'plan365ImageMessageId': plan365LinkedProof?['imageMessageId'],
-        'plan365VoiceMessageId': plan365LinkedProof?['voiceMessageId'],
+    await writeGroupMultiPartyVerdictAndAwaitHostCapture(
+      role: 'primary',
+      requireHostCapture: configuredB1bRequireHostCapture,
+      writeVerdict: () {
+        writeSharedJson(_signalName('linked_verdict.json'), {
+          'groupId': groupId,
+          'linkedTransportPeerId': stableTransport,
+          'emptyRepositoryBeforeBootstrap': true,
+          'bootstrapMaterialized': true,
+          'preservedStorageReopened': true,
+          'offlineBlobFreeDiscussionApplied': true,
+          'strictReactionAddApplied': true,
+          'strictReactionRemoveApplied': true,
+          'productionContentIngressGateInvoked':
+              _b1bContentIngressAuthorityGateInvocations > 0,
+          'productionAuthorityReconcileInvoked':
+              _b1bAuthorityReconcileInvocations > 0,
+          'contentMessageId': contentMessageId,
+          'reactionAddTransitionId': addTransitionId,
+          'reactionRemoveTransitionId': removeTransitionId,
+          'terminalReadOnlyDissolve': true,
+          if (configuredB1bPlan365GroupMedia) ...<String, dynamic>{
+            'plan365MediaAndVoiceApplied': plan365LinkedProof != null,
+            'plan365FingerprintDescriptorsVerified':
+                plan365LinkedProof?['fingerprintedDescriptorsVerified'] == true,
+            'plan365LocalPlaintextVerified':
+                plan365LinkedProof?['localPlaintextBytesVerified'] == true,
+            'plan365StrictBlobAckConverged':
+                plan365LinkedProof?['strictBlobAckConverged'] == true,
+            'plan365ProductionDownloadOwnerInvoked':
+                plan365LinkedProof?['productionDownloadOwnerInvoked'] == true,
+            'plan365RestrictedFixedPointInvoked':
+                plan365LinkedProof?['restrictedFixedPointInvoked'] == true,
+            'plan365StrictDownloadActionsObserved':
+                plan365LinkedProof?['strictDownloadActionsObserved'] == true,
+            'plan365StrictDeleteActionsObserved':
+                plan365LinkedProof?['strictDeleteActionsObserved'] == true,
+            'plan365ImageMessageId': plan365LinkedProof?['imageMessageId'],
+            'plan365VoiceMessageId': plan365LinkedProof?['voiceMessageId'],
+          },
+        });
+        writeSharedText(_signalName('linked_complete'), 'ok');
       },
-    });
-    writeSharedText(_signalName('linked_complete'), 'ok');
+      waitForSignal: (name) => waitForSharedSignal(
+        _signalName(name),
+        timeout: const Duration(minutes: 5),
+      ),
+    );
   } finally {
     await stack.teardown(deleteStorage: deleteStorage);
     if (!deleteStorage) {
@@ -5720,6 +6001,7 @@ Future<void> _runB1bConvergenceSibling() async {
       senderPeerId: stack.identity.peerId,
       senderPublicKey: stack.identity.publicKey,
       senderPrivateKey: stack.identity.privateKey,
+      msgRepo: stack.groupMsgRepo,
       inviteDeliveryAttemptRepo: stack.groupInviteDeliveryAttemptRepo,
       targetMessage: targetMessage,
       authoredAt: DateTime.now().toUtc(),
@@ -5913,35 +6195,46 @@ Future<void> _runB1bConvergenceSibling() async {
       _signalName('linked_complete'),
       timeout: const Duration(minutes: 5),
     );
-    writeSharedJson(_signalName('ordinary_verdict.json'), {
-      'groupId': group.id,
-      'linkedTransportPeerId': verifiedTarget.transportPeerId,
-      'bootstrapCustodyAccepted': true,
-      'offlineBlobFreeDiscussionCustodyAccepted': true,
-      'strictReactionAddCustodyAccepted': true,
-      'strictReactionRemoveCustodyAccepted': true,
-      'zeroGroupPubsubForStrictContent': true,
-      'productionAuthoringResolverInvoked': authoringResolverInvocations > 0,
-      'localAuthorityReconcileInvoked':
-          _b1bLocalAuthorityReconcileInvocations > 0,
-      'contentMessageId': contentMessageId,
-      'reactionAddTransitionId': addEntry.reactionId,
-      'reactionRemoveTransitionId': removeEntry.reactionId,
-      'dissolveCustodyAcceptedBeforeTerminalCommit': true,
-      if (configuredB1bPlan365GroupMedia) ...<String, dynamic>{
-        'plan365MediaAndVoiceCustodyAccepted':
-            plan365OrdinaryProof?['linkedRecoveryVerified'] == true,
-        'plan365ProductionPreparedCoordinatorInvoked':
-            plan365OrdinaryProof?['productionPreparedCoordinatorInvoked'] ==
-            true,
-        'plan365StrictUploadActionsObserved':
-            plan365OrdinaryProof?['strictUploadActionsObserved'] == true,
-        'plan365ZeroLegacyAllowedPeersUploads':
-            plan365OrdinaryProof?['zeroLegacyAllowedPeersUploads'] == true,
-        'plan365ImageMessageId': plan365OrdinaryProof?['imageMessageId'],
-        'plan365VoiceMessageId': plan365OrdinaryProof?['voiceMessageId'],
+    await writeGroupMultiPartyVerdictAndAwaitHostCapture(
+      role: 'sibling',
+      requireHostCapture: configuredB1bRequireHostCapture,
+      writeVerdict: () {
+        writeSharedJson(_signalName('ordinary_verdict.json'), {
+          'groupId': group.id,
+          'linkedTransportPeerId': verifiedTarget.transportPeerId,
+          'bootstrapCustodyAccepted': true,
+          'offlineBlobFreeDiscussionCustodyAccepted': true,
+          'strictReactionAddCustodyAccepted': true,
+          'strictReactionRemoveCustodyAccepted': true,
+          'zeroGroupPubsubForStrictContent': true,
+          'productionAuthoringResolverInvoked':
+              authoringResolverInvocations > 0,
+          'localAuthorityReconcileInvoked':
+              _b1bLocalAuthorityReconcileInvocations > 0,
+          'contentMessageId': contentMessageId,
+          'reactionAddTransitionId': addEntry.reactionId,
+          'reactionRemoveTransitionId': removeEntry.reactionId,
+          'dissolveCustodyAcceptedBeforeTerminalCommit': true,
+          if (configuredB1bPlan365GroupMedia) ...<String, dynamic>{
+            'plan365MediaAndVoiceCustodyAccepted':
+                plan365OrdinaryProof?['linkedRecoveryVerified'] == true,
+            'plan365ProductionPreparedCoordinatorInvoked':
+                plan365OrdinaryProof?['productionPreparedCoordinatorInvoked'] ==
+                true,
+            'plan365StrictUploadActionsObserved':
+                plan365OrdinaryProof?['strictUploadActionsObserved'] == true,
+            'plan365ZeroLegacyAllowedPeersUploads':
+                plan365OrdinaryProof?['zeroLegacyAllowedPeersUploads'] == true,
+            'plan365ImageMessageId': plan365OrdinaryProof?['imageMessageId'],
+            'plan365VoiceMessageId': plan365OrdinaryProof?['voiceMessageId'],
+          },
+        });
       },
-    });
+      waitForSignal: (name) => waitForSharedSignal(
+        _signalName(name),
+        timeout: const Duration(minutes: 5),
+      ),
+    );
   } finally {
     setGroupContentAuthoringResolver(stack.groupRepo, null);
     await stack.teardown();

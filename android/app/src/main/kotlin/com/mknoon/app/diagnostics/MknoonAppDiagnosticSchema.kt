@@ -17,6 +17,7 @@ internal object MknoonAppDiagnosticSchema {
         "direction" to setOf("incoming", "outgoing"),
         "transport" to setOf("direct", "relay", "unknown"),
         "errorClass" to setOf("state", "format", "argument", "timeout", "platform", "file_system", "other"),
-        "operation" to setOf("node_start", "node_stop", "relay_reconnect", "relay_probe", "peer_dial", "peer_disconnect", "other")
+        "operation" to setOf("node_start", "node_stop", "relay_reconnect", "relay_probe", "peer_dial", "peer_disconnect", "notification_flock", "other"),
+        "appLifecycle" to setOf("unknown", "resumed", "inactive", "hidden", "paused", "detached")
     )
 }

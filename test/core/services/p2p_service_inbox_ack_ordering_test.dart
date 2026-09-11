@@ -10,6 +10,8 @@ import 'package:flutter_app/core/services/p2p_service_impl.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/core/database/helpers/group_event_log_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/group_messages_db_helpers.dart';
+import 'package:flutter_app/core/database/helpers/group_media_key_snapshot.dart';
+import 'package:flutter_app/core/media/media_attachment_lifecycle_lock.dart';
 import 'package:flutter_app/core/database/helpers/group_notification_display_outbox_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/group_reaction_replay_outbox_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/protected_group_content_db_helpers.dart';
@@ -33,6 +35,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
 import '../../core/bridge/fake_bridge.dart' as test_bridge;
+import '../secure_storage/fake_secure_key_store.dart';
 import '../../shared/fakes/in_memory_inbox_staging_repository.dart';
 import '../../shared/fakes/in_memory_group_repository.dart';
 
@@ -1159,7 +1162,8 @@ Future<void> _exerciseProtectedContentAdapterAndReconciliation() async {
           encrypted_key TEXT NOT NULL, created_at TEXT NOT NULL,
           PRIMARY KEY (group_id, key_generation))''');
         await db.execute('''CREATE TABLE media_attachments (
-          id TEXT PRIMARY KEY, message_id TEXT NOT NULL)''');
+          id TEXT PRIMARY KEY, message_id TEXT NOT NULL,
+          owner_lane TEXT, encryption_key_base64 TEXT)''');
       },
     ),
   );
@@ -2746,9 +2750,16 @@ Future<void> _exerciseProtectedContentAdapterAndReconciliation() async {
     authorityData: const <String, Object?>{},
     signature: 'fake-signature',
   );
+  final pageMediaLock = MediaAttachmentLifecycleLock();
+  final pageMediaKeyAccess = GroupMediaKeyAccess(
+    secureKeyStore: FakeSecureKeyStore(),
+    lifecycleLock: pageMediaLock,
+  );
+  final pageMediaContenders = <Future<void>>[];
   var rejectSecondPreparedTerminal = true;
   var preparedTerminalCalls = 0;
   Future<bool> terminalizePrepared({
+    GroupMediaKeySnapshot? mediaKeySnapshot,
     required DatabaseExecutor txn,
     required String groupId,
     required String payloadType,
@@ -2762,6 +2773,26 @@ Future<void> _exerciseProtectedContentAdapterAndReconciliation() async {
     required Map<String, Object?> terminalEventPayload,
   }) async {
     preparedTerminalCalls++;
+    if (preparedTerminalCalls == 1) {
+      var competingMediaMutationRan = false;
+      final contender = Zone.root.run(
+        () => pageMediaLock.synchronized(
+          'reconciliation-page-contender',
+          () async {
+            competingMediaMutationRan = true;
+          },
+        ),
+      );
+      pageMediaContenders.add(contender);
+      // Flush queued lock acquisition without advancing a timed operation.
+      await Future<void>(() {});
+      expect(
+        competingMediaMutationRan,
+        isFalse,
+        reason: 'media ownership spans the page transaction and its rollback',
+      );
+    }
+    expect(mediaKeySnapshot, isNotNull);
     if (rejectSecondPreparedTerminal && preparedTerminalCalls == 2) {
       return false;
     }
@@ -2775,6 +2806,7 @@ Future<void> _exerciseProtectedContentAdapterAndReconciliation() async {
             whereArgs: <Object?>[ownerId, groupId],
             limit: 1,
           )).single,
+          mediaKeySnapshot: mediaKeySnapshot,
           preparedEventPayload: eventPayload,
           terminalSourcePeerId: terminalSourcePeerId,
           terminalSourceEventId: terminalSourceEventId,
@@ -2808,10 +2840,13 @@ Future<void> _exerciseProtectedContentAdapterAndReconciliation() async {
       authority: preparedInvalidatingAuthority,
       validateHistoricalAuthority: validateHistoricalAuthority,
       terminalizePreparedContent: terminalizePrepared,
+      mediaKeyAccess: pageMediaKeyAccess,
       pageSize: 200,
     ),
     throwsStateError,
   );
+  await Future.wait(pageMediaContenders);
+  pageMediaContenders.clear();
   expect(preparedTerminalCalls, 2);
   expect(
     (await dbLoadGroupMessage(db, preparedMessageId))?['status'],
@@ -2853,11 +2888,14 @@ Future<void> _exerciseProtectedContentAdapterAndReconciliation() async {
       authority: preparedInvalidatingAuthority,
       validateHistoricalAuthority: validateHistoricalAuthority,
       terminalizePreparedContent: terminalizePrepared,
+      mediaKeyAccess: pageMediaKeyAccess,
       pageSize: 200,
     ),
     isTrue,
     reason: 'restart commits both prepared owners and the page frontier once',
   );
+  await Future.wait(pageMediaContenders);
+  pageMediaContenders.clear();
   expect(preparedTerminalCalls, 2);
   final terminalMessage = await dbLoadGroupMessage(db, preparedMessageId);
   expect(terminalMessage?['status'], GroupMessage.statusSendFailed);

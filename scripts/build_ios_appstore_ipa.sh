@@ -23,14 +23,20 @@ if [[ -f "$LOCAL_EXPORT_PLIST" ]]; then
 fi
 
 printf 'Building App Store Connect IPA with %s\n' "$EXPORT_PLIST"
+# Reserve a unique evidence directory before Flutter can overwrite shared output.
+# Argument values are hashed by the helper, so defines cannot leak into metadata.
+set -- --release --export-options-plist="$EXPORT_PLIST" --dart-define-from-file="$ROOT_DIR/tool/build/voice_call_release_defines.json" "$@"
+capture_dir="$(python3 "$ROOT_DIR/scripts/ios_build_provenance.py" begin --root "$ROOT_DIR" -- "$@")"
 (
   cd "$ROOT_DIR"
   # 1:1 voice calling is compile-time gated. The release carries the gates
   # from tool/build/voice_call_release_defines.json (see tool/build/README.md);
   # without them the app has no call button and presents no incoming call.
-  set -- --dart-define-from-file="$ROOT_DIR/tool/build/voice_call_release_defines.json" "$@"
-  flutter build ipa --release --export-options-plist="$EXPORT_PLIST" "$@"
+  flutter build ipa "$@"
 )
+
+retained_dir="$(python3 "$ROOT_DIR/scripts/ios_build_provenance.py" retain --root "$ROOT_DIR" --capture "$ROOT_DIR/$capture_dir" -- "$@")"
+printf '\nRetained archive, symbols, IPA and provenance: %s\n' "$retained_dir"
 
 ipa_dir="$ROOT_DIR/build/ios/ipa"
 if [[ -d "$ipa_dir" ]]; then

@@ -2485,8 +2485,18 @@ Future<OutgoingOrdinaryMutationOutcome> _dbSettleOutgoingOrdinaryTransport(
       return OutgoingOrdinaryMutationOutcome.idempotent;
     }
 
+    // A receiver can commit and return its receipt before the native send
+    // future completes. Accept that proof for the exact staged attempt, while
+    // keeping unstaged `sending` rows ineligible for legacy null-envelope
+    // settlement. Later transport callbacks must preserve this delivery.
+    if (mode == OutgoingOrdinarySettlementMode.receipt &&
+        current['status'] == 'sending' &&
+        !_isNonEmptyEnvelope(expectedEnvelope)) {
+      return OutgoingOrdinaryMutationOutcome.preserved;
+    }
+
     final allowedPredecessors = mode == OutgoingOrdinarySettlementMode.receipt
-        ? const <String>{'inboxed', 'sent', 'failed'}
+        ? const <String>{'sending', 'inboxed', 'sent', 'failed'}
         : switch (status) {
             'delivered' => const <String>{
               'sending',

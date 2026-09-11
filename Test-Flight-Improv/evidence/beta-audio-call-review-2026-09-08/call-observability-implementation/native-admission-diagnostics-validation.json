@@ -1,0 +1,102 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-09-08T16:19:19.684679+00:00",
+  "scope": "Native admission diagnostics only; authentication, custody gates, presentation order and WorkManager return semantics preserved",
+  "causeBoundary": {
+    "observedWorkerStartUtc": "2026-09-08T15:59:29.342Z",
+    "observedWorkerSuccessUtc": "2026-09-08T15:59:30.195Z",
+    "durationMs": 853,
+    "interpretation": "WorkManager SUCCESS does not prove admitted/presented. Existing implementation always reports success after native execution, including nonadmitted/error paths. Retained earlier logs cannot distinguish the853ms attempt disposition.",
+    "privateLogSha256": "3d26a88202805090b9e0f4646f398b5c892e67cc7b651b64ab521f81aabf6787"
+  },
+  "causalTests": {
+    "before": "Two new behavior tests failed because no native admission start/result event was produced.",
+    "after": "19 focused admission tests and78 native preservation tests pass; exact5 dispositions, each custody bit, timeout/exception, private-input exclusion, diagnostic-only operation ID and throwing sink preservation are covered.",
+    "totals": {
+      "tests": 97,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "suites": [
+      {
+        "suite": "HeadlessCallAdmissionWorkerTest",
+        "tests": 19,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      {
+        "suite": "MknoonCallDiagnosticSpoolTest",
+        "tests": 14,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      {
+        "suite": "MknoonCallNativeBridgeTest",
+        "tests": 19,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      {
+        "suite": "MknoonCallLifecycleControllerTest",
+        "tests": 33,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      {
+        "suite": "MknoonFirebaseMessagingServiceTest",
+        "tests": 12,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      }
+    ]
+  },
+  "wireChange": {
+    "stage": "admission",
+    "admissionDisposition": [
+      "admitted",
+      "terminal",
+      "permanent_reject",
+      "empty_or_already_acked",
+      "deferred",
+      "unknown"
+    ],
+    "booleans": [
+      "databaseClosed",
+      "leaseReleased",
+      "requiredPersistenceComplete"
+    ],
+    "eventActions": [
+      "start",
+      "response",
+      "check",
+      "finish"
+    ],
+    "timing": "Per-operation durationMs uses a monotonic clock; events carry a random diagnostic-only operationId.",
+    "privacy": "Raw call/wake handles and invocation nonces are never event fields; exception text is never recorded. Private handle is used solely as native trace lookup input.",
+    "authority": "Diagnostic metadata does not grant admission; nonce+identity+persistence+database+lease+expiry checks remain required."
+  },
+  "schemaParity": {
+    "dartExactSchemaMatch": true,
+    "kotlinAllClosedSetsMatch": true,
+    "swiftAllClosedSetsMatch": true,
+    "schemaSha256": "6ea59e2bf718345f110a3fffc03b8ecbc18bcea7bd3b7e48d6d4ced559f247db"
+  },
+  "graphifyAffected": "ebd2ddec3c7e4595",
+  "logs": {
+    "native-admission-diagnostics-red.log": "9e8ce0f2089f5f9631f5aae8d1ff7a81a6c363ea57677eaa8774f701afd8edcb",
+    "native-admission-diagnostics-green.log": "2eab2071583ec0c242bcbd85f57e2a5973327eb92e9933f6ab2790b8e658eeeb",
+    "native-admission-diagnostics-final.log": "3cca4a854ab8e2127ffc3f6a940577d0f595d8b71ed851094ece10f131f0b5c8"
+  },
+  "limitations": [
+    "The exact root cause of the retained853ms attempt is not recovered by adding future diagnostics.",
+    "Deferred remains reasonunknown unless the producing Dart path supplies trustworthy typed diagnostic context; no owner failure is inferred.",
+    "New schema must be deployed before new native events are uploaded.",
+    "Live final diagnostic attempt remains root-coordinated and pending."
+  ]
+}

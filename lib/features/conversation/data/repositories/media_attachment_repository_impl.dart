@@ -2382,17 +2382,20 @@ class MediaAttachmentRepositoryImpl
         expectedCustody.ownerLane != MediaBlobCustodyOwnerLane.group) {
       return Future.value(false);
     }
-    return lifecycleLock.synchronized(
-      expectedAttachment.id,
-      () => commit(
-        expectedAttachmentRow: _toStorageExpectationRow(expectedAttachment),
+    return lifecycleLock.synchronized(expectedAttachment.id, () async {
+      final expectedRow = await _incomingStorageExpectationRow(
+        expectedAttachment,
+      );
+      if (expectedRow == null) return false;
+      return commit(
+        expectedAttachmentRow: expectedRow,
         expectedCustody: expectedCustody,
         localPath: localPath,
         sourceRelayPeerId: sourceRelayPeerId,
         updatedAt: updatedAt,
         nowMs: nowMs,
-      ),
-    );
+      );
+    });
   }
 
   @override
@@ -2423,15 +2426,18 @@ class MediaAttachmentRepositoryImpl
         expectedCustody.ownerLane != MediaBlobCustodyOwnerLane.group) {
       return Future.value(false);
     }
-    return lifecycleLock.synchronized(
-      expectedAttachment.id,
-      () => terminalize(
-        expectedAttachmentRow: _toStorageExpectationRow(expectedAttachment),
+    return lifecycleLock.synchronized(expectedAttachment.id, () async {
+      final expectedRow = await _incomingStorageExpectationRow(
+        expectedAttachment,
+      );
+      if (expectedRow == null) return false;
+      return terminalize(
+        expectedAttachmentRow: expectedRow,
         expectedCustody: expectedCustody,
         sourceRelayPeerId: sourceRelayPeerId,
         updatedAt: updatedAt,
-      ),
-    );
+      );
+    });
   }
 
   @override
@@ -5638,6 +5644,40 @@ class MediaAttachmentRepositoryImpl
     await store.write(secureStoreKey, key);
     row['encryption_key_base64'] = secureStoreReferenceForKey(secureStoreKey);
     return row;
+  }
+
+  // Incoming protected projections can retain the exact legacy key value.
+  // Call only while holding the attachment lifecycle lease, before the SQL CAS.
+  Future<Map<String, Object?>?> _incomingStorageExpectationRow(
+    MediaAttachment attachment,
+  ) async {
+    final stored = await dbLoadMediaById(attachment.id);
+    if (stored == null ||
+        stored['id'] != attachment.id ||
+        stored['message_id'] != attachment.messageId ||
+        stored['owner_lane'] != attachment.ownerLane?.dbValue) {
+      return null;
+    }
+    final expectedKey = attachment.encryptionKeyBase64;
+    final storedKey = stored['encryption_key_base64'];
+    if (storedKey is String && isSecureStoreReference(storedKey)) {
+      final keyName = mediaAttachmentEncryptionKeyStoreName(attachment.id);
+      final store = secureKeyStore;
+      if (storedKey != secureStoreReferenceForKey(keyName) ||
+          store == null ||
+          expectedKey == null ||
+          expectedKey.isEmpty ||
+          isSecureStoreReference(expectedKey) ||
+          await store.read(keyName) != expectedKey) {
+        return null;
+      }
+    } else if (storedKey != expectedKey) {
+      return null;
+    }
+    // Preserve the caller's entire expected projection. Only its proven key
+    // representation changes; SQL still rejects all other stale metadata.
+    return Map<String, Object?>.from(attachment.toMap())
+      ..['encryption_key_base64'] = storedKey;
   }
 
   Map<String, Object?> _toStorageExpectationRow(MediaAttachment attachment) {

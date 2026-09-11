@@ -1,14 +1,18 @@
 import 'dart:io';
 
+import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_app/core/database/app_database_version.dart';
 import 'package:flutter_app/core/database/helpers/direct_notification_display_outbox_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/direct_notification_reconciliation_outbox_db_helpers.dart';
 import 'package:flutter_app/core/database/production_migration_registry.dart';
 import 'package:flutter_app/core/media/private_media_policy.dart';
 import 'package:flutter_app/core/notifications/app_visibility_snapshot.dart';
+import 'package:flutter_app/core/notifications/bounded_posix_flock.dart';
 import 'package:flutter_app/core/notifications/direct_notification_canonical_reconciler.dart';
 import 'package:flutter_app/core/notifications/direct_notification_presentation_coordinator.dart';
 import 'package:flutter_app/core/notifications/deterministic_notification_id.dart';
+import 'package:flutter_app/core/notifications/durable_conversation_notification_id_registry.dart';
 import 'package:flutter_app/core/notifications/durable_local_notification_effect_coordinator.dart';
 import 'package:flutter_app/core/notifications/local_notification_ledger.dart';
 import 'package:flutter_app/core/notifications/notification_service.dart';
@@ -27,6 +31,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
   sqfliteFfiInit();
   databaseFactory = databaseFactoryFfi;
 
@@ -521,6 +526,101 @@ void main() {
         )).single['revision'],
         newerRevision.revision,
       );
+    },
+  );
+
+  test(
+    'iOS refused lock admission retains READY display work through restart',
+    () async {
+      final previousPlatform = debugDefaultTargetPlatformOverride;
+      debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
+      BoundedPosixFlock.debugUseIosBackgroundTasks = true;
+      const channel = MethodChannel('com.mknoon/go_bridge');
+      final directory = Directory.systemTemp.createTempSync(
+        'ios-display-lease-',
+      );
+      var admitted = false;
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(channel, (call) async {
+            return switch (call.method) {
+              'notificationLockBegin' => admitted ? 61 : null,
+              'notificationLockIsActive' => true,
+              'notificationLockEnd' => null,
+              _ => throw MissingPluginException(call.method),
+            };
+          });
+      addTearDown(() {
+        debugDefaultTargetPlatformOverride = previousPlatform;
+        BoundedPosixFlock.debugUseIosBackgroundTasks = null;
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+            .setMockMethodCallHandler(channel, null);
+        directory.deleteSync(recursive: true);
+      });
+      final registry = DurableConversationNotificationIdRegistry(
+        directory: directory,
+      );
+      var now = DateTime.utc(2026, 9, 10, 12);
+      final display = _DisplayOutbox(() => now);
+      final service = _GenerationService();
+      var effects = 0;
+      Future<NotificationPresentationResult> project(
+        DirectNotificationDisplayOutboxEntry entry,
+      ) async {
+        await registry.resolve(
+          entry.peerId,
+          activeNotificationIds: () async => [],
+        );
+        effects += 1;
+        return NotificationPresentationResult.shown;
+      }
+
+      const message = ConversationMessage(
+        id: 'message-held-in-ready',
+        contactPeerId: 'peer-a',
+        senderPeerId: 'peer-a',
+        text: 'synthetic isolated message',
+        timestamp: '2026-09-10T12:00:00.000Z',
+        status: 'delivered',
+        isIncoming: true,
+        createdAt: '2026-09-10T12:00:00.000Z',
+      );
+      final first = _owner(
+        display: display,
+        service: service,
+        now: () => now,
+        project: project,
+      );
+      addTearDown(first.dispose);
+      await first.stageMessage(message);
+      await first.promoteMessageReadyIfExact(message);
+      await first.retryNow();
+      final retained = display.entry('peer-a', 'message', message.id);
+      expect(retained?.isReady, isTrue);
+      expect(retained?.messageId, message.id);
+      expect(retained?.retryCount, 1);
+      expect(
+        retained?.lastErrorCode,
+        DirectNotificationDisplayOutboxErrorCode.displayFailed,
+      );
+      expect(display.completed, isEmpty);
+      expect(effects, 0);
+      expect(await registry.lookup('peer-a'), isNull);
+      first.dispose();
+
+      admitted = true;
+      now = now.add(const Duration(hours: 2));
+      final restarted = _owner(
+        display: display,
+        service: service,
+        now: () => now,
+        project: project,
+      );
+      addTearDown(restarted.dispose);
+      await restarted.retryNow();
+      expect(effects, 1);
+      expect(display.rows, isEmpty);
+      expect(display.completed, [message.id]);
+      expect(await registry.lookup('peer-a'), isNotNull);
     },
   );
 

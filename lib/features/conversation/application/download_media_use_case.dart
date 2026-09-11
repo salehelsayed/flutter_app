@@ -33,9 +33,11 @@ import 'strict_direct_media_blob_download_ack_owner.dart';
 /// Downloads a media blob from the relay and saves it locally.
 ///
 /// Called lazily when the UI needs to display a media item.
-final Map<_MediaDownloadInFlightKey, Future<MediaAttachment?>>
-_inFlightMediaDownloads =
-    <_MediaDownloadInFlightKey, Future<MediaAttachment?>>{};
+final Map<
+  _MediaDownloadInFlightKey,
+  ({Future<MediaAttachment?> future, _MediaDiagnosticAttempt diagnostics})
+>
+_inFlightMediaDownloads = {};
 
 // Private operation keys are resolved only through the collector's protected
 // local alias index. Event records contain only closed milestones and codes.
@@ -1368,7 +1370,14 @@ Future<MediaAttachment?> _downloadMediaDiagnosed({
   }
   final inFlight = _inFlightMediaDownloads[inFlightKey];
   if (inFlight != null) {
-    return inFlight;
+    // This invocation waits for the same transfer; it is not a second
+    // download or a discarded duplicate. Keep its own attempt/authority,
+    // while carrying the transfer owner's failure into its terminal report.
+    diagnosticAttempt.record('download', 'pending', reason: 'duplicate');
+    final result = await inFlight.future;
+    diagnosticAttempt.failureReason = inFlight.diagnostics.failureReason;
+    diagnosticAttempt.hasFailure = inFlight.diagnostics.hasFailure;
+    return result;
   }
 
   late final Future<MediaAttachment?> downloadFuture;
@@ -3809,11 +3818,17 @@ Future<MediaAttachment?> _downloadMediaDiagnosed({
 
   final execution = runDownload();
   downloadFuture = execution.whenComplete(() {
-    if (identical(_inFlightMediaDownloads[inFlightKey], downloadFuture)) {
+    if (identical(
+      _inFlightMediaDownloads[inFlightKey]?.future,
+      downloadFuture,
+    )) {
       _inFlightMediaDownloads.remove(inFlightKey);
     }
   });
 
-  _inFlightMediaDownloads[inFlightKey] = downloadFuture;
+  _inFlightMediaDownloads[inFlightKey] = (
+    future: downloadFuture,
+    diagnostics: diagnosticAttempt,
+  );
   return downloadFuture;
 }

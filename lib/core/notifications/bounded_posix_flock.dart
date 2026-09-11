@@ -4,8 +4,10 @@ import 'dart:io';
 
 import 'package:ffi/ffi.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
+import 'package:flutter_app/core/diagnostics/app_diagnostic_events.dart';
 
-/// Android-only finite BSD-flock acquisition failure.
+/// Finite Android acquisition or refused/expired iOS background admission.
 ///
 /// The lock action is never time-capped after acquisition. Callers can
 /// therefore fail closed before entering a notification side effect without
@@ -31,6 +33,25 @@ final class BoundedPosixFlockReentrantException implements Exception {
   String toString() => 'BoundedPosixFlockReentrantException($path)';
 }
 
+/// Retains both failures when ending a background assertion also fails while
+/// propagating an action/acquisition failure. The native lock is already free.
+final class BoundedPosixFlockBackgroundCleanupException implements Exception {
+  const BoundedPosixFlockBackgroundCleanupException({
+    required this.originalError,
+    required this.originalStackTrace,
+    required this.cleanupError,
+    required this.cleanupStackTrace,
+  });
+
+  final Object originalError;
+  final StackTrace originalStackTrace;
+  final Object cleanupError;
+  final StackTrace cleanupStackTrace;
+
+  @override
+  String toString() => 'BoundedPosixFlockBackgroundCleanupException';
+}
+
 typedef _OpenNative = Int32 Function(Pointer<Utf8>, Int32);
 typedef _OpenDart = int Function(Pointer<Utf8>, int);
 typedef _FlockNative = Int32 Function(Int32, Int32);
@@ -44,7 +65,11 @@ typedef _FsyncDart = int Function(int);
 ///
 /// Android retries `LOCK_EX | LOCK_NB` for one second. iOS/macOS retain the
 /// historical blocking `LOCK_EX` protocol used by the Notification Service
-/// Extension and app process.
+/// Extension and app process. iOS requests a scoped background assertion before
+/// acquisition, verifies admission after acquisition, and ends it after unlock.
+/// This protects ordinary suspension while the grant is live. An owner that
+/// outlives native expiration remains unsafe; it is never detached or unlocked
+/// early because a pending callback may still mutate durable/native state.
 final class BoundedPosixFlock {
   BoundedPosixFlock._();
 
@@ -56,6 +81,12 @@ final class BoundedPosixFlock {
   static const int lockNonBlocking = 4;
   static const int lockUnlock = 8;
   static final _BoundedPosixFlockApi _api = _BoundedPosixFlockApi.load();
+  static const _backgroundTasks = MethodChannel('com.mknoon/go_bridge');
+  @visibleForTesting
+  static bool? debugUseIosBackgroundTasks;
+
+  static bool get _usesIosBackgroundTasks =>
+      debugUseIosBackgroundTasks ?? Platform.isIOS;
   static final Object _isolateOwnerZoneKey = Object();
   static final Map<String, Future<void>> _isolateTails =
       <String, Future<void>>{};
@@ -107,19 +138,47 @@ final class BoundedPosixFlock {
     File file,
     Future<T> Function() action, {
     required bool ownerCompletion,
-  }) {
-    if (defaultTargetPlatform == TargetPlatform.android) {
-      return _withExclusiveNative(
-        file,
-        action,
-        ownerCompletion: ownerCompletion,
+  }) async {
+    final diagnosticOwner = Object();
+    var diagnosticReleased = false;
+    void reportReleased() {
+      if (diagnosticReleased) return;
+      diagnosticReleased = true;
+      AppDiagnosticEvents.notificationFileLock(
+        diagnosticOwner,
+        NotificationFileLockPhase.released,
       );
     }
-    return _serializeBlockingPlatformAcquisition(
-      file,
-      () =>
-          _withExclusiveNative(file, action, ownerCompletion: ownerCompletion),
+
+    AppDiagnosticEvents.notificationFileLock(
+      diagnosticOwner,
+      NotificationFileLockPhase.waiting,
     );
+    try {
+      if (defaultTargetPlatform == TargetPlatform.android) {
+        return await _withExclusiveNative(
+          file,
+          action,
+          ownerCompletion: ownerCompletion,
+          diagnosticOwner: diagnosticOwner,
+          onNativeReleased: reportReleased,
+        );
+      }
+      return await _serializeBlockingPlatformAcquisition(
+        file,
+        () => _withExclusiveNative(
+          file,
+          action,
+          ownerCompletion: ownerCompletion,
+          diagnosticOwner: diagnosticOwner,
+          onNativeReleased: reportReleased,
+        ),
+      );
+    } finally {
+      // Native unlock/close have completed before reporting release. This is
+      // observation only; suspension never causes an early unlock of an owner.
+      reportReleased();
+    }
   }
 
   static Future<T> _serializeBlockingPlatformAcquisition<T>(
@@ -151,6 +210,8 @@ final class BoundedPosixFlock {
     File file,
     Future<T> Function() action, {
     required bool ownerCompletion,
+    required Object diagnosticOwner,
+    required VoidCallback onNativeReleased,
   }) async {
     await file.create(recursive: true);
     final nativePath = file.path.toNativeUtf8();
@@ -165,7 +226,18 @@ final class BoundedPosixFlock {
     }
 
     var acquired = false;
+    int? backgroundTask;
+    Object? originalError;
+    StackTrace? originalStackTrace;
     try {
+      if (_usesIosBackgroundTasks) {
+        backgroundTask = await _backgroundTasks.invokeMethod<int>(
+          'notificationLockBegin',
+        );
+        if (backgroundTask == null) {
+          throw const BoundedPosixFlockUnavailableException();
+        }
+      }
       if (defaultTargetPlatform == TargetPlatform.android) {
         final stopwatch = Stopwatch()..start();
         var firstAttempt = true;
@@ -204,12 +276,50 @@ final class BoundedPosixFlock {
         }
         acquired = true;
       }
+      AppDiagnosticEvents.notificationFileLock(
+        diagnosticOwner,
+        NotificationFileLockPhase.held,
+      );
+      if (backgroundTask != null &&
+          await _backgroundTasks.invokeMethod<bool>(
+                'notificationLockIsActive',
+                backgroundTask,
+              ) !=
+              true) {
+        // Blocking acquisition may consume the grant. Do not start the action
+        // on an already-expired lease. Expiration after this check remains an
+        // owner-lifetime limitation, not permission to unlock pending work.
+        throw const BoundedPosixFlockUnavailableException();
+      }
       return await action();
+    } catch (error, stackTrace) {
+      originalError = error;
+      originalStackTrace = stackTrace;
+      rethrow;
     } finally {
       if (acquired) {
         _api.flock(descriptor, lockUnlock);
       }
       _api.close(descriptor);
+      onNativeReleased();
+      if (backgroundTask != null) {
+        try {
+          await _backgroundTasks.invokeMethod<void>(
+            'notificationLockEnd',
+            backgroundTask,
+          );
+        } catch (error, stackTrace) {
+          if (originalError != null) {
+            throw BoundedPosixFlockBackgroundCleanupException(
+              originalError: originalError,
+              originalStackTrace: originalStackTrace!,
+              cleanupError: error,
+              cleanupStackTrace: stackTrace,
+            );
+          }
+          rethrow;
+        }
+      }
     }
   }
 }

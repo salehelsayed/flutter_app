@@ -1,0 +1,88 @@
+{
+  "deployment": "d01c54fd-f8ab-4a81-ba61-19bcad5d81c7",
+  "custom_domain_raw_byte_comparison": [
+    {
+      "path": "child-safety.html",
+      "matches": false,
+      "error": null
+    },
+    {
+      "path": "index.html",
+      "matches": true,
+      "error": null
+    },
+    {
+      "path": "privacy-policy.html",
+      "matches": false,
+      "error": null
+    },
+    {
+      "path": "css/style.css",
+      "matches": true,
+      "error": null
+    },
+    {
+      "path": "css/privacy-policy.css",
+      "matches": true,
+      "error": null
+    },
+    {
+      "path": "css/drafts.css",
+      "matches": true,
+      "error": null
+    },
+    {
+      "path": "js/main.js",
+      "matches": true,
+      "error": null
+    },
+    {
+      "path": "qr-code.png",
+      "matches": true,
+      "error": null
+    }
+  ],
+  "custom_domain_html_difference": "Cloudflare email-address protection replaces mailto links and adds its email decoder script; inspected diff showed no other differences.",
+  "deployment_origin_files": [
+    {
+      "path": "child-safety.html",
+      "matches": true,
+      "error": null
+    },
+    {
+      "path": "index.html",
+      "matches": true,
+      "error": null
+    },
+    {
+      "path": "privacy-policy.html",
+      "matches": true,
+      "error": null
+    },
+    {
+      "path": "css/style.css",
+      "matches": true,
+      "error": null
+    },
+    {
+      "path": "css/privacy-policy.css",
+      "matches": true,
+      "error": null
+    },
+    {
+      "path": "css/drafts.css",
+      "matches": true,
+      "error": null
+    },
+    {
+      "path": "js/main.js",
+      "matches": true,
+      "error": null
+    },
+    {
+      "path": "qr-code.png",
+      "matches": true,
+      "error": null
+    }
+  ]
+}

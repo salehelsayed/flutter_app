@@ -1,0 +1,51 @@
+{
+  "captured_at_utc": "2026-09-08T10:41:03.300047+00:00",
+  "source": "local workspace network",
+  "method": "STUN Binding request at3478; TCP connect only at443 as network control;3s timeout",
+  "results": [
+    {
+      "family": "IPv4",
+      "transport": "TCP",
+      "port": 3478,
+      "response_type": "0x101",
+      "transaction_match": true,
+      "elapsed_seconds": 0.091
+    },
+    {
+      "family": "IPv4",
+      "transport": "UDP",
+      "port": 3478,
+      "response_type": "0x101",
+      "transaction_match": true,
+      "elapsed_seconds": 0.047
+    },
+    {
+      "family": "IPv4",
+      "transport": "TCP",
+      "port": 443,
+      "connected": true,
+      "elapsed_seconds": 0.045
+    },
+    {
+      "family": "IPv6",
+      "transport": "TCP",
+      "port": 3478,
+      "error": "timed out",
+      "elapsed_seconds": 3.0
+    },
+    {
+      "family": "IPv6",
+      "transport": "UDP",
+      "port": 3478,
+      "error": "timed out",
+      "elapsed_seconds": 3.001
+    },
+    {
+      "family": "IPv6",
+      "transport": "TCP",
+      "port": 443,
+      "connected": true,
+      "elapsed_seconds": 0.04
+    }
+  ]
+}

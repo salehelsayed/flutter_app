@@ -1,0 +1,118 @@
+.method public final setCapabilityEnabled(Z)Z
+    .registers 7
+    .param p1, "enabled"    # Z
+
+    .line 281
+    nop
+
+    .line 282
+    const-string v0, "dart_capability_enabled"
+
+    const/4 v1, 0x0
+
+    if-eqz p1, :cond_1d
+
+    .line 283
+    sget v2, Landroid/os/Build$VERSION;->SDK_INT:I
+
+    const/16 v3, 0x1a
+
+    if-ge v2, v3, :cond_1d
+
+    .line 285
+    iget-object v2, p0, Lcom/mknoon/app/call/MknoonCallRuntime;->preferences:Landroid/content/SharedPreferences;
+
+    invoke-interface {v2}, Landroid/content/SharedPreferences;->edit()Landroid/content/SharedPreferences$Editor;
+
+    move-result-object v2
+
+    invoke-interface {v2, v0, v1}, Landroid/content/SharedPreferences$Editor;->putBoolean(Ljava/lang/String;Z)Landroid/content/SharedPreferences$Editor;
+
+    move-result-object v0
+
+    invoke-interface {v0}, Landroid/content/SharedPreferences$Editor;->commit()Z
+
+    .line 286
+    invoke-direct {p0}, Lcom/mknoon/app/call/MknoonCallRuntime;->cleanupActiveLifecycle()Z
+
+    .line 287
+    return v1
+
+    .line 289
+    :cond_1d
+    iget-object v2, p0, Lcom/mknoon/app/call/MknoonCallRuntime;->preferences:Landroid/content/SharedPreferences;
+
+    invoke-interface {v2}, Landroid/content/SharedPreferences;->edit()Landroid/content/SharedPreferences$Editor;
+
+    move-result-object v2
+
+    invoke-interface {v2, v0, p1}, Landroid/content/SharedPreferences$Editor;->putBoolean(Ljava/lang/String;Z)Landroid/content/SharedPreferences$Editor;
+
+    move-result-object v2
+
+    invoke-interface {v2}, Landroid/content/SharedPreferences$Editor;->commit()Z
+
+    move-result v2
+
+    .line 290
+    .local v2, "committed":Z
+    const/4 v3, 0x1
+
+    if-nez p1, :cond_45
+
+    .line 291
+    if-eqz v2, :cond_3a
+
+    iget-object v4, p0, Lcom/mknoon/app/call/MknoonCallRuntime;->preferences:Landroid/content/SharedPreferences;
+
+    invoke-interface {v4, v0, v3}, Landroid/content/SharedPreferences;->getBoolean(Ljava/lang/String;Z)Z
+
+    move-result v0
+
+    if-nez v0, :cond_3a
+
+    move v0, v3
+
+    goto :goto_3b
+
+    :cond_3a
+    move v0, v1
+
+    .line 292
+    .local v0, "disabled":Z
+    :goto_3b
+    invoke-direct {p0}, Lcom/mknoon/app/call/MknoonCallRuntime;->cleanupActiveLifecycle()Z
+
+    move-result v4
+
+    .line 293
+    .local v4, "cleaned":Z
+    if-eqz v0, :cond_44
+
+    if-eqz v4, :cond_44
+
+    move v1, v3
+
+    :cond_44
+    return v1
+
+    .line 295
+    .end local v0    # "disabled":Z
+    .end local v4    # "cleaned":Z
+    :cond_45
+    if-eqz v2, :cond_50
+
+    iget-object v4, p0, Lcom/mknoon/app/call/MknoonCallRuntime;->preferences:Landroid/content/SharedPreferences;
+
+    invoke-interface {v4, v0, v1}, Landroid/content/SharedPreferences;->getBoolean(Ljava/lang/String;Z)Z
+
+    move-result v0
+
+    if-eqz v0, :cond_50
+
+    move v1, v3
+
+    :cond_50
+    return v1
+.end method
+

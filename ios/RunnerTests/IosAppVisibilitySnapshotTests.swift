@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 import XCTest
 
@@ -346,6 +347,282 @@ final class IosAppVisibilitySnapshotTests: XCTestCase {
     XCTAssertNil(staleRoute.snapshot?.visibleConversationDigest)
   }
 
+  func testVisibilityReadProtectionBracketsActualNativeFlock() throws {
+    let directory = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let seed = makeStore(directory: directory, boot: { "ios:77:11" }, now: { 100 })
+    XCTAssertTrue(seed.recordColdStart())
+    let incumbent = try seed.readRawStateForTesting()
+    let manager = VisibilityReadBoundaryFileManager()
+    var live = false
+    var starts = 0
+    var finishes = 0
+    var fileReads = 0
+    let store = IosAppVisibilitySnapshotStore(
+      directory: directory,
+      fileManager: manager,
+      bootSessionProvider: { "ios:77:11" },
+      monotonicMsProvider: { 101 }
+    )
+    manager.onStateCheck = {
+      fileReads += 1
+      XCTAssertTrue(live)
+      XCTAssertFalse(self.visibilityLockAvailable(directory))
+    }
+    let coordinator = IosAppVisibilityCoordinator(
+      store: store,
+      beginReadProtection: {
+        starts += 1
+        XCTAssertTrue(self.visibilityLockAvailable(directory))
+        live = true
+        return IosAppVisibilityReadProtection(
+          isActive: { live },
+          finish: {
+            XCTAssertTrue(self.visibilityLockAvailable(directory))
+            finishes += 1
+            live = false
+          }
+        )
+      }
+    )
+    XCTAssertEqual(coordinator.readSnapshot()?.snapshot.revision, 1)
+    XCTAssertEqual(starts, 1)
+    XCTAssertEqual(finishes, 1)
+    XCTAssertEqual(fileReads, 1)
+    XCTAssertFalse(live)
+    XCTAssertEqual(try seed.readRawStateForTesting(), incumbent)
+  }
+
+  func testVisibilityReadRefusalDoesNotSkipLifecycleWritesOrReadPersistedState() throws {
+    let directory = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let manager = VisibilityReadBoundaryFileManager()
+    let store = IosAppVisibilitySnapshotStore(
+      directory: directory,
+      fileManager: manager,
+      bootSessionProvider: { "ios:77:11" },
+      monotonicMsProvider: { 101 }
+    )
+    var starts = 0
+    var checks = 0
+    let coordinator = IosAppVisibilityCoordinator(
+      store: store,
+      beginReadProtection: { starts += 1; return nil }
+    )
+    coordinator.start(observeSystemNotifications: false)
+    defer { coordinator.stop() }
+    XCTAssertEqual(starts, 0)
+    coordinator.handleApplicationLifecycleForTesting(.foregroundActive)
+    let generation = try XCTUnwrap(store.readSnapshot()).snapshot.lifecycleGeneration
+    let digest = String(repeating: "a", count: 64)
+    XCTAssertTrue(coordinator.publishVisibleConversation(
+      digest: digest,
+      lifecycleGeneration: generation
+    ).committed)
+    let before = try store.readRawStateForTesting()
+    manager.onStateCheck = { checks += 1 }
+    XCTAssertNil(coordinator.readSnapshot())
+    XCTAssertEqual(checks, 0)
+    XCTAssertEqual(starts, 1)
+    XCTAssertEqual(try store.readRawStateForTesting(), before)
+    coordinator.handleApplicationLifecycleForTesting(.background)
+    XCTAssertEqual(starts, 1)
+    manager.onStateCheck = nil
+    let background = try XCTUnwrap(store.readSnapshot()).snapshot
+    XCTAssertEqual(background.lifecycle, .background)
+    XCTAssertNil(background.visibleConversationDigest)
+    XCTAssertEqual(background.lifecycleGeneration, generation + 1)
+  }
+
+  func testVisibilityReadRechecksExpiredAdmissionAfterWaitingForCoordinatorQueue() throws {
+    let directory = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let seed = makeStore(directory: directory, boot: { "ios:77:11" }, now: { 100 })
+    XCTAssertTrue(seed.recordColdStart())
+    let writerEntered = DispatchSemaphore(value: 0)
+    let allowWriter = DispatchSemaphore(value: 0)
+    let writerDone = DispatchSemaphore(value: 0)
+    let readerAdmitted = DispatchSemaphore(value: 0)
+    let readerDone = DispatchSemaphore(value: 0)
+    let live = VisibilityReadValueBox(true)
+    let result = VisibilityReadValueBox<IosAppVisibilitySnapshotEnvelope?>(nil)
+    let finished = VisibilityReadValueBox(false)
+    let store = IosAppVisibilitySnapshotStore(
+      directory: directory,
+      bootSessionProvider: { "ios:77:11" },
+      monotonicMsProvider: { 101 },
+      commitFault: { point in
+        if point == .beforeTemporaryWrite {
+          writerEntered.signal()
+          XCTAssertEqual(allowWriter.wait(timeout: .now() + 5), .success)
+        }
+        return false
+      }
+    )
+    let coordinator = IosAppVisibilityCoordinator(
+      store: store,
+      beginReadProtection: {
+        readerAdmitted.signal()
+        return IosAppVisibilityReadProtection(
+          isActive: { live.value },
+          finish: {
+            XCTAssertTrue(self.visibilityLockAvailable(directory))
+            finished.value = true
+          }
+        )
+      }
+    )
+    DispatchQueue.global().async {
+      coordinator.handleApplicationLifecycleForTesting(.background)
+      writerDone.signal()
+    }
+    XCTAssertEqual(writerEntered.wait(timeout: .now() + 5), .success)
+    DispatchQueue.global().async {
+      result.value = coordinator.readSnapshot()
+      readerDone.signal()
+    }
+    XCTAssertEqual(readerAdmitted.wait(timeout: .now() + 5), .success)
+    live.value = false
+    allowWriter.signal()
+    XCTAssertEqual(writerDone.wait(timeout: .now() + 5), .success)
+    XCTAssertEqual(readerDone.wait(timeout: .now() + 5), .success)
+    XCTAssertNil(result.value)
+    XCTAssertTrue(finished.value)
+    XCTAssertEqual(store.readSnapshot()?.snapshot.lifecycle, .background)
+  }
+
+  func testVisibilityReadEnteredOperationKeepsOwnershipUntilReturnAfterExpiry() throws {
+    let directory = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let seed = makeStore(directory: directory, boot: { "ios:77:11" }, now: { 100 })
+    XCTAssertTrue(seed.recordColdStart())
+    let manager = VisibilityReadBoundaryFileManager()
+    var live = true
+    var finished = 0
+    manager.onStateCheck = {
+      live = false
+      XCTAssertFalse(self.visibilityLockAvailable(directory))
+      XCTAssertEqual(finished, 0)
+    }
+    let store = IosAppVisibilitySnapshotStore(
+      directory: directory,
+      fileManager: manager,
+      bootSessionProvider: { "ios:77:11" },
+      monotonicMsProvider: { 101 }
+    )
+    let coordinator = IosAppVisibilityCoordinator(
+      store: store,
+      beginReadProtection: {
+        IosAppVisibilityReadProtection(
+          isActive: { live },
+          finish: {
+            XCTAssertTrue(self.visibilityLockAvailable(directory))
+            finished += 1
+          }
+        )
+      }
+    )
+    XCTAssertEqual(coordinator.readSnapshot()?.snapshot.revision, 1)
+    XCTAssertFalse(live)
+    XCTAssertEqual(finished, 1)
+  }
+
+  func testVisibilityReadUnavailableResultEndsLiveProtectionExactlyOnce() throws {
+    let directory = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let stateURL = directory.appendingPathComponent(
+      IosAppVisibilitySnapshotStore.stateFileName
+    )
+    let futureBytes = Data(#"{"schemaVersion":2,"future":"preserve"}"#.utf8)
+    try futureBytes.write(to: stateURL)
+    let store = makeStore(directory: directory, boot: { "ios:77:11" }, now: { 100 })
+    var started = 0
+    var finished = 0
+    let coordinator = IosAppVisibilityCoordinator(
+      store: store,
+      beginReadProtection: {
+        started += 1
+        return IosAppVisibilityReadProtection(
+          isActive: { true },
+          finish: {
+            XCTAssertTrue(self.visibilityLockAvailable(directory))
+            finished += 1
+          }
+        )
+      }
+    )
+    XCTAssertNil(coordinator.readSnapshot())
+    XCTAssertEqual(started, 1)
+    XCTAssertEqual(finished, 1)
+    XCTAssertEqual(try Data(contentsOf: stateURL), futureBytes)
+  }
+
+  func testVisibilityReadRechecksExpirationAfterContendedFlockBeforeLoadingState() throws {
+    let directory = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let seed = makeStore(directory: directory, boot: { "ios:77:11" }, now: { 100 })
+    XCTAssertTrue(seed.recordColdStart())
+    let incumbent = try seed.readRawStateForTesting()
+    let descriptor = open(
+      directory.appendingPathComponent(IosAppVisibilitySnapshotStore.lockFileName).path,
+      O_RDWR
+    )
+    XCTAssertGreaterThanOrEqual(descriptor, 0)
+    defer { close(descriptor) }
+    XCTAssertEqual(flock(descriptor, LOCK_EX | LOCK_NB), 0)
+    let attemptingAcquisition = DispatchSemaphore(value: 0)
+    let done = DispatchSemaphore(value: 0)
+    let live = VisibilityReadValueBox(true)
+    let reads = VisibilityReadValueBox(0)
+    let finishes = VisibilityReadValueBox(0)
+    let result = VisibilityReadValueBox<IosAppVisibilitySnapshotEnvelope?>(nil)
+    let manager = VisibilityReadBoundaryFileManager()
+    manager.onDirectoryCreated = { attemptingAcquisition.signal() }
+    manager.onStateCheck = { reads.value += 1 }
+    let store = IosAppVisibilitySnapshotStore(
+      directory: directory,
+      fileManager: manager,
+      bootSessionProvider: { "ios:77:11" },
+      monotonicMsProvider: { 101 }
+    )
+    let coordinator = IosAppVisibilityCoordinator(
+      store: store,
+      beginReadProtection: {
+        IosAppVisibilityReadProtection(
+          isActive: { live.value },
+          finish: {
+            XCTAssertTrue(self.visibilityLockAvailable(directory))
+            finishes.value += 1
+          }
+        )
+      }
+    )
+    DispatchQueue.global().async {
+      result.value = coordinator.readSnapshot()
+      done.signal()
+    }
+    XCTAssertEqual(attemptingAcquisition.wait(timeout: .now() + 5), .success)
+    live.value = false
+    XCTAssertEqual(flock(descriptor, LOCK_UN), 0)
+    XCTAssertEqual(done.wait(timeout: .now() + 5), .success)
+    XCTAssertNil(result.value)
+    XCTAssertEqual(reads.value, 0)
+    XCTAssertEqual(finishes.value, 1)
+    XCTAssertEqual(try seed.readRawStateForTesting(), incumbent)
+  }
+
+  private func visibilityLockAvailable(_ directory: URL) -> Bool {
+    let descriptor = open(
+      directory.appendingPathComponent(IosAppVisibilitySnapshotStore.lockFileName).path,
+      O_RDWR
+    )
+    guard descriptor >= 0 else { return false }
+    defer { close(descriptor) }
+    guard flock(descriptor, LOCK_EX | LOCK_NB) == 0 else { return false }
+    _ = flock(descriptor, LOCK_UN)
+    return true
+  }
+
   private func loadFixture() throws -> VisibilityFixture {
     try JSONDecoder().decode(
       VisibilityFixture.self,
@@ -522,5 +799,40 @@ private struct InvalidSnapshotVector {
 private extension Data {
   var hexString: String {
     map { String(format: "%02x", $0) }.joined()
+  }
+}
+
+private final class VisibilityReadBoundaryFileManager: FileManager, @unchecked Sendable {
+  var onStateCheck: (() -> Void)?
+  var onDirectoryCreated: (() -> Void)?
+
+  override func createDirectory(
+    at url: URL,
+    withIntermediateDirectories createIntermediates: Bool,
+    attributes: [FileAttributeKey: Any]? = nil
+  ) throws {
+    try super.createDirectory(
+      at: url,
+      withIntermediateDirectories: createIntermediates,
+      attributes: attributes
+    )
+    onDirectoryCreated?()
+  }
+
+  override func fileExists(atPath path: String) -> Bool {
+    if URL(fileURLWithPath: path).lastPathComponent == IosAppVisibilitySnapshotStore.stateFileName {
+      onStateCheck?()
+    }
+    return super.fileExists(atPath: path)
+  }
+}
+
+private final class VisibilityReadValueBox<Value>: @unchecked Sendable {
+  private let lock = NSLock()
+  private var stored: Value
+  init(_ value: Value) { stored = value }
+  var value: Value {
+    get { lock.lock(); defer { lock.unlock() }; return stored }
+    set { lock.lock(); defer { lock.unlock() }; stored = newValue }
   }
 }

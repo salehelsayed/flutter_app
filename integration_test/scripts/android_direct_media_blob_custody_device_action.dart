@@ -13,6 +13,33 @@ const String _configFile = 'intro_e2e_config.json';
 const String _resultFile = 'intro_e2e_result.json';
 const String _identityFile = 'intro_e2e_identity.json';
 
+/// Only the closed voice disposition and booleans may survive into host logs.
+String androidDirectMediaVoiceSendFailureDetails(Map<String, Object?> receipt) {
+  const keys = <String>[
+    'voiceSendResult',
+    'voiceSendReturnedMessage',
+    'voiceSendUploadLeaseHeld',
+  ];
+  if (!keys.any(receipt.containsKey)) return '';
+  final result = receipt[keys[0]];
+  final returnedMessage = receipt[keys[1]];
+  final uploadLeaseHeld = receipt[keys[2]];
+  if (!const <String>{
+        'success',
+        'invalidRecording',
+        'uploadFailed',
+        'uploadQueued',
+        'sendFailed',
+      }.contains(result) ||
+      returnedMessage is! bool ||
+      uploadLeaseHeld is! bool) {
+    return '; voiceObservation=invalid';
+  }
+  return '; voiceSendResult=$result; '
+      'voiceSendReturnedMessage=$returnedMessage; '
+      'voiceSendUploadLeaseHeld=$uploadLeaseHeld';
+}
+
 /// Runs the concrete two-Android action using the same private app-file/ADB
 /// boundary as the existing one-to-one campaigns. It never builds an APK and
 /// never supplies media bytes from the host.
@@ -25,6 +52,45 @@ Future<Map<String, Object?>> runAndroidDirectMediaBlobCustodyAdbDeviceAction(
   );
   await host.verifyPrerequisites();
   return host.run();
+}
+
+typedef AndroidDirectMediaContactEndpoint = ({
+  Future<void> Function() stopAndWait,
+  Future<void> Function() stage,
+  Future<void> Function() start,
+  Future<void> Function() waitForResult,
+});
+
+/// Owns the process/file handoff for the two contact-bootstrap commands.
+/// Exposed so the old-process poller ordering is testable without ADB.
+Future<void> exchangeAndroidDirectMediaContacts({
+  required AndroidDirectMediaContactEndpoint sender,
+  required AndroidDirectMediaContactEndpoint receiver,
+}) async {
+  final endpoints = [sender, receiver];
+  // A running poller consumes/deletes its command before awaiting transport.
+  // Both old processes must be gone before either new command becomes visible.
+  for (final endpoint in endpoints) {
+    await endpoint.stopAndWait();
+  }
+  for (final endpoint in endpoints) {
+    await endpoint.stage();
+  }
+  for (final endpoint in endpoints) {
+    await endpoint.start();
+  }
+  await Future.wait(endpoints.map((endpoint) => endpoint.waitForResult()));
+}
+
+/// Starts a first media phase in a fresh process with its request still owned.
+Future<void> launchAndroidDirectMediaInitialAction({
+  required Future<void> Function() stopAndWait,
+  required Future<void> Function() stage,
+  required Future<void> Function() start,
+}) async {
+  await stopAndWait();
+  await stage();
+  await start();
 }
 
 final class _AndroidDirectMediaBlobCustodyHost {
@@ -125,7 +191,7 @@ final class _AndroidDirectMediaBlobCustodyHost {
       await _bootstrapIdentity(receiver);
       await _exchangeContacts(sender, receiver);
 
-      await _stageAction(
+      await _launchInitialAction(
         receiver,
         _actionConfig(
           party: receiver,
@@ -137,7 +203,6 @@ final class _AndroidDirectMediaBlobCustodyHost {
           attachmentId: attachmentId,
         ),
       );
-      await _launch(receiver);
       final receiverArmed = await _waitForEndpoint(
         receiver,
         phase: androidDirectMediaBlobCustodyReceiverArmPhase,
@@ -150,7 +215,7 @@ final class _AndroidDirectMediaBlobCustodyHost {
       await _forceStop(receiver);
       await _waitForProcessAbsent(receiver);
 
-      await _stageAction(
+      await _launchInitialAction(
         sender,
         _actionConfig(
           party: sender,
@@ -162,7 +227,6 @@ final class _AndroidDirectMediaBlobCustodyHost {
           attachmentId: attachmentId,
         ),
       );
-      await _launch(sender);
       final senderStored = await _waitForEndpoint(
         sender,
         phase: androidDirectMediaBlobCustodySenderPreparePhase,
@@ -522,16 +586,25 @@ final class _AndroidDirectMediaBlobCustodyHost {
       ..peerId = qr['ns']! as String;
   }
 
-  Future<void> _exchangeContacts(_Party sender, _Party receiver) async {
-    await _stageContact(sender, receiver);
-    await _stageContact(receiver, sender);
-    await _launch(sender);
-    await _launch(receiver);
-    await Future.wait(<Future<void>>[
-      _waitForGenericStep(sender, 'custody-contact-${sender.role}'),
-      _waitForGenericStep(receiver, 'custody-contact-${receiver.role}'),
-    ]);
-  }
+  Future<void> _exchangeContacts(_Party sender, _Party receiver) =>
+      exchangeAndroidDirectMediaContacts(
+        sender: _contactEndpoint(sender, receiver),
+        receiver: _contactEndpoint(receiver, sender),
+      );
+
+  AndroidDirectMediaContactEndpoint _contactEndpoint(
+    _Party owner,
+    _Party contact,
+  ) => (
+    stopAndWait: () async {
+      await _forceStop(owner);
+      await _waitForProcessAbsent(owner);
+    },
+    stage: () => _stageContact(owner, contact),
+    start: () => _start(owner),
+    waitForResult: () =>
+        _waitForGenericStep(owner, 'custody-contact-${owner.role}'),
+  );
 
   Future<void> _stageContact(_Party owner, _Party contact) async {
     await _deleteAppFile(owner, _resultFile);
@@ -573,6 +646,18 @@ final class _AndroidDirectMediaBlobCustodyHost {
     }
     throw TimeoutException('Contact bootstrap timed out on ${party.deviceId}');
   }
+
+  Future<void> _launchInitialAction(
+    _Party party,
+    Map<String, Object?> config,
+  ) => launchAndroidDirectMediaInitialAction(
+    stopAndWait: () async {
+      await _forceStop(party);
+      await _waitForProcessAbsent(party);
+    },
+    stage: () => _stageAction(party, config),
+    start: () => _start(party),
+  );
 
   Future<void> _stageAction(_Party party, Map<String, Object?> config) async {
     await _deleteAppFile(party, _resultFile);
@@ -618,7 +703,8 @@ final class _AndroidDirectMediaBlobCustodyHost {
               throw StateError(
                 'Custody endpoint ${party.role}/$phase failed '
                 '(${value['errorCode'] ?? 'unknown'}; '
-                '${value['errorType'] ?? 'unknown'}).',
+                '${value['errorType'] ?? 'unknown'}'
+                '${androidDirectMediaVoiceSendFailureDetails(value)}).',
               );
             }
             if (bound &&

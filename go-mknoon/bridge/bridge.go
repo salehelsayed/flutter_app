@@ -1191,7 +1191,7 @@ func validateInboxRetrieveAckCustodyContract(
 // InboxStore stores a message in the offline inbox.
 // Input JSON: { "toPeerId": "...", "message": "...", optional
 // "custodyContract":"ack_or_expiry_v1", "custodyKind":"direct_text_v108",
-// optional "custodyExpiresAtOrBeforeMs":123 }
+// optional "custodyExpiresAtOrBeforeMs":123, "suppressNotification":true }
 // Returns JSON: { "ok": true }
 func InboxStore(paramsJSON string) (result string) {
 	defer func() {
@@ -1222,6 +1222,7 @@ func InboxStore(paramsJSON string) (result string) {
 		CustodyContract            string `json:"custodyContract"`
 		CustodyKind                string `json:"custodyKind"`
 		CustodyExpiresAtOrBeforeMs *int64 `json:"custodyExpiresAtOrBeforeMs"`
+		SuppressNotification       bool   `json:"suppressNotification"`
 	}
 	if err := json.Unmarshal([]byte(paramsJSON), &params); err != nil {
 		return errJSON("INVALID_INPUT", fmt.Sprintf("invalid JSON: %v", err))
@@ -1241,11 +1242,26 @@ func InboxStore(paramsJSON string) (result string) {
 		params.CustodyContract,
 		params.CustodyKind,
 		func() (node.InboxStoreOutcome, error) {
+			if params.SuppressNotification {
+				return n.InboxStoreDetailedWithNotificationPolicy(
+					params.ToPeerId, params.Message, params.TimeoutMs, params.WakeToken, true,
+				)
+			}
 			return n.InboxStoreDetailedWithWakeToken(
 				params.ToPeerId, params.Message, params.TimeoutMs, params.WakeToken,
 			)
 		},
 		func() (node.InboxStoreOutcome, error) {
+			if params.SuppressNotification {
+				var expiryCeiling int64
+				if params.CustodyExpiresAtOrBeforeMs != nil {
+					expiryCeiling = *params.CustodyExpiresAtOrBeforeMs
+				}
+				return n.InboxStoreAckCustodyDetailedWithNotificationPolicy(
+					params.ToPeerId, params.Message, params.TimeoutMs, params.WakeToken,
+					params.CustodyKind, expiryCeiling, true,
+				)
+			}
 			if params.CustodyExpiresAtOrBeforeMs != nil {
 				return n.InboxStoreAckCustodyDetailedWithWakeTokenAndExpiryCeiling(
 					params.ToPeerId,

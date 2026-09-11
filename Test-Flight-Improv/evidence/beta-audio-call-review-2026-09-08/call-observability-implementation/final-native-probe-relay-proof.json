@@ -1,0 +1,2737 @@
+{
+  "callerTraceId": "a1be4767-de23-47c7-9e81-d3d120d624a5",
+  "capturedAt": "2026-09-08T16:24:00.529720+00:00",
+  "lookbackHours": 3,
+  "provisionalNativeTracePresent": false,
+  "report": {
+    "admissionReported": false,
+    "alerts": [],
+    "answerReported": false,
+    "anyEndpointReportedMediaTraceCount": 0,
+    "atRecordLimit": false,
+    "authorityJoinAtRecordLimit": false,
+    "authorityJoinInvalidRecordCount": 0,
+    "bothEndpointsReportedMediaTraceCount": 0,
+    "bothEndpointsTerminalTraceCount": 0,
+    "calleeTerminalTraceCount": 0,
+    "callerTerminalTraceCount": 1,
+    "cleanupReported": true,
+    "counts": {
+      "discardLedgerSaturatedRecords": 0,
+      "droppedEvents": 0,
+      "legacyQuotaRejectionAttempts": 0,
+      "providerInvocations": 2,
+      "recordsWithUnknownHistoricalLoss": 0,
+      "retainedEvents": 84
+    },
+    "endpointCompleteness": {
+      "calleeReportedMedia": false,
+      "calleeTerminal": false,
+      "callerReportedMedia": false,
+      "callerTerminal": true,
+      "legacy": false
+    },
+    "events": [
+      {
+        "event": {
+          "action": "lookup",
+          "build": "7c70c5616c335ee1a3435730a153946466b73b636a138a1fef3ae78732900865",
+          "elapsedMs": 0,
+          "eventId": "902ec3d4-9287-4aee-a886-177961df041e",
+          "occurredAtMs": 1788884536662,
+          "outcome": "started",
+          "reason": "none",
+          "requestId": "016ae99a-8373-47ba-9a22-45729b55ac67",
+          "role": "server",
+          "runId": "6fde0178-e86d-43dc-9e76-b8510e0709b8",
+          "schemaVersion": 1,
+          "sequence": 1,
+          "source": "relay",
+          "stage": "authority",
+          "traceId": "a1be4767-de23-47c7-9e81-d3d120d624a5",
+          "values": {
+            "authorityKind": "endpoint"
+          }
+        },
+        "receivedAtMs": 1788884536666
+      },
+      {
+        "event": {
+          "action": "lookup",
+          "build": "7c70c5616c335ee1a3435730a153946466b73b636a138a1fef3ae78732900865",
+          "elapsedMs": 0,
+          "eventId": "5c536f7a-4fe2-4840-9241-7e8a05846c1f",
+          "occurredAtMs": 1788884536662,
+          "outcome": "ok",
+          "parentOperationId": "23ce49d2-1837-4959-a63a-574763152d26",
+          "reason": "none",
+          "requestId": "016ae99a-8373-47ba-9a22-45729b55ac67",
+          "role": "server",
+          "runId": "6fde0178-e86d-43dc-9e76-b8510e0709b8",
+          "schemaVersion": 1,
+          "sequence": 2,
+          "source": "relay",
+          "stage": "authority",
+          "traceId": "a1be4767-de23-47c7-9e81-d3d120d624a5",
+          "values": {
+            "authorityKind": "endpoint",
+            "found": true
+          }
+        },
+        "receivedAtMs": 1788884536676
+      },
+      {
+        "event": {
+          "action": "response",
+          "build": "7c70c5616c335ee1a3435730a153946466b73b636a138a1fef3ae78732900865",
+          "elapsedMs": 0,
+          "eventId": "4677841b-9e93-41bc-b7be-e21dd61c7736",
+          "occurredAtMs": 1788884536662,
+          "outcome": "ok",
+          "parentOperationId": "23ce49d2-1837-4959-a63a-574763152d26",
+          "reason": "none",
+          "requestId": "016ae99a-8373-47ba-9a22-45729b55ac67",
+          "role": "server",
+          "runId": "6fde0178-e86d-43dc-9e76-b8510e0709b8",
+          "schemaVersion": 1,
+          "sequence": 3,
+          "source": "relay",
+          "stage": "authority",
+          "traceId": "a1be4767-de23-47c7-9e81-d3d120d624a5",
+          "values": {
+            "authorityKind": "endpoint",
+            "responseWritten": true
+          }
+        },
+        "receivedAtMs": 1788884536684
+      },
+      {
+        "event": {
+          "action": "publish",
+          "build": "7c70c5616c335ee1a3435730a153946466b73b636a138a1fef3ae78732900865",
+          "elapsedMs": 0,
+          "eventId": "9a4f1948-3c9e-42a6-b6bf-ef8a4a8d9078",
+          "occurredAtMs": 1788884536715,
+          "operationId": "bf0dcbeb-ca36-47d6-8971-e3aedfdead76",
+          "outcome": "started",
+          "reason": "resume_refresh",
+          "requestId": "ffa344e5-a3bb-4481-9a77-4140c16de35d",
+          "role": "server",
+          "runId": "6fde0178-e86d-43dc-9e76-b8510e0709b8",
+          "schemaVersion": 1,
+          "sequence": 4,
+          "source": "relay",
+          "stage": "authority",
+          "traceId": "a1be4767-de23-47c7-9e81-d3d120d624a5",
+          "values": {
+            "authorityKind": "ios_voip_token"
+          }
+        },
+        "receivedAtMs": 1788884536715
+      },
+      {
+        "event": {
+          "action": "publish",
+          "build": "7c70c5616c335ee1a3435730a153946466b73b636a138a1fef3ae78732900865",
+          "elapsedMs": 0,
+          "eventId": "4a020141-aa19-4683-b45a-74df2d14d262",
+          "occurredAtMs": 1788884536716,
+          "operationId": "bf0dcbeb-ca36-47d6-8971-e3aedfdead76",
+          "outcome": "ok",
+          "reason": "resume_refresh",
+          "requestId": "ffa344e5-a3bb-4481-9a77-4140c16de35d",
+          "role": "server",
+          "runId": "6fde0178-e86d-43dc-9e76-b8510e0709b8",
+          "schemaVersion": 1,
+          "sequence": 5,
+          "source": "relay",
+          "stage": "authority",
+          "traceId": "a1be4767-de23-47c7-9e81-d3d120d624a5",
+          "values": {
+            "authorityKind": "ios_voip_token"
+          }
+        },
+        "receivedAtMs": 1788884536729
+      },
+      {
+        "event": {
+          "action": "response",
+          "build": "7c70c5616c335ee1a3435730a153946466b73b636a138a1fef3ae78732900865",
+          "elapsedMs": 0,
+          "eventId": "82fcb932-dad0-463a-85bb-cec2819251e6",
+          "occurredAtMs": 1788884536716,
+          "operationId": "bf0dcbeb-ca36-47d6-8971-e3aedfdead76",
+          "outcome": "ok",
+          "reason": "none",
+          "requestId": "ffa344e5-a3bb-4481-9a77-4140c16de35d",
+          "role": "server",
+          "runId": "6fde0178-e86d-43dc-9e76-b8510e0709b8",
+          "schemaVersion": 1,
+          "sequence": 6,
+          "source": "relay",
+          "stage": "authority",
+          "traceId": "a1be4767-de23-47c7-9e81-d3d120d624a5",
+          "values": {
+            "authorityKind": "ios_voip_token",
+            "responseWritten": true
+          }
+        },
+        "receivedAtMs": 1788884536738
+      },
+      {
+        "event": {
+          "action": "publish",
+          "build": "7c70c5616c335ee1a3435730a153946466b73b636a138a1fef3ae78732900865",
+          "elapsedMs": 0,
+          "eventId": "409baa7a-c110-4d3c-976c-e444b03ac107",
+          "occurredAtMs": 1788884536764,
+          "operationId": "bf0dcbeb-ca36-47d6-8971-e3aedfdead76",
+          "outcome": "started",
+          "reason": "resume_refresh",
+          "requestId": "4fc71c9e-a8de-4154-af10-ddefc0b72018",
+          "role": "server",
+          "runId": "6fde0178-e86d-43dc-9e76-b8510e0709b8",
+          "schemaVersion": 1,
+          "sequence": 7,
+          "source": "relay",
+          "stage": "authority",
+          "traceId": "a1be4767-de23-47c7-9e81-d3d120d624a5",
+          "values": {
+            "authorityKind": "wake_grant"
+          }
+        },
+        "receivedAtMs": 1788884536764
+      },
+      {
+        "event": {
+          "action": "publish",
+          "build": "7c70c5616c335ee1a3435730a153946466b73b636a138a1fef3ae78732900865",
+          "elapsedMs": 0,
+          "eventId": "7dbcaa1e-6d73-4a18-9773-6473215f9e1a",
+          "occurredAtMs": 1788884536765,
+          "operationId": "bf0dcbeb-ca36-47d6-8971-e3aedfdead76",
+          "outcome": "ok",
+          "reason": "resume_refresh",
+          "requestId": "4fc71c9e-a8de-4154-af10-ddefc0b72018",
+          "role": "server",
+          "runId": "6fde0178-e86d-43dc-9e76-b8510e0709b8",
+          "schemaVersion": 1,
+          "sequence": 8,
+          "source": "relay",
+          "stage": "authority",
+          "traceId": "a1be4767-de23-47c7-9e81-d3d120d624a5",
+          "values": {
+            "authorityKind": "wake_grant"
+          }
+        },
+        "receivedAtMs": 1788884536779
+      },
+      {
+        "event": {
+          "action": "response",
+          "build": "7c70c5616c335ee1a3435730a153946466b73b636a138a1fef3ae78732900865",
+          "elapsedMs": 0,
+          "eventId": "26366b20-d698-43fa-b4a2-53af7a47fc6d",
+          "occurredAtMs": 1788884536765,
+          "operationId": "bf0dcbeb-ca36-47d6-8971-e3aedfdead76",
+          "outcome": "ok",
+          "reason": "none",
+          "requestId": "4fc71c9e-a8de-4154-af10-ddefc0b72018",
+          "role": "server",
+          "runId": "6fde0178-e86d-43dc-9e76-b8510e0709b8",
+          "schemaVersion": 1,
+          "sequence": 9,
+          "source": "relay",
+          "stage": "authority",
+          "traceId": "a1be4767-de23-47c7-9e81-d3d120d624a5",
+          "values": {
+            "authorityKind": "wake_grant",
+            "responseWritten": true
+          }
+        },
+        "receivedAtMs": 1788884536788
+      },
+      {
+        "event": {
+          "action": "publish",
+          "build": "7c70c5616c335ee1a3435730a153946466b73b636a138a1fef3ae78732900865",
+          "elapsedMs": 0,
+          "eventId": "c4eba56b-10d5-4873-90b1-1c2b0b1d954c",
+          "occurredAtMs": 1788884536808,
+          "operationId": "bf0dcbeb-ca36-47d6-8971-e3aedfdead76",
+          "outcome": "started",
+          "reason": "resume_refresh",
+          "requestId": "3bfccb58-ef8e-43de-aa44-c64ca41df100",
+          "role": "server",
+          "runId": "6fde0178-e86d-43dc-9e76-b8510e0709b8",
+          "schemaVersion": 1,
+          "sequence": 10,
+          "source": "relay",
+          "stage": "authority",
+          "traceId": "a1be4767-de23-47c7-9e81-d3d120d624a5",
+          "values": {
+            "authorityKind": "endpoint"
+          }
+        },
+        "receivedAtMs": 1788884536808
+      },
+      {
+        "event": {
+          "action": "publish",
+          "build": "7c70c5616c335ee1a3435730a153946466b73b636a138a1fef3ae78732900865",
+          "elapsedMs": 0,
+          "eventId": "ebfdb20c-03f9-4f39-9da1-12bfb98cc5ca",
+          "occurredAtMs": 1788884536809,
+          "operationId": "bf0dcbeb-ca36-47d6-8971-e3aedfdead76",
+          "outcome": "ok",
+          "reason": "resume_refresh",
+          "requestId": "3bfccb58-ef8e-43de-aa44-c64ca41df100",
+          "role": "server",
+          "runId": "6fde0178-e86d-43dc-9e76-b8510e0709b8",
+          "schemaVersion": 1,
+          "sequence": 11,
+          "source": "relay",
+          "stage": "authority",
+          "traceId": "a1be4767-de23-47c7-9e81-d3d120d624a5",
+          "values": {
+            "authorityKind": "endpoint"
+          }
+        },
+        "receivedAtMs": 1788884536823
+      },
+      {
+        "event": {
+          "action": "response",
+          "build": "7c70c5616c335ee1a3435730a153946466b73b636a138a1fef3ae78732900865",
+          "elapsedMs": 0,
+          "eventId": "2f662706-af20-4a94-a5c1-6abf308bf8f1",
+          "occurredAtMs": 1788884536809,
+          "operationId": "bf0dcbeb-ca36-47d6-8971-e3aedfdead76",
+          "outcome": "ok",
+          "reason": "none",
+          "requestId": "3bfccb58-ef8e-43de-aa44-c64ca41df100",
+          "role": "server",
+          "runId": "6fde0178-e86d-43dc-9e76-b8510e0709b8",
+          "schemaVersion": 1,
+          "sequence": 12,
+          "source": "relay",
+          "stage": "authority",
+          "traceId": "a1be4767-de23-47c7-9e81-d3d120d624a5",
+          "values": {
+            "authorityKind": "endpoint",
+            "responseWritten": true
+          }
+        },
+        "receivedAtMs": 1788884536832
+      },
+      {
+        "event": {
+          "action": "lookup",
+          "build": "7c70c5616c335ee1a3435730a153946466b73b636a138a1fef3ae78732900865",
+          "elapsedMs": 0,
+          "eventId": "9b043174-34cf-42b2-b4cf-6d38587cced9",
+          "occurredAtMs": 1788884536855,
+          "outcome": "started",
+          "reason": "none",
+          "requestId": "3ea46883-1f70-468f-bf89-e4be8c909b74",
+          "role": "server",
+          "runId": "6fde0178-e86d-43dc-9e76-b8510e0709b8",
+          "schemaVersion": 1,
+          "sequence": 13,
+          "source": "relay",
+          "stage": "authority",
+          "traceId": "a1be4767-de23-47c7-9e81-d3d120d624a5",
+          "values": {
+            "authorityKind": "endpoint"
+          }
+        },
+        "receivedAtMs": 1788884536856
+      },
+      {
+        "event": {
+          "action": "lookup",
+          "build": "7c70c5616c335ee1a3435730a153946466b73b636a138a1fef3ae78732900865",
+          "elapsedMs": 0,
+          "eventId": "023e5fa4-7209-414b-906b-7dbd53601772",
+          "occurredAtMs": 1788884536856,
+          "outcome": "ok",
+          "parentOperationId": "23ce49d2-1837-4959-a63a-574763152d26",
+          "reason": "none",
+          "requestId": "3ea46883-1f70-468f-bf89-e4be8c909b74",
+          "role": "server",
+          "runId": "6fde0178-e86d-43dc-9e76-b8510e0709b8",
+          "schemaVersion": 1,
+          "sequence": 14,
+          "source": "relay",
+          "stage": "authority",
+          "traceId": "a1be4767-de23-47c7-9e81-d3d120d624a5",
+          "values": {
+            "authorityKind": "endpoint",
+            "found": true
+          }
+        },
+        "receivedAtMs": 1788884536865
+      },
+      {
+        "event": {
+          "action": "response",
+          "build": "7c70c5616c335ee1a3435730a153946466b73b636a138a1fef3ae78732900865",
+          "elapsedMs": 0,
+          "eventId": "606f07e5-3049-48ff-95d2-62b92b38cce9",
+          "occurredAtMs": 1788884536856,
+          "outcome": "ok",
+          "parentOperationId": "23ce49d2-1837-4959-a63a-574763152d26",
+          "reason": "none",
+          "requestId": "3ea46883-1f70-468f-bf89-e4be8c909b74",
+          "role": "server",
+          "runId": "6fde0178-e86d-43dc-9e76-b8510e0709b8",
+          "schemaVersion": 1,
+          "sequence": 15,
+          "source": "relay",
+          "stage": "authority",
+          "traceId": "a1be4767-de23-47c7-9e81-d3d120d624a5",
+          "values": {
+            "authorityKind": "endpoint",
+            "responseWritten": true
+          }
+        },
+        "receivedAtMs": 1788884536875
+      },
+      {
+        "event": {
+          "action": "lookup",
+          "build": "7c70c5616c335ee1a3435730a153946466b73b636a138a1fef3ae78732900865",
+          "elapsedMs": 0,
+          "eventId": "952940ce-3e18-472e-8bb1-4c25a00abe6f",
+          "occurredAtMs": 1788884536902,
+          "outcome": "started",
+          "reason": "none",
+          "requestId": "ae51495e-36e5-4404-bb64-0c2c5280b39b",
+          "role": "server",
+          "runId": "6fde0178-e86d-43dc-9e76-b8510e0709b8",
+          "schemaVersion": 1,
+          "sequence": 16,
+          "source": "relay",
+          "stage": "authority",
+          "traceId": "a1be4767-de23-47c7-9e81-d3d120d624a5",
+          "values": {
+            "authorityKind": "endpoint"
+          }
+        },
+        "receivedAtMs": 1788884536902
+      },
+      {
+        "event": {
+          "action": "lookup",
+          "build": "7c70c5616c335ee1a3435730a153946466b73b636a138a1fef3ae78732900865",
+          "elapsedMs": 0,
+          "eventId": "387200a1-2019-4a86-a1eb-79a6b9180d69",
+          "occurredAtMs": 1788884536903,
+          "outcome": "ok",
+          "parentOperationId": "23ce49d2-1837-4959-a63a-574763152d26",
+          "reason": "none",
+          "requestId": "ae51495e-36e5-4404-bb64-0c2c5280b39b",
+          "role": "server",
+          "runId": "6fde0178-e86d-43dc-9e76-b8510e0709b8",
+          "schemaVersion": 1,
+          "sequence": 17,
+          "source": "relay",
+          "stage": "authority",
+          "traceId": "a1be4767-de23-47c7-9e81-d3d120d624a5",
+          "values": {
+            "authorityKind": "endpoint",
+            "found": true
+          }
+        },
+        "receivedAtMs": 1788884536912
+      },
+      {
+        "event": {
+          "action": "response",
+          "build": "7c70c5616c335ee1a3435730a153946466b73b636a138a1fef3ae78732900865",
+          "elapsedMs": 0,
+          "eventId": "f431586c-5db3-452c-9545-87d7e23a4920",
+          "occurredAtMs": 1788884536903,
+          "outcome": "ok",
+          "parentOperationId": "23ce49d2-1837-4959-a63a-574763152d26",
+          "reason": "none",
+          "requestId": "ae51495e-36e5-4404-bb64-0c2c5280b39b",
+          "role": "server",
+          "runId": "6fde0178-e86d-43dc-9e76-b8510e0709b8",
+          "schemaVersion": 1,
+          "sequence": 18,
+          "source": "relay",
+          "stage": "authority",
+          "traceId": "a1be4767-de23-47c7-9e81-d3d120d624a5",
+          "values": {
+            "authorityKind": "endpoint",
+            "responseWritten": true
+          }
+        },
+        "receivedAtMs": 1788884536921
+      },
+      {
+        "event": {
+          "action": "lookup",
+          "build": "7c70c5616c335ee1a3435730a153946466b73b636a138a1fef3ae78732900865",
+          "elapsedMs": 0,
+          "eventId": "4d17b0cc-aa88-4767-8319-c0391bc65ba9",
+          "occurredAtMs": 1788884537001,
+          "outcome": "started",
+          "reason": "none",
+          "requestId": "4f5439e4-3b80-4b5b-855a-e7937ed345e7",
+          "role": "server",
+          "runId": "6fde0178-e86d-43dc-9e76-b8510e0709b8",
+          "schemaVersion": 1,
+          "sequence": 19,
+          "source": "relay",
+          "stage": "authority",
+          "traceId": "a1be4767-de23-47c7-9e81-d3d120d624a5",
+          "values": {
+            "authorityKind": "endpoint"
+          }
+        },
+        "receivedAtMs": 1788884537001
+      },
+      {
+        "event": {
+          "action": "lookup",
+          "build": "7c70c5616c335ee1a3435730a153946466b73b636a138a1fef3ae78732900865",
+          "elapsedMs": 0,
+          "eventId": "a9d1dab5-fb2f-4bb8-bf3d-9cfc69e2fab6",
+          "occurredAtMs": 1788884537001,
+          "outcome": "ok",
+          "parentOperationId": "23ce49d2-1837-4959-a63a-574763152d26",
+          "reason": "none",
+          "requestId": "4f5439e4-3b80-4b5b-855a-e7937ed345e7",
+          "role": "server",
+          "runId": "6fde0178-e86d-43dc-9e76-b8510e0709b8",
+          "schemaVersion": 1,
+          "sequence": 20,
+          "source": "relay",
+          "stage": "authority",
+          "traceId": "a1be4767-de23-47c7-9e81-d3d120d624a5",
+          "values": {
+            "authorityKind": "endpoint",
+            "found": true
+          }
+        },
+        "receivedAtMs": 1788884537011
+      },
+      {
+        "event": {
+          "action": "response",
+          "build": "7c70c5616c335ee1a3435730a153946466b73b636a138a1fef3ae78732900865",
+          "elapsedMs": 0,
+          "eventId": "625eefe2-3196-4fab-965f-6dc266189ed5",
+          "occurredAtMs": 1788884537001,
+          "outcome": "ok",
+          "parentOperationId": "23ce49d2-1837-4959-a63a-574763152d26",
+          "reason": "none",
+          "requestId": "4f5439e4-3b80-4b5b-855a-e7937ed345e7",
+          "role": "server",
+          "runId": "6fde0178-e86d-43dc-9e76-b8510e0709b8",
+          "schemaVersion": 1,
+          "sequence": 21,
+          "source": "relay",
+          "stage": "authority",
+          "traceId": "a1be4767-de23-47c7-9e81-d3d120d624a5",
+          "values": {
+            "authorityKind": "endpoint",
+            "responseWritten": true
+          }
+        },
+        "receivedAtMs": 1788884537022
+      },
+      {
+        "event": {
+          "action": "store",
+          "build": "7c70c5616c335ee1a3435730a153946466b73b636a138a1fef3ae78732900865",
+          "elapsedMs": 0,
+          "eventId": "c826a6b3-5a50-425b-98f3-51cb386b8d3a",
+          "occurredAtMs": 1788884537091,
+          "outcome": "started",
+          "reason": "none",
+          "requestId": "e9834424-b395-42b2-892e-65b7866df9eb",
+          "role": "server",
+          "runId": "6fde0178-e86d-43dc-9e76-b8510e0709b8",
+          "schemaVersion": 1,
+          "sequence": 22,
+          "source": "relay",
+          "stage": "signaling",
+          "traceId": "a1be4767-de23-47c7-9e81-d3d120d624a5",
+          "values": {}
+        },
+        "receivedAtMs": 1788884537091
+      },
+      {
+        "event": {
+          "action": "commit",
+          "build": "7c70c5616c335ee1a3435730a153946466b73b636a138a1fef3ae78732900865",
+          "elapsedMs": 1,
+          "eventId": "3db3eff2-91d5-406f-b522-0b8f957a7b32",
+          "occurredAtMs": 1788884537092,
+          "outcome": "ok",
+          "reason": "none",
+          "requestId": "e9834424-b395-42b2-892e-65b7866df9eb",
+          "role": "server",
+          "runId": "6fde0178-e86d-43dc-9e76-b8510e0709b8",
+          "schemaVersion": 1,
+          "sequence": 23,
+          "source": "relay",
+          "stage": "signaling",
+          "traceId": "a1be4767-de23-47c7-9e81-d3d120d624a5",
+          "values": {
+            "eventCount": 1,
+            "storeCommitted": true
+          }
+        },
+        "receivedAtMs": 1788884537109
+      },
+      {
+        "event": {
+          "action": "dispatch",
+          "build": "7c70c5616c335ee1a3435730a153946466b73b636a138a1fef3ae78732900865",
+          "elapsedMs": 3,
+          "eventId": "d48b9a45-2c2f-42a0-b635-6b1f198ae640",
+          "occurredAtMs": 1788884537095,
+          "outcome": "started",
+          "reason": "none",
+          "requestId": "e9834424-b395-42b2-892e-65b7866df9eb",
+          "role": "server",
+          "runId": "6fde0178-e86d-43dc-9e76-b8510e0709b8",
+          "schemaVersion": 1,
+          "sequence": 24,
+          "source": "relay",
+          "stage": "push",
+          "traceId": "a1be4767-de23-47c7-9e81-d3d120d624a5",
+          "values": {
+            "platform": "android",
+            "providerInvoked": true,
+            "retry": 0
+          }
+        },
+        "receivedAtMs": 1788884537118
+      },
+      {
+        "event": {
+          "action": "dispatch",
+          "build": "7c70c5616c335ee1a3435730a153946466b73b636a138a1fef3ae78732900865",
+          "elapsedMs": 278,
+          "eventId": "7e94eff1-c17b-4ebd-a8ee-31c0f938e5ff",
+          "occurredAtMs": 1788884537369,
+          "outcome": "ok",
+          "reason": "none",
+          "requestId": "e9834424-b395-42b2-892e-65b7866df9eb",
+          "role": "server",
+          "runId": "6fde0178-e86d-43dc-9e76-b8510e0709b8",
+          "schemaVersion": 1,
+          "sequence": 25,
+          "source": "relay",
+          "stage": "push",
+          "traceId": "a1be4767-de23-47c7-9e81-d3d120d624a5",
+          "values": {
+            "platform": "android",
+            "providerInvoked": true,
+            "retry": 0
+          }
+        },
+        "receivedAtMs": 1788884537369
+      },
+      {
+        "event": {
+          "action": "finish",
+          "build": "7c70c5616c335ee1a3435730a153946466b73b636a138a1fef3ae78732900865",
+          "elapsedMs": 278,
+          "eventId": "c4544c52-3765-40b4-8abc-b8fe1e5387cc",
+          "occurredAtMs": 1788884537369,
+          "outcome": "ok",
+          "reason": "none",
+          "requestId": "e9834424-b395-42b2-892e-65b7866df9eb",
+          "role": "server",
+          "runId": "6fde0178-e86d-43dc-9e76-b8510e0709b8",
+          "schemaVersion": 1,
+          "sequence": 26,
+          "source": "relay",
+          "stage": "push",
+          "traceId": "a1be4767-de23-47c7-9e81-d3d120d624a5",
+          "values": {}
+        },
+        "receivedAtMs": 1788884537379
+      },
+      {
+        "event": {
+          "action": "store",
+          "build": "7c70c5616c335ee1a3435730a153946466b73b636a138a1fef3ae78732900865",
+          "elapsedMs": 278,
+          "eventId": "531992bb-8241-42ce-b3b6-f88bcd684f82",
+          "occurredAtMs": 1788884537369,
+          "outcome": "ok",
+          "reason": "none",
+          "requestId": "e9834424-b395-42b2-892e-65b7866df9eb",
+          "role": "server",
+          "runId": "6fde0178-e86d-43dc-9e76-b8510e0709b8",
+          "schemaVersion": 1,
+          "sequence": 27,
+          "source": "relay",
+          "stage": "signaling",
+          "traceId": "a1be4767-de23-47c7-9e81-d3d120d624a5",
+          "values": {}
+        },
+        "receivedAtMs": 1788884537388
+      },
+      {
+        "event": {
+          "action": "response",
+          "build": "7c70c5616c335ee1a3435730a153946466b73b636a138a1fef3ae78732900865",
+          "elapsedMs": 278,
+          "eventId": "0a15ae3b-0cb6-4603-9b48-9898d5161540",
+          "occurredAtMs": 1788884537370,
+          "outcome": "ok",
+          "reason": "none",
+          "requestId": "e9834424-b395-42b2-892e-65b7866df9eb",
+          "role": "server",
+          "runId": "6fde0178-e86d-43dc-9e76-b8510e0709b8",
+          "schemaVersion": 1,
+          "sequence": 28,
+          "source": "relay",
+          "stage": "signaling",
+          "traceId": "a1be4767-de23-47c7-9e81-d3d120d624a5",
+          "values": {
+            "responseWritten": true
+          }
+        },
+        "receivedAtMs": 1788884537398
+      },
+      {
+        "event": {
+          "action": "start",
+          "build": "1.0.1+111-e9811addae2ee7a4",
+          "elapsedMs": 1406100,
+          "eventId": "3d0c4a1f-2d6e-480f-9f81-7e913654bba3",
+          "occurredAtMs": 1788884536553,
+          "outcome": "started",
+          "reason": "none",
+          "role": "caller",
+          "runId": "2d939f75-279d-40a2-b031-7c9665714c76",
+          "schemaVersion": 1,
+          "sequence": 67,
+          "source": "flutter",
+          "stage": "attempt",
+          "traceId": "a1be4767-de23-47c7-9e81-d3d120d624a5",
+          "values": {}
+        },
+        "receivedAtMs": 1788884540640
+      },
+      {
+        "event": {
+          "action": "lookup",
+          "build": "1.0.1+111-e9811addae2ee7a4",
+          "elapsedMs": 1406120,
+          "eventId": "bfe71e1d-2cdf-45b8-8f1b-0a3fa6581df4",
+          "occurredAtMs": 1788884536573,
+          "outcome": "started",
+          "reason": "none",
+          "requestId": "016ae99a-8373-47ba-9a22-45729b55ac67",
+          "role": "caller",
+          "runId": "2d939f75-279d-40a2-b031-7c9665714c76",
+          "schemaVersion": 1,
+          "sequence": 68,
+          "source": "flutter",
+          "stage": "authority",
+          "traceId": "a1be4767-de23-47c7-9e81-d3d120d624a5",
+          "values": {}
+        },
+        "receivedAtMs": 1788884540651
+      },
+      {
+        "event": {
+          "action": "lookup",
+          "build": "1.0.1+111-e9811addae2ee7a4",
+          "elapsedMs": 1406170,
+          "eventId": "eaff6e6f-400b-49ec-9d35-0e9958fe8d48",
+          "occurredAtMs": 1788884536623,
+          "outcome": "ok",
+          "reason": "none",
+          "requestId": "016ae99a-8373-47ba-9a22-45729b55ac67",
+          "role": "caller",
+          "runId": "2d939f75-279d-40a2-b031-7c9665714c76",
+          "schemaVersion": 1,
+          "sequence": 69,
+          "source": "flutter",
+          "stage": "authority",
+          "traceId": "a1be4767-de23-47c7-9e81-d3d120d624a5",
+          "values": {}
+        },
+        "receivedAtMs": 1788884540660
+      },
+      {
+        "event": {
+          "action": "lookup",
+          "build": "1.0.1+111-e9811addae2ee7a4",
+          "elapsedMs": 1406174,
+          "eventId": "c39adf99-25fe-4cac-aa93-f022781810dd",
+          "occurredAtMs": 1788884536627,
+          "outcome": "ok",
+          "reason": "none",
+          "role": "caller",
+          "runId": "2d939f75-279d-40a2-b031-7c9665714c76",
+          "schemaVersion": 1,
+          "sequence": 70,
+          "source": "flutter",
+          "stage": "preflight",
+          "traceId": "a1be4767-de23-47c7-9e81-d3d120d624a5",
+          "values": {}
+        },
+        "receivedAtMs": 1788884540670
+      },
+      {
+        "event": {
+          "action": "check",
+          "build": "1.0.1+111-e9811addae2ee7a4",
+          "elapsedMs": 1406174,
+          "eventId": "d1465a56-2e86-4e8b-80a5-a80be1a6cf5f",
+          "occurredAtMs": 1788884536628,
+          "outcome": "ok",
+          "reason": "none",
+          "role": "caller",
+          "runId": "2d939f75-279d-40a2-b031-7c9665714c76",
+          "schemaVersion": 1,
+          "sequence": 71,
+          "source": "flutter",
+          "stage": "preflight",
+          "traceId": "a1be4767-de23-47c7-9e81-d3d120d624a5",
+          "values": {
+            "microphoneAllowed": true
+          }
+        },
+        "receivedAtMs": 1788884540679
+      },
+      {
+        "event": {
+          "action": "start",
+          "build": "1.0.1+111-e9811addae2ee7a4",
+          "elapsedMs": 1406175,
+          "eventId": "5198bc51-e052-4408-bf66-1064f79d5947",
+          "occurredAtMs": 1788884536628,
+          "operationId": "bf0dcbeb-ca36-47d6-8971-e3aedfdead76",
+          "outcome": "started",
+          "reason": "resume_refresh",
+          "role": "caller",
+          "runId": "2d939f75-279d-40a2-b031-7c9665714c76",
+          "schemaVersion": 1,
+          "sequence": 72,
+          "source": "flutter",
+          "stage": "authority",
+          "traceId": "a1be4767-de23-47c7-9e81-d3d120d624a5",
+          "values": {}
+        },
+        "receivedAtMs": 1788884540688
+      },
+      {
+        "event": {
+          "action": "publish",
+          "build": "1.0.1+111-e9811addae2ee7a4",
+          "elapsedMs": 1406180,
+          "eventId": "45895dac-e932-4195-8505-c047e740ef66",
+          "occurredAtMs": 1788884536633,
+          "operationId": "bf0dcbeb-ca36-47d6-8971-e3aedfdead76",
+          "outcome": "started",
+          "reason": "none",
+          "requestId": "ffa344e5-a3bb-4481-9a77-4140c16de35d",
+          "role": "caller",
+          "runId": "2d939f75-279d-40a2-b031-7c9665714c76",
+          "schemaVersion": 1,
+          "sequence": 73,
+          "source": "flutter",
+          "stage": "authority",
+          "traceId": "a1be4767-de23-47c7-9e81-d3d120d624a5",
+          "values": {}
+        },
+        "receivedAtMs": 1788884540698
+      },
+      {
+        "event": {
+          "action": "publish",
+          "build": "1.0.1+111-e9811addae2ee7a4",
+          "elapsedMs": 1406222,
+          "eventId": "38a00e66-edb8-40e0-a8e9-ab6695b12464",
+          "occurredAtMs": 1788884536675,
+          "operationId": "bf0dcbeb-ca36-47d6-8971-e3aedfdead76",
+          "outcome": "ok",
+          "reason": "none",
+          "requestId": "ffa344e5-a3bb-4481-9a77-4140c16de35d",
+          "role": "caller",
+          "runId": "2d939f75-279d-40a2-b031-7c9665714c76",
+          "schemaVersion": 1,
+          "sequence": 74,
+          "source": "flutter",
+          "stage": "authority",
+          "traceId": "a1be4767-de23-47c7-9e81-d3d120d624a5",
+          "values": {}
+        },
+        "receivedAtMs": 1788884540707
+      },
+      {
+        "event": {
+          "action": "publish",
+          "build": "1.0.1+111-e9811addae2ee7a4",
+          "elapsedMs": 1406229,
+          "eventId": "0634431d-7089-4f2b-82c6-ca0cd294b0f1",
+          "occurredAtMs": 1788884536683,
+          "operationId": "bf0dcbeb-ca36-47d6-8971-e3aedfdead76",
+          "outcome": "started",
+          "reason": "none",
+          "requestId": "4fc71c9e-a8de-4154-af10-ddefc0b72018",
+          "role": "caller",
+          "runId": "2d939f75-279d-40a2-b031-7c9665714c76",
+          "schemaVersion": 1,
+          "sequence": 75,
+          "source": "flutter",
+          "stage": "authority",
+          "traceId": "a1be4767-de23-47c7-9e81-d3d120d624a5",
+          "values": {}
+        },
+        "receivedAtMs": 1788884540718
+      },
+      {
+        "event": {
+          "action": "publish",
+          "build": "1.0.1+111-e9811addae2ee7a4",
+          "elapsedMs": 1406269,
+          "eventId": "54491698-1332-462a-8ad6-1d01084e0d5b",
+          "occurredAtMs": 1788884536722,
+          "operationId": "bf0dcbeb-ca36-47d6-8971-e3aedfdead76",
+          "outcome": "ok",
+          "reason": "none",
+          "requestId": "4fc71c9e-a8de-4154-af10-ddefc0b72018",
+          "role": "caller",
+          "runId": "2d939f75-279d-40a2-b031-7c9665714c76",
+          "schemaVersion": 1,
+          "sequence": 76,
+          "source": "flutter",
+          "stage": "authority",
+          "traceId": "a1be4767-de23-47c7-9e81-d3d120d624a5",
+          "values": {}
+        },
+        "receivedAtMs": 1788884540727
+      },
+      {
+        "event": {
+          "action": "publish",
+          "build": "1.0.1+111-e9811addae2ee7a4",
+          "elapsedMs": 1406272,
+          "eventId": "e78eeac9-af4d-41a2-bcf5-4598674ce2e9",
+          "occurredAtMs": 1788884536725,
+          "operationId": "bf0dcbeb-ca36-47d6-8971-e3aedfdead76",
+          "outcome": "started",
+          "reason": "none",
+          "requestId": "3bfccb58-ef8e-43de-aa44-c64ca41df100",
+          "role": "caller",
+          "runId": "2d939f75-279d-40a2-b031-7c9665714c76",
+          "schemaVersion": 1,
+          "sequence": 77,
+          "source": "flutter",
+          "stage": "authority",
+          "traceId": "a1be4767-de23-47c7-9e81-d3d120d624a5",
+          "values": {}
+        },
+        "receivedAtMs": 1788884540737
+      },
+      {
+        "event": {
+          "action": "publish",
+          "build": "1.0.1+111-e9811addae2ee7a4",
+          "elapsedMs": 1406314,
+          "eventId": "28e7aecb-874d-4aa8-8e1d-ea095afc65ea",
+          "occurredAtMs": 1788884536768,
+          "operationId": "bf0dcbeb-ca36-47d6-8971-e3aedfdead76",
+          "outcome": "ok",
+          "reason": "none",
+          "requestId": "3bfccb58-ef8e-43de-aa44-c64ca41df100",
+          "role": "caller",
+          "runId": "2d939f75-279d-40a2-b031-7c9665714c76",
+          "schemaVersion": 1,
+          "sequence": 78,
+          "source": "flutter",
+          "stage": "authority",
+          "traceId": "a1be4767-de23-47c7-9e81-d3d120d624a5",
+          "values": {}
+        },
+        "receivedAtMs": 1788884540746
+      },
+      {
+        "event": {
+          "action": "lookup",
+          "build": "1.0.1+111-e9811addae2ee7a4",
+          "elapsedMs": 1406320,
+          "eventId": "fef08608-b4d6-4c1a-b81c-e070b5dc2dc0",
+          "occurredAtMs": 1788884536773,
+          "outcome": "started",
+          "reason": "none",
+          "requestId": "3ea46883-1f70-468f-bf89-e4be8c909b74",
+          "role": "caller",
+          "runId": "2d939f75-279d-40a2-b031-7c9665714c76",
+          "schemaVersion": 1,
+          "sequence": 79,
+          "source": "flutter",
+          "stage": "authority",
+          "traceId": "a1be4767-de23-47c7-9e81-d3d120d624a5",
+          "values": {}
+        },
+        "receivedAtMs": 1788884540756
+      },
+      {
+        "event": {
+          "action": "lookup",
+          "build": "1.0.1+111-e9811addae2ee7a4",
+          "elapsedMs": 1406360,
+          "eventId": "93b2e38e-9539-45b1-b6fa-ba257e429608",
+          "occurredAtMs": 1788884536814,
+          "outcome": "ok",
+          "reason": "none",
+          "requestId": "3ea46883-1f70-468f-bf89-e4be8c909b74",
+          "role": "caller",
+          "runId": "2d939f75-279d-40a2-b031-7c9665714c76",
+          "schemaVersion": 1,
+          "sequence": 80,
+          "source": "flutter",
+          "stage": "authority",
+          "traceId": "a1be4767-de23-47c7-9e81-d3d120d624a5",
+          "values": {}
+        },
+        "receivedAtMs": 1788884540765
+      },
+      {
+        "event": {
+          "action": "lookup",
+          "build": "1.0.1+111-e9811addae2ee7a4",
+          "elapsedMs": 1406364,
+          "eventId": "454f5743-4e48-48b3-8d11-9f29bd8003bb",
+          "occurredAtMs": 1788884536817,
+          "outcome": "ok",
+          "reason": "none",
+          "role": "caller",
+          "runId": "2d939f75-279d-40a2-b031-7c9665714c76",
+          "schemaVersion": 1,
+          "sequence": 81,
+          "source": "flutter",
+          "stage": "preflight",
+          "traceId": "a1be4767-de23-47c7-9e81-d3d120d624a5",
+          "values": {}
+        },
+        "receivedAtMs": 1788884540775
+      },
+      {
+        "event": {
+          "action": "commit",
+          "build": "1.0.1+111-e9811addae2ee7a4",
+          "elapsedMs": 1406364,
+          "eventId": "465496df-86f4-4014-995d-3ba00cddbab4",
+          "occurredAtMs": 1788884536817,
+          "outcome": "ok",
+          "reason": "none",
+          "role": "caller",
+          "runId": "2d939f75-279d-40a2-b031-7c9665714c76",
+          "schemaVersion": 1,
+          "sequence": 82,
+          "source": "flutter",
+          "stage": "signaling",
+          "traceId": "a1be4767-de23-47c7-9e81-d3d120d624a5",
+          "values": {
+            "accepted": false,
+            "connected": false,
+            "state": "outgoing_preparing",
+            "terminal": false
+          }
+        },
+        "receivedAtMs": 1788884540787
+      },
+      {
+        "event": {
+          "action": "lookup",
+          "build": "1.0.1+111-e9811addae2ee7a4",
+          "elapsedMs": 1406367,
+          "eventId": "8f2bd640-497d-4e6a-9939-833cee5f5dd3",
+          "occurredAtMs": 1788884536820,
+          "outcome": "started",
+          "reason": "none",
+          "requestId": "ae51495e-36e5-4404-bb64-0c2c5280b39b",
+          "role": "caller",
+          "runId": "2d939f75-279d-40a2-b031-7c9665714c76",
+          "schemaVersion": 1,
+          "sequence": 83,
+          "source": "flutter",
+          "stage": "authority",
+          "traceId": "a1be4767-de23-47c7-9e81-d3d120d624a5",
+          "values": {}
+        },
+        "receivedAtMs": 1788884540796
+      },
+      {
+        "event": {
+          "action": "lookup",
+          "build": "1.0.1+111-e9811addae2ee7a4",
+          "elapsedMs": 1406408,
+          "eventId": "cb59365f-e3ba-46a0-8a4f-535f11146cc5",
+          "occurredAtMs": 1788884536861,
+          "outcome": "ok",
+          "reason": "none",
+          "requestId": "ae51495e-36e5-4404-bb64-0c2c5280b39b",
+          "role": "caller",
+          "runId": "2d939f75-279d-40a2-b031-7c9665714c76",
+          "schemaVersion": 1,
+          "sequence": 84,
+          "source": "flutter",
+          "stage": "authority",
+          "traceId": "a1be4767-de23-47c7-9e81-d3d120d624a5",
+          "values": {}
+        },
+        "receivedAtMs": 1788884540805
+      },
+      {
+        "event": {
+          "action": "lookup",
+          "build": "1.0.1+111-e9811addae2ee7a4",
+          "elapsedMs": 1406412,
+          "eventId": "2180c451-f058-49ae-9b59-bd38eed310f6",
+          "occurredAtMs": 1788884536865,
+          "outcome": "ok",
+          "reason": "none",
+          "role": "caller",
+          "runId": "2d939f75-279d-40a2-b031-7c9665714c76",
+          "schemaVersion": 1,
+          "sequence": 85,
+          "source": "flutter",
+          "stage": "preflight",
+          "traceId": "a1be4767-de23-47c7-9e81-d3d120d624a5",
+          "values": {}
+        },
+        "receivedAtMs": 1788884540815
+      },
+      {
+        "event": {
+          "action": "commit",
+          "build": "1.0.1+111-e9811addae2ee7a4",
+          "elapsedMs": 1406438,
+          "eventId": "8a4546b4-5739-4973-8fd4-dae7ad2083ee",
+          "occurredAtMs": 1788884536891,
+          "outcome": "ok",
+          "reason": "none",
+          "role": "caller",
+          "runId": "2d939f75-279d-40a2-b031-7c9665714c76",
+          "schemaVersion": 1,
+          "sequence": 86,
+          "source": "flutter",
+          "stage": "signaling",
+          "traceId": "a1be4767-de23-47c7-9e81-d3d120d624a5",
+          "values": {
+            "accepted": false,
+            "connected": false,
+            "state": "inviting",
+            "terminal": false
+          }
+        },
+        "receivedAtMs": 1788884540825
+      },
+      {
+        "event": {
+          "action": "lookup",
+          "build": "1.0.1+111-e9811addae2ee7a4",
+          "elapsedMs": 1406456,
+          "eventId": "ea9da677-a805-4575-8c42-7c5c62e6fc67",
+          "occurredAtMs": 1788884536910,
+          "outcome": "started",
+          "reason": "none",
+          "requestId": "4f5439e4-3b80-4b5b-855a-e7937ed345e7",
+          "role": "caller",
+          "runId": "2d939f75-279d-40a2-b031-7c9665714c76",
+          "schemaVersion": 1,
+          "sequence": 87,
+          "source": "flutter",
+          "stage": "authority",
+          "traceId": "a1be4767-de23-47c7-9e81-d3d120d624a5",
+          "values": {}
+        },
+        "receivedAtMs": 1788884540835
+      },
+      {
+        "event": {
+          "action": "lookup",
+          "build": "1.0.1+111-e9811addae2ee7a4",
+          "elapsedMs": 1406520,
+          "eventId": "9d5601d2-5ba0-4ddd-84de-b356b4b7d7a4",
+          "occurredAtMs": 1788884536973,
+          "outcome": "ok",
+          "reason": "none",
+          "requestId": "4f5439e4-3b80-4b5b-855a-e7937ed345e7",
+          "role": "caller",
+          "runId": "2d939f75-279d-40a2-b031-7c9665714c76",
+          "schemaVersion": 1,
+          "sequence": 88,
+          "source": "flutter",
+          "stage": "authority",
+          "traceId": "a1be4767-de23-47c7-9e81-d3d120d624a5",
+          "values": {}
+        },
+        "receivedAtMs": 1788884540845
+      },
+      {
+        "event": {
+          "action": "lookup",
+          "build": "1.0.1+111-e9811addae2ee7a4",
+          "elapsedMs": 1406527,
+          "eventId": "7945b61f-f522-4afe-9921-e67230f3a08e",
+          "occurredAtMs": 1788884536980,
+          "outcome": "ok",
+          "reason": "none",
+          "role": "caller",
+          "runId": "2d939f75-279d-40a2-b031-7c9665714c76",
+          "schemaVersion": 1,
+          "sequence": 89,
+          "source": "flutter",
+          "stage": "preflight",
+          "traceId": "a1be4767-de23-47c7-9e81-d3d120d624a5",
+          "values": {}
+        },
+        "receivedAtMs": 1788884540855
+      },
+      {
+        "event": {
+          "action": "send_direct",
+          "build": "1.0.1+111-e9811addae2ee7a4",
+          "elapsedMs": 1406533,
+          "eventId": "8267fb83-d5ea-4234-b485-0a66ae03470f",
+          "occurredAtMs": 1788884536986,
+          "outcome": "started",
+          "reason": "none",
+          "role": "caller",
+          "runId": "2d939f75-279d-40a2-b031-7c9665714c76",
+          "schemaVersion": 1,
+          "sequence": 90,
+          "source": "flutter",
+          "stage": "signaling",
+          "traceId": "a1be4767-de23-47c7-9e81-d3d120d624a5",
+          "values": {}
+        },
+        "receivedAtMs": 1788884540865
+      },
+      {
+        "event": {
+          "action": "store",
+          "build": "1.0.1+111-e9811addae2ee7a4",
+          "elapsedMs": 1406533,
+          "eventId": "b3a82a9a-4fbe-4f83-a3f9-6a25fa347158",
+          "occurredAtMs": 1788884536986,
+          "outcome": "started",
+          "reason": "none",
+          "requestId": "e9834424-b395-42b2-892e-65b7866df9eb",
+          "role": "caller",
+          "runId": "2d939f75-279d-40a2-b031-7c9665714c76",
+          "schemaVersion": 1,
+          "sequence": 91,
+          "source": "flutter",
+          "stage": "signaling",
+          "traceId": "a1be4767-de23-47c7-9e81-d3d120d624a5",
+          "values": {}
+        },
+        "receivedAtMs": 1788884540874
+      },
+      {
+        "event": {
+          "action": "send_direct",
+          "build": "1.0.1+111-e9811addae2ee7a4",
+          "elapsedMs": 1406713,
+          "eventId": "65b685b6-259b-479b-877b-91ca4b0eb599",
+          "occurredAtMs": 1788884537166,
+          "outcome": "failed",
+          "reason": "transport_failed",
+          "role": "caller",
+          "runId": "2d939f75-279d-40a2-b031-7c9665714c76",
+          "schemaVersion": 1,
+          "sequence": 92,
+          "source": "flutter",
+          "stage": "signaling",
+          "traceId": "a1be4767-de23-47c7-9e81-d3d120d624a5",
+          "values": {}
+        },
+        "receivedAtMs": 1788884540884
+      },
+      {
+        "event": {
+          "action": "store",
+          "build": "1.0.1+111-e9811addae2ee7a4",
+          "elapsedMs": 1406883,
+          "eventId": "79195472-d26d-49cb-96be-1147f9fcd97c",
+          "occurredAtMs": 1788884537337,
+          "outcome": "ok",
+          "reason": "none",
+          "requestId": "e9834424-b395-42b2-892e-65b7866df9eb",
+          "role": "caller",
+          "runId": "2d939f75-279d-40a2-b031-7c9665714c76",
+          "schemaVersion": 1,
+          "sequence": 93,
+          "source": "flutter",
+          "stage": "signaling",
+          "traceId": "a1be4767-de23-47c7-9e81-d3d120d624a5",
+          "values": {}
+        },
+        "receivedAtMs": 1788884540894
+      },
+      {
+        "event": {
+          "action": "commit",
+          "build": "1.0.1+111-e9811addae2ee7a4",
+          "elapsedMs": 1406893,
+          "eventId": "391dc915-e879-4e8c-8b8c-9f519422497b",
+          "occurredAtMs": 1788884537347,
+          "outcome": "ok",
+          "reason": "none",
+          "role": "caller",
+          "runId": "2d939f75-279d-40a2-b031-7c9665714c76",
+          "schemaVersion": 1,
+          "sequence": 94,
+          "source": "flutter",
+          "stage": "signaling",
+          "traceId": "a1be4767-de23-47c7-9e81-d3d120d624a5",
+          "values": {
+            "storeCommitted": true
+          }
+        },
+        "receivedAtMs": 1788884540904
+      },
+      {
+        "event": {
+          "action": "commit",
+          "build": "1.0.1+111-e9811addae2ee7a4",
+          "elapsedMs": 1406895,
+          "eventId": "2a684aa3-7704-42dc-ba45-2023d7f16920",
+          "occurredAtMs": 1788884537348,
+          "outcome": "ok",
+          "reason": "none",
+          "role": "caller",
+          "runId": "2d939f75-279d-40a2-b031-7c9665714c76",
+          "schemaVersion": 1,
+          "sequence": 95,
+          "source": "flutter",
+          "stage": "signaling",
+          "traceId": "a1be4767-de23-47c7-9e81-d3d120d624a5",
+          "values": {
+            "accepted": false,
+            "connected": false,
+            "state": "ringing",
+            "terminal": false
+          }
+        },
+        "receivedAtMs": 1788884540916
+      },
+      {
+        "event": {
+          "action": "finish",
+          "build": "1.0.1+111-e9811addae2ee7a4",
+          "elapsedMs": 1406895,
+          "eventId": "60ce10b9-79f9-44e5-96f4-7716035c6214",
+          "occurredAtMs": 1788884537348,
+          "outcome": "ok",
+          "reason": "none",
+          "role": "caller",
+          "runId": "2d939f75-279d-40a2-b031-7c9665714c76",
+          "schemaVersion": 1,
+          "sequence": 96,
+          "source": "flutter",
+          "stage": "preflight",
+          "traceId": "a1be4767-de23-47c7-9e81-d3d120d624a5",
+          "values": {}
+        },
+        "receivedAtMs": 1788884540926
+      },
+      {
+        "event": {
+          "action": "present",
+          "elapsedMs": 357066169,
+          "eventId": "2285c5b6-edc6-444f-bbf4-0eb49b8d22ad",
+          "occurredAtMs": 1788884536879,
+          "operationId": "27440f8b-68da-4334-b53b-09f4078c3f37",
+          "outcome": "started",
+          "reason": "none",
+          "requestId": "7d0ac373-63e7-400f-b934-509f0b615254",
+          "role": "caller",
+          "runId": "ce7e6c8d-a215-4bb5-a5bb-98d291575025",
+          "schemaVersion": 1,
+          "sequence": 71,
+          "source": "ios",
+          "stage": "presentation",
+          "traceId": "a1be4767-de23-47c7-9e81-d3d120d624a5",
+          "values": {}
+        },
+        "receivedAtMs": 1788884540936
+      },
+      {
+        "event": {
+          "action": "commit",
+          "elapsedMs": 357066751,
+          "eventId": "9fb2babf-4dea-4e72-9f4b-18de4725b74f",
+          "occurredAtMs": 1788884537461,
+          "operationId": "27440f8b-68da-4334-b53b-09f4078c3f37",
+          "outcome": "ok",
+          "reason": "none",
+          "requestId": "7d0ac373-63e7-400f-b934-509f0b615254",
+          "role": "caller",
+          "runId": "ce7e6c8d-a215-4bb5-a5bb-98d291575025",
+          "schemaVersion": 1,
+          "sequence": 72,
+          "source": "ios",
+          "stage": "presentation",
+          "traceId": "a1be4767-de23-47c7-9e81-d3d120d624a5",
+          "values": {
+            "nativeCommitted": true,
+            "terminal": false
+          }
+        },
+        "receivedAtMs": 1788884540946
+      },
+      {
+        "event": {
+          "action": "present",
+          "elapsedMs": 357066755,
+          "eventId": "542dc85a-65ef-4b65-811d-2e62c649c82c",
+          "occurredAtMs": 1788884537464,
+          "operationId": "27440f8b-68da-4334-b53b-09f4078c3f37",
+          "outcome": "ok",
+          "reason": "none",
+          "requestId": "7d0ac373-63e7-400f-b934-509f0b615254",
+          "role": "caller",
+          "runId": "ce7e6c8d-a215-4bb5-a5bb-98d291575025",
+          "schemaVersion": 1,
+          "sequence": 73,
+          "source": "ios",
+          "stage": "presentation",
+          "traceId": "a1be4767-de23-47c7-9e81-d3d120d624a5",
+          "values": {
+            "accepted": true
+          }
+        },
+        "receivedAtMs": 1788884540955
+      },
+      {
+        "event": {
+          "action": "commit",
+          "elapsedMs": 357066758,
+          "eventId": "31d124f4-5eee-44dd-92fe-089528ef9d18",
+          "occurredAtMs": 1788884537468,
+          "operationId": "27440f8b-68da-4334-b53b-09f4078c3f37",
+          "outcome": "ok",
+          "reason": "none",
+          "requestId": "7d0ac373-63e7-400f-b934-509f0b615254",
+          "role": "caller",
+          "runId": "ce7e6c8d-a215-4bb5-a5bb-98d291575025",
+          "schemaVersion": 1,
+          "sequence": 74,
+          "source": "ios",
+          "stage": "audio",
+          "traceId": "a1be4767-de23-47c7-9e81-d3d120d624a5",
+          "values": {
+            "nativeCommitted": true,
+            "terminal": false
+          }
+        },
+        "receivedAtMs": 1788884540965
+      },
+      {
+        "event": {
+          "action": "lookup",
+          "build": "7c70c5616c335ee1a3435730a153946466b73b636a138a1fef3ae78732900865",
+          "elapsedMs": 0,
+          "eventId": "9c198a06-f36f-4248-8896-354c06e9270a",
+          "occurredAtMs": 1788884567038,
+          "outcome": "started",
+          "reason": "none",
+          "requestId": "881323e1-ad58-486b-86ca-324814f4ded4",
+          "role": "server",
+          "runId": "6fde0178-e86d-43dc-9e76-b8510e0709b8",
+          "schemaVersion": 1,
+          "sequence": 29,
+          "source": "relay",
+          "stage": "authority",
+          "traceId": "a1be4767-de23-47c7-9e81-d3d120d624a5",
+          "values": {
+            "authorityKind": "endpoint"
+          }
+        },
+        "receivedAtMs": 1788884567039
+      },
+      {
+        "event": {
+          "action": "lookup",
+          "build": "7c70c5616c335ee1a3435730a153946466b73b636a138a1fef3ae78732900865",
+          "elapsedMs": 0,
+          "eventId": "8dd7f1e6-067b-42ea-a003-e38085e87337",
+          "occurredAtMs": 1788884567039,
+          "outcome": "ok",
+          "parentOperationId": "23ce49d2-1837-4959-a63a-574763152d26",
+          "reason": "none",
+          "requestId": "881323e1-ad58-486b-86ca-324814f4ded4",
+          "role": "server",
+          "runId": "6fde0178-e86d-43dc-9e76-b8510e0709b8",
+          "schemaVersion": 1,
+          "sequence": 30,
+          "source": "relay",
+          "stage": "authority",
+          "traceId": "a1be4767-de23-47c7-9e81-d3d120d624a5",
+          "values": {
+            "authorityKind": "endpoint",
+            "found": true
+          }
+        },
+        "receivedAtMs": 1788884567050
+      },
+      {
+        "event": {
+          "action": "response",
+          "build": "7c70c5616c335ee1a3435730a153946466b73b636a138a1fef3ae78732900865",
+          "elapsedMs": 0,
+          "eventId": "9f4558ca-42aa-411d-b631-6b5f70b0d337",
+          "occurredAtMs": 1788884567039,
+          "outcome": "ok",
+          "parentOperationId": "23ce49d2-1837-4959-a63a-574763152d26",
+          "reason": "none",
+          "requestId": "881323e1-ad58-486b-86ca-324814f4ded4",
+          "role": "server",
+          "runId": "6fde0178-e86d-43dc-9e76-b8510e0709b8",
+          "schemaVersion": 1,
+          "sequence": 31,
+          "source": "relay",
+          "stage": "authority",
+          "traceId": "a1be4767-de23-47c7-9e81-d3d120d624a5",
+          "values": {
+            "authorityKind": "endpoint",
+            "responseWritten": true
+          }
+        },
+        "receivedAtMs": 1788884567060
+      },
+      {
+        "event": {
+          "action": "store",
+          "build": "7c70c5616c335ee1a3435730a153946466b73b636a138a1fef3ae78732900865",
+          "elapsedMs": 0,
+          "eventId": "460f7e29-4088-4315-bae8-9599a161d5a3",
+          "occurredAtMs": 1788884567135,
+          "outcome": "started",
+          "reason": "none",
+          "requestId": "c0462332-5e06-4b69-9cd7-35e5bb0396ca",
+          "role": "server",
+          "runId": "6fde0178-e86d-43dc-9e76-b8510e0709b8",
+          "schemaVersion": 1,
+          "sequence": 32,
+          "source": "relay",
+          "stage": "signaling",
+          "traceId": "a1be4767-de23-47c7-9e81-d3d120d624a5",
+          "values": {}
+        },
+        "receivedAtMs": 1788884567135
+      },
+      {
+        "event": {
+          "action": "commit",
+          "build": "7c70c5616c335ee1a3435730a153946466b73b636a138a1fef3ae78732900865",
+          "elapsedMs": 1,
+          "eventId": "a929779e-d3d8-4e05-b698-1c04db7d6a79",
+          "occurredAtMs": 1788884567136,
+          "outcome": "ok",
+          "reason": "none",
+          "requestId": "c0462332-5e06-4b69-9cd7-35e5bb0396ca",
+          "role": "server",
+          "runId": "6fde0178-e86d-43dc-9e76-b8510e0709b8",
+          "schemaVersion": 1,
+          "sequence": 33,
+          "source": "relay",
+          "stage": "signaling",
+          "traceId": "a1be4767-de23-47c7-9e81-d3d120d624a5",
+          "values": {
+            "eventCount": 2,
+            "storeCommitted": true
+          }
+        },
+        "receivedAtMs": 1788884567153
+      },
+      {
+        "event": {
+          "action": "commit",
+          "build": "1.0.1+111-e9811addae2ee7a4",
+          "elapsedMs": 1436452,
+          "eventId": "0e098dfc-806b-4a1f-b8ae-b6dbb60941f9",
+          "occurredAtMs": 1788884566905,
+          "outcome": "ok",
+          "reason": "no_answer",
+          "role": "caller",
+          "runId": "2d939f75-279d-40a2-b031-7c9665714c76",
+          "schemaVersion": 1,
+          "sequence": 97,
+          "source": "flutter",
+          "stage": "terminal",
+          "traceId": "a1be4767-de23-47c7-9e81-d3d120d624a5",
+          "values": {
+            "accepted": false,
+            "connected": false,
+            "state": "ended",
+            "terminal": true
+          }
+        },
+        "receivedAtMs": 1788884567163
+      },
+      {
+        "event": {
+          "action": "dispatch",
+          "build": "7c70c5616c335ee1a3435730a153946466b73b636a138a1fef3ae78732900865",
+          "elapsedMs": 2,
+          "eventId": "932e91e7-9e09-4e75-9eb3-fe900f5efd86",
+          "occurredAtMs": 1788884567137,
+          "outcome": "started",
+          "reason": "none",
+          "requestId": "c0462332-5e06-4b69-9cd7-35e5bb0396ca",
+          "role": "server",
+          "runId": "6fde0178-e86d-43dc-9e76-b8510e0709b8",
+          "schemaVersion": 1,
+          "sequence": 34,
+          "source": "relay",
+          "stage": "push",
+          "traceId": "a1be4767-de23-47c7-9e81-d3d120d624a5",
+          "values": {
+            "platform": "android",
+            "providerInvoked": true,
+            "retry": 0
+          }
+        },
+        "receivedAtMs": 1788884567174
+      },
+      {
+        "event": {
+          "action": "finish",
+          "build": "1.0.1+111-e9811addae2ee7a4",
+          "elapsedMs": 1436462,
+          "eventId": "faf35f41-298c-4283-960e-759eef2bb4db",
+          "occurredAtMs": 1788884566916,
+          "outcome": "no_answer",
+          "reason": "no_answer",
+          "role": "caller",
+          "runId": "2d939f75-279d-40a2-b031-7c9665714c76",
+          "schemaVersion": 1,
+          "sequence": 98,
+          "source": "flutter",
+          "stage": "terminal",
+          "traceId": "a1be4767-de23-47c7-9e81-d3d120d624a5",
+          "values": {
+            "accepted": false,
+            "connected": false,
+            "durationMs": 30087,
+            "mediaFlowVerified": false,
+            "terminal": true
+          }
+        },
+        "receivedAtMs": 1788884567183
+      },
+      {
+        "event": {
+          "action": "lookup",
+          "build": "1.0.1+111-e9811addae2ee7a4",
+          "elapsedMs": 1436501,
+          "eventId": "e2ff32ae-7d41-4df7-9dac-11050777a3b5",
+          "occurredAtMs": 1788884566954,
+          "outcome": "started",
+          "reason": "none",
+          "requestId": "881323e1-ad58-486b-86ca-324814f4ded4",
+          "role": "caller",
+          "runId": "2d939f75-279d-40a2-b031-7c9665714c76",
+          "schemaVersion": 1,
+          "sequence": 99,
+          "source": "flutter",
+          "stage": "authority",
+          "traceId": "a1be4767-de23-47c7-9e81-d3d120d624a5",
+          "values": {}
+        },
+        "receivedAtMs": 1788884567193
+      },
+      {
+        "event": {
+          "action": "lookup",
+          "build": "1.0.1+111-e9811addae2ee7a4",
+          "elapsedMs": 1436572,
+          "eventId": "64442482-eea0-4979-bc09-188261f407a1",
+          "occurredAtMs": 1788884567026,
+          "outcome": "ok",
+          "reason": "none",
+          "requestId": "881323e1-ad58-486b-86ca-324814f4ded4",
+          "role": "caller",
+          "runId": "2d939f75-279d-40a2-b031-7c9665714c76",
+          "schemaVersion": 1,
+          "sequence": 100,
+          "source": "flutter",
+          "stage": "authority",
+          "traceId": "a1be4767-de23-47c7-9e81-d3d120d624a5",
+          "values": {}
+        },
+        "receivedAtMs": 1788884567204
+      },
+      {
+        "event": {
+          "action": "dispatch",
+          "build": "7c70c5616c335ee1a3435730a153946466b73b636a138a1fef3ae78732900865",
+          "elapsedMs": 71,
+          "eventId": "125eabf1-d3b4-439f-815e-0c2cb57ce596",
+          "occurredAtMs": 1788884567206,
+          "outcome": "ok",
+          "reason": "none",
+          "requestId": "c0462332-5e06-4b69-9cd7-35e5bb0396ca",
+          "role": "server",
+          "runId": "6fde0178-e86d-43dc-9e76-b8510e0709b8",
+          "schemaVersion": 1,
+          "sequence": 35,
+          "source": "relay",
+          "stage": "push",
+          "traceId": "a1be4767-de23-47c7-9e81-d3d120d624a5",
+          "values": {
+            "platform": "android",
+            "providerInvoked": true,
+            "retry": 0
+          }
+        },
+        "receivedAtMs": 1788884567215
+      },
+      {
+        "event": {
+          "action": "lookup",
+          "build": "1.0.1+111-e9811addae2ee7a4",
+          "elapsedMs": 1436573,
+          "eventId": "990f1fdd-07e6-4225-b689-0517b6e5fed2",
+          "occurredAtMs": 1788884567027,
+          "outcome": "ok",
+          "reason": "none",
+          "role": "caller",
+          "runId": "2d939f75-279d-40a2-b031-7c9665714c76",
+          "schemaVersion": 1,
+          "sequence": 101,
+          "source": "flutter",
+          "stage": "preflight",
+          "traceId": "a1be4767-de23-47c7-9e81-d3d120d624a5",
+          "values": {}
+        },
+        "receivedAtMs": 1788884567225
+      },
+      {
+        "event": {
+          "action": "finish",
+          "build": "7c70c5616c335ee1a3435730a153946466b73b636a138a1fef3ae78732900865",
+          "elapsedMs": 71,
+          "eventId": "c1b6b74b-2c4b-4857-a085-05adcc143dad",
+          "occurredAtMs": 1788884567206,
+          "outcome": "ok",
+          "reason": "none",
+          "requestId": "c0462332-5e06-4b69-9cd7-35e5bb0396ca",
+          "role": "server",
+          "runId": "6fde0178-e86d-43dc-9e76-b8510e0709b8",
+          "schemaVersion": 1,
+          "sequence": 36,
+          "source": "relay",
+          "stage": "push",
+          "traceId": "a1be4767-de23-47c7-9e81-d3d120d624a5",
+          "values": {}
+        },
+        "receivedAtMs": 1788884567235
+      },
+      {
+        "event": {
+          "action": "send_direct",
+          "build": "1.0.1+111-e9811addae2ee7a4",
+          "elapsedMs": 1436586,
+          "eventId": "038353c1-1bdb-497b-9d76-34fcce06c637",
+          "occurredAtMs": 1788884567039,
+          "outcome": "started",
+          "reason": "none",
+          "role": "caller",
+          "runId": "2d939f75-279d-40a2-b031-7c9665714c76",
+          "schemaVersion": 1,
+          "sequence": 102,
+          "source": "flutter",
+          "stage": "signaling",
+          "traceId": "a1be4767-de23-47c7-9e81-d3d120d624a5",
+          "values": {}
+        },
+        "receivedAtMs": 1788884567245
+      },
+      {
+        "event": {
+          "action": "store",
+          "build": "7c70c5616c335ee1a3435730a153946466b73b636a138a1fef3ae78732900865",
+          "elapsedMs": 71,
+          "eventId": "7bcb69fc-2a47-4b58-b5f8-c43089236cb5",
+          "occurredAtMs": 1788884567206,
+          "outcome": "ok",
+          "reason": "none",
+          "requestId": "c0462332-5e06-4b69-9cd7-35e5bb0396ca",
+          "role": "server",
+          "runId": "6fde0178-e86d-43dc-9e76-b8510e0709b8",
+          "schemaVersion": 1,
+          "sequence": 37,
+          "source": "relay",
+          "stage": "signaling",
+          "traceId": "a1be4767-de23-47c7-9e81-d3d120d624a5",
+          "values": {}
+        },
+        "receivedAtMs": 1788884567255
+      },
+      {
+        "event": {
+          "action": "store",
+          "build": "1.0.1+111-e9811addae2ee7a4",
+          "elapsedMs": 1436587,
+          "eventId": "6963054f-9921-44fa-a15a-9d266640a2fc",
+          "occurredAtMs": 1788884567041,
+          "outcome": "started",
+          "reason": "none",
+          "requestId": "c0462332-5e06-4b69-9cd7-35e5bb0396ca",
+          "role": "caller",
+          "runId": "2d939f75-279d-40a2-b031-7c9665714c76",
+          "schemaVersion": 1,
+          "sequence": 103,
+          "source": "flutter",
+          "stage": "signaling",
+          "traceId": "a1be4767-de23-47c7-9e81-d3d120d624a5",
+          "values": {}
+        },
+        "receivedAtMs": 1788884567267
+      },
+      {
+        "event": {
+          "action": "response",
+          "build": "7c70c5616c335ee1a3435730a153946466b73b636a138a1fef3ae78732900865",
+          "elapsedMs": 71,
+          "eventId": "73583eb2-beac-4228-bf4f-515671c2dcd2",
+          "occurredAtMs": 1788884567206,
+          "outcome": "ok",
+          "reason": "none",
+          "requestId": "c0462332-5e06-4b69-9cd7-35e5bb0396ca",
+          "role": "server",
+          "runId": "6fde0178-e86d-43dc-9e76-b8510e0709b8",
+          "schemaVersion": 1,
+          "sequence": 38,
+          "source": "relay",
+          "stage": "signaling",
+          "traceId": "a1be4767-de23-47c7-9e81-d3d120d624a5",
+          "values": {
+            "responseWritten": true
+          }
+        },
+        "receivedAtMs": 1788884567277
+      },
+      {
+        "event": {
+          "action": "send_direct",
+          "build": "1.0.1+111-e9811addae2ee7a4",
+          "elapsedMs": 1436595,
+          "eventId": "c375df2d-bbe7-419d-9bb7-63c798e979d3",
+          "occurredAtMs": 1788884567048,
+          "outcome": "failed",
+          "reason": "transport_failed",
+          "role": "caller",
+          "runId": "2d939f75-279d-40a2-b031-7c9665714c76",
+          "schemaVersion": 1,
+          "sequence": 104,
+          "source": "flutter",
+          "stage": "signaling",
+          "traceId": "a1be4767-de23-47c7-9e81-d3d120d624a5",
+          "values": {}
+        },
+        "receivedAtMs": 1788884567287
+      },
+      {
+        "event": {
+          "action": "commit",
+          "elapsedMs": 357096336,
+          "eventId": "6056932a-6656-47e3-801e-e1dd7fcdf01d",
+          "occurredAtMs": 1788884567044,
+          "operationId": "27440f8b-68da-4334-b53b-09f4078c3f37",
+          "outcome": "ok",
+          "reason": "local_user",
+          "requestId": "7d0ac373-63e7-400f-b934-509f0b615254",
+          "role": "caller",
+          "runId": "ce7e6c8d-a215-4bb5-a5bb-98d291575025",
+          "schemaVersion": 1,
+          "sequence": 75,
+          "source": "ios",
+          "stage": "terminal",
+          "traceId": "a1be4767-de23-47c7-9e81-d3d120d624a5",
+          "values": {
+            "nativeCommitted": true,
+            "terminal": true
+          }
+        },
+        "receivedAtMs": 1788884570626
+      },
+      {
+        "event": {
+          "action": "store",
+          "build": "1.0.1+111-e9811addae2ee7a4",
+          "elapsedMs": 1436715,
+          "eventId": "9e74762e-8c04-4f84-9cef-c37c60f058a2",
+          "occurredAtMs": 1788884567168,
+          "outcome": "ok",
+          "reason": "none",
+          "requestId": "c0462332-5e06-4b69-9cd7-35e5bb0396ca",
+          "role": "caller",
+          "runId": "2d939f75-279d-40a2-b031-7c9665714c76",
+          "schemaVersion": 1,
+          "sequence": 105,
+          "source": "flutter",
+          "stage": "signaling",
+          "traceId": "a1be4767-de23-47c7-9e81-d3d120d624a5",
+          "values": {}
+        },
+        "receivedAtMs": 1788884570638
+      },
+      {
+        "event": {
+          "action": "commit",
+          "build": "1.0.1+111-e9811addae2ee7a4",
+          "elapsedMs": 1436722,
+          "eventId": "4d53eee9-a509-48ac-a57b-f08b28aae907",
+          "occurredAtMs": 1788884567175,
+          "outcome": "ok",
+          "reason": "none",
+          "role": "caller",
+          "runId": "2d939f75-279d-40a2-b031-7c9665714c76",
+          "schemaVersion": 1,
+          "sequence": 106,
+          "source": "flutter",
+          "stage": "signaling",
+          "traceId": "a1be4767-de23-47c7-9e81-d3d120d624a5",
+          "values": {
+            "storeCommitted": true
+          }
+        },
+        "receivedAtMs": 1788884570648
+      },
+      {
+        "event": {
+          "action": "finish",
+          "build": "1.0.1+111-e9811addae2ee7a4",
+          "elapsedMs": 1436723,
+          "eventId": "3f5f1289-a400-49b0-9980-a52b48869721",
+          "occurredAtMs": 1788884567176,
+          "outcome": "ok",
+          "reason": "none",
+          "role": "caller",
+          "runId": "2d939f75-279d-40a2-b031-7c9665714c76",
+          "schemaVersion": 1,
+          "sequence": 107,
+          "source": "flutter",
+          "stage": "cleanup",
+          "traceId": "a1be4767-de23-47c7-9e81-d3d120d624a5",
+          "values": {
+            "cleanupRemaining": 0,
+            "complete": true
+          }
+        },
+        "receivedAtMs": 1788884570658
+      }
+    ],
+    "evidenceIncomplete": false,
+    "failureOrderingScope": "First relay-received failed phase; different device clocks and delayed uploads do not establish global causal order. Missing stages may be normal for declined/canceled/preflight-only or legacy calls.",
+    "firstMissingStageReport": "answer",
+    "firstReceivedFailure": {
+      "action": "send_direct",
+      "outcome": "failed",
+      "reason": "transport_failed",
+      "receivedAtMs": 1788884540884,
+      "source": "flutter",
+      "stage": "signaling"
+    },
+    "hasRetainedEvents": true,
+    "invalidOrUnreadableRecordCount": 0,
+    "legacyTraceCount": 0,
+    "lossCountScope": "droppedEvents counts durable distinct permanent trace-cap refusals within a bounded ledger. Saturated ledgers are a lower bound. Legacy quota-rejection attempts include retries and do not establish a unique lost-event count.",
+    "mailboxAdmittedTraceCount": 1,
+    "missingEndpointTerminalTraceCount": 1,
+    "missingStageReports": [
+      "answer",
+      "media"
+    ],
+    "neutralTerminalTraceCount": 1,
+    "observedTraceCount": 1,
+    "operationChain": [
+      {
+        "action": "lookup",
+        "occurredAtMs": 1788884536662,
+        "outcome": "ok",
+        "parentOperationId": "23ce49d2-1837-4959-a63a-574763152d26",
+        "reason": "none",
+        "receivedAtMs": 1788884536676,
+        "source": "relay",
+        "stage": "authority"
+      },
+      {
+        "action": "response",
+        "occurredAtMs": 1788884536662,
+        "outcome": "ok",
+        "parentOperationId": "23ce49d2-1837-4959-a63a-574763152d26",
+        "reason": "none",
+        "receivedAtMs": 1788884536684,
+        "source": "relay",
+        "stage": "authority"
+      },
+      {
+        "action": "publish",
+        "occurredAtMs": 1788884536715,
+        "operationId": "bf0dcbeb-ca36-47d6-8971-e3aedfdead76",
+        "outcome": "started",
+        "reason": "resume_refresh",
+        "receivedAtMs": 1788884536715,
+        "source": "relay",
+        "stage": "authority"
+      },
+      {
+        "action": "publish",
+        "occurredAtMs": 1788884536716,
+        "operationId": "bf0dcbeb-ca36-47d6-8971-e3aedfdead76",
+        "outcome": "ok",
+        "reason": "resume_refresh",
+        "receivedAtMs": 1788884536729,
+        "source": "relay",
+        "stage": "authority"
+      },
+      {
+        "action": "response",
+        "occurredAtMs": 1788884536716,
+        "operationId": "bf0dcbeb-ca36-47d6-8971-e3aedfdead76",
+        "outcome": "ok",
+        "reason": "none",
+        "receivedAtMs": 1788884536738,
+        "source": "relay",
+        "stage": "authority"
+      },
+      {
+        "action": "publish",
+        "occurredAtMs": 1788884536764,
+        "operationId": "bf0dcbeb-ca36-47d6-8971-e3aedfdead76",
+        "outcome": "started",
+        "reason": "resume_refresh",
+        "receivedAtMs": 1788884536764,
+        "source": "relay",
+        "stage": "authority"
+      },
+      {
+        "action": "publish",
+        "occurredAtMs": 1788884536765,
+        "operationId": "bf0dcbeb-ca36-47d6-8971-e3aedfdead76",
+        "outcome": "ok",
+        "reason": "resume_refresh",
+        "receivedAtMs": 1788884536779,
+        "source": "relay",
+        "stage": "authority"
+      },
+      {
+        "action": "response",
+        "occurredAtMs": 1788884536765,
+        "operationId": "bf0dcbeb-ca36-47d6-8971-e3aedfdead76",
+        "outcome": "ok",
+        "reason": "none",
+        "receivedAtMs": 1788884536788,
+        "source": "relay",
+        "stage": "authority"
+      },
+      {
+        "action": "publish",
+        "occurredAtMs": 1788884536808,
+        "operationId": "bf0dcbeb-ca36-47d6-8971-e3aedfdead76",
+        "outcome": "started",
+        "reason": "resume_refresh",
+        "receivedAtMs": 1788884536808,
+        "source": "relay",
+        "stage": "authority"
+      },
+      {
+        "action": "publish",
+        "occurredAtMs": 1788884536809,
+        "operationId": "bf0dcbeb-ca36-47d6-8971-e3aedfdead76",
+        "outcome": "ok",
+        "reason": "resume_refresh",
+        "receivedAtMs": 1788884536823,
+        "source": "relay",
+        "stage": "authority"
+      },
+      {
+        "action": "response",
+        "occurredAtMs": 1788884536809,
+        "operationId": "bf0dcbeb-ca36-47d6-8971-e3aedfdead76",
+        "outcome": "ok",
+        "reason": "none",
+        "receivedAtMs": 1788884536832,
+        "source": "relay",
+        "stage": "authority"
+      },
+      {
+        "action": "lookup",
+        "occurredAtMs": 1788884536856,
+        "outcome": "ok",
+        "parentOperationId": "23ce49d2-1837-4959-a63a-574763152d26",
+        "reason": "none",
+        "receivedAtMs": 1788884536865,
+        "source": "relay",
+        "stage": "authority"
+      },
+      {
+        "action": "response",
+        "occurredAtMs": 1788884536856,
+        "outcome": "ok",
+        "parentOperationId": "23ce49d2-1837-4959-a63a-574763152d26",
+        "reason": "none",
+        "receivedAtMs": 1788884536875,
+        "source": "relay",
+        "stage": "authority"
+      },
+      {
+        "action": "lookup",
+        "occurredAtMs": 1788884536903,
+        "outcome": "ok",
+        "parentOperationId": "23ce49d2-1837-4959-a63a-574763152d26",
+        "reason": "none",
+        "receivedAtMs": 1788884536912,
+        "source": "relay",
+        "stage": "authority"
+      },
+      {
+        "action": "response",
+        "occurredAtMs": 1788884536903,
+        "outcome": "ok",
+        "parentOperationId": "23ce49d2-1837-4959-a63a-574763152d26",
+        "reason": "none",
+        "receivedAtMs": 1788884536921,
+        "source": "relay",
+        "stage": "authority"
+      },
+      {
+        "action": "lookup",
+        "occurredAtMs": 1788884537001,
+        "outcome": "ok",
+        "parentOperationId": "23ce49d2-1837-4959-a63a-574763152d26",
+        "reason": "none",
+        "receivedAtMs": 1788884537011,
+        "source": "relay",
+        "stage": "authority"
+      },
+      {
+        "action": "response",
+        "occurredAtMs": 1788884537001,
+        "outcome": "ok",
+        "parentOperationId": "23ce49d2-1837-4959-a63a-574763152d26",
+        "reason": "none",
+        "receivedAtMs": 1788884537022,
+        "source": "relay",
+        "stage": "authority"
+      },
+      {
+        "action": "start",
+        "occurredAtMs": 1788884536628,
+        "operationId": "bf0dcbeb-ca36-47d6-8971-e3aedfdead76",
+        "outcome": "started",
+        "reason": "resume_refresh",
+        "receivedAtMs": 1788884540688,
+        "source": "flutter",
+        "stage": "authority"
+      },
+      {
+        "action": "publish",
+        "occurredAtMs": 1788884536633,
+        "operationId": "bf0dcbeb-ca36-47d6-8971-e3aedfdead76",
+        "outcome": "started",
+        "reason": "none",
+        "receivedAtMs": 1788884540698,
+        "source": "flutter",
+        "stage": "authority"
+      },
+      {
+        "action": "publish",
+        "occurredAtMs": 1788884536675,
+        "operationId": "bf0dcbeb-ca36-47d6-8971-e3aedfdead76",
+        "outcome": "ok",
+        "reason": "none",
+        "receivedAtMs": 1788884540707,
+        "source": "flutter",
+        "stage": "authority"
+      },
+      {
+        "action": "publish",
+        "occurredAtMs": 1788884536683,
+        "operationId": "bf0dcbeb-ca36-47d6-8971-e3aedfdead76",
+        "outcome": "started",
+        "reason": "none",
+        "receivedAtMs": 1788884540718,
+        "source": "flutter",
+        "stage": "authority"
+      },
+      {
+        "action": "publish",
+        "occurredAtMs": 1788884536722,
+        "operationId": "bf0dcbeb-ca36-47d6-8971-e3aedfdead76",
+        "outcome": "ok",
+        "reason": "none",
+        "receivedAtMs": 1788884540727,
+        "source": "flutter",
+        "stage": "authority"
+      },
+      {
+        "action": "publish",
+        "occurredAtMs": 1788884536725,
+        "operationId": "bf0dcbeb-ca36-47d6-8971-e3aedfdead76",
+        "outcome": "started",
+        "reason": "none",
+        "receivedAtMs": 1788884540737,
+        "source": "flutter",
+        "stage": "authority"
+      },
+      {
+        "action": "publish",
+        "occurredAtMs": 1788884536768,
+        "operationId": "bf0dcbeb-ca36-47d6-8971-e3aedfdead76",
+        "outcome": "ok",
+        "reason": "none",
+        "receivedAtMs": 1788884540746,
+        "source": "flutter",
+        "stage": "authority"
+      },
+      {
+        "action": "present",
+        "occurredAtMs": 1788884536879,
+        "operationId": "27440f8b-68da-4334-b53b-09f4078c3f37",
+        "outcome": "started",
+        "reason": "none",
+        "receivedAtMs": 1788884540936,
+        "source": "ios",
+        "stage": "presentation"
+      },
+      {
+        "action": "commit",
+        "occurredAtMs": 1788884537461,
+        "operationId": "27440f8b-68da-4334-b53b-09f4078c3f37",
+        "outcome": "ok",
+        "reason": "none",
+        "receivedAtMs": 1788884540946,
+        "source": "ios",
+        "stage": "presentation"
+      },
+      {
+        "action": "present",
+        "occurredAtMs": 1788884537464,
+        "operationId": "27440f8b-68da-4334-b53b-09f4078c3f37",
+        "outcome": "ok",
+        "reason": "none",
+        "receivedAtMs": 1788884540955,
+        "source": "ios",
+        "stage": "presentation"
+      },
+      {
+        "action": "commit",
+        "occurredAtMs": 1788884537468,
+        "operationId": "27440f8b-68da-4334-b53b-09f4078c3f37",
+        "outcome": "ok",
+        "reason": "none",
+        "receivedAtMs": 1788884540965,
+        "source": "ios",
+        "stage": "audio"
+      },
+      {
+        "action": "lookup",
+        "occurredAtMs": 1788884567039,
+        "outcome": "ok",
+        "parentOperationId": "23ce49d2-1837-4959-a63a-574763152d26",
+        "reason": "none",
+        "receivedAtMs": 1788884567050,
+        "source": "relay",
+        "stage": "authority"
+      },
+      {
+        "action": "response",
+        "occurredAtMs": 1788884567039,
+        "outcome": "ok",
+        "parentOperationId": "23ce49d2-1837-4959-a63a-574763152d26",
+        "reason": "none",
+        "receivedAtMs": 1788884567060,
+        "source": "relay",
+        "stage": "authority"
+      },
+      {
+        "action": "commit",
+        "occurredAtMs": 1788884567044,
+        "operationId": "27440f8b-68da-4334-b53b-09f4078c3f37",
+        "outcome": "ok",
+        "reason": "local_user",
+        "receivedAtMs": 1788884570626,
+        "source": "ios",
+        "stage": "terminal"
+      }
+    ],
+    "phaseFailureEventCounts": {
+      "signaling": 2
+    },
+    "preflightRateScope": "Distinct traces with a failed preflight phase or client terminal preflight_failed, divided by observed client attempt/caller traces plus any preflight-failure traces. Duplicate phase/terminal reports count once. Missing attempts remain outside this retained-evidence denominator.",
+    "presentationReported": true,
+    "rates": {
+      "answered_without_verified_media": {
+        "alertEligible": false,
+        "alertThreshold": 0.1,
+        "denominator": 1,
+        "minimumSamples": 5,
+        "numerator": 0,
+        "rate": 0.0
+      },
+      "cleanup_failure": {
+        "alertEligible": false,
+        "alertThreshold": 0.2,
+        "denominator": 1,
+        "minimumSamples": 5,
+        "numerator": 0,
+        "rate": 0.0
+      },
+      "credential_failure": {
+        "alertEligible": false,
+        "alertThreshold": 0.2,
+        "denominator": 0,
+        "minimumSamples": 5,
+        "numerator": 0,
+        "rate": null
+      },
+      "drop_after_media": {
+        "alertEligible": false,
+        "alertThreshold": 0.1,
+        "denominator": 0,
+        "minimumSamples": 5,
+        "numerator": 0,
+        "rate": null
+      },
+      "preflight_rejection": {
+        "alertEligible": false,
+        "alertThreshold": 0.2,
+        "denominator": 1,
+        "minimumSamples": 5,
+        "numerator": 0,
+        "rate": 0.0
+      },
+      "provider_failure": {
+        "alertEligible": false,
+        "alertThreshold": 0.2,
+        "denominator": 2,
+        "minimumSamples": 5,
+        "numerator": 0,
+        "rate": 0.0
+      },
+      "technical_setup_failure": {
+        "alertEligible": false,
+        "alertThreshold": 0.2,
+        "denominator": 0,
+        "minimumSamples": 5,
+        "numerator": 0,
+        "rate": null
+      },
+      "telemetry_loss": {
+        "alertEligible": true,
+        "alertThreshold": 1e-06,
+        "denominator": 84,
+        "minimumSamples": 5,
+        "numerator": 0,
+        "rate": 0.0,
+        "rateIsLowerBound": false
+      },
+      "withdrawal_unknown_origin": {
+        "alertEligible": false,
+        "alertThreshold": 0.2,
+        "denominator": 0,
+        "minimumSamples": 5,
+        "numerator": 0,
+        "rate": null
+      }
+    },
+    "recordLimit": 100,
+    "registrationWithdrawalOperationsByOrigin": {},
+    "relatedAuthorityOperations": [
+      {
+        "action": "publish",
+        "occurredAtMs": 1788881635365,
+        "operationId": "23ce49d2-1837-4959-a63a-574763152d26",
+        "outcome": "started",
+        "reason": "resume_refresh",
+        "receivedAtMs": 1788881635366,
+        "role": "server",
+        "source": "relay",
+        "stage": "authority",
+        "values": {
+          "authorityKind": "wake_grant"
+        }
+      },
+      {
+        "action": "publish",
+        "occurredAtMs": 1788881635366,
+        "operationId": "23ce49d2-1837-4959-a63a-574763152d26",
+        "outcome": "ok",
+        "reason": "resume_refresh",
+        "receivedAtMs": 1788881635378,
+        "role": "server",
+        "source": "relay",
+        "stage": "authority",
+        "values": {
+          "authorityKind": "wake_grant"
+        }
+      },
+      {
+        "action": "response",
+        "occurredAtMs": 1788881635366,
+        "operationId": "23ce49d2-1837-4959-a63a-574763152d26",
+        "outcome": "ok",
+        "reason": "none",
+        "receivedAtMs": 1788881635384,
+        "role": "server",
+        "source": "relay",
+        "stage": "authority",
+        "values": {
+          "authorityKind": "wake_grant",
+          "responseWritten": true
+        }
+      },
+      {
+        "action": "publish",
+        "occurredAtMs": 1788881635423,
+        "operationId": "23ce49d2-1837-4959-a63a-574763152d26",
+        "outcome": "started",
+        "reason": "resume_refresh",
+        "receivedAtMs": 1788881635423,
+        "role": "server",
+        "source": "relay",
+        "stage": "authority",
+        "values": {
+          "authorityKind": "endpoint"
+        }
+      },
+      {
+        "action": "publish",
+        "occurredAtMs": 1788881635423,
+        "operationId": "23ce49d2-1837-4959-a63a-574763152d26",
+        "outcome": "ok",
+        "reason": "resume_refresh",
+        "receivedAtMs": 1788881635435,
+        "role": "server",
+        "source": "relay",
+        "stage": "authority",
+        "values": {
+          "authorityKind": "endpoint"
+        }
+      },
+      {
+        "action": "response",
+        "occurredAtMs": 1788881635423,
+        "operationId": "23ce49d2-1837-4959-a63a-574763152d26",
+        "outcome": "ok",
+        "reason": "none",
+        "receivedAtMs": 1788881635441,
+        "role": "server",
+        "source": "relay",
+        "stage": "authority",
+        "values": {
+          "authorityKind": "endpoint",
+          "responseWritten": true
+        }
+      },
+      {
+        "action": "start",
+        "occurredAtMs": 1788881637159,
+        "operationId": "23ce49d2-1837-4959-a63a-574763152d26",
+        "outcome": "started",
+        "reason": "resume_refresh",
+        "receivedAtMs": 1788881639701,
+        "role": "caller",
+        "source": "flutter",
+        "stage": "authority",
+        "values": {}
+      },
+      {
+        "action": "publish",
+        "occurredAtMs": 1788881637232,
+        "operationId": "23ce49d2-1837-4959-a63a-574763152d26",
+        "outcome": "started",
+        "reason": "none",
+        "receivedAtMs": 1788881639710,
+        "role": "caller",
+        "source": "flutter",
+        "stage": "authority",
+        "values": {}
+      },
+      {
+        "action": "publish",
+        "occurredAtMs": 1788881637282,
+        "operationId": "23ce49d2-1837-4959-a63a-574763152d26",
+        "outcome": "ok",
+        "reason": "none",
+        "receivedAtMs": 1788881639718,
+        "role": "caller",
+        "source": "flutter",
+        "stage": "authority",
+        "values": {}
+      },
+      {
+        "action": "publish",
+        "occurredAtMs": 1788881637289,
+        "operationId": "23ce49d2-1837-4959-a63a-574763152d26",
+        "outcome": "started",
+        "reason": "none",
+        "receivedAtMs": 1788881639727,
+        "role": "caller",
+        "source": "flutter",
+        "stage": "authority",
+        "values": {}
+      },
+      {
+        "action": "publish",
+        "occurredAtMs": 1788881637339,
+        "operationId": "23ce49d2-1837-4959-a63a-574763152d26",
+        "outcome": "ok",
+        "reason": "none",
+        "receivedAtMs": 1788881639735,
+        "role": "caller",
+        "source": "flutter",
+        "stage": "authority",
+        "values": {}
+      },
+      {
+        "action": "publish",
+        "occurredAtMs": 1788884536715,
+        "operationId": "bf0dcbeb-ca36-47d6-8971-e3aedfdead76",
+        "outcome": "started",
+        "reason": "resume_refresh",
+        "receivedAtMs": 1788884536715,
+        "role": "server",
+        "source": "relay",
+        "stage": "authority",
+        "values": {
+          "authorityKind": "ios_voip_token"
+        }
+      },
+      {
+        "action": "publish",
+        "occurredAtMs": 1788884536716,
+        "operationId": "bf0dcbeb-ca36-47d6-8971-e3aedfdead76",
+        "outcome": "ok",
+        "reason": "resume_refresh",
+        "receivedAtMs": 1788884536729,
+        "role": "server",
+        "source": "relay",
+        "stage": "authority",
+        "values": {
+          "authorityKind": "ios_voip_token"
+        }
+      },
+      {
+        "action": "response",
+        "occurredAtMs": 1788884536716,
+        "operationId": "bf0dcbeb-ca36-47d6-8971-e3aedfdead76",
+        "outcome": "ok",
+        "reason": "none",
+        "receivedAtMs": 1788884536738,
+        "role": "server",
+        "source": "relay",
+        "stage": "authority",
+        "values": {
+          "authorityKind": "ios_voip_token",
+          "responseWritten": true
+        }
+      },
+      {
+        "action": "publish",
+        "occurredAtMs": 1788884536764,
+        "operationId": "bf0dcbeb-ca36-47d6-8971-e3aedfdead76",
+        "outcome": "started",
+        "reason": "resume_refresh",
+        "receivedAtMs": 1788884536764,
+        "role": "server",
+        "source": "relay",
+        "stage": "authority",
+        "values": {
+          "authorityKind": "wake_grant"
+        }
+      },
+      {
+        "action": "publish",
+        "occurredAtMs": 1788884536765,
+        "operationId": "bf0dcbeb-ca36-47d6-8971-e3aedfdead76",
+        "outcome": "ok",
+        "reason": "resume_refresh",
+        "receivedAtMs": 1788884536779,
+        "role": "server",
+        "source": "relay",
+        "stage": "authority",
+        "values": {
+          "authorityKind": "wake_grant"
+        }
+      },
+      {
+        "action": "response",
+        "occurredAtMs": 1788884536765,
+        "operationId": "bf0dcbeb-ca36-47d6-8971-e3aedfdead76",
+        "outcome": "ok",
+        "reason": "none",
+        "receivedAtMs": 1788884536788,
+        "role": "server",
+        "source": "relay",
+        "stage": "authority",
+        "values": {
+          "authorityKind": "wake_grant",
+          "responseWritten": true
+        }
+      },
+      {
+        "action": "publish",
+        "occurredAtMs": 1788884536808,
+        "operationId": "bf0dcbeb-ca36-47d6-8971-e3aedfdead76",
+        "outcome": "started",
+        "reason": "resume_refresh",
+        "receivedAtMs": 1788884536808,
+        "role": "server",
+        "source": "relay",
+        "stage": "authority",
+        "values": {
+          "authorityKind": "endpoint"
+        }
+      },
+      {
+        "action": "publish",
+        "occurredAtMs": 1788884536809,
+        "operationId": "bf0dcbeb-ca36-47d6-8971-e3aedfdead76",
+        "outcome": "ok",
+        "reason": "resume_refresh",
+        "receivedAtMs": 1788884536823,
+        "role": "server",
+        "source": "relay",
+        "stage": "authority",
+        "values": {
+          "authorityKind": "endpoint"
+        }
+      },
+      {
+        "action": "response",
+        "occurredAtMs": 1788884536809,
+        "operationId": "bf0dcbeb-ca36-47d6-8971-e3aedfdead76",
+        "outcome": "ok",
+        "reason": "none",
+        "receivedAtMs": 1788884536832,
+        "role": "server",
+        "source": "relay",
+        "stage": "authority",
+        "values": {
+          "authorityKind": "endpoint",
+          "responseWritten": true
+        }
+      },
+      {
+        "action": "start",
+        "occurredAtMs": 1788884536628,
+        "operationId": "bf0dcbeb-ca36-47d6-8971-e3aedfdead76",
+        "outcome": "started",
+        "reason": "resume_refresh",
+        "receivedAtMs": 1788884540688,
+        "role": "caller",
+        "source": "flutter",
+        "stage": "authority",
+        "values": {}
+      },
+      {
+        "action": "publish",
+        "occurredAtMs": 1788884536633,
+        "operationId": "bf0dcbeb-ca36-47d6-8971-e3aedfdead76",
+        "outcome": "started",
+        "reason": "none",
+        "receivedAtMs": 1788884540698,
+        "role": "caller",
+        "source": "flutter",
+        "stage": "authority",
+        "values": {}
+      },
+      {
+        "action": "publish",
+        "occurredAtMs": 1788884536675,
+        "operationId": "bf0dcbeb-ca36-47d6-8971-e3aedfdead76",
+        "outcome": "ok",
+        "reason": "none",
+        "receivedAtMs": 1788884540707,
+        "role": "caller",
+        "source": "flutter",
+        "stage": "authority",
+        "values": {}
+      },
+      {
+        "action": "publish",
+        "occurredAtMs": 1788884536683,
+        "operationId": "bf0dcbeb-ca36-47d6-8971-e3aedfdead76",
+        "outcome": "started",
+        "reason": "none",
+        "receivedAtMs": 1788884540718,
+        "role": "caller",
+        "source": "flutter",
+        "stage": "authority",
+        "values": {}
+      },
+      {
+        "action": "publish",
+        "occurredAtMs": 1788884536722,
+        "operationId": "bf0dcbeb-ca36-47d6-8971-e3aedfdead76",
+        "outcome": "ok",
+        "reason": "none",
+        "receivedAtMs": 1788884540727,
+        "role": "caller",
+        "source": "flutter",
+        "stage": "authority",
+        "values": {}
+      },
+      {
+        "action": "publish",
+        "occurredAtMs": 1788884536725,
+        "operationId": "bf0dcbeb-ca36-47d6-8971-e3aedfdead76",
+        "outcome": "started",
+        "reason": "none",
+        "receivedAtMs": 1788884540737,
+        "role": "caller",
+        "source": "flutter",
+        "stage": "authority",
+        "values": {}
+      },
+      {
+        "action": "publish",
+        "occurredAtMs": 1788884536768,
+        "operationId": "bf0dcbeb-ca36-47d6-8971-e3aedfdead76",
+        "outcome": "ok",
+        "reason": "none",
+        "receivedAtMs": 1788884540746,
+        "role": "caller",
+        "source": "flutter",
+        "stage": "authority",
+        "values": {}
+      }
+    ],
+    "schemaVersion": 1,
+    "scope": "Opted-in retained records only. Client media is reported evidence; relay admission, push submission, and TURN minting do not prove audio. Coturn allocations remain aggregate.",
+    "technicalRateScope": "Post-preflight signaling/native-answer/media setup failures among distinct opted-in client-reported classified terminal traces. Preflight-only failures and declines/cancels/busy/no-answer are excluded from this denominator. Phase failures can recover and are counted separately. Minimum5 observations before rate alerts.",
+    "telemetryLossCountExact": true,
+    "terminalRecordOutcomes": {
+      "no_answer": 1
+    },
+    "traceId": "a1be4767-de23-47c7-9e81-d3d120d624a5",
+    "tracesWithoutTerminalRecord": 0,
+    "unclassifiedTerminalTraceCount": 0,
+    "unknownEndpointRoleTraceCount": 0,
+    "unresolvedOperationReferenceCount": 1
+  },
+  "reportedProvisionalNativeTraceId": "c7cc7b75-c633-4320-a926-391a29165ed2",
+  "scope": "Strict operator projection. Native admission remains locally queued per device controller; no automatic server-side join or both-endpoint media proof is claimed.",
+  "sourceRoleCounts": {
+    "flutter/caller": 41,
+    "ios/caller": 5,
+    "relay/server": 38
+  },
+  "sourceSnapshot": "relay-operator-live-20260908T162401Z.json"
+}

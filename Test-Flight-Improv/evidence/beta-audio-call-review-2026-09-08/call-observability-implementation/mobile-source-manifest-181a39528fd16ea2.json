@@ -1,0 +1,101 @@
+{
+  "sourceStamp": "181a39528fd16ea2",
+  "sourceSha256": {
+    "android/app/src/main/kotlin/com/mknoon/app/GoBridge.kt": "fb0fbc23c4acfa908982ee9da25276944e670ae63f1a6dfc21f8218d96db1530",
+    "android/app/src/main/kotlin/com/mknoon/app/MknoonFirebaseMessagingService.kt": "03c06c2604552bbc364bb3b450c149ce430e420442d80aabff96dbf5ff1ce0bc",
+    "android/app/src/main/kotlin/com/mknoon/app/call/MknoonCallAndroidRuntime.kt": "11c1b47aceab3c9557addcfeadfdc27b9cc32e72d6a6b6a2014e36b1755badde",
+    "android/app/src/main/kotlin/com/mknoon/app/call/MknoonCallDiagnosticSchema.kt": "b835af8eab78b91d0fb3502fc86c480d0e0f14b80a3322b9a57af79442caace6",
+    "android/app/src/main/kotlin/com/mknoon/app/call/MknoonCallDiagnostics.kt": "1c47521fa2fea6ef3a81246e8d246453e1cb36622d42627638c9376c21cb13c5",
+    "android/app/src/main/kotlin/com/mknoon/app/call/MknoonCallLifecycleController.kt": "0c889ea4ab2a2ca2c079f409192a31f49a9f28516bab8b87760aadab440893f4",
+    "android/app/src/main/kotlin/com/mknoon/app/call/MknoonCallNativeBridge.kt": "402d6746cec08e79637321643367c79c031a319832745cecf682e2d4914b52dc",
+    "android/app/src/main/kotlin/com/mknoon/app/call/MknoonCallNotificationFactory.kt": "b1e891cd94586e59791c69d62b7b30c958ddd532dc603d617fccf489057d8477",
+    "go-mknoon/bridge/bridge_call_control.go": "f6108a7ea97035485dc0038877227313dad0d2524cbd9f30810c0eb020a3b09f",
+    "go-mknoon/bridge/bridge_call_diagnostics.go": "03fd39a9e3b12703895ae16f7b30f3ccd653e7e4fd26cfc9304a9deff2d8ebdc",
+    "go-mknoon/bridge/bridge_call_diagnostics_test.go": "33bba6064fc288a859546c4cbf5ed0e8c48233be0d11a9f16760bd09e7cfd7b5",
+    "go-mknoon/bridge/bridge_turn_credentials.go": "b59f0b2a441280af52af465a86ce7385ed939d3af23e1fd5ed9ac27ed6284366",
+    "go-mknoon/node/call_control.go": "02606cca425a94710056e24acef7ecb0d4dc1f548d81f2269c916e73350b0642",
+    "go-mknoon/node/call_diagnostics.go": "190f014b09215f00680d7eb279b48ab84e1793adedc2bf0fccab025eff7eaadb",
+    "go-mknoon/node/call_diagnostics_test.go": "a528368e07dd2305e7485fc7fa13372b831bccad376b3d3da3663a8a5b76f8f6",
+    "go-mknoon/node/node.go": "e8e686017dfad76cea54d7d8b69551e365a2ec6c744e395cb2df42366deeff87",
+    "go-mknoon/node/turn_credentials.go": "5ca9feb621a24bd45ebfe0e9d6dfc19e34ca931428fe10b1872f33788594f94c",
+    "go-mknoon/node/turn_credentials_test.go": "4d746d31c0f71e38217d4e12e53f4ebea5816d5dcd1776130082c0d3c6885bb9",
+    "ios/Runner/AppDelegate.swift": "26e47e20d882251ca6dff46e548b0b5e85bd8b90f5a096a73f2132ee7d34514e",
+    "ios/Runner/GoBridge.swift": "543791562d213fcfa5887a1e3e9eb8fc08fa5e4439f40dc694834719707234a8",
+    "ios/Runner/MknoonCallDiagnostics.swift": "44d3dafad302e0b561169087909897beacac83e761004c938bad3e2707d70177",
+    "ios/Runner/MknoonCallKitController.swift": "21514ab205e481cd4fd21a52f5767a6171634b0c30390c31febe1029eb6cb2b7",
+    "ios/Runner/MknoonCallNativeBridge.swift": "c4ba314fe6fc727bc820cc1a7a173e5436372f052816755a9ac1e633b53fc26a",
+    "ios/Runner/MknoonVoipPushRegistry.swift": "0237e0a790e03c612c8d034f704e366be9f056aa15c38b6f2deda1ececa5ff0e",
+    "lib/app/bootstrap/call_signaling_composition.dart": "a0d6111eb4e51edb9bc258fd7652e9a21c6efee94f54837266946d4b94d97247",
+    "lib/app/bootstrap/production_application_bootstrap.dart": "73b06aa1d313ad7215efa871cdaf414d461c2b937bf69568446c116f31ccabc5",
+    "lib/app/bootstrap/production_call_signaling_graph.dart": "a1221b13c4a57bf5acce2522e731fb0f74fc6f4f489403213ac633032d899b8d",
+    "lib/core/bridge/go_bridge_client.dart": "10710ce62c8e2f1dc462c74519dd5a60b985f3f9d90065e3f38c247c7915e928",
+    "lib/core/bridge/p2p_bridge_client.dart": "866e1cd0d19934e4fd174f67d2ad74ea94a18f3e06fd41f455e8dfe0df841b1f",
+    "lib/features/call/application/call_cleanup_coordinator.dart": "e8303fd8183802b3fc1d4b956d84fef2b6881a3cbe8e390a078de23e64fa62d5",
+    "lib/features/call/application/call_signaling_context_store.dart": "5ef2819af75b8614f3bd0358fc285c697fcd8beaebc5ffd24699ecde6fcc12b1",
+    "lib/features/call/application/call_signaling_service.dart": "2be1d5fd0f4c1602dc4304e00bc8e2234ca060e25f63db3153d0eada30bc40bc",
+    "lib/features/call/application/call_wake_authorization_coordinator.dart": "3b6f99edfec3fd665d67102000f87a76ecb4c5e26910544643607d391be343b1",
+    "lib/features/call/application/handle_incoming_call_signal.dart": "a5014b911389974128a0addbd4757419e4b52ded31cf50465d0438c3d3908516",
+    "lib/features/call/diagnostics/call_diagnostic_schema.dart": "16a5765aefbb3098025ac482ac0409fff1e483e333343ba7c1f57c2276164992",
+    "lib/features/call/diagnostics/call_diagnostics.dart": "772b9b59d8f4eb69aee05112e17e5c1878a729ee55df10d97649a1f8c7387ecf",
+    "lib/features/call/diagnostics/production_call_diagnostics.dart": "a9e7747ee282e052b1560e1ef898d4ffbc773377fe15395e03a5bd7d899f71f4",
+    "lib/features/call/domain/call_authority_lifetime.dart": "85e0461023714b1073ffc7ff1f162b772d1b2e26810c2ee87c23906afcdc8c6a",
+    "lib/features/call/infrastructure/android_call_lifecycle_adapter.dart": "a4dc8443e930067a6ac976b54edd850390341625415dc68d2d442ebf61c2d9cf",
+    "lib/features/call/infrastructure/android_call_token_coordinator.dart": "6765db684f448a7f2a235b9ef70ddf3e6fb24ba032d78aef138f9218854fca08",
+    "lib/features/call/infrastructure/bridge_call_ice_server_provider.dart": "31a6ca8fb8a9a1bb4830376c77022526c692eef6214ac76adcb2eee07e837c23",
+    "lib/features/call/infrastructure/call_authority_client.dart": "e0e8142f5e04db2713ec780e7387a2c3bae9e23523acbd4fc3e695b21e7c85bb",
+    "lib/features/call/infrastructure/call_mailbox_client.dart": "e21ff4d3b6cdbd8bba1f360b96f0c6c803d32f8b11de780bb3e83c84c590142f",
+    "lib/features/call/infrastructure/call_stats_sampler.dart": "85d0296b01a1a61fc458b3d69215348a7ca42d882961786e10783e19bd5a0d3b",
+    "lib/features/call/infrastructure/flutter_webrtc_call_engine.dart": "ee5ba4c2180a352c5447891c86ccfa2be03c208e757548a3deeab8369aef1b57",
+    "lib/features/call/infrastructure/ios_call_lifecycle_adapter.dart": "f5ef9ee82ddd35d6f7702e8134c70d99164cbc3cefeb7c4dcd0e29ffa63307c5",
+    "lib/features/call/infrastructure/ios_voip_token_coordinator.dart": "b14268411c59226ae3e7a18b3923a156719803adbc85d811a270b2b091849345",
+    "lib/features/call/infrastructure/production_call_endpoint_resolution.dart": "d2662afe752a70842c8d837e9524cc034a8dfd57da431b2c0507bdf27e9ce1e4",
+    "lib/features/conversation/presentation/screens/conversation_screen.dart": "e9c9ef1db9a46a7309cef704fa9d692482bf5022b5922ed18132748943909318",
+    "lib/features/conversation/presentation/screens/conversation_wired.dart": "2cc6e6b92663ceac999d9b29c0575e084a7b399f0b162c6f66fbbbefe93e7009",
+    "lib/features/conversation/presentation/widgets/conversation_header.dart": "e790147362fc0aa9fda91b8950c2b5775b84b6181a77a8b109a58a6068776221",
+    "lib/features/settings/presentation/screens/settings_screen.dart": "7407d2efba539a0207495ed5349745eae1db499882fc0da46f35850952c17e5e",
+    "lib/features/settings/presentation/screens/settings_wired.dart": "00b8cd7c93e6b46249360d9835f2d7e9d97ab75c8075ce809ffadb369ac89a4f",
+    "lib/features/settings/presentation/widgets/call_diagnostics_settings_section.dart": "9a355b3d4f2a462af87fa24048ef3cd32f6b0e45ad0639466bdf0d98d8b863ce"
+  },
+  "platformBuilds": {
+    "android": {
+      "buildStamp": "4e3b67cb88cc8ccc",
+      "algorithm": "first 16 hex SHA256 of sorted compact JSON fingerprintInputs",
+      "fingerprintInputs": {
+        "sourceStamp": "181a39528fd16ea2",
+        "platform": "android",
+        "mode": "debug",
+        "nativeGradleProperties": {
+          "enableAndroidNativeCalls": true
+        },
+        "dartDefines": {
+          "VOICE_CALL_CAPABILITY_V1": "true",
+          "VOICE_CALL_OUTGOING_ENABLED": "true",
+          "VOICE_CALL_INCOMING_ENABLED": "true",
+          "VOICE_CALL_TURN_ENABLED": "true",
+          "VOICE_CALL_ANDROID_NATIVE_ENABLED": "true",
+          "VOICE_CALL_IOS_NATIVE_ENABLED": "true",
+          "VOICE_CALL_ALWAYS_RELAY_ENABLED": "true"
+        }
+      }
+    },
+    "ios": {
+      "buildStamp": "e9811addae2ee7a4",
+      "algorithm": "first 16 hex SHA256 of sorted compact JSON fingerprintInputs",
+      "fingerprintInputs": {
+        "sourceStamp": "181a39528fd16ea2",
+        "platform": "ios",
+        "mode": "profile",
+        "nativeGradleProperties": {},
+        "dartDefines": {
+          "VOICE_CALL_CAPABILITY_V1": "true",
+          "VOICE_CALL_OUTGOING_ENABLED": "true",
+          "VOICE_CALL_INCOMING_ENABLED": "true",
+          "VOICE_CALL_TURN_ENABLED": "true",
+          "VOICE_CALL_ANDROID_NATIVE_ENABLED": "true",
+          "VOICE_CALL_IOS_NATIVE_ENABLED": "true",
+          "VOICE_CALL_ALWAYS_RELAY_ENABLED": "true"
+        }
+      }
+    }
+  }
+}

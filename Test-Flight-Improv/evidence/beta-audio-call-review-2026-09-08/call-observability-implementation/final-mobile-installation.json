@@ -1,0 +1,25 @@
+{
+  "sourceStamp": "f1899f0d63e1724b",
+  "installedOnLabDevices": true,
+  "android": {
+    "buildStamp": "58b1ba6035e82327",
+    "artifactSha256": "de42656e4aba9e51cccdff78d9d8e06469eedea3ed601105443116ee665526be",
+    "nativeVersion": "1.0.1+111",
+    "nativeCallsCompiledEnabled": true,
+    "microphoneGranted": true,
+    "notificationsGranted": true,
+    "fullScreenIntent": "allow",
+    "keyguardSecureAndShowing": true,
+    "wifiOn": true,
+    "mobileDataOn": false
+  },
+  "ios": {
+    "buildStamp": "8bc9c8a8e32d3a38",
+    "mode": "profile",
+    "treeSha256": "0bdb7af7c092ad33d920aecd0819f5841e86f93848f249d15265ab82fb876261",
+    "nativeVersion": "1.0.1+111"
+  },
+  "diagnosticsSharing": "Previously enabled by UI on these two lab installations; off by default elsewhere",
+  "testFlightPublished": false,
+  "playPublished": false
+}

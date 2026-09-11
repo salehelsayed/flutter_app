@@ -1005,7 +1005,9 @@ func (is *InboxStore) StoreAckCustody(
 	result, storedEntry, admissionStatus, admission, preflightFallback, handled, err :=
 		is.storeAckCustodyWithWakeOutcome(toPeerID, entry, dedupeKey)
 	if !handled {
-		result, storedEntry, err = backend.StoreAckCustody(toPeerID, entry, dedupeKey)
+		storageEntry := entry
+		storageEntry.SuppressNotification = false
+		result, storedEntry, err = backend.StoreAckCustody(toPeerID, storageEntry, dedupeKey)
 	}
 	if err != nil {
 		if errors.Is(err, errAckCustodyIdentityConflict) {
@@ -1015,6 +1017,10 @@ func (is *InboxStore) StoreAckCustody(
 		recordAckCustodyStoreResult(ackCustodyStoreMetricFailed)
 		return "", inboxMessage{}, fmt.Errorf("store ack custody: %w", err)
 	}
+	// Redis returns a decoded row, so restore the request-only send policy after
+	// persistence without adding it to stored ciphertext or the ACK contract.
+	storedEntry.SuppressNotification = entry.SuppressNotification
+	is.rememberDirectNotificationCustodyOnly(toPeerID, entry, result)
 
 	switch result {
 	case InboxStoreResultStored:

@@ -1,0 +1,25 @@
+{
+  "capturedAtUtc": "2026-09-08T12:28:55.594028+00:00",
+  "device": "USB Pixel 6 lab target",
+  "normalApkInstalledSha256": "348b78d9c20f255535d7f2d315fd23b0f04cbb21967fc8fbe61c079e0f35d8e5",
+  "fullScreenIntentMode": "allow",
+  "observerFilesRemoved": {
+    "intro_e2e_config.json": true,
+    "intro_e2e_result.json": true,
+    "intro_e2e_result.previous.json": true
+  },
+  "normalAppLaunch": "ok, cold start",
+  "normalAppUiAtUtc": "2026-09-08T12:27:59.996586+00:00",
+  "normalAppUi": {
+    "labConversationVisible": true,
+    "callHeaderEnabled": true,
+    "callUnavailable": false,
+    "debugLaunchError": false,
+    "startControls": 1,
+    "answerControls": 0,
+    "declineControls": 0,
+    "endControls": 0
+  },
+  "deviceDataPreserved": true,
+  "ownedLoggersStopped": 5
+}

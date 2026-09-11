@@ -1,0 +1,23 @@
+Notification usability fix validation
+Source changes:
+- MknoonCallNotificationFactory always gives incoming notifications the existing immutable OPEN_INCOMING activity contentIntent; fullScreenIntent remains permission-gated.
+- CallSignalingComposition permits validated canonical ringing in the actual foreground even when the native presenter bypassed composition.present; validating/background/terminal gates and native answer authority remain in place.
+Regression evidence:
+- API 28 and API 34 actual notification body PendingIntent tests: RED (null contentIntent) then GREEN; tap cannot substitute Answer action/native UUID.
+- Android/iOS native ringing projection: RED (null foreground projection) then GREEN.
+- Four Dart scenarios cover foreground and first background arrival, onResume replay, no automatic answer, wrong-ID/background/ended rejection.
+Checks:
+- Native: 40 passed, 0 skipped/failed (6 notification factory, 32 lifecycle controller, 2 action receiver).
+- Dart focused composition + production live-call guard: 87 passed.
+- Analyzer: no issues in composition source/test.
+- Curated 1to1: 3487 passed, 4 skipped, 0 failed; 209 files; 01:53 runner elapsed; 6 nonfatal widget hit-test warnings.
+- Diff check clean.
+- Affected: a4b362eaa7f047b7, covering all four source/test paths.
+Artifacts:
+/tmp/beta-call-review-20260908/one-to-one-host-gate-notification-final.log
+/tmp/beta-call-review-20260908/call-notification-content-intent-red.log
+/tmp/beta-call-review-20260908/call-notification-content-intent-green.log
+/tmp/beta-call-review-20260908/call-native-ringing-projection-red.log
+/tmp/beta-call-review-20260908/call-native-ringing-projection-focused.log
+/tmp/beta-call-review-20260908/native-notification-unit-results/
+Device settings untouched by this task; root authorized Pixel full-screen permission remains allowed.

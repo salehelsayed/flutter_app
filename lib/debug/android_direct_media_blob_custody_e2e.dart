@@ -11,6 +11,7 @@ import 'package:flutter_app/core/media/direct_media_blob_custody.dart';
 import 'package:flutter_app/core/media/direct_media_custody_intent.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
+import 'package:flutter_app/core/media/media_upload_in_flight_tracker.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
 import 'package:flutter_app/features/conversation/application/prepared_direct_media_blob_custody_coordinator.dart';
@@ -163,6 +164,35 @@ final class AndroidDirectMediaBlobCustodyE2ERequest {
   };
 }
 
+/// Keeps the existing completion requirement while preserving the disposition
+/// when the process exits before its buffered flow events reach logcat.
+void requireAndroidDirectMediaVoiceSendCompletion({
+  required SendVoiceMessageResult result,
+  required bool returnedMessagePresent,
+  required bool uploadLeaseHeld,
+}) {
+  if (result == SendVoiceMessageResult.success && returnedMessagePresent) {
+    return;
+  }
+  throw _AndroidDirectMediaVoiceSendFailure(
+    result,
+    returnedMessagePresent,
+    uploadLeaseHeld,
+  );
+}
+
+final class _AndroidDirectMediaVoiceSendFailure extends StateError {
+  _AndroidDirectMediaVoiceSendFailure(
+    this.result,
+    this.returnedMessagePresent,
+    this.uploadLeaseHeld,
+  ) : super('restart did not complete the production voice send');
+
+  final SendVoiceMessageResult result;
+  final bool returnedMessagePresent;
+  final bool uploadLeaseHeld;
+}
+
 Map<String, Object?> androidDirectMediaBlobCustodyE2EFailureReceipt({
   required Map<String, dynamic> config,
   required Object error,
@@ -172,8 +202,15 @@ Map<String, Object?> androidDirectMediaBlobCustodyE2EFailureReceipt({
     status: 'failed',
     success: false,
     fields: <String, Object?>{
-      'errorType': error.runtimeType.toString(),
+      'errorType': error is _AndroidDirectMediaVoiceSendFailure
+          ? 'StateError'
+          : error.runtimeType.toString(),
       'errorCode': _directMediaBlobCustodyFailureCode(error),
+      if (error is _AndroidDirectMediaVoiceSendFailure) ...<String, Object?>{
+        'voiceSendResult': error.result.name,
+        'voiceSendReturnedMessage': error.returnedMessagePresent,
+        'voiceSendUploadLeaseHeld': error.uploadLeaseHeld,
+      },
     },
   );
 }
@@ -781,9 +818,13 @@ Future<Map<String, Object?>> _resumeSender({
     preassignedMessageIdIsFresh: true,
     blobId: request.attachmentId,
   );
-  if (result != SendVoiceMessageResult.success || sentMessage == null) {
-    throw StateError('restart did not complete the production voice send');
-  }
+  requireAndroidDirectMediaVoiceSendCompletion(
+    result: result,
+    returnedMessagePresent: sentMessage != null,
+    uploadLeaseHeld: mediaUploadInFlightTracker.isInFlight(
+      request.attachmentId,
+    ),
+  );
   final inboxCustodyRepository =
       messageRepo is OutgoingDirectTextInboxCustodyRepository
       ? messageRepo as OutgoingDirectTextInboxCustodyRepository

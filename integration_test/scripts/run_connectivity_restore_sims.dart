@@ -21,6 +21,46 @@ const _artifactEnvironment = 'SIMS_ARTIFACT_ANDROID_E2E_MAIN';
 const _physicalEnvironment = 'SIMS_ANDROID_PHYSICAL_DEVICE_ID';
 const _emulatorEnvironment = 'SIMS_ANDROID_EMULATOR_DEVICE_ID';
 
+/// Launches the prepared application; identity readiness is checked separately
+/// by the campaign's existing bounded identity-export wait.
+Future<bool> launchConnectivityRestoreApp({
+  required String packageName,
+  required Future<ProcessResult> Function(List<String>) runAdb,
+}) async {
+  final component = '$packageName/com.mknoon.app.MainActivity';
+  final result = await runAdb(<String>[
+    'shell',
+    'am',
+    'start',
+    '-W',
+    '-n',
+    component,
+  ]);
+  final output = '${result.stdout}\n${result.stderr}';
+  // `am start -W` can time out waiting for the first frame while Flutter is
+  // still initializing. Require the requested component and a live process;
+  // the campaign still waits up to 120 seconds for its actual identity export.
+  if (result.exitCode != 0 ||
+      output.contains('Error:') ||
+      !RegExp(
+        r'^Status:[ \t]+(?:ok|timeout)[ \t]*\r?$',
+        multiLine: true,
+      ).hasMatch(output) ||
+      !RegExp(
+        r'(?:\bcmp=|^Activity:[ \t]+)' +
+            RegExp.escape(component) +
+            r'(?=[\s}]|$)',
+        multiLine: true,
+      ).hasMatch(output)) {
+    return false;
+  }
+  final process = await runAdb(<String>['shell', 'pidof', packageName]);
+  return process.exitCode == 0 &&
+      RegExp(
+        r'^[1-9][0-9]*(?:[ \t]+[1-9][0-9]*)*$',
+      ).hasMatch('${process.stdout}'.trim());
+}
+
 Future<void> main() async {
   _Result result;
   try {
@@ -374,20 +414,10 @@ final class _Campaign {
   }
 
   Future<void> _launch(String device) async {
-    final result = await _adb(device, <String>[
-      'shell',
-      'am',
-      'start',
-      '-W',
-      '-n',
-      '$packageName/com.mknoon.app.MainActivity',
-    ], allowFailure: true);
-    final output = '${result.stdout}\n${result.stderr}';
-    if (result.exitCode != 0 ||
-        !RegExp(
-          r'^Status:[ \t]+ok[ \t]*\r?$',
-          multiLine: true,
-        ).hasMatch(output)) {
+    if (!await launchConnectivityRestoreApp(
+      packageName: packageName,
+      runAdb: (arguments) => _adb(device, arguments, allowFailure: true),
+    )) {
       throw _Failure('App launch failed on $device.');
     }
   }

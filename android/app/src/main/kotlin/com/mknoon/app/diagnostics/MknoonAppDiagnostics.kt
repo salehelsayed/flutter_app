@@ -20,6 +20,8 @@ import java.security.KeyStore
 import java.security.MessageDigest
 import java.util.UUID
 import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicLong
 import javax.crypto.Cipher
 import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
@@ -28,6 +30,25 @@ import javax.crypto.spec.GCMParameterSpec
 internal interface MknoonAppDiagnosticBackend {
     fun read(): ByteArray?
     fun replace(bytes: ByteArray)
+}
+
+/** Bounds pending observations even when the optional archive is slow. */
+internal class MknoonAppDiagnosticAdmission(private val limit: Int = 64) {
+    private val pending = AtomicInteger()
+    private val dropped = AtomicLong()
+    fun enqueue(submit: (() -> Unit) -> Unit, work: (Long) -> Unit) {
+        if (pending.incrementAndGet() > limit) {
+            pending.decrementAndGet(); dropped.incrementAndGet(); return
+        }
+        try {
+            submit {
+                try { runCatching { work(dropped.getAndSet(0)) } }
+                finally { pending.decrementAndGet() }
+            }
+        } catch (_: Exception) {
+            pending.decrementAndGet(); dropped.incrementAndGet()
+        }
+    }
 }
 
 internal object MknoonAppDiagnosticBridgeResult {
@@ -192,7 +213,7 @@ internal class MknoonAppDiagnosticSpool(
         return persist().also { if (!it) enabled = false }
     }
     fun append(feature: String, stage: String, outcome: String, reason: String = "none", rawValues: Map<String, Any?> = emptyMap(), traceId: String? = null,
-               occurredAt: Long = now(), eventBuild: String = installedBuild): Boolean {
+               occurredAt: Long = now(), eventBuild: String = installedBuild, deferPersistence: Boolean = false): Boolean {
         if (!enabled || !loaded || sequence >= 9_007_199_254_740_991L) return false
         if (feature !in MknoonAppDiagnosticSchema.feature || stage !in MknoonAppDiagnosticSchema.stage || outcome !in MknoonAppDiagnosticSchema.outcome || reason !in MknoonAppDiagnosticSchema.reason) return false
         val event = JSONObject().put("schemaVersion", 1).put("eventId", UUID.randomUUID().toString()).put("runId", runId)
@@ -201,7 +222,7 @@ internal class MknoonAppDiagnosticSpool(
             .put("build", build(eventBuild)).put("values", JSONObject(values(rawValues)))
         if (uuid(traceId)) event.put("traceId", traceId!!.lowercase())
         if (!valid(event)) return false
-        events.add(event); enforceCaps(); return persist()
+        events.add(event); return deferPersistence || persist()
     }
     fun importExit(code: Int, timestamp: Long, fingerprint: String? = null): Boolean {
         if (!enabled || enabledSince <= 0 || timestamp < enabledSince || timestamp > now()) return false
@@ -215,6 +236,9 @@ internal class MknoonAppDiagnosticSpool(
     fun drain(limit: Int): Map<String, Any> {
         enforceCaps()
         return mapOf("version" to 1, "events" to events.take(limit.coerceIn(1, 64)).map { row -> row.keys().asSequence().associateWith { key -> if (key == "values") row.getJSONObject(key).let { fields -> fields.keys().asSequence().associateWith { fields.get(it) } } else row.get(key) } }, "droppedEvents" to dropped)
+    }
+    fun recordDropped(count: Long) {
+        if (enabled && loaded && count > 0) dropped = (dropped + count.coerceAtMost(9_007_199_254_740_991L)).coerceAtMost(9_007_199_254_740_991L)
     }
     fun ack(ids: List<String>): Boolean {
         if (ids.size > 64 || ids.any { !uuid(it) }) return false
@@ -241,7 +265,8 @@ internal class MknoonAppDiagnosticSpool(
     private fun encoded() = JSONObject().put("version", 1).put("enabled", enabled).put("requested", requested).put("consentEpoch", epoch)
         .put("enabledSince", enabledSince).put("sequence", sequence).put("dropped", dropped).put("openRun", openRun)
         .put("events", JSONArray(events)).put("osReports", JSONArray(osReports.toList())).toString().toByteArray()
-    private fun persist(): Boolean = loaded && runCatching { val data = encoded(); require(data.size <= MAX_BYTES); backend.replace(data); true }.getOrDefault(false)
+    fun persistPending(): Boolean = persist()
+    private fun persist(): Boolean = loaded && runCatching { enforceCaps(); val data = encoded(); require(data.size <= MAX_BYTES); backend.replace(data); true }.getOrDefault(false)
 }
 
 /** Serial writer shared by Activity, FCM, Go bridge and headless workers. */
@@ -251,11 +276,23 @@ internal class MknoonAppDiagnostics private constructor(private val context: Con
         fun get(context: Context): MknoonAppDiagnostics = shared ?: synchronized(this) { shared ?: MknoonAppDiagnostics(context.applicationContext).also { shared = it } }
     }
     private val writer = Executors.newSingleThreadExecutor { work -> Thread(work, "mknoon-app-diagnostics").apply { isDaemon = true } }
+    private val admission = MknoonAppDiagnosticAdmission()
     private val backend = AndroidAppDiagnosticBackend(context)
     private var spool: MknoonAppDiagnosticSpool? = null
+    private var persistenceScheduled = false // Accessed only by writer.
     init { writer.execute { runCatching { spool = MknoonAppDiagnosticSpool(backend, installedBuild = "${BuildConfig.VERSION_NAME}+${BuildConfig.VERSION_CODE}"); importOsExits() } } }
     fun record(feature: String, stage: String, outcome: String, reason: String = "none", values: Map<String, Any?> = emptyMap(), traceId: String? = null) {
-        runCatching { writer.execute { runCatching { spool?.append(feature, stage, outcome, reason, values, traceId) } } }
+        admission.enqueue({ work -> writer.execute(work) }) { dropped ->
+            runCatching {
+                spool?.recordDropped(dropped)
+                if (spool?.append(feature, stage, outcome, reason, values, traceId, deferPersistence = true) == true && !persistenceScheduled) {
+                    persistenceScheduled = true
+                    // A FIFO barrier batches the bounded records already queued.
+                    // Control commands keep their position and persist current state.
+                    writer.execute { persistenceScheduled = false; spool?.persistPending() }
+                }
+            }
+        }
     }
     private fun importOsExits() {
         if (Build.VERSION.SDK_INT < 30 || spool?.captureEnabled != true) return

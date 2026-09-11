@@ -35,6 +35,20 @@ class MonitorTests(unittest.TestCase):
         self.assertEqual(snapshot['eventReports'],0)
         self.assertEqual(json.loads((self.output/'state.json').read_text())['active'],{})
 
+    def test_native_error_context_survives_monitor_without_cross_code_coalescing(self):
+        for code in [1,2]:
+            for _ in range(3):
+                self.record([self.event(feature='push',stage='presentation',outcome='failed',reason='prepare_failed',values={'errorClass':'platform','osReasonCode':code})])
+        changes,_=self.tick()
+        alerts=[a for a in changes if a['kind']=='new_error_signature']
+        self.assertEqual(len(alerts),2)
+        self.assertEqual({a['osReasonCode'] for a in alerts},{1,2})
+        self.assertTrue(all(a['fingerprintSpecificity']=='class_only' for a in alerts))
+        self.assertEqual(self.tick()[0],[])
+        safe={'kind':'new_error_signature','errorClass':'platform','osReasonCode':1,'fingerprintSpecificity':'class_only'}
+        for field,value in [('errorClass','SECRET'),('osReasonCode',True),('fingerprintSpecificity','SECRET'),('operation','SECRET')]:
+            self.assertIsNone(monitor.safe_alert({**safe,field:value}))
+
     def test_missing_final_alert_has_grace_and_minimum(self):
         for _ in range(5):self.record([self.event()])
         self.assertFalse(any(a['kind']=='missing_final_rate' for a in self.tick()[0]))

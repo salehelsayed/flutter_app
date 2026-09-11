@@ -1,0 +1,166 @@
+{
+  "events": [
+    {
+      "at": 1788951289.674038,
+      "action": "Old phone transfer entry and new phone welcome"
+    },
+    {
+      "at": 1788951291.766412,
+      "action": "New phone chooses Move from old phone"
+    },
+    {
+      "at": 1788951316.7028291,
+      "action": "Matching confirmation codes shown on both devices"
+    },
+    {
+      "at": 1788951319.856708,
+      "action": "User starts transfer"
+    },
+    {
+      "at": 1788951321.086337,
+      "action": "Old phone goes Home during transfer"
+    },
+    {
+      "at": 1788951323.70497,
+      "action": "Old phone notification shade opened"
+    },
+    {
+      "at": 1788951337.7114391,
+      "action": "Transfer notification inspection"
+    },
+    {
+      "at": 1788951338.9383821,
+      "action": "Return to transfer in mknoon"
+    },
+    {
+      "at": 1788951403.233034,
+      "action": "Final transfer state"
+    }
+  ],
+  "captures": [
+    {
+      "role": "phone",
+      "take": "migration-final2",
+      "remote": "/sdcard/mknoon-migration-final2-phone.mp4",
+      "pid": "22494",
+      "hostPid": 34695,
+      "startedAt": 1788951288.988035,
+      "local": "/tmp/mknoon-play-videos/migration-final2-phone.mp4",
+      "finishedAt": 1788951408.572267
+    },
+    {
+      "role": "emulator",
+      "take": "migration-final2",
+      "remote": "/sdcard/mknoon-migration-final2-emulator.mp4",
+      "pid": "7136",
+      "hostPid": 34702,
+      "startedAt": 1788951289.669269,
+      "local": "/tmp/mknoon-play-videos/migration-final2-emulator.mp4",
+      "finishedAt": 1788951409.382049
+    }
+  ],
+  "network": "ADB USB tunnel via Mac, sender limited to 128 KiB/s for visible transfer progress",
+  "finalUi": {
+    "phone": [
+      {
+        "text": "",
+        "content-desc": "Back",
+        "resource-id": null,
+        "class": "android.widget.Button",
+        "bounds": "[21,149][147,275]",
+        "clickable": "true"
+      },
+      {
+        "text": "",
+        "content-desc": "Move account to new phone",
+        "resource-id": null,
+        "class": "android.view.View",
+        "bounds": "[63,475][1017,572]",
+        "clickable": "false"
+      },
+      {
+        "text": "",
+        "content-desc": "Scan the migration QR shown on your new phone.",
+        "resource-id": null,
+        "class": "android.view.View",
+        "bounds": "[63,593][1017,645]",
+        "clickable": "false"
+      },
+      {
+        "text": "",
+        "content-desc": "Transfer complete",
+        "resource-id": null,
+        "class": "android.view.View",
+        "bounds": "[340,895][740,963]",
+        "clickable": "false"
+      },
+      {
+        "text": "",
+        "content-desc": "The migration transfer finished on this phone.",
+        "resource-id": null,
+        "class": "android.view.View",
+        "bounds": "[180,984][900,1031]",
+        "clickable": "false"
+      }
+    ],
+    "emulator": [
+      {
+        "text": "",
+        "content-desc": "Open chat with iphone-11",
+        "resource-id": null,
+        "class": "android.widget.Button",
+        "bounds": "[477,1011][603,1137]",
+        "clickable": "true"
+      },
+      {
+        "text": "",
+        "content-desc": "Open settings",
+        "resource-id": null,
+        "class": "android.widget.Button",
+        "bounds": "[477,1174][603,1300]",
+        "clickable": "true"
+      },
+      {
+        "text": "",
+        "content-desc": "Open chat with Username",
+        "resource-id": null,
+        "class": "android.widget.Button",
+        "bounds": "[477,1336][603,1462]",
+        "clickable": "true"
+      },
+      {
+        "text": "",
+        "content-desc": "Show all chats",
+        "resource-id": null,
+        "class": "android.widget.Button",
+        "bounds": "[42,157][147,262]",
+        "clickable": "true"
+      },
+      {
+        "text": "",
+        "content-desc": "online, send and inbox ready, directly reachable",
+        "resource-id": null,
+        "class": "android.view.View",
+        "bounds": "[639,170][912,249]",
+        "clickable": "false"
+      },
+      {
+        "text": "",
+        "content-desc": "orbit_create_group_fab",
+        "resource-id": null,
+        "class": "android.widget.Button",
+        "bounds": "[933,157][1038,262]",
+        "clickable": "true"
+      },
+      {
+        "text": "",
+        "content-desc": "Find someone in your circle",
+        "resource-id": null,
+        "class": "android.widget.Button",
+        "bounds": "[901,2214][1038,2350]",
+        "clickable": "true"
+      }
+    ]
+  },
+  "status": "finished"
+}

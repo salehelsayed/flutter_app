@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:crypto/crypto.dart';
+import 'package:flutter_app/core/database/app_database_version.dart';
 
 import 'group_media_reliability_criteria.dart';
 import 'group_media_reliability_runner_contract.dart';
@@ -874,7 +875,12 @@ final class _AndroidGroupMediaHost {
       'transportPeerId',
       maxLength: 180,
     );
-    if (probedAccount != accountPeerId || transportPeerId == accountPeerId) {
+    if (probedAccount != accountPeerId ||
+        !groupMediaRoleIdentityMatches(
+          context.authorityMode,
+          accountPeerId,
+          transportPeerId,
+        )) {
       throw const FormatException(
         'Android account and transport identity authority did not bind',
       );
@@ -1024,6 +1030,14 @@ final class _AndroidGroupMediaHost {
             : 'unexpected_error';
         throw GroupMediaReliabilityScenarioFailure(
           'group_endpoint_${config['phase']}_$safeErrorCode',
+        );
+      }
+      if ((result.containsKey('authorityMode')
+              ? result['authorityMode']
+              : groupMediaDistinctAuthorityMode) !=
+          context.authorityMode) {
+        throw GroupMediaReliabilityScenarioFailure(
+          'group_endpoint_authority_mode_mismatch',
         );
       }
       return result['status'] == expectedStatus && result['success'] == true
@@ -1369,6 +1383,28 @@ Map<String, Object?> aggregateAndroidGroupMediaReliabilityEvidence({
   required AndroidGroupMediaCommandSafetyEvidence commandSafety,
   required bool appsLeftInstalled,
 }) {
+  if (!groupMediaAuthorityModeIsValid(context.authorityMode)) {
+    throw const FormatException(
+      'Android group-media authority mode is invalid',
+    );
+  }
+  for (final receipt in [
+    senderSetup,
+    receiverArm,
+    senderSend,
+    receiverRecovery,
+    receiverRender,
+    senderProbe,
+  ]) {
+    if ((receipt.containsKey('authorityMode')
+            ? receipt['authorityMode']
+            : groupMediaDistinctAuthorityMode) !=
+        context.authorityMode) {
+      throw const FormatException(
+        'Android endpoint authority mode does not match runner custody',
+      );
+    }
+  }
   const resetRoles = <String>{'sender', 'receiver'};
   if (preResetReceipts.keys.toSet().length != resetRoles.length ||
       !preResetReceipts.keys.toSet().containsAll(resetRoles) ||
@@ -1415,15 +1451,25 @@ Map<String, Object?> aggregateAndroidGroupMediaReliabilityEvidence({
   );
   if (senderAccount != senderExportedAccountPeerId ||
       receiverAccount != receiverExportedAccountPeerId ||
-      senderAccount == senderTransport ||
-      receiverAccount == receiverTransport ||
+      !groupMediaRoleIdentityMatches(
+        context.authorityMode,
+        senderAccount,
+        senderTransport,
+      ) ||
+      !groupMediaRoleIdentityMatches(
+        context.authorityMode,
+        receiverAccount,
+        receiverTransport,
+      ) ||
       <String>{
             senderAccount,
             senderTransport,
             receiverAccount,
             receiverTransport,
           }.length !=
-          4 ||
+          (context.authorityMode == groupMediaAccountBoundAuthorityMode
+              ? 2
+              : 4) ||
       receiverArm['groupId'] != groupId ||
       senderSend['accountPeerId'] != senderAccount ||
       senderSend['transportPeerId'] != senderTransport ||
@@ -1441,8 +1487,9 @@ Map<String, Object?> aggregateAndroidGroupMediaReliabilityEvidence({
         senderTransport,
         receiverTransport,
       }) ||
-      allowedPeers.contains(senderAccount) ||
-      allowedPeers.contains(receiverAccount)) {
+      (context.authorityMode == groupMediaDistinctAuthorityMode &&
+          (allowedPeers.contains(senderAccount) ||
+              allowedPeers.contains(receiverAccount)))) {
     throw const FormatException(
       'Android group-media upload ACL was not the active transport roster',
     );
@@ -1585,6 +1632,7 @@ Map<String, Object?> aggregateAndroidGroupMediaReliabilityEvidence({
   );
   final artifact = <String, Object?>{
     'schema': groupMediaReliabilityArtifactSchema,
+    'authority_mode': context.authorityMode,
     'run_id': context.runId,
     'scenario': groupMediaForegroundRetryAclRoundtripScenario,
     'prepared_artifact': <String, Object?>{
@@ -1616,8 +1664,8 @@ Map<String, Object?> aggregateAndroidGroupMediaReliabilityEvidence({
       },
     },
     'account_vs_transport_discriminator': <String, Object?>{
-      'sender': true,
-      'receiver': true,
+      'sender': senderAccount != senderTransport,
+      'receiver': receiverAccount != receiverTransport,
     },
     'acl_entries': <Object?>[senderTransportDigest, receiverTransportDigest],
     'media': <String, Object?>{
@@ -1781,7 +1829,7 @@ final class _RoleDatabaseObservation {
         cipherVersion is! String ||
         cipherVersion.trim().isEmpty ||
         cipherVersion.length > 96 ||
-        userVersion != 104 ||
+        userVersion != currentIdentityDatabaseVersion ||
         rawRows is! List ||
         rawRows.length != (requireRows ? 3 : 0)) {
       throw FormatException('$role SQLCipher receipt is malformed');

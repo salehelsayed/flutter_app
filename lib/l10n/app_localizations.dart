@@ -6488,6 +6488,12 @@ abstract class AppLocalizations {
   /// **'Preview support report'**
   String get settings_diagnostics_preview_report;
 
+  /// No description provided for @settings_diagnostics_preview_truncated.
+  ///
+  /// In en, this message translates to:
+  /// **'Showing part of the report. Copy includes the full report.'**
+  String get settings_diagnostics_preview_truncated;
+
   /// No description provided for @settings_diagnostics_report_copied.
   ///
   /// In en, this message translates to:

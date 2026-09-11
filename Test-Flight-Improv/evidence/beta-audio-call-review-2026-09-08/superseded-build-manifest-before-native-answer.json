@@ -1,0 +1,37 @@
+{
+  "capturedAtUtc": "2026-09-08T12:01:04.333046+00:00",
+  "artifacts": {
+    "android_normal_debug": {
+      "bytes": 319133307,
+      "sha256": "be859119d767306fc61f8b55497b61dc7b84c29f01bb8d0a81e326e59b183c72"
+    },
+    "android_observer_qa_debug": {
+      "bytes": 319133241,
+      "sha256": "71adf39af59d352bf5b56a0168e23344c2e889bfe8c12b1293de1433064fa666"
+    },
+    "ios_profile_runner": {
+      "bytes": 38821456,
+      "sha256": "1828ff5c7232e7d523de11c40c0d094459e17421ff1c9eec6cde4083643982a6"
+    },
+    "ios_profile_dart_aot": {
+      "bytes": 30136336,
+      "sha256": "9e78f814ea8e0ab4b922752c1ed8c4e43c1e238f616eae3a7b3c97532328549a"
+    }
+  },
+  "productionSourceSha256": {
+    "go-mknoon/node/turn_credentials.go": "ebec536da66d861cf2de11f773af064e575fa765ea0680c1bf5ef3eb02f6e46e",
+    "lib/app/bootstrap/production_call_signaling_graph.dart": "a771a8197816ca98cfcc065cbdf8a9c3795f7754542719fa11659b653b44f5bd",
+    "lib/app/bootstrap/call_signaling_composition.dart": "14a9b8780a9a234f4c5afe8b3bd5c6252e7066f4e08d39e4f0c798bbdac114aa",
+    "lib/features/call/application/call_wake_authorization_coordinator.dart": "3b6f99edfec3fd665d67102000f87a76ecb4c5e26910544643607d391be343b1",
+    "lib/features/call/domain/call_authority_lifetime.dart": "85e0461023714b1073ffc7ff1f162b772d1b2e26810c2ee87c23906afcdc8c6a",
+    "lib/features/call/infrastructure/android_call_token_coordinator.dart": "6765db684f448a7f2a235b9ef70ddf3e6fb24ba032d78aef138f9218854fca08",
+    "lib/features/call/infrastructure/ios_voip_token_coordinator.dart": "c52806c8dee1eaae59adf5f13b458ca97668257d9a79d2f7b04a753b41269173",
+    "lib/features/conversation/presentation/screens/conversation_screen.dart": "e9c9ef1db9a46a7309cef704fa9d692482bf5022b5922ed18132748943909318",
+    "lib/features/conversation/presentation/screens/conversation_wired.dart": "876ef722a4a3163e07a9df7baa1162de3aae57e2284945d341cb98684a5b92aa",
+    "lib/features/conversation/presentation/widgets/conversation_header.dart": "e790147362fc0aa9fda91b8950c2b5775b84b6181a77a8b109a58a6068776221",
+    "android/app/src/main/kotlin/com/mknoon/app/call/MknoonCallNotificationFactory.kt": "b1e891cd94586e59791c69d62b7b30c958ddd532dc603d617fccf489057d8477"
+  },
+  "iosAPNsEnvironment": "development signing -> sandbox token publication",
+  "distribution": "Local lab validation packages; not uploaded to TestFlight or Play",
+  "androidFullScreenPermission": "User-authorized allow on connected Pixel"
+}

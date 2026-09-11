@@ -51,6 +51,232 @@ void main() {
   });
 
   group('PendingMessageRetrier', () {
+    for (final groupUpload in [false, true]) {
+      group(groupUpload ? 'group upload hints' : 'direct upload hints', () {
+        test(
+          'requested upload retry is debounced and adds no idle polling',
+          () {
+            fakeAsync((async) {
+              final requests = StreamController<void>.broadcast();
+              var uploads = 0;
+              var fullPasses = 0;
+              retrier = PendingMessageRetrier(
+                p2pService: p2pService,
+                messageRepo: messageRepo,
+                identityRepo: identityRepo,
+                contactRepo: contactRepo,
+                bridge: bridge,
+                directUploadRetrySignal: groupUpload ? null : requests.stream,
+                groupUploadRetrySignal: groupUpload ? requests.stream : null,
+                retryIncompleteUploadsPeriodicFn: () async => ++uploads,
+                retryIncompleteGroupUploadsPeriodicFn: () async => ++uploads,
+                retryIncompleteUploadsFn: () async => ++fullPasses,
+                retryIncompleteGroupUploadsFn: () async => ++fullPasses,
+                isExternalRecoveryInProgressFn: () => !groupUpload,
+              );
+              retrier.start();
+              async.elapse(const Duration(minutes: 1));
+              expect(uploads, 0);
+              for (var i = 0; i < 8; i++) {
+                requests.add(null);
+              }
+              async.flushMicrotasks();
+              async.elapse(const Duration(seconds: 4));
+              expect(uploads, 0);
+              async.elapse(const Duration(seconds: 1));
+              expect(uploads, 1);
+              expect(
+                fullPasses,
+                0,
+                reason: 'media does not wait behind full recovery',
+              );
+              async.elapse(const Duration(minutes: 10));
+              expect(
+                uploads,
+                1,
+                reason: 'one hint must not create a retry loop',
+              );
+              retrier.dispose();
+              requests.close();
+              async.flushMicrotasks();
+            });
+          },
+        );
+
+        test(
+          'requested upload retries serialize and retain a later request',
+          () {
+            fakeAsync((async) {
+              final requests = StreamController<void>.broadcast();
+              final first = Completer<int>();
+              var uploads = 0;
+              retrier = PendingMessageRetrier(
+                p2pService: p2pService,
+                messageRepo: messageRepo,
+                identityRepo: identityRepo,
+                contactRepo: contactRepo,
+                bridge: bridge,
+                directUploadRetrySignal: groupUpload ? null : requests.stream,
+                groupUploadRetrySignal: groupUpload ? requests.stream : null,
+                retryIncompleteUploadsPeriodicFn: () {
+                  uploads++;
+                  if (uploads == 1) return first.future;
+                  throw StateError('transient retry failure');
+                },
+                retryIncompleteGroupUploadsPeriodicFn: () {
+                  uploads++;
+                  if (uploads == 1) return first.future;
+                  throw StateError('transient retry failure');
+                },
+              );
+              retrier.start();
+              requests.add(null);
+              async.elapse(const Duration(seconds: 5));
+              expect(uploads, 1);
+              requests.add(null);
+              requests.add(null);
+              async.elapse(const Duration(seconds: 20));
+              expect(uploads, 1, reason: 'no overlapping native uploads');
+              first.complete(0);
+              async.flushMicrotasks();
+              async.elapse(const Duration(seconds: 5));
+              expect(uploads, 2);
+              async.elapse(const Duration(minutes: 1));
+              expect(
+                uploads,
+                2,
+                reason: 'an error leaves periodic recovery in charge',
+              );
+              retrier.dispose();
+              requests.close();
+              async.flushMicrotasks();
+            });
+          },
+        );
+
+        test(
+          'requested upload retry preserves network-restored media priority',
+          () {
+            fakeAsync((async) {
+              final requests = StreamController<void>.broadcast();
+              final restored = StreamController<void>.broadcast();
+              final restoring = Completer<int>();
+              var uploads = 0;
+              retrier = PendingMessageRetrier(
+                p2pService: p2pService,
+                messageRepo: messageRepo,
+                identityRepo: identityRepo,
+                contactRepo: contactRepo,
+                bridge: bridge,
+                directUploadRetrySignal: groupUpload ? null : requests.stream,
+                groupUploadRetrySignal: groupUpload ? requests.stream : null,
+                networkRestoredSignal: restored.stream,
+                retryUnackedMessagesOverride: () async => 0,
+                retryIncompleteUploadsNetworkRestoredFn: () => restoring.future,
+                retryIncompleteUploadsPeriodicFn: () async => ++uploads,
+                retryIncompleteGroupUploadsPeriodicFn: () async => ++uploads,
+              );
+              retrier.start();
+              restored.add(null);
+              async.elapse(const Duration(seconds: 1));
+              requests.add(null);
+              async.elapse(const Duration(seconds: 5));
+              expect(uploads, 0);
+              restoring.complete(0);
+              async.flushMicrotasks();
+              async.elapse(const Duration(seconds: 5));
+              expect(
+                uploads,
+                1,
+                reason: 'defer the hint instead of dropping it',
+              );
+              retrier.dispose();
+              requests.close();
+              restored.close();
+              async.flushMicrotasks();
+            });
+          },
+        );
+
+        test(
+          'disposing drops requested upload work even while a retry completes',
+          () {
+            fakeAsync((async) {
+              final requests = StreamController<void>.broadcast();
+              final active = Completer<int>();
+              var uploads = 0;
+              retrier = PendingMessageRetrier(
+                p2pService: p2pService,
+                messageRepo: messageRepo,
+                identityRepo: identityRepo,
+                contactRepo: contactRepo,
+                bridge: bridge,
+                directUploadRetrySignal: groupUpload ? null : requests.stream,
+                groupUploadRetrySignal: groupUpload ? requests.stream : null,
+                retryIncompleteUploadsPeriodicFn: () {
+                  uploads++;
+                  return active.future;
+                },
+                retryIncompleteGroupUploadsPeriodicFn: () {
+                  uploads++;
+                  return active.future;
+                },
+              );
+              retrier.start();
+              requests.add(null);
+              async.elapse(const Duration(seconds: 5));
+              requests.add(null);
+              async.flushMicrotasks();
+              retrier.dispose();
+              active.complete(0);
+              async.elapse(const Duration(minutes: 1));
+              expect(uploads, 1);
+              requests.close();
+              async.flushMicrotasks();
+            });
+          },
+        );
+      });
+    }
+
+    test('group upload hint waits for external and serialized recovery', () {
+      fakeAsync((async) {
+        final requests = StreamController<void>.broadcast();
+        var externalRecovery = true;
+        var uploads = 0;
+        retrier = PendingMessageRetrier(
+          p2pService: p2pService,
+          messageRepo: messageRepo,
+          identityRepo: identityRepo,
+          contactRepo: contactRepo,
+          bridge: bridge,
+          groupUploadRetrySignal: requests.stream,
+          isExternalRecoveryInProgressFn: () => externalRecovery,
+          retryIncompleteGroupUploadsPeriodicFn: () async {
+            expect(isGroupRecoveryInProgress(), isTrue);
+            return ++uploads;
+          },
+        );
+        retrier.start();
+        requests.add(null);
+        async.elapse(const Duration(seconds: 5));
+        expect(uploads, 0);
+        externalRecovery = false;
+        groupRecoveryGate.begin();
+        async.elapse(const Duration(seconds: 5));
+        expect(uploads, 0);
+        groupRecoveryGate.end();
+        async.elapse(const Duration(seconds: 5));
+        expect(uploads, 1);
+        expect(isGroupRecoveryInProgress(), isFalse);
+        async.elapse(const Duration(minutes: 1));
+        expect(uploads, 1);
+        retrier.dispose();
+        requests.close();
+        async.flushMicrotasks();
+      });
+    });
+
     test(
       'TC-17 default failed-message path leaves upload-pending media to the incomplete retry lane',
       () async {

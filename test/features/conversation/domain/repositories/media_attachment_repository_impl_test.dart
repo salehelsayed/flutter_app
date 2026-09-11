@@ -1,3 +1,10 @@
+import 'package:flutter_app/core/database/helpers/group_media_key_snapshot.dart';
+import 'package:flutter_app/core/services/inbox_store_outcome.dart';
+import 'package:flutter_app/features/groups/application/group_offline_replay_envelope.dart';
+import 'package:flutter_app/features/groups/application/protected_group_media_manifest.dart';
+import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
+import '../../../../shared/fakes/in_memory_group_repository.dart';
+import '../../../../core/bridge/fake_bridge.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
@@ -83,6 +90,23 @@ class _FailingSnapshotSecureKeyStore extends RecordingSecureKeyStore {
   }
 }
 
+class _IncomingKeyReadGateSecureKeyStore extends RecordingSecureKeyStore {
+  bool pauseNextRead = false;
+  final readEntered = Completer<void>();
+  final releaseRead = Completer<void>();
+
+  @override
+  Future<String?> read(String key) async {
+    final value = await super.read(key);
+    if (pauseNextRead) {
+      pauseNextRead = false;
+      readEntered.complete();
+      await releaseRead.future;
+    }
+    return value;
+  }
+}
+
 const _retryCounterColumns = <String>{
   'upload_retry_count',
   'download_retry_count',
@@ -122,6 +146,285 @@ void main() {
 
   tearDown(() async {
     await fixture.dispose();
+  });
+
+  _registerStrictGroupMediaKeyBoundaryTests(() => fixture);
+
+  group('incoming group key boundary', () {
+    const groupId = 'incoming-key-group';
+    const messageId = 'incoming-key-message';
+    const attachmentId = 'incoming-key-attachment';
+    const createdAt = '2026-09-10T00:00:00.000Z';
+    const key = 'incoming-exact-key';
+    const expiresAtMs = 1930000000000;
+    final keyName = mediaAttachmentEncryptionKeyStoreName(attachmentId);
+
+    Future<({MediaAttachment attachment, DirectMediaBlobCustodyRow custody})>
+    seed(String storage) async {
+      final hash = 'cd' * 32;
+      final fingerprint = computeGroupMediaBlobCustodyFingerprint(
+        groupId: groupId,
+        messageId: messageId,
+        attachmentId: attachmentId,
+        custodyBlobId: 'incoming-key-custody',
+        contentHash: hash,
+        ciphertextSize: 80,
+        recipientPeerIds: const <String>['incoming-key-recipient'],
+      );
+      final attachment = MediaAttachment(
+        id: attachmentId,
+        messageId: messageId,
+        mime: 'image/jpeg',
+        size: 64,
+        mediaType: 'image',
+        downloadStatus: 'pending',
+        createdAt: createdAt,
+        contentHash: hash,
+        encryptionKeyBase64: key,
+        encryptionNonce: 'incoming-exact-nonce',
+        encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+        groupMediaBlobCustodyFingerprint: fingerprint,
+        ownerLane: MediaOwnerLane.group,
+      );
+      final custody = DirectMediaBlobCustodyRow(
+        attachmentId: attachmentId,
+        messageId: messageId,
+        ownerLane: MediaBlobCustodyOwnerLane.group,
+        groupId: groupId,
+        custodyBlobId: 'incoming-key-custody',
+        direction: DirectMediaBlobCustodyDirection.incoming,
+        state: DirectMediaBlobCustodyState.incomingCommitted,
+        inboxCustodyIncarnationId: null,
+        recipientPeerId: null,
+        ciphertextRelativePath: null,
+        custodyKind: kGroupMediaBlobCustodyKind,
+        contentHash: hash,
+        ciphertextSize: 80,
+        expiresAtMs: expiresAtMs,
+        custodyRelayPeerId: null,
+        lastAttemptAt: null,
+        nextAttemptAt: null,
+        createdAt: createdAt,
+        updatedAt: createdAt,
+      );
+      await fixture.seedGroupParent(messageId, groupId: groupId);
+      if (storage == 'legacy') {
+        await fixture.db.insert('media_attachments', attachment.toMap());
+      } else {
+        await fixture.repo.saveAttachment(
+          attachment,
+          owner: MediaOwnerLane.group,
+        );
+      }
+      await fixture.db.insert(kDirectMediaBlobCustodyTable, custody.toMap());
+      return (attachment: attachment, custody: custody);
+    }
+
+    Future<bool> commit(
+      MediaAttachment attachment,
+      DirectMediaBlobCustodyRow custody,
+    ) => fixture.repo.commitIncomingGroupMediaBlobLocalPath(
+      expectedAttachment: attachment,
+      expectedCustody: custody,
+      localPath: 'media/$groupId/$attachmentId.jpg',
+      sourceRelayPeerId: 'incoming-key-relay',
+      updatedAt: '2026-09-10T00:00:01.000Z',
+      nowMs: 1800000000000,
+    );
+
+    Future<void> expectPending() async {
+      expect(
+        (await fixture.rawAttachmentRow(attachmentId))!['download_status'],
+        'pending',
+      );
+      final rows = await fixture.repo.loadGroupMediaBlobCustodyForMessage(
+        groupId: groupId,
+        messageId: messageId,
+      );
+      expect(rows.single.state, DirectMediaBlobCustodyState.incomingCommitted);
+      expect(rows.single.custodyRelayPeerId, isNull);
+    }
+
+    for (final storage in <String>['legacy', 'secure']) {
+      test(
+        '$storage exact key preserves its stored representation after commit',
+        () async {
+          final input = await seed(storage);
+          final stored = (await fixture.rawAttachmentRow(
+            attachmentId,
+          ))!['encryption_key_base64'];
+          final writes = fixture.secureKeyStore.writtenKeys.length;
+          expect(await commit(input.attachment, input.custody), isTrue);
+          expect(
+            (await fixture.rawAttachmentRow(
+              attachmentId,
+            ))!['encryption_key_base64'],
+            stored,
+          );
+          expect(fixture.secureKeyStore.writtenKeys, hasLength(writes));
+          final rows = await fixture.repo.loadGroupMediaBlobCustodyForMessage(
+            groupId: groupId,
+            messageId: messageId,
+          );
+          expect(
+            rows.single.state,
+            DirectMediaBlobCustodyState.incomingAckPending,
+          );
+          expect(rows.single.custodyRelayPeerId, 'incoming-key-relay');
+        },
+      );
+
+      for (final mismatch in <String>[
+        'key',
+        'nonce',
+        'hash',
+        'size',
+        'waveform',
+        'fingerprint',
+        'owner',
+        'message',
+        'custody',
+      ]) {
+        test(
+          '$storage stale $mismatch refuses without promotion or ACK',
+          () async {
+            final input = await seed(storage);
+            var expected = input.attachment;
+            var custody = input.custody;
+            switch (mismatch) {
+              case 'key':
+                expected = expected.copyWith(encryptionKeyBase64: 'wrong-key');
+              case 'nonce':
+                expected = expected.copyWith(encryptionNonce: 'wrong-nonce');
+              case 'hash':
+                expected = expected.copyWith(contentHash: 'ef' * 32);
+              case 'size':
+                expected = expected.copyWith(size: 65);
+              case 'waveform':
+                expected = expected.copyWith(waveform: const <double>[0.5]);
+              case 'fingerprint':
+                expected = expected.copyWith(
+                  groupMediaBlobCustodyFingerprint: 'ef' * 32,
+                );
+              case 'owner':
+                expected = expected.copyWith(ownerLane: MediaOwnerLane.direct);
+              case 'message':
+                expected = expected.copyWith(messageId: 'other-message');
+              case 'custody':
+                custody = custody.copyWith(updatedAt: '2026-09-10T00:00:02.000Z');
+            }
+            expect(await commit(expected, custody), isFalse);
+            await expectPending();
+          },
+        );
+      }
+    }
+
+    test('secure missing key refuses without promotion', () async {
+      final input = await seed('secure');
+      await fixture.secureKeyStore.delete(keyName);
+      expect(await commit(input.attachment, input.custody), isFalse);
+      await expectPending();
+    });
+
+    test('secure rotated key refuses without promotion', () async {
+      final input = await seed('secure');
+      await fixture.secureKeyStore.write(keyName, 'rotated-key');
+      expect(await commit(input.attachment, input.custody), isFalse);
+      await expectPending();
+    });
+
+    test('noncanonical reference with matching value still refuses', () async {
+      final input = await seed('secure');
+      const otherName = 'another-attachment-key';
+      await fixture.secureKeyStore.write(otherName, key);
+      await fixture.db.update(
+        'media_attachments',
+        <String, Object?>{
+          'encryption_key_base64': secureStoreReferenceForKey(otherName),
+        },
+        where: 'id = ?',
+        whereArgs: <Object?>[attachmentId],
+      );
+      expect(await commit(input.attachment, input.custody), isFalse);
+      await expectPending();
+    });
+
+    test('secure read error propagates and retains pending custody', () async {
+      await fixture.dispose();
+      final store = _FailingSnapshotSecureKeyStore();
+      fixture = await MediaRepositoryRealDbFixture.create(
+        secureKeyStore: store,
+      );
+      final input = await seed('secure');
+      store.failRead = true;
+      await expectLater(
+        commit(input.attachment, input.custody),
+        throwsStateError,
+      );
+      await expectPending();
+      store.failRead = false;
+      expect(await commit(input.attachment, input.custody), isTrue);
+    });
+
+    test(
+      'existing plaintext row commits after database reopen without rewriting its key',
+      () async {
+        await fixture.dispose();
+        final dir = Directory.systemTemp.createTempSync(
+          'incoming-group-key-reopen-',
+        );
+        addTearDown(() => dir.delete(recursive: true));
+        fixture = await MediaRepositoryRealDbFixture.create(
+          databasePath: '${dir.path}/identity.db',
+        );
+        final input = await seed('legacy');
+        fixture = await fixture.reopen();
+        expect(await commit(input.attachment, input.custody), isTrue);
+        expect(
+          (await fixture.rawAttachmentRow(
+            attachmentId,
+          ))!['encryption_key_base64'],
+          key,
+        );
+        expect(fixture.secureKeyStore.writtenKeys, isEmpty);
+      },
+    );
+
+    test(
+      'media ownership holds from secure read through the SQL commit',
+      () async {
+        await fixture.dispose();
+        final lock = MediaAttachmentLifecycleLock();
+        final store = _IncomingKeyReadGateSecureKeyStore();
+        fixture = await MediaRepositoryRealDbFixture.create(
+          secureKeyStore: store,
+          lifecycleLock: lock,
+        );
+        final input = await seed('secure');
+        store.pauseNextRead = true;
+        final committing = commit(input.attachment, input.custody);
+        await store.readEntered.future;
+        var mutationEntered = false;
+        Object? statusAtMutation;
+        final mutation = Zone.root.run(
+          () => lock.synchronized(attachmentId, () async {
+            mutationEntered = true;
+            statusAtMutation = (await fixture.rawAttachmentRow(
+              attachmentId,
+            ))!['download_status'];
+            await store.write(keyName, 'post-commit-rotation');
+          }),
+        );
+        await Future<void>(() {});
+        expect(mutationEntered, isFalse);
+        store.releaseRead.complete();
+        expect(await committing, isTrue);
+        await mutation;
+        expect(mutationEntered, isTrue);
+        expect(statusAtMutation, 'done');
+      },
+    );
   });
 
   Future<Map<String, Object?>?> rawRow(String id) =>
@@ -10041,4 +10344,768 @@ END
       );
     });
   });
+}
+
+void _registerStrictGroupMediaKeyBoundaryTests(
+  MediaRepositoryRealDbFixture Function() loadFixture,
+) {
+  Map<String, Object?> expectedRow(GroupMessage message) => <String, Object?>{
+    ...message.toMap(),
+    'retry_attempt_count': message.retryAttemptCount,
+    'next_eligible_at': message.nextEligibleAt?.millisecondsSinceEpoch,
+  };
+  GroupMediaKeyAccess access(MediaRepositoryRealDbFixture fixture) =>
+      GroupMediaKeyAccess(
+        secureKeyStore: fixture.secureKeyStore,
+        lifecycleLock: fixture.repo.lifecycleLock,
+      );
+  Future<bool> stage(
+    MediaRepositoryRealDbFixture fixture,
+    ({
+      GroupMessage expected,
+      Map<String, Object?> eventPayload,
+      Map<String, Object?> preparedEventPayload,
+    })
+    seeded, {
+    GroupMediaKeySnapshot? snapshot,
+  }) => dbStagePreparedLocalGroupContentMessage(
+    fixture.db,
+    expected: expectedRow(seeded.expected),
+    sourcePeerId: 'account-local',
+    sourceEventId: localPreparedProtectedGroupMessageSourceEventId(
+      seeded.expected.id,
+    ),
+    sourceTimestamp: '2026-08-14T12:00:00.000000Z',
+    preparedEventPayload: seeded.preparedEventPayload,
+    mediaKeyAccess: snapshot == null ? access(fixture) : null,
+    mediaKeySnapshot: snapshot,
+  );
+
+  for (final keyMode in <String>[
+    'legacy',
+    'secure',
+    'wrong-reference',
+    'missing-key',
+    'wrong-key',
+  ]) {
+    for (final waveform in <List<double>?>[
+      null,
+      const <double>[],
+      const <double>[0.1, 0.5],
+    ]) {
+      test(
+        'strict DB key boundary $keyMode ${waveform == null
+            ? "null"
+            : waveform.isEmpty
+            ? "empty"
+            : "nonempty"}',
+        () async {
+          final fixture = loadFixture();
+          final seeded = await _seedStrictGroupMediaKeyBoundary(
+            fixture,
+            keyMode: keyMode,
+            waveform: waveform,
+          );
+          final accepted =
+              (keyMode == 'legacy' || keyMode == 'secure') &&
+              (waveform == null || waveform.isEmpty);
+          expect(await stage(fixture, seeded), accepted);
+          if (!accepted) return;
+          expect(
+            await dbHasExactPreparedLocalGroupContentMessage(
+              fixture.db,
+              expected: expectedRow(seeded.expected),
+              eventPayload: seeded.eventPayload,
+              mediaKeyAccess: access(fixture),
+            ),
+            isTrue,
+          );
+          final replacement = GroupContentRetryPayload.decode(
+            seeded.expected.inboxRetryPayload!,
+          ).encodeWithPending(const <String>['transport-z']);
+          expect(
+            await dbReplaceGroupInboxRetryPayloadIfExact(
+              fixture.db,
+              expectedRow(seeded.expected),
+              replacement,
+              mediaKeyAccess: access(fixture),
+            ),
+            isTrue,
+          );
+          final surviving = seeded.expected.copyWith(
+            inboxRetryPayload: replacement,
+          );
+          expect(
+            await dbCompleteGroupContentInboxStoreRetryIfExact(
+              fixture.db,
+              expected: expectedRow(surviving),
+              sourcePeerId: 'account-local',
+              sourceEventId: localProtectedGroupMessageSourceEventId(
+                surviving.id,
+              ),
+              sourceTimestamp: '2026-08-14T12:00:00.000000Z',
+              eventPayload: seeded.eventPayload,
+              mediaKeyAccess: access(fixture),
+            ),
+            isTrue,
+          );
+          final terminal = (await fixture.db.query(
+            'group_messages',
+            where: 'id = ?',
+            whereArgs: <Object?>[surviving.id],
+          )).single;
+          expect(terminal['status'], 'sent');
+          expect(terminal['inbox_stored'], 1);
+          expect(terminal['inbox_retry_payload'], isNull);
+          final rows = await (fixture.repo as GroupMediaBlobCustodyRepository)
+              .loadGroupMediaBlobCustodyForMessage(
+                groupId: surviving.groupId,
+                messageId: surviving.id,
+              );
+          expect(rows, hasLength(2));
+          expect(
+            rows.every(
+              (row) =>
+                  row.state ==
+                  DirectMediaBlobCustodyState.outgoingCleanupPending,
+            ),
+            isTrue,
+          );
+          final key = (await fixture.rawAttachmentRow(
+            'key-boundary-image',
+          ))!['encryption_key_base64'];
+          expect(
+            key,
+            keyMode == 'legacy'
+                ? 'test-encryption-key'
+                : secureStoreReferenceForKey(
+                    mediaAttachmentEncryptionKeyStoreName('key-boundary-image'),
+                  ),
+          );
+        },
+      );
+    }
+  }
+
+  test(
+    'strict DB key scope rejects stale proof and releases after callback failure',
+    () async {
+      final fixture = loadFixture();
+      final seeded = await _seedStrictGroupMediaKeyBoundary(
+        fixture,
+        keyMode: 'secure',
+      );
+      late GroupMediaKeySnapshot expired;
+      await expectLater(
+        access(fixture).run<void>(
+          db: fixture.db,
+          messageIds: <String>[seeded.expected.id],
+          action: (snapshot) async {
+            expired = snapshot;
+            expect(
+              snapshot.matches(
+                db: fixture.db,
+                attachmentId: 'key-boundary-image',
+                messageId: seeded.expected.id,
+                storedKey: secureStoreReferenceForKey(
+                  mediaAttachmentEncryptionKeyStoreName('key-boundary-image'),
+                ),
+                committedKey: 'test-encryption-key',
+              ),
+              isTrue,
+            );
+            throw StateError('injected callback failure');
+          },
+        ),
+        throwsStateError,
+      );
+      expect(await stage(fixture, seeded, snapshot: expired), isFalse);
+      expect(await stage(fixture, seeded), isTrue);
+    },
+  );
+
+  test('strict DB key scope holds key mutation through SQL commit', () async {
+    final fixture = loadFixture();
+    final seeded = await _seedStrictGroupMediaKeyBoundary(
+      fixture,
+      keyMode: 'secure',
+    );
+    final attachment = (await fixture.repo.getAttachmentById(
+      'key-boundary-image',
+    ))!;
+    final keyName = mediaAttachmentEncryptionKeyStoreName(attachment.id);
+    final order = <String>[];
+    var contenderEntered = false;
+    Future<void>? mutation;
+    try {
+      await access(fixture).run<void>(
+        db: fixture.db,
+        messageIds: <String>[seeded.expected.id],
+        action: (snapshot) async {
+          // A separate owner must not inherit the scope's reentrant Zone lease.
+          mutation = Zone.root.run<Future<void>>(
+            () => fixture.repo.lifecycleLock.synchronized(
+              attachment.id,
+              () async {
+                contenderEntered = true;
+                await fixture.repo.saveAttachment(
+                  attachment.copyWith(encryptionKeyBase64: 'rotated-key'),
+                  owner: MediaOwnerLane.group,
+                );
+                order.add('mutation');
+              },
+            ),
+          );
+          // Give the independent contender an event turn to acquire ownership.
+          await Future<void>(() {});
+          await fixture.db.transaction((txn) async {
+            expect(
+              await fixture.secureKeyStore.read(keyName),
+              'test-encryption-key',
+              reason: 'the actual key must remain committed during SQL',
+            );
+            expect(contenderEntered, isFalse);
+            expect(
+              snapshot.matches(
+                db: txn,
+                attachmentId: attachment.id,
+                messageId: attachment.messageId,
+                storedKey: (await txn.query(
+                  'media_attachments',
+                  where: 'id = ?',
+                  whereArgs: <Object?>[attachment.id],
+                )).single['encryption_key_base64'],
+                committedKey: 'test-encryption-key',
+              ),
+              isTrue,
+            );
+            expect(order, isEmpty);
+          });
+          expect(
+            await fixture.secureKeyStore.read(keyName),
+            'test-encryption-key',
+          );
+          order.add('commit');
+        },
+      );
+    } finally {
+      await mutation;
+    }
+    expect(order, <String>['commit', 'mutation']);
+    expect(await fixture.secureKeyStore.read(keyName), 'rotated-key');
+    expect(
+      (await fixture.repo.getAttachmentById(
+        attachment.id,
+      ))!.encryptionKeyBase64,
+      'rotated-key',
+    );
+  });
+
+  test(
+    'strict DB key scope propagates secure read failure and releases ownership',
+    () async {
+      final fixture = loadFixture();
+      final seeded = await _seedStrictGroupMediaKeyBoundary(
+        fixture,
+        keyMode: 'secure',
+      );
+      final unavailableStore = _FailingSnapshotSecureKeyStore()
+        ..failRead = true;
+      var actionEntered = false;
+      await expectLater(
+        GroupMediaKeyAccess(
+          secureKeyStore: unavailableStore,
+          lifecycleLock: fixture.repo.lifecycleLock,
+        ).run<void>(
+          db: fixture.db,
+          messageIds: <String>[seeded.expected.id],
+          action: (_) async {
+            actionEntered = true;
+          },
+        ),
+        throwsStateError,
+      );
+      expect(actionEntered, isFalse);
+      expect(await stage(fixture, seeded), isTrue);
+    },
+  );
+
+  test(
+    'strict DB key scope rejects key reads inside SQL transactions',
+    () async {
+      final fixture = loadFixture();
+      await fixture.db.transaction((txn) async {
+        await expectLater(
+          () => access(fixture).run<void>(
+            db: txn,
+            messageIds: const <String>['message'],
+            action: (_) async {},
+          ),
+          throwsStateError,
+        );
+      });
+    },
+  );
+
+  test(
+    'strict DB key scope terminalizes a reopened secure media owner',
+    () async {
+      final directory = await Directory.systemTemp.createTemp(
+        'group-key-reopen-',
+      );
+      var fixture = await MediaRepositoryRealDbFixture.create(
+        databasePath: '${directory.path}/identity.db',
+      );
+      addTearDown(() async {
+        await fixture.dispose();
+        await directory.delete(recursive: true);
+      });
+      final seeded = await _seedStrictGroupMediaKeyBoundary(
+        fixture,
+        keyMode: 'secure',
+        waveform: const <double>[],
+      );
+      expect(await stage(fixture, seeded), isTrue);
+      fixture = await fixture.reopen();
+      expect(
+        await dbHasExactPreparedLocalGroupContentMessage(
+          fixture.db,
+          expected: expectedRow(seeded.expected),
+          eventPayload: seeded.eventPayload,
+          mediaKeyAccess: access(fixture),
+        ),
+        isTrue,
+      );
+      expect(
+        await dbTerminalizePreparedLocalGroupContentMessageIfExact(
+          fixture.db,
+          expected: expectedRow(seeded.expected),
+          preparedEventPayload: seeded.preparedEventPayload,
+          terminalSourcePeerId: 'account-local',
+          terminalSourceEventId: 'pt1:terminal-key-reopen',
+          terminalSourceTimestamp: '2026-08-14T12:01:00.000000Z',
+          terminalEventPayload: <String, Object?>{
+            'reason': 'test-reconciliation',
+          },
+          mediaKeyAccess: access(fixture),
+        ),
+        isTrue,
+      );
+      final row = (await fixture.db.query(
+        'group_messages',
+        where: 'id = ?',
+        whereArgs: <Object?>[seeded.expected.id],
+      )).single;
+      expect(row['status'], 'send_failed');
+      expect(row['inbox_retry_payload'], isNull);
+      expect(
+        (await fixture.rawAttachmentRow(
+          'key-boundary-image',
+        ))!['encryption_key_base64'],
+        secureStoreReferenceForKey(
+          mediaAttachmentEncryptionKeyStoreName('key-boundary-image'),
+        ),
+      );
+    },
+  );
+
+  test('strict DB key scope rejects proof from a different database', () async {
+    final fixture = loadFixture();
+    final seeded = await _seedStrictGroupMediaKeyBoundary(
+      fixture,
+      keyMode: 'secure',
+    );
+    final directory = await Directory.systemTemp.createTemp(
+      'group-key-other-db-',
+    );
+    final other = await MediaRepositoryRealDbFixture.create(
+      databasePath: '${directory.path}/other.db',
+    );
+    addTearDown(() async {
+      await other.dispose();
+      await directory.delete(recursive: true);
+    });
+    final otherSeeded = await _seedStrictGroupMediaKeyBoundary(
+      other,
+      keyMode: 'wrong-key',
+    );
+    expect(identical(fixture.db, other.db), isFalse);
+    await access(fixture).run<void>(
+      db: fixture.db,
+      messageIds: <String>[seeded.expected.id],
+      action: (snapshot) async {
+        expect(await stage(other, otherSeeded, snapshot: snapshot), isFalse);
+        expect(await stage(fixture, seeded, snapshot: snapshot), isTrue);
+      },
+    );
+  });
+
+  test(
+    'strict DB key scope supplies proof to transaction terminalization',
+    () async {
+      final fixture = loadFixture();
+      final seeded = await _seedStrictGroupMediaKeyBoundary(
+        fixture,
+        keyMode: 'secure',
+      );
+      expect(await stage(fixture, seeded), isTrue);
+      await access(fixture).run<void>(
+        db: fixture.db,
+        messageIds: <String>[seeded.expected.id],
+        action: (snapshot) async {
+          expect(
+            await fixture.db.transaction(
+              (txn) =>
+                  dbTerminalizePreparedLocalGroupContentMessageIfExactInTransaction(
+                    txn,
+                    expected: expectedRow(seeded.expected),
+                    preparedEventPayload: seeded.preparedEventPayload,
+                    terminalSourcePeerId: 'account-local',
+                    terminalSourceEventId: 'pt1:transaction-terminal',
+                    terminalSourceTimestamp: '2026-08-14T12:01:00.000000Z',
+                    terminalEventPayload: <String, Object?>{
+                      'reasonCode': 'authority_reconciliation_invalidated',
+                    },
+                    mediaKeySnapshot: snapshot,
+                  ),
+            ),
+            isTrue,
+          );
+        },
+      );
+    },
+  );
+
+  test(
+    'strict DB key scope preserves malformed retry refusal without key reads',
+    () async {
+      final fixture = loadFixture();
+      final seeded = await _seedStrictGroupMediaKeyBoundary(
+        fixture,
+        keyMode: 'secure',
+      );
+      final unavailableStore = _FailingSnapshotSecureKeyStore()
+        ..failRead = true;
+      for (final malformed in <String>[
+        '{',
+        '{}',
+        jsonEncode(<String, Object?>{
+          ...(jsonDecode(seeded.expected.inboxRetryPayload!) as Map)
+              .cast<String, Object?>(),
+          'groupId': 42,
+        }),
+      ]) {
+        expect(
+          await dbStagePreparedLocalGroupContentMessage(
+            fixture.db,
+            expected: expectedRow(
+              seeded.expected.copyWith(inboxRetryPayload: malformed),
+            ),
+            sourcePeerId: 'account-local',
+            sourceEventId: localPreparedProtectedGroupMessageSourceEventId(
+              seeded.expected.id,
+            ),
+            sourceTimestamp: '2026-08-14T12:00:00.000000Z',
+            preparedEventPayload: seeded.preparedEventPayload,
+            mediaKeyAccess: GroupMediaKeyAccess(
+              secureKeyStore: unavailableStore,
+            ),
+          ),
+          isFalse,
+        );
+      }
+    },
+  );
+
+  test(
+    'strict DB key scope completes a zero-recipient secure media owner',
+    () async {
+      final fixture = loadFixture();
+      final seeded = await _seedStrictGroupMediaKeyBoundary(
+        fixture,
+        keyMode: 'secure',
+        waveform: const <double>[],
+        zeroTarget: true,
+      );
+      expect(
+        await dbStageAndCompleteLocalGroupContentMessage(
+          fixture.db,
+          expected: expectedRow(seeded.expected),
+          sourcePeerId: 'account-local',
+          sourceEventId: localProtectedGroupMessageSourceEventId(
+            seeded.expected.id,
+          ),
+          sourceTimestamp: '2026-08-14T12:00:00.000000Z',
+          eventPayload: seeded.eventPayload,
+          mediaKeyAccess: access(fixture),
+        ),
+        isTrue,
+      );
+      expect(
+        (await fixture.db.query(
+          'group_messages',
+          where: 'id = ?',
+          whereArgs: <Object?>[seeded.expected.id],
+        )).single['status'],
+        'sent',
+      );
+    },
+  );
+}
+
+Future<
+  ({
+    GroupMessage expected,
+    Map<String, Object?> eventPayload,
+    Map<String, Object?> preparedEventPayload,
+  })
+>
+_seedStrictGroupMediaKeyBoundary(
+  MediaRepositoryRealDbFixture fixture, {
+  required String keyMode,
+  List<double>? waveform,
+  bool zeroTarget = false,
+}) async {
+  const groupId = 'key-boundary-group';
+  const messageId = 'key-boundary-message';
+  const attachmentId = 'key-boundary-image';
+  const blobId = 'gmb1_key_boundary';
+  const rawKey = 'test-encryption-key';
+  const hash =
+      'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+  final recipients = zeroTarget
+      ? const <String>[]
+      : const <String>['transport-remote', 'transport-z'];
+  const at = '2026-08-14T12:00:00.000Z';
+  final timestamp = DateTime.parse(at);
+  await fixture.db.insert('groups', <String, Object?>{
+    'id': groupId,
+    'name': 'Synthetic key boundary',
+    'type': 'chat',
+    'topic_name': 'key-boundary-topic',
+    'created_at': at,
+    'created_by': 'account-local',
+    'my_role': 'admin',
+  });
+  final parent = GroupMessage(
+    id: messageId,
+    groupId: groupId,
+    senderPeerId: 'account-local',
+    transportPeerId: 'transport-local',
+    senderUsername: 'Local',
+    text: 'synthetic caption',
+    timestamp: timestamp,
+    createdAt: timestamp,
+    logicalDeliveryId: messageId,
+    keyGeneration: 1,
+    status: GroupMessage.statusQueuedOffline,
+    isIncoming: false,
+  );
+  final fingerprint = computeGroupMediaBlobCustodyFingerprint(
+    groupId: groupId,
+    messageId: messageId,
+    attachmentId: attachmentId,
+    custodyBlobId: blobId,
+    contentHash: hash,
+    ciphertextSize: 80,
+    recipientPeerIds: recipients,
+  );
+  final attachment = MediaAttachment(
+    id: attachmentId,
+    messageId: messageId,
+    mime: 'image/jpeg',
+    size: 64,
+    mediaType: 'image',
+    localPath: 'pending_uploads/test.jpg',
+    downloadStatus: 'upload_pending',
+    createdAt: at,
+    contentHash: hash,
+    encryptionKeyBase64: rawKey,
+    encryptionNonce: 'test-nonce',
+    encryptionScheme: groupMediaBlobEncryptionScheme,
+    groupMediaBlobCustodyFingerprint: fingerprint,
+    ownerLane: MediaOwnerLane.group,
+    waveform: waveform,
+  );
+  final prepared = DirectMediaBlobCustodyRow(
+    attachmentId: attachmentId,
+    messageId: messageId,
+    ownerLane: MediaBlobCustodyOwnerLane.group,
+    groupId: groupId,
+    custodyBlobId: blobId,
+    direction: DirectMediaBlobCustodyDirection.outgoing,
+    state: DirectMediaBlobCustodyState.outgoingPrepared,
+    inboxCustodyIncarnationId: null,
+    recipientPeerId: 'transport-remote',
+    ciphertextRelativePath:
+        'group_media_blob_custody_v1/identity/group/image.blob',
+    custodyKind: kGroupMediaBlobCustodyKind,
+    contentHash: hash,
+    ciphertextSize: 80,
+    expiresAtMs: null,
+    custodyRelayPeerId: null,
+    lastAttemptAt: null,
+    nextAttemptAt: null,
+    createdAt: at,
+    updatedAt: at,
+  );
+  final repository = fixture.repo as GroupMediaBlobCustodyRepository;
+  expect(
+    await repository.stageFreshOutgoingGroupMediaBlobGeneration(
+      parent: parent,
+      attachments: <MediaAttachment>[attachment],
+      custodyRows: <DirectMediaBlobCustodyRow>[
+        for (final recipient in recipients)
+          DirectMediaBlobCustodyRow.fromMap(<String, Object?>{
+            ...prepared.toMap(),
+            'recipient_peer_id': recipient,
+          }),
+      ],
+      custodyBlobIdsByAttachmentId: const <String, String>{
+        attachmentId: blobId,
+      },
+    ),
+    GroupMediaBlobCustodyStageOutcome.applied,
+  );
+  for (final recipient in recipients) {
+    final row = DirectMediaBlobCustodyRow.fromMap(<String, Object?>{
+      ...prepared.toMap(),
+      'recipient_peer_id': recipient,
+    });
+    expect(
+      await repository.transitionGroupMediaBlobCustodyIfExact(
+        expected: row,
+        next: row.copyWith(
+          state: DirectMediaBlobCustodyState.outgoingStored,
+          expiresAtMs: 2000000000000,
+          custodyRelayPeerId: 'synthetic-relay',
+        ),
+      ),
+      isTrue,
+    );
+  }
+  final secureName = mediaAttachmentEncryptionKeyStoreName(attachmentId);
+  expect(
+    (await fixture.rawAttachmentRow(attachmentId))!['encryption_key_base64'],
+    secureStoreReferenceForKey(secureName),
+  );
+  expect(
+    (await fixture.repo.getAttachmentById(attachmentId))!.encryptionKeyBase64,
+    rawKey,
+  );
+  if (keyMode == 'legacy' || keyMode == 'wrong-reference') {
+    await fixture.db.update(
+      'media_attachments',
+      <String, Object?>{
+        'encryption_key_base64': keyMode == 'legacy'
+            ? rawKey
+            : secureStoreReferenceForKey('wrong-key-slot'),
+      },
+      where: 'id = ?',
+      whereArgs: <Object?>[attachmentId],
+    );
+  } else if (keyMode == 'missing-key') {
+    await fixture.secureKeyStore.delete(secureName);
+  } else if (keyMode == 'wrong-key') {
+    await fixture.secureKeyStore.write(secureName, 'different-key');
+  }
+  final manifest = ProtectedGroupMediaManifest(
+    groupId: groupId,
+    messageId: messageId,
+    attachments: <ProtectedGroupMediaAttachmentCommitment>[
+      ProtectedGroupMediaAttachmentCommitment(
+        attachmentId: attachmentId,
+        custodyBlobId: blobId,
+        ciphertextSha256: hash,
+        ciphertextSize: 80,
+        mime: 'image/jpeg',
+        mediaType: 'image',
+        encryptionKeyBase64: rawKey,
+        encryptionNonce: 'test-nonce',
+        caption: parent.text,
+        targets: <GroupMediaBlobTargetCommitment>[
+          for (final recipient in recipients)
+            GroupMediaBlobTargetCommitment(
+              recipientPeerId: recipient,
+              expiresAtMs: 2000000000000,
+            ),
+        ],
+      ),
+    ],
+  );
+  final plaintext = <String, Object?>{
+    'groupId': groupId,
+    'senderId': 'account-local',
+    'senderUsername': 'Local',
+    'senderDeviceId': 'device-local',
+    'transportPeerId': 'transport-local',
+    'messageId': messageId,
+    'logicalDeliveryId': messageId,
+    'keyEpoch': 1,
+    'text': parent.text,
+    'timestamp': '2026-08-14T12:00:00.000000Z',
+    'mediaManifest': manifest.encode(),
+    'mediaManifestHash': manifest.fingerprintSha256,
+  };
+  final groupRepo = InMemoryGroupRepository();
+  await groupRepo.saveKey(
+    GroupKeyInfo(
+      groupId: groupId,
+      keyGeneration: 1,
+      encryptedKey: 'test-group-key',
+      createdAt: timestamp,
+    ),
+  );
+  final replay = await buildGroupOfflineReplayEnvelope(
+    bridge: FakeBridge(),
+    groupRepo: groupRepo,
+    groupId: groupId,
+    payloadType: groupOfflineReplayPayloadTypeMessage,
+    plaintext: jsonEncode(plaintext),
+    senderPeerId: 'account-local',
+    senderPublicKey: 'pk-local',
+    senderPrivateKey: 'sk-local',
+    senderDeviceId: 'device-local',
+    senderTransportPeerId: 'transport-local',
+    recipientPeerIds: recipients,
+    messageId: messageId,
+    contentEventId: messageId,
+    mediaManifest: manifest,
+    contentAuthorityVersion: GroupContentAuthorityVersion(
+      eventAt: timestamp.subtract(const Duration(hours: 1)),
+      eventId: 'synthetic-authority',
+      keyEpoch: 1,
+    ),
+  );
+  final retry = zeroTarget
+      ? null
+      : jsonEncode(<String, Object?>{
+          'groupId': groupId,
+          'message': replay,
+          'custodyContract': ackOrExpiryInboxCustodyContract,
+          'custodyKind': groupContentCustodyKind,
+          'recipientPeerIds': recipients,
+        });
+  final expected = parent.copyWith(
+    lastSendAttemptAt: timestamp,
+    wireEnvelope: jsonEncode(plaintext),
+    inboxRetryPayload: retry,
+  );
+  final eventPayload = buildLocalProtectedGroupContentEventPayload(
+    replayEnvelope: replay,
+    payload: plaintext,
+  );
+  return (
+    expected: expected,
+    eventPayload: eventPayload,
+    preparedEventPayload: zeroTarget
+        ? <String, Object?>{}
+        : buildLocalProtectedGroupContentPreparedEventPayload(
+            eventPayload: eventPayload,
+            ownerKind: 'group_message',
+            ownerId: messageId,
+            ownerStatus: GroupMessage.statusQueuedOffline,
+            inboxRetryPayload: retry!,
+          ),
+  );
 }

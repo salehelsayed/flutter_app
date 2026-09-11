@@ -16,12 +16,54 @@ class MknoonAppDiagnosticSpoolTest {
     private class Memory : MknoonAppDiagnosticBackend {
         var bytes: ByteArray? = null
         var fail = false
+        var writes = 0
         override fun read() = bytes
-        override fun replace(bytes: ByteArray) { check(!fail); this.bytes = bytes.copyOf() }
+        override fun replace(bytes: ByteArray) { check(!fail); this.bytes = bytes.copyOf(); writes++ }
     }
     private fun spool(memory: Memory, now: () -> Long = { 1_900_000_000_000L }, build: String = "1.0.1+112") = MknoonAppDiagnosticSpool(memory, now, { 500 }, build)
     @Suppress("UNCHECKED_CAST")
     private fun events(store: MknoonAppDiagnosticSpool) = store.drain(64)["events"] as List<Map<String, Any>>
+    @Test fun slowWriterAdmissionIsBoundedAndRecoversWithoutBlockingControls() {
+        val admission = MknoonAppDiagnosticAdmission()
+        val queued = mutableListOf<() -> Unit>()
+        var accepted = 0; var dropped = 0L; var control = false
+        repeat(10_000) { admission.enqueue({ queued.add(it) }) { lost -> accepted++; dropped += lost } }
+        assertEquals(64, queued.size)
+        queued.add { control = true } // Consent/ACK bypass event admission.
+        queued.toList().forEach { it() }; queued.clear()
+        assertTrue(control); assertEquals(64, accepted); assertEquals(9_936L, dropped)
+        admission.enqueue({ queued.add(it) }) { accepted++ }
+        queued.single()(); assertEquals(65, accepted)
+    }
+    @Test fun rejectedWriterSubmissionNeverEscapesAndReleasesAdmission() {
+        val admission = MknoonAppDiagnosticAdmission(1)
+        admission.enqueue({ error("writer unavailable") }) { error("must not execute") }
+        var dropped = 0L
+        admission.enqueue({ it() }) { dropped = it; error("sink failed") }
+        assertEquals(1L, dropped)
+        var next = false; admission.enqueue({ it() }) { next = true }; assertTrue(next)
+    }
+    @Test fun queuedObservationsShareOneWriteAndControlPersistsCurrentState() {
+        val memory = Memory(); val store = spool(memory); assertTrue(store.configure(true, 10))
+        val initial = memory.writes
+        repeat(64) { assertTrue(store.append("runtime", "bridge", "ok", deferPersistence = true)) }
+        assertEquals(initial, memory.writes)
+        assertTrue(store.persistPending()); assertEquals(initial + 1, memory.writes)
+        assertEquals(64, events(store).size)
+        store.recordDropped(100)
+        assertTrue(store.append("push", "receive", "ok", deferPersistence = true))
+        assertTrue(store.configure(false, 11))
+        assertTrue(store.persistPending()); assertTrue(events(spool(memory)).isEmpty())
+        assertEquals(0L, store.drain(64)["droppedEvents"])
+    }
+    @Test fun failedDeferredWriteRemainsRetryableAndCountsOverflow() {
+        val memory = Memory(); val store = spool(memory); store.configure(true, 10)
+        store.recordDropped(20)
+        repeat(64) { store.append("push", "receive", "ok", deferPersistence = true) }
+        memory.fail = true; assertFalse(store.persistPending())
+        memory.fail = false; assertTrue(store.persistPending())
+        assertEquals(64, events(store).size); assertEquals(20L, store.drain(64)["droppedEvents"])
+    }
     @Test fun defaultOffAndExplicitOffSurviveRestart() {
         val memory = Memory(); val store = spool(memory)
         assertFalse(store.append("push", "receive", "ok")); assertTrue(events(store).isEmpty())

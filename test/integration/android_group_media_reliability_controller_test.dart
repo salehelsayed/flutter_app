@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:crypto/crypto.dart';
 import 'package:flutter_app/core/debug/group_media_ios_disposable_profile.dart';
+import 'package:flutter_app/core/database/app_database_version.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import '../../integration_test/scripts/android_group_media_reliability_controller.dart';
@@ -12,6 +13,89 @@ import '../../integration_test/support/android_app_state_guard.dart';
 import '../../integration_test/support/group_media_android_disposable_app.dart';
 
 void main() {
+  test(
+    'P269 legacy receipt absence is compatible but declared null is refused',
+    () {
+      expect(_aggregateFixture(), isNotEmpty);
+      for (final mode in <Object?>[null, 7, false, 'unknown']) {
+        expect(
+          () => _aggregateFixture(
+            mutate: (b) => _map(b, 'senderSetup')['authorityMode'] = mode,
+          ),
+          throwsFormatException,
+        );
+      }
+    },
+  );
+
+  test(
+    'P269 ordinary-primary aggregation keeps all media and custody assertions',
+    () {
+      final accepted = _aggregateFixture(
+        authorityMode: groupMediaAccountBoundAuthorityMode,
+      );
+      expect(accepted['authority_mode'], groupMediaAccountBoundAuthorityMode);
+      expect(
+        _map(accepted, 'account_vs_transport_discriminator'),
+        <String, Object?>{'sender': false, 'receiver': false},
+      );
+      final validation = validateGroupMediaReliabilityArtifact(accepted);
+      expect(validation.ok, isTrue, reason: validation.detail);
+      for (final corrupt in <void Function(Map<String, Object?>)>[
+        (b) => _map(b, 'senderSetup')['transportPeerId'] = 'other-transport',
+        (b) => _map(b, 'senderSetup')['accountPeerId'] = 'receiver-account',
+        (b) => _map(b, 'senderSend')['allowedPeers'] = <Object?>[
+          'sender-account',
+          'other-account',
+        ],
+        (b) => _map(b, 'receiverRecovery')['authorityMode'] =
+            groupMediaDistinctAuthorityMode,
+        (b) => _map(b, 'receiverRecovery').remove('authorityMode'),
+        (b) => _map(b, 'receiverRecovery')['secondDownloadWork'] = 1,
+        (b) => _map(_map(b, 'senderSend'), 'uploadsPerBlob')['voice'] = 0,
+        (b) => _map(b, 'receiverRenderedKinds')['mp4'] = 0,
+      ]) {
+        expect(
+          () => _aggregateFixture(
+            authorityMode: groupMediaAccountBoundAuthorityMode,
+            mutate: corrupt,
+          ),
+          throwsFormatException,
+        );
+      }
+    },
+  );
+
+  test('Android role receipts require the exact current database schema', () {
+    final accepted = _aggregateFixture();
+    for (final role in <String>['sender', 'receiver']) {
+      expect(
+        _map(_map(accepted, 'role_databases'), role)['user_version'],
+        currentIdentityDatabaseVersion,
+      );
+    }
+    for (final version in <int>[104, currentIdentityDatabaseVersion + 1]) {
+      for (final phase in <String, String>{
+        'senderSetup': 'roleDatabaseIdentity',
+        'receiverArm': 'roleDatabaseIdentity',
+        'senderSend': 'roleDatabase',
+        'receiverRecovery': 'roleDatabase',
+        'senderProbe': 'roleDatabase',
+      }.entries) {
+        expect(
+          () => _aggregateFixture(
+            mutate: (bundle) {
+              _map(_map(bundle, phase.key), phase.value)['user_version'] =
+                  version;
+            },
+          ),
+          throwsFormatException,
+          reason: '${phase.key} schema $version',
+        );
+      }
+    }
+  });
+
   test(
     'P269 Android UI proof requires explicit awake and unlocked evidence',
     () {
@@ -1110,6 +1194,7 @@ final class _ProcessRunner implements AndroidHostProcessRunner {
 }
 
 Map<String, Object?> _aggregateFixture({
+  String authorityMode = groupMediaDistinctAuthorityMode,
   void Function(Map<String, Object?> bundle)? mutate,
   void Function(
     Map<String, GroupMediaAndroidDisposableResetReceipt> pre,
@@ -1138,6 +1223,7 @@ Map<String, Object?> _aggregateFixture({
   };
   final context = GroupMediaReliabilityRunContext(
     scenario: groupMediaForegroundRetryAclRoundtripScenario,
+    authorityMode: authorityMode,
     runId: runId,
     preparedArtifact: GroupMediaReliabilityPreparedArtifact(
       path: '/tmp/prepared.apk',
@@ -1240,6 +1326,26 @@ Map<String, Object?> _aggregateFixture({
   };
   final copied = (jsonDecode(jsonEncode(bundle))! as Map)
       .cast<String, Object?>();
+  if (authorityMode == groupMediaAccountBoundAuthorityMode) {
+    for (final phase in <String>[
+      'senderSetup',
+      'receiverArm',
+      'senderSend',
+      'receiverRecovery',
+      'receiverRender',
+      'senderProbe',
+    ]) {
+      _map(copied, phase)['authorityMode'] = authorityMode;
+    }
+    _map(copied, 'senderSetup')['transportPeerId'] = 'sender-account';
+    _map(copied, 'receiverArm')['transportPeerId'] = 'receiver-account';
+    _map(copied, 'senderSend')['transportPeerId'] = 'sender-account';
+    _map(copied, 'senderSend')['receiverTransportPeerId'] = 'receiver-account';
+    _map(copied, 'senderSend')['allowedPeers'] = <Object?>[
+      'sender-account',
+      'receiver-account',
+    ];
+  }
   mutate?.call(copied);
   final preResetReceipts = <String, GroupMediaAndroidDisposableResetReceipt>{
     'sender': _resetReceipt('pre', 501, '1'),
@@ -1308,7 +1414,7 @@ Map<String, Object?> _roleDatabase({
   'role_db_path': '$role/group-media.sqlite',
   'database_path_sha256': pathDigest,
   'cipher_version': 'SQLCipher 4.6.1',
-  'user_version': 104,
+  'user_version': currentIdentityDatabaseVersion,
   'rows': <Object?>[
     for (final kind in const <String>['jpeg', 'mp4', 'voice'])
       <String, Object?>{

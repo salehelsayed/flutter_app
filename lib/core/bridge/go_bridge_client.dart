@@ -1016,7 +1016,16 @@ class GoBridgeClient extends Bridge {
       final decoded = jsonDecode(sanitized) as Map;
       reportDiagnostic(
         decoded['ok'] == true,
-        decoded['ok'] == true ? 'none' : 'bridge_rejected',
+        decoded['ok'] == true
+            ? 'none'
+            : switch ((cmd, decoded['errorCode'])) {
+                ('peer:dial', 'NOT_INITIALIZED') => 'bridge_unavailable',
+                ('peer:dial', 'INVALID_INPUT') => 'invalid_request',
+                // DIAL_ERROR includes several native causes; it does not
+                // establish that the peer is offline or the dial timed out.
+                ('peer:dial', 'DIAL_ERROR') => 'route_failed',
+                _ => 'bridge_rejected',
+              },
       );
       return sanitized;
     } on MissingPluginException catch (e) {

@@ -1,0 +1,19 @@
+{
+  "buildStamp": "8bc9c8a8e32d3a38",
+  "algorithm": "first 16 hex SHA256 of sorted compact JSON fingerprintInputs",
+  "fingerprintInputs": {
+    "sourceStamp": "f1899f0d63e1724b",
+    "platform": "ios",
+    "mode": "profile",
+    "nativeGradleProperties": {},
+    "dartDefines": {
+      "VOICE_CALL_CAPABILITY_V1": "true",
+      "VOICE_CALL_OUTGOING_ENABLED": "true",
+      "VOICE_CALL_INCOMING_ENABLED": "true",
+      "VOICE_CALL_TURN_ENABLED": "true",
+      "VOICE_CALL_ANDROID_NATIVE_ENABLED": "true",
+      "VOICE_CALL_IOS_NATIVE_ENABLED": "true",
+      "VOICE_CALL_ALWAYS_RELAY_ENABLED": "true"
+    }
+  }
+}

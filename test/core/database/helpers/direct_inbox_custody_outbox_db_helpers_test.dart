@@ -94,6 +94,210 @@ void main() {
     return message;
   }
 
+  group('historical delivered custody notification suppression', () {
+    Future<ConversationMessage> stageHistoricalInitial() async {
+      final message = _message(
+        'historical-original',
+        envelope: _envelope('historical-original', 'original-ciphertext'),
+      );
+      final staged = await repository.stageOutgoingDirectTextInboxCustody(
+        expected: null,
+        staged: message,
+        kind: OutgoingOrdinaryAttemptKind.fresh,
+        recipientPeerId: _peer,
+        incarnationId: _incarnationA,
+        wireEnvelope: message.wireEnvelope!,
+      );
+      expect(staged.authorizesTransport, isTrue);
+      return message;
+    }
+
+    Future<void> settleDelivered(String id) => db.update(
+      'messages',
+      {'status': 'delivered', 'wire_envelope': null, 'transport': 'direct'},
+      where: 'id = ?',
+      whereArgs: [id],
+    );
+
+    for (final read in [false, true]) {
+      test('pre-existing ${read ? 'read' : 'delivered'} initial suppresses '
+          'only notification while exact custody still drains', () async {
+        final message = await stageHistoricalInitial();
+        await settleDelivered(message.id);
+        if (read) {
+          await db.update(
+            'messages',
+            {'read_at': _t1},
+            where: 'id = ?',
+            whereArgs: [message.id],
+          );
+        }
+        // A restart with the old persisted row requires no new notification
+        // ledger, timestamp cutoff, or migration before eligibility is known.
+        await db.close();
+        db = await databaseFactoryFfi.openDatabase(
+          '${tempDirectory.path}/identity.db',
+          options: OpenDatabaseOptions(singleInstance: false),
+        );
+        repository = _buildRepository(db, capacity: 2);
+        final beforeOwner = (await db.query(
+          'direct_inbox_custody_outbox',
+        )).single;
+        final beforeMessage = (await db.query('messages')).single;
+        expect(
+          await dbShouldSuppressDeliveredDirectInboxNotification(
+            db,
+            recipientPeerId: _peer,
+            wireEnvelope: message.wireEnvelope!,
+          ),
+          isTrue,
+        );
+        expect((await db.query('messages')).single, beforeMessage);
+        expect(
+          (await db.query('direct_inbox_custody_outbox')).single,
+          beforeOwner,
+        );
+
+        var stores = 0;
+        final completed = await drainDirectInboxCustodyOutbox(
+          custodyRepository: repository,
+          storeInAckCustodyInboxDetailed:
+              (recipient, wire, {required custodyKind, timeoutMs}) async {
+                stores++;
+                expect(recipient, _peer);
+                expect(wire, message.wireEnvelope);
+                expect(custodyKind, AckCustodyKind.directTextV108);
+                expect(
+                  await dbShouldSuppressDeliveredDirectInboxNotification(
+                    db,
+                    recipientPeerId: recipient,
+                    wireEnvelope: wire,
+                  ),
+                  isTrue,
+                );
+                return const InboxStoreOutcome(
+                  status: InboxStoreStatus.stored,
+                  storeStatus: 'stored',
+                  custodyContract: ackOrExpiryInboxCustodyContract,
+                  expiresAtMs: 1900000060000,
+                );
+              },
+        );
+        expect(stores, 1);
+        expect(completed, 1);
+        expect(await db.query('direct_inbox_custody_outbox'), isEmpty);
+        expect((await db.query('messages')).single, beforeMessage);
+        expect(
+          await dbShouldSuppressDeliveredDirectInboxNotification(
+            db,
+            recipientPeerId: _peer,
+            wireEnvelope: message.wireEnvelope!,
+          ),
+          isFalse,
+          reason: 'notification silence requires a surviving exact owner',
+        );
+      });
+    }
+
+    final unprovenParents = <String, Map<String, Object?>>{
+      'old undelivered': {'status': 'sent'},
+      'old failed': {'status': 'failed'},
+      'pending envelope': {'wire_envelope': 'new-pending-envelope'},
+      'edited': {'edited_at': _t1},
+      'hidden': {'hidden_at': _t1},
+      'deleted': {'deleted_at': _t1},
+      'wrong recipient': {'contact_peer_id': 'other-recipient'},
+      'wrong sender': {'sender_peer_id': 'other-sender'},
+      'incoming': {'is_incoming': 1},
+      'replacement creation': {'created_at': _t1},
+      'fanout generation': {
+        'direct_event_fanout_generation_id': 'historical-original',
+      },
+      'unreleased relay custody': {'relay_expires_at': 1900000060000},
+    };
+    for (final variation in unprovenParents.entries) {
+      test('${variation.key} parent keeps notification eligible', () async {
+        final message = await stageHistoricalInitial();
+        await settleDelivered(message.id);
+        await db.update(
+          'messages',
+          variation.value,
+          where: 'id = ?',
+          whereArgs: [message.id],
+        );
+        expect(
+          await dbShouldSuppressDeliveredDirectInboxNotification(
+            db,
+            recipientPeerId: _peer,
+            wireEnvelope: message.wireEnvelope!,
+          ),
+          isFalse,
+        );
+        expect(await db.query('direct_inbox_custody_outbox'), hasLength(1));
+      });
+    }
+
+    for (final variation in [
+      'missing parent',
+      'missing owner',
+      'changed bytes',
+      'wrong requested recipient',
+      'mutation owner',
+      'fanout owner',
+      'ambiguous sibling',
+    ]) {
+      test('$variation keeps notification eligible', () async {
+        final message = await stageHistoricalInitial();
+        await settleDelivered(message.id);
+        var wire = message.wireEnvelope!;
+        var recipient = _peer;
+        switch (variation) {
+          case 'missing parent':
+            await db.delete(
+              'messages',
+              where: 'id = ?',
+              whereArgs: [message.id],
+            );
+          case 'missing owner':
+            await db.delete('direct_inbox_custody_outbox');
+          case 'changed bytes':
+            wire = _envelope(message.id, 'different-ciphertext');
+          case 'wrong requested recipient':
+            recipient = 'other-recipient';
+          case 'mutation owner':
+            wire = jsonEncode({
+              ...jsonDecode(wire) as Map<String, dynamic>,
+              'eventId': 'edit-event',
+            });
+            await db.update('direct_inbox_custody_outbox', {
+              'wire_envelope': wire,
+            });
+          case 'fanout owner':
+            await db.update('direct_inbox_custody_outbox', {
+              'contact_account_peer_id': _peer,
+            });
+          case 'ambiguous sibling':
+            final owner = (await db.query(
+              'direct_inbox_custody_outbox',
+            )).single;
+            await db.insert('direct_inbox_custody_outbox', {
+              ...owner,
+              'recipient_peer_id': 'other-physical-recipient',
+              'incarnation_id': _incarnationB,
+            });
+        }
+        expect(
+          await dbShouldSuppressDeliveredDirectInboxNotification(
+            db,
+            recipientPeerId: recipient,
+            wireEnvelope: wire,
+          ),
+          isFalse,
+        );
+      });
+    }
+  });
+
   for (final loadKind in ['batch', 'recipient', 'owner']) {
     test(
       'legacy diagnostic custody repair is atomic and fenced through $loadKind load',
@@ -181,29 +385,158 @@ void main() {
     );
   });
 
-  test('legacy diagnostic repair resumes the production custody drain', () async {
-    final message = await stageDiagnosticEnvelope('legacy-diagnostic-drain');
-    var stores = 0;
-    final completed = await drainDirectInboxCustodyOutbox(
-      custodyRepository: repository,
-      storeInAckCustodyInboxDetailed:
-          (recipient, envelope, {required custodyKind, timeoutMs}) async {
-        stores++;
-        expect(recipient, _peer);
-        expect(custodyKind, AckCustodyKind.directTextV108);
-        expect(envelope, _envelope(message.id, 'unchanged-ciphertext'));
-        return const InboxStoreOutcome(
-          status: InboxStoreStatus.stored,
-          storeStatus: 'stored',
-          custodyContract: ackOrExpiryInboxCustodyContract,
+  test(
+    'legacy diagnostic repair resumes the production custody drain',
+    () async {
+      final message = await stageDiagnosticEnvelope('legacy-diagnostic-drain');
+      var stores = 0;
+      final completed = await drainDirectInboxCustodyOutbox(
+        custodyRepository: repository,
+        storeInAckCustodyInboxDetailed:
+            (recipient, envelope, {required custodyKind, timeoutMs}) async {
+              stores++;
+              expect(recipient, _peer);
+              expect(custodyKind, AckCustodyKind.directTextV108);
+              expect(envelope, _envelope(message.id, 'unchanged-ciphertext'));
+              return const InboxStoreOutcome(
+                status: InboxStoreStatus.stored,
+                storeStatus: 'stored',
+                custodyContract: ackOrExpiryInboxCustodyContract,
+              );
+            },
+      );
+      expect(completed, 1);
+      expect(stores, 1);
+      expect(await db.query('direct_inbox_custody_outbox'), isEmpty);
+      expect((await dbLoadMessage(db, message.id))!['status'], 'inboxed');
+    },
+  );
+
+  for (final variation in [
+    'delivered',
+    'read',
+    'edited',
+    'hidden',
+    'deleted',
+    'removed',
+  ]) {
+    test(
+      'legacy diagnostic custody repairs and drains with $variation parent',
+      () async {
+        final message = await stageDiagnosticEnvelope(
+          'legacy-diagnostic-$variation',
         );
+        final legacyWire = message.wireEnvelope!;
+        if (variation == 'removed') {
+          await db.delete('messages', where: 'id = ?', whereArgs: [message.id]);
+        } else {
+          await db.update(
+            'messages',
+            switch (variation) {
+              'delivered' => {'status': 'delivered', 'wire_envelope': null},
+              'read' => {
+                'status': 'delivered',
+                'wire_envelope': null,
+                'read_at': _t1,
+              },
+              'edited' => {
+                'edited_at': _t1,
+                'wire_envelope': _envelope(message.id, 'new-edit-ciphertext'),
+              },
+              'hidden' => {'hidden_at': _t1},
+              _ => {'deleted_at': _t1},
+            },
+            where: 'id = ?',
+            whereArgs: [message.id],
+          );
+        }
+        await dbRecordDirectInboxCustodyFailureIfExact(
+          db,
+          recipientPeerId: _peer,
+          messageId: message.id,
+          expectedIncarnationId: _incarnationA,
+          expectedWireEnvelope: legacyWire,
+          errorCode: DirectInboxCustodyErrorCode.storeFailed,
+          attemptedAt: _t1,
+        );
+        final beforeParent = await dbLoadMessage(db, message.id);
+        final beforeOwner = (await db.query(
+          'direct_inbox_custody_outbox',
+        )).single;
+
+        // A restart must repair persisted custody independently of whatever
+        // stronger or newer projection the conversation now carries.
+        await db.close();
+        db = await databaseFactoryFfi.openDatabase(
+          '${tempDirectory.path}/identity.db',
+          options: OpenDatabaseOptions(singleInstance: false),
+        );
+        repository = _buildRepository(db, capacity: 2);
+        final repaired = (await repository.loadDirectInboxCustody()).single;
+        final expectedWire = _envelope(message.id, 'unchanged-ciphertext');
+        expect(repaired.wireEnvelope, expectedWire);
+        expect((await db.query('direct_inbox_custody_outbox')).single, {
+          ...beforeOwner,
+          'wire_envelope': expectedWire,
+        });
+        expect(await dbLoadMessage(db, message.id), beforeParent);
+        expect(
+          await dbRecordDirectInboxCustodyFailureIfExact(
+            db,
+            recipientPeerId: _peer,
+            messageId: message.id,
+            expectedIncarnationId: _incarnationA,
+            expectedWireEnvelope: legacyWire,
+            errorCode: DirectInboxCustodyErrorCode.storeFailed,
+            attemptedAt: _t1,
+          ),
+          isFalse,
+        );
+        expect(
+          await dbCompleteAcceptedDirectInboxCustodyIfExact(
+            db,
+            recipientPeerId: _peer,
+            messageId: message.id,
+            expectedIncarnationId: _incarnationA,
+            expectedWireEnvelope: legacyWire,
+            relayExpiresAt: null,
+          ),
+          DirectInboxCustodyCompletionOutcome.stale,
+        );
+
+        var stores = 0;
+        final completed = await drainDirectInboxCustodyOutbox(
+          custodyRepository: repository,
+          storeInAckCustodyInboxDetailed:
+              (recipient, envelope, {required custodyKind, timeoutMs}) async {
+                stores++;
+                expect(recipient, _peer);
+                expect(custodyKind, AckCustodyKind.directTextV108);
+                expect(envelope, expectedWire);
+                return const InboxStoreOutcome(
+                  status: InboxStoreStatus.stored,
+                  storeStatus: 'stored',
+                  custodyContract: ackOrExpiryInboxCustodyContract,
+                );
+              },
+        );
+        expect(completed, 1);
+        expect(stores, 1);
+        expect(await db.query('direct_inbox_custody_outbox'), isEmpty);
+        final afterParent = await dbLoadMessage(db, message.id);
+        if (variation == 'removed') {
+          // Existing completion creates only a scrubbed hidden tombstone,
+          // preventing a delayed whole-row save from resurrecting the text.
+          expect(afterParent!['hidden_at'], isNotNull);
+          expect(afterParent['text'], '');
+          expect(afterParent['wire_envelope'], isNull);
+        } else {
+          expect(afterParent, beforeParent);
+        }
+        expect(await repository.loadDirectInboxCustody(), isEmpty);
       },
     );
-    expect(completed, 1);
-    expect(stores, 1);
-    expect(await db.query('direct_inbox_custody_outbox'), isEmpty);
-    expect((await dbLoadMessage(db, message.id))!['status'], 'inboxed');
-  });
+  }
 
   test(
     'legacy diagnostic repair rolls owner and parent back together',
@@ -237,9 +570,15 @@ void main() {
   for (final variation in [
     'unknown-field',
     'invalid-trace',
-    'successor',
     'recipient-drift',
+    'sender-drift',
+    'ambiguous-owner',
     'media-bound',
+    'incoming-parent',
+    'private-parent',
+    'media-intent-parent',
+    'fanout-parent',
+    'media-attachment-parent',
   ]) {
     test(
       'legacy diagnostic repair preserves $variation authority unchanged',
@@ -251,35 +590,77 @@ void main() {
             if (variation == 'invalid-trace') 'diagnosticTraceId': 'not-a-uuid',
           },
         );
-        if (variation == 'successor') {
-          await db.update(
-            'messages',
-            {'status': 'delivered', 'wire_envelope': null, 'read_at': _t1},
-            where: 'id = ?',
-            whereArgs: [message.id],
-          );
-        } else if (variation == 'recipient-drift') {
+        if (variation == 'recipient-drift') {
           await db.update(
             'messages',
             {'contact_peer_id': 'different-recipient'},
             where: 'id = ?',
             whereArgs: [message.id],
           );
+        } else if (variation == 'sender-drift') {
+          await db.update(
+            'messages',
+            {'sender_peer_id': 'different-sender'},
+            where: 'id = ?',
+            whereArgs: [message.id],
+          );
+        } else if (variation == 'ambiguous-owner') {
+          await db.insert('direct_inbox_custody_outbox', {
+            ...(await db.query('direct_inbox_custody_outbox')).single,
+            'recipient_peer_id': 'different-recipient',
+            'incarnation_id': _incarnationB,
+          });
         } else if (variation == 'media-bound') {
           await db.update('direct_inbox_custody_outbox', {
             'media_blob_manifest_hash': 'a' * 64,
             'media_blob_expires_at_ms': 1,
           });
+        } else if (variation == 'media-attachment-parent') {
+          await dbInsertMediaAttachment(db, {
+            'id': 'legacy-owner-parent-media',
+            'message_id': message.id,
+            'owner_lane': 'direct',
+            'mime': 'image/jpeg',
+            'size': 900,
+            'media_type': 'image',
+            'created_at': _t0,
+            'download_status': 'done',
+            'local_path': 'media/direct/legacy-owner-parent-media.jpg',
+          });
+        } else if (variation.endsWith('-parent')) {
+          await db.update(
+            'messages',
+            switch (variation) {
+              'incoming-parent' => {'is_incoming': 1},
+              'private-parent' => {
+                'text': '',
+                'private_media_policy_version': 1,
+                'private_media_mode': 'disappearing',
+                'private_media_duration_seconds': 3600,
+                'private_media_state': 'available',
+              },
+              'media-intent-parent' => {
+                'direct_media_custody_intent_id': _incarnationB,
+              },
+              _ => {'direct_event_fanout_generation_id': message.id},
+            },
+            where: 'id = ?',
+            whereArgs: [message.id],
+          );
         }
-        final beforeOwner = (await db.query(
+        final beforeOwners = await db.query(
           'direct_inbox_custody_outbox',
-        )).single;
+          orderBy: 'recipient_peer_id',
+        );
         final beforeParent = await dbLoadMessage(db, message.id);
-        final owner = (await repository.loadDirectInboxCustody()).single;
+        final owner = (await repository.loadDirectInboxCustody()).first;
         expect(owner.wireEnvelope, message.wireEnvelope);
         expect(
-          (await db.query('direct_inbox_custody_outbox')).single,
-          beforeOwner,
+          await db.query(
+            'direct_inbox_custody_outbox',
+            orderBy: 'recipient_peer_id',
+          ),
+          beforeOwners,
         );
         expect(await dbLoadMessage(db, message.id), beforeParent);
       },

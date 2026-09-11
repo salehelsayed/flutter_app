@@ -1,0 +1,40 @@
+=== RUN   TestDirectNotificationPredeploymentHistoryGap
+=== RUN   TestDirectNotificationPredeploymentHistoryGap/predeployment_history_missing
+2026/09/10 10:07:21 [INBOX] Stored message for recipient-a from sender-a
+2026/09/10 10:07:21 [PUSH] outcome=success attempt=1 total_attempts=3
+2026/09/10 10:07:21 [INBOX] Acked 1 message(s) for recipient-a
+2026/09/10 10:07:21 [INBOX] Stored message for recipient-a from sender-a
+2026/09/10 10:07:21 [DIRECT_MESSAGE_DISPATCH_ADMISSION] outcome=acquired
+2026/09/10 10:07:21 [PUSH] outcome=success attempt=1 total_attempts=3
+2026/09/10 10:07:21 [INBOX] Acked 1 message(s) for recipient-a
+2026/09/10 10:07:21 [INBOX] Stored message for recipient-a from sender-a
+2026/09/10 10:07:21 [DIRECT_MESSAGE_DISPATCH_ADMISSION] outcome=acquired
+2026/09/10 10:07:21 [PUSH] outcome=success attempt=1 total_attempts=3
+2026/09/10 10:07:21 [INBOX] Acked 1 message(s) for recipient-a
+    predeployment_repro_test.go:99: provider sequence after new message and old replay: [old-authored-before-deployment genuinely-new-message old-authored-before-deployment]
+2026/09/10 10:07:21 [INBOX] Stored message for recipient-a from sender-a
+2026/09/10 10:07:21 [DIRECT_MESSAGE_DISPATCH_ADMISSION] outcome=duplicate_suppressed
+    predeployment_repro_test.go:108: subsequent identical replay suppressed after admission became populated
+    predeployment_repro_test.go:111: predeployment notification must remain historical: provider sequence=[old-authored-before-deployment genuinely-new-message old-authored-before-deployment], want=[old-authored-before-deployment genuinely-new-message]
+=== RUN   TestDirectNotificationPredeploymentHistoryGap/control_historical_admission_retained
+2026/09/10 10:07:21 [INBOX] Stored message for recipient-a from sender-a
+2026/09/10 10:07:21 [DIRECT_MESSAGE_DISPATCH_ADMISSION] outcome=acquired
+2026/09/10 10:07:21 [PUSH] outcome=success attempt=1 total_attempts=3
+2026/09/10 10:07:21 [INBOX] Acked 1 message(s) for recipient-a
+2026/09/10 10:07:21 [INBOX] Stored message for recipient-a from sender-a
+2026/09/10 10:07:21 [DIRECT_MESSAGE_DISPATCH_ADMISSION] outcome=acquired
+2026/09/10 10:07:21 [PUSH] outcome=success attempt=1 total_attempts=3
+2026/09/10 10:07:21 [INBOX] Acked 1 message(s) for recipient-a
+2026/09/10 10:07:21 [INBOX] Stored message for recipient-a from sender-a
+2026/09/10 10:07:21 [DIRECT_MESSAGE_DISPATCH_ADMISSION] outcome=duplicate_suppressed
+2026/09/10 10:07:21 [INBOX] Acked 1 message(s) for recipient-a
+    predeployment_repro_test.go:99: provider sequence after new message and old replay: [old-authored-before-deployment genuinely-new-message]
+2026/09/10 10:07:21 [INBOX] Stored message for recipient-a from sender-a
+2026/09/10 10:07:21 [DIRECT_MESSAGE_DISPATCH_ADMISSION] outcome=duplicate_suppressed
+    predeployment_repro_test.go:108: subsequent identical replay suppressed after admission became populated
+--- FAIL: TestDirectNotificationPredeploymentHistoryGap (0.02s)
+    --- FAIL: TestDirectNotificationPredeploymentHistoryGap/predeployment_history_missing (0.01s)
+    --- PASS: TestDirectNotificationPredeploymentHistoryGap/control_historical_admission_retained (0.01s)
+FAIL
+FAIL	github.com/mknoon/relay-server	0.572s
+FAIL

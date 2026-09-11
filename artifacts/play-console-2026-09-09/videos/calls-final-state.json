@@ -1,0 +1,70 @@
+{
+  "captures": [
+    {
+      "role": "phone",
+      "take": "calls-final",
+      "remote": "/sdcard/mknoon-calls-final-phone.mp4",
+      "pid": "20329",
+      "hostPid": 21035,
+      "startedAt": 1788949883.8563352,
+      "local": "/tmp/mknoon-play-videos/calls-final-phone.mp4",
+      "finishedAt": 1788949932.0367
+    },
+    {
+      "role": "emulator",
+      "take": "calls-final",
+      "remote": "/sdcard/mknoon-calls-final-emulator.mp4",
+      "pid": "5358",
+      "hostPid": 21038,
+      "startedAt": 1788949884.423448,
+      "local": "/tmp/mknoon-play-videos/calls-final-emulator.mp4",
+      "finishedAt": 1788949932.8793569
+    }
+  ],
+  "events": [
+    {
+      "time": 1788949884.423499,
+      "event": "Recording starts with both conversations open"
+    },
+    {
+      "time": 1788949887.5363798,
+      "event": "Emulator starts voice call"
+    },
+    {
+      "time": 1788949891.709978,
+      "event": "Physical phone answers incoming call"
+    },
+    {
+      "time": 1788949898.0802822,
+      "event": "Both call interfaces connected"
+    },
+    {
+      "time": 1788949903.2261,
+      "event": "Microphone muted by user"
+    },
+    {
+      "time": 1788949905.401438,
+      "event": "Microphone unmuted by user"
+    },
+    {
+      "time": 1788949908.49216,
+      "event": "Physical phone goes to Home while call continues"
+    },
+    {
+      "time": 1788949914.262142,
+      "event": "Call in progress notification and microphone indicator shown"
+    },
+    {
+      "time": 1788949920.532628,
+      "event": "Return to ongoing call with elapsed timer"
+    },
+    {
+      "time": 1788949923.6711721,
+      "event": "User ends call"
+    },
+    {
+      "time": 1788949928.14724,
+      "event": "Ongoing-call notification is gone"
+    }
+  ]
+}

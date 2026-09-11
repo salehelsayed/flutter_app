@@ -1,0 +1,16 @@
+{
+  "source": "Previously captured relay journal, local-only raw data",
+  "windowUtc": [
+    "2026-09-08T10:09:00Z",
+    "2026-09-08T10:19:00Z"
+  ],
+  "scannedEntries": 12258,
+  "firstUtc": "2026-09-08T10:09:14.670256+00:00",
+  "lastUtc": "2026-09-08T10:18:56.087829+00:00",
+  "fixedKeywordCounts": {},
+  "fixedKeywordCountsByMinute": {},
+  "limits": [
+    "Keyword presence does not establish a call-related error.",
+    "No raw messages or identifiers exported."
+  ]
+}

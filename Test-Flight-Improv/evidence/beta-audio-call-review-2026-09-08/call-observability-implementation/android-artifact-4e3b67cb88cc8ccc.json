@@ -1,0 +1,52 @@
+{
+  "sourceStamp": "181a39528fd16ea2",
+  "buildStamp": "4e3b67cb88cc8ccc",
+  "manifestFilesVerified": 54,
+  "artifact": "/tmp/call-observability-20260908/app-call-diagnostics-debug.apk",
+  "bytes": 353338978,
+  "sha256": "99d9f5b34dacc46a4c868cf395e888095aebb8811192a1fd4b5c9b61e26f8b24",
+  "mode": "debug",
+  "targetPlatform": "android-arm64",
+  "buildLog": "android-build-4e3b67cb88cc8ccc.log",
+  "nativeGradleProperties": {
+    "enableAndroidNativeCalls": true
+  },
+  "dartDefines": {
+    "VOICE_CALL_CAPABILITY_V1": "true",
+    "VOICE_CALL_OUTGOING_ENABLED": "true",
+    "VOICE_CALL_INCOMING_ENABLED": "true",
+    "VOICE_CALL_TURN_ENABLED": "true",
+    "VOICE_CALL_ANDROID_NATIVE_ENABLED": "true",
+    "VOICE_CALL_IOS_NATIVE_ENABLED": "true",
+    "VOICE_CALL_ALWAYS_RELAY_ENABLED": "true",
+    "CALL_DIAGNOSTICS_BUILD": "4e3b67cb88cc8ccc"
+  },
+  "fingerprint": {
+    "buildStamp": "4e3b67cb88cc8ccc",
+    "algorithm": "first 16 hex SHA256 of sorted compact JSON fingerprintInputs",
+    "fingerprintInputs": {
+      "sourceStamp": "181a39528fd16ea2",
+      "platform": "android",
+      "mode": "debug",
+      "nativeGradleProperties": {
+        "enableAndroidNativeCalls": true
+      },
+      "dartDefines": {
+        "VOICE_CALL_CAPABILITY_V1": "true",
+        "VOICE_CALL_OUTGOING_ENABLED": "true",
+        "VOICE_CALL_INCOMING_ENABLED": "true",
+        "VOICE_CALL_TURN_ENABLED": "true",
+        "VOICE_CALL_ANDROID_NATIVE_ENABLED": "true",
+        "VOICE_CALL_IOS_NATIVE_ENABLED": "true",
+        "VOICE_CALL_ALWAYS_RELAY_ENABLED": "true"
+      }
+    }
+  },
+  "packagedVerification": {
+    "buildConfigNativeCallsEnabled": true,
+    "setterRetainsSdkGuardAndPersistedEnablePath": true,
+    "diagnosticBuildStampPresentInKernel": true
+  },
+  "recordedAt": "2026-09-08T15:47:50.218653+00:00",
+  "buildCommand": "/Users/I560101/development/flutter-3.47.2/bin/flutter build apk --debug --no-pub --target-platform=android-arm64 --android-project-arg=enableAndroidNativeCalls=true --dart-define=VOICE_CALL_CAPABILITY_V1=true --dart-define=VOICE_CALL_OUTGOING_ENABLED=true --dart-define=VOICE_CALL_INCOMING_ENABLED=true --dart-define=VOICE_CALL_TURN_ENABLED=true --dart-define=VOICE_CALL_ANDROID_NATIVE_ENABLED=true --dart-define=VOICE_CALL_IOS_NATIVE_ENABLED=true --dart-define=VOICE_CALL_ALWAYS_RELAY_ENABLED=true --dart-define=CALL_DIAGNOSTICS_BUILD=4e3b67cb88cc8ccc"
+}

@@ -4,7 +4,7 @@ import Darwin
 import Foundation
 import UserNotifications
 
-#if DEBUG && MKNOON_RUNNER_TESTS && canImport(Runner)
+#if MKNOON_RUNNER_TESTS && canImport(Runner)
   @testable import Runner
 #endif
 

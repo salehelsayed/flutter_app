@@ -6,8 +6,12 @@ import 'dart:isolate';
 
 import 'package:ffi/ffi.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
+import 'package:flutter_app/core/diagnostics/app_diagnostic_events.dart';
+import 'package:flutter_app/core/notifications/bounded_posix_flock.dart';
 import 'package:flutter_app/core/notifications/durable_conversation_notification_id_registry.dart';
 import 'package:flutter_app/core/notifications/durable_notification_tone_lease.dart';
+import 'package:flutter_app/core/notifications/local_notification_ledger_store.dart';
 import 'package:flutter_app/core/notifications/notification_service.dart';
 import 'package:flutter_app/core/secure_storage/secure_key_store.dart';
 import 'package:flutter_app/features/push/application/pending_conversation_notification_overlay.dart';
@@ -21,6 +25,7 @@ const _ownerCompletionFloor = Duration(milliseconds: 1400);
 // acquisition bound remains asserted independently above. Leave enough room
 // for isolate scheduling during the batched host-all lane.
 const _outerWatchdog = Duration(seconds: 15);
+const _notificationLockChannel = MethodChannel('com.mknoon/go_bridge');
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -30,12 +35,404 @@ void main() {
   setUp(() {
     directory = Directory.systemTemp.createTempSync('bounded-posix-flock-');
     debugDefaultTargetPlatformOverride = TargetPlatform.android;
+    BoundedPosixFlock.debugUseIosBackgroundTasks = false;
+    var nextTask = 0;
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(_notificationLockChannel, (call) async {
+          return switch (call.method) {
+            'notificationLockBegin' => ++nextTask,
+            'notificationLockIsActive' => true,
+            'notificationLockEnd' => null,
+            _ => throw MissingPluginException(call.method),
+          };
+        });
   });
 
   tearDown(() {
+    AppDiagnosticEvents.onNotificationFileLock = null;
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(_notificationLockChannel, null);
     debugDefaultTargetPlatformOverride = null;
+    BoundedPosixFlock.debugUseIosBackgroundTasks = null;
     if (directory.existsSync()) directory.deleteSync(recursive: true);
   });
+
+  test(
+    'iOS lease encloses native ownership and preserves action failure',
+    () async {
+      debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
+      BoundedPosixFlock.debugUseIosBackgroundTasks = true;
+      final lock = File('${directory.path}/lease-order.lock');
+      final order = <String>[];
+      var leaseActive = false;
+      final failure = StateError('action-failure');
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(_notificationLockChannel, (call) async {
+            order.add(call.method);
+            switch (call.method) {
+              case 'notificationLockBegin':
+                expect(_canAcquireNativeFlock(lock), isTrue);
+                leaseActive = true;
+                return 41;
+              case 'notificationLockIsActive':
+                expect(call.arguments, 41);
+                expect(_canAcquireNativeFlock(lock), isFalse);
+                return leaseActive;
+              case 'notificationLockEnd':
+                expect(call.arguments, 41);
+                expect(_canAcquireNativeFlock(lock), isTrue);
+                leaseActive = false;
+                return null;
+              default:
+                throw MissingPluginException(call.method);
+            }
+          });
+
+      await expectLater(
+        BoundedPosixFlock.withExclusive(lock, () async {
+          expect(leaseActive, isTrue);
+          order.add('action');
+          expect(_canAcquireNativeFlock(lock), isFalse);
+          await Future<void>.value();
+          throw failure;
+        }),
+        throwsA(same(failure)),
+      );
+      expect(order, [
+        'notificationLockBegin',
+        'notificationLockIsActive',
+        'action',
+        'notificationLockEnd',
+      ]);
+      expect(leaseActive, isFalse);
+      expect(_canAcquireNativeFlock(lock), isTrue);
+    },
+  );
+
+  test(
+    'iOS denied and expired-before-action leases never enter the action',
+    () async {
+      debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
+      BoundedPosixFlock.debugUseIosBackgroundTasks = true;
+      for (final denied in [true, false]) {
+        final lock = File('${directory.path}/admission-$denied.lock');
+        final methods = <String>[];
+        var entered = false;
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+            .setMockMethodCallHandler(_notificationLockChannel, (call) async {
+              methods.add(call.method);
+              return switch (call.method) {
+                'notificationLockBegin' => denied ? null : 42,
+                'notificationLockIsActive' => false,
+                'notificationLockEnd' => null,
+                _ => throw MissingPluginException(call.method),
+              };
+            });
+        await expectLater(
+          BoundedPosixFlock.withExclusive(lock, () async => entered = true),
+          throwsA(isA<BoundedPosixFlockUnavailableException>()),
+        );
+        expect(entered, isFalse);
+        expect(_canAcquireNativeFlock(lock), isTrue);
+        expect(
+          methods,
+          denied
+              ? ['notificationLockBegin']
+              : [
+                  'notificationLockBegin',
+                  'notificationLockIsActive',
+                  'notificationLockEnd',
+                ],
+        );
+      }
+    },
+  );
+
+  test(
+    'iOS nested distinct locks balance leases and same-lock recursion starts none',
+    () async {
+      debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
+      BoundedPosixFlock.debugUseIosBackgroundTasks = true;
+      final outer = File('${directory.path}/outer.lock');
+      final inner = File('${directory.path}/inner.lock');
+      final begun = <int>[];
+      final ended = <int>[];
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(_notificationLockChannel, (call) async {
+            if (call.method == 'notificationLockBegin') {
+              final id = begun.length + 1;
+              begun.add(id);
+              return id;
+            }
+            if (call.method == 'notificationLockIsActive') return true;
+            if (call.method == 'notificationLockEnd') {
+              ended.add(call.arguments as int);
+              return null;
+            }
+            throw MissingPluginException(call.method);
+          });
+      expect(
+        await BoundedPosixFlock.withExclusive(outer, () async {
+          await expectLater(
+            BoundedPosixFlock.withExclusive(outer, () async => 0),
+            throwsA(isA<BoundedPosixFlockReentrantException>()),
+          );
+          return BoundedPosixFlock.withExclusive(inner, () async => 7);
+        }),
+        7,
+      );
+      expect(begun, [1, 2]);
+      expect(ended, [2, 1]);
+      expect(_canAcquireNativeFlock(outer), isTrue);
+      expect(_canAcquireNativeFlock(inner), isTrue);
+    },
+  );
+
+  test('Android and macOS never request iOS notification leases', () async {
+    var calls = 0;
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(_notificationLockChannel, (call) async {
+          calls += 1;
+          throw StateError('non-iOS channel call');
+        });
+    for (final platform in [TargetPlatform.android, TargetPlatform.macOS]) {
+      debugDefaultTargetPlatformOverride = platform;
+      expect(
+        await BoundedPosixFlock.withExclusive(
+          File('${directory.path}/${platform.name}.lock'),
+          () async => 9,
+        ),
+        9,
+      );
+    }
+    expect(calls, 0);
+  });
+
+  test(
+    'iOS lease channel failures stay visible and release native ownership',
+    () async {
+      debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
+      BoundedPosixFlock.debugUseIosBackgroundTasks = true;
+      for (final failingMethod in [
+        'notificationLockBegin',
+        'notificationLockIsActive',
+        'notificationLockEnd',
+      ]) {
+        final lock = File('${directory.path}/$failingMethod.lock');
+        var entered = false;
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+            .setMockMethodCallHandler(_notificationLockChannel, (call) async {
+              if (call.method == failingMethod) {
+                throw PlatformException(code: 'lease-channel-failure');
+              }
+              return switch (call.method) {
+                'notificationLockBegin' => 43,
+                'notificationLockIsActive' => true,
+                'notificationLockEnd' => null,
+                _ => throw MissingPluginException(call.method),
+              };
+            });
+        await expectLater(
+          BoundedPosixFlock.withExclusive(lock, () async => entered = true),
+          throwsA(
+            isA<PlatformException>().having(
+              (error) => error.code,
+              'code',
+              'lease-channel-failure',
+            ),
+          ),
+        );
+        expect(entered, failingMethod == 'notificationLockEnd');
+        expect(_canAcquireNativeFlock(lock), isTrue);
+      }
+
+      final lock = File('${directory.path}/double-failure.lock');
+      final failure = StateError('original-action-failure');
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(_notificationLockChannel, (call) async {
+            if (call.method == 'notificationLockBegin') return 44;
+            if (call.method == 'notificationLockIsActive') return true;
+            throw PlatformException(code: 'end-failure');
+          });
+      await expectLater(
+        BoundedPosixFlock.withExclusive(lock, () async => throw failure),
+        throwsA(
+          isA<BoundedPosixFlockBackgroundCleanupException>()
+              .having(
+                (error) => error.originalError,
+                'originalError',
+                same(failure),
+              )
+              .having(
+                (error) => error.cleanupError,
+                'cleanupError',
+                isA<PlatformException>().having(
+                  (error) => error.code,
+                  'code',
+                  'end-failure',
+                ),
+              )
+              .having(
+                (error) => error.originalStackTrace.toString(),
+                'originalStackTrace',
+                contains('bounded_posix_flock_test.dart'),
+              ),
+        ),
+      );
+      expect(_canAcquireNativeFlock(lock), isTrue);
+
+      var entered = false;
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(_notificationLockChannel, null);
+      await expectLater(
+        BoundedPosixFlock.withExclusive(lock, () async => entered = true),
+        throwsA(isA<MissingPluginException>()),
+      );
+      expect(entered, isFalse);
+      expect(_canAcquireNativeFlock(lock), isTrue);
+    },
+  );
+
+  test(
+    'iOS refused lease preserves existing ledger for a later admitted mutation',
+    () async {
+      debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
+      BoundedPosixFlock.debugUseIosBackgroundTasks = true;
+      final fixture =
+          jsonDecode(
+                File(
+                  'test/shared/fixtures/local_notification_ledger_v1.json',
+                ).readAsStringSync(),
+              )
+              as Map<String, Object?>;
+      final seeded = Map<String, Object?>.from(fixture['validEnvelope']! as Map)
+        ..['storeRevision'] = 1;
+      final binding = seeded['opaqueBinding']! as String;
+      final store = LocalNotificationLedgerStore(directory: directory);
+      await store.ledgerFile.writeAsString(jsonEncode(seeded), flush: true);
+      expect(
+        (await store.read(currentOpaqueBinding: binding))?.records,
+        hasLength(1),
+      );
+      final originalBytes = await store.ledgerFile.readAsBytes();
+      var admitted = false;
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(_notificationLockChannel, (call) async {
+            return switch (call.method) {
+              'notificationLockBegin' => admitted ? 45 : null,
+              'notificationLockIsActive' => true,
+              'notificationLockEnd' => null,
+              _ => throw MissingPluginException(call.method),
+            };
+          });
+      Future<Object?> suspend() => store.mutate(
+        currentOpaqueBinding: binding,
+        mutation: (current) => current.copyWith(
+          storeRevision: current.storeRevision + 1,
+          claimsSuspended: true,
+        ),
+      );
+      expect(await suspend(), isNull);
+      expect(await store.ledgerFile.readAsBytes(), originalBytes);
+      admitted = true;
+      expect(await suspend(), isNotNull);
+      final reopened = await store.read(currentOpaqueBinding: binding);
+      expect(reopened?.storeRevision, 2);
+      expect(reopened?.claimsSuspended, isTrue);
+      expect(reopened?.toJson()['records'], seeded['records']);
+    },
+  );
+
+  test(
+    'native unlock is observed before a pending lease end completes',
+    () async {
+      debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
+      BoundedPosixFlock.debugUseIosBackgroundTasks = true;
+      final lock = File('${directory.path}/pending-end.lock');
+      final endEntered = Completer<void>();
+      final allowEnd = Completer<void>();
+      final phases = <NotificationFileLockPhase>[];
+      AppDiagnosticEvents.onNotificationFileLock = (_, phase) =>
+          phases.add(phase);
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(_notificationLockChannel, (call) async {
+            if (call.method == 'notificationLockBegin') return 51;
+            if (call.method == 'notificationLockIsActive') return true;
+            if (call.method == 'notificationLockEnd') {
+              endEntered.complete();
+              await allowEnd.future;
+              return null;
+            }
+            throw MissingPluginException(call.method);
+          });
+      var completed = false;
+      final operation = BoundedPosixFlock.withExclusive(lock, () async => 11)
+          .then((value) {
+            completed = true;
+            return value;
+          });
+      await endEntered.future;
+      try {
+        expect(completed, isFalse);
+        expect(_canAcquireNativeFlock(lock), isTrue);
+        expect(phases, NotificationFileLockPhase.values);
+      } finally {
+        allowEnd.complete();
+      }
+      expect(await operation, 11);
+      expect(phases, NotificationFileLockPhase.values);
+    },
+  );
+
+  test(
+    'lock observations follow native ownership through async failure',
+    () async {
+      debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
+      BoundedPosixFlock.debugUseIosBackgroundTasks = true;
+      final lock = File(
+        '${directory.path}/private-owner-must-not-be-observed.lock',
+      );
+      final phases = <NotificationFileLockPhase>[];
+      final owners = <Object>[];
+      final nativeAvailability = <bool>[];
+      AppDiagnosticEvents.onNotificationFileLock = (owner, phase) {
+        owners.add(owner);
+        phases.add(phase);
+        if (phase == NotificationFileLockPhase.held) {
+          nativeAvailability.add(_canAcquireNativeFlock(lock));
+        } else if (phase == NotificationFileLockPhase.released) {
+          nativeAvailability.add(_canAcquireNativeFlock(lock));
+        }
+      };
+      final entered = Completer<void>();
+      final release = Completer<void>();
+      final failure = StateError('original-action-failure');
+      final operation = BoundedPosixFlock.withExclusive(lock, () async {
+        entered.complete();
+        await release.future;
+        throw failure;
+      });
+      final checked = expectLater(operation, throwsA(same(failure)));
+      await entered.future;
+      expect(phases, [
+        NotificationFileLockPhase.waiting,
+        NotificationFileLockPhase.held,
+      ]);
+      expect(_canAcquireNativeFlock(lock), isFalse);
+      release.complete();
+      await checked;
+      expect(phases, NotificationFileLockPhase.values);
+      expect(owners.toSet(), hasLength(1));
+      expect(owners.first, isNot(isA<String>()));
+      expect(nativeAvailability, [false, true]);
+      expect(_canAcquireNativeFlock(lock), isTrue);
+
+      AppDiagnosticEvents.onNotificationFileLock = (_, _) =>
+          throw StateError('observer');
+      expect(await BoundedPosixFlock.withExclusive(lock, () async => 42), 42);
+      expect(_canAcquireNativeFlock(lock), isTrue);
+    },
+  );
 
   test(
     'event claim contender times out before a literal owner releases',
@@ -2214,6 +2611,30 @@ typedef _FlockNative = Int32 Function(Int32, Int32);
 typedef _FlockDart = int Function(int, int);
 typedef _CloseNative = Int32 Function(Int32);
 typedef _CloseDart = int Function(int);
+
+bool _canAcquireNativeFlock(File file) {
+  final library = Platform.isAndroid
+      ? DynamicLibrary.open('libc.so')
+      : DynamicLibrary.process();
+  final open = library.lookupFunction<_OpenNative, _OpenDart>('open');
+  final flock = library.lookupFunction<_FlockNative, _FlockDart>('flock');
+  final close = library.lookupFunction<_CloseNative, _CloseDart>('close');
+  final nativePath = file.path.toNativeUtf8();
+  late final int descriptor;
+  try {
+    descriptor = open(nativePath, 2);
+  } finally {
+    malloc.free(nativePath);
+  }
+  if (descriptor < 0) throw StateError('native probe could not open test lock');
+  try {
+    if (flock(descriptor, 2 | 4) != 0) return false;
+    flock(descriptor, 8);
+    return true;
+  } finally {
+    close(descriptor);
+  }
+}
 
 Future<void> _holdNativeFlock(List<Object?> message) async {
   const openReadWrite = 2;

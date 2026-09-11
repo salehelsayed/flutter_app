@@ -32,6 +32,7 @@ import 'package:flutter_app/core/media/private_media_lifecycle_engine.dart';
 import 'package:flutter_app/core/media/private_media_protection_coordinator.dart';
 import 'package:flutter_app/core/media/media_picker.dart';
 import 'package:flutter_app/core/media/media_upload_in_flight_tracker.dart';
+import 'package:flutter_app/core/media/direct_upload_retry_signal.dart';
 import 'package:flutter_app/core/media/outgoing_direct_private_mutation_coordinator.dart';
 import 'package:flutter_app/core/media/pending_composer_media.dart';
 import 'package:flutter_app/core/media/picture_in_picture_gateway.dart';
@@ -3735,6 +3736,7 @@ class _ConversationWiredState extends State<ConversationWired>
 
     MediaUploadLease? uploadLease;
     _ForegroundDirectPrivateTransferLease? privateTransferLease;
+    var retryMediaUpload = false;
 
     try {
       emitFlowEvent(
@@ -4349,6 +4351,7 @@ class _ConversationWiredState extends State<ConversationWired>
                     );
                 if (!fanoutResult.isComplete ||
                     fanoutResult.attachments.length != 1) {
+                  retryMediaUpload = true;
                   await _uploadActivityController.complete(uploadOperation);
                   _updateLocalMessageStatus(optimisticMessage.id, 'sending');
                   await _refreshMessageWithHydratedMedia(optimisticMessage.id);
@@ -4395,6 +4398,7 @@ class _ConversationWiredState extends State<ConversationWired>
                 );
                 if (!strictResult.isComplete ||
                     strictResult.attachments.length != 1) {
+                  retryMediaUpload = true;
                   await _uploadActivityController.complete(uploadOperation);
                   _updateLocalMessageStatus(optimisticMessage.id, 'sending');
                   await _refreshMessageWithHydratedMedia(optimisticMessage.id);
@@ -4404,6 +4408,7 @@ class _ConversationWiredState extends State<ConversationWired>
                 strictCompletion = strictResult.attachments.single;
               }
               if (strictCompletion.messageId != optimisticMessage.id) {
+                retryMediaUpload = true;
                 await _uploadActivityController.complete(uploadOperation);
                 _updateLocalMessageStatus(optimisticMessage.id, 'sending');
                 await _refreshMessageWithHydratedMedia(optimisticMessage.id);
@@ -4424,6 +4429,7 @@ class _ConversationWiredState extends State<ConversationWired>
                   event: 'CONV_FL_PRIVATE_STRICT_CANONICALIZE_ERROR',
                   details: {'errorType': error.runtimeType.toString()},
                 );
+                retryMediaUpload = true;
                 await _uploadActivityController.complete(uploadOperation);
                 _updateLocalMessageStatus(optimisticMessage.id, 'sending');
                 await _refreshMessageWithHydratedMedia(optimisticMessage.id);
@@ -4495,6 +4501,7 @@ class _ConversationWiredState extends State<ConversationWired>
                           .toList(growable: false),
                     );
                 if (!fanoutResult.isComplete) {
+                  retryMediaUpload = true;
                   await _uploadActivityController.complete(uploadOperation);
                   _updateLocalMessageStatus(optimisticMessage.id, 'sending');
                   await _refreshMessageWithHydratedMedia(optimisticMessage.id);
@@ -4543,6 +4550,7 @@ class _ConversationWiredState extends State<ConversationWired>
                       : null,
                 );
                 if (!strictResult.isComplete) {
+                  retryMediaUpload = true;
                   await _uploadActivityController.complete(uploadOperation);
                   _updateLocalMessageStatus(optimisticMessage.id, 'sending');
                   await _refreshMessageWithHydratedMedia(optimisticMessage.id);
@@ -4720,6 +4728,7 @@ class _ConversationWiredState extends State<ConversationWired>
                     );
                   }
                   if (!projected.isTerminal) {
+                    retryMediaUpload = true;
                     _updateLocalMessageStatus(optimisticMessage.id, 'sending');
                     await _refreshMessageWithHydratedMedia(
                       optimisticMessage.id,
@@ -5114,6 +5123,7 @@ class _ConversationWiredState extends State<ConversationWired>
       if (lease != null) {
         mediaUploadInFlightTracker.release(lease);
       }
+      if (retryMediaUpload) requestDirectUploadRetry();
       if (mounted) {
         setState(() => _isSending = false);
       } else {
@@ -6079,6 +6089,7 @@ class _ConversationWiredState extends State<ConversationWired>
       bgTaskId = null;
     }
 
+    var retryVoiceUpload = false;
     try {
       // Try local WiFi first for voice messages, then keep the relay upload
       // fallback as the durable recovery copy.
@@ -6200,6 +6211,7 @@ class _ConversationWiredState extends State<ConversationWired>
             await _refreshMessageWithHydratedMedia(optimisticMessage.id);
           }
         } else if (result == SendVoiceMessageResult.uploadQueued) {
+          retryVoiceUpload = true;
           _updateLocalMessageStatus(optimisticMessage.id, 'sending');
           await _refreshMessageWithHydratedMedia(optimisticMessage.id);
         } else {
@@ -6241,8 +6253,28 @@ class _ConversationWiredState extends State<ConversationWired>
       } finally {
         await _uploadActivityController.complete(uploadOperation);
       }
+    } catch (error) {
+      // The pending recording is already durable. Leave delivery state to
+      // the retry owner, including any receipt committed before this error.
+      retryVoiceUpload = true;
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'CONV_FL_VOICE_SEND_ERROR',
+        details: {'errorType': error.runtimeType.toString()},
+      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(AppLocalizations.of(context)!.offline_retry_delayed),
+          ),
+        );
+      }
     } finally {
       mediaUploadInFlightTracker.release(voiceUploadLease);
+      if (mounted) {
+        _updateComposerState(isUploading: false);
+      }
+      if (retryVoiceUpload) requestDirectUploadRetry();
       if (bgTaskId != null && widget.bridge != null) {
         await callBgEnd(widget.bridge!, bgTaskId);
       }
@@ -7900,9 +7932,31 @@ class _ConversationWiredState extends State<ConversationWired>
       return;
     }
     if (!mounted || _contact.peerId != contactPeerId) return;
+    // A database read creates fresh projections even when history is
+    // unchanged. Keep the existing list (and chat subtree) in that case,
+    // especially when the initial empty result arrives during route entry.
+    if (_sameCallTimeline(entries)) return;
     setState(() {
       _callEntries = List<ConversationCallTimelineEntry>.unmodifiable(entries);
     });
+  }
+
+  bool _sameCallTimeline(List<ConversationCallTimelineEntry> entries) {
+    if (_callEntries.length != entries.length) return false;
+    for (var index = 0; index < entries.length; index++) {
+      final previous = _callEntries[index];
+      final next = entries[index];
+      if (previous.callId != next.callId ||
+          previous.contactPeerId != next.contactPeerId ||
+          previous.direction != next.direction ||
+          previous.status != next.status ||
+          previous.startedAt != next.startedAt ||
+          previous.endedAt != next.endedAt ||
+          previous.duration != next.duration) {
+        return false;
+      }
+    }
+    return true;
   }
 
   Future<void> _recoverAndMarkReadAfterResume() async {

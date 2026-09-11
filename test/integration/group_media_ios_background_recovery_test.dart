@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:crypto/crypto.dart';
 import 'package:flutter_app/core/debug/group_media_ios_disposable_profile.dart';
+import 'package:flutter_app/core/database/app_database_version.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import '../../integration_test/scripts/group_media_ios_background_recovery.dart';
@@ -2612,7 +2613,7 @@ final class _FakeCommandRunner implements GroupMediaIosCommandRunner {
       'database_path_sha256': _digest('production-db-path'),
       'database_reopened': true,
       'cipher_version': 'SQLCipher 4.6.1',
-      'user_version': 104,
+      'user_version': currentIdentityDatabaseVersion,
       'barrier': receipt['barrier'],
       'durable_status': receipt['durable_status'],
       'download_attempts': receipt['download_attempts'],

@@ -1,0 +1,23 @@
+Observed focused RED before production changes.
+Command: go test ./... -run '^TestDirectNotificationReplayAfterAckDoesNotResendIOS$' -count=1 -timeout=90s
+Working directory: go-relay-server
+Exit: 1
+
+--- FAIL: TestDirectNotificationReplayAfterAckDoesNotResendIOS (0.03s)
+    --- FAIL: TestDirectNotificationReplayAfterAckDoesNotResendIOS/memory_legacy (0.00s)
+        direct_notification_replay_test.go:110: same acknowledged message generated a second iOS alert: provider attempts=2
+    --- FAIL: TestDirectNotificationReplayAfterAckDoesNotResendIOS/redis_legacy (0.01s)
+        direct_notification_replay_test.go:110: same acknowledged message generated a second iOS alert: provider attempts=2
+    --- FAIL: TestDirectNotificationReplayAfterAckDoesNotResendIOS/redis_protected (0.01s)
+        direct_notification_replay_test.go:110: same acknowledged message generated a second iOS alert: provider attempts=2
+    --- FAIL: TestDirectNotificationReplayAfterAckDoesNotResendIOS/redis_legacy_after_restart (0.01s)
+        direct_notification_replay_test.go:110: same acknowledged message generated a second iOS alert: provider attempts=2
+    --- FAIL: TestDirectNotificationReplayAfterAckDoesNotResendIOS/redis_protected_after_restart (0.01s)
+        direct_notification_replay_test.go:110: same acknowledged message generated a second iOS alert: provider attempts=2
+FAIL
+FAIL github.com/mknoon/relay-server 13.070s
+FAIL
+
+This is a compact transcription of the captured execution output, not a rerun.
+The test file has subsequently gained additional cases and an observable
+suppression-metric wait, so the original failure line numbers are historical.

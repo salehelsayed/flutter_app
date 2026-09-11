@@ -3017,52 +3017,210 @@ void main() {
     );
   });
 
-  // 156 QW-11 (lists-scrolling-4): entrance animation runs ONLY for a genuinely
-  // new (appended) message, not for every row on the initial paint. The
-  // _AnimatedLetterCard wrapper keys on the bare message id; a non-animated row
-  // keeps only its `msg-<id>` outer key.
+  // Only live additions animate. Initial history stays still, and subsequent
+  // presentation updates must not interrupt a live message's animation.
   group('156 QW-11 entrance animation', () {
-    testWidgets(
-      'TC-21: existing (non-new) rows do not entrance-animate on first paint',
-      (tester) async {
+    for (final initialLoadDone in [false, true]) {
+      testWidgets('TC-21: all historical rows stay still on first paint '
+          '(initialLoadDone=$initialLoadDone)', (tester) async {
         await tester.pumpWidget(
           buildTestWidget(
             messages: [
               makeMessage(id: 'first-row', text: 'First'),
               makeMessage(id: 'last-row', text: 'Last'),
             ],
-            initialLoadDone: false,
+            initialLoadDone: initialLoadDone,
           ),
         );
-        // Duration pump drains the zero-delay entry-animation timer(s).
-        await tester.pump(const Duration(milliseconds: 500));
-
-        // The non-last row is present...
+        await tester.pump();
         expect(find.byKey(const ValueKey('msg-first-row')), findsOneWidget);
-        // ...but is NOT entrance-animated (no _AnimatedLetterCard, which keys on
-        // the bare message id).
+        expect(find.byKey(const ValueKey('msg-last-row')), findsOneWidget);
         expect(find.byKey(const ValueKey('first-row')), findsNothing);
-      },
-    );
+        expect(find.byKey(const ValueKey('last-row')), findsNothing);
+        await tester.pump(const Duration(milliseconds: 500));
+      });
+    }
 
-    testWidgets('TC-22: a newly-appended (isNew) message entrance-animates', (
+    testWidgets('loading completion does not animate historical messages', (
       tester,
     ) async {
-      // Positive control: the last message on the first build (when the list
-      // was empty) is the "new" one and MUST animate.
+      final history = [makeMessage(id: 'history', text: 'Stored history')];
+      await tester.pumpWidget(buildTestWidget());
+      await tester.pumpWidget(buildTestWidget(messages: history));
+      await tester.pump();
+      expect(find.byKey(const ValueKey('history')), findsNothing);
+      expect(
+        find.byKey(const ValueKey('conversation-loading-shell')),
+        findsNothing,
+      );
+      final row = tester.element(find.byKey(const ValueKey('msg-history')));
+      await tester.pumpWidget(
+        buildTestWidget(messages: history, initialLoadDone: true),
+      );
+      expect(find.byKey(const ValueKey('history')), findsNothing);
+      expect(
+        tester.element(find.byKey(const ValueKey('msg-history'))),
+        same(row),
+      );
+      await tester.pump(const Duration(milliseconds: 500));
+    });
+
+    for (final startsEmpty in [false, true]) {
+      testWidgets('TC-22: live addition finishes its animation across rebuilds '
+          '(startsEmpty=$startsEmpty)', (tester) async {
+        final previous = startsEmpty
+            ? <ConversationMessage>[]
+            : [makeMessage(id: 'older-row', text: 'Older')];
+        await tester.pumpWidget(
+          buildTestWidget(messages: previous, initialLoadDone: true),
+        );
+        await tester.pump(const Duration(milliseconds: 500));
+
+        final updated = [
+          ...previous,
+          makeMessage(id: 'newest-row', text: 'Just arrived'),
+        ];
+        await tester.pumpWidget(
+          buildTestWidget(messages: updated, initialLoadDone: true),
+        );
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 1));
+        await tester.pump(const Duration(milliseconds: 50));
+
+        final entrance = find.byKey(const ValueKey('newest-row'));
+        final opacityFinder = find.descendant(
+          of: entrance,
+          matching: find.byType(Opacity),
+        );
+        final transformFinder = find.descendant(
+          of: entrance,
+          matching: find.byType(Transform),
+        );
+        expect(entrance, findsOneWidget);
+        final entranceState = tester.state(entrance);
+        final contentFinder = find.descendant(
+          of: entrance,
+          matching: find.byType(LetterCard),
+        );
+        final content = tester.element(contentFinder);
+        final opacity = tester.widget<Opacity>(opacityFinder.first).opacity;
+        final translateY = tester
+            .widget<Transform>(transformFinder.first)
+            .transform
+            .storage[13];
+        expect(opacity, allOf(greaterThan(0), lessThan(1)));
+        expect(translateY, greaterThan(0));
+
+        // Change only composer presentation, without advancing the clock.
+        await tester.pumpWidget(
+          buildTestWidget(
+            messages: updated,
+            initialLoadDone: true,
+            isSending: true,
+          ),
+        );
+        expect(tester.state(entrance), same(entranceState));
+        expect(tester.element(contentFinder), same(content));
+        expect(tester.widget<Opacity>(opacityFinder.first).opacity, opacity);
+        expect(
+          tester.widget<Transform>(transformFinder.first).transform.storage[13],
+          translateY,
+        );
+
+        // Another arrival must not replace the previous newest row's state.
+        await tester.pumpWidget(
+          buildTestWidget(
+            messages: [
+              ...updated,
+              makeMessage(id: 'next-arrival'),
+            ],
+            initialLoadDone: true,
+          ),
+        );
+        expect(tester.state(entrance), same(entranceState));
+        expect(tester.element(contentFinder), same(content));
+        expect(tester.widget<Opacity>(opacityFinder.first).opacity, opacity);
+
+        await tester.pump(const Duration(milliseconds: 400));
+        expect(tester.widget<Opacity>(opacityFinder.first).opacity, 1);
+        expect(
+          tester.widget<Transform>(transformFinder.first).transform.storage[13],
+          0,
+        );
+      });
+    }
+
+    testWidgets('older-page insertion does not animate historical rows', (
+      tester,
+    ) async {
+      final newest = makeMessage(id: 'newest-row', text: 'Newest');
+      await tester.pumpWidget(
+        buildTestWidget(messages: [newest], initialLoadDone: true),
+      );
+      await tester.pump(const Duration(milliseconds: 500));
       await tester.pumpWidget(
         buildTestWidget(
           messages: [
-            makeMessage(id: 'older-row', text: 'Older'),
-            makeMessage(id: 'newest-row', text: 'Newest'),
+            makeMessage(
+              id: 'older-row',
+              text: 'Older page',
+              timestamp: '2026-02-08T15:30:00.000Z',
+            ),
+            newest,
           ],
           initialLoadDone: true,
         ),
       );
+      expect(find.byKey(const ValueKey('older-row')), findsNothing);
+      expect(find.byKey(const ValueKey('newest-row')), findsNothing);
       await tester.pump(const Duration(milliseconds: 500));
-
-      expect(find.byKey(const ValueKey('newest-row')), findsOneWidget);
     });
+
+    testWidgets(
+      'scrolling a live row out and back does not replay its entrance',
+      (tester) async {
+        final controller = ScrollController();
+        addTearDown(controller.dispose);
+        final history = [
+          for (var i = 0; i < 50; i++)
+            makeMessage(id: 'history-$i', text: 'Stored message $i'),
+        ];
+        await tester.pumpWidget(
+          buildTestWidget(
+            messages: history,
+            initialLoadDone: true,
+            scrollController: controller,
+          ),
+        );
+        await tester.pumpWidget(
+          buildTestWidget(
+            messages: [
+              ...history,
+              makeMessage(id: 'live-row'),
+            ],
+            initialLoadDone: true,
+            scrollController: controller,
+          ),
+        );
+        await tester.pump(const Duration(milliseconds: 400));
+        final entrance = find.byKey(const ValueKey('live-row'));
+        expect(entrance, findsOneWidget);
+        final before = tester.state(entrance);
+
+        controller.jumpTo(controller.position.maxScrollExtent);
+        await tester.pump();
+        expect(entrance, findsNothing);
+        controller.jumpTo(0);
+        await tester.pump();
+
+        expect(entrance, findsOneWidget);
+        expect(tester.state(entrance), isNot(same(before)));
+        final opacity = tester.widget<Opacity>(
+          find.descendant(of: entrance, matching: find.byType(Opacity)).first,
+        );
+        expect(opacity.opacity, 1);
+      },
+    );
   });
 
   // 159 TC-159-09b — Accepted Difference: the quoted-parent map is window-only

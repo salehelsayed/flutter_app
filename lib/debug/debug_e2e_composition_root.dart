@@ -222,6 +222,8 @@ final class DebugE2EActivation {
     required this.installedSimsProfile,
     this.isAndroid = false,
     this.androidProductionAudioCallE2EEnabled = false,
+    this.groupMediaAuthorityModeName =
+        configuredGroupMediaReliabilityAuthorityModeName,
   });
 
   final bool isDebugMode;
@@ -230,6 +232,12 @@ final class DebugE2EActivation {
   final String installedSimsProfile;
   final bool isAndroid;
   final bool androidProductionAudioCallE2EEnabled;
+  final String groupMediaAuthorityModeName;
+
+  GroupMediaReliabilityAuthorityMode get groupMediaAuthorityMode =>
+      isAndroidDisposableProfile
+      ? parseGroupMediaReliabilityAuthorityMode(groupMediaAuthorityModeName)
+      : GroupMediaReliabilityAuthorityMode.distinctAccountAndTransport;
 
   bool get constructsProductionAudioCallObserver =>
       isAndroid &&
@@ -265,7 +273,10 @@ final class DebugE2EActivation {
   bool get publishesIosReceiverBootstrap => isIosProductionProofProfile;
   bool get decoratesIosGroupMediaProof => isIosDisposableProfile;
   bool get suppliesDisposableNodeStart =>
-      isAndroidDisposableProfile || isIosDisposableProfile;
+      isIosDisposableProfile ||
+      (isAndroidDisposableProfile &&
+          groupMediaAuthorityMode ==
+              GroupMediaReliabilityAuthorityMode.distinctAccountAndTransport);
 }
 
 /// Owns the debug/E2E-only objects composed around the production application.
@@ -800,8 +811,10 @@ final class DebugE2ECompositionRoot {
     }
 
     Future<Map<String, Object?>?> acceptGroupMediaProofInvite(
-      String groupId,
-    ) async {
+      String groupId, {
+      GroupMediaReliabilityAuthorityMode authorityMode =
+          GroupMediaReliabilityAuthorityMode.distinctAccountAndTransport,
+    }) async {
       final deadline = DateTime.now().add(const Duration(seconds: 90));
       while (DateTime.now().isBefore(deadline) &&
           await dependencies.pendingGroupInviteRepository.getPendingInvite(
@@ -824,7 +837,11 @@ final class DebugE2ECompositionRoot {
       if (identity == null ||
           transportPeerId == null ||
           transportPeerId.isEmpty ||
-          identity.peerId == transportPeerId) {
+          !groupMediaReliabilityIdentityMatches(
+            mode: authorityMode,
+            accountPeerId: identity.peerId,
+            transportPeerId: transportPeerId,
+          )) {
         return null;
       }
       final accepted = await acceptPendingGroupInvite(
@@ -841,12 +858,22 @@ final class DebugE2ECompositionRoot {
         senderPublicKey: identity.publicKey,
         senderPrivateKey: identity.privateKey,
         senderUsername: identity.username,
-        ownDeviceId: transportPeerId,
-        ownTransportPeerId: transportPeerId,
+        ownDeviceId:
+            authorityMode ==
+                GroupMediaReliabilityAuthorityMode.accountBoundLegacy
+            ? null
+            : transportPeerId,
+        ownTransportPeerId:
+            authorityMode ==
+                GroupMediaReliabilityAuthorityMode.accountBoundLegacy
+            ? null
+            : transportPeerId,
         ownMlKemPublicKey: identity.mlKemPublicKey,
-        ownKeyPackageId: defaultGroupWelcomeKeyPackageIdForDevice(
-          transportPeerId,
-        ),
+        ownKeyPackageId:
+            authorityMode ==
+                GroupMediaReliabilityAuthorityMode.accountBoundLegacy
+            ? null
+            : defaultGroupWelcomeKeyPackageIdForDevice(transportPeerId),
         ownKeyPackagePublicMaterial: identity.mlKemPublicKey,
       );
       if (accepted.$1 != AcceptPendingGroupInviteResult.success ||
@@ -922,6 +949,7 @@ final class DebugE2ECompositionRoot {
 
         return runGroupMediaReliabilityE2EAction(
           config: config,
+          authorityModeName: activation.groupMediaAuthorityMode.name,
           controller: _groupMediaReliabilityE2EController,
           loadAttachment:
               dependencies.mediaAttachmentRepository.getAttachmentById,
@@ -933,7 +961,11 @@ final class DebugE2ECompositionRoot {
             if (identity == null ||
                 transportPeerId == null ||
                 transportPeerId.isEmpty ||
-                transportPeerId == identity.peerId) {
+                !groupMediaReliabilityIdentityMatches(
+                  mode: activation.groupMediaAuthorityMode,
+                  accountPeerId: identity.peerId,
+                  transportPeerId: transportPeerId,
+                )) {
               throw StateError(
                 'group-media disposable identity authority did not settle',
               );
@@ -954,8 +986,14 @@ final class DebugE2ECompositionRoot {
                 groupRepository: dependencies.groupRepository,
                 inviteDeliveryAttemptRepository:
                     dependencies.groupInviteDeliveryAttemptRepository,
+                appendGroupEventLogEntry:
+                    dependencies.groupMessageListener.appendGroupEventLogEntry,
+                authorityMode: activation.groupMediaAuthorityMode,
               ),
-          acceptReceiver: acceptGroupMediaProofInvite,
+          acceptReceiver: (groupId) => acceptGroupMediaProofInvite(
+            groupId,
+            authorityMode: activation.groupMediaAuthorityMode,
+          ),
           sendMedia:
               (
                 groupId,
@@ -965,6 +1003,7 @@ final class DebugE2ECompositionRoot {
                 receiverTransportPeerId,
               ) => sendGroupMediaReliabilityFixtures(
                 runId: request.runId,
+                authorityMode: activation.groupMediaAuthorityMode,
                 groupId: groupId,
                 messageIds: messageIds,
                 attachmentIds: attachmentIds,

@@ -190,13 +190,25 @@ def aggregate(attempts, rows, baseline_rows, health):
             alerts.append({'kind': 'missing_final_rate', 'feature': feature, 'build': build, 'platform': platform, 'count': incomplete, 'denominator': len(items), 'threshold': .2, 'minimumSamples': 5})
     def signature(row):
         e = row['event']
-        return (e['feature'], e['platform'], e['build'], e['stage'], e['reason'], e['values'].get('fingerprint'))
+        values = e['values']
+        error_class = values.get('errorClass')
+        fingerprint = values.get('fingerprint')
+        # Older Flutter producers hashed only the class when no app frame was
+        # available. That hash has no more specificity than the class itself.
+        if error_class and fingerprint == hashlib.sha256((error_class+'|').encode()).hexdigest():
+            fingerprint = None
+        return (e['feature'], e['platform'], e['build'], e['stage'], e['reason'],
+                fingerprint, error_class, values.get('osReasonCode'), values.get('operation'))
     prior = {signature(r) for r in baseline_rows if r['event']['outcome'] in FAILURE}
     errors = collections.Counter(signature(r) for r in rows if r['event']['outcome'] in FAILURE)
     error_summaries = []
     for key, count in sorted(errors.items(), key=lambda item: tuple(str(x) for x in item[0])):
-        feature, platform, build, stage, reason, fingerprint = key
+        feature, platform, build, stage, reason, fingerprint, error_class, os_reason_code, operation = key
         entry = {'feature': feature, 'platform': platform, 'build': build, 'stage': stage, 'reason': reason, 'fingerprint': fingerprint, 'eventReports': count, 'newInRetainedBaseline': key not in prior, 'baselineEventCount': len(baseline_rows)}
+        entry['fingerprintSpecificity'] = 'reported' if fingerprint else 'class_only' if error_class else 'none'
+        for name, value in [('errorClass', error_class), ('osReasonCode', os_reason_code), ('operation', operation)]:
+            if value is not None:
+                entry[name] = value
         error_summaries.append(entry)
         if key not in prior and count >= 3:
             alerts.append({'kind': 'new_error_signature', **entry, 'minimumReports': 3})

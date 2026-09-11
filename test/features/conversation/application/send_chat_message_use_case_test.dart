@@ -1108,8 +1108,16 @@ class FakeMessageRepository
         current,
       );
     }
+    if (mode == OutgoingOrdinarySettlementMode.receipt &&
+        current.status == 'sending' &&
+        (expectedEnvelope == null || expectedEnvelope.trim().isEmpty)) {
+      return _ordinaryResult(
+        OutgoingOrdinaryMutationOutcome.preserved,
+        current,
+      );
+    }
     final predecessors = mode == OutgoingOrdinarySettlementMode.receipt
-        ? const <String>{'inboxed', 'sent', 'failed'}
+        ? const <String>{'sending', 'inboxed', 'sent', 'failed'}
         : switch (status) {
             'delivered' => const <String>{
               'sending',
@@ -5603,6 +5611,8 @@ void main() {
     test(
       'send fails closed when an attachment lacks encryption metadata',
       () async {
+        final diagnostics = await AppDiagnostics.installForTesting();
+        addTearDown(diagnostics.dispose);
         const plaintextAttachment = MediaAttachment(
           id: 'att-plain-1',
           messageId: '',
@@ -5629,6 +5639,26 @@ void main() {
         expect(messageRepo.saved, isEmpty);
         expect(messageRepo.wireEnvelopeUpdates, isEmpty);
         expect(p2pService.lastSentMessage, isNull);
+        final diagnosticEvents = (await diagnostics.eventsForTesting())
+            .where((event) => event['feature'] == 'message')
+            .toList();
+        expect(
+          diagnosticEvents.singleWhere(
+            (event) => event['stage'] == 'finish',
+          )['reason'],
+          'metadata_invalid',
+        );
+        expect(
+          diagnosticEvents.where((event) => event['stage'] == 'encrypt'),
+          isEmpty,
+        );
+        expect(
+          diagnosticEvents.singleWhere(
+            (event) =>
+                event['stage'] == 'preflight' && event['outcome'] == 'failed',
+          )['reason'],
+          'metadata_invalid',
+        );
       },
     );
 
@@ -6126,6 +6156,8 @@ void main() {
     );
 
     test('returns encryptionRequired when bridge is missing', () async {
+      final diagnostics = await AppDiagnostics.installForTesting();
+      addTearDown(diagnostics.dispose);
       final (result, message) = await chat_use_case.sendChatMessage(
         p2pService: p2pService,
         messageRepo: messageRepo,
@@ -6142,11 +6174,31 @@ void main() {
       expect(p2pService.storeInInboxCallCount, 0);
       expect(messageRepo.saved, isEmpty);
       expect(messageRepo.wireEnvelopeUpdates, isEmpty);
+      final diagnosticEvents = (await diagnostics.eventsForTesting())
+          .where((event) => event['feature'] == 'message')
+          .toList();
+      final terminal = diagnosticEvents.singleWhere(
+        (event) => event['stage'] == 'finish',
+      );
+      expect(terminal['reason'], 'bridge_unavailable');
+      expect(
+        diagnosticEvents.where((event) => event['stage'] == 'encrypt'),
+        isEmpty,
+      );
+      expect(
+        diagnosticEvents.singleWhere(
+          (event) =>
+              event['stage'] == 'preflight' && event['outcome'] == 'failed',
+        )['reason'],
+        'bridge_unavailable',
+      );
     });
 
     test(
       'returns encryptionRequired when recipient ML-KEM key is missing',
       () async {
+        final diagnostics = await AppDiagnostics.installForTesting();
+        addTearDown(diagnostics.dispose);
         final (result, message) = await chat_use_case.sendChatMessage(
           p2pService: p2pService,
           messageRepo: messageRepo,
@@ -6164,6 +6216,24 @@ void main() {
         expect(p2pService.storeInInboxCallCount, 0);
         expect(messageRepo.saved, isEmpty);
         expect(messageRepo.wireEnvelopeUpdates, isEmpty);
+        final diagnosticEvents = (await diagnostics.eventsForTesting())
+            .where((event) => event['feature'] == 'message')
+            .toList();
+        final terminal = diagnosticEvents.singleWhere(
+          (event) => event['stage'] == 'finish',
+        );
+        expect(terminal['reason'], 'recipient_key_missing');
+        expect(
+          diagnosticEvents.where((event) => event['stage'] == 'encrypt'),
+          isEmpty,
+        );
+        expect(
+          diagnosticEvents.singleWhere(
+            (event) =>
+                event['stage'] == 'preflight' && event['outcome'] == 'failed',
+          )['reason'],
+          'recipient_key_missing',
+        );
       },
     );
 
@@ -6979,6 +7049,8 @@ void main() {
     });
 
     test('returns peerNotFound when discover returns null', () async {
+      final diagnostics = await AppDiagnostics.installForTesting();
+      addTearDown(diagnostics.dispose);
       p2pService = FakeP2PService(useNullDiscover: true);
 
       final (result, message) = await sendChatMessage(
@@ -6997,6 +7069,11 @@ void main() {
       expect(p2pService.discoverCallCount, 1);
       expect(messageRepo.saved.length, 1);
       expect(messageRepo.saved.first.status, 'failed');
+      final terminal = (await diagnostics.eventsForTesting()).singleWhere(
+        (event) => event['feature'] == 'message' && event['stage'] == 'finish',
+      );
+      expect(terminal['outcome'], 'failed');
+      expect(terminal['reason'], 'network_unavailable');
     });
 
     test('returns dialFailed when dial returns false', () async {

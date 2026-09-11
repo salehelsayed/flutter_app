@@ -7,6 +7,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_app/app/bootstrap/android_production_audio_call_e2e_observer.dart';
 import 'package:flutter_app/core/application/protected_group_content_runtime_quiescence.dart';
 import 'package:flutter_app/core/media/group_media_blob_artifact_store.dart';
+import 'package:flutter_app/core/media/group_upload_retry_signal.dart';
 import 'package:flutter_app/core/media/audio_recorder_service.dart';
 import 'package:flutter_app/core/notifications/group_notification_reconciliation_signal.dart';
 import 'package:flutter_app/core/notifications/notification_completed_outcome_drainer.dart';
@@ -74,6 +75,7 @@ import 'package:flutter_app/core/database/helpers/group_members_db_helpers.dart'
 import 'package:flutter_app/core/database/helpers/group_keys_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/group_forward_authorization_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/group_messages_db_helpers.dart';
+import 'package:flutter_app/core/database/helpers/group_media_key_snapshot.dart';
 import 'package:flutter_app/core/database/helpers/group_notification_display_outbox_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/group_notification_reconciliation_outbox_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/group_notification_canonical_state_db_helpers.dart';
@@ -312,6 +314,7 @@ import 'package:flutter_app/core/media/direct_media_blob_artifact_store.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/core/media/private_media_lifecycle_engine.dart';
 import 'package:flutter_app/core/media/media_upload_in_flight_tracker.dart';
+import 'package:flutter_app/core/media/direct_upload_retry_signal.dart';
 import 'package:flutter_app/core/media/record_audio_recorder_service.dart';
 import 'package:flutter_app/app/lifecycle/handle_app_resumed.dart';
 import 'package:flutter_app/core/notifications/active_conversation_tracker.dart';
@@ -4447,6 +4450,9 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
     final groupNotificationPresentationCoordinator =
         GroupNotificationPresentationCoordinator();
 
+    final groupMediaKeyAccess = GroupMediaKeyAccess(
+      secureKeyStore: secureKeyStore,
+    );
     GroupMessageRepositoryImpl createGroupMessageRepository(
       dynamic executor, {
       bool enableInboxPageTransactions = false,
@@ -4647,6 +4653,7 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
                 sourceEventId: sourceEventId,
                 sourceTimestamp: sourceTimestamp,
                 eventPayload: eventPayload,
+                mediaKeyAccess: groupMediaKeyAccess,
               )
             : null,
         dbStageAndCompleteLocalGroupContentMessageFn: executor is Database
@@ -4663,6 +4670,7 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
                 sourceEventId: sourceEventId,
                 sourceTimestamp: sourceTimestamp,
                 eventPayload: eventPayload,
+                mediaKeyAccess: groupMediaKeyAccess,
               )
             : null,
         dbStagePreparedLocalGroupContentMessageFn: executor is Database
@@ -4679,6 +4687,7 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
                 sourceEventId: sourceEventId,
                 sourceTimestamp: sourceTimestamp,
                 preparedEventPayload: preparedEventPayload,
+                mediaKeyAccess: groupMediaKeyAccess,
               )
             : null,
         dbTerminalizePreparedLocalGroupContentMessageIfExactFn:
@@ -4698,6 +4707,7 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
                 terminalSourceEventId: terminalSourceEventId,
                 terminalSourceTimestamp: terminalSourceTimestamp,
                 terminalEventPayload: terminalEventPayload,
+                mediaKeyAccess: groupMediaKeyAccess,
               )
             : null,
         dbHasExactPreparedLocalGroupContentMessageFn:
@@ -4706,6 +4716,9 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
                   executor,
                   expected: expected,
                   eventPayload: eventPayload,
+                  mediaKeyAccess: executor is Database
+                      ? groupMediaKeyAccess
+                      : null,
                 ),
         dbIsStrictGroupReactionTargetEligibleFn: (expected) =>
             dbIsStrictGroupReactionTargetEligible(executor, expected),
@@ -4714,6 +4727,7 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
                 executor,
                 expected,
                 replacement,
+                mediaKeyAccess: groupMediaKeyAccess,
               )
             : null,
         dbRecordGroupMessageRetryFailureFn:
@@ -5996,6 +6010,12 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
 
     // Create P2P service (uses the same bridge + local P2P)
     p2pService = P2PServiceImpl(
+      shouldSuppressDirectInboxNotification: (recipientPeerId, wireEnvelope) =>
+          dbShouldSuppressDeliveredDirectInboxNotification(
+            db,
+            recipientPeerId: recipientPeerId,
+            wireEnvelope: wireEnvelope,
+          ),
       requiredTransportPeerId: () =>
           roleAwareDeferredRuntimeStartRef?.activeLinkedTransportPeerId,
       logicalAccountPeerId: () =>
@@ -8445,6 +8465,7 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
 
     final protectedGroupAuthoritySupport =
         ProductionCanonicalProtectedGroupAuthoritySupport(
+          mediaKeyAccess: groupMediaKeyAccess,
           database: db,
           bridge: bridge,
           groupRepository: groupRepository,
@@ -9144,6 +9165,8 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
               releaseUploadLease: mediaUploadInFlightTracker.release,
             ),
           ),
+      directUploadRetrySignal: directUploadRetryRequests,
+      groupUploadRetrySignal: groupUploadRetryRequests,
       retryIncompleteUploadsPeriodicFn: () => runAccountRuntimeNetworkAction(
         operation: 'pending_retrier_upload_retry_periodic',
         blockedValue: 0,

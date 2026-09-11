@@ -1,0 +1,49 @@
+{
+  "schemaVersion": 1,
+  "scope": "One authorized iOS-to-Android lab call with immediate UI capture",
+  "callerStartAt": "2026-09-08T15:43:36.884432Z",
+  "callerRingingObservedAt": "2026-09-08T15:43:38.673134Z",
+  "calleeHierarchyAt": "2026-09-08T15:43:42.238788Z",
+  "secondCalleeCaptureAt": "2026-09-08T15:44:02.723355Z",
+  "callerFinishedObservedAt": "2026-09-08T15:44:13.611100Z",
+  "outcome": "No Answer or Decline controls found; no answer sent; caller controls cleared after timeout",
+  "deviceBoundary": {
+    "androidKeyguardShowing": true,
+    "androidKeyguardSecure": true,
+    "androidKeyguardOccluded": false,
+    "unlockHelperMeaning": "KEYCODE_WAKEUP wakes screen only; no secure keyguard dismissal",
+    "passcodeBypassAttempted": false
+  },
+  "calleeSurface": {
+    "incomingTitle": "MKnoon caller",
+    "incomingText": "Incoming call",
+    "answerCount": 0,
+    "declineCount": 0,
+    "surface": "Compact secure lock-screen notification",
+    "secondCaptureAlsoLackedControls": true
+  },
+  "notificationEvidence": {
+    "dumpCapturedAfterTimeout": true,
+    "activeRecordAtDumpWasMissedCall": true,
+    "activeIncomingFullScreenIntent": "unavailable from retained dump",
+    "incomingChannelImportance": 4,
+    "incomingChannelSound": null,
+    "incomingChannelVibration": false,
+    "fullScreenIntentAppOp": "allow"
+  },
+  "interpretation": "Screens and fresh hierarchy prove the compact locked surface lacked visible answer controls. They do not establish whether the system launched the full-screen PendingIntent, whether expansion would expose actions, or a native call failure. No additional call was attempted.",
+  "privateEvidenceFingerprints": {
+    "reverse-repro-android-incoming-2s.png": "d5adf9663a44674409f5ac8d7f33ddbd76694956783399803177f0ed44ba61d4",
+    "reverse-repro-android-incoming.xml": "c6b83c2f1c64dd698a46bac9a85ef7a7e3e8f02011dced901f9eba4a0e240795",
+    "reverse-repro-android-notification.png": "a07abafce447fe0ef883d01891d38580f2586396026619f119cd9f5b7c27745e",
+    "reverse-repro-android-notification.xml": "9accb42998db893da81735e63bd8d1608b594a4b46765296b1489682796bbf23",
+    "reverse-repro-notifications-private.txt": "0904041421492a7a11e5c5717dfba9be5900fbe2a9733be557e17d2efce857bf",
+    "reverse-repro-window-policy-private.txt": "988cd98e1f0f9ccbb0bd03f5beed11c95096a4f78c60430d417b4ce2fa61aa0f"
+  },
+  "sourceNavigation": {
+    "queryId": "ef4d5a36751c4a58",
+    "evidenceDigest": "50fce810343e20df",
+    "scope": "exact raw fallback for native notification factory"
+  },
+  "ownershipReturnedToRoot": true
+}

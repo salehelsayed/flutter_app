@@ -32,6 +32,8 @@ import 'package:flutter_app/features/groups/domain/models/group_reaction_replay_
 
 import '../../bridge/fake_bridge.dart';
 import '../../../shared/fakes/in_memory_group_repository.dart';
+import '../../../../integration_test/group_multi_device_real_harness.dart'
+    show createGroupMultiDeviceReactionReplayOutbox;
 
 void main() {
   late Database db;
@@ -2123,15 +2125,25 @@ CREATE TABLE groups (
               inboxRetryPayload: reactionFixture.retry,
             );
         expect(
-          await dbStagePreparedLocalGroupReactionContent(
+          await createGroupMultiDeviceReactionReplayOutbox(
             fixture.db,
-            expected: reactionExpected,
+          ).stageStrictContentPrepared(
+            GroupReactionReplayOutboxEntry.fromMap(reactionExpected),
             sourcePeerId: _protectedActor,
             sourceEventId: localPreparedProtectedGroupReactionSourceEventId(
               transitionId,
             ),
             sourceTimestamp: fixedGroupContentUtc(reactionAt),
             preparedEventPayload: reactionPrepared,
+          ),
+          isTrue,
+        );
+        expect(
+          await createGroupMultiDeviceReactionReplayOutbox(
+            fixture.db,
+          ).hasExactStrictContentPrepared(
+            GroupReactionReplayOutboxEntry.fromMap(reactionExpected),
+            eventPayload: reactionFixture.eventPayload,
           ),
           isTrue,
         );
@@ -2324,9 +2336,10 @@ CREATE TABLE groups (
         emptyAcl: true,
       );
       expect(
-        await dbStageAndCompleteLocalGroupReactionContent(
+        await createGroupMultiDeviceReactionReplayOutbox(
           fixture.db,
-          expected: addExpected,
+        ).stageAndCompleteStrictLocalContent(
+          GroupReactionReplayOutboxEntry.fromMap(addExpected),
           reactionRow: _protectedReactionRow(
             action: 'add',
             emoji: '❤️',

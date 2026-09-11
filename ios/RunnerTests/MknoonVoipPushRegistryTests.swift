@@ -1,3 +1,4 @@
+import CallKit
 import Flutter
 import Foundation
 import PushKit
@@ -5,10 +6,127 @@ import XCTest
 
 @testable import Runner
 
+final class PresentationDiagnosticMemory: MknoonAppDiagnosticBackend, MknoonCallDiagnosticBackend {
+  var data: Data?
+  var fail = false
+  func read() throws -> Data? { data }
+  func replace(_ data: Data) throws {
+    if fail { throw CocoaError(.fileWriteUnknown) }
+    self.data = data
+  }
+}
+
 final class MknoonVoipPushRegistryTests: XCTestCase {
   private let now: Int64 = 1_900_000_000_000
   private let call = "123e4567-e89b-42d3-a456-426614174000"
   private let contact = "223e4567-e89b-42d3-a456-426614174001"
+
+  func testPresentationResultsReachBothProductionSpoolsTruthfullyAndOnce() throws {
+    let cases: [(MknoonCallPresentationResult, String, String, String, String)] = [
+      (.presented, "ok", "none", "ok", "none"),
+      (.duplicate, "ok", "duplicate", "duplicate", "none"),
+      (.busy, "blocked", "authority_rejected", "busy", "busy"),
+      (.disabled, "blocked", "authority_rejected", "blocked", "calls_disabled"),
+      (.invalid, "rejected", "invalid_request", "rejected", "invalid_request"),
+      (.persistenceFailure, "failed", "native_write_failed", "failed", "native_persistence_failed"),
+      (.callKitFailure, "failed", "lifecycle_interrupted", "failed", "native_lifecycle_failed"),
+    ]
+    for (result, appOutcome, appReason, callOutcome, callReason) in cases {
+      let app = MknoonAppDiagnosticSpool(backend: PresentationDiagnosticMemory(), now: { self.now })
+      let calls = MknoonCallDiagnosticSpool(backend: PresentationDiagnosticMemory(), now: { self.now })
+      XCTAssertTrue(app.configure(true, consentEpoch: nil)); XCTAssertTrue(calls.configure(true))
+      let reporter = DeferredIncomingReporter()
+      var completions = 0
+      let registry = MknoonVoipPushRegistry(
+        controller: reporter, parser: VoipPayloadParser(nowMs: { self.now }),
+        tokenAuthority: MknoonVoipTokenAuthority(backend: MemoryVoipTokenBackend()),
+        capability: RegistryCallCapability(enabled: true), diagnosticSink: { _ in },
+        appPresentationRecorder: { outcome, reason, values, trace in
+          XCTAssertTrue(app.append("push", "presentation", outcome, reason, values: values, traceId: trace))
+        },
+        callPresentationRecorder: { handle, outcome, reason, context in
+          calls.append(handle: handle, stage: "presentation", action: "present", outcome: outcome, reason: reason, context: context)
+        })
+      registry.handlePush(dictionary: validPayload()) { completions += 1 }
+      XCTAssertEqual(completions, 0)
+      reporter.complete(result); reporter.complete(result)
+      XCTAssertEqual(completions, 1)
+      let appEvents = try XCTUnwrap(app.drain()["events"] as? [[String: Any]])
+      let callEvents = try XCTUnwrap(calls.drain(64)["events"] as? [[String: Any]])
+      XCTAssertEqual(appEvents.count, 1, "duplicate callback must not double-count \(result)")
+      XCTAssertEqual(callEvents.count, 1)
+      XCTAssertEqual(appEvents.first?["outcome"] as? String, appOutcome)
+      XCTAssertEqual(appEvents.first?["reason"] as? String, appReason)
+      XCTAssertEqual((appEvents.first?["values"] as? [String: Any])?["committed"] as? Bool, result == .presented)
+      XCTAssertEqual(callEvents.first?["outcome"] as? String, callOutcome)
+      XCTAssertEqual(callEvents.first?["reason"] as? String, callReason)
+    }
+  }
+
+  func testCallKitErrorFromRealControllerReachesPushSpoolWithoutPrivateErrorFields() throws {
+    let app = MknoonAppDiagnosticSpool(backend: PresentationDiagnosticMemory(), now: { self.now })
+    let calls = MknoonCallDiagnosticSpool(backend: PresentationDiagnosticMemory(), now: { self.now })
+    XCTAssertTrue(app.configure(true, consentEpoch: nil)); XCTAssertTrue(calls.configure(true))
+    let provider = FakeCallProvider()
+    provider.delayedReportCompletion = { _ in }
+    let store = PendingNativeCallStore(backend: MemoryPendingCallBackend(), nowMs: { self.now })
+    let controller = MknoonCallKitController(provider: provider, transactionRequester: FakeCallTransactions(),
+      store: store, contacts: OpaqueCallContactResolver(backend: MemoryOpaqueContactBackend(), nowMs: { self.now }),
+      audio: FakeCallAudio(), capability: MemoryCallCapability(enabled: true), nowMs: { self.now })
+    var completions = 0
+    let registry = MknoonVoipPushRegistry(controller: controller,
+      parser: VoipPayloadParser(nowMs: { self.now }),
+      tokenAuthority: MknoonVoipTokenAuthority(backend: MemoryVoipTokenBackend()),
+      capability: RegistryCallCapability(enabled: true), diagnosticSink: { _ in },
+      appPresentationRecorder: { outcome, reason, values, trace in
+        XCTAssertTrue(app.append("push", "presentation", outcome, reason, values: values, traceId: trace))
+      }, callPresentationRecorder: { handle, outcome, reason, context in
+        calls.append(handle: handle, stage: "presentation", action: "present", outcome: outcome, reason: reason, context: context)
+      })
+    registry.handlePush(dictionary: validPayload()) { completions += 1 }
+    XCTAssertEqual(completions, 0)
+    provider.delayedReportCompletion?(NSError(domain: CXErrorDomainIncomingCall, code: 3,
+      userInfo: [NSLocalizedDescriptionKey: "private-error-text"]))
+    XCTAssertEqual(completions, 1)
+    XCTAssertEqual(store.snapshot()?.terminalEvent?.type, .nativeFailure)
+    XCTAssertEqual(provider.endReports.count, 1)
+    let appEvent = try XCTUnwrap((app.drain()["events"] as? [[String: Any]])?.first)
+    XCTAssertEqual(appEvent["reason"] as? String, "prepare_failed")
+    let values = try XCTUnwrap(appEvent["values"] as? [String: Any])
+    XCTAssertEqual(values["osReasonCode"] as? Int64, 3)
+    XCTAssertEqual(values["errorClass"] as? String, "platform")
+    let callEvent = try XCTUnwrap((calls.drain(64)["events"] as? [[String: Any]])?.first)
+    XCTAssertEqual(callEvent["reason"] as? String, "provider_error")
+    let encoded = String(decoding: try JSONSerialization.data(withJSONObject: [appEvent, callEvent]), as: UTF8.self)
+    for secret in ["private-error-text", CXErrorDomainIncomingCall, call, contact] { XCTAssertFalse(encoded.contains(secret)) }
+    XCTAssertTrue(MknoonCallDiagnosticScope.current.isEmpty)
+  }
+
+  func testDisabledOrFailingDiagnosticSpoolsDoNotChangePushCompletion() {
+    for enabled in [false, true] {
+      let appMemory = PresentationDiagnosticMemory(), callMemory = PresentationDiagnosticMemory()
+      let app = MknoonAppDiagnosticSpool(backend: appMemory, now: { self.now })
+      let calls = MknoonCallDiagnosticSpool(backend: callMemory, now: { self.now })
+      if enabled {
+        XCTAssertTrue(app.configure(true, consentEpoch: nil)); XCTAssertTrue(calls.configure(true))
+        appMemory.fail = true; callMemory.fail = true
+      }
+      let reporter = DeferredIncomingReporter()
+      var completions = 0
+      let registry = MknoonVoipPushRegistry(controller: reporter,
+        parser: VoipPayloadParser(nowMs: { self.now }),
+        tokenAuthority: MknoonVoipTokenAuthority(backend: MemoryVoipTokenBackend()),
+        capability: RegistryCallCapability(enabled: true), diagnosticSink: { _ in },
+        appPresentationRecorder: { outcome, reason, values, trace in
+          _ = app.append("push", "presentation", outcome, reason, values: values, traceId: trace)
+        }, callPresentationRecorder: { handle, outcome, reason, context in
+          calls.append(handle: handle, stage: "presentation", action: "present", outcome: outcome, reason: reason, context: context)
+        })
+      registry.handlePush(dictionary: validPayload()) { completions += 1 }
+      reporter.complete(.presented)
+      XCTAssertEqual(completions, 1)
+    }
+  }
 
   func testColdDisabledLaunchKeepsMandatoryPushReceiverWithoutTokenPublication() throws {
     let driver = FakeVoipRegistrationDriver()

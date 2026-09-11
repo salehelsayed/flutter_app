@@ -1,0 +1,130 @@
+ACTIVITY MANAGER SERVICES (dumpsys activity services)
+  User 0 active services:
+  * ServiceRecord{cb93cdb u0 com.mknoon.app/.MigrationKeepAliveService c:com.mknoon.app}
+    intent={cmp=com.mknoon.app/.MigrationKeepAliveService}
+    packageName=com.mknoon.app
+    processName=com.mknoon.app
+    targetSdkVersion=36
+    baseDir=/data/app/~~f0CpHhUymPIjVp0H_V-dpg==/com.mknoon.app-zlrYhnXxjmYKTlImHtnyqw==/base.apk
+    dataDir=/data/user/0/com.mknoon.app
+    app=ProcessRecord{4e9f951 5748:com.mknoon.app/u0a233}
+    useNewWiuLogic_forCapabilities()=true
+    useNewWiuLogic_forStart()=true
+    useNewBfslLogic()=true
+    mAllowWiu_noBinding=PROC_STATE_TOP
+    mAllowWiu_inBindService=DENIED
+    mAllowWiu_byBindings=DENIED
+    getFgsAllowWiu_legacy=PROC_STATE_TOP
+    getFgsAllowWiu_new=PROC_STATE_TOP
+    getFgsAllowWiu_forStart=PROC_STATE_TOP
+    getFgsAllowWiu_forCapabilities=PROC_STATE_TOP
+    allowUiJobScheduling=true
+    recentCallingPackage=com.mknoon.app
+    recentCallingUid=10233
+    mAllowStart_noBinding=PROC_STATE_TOP
+    mAllowStart_inBindService=DENIED
+    mAllowStart_byBindings=DENIED
+    getFgsAllowStart_legacy=PROC_STATE_TOP
+    getFgsAllowStart_new=PROC_STATE_TOP
+    getFgsAllowStart=PROC_STATE_TOP
+    startForegroundCount=1
+    infoAllowStartForeground=[callingPackage: com.mknoon.app; callingUid: 10233; uidState: TOP ; uidBFSL: [BFSL]; BFGS denied: false; intent: Intent { cmp=com.mknoon.app/.MigrationKeepAliveService }; code:PROC_STATE_TOP; tempAllowListReason:<null>; allowWiu:12; targetSdkVersion:36; callerTargetSdkVersion:36; startForegroundCount:0; bindFromPackage:null; isBindService:false]
+    isForeground=true foregroundId=41217 types=0x00000001 foregroundNoti=Notification(channel=mknoon_account_move shortcut=null contentView=null vibrate=null sound=null defaults=0 flags=ONGOING_EVENT|FOREGROUND_SERVICE color=0x00000000 vis=PRIVATE template=null)
+    createTime=-29s137ms startingBgTimeout=--
+    lastActivity=-29s137ms restartTime=-29s137ms createdFromFg=true
+    startRequested=true delayedStop=false stopIfKilled=true callStart=true lastStartId=1
+ startCommandResult=2
+
+  * ServiceRecord{3ab3e83 u0 com.mknoon.app/com.baseflow.geolocator.GeolocatorLocationService c:com.mknoon.app}
+    intent={cmp=com.mknoon.app/com.baseflow.geolocator.GeolocatorLocationService}
+    packageName=com.mknoon.app
+    processName=com.mknoon.app
+    targetSdkVersion=36
+    baseDir=/data/app/~~f0CpHhUymPIjVp0H_V-dpg==/com.mknoon.app-zlrYhnXxjmYKTlImHtnyqw==/base.apk
+    dataDir=/data/user/0/com.mknoon.app
+    app=ProcessRecord{4e9f951 5748:com.mknoon.app/u0a233}
+    useNewWiuLogic_forCapabilities()=true
+    useNewWiuLogic_forStart()=true
+    useNewBfslLogic()=true
+    mAllowWiu_noBinding=DENIED
+    mAllowWiu_inBindService=PROC_STATE_TOP
+    mAllowWiu_byBindings=DENIED
+    getFgsAllowWiu_legacy=PROC_STATE_TOP
+    getFgsAllowWiu_new=DENIED
+    getFgsAllowWiu_forStart=DENIED
+    getFgsAllowWiu_forCapabilities=DENIED
+    allowUiJobScheduling=false
+    recentCallingPackage=com.mknoon.app
+    recentCallingUid=10233
+    mAllowStart_noBinding=DENIED
+    mAllowStart_inBindService=PROC_STATE_TOP
+    mAllowStart_byBindings=DENIED
+    getFgsAllowStart_legacy=PROC_STATE_TOP
+    getFgsAllowStart_new=DENIED
+    getFgsAllowStart=DENIED
+    startForegroundCount=0
+    infoAllowStartForeground=[callingPackage: com.mknoon.app; callingUid: 10233; uidState: TOP ; uidBFSL: [BFSL]; BFGS denied: false; intent: Intent { xflg=0x4 cmp=com.mknoon.app/com.baseflow.geolocator.GeolocatorLocationService }; code:PROC_STATE_TOP; tempAllowListReason:<null>; allowWiu:12; targetSdkVersion:36; callerTargetSdkVersion:36; startForegroundCount:0; bindFromPackage:null; isBindService:true]
+    createTime=-20m35s357ms startingBgTimeout=--
+    lastActivity=-20m35s357ms restartTime=-20m35s357ms createdFromFg=true
+    Bindings:
+    * IntentBindRecord{919f3c2 CREATE}:
+      intent={xflg=0x4 cmp=com.mknoon.app/com.baseflow.geolocator.GeolocatorLocationService}
+      binder=android.os.BinderProxy@25e15d3
+      requested=true received=true hasBound=true doRebind=false
+      * Client AppBindRecord{e7c510 ProcessRecord{4e9f951 5748:com.mknoon.app/u0a233}}
+        Per-process Connections:
+          ConnectionRecord{8149132 u0 CR com.mknoon.app/com.baseflow.geolocator.GeolocatorLocationService:@6ffd53d flags=0x1}
+    All Connections:
+      ConnectionRecord{8149132 u0 CR com.mknoon.app/com.baseflow.geolocator.GeolocatorLocationService:@6ffd53d flags=0x1}
+
+  * ServiceRecord{b56736e u0 com.mknoon.app/.MknoonFirebaseMessagingService c:com.mknoon.app}
+    intent={act=com.google.firebase.MESSAGING_EVENT pkg=com.mknoon.app}
+    packageName=com.mknoon.app
+    processName=com.mknoon.app
+    targetSdkVersion=36
+    baseDir=/data/app/~~f0CpHhUymPIjVp0H_V-dpg==/com.mknoon.app-zlrYhnXxjmYKTlImHtnyqw==/base.apk
+    dataDir=/data/user/0/com.mknoon.app
+    app=ProcessRecord{4e9f951 5748:com.mknoon.app/u0a233}
+    useNewWiuLogic_forCapabilities()=true
+    useNewWiuLogic_forStart()=true
+    useNewBfslLogic()=true
+    mAllowWiu_noBinding=DENIED
+    mAllowWiu_inBindService=PROC_STATE_TOP
+    mAllowWiu_byBindings=DENIED
+    getFgsAllowWiu_legacy=PROC_STATE_TOP
+    getFgsAllowWiu_new=DENIED
+    getFgsAllowWiu_forStart=DENIED
+    getFgsAllowWiu_forCapabilities=DENIED
+    allowUiJobScheduling=false
+    recentCallingPackage=com.mknoon.app
+    recentCallingUid=10233
+    mAllowStart_noBinding=DENIED
+    mAllowStart_inBindService=PROC_STATE_TOP
+    mAllowStart_byBindings=DENIED
+    getFgsAllowStart_legacy=PROC_STATE_TOP
+    getFgsAllowStart_new=DENIED
+    getFgsAllowStart=DENIED
+    startForegroundCount=0
+    infoAllowStartForeground=[callingPackage: com.mknoon.app; callingUid: 10233; uidState: TOP ; uidBFSL: [BFSL]; BFGS denied: false; intent: Intent { act=com.google.firebase.MESSAGING_EVENT xflg=0x4 pkg=com.mknoon.app }; code:PROC_STATE_TOP; tempAllowListReason:<null>; allowWiu:12; targetSdkVersion:36; callerTargetSdkVersion:36; startForegroundCount:0; bindFromPackage:null; isBindService:true]
+    createTime=-20m32s333ms startingBgTimeout=--
+    lastActivity=-20m32s333ms restartTime=-20m32s333ms createdFromFg=true
+    Bindings:
+    * IntentBindRecord{b19f809 CREATE}:
+      intent={act=com.google.firebase.MESSAGING_EVENT xflg=0x4 pkg=com.mknoon.app}
+      binder=android.os.BinderProxy@3978a0e
+      requested=true received=true hasBound=true doRebind=false
+      * Client AppBindRecord{86a3c2f ProcessRecord{4e9f951 5748:com.mknoon.app/u0a233}}
+        Per-process Connections:
+          ConnectionRecord{72ae9 u0 CR IMP com.mknoon.app/.MknoonFirebaseMessagingService:@4107770 flags=0x41}
+    All Connections:
+      ConnectionRecord{72ae9 u0 CR IMP com.mknoon.app/.MknoonFirebaseMessagingService:@4107770 flags=0x41}
+
+  Connection bindings to services:
+  * ConnectionRecord{72ae9 u0 CR IMP com.mknoon.app/.MknoonFirebaseMessagingService:@4107770 flags=0x41}
+    binding=AppBindRecord{86a3c2f com.mknoon.app/.MknoonFirebaseMessagingService:com.mknoon.app}
+    conn=android.os.BinderProxy@4107770 flags=0x41
+    ongoingCalls=false
+  * ConnectionRecord{8149132 u0 CR com.mknoon.app/com.baseflow.geolocator.GeolocatorLocationService:@6ffd53d flags=0x1}
+    binding=AppBindRecord{e7c510 com.mknoon.app/com.baseflow.geolocator.GeolocatorLocationService:com.mknoon.app}
+    conn=android.os.BinderProxy@6ffd53d flags=0x1
+    ongoingCalls=false

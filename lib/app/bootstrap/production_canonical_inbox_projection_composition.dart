@@ -7,6 +7,7 @@ import 'package:flutter_app/app/bootstrap/production_headless_canonical_recovery
 import 'package:flutter_app/core/bridge/go_bridge_client.dart';
 import 'package:flutter_app/core/database/helpers/contact_requests_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/contacts_db_helpers.dart';
+import 'package:flutter_app/core/database/helpers/direct_inbox_custody_outbox_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/direct_notification_display_outbox_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/direct_notification_reaction_terminal_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/direct_notification_read_acknowledgement_db_helpers.dart';
@@ -17,6 +18,7 @@ import 'package:flutter_app/core/database/helpers/group_forward_authorization_db
 import 'package:flutter_app/core/database/helpers/group_history_gap_repairs_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/group_members_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/group_messages_db_helpers.dart';
+import 'package:flutter_app/core/database/helpers/group_media_key_snapshot.dart';
 import 'package:flutter_app/core/database/helpers/group_notification_canonical_state_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/group_notification_display_outbox_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/group_notification_reconciliation_outbox_db_helpers.dart';
@@ -238,7 +240,13 @@ buildProductionCanonicalInboxProjectionComposition({
     final introductionRepository = _buildIntroductionRepository(database);
     final stagingRepository = _buildInboxStagingRepository(database);
     final groupRepository = _buildGroupRepository(database, secureKeyStore);
-    final groupMessageRepository = _buildGroupMessageRepository(database);
+    final groupMediaKeyAccess = GroupMediaKeyAccess(
+      secureKeyStore: secureKeyStore,
+    );
+    final groupMessageRepository = _buildGroupMessageRepository(
+      database,
+      groupMediaKeyAccess,
+    );
     final groupPendingKeyRepairRepository =
         _buildGroupPendingKeyRepairRepository(database);
     final groupPendingMembershipRepository =
@@ -509,6 +517,7 @@ buildProductionCanonicalInboxProjectionComposition({
     groupKeyUpdateListenerForCleanup = groupKeyUpdateListener;
     final protectedGroupAuthoritySupport =
         ProductionCanonicalProtectedGroupAuthoritySupport(
+          mediaKeyAccess: groupMediaKeyAccess,
           database: database,
           bridge: bridge,
           groupRepository: groupRepository,
@@ -536,6 +545,12 @@ buildProductionCanonicalInboxProjectionComposition({
         );
 
     p2pService = P2PServiceImpl(
+      shouldSuppressDirectInboxNotification: (recipientPeerId, wireEnvelope) =>
+          dbShouldSuppressDeliveredDirectInboxNotification(
+            database,
+            recipientPeerId: recipientPeerId,
+            wireEnvelope: wireEnvelope,
+          ),
       bridge: bridge,
       inboxStagingRepository: stagingRepository,
       requiredTransportPeerId: () => qualifiedIdentity.physicalPeerId,
@@ -1712,7 +1727,10 @@ GroupHistoryGapRepairRepositoryImpl _buildGroupHistoryGapRepairRepository(
       ),
 );
 
-GroupMessageRepositoryImpl _buildGroupMessageRepository(Database database) {
+GroupMessageRepositoryImpl _buildGroupMessageRepository(
+  Database database,
+  GroupMediaKeyAccess groupMediaKeyAccess,
+) {
   GroupMessageRepositoryImpl build(
     dynamic executor, {
     bool transactional = false,
@@ -1797,6 +1815,7 @@ GroupMessageRepositoryImpl _buildGroupMessageRepository(Database database) {
               sourceEventId: sourceEventId,
               sourceTimestamp: sourceTimestamp,
               eventPayload: eventPayload,
+              mediaKeyAccess: groupMediaKeyAccess,
             )
           : null,
       dbStageAndCompleteLocalGroupContentMessageFn: executor is Database
@@ -1813,6 +1832,7 @@ GroupMessageRepositoryImpl _buildGroupMessageRepository(Database database) {
               sourceEventId: sourceEventId,
               sourceTimestamp: sourceTimestamp,
               eventPayload: eventPayload,
+              mediaKeyAccess: groupMediaKeyAccess,
             )
           : null,
       dbStagePreparedLocalGroupContentMessageFn: executor is Database
@@ -1829,6 +1849,7 @@ GroupMessageRepositoryImpl _buildGroupMessageRepository(Database database) {
               sourceEventId: sourceEventId,
               sourceTimestamp: sourceTimestamp,
               preparedEventPayload: preparedEventPayload,
+              mediaKeyAccess: groupMediaKeyAccess,
             )
           : null,
       dbTerminalizePreparedLocalGroupContentMessageIfExactFn:
@@ -1848,6 +1869,7 @@ GroupMessageRepositoryImpl _buildGroupMessageRepository(Database database) {
               terminalSourceEventId: terminalSourceEventId,
               terminalSourceTimestamp: terminalSourceTimestamp,
               terminalEventPayload: terminalEventPayload,
+              mediaKeyAccess: groupMediaKeyAccess,
             )
           : null,
       dbHasExactPreparedLocalGroupContentMessageFn:
@@ -1856,6 +1878,9 @@ GroupMessageRepositoryImpl _buildGroupMessageRepository(Database database) {
                 executor,
                 expected: expected,
                 eventPayload: eventPayload,
+                mediaKeyAccess: executor is Database
+                    ? groupMediaKeyAccess
+                    : null,
               ),
       dbIsStrictGroupReactionTargetEligibleFn: (expected) =>
           dbIsStrictGroupReactionTargetEligible(executor, expected),
@@ -1864,6 +1889,7 @@ GroupMessageRepositoryImpl _buildGroupMessageRepository(Database database) {
               executor,
               expected,
               replacement,
+              mediaKeyAccess: groupMediaKeyAccess,
             )
           : null,
       dbRecordGroupMessageRetryFailureFn:

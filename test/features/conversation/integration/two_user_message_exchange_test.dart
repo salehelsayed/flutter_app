@@ -702,8 +702,16 @@ class InMemoryMessageRepository extends shared_fakes.InMemoryMessageRepository {
         current,
       );
     }
+    if (mode == OutgoingOrdinarySettlementMode.receipt &&
+        current.status == 'sending' &&
+        (expectedEnvelope == null || expectedEnvelope.trim().isEmpty)) {
+      return _ordinaryResult(
+        OutgoingOrdinaryMutationOutcome.preserved,
+        current,
+      );
+    }
     final predecessors = mode == OutgoingOrdinarySettlementMode.receipt
-        ? const <String>{'inboxed', 'sent', 'failed'}
+        ? const <String>{'sending', 'inboxed', 'sent', 'failed'}
         : switch (status) {
             'delivered' => const <String>{
               'sending',

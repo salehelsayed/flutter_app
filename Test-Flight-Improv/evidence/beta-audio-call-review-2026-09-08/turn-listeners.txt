@@ -1,0 +1,29 @@
+Tue Sep  8 10:41:11 UTC 2026
+lo               UNKNOWN        127.0.0.1/8 ::1/128 
+ens5             UP             172.31.34.24/20 metric 100 2a05:d016:c4d:7100:ec85:94ed:b90d:e20/128 fe80::8ac:75ff:fe15:98d5/64 
+udp   UNCONN 0      0                                 172.31.34.24:3478       0.0.0.0:*    users:(("turnserver",pid=1028552,fd=31))                                                   
+udp   UNCONN 0      0                                 172.31.34.24:3478       0.0.0.0:*    users:(("turnserver",pid=1028552,fd=30))                                                   
+udp   UNCONN 0      0                                    127.0.0.1:3478       0.0.0.0:*    users:(("turnserver",pid=1028552,fd=29))                                                   
+udp   UNCONN 0      0                                    127.0.0.1:3478       0.0.0.0:*    users:(("turnserver",pid=1028552,fd=28))                                                   
+udp   UNCONN 0      0                                        [::1]:3478          [::]:*    users:(("turnserver",pid=1028552,fd=32))                                                   
+udp   UNCONN 0      0                                        [::1]:3478          [::]:*    users:(("turnserver",pid=1028552,fd=33))                                                   
+tcp   LISTEN 0      1024                              172.31.34.24:3478       0.0.0.0:*    users:(("turnserver",pid=1028552,fd=23))                                                   
+tcp   LISTEN 0      1024                              172.31.34.24:3478       0.0.0.0:*    users:(("turnserver",pid=1028552,fd=21))                                                   
+tcp   LISTEN 0      1024                                 127.0.0.1:3478       0.0.0.0:*    users:(("turnserver",pid=1028552,fd=20))                                                   
+tcp   LISTEN 0      1024                                 127.0.0.1:3478       0.0.0.0:*    users:(("turnserver",pid=1028552,fd=17))                                                   
+tcp   LISTEN 0      511                                    0.0.0.0:443        0.0.0.0:*    users:(("nginx",pid=1040131,fd=7),("nginx",pid=1040130,fd=7),("nginx",pid=1011158,fd=7))   
+tcp   LISTEN 0      1024                                     [::1]:3478          [::]:*    users:(("turnserver",pid=1028552,fd=26))                                                   
+tcp   LISTEN 0      1024                                     [::1]:3478          [::]:*    users:(("turnserver",pid=1028552,fd=27))                                                   
+tcp   LISTEN 0      511                                       [::]:443           [::]:*    users:(("nginx",pid=1040131,fd=8),("nginx",pid=1040130,fd=8),("nginx",pid=1011158,fd=8))   
+2026-09-07T08:44:11+00:00 ip-172-31-34-24 turnserver[1028552]: 0: : WARNING: cannot find certificate file: turn_server_cert.pem (1)
+2026-09-07T08:44:11+00:00 ip-172-31-34-24 turnserver[1028552]: 0: : WARNING: cannot start TLS and DTLS listeners because certificate file is not set properly
+2026-09-07T08:44:11+00:00 ip-172-31-34-24 turnserver[1028552]: 0: : WARNING: cannot find private key file: turn_server_pkey.pem (1)
+2026-09-07T08:44:11+00:00 ip-172-31-34-24 turnserver[1028552]: 0: : WARNING: cannot start TLS and DTLS listeners because private key file is not set properly
+
+Advertised DNS:
+2a05:d016:c4d:7100:ec85:94ed:b90d:e20 STREAM mknoun.xyz
+2a05:d016:c4d:7100:ec85:94ed:b90d:e20 DGRAM  
+2a05:d016:c4d:7100:ec85:94ed:b90d:e20 RAW    
+13.60.15.36     STREAM 
+13.60.15.36     DGRAM  
+13.60.15.36     RAW    

@@ -1,0 +1,558 @@
+{
+  "capturedAt": "2026-09-08T11:08:37.969009+00:00",
+  "source": "Read-only live Redis scan; credentials never exported",
+  "aliasLimit": "peer-006/007/008 matched only by prior deviceKeyEpoch. Other followup aliases are capture-local. Call aliases cannot be matched to prior AOF after rewrite.",
+  "mailboxes": [
+    {
+      "recipient": "followup-peer-005",
+      "kind": "tombstone",
+      "ttlMs": 315698,
+      "call": "followup-call-001",
+      "record": {
+        "state": "pending",
+        "expiresAtMs": 1788865433481
+      }
+    },
+    {
+      "recipient": "followup-peer-005",
+      "kind": "replay-directory",
+      "ttlMs": 320746
+    },
+    {
+      "recipient": "peer-007",
+      "kind": "tombstone",
+      "ttlMs": 315959,
+      "call": "followup-call-001",
+      "record": {
+        "state": "pending",
+        "expiresAtMs": 1788865433754
+      }
+    },
+    {
+      "recipient": "peer-007",
+      "kind": "replay-directory",
+      "ttlMs": 321123
+    }
+  ],
+  "registrations": [
+    {
+      "peer": "peer-006",
+      "kind": "endpoint-device",
+      "ttlMs": 18508056,
+      "record": {
+        "platform": "android",
+        "expiresAtMs": 1788884225503,
+        "preferenceEpoch": 1788862625503
+      }
+    },
+    {
+      "peer": "followup-peer-004",
+      "kind": "endpoint-device",
+      "ttlMs": 7135918,
+      "record": {
+        "platform": "ios",
+        "expiresAtMs": 1788872853374,
+        "preferenceEpoch": 1788851253374
+      }
+    },
+    {
+      "peer": "followup-peer-005",
+      "kind": "endpoint-device",
+      "ttlMs": 21336189,
+      "record": {
+        "platform": "android",
+        "expiresAtMs": 1788887053654,
+        "preferenceEpoch": 1788865453654
+      }
+    },
+    {
+      "peer": "peer-007",
+      "kind": "endpoint-device",
+      "ttlMs": 21269375,
+      "record": {
+        "platform": "ios",
+        "expiresAtMs": 1788886986848,
+        "preferenceEpoch": 1788865386848
+      }
+    },
+    {
+      "peer": "peer-008",
+      "kind": "endpoint-device",
+      "ttlMs": 18216445,
+      "record": {
+        "platform": "ios",
+        "expiresAtMs": 1788883933927,
+        "preferenceEpoch": 1788862333927
+      }
+    },
+    {
+      "peer": "followup-peer-006",
+      "kind": "endpoint-tombstone",
+      "ttlMs": 7543557844,
+      "record": {
+        "preferenceEpoch": 1788633274916,
+        "deviceKeyEpoch": 6811540648400494
+      }
+    },
+    {
+      "peer": "peer-006",
+      "kind": "endpoint-tombstone",
+      "ttlMs": 7772908107,
+      "record": {
+        "preferenceEpoch": 1788862625503,
+        "deviceKeyEpoch": 4236284878241438
+      }
+    },
+    {
+      "peer": "followup-peer-004",
+      "kind": "endpoint-tombstone",
+      "ttlMs": 7761535921,
+      "record": {
+        "preferenceEpoch": 1788851253374,
+        "deviceKeyEpoch": 4559777639512153
+      }
+    },
+    {
+      "peer": "followup-peer-007",
+      "kind": "endpoint-tombstone",
+      "ttlMs": 7469707459,
+      "record": {
+        "preferenceEpoch": 1788559425361,
+        "deviceKeyEpoch": 6029811777554868
+      }
+    },
+    {
+      "peer": "followup-peer-008",
+      "kind": "endpoint-tombstone",
+      "ttlMs": 7551551596,
+      "record": {
+        "preferenceEpoch": 1788641269168,
+        "deviceKeyEpoch": 664378604552620
+      }
+    },
+    {
+      "peer": "followup-peer-005",
+      "kind": "endpoint-tombstone",
+      "ttlMs": 7775736151,
+      "record": {
+        "preferenceEpoch": 1788865453654,
+        "deviceKeyEpoch": 4474835287211613
+      }
+    },
+    {
+      "peer": "followup-peer-009",
+      "kind": "endpoint-tombstone",
+      "ttlMs": 7703404500,
+      "record": {
+        "preferenceEpoch": 1788793121958,
+        "deviceKeyEpoch": 495571787045794
+      }
+    },
+    {
+      "peer": "followup-peer-010",
+      "kind": "endpoint-tombstone",
+      "ttlMs": 7721316974,
+      "record": {
+        "preferenceEpoch": 1788811034436,
+        "deviceKeyEpoch": 2787272587961816
+      }
+    },
+    {
+      "peer": "followup-peer-011",
+      "kind": "endpoint-tombstone",
+      "ttlMs": 7727384663,
+      "record": {
+        "preferenceEpoch": 1788817102162,
+        "deviceKeyEpoch": 1994827768038926
+      }
+    },
+    {
+      "peer": "peer-007",
+      "kind": "endpoint-tombstone",
+      "ttlMs": 7775669292,
+      "record": {
+        "preferenceEpoch": 1788865386848,
+        "deviceKeyEpoch": 8879833610816774
+      }
+    },
+    {
+      "peer": "followup-peer-012",
+      "kind": "endpoint-tombstone",
+      "ttlMs": 7476290722,
+      "record": {
+        "preferenceEpoch": 1788566008243,
+        "deviceKeyEpoch": 7611834212752271
+      }
+    },
+    {
+      "peer": "followup-peer-013",
+      "kind": "endpoint-tombstone",
+      "ttlMs": 7722129413,
+      "record": {
+        "preferenceEpoch": 1788811846962,
+        "deviceKeyEpoch": 3977857320016264
+      }
+    },
+    {
+      "peer": "followup-peer-014",
+      "kind": "endpoint-tombstone",
+      "ttlMs": 7544107068,
+      "record": {
+        "preferenceEpoch": 1788633824282,
+        "deviceKeyEpoch": 3692516515830863
+      }
+    },
+    {
+      "peer": "peer-008",
+      "kind": "endpoint-tombstone",
+      "ttlMs": 7772616339,
+      "record": {
+        "preferenceEpoch": 1788862333927,
+        "deviceKeyEpoch": 7519413882761528
+      }
+    },
+    {
+      "peer": "followup-peer-015",
+      "kind": "endpoint-tombstone",
+      "ttlMs": 7476401808,
+      "record": {
+        "preferenceEpoch": 1788566119354,
+        "deviceKeyEpoch": 6834271129138568
+      }
+    },
+    {
+      "peer": "followup-peer-016",
+      "kind": "endpoint-tombstone",
+      "ttlMs": 7724980848,
+      "record": {
+        "preferenceEpoch": 1788814699648,
+        "deviceKeyEpoch": 5566751342259789
+      }
+    },
+    {
+      "peer": "followup-peer-017",
+      "kind": "endpoint-tombstone",
+      "ttlMs": 7707746517,
+      "record": {
+        "preferenceEpoch": 1788797464170,
+        "deviceKeyEpoch": 6666607227603571
+      }
+    },
+    {
+      "peer": "followup-peer-018",
+      "kind": "endpoint-tombstone",
+      "ttlMs": 7725051070,
+      "record": {
+        "preferenceEpoch": 1788814768718,
+        "deviceKeyEpoch": 1560453040807473
+      }
+    },
+    {
+      "peer": "followup-peer-019",
+      "kind": "endpoint-tombstone",
+      "ttlMs": 7694793463,
+      "record": {
+        "preferenceEpoch": 1788784511943,
+        "deviceKeyEpoch": 8276382987809213
+      }
+    },
+    {
+      "peer": "followup-peer-020",
+      "kind": "endpoint-tombstone",
+      "ttlMs": 7690484697,
+      "record": {
+        "preferenceEpoch": 1788780202273,
+        "deviceKeyEpoch": 2133478925154288
+      }
+    },
+    {
+      "peer": "peer-006",
+      "kind": "endpoint",
+      "ttlMs": 18507757,
+      "record": {
+        "platform": "android",
+        "expiresAtMs": 1788884225503,
+        "preferenceEpoch": 1788862625503,
+        "deviceKeyEpoch": 4236284878241438
+      }
+    },
+    {
+      "peer": "followup-peer-004",
+      "kind": "endpoint",
+      "ttlMs": 7135620,
+      "record": {
+        "platform": "ios",
+        "expiresAtMs": 1788872853374,
+        "preferenceEpoch": 1788851253374,
+        "deviceKeyEpoch": 4559777639512153
+      }
+    },
+    {
+      "peer": "followup-peer-005",
+      "kind": "endpoint",
+      "ttlMs": 21335892,
+      "record": {
+        "platform": "android",
+        "expiresAtMs": 1788887053654,
+        "preferenceEpoch": 1788865453654,
+        "deviceKeyEpoch": 4474835287211613
+      }
+    },
+    {
+      "peer": "peer-007",
+      "kind": "endpoint",
+      "ttlMs": 21269078,
+      "record": {
+        "platform": "ios",
+        "expiresAtMs": 1788886986848,
+        "preferenceEpoch": 1788865386848,
+        "deviceKeyEpoch": 8879833610816774
+      }
+    },
+    {
+      "peer": "peer-008",
+      "kind": "endpoint",
+      "ttlMs": 18216148,
+      "record": {
+        "platform": "ios",
+        "expiresAtMs": 1788883933927,
+        "preferenceEpoch": 1788862333927,
+        "deviceKeyEpoch": 7519413882761528
+      }
+    },
+    {
+      "peer": "followup-peer-006",
+      "kind": "token",
+      "ttlMs": 2359555493,
+      "record": {
+        "platform": "android",
+        "kind": "standard_call",
+        "expiresAtMs": 1791225273305
+      }
+    },
+    {
+      "peer": "peer-006",
+      "kind": "token",
+      "ttlMs": 2588845417,
+      "record": {
+        "platform": "android",
+        "kind": "standard_call",
+        "expiresAtMs": 1791454563238
+      }
+    },
+    {
+      "peer": "followup-peer-004",
+      "kind": "token",
+      "ttlMs": 2577535499,
+      "record": {
+        "platform": "ios",
+        "environment": "sandbox",
+        "kind": "ios_voip",
+        "expiresAtMs": 1791443253329,
+        "refreshEpoch": 1,
+        "generation": 1,
+        "capabilityVersion": 1
+      }
+    },
+    {
+      "peer": "followup-peer-008",
+      "kind": "token",
+      "ttlMs": 2367549421,
+      "record": {
+        "platform": "android",
+        "kind": "standard_call",
+        "expiresAtMs": 1791233267259
+      }
+    },
+    {
+      "peer": "followup-peer-005",
+      "kind": "token",
+      "ttlMs": 2591645891,
+      "record": {
+        "platform": "android",
+        "kind": "standard_call",
+        "expiresAtMs": 1791457363738
+      }
+    },
+    {
+      "peer": "followup-peer-009",
+      "kind": "token",
+      "ttlMs": 2519403957,
+      "record": {
+        "platform": "ios",
+        "environment": "sandbox",
+        "kind": "ios_voip",
+        "expiresAtMs": 1791385121812,
+        "refreshEpoch": 1,
+        "generation": 1,
+        "capabilityVersion": 1
+      }
+    },
+    {
+      "peer": "followup-peer-010",
+      "kind": "token",
+      "ttlMs": 2537316257,
+      "record": {
+        "platform": "ios",
+        "environment": "production",
+        "kind": "ios_voip",
+        "expiresAtMs": 1791403034121,
+        "refreshEpoch": 1,
+        "generation": 1,
+        "capabilityVersion": 1
+      }
+    },
+    {
+      "peer": "followup-peer-011",
+      "kind": "token",
+      "ttlMs": 2543384131,
+      "record": {
+        "platform": "ios",
+        "environment": "production",
+        "kind": "ios_voip",
+        "expiresAtMs": 1791409102003,
+        "refreshEpoch": 1,
+        "generation": 1,
+        "capabilityVersion": 1
+      }
+    },
+    {
+      "peer": "peer-007",
+      "kind": "token",
+      "ttlMs": 2591663902,
+      "record": {
+        "platform": "ios",
+        "environment": "production",
+        "kind": "ios_voip",
+        "expiresAtMs": 1791457381783,
+        "refreshEpoch": 7,
+        "generation": 5,
+        "capabilityVersion": 1
+      }
+    },
+    {
+      "peer": "followup-peer-012",
+      "kind": "token",
+      "ttlMs": 2292290310,
+      "record": {
+        "platform": "ios",
+        "environment": "sandbox",
+        "kind": "ios_voip",
+        "expiresAtMs": 1791158008199,
+        "refreshEpoch": 2,
+        "generation": 2,
+        "capabilityVersion": 1
+      }
+    },
+    {
+      "peer": "followup-peer-013",
+      "kind": "token",
+      "ttlMs": 2538128906,
+      "record": {
+        "platform": "ios",
+        "environment": "production",
+        "kind": "ios_voip",
+        "expiresAtMs": 1791403846804,
+        "refreshEpoch": 1,
+        "generation": 1,
+        "capabilityVersion": 1
+      }
+    },
+    {
+      "peer": "followup-peer-014",
+      "kind": "token",
+      "ttlMs": 2359996845,
+      "record": {
+        "platform": "android",
+        "kind": "standard_call",
+        "expiresAtMs": 1791225714751
+      }
+    },
+    {
+      "peer": "peer-008",
+      "kind": "token",
+      "ttlMs": 2588615389,
+      "record": {
+        "platform": "ios",
+        "environment": "production",
+        "kind": "ios_voip",
+        "expiresAtMs": 1791454333303,
+        "refreshEpoch": 3,
+        "generation": 2,
+        "capabilityVersion": 1
+      }
+    },
+    {
+      "peer": "followup-peer-015",
+      "kind": "token",
+      "ttlMs": 2292401326,
+      "record": {
+        "platform": "ios",
+        "environment": "sandbox",
+        "kind": "ios_voip",
+        "expiresAtMs": 1791158119249,
+        "refreshEpoch": 1788566118,
+        "generation": 4,
+        "capabilityVersion": 1
+      }
+    },
+    {
+      "peer": "followup-peer-016",
+      "kind": "token",
+      "ttlMs": 2540980582,
+      "record": {
+        "platform": "android",
+        "kind": "standard_call",
+        "expiresAtMs": 1791406698514
+      }
+    },
+    {
+      "peer": "followup-peer-017",
+      "kind": "token",
+      "ttlMs": 2523746137,
+      "record": {
+        "platform": "ios",
+        "environment": "sandbox",
+        "kind": "ios_voip",
+        "expiresAtMs": 1791389464077,
+        "refreshEpoch": 1,
+        "generation": 1,
+        "capabilityVersion": 1
+      }
+    },
+    {
+      "peer": "followup-peer-018",
+      "kind": "token",
+      "ttlMs": 2541050662,
+      "record": {
+        "platform": "ios",
+        "environment": "sandbox",
+        "kind": "ios_voip",
+        "expiresAtMs": 1791406768611,
+        "refreshEpoch": 1,
+        "generation": 1,
+        "capabilityVersion": 1
+      }
+    },
+    {
+      "peer": "followup-peer-019",
+      "kind": "token",
+      "ttlMs": 2510792285,
+      "record": {
+        "platform": "android",
+        "kind": "standard_call",
+        "expiresAtMs": 1791376510243
+      }
+    },
+    {
+      "peer": "followup-peer-020",
+      "kind": "token",
+      "ttlMs": 2504296864,
+      "record": {
+        "platform": "android",
+        "kind": "standard_call",
+        "expiresAtMs": 1791370014832
+      }
+    }
+  ]
+}

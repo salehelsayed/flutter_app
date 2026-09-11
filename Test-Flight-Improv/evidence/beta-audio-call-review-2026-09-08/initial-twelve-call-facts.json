@@ -1,0 +1,733 @@
+{
+  "sourceSha256": "414358e242cf0c559cee136dc10e9ca16f19ff2169c0343c97c114cb8eead07c",
+  "scope": "All12 initial handles retained in the original sanitized AOF capture; first observed direction is not proof of who initiated at the device.",
+  "counts": {
+    "handles": 12,
+    "directionalMailboxes": 23,
+    "storedEnvelopes": 45,
+    "acknowledgedEnvelopes": 40,
+    "explicitCanceledHandles": 4
+  },
+  "interpretationLimits": [
+    "Envelope contents and event types are encrypted and were not interpreted.",
+    "Observed envelope span is not call duration.",
+    "ACK is release of relay custody, not media acceptance or audible ringing.",
+    "Wake completed may be written by ACK and is not a push count.",
+    "The client races direct and mailbox transport; mailbox counts do not capture all successfully delivered direct traffic.",
+    "Per-retrieval and ACK receipt timestamps were not retained by the original allowlisted export.",
+    "Final recorded pending counts describe AOF metadata transitions, not current pending calls."
+  ],
+  "calls": [
+    {
+      "call": "call-090",
+      "firstObservedDirection": "peer-006->peer-007",
+      "firstReceiptUtc": "2026-09-08T10:10:00.044Z",
+      "lastEnvelopeReceiptUtc": "2026-09-08T10:10:00.257Z",
+      "observedEnvelopeSpanMs": 213,
+      "firstReciprocalReceiptAfterMs": 213,
+      "directions": [
+        {
+          "sender": "peer-006",
+          "recipient": "peer-007",
+          "storedEnvelopes": 1,
+          "acknowledgedEnvelopes": 1,
+          "finalRecordedPendingEnvelopes": 0,
+          "events": [
+            {
+              "receiptAtUtc": "2026-09-08T10:10:00.044Z",
+              "offsetFromFirstReceiptMs": 0,
+              "remainingEnvelopeLifetimeAtReceiptMs": 39825
+            }
+          ],
+          "wakeStateWriteCounts": {
+            "claimed": 1,
+            "dispatching": 3,
+            "completed": 2
+          }
+        },
+        {
+          "sender": "peer-007",
+          "recipient": "peer-006",
+          "storedEnvelopes": 1,
+          "acknowledgedEnvelopes": 1,
+          "finalRecordedPendingEnvelopes": 0,
+          "events": [
+            {
+              "receiptAtUtc": "2026-09-08T10:10:00.257Z",
+              "offsetFromFirstReceiptMs": 213,
+              "remainingEnvelopeLifetimeAtReceiptMs": 39911
+            }
+          ],
+          "wakeStateWriteCounts": {
+            "claimed": 1,
+            "dispatching": 3,
+            "completed": 2
+          }
+        }
+      ],
+      "explicitTerminals": [
+        {
+          "mailboxSender": "peer-006",
+          "mailboxRecipient": "peer-007",
+          "state": "canceled",
+          "atUtc": "2026-09-08T10:10:00.670Z",
+          "offsetFromFirstReceiptMs": 626
+        }
+      ]
+    },
+    {
+      "call": "call-091",
+      "firstObservedDirection": "peer-006->peer-007",
+      "firstReceiptUtc": "2026-09-08T10:10:17.386Z",
+      "lastEnvelopeReceiptUtc": "2026-09-08T10:10:17.638Z",
+      "observedEnvelopeSpanMs": 252,
+      "firstReciprocalReceiptAfterMs": 252,
+      "directions": [
+        {
+          "sender": "peer-006",
+          "recipient": "peer-007",
+          "storedEnvelopes": 1,
+          "acknowledgedEnvelopes": 1,
+          "finalRecordedPendingEnvelopes": 0,
+          "events": [
+            {
+              "receiptAtUtc": "2026-09-08T10:10:17.386Z",
+              "offsetFromFirstReceiptMs": 0,
+              "remainingEnvelopeLifetimeAtReceiptMs": 39811
+            }
+          ],
+          "wakeStateWriteCounts": {
+            "claimed": 1,
+            "dispatching": 3,
+            "completed": 2
+          }
+        },
+        {
+          "sender": "peer-007",
+          "recipient": "peer-006",
+          "storedEnvelopes": 1,
+          "acknowledgedEnvelopes": 1,
+          "finalRecordedPendingEnvelopes": 0,
+          "events": [
+            {
+              "receiptAtUtc": "2026-09-08T10:10:17.638Z",
+              "offsetFromFirstReceiptMs": 252,
+              "remainingEnvelopeLifetimeAtReceiptMs": 39821
+            }
+          ],
+          "wakeStateWriteCounts": {
+            "claimed": 1,
+            "dispatching": 3,
+            "completed": 2
+          }
+        }
+      ],
+      "explicitTerminals": [
+        {
+          "mailboxSender": "peer-006",
+          "mailboxRecipient": "peer-007",
+          "state": "canceled",
+          "atUtc": "2026-09-08T10:10:17.900Z",
+          "offsetFromFirstReceiptMs": 514
+        }
+      ]
+    },
+    {
+      "call": "call-092",
+      "firstObservedDirection": "peer-006->peer-007",
+      "firstReceiptUtc": "2026-09-08T10:10:26.992Z",
+      "lastEnvelopeReceiptUtc": "2026-09-08T10:10:45.558Z",
+      "observedEnvelopeSpanMs": 18566,
+      "firstReciprocalReceiptAfterMs": 18566,
+      "directions": [
+        {
+          "sender": "peer-006",
+          "recipient": "peer-007",
+          "storedEnvelopes": 1,
+          "acknowledgedEnvelopes": 1,
+          "finalRecordedPendingEnvelopes": 0,
+          "events": [
+            {
+              "receiptAtUtc": "2026-09-08T10:10:26.992Z",
+              "offsetFromFirstReceiptMs": 0,
+              "remainingEnvelopeLifetimeAtReceiptMs": 39775
+            }
+          ],
+          "wakeStateWriteCounts": {
+            "claimed": 1,
+            "dispatching": 3,
+            "completed": 2
+          }
+        },
+        {
+          "sender": "peer-007",
+          "recipient": "peer-006",
+          "storedEnvelopes": 1,
+          "acknowledgedEnvelopes": 1,
+          "finalRecordedPendingEnvelopes": 0,
+          "events": [
+            {
+              "receiptAtUtc": "2026-09-08T10:10:45.558Z",
+              "offsetFromFirstReceiptMs": 18566,
+              "remainingEnvelopeLifetimeAtReceiptMs": 39849
+            }
+          ],
+          "wakeStateWriteCounts": {
+            "claimed": 1,
+            "dispatching": 3,
+            "completed": 2
+          }
+        }
+      ],
+      "explicitTerminals": []
+    },
+    {
+      "call": "call-093",
+      "firstObservedDirection": "peer-007->peer-008",
+      "firstReceiptUtc": "2026-09-08T10:11:36.513Z",
+      "lastEnvelopeReceiptUtc": "2026-09-08T10:11:58.419Z",
+      "observedEnvelopeSpanMs": 21906,
+      "firstReciprocalReceiptAfterMs": 949,
+      "directions": [
+        {
+          "sender": "peer-007",
+          "recipient": "peer-008",
+          "storedEnvelopes": 6,
+          "acknowledgedEnvelopes": 6,
+          "finalRecordedPendingEnvelopes": 0,
+          "events": [
+            {
+              "receiptAtUtc": "2026-09-08T10:11:36.513Z",
+              "offsetFromFirstReceiptMs": 0,
+              "remainingEnvelopeLifetimeAtReceiptMs": 39821
+            },
+            {
+              "receiptAtUtc": "2026-09-08T10:11:42.111Z",
+              "offsetFromFirstReceiptMs": 5598,
+              "remainingEnvelopeLifetimeAtReceiptMs": 39960
+            },
+            {
+              "receiptAtUtc": "2026-09-08T10:11:42.320Z",
+              "offsetFromFirstReceiptMs": 5807,
+              "remainingEnvelopeLifetimeAtReceiptMs": 39935
+            },
+            {
+              "receiptAtUtc": "2026-09-08T10:11:42.438Z",
+              "offsetFromFirstReceiptMs": 5925,
+              "remainingEnvelopeLifetimeAtReceiptMs": 39954
+            },
+            {
+              "receiptAtUtc": "2026-09-08T10:11:42.576Z",
+              "offsetFromFirstReceiptMs": 6063,
+              "remainingEnvelopeLifetimeAtReceiptMs": 39964
+            },
+            {
+              "receiptAtUtc": "2026-09-08T10:11:42.713Z",
+              "offsetFromFirstReceiptMs": 6200,
+              "remainingEnvelopeLifetimeAtReceiptMs": 39963
+            }
+          ],
+          "wakeStateWriteCounts": {
+            "claimed": 1,
+            "dispatching": 3,
+            "completed": 12
+          }
+        },
+        {
+          "sender": "peer-008",
+          "recipient": "peer-007",
+          "storedEnvelopes": 6,
+          "acknowledgedEnvelopes": 6,
+          "finalRecordedPendingEnvelopes": 0,
+          "events": [
+            {
+              "receiptAtUtc": "2026-09-08T10:11:37.462Z",
+              "offsetFromFirstReceiptMs": 949,
+              "remainingEnvelopeLifetimeAtReceiptMs": 39873
+            },
+            {
+              "receiptAtUtc": "2026-09-08T10:11:41.796Z",
+              "offsetFromFirstReceiptMs": 5283,
+              "remainingEnvelopeLifetimeAtReceiptMs": 39836
+            },
+            {
+              "receiptAtUtc": "2026-09-08T10:11:42.459Z",
+              "offsetFromFirstReceiptMs": 5946,
+              "remainingEnvelopeLifetimeAtReceiptMs": 39945
+            },
+            {
+              "receiptAtUtc": "2026-09-08T10:11:42.621Z",
+              "offsetFromFirstReceiptMs": 6108,
+              "remainingEnvelopeLifetimeAtReceiptMs": 39924
+            },
+            {
+              "receiptAtUtc": "2026-09-08T10:11:42.766Z",
+              "offsetFromFirstReceiptMs": 6253,
+              "remainingEnvelopeLifetimeAtReceiptMs": 39940
+            },
+            {
+              "receiptAtUtc": "2026-09-08T10:11:58.419Z",
+              "offsetFromFirstReceiptMs": 21906,
+              "remainingEnvelopeLifetimeAtReceiptMs": 39039
+            }
+          ],
+          "wakeStateWriteCounts": {
+            "claimed": 1,
+            "dispatching": 3,
+            "completed": 12
+          }
+        }
+      ],
+      "explicitTerminals": []
+    },
+    {
+      "call": "call-094",
+      "firstObservedDirection": "peer-006->peer-007",
+      "firstReceiptUtc": "2026-09-08T10:12:01.789Z",
+      "lastEnvelopeReceiptUtc": "2026-09-08T10:12:02.638Z",
+      "observedEnvelopeSpanMs": 849,
+      "firstReciprocalReceiptAfterMs": 849,
+      "directions": [
+        {
+          "sender": "peer-006",
+          "recipient": "peer-007",
+          "storedEnvelopes": 1,
+          "acknowledgedEnvelopes": 1,
+          "finalRecordedPendingEnvelopes": 0,
+          "events": [
+            {
+              "receiptAtUtc": "2026-09-08T10:12:01.789Z",
+              "offsetFromFirstReceiptMs": 0,
+              "remainingEnvelopeLifetimeAtReceiptMs": 39797
+            }
+          ],
+          "wakeStateWriteCounts": {
+            "claimed": 1,
+            "dispatching": 3,
+            "completed": 2
+          }
+        },
+        {
+          "sender": "peer-007",
+          "recipient": "peer-006",
+          "storedEnvelopes": 1,
+          "acknowledgedEnvelopes": 1,
+          "finalRecordedPendingEnvelopes": 0,
+          "events": [
+            {
+              "receiptAtUtc": "2026-09-08T10:12:02.638Z",
+              "offsetFromFirstReceiptMs": 849,
+              "remainingEnvelopeLifetimeAtReceiptMs": 39895
+            }
+          ],
+          "wakeStateWriteCounts": {
+            "claimed": 1,
+            "dispatching": 3,
+            "completed": 2
+          }
+        }
+      ],
+      "explicitTerminals": []
+    },
+    {
+      "call": "call-095",
+      "firstObservedDirection": "peer-008->peer-006",
+      "firstReceiptUtc": "2026-09-08T10:12:06.055Z",
+      "lastEnvelopeReceiptUtc": "2026-09-08T10:12:21.939Z",
+      "observedEnvelopeSpanMs": 15884,
+      "firstReciprocalReceiptAfterMs": 713,
+      "directions": [
+        {
+          "sender": "peer-008",
+          "recipient": "peer-006",
+          "storedEnvelopes": 4,
+          "acknowledgedEnvelopes": 4,
+          "finalRecordedPendingEnvelopes": 0,
+          "events": [
+            {
+              "receiptAtUtc": "2026-09-08T10:12:06.055Z",
+              "offsetFromFirstReceiptMs": 0,
+              "remainingEnvelopeLifetimeAtReceiptMs": 39704
+            },
+            {
+              "receiptAtUtc": "2026-09-08T10:12:09.964Z",
+              "offsetFromFirstReceiptMs": 3909,
+              "remainingEnvelopeLifetimeAtReceiptMs": 39934
+            },
+            {
+              "receiptAtUtc": "2026-09-08T10:12:10.209Z",
+              "offsetFromFirstReceiptMs": 4154,
+              "remainingEnvelopeLifetimeAtReceiptMs": 39924
+            },
+            {
+              "receiptAtUtc": "2026-09-08T10:12:10.453Z",
+              "offsetFromFirstReceiptMs": 4398,
+              "remainingEnvelopeLifetimeAtReceiptMs": 39889
+            }
+          ],
+          "wakeStateWriteCounts": {
+            "claimed": 4,
+            "dispatching": 12,
+            "completed": 8
+          }
+        },
+        {
+          "sender": "peer-006",
+          "recipient": "peer-008",
+          "storedEnvelopes": 8,
+          "acknowledgedEnvelopes": 7,
+          "finalRecordedPendingEnvelopes": 1,
+          "events": [
+            {
+              "receiptAtUtc": "2026-09-08T10:12:06.768Z",
+              "offsetFromFirstReceiptMs": 713,
+              "remainingEnvelopeLifetimeAtReceiptMs": 39704
+            },
+            {
+              "receiptAtUtc": "2026-09-08T10:12:09.600Z",
+              "offsetFromFirstReceiptMs": 3545,
+              "remainingEnvelopeLifetimeAtReceiptMs": 39494
+            },
+            {
+              "receiptAtUtc": "2026-09-08T10:12:10.851Z",
+              "offsetFromFirstReceiptMs": 4796,
+              "remainingEnvelopeLifetimeAtReceiptMs": 39722
+            },
+            {
+              "receiptAtUtc": "2026-09-08T10:12:11.174Z",
+              "offsetFromFirstReceiptMs": 5119,
+              "remainingEnvelopeLifetimeAtReceiptMs": 39718
+            },
+            {
+              "receiptAtUtc": "2026-09-08T10:12:11.542Z",
+              "offsetFromFirstReceiptMs": 5487,
+              "remainingEnvelopeLifetimeAtReceiptMs": 39651
+            },
+            {
+              "receiptAtUtc": "2026-09-08T10:12:11.860Z",
+              "offsetFromFirstReceiptMs": 5805,
+              "remainingEnvelopeLifetimeAtReceiptMs": 39704
+            },
+            {
+              "receiptAtUtc": "2026-09-08T10:12:12.038Z",
+              "offsetFromFirstReceiptMs": 5983,
+              "remainingEnvelopeLifetimeAtReceiptMs": 39845
+            },
+            {
+              "receiptAtUtc": "2026-09-08T10:12:21.939Z",
+              "offsetFromFirstReceiptMs": 15884,
+              "remainingEnvelopeLifetimeAtReceiptMs": 39199
+            }
+          ],
+          "wakeStateWriteCounts": {
+            "claimed": 1,
+            "dispatching": 3,
+            "completed": 15
+          }
+        }
+      ],
+      "explicitTerminals": []
+    },
+    {
+      "call": "call-096",
+      "firstObservedDirection": "peer-006->peer-007",
+      "firstReceiptUtc": "2026-09-08T10:12:36.516Z",
+      "lastEnvelopeReceiptUtc": "2026-09-08T10:12:36.719Z",
+      "observedEnvelopeSpanMs": 203,
+      "firstReciprocalReceiptAfterMs": 203,
+      "directions": [
+        {
+          "sender": "peer-006",
+          "recipient": "peer-007",
+          "storedEnvelopes": 1,
+          "acknowledgedEnvelopes": 1,
+          "finalRecordedPendingEnvelopes": 0,
+          "events": [
+            {
+              "receiptAtUtc": "2026-09-08T10:12:36.516Z",
+              "offsetFromFirstReceiptMs": 0,
+              "remainingEnvelopeLifetimeAtReceiptMs": 39819
+            }
+          ],
+          "wakeStateWriteCounts": {
+            "claimed": 1,
+            "dispatching": 3,
+            "completed": 2
+          }
+        },
+        {
+          "sender": "peer-007",
+          "recipient": "peer-006",
+          "storedEnvelopes": 1,
+          "acknowledgedEnvelopes": 1,
+          "finalRecordedPendingEnvelopes": 0,
+          "events": [
+            {
+              "receiptAtUtc": "2026-09-08T10:12:36.719Z",
+              "offsetFromFirstReceiptMs": 203,
+              "remainingEnvelopeLifetimeAtReceiptMs": 39918
+            }
+          ],
+          "wakeStateWriteCounts": {
+            "claimed": 1,
+            "dispatching": 3,
+            "completed": 2
+          }
+        }
+      ],
+      "explicitTerminals": [
+        {
+          "mailboxSender": "peer-006",
+          "mailboxRecipient": "peer-007",
+          "state": "canceled",
+          "atUtc": "2026-09-08T10:12:37.015Z",
+          "offsetFromFirstReceiptMs": 499
+        }
+      ]
+    },
+    {
+      "call": "call-097",
+      "firstObservedDirection": "peer-006->peer-007",
+      "firstReceiptUtc": "2026-09-08T10:13:00.169Z",
+      "lastEnvelopeReceiptUtc": "2026-09-08T10:13:01.672Z",
+      "observedEnvelopeSpanMs": 1503,
+      "firstReciprocalReceiptAfterMs": 1503,
+      "directions": [
+        {
+          "sender": "peer-006",
+          "recipient": "peer-007",
+          "storedEnvelopes": 1,
+          "acknowledgedEnvelopes": 0,
+          "finalRecordedPendingEnvelopes": 1,
+          "events": [
+            {
+              "receiptAtUtc": "2026-09-08T10:13:00.169Z",
+              "offsetFromFirstReceiptMs": 0,
+              "remainingEnvelopeLifetimeAtReceiptMs": 39797
+            }
+          ],
+          "wakeStateWriteCounts": {
+            "claimed": 1,
+            "dispatching": 3,
+            "completed": 1
+          }
+        },
+        {
+          "sender": "peer-007",
+          "recipient": "peer-006",
+          "storedEnvelopes": 1,
+          "acknowledgedEnvelopes": 0,
+          "finalRecordedPendingEnvelopes": 1,
+          "events": [
+            {
+              "receiptAtUtc": "2026-09-08T10:13:01.672Z",
+              "offsetFromFirstReceiptMs": 1503,
+              "remainingEnvelopeLifetimeAtReceiptMs": 39417
+            }
+          ],
+          "wakeStateWriteCounts": {
+            "claimed": 1,
+            "dispatching": 3,
+            "completed": 1
+          }
+        }
+      ],
+      "explicitTerminals": []
+    },
+    {
+      "call": "call-098",
+      "firstObservedDirection": "peer-006->peer-007",
+      "firstReceiptUtc": "2026-09-08T10:15:27.340Z",
+      "lastEnvelopeReceiptUtc": "2026-09-08T10:15:27.340Z",
+      "observedEnvelopeSpanMs": 0,
+      "firstReciprocalReceiptAfterMs": null,
+      "directions": [
+        {
+          "sender": "peer-006",
+          "recipient": "peer-007",
+          "storedEnvelopes": 1,
+          "acknowledgedEnvelopes": 1,
+          "finalRecordedPendingEnvelopes": 0,
+          "events": [
+            {
+              "receiptAtUtc": "2026-09-08T10:15:27.340Z",
+              "offsetFromFirstReceiptMs": 0,
+              "remainingEnvelopeLifetimeAtReceiptMs": 39800
+            }
+          ],
+          "wakeStateWriteCounts": {
+            "claimed": 1,
+            "dispatching": 3,
+            "completed": 2
+          }
+        }
+      ],
+      "explicitTerminals": []
+    },
+    {
+      "call": "call-099",
+      "firstObservedDirection": "peer-006->peer-007",
+      "firstReceiptUtc": "2026-09-08T10:16:11.240Z",
+      "lastEnvelopeReceiptUtc": "2026-09-08T10:16:29.047Z",
+      "observedEnvelopeSpanMs": 17807,
+      "firstReciprocalReceiptAfterMs": 374,
+      "directions": [
+        {
+          "sender": "peer-006",
+          "recipient": "peer-007",
+          "storedEnvelopes": 1,
+          "acknowledgedEnvelopes": 1,
+          "finalRecordedPendingEnvelopes": 0,
+          "events": [
+            {
+              "receiptAtUtc": "2026-09-08T10:16:11.240Z",
+              "offsetFromFirstReceiptMs": 0,
+              "remainingEnvelopeLifetimeAtReceiptMs": 39716
+            }
+          ],
+          "wakeStateWriteCounts": {
+            "claimed": 1,
+            "dispatching": 3,
+            "completed": 2
+          }
+        },
+        {
+          "sender": "peer-007",
+          "recipient": "peer-006",
+          "storedEnvelopes": 2,
+          "acknowledgedEnvelopes": 2,
+          "finalRecordedPendingEnvelopes": 0,
+          "events": [
+            {
+              "receiptAtUtc": "2026-09-08T10:16:11.614Z",
+              "offsetFromFirstReceiptMs": 374,
+              "remainingEnvelopeLifetimeAtReceiptMs": 39909
+            },
+            {
+              "receiptAtUtc": "2026-09-08T10:16:29.047Z",
+              "offsetFromFirstReceiptMs": 17807,
+              "remainingEnvelopeLifetimeAtReceiptMs": 39807
+            }
+          ],
+          "wakeStateWriteCounts": {
+            "claimed": 2,
+            "dispatching": 6,
+            "completed": 4
+          }
+        }
+      ],
+      "explicitTerminals": []
+    },
+    {
+      "call": "call-100",
+      "firstObservedDirection": "peer-006->peer-007",
+      "firstReceiptUtc": "2026-09-08T10:16:28.312Z",
+      "lastEnvelopeReceiptUtc": "2026-09-08T10:16:34.707Z",
+      "observedEnvelopeSpanMs": 6395,
+      "firstReciprocalReceiptAfterMs": 1087,
+      "directions": [
+        {
+          "sender": "peer-006",
+          "recipient": "peer-007",
+          "storedEnvelopes": 1,
+          "acknowledgedEnvelopes": 1,
+          "finalRecordedPendingEnvelopes": 0,
+          "events": [
+            {
+              "receiptAtUtc": "2026-09-08T10:16:28.312Z",
+              "offsetFromFirstReceiptMs": 0,
+              "remainingEnvelopeLifetimeAtReceiptMs": 39695
+            }
+          ],
+          "wakeStateWriteCounts": {
+            "claimed": 1,
+            "dispatching": 3,
+            "completed": 2
+          }
+        },
+        {
+          "sender": "peer-007",
+          "recipient": "peer-006",
+          "storedEnvelopes": 2,
+          "acknowledgedEnvelopes": 2,
+          "finalRecordedPendingEnvelopes": 0,
+          "events": [
+            {
+              "receiptAtUtc": "2026-09-08T10:16:29.399Z",
+              "offsetFromFirstReceiptMs": 1087,
+              "remainingEnvelopeLifetimeAtReceiptMs": 39830
+            },
+            {
+              "receiptAtUtc": "2026-09-08T10:16:34.707Z",
+              "offsetFromFirstReceiptMs": 6395,
+              "remainingEnvelopeLifetimeAtReceiptMs": 39856
+            }
+          ],
+          "wakeStateWriteCounts": {
+            "claimed": 2,
+            "dispatching": 6,
+            "completed": 4
+          }
+        }
+      ],
+      "explicitTerminals": []
+    },
+    {
+      "call": "call-101",
+      "firstObservedDirection": "peer-006->peer-007",
+      "firstReceiptUtc": "2026-09-08T10:17:04.394Z",
+      "lastEnvelopeReceiptUtc": "2026-09-08T10:17:04.522Z",
+      "observedEnvelopeSpanMs": 128,
+      "firstReciprocalReceiptAfterMs": 128,
+      "directions": [
+        {
+          "sender": "peer-006",
+          "recipient": "peer-007",
+          "storedEnvelopes": 1,
+          "acknowledgedEnvelopes": 0,
+          "finalRecordedPendingEnvelopes": 1,
+          "events": [
+            {
+              "receiptAtUtc": "2026-09-08T10:17:04.394Z",
+              "offsetFromFirstReceiptMs": 0,
+              "remainingEnvelopeLifetimeAtReceiptMs": 39718
+            }
+          ],
+          "wakeStateWriteCounts": {
+            "claimed": 1,
+            "dispatching": 3,
+            "completed": 1
+          }
+        },
+        {
+          "sender": "peer-007",
+          "recipient": "peer-006",
+          "storedEnvelopes": 1,
+          "acknowledgedEnvelopes": 0,
+          "finalRecordedPendingEnvelopes": 1,
+          "events": [
+            {
+              "receiptAtUtc": "2026-09-08T10:17:04.522Z",
+              "offsetFromFirstReceiptMs": 128,
+              "remainingEnvelopeLifetimeAtReceiptMs": 39900
+            }
+          ],
+          "wakeStateWriteCounts": {
+            "claimed": 1,
+            "dispatching": 3,
+            "completed": 1
+          }
+        }
+      ],
+      "explicitTerminals": [
+        {
+          "mailboxSender": "peer-006",
+          "mailboxRecipient": "peer-007",
+          "state": "canceled",
+          "atUtc": "2026-09-08T10:17:04.865Z",
+          "offsetFromFirstReceiptMs": 471
+        }
+      ]
+    }
+  ]
+}

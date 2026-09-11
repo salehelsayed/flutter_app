@@ -18,9 +18,14 @@ internal final class MknoonCallNativeBridge: NSObject, FlutterStreamHandler {
   private var attaching = false
   private var bufferedEvents: [PendingNativeCallEvent] = []
   private var disposed = false
+  private let diagnosticRecorder: (String?, String, String, String, String, [String: Any], [String: Any]) -> Void
 
-  init(controller: MknoonCallKitController, messenger: FlutterBinaryMessenger?) {
+  init(controller: MknoonCallKitController, messenger: FlutterBinaryMessenger?,
+       diagnosticRecorder: @escaping (String?, String, String, String, String, [String: Any], [String: Any]) -> Void = { handle, stage, action, outcome, reason, values, context in
+         MknoonCallDiagnostics.shared.record(handle: handle, stage: stage, action: action, outcome: outcome, reason: reason, values: values, context: context)
+       }) {
     self.controller = controller
+    self.diagnosticRecorder = diagnosticRecorder
     if let messenger {
       methodChannel = FlutterMethodChannel(
         name: Self.methodChannelName,
@@ -81,14 +86,20 @@ internal final class MknoonCallNativeBridge: NSObject, FlutterStreamHandler {
     let captured = context
     if let handle, let trace = context["traceId"] as? String { MknoonCallDiagnostics.shared.bind(handle: handle, traceId: trace, context: context) }
     let reason = context["reason"] as? String ?? "none"
-    MknoonCallDiagnostics.shared.record(handle: handle, stage: stage, action: action, outcome: "started", reason: reason, context: context)
+    let record = diagnosticRecorder
+    record(handle, stage, action, "started", reason, [:], context)
     MknoonCallDiagnosticScope.withContext(context) {
       handleCore(FlutterMethodCall(methodName: call.method, arguments: cleaned)) { value in
         let accepted = value as? Bool
-        MknoonCallDiagnostics.shared.record(handle: handle, stage: stage, action: action,
-                                            outcome: value is FlutterError ? "failed" : accepted == false ? "rejected" : "ok",
-                                            reason: accepted == false && stage == "answer" ? "native_answer_refused" : reason,
-                                            values: accepted.map { ["accepted": $0] } ?? [:], context: captured)
+        let completionReason: String
+        if let error = value as? FlutterError {
+          completionReason = error.code == "bad_args" ? "invalid_request" : "unknown"
+        } else {
+          completionReason = accepted == false && stage == "answer" ? "native_answer_refused" : reason
+        }
+        record(handle, stage, action, value is FlutterError ? "failed" : accepted == false ? "rejected" : "ok",
+               completionReason,
+               accepted.map { ["accepted": $0] } ?? [:], captured)
         result(value)
       }
     }

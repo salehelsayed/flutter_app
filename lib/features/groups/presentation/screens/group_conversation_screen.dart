@@ -637,7 +637,7 @@ class GroupConversationScreen extends StatelessWidget {
     final childIndexByKey = <Key, int>{
       for (var index = 0; index < displayItems.length; index++)
         if (displayItems[index].type == GroupDisplayItemType.message)
-          ValueKey<String>('grp-msg-${displayItems[index].message!.id}'): index,
+          ValueKey<String>('grp-row-${displayItems[index].message!.id}'): index,
     };
     // 156 QW-10 (lists-scrolling-1): build the quoted-parent lookup ONCE per
     // frame instead of an O(N) `messages.firstWhere(...)` scan per visible row.
@@ -905,7 +905,7 @@ class GroupConversationScreen extends StatelessWidget {
           messageUploadProgress: messageUploadProgress[message.id],
         );
 
-        Widget bubble = Padding(
+        final content = Padding(
           key: ValueKey('grp-msg-${message.id}'),
           // 137 follow-up: tight gap within a run, larger gap between runs.
           padding: EdgeInsets.only(
@@ -981,45 +981,51 @@ class GroupConversationScreen extends StatelessWidget {
           ),
         );
 
-        if (canOpenPrivateMedia) {
-          bubble = Semantics(
-            button: true,
-            label: AppLocalizations.of(context)!.private_media_open,
-            child: GestureDetector(
-              key: ValueKey('group-private-open-${message.id}'),
-              behavior: HitTestBehavior.opaque,
-              onTap: () => onOpenPrivateMedia!(message.id),
-              child: bubble,
-            ),
-          );
-        }
+        return _GroupMessageRow(
+          key: ValueKey('grp-row-${message.id}'),
+          content: content,
+          decorate: (bubble) {
+            if (canOpenPrivateMedia) {
+              bubble = Semantics(
+                button: true,
+                label: AppLocalizations.of(context)!.private_media_open,
+                child: GestureDetector(
+                  key: ValueKey('group-private-open-${message.id}'),
+                  behavior: HitTestBehavior.opaque,
+                  onTap: () => onOpenPrivateMedia!(message.id),
+                  child: bubble,
+                ),
+              );
+            }
 
-        // 136 Phase 4: swipe-to-reply is enabled on EVERY balloon in BOTH
-        // directions (outgoing balloons now get the gesture too), still gated
-        // by write permission. System/membership rows (sys- ids) are excluded:
-        // they are not quote-reply targets, matching the 1:1 surface where
-        // transport=='system' rows render as IntroSystemMessage before the
-        // swipe wrap.
-        if (!redactsPrivateMedia &&
-            !isSystemRow &&
-            canWrite &&
-            onQuoteReply != null) {
-          bubble = SwipeToQuoteBubble(
-            onQuoteTriggered: () => onQuoteReply!(message.id),
-            child: bubble,
-          );
-        }
+            // 136 Phase 4: swipe-to-reply is enabled on EVERY balloon in BOTH
+            // directions (outgoing balloons now get the gesture too), still gated
+            // by write permission. System/membership rows (sys- ids) are excluded:
+            // they are not quote-reply targets, matching the 1:1 surface where
+            // transport=='system' rows render as IntroSystemMessage before the
+            // swipe wrap.
+            if (!redactsPrivateMedia &&
+                !isSystemRow &&
+                canWrite &&
+                onQuoteReply != null) {
+              bubble = SwipeToQuoteBubble(
+                onQuoteTriggered: () => onQuoteReply!(message.id),
+                child: bubble,
+              );
+            }
 
-        if (isHighlighted) {
-          bubble = _buildHighlightedMessageCue(
-            context,
-            messageId: message.id,
-            isSent: isSent,
-            child: bubble,
-          );
-        }
+            if (isHighlighted) {
+              bubble = _buildHighlightedMessageCue(
+                context,
+                messageId: message.id,
+                isSent: isSent,
+                child: bubble,
+              );
+            }
 
-        return bubble;
+            return bubble;
+          },
+        );
       },
     );
   }
@@ -1435,6 +1441,31 @@ class GroupConversationScreen extends StatelessWidget {
       AppLocalizations.of(context)!.conversation_context_copied,
     );
   }
+}
+
+/// The lazy list tracks this outer row across inserts and reordering. Its
+/// content key also preserves media players when optional reply, private-open,
+/// or highlight wrappers are added, removed, or replaced around the content.
+class _GroupMessageRow extends StatefulWidget {
+  final Widget content;
+  final Widget Function(Widget content) decorate;
+
+  const _GroupMessageRow({
+    super.key,
+    required this.content,
+    required this.decorate,
+  });
+
+  @override
+  State<_GroupMessageRow> createState() => _GroupMessageRowState();
+}
+
+class _GroupMessageRowState extends State<_GroupMessageRow> {
+  final _contentKey = GlobalKey();
+
+  @override
+  Widget build(BuildContext context) =>
+      widget.decorate(KeyedSubtree(key: _contentKey, child: widget.content));
 }
 
 class _GroupConversationLoadingShell extends StatelessWidget {

@@ -1,0 +1,54 @@
+{
+  "method": "Collector owner derivation matched in relay memory; no owner digests or raw records exported",
+  "runs": [
+    {
+      "runId": "92967673-12f8-41fa-aff7-5b836b90bd72",
+      "observed": true,
+      "friendAuthenticatedOwnerMatch": true,
+      "userAuthenticatedOwnerMatch": false,
+      "singleAuthenticatedOwner": true
+    },
+    {
+      "runId": "a0bed3aa-0cfe-4655-8367-782261215de5",
+      "observed": true,
+      "friendAuthenticatedOwnerMatch": true,
+      "userAuthenticatedOwnerMatch": false,
+      "singleAuthenticatedOwner": true
+    },
+    {
+      "runId": "beacf5e6-bafd-4434-9e89-7b23ffb488b7",
+      "observed": true,
+      "friendAuthenticatedOwnerMatch": true,
+      "userAuthenticatedOwnerMatch": false,
+      "singleAuthenticatedOwner": true
+    },
+    {
+      "runId": "db143104-6d96-48fa-84f6-57f37baa8b3c",
+      "observed": true,
+      "friendAuthenticatedOwnerMatch": true,
+      "userAuthenticatedOwnerMatch": false,
+      "singleAuthenticatedOwner": true
+    },
+    {
+      "runId": "4f441d5a-1c2e-49c2-b1e8-cfb962aa1437",
+      "observed": true,
+      "friendAuthenticatedOwnerMatch": true,
+      "userAuthenticatedOwnerMatch": false,
+      "singleAuthenticatedOwner": true
+    },
+    {
+      "runId": "bab5eb92-42c4-43d7-8c2e-8301306d6071",
+      "observed": true,
+      "friendAuthenticatedOwnerMatch": true,
+      "userAuthenticatedOwnerMatch": false,
+      "singleAuthenticatedOwner": true
+    },
+    {
+      "runId": "78613d35-9d9c-49c0-baaa-19ed7a22e337",
+      "observed": true,
+      "friendAuthenticatedOwnerMatch": false,
+      "userAuthenticatedOwnerMatch": true,
+      "singleAuthenticatedOwner": true
+    }
+  ]
+}

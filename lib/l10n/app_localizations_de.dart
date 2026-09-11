@@ -3992,6 +3992,10 @@ class AppLocalizationsDe extends AppLocalizations {
   String get settings_diagnostics_preview_report => 'Supportbericht ansehen';
 
   @override
+  String get settings_diagnostics_preview_truncated =>
+      'Ein Teil des Berichts wird angezeigt. Beim Kopieren wird der vollständige Bericht kopiert.';
+
+  @override
   String get settings_diagnostics_report_copied => 'Supportbericht kopiert';
 
   @override

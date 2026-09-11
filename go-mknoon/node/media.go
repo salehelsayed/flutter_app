@@ -338,6 +338,14 @@ func (n *Node) openMediaStreamForRelayWithDial(operation string, relay RelayInfo
 		"outcome":     "success",
 	}))
 	setStreamDeadline(s, MediaTimeout)
+	switch operation {
+	case "upload", "upload_custody", "upload_custody_probe", "profile_upload":
+		stream.stream = &mediaUploadStream{
+			Stream:           s,
+			idleTimeout:      MediaIdleTimeout,
+			absoluteDeadline: time.Now().Add(MediaTimeout),
+		}
+	}
 	return stream, nil
 }
 
@@ -466,8 +474,7 @@ func (n *Node) MediaUpload(id, toPeerId, mime, filePath string, allowedPeers []s
 	}
 	progressReader.emitProgressFn(0, fi.Size())
 	transferStart := time.Now()
-	idleReader := newIdleTimeoutReader(progressReader, MediaIdleTimeout)
-	if _, err := io.Copy(s, idleReader); err != nil {
+	if _, err := io.Copy(s, progressReader); err != nil {
 		return fmt.Errorf("stream file data: %w", err)
 	}
 	progressReader.emitProgressFn(fi.Size(), fi.Size())
@@ -1052,7 +1059,7 @@ func (n *Node) mediaUploadCustodyToRelay(
 		},
 	}
 	progressReader.emitProgressFn(0, expected.Size)
-	if _, err := io.CopyN(s, newIdleTimeoutReader(progressReader, MediaIdleTimeout), expected.Size); err != nil {
+	if _, err := io.CopyN(s, progressReader, expected.Size); err != nil {
 		result, resultErr := mediaCustodyFailure(MediaCustodyCommitIndeterminateCode, fmt.Sprintf("stream file data: %v", err), relay.ID.String())
 		return result, mediaCustodyAttemptAmbiguous, resultErr
 	}
@@ -1537,8 +1544,7 @@ func (n *Node) ProfileUpload(mime, filePath string) error {
 		},
 	}
 	progressReader.emitProgressFn(0, fi.Size())
-	idleReader := newIdleTimeoutReader(progressReader, MediaIdleTimeout)
-	if _, err := io.Copy(s, idleReader); err != nil {
+	if _, err := io.Copy(s, progressReader); err != nil {
 		return fmt.Errorf("stream profile data: %w", err)
 	}
 	progressReader.emitProgressFn(fi.Size(), fi.Size())

@@ -9,6 +9,44 @@ import 'package:flutter_test/flutter_test.dart';
 
 void main() {
   test(
+    'P269 ordinary Android mode uses normal startup while iOS stays distinct',
+    () {
+      for (final profile in <String>[
+        'android.e2e.group_media_269',
+        'ios.device.group_media_269',
+      ]) {
+        final activation = DebugE2EActivation(
+          isDebugMode: true,
+          e2eTestMode: true,
+          directTextProofMode: false,
+          installedSimsProfile: profile,
+          groupMediaAuthorityModeName: 'accountBoundLegacy',
+        );
+        expect(
+          activation.suppliesDisposableNodeStart,
+          profile.startsWith('ios'),
+        );
+        expect(
+          activation.groupMediaAuthorityMode.name,
+          profile.startsWith('ios')
+              ? 'distinctAccountAndTransport'
+              : 'accountBoundLegacy',
+        );
+        expect(activation.constructsControllerRoot, isTrue);
+        expect(activation.startsIntroPoller, isTrue);
+      }
+      const invalid = DebugE2EActivation(
+        isDebugMode: true,
+        e2eTestMode: true,
+        directTextProofMode: false,
+        installedSimsProfile: 'android.e2e.group_media_269',
+        groupMediaAuthorityModeName: 'unknown',
+      );
+      expect(() => invalid.suppliesDisposableNodeStart, throwsFormatException);
+    },
+  );
+
+  test(
     'intro E2E conversation routing carries the process-owned outgoing call capability',
     () {
       final productionSource = File(

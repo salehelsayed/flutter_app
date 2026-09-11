@@ -1,0 +1,46 @@
+Final combined validation after native Answer repair (supersedes earlier totals below)
+Curated 1to1: exit 0; 3494 passed; 4 skipped; 0 failed; 209 exact Dart files; 01:39 elapsed.
+Command: PATH=/Users/I560101/development/flutter-3.47.2/bin:$PATH ./scripts/run_host_test_gates.sh 1to1 --batch-flutter --concurrency 4 --reporter expanded
+Final log: /tmp/beta-call-review-20260908/one-to-one-host-gate-native-answer-final.log
+Focused composition/production graph/Android/iOS adapters: 171 passed.
+Native bridge regression suite: 18 passed; four new cases failed before the bridge repair.
+Earlier notification batch: 40 native tests passed; foreground incoming composition batch: 87 passed.
+Six nonfatal hit-test warnings remain in passing pre-existing interaction tests.
+No full host-all gate or unrelated feature/core sweeps were run.
+
+Earlier validation history follows:
+
+Curated host gate: 1to1
+Flutter SDK: /Users/I560101/development/flutter-3.47.2/bin/flutter
+Command: PATH=/Users/I560101/development/flutter-3.47.2/bin:$PATH ./scripts/run_host_test_gates.sh 1to1 --batch-flutter --concurrency 4 --reporter expanded
+Coverage: 209 exact Dart files, one Flutter batch, no native-only commands
+Final result: exit 0; 3479 passed; 4 skipped; 0 failed; 02:06 elapsed in runner
+Initial result: exit 1; 3478 passed; 4 skipped; 1 failed (TC-294-09 direct-screen handoff fingerprint)
+Repair: reviewed approved onCallRetry/callActionInFlight additions; updated only direct-handoff expected fingerprint plus comment
+Focused repair check: 1 passed, 0 failed
+Final log: /tmp/beta-call-review-20260908/one-to-one-host-gate-final.log
+No host-all or unrelated feature/core sweeps run.
+Nonfatal widget hit-test warnings: 6
+01:29 +2735: /Volumes/CrucialX9/flutter_app/test/features/conversation/presentation/screens/conversation_screen_test.dart: ConversationScreen pending attachments keep reply copy and delete available while edit stays hidden
+Warning: A call to tap() with finder "Found 1 widget with key [<'message-context-backdrop'>]: [
+01:29 +2736: /Volumes/CrucialX9/flutter_app/test/features/conversation/presentation/screens/conversation_screen_test.dart: ConversationScreen uploading attachments keep reply copy and delete available while edit stays hidden
+Warning: A call to tap() with finder "Found 1 widget with key [<'message-context-backdrop'>]: [
+01:29 +2738: /Volumes/CrucialX9/flutter_app/test/features/conversation/presentation/screens/conversation_screen_test.dart: ConversationScreen sending keeps reply copy and delete available while edit stays hidden
+Warning: A call to tap() with finder "Found 1 widget with key [<'message-context-backdrop'>]: [
+01:29 +2739: /Volumes/CrucialX9/flutter_app/test/features/conversation/presentation/screens/conversation_screen_test.dart: ConversationScreen processing keeps reply copy and delete available while edit stays hidden
+Warning: A call to tap() with finder "Found 1 widget with key [<'message-context-backdrop'>]: [
+01:29 +2740: /Volumes/CrucialX9/flutter_app/test/features/conversation/presentation/screens/conversation_screen_test.dart: ConversationScreen recording keeps reply copy and delete available while edit stays hidden
+Warning: A call to tap() with finder "Found 1 widget with key [<'message-context-backdrop'>]: [
+01:58 +3467 ~4: /Volumes/CrucialX9/flutter_app/test/features/conversation/presentation/screens/conversation_wired_test.dart: 233 direct pagination preservation initial fifty and older page append without resetting the window
+Warning: A call to drag() with finder "Found 1 widget with type "ListView" (ignoring all but first): [
+
+Later counterexample audit and final rerun:
+Concrete defect: late old-graph resume/contact advertisement failure could clear replacement readiness after invalidation.
+Fix: preserve _started/outgoing readiness unless the withdrawn graph is still current.
+Deterministic regression: 4 cases RED then GREEN (resume/contact x false/exception).
+Focused composition + production live-call guard: 83 passed.
+Analyzer: no issues in the 2 changed composition source/test paths.
+Affected query: 15c100c25fb84701.
+Final curated 1to1: exit 0; 3483 passed; 4 skipped; 0 failed; 209 files; 01:43 runner elapsed.
+Nonfatal warnings: 6 (same widget hit-test warnings).
+Latest log: /tmp/beta-call-review-20260908/one-to-one-host-gate-stale-withdraw-final.log

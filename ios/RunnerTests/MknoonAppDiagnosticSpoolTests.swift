@@ -8,13 +8,50 @@ final class MknoonAppDiagnosticSpoolTests: XCTestCase {
   private final class Memory: MknoonAppDiagnosticBackend {
     var data: Data?
     var fail = false
+    var writes = 0
     func read() throws -> Data? { data }
-    func replace(_ data: Data) throws { if fail { throw CocoaError(.fileWriteUnknown) }; self.data = data }
+    func replace(_ data: Data) throws { if fail { throw CocoaError(.fileWriteUnknown) }; self.data = data; writes += 1 }
   }
   private func spool(_ memory: Memory, now: @escaping () -> Int64 = { 1_900_000_000_000 }, build: String = "1.0.1+112") -> MknoonAppDiagnosticSpool {
     MknoonAppDiagnosticSpool(backend: memory, now: now, elapsed: { 500 }, installedBuild: build)
   }
   private func events(_ store: MknoonAppDiagnosticSpool) -> [[String: Any]] { store.drain()["events"] as? [[String: Any]] ?? [] }
+  func testSlowWriterAdmissionIsBoundedAndRecoversWithoutBlockingControls() {
+    let admission = MknoonAppDiagnosticAdmission()
+    var queued: [() -> Void] = [], accepted = 0, dropped: Int64 = 0, control = false
+    for _ in 0..<10_000 {
+      admission.enqueue({ queued.append($0) }) { lost in accepted += 1; dropped += lost }
+    }
+    XCTAssertEqual(queued.count, 64)
+    queued.append { control = true } // Consent/ACK bypass event admission.
+    queued.forEach { $0() }; queued = []
+    XCTAssertTrue(control); XCTAssertEqual(accepted, 64); XCTAssertEqual(dropped, 9_936)
+    admission.enqueue({ queued.append($0) }) { _ in accepted += 1 }
+    queued[0](); XCTAssertEqual(accepted, 65)
+  }
+  func testQueuedObservationsShareOneWriteAndControlPersistsCurrentState() {
+    let memory = Memory()
+    let active = spool(memory); XCTAssertTrue(active.configure(true, consentEpoch: 10))
+    let initial = memory.writes
+    for _ in 0..<64 { XCTAssertTrue(active.append("runtime", "bridge", "ok", deferPersistence: true)) }
+    XCTAssertEqual(memory.writes, initial)
+    XCTAssertTrue(active.persistPending()); XCTAssertEqual(memory.writes, initial + 1)
+    XCTAssertEqual(events(active).count, 64)
+    active.recordDropped(100)
+    XCTAssertTrue(active.append("push", "receive", "ok", deferPersistence: true))
+    XCTAssertTrue(active.configure(false, consentEpoch: 11))
+    XCTAssertTrue(active.persistPending()); XCTAssertTrue(events(spool(memory)).isEmpty)
+    XCTAssertEqual(active.drain()["droppedEvents"] as? Int64, 0)
+  }
+  func testFailedDeferredWriteRemainsRetryableAndCountsOverflow() {
+    let memory = Memory()
+    let active = spool(memory); XCTAssertTrue(active.configure(true, consentEpoch: 10))
+    active.recordDropped(20)
+    for _ in 0..<64 { active.append("push", "receive", "ok", deferPersistence: true) }
+    memory.fail = true; XCTAssertFalse(active.persistPending())
+    memory.fail = false; XCTAssertTrue(active.persistPending())
+    XCTAssertEqual(events(active).count, 64); XCTAssertEqual(active.drain()["droppedEvents"] as? Int64, 20)
+  }
   func testDefaultOffAndExplicitOffSurviveRestart() {
     let memory = Memory(), store = spool(Memory())
     XCTAssertFalse(store.append("push", "receive", "ok")); XCTAssertTrue(events(store).isEmpty)

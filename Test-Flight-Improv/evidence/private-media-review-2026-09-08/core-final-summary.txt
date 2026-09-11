@@ -1,0 +1,18 @@
+04:41 +3839: /Volumes/CrucialX9/flutter_app/test/unit/dtr18_placement_closure_contract_test.dart: DTR-18 relocates all three Conversation adapters
+04:41 +3840: /Volumes/CrucialX9/flutter_app/test/unit/dtr18_placement_closure_contract_test.dart: DTR-18 relocates all three Conversation adapters
+04:41 +3841: /Volumes/CrucialX9/flutter_app/test/unit/dtr18_placement_closure_contract_test.dart: DTR-18 relocates all three Conversation adapters
+04:41 +3842: /Volumes/CrucialX9/flutter_app/test/unit/dtr18_placement_closure_contract_test.dart: DTR-18 relocates all three Conversation adapters
+04:44 +3843: /Volumes/CrucialX9/flutter_app/test/unit/dtr18_placement_closure_contract_test.dart: DTR-18 relocates the six remaining feature adapters
+04:54 +3844: /Volumes/CrucialX9/flutter_app/test/unit/dtr18_placement_closure_contract_test.dart: DTR-18 closes placement debt and retains an exact dependency floor
+04:54 +3845: All tests passed!
+PASS: Flutter batch (448 test paths)
+
+==> #1 ./scripts/check_android_renderer_manifest_contract.sh
+PASS variants=profile,release renderer=Skia/OpenGLES impeller=false pip=true mediaShare=true mediaEgress=true
+PASS: #1 scripts/check_android_renderer_manifest_contract.sh
+
+==> #2 ./scripts/check_dropped_push_recovery_manifest_contract.sh
+PASS flutterfireOwner=0 mknoonOwner=1 mknoonPriority=500 firebaseFallback=1 firebasePriority=-500 messagingFilters=2 flutterfireReceiver=0 mknoonReceiver=1
+PASS: #2 scripts/check_dropped_push_recovery_manifest_contract.sh
+
+PASS: host tests completed for scope: core-host-all

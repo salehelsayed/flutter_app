@@ -2,6 +2,7 @@ import 'package:flutter_app/core/database/direct_media_blob_custody.dart';
 import 'package:flutter_app/core/media/direct_media_blob_custody.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/debug/android_direct_media_blob_custody_e2e.dart';
+import 'package:flutter_app/features/conversation/application/send_voice_message_use_case.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -74,6 +75,55 @@ void main() {
     expect(receipt, containsPair('errorCode', 'sender_render_source_absent'));
     expect(receipt.containsKey('error'), isFalse);
     expect(receipt.containsKey('stackTrace'), isFalse);
+  });
+
+  test('sender completion preserves every rejected voice disposition', () {
+    for (final result in SendVoiceMessageResult.values) {
+      for (final returnedMessagePresent in [false, true]) {
+        for (final uploadLeaseHeld in [false, true]) {
+          if (result == SendVoiceMessageResult.success &&
+              returnedMessagePresent) {
+            expect(
+              () => requireAndroidDirectMediaVoiceSendCompletion(
+                result: result,
+                returnedMessagePresent: returnedMessagePresent,
+                uploadLeaseHeld: uploadLeaseHeld,
+              ),
+              returnsNormally,
+            );
+            continue;
+          }
+          Object? failure;
+          try {
+            requireAndroidDirectMediaVoiceSendCompletion(
+              result: result,
+              returnedMessagePresent: returnedMessagePresent,
+              uploadLeaseHeld: uploadLeaseHeld,
+            );
+          } catch (error) {
+            failure = error;
+          }
+          expect(failure, isA<StateError>());
+          final receipt = androidDirectMediaBlobCustodyE2EFailureReceipt(
+            config: _request(
+              role: androidDirectMediaBlobCustodySenderRole,
+              phase: androidDirectMediaBlobCustodySenderResumePhase,
+              expectedHash: _sha,
+            ),
+            error: failure!,
+          );
+          expect(receipt['status'], 'failed');
+          expect(receipt['success'], isFalse);
+          expect(receipt['errorType'], 'StateError');
+          expect(receipt['errorCode'], 'sender_production_send_failed');
+          expect(receipt['voiceSendResult'], result.name);
+          expect(receipt['voiceSendReturnedMessage'], returnedMessagePresent);
+          expect(receipt['voiceSendUploadLeaseHeld'], uploadLeaseHeld);
+          expect(receipt.containsKey('error'), isFalse);
+          expect(receipt.containsKey('stackTrace'), isFalse);
+        }
+      }
+    }
   });
 
   test(

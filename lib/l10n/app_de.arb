@@ -1866,6 +1866,7 @@
   "settings_diagnostics_support_code_copied": "Supportcode kopiert. Gib ihn bei einer Problemmeldung an.",
   "settings_diagnostics_copy_support_code": "Supportcode kopieren",
   "settings_diagnostics_preview_report": "Supportbericht ansehen",
+  "settings_diagnostics_preview_truncated": "Ein Teil des Berichts wird angezeigt. Beim Kopieren wird der vollständige Bericht kopiert.",
   "settings_diagnostics_report_copied": "Supportbericht kopiert",
   "settings_diagnostics_copy_report": "Supportbericht kopieren",
   "settings_diagnostics_cleared": "Das Teilen ist ausgeschaltet und lokale Berichte wurden gelöscht",

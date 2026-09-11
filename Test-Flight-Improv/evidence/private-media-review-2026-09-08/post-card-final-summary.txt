@@ -1,0 +1,12 @@
+[FLOW] {"ts":"2026-09-08T19:12:40.018224Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"P2P_MEDIA_DOWNLOAD_RESPONSE","details":{"ok":true,"id":"blob-plain-1"}}
+[FLOW] {"ts":"2026-09-08T19:12:40.018473Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"POST_MEDIA_DOWNLOAD_SUCCESS","details":{"postId":"post-1","mediaId":"media-1"}}
+00:00 +7: /Volumes/CrucialX9/flutter_app/test/features/conversation/presentation/screens/direct_private_media_card_test.dart: private media renders one cohesive in-bubble card, never an empty bubble
+[FLOW] {"ts":"2026-09-08T19:12:40.298008Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"MEDIA_RESOLVE_SYNC_NO_CACHE","details":{}}
+00:00 +8: /Volumes/CrucialX9/flutter_app/test/features/conversation/presentation/screens/direct_private_media_card_test.dart: card shows no-pixel visual header and media-kind title
+00:00 +9: /Volumes/CrucialX9/flutter_app/test/features/conversation/presentation/screens/direct_private_media_card_test.dart: card preserves reactions and context overlay
+00:00 +10: /Volumes/CrucialX9/flutter_app/test/features/conversation/presentation/screens/direct_private_media_card_test.dart: consumed view-once receipt is minimal in live and lifted cards while outer reply and delete remain reachable
+00:00 +11: /Volumes/CrucialX9/flutter_app/test/features/conversation/presentation/screens/direct_private_media_card_test.dart: private verification failures remain closed without suggesting an update
+00:01 +12: /Volumes/CrucialX9/flutter_app/test/features/conversation/presentation/screens/direct_private_media_card_test.dart: private Info does not claim an update fixes a rejected policy
+00:01 +13: /Volumes/CrucialX9/flutter_app/test/features/conversation/presentation/screens/direct_private_media_card_test.dart: future private policy still suggests updating without opening
+00:01 +14: /Volumes/CrucialX9/flutter_app/test/features/conversation/presentation/screens/direct_private_media_card_test.dart: non-view-once terminal cards retain generic copy and actions
+00:01 +15: All tests passed!

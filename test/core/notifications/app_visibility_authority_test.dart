@@ -9,6 +9,62 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
   test(
+    'denied native read drops cached suppression until a new generation',
+    () async {
+      const channel = MethodChannel(appVisibilityPlatformChannelName);
+      var readAdmitted = true;
+      var generation = 1;
+      final messenger =
+          TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+      messenger.setMockMethodCallHandler(channel, (call) async {
+        expect(call.method, appVisibilityReadSnapshotMethod);
+        expect(call.arguments, isNull);
+        if (!readAdmitted) return null;
+        return <String, Object?>{
+          'snapshot': _snapshot(
+            revision: generation,
+            generation: generation,
+            digest: _directA.digest,
+          ).toJson(),
+          'currentMonotonicMs': 1001,
+          'currentBootSession': 'test:boot-1',
+        };
+      });
+      final authority = AppVisibilityAuthority(
+        platformBridge: MethodChannelAppVisibilityPlatformBridge(
+          channel: channel,
+        ),
+      );
+      addTearDown(() {
+        authority.dispose();
+        messenger.setMockMethodCallHandler(channel, null);
+      });
+
+      expect((await authority.evaluate(_directA)).maySuppress, isTrue);
+      expect(authority.lifecycleGeneration, 1);
+      readAdmitted = false;
+      expect(
+        await authority.evaluate(_directA),
+        AppVisibilityEvaluation.failNotify,
+      );
+      expect(authority.lifecycleGeneration, isNull);
+      expect(authority.visibleConversationDigest, isNull);
+      expect(await authority.synchronize(), isFalse);
+
+      // A subsequent read of the old generation cannot revive cached authority.
+      readAdmitted = true;
+      expect(
+        await authority.evaluate(_directA),
+        AppVisibilityEvaluation.failNotify,
+      );
+      generation = 2;
+      expect(await authority.synchronize(), isTrue);
+      expect((await authority.evaluate(_directA)).maySuppress, isTrue);
+      expect((await authority.evaluate(_directB)).maySuppress, isFalse);
+    },
+  );
+
+  test(
     'TC-371-02a lifecycle generation and projection failure are fail-notify',
     () async {
       const channel = MethodChannel(appVisibilityPlatformChannelName);

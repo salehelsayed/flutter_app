@@ -1,0 +1,74 @@
+{
+  "case": "Native-presented incoming call answered through foreground app UI before Android native answer bridge repair",
+  "events": [
+    {
+      "ts": "2026-09-08T12:01:41.766681Z",
+      "event": "CALL_STATE_TRANSITION",
+      "details": {
+        "trigger": "remoteInvite",
+        "state": "incomingValidating",
+        "endReason": "none"
+      }
+    },
+    {
+      "ts": "2026-09-08T12:01:41.769267Z",
+      "event": "CALL_STATE_TRANSITION",
+      "details": {
+        "trigger": "incomingValidated",
+        "state": "incomingValidating",
+        "endReason": "none"
+      }
+    },
+    {
+      "ts": "2026-09-08T12:01:42.297329Z",
+      "event": "CALL_INCOMING_PRESENTATION_RESULT",
+      "details": {
+        "presented": true,
+        "threw": false
+      }
+    },
+    {
+      "ts": "2026-09-08T12:01:42.297821Z",
+      "event": "CALL_STATE_TRANSITION",
+      "details": {
+        "trigger": "systemUiPresented",
+        "state": "ringing",
+        "endReason": "none"
+      }
+    },
+    {
+      "ts": "2026-09-08T12:01:44.450504Z",
+      "event": "CALL_STATE_TRANSITION",
+      "details": {
+        "trigger": "answer",
+        "state": "accepted",
+        "endReason": "none"
+      }
+    },
+    {
+      "ts": "2026-09-08T12:01:44.568370Z",
+      "event": "CALL_STATE_TRANSITION",
+      "details": {
+        "trigger": "negotiationFailed",
+        "state": "ended",
+        "endReason": "mediaFailed"
+      }
+    },
+    {
+      "ts": "2026-09-08T12:01:44.570622Z",
+      "event": "CALL_AUDIO_START_RESULT",
+      "details": {
+        "status": "audioSessionFailed"
+      }
+    },
+    {
+      "ts": "2026-09-08T12:01:44.571250Z",
+      "event": "CALL_TERMINAL_CLEANUP_RESULT",
+      "details": {
+        "status": "ready",
+        "reason": "none"
+      }
+    }
+  ],
+  "containsPrivateMaterial": false
+}

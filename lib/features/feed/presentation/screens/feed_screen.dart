@@ -66,6 +66,8 @@ class FeedScreen extends StatefulWidget {
   final VoidCallback? onClearFocus;
   final void Function(String threadId, String text)? onComposerSend;
   final void Function(String threadId, String text)? onComposerDraftChanged;
+  /// The host retains this draft when the focused composer is unmounted.
+  final String composerDraft;
 
   /// Outgoing replies sent during the current focus session, keyed by the same
   /// thread id encoding as [focusedId]. Drives the append-stay green bubbles
@@ -108,6 +110,7 @@ class FeedScreen extends StatefulWidget {
     this.onClearFocus,
     this.onComposerSend,
     this.onComposerDraftChanged,
+    this.composerDraft = '',
     this.sessionReplies = const {},
     this.onRetrySend,
     this.onSwipeCommit,
@@ -325,6 +328,8 @@ class _FeedScreenState extends State<FeedScreen> {
     }
 
     return FeedComposer(
+      key: ValueKey('feed-composer-$focusedId'),
+      draftText: widget.composerDraft,
       hintText: hint,
       addAnotherHint: l10n.feed_add_another,
       onSend: (text) => widget.onComposerSend?.call(focusedId, text),

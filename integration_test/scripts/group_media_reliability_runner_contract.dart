@@ -136,6 +136,7 @@ final class GroupMediaReliabilityRunContext {
     required this.proofDirectory,
     required this.buildGuardLog,
     this.androidCompanionArtifact,
+    this.authorityMode = groupMediaDistinctAuthorityMode,
   });
 
   final String scenario;
@@ -145,6 +146,7 @@ final class GroupMediaReliabilityRunContext {
   final Directory proofDirectory;
   final File? buildGuardLog;
   final GroupMediaReliabilityPreparedArtifact? androidCompanionArtifact;
+  final String authorityMode;
 
   bool get childBuildsAllowed => false;
 }
@@ -368,6 +370,13 @@ String? _validateScenarioArtifact(
     return 'Artifact run_id does not match runner custody.';
   }
   if (context.scenario == groupMediaForegroundRetryAclRoundtripScenario) {
+    if (artifact is! Map ||
+        (artifact.containsKey('authority_mode')
+                ? artifact['authority_mode']
+                : groupMediaDistinctAuthorityMode) !=
+            context.authorityMode) {
+      return 'Artifact authority mode does not match runner custody.';
+    }
     final validation = validateGroupMediaReliabilityArtifact(artifact);
     if (!validation.ok) return validation.detail;
   } else {
@@ -407,6 +416,15 @@ GroupMediaReliabilityRunContext _buildContext(
 ) {
   final scenario = parsed.scenario!;
   final isAndroid = scenario == groupMediaForegroundRetryAclRoundtripScenario;
+  final authorityMode =
+      environment['SIMS_GROUP_MEDIA_AUTHORITY_MODE'] ??
+      groupMediaDistinctAuthorityMode;
+  if (!groupMediaAuthorityModeIsValid(authorityMode) ||
+      (!isAndroid && authorityMode != groupMediaDistinctAuthorityMode)) {
+    throw const FormatException(
+      'Group media authority mode is invalid for this scenario.',
+    );
+  }
   final expectedProfile = isAndroid
       ? groupMediaReliabilityAndroidBuildProfile
       : groupMediaReliabilityIosBuildProfile;
@@ -503,6 +521,7 @@ GroupMediaReliabilityRunContext _buildContext(
         ? null
         : File(buildGuardPath).absolute,
     androidCompanionArtifact: androidCompanionArtifact,
+    authorityMode: authorityMode,
   );
 }
 

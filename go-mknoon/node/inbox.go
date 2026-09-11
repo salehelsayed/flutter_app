@@ -78,6 +78,9 @@ type inboxRequest struct {
 	// contacts can wake you"). omitempty keeps every non-attaching frame
 	// byte-identical to the pre-FDC-09 store frame (NET-REL-07).
 	WakeToken string `json:"wakeToken,omitempty"`
+	// Sender-confirmed historical delivery may still require immutable relay
+	// custody. This request-only policy omits a new notification, never custody.
+	SuppressNotification bool `json:"suppressNotification,omitempty"`
 	// Plan 344: present only on the additive protected store action. The action
 	// itself selects the contract; this discriminator constrains the two local
 	// custody owners permitted to use it.
@@ -303,6 +306,18 @@ func (n *Node) InboxStoreDetailedWithWakeToken(
 	timeoutMs int,
 	wakeToken string,
 ) (InboxStoreOutcome, error) {
+	return n.InboxStoreDetailedWithNotificationPolicy(toPeerId, message, timeoutMs, wakeToken, false)
+}
+
+// InboxStoreDetailedWithNotificationPolicy preserves legacy custody while
+// carrying the sender's explicit notification choice outside the ciphertext.
+func (n *Node) InboxStoreDetailedWithNotificationPolicy(
+	toPeerId string,
+	message string,
+	timeoutMs int,
+	wakeToken string,
+	suppressNotification bool,
+) (InboxStoreOutcome, error) {
 	n.mu.RLock()
 	h := n.host
 	n.mu.RUnlock()
@@ -352,11 +367,12 @@ func (n *Node) InboxStoreDetailedWithWakeToken(
 		setStreamDeadline(s, timeout)
 
 		req := inboxRequest{
-			Action:    "store",
-			To:        toPeerId,
-			From:      n.peerId,
-			Message:   message,
-			WakeToken: wakeToken, // FDC-09 §12 (CV-14): present recipient-issued token; empty => omitted (NET-REL-07)
+			Action:               "store",
+			To:                   toPeerId,
+			From:                 n.peerId,
+			Message:              message,
+			WakeToken:            wakeToken, // FDC-09 §12 (CV-14): present recipient-issued token; empty => omitted (NET-REL-07)
+			SuppressNotification: suppressNotification,
 		}
 
 		reqBytes, err := json.Marshal(req)
@@ -431,6 +447,7 @@ func (n *Node) InboxStoreAckCustodyDetailedWithWakeToken(
 		wakeToken,
 		custodyKind,
 		0,
+		false,
 	)
 }
 
@@ -460,6 +477,31 @@ func (n *Node) InboxStoreAckCustodyDetailedWithWakeTokenAndExpiryCeiling(
 		wakeToken,
 		custodyKind,
 		custodyExpiresAtOrBeforeMs,
+		false,
+	)
+}
+
+// InboxStoreAckCustodyDetailedWithNotificationPolicy keeps the protected
+// receipt/expiry contract and requests custody without another notification.
+// A zero expiry ceiling means omission, as in the ordinary protected method.
+func (n *Node) InboxStoreAckCustodyDetailedWithNotificationPolicy(
+	toPeerID string,
+	message string,
+	timeoutMs int,
+	wakeToken string,
+	custodyKind string,
+	custodyExpiresAtOrBeforeMs int64,
+	suppressNotification bool,
+) (InboxStoreOutcome, error) {
+	if custodyExpiresAtOrBeforeMs < 0 ||
+		(custodyExpiresAtOrBeforeMs > 0 && custodyKind != CustodyKindDirectTextV108 && custodyKind != CustodyKindGroupContentV1) {
+		return InboxStoreOutcome{ErrorCode: "CUSTODY_INELIGIBLE"}, fmt.Errorf(
+			"%w: unsupported media expiry ceiling", ErrInboxCustodyIneligible,
+		)
+	}
+	return n.inboxStoreAckCustodyDetailedWithWakeToken(
+		toPeerID, message, timeoutMs, wakeToken, custodyKind,
+		custodyExpiresAtOrBeforeMs, suppressNotification,
 	)
 }
 
@@ -470,6 +512,7 @@ func (n *Node) inboxStoreAckCustodyDetailedWithWakeToken(
 	wakeToken string,
 	custodyKind string,
 	custodyExpiresAtOrBeforeMs int64,
+	suppressNotification bool,
 ) (InboxStoreOutcome, error) {
 	if !isSupportedInboxCustodyKind(custodyKind) {
 		return InboxStoreOutcome{ErrorCode: "CUSTODY_INELIGIBLE"},
@@ -501,6 +544,7 @@ func (n *Node) inboxStoreAckCustodyDetailedWithWakeToken(
 		CustodyKind:                custodyKind,
 		CustodyContract:            AckOrExpiryCustodyContract,
 		CustodyExpiresAtOrBeforeMs: custodyExpiresAtOrBeforeMs,
+		SuppressNotification:       suppressNotification,
 	}
 	start := time.Now()
 	var lastErr error

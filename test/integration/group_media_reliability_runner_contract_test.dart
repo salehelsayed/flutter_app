@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:crypto/crypto.dart';
+import 'package:flutter_app/core/database/app_database_version.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import '../../integration_test/scripts/group_media_ios_background_recovery_evidence.dart';
@@ -12,6 +13,114 @@ import '../../integration_test/scripts/group_media_reliability_runner_contract.d
 import '../../tool/sims/artifact_evidence.dart';
 
 void main() {
+  test(
+    'P269 ordinary runner binds declared mode and rejects old or malformed receipt mode',
+    () async {
+      final dir = await Directory.systemTemp.createTemp(
+        'p269-ordinary-contract-',
+      );
+      addTearDown(() => dir.delete(recursive: true));
+      final apk = File('${dir.path}/prepared.apk')
+        ..writeAsStringSync('immutable-disposable-test-artifact');
+      var attempt = 0;
+      Future<GroupMediaReliabilityRunnerResult> run(
+        Object? mode, {
+        bool absent = false,
+      }) => runGroupMediaReliabilityRunner(
+        arguments: <String>[
+          '--scenario',
+          groupMediaForegroundRetryAclRoundtripScenario,
+          '--run-id',
+          'ordinary-${attempt++}',
+          '-d',
+          'pixel-usb,emulator-5554',
+        ],
+        environment: <String, String>{
+          groupMediaReliabilityAndroidArtifactEnvironment: apk.path,
+          'SIMS_ARTIFACT_PROFILE_ID': groupMediaReliabilityAndroidBuildProfile,
+          'SIMS_GROUP_MEDIA_AUTHORITY_MODE':
+              groupMediaAccountBoundAuthorityMode,
+          'SIMS_PROOF_DIRECTORY': '${dir.path}/proof-$attempt',
+          'MKNOON_RELAY_ADDRESSES': '/dns/relay.invalid/tcp/443/wss',
+        },
+        executeScenario: (context) async {
+          expect(context.authorityMode, groupMediaAccountBoundAuthorityMode);
+          final artifact = _acceptedArtifact(context);
+          if (absent) {
+            artifact.remove('authority_mode');
+          } else {
+            artifact['authority_mode'] = mode;
+          }
+          return artifact;
+        },
+      );
+      expect((await run(groupMediaAccountBoundAuthorityMode)).exitCode, 0);
+      for (final mode in <Object?>[
+        null,
+        1,
+        false,
+        '',
+        'unknown',
+        groupMediaDistinctAuthorityMode,
+      ]) {
+        final result = await run(mode);
+        expect(result.exitCode, 1, reason: '$mode');
+        expect(result.json['artifactPresent'], isFalse);
+        expect(result.json['detail'], contains('authority mode'));
+      }
+      expect((await run(null, absent: true)).exitCode, 1);
+    },
+  );
+
+  test(
+    'iOS boundary observations require the exact current database schema',
+    () {
+      const runId = 'p269-current-schema';
+      final receiverDigest = _digest('synthetic-receiver');
+      for (final phase in <String, String>{
+        'phase_a': 'a',
+        'phase_b_claim': 'b_claim',
+        'phase_b_recovery': 'b_recovery',
+      }.entries) {
+        for (final version in <int>[
+          currentIdentityDatabaseVersion,
+          104,
+          currentIdentityDatabaseVersion + 1,
+        ]) {
+          final observation = _iosObservationPair(
+            runId: runId,
+            phase: phase.value,
+            receiverDigest: receiverDigest,
+            databasePathDigest: _digest('synthetic-database-path'),
+            receiverPid: 1234,
+          );
+          final database = observation['database']! as Map<String, Object?>;
+          database['user_version'] = version;
+          observation['database_sha256'] = groupMediaIosObservationDigest(
+            database,
+          );
+          final result = validateGroupMediaIosBoundaryObservation(
+            value: observation,
+            section: phase.key,
+            runId: runId,
+            receiverDigest: receiverDigest,
+          );
+          expect(
+            result.ok,
+            version == currentIdentityDatabaseVersion,
+            reason: '${phase.key}, schema $version: ${result.detail}',
+          );
+          if (version != currentIdentityDatabaseVersion) {
+            expect(
+              result.detail,
+              contains('${phase.key}.database.user_version'),
+            );
+          }
+        }
+      }
+    },
+  );
+
   test(
     'P269 runner requires prepared main artifact two roles and one Sims evidence envelope',
     () async {
@@ -645,10 +754,19 @@ Map<String, Object?> _acceptedArtifact(
   String? artifactRunId,
 }) {
   final runId = artifactRunId ?? context.runId;
-  final senderTransport = _digest('$runId:sender-transport');
-  final receiverTransport = _digest('$runId:receiver-transport');
+  final senderTransport = _digest(
+    context.authorityMode == groupMediaAccountBoundAuthorityMode
+        ? '$runId:sender-account'
+        : '$runId:sender-transport',
+  );
+  final receiverTransport = _digest(
+    context.authorityMode == groupMediaAccountBoundAuthorityMode
+        ? '$runId:receiver-account'
+        : '$runId:receiver-transport',
+  );
   return <String, Object?>{
     'schema': groupMediaReliabilityArtifactSchema,
+    'authority_mode': context.authorityMode,
     'run_id': runId,
     'scenario': groupMediaForegroundRetryAclRoundtripScenario,
     'prepared_artifact': <String, Object?>{
@@ -680,8 +798,8 @@ Map<String, Object?> _acceptedArtifact(
       },
     },
     'account_vs_transport_discriminator': <String, Object?>{
-      'sender': true,
-      'receiver': true,
+      'sender': context.authorityMode == groupMediaDistinctAuthorityMode,
+      'receiver': context.authorityMode == groupMediaDistinctAuthorityMode,
     },
     'acl_entries': <Object?>[senderTransport, receiverTransport],
     'media': <String, Object?>{
@@ -700,7 +818,7 @@ Map<String, Object?> _acceptedArtifact(
           'role_db_path': '$role/group-media.sqlite',
           'database_path_sha256': _digest('$runId:$role-database'),
           'cipher_version': 'SQLCipher 4.6.1',
-          'user_version': 104,
+          'user_version': currentIdentityDatabaseVersion,
           'reopened': true,
           'rows': <Object?>[
             for (final kind in const <String>['jpeg', 'mp4', 'voice'])
@@ -982,7 +1100,7 @@ Map<String, Object?> _iosObservationPair({
     'database_path_sha256': databasePathDigest,
     'database_reopened': true,
     'cipher_version': 'SQLCipher 4.6.1',
-    'user_version': 104,
+    'user_version': currentIdentityDatabaseVersion,
     'barrier': isPhaseA
         ? 'background_receive_started'
         : isRecovery

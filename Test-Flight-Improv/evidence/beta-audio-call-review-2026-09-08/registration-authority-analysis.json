@@ -1,0 +1,3968 @@
+{
+  "schemaVersion": 1,
+  "source": {
+    "path": "Test-Flight-Improv/evidence/beta-audio-call-review-2026-09-08/redis-call-timeline.json",
+    "sha256": "414358e242cf0c559cee136dc10e9ca16f19ff2169c0343c97c114cb8eead07c",
+    "collectedAt": "2026-09-08T10:46:11.693349+00:00",
+    "mutationRows": 392,
+    "baselineRows": 20,
+    "originalPreserved": true
+  },
+  "scope": {
+    "callAliases": [
+      "call-090",
+      "call-091",
+      "call-092",
+      "call-093",
+      "call-094",
+      "call-095",
+      "call-096",
+      "call-097",
+      "call-098",
+      "call-099",
+      "call-100",
+      "call-101"
+    ],
+    "peers": [
+      "peer-006",
+      "peer-007",
+      "peer-008"
+    ]
+  },
+  "methodology": [
+    "Replay the baseline and listed successful registration mutations in exported command order. An operation whose before-anchor is at or earlier than a first receipt is applied before that receipt; operations whose bracket straddles it are reported ambiguous. No evaluated first receipt has such an ambiguous bracket.",
+    "Registration timestamps are not observed. Adjacent call receipt/terminal values label command-order anchors only, not registration instants, and numeric preference epochs are not mutation timestamps.",
+    "The source has no conflicting or reversed registration anchor brackets. All first-recipient records are supported by positive prior rows; absence is asserted only after explicit exported delete rows.",
+    "Expiry comparisons use each record expiresAtMs against observed receipt/terminal timestamps. This does not independently verify Redis key TTL, cryptographic validity, client-side grants/receipts, device reachability, APNs delivery, or media connectivity.",
+    "Endpoint identity-change flags are reported exactly as exported; their hidden identity fields are not reinterpreted as cryptographic device identity or token rotation.",
+    "Mailbox aliases group opaque handles. First observed direction is used as the analysis label, not inferred decrypted invite/call initiation.",
+    "Current-source operation semantics were independently verified by the mailbox audit agent using Graphify query 1a0b4914e6e744a4, evidence digest 7a2cfaa5a97cd184; this identifies the emitted endpoint-revoke command signature, not the historical client callback or a token/endpoint joint transaction."
+  ],
+  "findings": {
+    "firstRecipientRecordsPresentAndUnexpiredForAll12": true,
+    "shortRecordTtlExhaustionExplainsTheseObservedStarts": false,
+    "allSuccessfulEndpointEpochWritesMonotonic": true,
+    "deviceKeyEpochChanged": false,
+    "tokenIdentityChangeReported": false,
+    "wakeIdentityChangeReported": false,
+    "publicationRaceCausationEstablished": false,
+    "publicationRaceCaveat": "Successful monotonic AOF writes cannot reveal a rejected stale publication attempt; this export neither proves nor excludes such a race.",
+    "deletionAttribution": "Two peer-007 endpoint revocations and adjacent token deletions follow successful mailbox admission. The explicit endpoint-revoke signature is supported by current source, while the triggering app action and historical call outcome causation remain unknown. They cannot explain earlier 090\u2013098 groups; endpoint tombstones do not terminalize call mailboxes.",
+    "missingClientAuthorityCaveat": "Relay wake rows do not prove that the sender stored the correct received wake grant or that its local issuance/distribution receipt gate was satisfied.",
+    "explicitEndpointRevokeSignatureObserved": true,
+    "tokenAndEndpointJointAtomicityEstablished": false
+  },
+  "peerSummaries": [
+    {
+      "peer": "peer-006",
+      "platform": "android",
+      "endpointRegistrationRowsIncludingBaseline": 41,
+      "successfulEndpointPreferenceEpochsStrictlyIncreasing": true,
+      "deviceKeyEpochValues": [
+        4236284878241438
+      ],
+      "endpointExpiryMinusPreferenceEpochMs": [
+        21600000
+      ],
+      "tokenRegistrationRowsIncludingBaseline": 7,
+      "tokenIdentityChangeTrueCount": 0,
+      "wakeIdentityChangeTrueCount": 0,
+      "wakeExpiries": [
+        "2026-09-09T10:09:27.698Z"
+      ],
+      "wakeDeletionCount": 0
+    },
+    {
+      "peer": "peer-007",
+      "platform": "ios",
+      "endpointRegistrationRowsIncludingBaseline": 19,
+      "successfulEndpointPreferenceEpochsStrictlyIncreasing": true,
+      "deviceKeyEpochValues": [
+        8879833610816774
+      ],
+      "endpointExpiryMinusPreferenceEpochMs": [
+        21600000
+      ],
+      "tokenRegistrationRowsIncludingBaseline": 19,
+      "tokenIdentityChangeTrueCount": 0,
+      "wakeIdentityChangeTrueCount": 0,
+      "wakeExpiries": [
+        "2026-09-08T21:24:31.777Z"
+      ],
+      "wakeDeletionCount": 0
+    },
+    {
+      "peer": "peer-008",
+      "platform": "ios",
+      "endpointRegistrationRowsIncludingBaseline": 7,
+      "successfulEndpointPreferenceEpochsStrictlyIncreasing": true,
+      "deviceKeyEpochValues": [
+        7519413882761528
+      ],
+      "endpointExpiryMinusPreferenceEpochMs": [
+        21600000
+      ],
+      "tokenRegistrationRowsIncludingBaseline": 8,
+      "tokenIdentityChangeTrueCount": 0,
+      "wakeIdentityChangeTrueCount": 0,
+      "wakeExpiries": [
+        "2026-09-09T10:09:28.510Z"
+      ],
+      "wakeDeletionCount": 0
+    }
+  ],
+  "tokenEpochGenerationTransitions": [
+    {
+      "peer": "peer-007",
+      "sourcePointer": "/registrationMutationsDuringCallWindow/319",
+      "previousSourcePointer": "/registrationMutationsDuringCallWindow/277",
+      "previous": {
+        "refreshEpoch": 3,
+        "generation": 2
+      },
+      "next": {
+        "refreshEpoch": 5,
+        "generation": 3
+      },
+      "identityChangedFromPreviousRegistration": false,
+      "commandOrderAfterAnchor": "2026-09-08T10:16:34.707Z",
+      "commandOrderBeforeAnchor": "2026-09-08T10:17:04.394Z"
+    },
+    {
+      "peer": "peer-008",
+      "sourcePointer": "/registrationMutationsDuringCallWindow/68",
+      "previousSourcePointer": "/registrationMutationsDuringCallWindow/10",
+      "previous": {
+        "refreshEpoch": 2,
+        "generation": 1
+      },
+      "next": {
+        "refreshEpoch": 3,
+        "generation": 2
+      },
+      "identityChangedFromPreviousRegistration": false,
+      "commandOrderAfterAnchor": "2026-09-08T10:10:45.558Z",
+      "commandOrderBeforeAnchor": "2026-09-08T10:11:36.513Z"
+    }
+  ],
+  "endpointIdentityChangeFlags": [
+    {
+      "peer": "peer-006",
+      "sourcePointer": "/registrationMutationsDuringCallWindow/92",
+      "kind": "exporter_endpoint_identity_change",
+      "deviceKeyEpoch": 4236284878241438,
+      "preferenceEpoch": 1788862316099,
+      "commandOrderAfterAnchor": "2026-09-08T10:11:42.766Z",
+      "commandOrderBeforeAnchor": "2026-09-08T10:11:58.419Z"
+    },
+    {
+      "peer": "peer-006",
+      "sourcePointer": "/registrationMutationsDuringCallWindow/149",
+      "kind": "exporter_endpoint_identity_change",
+      "deviceKeyEpoch": 4236284878241438,
+      "preferenceEpoch": 1788862371392,
+      "commandOrderAfterAnchor": "2026-09-08T10:12:37.015Z",
+      "commandOrderBeforeAnchor": "2026-09-08T10:13:00.169Z"
+    },
+    {
+      "peer": "peer-006",
+      "sourcePointer": "/registrationMutationsDuringCallWindow/201",
+      "kind": "exporter_endpoint_identity_change",
+      "deviceKeyEpoch": 4236284878241438,
+      "preferenceEpoch": 1788862507377,
+      "commandOrderAfterAnchor": "2026-09-08T10:13:01.672Z",
+      "commandOrderBeforeAnchor": "2026-09-08T10:15:27.340Z"
+    },
+    {
+      "peer": "peer-006",
+      "sourcePointer": "/registrationMutationsDuringCallWindow/223",
+      "kind": "exporter_endpoint_identity_change",
+      "deviceKeyEpoch": 4236284878241438,
+      "preferenceEpoch": 1788862525498,
+      "commandOrderAfterAnchor": "2026-09-08T10:13:01.672Z",
+      "commandOrderBeforeAnchor": "2026-09-08T10:15:27.340Z"
+    },
+    {
+      "peer": "peer-006",
+      "sourcePointer": "/registrationMutationsDuringCallWindow/259",
+      "kind": "exporter_endpoint_identity_change",
+      "deviceKeyEpoch": 4236284878241438,
+      "preferenceEpoch": 1788862556407,
+      "commandOrderAfterAnchor": "2026-09-08T10:15:27.340Z",
+      "commandOrderBeforeAnchor": "2026-09-08T10:16:11.240Z"
+    },
+    {
+      "peer": "peer-006",
+      "sourcePointer": "/registrationMutationsDuringCallWindow/286",
+      "kind": "exporter_endpoint_identity_change",
+      "deviceKeyEpoch": 4236284878241438,
+      "preferenceEpoch": 1788862566035,
+      "commandOrderAfterAnchor": "2026-09-08T10:15:27.340Z",
+      "commandOrderBeforeAnchor": "2026-09-08T10:16:11.240Z"
+    },
+    {
+      "peer": "peer-007",
+      "sourcePointer": "/registrationMutationsDuringCallWindow/323",
+      "kind": "exporter_endpoint_identity_change",
+      "deviceKeyEpoch": 8879833610816774,
+      "preferenceEpoch": 1788862606578,
+      "commandOrderAfterAnchor": "2026-09-08T10:16:34.707Z",
+      "commandOrderBeforeAnchor": "2026-09-08T10:17:04.394Z"
+    },
+    {
+      "peer": "peer-008",
+      "sourcePointer": "/registrationMutationsDuringCallWindow/72",
+      "kind": "exporter_endpoint_identity_change",
+      "deviceKeyEpoch": 7519413882761528,
+      "preferenceEpoch": 1788862295698,
+      "commandOrderAfterAnchor": "2026-09-08T10:10:45.558Z",
+      "commandOrderBeforeAnchor": "2026-09-08T10:11:36.513Z"
+    }
+  ],
+  "deletionEpisodes": [
+    {
+      "peer": "peer-007",
+      "deleteRows": [
+        "/registrationMutationsDuringCallWindow/313",
+        "/registrationMutationsDuringCallWindow/314",
+        "/registrationMutationsDuringCallWindow/315"
+      ],
+      "commandOrderAfterAnchor": "2026-09-08T10:16:28.312Z",
+      "commandOrderBeforeAnchor": "2026-09-08T10:16:29.047Z",
+      "previousEndpointExpiresAt": "2026-09-08T16:16:07.480Z",
+      "previousTokenExpiresAt": "2026-10-08T10:16:03.414Z",
+      "ordinaryRecordedExpiryFitsDeletion": false,
+      "interpretation": "The endpoint DEL, device-route DEL and three separate endpoint-tombstone HSET rows match current RevokeEndpoint, so ordinary Redis expiry alone cannot explain this sequence. Endpoint revocation is atomic within its own WATCH/TxPipelined transaction; the adjacent token deletion is separate. The initiating app callback, whether both came from one higher-level lifecycle operation, and their effect on the observed call are not established.",
+      "nextTokenRegistration": {
+        "sourcePointer": "/registrationMutationsDuringCallWindow/319",
+        "peer": "peer-007",
+        "kind": "token",
+        "tokenKind": "ios_voip",
+        "authorizedSender": null,
+        "operation": "register",
+        "record": {
+          "platform": "ios",
+          "environment": "production",
+          "kind": "ios_voip",
+          "expiresAtMs": 1791454604697,
+          "capabilityVersion": 1,
+          "refreshEpoch": 5,
+          "generation": 3,
+          "identityChangedFromPreviousRegistration": false
+        },
+        "commandOrderAfterAnchor": "2026-09-08T10:16:34.707Z",
+        "commandOrderBeforeAnchor": "2026-09-08T10:17:04.394Z"
+      },
+      "nextEndpointRegistration": {
+        "sourcePointer": "/registrationMutationsDuringCallWindow/323",
+        "peer": "peer-007",
+        "kind": "endpoint",
+        "tokenKind": null,
+        "authorizedSender": null,
+        "operation": "register",
+        "record": {
+          "platform": "ios",
+          "expiresAtMs": 1788884206578,
+          "preferenceEpoch": 1788862606578,
+          "deviceKeyEpoch": 8879833610816774,
+          "identityChangedFromPreviousRegistration": true
+        },
+        "commandOrderAfterAnchor": "2026-09-08T10:16:34.707Z",
+        "commandOrderBeforeAnchor": "2026-09-08T10:17:04.394Z"
+      },
+      "noLaterRegistrationCaveat": null,
+      "endpointRevokeSignatureRows": [
+        "/registrationMutationsDuringCallWindow/314",
+        "/registrationMutationsDuringCallWindow/315",
+        "/registrationMutationsDuringCallWindow/316",
+        "/registrationMutationsDuringCallWindow/317",
+        "/registrationMutationsDuringCallWindow/318"
+      ],
+      "explicitEndpointRevokeSignatureObserved": true,
+      "endpointOperationAtomicAccordingToCurrentSource": true,
+      "adjacentTokenDeleteWithinSameEndpointTransaction": false,
+      "jointTokenEndpointAtomicityEstablished": false,
+      "wakeRegistrationDeletedInExport": false,
+      "interleaving": {
+        "afterAnchor": {
+          "callAlias": "call-100",
+          "direction": "peer-006 -> peer-007",
+          "meaning": "first observed receipt"
+        },
+        "beforeAnchor": {
+          "callAlias": "call-099",
+          "direction": "peer-007 -> peer-006",
+          "meaning": "last observed envelope receipt"
+        },
+        "overlappingObservedGroupSpans": [
+          "call-099",
+          "call-100"
+        ],
+        "episodeCount": 1,
+        "caveat": "Overlapping envelope spans are not proof of overlapping active media calls."
+      }
+    },
+    {
+      "peer": "peer-007",
+      "deleteRows": [
+        "/registrationMutationsDuringCallWindow/386",
+        "/registrationMutationsDuringCallWindow/387",
+        "/registrationMutationsDuringCallWindow/388"
+      ],
+      "commandOrderAfterAnchor": "2026-09-08T10:17:04.522Z",
+      "commandOrderBeforeAnchor": "2026-09-08T10:17:04.865Z",
+      "previousEndpointExpiresAt": "2026-09-08T16:17:03.566Z",
+      "previousTokenExpiresAt": "2026-10-08T10:17:01.449Z",
+      "ordinaryRecordedExpiryFitsDeletion": false,
+      "interpretation": "The endpoint DEL, device-route DEL and three separate endpoint-tombstone HSET rows match current RevokeEndpoint, so ordinary Redis expiry alone cannot explain this sequence. Endpoint revocation is atomic within its own WATCH/TxPipelined transaction; the adjacent token deletion is separate. The initiating app callback, whether both came from one higher-level lifecycle operation, and their effect on the observed call are not established.",
+      "nextTokenRegistration": null,
+      "nextEndpointRegistration": null,
+      "noLaterRegistrationCaveat": "No later registration in the exported window does not prove permanent absence.",
+      "endpointRevokeSignatureRows": [
+        "/registrationMutationsDuringCallWindow/387",
+        "/registrationMutationsDuringCallWindow/388",
+        "/registrationMutationsDuringCallWindow/389",
+        "/registrationMutationsDuringCallWindow/390",
+        "/registrationMutationsDuringCallWindow/391"
+      ],
+      "explicitEndpointRevokeSignatureObserved": true,
+      "endpointOperationAtomicAccordingToCurrentSource": true,
+      "adjacentTokenDeleteWithinSameEndpointTransaction": false,
+      "jointTokenEndpointAtomicityEstablished": false,
+      "wakeRegistrationDeletedInExport": false,
+      "interleaving": {
+        "afterAnchor": {
+          "callAlias": "call-101",
+          "direction": "peer-007 -> peer-006",
+          "meaning": "first reverse receipt"
+        },
+        "beforeAnchor": {
+          "callAlias": "call-101",
+          "meaning": "canceled marker"
+        },
+        "episodeCount": 1
+      }
+    }
+  ],
+  "calls": [
+    {
+      "callAlias": "call-090",
+      "aliasCaveat": "Equal opaque-handle group from source; not independently decoded call IDs or invite semantics.",
+      "firstObservedDirection": {
+        "sender": "peer-006",
+        "recipient": "peer-007"
+      },
+      "firstObservedReceipt": "2026-09-08T10:10:00.044Z",
+      "lastObservedEventOrTerminalMarker": "2026-09-08T10:10:00.670Z",
+      "observedSpanCaveat": "This is an observed metadata span, not proven media duration or terminal state.",
+      "allThreeRecipientRecordsPresentAndUnexpiredBeforeFirstReceipt": true,
+      "recipientAuthorityAtFirstReceipt": {
+        "endpoint": {
+          "sourcePointer": "/latestRegistrationsBeforeFirstIncidentCall/4",
+          "peer": "peer-007",
+          "kind": "endpoint",
+          "tokenKind": null,
+          "authorizedSender": null,
+          "operation": "register",
+          "record": {
+            "platform": "ios",
+            "expiresAtMs": 1788883780944,
+            "preferenceEpoch": 1788862180944,
+            "deviceKeyEpoch": 8879833610816774,
+            "identityChangedFromPreviousRegistration": false
+          },
+          "commandOrderAfterAnchor": null,
+          "commandOrderBeforeAnchor": null,
+          "status": "observed_registered",
+          "expiresAt": "2026-09-08T16:09:40.944Z",
+          "unexpiredAtReceipt": true,
+          "signedOrRecordedExpiryAfterObservedGroupTail": true,
+          "remainingAtReceiptMs": 21580900
+        },
+        "endpoint-device": {
+          "sourcePointer": "/latestRegistrationsBeforeFirstIncidentCall/5",
+          "peer": "peer-007",
+          "kind": "endpoint-device",
+          "tokenKind": null,
+          "authorizedSender": null,
+          "operation": "register",
+          "record": {
+            "platform": "ios",
+            "expiresAtMs": 1788883780944,
+            "preferenceEpoch": 1788862180944
+          },
+          "commandOrderAfterAnchor": null,
+          "commandOrderBeforeAnchor": null,
+          "status": "observed_registered",
+          "expiresAt": "2026-09-08T16:09:40.944Z",
+          "unexpiredAtReceipt": true,
+          "signedOrRecordedExpiryAfterObservedGroupTail": true,
+          "remainingAtReceiptMs": 21580900
+        },
+        "token": {
+          "sourcePointer": "/latestRegistrationsBeforeFirstIncidentCall/0",
+          "peer": "peer-007",
+          "kind": "token",
+          "tokenKind": "ios_voip",
+          "authorizedSender": null,
+          "operation": "register",
+          "record": {
+            "platform": "ios",
+            "environment": "production",
+            "kind": "ios_voip",
+            "expiresAtMs": 1791454178607,
+            "capabilityVersion": 1,
+            "refreshEpoch": 3,
+            "generation": 2,
+            "identityChangedFromPreviousRegistration": false
+          },
+          "commandOrderAfterAnchor": null,
+          "commandOrderBeforeAnchor": null,
+          "status": "observed_registered",
+          "expiresAt": "2026-10-08T10:09:38.607Z",
+          "unexpiredAtReceipt": true,
+          "signedOrRecordedExpiryAfterObservedGroupTail": true,
+          "remainingAtReceiptMs": 2591978563
+        },
+        "wake": {
+          "sourcePointer": "/latestRegistrationsBeforeFirstIncidentCall/2",
+          "peer": "peer-007",
+          "kind": "wake",
+          "tokenKind": null,
+          "authorizedSender": "peer-006",
+          "operation": "register",
+          "record": {
+            "expiresAtMs": 1788902671777,
+            "identityChangedFromPreviousRegistration": false
+          },
+          "commandOrderAfterAnchor": null,
+          "commandOrderBeforeAnchor": null,
+          "status": "observed_registered",
+          "expiresAt": "2026-09-08T21:24:31.777Z",
+          "unexpiredAtReceipt": true,
+          "signedOrRecordedExpiryAfterObservedGroupTail": true,
+          "remainingAtReceiptMs": 40471733
+        }
+      },
+      "recipientDeletionRowsWithinObservedSpan": [],
+      "recipientMutationPointersWithinObservedSpan": [],
+      "recipientStateThroughObservedSpan": "no_exported_deletion_or_record_expiry",
+      "directionalMailboxes": [
+        {
+          "mailbox": "mailbox-153",
+          "sourcePointer": "/mailboxes/0",
+          "sender": "peer-006",
+          "recipient": "peer-007",
+          "firstReceipt": "2026-09-08T10:10:00.044Z",
+          "lastEventReceipt": "2026-09-08T10:10:00.044Z",
+          "recipientAuthorityBeforeFirstReceipt": {
+            "endpoint": {
+              "sourcePointer": "/latestRegistrationsBeforeFirstIncidentCall/4",
+              "peer": "peer-007",
+              "kind": "endpoint",
+              "tokenKind": null,
+              "authorizedSender": null,
+              "operation": "register",
+              "record": {
+                "platform": "ios",
+                "expiresAtMs": 1788883780944,
+                "preferenceEpoch": 1788862180944,
+                "deviceKeyEpoch": 8879833610816774,
+                "identityChangedFromPreviousRegistration": false
+              },
+              "commandOrderAfterAnchor": null,
+              "commandOrderBeforeAnchor": null,
+              "status": "observed_registered",
+              "expiresAt": "2026-09-08T16:09:40.944Z",
+              "unexpiredAtReceipt": true,
+              "signedOrRecordedExpiryAfterObservedGroupTail": true,
+              "remainingAtReceiptMs": 21580900
+            },
+            "endpoint-device": {
+              "sourcePointer": "/latestRegistrationsBeforeFirstIncidentCall/5",
+              "peer": "peer-007",
+              "kind": "endpoint-device",
+              "tokenKind": null,
+              "authorizedSender": null,
+              "operation": "register",
+              "record": {
+                "platform": "ios",
+                "expiresAtMs": 1788883780944,
+                "preferenceEpoch": 1788862180944
+              },
+              "commandOrderAfterAnchor": null,
+              "commandOrderBeforeAnchor": null,
+              "status": "observed_registered",
+              "expiresAt": "2026-09-08T16:09:40.944Z",
+              "unexpiredAtReceipt": true,
+              "signedOrRecordedExpiryAfterObservedGroupTail": true,
+              "remainingAtReceiptMs": 21580900
+            },
+            "token": {
+              "sourcePointer": "/latestRegistrationsBeforeFirstIncidentCall/0",
+              "peer": "peer-007",
+              "kind": "token",
+              "tokenKind": "ios_voip",
+              "authorizedSender": null,
+              "operation": "register",
+              "record": {
+                "platform": "ios",
+                "environment": "production",
+                "kind": "ios_voip",
+                "expiresAtMs": 1791454178607,
+                "capabilityVersion": 1,
+                "refreshEpoch": 3,
+                "generation": 2,
+                "identityChangedFromPreviousRegistration": false
+              },
+              "commandOrderAfterAnchor": null,
+              "commandOrderBeforeAnchor": null,
+              "status": "observed_registered",
+              "expiresAt": "2026-10-08T10:09:38.607Z",
+              "unexpiredAtReceipt": true,
+              "signedOrRecordedExpiryAfterObservedGroupTail": true,
+              "remainingAtReceiptMs": 2591978563
+            },
+            "wake": {
+              "sourcePointer": "/latestRegistrationsBeforeFirstIncidentCall/2",
+              "peer": "peer-007",
+              "kind": "wake",
+              "tokenKind": null,
+              "authorizedSender": "peer-006",
+              "operation": "register",
+              "record": {
+                "expiresAtMs": 1788902671777,
+                "identityChangedFromPreviousRegistration": false
+              },
+              "commandOrderAfterAnchor": null,
+              "commandOrderBeforeAnchor": null,
+              "status": "observed_registered",
+              "expiresAt": "2026-09-08T21:24:31.777Z",
+              "unexpiredAtReceipt": true,
+              "signedOrRecordedExpiryAfterObservedGroupTail": true,
+              "remainingAtReceiptMs": 40471733
+            }
+          },
+          "ambiguousMutationPointers": []
+        },
+        {
+          "mailbox": "mailbox-154",
+          "sourcePointer": "/mailboxes/1",
+          "sender": "peer-007",
+          "recipient": "peer-006",
+          "firstReceipt": "2026-09-08T10:10:00.257Z",
+          "lastEventReceipt": "2026-09-08T10:10:00.257Z",
+          "recipientAuthorityBeforeFirstReceipt": {
+            "endpoint": {
+              "sourcePointer": "/latestRegistrationsBeforeFirstIncidentCall/17",
+              "peer": "peer-006",
+              "kind": "endpoint",
+              "tokenKind": null,
+              "authorizedSender": null,
+              "operation": "register",
+              "record": {
+                "platform": "android",
+                "expiresAtMs": 1788883799371,
+                "preferenceEpoch": 1788862199371,
+                "deviceKeyEpoch": 4236284878241438,
+                "identityChangedFromPreviousRegistration": false
+              },
+              "commandOrderAfterAnchor": null,
+              "commandOrderBeforeAnchor": null,
+              "status": "observed_registered",
+              "expiresAt": "2026-09-08T16:09:59.371Z",
+              "unexpiredAtReceipt": true,
+              "signedOrRecordedExpiryAfterObservedGroupTail": true,
+              "remainingAtReceiptMs": 21599114
+            },
+            "endpoint-device": {
+              "sourcePointer": "/latestRegistrationsBeforeFirstIncidentCall/18",
+              "peer": "peer-006",
+              "kind": "endpoint-device",
+              "tokenKind": null,
+              "authorizedSender": null,
+              "operation": "register",
+              "record": {
+                "platform": "android",
+                "expiresAtMs": 1788883799371,
+                "preferenceEpoch": 1788862199371
+              },
+              "commandOrderAfterAnchor": null,
+              "commandOrderBeforeAnchor": null,
+              "status": "observed_registered",
+              "expiresAt": "2026-09-08T16:09:59.371Z",
+              "unexpiredAtReceipt": true,
+              "signedOrRecordedExpiryAfterObservedGroupTail": true,
+              "remainingAtReceiptMs": 21599114
+            },
+            "token": {
+              "sourcePointer": "/latestRegistrationsBeforeFirstIncidentCall/7",
+              "peer": "peer-006",
+              "kind": "token",
+              "tokenKind": "standard_call",
+              "authorizedSender": null,
+              "operation": "register",
+              "record": {
+                "platform": "android",
+                "kind": "standard_call",
+                "expiresAtMs": 1791454167084,
+                "identityChangedFromPreviousRegistration": null
+              },
+              "commandOrderAfterAnchor": null,
+              "commandOrderBeforeAnchor": null,
+              "status": "observed_registered",
+              "expiresAt": "2026-10-08T10:09:27.084Z",
+              "unexpiredAtReceipt": true,
+              "signedOrRecordedExpiryAfterObservedGroupTail": true,
+              "remainingAtReceiptMs": 2591966827
+            },
+            "wake": {
+              "sourcePointer": "/latestRegistrationsBeforeFirstIncidentCall/15",
+              "peer": "peer-006",
+              "kind": "wake",
+              "tokenKind": null,
+              "authorizedSender": "peer-007",
+              "operation": "register",
+              "record": {
+                "expiresAtMs": 1788948567698,
+                "identityChangedFromPreviousRegistration": false
+              },
+              "commandOrderAfterAnchor": null,
+              "commandOrderBeforeAnchor": null,
+              "status": "observed_registered",
+              "expiresAt": "2026-09-09T10:09:27.698Z",
+              "unexpiredAtReceipt": true,
+              "signedOrRecordedExpiryAfterObservedGroupTail": true,
+              "remainingAtReceiptMs": 86367441
+            }
+          },
+          "ambiguousMutationPointers": []
+        }
+      ]
+    },
+    {
+      "callAlias": "call-091",
+      "aliasCaveat": "Equal opaque-handle group from source; not independently decoded call IDs or invite semantics.",
+      "firstObservedDirection": {
+        "sender": "peer-006",
+        "recipient": "peer-007"
+      },
+      "firstObservedReceipt": "2026-09-08T10:10:17.386Z",
+      "lastObservedEventOrTerminalMarker": "2026-09-08T10:10:17.900Z",
+      "observedSpanCaveat": "This is an observed metadata span, not proven media duration or terminal state.",
+      "allThreeRecipientRecordsPresentAndUnexpiredBeforeFirstReceipt": true,
+      "recipientAuthorityAtFirstReceipt": {
+        "endpoint": {
+          "sourcePointer": "/latestRegistrationsBeforeFirstIncidentCall/4",
+          "peer": "peer-007",
+          "kind": "endpoint",
+          "tokenKind": null,
+          "authorizedSender": null,
+          "operation": "register",
+          "record": {
+            "platform": "ios",
+            "expiresAtMs": 1788883780944,
+            "preferenceEpoch": 1788862180944,
+            "deviceKeyEpoch": 8879833610816774,
+            "identityChangedFromPreviousRegistration": false
+          },
+          "commandOrderAfterAnchor": null,
+          "commandOrderBeforeAnchor": null,
+          "status": "observed_registered",
+          "expiresAt": "2026-09-08T16:09:40.944Z",
+          "unexpiredAtReceipt": true,
+          "signedOrRecordedExpiryAfterObservedGroupTail": true,
+          "remainingAtReceiptMs": 21563558
+        },
+        "endpoint-device": {
+          "sourcePointer": "/latestRegistrationsBeforeFirstIncidentCall/5",
+          "peer": "peer-007",
+          "kind": "endpoint-device",
+          "tokenKind": null,
+          "authorizedSender": null,
+          "operation": "register",
+          "record": {
+            "platform": "ios",
+            "expiresAtMs": 1788883780944,
+            "preferenceEpoch": 1788862180944
+          },
+          "commandOrderAfterAnchor": null,
+          "commandOrderBeforeAnchor": null,
+          "status": "observed_registered",
+          "expiresAt": "2026-09-08T16:09:40.944Z",
+          "unexpiredAtReceipt": true,
+          "signedOrRecordedExpiryAfterObservedGroupTail": true,
+          "remainingAtReceiptMs": 21563558
+        },
+        "token": {
+          "sourcePointer": "/latestRegistrationsBeforeFirstIncidentCall/0",
+          "peer": "peer-007",
+          "kind": "token",
+          "tokenKind": "ios_voip",
+          "authorizedSender": null,
+          "operation": "register",
+          "record": {
+            "platform": "ios",
+            "environment": "production",
+            "kind": "ios_voip",
+            "expiresAtMs": 1791454178607,
+            "capabilityVersion": 1,
+            "refreshEpoch": 3,
+            "generation": 2,
+            "identityChangedFromPreviousRegistration": false
+          },
+          "commandOrderAfterAnchor": null,
+          "commandOrderBeforeAnchor": null,
+          "status": "observed_registered",
+          "expiresAt": "2026-10-08T10:09:38.607Z",
+          "unexpiredAtReceipt": true,
+          "signedOrRecordedExpiryAfterObservedGroupTail": true,
+          "remainingAtReceiptMs": 2591961221
+        },
+        "wake": {
+          "sourcePointer": "/latestRegistrationsBeforeFirstIncidentCall/2",
+          "peer": "peer-007",
+          "kind": "wake",
+          "tokenKind": null,
+          "authorizedSender": "peer-006",
+          "operation": "register",
+          "record": {
+            "expiresAtMs": 1788902671777,
+            "identityChangedFromPreviousRegistration": false
+          },
+          "commandOrderAfterAnchor": null,
+          "commandOrderBeforeAnchor": null,
+          "status": "observed_registered",
+          "expiresAt": "2026-09-08T21:24:31.777Z",
+          "unexpiredAtReceipt": true,
+          "signedOrRecordedExpiryAfterObservedGroupTail": true,
+          "remainingAtReceiptMs": 40454391
+        }
+      },
+      "recipientDeletionRowsWithinObservedSpan": [],
+      "recipientMutationPointersWithinObservedSpan": [],
+      "recipientStateThroughObservedSpan": "no_exported_deletion_or_record_expiry",
+      "directionalMailboxes": [
+        {
+          "mailbox": "mailbox-155",
+          "sourcePointer": "/mailboxes/2",
+          "sender": "peer-006",
+          "recipient": "peer-007",
+          "firstReceipt": "2026-09-08T10:10:17.386Z",
+          "lastEventReceipt": "2026-09-08T10:10:17.386Z",
+          "recipientAuthorityBeforeFirstReceipt": {
+            "endpoint": {
+              "sourcePointer": "/latestRegistrationsBeforeFirstIncidentCall/4",
+              "peer": "peer-007",
+              "kind": "endpoint",
+              "tokenKind": null,
+              "authorizedSender": null,
+              "operation": "register",
+              "record": {
+                "platform": "ios",
+                "expiresAtMs": 1788883780944,
+                "preferenceEpoch": 1788862180944,
+                "deviceKeyEpoch": 8879833610816774,
+                "identityChangedFromPreviousRegistration": false
+              },
+              "commandOrderAfterAnchor": null,
+              "commandOrderBeforeAnchor": null,
+              "status": "observed_registered",
+              "expiresAt": "2026-09-08T16:09:40.944Z",
+              "unexpiredAtReceipt": true,
+              "signedOrRecordedExpiryAfterObservedGroupTail": true,
+              "remainingAtReceiptMs": 21563558
+            },
+            "endpoint-device": {
+              "sourcePointer": "/latestRegistrationsBeforeFirstIncidentCall/5",
+              "peer": "peer-007",
+              "kind": "endpoint-device",
+              "tokenKind": null,
+              "authorizedSender": null,
+              "operation": "register",
+              "record": {
+                "platform": "ios",
+                "expiresAtMs": 1788883780944,
+                "preferenceEpoch": 1788862180944
+              },
+              "commandOrderAfterAnchor": null,
+              "commandOrderBeforeAnchor": null,
+              "status": "observed_registered",
+              "expiresAt": "2026-09-08T16:09:40.944Z",
+              "unexpiredAtReceipt": true,
+              "signedOrRecordedExpiryAfterObservedGroupTail": true,
+              "remainingAtReceiptMs": 21563558
+            },
+            "token": {
+              "sourcePointer": "/latestRegistrationsBeforeFirstIncidentCall/0",
+              "peer": "peer-007",
+              "kind": "token",
+              "tokenKind": "ios_voip",
+              "authorizedSender": null,
+              "operation": "register",
+              "record": {
+                "platform": "ios",
+                "environment": "production",
+                "kind": "ios_voip",
+                "expiresAtMs": 1791454178607,
+                "capabilityVersion": 1,
+                "refreshEpoch": 3,
+                "generation": 2,
+                "identityChangedFromPreviousRegistration": false
+              },
+              "commandOrderAfterAnchor": null,
+              "commandOrderBeforeAnchor": null,
+              "status": "observed_registered",
+              "expiresAt": "2026-10-08T10:09:38.607Z",
+              "unexpiredAtReceipt": true,
+              "signedOrRecordedExpiryAfterObservedGroupTail": true,
+              "remainingAtReceiptMs": 2591961221
+            },
+            "wake": {
+              "sourcePointer": "/latestRegistrationsBeforeFirstIncidentCall/2",
+              "peer": "peer-007",
+              "kind": "wake",
+              "tokenKind": null,
+              "authorizedSender": "peer-006",
+              "operation": "register",
+              "record": {
+                "expiresAtMs": 1788902671777,
+                "identityChangedFromPreviousRegistration": false
+              },
+              "commandOrderAfterAnchor": null,
+              "commandOrderBeforeAnchor": null,
+              "status": "observed_registered",
+              "expiresAt": "2026-09-08T21:24:31.777Z",
+              "unexpiredAtReceipt": true,
+              "signedOrRecordedExpiryAfterObservedGroupTail": true,
+              "remainingAtReceiptMs": 40454391
+            }
+          },
+          "ambiguousMutationPointers": []
+        },
+        {
+          "mailbox": "mailbox-156",
+          "sourcePointer": "/mailboxes/3",
+          "sender": "peer-007",
+          "recipient": "peer-006",
+          "firstReceipt": "2026-09-08T10:10:17.638Z",
+          "lastEventReceipt": "2026-09-08T10:10:17.638Z",
+          "recipientAuthorityBeforeFirstReceipt": {
+            "endpoint": {
+              "sourcePointer": "/registrationMutationsDuringCallWindow/14",
+              "peer": "peer-006",
+              "kind": "endpoint",
+              "tokenKind": null,
+              "authorizedSender": null,
+              "operation": "register",
+              "record": {
+                "platform": "android",
+                "expiresAtMs": 1788883816709,
+                "preferenceEpoch": 1788862216709,
+                "deviceKeyEpoch": 4236284878241438,
+                "identityChangedFromPreviousRegistration": false
+              },
+              "commandOrderAfterAnchor": "2026-09-08T10:10:00.670Z",
+              "commandOrderBeforeAnchor": "2026-09-08T10:10:17.386Z",
+              "status": "observed_registered",
+              "expiresAt": "2026-09-08T16:10:16.709Z",
+              "unexpiredAtReceipt": true,
+              "signedOrRecordedExpiryAfterObservedGroupTail": true,
+              "remainingAtReceiptMs": 21599071
+            },
+            "endpoint-device": {
+              "sourcePointer": "/registrationMutationsDuringCallWindow/15",
+              "peer": "peer-006",
+              "kind": "endpoint-device",
+              "tokenKind": null,
+              "authorizedSender": null,
+              "operation": "register",
+              "record": {
+                "platform": "android",
+                "expiresAtMs": 1788883816709,
+                "preferenceEpoch": 1788862216709
+              },
+              "commandOrderAfterAnchor": "2026-09-08T10:10:00.670Z",
+              "commandOrderBeforeAnchor": "2026-09-08T10:10:17.386Z",
+              "status": "observed_registered",
+              "expiresAt": "2026-09-08T16:10:16.709Z",
+              "unexpiredAtReceipt": true,
+              "signedOrRecordedExpiryAfterObservedGroupTail": true,
+              "remainingAtReceiptMs": 21599071
+            },
+            "token": {
+              "sourcePointer": "/latestRegistrationsBeforeFirstIncidentCall/7",
+              "peer": "peer-006",
+              "kind": "token",
+              "tokenKind": "standard_call",
+              "authorizedSender": null,
+              "operation": "register",
+              "record": {
+                "platform": "android",
+                "kind": "standard_call",
+                "expiresAtMs": 1791454167084,
+                "identityChangedFromPreviousRegistration": null
+              },
+              "commandOrderAfterAnchor": null,
+              "commandOrderBeforeAnchor": null,
+              "status": "observed_registered",
+              "expiresAt": "2026-10-08T10:09:27.084Z",
+              "unexpiredAtReceipt": true,
+              "signedOrRecordedExpiryAfterObservedGroupTail": true,
+              "remainingAtReceiptMs": 2591949446
+            },
+            "wake": {
+              "sourcePointer": "/registrationMutationsDuringCallWindow/9",
+              "peer": "peer-006",
+              "kind": "wake",
+              "tokenKind": null,
+              "authorizedSender": "peer-007",
+              "operation": "register",
+              "record": {
+                "expiresAtMs": 1788948567698,
+                "identityChangedFromPreviousRegistration": false
+              },
+              "commandOrderAfterAnchor": "2026-09-08T10:10:00.670Z",
+              "commandOrderBeforeAnchor": "2026-09-08T10:10:17.386Z",
+              "status": "observed_registered",
+              "expiresAt": "2026-09-09T10:09:27.698Z",
+              "unexpiredAtReceipt": true,
+              "signedOrRecordedExpiryAfterObservedGroupTail": true,
+              "remainingAtReceiptMs": 86350060
+            }
+          },
+          "ambiguousMutationPointers": []
+        }
+      ]
+    },
+    {
+      "callAlias": "call-092",
+      "aliasCaveat": "Equal opaque-handle group from source; not independently decoded call IDs or invite semantics.",
+      "firstObservedDirection": {
+        "sender": "peer-006",
+        "recipient": "peer-007"
+      },
+      "firstObservedReceipt": "2026-09-08T10:10:26.992Z",
+      "lastObservedEventOrTerminalMarker": "2026-09-08T10:10:45.558Z",
+      "observedSpanCaveat": "This is an observed metadata span, not proven media duration or terminal state.",
+      "allThreeRecipientRecordsPresentAndUnexpiredBeforeFirstReceipt": true,
+      "recipientAuthorityAtFirstReceipt": {
+        "endpoint": {
+          "sourcePointer": "/registrationMutationsDuringCallWindow/21",
+          "peer": "peer-007",
+          "kind": "endpoint",
+          "tokenKind": null,
+          "authorizedSender": null,
+          "operation": "register",
+          "record": {
+            "platform": "ios",
+            "expiresAtMs": 1788883826214,
+            "preferenceEpoch": 1788862226214,
+            "deviceKeyEpoch": 8879833610816774,
+            "identityChangedFromPreviousRegistration": false
+          },
+          "commandOrderAfterAnchor": "2026-09-08T10:10:17.900Z",
+          "commandOrderBeforeAnchor": "2026-09-08T10:10:26.992Z",
+          "status": "observed_registered",
+          "expiresAt": "2026-09-08T16:10:26.214Z",
+          "unexpiredAtReceipt": true,
+          "signedOrRecordedExpiryAfterObservedGroupTail": true,
+          "remainingAtReceiptMs": 21599222
+        },
+        "endpoint-device": {
+          "sourcePointer": "/registrationMutationsDuringCallWindow/22",
+          "peer": "peer-007",
+          "kind": "endpoint-device",
+          "tokenKind": null,
+          "authorizedSender": null,
+          "operation": "register",
+          "record": {
+            "platform": "ios",
+            "expiresAtMs": 1788883826214,
+            "preferenceEpoch": 1788862226214
+          },
+          "commandOrderAfterAnchor": "2026-09-08T10:10:17.900Z",
+          "commandOrderBeforeAnchor": "2026-09-08T10:10:26.992Z",
+          "status": "observed_registered",
+          "expiresAt": "2026-09-08T16:10:26.214Z",
+          "unexpiredAtReceipt": true,
+          "signedOrRecordedExpiryAfterObservedGroupTail": true,
+          "remainingAtReceiptMs": 21599222
+        },
+        "token": {
+          "sourcePointer": "/registrationMutationsDuringCallWindow/17",
+          "peer": "peer-007",
+          "kind": "token",
+          "tokenKind": "ios_voip",
+          "authorizedSender": null,
+          "operation": "register",
+          "record": {
+            "platform": "ios",
+            "environment": "production",
+            "kind": "ios_voip",
+            "expiresAtMs": 1791454224066,
+            "capabilityVersion": 1,
+            "refreshEpoch": 3,
+            "generation": 2,
+            "identityChangedFromPreviousRegistration": false
+          },
+          "commandOrderAfterAnchor": "2026-09-08T10:10:17.900Z",
+          "commandOrderBeforeAnchor": "2026-09-08T10:10:26.992Z",
+          "status": "observed_registered",
+          "expiresAt": "2026-10-08T10:10:24.066Z",
+          "unexpiredAtReceipt": true,
+          "signedOrRecordedExpiryAfterObservedGroupTail": true,
+          "remainingAtReceiptMs": 2591997074
+        },
+        "wake": {
+          "sourcePointer": "/registrationMutationsDuringCallWindow/19",
+          "peer": "peer-007",
+          "kind": "wake",
+          "tokenKind": null,
+          "authorizedSender": "peer-006",
+          "operation": "register",
+          "record": {
+            "expiresAtMs": 1788902671777,
+            "identityChangedFromPreviousRegistration": false
+          },
+          "commandOrderAfterAnchor": "2026-09-08T10:10:17.900Z",
+          "commandOrderBeforeAnchor": "2026-09-08T10:10:26.992Z",
+          "status": "observed_registered",
+          "expiresAt": "2026-09-08T21:24:31.777Z",
+          "unexpiredAtReceipt": true,
+          "signedOrRecordedExpiryAfterObservedGroupTail": true,
+          "remainingAtReceiptMs": 40444785
+        }
+      },
+      "recipientDeletionRowsWithinObservedSpan": [],
+      "recipientMutationPointersWithinObservedSpan": [],
+      "recipientStateThroughObservedSpan": "no_exported_deletion_or_record_expiry",
+      "directionalMailboxes": [
+        {
+          "mailbox": "mailbox-157",
+          "sourcePointer": "/mailboxes/4",
+          "sender": "peer-006",
+          "recipient": "peer-007",
+          "firstReceipt": "2026-09-08T10:10:26.992Z",
+          "lastEventReceipt": "2026-09-08T10:10:26.992Z",
+          "recipientAuthorityBeforeFirstReceipt": {
+            "endpoint": {
+              "sourcePointer": "/registrationMutationsDuringCallWindow/21",
+              "peer": "peer-007",
+              "kind": "endpoint",
+              "tokenKind": null,
+              "authorizedSender": null,
+              "operation": "register",
+              "record": {
+                "platform": "ios",
+                "expiresAtMs": 1788883826214,
+                "preferenceEpoch": 1788862226214,
+                "deviceKeyEpoch": 8879833610816774,
+                "identityChangedFromPreviousRegistration": false
+              },
+              "commandOrderAfterAnchor": "2026-09-08T10:10:17.900Z",
+              "commandOrderBeforeAnchor": "2026-09-08T10:10:26.992Z",
+              "status": "observed_registered",
+              "expiresAt": "2026-09-08T16:10:26.214Z",
+              "unexpiredAtReceipt": true,
+              "signedOrRecordedExpiryAfterObservedGroupTail": true,
+              "remainingAtReceiptMs": 21599222
+            },
+            "endpoint-device": {
+              "sourcePointer": "/registrationMutationsDuringCallWindow/22",
+              "peer": "peer-007",
+              "kind": "endpoint-device",
+              "tokenKind": null,
+              "authorizedSender": null,
+              "operation": "register",
+              "record": {
+                "platform": "ios",
+                "expiresAtMs": 1788883826214,
+                "preferenceEpoch": 1788862226214
+              },
+              "commandOrderAfterAnchor": "2026-09-08T10:10:17.900Z",
+              "commandOrderBeforeAnchor": "2026-09-08T10:10:26.992Z",
+              "status": "observed_registered",
+              "expiresAt": "2026-09-08T16:10:26.214Z",
+              "unexpiredAtReceipt": true,
+              "signedOrRecordedExpiryAfterObservedGroupTail": true,
+              "remainingAtReceiptMs": 21599222
+            },
+            "token": {
+              "sourcePointer": "/registrationMutationsDuringCallWindow/17",
+              "peer": "peer-007",
+              "kind": "token",
+              "tokenKind": "ios_voip",
+              "authorizedSender": null,
+              "operation": "register",
+              "record": {
+                "platform": "ios",
+                "environment": "production",
+                "kind": "ios_voip",
+                "expiresAtMs": 1791454224066,
+                "capabilityVersion": 1,
+                "refreshEpoch": 3,
+                "generation": 2,
+                "identityChangedFromPreviousRegistration": false
+              },
+              "commandOrderAfterAnchor": "2026-09-08T10:10:17.900Z",
+              "commandOrderBeforeAnchor": "2026-09-08T10:10:26.992Z",
+              "status": "observed_registered",
+              "expiresAt": "2026-10-08T10:10:24.066Z",
+              "unexpiredAtReceipt": true,
+              "signedOrRecordedExpiryAfterObservedGroupTail": true,
+              "remainingAtReceiptMs": 2591997074
+            },
+            "wake": {
+              "sourcePointer": "/registrationMutationsDuringCallWindow/19",
+              "peer": "peer-007",
+              "kind": "wake",
+              "tokenKind": null,
+              "authorizedSender": "peer-006",
+              "operation": "register",
+              "record": {
+                "expiresAtMs": 1788902671777,
+                "identityChangedFromPreviousRegistration": false
+              },
+              "commandOrderAfterAnchor": "2026-09-08T10:10:17.900Z",
+              "commandOrderBeforeAnchor": "2026-09-08T10:10:26.992Z",
+              "status": "observed_registered",
+              "expiresAt": "2026-09-08T21:24:31.777Z",
+              "unexpiredAtReceipt": true,
+              "signedOrRecordedExpiryAfterObservedGroupTail": true,
+              "remainingAtReceiptMs": 40444785
+            }
+          },
+          "ambiguousMutationPointers": []
+        },
+        {
+          "mailbox": "mailbox-158",
+          "sourcePointer": "/mailboxes/5",
+          "sender": "peer-007",
+          "recipient": "peer-006",
+          "firstReceipt": "2026-09-08T10:10:45.558Z",
+          "lastEventReceipt": "2026-09-08T10:10:45.558Z",
+          "recipientAuthorityBeforeFirstReceipt": {
+            "endpoint": {
+              "sourcePointer": "/registrationMutationsDuringCallWindow/31",
+              "peer": "peer-006",
+              "kind": "endpoint",
+              "tokenKind": null,
+              "authorizedSender": null,
+              "operation": "register",
+              "record": {
+                "platform": "android",
+                "expiresAtMs": 1788883836554,
+                "preferenceEpoch": 1788862236554,
+                "deviceKeyEpoch": 4236284878241438,
+                "identityChangedFromPreviousRegistration": false
+              },
+              "commandOrderAfterAnchor": "2026-09-08T10:10:26.992Z",
+              "commandOrderBeforeAnchor": "2026-09-08T10:10:45.558Z",
+              "status": "observed_registered",
+              "expiresAt": "2026-09-08T16:10:36.554Z",
+              "unexpiredAtReceipt": true,
+              "signedOrRecordedExpiryAfterObservedGroupTail": true,
+              "remainingAtReceiptMs": 21590996
+            },
+            "endpoint-device": {
+              "sourcePointer": "/registrationMutationsDuringCallWindow/32",
+              "peer": "peer-006",
+              "kind": "endpoint-device",
+              "tokenKind": null,
+              "authorizedSender": null,
+              "operation": "register",
+              "record": {
+                "platform": "android",
+                "expiresAtMs": 1788883836554,
+                "preferenceEpoch": 1788862236554
+              },
+              "commandOrderAfterAnchor": "2026-09-08T10:10:26.992Z",
+              "commandOrderBeforeAnchor": "2026-09-08T10:10:45.558Z",
+              "status": "observed_registered",
+              "expiresAt": "2026-09-08T16:10:36.554Z",
+              "unexpiredAtReceipt": true,
+              "signedOrRecordedExpiryAfterObservedGroupTail": true,
+              "remainingAtReceiptMs": 21590996
+            },
+            "token": {
+              "sourcePointer": "/latestRegistrationsBeforeFirstIncidentCall/7",
+              "peer": "peer-006",
+              "kind": "token",
+              "tokenKind": "standard_call",
+              "authorizedSender": null,
+              "operation": "register",
+              "record": {
+                "platform": "android",
+                "kind": "standard_call",
+                "expiresAtMs": 1791454167084,
+                "identityChangedFromPreviousRegistration": null
+              },
+              "commandOrderAfterAnchor": null,
+              "commandOrderBeforeAnchor": null,
+              "status": "observed_registered",
+              "expiresAt": "2026-10-08T10:09:27.084Z",
+              "unexpiredAtReceipt": true,
+              "signedOrRecordedExpiryAfterObservedGroupTail": true,
+              "remainingAtReceiptMs": 2591921526
+            },
+            "wake": {
+              "sourcePointer": "/registrationMutationsDuringCallWindow/34",
+              "peer": "peer-006",
+              "kind": "wake",
+              "tokenKind": null,
+              "authorizedSender": "peer-007",
+              "operation": "register",
+              "record": {
+                "expiresAtMs": 1788948567698,
+                "identityChangedFromPreviousRegistration": false
+              },
+              "commandOrderAfterAnchor": "2026-09-08T10:10:26.992Z",
+              "commandOrderBeforeAnchor": "2026-09-08T10:10:45.558Z",
+              "status": "observed_registered",
+              "expiresAt": "2026-09-09T10:09:27.698Z",
+              "unexpiredAtReceipt": true,
+              "signedOrRecordedExpiryAfterObservedGroupTail": true,
+              "remainingAtReceiptMs": 86322140
+            }
+          },
+          "ambiguousMutationPointers": []
+        }
+      ]
+    },
+    {
+      "callAlias": "call-093",
+      "aliasCaveat": "Equal opaque-handle group from source; not independently decoded call IDs or invite semantics.",
+      "firstObservedDirection": {
+        "sender": "peer-007",
+        "recipient": "peer-008"
+      },
+      "firstObservedReceipt": "2026-09-08T10:11:36.513Z",
+      "lastObservedEventOrTerminalMarker": "2026-09-08T10:11:58.419Z",
+      "observedSpanCaveat": "This is an observed metadata span, not proven media duration or terminal state.",
+      "allThreeRecipientRecordsPresentAndUnexpiredBeforeFirstReceipt": true,
+      "recipientAuthorityAtFirstReceipt": {
+        "endpoint": {
+          "sourcePointer": "/registrationMutationsDuringCallWindow/72",
+          "peer": "peer-008",
+          "kind": "endpoint",
+          "tokenKind": null,
+          "authorizedSender": null,
+          "operation": "register",
+          "record": {
+            "platform": "ios",
+            "expiresAtMs": 1788883895698,
+            "preferenceEpoch": 1788862295698,
+            "deviceKeyEpoch": 7519413882761528,
+            "identityChangedFromPreviousRegistration": true
+          },
+          "commandOrderAfterAnchor": "2026-09-08T10:10:45.558Z",
+          "commandOrderBeforeAnchor": "2026-09-08T10:11:36.513Z",
+          "status": "observed_registered",
+          "expiresAt": "2026-09-08T16:11:35.698Z",
+          "unexpiredAtReceipt": true,
+          "signedOrRecordedExpiryAfterObservedGroupTail": true,
+          "remainingAtReceiptMs": 21599185
+        },
+        "endpoint-device": {
+          "sourcePointer": "/registrationMutationsDuringCallWindow/73",
+          "peer": "peer-008",
+          "kind": "endpoint-device",
+          "tokenKind": null,
+          "authorizedSender": null,
+          "operation": "register",
+          "record": {
+            "platform": "ios",
+            "expiresAtMs": 1788883895698,
+            "preferenceEpoch": 1788862295698
+          },
+          "commandOrderAfterAnchor": "2026-09-08T10:10:45.558Z",
+          "commandOrderBeforeAnchor": "2026-09-08T10:11:36.513Z",
+          "status": "observed_registered",
+          "expiresAt": "2026-09-08T16:11:35.698Z",
+          "unexpiredAtReceipt": true,
+          "signedOrRecordedExpiryAfterObservedGroupTail": true,
+          "remainingAtReceiptMs": 21599185
+        },
+        "token": {
+          "sourcePointer": "/registrationMutationsDuringCallWindow/68",
+          "peer": "peer-008",
+          "kind": "token",
+          "tokenKind": "ios_voip",
+          "authorizedSender": null,
+          "operation": "register",
+          "record": {
+            "platform": "ios",
+            "environment": "production",
+            "kind": "ios_voip",
+            "expiresAtMs": 1791454295177,
+            "capabilityVersion": 1,
+            "refreshEpoch": 3,
+            "generation": 2,
+            "identityChangedFromPreviousRegistration": false
+          },
+          "commandOrderAfterAnchor": "2026-09-08T10:10:45.558Z",
+          "commandOrderBeforeAnchor": "2026-09-08T10:11:36.513Z",
+          "status": "observed_registered",
+          "expiresAt": "2026-10-08T10:11:35.177Z",
+          "unexpiredAtReceipt": true,
+          "signedOrRecordedExpiryAfterObservedGroupTail": true,
+          "remainingAtReceiptMs": 2591998664
+        },
+        "wake": {
+          "sourcePointer": "/registrationMutationsDuringCallWindow/71",
+          "peer": "peer-008",
+          "kind": "wake",
+          "tokenKind": null,
+          "authorizedSender": "peer-007",
+          "operation": "register",
+          "record": {
+            "expiresAtMs": 1788948568510,
+            "identityChangedFromPreviousRegistration": false
+          },
+          "commandOrderAfterAnchor": "2026-09-08T10:10:45.558Z",
+          "commandOrderBeforeAnchor": "2026-09-08T10:11:36.513Z",
+          "status": "observed_registered",
+          "expiresAt": "2026-09-09T10:09:28.510Z",
+          "unexpiredAtReceipt": true,
+          "signedOrRecordedExpiryAfterObservedGroupTail": true,
+          "remainingAtReceiptMs": 86271997
+        }
+      },
+      "recipientDeletionRowsWithinObservedSpan": [],
+      "recipientMutationPointersWithinObservedSpan": [
+        "/registrationMutationsDuringCallWindow/75",
+        "/registrationMutationsDuringCallWindow/76",
+        "/registrationMutationsDuringCallWindow/77",
+        "/registrationMutationsDuringCallWindow/78",
+        "/registrationMutationsDuringCallWindow/79",
+        "/registrationMutationsDuringCallWindow/80",
+        "/registrationMutationsDuringCallWindow/81",
+        "/registrationMutationsDuringCallWindow/82",
+        "/registrationMutationsDuringCallWindow/83",
+        "/registrationMutationsDuringCallWindow/84",
+        "/registrationMutationsDuringCallWindow/85",
+        "/registrationMutationsDuringCallWindow/86",
+        "/registrationMutationsDuringCallWindow/87",
+        "/registrationMutationsDuringCallWindow/88"
+      ],
+      "recipientStateThroughObservedSpan": "no_exported_deletion_or_record_expiry",
+      "directionalMailboxes": [
+        {
+          "mailbox": "mailbox-159",
+          "sourcePointer": "/mailboxes/6",
+          "sender": "peer-007",
+          "recipient": "peer-008",
+          "firstReceipt": "2026-09-08T10:11:36.513Z",
+          "lastEventReceipt": "2026-09-08T10:11:42.713Z",
+          "recipientAuthorityBeforeFirstReceipt": {
+            "endpoint": {
+              "sourcePointer": "/registrationMutationsDuringCallWindow/72",
+              "peer": "peer-008",
+              "kind": "endpoint",
+              "tokenKind": null,
+              "authorizedSender": null,
+              "operation": "register",
+              "record": {
+                "platform": "ios",
+                "expiresAtMs": 1788883895698,
+                "preferenceEpoch": 1788862295698,
+                "deviceKeyEpoch": 7519413882761528,
+                "identityChangedFromPreviousRegistration": true
+              },
+              "commandOrderAfterAnchor": "2026-09-08T10:10:45.558Z",
+              "commandOrderBeforeAnchor": "2026-09-08T10:11:36.513Z",
+              "status": "observed_registered",
+              "expiresAt": "2026-09-08T16:11:35.698Z",
+              "unexpiredAtReceipt": true,
+              "signedOrRecordedExpiryAfterObservedGroupTail": true,
+              "remainingAtReceiptMs": 21599185
+            },
+            "endpoint-device": {
+              "sourcePointer": "/registrationMutationsDuringCallWindow/73",
+              "peer": "peer-008",
+              "kind": "endpoint-device",
+              "tokenKind": null,
+              "authorizedSender": null,
+              "operation": "register",
+              "record": {
+                "platform": "ios",
+                "expiresAtMs": 1788883895698,
+                "preferenceEpoch": 1788862295698
+              },
+              "commandOrderAfterAnchor": "2026-09-08T10:10:45.558Z",
+              "commandOrderBeforeAnchor": "2026-09-08T10:11:36.513Z",
+              "status": "observed_registered",
+              "expiresAt": "2026-09-08T16:11:35.698Z",
+              "unexpiredAtReceipt": true,
+              "signedOrRecordedExpiryAfterObservedGroupTail": true,
+              "remainingAtReceiptMs": 21599185
+            },
+            "token": {
+              "sourcePointer": "/registrationMutationsDuringCallWindow/68",
+              "peer": "peer-008",
+              "kind": "token",
+              "tokenKind": "ios_voip",
+              "authorizedSender": null,
+              "operation": "register",
+              "record": {
+                "platform": "ios",
+                "environment": "production",
+                "kind": "ios_voip",
+                "expiresAtMs": 1791454295177,
+                "capabilityVersion": 1,
+                "refreshEpoch": 3,
+                "generation": 2,
+                "identityChangedFromPreviousRegistration": false
+              },
+              "commandOrderAfterAnchor": "2026-09-08T10:10:45.558Z",
+              "commandOrderBeforeAnchor": "2026-09-08T10:11:36.513Z",
+              "status": "observed_registered",
+              "expiresAt": "2026-10-08T10:11:35.177Z",
+              "unexpiredAtReceipt": true,
+              "signedOrRecordedExpiryAfterObservedGroupTail": true,
+              "remainingAtReceiptMs": 2591998664
+            },
+            "wake": {
+              "sourcePointer": "/registrationMutationsDuringCallWindow/71",
+              "peer": "peer-008",
+              "kind": "wake",
+              "tokenKind": null,
+              "authorizedSender": "peer-007",
+              "operation": "register",
+              "record": {
+                "expiresAtMs": 1788948568510,
+                "identityChangedFromPreviousRegistration": false
+              },
+              "commandOrderAfterAnchor": "2026-09-08T10:10:45.558Z",
+              "commandOrderBeforeAnchor": "2026-09-08T10:11:36.513Z",
+              "status": "observed_registered",
+              "expiresAt": "2026-09-09T10:09:28.510Z",
+              "unexpiredAtReceipt": true,
+              "signedOrRecordedExpiryAfterObservedGroupTail": true,
+              "remainingAtReceiptMs": 86271997
+            }
+          },
+          "ambiguousMutationPointers": []
+        },
+        {
+          "mailbox": "mailbox-160",
+          "sourcePointer": "/mailboxes/7",
+          "sender": "peer-008",
+          "recipient": "peer-007",
+          "firstReceipt": "2026-09-08T10:11:37.462Z",
+          "lastEventReceipt": "2026-09-08T10:11:58.419Z",
+          "recipientAuthorityBeforeFirstReceipt": {
+            "endpoint": {
+              "sourcePointer": "/registrationMutationsDuringCallWindow/65",
+              "peer": "peer-007",
+              "kind": "endpoint",
+              "tokenKind": null,
+              "authorizedSender": null,
+              "operation": "register",
+              "record": {
+                "platform": "ios",
+                "expiresAtMs": 1788883886659,
+                "preferenceEpoch": 1788862286659,
+                "deviceKeyEpoch": 8879833610816774,
+                "identityChangedFromPreviousRegistration": false
+              },
+              "commandOrderAfterAnchor": "2026-09-08T10:10:45.558Z",
+              "commandOrderBeforeAnchor": "2026-09-08T10:11:36.513Z",
+              "status": "observed_registered",
+              "expiresAt": "2026-09-08T16:11:26.659Z",
+              "unexpiredAtReceipt": true,
+              "signedOrRecordedExpiryAfterObservedGroupTail": true,
+              "remainingAtReceiptMs": 21589197
+            },
+            "endpoint-device": {
+              "sourcePointer": "/registrationMutationsDuringCallWindow/66",
+              "peer": "peer-007",
+              "kind": "endpoint-device",
+              "tokenKind": null,
+              "authorizedSender": null,
+              "operation": "register",
+              "record": {
+                "platform": "ios",
+                "expiresAtMs": 1788883886659,
+                "preferenceEpoch": 1788862286659
+              },
+              "commandOrderAfterAnchor": "2026-09-08T10:10:45.558Z",
+              "commandOrderBeforeAnchor": "2026-09-08T10:11:36.513Z",
+              "status": "observed_registered",
+              "expiresAt": "2026-09-08T16:11:26.659Z",
+              "unexpiredAtReceipt": true,
+              "signedOrRecordedExpiryAfterObservedGroupTail": true,
+              "remainingAtReceiptMs": 21589197
+            },
+            "token": {
+              "sourcePointer": "/registrationMutationsDuringCallWindow/61",
+              "peer": "peer-007",
+              "kind": "token",
+              "tokenKind": "ios_voip",
+              "authorizedSender": null,
+              "operation": "register",
+              "record": {
+                "platform": "ios",
+                "environment": "production",
+                "kind": "ios_voip",
+                "expiresAtMs": 1791454284638,
+                "capabilityVersion": 1,
+                "refreshEpoch": 3,
+                "generation": 2,
+                "identityChangedFromPreviousRegistration": false
+              },
+              "commandOrderAfterAnchor": "2026-09-08T10:10:45.558Z",
+              "commandOrderBeforeAnchor": "2026-09-08T10:11:36.513Z",
+              "status": "observed_registered",
+              "expiresAt": "2026-10-08T10:11:24.638Z",
+              "unexpiredAtReceipt": true,
+              "signedOrRecordedExpiryAfterObservedGroupTail": true,
+              "remainingAtReceiptMs": 2591987176
+            },
+            "wake": {
+              "sourcePointer": "/registrationMutationsDuringCallWindow/64",
+              "peer": "peer-007",
+              "kind": "wake",
+              "tokenKind": null,
+              "authorizedSender": "peer-008",
+              "operation": "register",
+              "record": {
+                "expiresAtMs": 1788902671777,
+                "identityChangedFromPreviousRegistration": false
+              },
+              "commandOrderAfterAnchor": "2026-09-08T10:10:45.558Z",
+              "commandOrderBeforeAnchor": "2026-09-08T10:11:36.513Z",
+              "status": "observed_registered",
+              "expiresAt": "2026-09-08T21:24:31.777Z",
+              "unexpiredAtReceipt": true,
+              "signedOrRecordedExpiryAfterObservedGroupTail": true,
+              "remainingAtReceiptMs": 40374315
+            }
+          },
+          "ambiguousMutationPointers": []
+        }
+      ]
+    },
+    {
+      "callAlias": "call-094",
+      "aliasCaveat": "Equal opaque-handle group from source; not independently decoded call IDs or invite semantics.",
+      "firstObservedDirection": {
+        "sender": "peer-006",
+        "recipient": "peer-007"
+      },
+      "firstObservedReceipt": "2026-09-08T10:12:01.789Z",
+      "lastObservedEventOrTerminalMarker": "2026-09-08T10:12:02.638Z",
+      "observedSpanCaveat": "This is an observed metadata span, not proven media duration or terminal state.",
+      "allThreeRecipientRecordsPresentAndUnexpiredBeforeFirstReceipt": true,
+      "recipientAuthorityAtFirstReceipt": {
+        "endpoint": {
+          "sourcePointer": "/registrationMutationsDuringCallWindow/65",
+          "peer": "peer-007",
+          "kind": "endpoint",
+          "tokenKind": null,
+          "authorizedSender": null,
+          "operation": "register",
+          "record": {
+            "platform": "ios",
+            "expiresAtMs": 1788883886659,
+            "preferenceEpoch": 1788862286659,
+            "deviceKeyEpoch": 8879833610816774,
+            "identityChangedFromPreviousRegistration": false
+          },
+          "commandOrderAfterAnchor": "2026-09-08T10:10:45.558Z",
+          "commandOrderBeforeAnchor": "2026-09-08T10:11:36.513Z",
+          "status": "observed_registered",
+          "expiresAt": "2026-09-08T16:11:26.659Z",
+          "unexpiredAtReceipt": true,
+          "signedOrRecordedExpiryAfterObservedGroupTail": true,
+          "remainingAtReceiptMs": 21564870
+        },
+        "endpoint-device": {
+          "sourcePointer": "/registrationMutationsDuringCallWindow/66",
+          "peer": "peer-007",
+          "kind": "endpoint-device",
+          "tokenKind": null,
+          "authorizedSender": null,
+          "operation": "register",
+          "record": {
+            "platform": "ios",
+            "expiresAtMs": 1788883886659,
+            "preferenceEpoch": 1788862286659
+          },
+          "commandOrderAfterAnchor": "2026-09-08T10:10:45.558Z",
+          "commandOrderBeforeAnchor": "2026-09-08T10:11:36.513Z",
+          "status": "observed_registered",
+          "expiresAt": "2026-09-08T16:11:26.659Z",
+          "unexpiredAtReceipt": true,
+          "signedOrRecordedExpiryAfterObservedGroupTail": true,
+          "remainingAtReceiptMs": 21564870
+        },
+        "token": {
+          "sourcePointer": "/registrationMutationsDuringCallWindow/61",
+          "peer": "peer-007",
+          "kind": "token",
+          "tokenKind": "ios_voip",
+          "authorizedSender": null,
+          "operation": "register",
+          "record": {
+            "platform": "ios",
+            "environment": "production",
+            "kind": "ios_voip",
+            "expiresAtMs": 1791454284638,
+            "capabilityVersion": 1,
+            "refreshEpoch": 3,
+            "generation": 2,
+            "identityChangedFromPreviousRegistration": false
+          },
+          "commandOrderAfterAnchor": "2026-09-08T10:10:45.558Z",
+          "commandOrderBeforeAnchor": "2026-09-08T10:11:36.513Z",
+          "status": "observed_registered",
+          "expiresAt": "2026-10-08T10:11:24.638Z",
+          "unexpiredAtReceipt": true,
+          "signedOrRecordedExpiryAfterObservedGroupTail": true,
+          "remainingAtReceiptMs": 2591962849
+        },
+        "wake": {
+          "sourcePointer": "/registrationMutationsDuringCallWindow/63",
+          "peer": "peer-007",
+          "kind": "wake",
+          "tokenKind": null,
+          "authorizedSender": "peer-006",
+          "operation": "register",
+          "record": {
+            "expiresAtMs": 1788902671777,
+            "identityChangedFromPreviousRegistration": false
+          },
+          "commandOrderAfterAnchor": "2026-09-08T10:10:45.558Z",
+          "commandOrderBeforeAnchor": "2026-09-08T10:11:36.513Z",
+          "status": "observed_registered",
+          "expiresAt": "2026-09-08T21:24:31.777Z",
+          "unexpiredAtReceipt": true,
+          "signedOrRecordedExpiryAfterObservedGroupTail": true,
+          "remainingAtReceiptMs": 40349988
+        }
+      },
+      "recipientDeletionRowsWithinObservedSpan": [],
+      "recipientMutationPointersWithinObservedSpan": [],
+      "recipientStateThroughObservedSpan": "no_exported_deletion_or_record_expiry",
+      "directionalMailboxes": [
+        {
+          "mailbox": "mailbox-161",
+          "sourcePointer": "/mailboxes/8",
+          "sender": "peer-006",
+          "recipient": "peer-007",
+          "firstReceipt": "2026-09-08T10:12:01.789Z",
+          "lastEventReceipt": "2026-09-08T10:12:01.789Z",
+          "recipientAuthorityBeforeFirstReceipt": {
+            "endpoint": {
+              "sourcePointer": "/registrationMutationsDuringCallWindow/65",
+              "peer": "peer-007",
+              "kind": "endpoint",
+              "tokenKind": null,
+              "authorizedSender": null,
+              "operation": "register",
+              "record": {
+                "platform": "ios",
+                "expiresAtMs": 1788883886659,
+                "preferenceEpoch": 1788862286659,
+                "deviceKeyEpoch": 8879833610816774,
+                "identityChangedFromPreviousRegistration": false
+              },
+              "commandOrderAfterAnchor": "2026-09-08T10:10:45.558Z",
+              "commandOrderBeforeAnchor": "2026-09-08T10:11:36.513Z",
+              "status": "observed_registered",
+              "expiresAt": "2026-09-08T16:11:26.659Z",
+              "unexpiredAtReceipt": true,
+              "signedOrRecordedExpiryAfterObservedGroupTail": true,
+              "remainingAtReceiptMs": 21564870
+            },
+            "endpoint-device": {
+              "sourcePointer": "/registrationMutationsDuringCallWindow/66",
+              "peer": "peer-007",
+              "kind": "endpoint-device",
+              "tokenKind": null,
+              "authorizedSender": null,
+              "operation": "register",
+              "record": {
+                "platform": "ios",
+                "expiresAtMs": 1788883886659,
+                "preferenceEpoch": 1788862286659
+              },
+              "commandOrderAfterAnchor": "2026-09-08T10:10:45.558Z",
+              "commandOrderBeforeAnchor": "2026-09-08T10:11:36.513Z",
+              "status": "observed_registered",
+              "expiresAt": "2026-09-08T16:11:26.659Z",
+              "unexpiredAtReceipt": true,
+              "signedOrRecordedExpiryAfterObservedGroupTail": true,
+              "remainingAtReceiptMs": 21564870
+            },
+            "token": {
+              "sourcePointer": "/registrationMutationsDuringCallWindow/61",
+              "peer": "peer-007",
+              "kind": "token",
+              "tokenKind": "ios_voip",
+              "authorizedSender": null,
+              "operation": "register",
+              "record": {
+                "platform": "ios",
+                "environment": "production",
+                "kind": "ios_voip",
+                "expiresAtMs": 1791454284638,
+                "capabilityVersion": 1,
+                "refreshEpoch": 3,
+                "generation": 2,
+                "identityChangedFromPreviousRegistration": false
+              },
+              "commandOrderAfterAnchor": "2026-09-08T10:10:45.558Z",
+              "commandOrderBeforeAnchor": "2026-09-08T10:11:36.513Z",
+              "status": "observed_registered",
+              "expiresAt": "2026-10-08T10:11:24.638Z",
+              "unexpiredAtReceipt": true,
+              "signedOrRecordedExpiryAfterObservedGroupTail": true,
+              "remainingAtReceiptMs": 2591962849
+            },
+            "wake": {
+              "sourcePointer": "/registrationMutationsDuringCallWindow/63",
+              "peer": "peer-007",
+              "kind": "wake",
+              "tokenKind": null,
+              "authorizedSender": "peer-006",
+              "operation": "register",
+              "record": {
+                "expiresAtMs": 1788902671777,
+                "identityChangedFromPreviousRegistration": false
+              },
+              "commandOrderAfterAnchor": "2026-09-08T10:10:45.558Z",
+              "commandOrderBeforeAnchor": "2026-09-08T10:11:36.513Z",
+              "status": "observed_registered",
+              "expiresAt": "2026-09-08T21:24:31.777Z",
+              "unexpiredAtReceipt": true,
+              "signedOrRecordedExpiryAfterObservedGroupTail": true,
+              "remainingAtReceiptMs": 40349988
+            }
+          },
+          "ambiguousMutationPointers": []
+        },
+        {
+          "mailbox": "mailbox-162",
+          "sourcePointer": "/mailboxes/9",
+          "sender": "peer-007",
+          "recipient": "peer-006",
+          "firstReceipt": "2026-09-08T10:12:02.638Z",
+          "lastEventReceipt": "2026-09-08T10:12:02.638Z",
+          "recipientAuthorityBeforeFirstReceipt": {
+            "endpoint": {
+              "sourcePointer": "/registrationMutationsDuringCallWindow/107",
+              "peer": "peer-006",
+              "kind": "endpoint",
+              "tokenKind": null,
+              "authorizedSender": null,
+              "operation": "register",
+              "record": {
+                "platform": "android",
+                "expiresAtMs": 1788883921089,
+                "preferenceEpoch": 1788862321089,
+                "deviceKeyEpoch": 4236284878241438,
+                "identityChangedFromPreviousRegistration": false
+              },
+              "commandOrderAfterAnchor": "2026-09-08T10:11:58.419Z",
+              "commandOrderBeforeAnchor": "2026-09-08T10:12:01.789Z",
+              "status": "observed_registered",
+              "expiresAt": "2026-09-08T16:12:01.089Z",
+              "unexpiredAtReceipt": true,
+              "signedOrRecordedExpiryAfterObservedGroupTail": true,
+              "remainingAtReceiptMs": 21598451
+            },
+            "endpoint-device": {
+              "sourcePointer": "/registrationMutationsDuringCallWindow/108",
+              "peer": "peer-006",
+              "kind": "endpoint-device",
+              "tokenKind": null,
+              "authorizedSender": null,
+              "operation": "register",
+              "record": {
+                "platform": "android",
+                "expiresAtMs": 1788883921089,
+                "preferenceEpoch": 1788862321089
+              },
+              "commandOrderAfterAnchor": "2026-09-08T10:11:58.419Z",
+              "commandOrderBeforeAnchor": "2026-09-08T10:12:01.789Z",
+              "status": "observed_registered",
+              "expiresAt": "2026-09-08T16:12:01.089Z",
+              "unexpiredAtReceipt": true,
+              "signedOrRecordedExpiryAfterObservedGroupTail": true,
+              "remainingAtReceiptMs": 21598451
+            },
+            "token": {
+              "sourcePointer": "/registrationMutationsDuringCallWindow/89",
+              "peer": "peer-006",
+              "kind": "token",
+              "tokenKind": "standard_call",
+              "authorizedSender": null,
+              "operation": "register",
+              "record": {
+                "platform": "android",
+                "kind": "standard_call",
+                "expiresAtMs": 1791454314140,
+                "identityChangedFromPreviousRegistration": false
+              },
+              "commandOrderAfterAnchor": "2026-09-08T10:11:42.766Z",
+              "commandOrderBeforeAnchor": "2026-09-08T10:11:58.419Z",
+              "status": "observed_registered",
+              "expiresAt": "2026-10-08T10:11:54.140Z",
+              "unexpiredAtReceipt": true,
+              "signedOrRecordedExpiryAfterObservedGroupTail": true,
+              "remainingAtReceiptMs": 2591991502
+            },
+            "wake": {
+              "sourcePointer": "/registrationMutationsDuringCallWindow/105",
+              "peer": "peer-006",
+              "kind": "wake",
+              "tokenKind": null,
+              "authorizedSender": "peer-007",
+              "operation": "register",
+              "record": {
+                "expiresAtMs": 1788948567698,
+                "identityChangedFromPreviousRegistration": false
+              },
+              "commandOrderAfterAnchor": "2026-09-08T10:11:58.419Z",
+              "commandOrderBeforeAnchor": "2026-09-08T10:12:01.789Z",
+              "status": "observed_registered",
+              "expiresAt": "2026-09-09T10:09:27.698Z",
+              "unexpiredAtReceipt": true,
+              "signedOrRecordedExpiryAfterObservedGroupTail": true,
+              "remainingAtReceiptMs": 86245060
+            }
+          },
+          "ambiguousMutationPointers": []
+        }
+      ]
+    },
+    {
+      "callAlias": "call-095",
+      "aliasCaveat": "Equal opaque-handle group from source; not independently decoded call IDs or invite semantics.",
+      "firstObservedDirection": {
+        "sender": "peer-008",
+        "recipient": "peer-006"
+      },
+      "firstObservedReceipt": "2026-09-08T10:12:06.055Z",
+      "lastObservedEventOrTerminalMarker": "2026-09-08T10:12:21.939Z",
+      "observedSpanCaveat": "This is an observed metadata span, not proven media duration or terminal state.",
+      "allThreeRecipientRecordsPresentAndUnexpiredBeforeFirstReceipt": true,
+      "recipientAuthorityAtFirstReceipt": {
+        "endpoint": {
+          "sourcePointer": "/registrationMutationsDuringCallWindow/107",
+          "peer": "peer-006",
+          "kind": "endpoint",
+          "tokenKind": null,
+          "authorizedSender": null,
+          "operation": "register",
+          "record": {
+            "platform": "android",
+            "expiresAtMs": 1788883921089,
+            "preferenceEpoch": 1788862321089,
+            "deviceKeyEpoch": 4236284878241438,
+            "identityChangedFromPreviousRegistration": false
+          },
+          "commandOrderAfterAnchor": "2026-09-08T10:11:58.419Z",
+          "commandOrderBeforeAnchor": "2026-09-08T10:12:01.789Z",
+          "status": "observed_registered",
+          "expiresAt": "2026-09-08T16:12:01.089Z",
+          "unexpiredAtReceipt": true,
+          "signedOrRecordedExpiryAfterObservedGroupTail": true,
+          "remainingAtReceiptMs": 21595034
+        },
+        "endpoint-device": {
+          "sourcePointer": "/registrationMutationsDuringCallWindow/108",
+          "peer": "peer-006",
+          "kind": "endpoint-device",
+          "tokenKind": null,
+          "authorizedSender": null,
+          "operation": "register",
+          "record": {
+            "platform": "android",
+            "expiresAtMs": 1788883921089,
+            "preferenceEpoch": 1788862321089
+          },
+          "commandOrderAfterAnchor": "2026-09-08T10:11:58.419Z",
+          "commandOrderBeforeAnchor": "2026-09-08T10:12:01.789Z",
+          "status": "observed_registered",
+          "expiresAt": "2026-09-08T16:12:01.089Z",
+          "unexpiredAtReceipt": true,
+          "signedOrRecordedExpiryAfterObservedGroupTail": true,
+          "remainingAtReceiptMs": 21595034
+        },
+        "token": {
+          "sourcePointer": "/registrationMutationsDuringCallWindow/89",
+          "peer": "peer-006",
+          "kind": "token",
+          "tokenKind": "standard_call",
+          "authorizedSender": null,
+          "operation": "register",
+          "record": {
+            "platform": "android",
+            "kind": "standard_call",
+            "expiresAtMs": 1791454314140,
+            "identityChangedFromPreviousRegistration": false
+          },
+          "commandOrderAfterAnchor": "2026-09-08T10:11:42.766Z",
+          "commandOrderBeforeAnchor": "2026-09-08T10:11:58.419Z",
+          "status": "observed_registered",
+          "expiresAt": "2026-10-08T10:11:54.140Z",
+          "unexpiredAtReceipt": true,
+          "signedOrRecordedExpiryAfterObservedGroupTail": true,
+          "remainingAtReceiptMs": 2591988085
+        },
+        "wake": {
+          "sourcePointer": "/registrationMutationsDuringCallWindow/106",
+          "peer": "peer-006",
+          "kind": "wake",
+          "tokenKind": null,
+          "authorizedSender": "peer-008",
+          "operation": "register",
+          "record": {
+            "expiresAtMs": 1788948567698,
+            "identityChangedFromPreviousRegistration": false
+          },
+          "commandOrderAfterAnchor": "2026-09-08T10:11:58.419Z",
+          "commandOrderBeforeAnchor": "2026-09-08T10:12:01.789Z",
+          "status": "observed_registered",
+          "expiresAt": "2026-09-09T10:09:27.698Z",
+          "unexpiredAtReceipt": true,
+          "signedOrRecordedExpiryAfterObservedGroupTail": true,
+          "remainingAtReceiptMs": 86241643
+        }
+      },
+      "recipientDeletionRowsWithinObservedSpan": [],
+      "recipientMutationPointersWithinObservedSpan": [
+        "/registrationMutationsDuringCallWindow/117",
+        "/registrationMutationsDuringCallWindow/118",
+        "/registrationMutationsDuringCallWindow/119",
+        "/registrationMutationsDuringCallWindow/120",
+        "/registrationMutationsDuringCallWindow/121",
+        "/registrationMutationsDuringCallWindow/122",
+        "/registrationMutationsDuringCallWindow/123",
+        "/registrationMutationsDuringCallWindow/126",
+        "/registrationMutationsDuringCallWindow/127",
+        "/registrationMutationsDuringCallWindow/128"
+      ],
+      "recipientStateThroughObservedSpan": "no_exported_deletion_or_record_expiry",
+      "directionalMailboxes": [
+        {
+          "mailbox": "mailbox-163",
+          "sourcePointer": "/mailboxes/10",
+          "sender": "peer-008",
+          "recipient": "peer-006",
+          "firstReceipt": "2026-09-08T10:12:06.055Z",
+          "lastEventReceipt": "2026-09-08T10:12:10.453Z",
+          "recipientAuthorityBeforeFirstReceipt": {
+            "endpoint": {
+              "sourcePointer": "/registrationMutationsDuringCallWindow/107",
+              "peer": "peer-006",
+              "kind": "endpoint",
+              "tokenKind": null,
+              "authorizedSender": null,
+              "operation": "register",
+              "record": {
+                "platform": "android",
+                "expiresAtMs": 1788883921089,
+                "preferenceEpoch": 1788862321089,
+                "deviceKeyEpoch": 4236284878241438,
+                "identityChangedFromPreviousRegistration": false
+              },
+              "commandOrderAfterAnchor": "2026-09-08T10:11:58.419Z",
+              "commandOrderBeforeAnchor": "2026-09-08T10:12:01.789Z",
+              "status": "observed_registered",
+              "expiresAt": "2026-09-08T16:12:01.089Z",
+              "unexpiredAtReceipt": true,
+              "signedOrRecordedExpiryAfterObservedGroupTail": true,
+              "remainingAtReceiptMs": 21595034
+            },
+            "endpoint-device": {
+              "sourcePointer": "/registrationMutationsDuringCallWindow/108",
+              "peer": "peer-006",
+              "kind": "endpoint-device",
+              "tokenKind": null,
+              "authorizedSender": null,
+              "operation": "register",
+              "record": {
+                "platform": "android",
+                "expiresAtMs": 1788883921089,
+                "preferenceEpoch": 1788862321089
+              },
+              "commandOrderAfterAnchor": "2026-09-08T10:11:58.419Z",
+              "commandOrderBeforeAnchor": "2026-09-08T10:12:01.789Z",
+              "status": "observed_registered",
+              "expiresAt": "2026-09-08T16:12:01.089Z",
+              "unexpiredAtReceipt": true,
+              "signedOrRecordedExpiryAfterObservedGroupTail": true,
+              "remainingAtReceiptMs": 21595034
+            },
+            "token": {
+              "sourcePointer": "/registrationMutationsDuringCallWindow/89",
+              "peer": "peer-006",
+              "kind": "token",
+              "tokenKind": "standard_call",
+              "authorizedSender": null,
+              "operation": "register",
+              "record": {
+                "platform": "android",
+                "kind": "standard_call",
+                "expiresAtMs": 1791454314140,
+                "identityChangedFromPreviousRegistration": false
+              },
+              "commandOrderAfterAnchor": "2026-09-08T10:11:42.766Z",
+              "commandOrderBeforeAnchor": "2026-09-08T10:11:58.419Z",
+              "status": "observed_registered",
+              "expiresAt": "2026-10-08T10:11:54.140Z",
+              "unexpiredAtReceipt": true,
+              "signedOrRecordedExpiryAfterObservedGroupTail": true,
+              "remainingAtReceiptMs": 2591988085
+            },
+            "wake": {
+              "sourcePointer": "/registrationMutationsDuringCallWindow/106",
+              "peer": "peer-006",
+              "kind": "wake",
+              "tokenKind": null,
+              "authorizedSender": "peer-008",
+              "operation": "register",
+              "record": {
+                "expiresAtMs": 1788948567698,
+                "identityChangedFromPreviousRegistration": false
+              },
+              "commandOrderAfterAnchor": "2026-09-08T10:11:58.419Z",
+              "commandOrderBeforeAnchor": "2026-09-08T10:12:01.789Z",
+              "status": "observed_registered",
+              "expiresAt": "2026-09-09T10:09:27.698Z",
+              "unexpiredAtReceipt": true,
+              "signedOrRecordedExpiryAfterObservedGroupTail": true,
+              "remainingAtReceiptMs": 86241643
+            }
+          },
+          "ambiguousMutationPointers": []
+        },
+        {
+          "mailbox": "mailbox-164",
+          "sourcePointer": "/mailboxes/11",
+          "sender": "peer-006",
+          "recipient": "peer-008",
+          "firstReceipt": "2026-09-08T10:12:06.768Z",
+          "lastEventReceipt": "2026-09-08T10:12:21.939Z",
+          "recipientAuthorityBeforeFirstReceipt": {
+            "endpoint": {
+              "sourcePointer": "/registrationMutationsDuringCallWindow/114",
+              "peer": "peer-008",
+              "kind": "endpoint",
+              "tokenKind": null,
+              "authorizedSender": null,
+              "operation": "register",
+              "record": {
+                "platform": "ios",
+                "expiresAtMs": 1788883925506,
+                "preferenceEpoch": 1788862325506,
+                "deviceKeyEpoch": 7519413882761528,
+                "identityChangedFromPreviousRegistration": false
+              },
+              "commandOrderAfterAnchor": "2026-09-08T10:12:02.638Z",
+              "commandOrderBeforeAnchor": "2026-09-08T10:12:06.055Z",
+              "status": "observed_registered",
+              "expiresAt": "2026-09-08T16:12:05.506Z",
+              "unexpiredAtReceipt": true,
+              "signedOrRecordedExpiryAfterObservedGroupTail": true,
+              "remainingAtReceiptMs": 21598738
+            },
+            "endpoint-device": {
+              "sourcePointer": "/registrationMutationsDuringCallWindow/115",
+              "peer": "peer-008",
+              "kind": "endpoint-device",
+              "tokenKind": null,
+              "authorizedSender": null,
+              "operation": "register",
+              "record": {
+                "platform": "ios",
+                "expiresAtMs": 1788883925506,
+                "preferenceEpoch": 1788862325506
+              },
+              "commandOrderAfterAnchor": "2026-09-08T10:12:02.638Z",
+              "commandOrderBeforeAnchor": "2026-09-08T10:12:06.055Z",
+              "status": "observed_registered",
+              "expiresAt": "2026-09-08T16:12:05.506Z",
+              "unexpiredAtReceipt": true,
+              "signedOrRecordedExpiryAfterObservedGroupTail": true,
+              "remainingAtReceiptMs": 21598738
+            },
+            "token": {
+              "sourcePointer": "/registrationMutationsDuringCallWindow/110",
+              "peer": "peer-008",
+              "kind": "token",
+              "tokenKind": "ios_voip",
+              "authorizedSender": null,
+              "operation": "register",
+              "record": {
+                "platform": "ios",
+                "environment": "production",
+                "kind": "ios_voip",
+                "expiresAtMs": 1791454324983,
+                "capabilityVersion": 1,
+                "refreshEpoch": 3,
+                "generation": 2,
+                "identityChangedFromPreviousRegistration": false
+              },
+              "commandOrderAfterAnchor": "2026-09-08T10:12:02.638Z",
+              "commandOrderBeforeAnchor": "2026-09-08T10:12:06.055Z",
+              "status": "observed_registered",
+              "expiresAt": "2026-10-08T10:12:04.983Z",
+              "unexpiredAtReceipt": true,
+              "signedOrRecordedExpiryAfterObservedGroupTail": true,
+              "remainingAtReceiptMs": 2591998215
+            },
+            "wake": {
+              "sourcePointer": "/registrationMutationsDuringCallWindow/112",
+              "peer": "peer-008",
+              "kind": "wake",
+              "tokenKind": null,
+              "authorizedSender": "peer-006",
+              "operation": "register",
+              "record": {
+                "expiresAtMs": 1788948568510,
+                "identityChangedFromPreviousRegistration": false
+              },
+              "commandOrderAfterAnchor": "2026-09-08T10:12:02.638Z",
+              "commandOrderBeforeAnchor": "2026-09-08T10:12:06.055Z",
+              "status": "observed_registered",
+              "expiresAt": "2026-09-09T10:09:28.510Z",
+              "unexpiredAtReceipt": true,
+              "signedOrRecordedExpiryAfterObservedGroupTail": true,
+              "remainingAtReceiptMs": 86241742
+            }
+          },
+          "ambiguousMutationPointers": []
+        }
+      ]
+    },
+    {
+      "callAlias": "call-096",
+      "aliasCaveat": "Equal opaque-handle group from source; not independently decoded call IDs or invite semantics.",
+      "firstObservedDirection": {
+        "sender": "peer-006",
+        "recipient": "peer-007"
+      },
+      "firstObservedReceipt": "2026-09-08T10:12:36.516Z",
+      "lastObservedEventOrTerminalMarker": "2026-09-08T10:12:37.015Z",
+      "observedSpanCaveat": "This is an observed metadata span, not proven media duration or terminal state.",
+      "allThreeRecipientRecordsPresentAndUnexpiredBeforeFirstReceipt": true,
+      "recipientAuthorityAtFirstReceipt": {
+        "endpoint": {
+          "sourcePointer": "/registrationMutationsDuringCallWindow/65",
+          "peer": "peer-007",
+          "kind": "endpoint",
+          "tokenKind": null,
+          "authorizedSender": null,
+          "operation": "register",
+          "record": {
+            "platform": "ios",
+            "expiresAtMs": 1788883886659,
+            "preferenceEpoch": 1788862286659,
+            "deviceKeyEpoch": 8879833610816774,
+            "identityChangedFromPreviousRegistration": false
+          },
+          "commandOrderAfterAnchor": "2026-09-08T10:10:45.558Z",
+          "commandOrderBeforeAnchor": "2026-09-08T10:11:36.513Z",
+          "status": "observed_registered",
+          "expiresAt": "2026-09-08T16:11:26.659Z",
+          "unexpiredAtReceipt": true,
+          "signedOrRecordedExpiryAfterObservedGroupTail": true,
+          "remainingAtReceiptMs": 21530143
+        },
+        "endpoint-device": {
+          "sourcePointer": "/registrationMutationsDuringCallWindow/66",
+          "peer": "peer-007",
+          "kind": "endpoint-device",
+          "tokenKind": null,
+          "authorizedSender": null,
+          "operation": "register",
+          "record": {
+            "platform": "ios",
+            "expiresAtMs": 1788883886659,
+            "preferenceEpoch": 1788862286659
+          },
+          "commandOrderAfterAnchor": "2026-09-08T10:10:45.558Z",
+          "commandOrderBeforeAnchor": "2026-09-08T10:11:36.513Z",
+          "status": "observed_registered",
+          "expiresAt": "2026-09-08T16:11:26.659Z",
+          "unexpiredAtReceipt": true,
+          "signedOrRecordedExpiryAfterObservedGroupTail": true,
+          "remainingAtReceiptMs": 21530143
+        },
+        "token": {
+          "sourcePointer": "/registrationMutationsDuringCallWindow/61",
+          "peer": "peer-007",
+          "kind": "token",
+          "tokenKind": "ios_voip",
+          "authorizedSender": null,
+          "operation": "register",
+          "record": {
+            "platform": "ios",
+            "environment": "production",
+            "kind": "ios_voip",
+            "expiresAtMs": 1791454284638,
+            "capabilityVersion": 1,
+            "refreshEpoch": 3,
+            "generation": 2,
+            "identityChangedFromPreviousRegistration": false
+          },
+          "commandOrderAfterAnchor": "2026-09-08T10:10:45.558Z",
+          "commandOrderBeforeAnchor": "2026-09-08T10:11:36.513Z",
+          "status": "observed_registered",
+          "expiresAt": "2026-10-08T10:11:24.638Z",
+          "unexpiredAtReceipt": true,
+          "signedOrRecordedExpiryAfterObservedGroupTail": true,
+          "remainingAtReceiptMs": 2591928122
+        },
+        "wake": {
+          "sourcePointer": "/registrationMutationsDuringCallWindow/63",
+          "peer": "peer-007",
+          "kind": "wake",
+          "tokenKind": null,
+          "authorizedSender": "peer-006",
+          "operation": "register",
+          "record": {
+            "expiresAtMs": 1788902671777,
+            "identityChangedFromPreviousRegistration": false
+          },
+          "commandOrderAfterAnchor": "2026-09-08T10:10:45.558Z",
+          "commandOrderBeforeAnchor": "2026-09-08T10:11:36.513Z",
+          "status": "observed_registered",
+          "expiresAt": "2026-09-08T21:24:31.777Z",
+          "unexpiredAtReceipt": true,
+          "signedOrRecordedExpiryAfterObservedGroupTail": true,
+          "remainingAtReceiptMs": 40315261
+        }
+      },
+      "recipientDeletionRowsWithinObservedSpan": [],
+      "recipientMutationPointersWithinObservedSpan": [],
+      "recipientStateThroughObservedSpan": "no_exported_deletion_or_record_expiry",
+      "directionalMailboxes": [
+        {
+          "mailbox": "mailbox-165",
+          "sourcePointer": "/mailboxes/12",
+          "sender": "peer-006",
+          "recipient": "peer-007",
+          "firstReceipt": "2026-09-08T10:12:36.516Z",
+          "lastEventReceipt": "2026-09-08T10:12:36.516Z",
+          "recipientAuthorityBeforeFirstReceipt": {
+            "endpoint": {
+              "sourcePointer": "/registrationMutationsDuringCallWindow/65",
+              "peer": "peer-007",
+              "kind": "endpoint",
+              "tokenKind": null,
+              "authorizedSender": null,
+              "operation": "register",
+              "record": {
+                "platform": "ios",
+                "expiresAtMs": 1788883886659,
+                "preferenceEpoch": 1788862286659,
+                "deviceKeyEpoch": 8879833610816774,
+                "identityChangedFromPreviousRegistration": false
+              },
+              "commandOrderAfterAnchor": "2026-09-08T10:10:45.558Z",
+              "commandOrderBeforeAnchor": "2026-09-08T10:11:36.513Z",
+              "status": "observed_registered",
+              "expiresAt": "2026-09-08T16:11:26.659Z",
+              "unexpiredAtReceipt": true,
+              "signedOrRecordedExpiryAfterObservedGroupTail": true,
+              "remainingAtReceiptMs": 21530143
+            },
+            "endpoint-device": {
+              "sourcePointer": "/registrationMutationsDuringCallWindow/66",
+              "peer": "peer-007",
+              "kind": "endpoint-device",
+              "tokenKind": null,
+              "authorizedSender": null,
+              "operation": "register",
+              "record": {
+                "platform": "ios",
+                "expiresAtMs": 1788883886659,
+                "preferenceEpoch": 1788862286659
+              },
+              "commandOrderAfterAnchor": "2026-09-08T10:10:45.558Z",
+              "commandOrderBeforeAnchor": "2026-09-08T10:11:36.513Z",
+              "status": "observed_registered",
+              "expiresAt": "2026-09-08T16:11:26.659Z",
+              "unexpiredAtReceipt": true,
+              "signedOrRecordedExpiryAfterObservedGroupTail": true,
+              "remainingAtReceiptMs": 21530143
+            },
+            "token": {
+              "sourcePointer": "/registrationMutationsDuringCallWindow/61",
+              "peer": "peer-007",
+              "kind": "token",
+              "tokenKind": "ios_voip",
+              "authorizedSender": null,
+              "operation": "register",
+              "record": {
+                "platform": "ios",
+                "environment": "production",
+                "kind": "ios_voip",
+                "expiresAtMs": 1791454284638,
+                "capabilityVersion": 1,
+                "refreshEpoch": 3,
+                "generation": 2,
+                "identityChangedFromPreviousRegistration": false
+              },
+              "commandOrderAfterAnchor": "2026-09-08T10:10:45.558Z",
+              "commandOrderBeforeAnchor": "2026-09-08T10:11:36.513Z",
+              "status": "observed_registered",
+              "expiresAt": "2026-10-08T10:11:24.638Z",
+              "unexpiredAtReceipt": true,
+              "signedOrRecordedExpiryAfterObservedGroupTail": true,
+              "remainingAtReceiptMs": 2591928122
+            },
+            "wake": {
+              "sourcePointer": "/registrationMutationsDuringCallWindow/63",
+              "peer": "peer-007",
+              "kind": "wake",
+              "tokenKind": null,
+              "authorizedSender": "peer-006",
+              "operation": "register",
+              "record": {
+                "expiresAtMs": 1788902671777,
+                "identityChangedFromPreviousRegistration": false
+              },
+              "commandOrderAfterAnchor": "2026-09-08T10:10:45.558Z",
+              "commandOrderBeforeAnchor": "2026-09-08T10:11:36.513Z",
+              "status": "observed_registered",
+              "expiresAt": "2026-09-08T21:24:31.777Z",
+              "unexpiredAtReceipt": true,
+              "signedOrRecordedExpiryAfterObservedGroupTail": true,
+              "remainingAtReceiptMs": 40315261
+            }
+          },
+          "ambiguousMutationPointers": []
+        },
+        {
+          "mailbox": "mailbox-166",
+          "sourcePointer": "/mailboxes/13",
+          "sender": "peer-007",
+          "recipient": "peer-006",
+          "firstReceipt": "2026-09-08T10:12:36.719Z",
+          "lastEventReceipt": "2026-09-08T10:12:36.719Z",
+          "recipientAuthorityBeforeFirstReceipt": {
+            "endpoint": {
+              "sourcePointer": "/registrationMutationsDuringCallWindow/143",
+              "peer": "peer-006",
+              "kind": "endpoint",
+              "tokenKind": null,
+              "authorizedSender": null,
+              "operation": "register",
+              "record": {
+                "platform": "android",
+                "expiresAtMs": 1788883955879,
+                "preferenceEpoch": 1788862355879,
+                "deviceKeyEpoch": 4236284878241438,
+                "identityChangedFromPreviousRegistration": false
+              },
+              "commandOrderAfterAnchor": "2026-09-08T10:12:21.939Z",
+              "commandOrderBeforeAnchor": "2026-09-08T10:12:36.516Z",
+              "status": "observed_registered",
+              "expiresAt": "2026-09-08T16:12:35.879Z",
+              "unexpiredAtReceipt": true,
+              "signedOrRecordedExpiryAfterObservedGroupTail": true,
+              "remainingAtReceiptMs": 21599160
+            },
+            "endpoint-device": {
+              "sourcePointer": "/registrationMutationsDuringCallWindow/144",
+              "peer": "peer-006",
+              "kind": "endpoint-device",
+              "tokenKind": null,
+              "authorizedSender": null,
+              "operation": "register",
+              "record": {
+                "platform": "android",
+                "expiresAtMs": 1788883955879,
+                "preferenceEpoch": 1788862355879
+              },
+              "commandOrderAfterAnchor": "2026-09-08T10:12:21.939Z",
+              "commandOrderBeforeAnchor": "2026-09-08T10:12:36.516Z",
+              "status": "observed_registered",
+              "expiresAt": "2026-09-08T16:12:35.879Z",
+              "unexpiredAtReceipt": true,
+              "signedOrRecordedExpiryAfterObservedGroupTail": true,
+              "remainingAtReceiptMs": 21599160
+            },
+            "token": {
+              "sourcePointer": "/registrationMutationsDuringCallWindow/89",
+              "peer": "peer-006",
+              "kind": "token",
+              "tokenKind": "standard_call",
+              "authorizedSender": null,
+              "operation": "register",
+              "record": {
+                "platform": "android",
+                "kind": "standard_call",
+                "expiresAtMs": 1791454314140,
+                "identityChangedFromPreviousRegistration": false
+              },
+              "commandOrderAfterAnchor": "2026-09-08T10:11:42.766Z",
+              "commandOrderBeforeAnchor": "2026-09-08T10:11:58.419Z",
+              "status": "observed_registered",
+              "expiresAt": "2026-10-08T10:11:54.140Z",
+              "unexpiredAtReceipt": true,
+              "signedOrRecordedExpiryAfterObservedGroupTail": true,
+              "remainingAtReceiptMs": 2591957421
+            },
+            "wake": {
+              "sourcePointer": "/registrationMutationsDuringCallWindow/141",
+              "peer": "peer-006",
+              "kind": "wake",
+              "tokenKind": null,
+              "authorizedSender": "peer-007",
+              "operation": "register",
+              "record": {
+                "expiresAtMs": 1788948567698,
+                "identityChangedFromPreviousRegistration": false
+              },
+              "commandOrderAfterAnchor": "2026-09-08T10:12:21.939Z",
+              "commandOrderBeforeAnchor": "2026-09-08T10:12:36.516Z",
+              "status": "observed_registered",
+              "expiresAt": "2026-09-09T10:09:27.698Z",
+              "unexpiredAtReceipt": true,
+              "signedOrRecordedExpiryAfterObservedGroupTail": true,
+              "remainingAtReceiptMs": 86210979
+            }
+          },
+          "ambiguousMutationPointers": []
+        }
+      ]
+    },
+    {
+      "callAlias": "call-097",
+      "aliasCaveat": "Equal opaque-handle group from source; not independently decoded call IDs or invite semantics.",
+      "firstObservedDirection": {
+        "sender": "peer-006",
+        "recipient": "peer-007"
+      },
+      "firstObservedReceipt": "2026-09-08T10:13:00.169Z",
+      "lastObservedEventOrTerminalMarker": "2026-09-08T10:13:01.672Z",
+      "observedSpanCaveat": "This is an observed metadata span, not proven media duration or terminal state.",
+      "allThreeRecipientRecordsPresentAndUnexpiredBeforeFirstReceipt": true,
+      "recipientAuthorityAtFirstReceipt": {
+        "endpoint": {
+          "sourcePointer": "/registrationMutationsDuringCallWindow/65",
+          "peer": "peer-007",
+          "kind": "endpoint",
+          "tokenKind": null,
+          "authorizedSender": null,
+          "operation": "register",
+          "record": {
+            "platform": "ios",
+            "expiresAtMs": 1788883886659,
+            "preferenceEpoch": 1788862286659,
+            "deviceKeyEpoch": 8879833610816774,
+            "identityChangedFromPreviousRegistration": false
+          },
+          "commandOrderAfterAnchor": "2026-09-08T10:10:45.558Z",
+          "commandOrderBeforeAnchor": "2026-09-08T10:11:36.513Z",
+          "status": "observed_registered",
+          "expiresAt": "2026-09-08T16:11:26.659Z",
+          "unexpiredAtReceipt": true,
+          "signedOrRecordedExpiryAfterObservedGroupTail": true,
+          "remainingAtReceiptMs": 21506490
+        },
+        "endpoint-device": {
+          "sourcePointer": "/registrationMutationsDuringCallWindow/66",
+          "peer": "peer-007",
+          "kind": "endpoint-device",
+          "tokenKind": null,
+          "authorizedSender": null,
+          "operation": "register",
+          "record": {
+            "platform": "ios",
+            "expiresAtMs": 1788883886659,
+            "preferenceEpoch": 1788862286659
+          },
+          "commandOrderAfterAnchor": "2026-09-08T10:10:45.558Z",
+          "commandOrderBeforeAnchor": "2026-09-08T10:11:36.513Z",
+          "status": "observed_registered",
+          "expiresAt": "2026-09-08T16:11:26.659Z",
+          "unexpiredAtReceipt": true,
+          "signedOrRecordedExpiryAfterObservedGroupTail": true,
+          "remainingAtReceiptMs": 21506490
+        },
+        "token": {
+          "sourcePointer": "/registrationMutationsDuringCallWindow/61",
+          "peer": "peer-007",
+          "kind": "token",
+          "tokenKind": "ios_voip",
+          "authorizedSender": null,
+          "operation": "register",
+          "record": {
+            "platform": "ios",
+            "environment": "production",
+            "kind": "ios_voip",
+            "expiresAtMs": 1791454284638,
+            "capabilityVersion": 1,
+            "refreshEpoch": 3,
+            "generation": 2,
+            "identityChangedFromPreviousRegistration": false
+          },
+          "commandOrderAfterAnchor": "2026-09-08T10:10:45.558Z",
+          "commandOrderBeforeAnchor": "2026-09-08T10:11:36.513Z",
+          "status": "observed_registered",
+          "expiresAt": "2026-10-08T10:11:24.638Z",
+          "unexpiredAtReceipt": true,
+          "signedOrRecordedExpiryAfterObservedGroupTail": true,
+          "remainingAtReceiptMs": 2591904469
+        },
+        "wake": {
+          "sourcePointer": "/registrationMutationsDuringCallWindow/63",
+          "peer": "peer-007",
+          "kind": "wake",
+          "tokenKind": null,
+          "authorizedSender": "peer-006",
+          "operation": "register",
+          "record": {
+            "expiresAtMs": 1788902671777,
+            "identityChangedFromPreviousRegistration": false
+          },
+          "commandOrderAfterAnchor": "2026-09-08T10:10:45.558Z",
+          "commandOrderBeforeAnchor": "2026-09-08T10:11:36.513Z",
+          "status": "observed_registered",
+          "expiresAt": "2026-09-08T21:24:31.777Z",
+          "unexpiredAtReceipt": true,
+          "signedOrRecordedExpiryAfterObservedGroupTail": true,
+          "remainingAtReceiptMs": 40291608
+        }
+      },
+      "recipientDeletionRowsWithinObservedSpan": [],
+      "recipientMutationPointersWithinObservedSpan": [],
+      "recipientStateThroughObservedSpan": "no_exported_deletion_or_record_expiry",
+      "directionalMailboxes": [
+        {
+          "mailbox": "mailbox-167",
+          "sourcePointer": "/mailboxes/14",
+          "sender": "peer-006",
+          "recipient": "peer-007",
+          "firstReceipt": "2026-09-08T10:13:00.169Z",
+          "lastEventReceipt": "2026-09-08T10:13:00.169Z",
+          "recipientAuthorityBeforeFirstReceipt": {
+            "endpoint": {
+              "sourcePointer": "/registrationMutationsDuringCallWindow/65",
+              "peer": "peer-007",
+              "kind": "endpoint",
+              "tokenKind": null,
+              "authorizedSender": null,
+              "operation": "register",
+              "record": {
+                "platform": "ios",
+                "expiresAtMs": 1788883886659,
+                "preferenceEpoch": 1788862286659,
+                "deviceKeyEpoch": 8879833610816774,
+                "identityChangedFromPreviousRegistration": false
+              },
+              "commandOrderAfterAnchor": "2026-09-08T10:10:45.558Z",
+              "commandOrderBeforeAnchor": "2026-09-08T10:11:36.513Z",
+              "status": "observed_registered",
+              "expiresAt": "2026-09-08T16:11:26.659Z",
+              "unexpiredAtReceipt": true,
+              "signedOrRecordedExpiryAfterObservedGroupTail": true,
+              "remainingAtReceiptMs": 21506490
+            },
+            "endpoint-device": {
+              "sourcePointer": "/registrationMutationsDuringCallWindow/66",
+              "peer": "peer-007",
+              "kind": "endpoint-device",
+              "tokenKind": null,
+              "authorizedSender": null,
+              "operation": "register",
+              "record": {
+                "platform": "ios",
+                "expiresAtMs": 1788883886659,
+                "preferenceEpoch": 1788862286659
+              },
+              "commandOrderAfterAnchor": "2026-09-08T10:10:45.558Z",
+              "commandOrderBeforeAnchor": "2026-09-08T10:11:36.513Z",
+              "status": "observed_registered",
+              "expiresAt": "2026-09-08T16:11:26.659Z",
+              "unexpiredAtReceipt": true,
+              "signedOrRecordedExpiryAfterObservedGroupTail": true,
+              "remainingAtReceiptMs": 21506490
+            },
+            "token": {
+              "sourcePointer": "/registrationMutationsDuringCallWindow/61",
+              "peer": "peer-007",
+              "kind": "token",
+              "tokenKind": "ios_voip",
+              "authorizedSender": null,
+              "operation": "register",
+              "record": {
+                "platform": "ios",
+                "environment": "production",
+                "kind": "ios_voip",
+                "expiresAtMs": 1791454284638,
+                "capabilityVersion": 1,
+                "refreshEpoch": 3,
+                "generation": 2,
+                "identityChangedFromPreviousRegistration": false
+              },
+              "commandOrderAfterAnchor": "2026-09-08T10:10:45.558Z",
+              "commandOrderBeforeAnchor": "2026-09-08T10:11:36.513Z",
+              "status": "observed_registered",
+              "expiresAt": "2026-10-08T10:11:24.638Z",
+              "unexpiredAtReceipt": true,
+              "signedOrRecordedExpiryAfterObservedGroupTail": true,
+              "remainingAtReceiptMs": 2591904469
+            },
+            "wake": {
+              "sourcePointer": "/registrationMutationsDuringCallWindow/63",
+              "peer": "peer-007",
+              "kind": "wake",
+              "tokenKind": null,
+              "authorizedSender": "peer-006",
+              "operation": "register",
+              "record": {
+                "expiresAtMs": 1788902671777,
+                "identityChangedFromPreviousRegistration": false
+              },
+              "commandOrderAfterAnchor": "2026-09-08T10:10:45.558Z",
+              "commandOrderBeforeAnchor": "2026-09-08T10:11:36.513Z",
+              "status": "observed_registered",
+              "expiresAt": "2026-09-08T21:24:31.777Z",
+              "unexpiredAtReceipt": true,
+              "signedOrRecordedExpiryAfterObservedGroupTail": true,
+              "remainingAtReceiptMs": 40291608
+            }
+          },
+          "ambiguousMutationPointers": []
+        },
+        {
+          "mailbox": "mailbox-168",
+          "sourcePointer": "/mailboxes/15",
+          "sender": "peer-007",
+          "recipient": "peer-006",
+          "firstReceipt": "2026-09-08T10:13:01.672Z",
+          "lastEventReceipt": "2026-09-08T10:13:01.672Z",
+          "recipientAuthorityBeforeFirstReceipt": {
+            "endpoint": {
+              "sourcePointer": "/registrationMutationsDuringCallWindow/174",
+              "peer": "peer-006",
+              "kind": "endpoint",
+              "tokenKind": null,
+              "authorizedSender": null,
+              "operation": "register",
+              "record": {
+                "platform": "android",
+                "expiresAtMs": 1788883979473,
+                "preferenceEpoch": 1788862379473,
+                "deviceKeyEpoch": 4236284878241438,
+                "identityChangedFromPreviousRegistration": false
+              },
+              "commandOrderAfterAnchor": "2026-09-08T10:12:37.015Z",
+              "commandOrderBeforeAnchor": "2026-09-08T10:13:00.169Z",
+              "status": "observed_registered",
+              "expiresAt": "2026-09-08T16:12:59.473Z",
+              "unexpiredAtReceipt": true,
+              "signedOrRecordedExpiryAfterObservedGroupTail": true,
+              "remainingAtReceiptMs": 21597801
+            },
+            "endpoint-device": {
+              "sourcePointer": "/registrationMutationsDuringCallWindow/175",
+              "peer": "peer-006",
+              "kind": "endpoint-device",
+              "tokenKind": null,
+              "authorizedSender": null,
+              "operation": "register",
+              "record": {
+                "platform": "android",
+                "expiresAtMs": 1788883979473,
+                "preferenceEpoch": 1788862379473
+              },
+              "commandOrderAfterAnchor": "2026-09-08T10:12:37.015Z",
+              "commandOrderBeforeAnchor": "2026-09-08T10:13:00.169Z",
+              "status": "observed_registered",
+              "expiresAt": "2026-09-08T16:12:59.473Z",
+              "unexpiredAtReceipt": true,
+              "signedOrRecordedExpiryAfterObservedGroupTail": true,
+              "remainingAtReceiptMs": 21597801
+            },
+            "token": {
+              "sourcePointer": "/registrationMutationsDuringCallWindow/146",
+              "peer": "peer-006",
+              "kind": "token",
+              "tokenKind": "standard_call",
+              "authorizedSender": null,
+              "operation": "register",
+              "record": {
+                "platform": "android",
+                "kind": "standard_call",
+                "expiresAtMs": 1791454369187,
+                "identityChangedFromPreviousRegistration": false
+              },
+              "commandOrderAfterAnchor": "2026-09-08T10:12:37.015Z",
+              "commandOrderBeforeAnchor": "2026-09-08T10:13:00.169Z",
+              "status": "observed_registered",
+              "expiresAt": "2026-10-08T10:12:49.187Z",
+              "unexpiredAtReceipt": true,
+              "signedOrRecordedExpiryAfterObservedGroupTail": true,
+              "remainingAtReceiptMs": 2591987515
+            },
+            "wake": {
+              "sourcePointer": "/registrationMutationsDuringCallWindow/172",
+              "peer": "peer-006",
+              "kind": "wake",
+              "tokenKind": null,
+              "authorizedSender": "peer-007",
+              "operation": "register",
+              "record": {
+                "expiresAtMs": 1788948567698,
+                "identityChangedFromPreviousRegistration": false
+              },
+              "commandOrderAfterAnchor": "2026-09-08T10:12:37.015Z",
+              "commandOrderBeforeAnchor": "2026-09-08T10:13:00.169Z",
+              "status": "observed_registered",
+              "expiresAt": "2026-09-09T10:09:27.698Z",
+              "unexpiredAtReceipt": true,
+              "signedOrRecordedExpiryAfterObservedGroupTail": true,
+              "remainingAtReceiptMs": 86186026
+            }
+          },
+          "ambiguousMutationPointers": []
+        }
+      ]
+    },
+    {
+      "callAlias": "call-098",
+      "aliasCaveat": "Equal opaque-handle group from source; not independently decoded call IDs or invite semantics.",
+      "firstObservedDirection": {
+        "sender": "peer-006",
+        "recipient": "peer-007"
+      },
+      "firstObservedReceipt": "2026-09-08T10:15:27.340Z",
+      "lastObservedEventOrTerminalMarker": "2026-09-08T10:15:27.340Z",
+      "observedSpanCaveat": "This is an observed metadata span, not proven media duration or terminal state.",
+      "allThreeRecipientRecordsPresentAndUnexpiredBeforeFirstReceipt": true,
+      "recipientAuthorityAtFirstReceipt": {
+        "endpoint": {
+          "sourcePointer": "/registrationMutationsDuringCallWindow/188",
+          "peer": "peer-007",
+          "kind": "endpoint",
+          "tokenKind": null,
+          "authorizedSender": null,
+          "operation": "register",
+          "record": {
+            "platform": "ios",
+            "expiresAtMs": 1788884072664,
+            "preferenceEpoch": 1788862472664,
+            "deviceKeyEpoch": 8879833610816774,
+            "identityChangedFromPreviousRegistration": false
+          },
+          "commandOrderAfterAnchor": "2026-09-08T10:13:01.672Z",
+          "commandOrderBeforeAnchor": "2026-09-08T10:15:27.340Z",
+          "status": "observed_registered",
+          "expiresAt": "2026-09-08T16:14:32.664Z",
+          "unexpiredAtReceipt": true,
+          "signedOrRecordedExpiryAfterObservedGroupTail": true,
+          "remainingAtReceiptMs": 21545324
+        },
+        "endpoint-device": {
+          "sourcePointer": "/registrationMutationsDuringCallWindow/189",
+          "peer": "peer-007",
+          "kind": "endpoint-device",
+          "tokenKind": null,
+          "authorizedSender": null,
+          "operation": "register",
+          "record": {
+            "platform": "ios",
+            "expiresAtMs": 1788884072664,
+            "preferenceEpoch": 1788862472664
+          },
+          "commandOrderAfterAnchor": "2026-09-08T10:13:01.672Z",
+          "commandOrderBeforeAnchor": "2026-09-08T10:15:27.340Z",
+          "status": "observed_registered",
+          "expiresAt": "2026-09-08T16:14:32.664Z",
+          "unexpiredAtReceipt": true,
+          "signedOrRecordedExpiryAfterObservedGroupTail": true,
+          "remainingAtReceiptMs": 21545324
+        },
+        "token": {
+          "sourcePointer": "/registrationMutationsDuringCallWindow/184",
+          "peer": "peer-007",
+          "kind": "token",
+          "tokenKind": "ios_voip",
+          "authorizedSender": null,
+          "operation": "register",
+          "record": {
+            "platform": "ios",
+            "environment": "production",
+            "kind": "ios_voip",
+            "expiresAtMs": 1791454442461,
+            "capabilityVersion": 1,
+            "refreshEpoch": 3,
+            "generation": 2,
+            "identityChangedFromPreviousRegistration": false
+          },
+          "commandOrderAfterAnchor": "2026-09-08T10:13:01.672Z",
+          "commandOrderBeforeAnchor": "2026-09-08T10:15:27.340Z",
+          "status": "observed_registered",
+          "expiresAt": "2026-10-08T10:14:02.461Z",
+          "unexpiredAtReceipt": true,
+          "signedOrRecordedExpiryAfterObservedGroupTail": true,
+          "remainingAtReceiptMs": 2591915121
+        },
+        "wake": {
+          "sourcePointer": "/registrationMutationsDuringCallWindow/186",
+          "peer": "peer-007",
+          "kind": "wake",
+          "tokenKind": null,
+          "authorizedSender": "peer-006",
+          "operation": "register",
+          "record": {
+            "expiresAtMs": 1788902671777,
+            "identityChangedFromPreviousRegistration": false
+          },
+          "commandOrderAfterAnchor": "2026-09-08T10:13:01.672Z",
+          "commandOrderBeforeAnchor": "2026-09-08T10:15:27.340Z",
+          "status": "observed_registered",
+          "expiresAt": "2026-09-08T21:24:31.777Z",
+          "unexpiredAtReceipt": true,
+          "signedOrRecordedExpiryAfterObservedGroupTail": true,
+          "remainingAtReceiptMs": 40144437
+        }
+      },
+      "recipientDeletionRowsWithinObservedSpan": [],
+      "recipientMutationPointersWithinObservedSpan": [],
+      "recipientStateThroughObservedSpan": "no_exported_deletion_or_record_expiry",
+      "directionalMailboxes": [
+        {
+          "mailbox": "mailbox-169",
+          "sourcePointer": "/mailboxes/16",
+          "sender": "peer-006",
+          "recipient": "peer-007",
+          "firstReceipt": "2026-09-08T10:15:27.340Z",
+          "lastEventReceipt": "2026-09-08T10:15:27.340Z",
+          "recipientAuthorityBeforeFirstReceipt": {
+            "endpoint": {
+              "sourcePointer": "/registrationMutationsDuringCallWindow/188",
+              "peer": "peer-007",
+              "kind": "endpoint",
+              "tokenKind": null,
+              "authorizedSender": null,
+              "operation": "register",
+              "record": {
+                "platform": "ios",
+                "expiresAtMs": 1788884072664,
+                "preferenceEpoch": 1788862472664,
+                "deviceKeyEpoch": 8879833610816774,
+                "identityChangedFromPreviousRegistration": false
+              },
+              "commandOrderAfterAnchor": "2026-09-08T10:13:01.672Z",
+              "commandOrderBeforeAnchor": "2026-09-08T10:15:27.340Z",
+              "status": "observed_registered",
+              "expiresAt": "2026-09-08T16:14:32.664Z",
+              "unexpiredAtReceipt": true,
+              "signedOrRecordedExpiryAfterObservedGroupTail": true,
+              "remainingAtReceiptMs": 21545324
+            },
+            "endpoint-device": {
+              "sourcePointer": "/registrationMutationsDuringCallWindow/189",
+              "peer": "peer-007",
+              "kind": "endpoint-device",
+              "tokenKind": null,
+              "authorizedSender": null,
+              "operation": "register",
+              "record": {
+                "platform": "ios",
+                "expiresAtMs": 1788884072664,
+                "preferenceEpoch": 1788862472664
+              },
+              "commandOrderAfterAnchor": "2026-09-08T10:13:01.672Z",
+              "commandOrderBeforeAnchor": "2026-09-08T10:15:27.340Z",
+              "status": "observed_registered",
+              "expiresAt": "2026-09-08T16:14:32.664Z",
+              "unexpiredAtReceipt": true,
+              "signedOrRecordedExpiryAfterObservedGroupTail": true,
+              "remainingAtReceiptMs": 21545324
+            },
+            "token": {
+              "sourcePointer": "/registrationMutationsDuringCallWindow/184",
+              "peer": "peer-007",
+              "kind": "token",
+              "tokenKind": "ios_voip",
+              "authorizedSender": null,
+              "operation": "register",
+              "record": {
+                "platform": "ios",
+                "environment": "production",
+                "kind": "ios_voip",
+                "expiresAtMs": 1791454442461,
+                "capabilityVersion": 1,
+                "refreshEpoch": 3,
+                "generation": 2,
+                "identityChangedFromPreviousRegistration": false
+              },
+              "commandOrderAfterAnchor": "2026-09-08T10:13:01.672Z",
+              "commandOrderBeforeAnchor": "2026-09-08T10:15:27.340Z",
+              "status": "observed_registered",
+              "expiresAt": "2026-10-08T10:14:02.461Z",
+              "unexpiredAtReceipt": true,
+              "signedOrRecordedExpiryAfterObservedGroupTail": true,
+              "remainingAtReceiptMs": 2591915121
+            },
+            "wake": {
+              "sourcePointer": "/registrationMutationsDuringCallWindow/186",
+              "peer": "peer-007",
+              "kind": "wake",
+              "tokenKind": null,
+              "authorizedSender": "peer-006",
+              "operation": "register",
+              "record": {
+                "expiresAtMs": 1788902671777,
+                "identityChangedFromPreviousRegistration": false
+              },
+              "commandOrderAfterAnchor": "2026-09-08T10:13:01.672Z",
+              "commandOrderBeforeAnchor": "2026-09-08T10:15:27.340Z",
+              "status": "observed_registered",
+              "expiresAt": "2026-09-08T21:24:31.777Z",
+              "unexpiredAtReceipt": true,
+              "signedOrRecordedExpiryAfterObservedGroupTail": true,
+              "remainingAtReceiptMs": 40144437
+            }
+          },
+          "ambiguousMutationPointers": []
+        }
+      ]
+    },
+    {
+      "callAlias": "call-099",
+      "aliasCaveat": "Equal opaque-handle group from source; not independently decoded call IDs or invite semantics.",
+      "firstObservedDirection": {
+        "sender": "peer-006",
+        "recipient": "peer-007"
+      },
+      "firstObservedReceipt": "2026-09-08T10:16:11.240Z",
+      "lastObservedEventOrTerminalMarker": "2026-09-08T10:16:29.047Z",
+      "observedSpanCaveat": "This is an observed metadata span, not proven media duration or terminal state.",
+      "allThreeRecipientRecordsPresentAndUnexpiredBeforeFirstReceipt": true,
+      "recipientAuthorityAtFirstReceipt": {
+        "endpoint": {
+          "sourcePointer": "/registrationMutationsDuringCallWindow/290",
+          "peer": "peer-007",
+          "kind": "endpoint",
+          "tokenKind": null,
+          "authorizedSender": null,
+          "operation": "register",
+          "record": {
+            "platform": "ios",
+            "expiresAtMs": 1788884167480,
+            "preferenceEpoch": 1788862567480,
+            "deviceKeyEpoch": 8879833610816774,
+            "identityChangedFromPreviousRegistration": false
+          },
+          "commandOrderAfterAnchor": "2026-09-08T10:15:27.340Z",
+          "commandOrderBeforeAnchor": "2026-09-08T10:16:11.240Z",
+          "status": "observed_registered",
+          "expiresAt": "2026-09-08T16:16:07.480Z",
+          "unexpiredAtReceipt": true,
+          "signedOrRecordedExpiryAfterObservedGroupTail": true,
+          "remainingAtReceiptMs": 21596240
+        },
+        "endpoint-device": {
+          "sourcePointer": "/registrationMutationsDuringCallWindow/291",
+          "peer": "peer-007",
+          "kind": "endpoint-device",
+          "tokenKind": null,
+          "authorizedSender": null,
+          "operation": "register",
+          "record": {
+            "platform": "ios",
+            "expiresAtMs": 1788884167480,
+            "preferenceEpoch": 1788862567480
+          },
+          "commandOrderAfterAnchor": "2026-09-08T10:15:27.340Z",
+          "commandOrderBeforeAnchor": "2026-09-08T10:16:11.240Z",
+          "status": "observed_registered",
+          "expiresAt": "2026-09-08T16:16:07.480Z",
+          "unexpiredAtReceipt": true,
+          "signedOrRecordedExpiryAfterObservedGroupTail": true,
+          "remainingAtReceiptMs": 21596240
+        },
+        "token": {
+          "sourcePointer": "/registrationMutationsDuringCallWindow/277",
+          "peer": "peer-007",
+          "kind": "token",
+          "tokenKind": "ios_voip",
+          "authorizedSender": null,
+          "operation": "register",
+          "record": {
+            "platform": "ios",
+            "environment": "production",
+            "kind": "ios_voip",
+            "expiresAtMs": 1791454563414,
+            "capabilityVersion": 1,
+            "refreshEpoch": 3,
+            "generation": 2,
+            "identityChangedFromPreviousRegistration": false
+          },
+          "commandOrderAfterAnchor": "2026-09-08T10:15:27.340Z",
+          "commandOrderBeforeAnchor": "2026-09-08T10:16:11.240Z",
+          "status": "observed_registered",
+          "expiresAt": "2026-10-08T10:16:03.414Z",
+          "unexpiredAtReceipt": true,
+          "signedOrRecordedExpiryAfterObservedGroupTail": true,
+          "remainingAtReceiptMs": 2591992174
+        },
+        "wake": {
+          "sourcePointer": "/registrationMutationsDuringCallWindow/281",
+          "peer": "peer-007",
+          "kind": "wake",
+          "tokenKind": null,
+          "authorizedSender": "peer-006",
+          "operation": "register",
+          "record": {
+            "expiresAtMs": 1788902671777,
+            "identityChangedFromPreviousRegistration": false
+          },
+          "commandOrderAfterAnchor": "2026-09-08T10:15:27.340Z",
+          "commandOrderBeforeAnchor": "2026-09-08T10:16:11.240Z",
+          "status": "observed_registered",
+          "expiresAt": "2026-09-08T21:24:31.777Z",
+          "unexpiredAtReceipt": true,
+          "signedOrRecordedExpiryAfterObservedGroupTail": true,
+          "remainingAtReceiptMs": 40100537
+        }
+      },
+      "recipientDeletionRowsWithinObservedSpan": [
+        {
+          "sourcePointer": "/registrationMutationsDuringCallWindow/313",
+          "peer": "peer-007",
+          "kind": "token",
+          "tokenKind": "ios_voip",
+          "authorizedSender": null,
+          "operation": "delete",
+          "record": {},
+          "commandOrderAfterAnchor": "2026-09-08T10:16:28.312Z",
+          "commandOrderBeforeAnchor": "2026-09-08T10:16:29.047Z"
+        },
+        {
+          "sourcePointer": "/registrationMutationsDuringCallWindow/314",
+          "peer": "peer-007",
+          "kind": "endpoint",
+          "tokenKind": null,
+          "authorizedSender": null,
+          "operation": "delete",
+          "record": {},
+          "commandOrderAfterAnchor": "2026-09-08T10:16:28.312Z",
+          "commandOrderBeforeAnchor": "2026-09-08T10:16:29.047Z"
+        },
+        {
+          "sourcePointer": "/registrationMutationsDuringCallWindow/315",
+          "peer": "peer-007",
+          "kind": "endpoint-device",
+          "tokenKind": null,
+          "authorizedSender": null,
+          "operation": "delete",
+          "record": {},
+          "commandOrderAfterAnchor": "2026-09-08T10:16:28.312Z",
+          "commandOrderBeforeAnchor": "2026-09-08T10:16:29.047Z"
+        }
+      ],
+      "recipientMutationPointersWithinObservedSpan": [
+        "/registrationMutationsDuringCallWindow/313",
+        "/registrationMutationsDuringCallWindow/314",
+        "/registrationMutationsDuringCallWindow/315",
+        "/registrationMutationsDuringCallWindow/316",
+        "/registrationMutationsDuringCallWindow/317",
+        "/registrationMutationsDuringCallWindow/318"
+      ],
+      "recipientStateThroughObservedSpan": "endpoint_and_token_deleted_after_first_receipt_wake_retained",
+      "directionalMailboxes": [
+        {
+          "mailbox": "mailbox-170",
+          "sourcePointer": "/mailboxes/17",
+          "sender": "peer-006",
+          "recipient": "peer-007",
+          "firstReceipt": "2026-09-08T10:16:11.240Z",
+          "lastEventReceipt": "2026-09-08T10:16:11.240Z",
+          "recipientAuthorityBeforeFirstReceipt": {
+            "endpoint": {
+              "sourcePointer": "/registrationMutationsDuringCallWindow/290",
+              "peer": "peer-007",
+              "kind": "endpoint",
+              "tokenKind": null,
+              "authorizedSender": null,
+              "operation": "register",
+              "record": {
+                "platform": "ios",
+                "expiresAtMs": 1788884167480,
+                "preferenceEpoch": 1788862567480,
+                "deviceKeyEpoch": 8879833610816774,
+                "identityChangedFromPreviousRegistration": false
+              },
+              "commandOrderAfterAnchor": "2026-09-08T10:15:27.340Z",
+              "commandOrderBeforeAnchor": "2026-09-08T10:16:11.240Z",
+              "status": "observed_registered",
+              "expiresAt": "2026-09-08T16:16:07.480Z",
+              "unexpiredAtReceipt": true,
+              "signedOrRecordedExpiryAfterObservedGroupTail": true,
+              "remainingAtReceiptMs": 21596240
+            },
+            "endpoint-device": {
+              "sourcePointer": "/registrationMutationsDuringCallWindow/291",
+              "peer": "peer-007",
+              "kind": "endpoint-device",
+              "tokenKind": null,
+              "authorizedSender": null,
+              "operation": "register",
+              "record": {
+                "platform": "ios",
+                "expiresAtMs": 1788884167480,
+                "preferenceEpoch": 1788862567480
+              },
+              "commandOrderAfterAnchor": "2026-09-08T10:15:27.340Z",
+              "commandOrderBeforeAnchor": "2026-09-08T10:16:11.240Z",
+              "status": "observed_registered",
+              "expiresAt": "2026-09-08T16:16:07.480Z",
+              "unexpiredAtReceipt": true,
+              "signedOrRecordedExpiryAfterObservedGroupTail": true,
+              "remainingAtReceiptMs": 21596240
+            },
+            "token": {
+              "sourcePointer": "/registrationMutationsDuringCallWindow/277",
+              "peer": "peer-007",
+              "kind": "token",
+              "tokenKind": "ios_voip",
+              "authorizedSender": null,
+              "operation": "register",
+              "record": {
+                "platform": "ios",
+                "environment": "production",
+                "kind": "ios_voip",
+                "expiresAtMs": 1791454563414,
+                "capabilityVersion": 1,
+                "refreshEpoch": 3,
+                "generation": 2,
+                "identityChangedFromPreviousRegistration": false
+              },
+              "commandOrderAfterAnchor": "2026-09-08T10:15:27.340Z",
+              "commandOrderBeforeAnchor": "2026-09-08T10:16:11.240Z",
+              "status": "observed_registered",
+              "expiresAt": "2026-10-08T10:16:03.414Z",
+              "unexpiredAtReceipt": true,
+              "signedOrRecordedExpiryAfterObservedGroupTail": true,
+              "remainingAtReceiptMs": 2591992174
+            },
+            "wake": {
+              "sourcePointer": "/registrationMutationsDuringCallWindow/281",
+              "peer": "peer-007",
+              "kind": "wake",
+              "tokenKind": null,
+              "authorizedSender": "peer-006",
+              "operation": "register",
+              "record": {
+                "expiresAtMs": 1788902671777,
+                "identityChangedFromPreviousRegistration": false
+              },
+              "commandOrderAfterAnchor": "2026-09-08T10:15:27.340Z",
+              "commandOrderBeforeAnchor": "2026-09-08T10:16:11.240Z",
+              "status": "observed_registered",
+              "expiresAt": "2026-09-08T21:24:31.777Z",
+              "unexpiredAtReceipt": true,
+              "signedOrRecordedExpiryAfterObservedGroupTail": true,
+              "remainingAtReceiptMs": 40100537
+            }
+          },
+          "ambiguousMutationPointers": []
+        },
+        {
+          "mailbox": "mailbox-171",
+          "sourcePointer": "/mailboxes/18",
+          "sender": "peer-007",
+          "recipient": "peer-006",
+          "firstReceipt": "2026-09-08T10:16:11.614Z",
+          "lastEventReceipt": "2026-09-08T10:16:29.047Z",
+          "recipientAuthorityBeforeFirstReceipt": {
+            "endpoint": {
+              "sourcePointer": "/registrationMutationsDuringCallWindow/300",
+              "peer": "peer-006",
+              "kind": "endpoint",
+              "tokenKind": null,
+              "authorizedSender": null,
+              "operation": "register",
+              "record": {
+                "platform": "android",
+                "expiresAtMs": 1788884170027,
+                "preferenceEpoch": 1788862570027,
+                "deviceKeyEpoch": 4236284878241438,
+                "identityChangedFromPreviousRegistration": false
+              },
+              "commandOrderAfterAnchor": "2026-09-08T10:15:27.340Z",
+              "commandOrderBeforeAnchor": "2026-09-08T10:16:11.240Z",
+              "status": "observed_registered",
+              "expiresAt": "2026-09-08T16:16:10.027Z",
+              "unexpiredAtReceipt": true,
+              "signedOrRecordedExpiryAfterObservedGroupTail": true,
+              "remainingAtReceiptMs": 21598413
+            },
+            "endpoint-device": {
+              "sourcePointer": "/registrationMutationsDuringCallWindow/301",
+              "peer": "peer-006",
+              "kind": "endpoint-device",
+              "tokenKind": null,
+              "authorizedSender": null,
+              "operation": "register",
+              "record": {
+                "platform": "android",
+                "expiresAtMs": 1788884170027,
+                "preferenceEpoch": 1788862570027
+              },
+              "commandOrderAfterAnchor": "2026-09-08T10:15:27.340Z",
+              "commandOrderBeforeAnchor": "2026-09-08T10:16:11.240Z",
+              "status": "observed_registered",
+              "expiresAt": "2026-09-08T16:16:10.027Z",
+              "unexpiredAtReceipt": true,
+              "signedOrRecordedExpiryAfterObservedGroupTail": true,
+              "remainingAtReceiptMs": 21598413
+            },
+            "token": {
+              "sourcePointer": "/registrationMutationsDuringCallWindow/272",
+              "peer": "peer-006",
+              "kind": "token",
+              "tokenKind": "standard_call",
+              "authorizedSender": null,
+              "operation": "register",
+              "record": {
+                "platform": "android",
+                "kind": "standard_call",
+                "expiresAtMs": 1791454563238,
+                "identityChangedFromPreviousRegistration": false
+              },
+              "commandOrderAfterAnchor": "2026-09-08T10:15:27.340Z",
+              "commandOrderBeforeAnchor": "2026-09-08T10:16:11.240Z",
+              "status": "observed_registered",
+              "expiresAt": "2026-10-08T10:16:03.238Z",
+              "unexpiredAtReceipt": true,
+              "signedOrRecordedExpiryAfterObservedGroupTail": true,
+              "remainingAtReceiptMs": 2591991624
+            },
+            "wake": {
+              "sourcePointer": "/registrationMutationsDuringCallWindow/303",
+              "peer": "peer-006",
+              "kind": "wake",
+              "tokenKind": null,
+              "authorizedSender": "peer-007",
+              "operation": "register",
+              "record": {
+                "expiresAtMs": 1788948567698,
+                "identityChangedFromPreviousRegistration": false
+              },
+              "commandOrderAfterAnchor": "2026-09-08T10:16:11.240Z",
+              "commandOrderBeforeAnchor": "2026-09-08T10:16:11.614Z",
+              "status": "observed_registered",
+              "expiresAt": "2026-09-09T10:09:27.698Z",
+              "unexpiredAtReceipt": true,
+              "signedOrRecordedExpiryAfterObservedGroupTail": true,
+              "remainingAtReceiptMs": 85996084
+            }
+          },
+          "ambiguousMutationPointers": []
+        }
+      ]
+    },
+    {
+      "callAlias": "call-100",
+      "aliasCaveat": "Equal opaque-handle group from source; not independently decoded call IDs or invite semantics.",
+      "firstObservedDirection": {
+        "sender": "peer-006",
+        "recipient": "peer-007"
+      },
+      "firstObservedReceipt": "2026-09-08T10:16:28.312Z",
+      "lastObservedEventOrTerminalMarker": "2026-09-08T10:16:34.707Z",
+      "observedSpanCaveat": "This is an observed metadata span, not proven media duration or terminal state.",
+      "allThreeRecipientRecordsPresentAndUnexpiredBeforeFirstReceipt": true,
+      "recipientAuthorityAtFirstReceipt": {
+        "endpoint": {
+          "sourcePointer": "/registrationMutationsDuringCallWindow/290",
+          "peer": "peer-007",
+          "kind": "endpoint",
+          "tokenKind": null,
+          "authorizedSender": null,
+          "operation": "register",
+          "record": {
+            "platform": "ios",
+            "expiresAtMs": 1788884167480,
+            "preferenceEpoch": 1788862567480,
+            "deviceKeyEpoch": 8879833610816774,
+            "identityChangedFromPreviousRegistration": false
+          },
+          "commandOrderAfterAnchor": "2026-09-08T10:15:27.340Z",
+          "commandOrderBeforeAnchor": "2026-09-08T10:16:11.240Z",
+          "status": "observed_registered",
+          "expiresAt": "2026-09-08T16:16:07.480Z",
+          "unexpiredAtReceipt": true,
+          "signedOrRecordedExpiryAfterObservedGroupTail": true,
+          "remainingAtReceiptMs": 21579168
+        },
+        "endpoint-device": {
+          "sourcePointer": "/registrationMutationsDuringCallWindow/291",
+          "peer": "peer-007",
+          "kind": "endpoint-device",
+          "tokenKind": null,
+          "authorizedSender": null,
+          "operation": "register",
+          "record": {
+            "platform": "ios",
+            "expiresAtMs": 1788884167480,
+            "preferenceEpoch": 1788862567480
+          },
+          "commandOrderAfterAnchor": "2026-09-08T10:15:27.340Z",
+          "commandOrderBeforeAnchor": "2026-09-08T10:16:11.240Z",
+          "status": "observed_registered",
+          "expiresAt": "2026-09-08T16:16:07.480Z",
+          "unexpiredAtReceipt": true,
+          "signedOrRecordedExpiryAfterObservedGroupTail": true,
+          "remainingAtReceiptMs": 21579168
+        },
+        "token": {
+          "sourcePointer": "/registrationMutationsDuringCallWindow/277",
+          "peer": "peer-007",
+          "kind": "token",
+          "tokenKind": "ios_voip",
+          "authorizedSender": null,
+          "operation": "register",
+          "record": {
+            "platform": "ios",
+            "environment": "production",
+            "kind": "ios_voip",
+            "expiresAtMs": 1791454563414,
+            "capabilityVersion": 1,
+            "refreshEpoch": 3,
+            "generation": 2,
+            "identityChangedFromPreviousRegistration": false
+          },
+          "commandOrderAfterAnchor": "2026-09-08T10:15:27.340Z",
+          "commandOrderBeforeAnchor": "2026-09-08T10:16:11.240Z",
+          "status": "observed_registered",
+          "expiresAt": "2026-10-08T10:16:03.414Z",
+          "unexpiredAtReceipt": true,
+          "signedOrRecordedExpiryAfterObservedGroupTail": true,
+          "remainingAtReceiptMs": 2591975102
+        },
+        "wake": {
+          "sourcePointer": "/registrationMutationsDuringCallWindow/281",
+          "peer": "peer-007",
+          "kind": "wake",
+          "tokenKind": null,
+          "authorizedSender": "peer-006",
+          "operation": "register",
+          "record": {
+            "expiresAtMs": 1788902671777,
+            "identityChangedFromPreviousRegistration": false
+          },
+          "commandOrderAfterAnchor": "2026-09-08T10:15:27.340Z",
+          "commandOrderBeforeAnchor": "2026-09-08T10:16:11.240Z",
+          "status": "observed_registered",
+          "expiresAt": "2026-09-08T21:24:31.777Z",
+          "unexpiredAtReceipt": true,
+          "signedOrRecordedExpiryAfterObservedGroupTail": true,
+          "remainingAtReceiptMs": 40083465
+        }
+      },
+      "recipientDeletionRowsWithinObservedSpan": [
+        {
+          "sourcePointer": "/registrationMutationsDuringCallWindow/313",
+          "peer": "peer-007",
+          "kind": "token",
+          "tokenKind": "ios_voip",
+          "authorizedSender": null,
+          "operation": "delete",
+          "record": {},
+          "commandOrderAfterAnchor": "2026-09-08T10:16:28.312Z",
+          "commandOrderBeforeAnchor": "2026-09-08T10:16:29.047Z"
+        },
+        {
+          "sourcePointer": "/registrationMutationsDuringCallWindow/314",
+          "peer": "peer-007",
+          "kind": "endpoint",
+          "tokenKind": null,
+          "authorizedSender": null,
+          "operation": "delete",
+          "record": {},
+          "commandOrderAfterAnchor": "2026-09-08T10:16:28.312Z",
+          "commandOrderBeforeAnchor": "2026-09-08T10:16:29.047Z"
+        },
+        {
+          "sourcePointer": "/registrationMutationsDuringCallWindow/315",
+          "peer": "peer-007",
+          "kind": "endpoint-device",
+          "tokenKind": null,
+          "authorizedSender": null,
+          "operation": "delete",
+          "record": {},
+          "commandOrderAfterAnchor": "2026-09-08T10:16:28.312Z",
+          "commandOrderBeforeAnchor": "2026-09-08T10:16:29.047Z"
+        }
+      ],
+      "recipientMutationPointersWithinObservedSpan": [
+        "/registrationMutationsDuringCallWindow/313",
+        "/registrationMutationsDuringCallWindow/314",
+        "/registrationMutationsDuringCallWindow/315",
+        "/registrationMutationsDuringCallWindow/316",
+        "/registrationMutationsDuringCallWindow/317",
+        "/registrationMutationsDuringCallWindow/318"
+      ],
+      "recipientStateThroughObservedSpan": "endpoint_and_token_deleted_after_first_receipt_wake_retained",
+      "directionalMailboxes": [
+        {
+          "mailbox": "mailbox-172",
+          "sourcePointer": "/mailboxes/19",
+          "sender": "peer-006",
+          "recipient": "peer-007",
+          "firstReceipt": "2026-09-08T10:16:28.312Z",
+          "lastEventReceipt": "2026-09-08T10:16:28.312Z",
+          "recipientAuthorityBeforeFirstReceipt": {
+            "endpoint": {
+              "sourcePointer": "/registrationMutationsDuringCallWindow/290",
+              "peer": "peer-007",
+              "kind": "endpoint",
+              "tokenKind": null,
+              "authorizedSender": null,
+              "operation": "register",
+              "record": {
+                "platform": "ios",
+                "expiresAtMs": 1788884167480,
+                "preferenceEpoch": 1788862567480,
+                "deviceKeyEpoch": 8879833610816774,
+                "identityChangedFromPreviousRegistration": false
+              },
+              "commandOrderAfterAnchor": "2026-09-08T10:15:27.340Z",
+              "commandOrderBeforeAnchor": "2026-09-08T10:16:11.240Z",
+              "status": "observed_registered",
+              "expiresAt": "2026-09-08T16:16:07.480Z",
+              "unexpiredAtReceipt": true,
+              "signedOrRecordedExpiryAfterObservedGroupTail": true,
+              "remainingAtReceiptMs": 21579168
+            },
+            "endpoint-device": {
+              "sourcePointer": "/registrationMutationsDuringCallWindow/291",
+              "peer": "peer-007",
+              "kind": "endpoint-device",
+              "tokenKind": null,
+              "authorizedSender": null,
+              "operation": "register",
+              "record": {
+                "platform": "ios",
+                "expiresAtMs": 1788884167480,
+                "preferenceEpoch": 1788862567480
+              },
+              "commandOrderAfterAnchor": "2026-09-08T10:15:27.340Z",
+              "commandOrderBeforeAnchor": "2026-09-08T10:16:11.240Z",
+              "status": "observed_registered",
+              "expiresAt": "2026-09-08T16:16:07.480Z",
+              "unexpiredAtReceipt": true,
+              "signedOrRecordedExpiryAfterObservedGroupTail": true,
+              "remainingAtReceiptMs": 21579168
+            },
+            "token": {
+              "sourcePointer": "/registrationMutationsDuringCallWindow/277",
+              "peer": "peer-007",
+              "kind": "token",
+              "tokenKind": "ios_voip",
+              "authorizedSender": null,
+              "operation": "register",
+              "record": {
+                "platform": "ios",
+                "environment": "production",
+                "kind": "ios_voip",
+                "expiresAtMs": 1791454563414,
+                "capabilityVersion": 1,
+                "refreshEpoch": 3,
+                "generation": 2,
+                "identityChangedFromPreviousRegistration": false
+              },
+              "commandOrderAfterAnchor": "2026-09-08T10:15:27.340Z",
+              "commandOrderBeforeAnchor": "2026-09-08T10:16:11.240Z",
+              "status": "observed_registered",
+              "expiresAt": "2026-10-08T10:16:03.414Z",
+              "unexpiredAtReceipt": true,
+              "signedOrRecordedExpiryAfterObservedGroupTail": true,
+              "remainingAtReceiptMs": 2591975102
+            },
+            "wake": {
+              "sourcePointer": "/registrationMutationsDuringCallWindow/281",
+              "peer": "peer-007",
+              "kind": "wake",
+              "tokenKind": null,
+              "authorizedSender": "peer-006",
+              "operation": "register",
+              "record": {
+                "expiresAtMs": 1788902671777,
+                "identityChangedFromPreviousRegistration": false
+              },
+              "commandOrderAfterAnchor": "2026-09-08T10:15:27.340Z",
+              "commandOrderBeforeAnchor": "2026-09-08T10:16:11.240Z",
+              "status": "observed_registered",
+              "expiresAt": "2026-09-08T21:24:31.777Z",
+              "unexpiredAtReceipt": true,
+              "signedOrRecordedExpiryAfterObservedGroupTail": true,
+              "remainingAtReceiptMs": 40083465
+            }
+          },
+          "ambiguousMutationPointers": []
+        },
+        {
+          "mailbox": "mailbox-173",
+          "sourcePointer": "/mailboxes/20",
+          "sender": "peer-007",
+          "recipient": "peer-006",
+          "firstReceipt": "2026-09-08T10:16:29.399Z",
+          "lastEventReceipt": "2026-09-08T10:16:34.707Z",
+          "recipientAuthorityBeforeFirstReceipt": {
+            "endpoint": {
+              "sourcePointer": "/registrationMutationsDuringCallWindow/310",
+              "peer": "peer-006",
+              "kind": "endpoint",
+              "tokenKind": null,
+              "authorizedSender": null,
+              "operation": "register",
+              "record": {
+                "platform": "android",
+                "expiresAtMs": 1788884187223,
+                "preferenceEpoch": 1788862587223,
+                "deviceKeyEpoch": 4236284878241438,
+                "identityChangedFromPreviousRegistration": false
+              },
+              "commandOrderAfterAnchor": "2026-09-08T10:16:11.614Z",
+              "commandOrderBeforeAnchor": "2026-09-08T10:16:28.312Z",
+              "status": "observed_registered",
+              "expiresAt": "2026-09-08T16:16:27.223Z",
+              "unexpiredAtReceipt": true,
+              "signedOrRecordedExpiryAfterObservedGroupTail": true,
+              "remainingAtReceiptMs": 21597824
+            },
+            "endpoint-device": {
+              "sourcePointer": "/registrationMutationsDuringCallWindow/311",
+              "peer": "peer-006",
+              "kind": "endpoint-device",
+              "tokenKind": null,
+              "authorizedSender": null,
+              "operation": "register",
+              "record": {
+                "platform": "android",
+                "expiresAtMs": 1788884187223,
+                "preferenceEpoch": 1788862587223
+              },
+              "commandOrderAfterAnchor": "2026-09-08T10:16:11.614Z",
+              "commandOrderBeforeAnchor": "2026-09-08T10:16:28.312Z",
+              "status": "observed_registered",
+              "expiresAt": "2026-09-08T16:16:27.223Z",
+              "unexpiredAtReceipt": true,
+              "signedOrRecordedExpiryAfterObservedGroupTail": true,
+              "remainingAtReceiptMs": 21597824
+            },
+            "token": {
+              "sourcePointer": "/registrationMutationsDuringCallWindow/272",
+              "peer": "peer-006",
+              "kind": "token",
+              "tokenKind": "standard_call",
+              "authorizedSender": null,
+              "operation": "register",
+              "record": {
+                "platform": "android",
+                "kind": "standard_call",
+                "expiresAtMs": 1791454563238,
+                "identityChangedFromPreviousRegistration": false
+              },
+              "commandOrderAfterAnchor": "2026-09-08T10:15:27.340Z",
+              "commandOrderBeforeAnchor": "2026-09-08T10:16:11.240Z",
+              "status": "observed_registered",
+              "expiresAt": "2026-10-08T10:16:03.238Z",
+              "unexpiredAtReceipt": true,
+              "signedOrRecordedExpiryAfterObservedGroupTail": true,
+              "remainingAtReceiptMs": 2591973839
+            },
+            "wake": {
+              "sourcePointer": "/registrationMutationsDuringCallWindow/308",
+              "peer": "peer-006",
+              "kind": "wake",
+              "tokenKind": null,
+              "authorizedSender": "peer-007",
+              "operation": "register",
+              "record": {
+                "expiresAtMs": 1788948567698,
+                "identityChangedFromPreviousRegistration": false
+              },
+              "commandOrderAfterAnchor": "2026-09-08T10:16:11.614Z",
+              "commandOrderBeforeAnchor": "2026-09-08T10:16:28.312Z",
+              "status": "observed_registered",
+              "expiresAt": "2026-09-09T10:09:27.698Z",
+              "unexpiredAtReceipt": true,
+              "signedOrRecordedExpiryAfterObservedGroupTail": true,
+              "remainingAtReceiptMs": 85978299
+            }
+          },
+          "ambiguousMutationPointers": []
+        }
+      ]
+    },
+    {
+      "callAlias": "call-101",
+      "aliasCaveat": "Equal opaque-handle group from source; not independently decoded call IDs or invite semantics.",
+      "firstObservedDirection": {
+        "sender": "peer-006",
+        "recipient": "peer-007"
+      },
+      "firstObservedReceipt": "2026-09-08T10:17:04.394Z",
+      "lastObservedEventOrTerminalMarker": "2026-09-08T10:17:04.865Z",
+      "observedSpanCaveat": "This is an observed metadata span, not proven media duration or terminal state.",
+      "allThreeRecipientRecordsPresentAndUnexpiredBeforeFirstReceipt": true,
+      "recipientAuthorityAtFirstReceipt": {
+        "endpoint": {
+          "sourcePointer": "/registrationMutationsDuringCallWindow/379",
+          "peer": "peer-007",
+          "kind": "endpoint",
+          "tokenKind": null,
+          "authorizedSender": null,
+          "operation": "register",
+          "record": {
+            "platform": "ios",
+            "expiresAtMs": 1788884223566,
+            "preferenceEpoch": 1788862623566,
+            "deviceKeyEpoch": 8879833610816774,
+            "identityChangedFromPreviousRegistration": false
+          },
+          "commandOrderAfterAnchor": "2026-09-08T10:16:34.707Z",
+          "commandOrderBeforeAnchor": "2026-09-08T10:17:04.394Z",
+          "status": "observed_registered",
+          "expiresAt": "2026-09-08T16:17:03.566Z",
+          "unexpiredAtReceipt": true,
+          "signedOrRecordedExpiryAfterObservedGroupTail": true,
+          "remainingAtReceiptMs": 21599172
+        },
+        "endpoint-device": {
+          "sourcePointer": "/registrationMutationsDuringCallWindow/380",
+          "peer": "peer-007",
+          "kind": "endpoint-device",
+          "tokenKind": null,
+          "authorizedSender": null,
+          "operation": "register",
+          "record": {
+            "platform": "ios",
+            "expiresAtMs": 1788884223566,
+            "preferenceEpoch": 1788862623566
+          },
+          "commandOrderAfterAnchor": "2026-09-08T10:16:34.707Z",
+          "commandOrderBeforeAnchor": "2026-09-08T10:17:04.394Z",
+          "status": "observed_registered",
+          "expiresAt": "2026-09-08T16:17:03.566Z",
+          "unexpiredAtReceipt": true,
+          "signedOrRecordedExpiryAfterObservedGroupTail": true,
+          "remainingAtReceiptMs": 21599172
+        },
+        "token": {
+          "sourcePointer": "/registrationMutationsDuringCallWindow/373",
+          "peer": "peer-007",
+          "kind": "token",
+          "tokenKind": "ios_voip",
+          "authorizedSender": null,
+          "operation": "register",
+          "record": {
+            "platform": "ios",
+            "environment": "production",
+            "kind": "ios_voip",
+            "expiresAtMs": 1791454621449,
+            "capabilityVersion": 1,
+            "refreshEpoch": 5,
+            "generation": 3,
+            "identityChangedFromPreviousRegistration": false
+          },
+          "commandOrderAfterAnchor": "2026-09-08T10:16:34.707Z",
+          "commandOrderBeforeAnchor": "2026-09-08T10:17:04.394Z",
+          "status": "observed_registered",
+          "expiresAt": "2026-10-08T10:17:01.449Z",
+          "unexpiredAtReceipt": true,
+          "signedOrRecordedExpiryAfterObservedGroupTail": true,
+          "remainingAtReceiptMs": 2591997055
+        },
+        "wake": {
+          "sourcePointer": "/registrationMutationsDuringCallWindow/375",
+          "peer": "peer-007",
+          "kind": "wake",
+          "tokenKind": null,
+          "authorizedSender": "peer-006",
+          "operation": "register",
+          "record": {
+            "expiresAtMs": 1788902671777,
+            "identityChangedFromPreviousRegistration": false
+          },
+          "commandOrderAfterAnchor": "2026-09-08T10:16:34.707Z",
+          "commandOrderBeforeAnchor": "2026-09-08T10:17:04.394Z",
+          "status": "observed_registered",
+          "expiresAt": "2026-09-08T21:24:31.777Z",
+          "unexpiredAtReceipt": true,
+          "signedOrRecordedExpiryAfterObservedGroupTail": true,
+          "remainingAtReceiptMs": 40047383
+        }
+      },
+      "recipientDeletionRowsWithinObservedSpan": [
+        {
+          "sourcePointer": "/registrationMutationsDuringCallWindow/386",
+          "peer": "peer-007",
+          "kind": "token",
+          "tokenKind": "ios_voip",
+          "authorizedSender": null,
+          "operation": "delete",
+          "record": {},
+          "commandOrderAfterAnchor": "2026-09-08T10:17:04.522Z",
+          "commandOrderBeforeAnchor": "2026-09-08T10:17:04.865Z"
+        },
+        {
+          "sourcePointer": "/registrationMutationsDuringCallWindow/387",
+          "peer": "peer-007",
+          "kind": "endpoint",
+          "tokenKind": null,
+          "authorizedSender": null,
+          "operation": "delete",
+          "record": {},
+          "commandOrderAfterAnchor": "2026-09-08T10:17:04.522Z",
+          "commandOrderBeforeAnchor": "2026-09-08T10:17:04.865Z"
+        },
+        {
+          "sourcePointer": "/registrationMutationsDuringCallWindow/388",
+          "peer": "peer-007",
+          "kind": "endpoint-device",
+          "tokenKind": null,
+          "authorizedSender": null,
+          "operation": "delete",
+          "record": {},
+          "commandOrderAfterAnchor": "2026-09-08T10:17:04.522Z",
+          "commandOrderBeforeAnchor": "2026-09-08T10:17:04.865Z"
+        }
+      ],
+      "recipientMutationPointersWithinObservedSpan": [
+        "/registrationMutationsDuringCallWindow/386",
+        "/registrationMutationsDuringCallWindow/387",
+        "/registrationMutationsDuringCallWindow/388",
+        "/registrationMutationsDuringCallWindow/389",
+        "/registrationMutationsDuringCallWindow/390",
+        "/registrationMutationsDuringCallWindow/391"
+      ],
+      "recipientStateThroughObservedSpan": "endpoint_and_token_deleted_after_first_receipt_wake_retained",
+      "directionalMailboxes": [
+        {
+          "mailbox": "mailbox-174",
+          "sourcePointer": "/mailboxes/21",
+          "sender": "peer-006",
+          "recipient": "peer-007",
+          "firstReceipt": "2026-09-08T10:17:04.394Z",
+          "lastEventReceipt": "2026-09-08T10:17:04.394Z",
+          "recipientAuthorityBeforeFirstReceipt": {
+            "endpoint": {
+              "sourcePointer": "/registrationMutationsDuringCallWindow/379",
+              "peer": "peer-007",
+              "kind": "endpoint",
+              "tokenKind": null,
+              "authorizedSender": null,
+              "operation": "register",
+              "record": {
+                "platform": "ios",
+                "expiresAtMs": 1788884223566,
+                "preferenceEpoch": 1788862623566,
+                "deviceKeyEpoch": 8879833610816774,
+                "identityChangedFromPreviousRegistration": false
+              },
+              "commandOrderAfterAnchor": "2026-09-08T10:16:34.707Z",
+              "commandOrderBeforeAnchor": "2026-09-08T10:17:04.394Z",
+              "status": "observed_registered",
+              "expiresAt": "2026-09-08T16:17:03.566Z",
+              "unexpiredAtReceipt": true,
+              "signedOrRecordedExpiryAfterObservedGroupTail": true,
+              "remainingAtReceiptMs": 21599172
+            },
+            "endpoint-device": {
+              "sourcePointer": "/registrationMutationsDuringCallWindow/380",
+              "peer": "peer-007",
+              "kind": "endpoint-device",
+              "tokenKind": null,
+              "authorizedSender": null,
+              "operation": "register",
+              "record": {
+                "platform": "ios",
+                "expiresAtMs": 1788884223566,
+                "preferenceEpoch": 1788862623566
+              },
+              "commandOrderAfterAnchor": "2026-09-08T10:16:34.707Z",
+              "commandOrderBeforeAnchor": "2026-09-08T10:17:04.394Z",
+              "status": "observed_registered",
+              "expiresAt": "2026-09-08T16:17:03.566Z",
+              "unexpiredAtReceipt": true,
+              "signedOrRecordedExpiryAfterObservedGroupTail": true,
+              "remainingAtReceiptMs": 21599172
+            },
+            "token": {
+              "sourcePointer": "/registrationMutationsDuringCallWindow/373",
+              "peer": "peer-007",
+              "kind": "token",
+              "tokenKind": "ios_voip",
+              "authorizedSender": null,
+              "operation": "register",
+              "record": {
+                "platform": "ios",
+                "environment": "production",
+                "kind": "ios_voip",
+                "expiresAtMs": 1791454621449,
+                "capabilityVersion": 1,
+                "refreshEpoch": 5,
+                "generation": 3,
+                "identityChangedFromPreviousRegistration": false
+              },
+              "commandOrderAfterAnchor": "2026-09-08T10:16:34.707Z",
+              "commandOrderBeforeAnchor": "2026-09-08T10:17:04.394Z",
+              "status": "observed_registered",
+              "expiresAt": "2026-10-08T10:17:01.449Z",
+              "unexpiredAtReceipt": true,
+              "signedOrRecordedExpiryAfterObservedGroupTail": true,
+              "remainingAtReceiptMs": 2591997055
+            },
+            "wake": {
+              "sourcePointer": "/registrationMutationsDuringCallWindow/375",
+              "peer": "peer-007",
+              "kind": "wake",
+              "tokenKind": null,
+              "authorizedSender": "peer-006",
+              "operation": "register",
+              "record": {
+                "expiresAtMs": 1788902671777,
+                "identityChangedFromPreviousRegistration": false
+              },
+              "commandOrderAfterAnchor": "2026-09-08T10:16:34.707Z",
+              "commandOrderBeforeAnchor": "2026-09-08T10:17:04.394Z",
+              "status": "observed_registered",
+              "expiresAt": "2026-09-08T21:24:31.777Z",
+              "unexpiredAtReceipt": true,
+              "signedOrRecordedExpiryAfterObservedGroupTail": true,
+              "remainingAtReceiptMs": 40047383
+            }
+          },
+          "ambiguousMutationPointers": []
+        },
+        {
+          "mailbox": "mailbox-175",
+          "sourcePointer": "/mailboxes/22",
+          "sender": "peer-007",
+          "recipient": "peer-006",
+          "firstReceipt": "2026-09-08T10:17:04.522Z",
+          "lastEventReceipt": "2026-09-08T10:17:04.522Z",
+          "recipientAuthorityBeforeFirstReceipt": {
+            "endpoint": {
+              "sourcePointer": "/registrationMutationsDuringCallWindow/382",
+              "peer": "peer-006",
+              "kind": "endpoint",
+              "tokenKind": null,
+              "authorizedSender": null,
+              "operation": "register",
+              "record": {
+                "platform": "android",
+                "expiresAtMs": 1788884223526,
+                "preferenceEpoch": 1788862623526,
+                "deviceKeyEpoch": 4236284878241438,
+                "identityChangedFromPreviousRegistration": false
+              },
+              "commandOrderAfterAnchor": "2026-09-08T10:16:34.707Z",
+              "commandOrderBeforeAnchor": "2026-09-08T10:17:04.394Z",
+              "status": "observed_registered",
+              "expiresAt": "2026-09-08T16:17:03.526Z",
+              "unexpiredAtReceipt": true,
+              "signedOrRecordedExpiryAfterObservedGroupTail": true,
+              "remainingAtReceiptMs": 21599004
+            },
+            "endpoint-device": {
+              "sourcePointer": "/registrationMutationsDuringCallWindow/383",
+              "peer": "peer-006",
+              "kind": "endpoint-device",
+              "tokenKind": null,
+              "authorizedSender": null,
+              "operation": "register",
+              "record": {
+                "platform": "android",
+                "expiresAtMs": 1788884223526,
+                "preferenceEpoch": 1788862623526
+              },
+              "commandOrderAfterAnchor": "2026-09-08T10:16:34.707Z",
+              "commandOrderBeforeAnchor": "2026-09-08T10:17:04.394Z",
+              "status": "observed_registered",
+              "expiresAt": "2026-09-08T16:17:03.526Z",
+              "unexpiredAtReceipt": true,
+              "signedOrRecordedExpiryAfterObservedGroupTail": true,
+              "remainingAtReceiptMs": 21599004
+            },
+            "token": {
+              "sourcePointer": "/registrationMutationsDuringCallWindow/272",
+              "peer": "peer-006",
+              "kind": "token",
+              "tokenKind": "standard_call",
+              "authorizedSender": null,
+              "operation": "register",
+              "record": {
+                "platform": "android",
+                "kind": "standard_call",
+                "expiresAtMs": 1791454563238,
+                "identityChangedFromPreviousRegistration": false
+              },
+              "commandOrderAfterAnchor": "2026-09-08T10:15:27.340Z",
+              "commandOrderBeforeAnchor": "2026-09-08T10:16:11.240Z",
+              "status": "observed_registered",
+              "expiresAt": "2026-10-08T10:16:03.238Z",
+              "unexpiredAtReceipt": true,
+              "signedOrRecordedExpiryAfterObservedGroupTail": true,
+              "remainingAtReceiptMs": 2591938716
+            },
+            "wake": {
+              "sourcePointer": "/registrationMutationsDuringCallWindow/385",
+              "peer": "peer-006",
+              "kind": "wake",
+              "tokenKind": null,
+              "authorizedSender": "peer-007",
+              "operation": "register",
+              "record": {
+                "expiresAtMs": 1788948567698,
+                "identityChangedFromPreviousRegistration": false
+              },
+              "commandOrderAfterAnchor": "2026-09-08T10:16:34.707Z",
+              "commandOrderBeforeAnchor": "2026-09-08T10:17:04.394Z",
+              "status": "observed_registered",
+              "expiresAt": "2026-09-09T10:09:27.698Z",
+              "unexpiredAtReceipt": true,
+              "signedOrRecordedExpiryAfterObservedGroupTail": true,
+              "remainingAtReceiptMs": 85943176
+            }
+          },
+          "ambiguousMutationPointers": []
+        }
+      ]
+    }
+  ],
+  "sourceSemanticsVerification": {
+    "queryId": "1a0b4914e6e744a4",
+    "evidenceDigest": "7a2cfaa5a97cd184",
+    "verificationMethod": "Cross-agent current-source audit; no additional production/source actions by this analysis",
+    "auditArtifact": "Test-Flight-Improv/evidence/beta-audio-call-review-2026-09-08/initial-twelve-mailbox-semantics.md",
+    "endpointRevoke": {
+      "path": "go-relay-server/call_control_redis.go",
+      "symbol": "RevokeEndpoint",
+      "watchLine": 1224,
+      "transactionStartLine": 1252,
+      "transactionEndLine": 1264,
+      "signature": "Endpoint DEL, device-route DEL, three separate endpoint-tombstone HSETs, then expiry, in one WATCH/TxPipelined transaction."
+    },
+    "endpointRegister": {
+      "path": "go-relay-server/call_control_redis.go",
+      "symbol": "SetEndpoint",
+      "startLine": 1178,
+      "endLine": 1188,
+      "distinction": "Endpoint and route records plus one combined high-water HSET, unlike the observed split revoke HSETs."
+    },
+    "tokenDeletion": "Separate method/key outside the endpoint revoke transaction; adjacent sanitized rows do not prove a joint atomic operation.",
+    "scopeLimit": "Current source signature match does not establish historical calling lifecycle callback, device action, or per-call media consequence. Endpoint tombstones do not terminalize call mailboxes."
+  }
+}

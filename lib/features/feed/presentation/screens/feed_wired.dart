@@ -322,6 +322,16 @@ class _FeedWiredState extends State<FeedWired>
   // have dropped a message under the incremental single-id upsert.
   final Map<String, _PendingContactFeedFlush> _pendingContactFlushes = {};
   final Map<String, Timer> _pendingContactFlushTimers = {};
+  // Debouncing does not serialize the async SQL/media work started by a flush.
+  // Track individual rows so a later event supersedes only that row; contact
+  // snapshots additionally supersede work against the replaced window.
+  final Map<(String, String), int> _messageFeedVersions = {};
+  final Map<String, int> _contactFeedVersions = {};
+  final Map<String, int> _contactMetadataVersions = {};
+  final Map<String, int> _contactSnapshotVersions = {};
+  int _contactFeedChangeVersion = 0;
+  int _feedLoadRequestId = 0;
+  int _contactSectionLoadRequestId = 0;
   int _orbitBadgeLoadRequestId = 0;
   ImageQualityPreference _qualityPreference = ImageQualityPreference.compressed;
 
@@ -519,21 +529,37 @@ class _FeedWiredState extends State<FeedWired>
   }
 
   Future<void> _loadFeedFromDatabase() async {
+    // A newer full/section request invalidates the other's older contact read.
+    _contactFeedChangeVersion++;
+    final requestId = ++_feedLoadRequestId;
     try {
-      final items = await loadFeed(
-        contactRepo: widget.contactRepository,
-        messageRepo: widget.messageRepository,
-        mediaAttachmentRepo: widget.mediaAttachmentRepository,
-        mediaFileManager: widget.mediaFileManager,
-        groupRepo: widget.groupRepository,
-        groupMsgRepo: widget.groupMessageRepository,
-      );
-      if (!mounted) return;
+      while (mounted) {
+        final changeVersion = _contactFeedChangeVersion;
+        final items = await loadFeed(
+          contactRepo: widget.contactRepository,
+          messageRepo: widget.messageRepository,
+          mediaAttachmentRepo: widget.mediaAttachmentRepository,
+          mediaFileManager: widget.mediaFileManager,
+          groupRepo: widget.groupRepository,
+          groupMsgRepo: widget.groupMessageRepository,
+        );
+        if (!mounted || requestId != _feedLoadRequestId) return;
+        if (changeVersion != _contactFeedChangeVersion) continue;
 
-      _feedStore.replaceAll(items);
-      _markFeedLoaded();
-      _loadReactionsForFeed();
+        _supersedeContactSnapshots([..._feedItems, ...items]);
+        _feedStore.replaceAll(items);
+        _markFeedLoaded();
+        _loadReactionsForFeed();
+        final focused = _focusedId;
+        if (focused != null &&
+            !focused.startsWith('group:') &&
+            !focused.startsWith('connection:')) {
+          await _hydrateFocusedContactThread(focused);
+        }
+        return;
+      }
     } catch (e) {
+      if (!mounted || requestId != _feedLoadRequestId) return;
       emitFlowEvent(
         layer: 'FL',
         event: 'FEED_FL_DB_LOAD_ERROR',
@@ -701,41 +727,57 @@ class _FeedWiredState extends State<FeedWired>
     bool refreshUnreadCount = true,
     int? pageSize = _feedSnapshotPageSize,
   }) async {
+    _noteContactFeedChange(contactPeerId);
+    final requestId = (_contactSnapshotVersions[contactPeerId] ?? 0) + 1;
+    _contactSnapshotVersions[contactPeerId] = requestId;
     try {
-      final snapshot = await loadContactFeedSnapshot(
-        contactRepo: widget.contactRepository,
-        messageRepo: widget.messageRepository,
-        contactPeerId: contactPeerId,
-        pageSize: pageSize,
-        mediaAttachmentRepo: widget.mediaAttachmentRepository,
-        mediaFileManager: widget.mediaFileManager,
-      );
-      if (!mounted) return;
+      while (mounted) {
+        final changeVersion = _contactFeedVersions[contactPeerId];
+        final snapshot = await loadContactFeedSnapshot(
+          contactRepo: widget.contactRepository,
+          messageRepo: widget.messageRepository,
+          contactPeerId: contactPeerId,
+          pageSize: pageSize,
+          mediaAttachmentRepo: widget.mediaAttachmentRepository,
+          mediaFileManager: widget.mediaFileManager,
+        );
+        if (!mounted || _contactSnapshotVersions[contactPeerId] != requestId) {
+          return;
+        }
+        if (_contactFeedVersions[contactPeerId] != changeVersion) continue;
 
-      final nextMessageIds = snapshot.threadItem == null
-          ? <String>{}
-          : snapshot.threadItem!.messages.map((message) => message.id).toSet();
-      _syncComposerStateForContact(contactPeerId, nextMessageIds);
+        final nextMessageIds = snapshot.threadItem == null
+            ? <String>{}
+            : snapshot.threadItem!.messages
+                  .map((message) => message.id)
+                  .toSet();
+        _syncComposerStateForContact(contactPeerId, nextMessageIds);
 
-      _feedStore.replaceContactSnapshot(
-        contactPeerId: contactPeerId,
-        connectionItem: snapshot.connectionItem,
-        threadItem: snapshot.threadItem,
-      );
-      _markFeedLoaded();
+        _contactSnapshotVersions[contactPeerId] = requestId + 1;
+        _feedStore.replaceContactSnapshot(
+          contactPeerId: contactPeerId,
+          connectionItem: snapshot.connectionItem,
+          threadItem: snapshot.threadItem,
+        );
+        _markFeedLoaded();
 
-      // 160 B7: do NOT prune reactions by page difference. Under the bounded
-      // snapshot an older still-present message is evicted from the window but
-      // has NOT left the thread, so clearing it would drop live reactions
-      // (TC-160-10). Genuine removals clear their own id at the delete/hide
-      // call site (see the repo-change listener). We still (re)load reactions
-      // for the rendered page.
-      await _refreshReactionsForMessageIds(nextMessageIds.toList());
+        // 160 B7: do NOT prune reactions by page difference. Under the bounded
+        // snapshot an older still-present message is evicted from the window but
+        // has NOT left the thread, so clearing it would drop live reactions
+        // (TC-160-10). Genuine removals clear their own id at the delete/hide
+        // call site (see the repo-change listener). We still (re)load reactions
+        // for the rendered page.
+        await _refreshReactionsForMessageIds(nextMessageIds.toList());
 
-      if (refreshUnreadCount) {
-        await _loadTotalUnreadCount();
+        if (refreshUnreadCount) {
+          await _loadTotalUnreadCount();
+        }
+        return;
       }
     } catch (e) {
+      if (!mounted || _contactSnapshotVersions[contactPeerId] != requestId) {
+        return;
+      }
       emitFlowEvent(
         layer: 'FL',
         event: 'FEED_FL_CONTACT_REFRESH_ERROR',
@@ -776,6 +818,8 @@ class _FeedWiredState extends State<FeedWired>
   Future<void> _refreshAllContactsSection({
     bool refreshUnreadCount = true,
   }) async {
+    _contactFeedChangeVersion++;
+    final requestId = ++_contactSectionLoadRequestId;
     final previousContactMessageIds = _feedItems
         .whereType<ThreadFeedItem>()
         .expand((item) => item.messages)
@@ -783,42 +827,49 @@ class _FeedWiredState extends State<FeedWired>
         .toSet();
 
     try {
-      final contactItems = await loadContactFeedItems(
-        contactRepo: widget.contactRepository,
-        messageRepo: widget.messageRepository,
-        mediaAttachmentRepo: widget.mediaAttachmentRepository,
-        mediaFileManager: widget.mediaFileManager,
-      );
-      if (!mounted) return;
+      while (mounted) {
+        final changeVersion = _contactFeedChangeVersion;
+        final contactItems = await loadContactFeedItems(
+          contactRepo: widget.contactRepository,
+          messageRepo: widget.messageRepository,
+          mediaAttachmentRepo: widget.mediaAttachmentRepository,
+          mediaFileManager: widget.mediaFileManager,
+        );
+        if (!mounted || requestId != _contactSectionLoadRequestId) return;
+        if (changeVersion != _contactFeedChangeVersion) continue;
 
-      final nextContactMessageIds = contactItems
-          .whereType<ThreadFeedItem>()
-          .expand((item) => item.messages)
-          .map((message) => message.id)
-          .toSet();
+        final nextContactMessageIds = contactItems
+            .whereType<ThreadFeedItem>()
+            .expand((item) => item.messages)
+            .map((message) => message.id)
+            .toSet();
 
-      _feedStore.replaceContacts(contactItems);
-      _markFeedLoaded();
-      _reactionStore.clearMessageIds(
-        previousContactMessageIds.difference(nextContactMessageIds),
-      );
+        _supersedeContactSnapshots([..._feedItems, ...contactItems]);
+        _feedStore.replaceContacts(contactItems);
+        _markFeedLoaded();
+        _reactionStore.clearMessageIds(
+          previousContactMessageIds.difference(nextContactMessageIds),
+        );
 
-      await _refreshReactionsForMessageIds(nextContactMessageIds.toList());
+        await _refreshReactionsForMessageIds(nextContactMessageIds.toList());
 
-      if (refreshUnreadCount) {
-        await _loadTotalUnreadCount();
-      }
+        if (refreshUnreadCount) {
+          await _loadTotalUnreadCount();
+        }
 
-      // 160 A9: a wholesale contact-section reload re-windows every thread. If a
-      // 1:1 card is focused, restore its FULL hydrated thread so the open view
-      // is not clobbered back to the mount window.
-      final focused = _focusedId;
-      if (focused != null &&
-          !focused.startsWith('group:') &&
-          !focused.startsWith('connection:')) {
-        await _hydrateFocusedContactThread(focused);
+        // 160 A9: a wholesale contact-section reload re-windows every thread. If a
+        // 1:1 card is focused, restore its FULL hydrated thread so the open view
+        // is not clobbered back to the mount window.
+        final focused = _focusedId;
+        if (focused != null &&
+            !focused.startsWith('group:') &&
+            !focused.startsWith('connection:')) {
+          await _hydrateFocusedContactThread(focused);
+        }
+        return;
       }
     } catch (e) {
+      if (!mounted || requestId != _contactSectionLoadRequestId) return;
       emitFlowEvent(
         layer: 'FL',
         event: 'FEED_FL_CONTACT_SECTION_REFRESH_ERROR',
@@ -1131,6 +1182,14 @@ class _FeedWiredState extends State<FeedWired>
     ConversationMessage message, {
     bool refreshUnreadCount = true,
   }) async {
+    final key = (message.contactPeerId, message.id);
+    final messageVersion = _messageFeedVersions[key];
+    final snapshotVersion = _contactSnapshotVersions[message.contactPeerId];
+    var metadataVersion = _contactMetadataVersions[message.contactPeerId];
+    bool isCurrent() =>
+        mounted &&
+        _messageFeedVersions[key] == messageVersion &&
+        _contactSnapshotVersions[message.contactPeerId] == snapshotVersion;
     try {
       if (message.isHidden) {
         await _refreshContactFeedItem(
@@ -1140,9 +1199,10 @@ class _FeedWiredState extends State<FeedWired>
         return;
       }
 
-      final contact = await widget.contactRepository.getContact(
+      var contact = await widget.contactRepository.getContact(
         message.contactPeerId,
       );
+      if (!isCurrent()) return;
       if (contact == null || contact.isArchived) {
         await _refreshContactFeedItem(
           message.contactPeerId,
@@ -1159,6 +1219,24 @@ class _FeedWiredState extends State<FeedWired>
                 owner: MediaOwnerLane.direct,
               ),
       );
+      if (!isCurrent()) return;
+      // Media paths can cross an OS boundary. Preserve a profile/block change
+      // that arrived there without discarding this independent message update.
+      while (metadataVersion !=
+          _contactMetadataVersions[message.contactPeerId]) {
+        metadataVersion = _contactMetadataVersions[message.contactPeerId];
+        contact = await widget.contactRepository.getContact(
+          message.contactPeerId,
+        );
+        if (!isCurrent()) return;
+      }
+      if (contact == null || contact.isArchived) {
+        await _refreshContactFeedItem(
+          message.contactPeerId,
+          refreshUnreadCount: refreshUnreadCount,
+        );
+        return;
+      }
       final currentThread = _threadForContact(contact.peerId);
       final merge = _mergeContactThreadMessages(
         currentThread,
@@ -1196,6 +1274,7 @@ class _FeedWiredState extends State<FeedWired>
         await _loadTotalUnreadCount();
       }
     } catch (e) {
+      if (!isCurrent()) return;
       emitFlowEvent(
         layer: 'FL',
         event: 'FEED_FL_CONTACT_INCREMENTAL_UPDATE_ERROR',
@@ -1218,6 +1297,7 @@ class _FeedWiredState extends State<FeedWired>
     ContactModel contact,
     ConversationMessage message,
   ) {
+    _noteContactMessageChange(message);
     final currentThread = _threadForContact(contact.peerId);
     final merge = _mergeContactThreadMessages(
       currentThread,
@@ -1245,6 +1325,12 @@ class _FeedWiredState extends State<FeedWired>
   }
 
   Future<void> _applyContactUpdateToFeed(ContactModel contact) async {
+    _noteContactFeedChange(contact.peerId);
+    _contactMetadataVersions.update(
+      contact.peerId,
+      (value) => value + 1,
+      ifAbsent: () => 1,
+    );
     if (contact.isArchived) {
       await _refreshContactFeedItem(contact.peerId);
       return;
@@ -1583,6 +1669,7 @@ class _FeedWiredState extends State<FeedWired>
     ConversationMessage message, {
     required bool refreshUnreadCount,
   }) {
+    _noteContactMessageChange(message);
     final peerId = message.contactPeerId;
     final pending = _pendingContactFlushes[peerId];
     if (pending == null) {
@@ -1604,6 +1691,38 @@ class _FeedWiredState extends State<FeedWired>
       _feedReloadCoalesceWindow,
       () => _flushContactFeedFlush(peerId),
     );
+  }
+
+  void _noteContactFeedChange(String peerId) {
+    _contactFeedChangeVersion++;
+    _contactFeedVersions.update(
+      peerId,
+      (value) => value + 1,
+      ifAbsent: () => 1,
+    );
+  }
+
+  void _noteContactMessageChange(ConversationMessage message) {
+    _noteContactFeedChange(message.contactPeerId);
+    final key = (message.contactPeerId, message.id);
+    _messageFeedVersions.update(key, (value) => value + 1, ifAbsent: () => 1);
+  }
+
+  void _supersedeContactSnapshots(Iterable<FeedItem> items) {
+    final peerIds = <String>{
+      for (final item in items)
+        if (item is ThreadFeedItem)
+          item.contactPeerId
+        else if (item is ConnectionFeedItem)
+          item.contactPeerId,
+    };
+    for (final peerId in peerIds) {
+      _contactSnapshotVersions.update(
+        peerId,
+        (value) => value + 1,
+        ifAbsent: () => 1,
+      );
+    }
   }
 
   void _flushContactFeedFlush(String peerId) {
@@ -3135,6 +3254,7 @@ class _FeedWiredState extends State<FeedWired>
         onClearFocus: _onClearFocus,
         onComposerSend: _onFeedComposerSend,
         onComposerDraftChanged: _onFeedComposerDraftChanged,
+        composerDraft: _draftTexts[_focusedId] ?? '',
         sessionReplies: _feedSessionOutgoing,
         onRetrySend: _onRetrySend,
         onSwipeCommit: _leaveFocusedThread,

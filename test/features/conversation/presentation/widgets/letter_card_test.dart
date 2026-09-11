@@ -302,7 +302,7 @@ void main() {
         },
       );
 
-      testWidgets('shows pending media delivery note while media is sending', (
+      testWidgets('queued media uses a waiting note without an upload spinner', (
         tester,
       ) async {
         await tester.pumpWidget(
@@ -318,18 +318,61 @@ void main() {
                 size: 1024,
                 mediaType: 'image',
                 localPath: '/tmp/sending.jpg',
-                downloadStatus: 'done',
+                downloadStatus: 'upload_pending',
                 createdAt: '2026-02-27T10:00:00.000Z',
               ),
             ],
           ),
         );
 
-        expect(find.text('Uploading media'), findsOneWidget);
+        expect(find.text('Media pending upload'), findsWidgets);
+        expect(find.text('Uploading media'), findsNothing);
+        expect(find.byIcon(Icons.schedule_rounded), findsWidgets);
         expect(
-          find.text('Recipients will receive this after the upload finishes.'),
+          find.byKey(const ValueKey('message-media-pending-note')),
           findsOneWidget,
         );
+        expect(
+          find.descendant(
+            of: find.byKey(const ValueKey('message-media-pending-note')),
+            matching: find.byType(CircularProgressIndicator),
+          ),
+          findsNothing,
+        );
+        expect(
+          find.descendant(
+            of: find.byKey(const ValueKey('message-media-pending-note')),
+            matching: find.text(
+              'Recipients will receive this after the upload finishes.',
+            ),
+          ),
+          findsOneWidget,
+        );
+      });
+
+      testWidgets('uploaded media waiting for its message does not claim upload activity', (
+        tester,
+      ) async {
+        await tester.pumpWidget(
+          buildTestWidget(
+            isIncoming: false,
+            status: 'sending',
+            text: '',
+            media: const [
+              MediaAttachment(
+                id: 'uploaded-media',
+                messageId: 'sending-message',
+                mime: 'image/jpeg',
+                size: 1024,
+                mediaType: 'image',
+                downloadStatus: 'done',
+                createdAt: '2026-02-27T10:00:00.000Z',
+              ),
+            ],
+          ),
+        );
+        expect(find.text('Uploading media'), findsNothing);
+        expect(find.text('Media pending upload'), findsNothing);
       });
 
       // 155: a message that reached the inbox reads as a good "in the inbox"

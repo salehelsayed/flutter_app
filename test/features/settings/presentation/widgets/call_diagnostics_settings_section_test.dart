@@ -1,11 +1,74 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/features/settings/presentation/widgets/call_diagnostics_settings_section.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  testWidgets('large report preview stays bounded and copies the full report', (
+    tester,
+  ) async {
+    final enabled = ValueNotifier(true);
+    addTearDown(enabled.dispose);
+    final report =
+        '${List.filled(60000, '{"stage":"preflight","reason":"none"}').join('\n')}\nEND_OF_FULL_REPORT';
+    String? copied;
+    final messenger =
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+    messenger.setMockMethodCallHandler(SystemChannels.platform, (call) async {
+      if (call.method == 'Clipboard.setData') {
+        copied = (call.arguments as Map)['text'] as String;
+      }
+      return null;
+    });
+    addTearDown(() {
+      messenger.setMockMethodCallHandler(SystemChannels.platform, null);
+    });
+    await tester.pumpWidget(
+      MaterialApp(
+        locale: const Locale('en'),
+        localizationsDelegates: AppLocalizations.localizationsDelegates,
+        supportedLocales: AppLocalizations.supportedLocales,
+        home: Scaffold(
+          body: CallDiagnosticsSettingsSection(
+            enabled: enabled,
+            setEnabled: (value) async => enabled.value = value,
+            exportPreview: () async => report,
+            clear: () async {},
+          ),
+        ),
+      ),
+    );
+    await tester.tap(find.text('Call diagnostics'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Preview support report'));
+    await tester.pumpAndSettle();
+    final visibleReport = tester
+        .widget<SelectableText>(find.byType(SelectableText))
+        .data!;
+    expect(visibleReport.length, lessThanOrEqualTo(8194));
+    expect(visibleReport, startsWith('{"stage":"preflight"'));
+    expect(visibleReport, isNot(contains('END_OF_FULL_REPORT')));
+    expect(
+      find.text('Showing part of the report. Copy includes the full report.'),
+      findsOneWidget,
+    );
+    final copy = find.widgetWithText(TextButton, 'Copy support report');
+    await tester.ensureVisible(copy);
+    await tester.pumpAndSettle();
+    await tester.tap(copy);
+    await tester.pumpAndSettle();
+    expect(copied, report);
+    expect(find.text('Support report copied'), findsOneWidget);
+    Navigator.of(tester.element(copy)).pop();
+    await tester.pumpAndSettle();
+    expect(find.byType(SelectableText), findsNothing);
+    expect(find.text('Call diagnostics'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets(
     'sharing status distinguishes pending setup and incomplete uploads',
     (tester) async {

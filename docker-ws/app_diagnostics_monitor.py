@@ -14,7 +14,7 @@ import app_diagnostics as operator
 
 MAX_ENTRIES = 200
 MAX_FILE_BYTES = 512 << 10
-ALERT_KEYS = ('kind', 'feature', 'platform', 'build', 'stage', 'reason', 'fingerprint')
+ALERT_KEYS = ('kind', 'feature', 'platform', 'build', 'stage', 'reason', 'fingerprint', 'errorClass', 'osReasonCode', 'operation')
 KINDS = {'technical_failure_rate','missing_final_rate','missing_start_rate','interrupted_unknown_rate','new_error_signature','telemetry_loss','telemetry_coverage_gap','collector_unavailable','coverage_projection_truncated'}
 COUNT_KEYS = ('count', 'denominator', 'eventReports', 'droppedEvents', 'invalidEvents', 'invalidRecords', 'clientReportedDroppedEvents', 'observedCounterIncrements')
 
@@ -50,7 +50,7 @@ def safe_alert(alert):
     if not isinstance(alert, dict) or alert.get('kind') not in KINDS:
         return None
     result = {'kind': alert['kind']}
-    for key in ALERT_KEYS[1:]:
+    for key in (*ALERT_KEYS[1:], 'fingerprintSpecificity'):
         if key not in alert or alert[key] is None:
             continue
         value = alert[key]
@@ -62,6 +62,15 @@ def safe_alert(alert):
                 return None
         elif key == 'fingerprint':
             if not isinstance(value, str) or not operator.HASH.fullmatch(value):
+                return None
+        elif key in {'errorClass', 'operation'}:
+            if value not in operator.SCHEMA['enumValues'][key]:
+                return None
+        elif key == 'osReasonCode':
+            if not operator.integer(value):
+                return None
+        elif key == 'fingerprintSpecificity':
+            if value not in {'reported', 'class_only', 'none'}:
                 return None
         result[key] = value
     for key in COUNT_KEYS:

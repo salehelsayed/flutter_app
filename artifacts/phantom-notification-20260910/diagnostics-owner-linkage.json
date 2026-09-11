@@ -1,0 +1,40 @@
+{
+  "method": "Compare retained authenticated owner partitions entirely in relay memory; no owner maps or digests exported",
+  "runs": [
+    {
+      "runId": "78613d35-9d9c-49c0-baaa-19ed7a22e337",
+      "observed": true,
+      "singleAuthenticatedOwner": true,
+      "sameOwnerAsPreviouslyVerifiedUser": true,
+      "sameOwnerAsYesterdayFriend": false
+    },
+    {
+      "runId": "92967673-12f8-41fa-aff7-5b836b90bd72",
+      "observed": true,
+      "singleAuthenticatedOwner": true,
+      "sameOwnerAsPreviouslyVerifiedUser": false,
+      "sameOwnerAsYesterdayFriend": true
+    },
+    {
+      "runId": "bfcc66fb-1dc8-4699-93b3-7d4b7c45d179",
+      "observed": true,
+      "singleAuthenticatedOwner": true,
+      "sameOwnerAsPreviouslyVerifiedUser": true,
+      "sameOwnerAsYesterdayFriend": false
+    },
+    {
+      "runId": "ffc7efdc-d429-4b88-8854-48ee85182dcf",
+      "observed": true,
+      "singleAuthenticatedOwner": true,
+      "sameOwnerAsPreviouslyVerifiedUser": false,
+      "sameOwnerAsYesterdayFriend": false
+    },
+    {
+      "runId": "10a80369-4afe-49b3-a823-3642234f7e90",
+      "observed": true,
+      "singleAuthenticatedOwner": true,
+      "sameOwnerAsPreviouslyVerifiedUser": true,
+      "sameOwnerAsYesterdayFriend": false
+    }
+  ]
+}

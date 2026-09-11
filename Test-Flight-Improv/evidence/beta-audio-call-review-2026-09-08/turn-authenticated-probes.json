@@ -1,0 +1,38 @@
+{
+  "captured_at_utc": "2026-09-08T10:37:27.285656+00:00",
+  "source": "production relay host, public IPv4 TURN endpoint",
+  "tool": "/usr/local/bin/turnutils_uclient",
+  "arguments_without_credentials": [
+    "-y",
+    "-c",
+    "-n",
+    "5",
+    "-l",
+    "100",
+    "-p",
+    "3478"
+  ],
+  "credential_source": "ephemeral120s HMAC credentials derived server-side from current issuer key; credential values never recorded",
+  "issuer_secret_matches_coturn_static_secret": true,
+  "results": [
+    {
+      "client_transport": "UDP",
+      "exit_code": 0,
+      "messages_sent": 10,
+      "messages_received": 10,
+      "bytes_sent": 1000,
+      "bytes_received": 1000,
+      "lost_packets": 0
+    },
+    {
+      "client_transport": "TCP",
+      "exit_code": 0,
+      "messages_sent": 10,
+      "messages_received": 10,
+      "bytes_sent": 1000,
+      "bytes_received": 1000,
+      "lost_packets": 0
+    }
+  ],
+  "limits": "Proves authenticated allocation and server-side relay-to-relay IPv4 hairpin packet exchange; does not prove external mobile networks, audio playout, IPv6 or TLS."
+}

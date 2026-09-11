@@ -1,0 +1,374 @@
+{
+  "window": {
+    "startUtc": "2026-09-08T10:09:00Z",
+    "endUtc": "2026-09-08T10:19:00Z"
+  },
+  "capturedAt": "2026-09-08T12:37:36.751410+00:00",
+  "perCallTimeOverlap": [
+    {
+      "call": "call-090",
+      "initiator": "peer-006",
+      "recipient": "peer-007",
+      "firstReceiptUtc": "2026-09-08T10:10:00.044Z",
+      "nominalMetricObservationIntervalUtc": [
+        "2026-09-08T10:10:00Z",
+        "2026-09-08T10:10:15Z"
+      ],
+      "apnsSentIncreaseInInterval": 1,
+      "turnIssuedObservation": {
+        "status": "issued-series-not-yet-present"
+      },
+      "otherCallFirstReceiptsInInterval": [],
+      "callSpecificBinding": false,
+      "reason": "Provider and issuance metrics carry no call handle; overlap does not uniquely assign events."
+    },
+    {
+      "call": "call-091",
+      "initiator": "peer-006",
+      "recipient": "peer-007",
+      "firstReceiptUtc": "2026-09-08T10:10:17.386Z",
+      "nominalMetricObservationIntervalUtc": [
+        "2026-09-08T10:10:15Z",
+        "2026-09-08T10:10:30Z"
+      ],
+      "apnsSentIncreaseInInterval": 2,
+      "turnIssuedObservation": {
+        "status": "issued-series-not-yet-present"
+      },
+      "otherCallFirstReceiptsInInterval": [
+        "call-092"
+      ],
+      "callSpecificBinding": false,
+      "reason": "Provider and issuance metrics carry no call handle; overlap does not uniquely assign events."
+    },
+    {
+      "call": "call-092",
+      "initiator": "peer-006",
+      "recipient": "peer-007",
+      "firstReceiptUtc": "2026-09-08T10:10:26.992Z",
+      "nominalMetricObservationIntervalUtc": [
+        "2026-09-08T10:10:15Z",
+        "2026-09-08T10:10:30Z"
+      ],
+      "apnsSentIncreaseInInterval": 2,
+      "turnIssuedObservation": {
+        "status": "issued-series-not-yet-present"
+      },
+      "otherCallFirstReceiptsInInterval": [
+        "call-091"
+      ],
+      "callSpecificBinding": false,
+      "reason": "Provider and issuance metrics carry no call handle; overlap does not uniquely assign events."
+    },
+    {
+      "call": "call-093",
+      "initiator": "peer-007",
+      "recipient": "peer-008",
+      "firstReceiptUtc": "2026-09-08T10:11:36.513Z",
+      "nominalMetricObservationIntervalUtc": [
+        "2026-09-08T10:11:30Z",
+        "2026-09-08T10:11:45Z"
+      ],
+      "apnsSentIncreaseInInterval": 2,
+      "turnIssuedObservation": {
+        "status": "issued-series-first-observation",
+        "cumulative": 2
+      },
+      "otherCallFirstReceiptsInInterval": [],
+      "callSpecificBinding": false,
+      "reason": "Provider and issuance metrics carry no call handle; overlap does not uniquely assign events."
+    },
+    {
+      "call": "call-094",
+      "initiator": "peer-006",
+      "recipient": "peer-007",
+      "firstReceiptUtc": "2026-09-08T10:12:01.789Z",
+      "nominalMetricObservationIntervalUtc": [
+        "2026-09-08T10:12:00Z",
+        "2026-09-08T10:12:15Z"
+      ],
+      "apnsSentIncreaseInInterval": 2,
+      "turnIssuedObservation": {
+        "status": "observed",
+        "increase": 2,
+        "cumulative": 4
+      },
+      "otherCallFirstReceiptsInInterval": [
+        "call-095"
+      ],
+      "callSpecificBinding": false,
+      "reason": "Provider and issuance metrics carry no call handle; overlap does not uniquely assign events."
+    },
+    {
+      "call": "call-095",
+      "initiator": "peer-008",
+      "recipient": "peer-006",
+      "firstReceiptUtc": "2026-09-08T10:12:06.055Z",
+      "nominalMetricObservationIntervalUtc": [
+        "2026-09-08T10:12:00Z",
+        "2026-09-08T10:12:15Z"
+      ],
+      "apnsSentIncreaseInInterval": 2,
+      "turnIssuedObservation": {
+        "status": "observed",
+        "increase": 2,
+        "cumulative": 4
+      },
+      "otherCallFirstReceiptsInInterval": [
+        "call-094"
+      ],
+      "callSpecificBinding": false,
+      "reason": "Provider and issuance metrics carry no call handle; overlap does not uniquely assign events."
+    },
+    {
+      "call": "call-096",
+      "initiator": "peer-006",
+      "recipient": "peer-007",
+      "firstReceiptUtc": "2026-09-08T10:12:36.516Z",
+      "nominalMetricObservationIntervalUtc": [
+        "2026-09-08T10:12:30Z",
+        "2026-09-08T10:12:45Z"
+      ],
+      "apnsSentIncreaseInInterval": 1,
+      "turnIssuedObservation": {
+        "status": "observed",
+        "increase": 0,
+        "cumulative": 4
+      },
+      "otherCallFirstReceiptsInInterval": [],
+      "callSpecificBinding": false,
+      "reason": "Provider and issuance metrics carry no call handle; overlap does not uniquely assign events."
+    },
+    {
+      "call": "call-097",
+      "initiator": "peer-006",
+      "recipient": "peer-007",
+      "firstReceiptUtc": "2026-09-08T10:13:00.169Z",
+      "nominalMetricObservationIntervalUtc": [
+        "2026-09-08T10:13:00Z",
+        "2026-09-08T10:13:15Z"
+      ],
+      "apnsSentIncreaseInInterval": 1,
+      "turnIssuedObservation": {
+        "status": "observed",
+        "increase": 0,
+        "cumulative": 4
+      },
+      "otherCallFirstReceiptsInInterval": [],
+      "callSpecificBinding": false,
+      "reason": "Provider and issuance metrics carry no call handle; overlap does not uniquely assign events."
+    },
+    {
+      "call": "call-098",
+      "initiator": "peer-006",
+      "recipient": "peer-007",
+      "firstReceiptUtc": "2026-09-08T10:15:27.340Z",
+      "nominalMetricObservationIntervalUtc": [
+        "2026-09-08T10:15:15Z",
+        "2026-09-08T10:15:30Z"
+      ],
+      "apnsSentIncreaseInInterval": 1,
+      "turnIssuedObservation": {
+        "status": "observed",
+        "increase": 0,
+        "cumulative": 4
+      },
+      "otherCallFirstReceiptsInInterval": [],
+      "callSpecificBinding": false,
+      "reason": "Provider and issuance metrics carry no call handle; overlap does not uniquely assign events."
+    },
+    {
+      "call": "call-099",
+      "initiator": "peer-006",
+      "recipient": "peer-007",
+      "firstReceiptUtc": "2026-09-08T10:16:11.240Z",
+      "nominalMetricObservationIntervalUtc": [
+        "2026-09-08T10:16:00Z",
+        "2026-09-08T10:16:15Z"
+      ],
+      "apnsSentIncreaseInInterval": 1,
+      "turnIssuedObservation": {
+        "status": "observed",
+        "increase": 0,
+        "cumulative": 4
+      },
+      "otherCallFirstReceiptsInInterval": [],
+      "callSpecificBinding": false,
+      "reason": "Provider and issuance metrics carry no call handle; overlap does not uniquely assign events."
+    },
+    {
+      "call": "call-100",
+      "initiator": "peer-006",
+      "recipient": "peer-007",
+      "firstReceiptUtc": "2026-09-08T10:16:28.312Z",
+      "nominalMetricObservationIntervalUtc": [
+        "2026-09-08T10:16:15Z",
+        "2026-09-08T10:16:30Z"
+      ],
+      "apnsSentIncreaseInInterval": 1,
+      "turnIssuedObservation": {
+        "status": "observed",
+        "increase": 0,
+        "cumulative": 4
+      },
+      "otherCallFirstReceiptsInInterval": [],
+      "callSpecificBinding": false,
+      "reason": "Provider and issuance metrics carry no call handle; overlap does not uniquely assign events."
+    },
+    {
+      "call": "call-101",
+      "initiator": "peer-006",
+      "recipient": "peer-007",
+      "firstReceiptUtc": "2026-09-08T10:17:04.394Z",
+      "nominalMetricObservationIntervalUtc": [
+        "2026-09-08T10:17:00Z",
+        "2026-09-08T10:17:15Z"
+      ],
+      "apnsSentIncreaseInInterval": 1,
+      "turnIssuedObservation": {
+        "status": "observed",
+        "increase": 0,
+        "cumulative": 4
+      },
+      "otherCallFirstReceiptsInInterval": [],
+      "callSpecificBinding": false,
+      "reason": "Provider and issuance metrics carry no call handle; overlap does not uniquely assign events."
+    }
+  ],
+  "apnsIncreaseBuckets": [
+    {
+      "previousObservationUtc": "2026-09-08T10:10:00Z",
+      "observationUtc": "2026-09-08T10:10:15Z",
+      "apnsSentIncrease": 1,
+      "cumulativeApnsSent": 1,
+      "handleFirstReceiptsInNominalObservationInterval": [
+        "call-090"
+      ]
+    },
+    {
+      "previousObservationUtc": "2026-09-08T10:10:15Z",
+      "observationUtc": "2026-09-08T10:10:30Z",
+      "apnsSentIncrease": 2,
+      "cumulativeApnsSent": 3,
+      "handleFirstReceiptsInNominalObservationInterval": [
+        "call-091",
+        "call-092"
+      ]
+    },
+    {
+      "previousObservationUtc": "2026-09-08T10:11:30Z",
+      "observationUtc": "2026-09-08T10:11:45Z",
+      "apnsSentIncrease": 2,
+      "cumulativeApnsSent": 5,
+      "handleFirstReceiptsInNominalObservationInterval": [
+        "call-093"
+      ]
+    },
+    {
+      "previousObservationUtc": "2026-09-08T10:12:00Z",
+      "observationUtc": "2026-09-08T10:12:15Z",
+      "apnsSentIncrease": 2,
+      "cumulativeApnsSent": 7,
+      "handleFirstReceiptsInNominalObservationInterval": [
+        "call-094",
+        "call-095"
+      ]
+    },
+    {
+      "previousObservationUtc": "2026-09-08T10:12:30Z",
+      "observationUtc": "2026-09-08T10:12:45Z",
+      "apnsSentIncrease": 1,
+      "cumulativeApnsSent": 8,
+      "handleFirstReceiptsInNominalObservationInterval": [
+        "call-096"
+      ]
+    },
+    {
+      "previousObservationUtc": "2026-09-08T10:13:00Z",
+      "observationUtc": "2026-09-08T10:13:15Z",
+      "apnsSentIncrease": 1,
+      "cumulativeApnsSent": 9,
+      "handleFirstReceiptsInNominalObservationInterval": [
+        "call-097"
+      ]
+    },
+    {
+      "previousObservationUtc": "2026-09-08T10:15:15Z",
+      "observationUtc": "2026-09-08T10:15:30Z",
+      "apnsSentIncrease": 1,
+      "cumulativeApnsSent": 10,
+      "handleFirstReceiptsInNominalObservationInterval": [
+        "call-098"
+      ]
+    },
+    {
+      "previousObservationUtc": "2026-09-08T10:16:00Z",
+      "observationUtc": "2026-09-08T10:16:15Z",
+      "apnsSentIncrease": 1,
+      "cumulativeApnsSent": 11,
+      "handleFirstReceiptsInNominalObservationInterval": [
+        "call-099"
+      ]
+    },
+    {
+      "previousObservationUtc": "2026-09-08T10:16:15Z",
+      "observationUtc": "2026-09-08T10:16:30Z",
+      "apnsSentIncrease": 1,
+      "cumulativeApnsSent": 12,
+      "handleFirstReceiptsInNominalObservationInterval": [
+        "call-100"
+      ]
+    },
+    {
+      "previousObservationUtc": "2026-09-08T10:17:00Z",
+      "observationUtc": "2026-09-08T10:17:15Z",
+      "apnsSentIncrease": 1,
+      "cumulativeApnsSent": 13,
+      "handleFirstReceiptsInNominalObservationInterval": [
+        "call-101"
+      ]
+    }
+  ],
+  "allApnsNonSentOutcomesStayedZero": true,
+  "upChecks": {
+    "up{job=\"relay-server\"}": {
+      "points": 41,
+      "allUp": true
+    },
+    "up{job=\"redis\"}": {
+      "points": 41,
+      "allUp": true
+    },
+    "up{job=\"node\"}": {
+      "points": 41,
+      "allUp": true
+    }
+  },
+  "journalSummary": {
+    "relay-server.service": {
+      "entryCount": 12258,
+      "firstUtc": "2026-09-08T10:09:14.670256+00:00",
+      "lastUtc": "2026-09-08T10:18:56.087829+00:00",
+      "priorityCounts": {
+        "6": 12258
+      },
+      "fixedEventCounts": {},
+      "fixedEvents": [],
+      "journalExitCode": 0
+    },
+    "coturn.service": {
+      "entryCount": 0,
+      "firstUtc": null,
+      "lastUtc": null,
+      "priorityCounts": {},
+      "fixedEventCounts": {},
+      "fixedEvents": [],
+      "journalExitCode": 0
+    }
+  },
+  "limits": [
+    "Prometheus query observations occur every15s and select preceding scrape values; interval boundaries are nominal observation windows, not exact event-time bounds.",
+    "One push may relate to a previous stored event, reciprocal signaling or retry. No count is an individual-call push verdict.",
+    "Completed wakeClaims were intentionally not used as provider counts."
+  ]
+}

@@ -2004,6 +2004,7 @@
   "settings_diagnostics_support_code_copied": "Support code copied. Share it when reporting a problem.",
   "settings_diagnostics_copy_support_code": "Copy support code",
   "settings_diagnostics_preview_report": "Preview support report",
+  "settings_diagnostics_preview_truncated": "Showing part of the report. Copy includes the full report.",
   "settings_diagnostics_report_copied": "Support report copied",
   "settings_diagnostics_copy_report": "Copy support report",
   "settings_diagnostics_cleared": "Sharing is off and local reports are cleared",

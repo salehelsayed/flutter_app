@@ -1,0 +1,60 @@
+{
+  "capturedAtUtc": "2026-09-08T12:22:38.173241+00:00",
+  "artifacts": {
+    "android_normal": {
+      "bytes": 319134140,
+      "sha256": "348b78d9c20f255535d7f2d315fd23b0f04cbb21967fc8fbe61c079e0f35d8e5"
+    },
+    "android_observer": {
+      "bytes": 319134072,
+      "sha256": "cf02f315392ba12d42af5ea93b11264303bcfdc052c57563550cc9d906919085"
+    },
+    "ios_profile_Runner": {
+      "bytes": 38821456,
+      "sha256": "a805134d8d989df9015dd82ab51cd0a132b994940638a4c87fe9b4b2a7e13218"
+    },
+    "ios_profile_Frameworks/App.framework/App": {
+      "bytes": 30136336,
+      "sha256": "19c554c9a956620e07f2b61eb7d1f89ad0bb3d72fd16b159a2a814ee446232b6"
+    }
+  },
+  "iosProfileTreeSha256": "c96f88495b044f12ea24137887aea24ec61f0e6dd1f48bfd7ab44d5832cecd0d",
+  "productionSourceSha256": {
+    "android/app/src/main/kotlin/com/mknoon/app/call/MknoonCallNativeBridge.kt": "ef94df77dd61080ecb73a150fa72b4f0c36ed4a70d84105d94c7a379fe362964",
+    "android/app/src/main/kotlin/com/mknoon/app/call/MknoonCallNotificationFactory.kt": "b1e891cd94586e59791c69d62b7b30c958ddd532dc603d617fccf489057d8477",
+    "go-mknoon/node/turn_credentials.go": "ebec536da66d861cf2de11f773af064e575fa765ea0680c1bf5ef3eb02f6e46e",
+    "lib/app/bootstrap/call_signaling_composition.dart": "14a9b8780a9a234f4c5afe8b3bd5c6252e7066f4e08d39e4f0c798bbdac114aa",
+    "lib/app/bootstrap/production_call_signaling_graph.dart": "3196912ca5786106ce25d85eb209caa2902417dcd493b40eef1e6db8110e3a3e",
+    "lib/features/call/application/call_wake_authorization_coordinator.dart": "3b6f99edfec3fd665d67102000f87a76ecb4c5e26910544643607d391be343b1",
+    "lib/features/call/domain/call_authority_lifetime.dart": "85e0461023714b1073ffc7ff1f162b772d1b2e26810c2ee87c23906afcdc8c6a",
+    "lib/features/call/infrastructure/android_call_lifecycle_adapter.dart": "2da40c4e978584fcc8469ae432686edb6ea97caea7a4a89e1f5bb708ab8cd607",
+    "lib/features/call/infrastructure/android_call_token_coordinator.dart": "6765db684f448a7f2a235b9ef70ddf3e6fb24ba032d78aef138f9218854fca08",
+    "lib/features/call/infrastructure/ios_voip_token_coordinator.dart": "c52806c8dee1eaae59adf5f13b458ca97668257d9a79d2f7b04a753b41269173",
+    "lib/features/conversation/presentation/screens/conversation_screen.dart": "e9c9ef1db9a46a7309cef704fa9d692482bf5022b5922ed18132748943909318",
+    "lib/features/conversation/presentation/screens/conversation_wired.dart": "876ef722a4a3163e07a9df7baa1162de3aae57e2284945d341cb98684a5b92aa",
+    "lib/features/conversation/presentation/widgets/conversation_header.dart": "e790147362fc0aa9fda91b8950c2b5775b84b6181a77a8b109a58a6068776221"
+  },
+  "nativeChecks": {
+    "android_normal": {
+      "native_go_sha256": "b32725b2f167960236d32a14b567aba7f41cc13981e67189a2e368b6321e3393",
+      "matches_verified_rebuilt_go": true
+    },
+    "android_observer": {
+      "native_go_sha256": "b32725b2f167960236d32a14b567aba7f41cc13981e67189a2e368b6321e3393",
+      "matches_verified_rebuilt_go": true
+    },
+    "ios_GoMknoon": {
+      "matches_rebuilt_native_framework": true
+    },
+    "ios_GoMknoonNSE": {
+      "matches_rebuilt_native_framework": true
+    }
+  },
+  "userFilesPreserved": {
+    "pubspec.yaml": true,
+    "docker-ws/build_store_release_result.txt": true
+  },
+  "iosAPNsEnvironment": "development signing -> sandbox token publication",
+  "distribution": "Local lab validation packages; not uploaded to TestFlight or Play",
+  "androidFullScreenPermission": "User-authorized allow on connected Pixel"
+}

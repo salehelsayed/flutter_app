@@ -1,0 +1,73 @@
+{
+  "schemaVersion": 1,
+  "date": "2026-09-08",
+  "scope": "Native optional diagnostic spool, bridge, consent, lifecycle preservation and push metadata compatibility",
+  "android": {
+    "command": "./gradlew :app:testDebugUnitTest --tests 'com.mknoon.app.call.MknoonCallDiagnosticSpoolTest' --tests 'com.mknoon.app.call.MknoonCallNativeBridgeTest' --tests 'com.mknoon.app.call.MknoonCallLifecycleControllerTest' --tests 'com.mknoon.app.MknoonFirebaseMessagingServiceTest' -PenableAndroidNativeCalls=true -x :app:compileFlutterBuildDebug",
+    "workingDirectory": "android",
+    "suites": [
+      {
+        "suite": "com.mknoon.app.MknoonFirebaseMessagingServiceTest",
+        "tests": 12,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      {
+        "suite": "com.mknoon.app.call.MknoonCallDiagnosticSpoolTest",
+        "tests": 14,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      {
+        "suite": "com.mknoon.app.call.MknoonCallLifecycleControllerTest",
+        "tests": 33,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      {
+        "suite": "com.mknoon.app.call.MknoonCallNativeBridgeTest",
+        "tests": 19,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      }
+    ],
+    "tests": 78,
+    "failures": 0
+  },
+  "swiftHost": {
+    "tests": 13,
+    "failures": 0,
+    "method": "Actual MknoonCallDiagnostics.swift, actual token authority slice and actual spool XCTest source in a temporary SwiftPM harness with minimal Flutter type stubs. Eleven spool tests (including the shared wire fixture) plus two typed-invalidation causality tests.",
+    "boundary": "Host core proof only; does not prove Flutter runtime channel registration, live PushKit delivery or actual iOS target linkage."
+  },
+  "preservation": [
+    "Native diagnostic drain is non-destructive until diagnostic ACK; canonical native journal ACK does not delete diagnostics.",
+    "Diagnostic sink failure cannot change canonical answer/audio admission.",
+    "Native failed consent write disables capture in memory; same-epoch same-request retry is permitted. Stale/equal-conflicting re-enable is refused. Durable opt-out cannot be claimed when persistence fails.",
+    "Native lookup exports only a diagnostic trace UUID, normalizes private compact/canonical handles, survives restart/ACK and refuses expired/disabled lookup.",
+    "Malformed optional push diagnostics are stripped before the unchanged strict call authority parser.",
+    "Closed Swift/Kotlin vocabularies match tool/call_diagnostics/schema_v1.json; Swift frontend parse and owned-path diff check pass."
+  ],
+  "causalRedGreen": {
+    "test": "failedConsentWriteDisablesCaptureButSameRequestCanRetry",
+    "before": "One Android assertion failure: retry(true, same epoch) refused after sink failure.",
+    "after": "Passes with desired consent separated from effective capture."
+  },
+  "graphify": {
+    "fullAffected": "068c740ab7a8459a",
+    "lastAffected": "4814dcfb966347bc"
+  },
+  "sharedSchemaSha256": "4ca526a5cc58343c0f57e77aab68d1488caf968f2a6d379dabfb5cccb33c1887",
+  "wireInterop": {
+    "fixture": "tool/call_diagnostics/wire_fixtures_v1.json",
+    "productionChange": "Native context sanitizers map closed wire cause into internal reason; event schema unchanged.",
+    "androidBefore": "Shared fixture sanitizer and actual native capability wrapper both fail before mapping.",
+    "swiftHostBefore": "Shared fixture fails for both attempt and authority contexts before mapping.",
+    "after": "All focused tests pass; trace/request/operation/parent UUIDs and cause are preserved.",
+    "iosWrapperBoundary": "Actual iOS native wrapper test is added to RunnerTests and fixture bundled; source parses, but it is not part of the host-stub execution."
+  }
+}

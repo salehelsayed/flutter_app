@@ -1,0 +1,25 @@
+{
+  "scope": "1to1",
+  "command": "PATH=/Users/I560101/development/flutter-3.47.2/bin:$PATH GOTOOLCHAIN=go1.25.0 ./scripts/run_host_test_gates.sh 1to1 --batch-flutter --concurrency 4 --reporter failures-only",
+  "sourceStamp": "181a39528fd16ea2",
+  "flutterVersion": "3.47.2",
+  "goToolchain": "go1.25.0",
+  "concurrency": 4,
+  "testPaths": 212,
+  "passed": 3543,
+  "skipped": 4,
+  "failed": 0,
+  "exitCode": 0,
+  "ranAfterBothMobileBuilds": true,
+  "rawLog": "/tmp/call-observability-20260908/curated-1to1-final-correlation-quota.log",
+  "overlapNote": "Focused invocation counts in app-validation-summary.md overlap this curated run; do not add them to this total.",
+  "liveProof": false,
+  "testOnlyCompletionWaitCorrection": "test/features/conversation/presentation/screens/conversation_received_media_forward_test.dart",
+  "priorFailedRun": "curated-correlation-quota-first-result.json",
+  "warnings": {
+    "count": 6,
+    "kind": "widget hit-test warnings",
+    "messageContextBackdropTap": 5,
+    "listViewDrag": 1
+  }
+}

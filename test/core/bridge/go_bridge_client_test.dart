@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
@@ -7,6 +8,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/bridge/bridge_group_helpers.dart';
 import 'package:flutter_app/core/bridge/go_bridge_client.dart';
+import 'package:flutter_app/core/diagnostics/app_diagnostics.dart';
 import 'package:flutter_app/core/services/p2p_service_impl.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/core/utils/push_diagnostics_logger.dart';
@@ -535,6 +537,93 @@ void main() {
   // ---------------------------------------------------------------------------
   // Error handling
   // ---------------------------------------------------------------------------
+  group('APP-NET-01 peer dial diagnostics', () {
+    late Directory directory;
+    late AppDiagnostics diagnostics;
+
+    setUp(() async {
+      directory = await Directory.systemTemp.createTemp('bridge-diagnostics-');
+      diagnostics = await AppDiagnostics.installForTesting(
+        directory: directory,
+      );
+    });
+
+    tearDown(() async {
+      await diagnostics.dispose();
+      await directory.delete(recursive: true);
+    });
+
+    for (final entry in [
+      (cmd: 'peer:dial', code: 'NOT_INITIALIZED', reason: 'bridge_unavailable'),
+      (cmd: 'peer:dial', code: 'INVALID_INPUT', reason: 'invalid_request'),
+      (cmd: 'peer:dial', code: 'DIAL_ERROR', reason: 'route_failed'),
+      (cmd: 'peer:dial', code: 'INTERNAL_ERROR', reason: 'bridge_rejected'),
+      (cmd: 'peer:dial', code: 'UNSUPPORTED', reason: 'bridge_rejected'),
+      (
+        cmd: 'peer:dial',
+        code: 'PRIVATE_NATIVE_CODE',
+        reason: 'bridge_rejected',
+      ),
+      (cmd: 'relay:probe', code: 'DIAL_ERROR', reason: 'bridge_rejected'),
+    ]) {
+      test(
+        '${entry.cmd} ${entry.code} retains envelope and bounded reason',
+        () async {
+          final native = {
+            'ok': false,
+            'errorCode': entry.code,
+            'errorMessage': 'synthetic native failure',
+          };
+          TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+              .setMockMethodCallHandler(
+                const MethodChannel('com.mknoon/go_bridge'),
+                (call) async => jsonEncode(native),
+              );
+
+          final response = await client.send(
+            jsonEncode({
+              'cmd': entry.cmd,
+              'payload': {'peerId': 'PRIVATE_PEER_ID'},
+            }),
+          );
+          expect(jsonDecode(response), native);
+          final events = await diagnostics.eventsForTesting();
+          final terminal = events
+              .where((event) => event['stage'] == 'finish')
+              .single;
+          expect(terminal['feature'], 'network');
+          expect(terminal['outcome'], 'failed');
+          expect(terminal['reason'], entry.reason);
+          expect(
+            (terminal['values'] as Map)['operation'],
+            entry.cmd == 'peer:dial' ? 'peer_dial' : 'relay_probe',
+          );
+          final preview = await diagnostics.exportPreview();
+          expect(preview, isNot(contains('PRIVATE_')));
+          expect(preview, isNot(contains('synthetic native failure')));
+        },
+      );
+    }
+
+    test('successful native dial remains successful', () async {
+      final native = {'ok': true};
+      final response = await client.send(
+        jsonEncode({
+          'cmd': 'peer:dial',
+          'payload': {'peerId': 'PRIVATE_PEER_ID'},
+        }),
+      );
+      expect(jsonDecode(response), native);
+      final events = await diagnostics.eventsForTesting();
+      final terminal = events
+          .where((event) => event['stage'] == 'finish')
+          .single;
+      expect(terminal['outcome'], 'success');
+      expect(terminal['reason'], 'none');
+      expect(await diagnostics.exportPreview(), isNot(contains('PRIVATE_')));
+    });
+  });
+
   group('error handling', () {
     test('unknown command returns UNKNOWN_COMMAND error', () async {
       final request = jsonEncode({
