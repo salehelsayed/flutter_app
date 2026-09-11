@@ -261,6 +261,12 @@ artifacts/**/*-logarchive-*.tar
 # Large raw device-log captures.
 /docker-ws/fresh4.txt
 /docker-ws/tap2.txt
+/docker-ws/pixel_repro*.txt
+/docker-ws/iphone11_syslog.txt
+/docker-ws/iphone11_presence_probe.txt
+
+# Verification output that captured a generated test-identity mnemonic.
+/docker-ws/verify_permanent_token_eviction_320_result.txt
 
 # Store-review videos, archives and binaries under artifacts/. Keep the
 # filtered logs/JSON summaries; drop the multi-MB media and executables.
