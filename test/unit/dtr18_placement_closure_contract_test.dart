@@ -74,7 +74,10 @@ const _relocations = <String, List<String>>{
     // Plan 366 adds the plural direct-private generation stage and the exact
     // fresh-share/authorized-forward inputs to that adapter; placement and
     // dependency direction stay unchanged.
-    'cf565a40d732b59394efedfcb9ce40a1a841ae3ba2f5f28df808fbe5534bb992',
+    // The committed build-119 repair requalifies incoming group custody against
+    // the exact stored key under the existing attachment lifecycle lease.
+    // The SQL CAS and this adapter's placement remain unchanged.
+    'b865f0a7ff5fc073bad7b13617105acb44147987cdb0c8aba4f6dd9d2be31362',
   ],
   'lib/features/conversation/domain/repositories/'
       'message_repository_impl.dart': <String>[
@@ -94,7 +97,9 @@ const _relocations = <String, List<String>>{
     // Plan 366 adds the plural private Barrier-B delegate and its exact
     // current-snapshot/persisted-survivor validation to this same data
     // adapter; no repository responsibility changes layer.
-    '79c4335ba5182596d8cdc9399b646fa4a3474cd322db7de51664adaa0ca27642',
+    // Quiet recovery adds the exact-row annotation delegate and invalidates the
+    // same cached message snapshot after persistence; no owner changes layer.
+    'e3aaf9899ca8547067a2324d8e7ed269df9f39c72f03ce805527a14a0c40bd7e',
   ],
   'lib/features/conversation/domain/repositories/'
       'reaction_repository_impl.dart': <String>[

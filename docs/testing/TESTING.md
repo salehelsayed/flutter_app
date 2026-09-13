@@ -544,6 +544,15 @@ visible and cannot become an ordinary first-attempt PASS.
   handoff; the former unconditional Android-or-iOS text assertion contradicted
   that existing policy and failed the combined host sweep.
 
+- **Runtime preservation inventory:** the DTR-10 database-floor anchor must
+  advance with the production schema (v119 for durable quiet recovery).
+  DTR-18 body fingerprints also include reviewed changes within an existing
+  adapter: the committed incoming group-media key requalification under its
+  lifecycle lease and the quiet message annotation delegate do not relocate
+  repository ownership. Keep the exact fingerprints and repository behavior
+  tests together; older fingerprints failed the combined sweep despite the
+  retained data-layer placement.
+
 - **Group media proof schema:** endpoint admission, Android receipts, shared
   criteria and iOS boundary validation must require exactly
   `currentIdentityDatabaseVersion`. Literal schema 104 checks rejected the
