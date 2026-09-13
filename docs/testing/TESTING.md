@@ -306,8 +306,20 @@ deferred runner setup because no dedicated test machine is available. The
 publishing branch is based directly on origin `main`, preserving the separate
 unpublished application commit locally. Runner activation and the required
 main-branch rule are deferred together; enabling the rule without a runner
-would block every merge. An actual PR can still exercise hosted metadata and
-the final check's refusal to accept skipped execution.
+would block every merge.
+
+[Draft PR #2](https://github.com/salehelsayed/flutter_app/pull/2) exercised this
+boundary in [run 34773008050](https://github.com/salehelsayed/flutter_app/actions/runs/34773008050)
+at PR head `bc7f331d87d67492ada4d3b716edd875db247ad1`. Hosted metadata passed
+57 selector/CI and five inventory tests, and uploaded the expected five-check
+plan for synthetic merge `800d274a340a575a2aa33bbd057a07a27df9b391` against the
+verified main baseline above. `selected=skipped`; the final **Mknoon regression
+checks** job failed with exit 2 and `CI selected job disabled, skipped,
+cancelled, failed or not completed`. The downloaded plan's source hash matches
+the locally tested publishing candidate. This verifies refusal of skipped
+execution, not successful remote regression execution or main enforcement.
+The metadata log and downloaded plan remain in the evidence root as
+`remote-pr-metadata.log` and `remote-pr-expected-1/plan.json`.
 
 The minimal pending activation actions, requiring explicit authorization, are:
 
