@@ -1253,7 +1253,9 @@
         "test/features/conversation/application/verify_inbox_custody_use_case_test.dart",
         "test/features/conversation/application/drain_direct_inbox_custody_outbox_use_case_test.dart",
         "test/features/conversation/application/handle_incoming_chat_message_use_case_test.dart",
-        "test/features/push/application/background_message_handler_test.dart"
+        "test/features/push/application/background_message_handler_test.dart",
+        "test/core/database/helpers/direct_inbox_custody_outbox_db_helpers_test.dart",
+        "test/features/conversation/integration/concurrent_durable_fallback_roundtrip_test.dart"
       ],
       "boundary": "Automatic recovery older than 24 hours preserves exact message delivery and durable quiet intent; fresh/manual sends and notification history remain independent",
       "limitations": "Host Dart, SQLite and bridge contracts; Go module checks and existing Android FCM / iOS NSE native runners cover their separate boundaries. No live APNs/FCM or signed device claim.",
@@ -1266,6 +1268,31 @@
         "lib/core/database/migrations/119_quiet_message_recovery.dart"
       ],
       "inspected": true
+    },
+    "go-messaging-recovery-integration": {
+      "kind": "command",
+      "command": [
+        "go",
+        "test",
+        "-tags=integration",
+        "./integration",
+        "-run",
+        "^Test(QuietRecoveryMixedVersionDelivery|AckCustodyMixedVersionMatrix|DualStackNodeWithIPv4Relay|DialPeerViaRelayMultiAddrFailover)$",
+        "-count=1",
+        "-v"
+      ],
+      "cwd": "go-mknoon",
+      "success_marker": "--- PASS: TestQuietRecoveryMixedVersionDelivery",
+      "boundary": "Tagged native messaging compatibility and IPv4-only relay integration fixtures; complete quiet store/retrieve/ACK fallback",
+      "limitations": "Local libp2p and synthetic relay handlers. Production relay handlers/backends run in go-relay; Dart commit/display and signed-device behavior remain separate.",
+      "requirements": [
+        "go"
+      ],
+      "timeout_seconds": 300,
+      "references": [
+        "go-mknoon/integration/ack_custody_mixed_relay_test.go",
+        "go-mknoon/integration/ipv6_dual_stack_test.go"
+      ]
     }
   },
   "areas": [
@@ -1988,12 +2015,33 @@
         "go-relay-server/direct_quiet_recovery*",
         "go-mknoon/node/quiet_recovery*",
         "test/core/notifications/automatic_recovery_notification_policy_test.dart",
-        "test/core/database/migrations/119_quiet_message_recovery_test.dart"
+        "test/core/database/migrations/119_quiet_message_recovery_test.dart",
+        "go-mknoon/node/node.go",
+        "go-mknoon/node/config.go",
+        "go-mknoon/node/inbox.go",
+        "go-mknoon/node/ipv6_happy_eyeballs_test.go",
+        "go-mknoon/bridge/bridge.go",
+        "go-mknoon/bridge/inbox_notification_policy_test.go",
+        "go-mknoon/bridge/nse_inbox.go",
+        "go-mknoon/bridge/nse_inbox_test.go",
+        "go-mknoon/internal/nsepush/retrieve.go",
+        "go-mknoon/integration/ack_custody_mixed_relay_test.go",
+        "go-mknoon/integration/ipv6_dual_stack_test.go",
+        "go-relay-server/inbox.go",
+        "go-relay-server/ack_custody.go",
+        "go-relay-server/backend_memory.go",
+        "go-relay-server/backend_redis.go",
+        "go-relay-server/limits.go",
+        "test/core/database/helpers/direct_inbox_custody_outbox_db_helpers_test.dart",
+        "test/features/conversation/integration/concurrent_durable_fallback_roundtrip_test.dart"
       ],
       "checks": [
         "quiet-recovery",
         "go-core",
-        "go-relay"
+        "go-relay",
+        "go-messaging-recovery-integration",
+        "migration",
+        "bridge"
       ],
       "why": "Recovery intent crosses immutable sender retries, transport, durable receiver state and notification projection"
     }

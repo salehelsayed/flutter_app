@@ -58,12 +58,33 @@ void main() {
         quietRecovery: true,
       );
       await dbInsertInboxStagingEntry(database, entry.toMap());
+      await dbInsertInboxStagingEntry(
+        database,
+        entry
+            .copyWith(
+              entryId: 'fresh-entry',
+              envelope: 'fresh encrypted bytes',
+              quietRecovery: false,
+            )
+            .toMap(),
+      );
       await dbMarkIncomingQuietRecovery(database, row);
       await database.close();
       database = await databaseFactoryFfi.openDatabase('${directory.path}/db');
-      final recovered = InboxStagingEntry.fromMap(
-        (await dbLoadRecoverableInboxStagingEntries(database)).single,
-      ).toChatMessage().copyWith(predecryptedText: 'plaintext');
+      final restored = (await dbLoadRecoverableInboxStagingEntries(
+        database,
+      )).map(InboxStagingEntry.fromMap).toList();
+      expect(restored, hasLength(2));
+      expect(
+        restored
+            .singleWhere((row) => row.entryId == 'fresh-entry')
+            .quietRecovery,
+        isFalse,
+      );
+      final recovered = restored
+          .singleWhere((row) => row.entryId == entry.entryId)
+          .toChatMessage()
+          .copyWith(predecryptedText: 'plaintext');
       expect(recovered.quietRecovery, isTrue);
       expect(recovered.content, entry.envelope);
       final message = ConversationMessage.fromMap(
@@ -74,6 +95,20 @@ void main() {
       expect(message.timestamp, timestamp);
       expect(message.text, row['text']);
       expect(message.status, row['status']);
+      // A delayed normal replica after process death retains both the staged
+      // ACK owner and the canonical quiet disposition.
+      await dbInsertInboxStagingEntry(
+        database,
+        entry.copyWith(quietRecovery: false).toMap(),
+      );
+      expect(
+        (await dbLoadInboxStagingEntry(
+          database,
+          entry.entryId,
+        ))!['quiet_recovery'],
+        1,
+      );
+      expect((await database.query('messages')).single['quiet_recovery'], 1);
     },
   );
 

@@ -99,9 +99,38 @@ func TestNSEInboxBridgeReturnsStrictBoundedPage(t *testing.T) {
 	}
 	requests := relay.snapshotRequests()
 	if len(requests) != 1 || requests[0]["action"] != "retrieve_custody_pending_v1" ||
+		requests[0]["quietRecovery"] != true ||
 		requests[0]["limit"] != float64(1) ||
 		requests[0]["custodyContract"] != node.AckOrExpiryCustodyContract {
 		t.Fatalf("strict one-shot request = %#v", requests)
+	}
+}
+
+func TestNSEInboxBridgePreservesQuietRecoveryInStrictPage(t *testing.T) {
+	privateKey, transportPeer := nseBridgeTestIdentity(t)
+	relay := startNSEBridgeTestRelay(t, func(map[string]interface{}, peer.ID) map[string]interface{} {
+		return map[string]interface{}{
+			"status": "OK", "hasMore": false,
+			"custodyContract": node.AckOrExpiryCustodyContract,
+			"messages": []map[string]interface{}{{
+				"id": "quiet-entry", "from": "sender", "message": "immutable quiet cipher", "timestamp": 11,
+				"quietRecovery": true,
+			}},
+		}
+	})
+	response := decodeWakeOutcomeBridgeTestResponse(t, NSEInboxRetrievePending(nseBridgeParamsJSON(t,
+		privateKey, transportPeer, []string{relay.addr(t)}, 500,
+	)))
+	if response["ok"] != true || response["custodyContract"] != node.AckOrExpiryCustodyContract {
+		t.Fatalf("NSE quiet retrieval lost custody authority: %v", response)
+	}
+	messages, ok := response["messages"].([]interface{})
+	if !ok || len(messages) != 1 {
+		t.Fatalf("NSE quiet retrieval lost the bounded page: %v", response)
+	}
+	row := messages[0].(map[string]interface{})
+	if row["quietRecovery"] != true || row["id"] != "quiet-entry" || row["from"] != "sender" || row["message"] != "immutable quiet cipher" || row["timestamp"] != float64(11) {
+		t.Fatalf("NSE bridge lost quiet disposition or immutable row: %v", row)
 	}
 }
 

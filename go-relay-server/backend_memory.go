@@ -165,6 +165,17 @@ func (b *memoryInboxBackend) Store(toPeerId string, entry inboxMessage) (InboxSt
 }
 
 func (b *memoryInboxBackend) RetrievePending(peerId string, limit int) ([]inboxMessage, bool) {
+	return b.retrievePendingForQuietRecovery(peerId, limit, true)
+}
+
+func (b *memoryInboxBackend) RetrieveForQuietRecovery(peerID string, limit int, includeQuiet, destructive bool) ([]inboxMessage, bool) {
+	if destructive {
+		return b.retrieveForQuietRecovery(peerID, limit, includeQuiet)
+	}
+	return b.retrievePendingForQuietRecovery(peerID, limit, includeQuiet)
+}
+
+func (b *memoryInboxBackend) retrievePendingForQuietRecovery(peerId string, limit int, includeQuiet bool) ([]inboxMessage, bool) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
@@ -187,16 +198,15 @@ func (b *memoryInboxBackend) RetrievePending(peerId string, limit int) ([]inboxM
 		b.store[peerId] = messages
 	}
 
-	if limit > len(messages) {
-		limit = len(messages)
-	}
-
-	result := make([]inboxMessage, limit)
-	copy(result, messages[:limit])
-	return result, len(messages) > limit
+	result, _, hasMore := inboxPageForQuietReceiver(messages, limit, includeQuiet)
+	return result, hasMore
 }
 
 func (b *memoryInboxBackend) Retrieve(peerId string, limit int) ([]inboxMessage, bool) {
+	return b.retrieveForQuietRecovery(peerId, limit, true)
+}
+
+func (b *memoryInboxBackend) retrieveForQuietRecovery(peerId string, limit int, includeQuiet bool) ([]inboxMessage, bool) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
@@ -208,18 +218,17 @@ func (b *memoryInboxBackend) Retrieve(peerId string, limit int) ([]inboxMessage,
 		return nil, false
 	}
 
-	if limit > len(messages) {
-		limit = len(messages)
+	result, selected, hasMore := inboxPageForQuietReceiver(messages, limit, includeQuiet)
+	remaining := make([]inboxMessage, 0, len(messages)-len(result))
+	for index, entry := range messages {
+		if !selected[index] {
+			remaining = append(remaining, entry)
+		}
 	}
-
-	result := make([]inboxMessage, limit)
-	copy(result, messages[:limit])
-
-	remaining := messages[limit:]
 	if len(remaining) > 0 {
 		b.store[peerId] = remaining
 		b.rebuildDedupeKeys(peerId, remaining)
-		return result, true
+		return result, hasMore
 	}
 
 	delete(b.store, peerId)

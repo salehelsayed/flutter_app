@@ -421,6 +421,17 @@ func (b *redisInboxBackend) Store(toPeerId string, entry inboxMessage) (InboxSto
 }
 
 func (b *redisInboxBackend) Retrieve(peerId string, limit int) ([]inboxMessage, bool) {
+	return b.retrieveForQuietRecovery(peerId, limit, true)
+}
+
+func (b *redisInboxBackend) RetrieveForQuietRecovery(peerID string, limit int, includeQuiet, destructive bool) ([]inboxMessage, bool) {
+	if destructive {
+		return b.retrieveForQuietRecovery(peerID, limit, includeQuiet)
+	}
+	return b.retrievePendingForQuietRecovery(peerID, limit, includeQuiet)
+}
+
+func (b *redisInboxBackend) retrieveForQuietRecovery(peerId string, limit int, includeQuiet bool) ([]inboxMessage, bool) {
 	if limit <= 0 {
 		return nil, false
 	}
@@ -453,10 +464,14 @@ func (b *redisInboxBackend) Retrieve(peerId string, limit int) ([]inboxMessage, 
 			return redisReplaceList(tx, key, nil)
 		}
 
-		pageSize := minInt(limit, len(validMessages))
-		result = append([]inboxMessage(nil), validMessages[:pageSize]...)
-		remaining := append([]string(nil), validRaw[pageSize:]...)
-		hasMore = len(remaining) > 0
+		var selected map[int]bool
+		result, selected, hasMore = inboxPageForQuietReceiver(validMessages, limit, includeQuiet)
+		remaining := make([]string, 0, len(validRaw)-len(result))
+		for index, raw := range validRaw {
+			if !selected[index] {
+				remaining = append(remaining, raw)
+			}
+		}
 		return redisReplaceList(tx, key, remaining)
 	})
 	if err != nil {
@@ -469,6 +484,10 @@ func (b *redisInboxBackend) Retrieve(peerId string, limit int) ([]inboxMessage, 
 }
 
 func (b *redisInboxBackend) RetrievePending(peerId string, limit int) ([]inboxMessage, bool) {
+	return b.retrievePendingForQuietRecovery(peerId, limit, true)
+}
+
+func (b *redisInboxBackend) retrievePendingForQuietRecovery(peerId string, limit int, includeQuiet bool) ([]inboxMessage, bool) {
 	if limit <= 0 {
 		return nil, false
 	}
@@ -501,9 +520,7 @@ func (b *redisInboxBackend) RetrievePending(peerId string, limit int) ([]inboxMe
 			return redisReplaceList(tx, key, nil)
 		}
 
-		pageSize := minInt(limit, len(validMessages))
-		result = append([]inboxMessage(nil), validMessages[:pageSize]...)
-		hasMore = len(validMessages) > pageSize
+		result, _, hasMore = inboxPageForQuietReceiver(validMessages, limit, includeQuiet)
 		return redisReplaceList(tx, key, validRaw)
 	})
 	if err != nil {
@@ -868,6 +885,10 @@ func (b *redisInboxBackend) RetrieveAckCustodyPending(
 	peerID string,
 	limit int,
 ) ([]inboxMessage, bool, error) {
+	return b.RetrieveAckCustodyForQuietRecovery(peerID, limit, true)
+}
+
+func (b *redisInboxBackend) RetrieveAckCustodyForQuietRecovery(peerID string, limit int, includeQuiet bool) ([]inboxMessage, bool, error) {
 	if limit <= 0 {
 		return nil, false, nil
 	}
@@ -922,8 +943,8 @@ func (b *redisInboxBackend) RetrieveAckCustodyPending(
 	recordAckCustodyExpired(protectedPruned)
 	recordInboxExpiredPruned(legacyPruned)
 
-	pageSize := minInt(limit, len(logical))
-	return append([]inboxMessage(nil), logical[:pageSize]...), len(logical) > pageSize, nil
+	page, _, hasMore := inboxPageForQuietReceiver(logical, limit, includeQuiet)
+	return page, hasMore, nil
 }
 
 func ackCustodyTargets(entryIDs []string) map[string]struct{} {

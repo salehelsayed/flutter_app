@@ -1,6 +1,9 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:clock/clock.dart';
+import 'package:flutter_app/core/notifications/automatic_recovery_notification_policy.dart';
+
 import 'package:flutter_app/core/database/app_database_version.dart';
 import 'package:flutter_app/core/database/direct_event_fanout_contract.dart';
 import 'package:flutter_app/core/database/direct_media_blob_custody.dart';
@@ -93,6 +96,72 @@ void main() {
     expect(staged.authorizesTransport, isTrue);
     return message;
   }
+
+  test(
+    'failed custody survives database reopen and quietly recovers exact owner after 24 hours',
+    () async {
+      final message = await stageDiagnosticEnvelope('restart-recovery');
+      await db.update(
+        'messages',
+        {'status': 'failed'},
+        where: 'id = ?',
+        whereArgs: [message.id],
+      );
+      final owner = (await repository.loadDirectInboxCustody()).single;
+      final originalTime = DateTime.parse(owner.createdAt);
+      final boundary = originalTime.add(const Duration(hours: 24));
+      final policies = <bool>[];
+      var reachable = false;
+      Future<int> drain(DateTime now) => withClock(
+        Clock.fixed(now),
+        () => drainDirectInboxCustodyOutbox(
+          custodyRepository: repository,
+          storeInAckCustodyInboxDetailed:
+              (recipient, wire, {required custodyKind, timeoutMs}) async {
+                expect(recipient, owner.recipientPeerId);
+                expect(wire, owner.wireEnvelope);
+                expect(custodyKind, AckCustodyKind.directTextV108);
+                policies.add(quietRecoveryForEnvelope(wire));
+                return reachable
+                    ? const InboxStoreOutcome(
+                        status: InboxStoreStatus.stored,
+                        storeStatus: 'stored',
+                        custodyContract: ackOrExpiryInboxCustodyContract,
+                      )
+                    : const InboxStoreOutcome(status: InboxStoreStatus.failed);
+              },
+        ),
+      );
+      expect(await drain(boundary), 0);
+      expect(
+        (await repository.loadDirectInboxCustody()).single.incarnationId,
+        owner.incarnationId,
+      );
+      expect((await db.query('messages')).single['status'], 'failed');
+      await db.close();
+      db = await databaseFactoryFfi.openDatabase(
+        '${tempDirectory.path}/identity.db',
+        options: OpenDatabaseOptions(singleInstance: false),
+      );
+      repository = _buildRepository(db, capacity: 2);
+      final restored = (await repository.loadDirectInboxCustody()).single;
+      expect(restored.createdAt, owner.createdAt);
+      expect(restored.incarnationId, owner.incarnationId);
+      expect(restored.wireEnvelope, owner.wireEnvelope);
+      expect(restored.recipientPeerId, owner.recipientPeerId);
+      expect(await drain(boundary.add(const Duration(microseconds: 1))), 0);
+      expect((await db.query('messages')).single['status'], 'failed');
+      reachable = true;
+      expect(await drain(originalTime.add(const Duration(days: 3))), 1);
+      expect(policies, [false, true, true]);
+      expect(await repository.loadDirectInboxCustody(), isEmpty);
+      final settled = (await db.query('messages')).single;
+      expect(settled['id'], message.id);
+      expect(settled['wire_envelope'], owner.wireEnvelope);
+      expect(settled['status'], 'inboxed');
+      expect(settled['read_at'], isNull);
+    },
+  );
 
   group('historical delivered custody notification suppression', () {
     Future<ConversationMessage> stageHistoricalInitial() async {

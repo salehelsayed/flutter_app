@@ -23,6 +23,8 @@ class LocalP2PService {
   // the libp2p LAN-direct multiaddr. Cached so restartAdvertising re-publishes them.
   int? _quicPort;
   int? _tcpPort;
+  Future<void>? _startFuture;
+  Future<void>? _restartFuture;
 
   LocalP2PService({
     required LocalDiscoveryService discovery,
@@ -36,7 +38,14 @@ class LocalP2PService {
   /// unchanged). Null when the libp2p ports are not yet known (cold-start before
   /// the host reports its listen addresses) — a later restartAdvertising
   /// re-publishes once they are.
-  Future<void> start(String peerId, {int? quicPort, int? tcpPort}) async {
+  Future<void> start(String peerId, {int? quicPort, int? tcpPort}) =>
+      _startFuture ??= _start(
+        peerId,
+        quicPort: quicPort,
+        tcpPort: tcpPort,
+      ).whenComplete(() => _startFuture = null);
+
+  Future<void> _start(String peerId, {int? quicPort, int? tcpPort}) async {
     _peerId = peerId;
     _quicPort = quicPort;
     _tcpPort = tcpPort;
@@ -70,18 +79,32 @@ class LocalP2PService {
   }
 
   /// Restart mDNS advertising (e.g. after iOS returns from background).
-  Future<void> restartAdvertising() async {
+  Future<void> restartAdvertising() => _restartFuture ??= _restartAdvertising()
+      .whenComplete(() => _restartFuture = null);
+
+  Future<void> _restartAdvertising() async {
+    // Resume and address updates may arrive while native readiness is still
+    // pending. Join startup, then share one refresh with the latest ports.
+    await _startFuture;
     final peerId = _peerId;
     final port = _wsServer.port;
     if (peerId == null || port == null) return;
 
-    await _discovery.stopAdvertising();
-    await _discovery.startAdvertising(
-      peerId,
-      port,
-      quicPort: _quicPort,
-      tcpPort: _tcpPort,
-    );
+    int? advertisedQuicPort;
+    int? advertisedTcpPort;
+    do {
+      advertisedQuicPort = _quicPort;
+      advertisedTcpPort = _tcpPort;
+      await _discovery.stopAdvertising();
+      await _discovery.startAdvertising(
+        peerId,
+        port,
+        quicPort: advertisedQuicPort,
+        tcpPort: advertisedTcpPort,
+      );
+      // An address update during native start shares this future. Publish that
+      // newer snapshot before completing it; do not launch a parallel start.
+    } while (advertisedQuicPort != _quicPort || advertisedTcpPort != _tcpPort);
 
     emitFlowEvent(
       layer: 'FL',
@@ -129,13 +152,7 @@ class LocalP2PService {
     final port = _wsServer.port;
     if (peerId == null || port == null) return;
 
-    await _discovery.stopAdvertising();
-    await _discovery.startAdvertising(
-      peerId,
-      port,
-      quicPort: _quicPort,
-      tcpPort: _tcpPort,
-    );
+    await restartAdvertising();
 
     emitFlowEvent(
       layer: 'FL',

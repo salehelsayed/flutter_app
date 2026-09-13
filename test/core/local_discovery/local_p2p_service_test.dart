@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:crypto/crypto.dart';
@@ -9,6 +10,36 @@ import 'package:flutter_app/core/local_discovery/local_ws_server.dart';
 import 'package:flutter_app/core/local_discovery/local_p2p_service.dart';
 
 import 'fake_local_discovery_service.dart';
+
+class _PendingAdvertisingDiscovery extends FakeLocalDiscoveryService {
+  final entered = Completer<void>();
+  final ready = Completer<void>();
+  int activeStarts = 0;
+  int maxActiveStarts = 0;
+
+  @override
+  Future<void> startAdvertising(
+    String peerId,
+    int port, {
+    int? quicPort,
+    int? tcpPort,
+  }) async {
+    activeStarts++;
+    if (activeStarts > maxActiveStarts) maxActiveStarts = activeStarts;
+    if (!entered.isCompleted) entered.complete();
+    try {
+      await ready.future;
+      await super.startAdvertising(
+        peerId,
+        port,
+        quicPort: quicPort,
+        tcpPort: tcpPort,
+      );
+    } finally {
+      activeStarts--;
+    }
+  }
+}
 
 void main() {
   group('LocalP2PService', () {
@@ -34,6 +65,31 @@ void main() {
       expect(fakeDiscovery.advertisedPeerId, equals('myPeerId'));
       expect(fakeDiscovery.advertisedPort, equals(wsServer.port));
     });
+
+    test(
+      'resume and address refresh join pending startup without overlapping native starts',
+      () async {
+        final discovery = _PendingAdvertisingDiscovery();
+        final local = LocalP2PService(discovery: discovery, wsServer: wsServer);
+        addTearDown(local.dispose);
+        final start = local.start('peer');
+        await discovery.entered.future;
+        final resume = local.restartAdvertising();
+        final refresh = local.updateLibp2pPorts(
+          quicPort: 45000,
+          tcpPort: 45001,
+        );
+        final overlappingResume = local.restartAdvertising();
+        await Future<void>.delayed(Duration.zero);
+        discovery.ready.complete();
+        await Future.wait([start, resume, refresh, overlappingResume]);
+        expect(discovery.maxActiveStarts, 1);
+        expect(discovery.startAdvertisingCallCount, 2);
+        expect(discovery.advertisedQuicPort, 45000);
+        expect(discovery.advertisedTcpPort, 45001);
+        expect(discovery.isAdvertising, isTrue);
+      },
+    );
 
     // FDC-11 (174) TC-02: once the host surfaces its resolved libp2p LAN ports
     // (after the cold-start early seam advertised null), updateLibp2pPorts
@@ -112,7 +168,8 @@ void main() {
         expect(
           fakeDiscovery.stopAdvertisingCallCount,
           0,
-          reason: 'a gated re-advert must NOT tear down the prior ported advert',
+          reason:
+              'a gated re-advert must NOT tear down the prior ported advert',
         );
         expect(
           fakeDiscovery.startAdvertisingCallCount,

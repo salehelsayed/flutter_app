@@ -23,6 +23,8 @@ library;
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/features/conversation/application/send_chat_message_use_case.dart';
+import 'package:flutter_app/features/conversation/application/drain_direct_inbox_custody_outbox_use_case.dart';
+import 'package:flutter_app/features/p2p/domain/models/send_message_result.dart';
 
 import '../../../shared/fakes/fake_p2p_network.dart';
 import '../../../shared/fakes/test_user.dart';
@@ -56,6 +58,105 @@ void main() {
   });
 
   group('NET-REL-05 I1 — concurrent durable fallback round-trip', () {
+    test(
+      'ACK loss after recipient commit then inbox fallback displays one identity',
+      () async {
+        final liveFrames = <String>[];
+        alice.p2pService.directReplyBuilder = (peer, wire, delivered) {
+          expect(peer, bob.peerId);
+          liveFrames.add(wire);
+          return SendMessageResult(
+            sent: delivered,
+            acked: false,
+            transport: 'direct',
+          );
+        };
+        final (result, message) = await alice.sendMessage(
+          bob.peerId,
+          'ACK loss fixture',
+        );
+        expect(result, SendChatMessageResult.success);
+        expect(message!.status, 'inboxed');
+        expect(message.wireEnvelope, isNotNull);
+        expect(liveFrames, isNotEmpty);
+        expect(
+          liveFrames.every((wire) => wire == message.wireEnvelope),
+          isTrue,
+        );
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+        expect(
+          (await bob.loadConversationWith(alice.peerId)).single.id,
+          message.id,
+        );
+        expect(await bob.drainOfflineInbox(), 1);
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+        final received = await bob.loadConversationWith(alice.peerId);
+        expect(received, hasLength(1));
+        expect(received.single.id, message.id);
+        expect(received.single.text, 'ACK loss fixture');
+        expect(received.single.readAt, isNull);
+        expect(
+          (await alice.messageRepo.getMessage(message.id))!.status,
+          'inboxed',
+        );
+      },
+    );
+
+    test(
+      'all paths fail then reconstructed sender drains original custody',
+      () async {
+        network.deliveryFails = true;
+        network.inboxDisabled = true;
+        final (_, failed) = await alice.sendMessage(
+          bob.peerId,
+          'restart fixture',
+        );
+        expect(failed!.status, 'failed');
+        final owner = (await alice.messageRepo.loadDirectInboxCustody()).single;
+        expect(owner.wireEnvelope, failed.wireEnvelope);
+        final persistedMessages = alice.messageRepo;
+        final persistedContacts = alice.contactRepo;
+        final senderID = alice.peerId;
+        alice.dispose();
+        alice = TestUser.create(
+          peerId: senderID,
+          username: 'Alice',
+          network: network,
+          messageRepo: persistedMessages,
+          contactRepo: persistedContacts,
+        )..start();
+        network.deliveryFails = false;
+        network.inboxDisabled = false;
+        expect(
+          await drainDirectInboxCustodyOutbox(
+            custodyRepository: alice.messageRepo,
+            storeInAckCustodyInboxDetailed:
+                (peer, wire, {required custodyKind, timeoutMs}) {
+                  expect(peer, owner.recipientPeerId);
+                  expect(wire, owner.wireEnvelope);
+                  return alice.p2pService.storeInAckCustodyInboxDetailed(
+                    peer,
+                    wire,
+                    custodyKind: custodyKind,
+                    timeoutMs: timeoutMs,
+                  );
+                },
+          ),
+          1,
+        );
+        expect(
+          (await alice.messageRepo.getMessage(failed.id))!.status,
+          'inboxed',
+        );
+        expect(await bob.drainOfflineInbox(), 1);
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+        final received = await bob.loadConversationWith(senderID);
+        expect(received, hasLength(1));
+        expect(received.single.id, failed.id);
+        expect(received.single.text, failed.text);
+      },
+    );
+
     test(
       'low-confidence send to offline peer takes inbox custody and surfaces '
       'exactly once on drain',

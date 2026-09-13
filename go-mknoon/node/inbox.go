@@ -38,11 +38,15 @@ const (
 	CustodyKindGroupAuthorityV1   = "group_authority_v1"
 	CustodyKindGroupContentV1     = "group_content_v1"
 
-	inboxStoreAckCustodyAction    = "store_custody_v1"
-	inboxRetrieveAckCustodyAction = "retrieve_custody_pending_v1"
-	inboxAckCustodyAction         = "ack_custody_v1"
-	inboxAckCustodyFanoutLimit    = 3
-	inboxWakeOutcomeAction        = "wake_outcome_v1"
+	inboxStoreAckCustodyAction = "store_custody_v1"
+	// Quiet stores need action-level capability: an old relay ignores unknown
+	// JSON fields but rejects unknown actions before accepting message custody.
+	inboxStoreQuietAction           = "store_quiet_v1"
+	inboxStoreAckCustodyQuietAction = "store_custody_quiet_v1"
+	inboxRetrieveAckCustodyAction   = "retrieve_custody_pending_v1"
+	inboxAckCustodyAction           = "ack_custody_v1"
+	inboxAckCustodyFanoutLimit      = 3
+	inboxWakeOutcomeAction          = "wake_outcome_v1"
 )
 
 // InboxMessage represents a message stored in the offline inbox.
@@ -354,9 +358,13 @@ func (n *Node) InboxStoreDetailedWithNotificationPolicy(
 		connectMs := time.Since(connectStart).Milliseconds()
 
 		streamStart := time.Now()
+		connections := h.Network().ConnsToPeer(relay.ID)
 		s, err := h.NewStream(ctx, relay.ID, InboxProtocol)
 		streamOpenMs := time.Since(streamStart).Milliseconds()
 		if err != nil {
+			if len(connections) == 1 {
+				n.retireTimedOutSendConnection(connections[0], err)
+			}
 			n.emitEvent("inbox:store_timing", map[string]interface{}{
 				"connectMs":    connectMs,
 				"streamOpenMs": streamOpenMs,
@@ -378,6 +386,9 @@ func (n *Node) InboxStoreDetailedWithNotificationPolicy(
 			SuppressNotification: suppressNotification || quietRecoveryEnabled(quietRecovery),
 			QuietRecovery:        quietRecoveryEnabled(quietRecovery),
 		}
+		if req.QuietRecovery {
+			req.Action = inboxStoreQuietAction
+		}
 
 		reqBytes, err := json.Marshal(req)
 		if err != nil {
@@ -386,6 +397,7 @@ func (n *Node) InboxStoreDetailedWithNotificationPolicy(
 
 		writeStart := time.Now()
 		if err := writeFrame(s, reqBytes); err != nil {
+			n.retireTimedOutSendConnection(s.Conn(), err)
 			return fmt.Errorf("write request: %w", err)
 		}
 		writeMs := time.Since(writeStart).Milliseconds()
@@ -394,6 +406,7 @@ func (n *Node) InboxStoreDetailedWithNotificationPolicy(
 		respBytes, err := readFrame(s)
 		readMs := time.Since(readStart).Milliseconds()
 		if err != nil {
+			n.retireTimedOutSendConnection(s.Conn(), err)
 			return fmt.Errorf("read response: %w", err)
 		}
 
@@ -553,6 +566,9 @@ func (n *Node) inboxStoreAckCustodyDetailedWithWakeToken(
 		SuppressNotification:       suppressNotification || quietRecoveryEnabled(quietRecovery),
 		QuietRecovery:              quietRecoveryEnabled(quietRecovery),
 	}
+	if req.QuietRecovery {
+		req.Action = inboxStoreAckCustodyQuietAction
+	}
 	start := time.Now()
 	var lastErr error
 	var lastOutcome InboxStoreOutcome
@@ -644,8 +660,12 @@ func (n *Node) exchangeInboxRequest(
 	if err := h.Connect(ctx, peer.AddrInfo{ID: relay.ID, Addrs: relay.Addrs}); err != nil {
 		return nil, fmt.Errorf("connect to relay: %w", err)
 	}
+	connections := h.Network().ConnsToPeer(relay.ID)
 	s, err := h.NewStream(ctx, relay.ID, InboxProtocol)
 	if err != nil {
+		if len(connections) == 1 {
+			n.retireTimedOutSendConnection(connections[0], err)
+		}
 		return nil, fmt.Errorf("open inbox stream: %w", err)
 	}
 	streamOK := false
@@ -657,10 +677,12 @@ func (n *Node) exchangeInboxRequest(
 		return nil, fmt.Errorf("marshal request: %w", err)
 	}
 	if err := writeFrame(s, reqBytes); err != nil {
+		n.retireTimedOutSendConnection(s.Conn(), err)
 		return nil, fmt.Errorf("write request: %w", err)
 	}
 	respBytes, err := readFrame(s)
 	if err != nil {
+		n.retireTimedOutSendConnection(s.Conn(), err)
 		return nil, fmt.Errorf("read response: %w", err)
 	}
 	streamOK = true
@@ -906,8 +928,9 @@ func (n *Node) InboxRetrieve() ([]InboxMessage, error) {
 		setStreamDeadline(s, timeout)
 
 		req := inboxRequest{
-			Action: "retrieve",
-			Limit:  50,
+			Action:        "retrieve",
+			QuietRecovery: true,
+			Limit:         50,
 		}
 
 		reqBytes, err := json.Marshal(req)
@@ -1001,8 +1024,9 @@ func (n *Node) InboxRetrieveWithTimeout(timeoutMs int) (*InboxRetrieveResult, er
 		setStreamDeadline(s, timeout)
 
 		req := inboxRequest{
-			Action: "retrieve",
-			Limit:  50,
+			Action:        "retrieve",
+			QuietRecovery: true,
+			Limit:         50,
 		}
 
 		reqBytes, err := json.Marshal(req)
@@ -1083,8 +1107,9 @@ func (n *Node) InboxRetrievePendingWithTimeout(timeoutMs int) (*InboxRetrievePen
 		setStreamDeadline(s, timeout)
 
 		req := inboxRequest{
-			Action: "retrieve_pending",
-			Limit:  50,
+			Action:        "retrieve_pending",
+			QuietRecovery: true,
+			Limit:         50,
 		}
 
 		reqBytes, err := json.Marshal(req)
@@ -1297,6 +1322,7 @@ func retrieveAckCustodyRelayWithExchange(
 	for _, candidate := range relayInfoAttemptCandidates(relay) {
 		strictRaw, err := exchange(candidate, inboxRequest{
 			Action:          inboxRetrieveAckCustodyAction,
+			QuietRecovery:   true,
 			Limit:           limit,
 			CustodyContract: AckOrExpiryCustodyContract,
 		})
@@ -1311,8 +1337,9 @@ func retrieveAckCustodyRelayWithExchange(
 		}
 
 		legacyRaw, legacyErr := exchange(candidate, inboxRequest{
-			Action: "retrieve_pending",
-			Limit:  limit,
+			Action:        "retrieve_pending",
+			QuietRecovery: true,
+			Limit:         limit,
 		})
 		if legacyErr == nil {
 			if result, parseErr := parseInboxCustodyRetrieveResponse(legacyRaw, false); parseErr == nil {

@@ -349,6 +349,55 @@ visible and cannot become an ordinary first-attempt PASS.
   its snapshot, commits the competing claim, then verifies the loser returns
   no claim. Red/green evidence is retained in the adjacent
   `quiet-recovery-go-claim-conflict-*` logs.
+  Mixed-version recovery additionally requires action-level relay admission:
+  `store_quiet_v1` and `store_custody_quiet_v1` preserve the existing storage
+  and custody owners, but an older relay rejects them before accepting a row
+  whose unknown quiet sidecar it would discard. Ordinary/manual stores retain
+  their existing actions. Updated retrieval requests declare `quietRecovery`;
+  older receivers continue draining ordinary rows while quiet rows remain in
+  custody for an upgraded runtime. Both pending and destructive legacy reads
+  preserve those hidden rows, and pagination counts only eligible rows. Redis
+  applies destructive selection inside the existing transaction. Existing
+  sidecar-aware senders remain accepted by the updated relay. A sender/relay
+  upgrade alone does not establish quiet display on an old recipient binary.
+  Tagged Go compatibility fixtures cover rejection through store, retrieval and
+  explicit ACK; production relay tests cover authenticated attribution, both
+  backends and old/new reader pagination. SQLite reopen and Dart receive tests
+  preserve original age/bytes/owner, the exact 24-hour boundary, unread state,
+  mixed pages and durable quiet disposition after delayed normal duplicates.
+  The exported mobile inbox JSON builders previously dropped the relay's
+  quiet flag, including protected pending retrieval. The shared NSE response
+  had the same omission. Five actual bridge roundtrips reproduced that loss;
+  all four projections now retain the
+  additive flag on quiet rows while preserving normal row shape, identity,
+  encrypted bytes and protected custody authority. Node/NSE decoding and
+  Dart-only quiet tests alone did not cover these projection boundaries. The
+  memory-bounded iOS extension's fail-closed stub remains unchanged.
+  Evidence is in `.codex-test-logs/dual-stack-recovery/`.
+- **Established dual-stack messaging failure:** a fresh IPv6 handshake stall
+  was already covered, but did not prove recovery of a reused connection.
+  A socket-scoped loopback proxy first delivered over IPv6, then discarded
+  traffic without FIN/RST. Repeated chat and inbox sends remained trapped on
+  that connection after stream deadlines; resetting only the stream did not
+  retire the multiplexed connection. Send failure handling now retires the
+  specific timed-out connection while retaining peerstore candidates and
+  healthy siblings. Hidden stream-open failures are attributed only when one
+  established connection was available; capability rejection and cancellation
+  do not justify closing a healthy connection. The existing retry owner and
+  operation/committed-ACK deadlines remain in charge. Native fixtures observe
+  selected IPv6 before the fault and selected IPv4 on the subsequent attempt
+  without restarting either node, including quiet sends, uncached negotiation,
+  ACK loss after receive and relay custody. A UDP blackhole also preserves TCP
+  and TLS WebSocket messaging, with the selected address observed and a
+  fixture-local trusted certificate for WSS. Dart integration separately proves
+  one display identity after ACK loss and inbox fallback, plus retained failure
+  and restart drain; it uses
+  fake crypto/network, while the database reopen fixture uses real host SQLite.
+  These tests establish neither public IPv6 reachability nor signed mobile or
+  deployed WSS behavior. Initial setup failures (wrong TCP/WS fixture listener,
+  default Go 1.27 QUIC incompatibility, and default Flutter 3.41.4 below the
+  repository SDK floor) remain in the evidence root. Use the repository's Go
+  1.25.0 and Flutter 3.47.2 toolchains, without changing dependency pins.
 - **Voice-upload incident boundary:** a 2026-09-10 iPhone incident showed
   “Uploading media” from about 18:56 until 19:10 Berlin. The relay received only
   131,072 of 670,610 bytes before a stream reset; the phone then disconnected
@@ -518,6 +567,13 @@ visible and cannot become an ordinary first-attempt PASS.
   assertion. Relay readiness alone still does not prove LAN discovery. Redacted
   evidence is retained in
   `.codex-test-logs/live-phones-20260912T084648Z/android-local-discovery.redacted.log`.
+  A separate host fixture reproduced four overlapping native starts when
+  resume and a libp2p address refresh bypassed that startup future. The existing
+  `LocalP2PService` now joins pending startup and coalesces advertising refreshes,
+  publishing a newer port snapshot before the shared refresh completes. The
+  fixture observes one active start and one subsequent refresh; existing failed
+  startup retry, Bonsoir error containment, denial gating and disposal controls
+  still pass. Evidence is under `.codex-test-logs/dual-stack-recovery/`.
 
 - **iOS discovery errors during resume:** physical iPhone13 / iOS 26.5 emitted
   an unhandled Bonsoir `PlatformException(discoveryError)` with native code

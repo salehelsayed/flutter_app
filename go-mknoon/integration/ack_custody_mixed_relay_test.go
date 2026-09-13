@@ -6,11 +6,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/libp2p/go-libp2p/core/network"
+	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/mknoon/go-mknoon/node"
 )
 
@@ -23,13 +25,15 @@ type ackCustodyMatrixRequest struct {
 	EntryIDs        []string `json:"entryIds,omitempty"`
 	CustodyKind     string   `json:"custodyKind,omitempty"`
 	CustodyContract string   `json:"custodyContract,omitempty"`
+	QuietRecovery   bool     `json:"quietRecovery,omitempty"`
 }
 
 type ackCustodyMatrixMessage struct {
-	ID        string `json:"id"`
-	From      string `json:"from"`
-	Message   string `json:"message"`
-	Timestamp int64  `json:"timestamp"`
+	ID            string `json:"id"`
+	From          string `json:"from"`
+	Message       string `json:"message"`
+	Timestamp     int64  `json:"timestamp"`
+	QuietRecovery bool   `json:"quietRecovery,omitempty"`
 }
 
 type ackCustodyMatrixResponse struct {
@@ -44,13 +48,14 @@ type ackCustodyMatrixResponse struct {
 }
 
 type ackCustodyMatrixState struct {
-	mu        sync.Mutex
-	upgraded  bool
-	admission bool
-	sequence  int64
-	legacy    map[string][]ackCustodyMatrixMessage
-	protected map[string][]ackCustodyMatrixMessage
-	actions   []string
+	mu           sync.Mutex
+	upgraded     bool
+	quietCapable bool
+	admission    bool
+	sequence     int64
+	legacy       map[string][]ackCustodyMatrixMessage
+	protected    map[string][]ackCustodyMatrixMessage
+	actions      []string
 }
 
 func newAckCustodyMatrixState(upgraded bool) *ackCustodyMatrixState {
@@ -91,19 +96,31 @@ func (s *ackCustodyMatrixState) handleStream(stream network.Stream) {
 	defer s.mu.Unlock()
 	s.actions = append(s.actions, req.Action)
 	remotePeer := stream.Conn().RemotePeer().String()
+	quietAction := req.Action == "store_quiet_v1" || req.Action == "store_custody_quiet_v1"
+	if quietAction && !s.quietCapable {
+		s.writeUnsupported(stream, req.Action)
+		return
+	}
+	if s.quietCapable && strings.HasPrefix(req.Action, "retrieve") && !req.QuietRecovery {
+		// A modern receiver must declare that it preserves per-row quiet
+		// intent. The real relay's legacy pagination is tested in its module.
+		s.writeUnsupported(stream, req.Action)
+		return
+	}
 
 	switch req.Action {
-	case "store":
+	case "store", "store_quiet_v1":
 		s.sequence++
 		entry := ackCustodyMatrixMessage{
-			ID:        fmt.Sprintf("legacy-%06d", s.sequence),
-			From:      req.From,
-			Message:   req.Message,
-			Timestamp: time.Now().UnixMilli() + s.sequence,
+			ID:            fmt.Sprintf("legacy-%06d", s.sequence),
+			From:          req.From,
+			Message:       req.Message,
+			Timestamp:     time.Now().UnixMilli() + s.sequence,
+			QuietRecovery: quietAction,
 		}
 		s.legacy[req.To] = append(s.legacy[req.To], entry)
 		_ = writeAckCustodyMatrixResponse(stream, ackCustodyMatrixResponse{Status: "OK", StoreStatus: "stored"})
-	case "store_custody_v1":
+	case "store_custody_v1", "store_custody_quiet_v1":
 		if !s.validStrictRequest(req) ||
 			(req.CustodyKind != node.CustodyKindDirectTextV108 &&
 				req.CustodyKind != node.CustodyKindDirectReactionV109 &&
@@ -119,10 +136,11 @@ func (s *ackCustodyMatrixState) handleStream(stream network.Stream) {
 		}
 		s.sequence++
 		entry := ackCustodyMatrixMessage{
-			ID:        fmt.Sprintf("protected-%06d", s.sequence),
-			From:      req.From,
-			Message:   req.Message,
-			Timestamp: time.Now().UnixMilli() + s.sequence,
+			ID:            fmt.Sprintf("protected-%06d", s.sequence),
+			From:          req.From,
+			Message:       req.Message,
+			Timestamp:     time.Now().UnixMilli() + s.sequence,
+			QuietRecovery: quietAction,
 		}
 		s.protected[req.To] = append(s.protected[req.To], entry)
 		// Compatibility shadow: same ID/sender/bytes/timestamp in the legacy lane.
@@ -501,6 +519,93 @@ func TestAckCustodyMixedVersionMatrix(t *testing.T) {
 			t.Fatalf("re-enabled outcome=%#v err=%v", outcome, err)
 		}
 	})
+}
+
+// Exercise protocol rejection -> durable store -> pending retrieval -> ACK,
+// including a relay that understands protected custody but predates quiet
+// metadata. Such a relay would silently discard an unknown JSON sidecar.
+func TestQuietRecoveryMixedVersionDelivery(t *testing.T) {
+	for _, protected := range []bool{false, true} {
+		for _, compatibleRelay := range []bool{false, true} {
+			t.Run(fmt.Sprintf("protected=%v/compatible=%v", protected, compatibleRelay), func(t *testing.T) {
+				oldRelay, oldState := startAckCustodyMatrixRelay(t, true)
+				newRelay, newState := startAckCustodyMatrixRelay(t, true)
+				newState.mu.Lock()
+				newState.quietCapable = true
+				newState.mu.Unlock()
+				relays := []string{oldRelay.addr()}
+				if compatibleRelay {
+					relays = append(relays, newRelay.addr())
+				}
+				sender, senderID := startNodeWithRelays(t, relays, nil, nil)
+				receiver, recipient := startNodeWithRelays(t, []string{newRelay.addr()}, nil, nil)
+				receiver.Host().RemoveStreamHandler(node.QuietRecoveryChatProtocol)
+				pid, err := peer.Decode(recipient)
+				if err != nil {
+					t.Fatal(err)
+				}
+				addresses := []string{}
+				for _, addr := range receiver.Host().Addrs() {
+					addresses = append(addresses, addr.String())
+				}
+				if err := sender.DialPeerWithTimeout(recipient, addresses, 3000); err != nil {
+					t.Fatal(err)
+				}
+				connections := sender.Host().Network().ConnsToPeer(pid)
+				const wire = `{"type":"chat_message","version":"2","id":"quiet-original","encrypted":{"ciphertext":"immutable"}}`
+				if result, err := sender.SendMessageWithNotificationPolicy(recipient, wire, 4000, true); err == nil || result.Acked {
+					t.Fatalf("old peer accepted quiet chat: %+v %v", result, err)
+				}
+				for _, conn := range connections {
+					if conn.IsClosed() {
+						t.Fatal("capability rejection closed healthy connection")
+					}
+				}
+				var outcome node.InboxStoreOutcome
+				if protected {
+					outcome, err = sender.InboxStoreAckCustodyDetailedWithNotificationPolicy(recipient, wire, 1000, "", node.CustodyKindDirectTextV108, 0, false, true)
+				} else {
+					outcome, err = sender.InboxStoreDetailedWithNotificationPolicy(recipient, wire, 1000, "", false, true)
+				}
+				legacy, custody := oldState.laneSizes(recipient)
+				if legacy != 0 || custody != 0 {
+					t.Fatalf("quiet recovery was downgraded on old relay: legacy=%d custody=%d outcome=%+v err=%v", legacy, custody, outcome, err)
+				}
+				if !compatibleRelay {
+					if err == nil {
+						t.Fatalf("unsupported-only pool falsely accepted custody: %+v", outcome)
+					}
+					return
+				}
+				if err != nil || outcome.StoreStatus != "stored" {
+					t.Fatalf("compatible durable fallback: %+v %v", outcome, err)
+				}
+				// The old direct peer must not receive an alertable fallback. A
+				// later upgraded runtime can retrieve the retained quiet row.
+				page, err := receiver.InboxRetrieveAckCustodyPendingWithTimeout(1000)
+				if err != nil || len(page.Messages) != 1 {
+					t.Fatalf("fallback retrieval: %+v %v", page, err)
+				}
+				row := page.Messages[0]
+				if row.Message != wire || row.From != senderID || !row.QuietRecovery {
+					t.Fatalf("quiet/identity/bytes lost through fallback: %+v", row)
+				}
+				// Retrieval alone is not a commit. It remains pending until the
+				// recipient's durable staging owner explicitly acknowledges it.
+				replayed, err := receiver.InboxRetrieveAckCustodyPendingWithTimeout(1000)
+				if err != nil || len(replayed.Messages) != 1 || replayed.Messages[0] != row {
+					t.Fatalf("pending replay changed custody: %+v %v", replayed, err)
+				}
+				if acked, err := receiver.InboxAckCustody([]string{row.ID}, 1000); err != nil || acked != 1 {
+					t.Fatalf("durable ACK: %d %v", acked, err)
+				}
+				page, err = receiver.InboxRetrieveAckCustodyPendingWithTimeout(1000)
+				if err != nil || len(page.Messages) != 0 {
+					t.Fatalf("ACK did not retire custody: %+v %v", page, err)
+				}
+			})
+		}
+	}
 }
 
 func containsAckCustodyAction(actions []string, want string) bool {

@@ -1129,10 +1129,18 @@ func (is *InboxStore) storeAckCustodyWithWakeOutcome(
 func (is *InboxStore) RetrieveAckCustodyPending(
 	peerID string,
 	limit int,
+	quietCapability ...bool,
 ) ([]inboxMessage, bool, error) {
 	backend, ok := is.backend.(AckCustodyInboxBackend)
 	if !ok {
 		return nil, false, errAckCustodyBackendUnavailable
+	}
+	if len(quietCapability) > 0 && !quietCapability[0] {
+		reader, ok := is.backend.(quietRecoveryCustodyReader)
+		if !ok {
+			return nil, false, errAckCustodyBackendUnavailable
+		}
+		return reader.RetrieveAckCustodyForQuietRecovery(peerID, limit, false)
 	}
 	return backend.RetrieveAckCustodyPending(peerID, limit)
 }

@@ -3226,8 +3226,18 @@ func (is *InboxStore) Retrieve(peerId string, limit int) []inboxMessage {
 }
 
 // RetrieveWithMeta retrieves messages and returns pagination metadata.
-func (is *InboxStore) RetrieveWithMeta(peerId string, limit int) ([]inboxMessage, bool) {
-	messages, hasMore := is.backend.Retrieve(peerId, limit)
+func (is *InboxStore) RetrieveWithMeta(peerId string, limit int, quietCapability ...bool) ([]inboxMessage, bool) {
+	var messages []inboxMessage
+	var hasMore bool
+	if len(quietCapability) > 0 && !quietCapability[0] {
+		reader, ok := is.backend.(quietRecoveryInboxReader)
+		if !ok {
+			return nil, false
+		}
+		messages, hasMore = reader.RetrieveForQuietRecovery(peerId, limit, false, true)
+	} else {
+		messages, hasMore = is.backend.Retrieve(peerId, limit)
+	}
 
 	if len(messages) > 0 {
 		inboxRetrievedCounter.Add(float64(len(messages)))
@@ -3238,7 +3248,14 @@ func (is *InboxStore) RetrieveWithMeta(peerId string, limit int) ([]inboxMessage
 
 // RetrievePendingWithMeta retrieves messages without deleting them and returns
 // pagination metadata.
-func (is *InboxStore) RetrievePendingWithMeta(peerId string, limit int) ([]inboxMessage, bool) {
+func (is *InboxStore) RetrievePendingWithMeta(peerId string, limit int, quietCapability ...bool) ([]inboxMessage, bool) {
+	if len(quietCapability) > 0 && !quietCapability[0] {
+		reader, ok := is.backend.(quietRecoveryInboxReader)
+		if !ok {
+			return nil, false
+		}
+		return reader.RetrieveForQuietRecovery(peerId, limit, false, false)
+	}
 	return is.backend.RetrievePending(peerId, limit)
 }
 
@@ -4474,7 +4491,10 @@ func HandleInboxStream(
 		handleTurnCredentialRequest(s, requestBytes, remotePeer, turnCredentials)
 		return
 
-	case "store":
+	case "store", quietRecoveryStoreAction:
+		if req.Action == quietRecoveryStoreAction {
+			req.QuietRecovery, req.SuppressNotification = true, true
+		}
 		if req.To == "" || req.Message == "" {
 			resp = inboxResponse{Status: "ERROR", Error: "Missing required fields: to, message"}
 		} else {
@@ -4516,7 +4536,10 @@ func HandleInboxStream(
 			// (only for genuinely new messages, skipped for duplicates).
 		}
 
-	case ackCustodyStoreAction:
+	case ackCustodyStoreAction, quietRecoveryCustodyStoreAction:
+		if req.Action == quietRecoveryCustodyStoreAction {
+			req.QuietRecovery, req.SuppressNotification = true, true
+		}
 		storeNow := inbox.ackCustodyNow()
 		if req.To == "" || req.Message == "" || req.CustodyKind == "" ||
 			req.CustodyContract != ackCustodyContract ||
@@ -4603,7 +4626,7 @@ func HandleInboxStream(
 		if limit <= 0 {
 			limit = 50
 		}
-		messages, hasMore := inbox.RetrieveWithMeta(remotePeer, limit)
+		messages, hasMore := inbox.RetrieveWithMeta(remotePeer, limit, req.QuietRecovery)
 		if len(messages) > 0 {
 			resp = inboxResponse{Status: "OK", Messages: messages, HasMore: hasMore}
 		} else {
@@ -4615,7 +4638,7 @@ func HandleInboxStream(
 		if limit <= 0 {
 			limit = 50
 		}
-		messages, hasMore := inbox.RetrievePendingWithMeta(remotePeer, limit)
+		messages, hasMore := inbox.RetrievePendingWithMeta(remotePeer, limit, req.QuietRecovery)
 		if len(messages) > 0 {
 			fittedMessages, fittedHasMore, err := fitRetrievePendingResponse(messages, hasMore)
 			if err != nil {
@@ -4643,7 +4666,7 @@ func HandleInboxStream(
 			if limit <= 0 {
 				limit = 50
 			}
-			messages, hasMore, err := inbox.RetrieveAckCustodyPending(remotePeer, limit)
+			messages, hasMore, err := inbox.RetrieveAckCustodyPending(remotePeer, limit, req.QuietRecovery)
 			if err != nil {
 				resp = inboxResponse{Status: "ERROR", Error: err.Error()}
 			} else if len(messages) == 0 {

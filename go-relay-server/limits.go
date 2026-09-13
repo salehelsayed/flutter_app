@@ -151,6 +151,10 @@ func (b *memoryInboxBackendLimited) RetrievePending(peerId string, limit int) ([
 	return b.inner.RetrievePending(peerId, limit)
 }
 
+func (b *memoryInboxBackendLimited) RetrieveForQuietRecovery(peerID string, limit int, includeQuiet, destructive bool) ([]inboxMessage, bool) {
+	return b.inner.RetrieveForQuietRecovery(peerID, limit, includeQuiet, destructive)
+}
+
 func (b *memoryInboxBackendLimited) Ack(peerId string, entryIDs []string) (int, error) {
 	return b.inner.Ack(peerId, entryIDs)
 }

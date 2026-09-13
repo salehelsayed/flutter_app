@@ -1392,6 +1392,9 @@ func InboxRetrieve() (result string) {
 			"message":   m.Message,
 			"timestamp": m.Timestamp,
 		}
+		if m.QuietRecovery {
+			msgList[i]["quietRecovery"] = true
+		}
 	}
 
 	return okJSON(map[string]interface{}{
@@ -1440,6 +1443,9 @@ func InboxRetrieveWithParams(paramsJSON string) (result string) {
 			"from":      m.From,
 			"message":   m.Message,
 			"timestamp": m.Timestamp,
+		}
+		if m.QuietRecovery {
+			msgList[i]["quietRecovery"] = true
 		}
 	}
 
@@ -1505,6 +1511,9 @@ func InboxRetrievePendingWithParams(paramsJSON string) (result string) {
 			"from":      m.From,
 			"message":   m.Message,
 			"timestamp": m.Timestamp,
+		}
+		if m.QuietRecovery {
+			msgList[i]["quietRecovery"] = true
 		}
 	}
 
