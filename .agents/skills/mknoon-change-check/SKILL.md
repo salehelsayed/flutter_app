@@ -10,7 +10,9 @@ description: "Run Mknoon's deterministic fast-plus-affected checks after code ch
 Work from the repository root. Read `AGENTS.md` and applicable overrides,
 `docs/testing/TESTING.md`, and the relevant rules in
 `tool/testing/selection.json`. Use a verified explicit comparison revision;
-for a pull request use its merge base with the intended target branch.
+for a pull request use the merge base of the actual PR head and target SHAs.
+GitHub's synthetic merge checkout is the tested candidate, not the PR head
+used to calculate that common ancestor.
 Do not invoke other skills without a separate explicit user request.
 
 ## Workflow
@@ -49,3 +51,10 @@ Return the baseline/candidate identity, selection/report paths, selected versus
 executed checks, measured elapsed time, first-attempt failures and reruns, and
 unexecuted requirements. State whether the change checks passed; they do not
 certify a signed release artifact.
+
+CI uses this same selection through `ci-plan`, `ci-run`, and `ci-verify`.
+The PR context is `Mknoon regression checks`; it requires complete original
+attempts and results matching the independent candidate/plan/run fingerprint.
+Metadata success, skipped/disabled execution, queued runners and missing
+artifacts are not a green check. Report remote runner/ruleset activation
+separately, following the pending actions in the testing knowledge file.

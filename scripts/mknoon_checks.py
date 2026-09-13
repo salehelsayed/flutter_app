@@ -153,6 +153,11 @@ def validate(root, rules, files=None):
             if cid not in checks: errors.append('Unknown check: ' + cid)
     for area in rules.get('areas', []):
         if not area.get('patterns') or not area.get('why'): errors.append('Incomplete area: ' + area.get('id', '?'))
+        for path in area.get('exclude_paths', []):
+            if any(c in path for c in '*?[') or not any(
+                    other is not area and any(fnmatch.fnmatchcase(path, p) for p in other['patterns'])
+                    and path not in other.get('exclude_paths', []) for other in rules['areas']):
+                errors.append('Area exclusions need an exact path with another mapping: ' + path)
         for cid in area.get('checks', []):
             if cid not in checks: errors.append('Unknown area check: ' + cid)
     sims = json.loads((root / SIMS).read_text()) if (root / SIMS).exists() else {'capabilities': []}
@@ -212,7 +217,8 @@ def select(rules, changes, mode, files, root):
         for cid in rules['mandatory']: add(cid, 'mandatory release check')
     for change in changes:
         path = change['path']
-        matching = [a for a in rules['areas'] if any(fnmatch.fnmatchcase(path, p) for p in a['patterns'])]
+        matching = [a for a in rules['areas'] if any(fnmatch.fnmatchcase(path, p) for p in a['patterns'])
+                    and path not in a.get('exclude_paths', [])]
         if matching:
             for area in matching:
                 areas.add(area['id'])
@@ -521,7 +527,21 @@ def prior_full_failures(root):
     return receipts
 
 
-def make_plan(args, root, rules):
+def plan_fingerprint(plan):
+    """Portable execution contract; host prerequisites/tool versions are separate evidence."""
+    selected = []
+    for check in plan['selected']:
+        row = {k: v for k, v in check.items() if k != 'blocked_prerequisites'}
+        # sys.executable is host-specific, but the interpreter invocation is not.
+        if row['kind'] == 'python':
+            row['command'] = ['python3', *row['command'][1:]]
+        selected.append(row)
+    return digest({**{k: plan.get(k) for k in (
+        'mode', 'baseline', 'candidate_build', 'identity', 'changes',
+        'not_selected', 'unmapped_changes', 'ci')}, 'selected': selected})
+
+
+def make_plan(args, root, rules, *, capture_toolchains=True):
     files = validate(root, rules)
     baseline = resolve_ref(root, args.base)
     if not args.local and git(root, 'status', '--porcelain', '--untracked-files=normal').strip():
@@ -534,7 +554,8 @@ def make_plan(args, root, rules):
     known = sum(c.get('estimated_seconds') or 0 for c in selection['selected'])
     return {'schema_version':1, 'mode':args.mode, 'baseline':baseline,
             'baseline_provenance':'operator-supplied published revision' if args.mode == 'release' else 'explicit comparison revision',
-            'candidate_build': args.build_label, 'identity':identity, 'toolchains':toolchain_identity(root), 'changes':changes,
+            'candidate_build': args.build_label, 'identity':identity,
+            'toolchains':toolchain_identity(root) if capture_toolchains else {}, 'changes':changes,
             'estimated_test_seconds_known':known,
             'runtime_unknown_checks':[c['id'] for c in selection['selected'] if c.get('estimated_seconds') is None],
             'build_setup_seconds':'unknown until execution', **selection}, files
@@ -542,7 +563,8 @@ def make_plan(args, root, rules):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('action', choices=['discover','validate','plan','run','full','devices'])
+    parser.add_argument('action', choices=['discover','validate','plan','run','full','devices',
+                                         'ci-plan','ci-run','ci-verify'])
     parser.add_argument('--mode', choices=['change','release'], default='change')
     parser.add_argument('--base', help='Explicit comparison ref; releases: actual previous published revision')
     parser.add_argument('--local', action='store_true', help='Include staged, unstaged and nonignored untracked changes')
@@ -556,6 +578,8 @@ def main(argv=None):
     parser.add_argument('--list-runners', action='store_true')
     parser.add_argument('--inventory', type=Path, help='Validate an existing inventory snapshot against current discovery')
     parser.add_argument('--plan', action='store_true', help='Full workflow discovery only')
+    parser.add_argument('--expected-plan', type=Path, help='CI metadata plan from this workflow attempt')
+    parser.add_argument('--report-directory', type=Path, help='CI execution plan/results to verify')
     args = parser.parse_args(argv)
     started = time.monotonic()
     root = ROOT
@@ -568,6 +592,8 @@ def main(argv=None):
     os.chmod(directory, 0o700)
     try:
         rules = json.loads((root / RULES).read_text())
+        if args.action.startswith('ci-'):
+            return ci_action(args, root, rules, directory, started)
         if args.action == 'discover':
             from testing_inventory import main as inventory_main
             command = ['--output', str(directory / 'inventory.json')]
@@ -599,6 +625,7 @@ def main(argv=None):
         for c in plan['selected']:
             c['blocked_prerequisites'] = prerequisites(c, root, device_config, matrix)
             if c['kind'] == 'manual': c['blocked_prerequisites'] = ['requires candidate-bound manual evidence']
+        plan['plan_sha256'] = plan_fingerprint(plan)
         (directory / 'plan.json').write_text(json.dumps(plan, indent=2) + '\n')
         if args.action == 'plan':
             print(f"Selected {len(plan['selected'])} checks; {len(plan['changes'])} change rows; areas: {', '.join(plan['affected_areas'])}")
@@ -617,6 +644,8 @@ def main(argv=None):
 
 
 def execute_plan(args, root, rules, plan, files, device_config, matrix, directory, started):
+    plan['plan_sha256'] = plan_fingerprint(plan)
+    (directory / 'plan.json').write_text(json.dumps(plan, indent=2) + '\n')
     evidence = json.loads(args.evidence.read_text()) if args.evidence else {}
     artifact_hashes = {p.name:file_hash(p) for p in args.candidate_artifact}
     if len(artifact_hashes) != len(args.candidate_artifact): raise InvalidPlan('Candidate artifact basenames must be unique')
@@ -676,6 +705,8 @@ def execute_plan(args, root, rules, plan, files, device_config, matrix, director
                                 seconds += verify_seconds
                                 if verify_code or verify_timeout:
                                     a.update(status='BLOCKED', checkpoint='sims_report_verification_failed')
+                                else:
+                                    a['report_verification_observed'] = True
                         if c['kind'] == 'legacy':
                             a = inspect_legacy(legacy_dir, code, timeout)
                         a.update(exit_status=code, duration_seconds=seconds, attempt=attempt + 1)
@@ -705,6 +736,7 @@ def execute_plan(args, root, rules, plan, files, device_config, matrix, director
     if gaps and overall != 'FAIL': overall = 'BLOCKED'
     report = {**{k:plan[k] for k in ('mode','baseline','candidate_build','identity','not_selected')},
               'schema_version':1, 'automated_status':auto, 'status':overall,
+              'plan_sha256':plan['plan_sha256'], 'ci':plan.get('ci'),
               'artifact_sha256':artifact_hashes, 'devices':matrix,
               'toolchains':plan.get('toolchains', {}),
               'prior_full_failures':prior_full_failures(root),
@@ -749,7 +781,7 @@ def inspect_sims(path, capability, code, timeout):
                    or row.get('printOnly') is not False or row.get('blocker') is not None for row in checked):
         return {'status':'BLOCKED','checkpoint':'incomplete_sims_evidence'}
     return {'status':'PASS','checkpoint':'sims_assertions_and_artifact_observed','sims_report_sha256':file_hash(path),
-            'builds':data.get('builds', {}), 'not_applicable':[r['capabilityId'] for r in not_applicable]}
+            'timed_out':False, 'builds':data.get('builds', {}), 'not_applicable':[r['capabilityId'] for r in not_applicable]}
 
 
 def inspect_legacy(directory, code, timeout):
@@ -770,7 +802,23 @@ def inspect_legacy(directory, code, timeout):
         if re.search(r'~[1-9]\d*|--- SKIP:|\b[1-9]\d* (?:tests? )?skipped|\bskipped[=: ]+[1-9]\d*|"skipped"\s*:\s*true', text, re.I):
             return {'status':'BLOCKED','checkpoint':'legacy_skipped_tests', 'route_log':log.name}
     return {'status':'PASS','checkpoint':'legacy_95_routes_completed', 'route_count':95,
+            'timed_out':False, 'summary_sha256':file_hash(summary),
             'limitation':'Legacy per-route summaries are retained; case-level counts are not available for every nested runner.'}
+
+
+def make_full_plan(args, root, rules, *, capture_toolchains=True):
+    baseline = resolve_ref(root, args.base)
+    if not args.local and git(root,'status','--porcelain','--untracked-files=normal').strip():
+        raise InvalidPlan('Full source is dirty; use --local or clean checkout')
+    files = source_files(root)
+    plan = {'mode':'full', 'baseline':baseline, 'candidate_build':args.build_label,
+            'toolchains':toolchain_identity(root) if capture_toolchains else {},
+            'identity':source_identity(root,files,rules), 'not_selected':[], 'unmapped_changes':[], 'selected':[]}
+    for c in rules['full_commands']:
+        check = dict(c)
+        check['selected_paths'] = expand_paths(root, c.get('paths',[]), files) if c['kind'] == 'flutter' else c.get('paths',[])
+        plan['selected'].append(check)
+    return plan, files
 
 
 def full_run(args, root, rules, directory, started):
@@ -785,25 +833,182 @@ def full_run(args, root, rules, directory, started):
     config = json.loads(args.device_config.read_text()) if args.device_config else {}
     if not config.get('isolated_test_environment'): raise InvalidPlan('Full execution requires --device-config for isolated environments')
     # Full legacy campaigns may span days. No cancellation/resume or cross-revision merge.
-    full_rules = json.loads(json.dumps(rules))
-    full_rules['checks'] = {c['id']:c for c in commands}
-    full_rules['fast'] = list(full_rules['checks']); full_rules['mandatory'] = []
-    full_rules['areas'] = []; full_rules['conservative'] = []
-    baseline = resolve_ref(root, args.base)
-    if not args.local and git(root,'status','--porcelain','--untracked-files=normal').strip(): raise InvalidPlan('Full source is dirty; use --local or clean checkout')
-    files = source_files(root)
+    plan, files = make_full_plan(args, root, rules)
     matrix = devices(root)
-    plan = {'mode':'full', 'baseline':baseline, 'candidate_build':args.build_label,
-            'toolchains':toolchain_identity(root),
-            'identity':source_identity(root,files,rules), 'not_selected':[], 'unmapped_changes':[], 'selected':[]}
-    for c in commands:
-        check = dict(c)
-        check['selected_paths'] = expand_paths(root, c.get('paths',[]), files) if c['kind'] == 'flutter' else c.get('paths',[])
+    for check in plan['selected']:
         check['blocked_prerequisites'] = prerequisites(check,root,config,matrix)
-        plan['selected'].append(check)
     # Preserve full workflow failures independently of release summaries.
     (directory / 'plan.json').write_text(json.dumps(plan,indent=2) + '\n')
     return execute_plan(args,root,rules,plan,files,config,matrix,directory,started)
+
+
+def ci_context(root, env=None):
+    """Resolve immutable event SHAs, never HEAD^ or the merge commit's merge-base."""
+    env = os.environ if env is None else env
+    required = ('GITHUB_SHA', 'GITHUB_REPOSITORY', 'GITHUB_RUN_ID', 'GITHUB_RUN_ATTEMPT',
+                'GITHUB_EVENT_NAME', 'GITHUB_EVENT_PATH', 'GITHUB_WORKFLOW_REF', 'GITHUB_REF')
+    if any(not env.get(k) for k in required):
+        raise InvalidPlan('CI event provenance missing')
+    candidate = env['GITHUB_SHA']
+    if not re.fullmatch(r'[0-9a-f]{40}', candidate) or resolve_ref(root, 'HEAD') != candidate:
+        raise InvalidPlan('CI checkout does not match the expected candidate SHA')
+    if any(not re.fullmatch(r'[1-9][0-9]*', env[k]) for k in ('GITHUB_RUN_ID', 'GITHUB_RUN_ATTEMPT')):
+        raise InvalidPlan('CI run identity invalid')
+    event = json.loads(Path(env['GITHUB_EVENT_PATH']).read_text())
+    context = {k.removeprefix('GITHUB_').lower(): env[k] for k in required if k != 'GITHUB_EVENT_PATH'}
+    if event['repository']['full_name'] != context['repository']:
+        raise InvalidPlan('CI repository provenance mismatch')
+    if context['event_name'] == 'pull_request':
+        pr = event['pull_request']
+        head, base = pr['head']['sha'], pr['base']['sha']
+        if any(not re.fullmatch(r'[0-9a-f]{40}', sha) for sha in (head, base)):
+            raise InvalidPlan('PR head/base must be immutable SHAs')
+        parents = git(root, 'rev-list', '--parents', '-n', '1', candidate).decode().split()[1:]
+        if parents != [base, head] or context['ref'] != f"refs/pull/{event['number']}/merge":
+            raise InvalidPlan('PR merge candidate has stale or mismatched head/base parents')
+        context.update(mode='change', pr_number=event['number'], pr_head=head, pr_base=base,
+                       pr_base_ref=pr['base']['ref'], head_repository=pr['head']['repo']['full_name'])
+        context['baseline'] = git(root, 'merge-base', head, base).decode().strip()
+    elif context['event_name'] == 'schedule':
+        context.update(mode='full', baseline=candidate)
+    elif context['event_name'] == 'workflow_dispatch':
+        inputs = event.get('inputs', {})
+        mode = inputs.get('mode', 'change')
+        if mode not in ('change', 'release', 'full'):
+            raise InvalidPlan('Unsupported CI mode')
+        # A mutable branch name is not a published-build attestation.
+        baseline = inputs.get('baseline', '')
+        if not re.fullmatch(r'[0-9a-f]{40}', baseline):
+            raise InvalidPlan('CI dispatch requires an explicit verified baseline SHA')
+        context.update(mode=mode, baseline=resolve_ref(root, baseline),
+                       build_label=inputs.get('build_label', ''))
+    else:
+        raise InvalidPlan('Unsupported CI event; privileged PR execution is prohibited')
+    return context
+
+
+def require_ci(condition, message):
+    if not condition:
+        raise InvalidPlan(message)
+
+
+def verify_ci_results(expected, execution_plan, report, context, fingerprint,
+                      metadata_result, execution_result):
+    """Fail closed on job conclusions, complete membership and original execution facts."""
+    require_ci(metadata_result == 'success', 'CI metadata did not succeed: ' + metadata_result)
+    require_ci(execution_result == 'success', 'CI selected execution did not succeed: ' + execution_result)
+    require_ci(bool(fingerprint) and expected.get('plan_sha256') == fingerprint
+               and plan_fingerprint(expected) == fingerprint, 'CI expected plan fingerprint mismatch')
+    require_ci(expected.get('ci') == context, 'CI expected event/candidate provenance mismatch')
+    require_ci(execution_plan.get('plan_sha256') == fingerprint
+               and plan_fingerprint(execution_plan) == fingerprint, 'CI execution plan mismatch')
+    require_ci(not expected['unmapped_changes'], 'Unmapped changes remain unresolved')
+    require_ci(report.get('schema_version') == 1 and report.get('ci') == context
+               and report.get('plan_sha256') == fingerprint, 'CI result provenance missing or stale')
+    for key in ('mode', 'baseline', 'candidate_build', 'identity', 'not_selected', 'toolchains'):
+        require_ci(report.get(key) == execution_plan.get(key), 'CI result identity mismatch: ' + key)
+    require_ci(report.get('status') == 'PASS' and report.get('automated_status') == 'PASS'
+               and report.get('gaps') == [], 'CI report is failed, blocked or incomplete')
+    selected = {c['id']: c for c in execution_plan['selected']}
+    rows = report.get('results', [])
+    require_ci(bool(selected) and len(selected) == len(execution_plan['selected'])
+               and len(rows) == len(selected) and {r['id'] for r in rows} == set(selected),
+               'CI selected results are missing, duplicated or unexpected')
+    is_hash = lambda value: isinstance(value, str) and bool(re.fullmatch(r'[0-9a-f]{64}', value))
+    if context['mode'] == 'release':
+        artifacts = report.get('artifact_sha256', {})
+        require_ci(bool(artifacts) and all(is_hash(h) for h in artifacts.values()),
+                   'Signed candidate artifact evidence missing')
+    for row in rows:
+        check = selected[row['id']]
+        label = 'CI result for ' + row['id']
+        require_ci(row.get('status') == 'PASS', label + ' did not pass')
+        for key in ('kind', 'command', 'selected_paths'):
+            require_ci(row.get(key) == check[key], label + ' has mismatched ' + key)
+        attempts = row.get('attempts', [])
+        if check['kind'] == 'manual':
+            require_ci(context['mode'] == 'release' and attempts == []
+                       and row.get('checkpoint') == 'attested_manual_assertions'
+                       and set(row.get('assertions_observed', [])) == set(check['assertions'])
+                       and bool(row.get('receipt_sha256'))
+                       and all(is_hash(h) for h in row['receipt_sha256']), label + ' lacks required signed evidence')
+            continue
+        require_ci(1 <= len(attempts) <= 2, label + ' has no complete first attempt')
+        for number, attempt in enumerate(attempts, 1):
+            require_ci(attempt.get('status') == 'PASS' and attempt.get('attempt') == number
+                       and type(attempt.get('exit_status')) is int and attempt['exit_status'] == 0
+                       and attempt.get('timed_out') is False, label + ' has a failed or unfinished attempt')
+            kind = check['kind']
+            if kind == 'sims':
+                require_ci(attempt.get('checkpoint') == 'sims_assertions_and_artifact_observed'
+                           and is_hash(attempt.get('sims_report_sha256'))
+                           and attempt.get('report_verification_observed') is True,
+                           label + ' lacks verified device evidence')
+            elif kind == 'legacy':
+                require_ci(attempt.get('checkpoint') == 'legacy_95_routes_completed'
+                           and attempt.get('route_count') == 95 and is_hash(attempt.get('summary_sha256')),
+                           label + ' lacks complete full-regression evidence')
+            else:
+                counts = attempt.get('counts', {})
+                require_ci(kind in ('flutter', 'python', 'node', 'go', 'command')
+                           and attempt.get('checkpoint') == 'runner_completed'
+                           and attempt.get('completion_observed') is True
+                           and type(counts.get('passed')) is int and counts['passed'] > 0
+                           and counts.get('failed') == 0 and counts.get('skipped') == 0
+                           and attempt.get('missing_test_files') == []
+                           and attempt.get('failed_cases') == []
+                           and attempt.get('compilation_diagnostics') == []
+                           and is_hash(attempt.get('raw_output_sha256')),
+                           label + ' lacks complete substantive execution')
+    return {'status':'PASS', 'plan_sha256':fingerprint, 'ci':context, 'completed_checks':len(rows)}
+
+
+def ci_action(args, root, rules, directory, started):
+    """Use the existing selector/runner with an independently reconstructed CI plan."""
+    context = ci_context(root)
+    require_ci(not args.local and not args.only, 'CI cannot use a dirty candidate or diagnostic subset')
+    args.base, args.mode = context['baseline'], context['mode']
+    args.build_label = context.get('build_label', '')
+    validate(root, rules)
+    builder = make_full_plan if args.mode == 'full' else make_plan
+    plan, files = builder(args, root, rules, capture_toolchains=args.action == 'ci-run')
+    plan['ci'] = context
+    plan['plan_sha256'] = plan_fingerprint(plan)
+    if args.action == 'ci-plan':
+        (directory / 'plan.json').write_text(json.dumps(plan, indent=2) + '\n')
+        with Path(os.environ['GITHUB_OUTPUT']).open('a') as output:
+            output.write('plan_sha256=' + plan['plan_sha256'] + '\n')
+        print(f"Planned {len(plan['selected'])} {args.mode} checks at {context['sha']}; baseline {args.base}")
+        return 0
+    if args.action == 'ci-verify':
+        # Check job conclusions before touching possibly absent artifacts.
+        require_ci(os.environ.get('MKNOON_METADATA_RESULT') == 'success', 'CI metadata job did not succeed')
+        require_ci(os.environ.get('MKNOON_EXECUTION_RESULT') == 'success',
+                   'CI selected job disabled, skipped, cancelled, failed or not completed')
+    require_ci(args.expected_plan is not None, 'CI expected plan missing')
+    expected = json.loads(args.expected_plan.read_text())
+    fingerprint = os.environ.get('MKNOON_PLAN_SHA256', '')
+    require_ci(bool(fingerprint) and expected.get('plan_sha256') == fingerprint
+               and plan_fingerprint(expected) == fingerprint
+               and plan['plan_sha256'] == fingerprint, 'CI plan or candidate differs from metadata expectation')
+    if args.action == 'ci-run':
+        require_ci(context['event_name'] != 'pull_request' or context['head_repository'] == context['repository'],
+                   'Fork code is prohibited on the shared runner')
+        require_ci(args.mode == 'release' or not (args.evidence or args.candidate_artifact),
+                   'Signed artifact evidence belongs only to release acceptance')
+        config = json.loads(args.device_config.read_text()) if args.device_config else {}
+        matrix = devices(root) if config else {}
+        for c in plan['selected']:
+            c['blocked_prerequisites'] = prerequisites(c, root, config, matrix)
+        return execute_plan(args, root, rules, plan, files, config, matrix, directory, started)
+    require_ci(args.report_directory is not None, 'CI results directory missing')
+    execution_plan = json.loads((args.report_directory / 'plan.json').read_text())
+    report = json.loads((args.report_directory / 'results.json').read_text())
+    verdict = verify_ci_results(expected, execution_plan, report, context, fingerprint,
+                                os.environ['MKNOON_METADATA_RESULT'], os.environ['MKNOON_EXECUTION_RESULT'])
+    (directory / 'verdict.json').write_text(json.dumps(verdict, indent=2) + '\n')
+    print(f"PASS: all {verdict['completed_checks']} selected checks have complete candidate-bound results")
+    return 0
 
 
 if __name__ == '__main__':

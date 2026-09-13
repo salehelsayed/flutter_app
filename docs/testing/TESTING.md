@@ -59,6 +59,16 @@ records 247 passing Codex host tests plus passing fast/workflow/schema checks.
 Python check selectors must enumerate files: wildcard expansion is implemented
 for Flutter selectors, while the Python runner forwards paths to `unittest`.
 
+Fresh-checkout verification exposed two Codex integration errors: the tests
+unconditionally read ignored `.codex/config.toml` and `.codex/hooks.json` from
+the development machine. Clones intentionally have no such local overrides.
+The integration tests now accept their absence and still reject checkpoint
+configuration when those files exist, with isolated positive/negative fixtures.
+No private editor configuration is copied into CI. The existing `codex-tooling`
+manifest area already selects this test file. The original failed selection and
+diagnostic rerun remain in the CI evidence root under
+`publish-worktree/.codex-test-logs/publish-run/` and `publish-codex-diagnostic.log`.
+
 ## Daily commands
 
 Run from the repository root. `BASE_REF` must name the verified intended
@@ -173,18 +183,228 @@ failed or unfinished full runs visible to release reviewers. Full regression
 is not the default after each small change or individual TDD plan; follow the
 wave/release cadence in `AGENTS.md`.
 
-`.github/workflows/mknoon-checks.yml` configures a hosted metadata job and the
-same wrapper for change/release checks and serialized weekly full execution.
-Test execution is opt-in through `MKNOON_TEST_RUNNER_ENABLED` and requires an
-appropriately isolated self-hosted runner carrying the `mknoon-test` label,
-device/service setup, and release-baseline inputs. Full jobs disable active-run
-cancellation and allow 4,320 minutes (three days). An unfinished campaign remains
-BLOCKED; if measurement exceeds that bound, implement tracked partitions at one
-revision before claiming the cadence can complete. A committed workflow file
-does not prove the schedule is active or that branch protection requires it.
-No actual remote CI run, schedule activation, or merge-blocking rule has been
-verified by this implementation. Do not publish or change remote repository
-settings without explicit authorization.
+`.github/workflows/mknoon-checks.yml` uses the same wrapper and selection manifest
+for three distinct acceptance modes. Its final hosted job always runs after
+metadata and selected execution; only a PR emits **`Mknoon regression checks`**,
+the exact status context to require on `main`. A manual change diagnostic emits
+`Mknoon change diagnostics`; release dispatch emits `Mknoon signed-release
+acceptance`; scheduled/manual full execution emits `Mknoon full regression`.
+These other contexts cannot substitute for a PR's selection or certify a
+different candidate. PR activity includes base-branch edits, and there are no
+path filters or privileged `pull_request_target` jobs. No push-to-main job is
+needed for enforcement when the pending ruleset requires PR integration.
+
+`ci-plan` resolves the merge base of the event's **PR head and target SHAs**,
+checks both parents of GitHub's synthetic merge candidate, and records all
+three identities. The selected checks execute that merge candidate. Comparing
+from the true common ancestor can conservatively include target-branch changes
+present in the candidate. Computing `merge-base HEAD PR_BASE` after checking out
+the synthetic merge incorrectly returns the target tip instead. A dispatch
+requires an explicit full baseline SHA; a release SHA remains an operator
+attestation of the actual distribution record. A schedule uses its candidate
+SHA and runs the existing full command list.
+
+Metadata publishes an independent `plan.json` and a portable `plan_sha256` job
+output. `ci-run` reconstructs selection on the execution host before calling the
+existing runner. `ci-verify` reconstructs it again on a hosted runner and checks
+the execution plan/results against that output, the candidate source/rules,
+baseline, event, repository, workflow, run ID and attempt. Per-host Python paths
+and prerequisite discovery are excluded from the portable fingerprint;
+execution toolchain facts remain bound between the execution plan and report.
+Every selected ID must appear exactly once with matching commands/paths and
+complete original attempts. Missing results, skips, cancellation, incomplete
+counts, stale evidence, unresolved impact and a metadata-only success all fail
+the final check. A queued job without a runner leaves acceptance pending; it
+never establishes PASS. Source-build tests cannot certify a signed artifact.
+
+Test execution remains opt-in through `MKNOON_TEST_RUNNER_ENABLED == 'true'` and
+requires an isolated disposable self-hosted runner labeled `mknoon-test`.
+Both the workflow gate and `ci-run` refuse fork execution on that host. GitHub
+contributor approval permits the hosted metadata workflow; it does not override
+that restriction. After reviewing the exact fork revision, a maintainer can
+bring the reviewed contribution into an origin branch and open a corresponding
+PR subject to the same gate. The original fork PR remains blocked; do not post
+a substitute success or use a privileged workflow to execute its code.
+
+All selected jobs, including release/full jobs, share
+`mknoon-shared-test-devices`, retain `cancel-in-progress: false` and `queue: max`,
+and the wrapper retains its checkout resource lock. A single dedicated device
+pool must not be shared with unmanaged local campaigns or another repository's
+jobs; GitHub concurrency groups do not serialize other repositories. Ordinary
+change/release jobs have a six-hour ceiling; full jobs retain 4,320 minutes
+(three days). These are limits, not measured completion promises. Timeout or an
+unfinished campaign remains incomplete. If full measurement exceeds its bound,
+partition existing routes at one revision before claiming the cadence completes.
+
+Artifacts use run-ID/attempt names and never overwrite prior attempts. Only the
+allowlisted wrapper plan/result/partial/error/summary files are uploaded, with
+hidden-file inclusion enabled for their ignored `.codex-test-logs` parent.
+Nested device logs, signing material and raw receipts are not uploaded. A
+diagnostic rerun within a report preserves its failed first attempt. Re-running
+only failed GitHub jobs cannot borrow a successful metadata plan from an older
+attempt: use a fresh complete workflow attempt and retain the earlier artifacts
+and conclusions in the review. A later run does not erase a previous failure.
+
+The CI unit files `mknoon_checks_test.py`, `mknoon_ci_checks_test.py` and
+`testing_inventory_test.py` execute isolated Python/Git/parser fixtures. Their
+exact paths are excluded only from the broad infrastructure area and still map
+to `workflow` in `selection.json`; unknown infrastructure retains broad coverage.
+The manifest also retains shared bridge/storage/lifecycle/native/build consumers
+and adds the direct/group projection suites to notification changes: current
+listeners, retry owners and reconciliation import these shared notification
+contracts. Executable selectors remain solely in the manifest.
+
+Local validation of this CI boundary passed 57 selector/CI tests and five
+inventory tests, including real temporary Git histories and isolated failing
+test subprocesses. After repairing the clean-checkout portability defect above,
+the publishing candidate passed all five selected groups (workflow, bootstrap,
+contacts, provider schema and Codex tooling): **323 tests, zero failed/skipped,
+98.637 seconds**, with no diagnostic subset. Candidate/plan and observed counts
+are in the evidence root below under
+`publish-worktree/.codex-test-logs/publish-fixed-run/`. The earlier two failed
+integration tests and diagnostic rerun remain preserved separately; the initial
+development-tree 321-test pass is under `change-run/`. These results validate
+this tooling change, not the separate unpublished application commit. Rule
+validation, Python compilation and whitespace checks passed. Actionlint 1.7.12 initially reported the existing
+custom runner label and its unsupported `queue` schema field. With that label
+declared in an ignored local config, only `queue: max` remains unsupported;
+all other lint checks pass when that exact diagnostic is excluded. The retained
+queue behavior is covered by [GitHub's current workflow syntax](https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax#concurrency)
+and the existing remote run. This is an explicit linter limitation, not an
+unqualified lint pass or a newly executed CI campaign. Both diagnostics remain
+in the ignored evidence root.
+
+### Remote observation and pending activation
+
+Read-only revalidation on **2026-09-13** resolved origin `main` to
+`ad3529a041528c07dd6714a98c0f70fefeb2366b`; the clean starting local HEAD was
+`1df147ccfc7ded0336ea28ed9f4b2d0039a48b81`, one preserved unpublished commit
+ahead. Initial validation compared local changes against that starting HEAD;
+the publishing candidate and its latest validation use origin main directly,
+excluding the unrelated application commit. Source and remote receipts are
+retained in ignored `.codex-test-logs/ci-enforcement-20260913-15_yatv1/`.
+
+The authenticated API returned Actions enabled, this workflow active, **zero
+repository runners, variables and secrets**, `main.protected=false`, empty
+repository/branch rules, and `Branch not protected` from the protection endpoint.
+The token reports administrative capability; no administrative action was
+authorized or taken. The existing fork approval setting is
+`first_time_contributors`, with read-only workflow token defaults and PR-review
+approval disabled. Administrative endpoints that are inaccessible in future
+audits must be reported as **unknown**, never inferred disabled from a 403/404
+alone. Here the successful branch/rules queries corroborate the protection 404.
+
+The actual [scheduled run 34745389097](https://github.com/salehelsayed/flutter_app/actions/runs/34745389097)
+at `5a9bb5c94503d3e48dca734f4d2b2cb06fe8141a` was marked success, but its jobs
+showed `metadata=success` and `selected=skipped`. Its logs record 37 wrapper and
+five inventory tests, with no selected application/full execution. This refutes
+the earlier statement that no remote run/schedule had been observed; it does
+not validate this local implementation or a full campaign. Current origin main
+had no check runs. **Activation remains BLOCKED; remote enforcement is not
+verified.** The user subsequently authorized publishing this CI change, then
+deferred runner setup because no dedicated test machine is available. The
+publishing branch is based directly on origin `main`, preserving the separate
+unpublished application commit locally. Runner activation and the required
+main-branch rule are deferred together; enabling the rule without a runner
+would block every merge.
+
+[Draft PR #2](https://github.com/salehelsayed/flutter_app/pull/2) exercised this
+boundary in [run 34773008050](https://github.com/salehelsayed/flutter_app/actions/runs/34773008050)
+at PR head `bc7f331d87d67492ada4d3b716edd875db247ad1`. Hosted metadata passed
+57 selector/CI and five inventory tests, and uploaded the expected five-check
+plan for synthetic merge `800d274a340a575a2aa33bbd057a07a27df9b391` against the
+verified main baseline above. `selected=skipped`; the final **Mknoon regression
+checks** job failed with exit 2 and `CI selected job disabled, skipped,
+cancelled, failed or not completed`. The downloaded plan's source hash matches
+the locally tested publishing candidate. This verifies refusal of skipped
+execution, not successful remote regression execution or main enforcement.
+The metadata log and downloaded plan remain in the evidence root as
+`remote-pr-metadata.log` and `remote-pr-expected-1/plan.json`.
+
+The minimal pending activation actions, requiring explicit authorization, are:
+
+1. Review this CI change through its pull request and complete the selected
+   checks before integration. Do not register a required context as satisfied
+   by the historical metadata-only run.
+2. Register one dedicated disposable/ephemeral runner with labels
+   `[self-hosted, mknoon-test]`. Its clean image needs Python 3.11+ (`tomllib`), Flutter
+   **3.47.2** (the current pubspec floor) with matching Dart/resolved packages,
+   Go **1.25.0**, Node, and the native toolchains required by selected checks.
+   A macOS image with Xcode/CocoaPods plus Android SDK/JDK/adb supports the current
+   cross-platform selection. Use a dedicated USB Android phone plus an available
+   emulator for ordinary two-peer proof; add live iOS targets for applicable iOS
+   boundaries. Prepare isolated fixture services using existing SIMS contracts.
+   The runner must contain no developer credentials, signing keys, production
+   service credentials or production app data. Do not attach the credentialed
+   development host merely by adding a label. No paid capacity is provisioned
+   by this change.
+3. Place the live, isolated device-config JSON described above at
+   `/opt/mknoon-ci/device-config.json` on that runner. Set the existing variables:
+
+   ```bash
+   gh variable set MKNOON_TEST_DEVICE_CONFIG --repo salehelsayed/flutter_app --body /opt/mknoon-ci/device-config.json
+   gh variable set MKNOON_TEST_RUNNER_ENABLED --repo salehelsayed/flutter_app --body true
+   ```
+
+   Enabling this gate also enables the existing weekly full schedule. The PR
+   path needs no signed-artifact/evidence variables. Mount those reviewed input
+   files only for release dispatch and then set `MKNOON_CANDIDATE_ARTIFACT` and
+   `MKNOON_MANUAL_EVIDENCE` to their runner-local paths. Signing happens through
+   the existing release process, not this CI workflow. For multiple platform
+   artifacts use the local wrapper's repeatable `--candidate-artifact` option;
+   the CI variable currently supplies one artifact per release dispatch.
+4. Inspect a fresh permitted PR run through metadata, selected execution,
+   uploaded plan/results, and the final verdict at the current merge SHA. If a
+   runner is queued/offline, report pending/BLOCKED. Then create the following
+   minimal main ruleset, with **no bypass actors**. GitHub Actions app ID 15368
+   was verified from the actual run's check records. Save the exact JSON to a
+   reviewed local file and, only after approval, submit it with
+   `gh api --method POST repos/salehelsayed/flutter_app/rulesets --input <file>`:
+
+   ```json
+   {
+     "name": "Mknoon main regression checks",
+     "target": "branch",
+     "enforcement": "active",
+     "bypass_actors": [],
+     "conditions": {"ref_name": {"include": ["refs/heads/main"], "exclude": []}},
+     "rules": [
+       {
+         "type": "pull_request",
+         "parameters": {
+           "required_approving_review_count": 0,
+           "dismiss_stale_reviews_on_push": false,
+           "require_code_owner_review": false,
+           "require_last_push_approval": false,
+           "required_review_thread_resolution": false
+         }
+       },
+       {
+         "type": "required_status_checks",
+         "parameters": {
+           "strict_required_status_checks_policy": true,
+           "do_not_enforce_on_create": false,
+           "required_status_checks": [
+             {"context": "Mknoon regression checks", "integration_id": 15368}
+           ]
+         }
+       }
+     ]
+   }
+   ```
+
+5. Read back `/rulesets`, the created ruleset, `/rules/branches/main`, and the
+   PR's required check/merge state. Confirm a failing or incomplete selected
+   result blocks integration and a complete candidate-bound result satisfies
+   the required context with strict branch freshness. Do not infer enforcement
+   from workflow YAML, administrative capability, or a green summary alone.
+
+Ruleset fields follow the [GitHub rules API](https://docs.github.com/en/rest/repos/rules#create-a-repository-ruleset).
+The pending rule requires ordinary PR regression only. Signed release approval
+still requires the actual previous published baseline, mandatory-plus-affected
+automated checks, available-device journeys, exact signed artifact/configuration
+hashes, all required manual receipts and review of outstanding full failures.
+Historical runs and host-source passes cannot fill missing signed evidence.
 
 ## What the inspected checks establish
 
