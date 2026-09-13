@@ -609,9 +609,10 @@
       "kind": "python",
       "paths": [
         "scripts/test/mknoon_checks_test.py",
-        "scripts/test/testing_inventory_test.py"
+        "scripts/test/testing_inventory_test.py",
+        "scripts/test/mknoon_ci_checks_test.py"
       ],
-      "boundary": "Selector, inventory, evidence and runner safety contracts",
+      "boundary": "Selector, inventory, runner safety and candidate-bound CI acceptance contracts",
       "timeout_seconds": 120,
       "estimated_seconds": 7,
       "requirements": [
@@ -1311,9 +1312,11 @@
         "direct-chat",
         "small-group",
         "affected-push",
-        "provider-schema"
+        "provider-schema",
+        "affected-conversation",
+        "affected-groups"
       ],
-      "why": "Visibility, shared message events, mute and route ordering affect both conversation families"
+      "why": "Visibility, shared message events, mute and route ordering also feed direct/group projection, listeners and retry owners"
     },
     {
       "id": "identity",
@@ -1544,13 +1547,14 @@
         "tool/testing/*",
         ".agents/skills/mknoon-*/SKILL.md",
         ".github/workflows/mknoon-checks.yml",
-        ".gitignore"
+        ".gitignore",
+        "scripts/test/mknoon_ci_checks_test.py"
       ],
       "checks": [
         "workflow",
         "provider-schema"
       ],
-      "why": "Selection/report/inventory changes must preserve conservative failure semantics"
+      "why": "Selection/report/inventory and final CI acceptance must preserve complete candidate-bound execution and conservative failure semantics"
     },
     {
       "id": "shared-fixtures",
@@ -1756,7 +1760,12 @@
         "workflow",
         "provider-schema"
       ],
-      "why": "Runner/fixture changes need host consumers; changed device tests require current SIMS or explicit new mapping review"
+      "why": "Runner/fixture changes need host consumers; changed device tests require current SIMS or explicit new mapping review; the exact excluded CI unit tests execute disposable Python/Git fixtures only and remain covered by the workflow area",
+      "exclude_paths": [
+        "scripts/test/mknoon_checks_test.py",
+        "scripts/test/mknoon_ci_checks_test.py",
+        "scripts/test/testing_inventory_test.py"
+      ]
     },
     {
       "id": "localization",
@@ -2132,9 +2141,10 @@
       "kind": "python",
       "paths": [
         "scripts/test/mknoon_checks_test.py",
-        "scripts/test/testing_inventory_test.py"
+        "scripts/test/testing_inventory_test.py",
+        "scripts/test/mknoon_ci_checks_test.py"
       ],
-      "boundary": "Selector, inventory, evidence and runner safety contracts",
+      "boundary": "Selector, inventory, runner safety and candidate-bound CI acceptance contracts",
       "timeout_seconds": 120,
       "estimated_seconds": null,
       "requirements": [
@@ -2151,7 +2161,8 @@
         "unittest",
         "-v",
         "scripts/test/mknoon_checks_test.py",
-        "scripts/test/testing_inventory_test.py"
+        "scripts/test/testing_inventory_test.py",
+        "scripts/test/mknoon_ci_checks_test.py"
       ]
     },
     {
