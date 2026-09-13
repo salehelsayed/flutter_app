@@ -1204,6 +1204,34 @@ final class MknoonCallKitLifecycleTests: XCTestCase {
     XCTAssertEqual(rig.backend.deleteCount, 1)
   }
 
+  func testRetiredTerminalReceiptDoesNotReleaseSuccessorAudio() throws {
+    var clock = now
+    let rig = makeRig(nowMsProvider: { clock })
+    XCTAssertEqual(present(rig, payload(callA)), .presented)
+    XCTAssertTrue(rig.controller.remoteCancel(callHandle: callA.uuidString.lowercased()))
+    let terminalSequence = try XCTUnwrap(rig.store.snapshot()).highestSequence
+    clock += PendingNativeCallStore.terminalReplayRetentionMs + 1
+    let successor = VoipWakePayload(
+      nativeCallId: callB, callHandle: callB.uuidString.lowercased(),
+      wakeHandle: contact, receivedAtMs: clock, expiresAtMs: clock + 30_000
+    )
+    XCTAssertEqual(present(rig, successor), .presented)
+    XCTAssertTrue(rig.controller.handleAnswer(callB))
+    let answerSequence = try XCTUnwrap(rig.store.snapshot()).highestSequence
+    XCTAssertTrue(rig.controller.acknowledge(callB, through: answerSequence, disposition: .adopted))
+    XCTAssertTrue(rig.controller.recordAudioActivatedForTests(callB))
+    XCTAssertTrue(rig.controller.activateAudio(callB))
+    let releases = rig.audio.releaseCount
+
+    for _ in 0..<2 {
+      XCTAssertTrue(rig.controller.acknowledge(callA, through: terminalSequence, disposition: .terminal))
+      XCTAssertEqual(rig.audio.releaseCount, releases)
+      XCTAssertEqual(rig.controller.audioState(callB)?.active, true)
+      XCTAssertEqual(rig.store.snapshot()?.nativeCallId, callB)
+      XCTAssertNil(rig.store.snapshot()?.terminalEvent)
+    }
+  }
+
   func testAnswerThenExpiryBeforeAttachmentCannotBeRevivedAndTerminalAckDeletesOnce() throws {
     let backend = MemoryPendingCallBackend()
     var clock = now

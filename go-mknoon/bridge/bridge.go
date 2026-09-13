@@ -1035,6 +1035,7 @@ func SendMessage(paramsJSON string) (result string) {
 		Message       string `json:"message"`
 		TimeoutMs     int    `json:"timeoutMs"`
 		CorrelationId string `json:"correlationId"`
+		QuietRecovery bool   `json:"quietRecovery"`
 	}
 	if err := json.Unmarshal([]byte(paramsJSON), &params); err != nil {
 		return errJSON("INVALID_INPUT", fmt.Sprintf("invalid JSON: %v", err))
@@ -1043,10 +1044,11 @@ func SendMessage(paramsJSON string) (result string) {
 		return errJSON("INVALID_INPUT", "missing peerId or message")
 	}
 
-	sendResult, err := n.SendMessageWithTransport(
+	sendResult, err := n.SendMessageWithNotificationPolicy(
 		params.PeerId,
 		params.Message,
 		params.TimeoutMs,
+		params.QuietRecovery,
 	)
 	if err != nil {
 		return errJSON("SEND_ERROR", err.Error())
@@ -1223,6 +1225,7 @@ func InboxStore(paramsJSON string) (result string) {
 		CustodyKind                string `json:"custodyKind"`
 		CustodyExpiresAtOrBeforeMs *int64 `json:"custodyExpiresAtOrBeforeMs"`
 		SuppressNotification       bool   `json:"suppressNotification"`
+		QuietRecovery              bool   `json:"quietRecovery"`
 	}
 	if err := json.Unmarshal([]byte(paramsJSON), &params); err != nil {
 		return errJSON("INVALID_INPUT", fmt.Sprintf("invalid JSON: %v", err))
@@ -1242,9 +1245,9 @@ func InboxStore(paramsJSON string) (result string) {
 		params.CustodyContract,
 		params.CustodyKind,
 		func() (node.InboxStoreOutcome, error) {
-			if params.SuppressNotification {
+			if params.SuppressNotification || params.QuietRecovery {
 				return n.InboxStoreDetailedWithNotificationPolicy(
-					params.ToPeerId, params.Message, params.TimeoutMs, params.WakeToken, true,
+					params.ToPeerId, params.Message, params.TimeoutMs, params.WakeToken, params.SuppressNotification, params.QuietRecovery,
 				)
 			}
 			return n.InboxStoreDetailedWithWakeToken(
@@ -1252,14 +1255,14 @@ func InboxStore(paramsJSON string) (result string) {
 			)
 		},
 		func() (node.InboxStoreOutcome, error) {
-			if params.SuppressNotification {
+			if params.SuppressNotification || params.QuietRecovery {
 				var expiryCeiling int64
 				if params.CustodyExpiresAtOrBeforeMs != nil {
 					expiryCeiling = *params.CustodyExpiresAtOrBeforeMs
 				}
 				return n.InboxStoreAckCustodyDetailedWithNotificationPolicy(
 					params.ToPeerId, params.Message, params.TimeoutMs, params.WakeToken,
-					params.CustodyKind, expiryCeiling, true,
+					params.CustodyKind, expiryCeiling, params.SuppressNotification, params.QuietRecovery,
 				)
 			}
 			if params.CustodyExpiresAtOrBeforeMs != nil {

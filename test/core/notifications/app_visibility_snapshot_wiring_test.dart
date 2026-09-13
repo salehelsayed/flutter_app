@@ -191,11 +191,31 @@ void _expectRawPresentationDecisionsUseOnlyVisibilityAuthority() {
   final startupUnit = _unit(_startupRouterPath);
   final startupState = _class(startupUnit, '_StartupRouterState');
   final accountErase = _method(startupState, '_eraseMigratedOutAccount');
-  expect(
-    (accountErase.body as BlockFunctionBody).block.statements.first.toSource(),
-    'widget.invalidateAppVisibility?.call();',
-    reason: 'account erase must invalidate visibility before native cleanup',
+  final calls = _namedInvocations(accountErase, 'call');
+  final invalidation = calls.singleWhere(
+    (call) => call.target?.toSource() == 'widget.invalidateAppVisibility',
   );
+  final cleanup = <MethodInvocation>[
+    ...calls.where(
+      (call) => <String>{
+        'widget.retireCanonicalNotificationBinding',
+        'widget.clearIosNotificationRecovery',
+      }.contains(call.target?.toSource()),
+    ),
+    ..._namedInvocations(accountErase, 'eraseDatabase'),
+    ..._namedInvocations(accountErase, 'eraseAccount'),
+    ..._namedInvocations(accountErase, 'clearAuthority'),
+  ];
+  expect(cleanup, hasLength(5));
+  for (final operation in cleanup) {
+    expect(
+      invalidation.offset,
+      lessThan(operation.offset),
+      reason:
+          'visibility must be invalidated before ${operation.toSource()}; '
+          'local availability checks may precede invalidation',
+    );
+  }
   final restartedRouter = _creationsNamed(
     _method(startupState, '_buildRestartedStartupRouter'),
     'StartupRouter',

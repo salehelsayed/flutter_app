@@ -1,3 +1,4 @@
+import 'package:flutter_app/core/notifications/automatic_recovery_notification_policy.dart';
 import 'package:flutter_app/core/services/inbox_store_outcome.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
@@ -39,7 +40,11 @@ Future<int> verifyInboxCustody({
     if (!_shouldRecheck(row, now)) continue;
 
     try {
-      final outcome = await storeInInboxDetailed(row.contactPeerId, envelope);
+      final outcome = await runWithAutomaticRecoveryNotificationPolicy(
+        originalTimestamp: row.timestamp,
+        now: now,
+        action: () => storeInInboxDetailed(row.contactPeerId, envelope),
+      );
       checked++;
       await _applyOutcome(
         row: row,

@@ -51,6 +51,7 @@ buildDirectConversationNotificationSnapshot({
             (message) =>
                 message.contactPeerId == contactPeerId &&
                 message.isIncoming &&
+                !message.quietRecovery &&
                 message.readAt == null &&
                 !message.isDeleted &&
                 !message.isHidden &&

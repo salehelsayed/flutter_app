@@ -152,7 +152,7 @@ void main() {
   );
 
   test(
-    'failure behind ordinary updates survives later ordinary updates',
+    'terminal close behind ordinary updates survives later ordinary updates',
     () => _guarded(() async {
       final h = _Harness();
       final gate = Completer<List<webrtc.RTCRtpSender>>();
@@ -164,7 +164,9 @@ void main() {
         for (var i = 0; i < 256; i++) {
           h.peer.emit(_connected);
         }
-        h.peer.emit(_failed);
+        // Initial ICE failure may recover as trickle candidates arrive, but
+        // a closed native connection must retain terminal event priority.
+        h.peer.emit(webrtc.RTCPeerConnectionState.RTCPeerConnectionStateClosed);
         for (var i = 0; i < 256; i++) {
           h.peer.emit(_connected);
         }

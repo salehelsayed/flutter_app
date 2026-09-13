@@ -23,6 +23,188 @@ final _now = DateTime.fromMillisecondsSinceEpoch(_nowMs, isUtc: true);
 
 void main() {
   test(
+    'authenticated incoming can retire an unbound cancelled predecessor before its native event',
+    () async {
+      const retiredHandle = '44444444-4444-4444-8444-444444444444';
+      final retired = _batch([
+        _event(1, 'presented'),
+        _event(2, 'remoteCancelled'),
+      ]);
+      (retired['descriptor']! as Map<String, Object?>)['callHandle'] =
+          retiredHandle;
+      retired['nativeCallId'] = retiredHandle;
+      for (final event in retired['events']! as List<Map<String, Object?>>) {
+        event['callHandle'] = retiredHandle;
+      }
+      final native = _LifecycleNative()..attachResult = retired;
+      final coordinator = _coordinator();
+      final adapter = _adapter(native, coordinator);
+      addTearDown(() async {
+        await adapter.close();
+        await coordinator.dispose();
+        await native.events.close();
+      });
+      await adapter.start();
+      await _prepareIncoming(coordinator);
+      expect(await adapter.present(_presentation()), isTrue);
+      expect(
+        native.callsOf('acknowledge').single.arguments['callHandle'],
+        retiredHandle,
+      );
+      expect(
+        native.callsOf('presentAuthenticated').single.arguments['callHandle'],
+        _callHandle,
+      );
+      expect(native.callsOf('failClosed'), isEmpty);
+    },
+  );
+
+  test(
+    'outgoing preflight can retire an unbound cancelled incoming call',
+    () async {
+      final native = _LifecycleNative(terminalAtAttach: true)
+        ..terminalAcknowledgementResult = false;
+      final coordinator = _coordinator();
+      final adapter = _adapter(native, coordinator);
+      addTearDown(() async {
+        await adapter.close();
+        await coordinator.dispose();
+        await native.events.close();
+      });
+      await adapter.start();
+      expect(await adapter.reconcileBeforeOutgoing(), isFalse);
+      native.terminalAcknowledgementResult = true;
+      expect(await adapter.reconcileBeforeOutgoing(), isTrue);
+      expect(native.callsOf('acknowledge'), hasLength(2));
+      expect(native.callsOf('acknowledge').last.arguments, {
+        'version': 1,
+        'callHandle': _callHandle,
+        'throughSequence': 2,
+        'disposition': 'TERMINAL',
+      });
+      expect(native.callsOf('failClosed'), isEmpty);
+      expect(coordinator.activeSession, isNull);
+    },
+  );
+
+  for (final presented in [false, true]) {
+    for (final alreadyAdmitted in [false, true]) {
+      test('retired unbound terminal does not invalidate the next incoming call '
+          '(presented=$presented, admitted=$alreadyAdmitted)', () async {
+        const retiredHandle = '44444444-4444-4444-8444-444444444444';
+        var clock = _now.subtract(const Duration(minutes: 2));
+        final retired = _batch([
+          if (presented) _event(1, 'presented'),
+          _event(presented ? 2 : 1, 'remoteCancelled'),
+        ]);
+        final descriptor = retired['descriptor']! as Map<String, Object?>;
+        descriptor['callHandle'] = retiredHandle;
+        descriptor['presented'] = presented;
+        descriptor['expiresAtMs'] = _nowMs - 60_000;
+        retired['nativeCallId'] = retiredHandle;
+        for (final event in retired['events']! as List<Map<String, Object?>>) {
+          event['callHandle'] = retiredHandle;
+          event['occurredAtMs'] = clock.millisecondsSinceEpoch;
+        }
+        final native = _LifecycleNative()..attachResult = retired;
+        final coordinator = _coordinator();
+        final adapter = _adapter(native, coordinator, clock: () => clock);
+        addTearDown(() async {
+          await adapter.close();
+          await coordinator.dispose();
+          await native.events.close();
+        });
+        await adapter.start();
+        expect(native.callsOf('acknowledge'), isEmpty);
+        expect(coordinator.activeSession, isNull);
+
+        // iOS retains an unadopted terminal briefly, then replaces it with a
+        // durable receipt before accepting another call. Dart stayed suspended.
+        clock = _now;
+        if (alreadyAdmitted) await _prepareIncoming(coordinator);
+        native.events.add(_batch([_event(1, 'presented')]));
+        await _until(
+          () =>
+              native.callsOf('acknowledge').isNotEmpty ||
+              native.callsOf('failClosed').isNotEmpty,
+        );
+        expect(native.callsOf('failClosed'), isEmpty);
+        expect(native.callsOf('acknowledge').single.arguments, {
+          'version': 1,
+          'callHandle': retiredHandle,
+          'throughSequence': presented ? 2 : 1,
+          'disposition': 'TERMINAL',
+        });
+        await _bindRinging(adapter, coordinator);
+        expect(adapter.isBoundTo(_callId), isTrue);
+
+        // An already captured event for the retired call cannot replace the
+        // newly adopted call, even though its pre-start expiry is now past.
+        native.events.add(retired);
+        await Future<void>.delayed(Duration.zero);
+        expect(native.callsOf('failClosed'), isEmpty);
+        expect(coordinator.activeSession?.state, CallState.ringing);
+      });
+    }
+  }
+
+  for (final receipt in <Object?>[false, null, 'true']) {
+    test(
+      'unbound replacement requires the exact native terminal receipt ($receipt)',
+      () async {
+        final native = _LifecycleNative(terminalAtAttach: true)
+          ..terminalAcknowledgementResult = receipt;
+        final coordinator = _coordinator();
+        final adapter = _adapter(native, coordinator);
+        addTearDown(() async {
+          await adapter.close();
+          await coordinator.dispose();
+          await native.events.close();
+        });
+        await adapter.start();
+        final replacement = _batch([_event(1, 'presented')]);
+        const newHandle = '44444444-4444-4444-8444-444444444444';
+        (replacement['descriptor']! as Map<String, Object?>)['callHandle'] =
+            newHandle;
+        replacement['nativeCallId'] = newHandle;
+        (replacement['events']! as List<Map<String, Object?>>)
+                .single['callHandle'] =
+            newHandle;
+        native.events.add(replacement);
+        await _until(() => native.callsOf('failClosed').isNotEmpty);
+        expect(native.callsOf('adopt'), isEmpty);
+        expect(coordinator.activeSession, isNull);
+        expect(native.callsOf('failClosed'), hasLength(1));
+      },
+    );
+  }
+
+  test('a live unbound incoming descriptor still fences replacement', () async {
+    final native = _LifecycleNative();
+    final coordinator = _coordinator();
+    final adapter = _adapter(native, coordinator);
+    addTearDown(() async {
+      await adapter.close();
+      await coordinator.dispose();
+      await native.events.close();
+    });
+    await adapter.start();
+    final replacement = _batch([_event(1, 'presented')]);
+    const newHandle = '44444444-4444-4444-8444-444444444444';
+    (replacement['descriptor']! as Map<String, Object?>)['callHandle'] =
+        newHandle;
+    replacement['nativeCallId'] = newHandle;
+    (replacement['events']! as List<Map<String, Object?>>)
+            .single['callHandle'] =
+        newHandle;
+    native.events.add(replacement);
+    await _until(() => native.callsOf('failClosed').isNotEmpty);
+    expect(native.callsOf('acknowledge'), isEmpty);
+    expect(native.callsOf('adopt'), isEmpty);
+    expect(coordinator.activeSession, isNull);
+  });
+
+  test(
     'iOS forwards native route inventory changes and closes the stream',
     () async {
       final native = _LifecycleNative();
@@ -407,7 +589,11 @@ void main() {
   test(
     'incoming presentation replay still rejects descriptor or event mutations',
     () async {
-      for (final mutation in <String>['expiry', 'direction', 'event_identity']) {
+      for (final mutation in <String>[
+        'expiry',
+        'direction',
+        'event_identity',
+      ]) {
         final native = _LifecycleNative();
         final coordinator = _coordinator();
         final adapter = _adapter(native, coordinator);
@@ -842,6 +1028,7 @@ IosCallLifecycleAdapter _adapter(
   Duration audioActivationRetryInterval = const Duration(milliseconds: 50),
   Future<void> Function(Duration delay)? audioActivationDelay,
   NativeOutgoingRegistrationResultObserver? onOutgoingRegistrationResult,
+  DateTime Function()? clock,
 }) {
   final adapter = IosCallLifecycleAdapter(
     invokeMethod: native.invoke,
@@ -849,7 +1036,7 @@ IosCallLifecycleAdapter _adapter(
     coordinator: coordinator,
     resolveAuthenticatedHandle: (callId) =>
         callId == _callId ? _callHandle : null,
-    clock: () => _now,
+    clock: clock ?? () => _now,
     audioActivationMaxAttempts: audioActivationMaxAttempts,
     audioActivationRetryInterval: audioActivationRetryInterval,
     audioActivationDelay: audioActivationDelay,
@@ -992,6 +1179,7 @@ final class _LifecycleNative {
   final Completer<Object?> _activation = Completer<Object?>();
   Object? disableCapabilityResult = true;
   Object? disableCapabilityError;
+  Object? terminalAcknowledgementResult = true;
   final List<Object?> activationResults = <Object?>[];
 
   void emit(String type) {
@@ -1035,10 +1223,13 @@ final class _LifecycleNative {
         return _activation.future;
       case 'readAudioState':
         return audioState;
+      case 'acknowledge':
+        return arguments['disposition'] == 'TERMINAL'
+            ? terminalAcknowledgementResult
+            : true;
       case 'presentAuthenticated':
       case 'registerOutgoingAuthenticated':
       case 'adopt':
-      case 'acknowledge':
       case 'deactivateAudio':
       case 'requestRoute':
       case 'end':

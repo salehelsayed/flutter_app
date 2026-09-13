@@ -57,7 +57,8 @@ final class NseInboxCandidateAdapter: NseInboxCandidateAdapting {
     _ row: NseInboxRetrievedMessage,
     credential: NseInboxCredential
   ) -> NseInboxCandidate? {
-    guard let envelope = Self.decodeMap(row.message) else { return nil }
+    guard !row.quietRecovery,
+          let envelope = Self.decodeMap(row.message) else { return nil }
     switch envelope["type"] as? String {
     case "chat_message", "message_reaction":
       return adaptDirect(row, envelope: envelope, credential: credential)

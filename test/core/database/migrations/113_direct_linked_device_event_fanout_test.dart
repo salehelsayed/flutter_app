@@ -99,8 +99,8 @@ void main() {
       if (db.isOpen) await db.close();
     });
 
-    expect(currentIdentityDatabaseVersion, 118);
-    expect(await _userVersion(db), 118);
+    expect(currentIdentityDatabaseVersion, 119);
+    expect(await _userVersion(db), currentIdentityDatabaseVersion);
 
     // Registered exactly once in both registries, immediately after v112.
     // 362: v114 now follows v113, so the ledger claim is positional.
@@ -125,6 +125,7 @@ void main() {
     expect(await _columnNames(db, 'messages'), <String>[
       ...v112MessageColumns,
       ..._newMessageColumns,
+      'quiet_recovery',
     ]);
     expect(await _columnNames(db, 'direct_inbox_custody_outbox'), <String>[
       ...v112CustodyColumns,
@@ -180,7 +181,7 @@ void main() {
     await runDirectLinkedDeviceEventFanoutMigration(db);
     await runDirectLinkedDeviceEventFanoutMigration(db);
     await _expectExactSchema(db);
-    expect(await _userVersion(db), 118);
+    expect(await _userVersion(db), currentIdentityDatabaseVersion);
 
     // Author one real fanout-marked row set, then prove reopen preserves it
     // and that v113 is a one-way floor.
@@ -225,7 +226,7 @@ void main() {
         onDowngrade: onDatabaseVersionChangeError,
       ),
     );
-    expect(await _userVersion(db), 118);
+    expect(await _userVersion(db), currentIdentityDatabaseVersion);
     expect(
       await db.query('direct_inbox_custody_outbox', orderBy: 'message_id'),
       markedCustody,
@@ -265,7 +266,7 @@ void main() {
         onDowngrade: onDatabaseVersionChangeError,
       ),
     );
-    expect(await _userVersion(db), 118);
+    expect(await _userVersion(db), currentIdentityDatabaseVersion);
     expect(
       await db.query('direct_inbox_custody_outbox', orderBy: 'message_id'),
       markedCustody,
@@ -286,7 +287,7 @@ void main() {
     addTearDown(() async {
       if (fresh.isOpen) await fresh.close();
     });
-    expect(await _userVersion(fresh), 118);
+    expect(await _userVersion(fresh), currentIdentityDatabaseVersion);
     expect(
       await _columnNames(fresh, 'messages'),
       containsAll(_newMessageColumns),
@@ -330,6 +331,13 @@ void _expectPreservedWithNullNewColumns(
     }
     final projected = Map<String, Object?>.from(row)
       ..removeWhere((key, _) => newColumns.contains(key));
+    if (projected.containsKey('quiet_recovery')) {
+      expect(
+        projected.remove('quiet_recovery'),
+        0,
+        reason: 'v119 does not infer quiet intent for historical rows',
+      );
+    }
     expect(projected, before[index]);
   }
 }
@@ -446,17 +454,13 @@ Future<void> _expectColumnConstraints(Database db) async {
     );
   }
 
-  await expectRejected(
-    'direct_inbox_custody_outbox',
-    <String, Object?>{
-      ..._v108Row(),
-      'message_id': 'blank-contact-probe',
-      'incarnation_id': '22222222222222222222222222222222',
-      'recipient_peer_id': 'peer-blank-contact-probe',
-      'contact_account_peer_id': '   ',
-    },
-    'a blank logical contact is refused by the column CHECK',
-  );
+  await expectRejected('direct_inbox_custody_outbox', <String, Object?>{
+    ..._v108Row(),
+    'message_id': 'blank-contact-probe',
+    'incarnation_id': '22222222222222222222222222222222',
+    'recipient_peer_id': 'peer-blank-contact-probe',
+    'contact_account_peer_id': '   ',
+  }, 'a blank logical contact is refused by the column CHECK');
   await expectRejected(
     'direct_reaction_inbox_custody_outbox',
     <String, Object?>{

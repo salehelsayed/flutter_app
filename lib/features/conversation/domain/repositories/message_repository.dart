@@ -8,6 +8,11 @@ import 'package:flutter_app/core/database/outgoing_transport_mutation.dart';
 import 'package:flutter_app/core/database/direct_event_fanout_contract.dart';
 import 'package:flutter_app/core/media/outgoing_direct_private_mutation_coordinator.dart';
 
+/// Narrow receiver annotation; never rewrites message content or read state.
+abstract interface class IncomingQuietRecoveryRepository {
+  Future<void> markIncomingQuietRecovery(ConversationMessage expected);
+}
+
 /// Repository interface for managing conversation messages.
 abstract class MessageRepository {
   /// Saves a message to the database.

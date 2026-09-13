@@ -21,6 +21,7 @@ const (
 	RendezvousProtocol              = "/canvas/rendezvous/1.0.0"
 	InboxProtocol                   = "/mknoon/inbox/1.0.0"
 	ChatProtocol                    = "/mknoon/chat/1.0.0"
+	QuietRecoveryChatProtocol       = "/mknoon/chat-quiet/1.0.0"
 	MediaProtocol                   = "/mknoon/media/1.0.0"
 	GroupValidationFeedbackProtocol = "/mknoon/group-validation-feedback/1.0.0"
 	// MediaLANProtocol (FDC-15) is the peer-to-peer LAN media byte stream — a

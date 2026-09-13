@@ -64,6 +64,34 @@ Map<String, Object?> _blockedChannelReply(String id, int importance) =>
     };
 
 void main() {
+  test(
+    'exact quiet wake has no notification fallback or local display',
+    () async {
+      const wake = RemoteMessage(
+        data: {'v': '1', 'w': '1', 'quietRecovery': '1'},
+      );
+      expect(isQuietRecoveryWake(wake), isTrue);
+      // Completes without initializing Firebase, SQL, or notification plugins.
+      await firebaseMessagingBackgroundHandler(wake);
+      expect(
+        isQuietRecoveryWake(
+          const RemoteMessage(
+            data: {'v': '1', 'w': '1', 'quietRecovery': true},
+          ),
+        ),
+        isFalse,
+      );
+      expect(
+        isQuietRecoveryWake(
+          const RemoteMessage(
+            data: {'v': '1', 'w': '1', 'quietRecovery': '1'},
+            notification: RemoteNotification(title: 'visible'),
+          ),
+        ),
+        isFalse,
+      );
+    },
+  );
   TestWidgetsFlutterBinding.ensureInitialized();
   sqfliteFfiInit();
 
@@ -1322,11 +1350,9 @@ void main() {
               );
             }
             await validatorEntered.future.timeout(const Duration(seconds: 1));
-            expect(
-              validatedPeers,
-              <String>[scenario.peerId],
-              reason: '${scenario.suffix} exact validator peer at boundary',
-            );
+            expect(validatedPeers, <String>[
+              scenario.peerId,
+            ], reason: '${scenario.suffix} exact validator peer at boundary');
             expect(
               validatedMetadata.single.kind,
               scenario.kind,

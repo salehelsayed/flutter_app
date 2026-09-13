@@ -258,6 +258,10 @@ buildProductionCanonicalDirectProjectionComposition(
               message.privateMediaState.isTerminal) {
             return DurableLocalNotificationCanonicalDisposition.cancelled;
           }
+          if (message.quietRecovery) {
+            return DurableLocalNotificationCanonicalDisposition
+                .suppressedPolicy;
+          }
           return message.readAt != null
               ? DurableLocalNotificationCanonicalDisposition.read
               : DurableLocalNotificationCanonicalDisposition.eligible;
@@ -1137,6 +1141,7 @@ buildProductionCanonicalDirectProjectionComposition(
               message.senderPeerId != entry.actorPeerId ||
               message.timestamp != entry.eventTimestamp ||
               !message.isIncoming ||
+              message.quietRecovery ||
               message.readAt != null ||
               message.isDeleted ||
               message.hiddenAt != null ||

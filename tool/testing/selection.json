@@ -57,10 +57,11 @@
     "startup": {
       "kind": "flutter",
       "paths": [
-        "test/features/identity/presentation/screens/startup_router_recovery_test.dart"
+        "test/features/identity/presentation/screens/startup_router_recovery_test.dart",
+        "test/core/database/encrypted_db_opener_test.dart"
       ],
-      "boundary": "Returning-identity route, blocked authority, direct/group cold recovery completion",
-      "limitations": "Fake repositories, bridge and recovery callbacks; device secure storage is separate",
+      "boundary": "Returning-identity route, blocked authority, database-before-key erasure, direct/group cold recovery completion",
+      "limitations": "Fake repositories, bridge and recovery callbacks plus real temporary-file erasure; native SQLCipher and device secure storage are separate",
       "timeout_seconds": 900,
       "estimated_seconds": 8,
       "requirements": [
@@ -349,7 +350,7 @@
         "test/features/call/infrastructure/flutter_webrtc_build_contract_test.dart",
         "test/tool/sims/sims_manifest_test.dart"
       ],
-      "boundary": "Direct/mailbox old-generation hangup convergence/cleanup, negotiation material generation/privacy, authenticated remote ICE through the real executor and WebRTC wrapper batch limit, restart filtering and interrupted drain cleanup; native snapshot exception normalization through the real engine/executor/audio owner, bounded observation recovery, exact-call fatal dispatch, stale completion and cleanup; sustained native/engine event delivery, bounded history and coalescing, failure/disconnect priority, reentrant callbacks and terminal fencing; policy-aware TURN retrieval with transient-only direct attempts, strict credential/authentication rejection, exact-call late-result fences, frozen restart policy and canonical setup/reconnect deadlines; mixed local/remote ICE policies in both directions, local SDP/candidate egress including related addresses, and selected local candidate classification; production per-call policy captured at admission for incoming/outgoing/native paths, secure privacy preference persistence and fail-closed loading, feature availability versus rollout restriction, native all/relay configuration, and settings persistence/error visibility",
+      "boundary": "Direct/mailbox old-generation hangup convergence/cleanup, negotiation material generation/privacy, authenticated remote ICE through the real executor and WebRTC wrapper batch limit, restart filtering and interrupted drain cleanup; native snapshot exception normalization through the real engine/executor/audio owner, bounded observation recovery, exact-call fatal dispatch, stale completion and cleanup; sustained native/engine event delivery, bounded history and coalescing, terminal failure/disconnect priority, provisional initial ICE checklist recovery within the unchanged deadline, reentrant callbacks and terminal fencing; policy-aware TURN retrieval with transient-only direct attempts, strict credential/authentication rejection, exact-call late-result fences, frozen restart policy and canonical setup/reconnect deadlines; mixed local/remote ICE policies in both directions, local SDP/candidate egress including related addresses, and selected local candidate classification; production per-call policy captured at admission for incoming/outgoing/native paths, secure privacy preference persistence and fail-closed loading, feature availability versus rollout restriction, native all/relay configuration, and settings persistence/error visibility",
       "limitations": "Fake crypto/transports/native lifecycle; no microphone/RTP/audible audio evidence",
       "timeout_seconds": 900,
       "estimated_seconds": 3,
@@ -936,6 +937,7 @@
         "a_to_b_audio_observed",
         "b_to_a_audio_observed",
         "ended_and_released",
+        "ios_idle_background_voip_call_presented",
         "ios_disabled_capability_voip_wake_completed",
         "ios_each_required_push_callkit_report_completed"
       ],
@@ -945,7 +947,7 @@
       "investigate": [
         "docs/testing/TESTING.md"
       ],
-      "limitations": "Required signed-candidate observation; cannot be satisfied by host fakes. Include disabled-capability cold launch and queued/coalesced incoming VoIP pushes; every required CallKit report completion must be observed."
+      "limitations": "Required signed-candidate observation; cannot be satisfied by host fakes. Include an incoming call after six minutes without a VoIP push while iOS is suspended, correlating provider acceptance, device PushKit receipt and CallKit presentation; retain any initial missed ring even if a retry succeeds. Include a retained unadopted terminal followed by a new incoming call after native retention expires; confirm the old exact receipt is acknowledged without invalidating the new call or releasing its audio and timeouts. Include disabled-capability cold launch and queued/coalesced incoming VoIP pushes; every required CallKit report completion must be observed."
     },
     "go-core": {
       "kind": "go",
@@ -1235,6 +1237,33 @@
         "lib/app/bootstrap/production_canonical_inbox_projection_composition.dart",
         "lib/app/bootstrap/production_canonical_group_replay_composition.dart",
         "lib/features/conversation/data/repositories/media_attachment_repository_impl.dart"
+      ],
+      "inspected": true
+    },
+    "quiet-recovery": {
+      "kind": "flutter",
+      "paths": [
+        "test/core/notifications/automatic_recovery_notification_policy_test.dart",
+        "test/core/database/migrations/119_quiet_message_recovery_test.dart",
+        "test/core/bootstrap/production_canonical_direct_projection_composition_test.dart",
+        "test/core/notifications/conversation_notification_snapshot_test.dart",
+        "test/core/bridge/p2p_bridge_client_test.dart",
+        "test/features/conversation/application/retry_failed_messages_use_case_test.dart",
+        "test/features/conversation/application/retry_unacked_messages_use_case_test.dart",
+        "test/features/conversation/application/verify_inbox_custody_use_case_test.dart",
+        "test/features/conversation/application/drain_direct_inbox_custody_outbox_use_case_test.dart",
+        "test/features/conversation/application/handle_incoming_chat_message_use_case_test.dart",
+        "test/features/push/application/background_message_handler_test.dart"
+      ],
+      "boundary": "Automatic recovery older than 24 hours preserves exact message delivery and durable quiet intent; fresh/manual sends and notification history remain independent",
+      "limitations": "Host Dart, SQLite and bridge contracts; Go module checks and existing Android FCM / iOS NSE native runners cover their separate boundaries. No live APNs/FCM or signed device claim.",
+      "timeout_seconds": 900,
+      "requirements": [
+        "flutter"
+      ],
+      "investigate": [
+        "lib/core/notifications/automatic_recovery_notification_policy.dart",
+        "lib/core/database/migrations/119_quiet_message_recovery.dart"
       ],
       "inspected": true
     }
@@ -1941,10 +1970,37 @@
         "affected-calls"
       ],
       "why": "Saved settings and feature/build gates govern production call privacy independently of settings UI visibility"
+    },
+    {
+      "id": "quiet-recovery",
+      "patterns": [
+        "lib/core/notifications/automatic_recovery_notification_policy.dart",
+        "lib/features/conversation/application/retry_*",
+        "lib/features/conversation/application/verify_inbox_custody_use_case.dart",
+        "lib/features/conversation/application/drain_direct_inbox_custody_outbox_use_case.dart",
+        "lib/core/inbox/*",
+        "lib/core/bridge/p2p_bridge_client.dart",
+        "lib/core/services/p2p_impl/p2p_inbox_coordinator.dart",
+        "lib/features/conversation/domain/models/conversation_message.dart",
+        "lib/features/p2p/domain/models/chat_message.dart",
+        "lib/app/bootstrap/production_canonical_direct_projection_composition.dart",
+        "lib/core/database/migrations/119_quiet_message_recovery.dart",
+        "go-relay-server/direct_quiet_recovery*",
+        "go-mknoon/node/quiet_recovery*",
+        "test/core/notifications/automatic_recovery_notification_policy_test.dart",
+        "test/core/database/migrations/119_quiet_message_recovery_test.dart"
+      ],
+      "checks": [
+        "quiet-recovery",
+        "go-core",
+        "go-relay"
+      ],
+      "why": "Recovery intent crosses immutable sender retries, transport, durable receiver state and notification projection"
     }
   ],
   "documentation_only": [
     "*.md",
+    "UI-25-UIUXPolish/ui-ux-polish.zip",
     "artifacts/*",
     "crash-report/*",
     "graphify-out/*",

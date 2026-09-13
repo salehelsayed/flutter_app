@@ -1,3 +1,4 @@
+import 'package:flutter_app/core/notifications/automatic_recovery_notification_policy.dart';
 import 'dart:async';
 import 'dart:convert';
 
@@ -96,6 +97,52 @@ class _SlowBridge extends Bridge {
 }
 
 void main() {
+  test(
+    'quiet recovery sidecar crosses both bridge commands without editing ciphertext',
+    () async {
+      final bridge = _MockBridge();
+      const envelope =
+          '{"type":"chat_message","version":"2","id":"old","encrypted":{"ciphertext":"immutable"}}';
+      final now = DateTime.utc(2026, 9, 12);
+      await runWithAutomaticRecoveryNotificationPolicy(
+        originalTimestamp: now
+            .subtract(const Duration(days: 3))
+            .toIso8601String(),
+        now: now,
+        action: () async {
+          await callP2PInboxStore(
+            bridge,
+            toPeerId: 'recipient',
+            message: envelope,
+          );
+          final store =
+              bridge.lastParsedRequest!['payload'] as Map<String, dynamic>;
+          expect(store['quietRecovery'], true);
+          expect(store['suppressNotification'], true);
+          expect(store['message'], envelope);
+          await callP2PMessageSend(
+            bridge,
+            peerId: 'recipient',
+            message: envelope,
+          );
+          final direct =
+              bridge.lastParsedRequest!['payload'] as Map<String, dynamic>;
+          expect(direct['quietRecovery'], true);
+          expect(direct['message'], envelope);
+        },
+      );
+      await callP2PInboxStore(bridge, toPeerId: 'recipient', message: envelope);
+      expect(
+        bridge.lastParsedRequest!['payload'],
+        isNot(contains('quietRecovery')),
+      );
+      expect(
+        bridge.lastParsedRequest!['payload'],
+        isNot(contains('suppressNotification')),
+      );
+    },
+  );
+
   late _MockBridge bridge;
 
   setUp(() {
@@ -1721,18 +1768,14 @@ void main() {
       expect(result['ok'], isTrue);
     });
 
-    test(
-      'bridge hang triggers TimeoutException after 5s',
-      () async {
-        final hanging = _HangingBridge();
+    test('bridge hang triggers TimeoutException after 5s', () async {
+      final hanging = _HangingBridge();
 
-        expect(
-          () => callP2PRelayProbe(hanging, peerId: 'abc'),
-          throwsA(isA<TimeoutException>()),
-        );
-      },
-      timeout: const Timeout(Duration(seconds: 10)),
-    );
+      expect(
+        () => callP2PRelayProbe(hanging, peerId: 'abc'),
+        throwsA(isA<TimeoutException>()),
+      );
+    }, timeout: const Timeout(Duration(seconds: 10)));
   });
 
   // ---------------------------------------------------------------------------

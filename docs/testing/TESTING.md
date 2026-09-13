@@ -27,6 +27,9 @@ configuration and signed artifact, not just the Dart revision or version label.
 - `tool/testing/selection.json` owns check selectors, requirements, timeouts,
   affected-area mappings, and mandatory membership. Edit executable mappings
   there; do not maintain a second selection list in this document or skills.
+  The exact `UI-25-UIUXPolish/ui-ux-polish.zip` documentation exclusion was
+  verified against its six Markdown members, each identical to the adjacent
+  unpacked file; it does not exempt other archives or executable changes.
 - `python3 scripts/mknoon_checks.py discover` generates the inventory from the
   existing runners/files. Its output distinguishes file/suite discovery from
   runner-reported test cases. Discovery does not establish assertion coverage.
@@ -280,6 +283,10 @@ Use the manifest's required evidence IDs when recording the following journeys:
    Include a cold VoIP wake while capability is disabled and queued/coalesced
    pushes; verify each required CallKit report completes. A retained PushKit
    receiver and fake provider tests do not alone certify the OS boundary.
+   Also place a background incoming call six minutes after the last successful
+   VoIP push, confirming suspension before the invite. Correlate provider
+   acceptance, device PushKit receipt and CallKit presentation. Preserve a
+   missed first attempt; a successful immediate retry does not satisfy this leg.
 
 Source/configuration/bundle/artifact changes invalidate prior candidate evidence.
 Host-source tests never certify an untested signed artifact. Missing evidence is
@@ -288,6 +295,60 @@ visible and cannot become an ordinary first-attempt PASS.
 
 ## Diagnostics and confirmed lessons
 
+- **Old pending-send notification boundary:** delivered-history suppression
+  does not establish an age policy for undelivered backlogs. A verified private
+  iPhone incident on 2026-09-12 linked three 11:50:28 Berlin push receipts to
+  message traces whose Android build 112 send attempts failed on September 9.
+  The same authenticated sender started build 118 seconds before today's relay
+  submissions; the receiver also ran build 118 and the September 10 relay fix
+  was still active. Recovery then drained retained obligations without an
+  authored-age cutoff, while quiet history repair required canonical delivered
+  proof. The sender's final diagnostics explicitly record `failed/send_failed`;
+  relay receipt timestamps place their upload seconds later on September 9.
+  That proves a working diagnostic upload path then, not an uninterrupted
+  internet outage until September 12. A failed send or missing acknowledgment
+  does not identify the underlying connection failure. This supports startup
+  recovery of old pending messages; it does not
+  prove which retry branch ran, unchanged ciphertext, or that the recipient had
+  never read the content. Preserve separate coverage for stale pending delivery
+  and already-delivered replay. Propagated traces establish lineage; NSE handoff
+  and `committed=true` do not prove OS display or first-ever insertion. Read-only
+  evidence and attribution limits are in ignored
+  `.codex-test-logs/old-push-20260912-0953UTC/report.md`.
+  Automatic initial-direct-message recovery now carries separate `quietRecovery`
+  intent after **more than 24 hours** from the original durable timestamp.
+  Fresh sends, the exact 24-hour boundary and explicit manual retries keep
+  normal policy. Recovery preserves ciphertext, custody/ACK and unread state;
+  it does not claim delivery or seed delivered/visible notification admission.
+  Receiver schema v119 retains the sidecar through staging and restart;
+  canonical notification eligibility and history exclude quiet rows. Mixed
+  inbox pages retain per-row policy. A delayed normal duplicate cannot clear
+  durable quiet intent: duplicate/manual receipt and edits reuse the original
+  display identity rather than granting a new alert. The `quiet-recovery` check
+  preserves these controls. Android FCM native tests assert durable scheduling without a card;
+  the existing NSE TC-373-06 gate includes quiet-row rejection with an alertable
+  control. Relay quiet history survives ACK/restart and fences provider work
+  that has not begun. Already-started provider requests cannot be recalled;
+  a previously accepted visible iOS wake can still use its generic fallback
+  when NSE retrieves only quiet rows. Newly generated quiet wakes are
+  background-only;
+  old Android routing-only jobs without ciphertext cannot reconstruct the exact
+  suppression identity. Quiet iOS background wakes may defer canonical fetching
+  until the next active runtime. These source/test results do not establish
+  signed-device behavior or live APNs/FCM effects. Relay v1.10.7 was deployed
+  on 2026-09-12 with the quiet policy and Redis claim repair; both phone apps
+  still require an update for the complete cutoff. The matched executable,
+  durable backend, restart stability and rollback receipt are recorded in
+  ignored `.codex-test-logs/relay-deploy-20260912-_vw27ewh/`. Test evidence is
+  under `.codex-test-logs/quiet-recovery-24h/` and the adjacent
+  `quiet-recovery-sender-*` / `quiet-recovery-go-*` logs.
+  Redis wake-claim WATCH retries must reset both the candidate claim and the
+  claimed flag at every transaction attempt. Otherwise a losing worker can
+  return an aborted claim after observing the winning worker, causing duplicate
+  provider alerts. A deterministic conflict regression holds one worker after
+  its snapshot, commits the competing claim, then verifies the loser returns
+  no claim. Red/green evidence is retained in the adjacent
+  `quiet-recovery-go-claim-conflict-*` logs.
 - **Voice-upload incident boundary:** a 2026-09-10 iPhone incident showed
   “Uploading media” from about 18:56 until 19:10 Berlin. The relay received only
   131,072 of 670,610 bytes before a stream reset; the phone then disconnected
@@ -443,6 +504,45 @@ visible and cannot become an ordinary first-attempt PASS.
   phone/emulator campaign passed queued-message drain and reconnection checks.
   Keep the exact host contract and real device proof separate, and retain
   initial failures when a harness correction enables a subsequent pass.
+
+- **Overlapping local discovery startup:** a physical Pixel 6 / API 37 debug
+  cold launch at `5a9bb5c94503d3e48dca734f4d2b2cb06fe8141a` retained the fresh
+  identity but emitted an unhandled Bonsoir `isReady` assertion from
+  `BonsoirDiscoveryService.startAdvertising`, through `LocalP2PService.start`
+  and `startEarlyLocalDiscovery`. Startup, warm-up and router entry points
+  overlapped while native readiness was pending, replacing the broadcaster.
+  The coordinator now shares one pending start and clears it for a failed-start
+  retry. The causal host regression observed three starts before the fix and one
+  afterward; early ordering, composition and late-disposal compensation remain
+  covered. Updated physical Android cold launches retained identity without the
+  assertion. Relay readiness alone still does not prove LAN discovery. Redacted
+  evidence is retained in
+  `.codex-test-logs/live-phones-20260912T084648Z/android-local-discovery.redacted.log`.
+
+- **iOS discovery errors during resume:** physical iPhone13 / iOS 26.5 emitted
+  an unhandled Bonsoir `PlatformException(discoveryError)` with native code
+  `-65569` (`DefunctConnection`) after suspension. Captured events showed the
+  existing resume path replacing the browser and discovering peers afterward;
+  this was an unhandled stream error, not proof of failed recovery. The existing
+  subscription now consumes errors and records only a fixed reason and numeric
+  native code. No error message, peer or address is copied into that diagnostic.
+  The factory-seam regression reproduces the error and preserves stop/start
+  recovery, without adding a new retry or native lifecycle owner. First device
+  failures and host red/green evidence remain under
+  `.codex-test-logs/live-phones-20260912T084648Z/`.
+  The final normal profile build reproduced native code `-65569` after
+  Appium-confirmed suspension on both physical iPhone11 and iPhone13. Both
+  emitted the handled diagnostic, restarted discovery and found peers again,
+  with no unhandled exception in that captured resume window. The redacted
+  timestamp/line receipt is `final-ios-resume-proof.json` in that evidence root.
+
+- **Disposable transport profile contract:** the debug activation policy allows
+  iOS disposable profiles and requires distinct account/transport authority
+  for Android disposable profiles. The behavior cases in
+  `debug_e2e_composition_root_test.dart` protect both modes and invalid authority.
+  Keep the production source contract focused on the nullable root-owned
+  handoff; the former unconditional Android-or-iOS text assertion contradicted
+  that existing policy and failed the combined host sweep.
 
 - **Group media proof schema:** endpoint admission, Android receipts, shared
   criteria and iOS boundary validation must require exactly
@@ -627,6 +727,102 @@ visible and cannot become an ordinary first-attempt PASS.
   gathered SDP address fields, selected local native statistics and advancing
   bidirectional RTP. Its local broker bypasses production signaling and cannot
   prove authenticated libp2p delivery, audible audio, or signed/iOS parity.
+  Production Appium calls subsequently exposed a timing boundary: TURN rejected
+  a private remote host candidate with CreatePermission 403, and native ICE
+  reported failure before later public trickle candidates arrived. Initial
+  negotiation now retains its existing canonical deadline for this specific
+  checklist failure, allowing later connected events to supersede it. A native
+  failed snapshot has a distinct engine error; adapter/configuration/privacy
+  errors and established-call failure remain terminal. Terminal pending events
+  cannot be overwritten by a later provisional ICE failure. Host tests cover
+  both event/snapshot orderings, stale readiness, recovery and unchanged timeout
+  cleanup. The physical Android/iPhone13 production path then connected in both
+  mixed-policy directions; temporary redacted native diagnostics proved local
+  TURN/UDP on the protected Android and direct UDP in normal mode. Those
+  diagnostic hooks were removed from production source. Normal app Appium runs
+  also exercised iPhone11 background CallKit acceptance with its saved relay
+  setting. These observations establish connection and selected Android routes,
+  not measured audible quality or independently captured iOS selected pairs.
+  Evidence, including the first failures, is retained under
+  `.codex-test-logs/live-phones-20260912T084648Z/`.
+  That Appium run also retained two iPhone13 background attempts with no incoming
+  presentation before the caller's `noAnswer` deadline. A later call woke the
+  same final build from Appium-confirmed suspended state; PushKit reported
+  `metadata_required`, accepted the payload and presented CallKit. Aggregate
+  relay APNs counters advanced from 22 to 23 successful sends in that successful
+  window with no provider rejection counters. These shared counters cannot
+  establish delivery of either earlier missing ring. A follow-up recovered
+  per-call relay records proving provider acceptance for both original misses,
+  and reproduced another miss at 12:50:03 UTC on the unchanged app after about
+  six minutes without a VoIP push. The iPhone stayed suspended through the
+  caller's `noAnswer` deadline, without a recorded PushKit callback. Its system
+  archive then recorded a development APNs keep-alive failure and reconnection
+  at 12:54:19–12:54:20 UTC. Both original misses likewise preceded development
+  APNs keep-alive failures/reconnections. The new failed connection used IPv6
+  TCP port 5223 over Wi-Fi. This is evidence of an APNs connection failure;
+  attribution to the router, ISP or Apple remains a hypothesis. Provider
+  acceptance is not phone delivery, and neither rapid retries nor the separate
+  Bonjour error containment fixes this boundary. With the same app, token and
+  epoch, an Appium-controlled Pixel hotspot comparison used IPv4 APNs and
+  presented the incoming call after the same six-minute idle interval. The
+  hotspot shared the original Wi-Fi uplink; this was not an independent ISP
+  comparison. After restoring the original Wi-Fi, a fresh-connection call
+  worked, but the six-minute idle call at 13:12:46 UTC missed again, with
+  provider acceptance and no incoming presentation before `noAnswer`. The
+  complete archive identified its failed development connection C552 as IPv6,
+  with keep-alive failure at 13:16:58 UTC; earlier IPv4 observations were for
+  a different connection, C551. Do not infer the environment's route from an
+  arbitrary APNs connection or an address-filtered subset. The original-Wi-Fi /
+  hotspot / original-Wi-Fi idle comparison failed / passed / failed without an
+  app or token change. Both failed development connections used IPv6 and the
+  passing hotspot used IPv4, but that comparison alone does not isolate IP
+  version from the changed local network path. A follow-up on the original
+  Wi-Fi, with the same installed app and original router DNS upstream, observed
+  another IPv6 miss and an IPv4 pass after suspension; both courier connections
+  used TCP 5223. This strengthens the address-family/path hypothesis but does
+  not establish a permanent fix. DNS filter selection is not route evidence:
+  `apsd` reused a cached numeric IPv4 endpoint when IPv6-only answers were
+  requested. Identify the development courier connection in the complete
+  native archive for each trial. Preserve APNs bootstrap/configuration lookups
+  when testing courier address-family restrictions; the sandbox bootstrap
+  lookup in this run had no IPv6 address. A post-restart comparison retained
+  another IPv6 idle miss: the first observed PushKit callback followed an APNs
+  keep-alive failure/reconnect, about 54 seconds after invite acceptance and
+  after cancellation. Its payload kind was not independently identified.
+  On the next IPv4 trial, PushKit arrived about 183 ms after provider acceptance
+  and CallKit presented, but Dart invalidated its native lifecycle and ended
+  the call about 15 ms later. Preserve this end-to-end failure separately from
+  network wake delivery. The retained unadopted terminal from the earlier
+  attempt exposed a journal handoff regression: iOS had retired it to a durable
+  receipt while Dart still fenced every different descriptor. Host red/green
+  tests cover recovery only after acknowledgement of the exact old terminal,
+  both cancellation/presentation orderings and both new-call admission orders.
+  Missing receipts, live predecessors and adopted-call fences remain protected.
+  Receipt acknowledgement must also leave a successor's shared native audio
+  and timeout work intact. Appium subsequently exercised that exact sequence
+  on the physical iPhone 13 and Pixel 6. Native journal copies established an
+  unadopted cancelled predecessor before each successor. In the final profile
+  build (`20260913T102834Z`), the same iOS process acknowledged the old terminal
+  through sequence 2, adopted the next incoming call after over six minutes
+  suspended, claimed audio and completed terminal cleanup; both phones showed
+  Connected. A separate outgoing call exercised the same retained predecessor
+  and completed in both UIs. These are causal lifecycle recovery checks, not
+  merely fresh-call retries. The observed development courier used IPv4 TCP
+  5223; these passes do not establish recovery of the failed IPv6 connection.
+  Audible quality and screen lock were not independently asserted. The added
+  native successor-audio unit test was syntax-checked but not executed under
+  the user's restriction against building an iOS test harness.
+  This app lifecycle correction cannot repair an OS APNs connection that has
+  not delivered a push. The specific network or OS defect
+  and a permanent fix remain unconfirmed. These
+  observations concern development/sandbox APNs, not a
+  verified TestFlight/production APNs candidate. Redacted per-call and OS
+  evidence is under `.codex-test-logs/iphone13-background-wake-20260912T123246Z/`.
+  Same-Wi-Fi follow-up evidence is under
+  `.codex-test-logs/iphone13-ip-family-20260912T150922Z/`.
+  The lifecycle fix, exact host commands, final-build device evidence and
+  verified restoration of Automatic DNS are recorded in
+  `.codex-test-logs/iphone13-ip-family-20260913T092100Z/REPORT.md`.
   The Pixel 6 (API 37) / Android emulator (API 35) TCP run passed all eight
   policy/direction cases and their restarts: 32 endpoint observations, including
   16 protected observations with sanitized native egress and selected local TURN.
@@ -726,8 +922,11 @@ visible and cannot become an ordinary first-attempt PASS.
   feature is hidden. Approved STUN comes from the operator's build configuration
   and is kept alongside the existing authenticated TURN provider.
   Production composition, secure-storage MethodChannel, settings-sheet and real
-  WebRTC-adapter configuration tests cover these boundaries. They do not prove
-  native persistent storage across an actual installed upgrade.
+  WebRTC-adapter configuration tests cover these boundaries. Appium on physical
+  Android, iPhone11 and iPhone13 additionally verified the enabled preference
+  across installed app updates and terminate/activate. Fresh
+  identities and contacts also survived normal app updates on all three phones.
+  These installed debug/profile observations do not certify a signed release.
   The current Pixel 6/API 37 and API 35 emulator native media proof passed the
   eight policy/direction cases plus restarts over UDP and TCP: 64 endpoint
   observations, with local TURN and sanitized egress on all 32 protected
@@ -751,8 +950,9 @@ visible and cannot become an ordinary first-attempt PASS.
   layers now keep delivering while evicting old diagnostic history. The native
   emitter handles reentrant callbacks with at most a disconnect edge plus the
   latest event. The executor likewise retains one coalesced record (at most two
-  pending events) behind one asynchronous drain; failure supersedes ordinary
-  updates, and a disconnect cannot hide the latest recovery state. Production
+  pending events) behind one asynchronous drain; terminal failure supersedes
+  ordinary updates and provisional initial ICE failure, while a disconnect
+  cannot hide the latest recovery state. Production
   consumers keep stream subscriptions unpaused and coalesce awaited work in the
   executor. This does not bound buffers created by arbitrary paused subscribers.
   Candidate queues, batch capacities and the coordinator's pending-event limit
@@ -1006,6 +1206,24 @@ difference in outcomes remains unexplained; those passes do not establish a
 fix for the earlier failures. The retained first failures remain authoritative
 for their own run. See the focused investigation record and
 `artifacts/testflight-crash-investigation-20260910/check-final/results.json`.
+
+Physical Android local-reset regression: on Pixel 6 / API 37 at
+`5a9bb5c94503d3e48dca734f4d2b2cb06fe8141a`, choosing **Erase local data** on
+the migrated-out screen and cold-launching produced
+`SQLiteNotADatabaseException: file is not a database (code 26)` followed by an
+unhandled `DatabaseException`. The old migrated-out erase deleted the
+secure-storage registry (including the database key) without removing the
+encrypted database. Production now closes and removes the encrypted database,
+its SQLite sidecars and rekey recovery files before erasing the key. Failed
+close/deletion preserves the key and migrated-out authority. The canonical lease
+remains held until normal teardown to prevent reopening during erasure.
+Real temporary-file tests cover removal and failure propagation; startup tests
+cover ordering, durable authority and notification-preservation guards. The
+device erase/restart journey has not been repeated after this fix, so a passing
+host erase or secure-key deletion alone does not prove that native journey.
+This is separate from the earlier notification-preservation fixture failure.
+Redacted device evidence:
+`.codex-test-logs/live-phones-20260912T084648Z/android-reset-regression.redacted.log`.
 
 A two-file diagnostic rerun reproduced both failures (43 passed, two failed,
 9.470 seconds); focused failed-case reruns also failed. Sanitized follow-up

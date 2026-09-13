@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -1001,6 +1002,11 @@ func (is *InboxStore) StoreAckCustody(
 		return "", inboxMessage{}, errAckCustodyIneligible
 	}
 
+	priorQuiet, unlock, policyErr := is.prepareDirectRecoveryStore(toPeerID, &entry)
+	defer unlock()
+	if policyErr != nil {
+		return "", inboxMessage{}, policyErr
+	}
 	entry = ensureInboxMessageID(entry)
 	result, storedEntry, admissionStatus, admission, preflightFallback, handled, err :=
 		is.storeAckCustodyWithWakeOutcome(toPeerID, entry, dedupeKey)
@@ -1041,6 +1047,9 @@ func (is *InboxStore) StoreAckCustody(
 			is.launchStoredDirectPushAfterPreflight(toPeerID, storedEntry, preflightFallback)
 		}
 	case InboxStoreResultDuplicate:
+		if priorQuiet && !entry.QuietRecovery {
+			is.launchStoredDirectPush(toPeerID, storedEntry)
+		}
 		recordAckCustodyStoreResult(ackCustodyStoreMetricDuplicate)
 	case InboxStoreResultRejectedFull:
 		recordAckCustodyStoreResult(ackCustodyStoreMetricRejectedFull)
@@ -1074,6 +1083,13 @@ func (is *InboxStore) storeAckCustodyWithWakeOutcome(
 	})
 	if !ok || !is.WakeOutcomeAdmissionEnabled() {
 		return "", inboxMessage{}, "", wakeOutcomeAdmission{}, wakeOutcomePreflightFallback{}, false, nil
+	}
+	if identity, valid := newDirectMessageDispatchAdmissionIdentity(toPeerID, entry.From, entry.Message); valid {
+		if backend, ok := is.backend.(directQuietRecoveryBackend); ok {
+			if quiet, err := backend.DirectQuietRecovery(context.Background(), identity.storageKey()); err != nil || quiet {
+				return "", inboxMessage{}, "", wakeOutcomeAdmission{}, wakeOutcomePreflightFallback{}, false, nil
+			}
+		}
 	}
 	producer, requiredCapability, verifiedEventKey, eligible := is.directWakeOutcomeProducer(toPeerID, entry)
 	if !eligible {

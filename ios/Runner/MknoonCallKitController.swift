@@ -826,7 +826,9 @@ internal final class MknoonCallKitController: NSObject, CXProviderDelegate {
         "[MKNOON_CALLKIT_DIAG] ack=" + String(describing: disposition) + " through=" + String(sequence)
           + " ok=" + String(acknowledged)
       )
-      if acknowledged && disposition == .terminal {
+      // A retained receipt can acknowledge an older call after its successor
+      // starts. Shared audio and timers belong to that successor now.
+      if acknowledged && disposition == .terminal && store.snapshot() == nil {
         clearNativeReferences(nativeCallId)
       }
       return acknowledged

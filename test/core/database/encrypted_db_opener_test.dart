@@ -9,6 +9,72 @@ import 'package:sqflite_sqlcipher/sqflite.dart';
 import '../../core/secure_storage/fake_secure_key_store.dart';
 
 void main() {
+  group('explicit encrypted account database erase', () {
+    late Directory directory;
+    late String path;
+    setUp(() async {
+      directory = await Directory.systemTemp.createTemp('account-db-erase-');
+      path = '${directory.path}/identity.db';
+    });
+    tearDown(() async => directory.delete(recursive: true));
+
+    test(
+      'closes before removing the database and every recovery sidecar',
+      () async {
+        final paths = [
+          for (final databaseSuffix in ['', '.rekey-tmp', '.pre-raw.bak'])
+            for (final sidecarSuffix in ['', '-wal', '-shm', '-journal'])
+              '$path$databaseSuffix$sidecarSuffix',
+        ];
+        for (final file in paths) {
+          await File(file).writeAsString('old account data');
+        }
+        final unrelated = File('${directory.path}/unrelated');
+        await unrelated.writeAsString('preserve');
+        final database = _RecordingDatabase(
+          path: path,
+          onClose: () async {
+            for (final file in paths) {
+              expect(await File(file).exists(), isTrue);
+            }
+          },
+        );
+
+        await eraseEncryptedDatabase(database);
+
+        expect(database.closeCount, 1);
+        for (final file in paths) {
+          expect(await File(file).exists(), isFalse, reason: file);
+        }
+        expect(await unrelated.readAsString(), 'preserve');
+      },
+    );
+
+    test('close failure leaves the account database intact', () async {
+      await File(path).writeAsString('retained account');
+      final database = _RecordingDatabase(
+        path: path,
+        closeFailure: StateError('busy writer'),
+      );
+      await expectLater(eraseEncryptedDatabase(database), throwsStateError);
+      expect(await File(path).readAsString(), 'retained account');
+    });
+
+    test(
+      'deletion failure propagates before the main database is removed',
+      () async {
+        await File(path).writeAsString('retained account');
+        await Directory('$path.rekey-tmp').create();
+        await File('$path.rekey-tmp/retained').writeAsString('blocked removal');
+        await expectLater(
+          eraseEncryptedDatabase(_RecordingDatabase(path: path)),
+          throwsA(isA<FileSystemException>()),
+        );
+        expect(await File(path).readAsString(), 'retained account');
+      },
+    );
+  });
+
   group('encrypted_db_opener', () {
     group('key generation contract', () {
       // Replicate the private _generateRandomKey to verify its contract
@@ -455,16 +521,25 @@ class _FailingWriteKeyStore extends _StaticKeyStore {
 }
 
 class _RecordingDatabase implements Database {
-  _RecordingDatabase({this.closeFailure, this.events});
+  _RecordingDatabase({
+    this.closeFailure,
+    this.events,
+    this.path = '',
+    this.onClose,
+  });
 
   final Object? closeFailure;
   final List<String>? events;
+  @override
+  final String path;
+  final Future<void> Function()? onClose;
   int closeCount = 0;
 
   @override
   Future<void> close() async {
     closeCount += 1;
     events?.add('close');
+    await onClose?.call();
     final failure = closeFailure;
     if (failure != null) throw failure;
   }

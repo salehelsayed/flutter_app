@@ -7,6 +7,7 @@ class InboxStagingEntry {
   final String? messageType;
   final String relayTimestamp;
   final String envelope;
+  final bool quietRecovery;
   final String status;
   final int attemptCount;
   final String stagedAt;
@@ -21,6 +22,7 @@ class InboxStagingEntry {
     required this.relayTimestamp,
     required this.envelope,
     required this.stagedAt,
+    this.quietRecovery = false,
     this.messageType,
     this.status = 'pending',
     this.attemptCount = 0,
@@ -37,6 +39,7 @@ class InboxStagingEntry {
       messageType: row['message_type'] as String?,
       relayTimestamp: row['relay_timestamp'] as String,
       envelope: row['envelope'] as String,
+      quietRecovery: row['quiet_recovery'] == 1,
       status: row['status'] as String? ?? 'pending',
       attemptCount: row['attempt_count'] as int? ?? 0,
       stagedAt: row['staged_at'] as String,
@@ -54,6 +57,7 @@ class InboxStagingEntry {
       'message_type': messageType,
       'relay_timestamp': relayTimestamp,
       'envelope': envelope,
+      if (quietRecovery) 'quiet_recovery': 1,
       'status': status,
       'attempt_count': attemptCount,
       'staged_at': stagedAt,
@@ -70,6 +74,7 @@ class InboxStagingEntry {
     String? messageType,
     String? relayTimestamp,
     String? envelope,
+    bool? quietRecovery,
     String? status,
     int? attemptCount,
     String? stagedAt,
@@ -84,6 +89,7 @@ class InboxStagingEntry {
       messageType: messageType ?? this.messageType,
       relayTimestamp: relayTimestamp ?? this.relayTimestamp,
       envelope: envelope ?? this.envelope,
+      quietRecovery: quietRecovery ?? this.quietRecovery,
       status: status ?? this.status,
       attemptCount: attemptCount ?? this.attemptCount,
       stagedAt: stagedAt ?? this.stagedAt,
@@ -101,6 +107,7 @@ class InboxStagingEntry {
       timestamp: relayTimestamp,
       isIncoming: true,
       transport: 'inbox',
+      quietRecovery: quietRecovery,
     );
   }
 }

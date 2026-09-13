@@ -191,6 +191,7 @@ final class AndroidCallLifecycleAdapter
     this.projectTerminalBeforeEnd = false,
     this.requireAdoptionForAudio = false,
     this.failStartOnAttachError = false,
+    this.recoverRetiredUnboundIncoming = false,
     NativeOutgoingRegistrationResultObserver? onOutgoingRegistrationResult,
   }) : _invokeMethod = invokeMethod,
        _nativeEvents = nativeEvents,
@@ -227,6 +228,10 @@ final class AndroidCallLifecycleAdapter
   final bool projectTerminalBeforeEnd;
   final bool requireAdoptionForAudio;
   final bool failStartOnAttachError;
+
+  /// iOS can sweep an unadopted terminal into a durable acknowledgement
+  /// receipt while Dart is suspended. Android keeps its existing fence.
+  final bool recoverRetiredUnboundIncoming;
   final NativeOutgoingRegistrationResultObserver? _onOutgoingRegistrationResult;
 
   final StreamController<CallAudioSessionInterruption> _interruptions =
@@ -352,7 +357,7 @@ final class AndroidCallLifecycleAdapter
       final attached = await _invokeMethod('attach', _versionArguments());
       await _schedule<void>(() async {
         if (_closed || _invalid) return;
-        _ingest(attached);
+        await _ingest(attached);
       });
     } catch (error) {
       await _schedule<void>(() async => _invalidate());
@@ -400,6 +405,7 @@ final class AndroidCallLifecycleAdapter
     if (terminal == null) return true;
     final priorCallId = _boundCallId;
     if (priorCallId == null) {
+      if (await _retireUnboundIncomingTerminal()) return true;
       return _outgoingRegistrationRejected(
         NativeOutgoingRegistrationStage.terminalReplay,
         NativeOutgoingRegistrationReason.terminalCleanupPending,
@@ -485,7 +491,7 @@ final class AndroidCallLifecycleAdapter
           _versionArguments(),
         ).timeout(_failClosedTimeout);
         if (!_closed && !_invalid && _boundCallId == callId) {
-          _ingest(replay);
+          await _ingest(replay);
           await _reconcileBoundEvents();
         }
       } catch (_) {
@@ -568,7 +574,7 @@ final class AndroidCallLifecycleAdapter
       );
     }
     if (_pendingTerminal != null) {
-      if (!await _retryRetainedTerminalBeforeOutgoing()) return false;
+      if (!await _retryRetainedTerminalBeforeOutgoing(callId)) return false;
       final resumed = _coordinator.activeSession;
       if (resumed?.callId != callId ||
           resumed?.direction != CallDirection.outgoing ||
@@ -735,10 +741,18 @@ final class AndroidCallLifecycleAdapter
   /// whose critical cleanup is already ACK-ready may reach native ACK. A live
   /// nonterminal descriptor remains a hard conflict, while pending cleanup or
   /// a refused ACK retains the complete terminal replay for a later attempt.
-  Future<bool> _retryRetainedTerminalBeforeOutgoing() async {
+  Future<bool> _retryRetainedTerminalBeforeOutgoing(
+    CallId successorCallId,
+  ) async {
     final terminal = _pendingTerminal;
     if (terminal == null) return true;
     final priorCallId = _boundCallId;
+    if (priorCallId == null &&
+        await _retireUnboundIncomingTerminal(
+          successorHandle: _resolveAuthenticatedHandle(successorCallId),
+        )) {
+      return true;
+    }
     if (priorCallId == null ||
         !_coordinator.terminalCleanupAckReady(priorCallId)) {
       return _outgoingRegistrationRejected(
@@ -761,12 +775,14 @@ final class AndroidCallLifecycleAdapter
   /// Releases a distinct prior call only after its critical cleanup is
   /// already safe to acknowledge. A refused ACK keeps the complete terminal
   /// binding intact so the new incoming descriptor cannot overwrite it.
-  Future<bool> _ackCleanupReadyRetainedTerminal() async {
+  Future<bool> _ackCleanupReadyRetainedTerminal(String successorHandle) async {
     final terminal = _pendingTerminal;
     if (terminal == null) return true;
     final priorCallId = _boundCallId;
-    if (priorCallId == null ||
-        !_coordinator.terminalCleanupAckReady(priorCallId)) {
+    if (priorCallId == null) {
+      return _retireUnboundIncomingTerminal(successorHandle: successorHandle);
+    }
+    if (!_coordinator.terminalCleanupAckReady(priorCallId)) {
       return false;
     }
     if (_boundCallId != priorCallId || !identical(_pendingTerminal, terminal)) {
@@ -820,7 +836,7 @@ final class AndroidCallLifecycleAdapter
     if (descriptor != null &&
         descriptor.callHandle != handle &&
         _pendingTerminal != null) {
-      if (!await _ackCleanupReadyRetainedTerminal()) return false;
+      if (!await _ackCleanupReadyRetainedTerminal(handle!)) return false;
       descriptor = _descriptor;
     }
     if (descriptor != null) {
@@ -1135,7 +1151,7 @@ final class AndroidCallLifecycleAdapter
       _schedule<void>(() async {
         if (_closed || _invalid) return;
         try {
-          _ingest(value);
+          await _ingest(value);
           await _reconcileBoundEvents();
         } catch (_) {
           await _invalidate();
@@ -1178,7 +1194,7 @@ final class AndroidCallLifecycleAdapter
     Object? replay;
     try {
       replay = await _invokeMethod('attach', _versionArguments());
-      _ingest(replay);
+      await _ingest(replay);
     } catch (_) {
       await _invalidate();
       return;
@@ -1398,7 +1414,7 @@ final class AndroidCallLifecycleAdapter
       if (!accepted || !event.type.isTerminal) return accepted;
       if (_coordinator.terminalCleanupAckReady(callId)) return true;
       if (reduction.decision == CallEventDecision.ignored) {
-        return _coordinator.retryTerminalCleanup(callId);
+        return await _coordinator.retryTerminalCleanup(callId);
       }
       return false;
     } catch (_) {
@@ -1462,14 +1478,53 @@ final class AndroidCallLifecycleAdapter
     if (disposition == _AcknowledgementDisposition.terminal) {
       final retiredHandle = _boundHandle ?? _descriptor?.callHandle;
       if (retiredHandle != null) {
-        _retiredHighWatermarks.remove(retiredHandle);
-        _retiredHighWatermarks[retiredHandle] = through;
-        while (_retiredHighWatermarks.length > maxRetiredCallFences) {
-          _retiredHighWatermarks.remove(_retiredHighWatermarks.keys.first);
-        }
+        _rememberRetiredHandle(retiredHandle, through);
       }
       _resetPerCallState();
     }
+    return true;
+  }
+
+  void _rememberRetiredHandle(String handle, int through) {
+    _retiredHighWatermarks.remove(handle);
+    _retiredHighWatermarks[handle] = through;
+    while (_retiredHighWatermarks.length > maxRetiredCallFences) {
+      _retiredHighWatermarks.remove(_retiredHighWatermarks.keys.first);
+    }
+  }
+
+  /// No coordinator call or media ever owned this incoming terminal. Its
+  /// exact native acknowledgement can release it for a different call without
+  /// bypassing cleanup of an adopted call or relying on a local expiry guess.
+  Future<bool> _retireUnboundIncomingTerminal({String? successorHandle}) async {
+    final previous = _descriptor;
+    if (!recoverRetiredUnboundIncoming ||
+        _boundCallId != null ||
+        previous == null ||
+        previous.direction != _NativeCallDirection.incoming ||
+        previous.phase != _NativeDescriptorPhase.preStart ||
+        previous.callHandle == successorHandle ||
+        _pendingTerminal == null) {
+      return false;
+    }
+    final active = _coordinator.activeSession;
+    if (active != null && !active.isTerminal) {
+      final activeCallId = active.callId;
+      if (successorHandle == null ||
+          activeCallId == null ||
+          _resolveAuthenticatedHandle(activeCallId) != successorHandle) {
+        return false;
+      }
+    }
+    final retired = await _invokeBoolean('acknowledge', <String, Object?>{
+      'version': protocolVersion,
+      'callHandle': previous.callHandle,
+      'throughSequence': _highestObservedSequence,
+      'disposition': _AcknowledgementDisposition.terminal.wireName,
+    });
+    if (!retired || _closed || _invalid) return false;
+    _rememberRetiredHandle(previous.callHandle, _highestObservedSequence);
+    _resetPerCallState();
     return true;
   }
 
@@ -1492,7 +1547,7 @@ final class AndroidCallLifecycleAdapter
     _failedMuteSequence = null;
   }
 
-  void _ingest(Object? value) {
+  Future<void> _ingest(Object? value) async {
     final batch = _NativeBatch.parse(value, maxEvents: maxEventsPerBatch);
     final nativeCallId = batch.nativeCallId;
     final retiredThrough = nativeCallId == null
@@ -1503,6 +1558,24 @@ final class AndroidCallLifecycleAdapter
       throw const FormatException('event follows terminal acknowledgement');
     }
     final descriptor = batch.descriptor;
+    final previous = _descriptor;
+    if (recoverRetiredUnboundIncoming &&
+        _boundCallId == null &&
+        previous != null &&
+        previous.direction == _NativeCallDirection.incoming &&
+        previous.phase == _NativeDescriptorPhase.preStart &&
+        _pendingTerminal != null &&
+        descriptor != null &&
+        descriptor.direction == _NativeCallDirection.incoming &&
+        descriptor.callHandle != previous.callHandle &&
+        batch.nativeCallId == descriptor.callHandle) {
+      if (!await _retireUnboundIncomingTerminal(
+        successorHandle: descriptor.callHandle,
+      )) {
+        if (_closed || _invalid) return;
+        throw const FormatException('native terminal receipt unavailable');
+      }
+    }
     var delayedAdoptionReplay = false;
     if (descriptor == null &&
         batch.events.isEmpty &&
@@ -1538,9 +1611,7 @@ final class AndroidCallLifecycleAdapter
           batch.events.single.type == _NativeEventType.presented &&
           batch.events.single.sequence <= _acknowledgedSequence &&
           _observedEvents[batch.events.single.sequence] == batch.events.single;
-      if (current != null &&
-          current != descriptor &&
-          !delayedAdoptionReplay) {
+      if (current != null && current != descriptor && !delayedAdoptionReplay) {
         throw const FormatException('native descriptor changed');
       }
       final bound = _coordinator.activeSession;

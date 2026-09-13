@@ -5,6 +5,7 @@ import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart';
 import 'p2p_service.dart';
 import '../notifications/active_conversation_tracker.dart';
+import '../notifications/automatic_recovery_notification_policy.dart';
 import '../notifications/ios_notification_recovery_coordinator.dart';
 import '../notifications/ios_mailbox_alert_silent_replay_context.dart';
 import '../bridge/bridge.dart';

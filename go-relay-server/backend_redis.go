@@ -374,6 +374,14 @@ func (b *redisInboxBackend) Store(toPeerId string, entry inboxMessage) (InboxSto
 		if dedupeKey != "" {
 			for _, message := range validMessages {
 				if extractDirectInboxDedupeKey(message.Message) == dedupeKey {
+					if message.From == entry.From && message.Message == entry.Message {
+						validRaw = updateQuietRecoveryRows(validRaw, entry)
+						if err := b.replaceListsWithQuietRecovery(tx, map[string][]string{key: validRaw}, toPeerId, entry); err != nil {
+							return err
+						}
+						result = InboxStoreResultDuplicate
+						return nil
+					}
 					if len(validRaw) != len(rawEntries) {
 						if err := redisReplaceList(tx, key, validRaw); err != nil {
 							return err
@@ -396,7 +404,7 @@ func (b *redisInboxBackend) Store(toPeerId string, entry inboxMessage) (InboxSto
 		values := append([]string(nil), validRaw...)
 		values = append(values, string(payload))
 
-		if err := redisReplaceList(tx, key, values); err != nil {
+		if err := b.replaceListsWithQuietRecovery(tx, map[string][]string{key: values}, toPeerId, entry); err != nil {
 			return err
 		}
 		result = InboxStoreResultStored
@@ -771,7 +779,13 @@ func (b *redisInboxBackend) StoreAckCustody(
 				}
 			}
 
-			needsWrite := !equalStringSlices(protectedRaw, validProtectedRaw) ||
+			accepted := decisionErr == nil && (result == InboxStoreResultStored || result == InboxStoreResultDuplicate)
+			if accepted {
+				storedEntry.QuietRecovery = entry.QuietRecovery
+				validProtectedRaw = updateQuietRecoveryRows(validProtectedRaw, entry)
+				validLegacyRaw = updateQuietRecoveryRows(validLegacyRaw, entry)
+			}
+			needsWrite := accepted || !equalStringSlices(protectedRaw, validProtectedRaw) ||
 				!equalStringSlices(legacyRaw, validLegacyRaw)
 			if !needsWrite {
 				return nil
@@ -781,10 +795,11 @@ func (b *redisInboxBackend) StoreAckCustody(
 					return err
 				}
 			}
-			return redisReplaceLists(tx, map[string][]string{
-				protectedKey: validProtectedRaw,
-				legacyKey:    validLegacyRaw,
-			})
+			replacements := map[string][]string{protectedKey: validProtectedRaw, legacyKey: validLegacyRaw}
+			if accepted {
+				return b.replaceListsWithQuietRecovery(tx, replacements, toPeerID, entry)
+			}
+			return redisReplaceLists(tx, replacements)
 		},
 	)
 	if err != nil {

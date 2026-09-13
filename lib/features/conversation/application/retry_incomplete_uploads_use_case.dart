@@ -1,3 +1,4 @@
+import 'package:flutter_app/core/notifications/automatic_recovery_notification_policy.dart';
 import 'dart:io';
 
 import 'package:flutter_app/core/bridge/bridge.dart';
@@ -1472,26 +1473,29 @@ Future<int> retryIncompleteUploads({
               sendMessage.contactPeerId,
             ))?.mlKemPublicKey
           : null;
-      final (result, _) = await sendChatMessage(
-        p2pService: p2pService,
-        messageRepo: messageRepo,
-        targetPeerId: sendMessage.contactPeerId,
-        text: sendMessage.text,
-        senderPeerId: identity.peerId,
-        senderUsername: identity.username,
-        messageId: sendMessage.id,
-        timestamp: sendMessage.timestamp,
-        bridge: bridge,
-        recipientMlKemPublicKey: recipientMlKemPublicKey,
-        quotedMessageId: sendMessage.quotedMessageId,
-        dedupKey: sendMessage.dedupKey,
-        isForwarded: sendMessage.isForwarded,
-        mediaAttachments: fullAttachmentList,
-        privateMediaPolicy: sendMessage.privateMediaPolicy,
-        mediaAttachmentRepo: mediaAttachmentRepo,
-        emitTimingEvent: false,
-        directLinkedMediaFanout: linkedMediaFanout,
-        directPrivateMediaFanout: privateMediaFanout,
+      final (result, _) = await runWithAutomaticRecoveryNotificationPolicy(
+        originalTimestamp: sendMessage.timestamp,
+        action: () => sendChatMessage(
+          p2pService: p2pService,
+          messageRepo: messageRepo,
+          targetPeerId: sendMessage.contactPeerId,
+          text: sendMessage.text,
+          senderPeerId: identity.peerId,
+          senderUsername: identity.username,
+          messageId: sendMessage.id,
+          timestamp: sendMessage.timestamp,
+          bridge: bridge,
+          recipientMlKemPublicKey: recipientMlKemPublicKey,
+          quotedMessageId: sendMessage.quotedMessageId,
+          dedupKey: sendMessage.dedupKey,
+          isForwarded: sendMessage.isForwarded,
+          mediaAttachments: fullAttachmentList,
+          privateMediaPolicy: sendMessage.privateMediaPolicy,
+          mediaAttachmentRepo: mediaAttachmentRepo,
+          emitTimingEvent: false,
+          directLinkedMediaFanout: linkedMediaFanout,
+          directPrivateMediaFanout: privateMediaFanout,
+        ),
       );
 
       if (result == SendChatMessageResult.success) {

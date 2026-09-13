@@ -712,19 +712,25 @@ final class CallNegotiationEffectExecutor implements CallEffectExecutor {
     if (_closed) return;
     final session = _readSnapshotSafely();
     if (session == null || session.callId == null || session.isTerminal) return;
+    final isTerminalFailure =
+        _isFailureEngineEvent(event) &&
+        !_isInitialIceChecklistFailure(event, session);
     if (_isFailureEngineEvent(event)) {
-      _cancelMediaReadinessWatch(closeActivePhase: true);
+      _cancelMediaReadinessWatch(closeActivePhase: isTerminalFailure);
     } else if (event.connectionState != CallConnectionState.connected) {
       _cancelMediaReadinessWatch();
     }
     final pending = _pendingEngineEvent;
     final pendingIsFailure =
-        pending != null && _isFailureEngineEvent(pending.event);
+        pending != null &&
+        _isFailureEngineEvent(pending.event) &&
+        !_isInitialIceChecklistFailure(pending.event, pending.session);
     // Keep a disconnect edge as well as the latest state: overwriting either
     // can lose mediaLost or the connected update that starts recovery. This
     // remains one coalesced record (at most two events), never a callback FIFO.
-    // A failure supersedes both and cannot be overwritten by ordinary updates.
-    if (pending == null || _isFailureEngineEvent(event) || !pendingIsFailure) {
+    // A terminal failure supersedes both. An early ICE checklist failure can
+    // be superseded by connectivity from a later trickle candidate.
+    if (pending == null || isTerminalFailure || !pendingIsFailure) {
       _pendingEngineEvent = _PendingEngineEvent(
         event,
         session,
@@ -764,7 +770,8 @@ final class CallNegotiationEffectExecutor implements CallEffectExecutor {
             final failureWaiting =
                 next?.session.callId == pending.session.callId &&
                 next != null &&
-                _isFailureEngineEvent(next.event);
+                _isFailureEngineEvent(next.event) &&
+                !_isInitialIceChecklistFailure(next.event, next.session);
             if (!identical(disconnect, pending.event) &&
                 !failureWaiting &&
                 _isCurrentSession(pending.session)) {
@@ -792,6 +799,13 @@ final class CallNegotiationEffectExecutor implements CallEffectExecutor {
     _trackedCallIds.add(session.callId!);
 
     if (_isFailureEngineEvent(event)) {
+      if (_isInitialIceChecklistFailure(event, session)) {
+        // A TURN permission rejection for an early private host candidate can
+        // exhaust the current checklist before public trickle candidates arrive.
+        // Keep the existing negotiation deadline while native ICE tries them.
+        _cancelMediaReadinessWatch();
+        return;
+      }
       await _dispatchFailureForSession(session);
       return;
     }
@@ -875,13 +889,20 @@ final class CallNegotiationEffectExecutor implements CallEffectExecutor {
         return;
       }
       _recordFailure(error, 'mediaReadiness');
-      if (error is! CallEngineException ||
-          (error.code != CallEngineErrorCode.observationUnavailable &&
-              error.code != CallEngineErrorCode.notReady)) {
+      // A snapshot may observe the same early ICE failure before its state
+      // event reaches the drain. Apply the same bounded trickle recovery here.
+      final awaitingTrickle =
+          session.state == CallState.negotiating &&
+          error is CallEngineException &&
+          error.code == CallEngineErrorCode.iceConnectionFailed;
+      if (!awaitingTrickle &&
+          (error is! CallEngineException ||
+              (error.code != CallEngineErrorCode.observationUnavailable &&
+                  error.code != CallEngineErrorCode.notReady))) {
         await _dispatchFailureForSession(session);
         return;
       }
-      _observationFailureCount++;
+      if (!awaitingTrickle) _observationFailureCount++;
       // Consume this sample without claiming readiness. Retry on the same
       // cadence/cap, bounded in production by the canonical phase deadline.
     }
@@ -1162,6 +1183,15 @@ final class CallNegotiationEffectExecutor implements CallEffectExecutor {
       event.connectionState == CallConnectionState.failed ||
       event.connectionState == CallConnectionState.closed ||
       event.failureReason != CallFailureReason.none;
+
+  static bool _isInitialIceChecklistFailure(
+    CallEngineEvent event,
+    CallSessionSnapshot session,
+  ) =>
+      session.state == CallState.negotiating &&
+      event.type == CallEngineEventType.state &&
+      event.connectionState == CallConnectionState.failed &&
+      event.failureReason == CallFailureReason.transportUnavailable;
 
   static CallEventType? _mediaReadinessTypeFor(CallState state) =>
       switch (state) {

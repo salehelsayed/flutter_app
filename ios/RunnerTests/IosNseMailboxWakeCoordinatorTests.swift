@@ -11,6 +11,23 @@ final class IosNseMailboxWakeCoordinatorTests: XCTestCase {
   private let account = "peer-self"
   private let transport = "transport-self"
 
+  private func assertQuietRecoveryRowCannotBecomeAnAuthenticatedAlertCandidate() throws {
+    let fixture = try loadMailboxFixture()
+    let accepted = try XCTUnwrap(fixture.rows.first {
+      $0["classification"] as? String == "accepted"
+    })
+    let rowID = try XCTUnwrap(accepted["id"] as? String)
+    XCTAssertNotNil(try adaptFixtureRow(rowID, fixture: fixture))
+    XCTAssertNil(try adaptFixtureRow(rowID, fixture: fixture, quietRecovery: true))
+
+    let encoded = #"{"ok":true,"messages":[{"id":"a","from":"b","message":"{}","timestamp":1,"quietRecovery":true}],"hasMore":false,"custodyContract":"ack_or_expiry_v1"}"#
+    let page = try XCTUnwrap(NseMailboxWakeCoordinator.decodePage(encoded))
+    XCTAssertTrue(try XCTUnwrap(page.messages.first).quietRecovery)
+    XCTAssertNil(NseMailboxWakeCoordinator.decodePage(
+      encoded.replacingOccurrences(of: "\"quietRecovery\":true", with: "\"quietRecovery\":1")
+    ))
+  }
+
   func testTC37303ExactFixedGrammarAndRichCompatibility() throws {
     let exact = fixedWake()
     XCTAssertTrue(NseMailboxWakeClassifier.isExactFixedWake(exact))
@@ -1564,6 +1581,7 @@ final class IosNseMailboxWakeCoordinatorTests: XCTestCase {
   }
 
   func testTC37306LegacyGroupAndUnsupportedRowsDoNotInventAuthority() throws {
+    try assertQuietRecoveryRowCannotBecomeAnAuthenticatedAlertCandidate()
     let hasMoreJSON =
       #"{"ok":true,"messages":[],"hasMore":true,"custodyContract":"ack_or_expiry_v1"}"#
     let hasMorePage = try XCTUnwrap(
@@ -1915,7 +1933,8 @@ final class IosNseMailboxWakeCoordinatorTests: XCTestCase {
     _ rowId: String,
     fixture: MailboxFixture,
     keyOverrides: [String: String] = [:],
-    rawEnvelopeOverride: [String: Any]? = nil
+    rawEnvelopeOverride: [String: Any]? = nil,
+    quietRecovery: Bool = false
   ) throws -> NseInboxCandidate? {
     let fixtureRow = try XCTUnwrap(fixture.rows.first {
       $0["id"] as? String == rowId
@@ -1955,7 +1974,8 @@ final class IosNseMailboxWakeCoordinatorTests: XCTestCase {
         message: encodedOuter,
         timestamp: try XCTUnwrap(
           (message["timestamp"] as? NSNumber)?.int64Value
-        )
+        ),
+        quietRecovery: quietRecovery
       ),
       credential: credential
     )

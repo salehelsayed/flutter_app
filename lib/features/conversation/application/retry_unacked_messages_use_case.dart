@@ -1,3 +1,4 @@
+import 'package:flutter_app/core/notifications/automatic_recovery_notification_policy.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/core/database/direct_inbox_event_envelope.dart';
@@ -359,9 +360,10 @@ Future<int> retryUnackedMessages({
       continue;
     }
     try {
-      final stored = await p2pService.storeInInbox(
-        msg.contactPeerId,
-        msg.wireEnvelope!,
+      final stored = await runWithAutomaticRecoveryNotificationPolicy(
+        originalTimestamp: msg.timestamp,
+        action: () =>
+            p2pService.storeInInbox(msg.contactPeerId, msg.wireEnvelope!),
       );
       if (stored) {
         final persisted = await persistTransport(

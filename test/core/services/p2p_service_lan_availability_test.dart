@@ -1,3 +1,5 @@
+import 'package:flutter_app/core/notifications/automatic_recovery_notification_policy.dart';
+import 'package:flutter_app/core/local_discovery/lan_ack.dart';
 import 'dart:async';
 import 'dart:convert';
 
@@ -56,12 +58,19 @@ class _FakeBridge extends Bridge {
 class _DelayedStartLocalP2PService extends FakeLocalP2PService {
   final Completer<void> startEntered = Completer<void>();
   final Completer<void> releaseStart = Completer<void>();
+  int startCallCount = 0;
   int stopCallCount = 0;
+  bool failNextStart = false;
 
   @override
   Future<void> start(String peerId, {int? quicPort, int? tcpPort}) async {
+    startCallCount++;
     if (!startEntered.isCompleted) startEntered.complete();
     await releaseStart.future;
+    if (failNextStart) {
+      failNextStart = false;
+      throw StateError('native discovery initialization failed');
+    }
     await super.start(peerId, quicPort: quicPort, tcpPort: tcpPort);
   }
 
@@ -124,6 +133,81 @@ void expectLan(
 }
 
 void main() {
+  test(
+    'quiet recovery refuses legacy LAN while normal manual transport remains available',
+    () async {
+      final local = FakeLocalP2PService();
+      final service = _service(metrics: TransportMetrics(), localP2P: local);
+      addTearDown(service.dispose);
+      const wire =
+          '{"type":"chat_message","version":"2","id":"old","encrypted":{"ciphertext":"bytes"}}';
+      final now = DateTime.utc(2026, 9, 12);
+      final quiet = await runWithAutomaticRecoveryNotificationPolicy(
+        originalTimestamp: now
+            .subtract(const Duration(days: 3))
+            .toIso8601String(),
+        now: now,
+        action: () =>
+            service.sendLocalMessageDurable('recipient', wire, 'sender'),
+      );
+      expect(quiet, LanSendAck.failed);
+      expect(local.sentMessages, isEmpty);
+      expect(
+        await service.sendLocalMessageDurable('recipient', wire, 'sender'),
+        LanSendAck.committed,
+      );
+      expect(local.sentMessages.length, 1);
+    },
+  );
+
+  test(
+    'overlapping early and warm discovery share pending initialization',
+    () async {
+      final metrics = TransportMetrics();
+      final localP2P = _DelayedStartLocalP2PService();
+      final service = _service(metrics: metrics, localP2P: localP2P);
+      addTearDown(service.dispose);
+
+      await service.startNodeCore('cHJpdmF0ZWtleXRlc3Q=', 'self-peer');
+      final first = service.startEarlyLocalDiscovery();
+      await localP2P.startEntered.future;
+      final second = service.startEarlyLocalDiscovery();
+      await service.warmBackground();
+      await Future<void>.delayed(Duration.zero);
+      final startsWhilePending = localP2P.startCallCount;
+
+      localP2P.releaseStart.complete();
+      await Future.wait([first, second]);
+      await Future<void>.delayed(Duration.zero);
+
+      expect(
+        startsWhilePending,
+        1,
+        reason:
+            'A native broadcaster awaiting readiness must not be replaced '
+            'by another cold-start trigger.',
+      );
+      expect(localP2P.startCallCount, 1);
+      expectLan(metrics, active: true, peers: 0);
+    },
+  );
+
+  test('failed pending discovery can be retried by the next trigger', () async {
+    final metrics = TransportMetrics();
+    final localP2P = _DelayedStartLocalP2PService()..failNextStart = true;
+    localP2P.releaseStart.complete();
+    final service = _service(metrics: metrics, localP2P: localP2P);
+    addTearDown(service.dispose);
+    await service.startNodeCore('cHJpdmF0ZWtleXRlc3Q=', 'self-peer');
+
+    await expectLater(service.startEarlyLocalDiscovery(), throwsStateError);
+    expectLan(metrics, active: false, peers: 0);
+    await service.startEarlyLocalDiscovery();
+
+    expect(localP2P.startCallCount, 2);
+    expectLan(metrics, active: true, peers: 0);
+  });
+
   test(
     'records active zero-peer LAN snapshot after local discovery starts',
     () async {

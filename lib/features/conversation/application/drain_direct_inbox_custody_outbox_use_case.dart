@@ -1,3 +1,4 @@
+import 'package:flutter_app/core/notifications/automatic_recovery_notification_policy.dart';
 import 'package:flutter_app/core/services/inbox_store_outcome.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/conversation/domain/models/direct_inbox_custody_outbox_entry.dart';
@@ -39,6 +40,7 @@ Future<int> drainDirectInboxCustodyOutbox({
   for (final entry in entries) {
     final result = await drainOwnedDirectInboxCustodyOutboxEntry(
       entry: entry,
+      automaticRecovery: true,
       custodyRepository: custodyRepository,
       storeInAckCustodyInboxDetailed: storeInAckCustodyInboxDetailed,
       storeInMediaExpiryBoundedInboxDetailed:
@@ -49,7 +51,8 @@ Future<int> drainDirectInboxCustodyOutbox({
   return completed;
 }
 
-/// Attempts the exact pending custody row for one direct message.
+/// Explicitly retries the exact pending custody row for one direct message.
+/// This manual entry point restores normal notification intent.
 ///
 /// Callers must use [DirectInboxCustodyDrainAttempt.found] as the routing
 /// discriminator. A found-but-retained row owns retry even when the store or
@@ -75,18 +78,49 @@ Future<DirectInboxCustodyDrainAttempt> drainDirectInboxCustodyOutboxForMessage({
     );
   }
   if (entry == null) return DirectInboxCustodyDrainAttempt.notFound;
-  return drainOwnedDirectInboxCustodyOutboxEntry(
-    entry: entry,
-    custodyRepository: custodyRepository,
-    storeInAckCustodyInboxDetailed: storeInAckCustodyInboxDetailed,
-    storeInMediaExpiryBoundedInboxDetailed:
-        storeInMediaExpiryBoundedInboxDetailed,
+  return runWithAutomaticRecoveryNotificationPolicy(
+    originalTimestamp: entry.createdAt,
+    manualRetry: true,
+    action: () => drainOwnedDirectInboxCustodyOutboxEntry(
+      entry: entry,
+      custodyRepository: custodyRepository,
+      storeInAckCustodyInboxDetailed: storeInAckCustodyInboxDetailed,
+      storeInMediaExpiryBoundedInboxDetailed:
+          storeInMediaExpiryBoundedInboxDetailed,
+    ),
   );
 }
 
 /// Replays one already-resolved immutable owner row. The stored entry supplies
 /// both the exact bytes and recipient; no mutable parent projection is used.
 Future<DirectInboxCustodyDrainAttempt> drainOwnedDirectInboxCustodyOutboxEntry({
+  required DirectInboxCustodyOutboxEntry entry,
+  bool automaticRecovery = false,
+  required OutgoingDirectTextInboxCustodyRepository custodyRepository,
+  required StoreInAckCustodyInboxDetailedFn storeInAckCustodyInboxDetailed,
+  StoreInMediaExpiryBoundedInboxDetailedFn?
+  storeInMediaExpiryBoundedInboxDetailed,
+}) => automaticRecovery
+    ? runWithAutomaticRecoveryNotificationPolicy(
+        originalTimestamp: entry.createdAt,
+        action: () => _drainOwnedDirectInboxCustodyOutboxEntry(
+          entry: entry,
+          custodyRepository: custodyRepository,
+          storeInAckCustodyInboxDetailed: storeInAckCustodyInboxDetailed,
+          storeInMediaExpiryBoundedInboxDetailed:
+              storeInMediaExpiryBoundedInboxDetailed,
+        ),
+      )
+    : _drainOwnedDirectInboxCustodyOutboxEntry(
+        entry: entry,
+        custodyRepository: custodyRepository,
+        storeInAckCustodyInboxDetailed: storeInAckCustodyInboxDetailed,
+        storeInMediaExpiryBoundedInboxDetailed:
+            storeInMediaExpiryBoundedInboxDetailed,
+      );
+
+Future<DirectInboxCustodyDrainAttempt>
+_drainOwnedDirectInboxCustodyOutboxEntry({
   required DirectInboxCustodyOutboxEntry entry,
   required OutgoingDirectTextInboxCustodyRepository custodyRepository,
   required StoreInAckCustodyInboxDetailedFn storeInAckCustodyInboxDetailed,

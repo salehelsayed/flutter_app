@@ -53,6 +53,10 @@ enum CallEngineEventType { state, statistics, overflow, closed }
 enum CallEngineErrorCode {
   configurationRejected,
   transportUnavailable,
+
+  /// Native ICE exhausted its current candidate checklist. Initial negotiation
+  /// may recover when later trickle candidates arrive before its deadline.
+  iceConnectionFailed,
   notReady,
 
   /// A snapshot read failed without establishing a media/transport failure.

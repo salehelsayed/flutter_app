@@ -1431,6 +1431,11 @@ func (s *redisWakeOutcomeStore) claimOne(
 	var result wakeOutcomeClaim
 	claimed := false
 	err = withRedisWatchRetryKeys(s.client, []string{stateKey, s.dueKey()}, func(tx *redis.Tx) error {
+		// A WATCH conflict discards this attempt's token and claim. A retry
+		// observing another worker's live claim must not return stale authority
+		// from the aborted attempt and submit the same notification twice.
+		result = wakeOutcomeClaim{}
+		claimed = false
 		if err := s.validateDueIndexType(context.Background(), tx); err != nil {
 			return err
 		}

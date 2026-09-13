@@ -1,3 +1,5 @@
+import 'package:flutter_app/core/notifications/automatic_recovery_notification_policy.dart';
+import 'package:clock/clock.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart' show Database;
 import 'package:flutter_app/core/database/helpers/direct_reaction_inbox_custody_outbox_db_helpers.dart';
@@ -100,6 +102,40 @@ class _MarkerAfterUnackedListMessageRepository extends FakeMessageRepository {
 }
 
 void main() {
+  test(
+    'unacked restoration is quiet after 24 hours and does not claim delivery',
+    () async {
+      final now = DateTime.utc(2026, 9, 12);
+      final repo = FakeMessageRepository();
+      final messages = [
+        _makeSentMessage(id: 'old').copyWith(
+          timestamp: now.subtract(const Duration(days: 3)).toIso8601String(),
+        ),
+        _makeSentMessage(id: 'boundary').copyWith(
+          timestamp: now.subtract(const Duration(hours: 24)).toIso8601String(),
+        ),
+      ];
+      repo.seed(messages);
+      final policies = <bool>[];
+      final service = FakeP2PService()
+        ..onStoreInInbox = (peer, wire, {timeoutMs}) async {
+          policies.add(quietRecoveryForEnvelope(wire));
+          return true;
+        };
+      final count = await withClock(
+        Clock.fixed(now),
+        () => retryUnackedMessages(messageRepo: repo, p2pService: service),
+      );
+      expect(count, 2);
+      expect(policies, [true, false]);
+      for (final message in messages) {
+        final stored = (await repo.getMessage(message.id))!;
+        expect(stored.status, 'inboxed');
+        expect(stored.wireEnvelope, message.wireEnvelope);
+      }
+    },
+  );
+
   group('retryUnackedMessages', () {
     late FakeMessageRepository messageRepo;
 
@@ -950,11 +986,9 @@ void main() {
         ),
         0,
       );
-      expect(
-        messageRepository.ownedAtLookups,
-        <int>[1],
-        reason: 'a physical owner wins at the first generic lifecycle lookup',
-      );
+      expect(messageRepository.ownedAtLookups, <int>[
+        1,
+      ], reason: 'a physical owner wins at the first generic lifecycle lookup');
       expect(
         p2pService.storeInInboxCallCount,
         0,
@@ -1056,11 +1090,9 @@ void main() {
         2,
         reason: 'the list-load lookup and then the pre-egress owner barrier',
       );
-      expect(
-        editRepository.ownedAtLookups,
-        <int>[2],
-        reason: 'only the pre-egress lookup could see the physical owner',
-      );
+      expect(editRepository.ownedAtLookups, <int>[
+        2,
+      ], reason: 'only the pre-egress lookup could see the physical owner');
       expect(
         editP2p.storeInInboxCallCount,
         0,

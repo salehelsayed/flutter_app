@@ -583,6 +583,7 @@ class _P2PInboxCoordinator {
       senderPeerId: from,
       messageType: _messageTypeFromEnvelope(envelope),
       relayTimestamp: _normalizeInboxTimestamp(raw['timestamp']),
+      quietRecovery: raw['quietRecovery'] == true,
       envelope: envelope,
       stagedAt: DateTime.now().toUtc().toIso8601String(),
     );
@@ -620,6 +621,7 @@ class _P2PInboxCoordinator {
       senderPeerId: message.from,
       messageType: messageType ?? _messageTypeFromEnvelope(message.content),
       relayTimestamp: _normalizeInboxTimestamp(message.timestamp),
+      quietRecovery: message.quietRecovery,
       envelope: message.content,
       stagedAt: DateTime.now().toUtc().toIso8601String(),
     );
@@ -693,6 +695,7 @@ class _P2PInboxCoordinator {
       timestamp: message.timestamp,
       isIncoming: message.isIncoming,
       transport: message.transport,
+      quietRecovery: message.quietRecovery,
     );
   }
 

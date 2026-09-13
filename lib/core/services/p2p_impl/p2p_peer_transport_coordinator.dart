@@ -126,6 +126,7 @@ class _P2PPeerTransportCoordinator {
 
   DateTime? _lastNetworkRewarmAt;
   bool _localDiscoveryActive = false;
+  Future<void>? _localDiscoveryStartFuture;
   int? _resolvedAdvertQuicPort;
   int? _resolvedAdvertTcpPort;
   bool _localNetworkProven = false;
@@ -171,32 +172,39 @@ class _P2PPeerTransportCoordinator {
     await _startLocalDiscovery(localPeerId);
   }
 
-  Future<void> _startLocalDiscovery(String localPeerId) async {
-    if (_disposed || _localDiscoveryActive) return;
+  Future<void> _startLocalDiscovery(String localPeerId) {
+    if (_disposed || _localDiscoveryActive) return Future<void>.value();
+    final pending = _localDiscoveryStartFuture;
+    if (pending != null) return pending;
     final localP2P = _localP2P;
-    if (localP2P == null) return;
+    if (localP2P == null) return Future<void>.value();
 
-    try {
-      final listenAddresses = _port.readNodeState().listenAddresses;
-      await localP2P.start(
-        localPeerId,
-        quicPort: _libp2pListenPort(listenAddresses, quic: true),
-        tcpPort: _libp2pListenPort(listenAddresses, quic: false),
-      );
-      if (_disposed) {
-        try {
-          await localP2P.stop();
-        } catch (_) {
-          // Best-effort compensation for a start that completed after dispose.
+    // Node startup, warm-up and the startup router can all enter before native
+    // mDNS readiness completes. They must await the same start: another start
+    // would replace Bonsoir's broadcaster while the first one is still pending.
+    return _localDiscoveryStartFuture = (() async {
+      try {
+        final listenAddresses = _port.readNodeState().listenAddresses;
+        await localP2P.start(
+          localPeerId,
+          quicPort: _libp2pListenPort(listenAddresses, quic: true),
+          tcpPort: _libp2pListenPort(listenAddresses, quic: false),
+        );
+        if (_disposed) {
+          try {
+            await localP2P.stop();
+          } catch (_) {
+            // Best-effort compensation for a start completed after dispose.
+          }
+          return;
         }
-        return;
+        _setLocalDiscoveryActive();
+      } catch (_) {
+        if (_disposed) return;
+        _setLocalDiscoveryInactive();
+        rethrow;
       }
-      _setLocalDiscoveryActive();
-    } catch (_) {
-      if (_disposed) return;
-      _setLocalDiscoveryInactive();
-      rethrow;
-    }
+    })().whenComplete(() => _localDiscoveryStartFuture = null);
   }
 
   static int? _libp2pListenPort(
@@ -872,6 +880,9 @@ class _P2PPeerTransportCoordinator {
       return LanSendAck.failed;
     }
 
+    // The legacy LAN frame cannot negotiate notification disposition. Quiet
+    // recovery uses the capable Go chat protocol or the durable inbox path.
+    if (quietRecoveryForEnvelope(message)) return LanSendAck.failed;
     final localP2P = _localP2P;
     if (localP2P == null) return LanSendAck.failed;
     return localP2P.sendMessageDetailed(

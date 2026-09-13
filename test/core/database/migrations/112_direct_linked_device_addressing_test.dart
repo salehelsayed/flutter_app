@@ -70,8 +70,8 @@ void main() {
       if (db.isOpen) await db.close();
     });
 
-    expect(currentIdentityDatabaseVersion, 118);
-    expect(await _userVersion(db), 118);
+    expect(currentIdentityDatabaseVersion, 119);
+    expect(await _userVersion(db), currentIdentityDatabaseVersion);
 
     // Registered exactly once in both registries, immediately after v111.
     for (final registry in <List<ProductionMigrationEntry>>[
@@ -124,7 +124,7 @@ void main() {
     await runDirectLinkedDeviceAddressingMigration(db);
     await runDirectLinkedDeviceAddressingMigration(db);
     await _expectExactSchema(db);
-    expect(await _userVersion(db), 118);
+    expect(await _userVersion(db), currentIdentityDatabaseVersion);
 
     // Stage one real binding, then prove reopen preserves it and that v112
     // is a one-way floor.
@@ -158,7 +158,7 @@ void main() {
         onDowngrade: onDatabaseVersionChangeError,
       ),
     );
-    expect(await _userVersion(db), 118);
+    expect(await _userVersion(db), currentIdentityDatabaseVersion);
     expect(
       await db.query('direct_contact_device_bindings', orderBy: 'device_id'),
       snapshot,
@@ -189,7 +189,7 @@ void main() {
         onDowngrade: onDatabaseVersionChangeError,
       ),
     );
-    expect(await _userVersion(db), 118);
+    expect(await _userVersion(db), currentIdentityDatabaseVersion);
     expect(
       await db.query('direct_contact_device_bindings', orderBy: 'device_id'),
       snapshot,
@@ -213,6 +213,13 @@ List<Map<String, Object?>> _withoutNullV113Columns(
 ) => rows
     .map((row) {
       final projected = Map<String, Object?>.from(row);
+      if (projected.containsKey('quiet_recovery')) {
+        expect(
+          projected.remove('quiet_recovery'),
+          0,
+          reason: 'v119 does not infer quiet intent for historical rows',
+        );
+      }
       for (final column in _v113Columns) {
         expect(
           projected.remove(column),

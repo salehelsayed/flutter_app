@@ -46,6 +46,35 @@ class MknoonFirebaseMessagingServiceTest {
 
     @Test
     @Config(sdk = [33])
+    fun quietRecoverySchedulesDurablyWithoutCardOrFlutterFireDuplication() {
+        val store = DroppedPushRecoveryStore(context)
+        store.setCurrentBinding("installation-a/account-a", recoveryWorkEnabled = true)
+        val delegated = mutableListOf<RemoteMessage>()
+        val fixedSchedules = mutableListOf<DroppedPushRecoveryStore.PendingRecovery>()
+        val deletedSchedules = mutableListOf<DroppedPushRecoveryStore.PendingRecovery>()
+        val service = classifierService(delegated, fixedSchedules, deletedSchedules)
+        val data = mapOf("v" to "1", "w" to "1", "quietRecovery" to "1")
+
+        service.onMessageReceived(dataMessage(data))
+
+        assertTrue(delegated.isEmpty())
+        assertEquals(1, fixedSchedules.size)
+        assertEquals(listOf(1L), service.warmSignals)
+        assertNotNull(store.pendingRecovery())
+        assertTrue(context.getSystemService(NotificationManager::class.java).activeNotifications.isEmpty())
+        val receiver = RecordingFirebaseMessagingReceiver()
+        receiver.onReceive(context, messageIntent(data))
+        assertTrue(receiver.delegated.isEmpty())
+        assertFalse(MknoonFirebaseMessagingService.isExactQuietRecoveryWake(
+            notificationBearingMessage(data),
+        ))
+        assertFalse(MknoonFirebaseMessagingService.isExactQuietRecoveryWake(
+            dataMessage(data + ("quietRecovery" to "true")),
+        ))
+    }
+
+    @Test
+    @Config(sdk = [33])
     fun testTC37501ExactFixedWakeInterceptsAndAllOtherShapesDelegateOnce() {
         shadowOf(context as android.app.Application)
             .grantPermissions(Manifest.permission.POST_NOTIFICATIONS)

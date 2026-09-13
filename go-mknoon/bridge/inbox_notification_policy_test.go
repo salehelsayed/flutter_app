@@ -50,18 +50,25 @@ func TestInboxStoreNotificationPolicyReachesRelay(t *testing.T) {
 		name       string
 		protected  bool
 		suppress   bool
+		quiet      bool
 		mediaBound bool
 	}{
 		{name: "legacy_default"},
 		{name: "legacy_historical", suppress: true},
+		{name: "legacy_quiet", quiet: true},
 		{name: "protected_default", protected: true},
 		{name: "protected_historical", protected: true, suppress: true},
+		{name: "protected_quiet", protected: true, quiet: true},
+		{name: "media_quiet", protected: true, quiet: true, mediaBound: true},
 		{name: "media_historical", protected: true, suppress: true, mediaBound: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			input := map[string]interface{}{
 				"toPeerId": relay.ID().String(), "message": envelope,
 				"timeoutMs": 1000, "wakeToken": "recipient-issued-token",
+			}
+			if tc.quiet {
+				input["quietRecovery"] = true
 			}
 			if tc.suppress {
 				input["suppressNotification"] = true
@@ -77,12 +84,20 @@ func TestInboxStoreNotificationPolicyReachesRelay(t *testing.T) {
 			assertOk(t, parseJSON(t, InboxStore(string(raw))))
 			select {
 			case request := <-requests:
-				if tc.suppress {
+				if tc.suppress || tc.quiet {
 					if request["suppressNotification"] != true {
 						t.Errorf("confirmed historical delivery lost notification suppression: %v", request)
 					}
 				} else if _, exists := request["suppressNotification"]; exists {
 					t.Error("ordinary store must omit the additive notification policy")
+				}
+				if (request["quietRecovery"] == true) != tc.quiet {
+					t.Errorf("quiet recovery intent lost: %v", request)
+				}
+				if !tc.quiet {
+					if _, exists := request["quietRecovery"]; exists {
+						t.Error("normal store must omit quiet recovery")
+					}
 				}
 				if request["message"] != envelope || request["to"] != relay.ID().String() || request["wakeToken"] != "recipient-issued-token" {
 					t.Errorf("notification policy changed immutable custody or wake authorization: %v", request)

@@ -1417,7 +1417,7 @@ final class FlutterWebRtcCallEngine
       throw const CallEngineException(CallEngineErrorCode.closed);
     }
     if (snapshot.connectionState == WebRtcConnectionState.failed) {
-      throw const CallEngineException(CallEngineErrorCode.transportUnavailable);
+      throw const CallEngineException(CallEngineErrorCode.iceConnectionFailed);
     }
     final transport = _mapAdapterTransport(snapshot.transport);
     final relaySelectionProven = switch (transport) {

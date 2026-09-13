@@ -479,6 +479,7 @@ func (n *Node) Start(cfg NodeConfig) (state *NodeState, err error) {
 	}
 
 	h.SetStreamHandler(ChatProtocol, n.handleIncomingMessage)
+	h.SetStreamHandler(QuietRecoveryChatProtocol, n.handleIncomingMessage)
 	h.SetStreamHandler(GroupValidationFeedbackProtocol, n.handleGroupValidationFeedback)
 	if flags.EnableLibp2pLANMedia {
 		h.SetStreamHandler(MediaLANProtocol, n.handleIncomingLANMedia)
@@ -1522,7 +1523,13 @@ func (n *Node) DisconnectPeer(peerIdStr string) error {
 	return h.Network().ClosePeer(pid)
 }
 
+type quietRecoveryContextKey struct{}
+
 func (n *Node) openChatStream(ctx context.Context, h host.Host, pid peer.ID) (network.Stream, error) {
+	if quiet, _ := ctx.Value(quietRecoveryContextKey{}).(bool); quiet {
+		// Negotiation failure must never fall back to the alerting protocol.
+		return h.NewStream(ctx, pid, QuietRecoveryChatProtocol)
+	}
 	if n.openChatStreamHook != nil {
 		return n.openChatStreamHook(ctx, h, pid)
 	}
@@ -1737,6 +1744,12 @@ func (n *Node) sendNow() time.Time {
 }
 
 func (n *Node) SendMessageWithTransport(peerIdStr string, message string, timeoutMs int) (SendMessageResult, error) {
+	return n.SendMessageWithNotificationPolicy(peerIdStr, message, timeoutMs, false)
+}
+
+// SendMessageWithNotificationPolicy preserves the exact encrypted frame and
+// negotiates a separate protocol when the receiver must omit a new alert.
+func (n *Node) SendMessageWithNotificationPolicy(peerIdStr string, message string, timeoutMs int, quietRecovery bool) (SendMessageResult, error) {
 	n.mu.RLock()
 	h := n.host
 	n.mu.RUnlock()
@@ -1766,6 +1779,9 @@ func (n *Node) SendMessageWithTransport(peerIdStr string, message string, timeou
 
 	commandCtx, cancelCommand := context.WithDeadline(n.ctx, deadlines.command)
 	defer cancelCommand()
+	if quietRecovery {
+		commandCtx = context.WithValue(commandCtx, quietRecoveryContextKey{}, true)
+	}
 	prewriteCtx, cancelPrewrite := context.WithDeadline(commandCtx, deadlines.prewrite)
 	defer cancelPrewrite()
 
@@ -2094,6 +2110,10 @@ func (n *Node) handleIncomingMessage(s network.Stream) {
 		"timestamp":  timestamp,
 		"isIncoming": true,
 		"transport":  classifyStreamTransport(s),
+	}
+
+	if s.Protocol() == QuietRecoveryChatProtocol {
+		msgData["quietRecovery"] = true
 	}
 
 	if n.shouldDeferDirectAck(msgBytes) {

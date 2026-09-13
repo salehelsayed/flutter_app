@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:bonsoir/bonsoir.dart';
 import 'package:flutter/foundation.dart'
     show defaultTargetPlatform, visibleForTesting, TargetPlatform;
+import 'package:flutter/services.dart' show PlatformException;
 import 'package:flutter_app/core/local_discovery/local_discovery_service.dart';
 import 'package:flutter_app/core/local_discovery/native_mdns_resolver.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
@@ -237,7 +238,10 @@ class BonsoirDiscoveryService implements LocalDiscoveryService {
     _discovery = _createDiscovery(_serviceType);
     await _discovery!.ready;
     _discoverySub?.cancel();
-    _discoverySub = _discovery!.eventStream!.listen(_handleDiscoveryEvent);
+    _discoverySub = _discovery!.eventStream!.listen(
+      _handleDiscoveryEvent,
+      onError: _handleDiscoveryError,
+    );
     await _discovery!.start();
 
     emitFlowEvent(
@@ -316,6 +320,23 @@ class BonsoirDiscoveryService implements LocalDiscoveryService {
         );
       }
     });
+  }
+
+  void _handleDiscoveryError(Object error) {
+    if (_stopping) return;
+    // iOS can invalidate the native browser while suspended. The existing
+    // resume path replaces it; its error stream must not escape to the zone.
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'LOCAL_MDNS_DISCOVERY_ERROR',
+      details: {
+        'reason': error is PlatformException && error.code == 'discoveryError'
+            ? 'nativeDiscoveryFailure'
+            : 'discoveryStreamFailure',
+        if (error is PlatformException && error.details is int)
+          'nativeCode': error.details,
+      },
+    );
   }
 
   void _handleDiscoveryEvent(BonsoirDiscoveryEvent event) {

@@ -853,7 +853,22 @@ _handleIncomingChatMessageDiagnosed({
   }
 
   // 3. Check for duplicate / same-ID edit update
-  final existingMessage = await messageRepo.getMessage(payload.id);
+  var existingMessage = await messageRepo.getMessage(payload.id);
+  if (message.quietRecovery &&
+      !payload.isEdit &&
+      existingMessage != null &&
+      !existingMessage.quietRecovery &&
+      existingMessage.isIncoming &&
+      existingMessage.contactPeerId == payload.senderPeerId &&
+      existingMessage.senderPeerId == payload.senderPeerId &&
+      existingMessage.timestamp == payload.timestamp) {
+    if (messageRepo is! IncomingQuietRecoveryRepository) {
+      throw StateError('quiet recovery persistence unavailable');
+    }
+    await (messageRepo as IncomingQuietRecoveryRepository)
+        .markIncomingQuietRecovery(existingMessage);
+    existingMessage = await messageRepo.getMessage(payload.id);
+  }
   final shouldMaterializeDeferredEdit =
       existingMessage != null &&
       !payload.isEdit &&
@@ -1126,7 +1141,9 @@ _handleIncomingChatMessageDiagnosed({
           transport: transport,
         );
   var conversationMessage = _seedIncomingPrivateMediaLifecycle(
-    candidateMessage,
+    candidateMessage.copyWith(
+      quietRecovery: candidateMessage.quietRecovery || message.quietRecovery,
+    ),
     // A terminal replay must qualify against the DB with the FRESH wire
     // candidate. Seeding the durable terminal checkpoint into it would make
     // the staging shape invalid and the dedicated terminal branch

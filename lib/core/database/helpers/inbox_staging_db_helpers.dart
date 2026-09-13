@@ -30,6 +30,23 @@ Future<int> dbInsertInboxStagingEntry(
       row,
       conflictAlgorithm: ConflictAlgorithm.ignore,
     );
+    if (row['quiet_recovery'] == 1) {
+      // An exact duplicate may upgrade alert suppression, while preserving
+      // the original staging/ACK ownership and immutable encrypted bytes.
+      await db.update(
+        'inbox_staging_entries',
+        <String, Object?>{'quiet_recovery': 1},
+        where:
+            'entry_id = ? AND owner_peer_id = ? AND sender_peer_id = ? '
+            'AND envelope = ?',
+        whereArgs: <Object?>[
+          entryId,
+          row['owner_peer_id'],
+          row['sender_peer_id'],
+          row['envelope'],
+        ],
+      );
+    }
 
     emitFlowEvent(
       layer: 'DB',

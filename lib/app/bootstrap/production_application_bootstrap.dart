@@ -1430,6 +1430,8 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
       dbUpdateMessageStatus: (id, status) =>
           dbUpdateMessageStatus(db, id, status),
       dbLoadMessage: (id) => dbLoadMessage(db, id),
+      dbMarkIncomingQuietRecovery: (expected) =>
+          dbMarkIncomingQuietRecovery(db, expected.toMap()),
       dbCountMessagesForContact: (contactPeerId) =>
           dbCountMessagesForContact(db, contactPeerId),
       dbMarkConversationAsRead: (contactPeerId) =>
@@ -5375,6 +5377,7 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
         for (final entry in mediaSiblings) {
           final attempt = await drainOwnedDirectInboxCustodyOutboxEntry(
             entry: entry,
+            automaticRecovery: true,
             custodyRepository: messageRepository,
             storeInAckCustodyInboxDetailed:
                 p2pService.storeInAckCustodyInboxDetailed,
@@ -10332,6 +10335,10 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
         retireIosNseInboxTransport: iosNseTransportAdmissionActive
             ? iosNseInboxTransportProjection.retireAndReadBack
             : null,
+        // Migrated-out startup has already refused account runtime work. Keep
+        // the canonical lease until normal teardown, so a background engine
+        // cannot reopen storage between deletion and secure-key cleanup.
+        eraseLocalAccountDatabase: () => eraseEncryptedDatabase(db),
         accountMigrationRecoverExportPause: () async {
           if (accountMigrationTransferRuntime.hasActiveExportRun) {
             return false;

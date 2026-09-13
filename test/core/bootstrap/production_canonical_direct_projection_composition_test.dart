@@ -43,6 +43,21 @@ const _physicalPeerId = 'physical-direct-correlation';
 void main() {
   sqfliteFfiInit();
 
+  test(
+    'quiet recovered message retires durable display without an OS effect',
+    () async {
+      final harness = await _DurableDirectProjectionHarness.create(
+        messageId: 'three-day-recovery',
+        quietRecovery: true,
+      );
+      addTearDown(harness.dispose);
+      await harness.composition.owner.retryNow();
+      await harness.composition.owner.retryNow();
+      expect(harness.service.shown, isEmpty);
+      expect(harness.displayOutbox.entry, isNull);
+    },
+  );
+
   test('TC-393-02 production wires exact generation cancellation', () async {
     final service = _GenerationNotificationService(
       const ConversationNotificationContentMetadata(
@@ -1504,6 +1519,22 @@ final class _RemoteAdoptionNotificationService extends FakeNotificationService
     if (!terminal) {
       return const DurableLocalNotificationEffectResult.retryable();
     }
+    // Exercise the production context's final canonical policy before the
+    // fake native effect, just as the real durable effect boundary does.
+    final canonical = await durableEffectContext
+        .readFinalCanonicalDisposition();
+    if (canonical ==
+        DurableLocalNotificationCanonicalDisposition.suppressedPolicy) {
+      return DurableLocalNotificationEffectResult(
+        disposition: DurableLocalNotificationEffectDisposition.suppressedPolicy,
+        receipt: DurableLocalNotificationEffectReceipt(
+          eventCorrelation: durableEffectContext.eventCorrelation,
+          recordRevision: 7,
+          presentationState:
+              LocalNotificationPresentationState.suppressedPolicy,
+        ),
+      );
+    }
     var enteredNative = false;
     if (!durableEffectContext.remotePresentationEstablished) {
       enteredNative = await publishNative(
@@ -1643,6 +1674,7 @@ final class _DurableDirectProjectionHarness {
     required String messageId,
     String? reactionId,
     String? messageText,
+    bool quietRecovery = false,
     List<MediaAttachment> attachments = const <MediaAttachment>[],
   }) async {
     const timestamp = '2026-08-16T12:30:00.000Z';
@@ -1725,7 +1757,7 @@ final class _DurableDirectProjectionHarness {
           id: messageId,
           timestamp: timestamp,
           incoming: reactionId == null,
-        ).copyWith(text: messageText),
+        ).copyWith(text: messageText, quietRecovery: quietRecovery),
       ]);
     final contacts = FakeContactRepository()
       ..seed(const <ContactModel>[

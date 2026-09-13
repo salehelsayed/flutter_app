@@ -1,3 +1,5 @@
+import 'package:flutter_app/core/notifications/automatic_recovery_notification_policy.dart';
+import 'package:clock/clock.dart';
 import 'dart:async';
 
 import 'package:flutter_app/core/services/inbox_store_outcome.dart';
@@ -187,6 +189,57 @@ final class _InMemoryCustodyRepository
 }
 
 void main() {
+  test(
+    'automatic custody uses original enqueue age despite recent retry and preserves manual alert',
+    () async {
+      final now = DateTime.utc(2026, 9, 12, 9, 50);
+      final repository = _InMemoryCustodyRepository();
+      final old =
+          _entry(
+            'old',
+            lastAttemptAt: now.toIso8601String(),
+            retryCount: 8,
+          ).copyWith(
+            createdAt: now.subtract(const Duration(days: 3)).toIso8601String(),
+            updatedAt: now.toIso8601String(),
+          );
+      final boundary = _entry('boundary').copyWith(
+        createdAt: now.subtract(const Duration(hours: 24)).toIso8601String(),
+      );
+      repository.seed(old, messageStatus: 'failed');
+      repository.seed(boundary, messageStatus: 'failed');
+      final policies = <String, bool>{};
+      await withClock(
+        Clock.fixed(now),
+        () => drainDirectInboxCustodyOutbox(
+          custodyRepository: repository,
+          storeInAckCustodyInboxDetailed:
+              (peer, wire, {required custodyKind, timeoutMs}) async {
+                policies[wire] = isQuietAutomaticRecovery;
+                return const InboxStoreOutcome(status: InboxStoreStatus.failed);
+              },
+        ),
+      );
+      expect(policies, {old.wireEnvelope: true, boundary.wireEnvelope: false});
+      expect(repository.rows.length, 2);
+      expect(repository.messages[old.messageId]!.status, 'failed');
+      await drainDirectInboxCustodyOutboxForMessage(
+        custodyRepository: repository,
+        recipientPeerId: old.recipientPeerId,
+        messageId: old.messageId,
+        storeInAckCustodyInboxDetailed:
+            (peer, wire, {required custodyKind, timeoutMs}) async {
+              expect(isQuietAutomaticRecovery, false);
+              expect(wire, old.wireEnvelope);
+              return const InboxStoreOutcome(
+                status: InboxStoreStatus.stored,
+                custodyContract: ackOrExpiryInboxCustodyContract,
+              );
+            },
+      );
+    },
+  );
+
   test(
     'TC-347-05b media v108 retires only on envelope expiry at or before blob bound',
     () async {

@@ -82,7 +82,7 @@ dbApplyIncomingOrdinaryTextMutation(
       );
     }
 
-    final current = currentRows.single;
+    var current = currentRows.single;
     if (!_sameIncomingOrdinaryTextAuthority(current, incomingRow)) {
       return DbIncomingOrdinaryTextMutationResult(
         outcome: IncomingOrdinaryTextMutationOutcome.unauthorized,
@@ -131,6 +131,17 @@ dbApplyIncomingOrdinaryTextMutation(
 
     switch (kind) {
       case IncomingOrdinaryTextMutationKind.initial:
+        if (incomingRow['quiet_recovery'] == 1 &&
+            current['quiet_recovery'] != 1 &&
+            current['timestamp'] == incomingRow['timestamp']) {
+          await txn.update(
+            'messages',
+            <String, Object?>{'quiet_recovery': 1},
+            where: 'id = ?',
+            whereArgs: <Object?>[messageId],
+          );
+          current = <String, Object?>{...current, 'quiet_recovery': 1};
+        }
         if (_nonBlankDatabaseString(current['edited_at'])) {
           if (!_nonBlankDatabaseString(current['hidden_at'])) {
             return DbIncomingOrdinaryTextMutationResult(
@@ -526,6 +537,29 @@ const _custodyOwnedParentTransportColumns = <String>[
 ];
 
 /// Inserts a message into the database.
+Future<void> dbMarkIncomingQuietRecovery(
+  Database db,
+  Map<String, Object?> expected,
+) async {
+  if (expected['is_incoming'] != 1) {
+    throw StateError('quiet recovery requires incoming authority');
+  }
+  await db.update(
+    'messages',
+    <String, Object?>{'quiet_recovery': 1},
+    where:
+        'id = ? AND contact_peer_id = ? AND sender_peer_id = ? '
+        'AND timestamp = ? AND is_incoming = 1',
+    whereArgs: <Object?>[
+      expected['id'],
+      expected['contact_peer_id'],
+      expected['sender_peer_id'],
+      expected['timestamp'],
+    ],
+  );
+}
+
+/// Inserts a message into the database.
 Future<void> dbInsertMessage(Database db, Map<String, Object?> row) async {
   final id = row['id'] as String? ?? '';
 
@@ -572,6 +606,9 @@ Future<void> dbInsertMessage(Database db, Map<String, Object?> row) async {
       }
       if (existingRows.isNotEmpty) {
         final existing = existingRows.single;
+        if (existing['quiet_recovery'] == 1) {
+          merged['quiet_recovery'] = 1;
+        }
         final existingIsOutgoing =
             ((existing['is_incoming'] as num?)?.toInt() ?? 0) == 0;
         final existingUserTerminal =
@@ -3890,24 +3927,20 @@ dbCommitOutgoingDirectPrivateWireEnvelopeFanoutWithInboxCustody(
         )) {
           throw const _OutgoingDirectPrivateInboxCustodyRollback();
         }
-        await txn.insert(
-          _directInboxCustodyOutboxTable,
-          <String, Object?>{
-            'recipient_peer_id': binding.recipientPeerId,
-            'message_id': messageId,
-            'incarnation_id': incarnation,
-            'wire_envelope': binding.wireEnvelope,
-            'retry_count': 0,
-            'last_attempt_at': null,
-            'last_error_code': null,
-            'media_blob_manifest_hash': binding.wireMediaBlobManifestHash,
-            'media_blob_expires_at_ms': binding.wireMediaBlobExpiresAtMs,
-            'contact_account_peer_id': contactAccountPeerId,
-            'created_at': createdAt,
-            'updated_at': createdAt,
-          },
-          conflictAlgorithm: ConflictAlgorithm.abort,
-        );
+        await txn.insert(_directInboxCustodyOutboxTable, <String, Object?>{
+          'recipient_peer_id': binding.recipientPeerId,
+          'message_id': messageId,
+          'incarnation_id': incarnation,
+          'wire_envelope': binding.wireEnvelope,
+          'retry_count': 0,
+          'last_attempt_at': null,
+          'last_error_code': null,
+          'media_blob_manifest_hash': binding.wireMediaBlobManifestHash,
+          'media_blob_expires_at_ms': binding.wireMediaBlobExpiresAtMs,
+          'contact_account_peer_id': contactAccountPeerId,
+          'created_at': createdAt,
+          'updated_at': createdAt,
+        }, conflictAlgorithm: ConflictAlgorithm.abort);
       }
 
       final finalParents = await txn.query(

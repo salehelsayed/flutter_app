@@ -159,13 +159,57 @@ void main() {
     );
   }
 
+  for (final recovers in [false, true]) {
+    test(
+      'initial native ICE failure ${recovers ? 'recovers with later candidates' : 'expires at the original deadline'}',
+      () => _guarded(() async {
+        final h = _Harness();
+        try {
+          final b = await h.start();
+          final deadline = h.deadlines.active.single;
+          b.native.state = WebRtcConnectionState.failed;
+          b.native.emit(WebRtcConnectionState.connected);
+          await _settle();
+          expect(h.coordinator.activeSession?.state, CallState.negotiating);
+          expect(h.failures, isEmpty);
+          expect(h.deadlines.active, [deadline]);
+          expect(b.native.closeCalls, 0);
+          expect(
+            b.executor.toDiagnosticMap()['lastFailureCode'],
+            'iceConnectionFailed',
+          );
+          if (recovers) {
+            b.native.state = WebRtcConnectionState.connected;
+            b.native.ready = true;
+            b.polls.fireNext();
+            await _settle();
+            expect(h.coordinator.activeSession?.state, CallState.connected);
+            expect(h.mediaConnected, hasLength(1));
+            await h.hangup();
+          } else {
+            h.deadlines.fireNext();
+            await _settle();
+            expect(h.coordinator.activeSession, isNull);
+            expect(
+              h.coordinator.lastSnapshot?.endReason,
+              CallEndReason.mediaFailed,
+            );
+            expect(h.mediaConnected, isEmpty);
+          }
+          h.expectReleased(b);
+        } finally {
+          await h.close();
+        }
+      }),
+    );
+  }
+
   for (final fatal in [
     'transportUnavailable',
     'configurationRejected',
     'closed',
     'relayPolicyViolation',
     'unexpected',
-    'failedSnapshot',
     'closedSnapshot',
   ]) {
     test(
@@ -179,8 +223,6 @@ void main() {
               b.native.transport = WebRtcTransportClass.direct;
             case 'unexpected':
               b.native.snapshotError = StateError(_unsafeText);
-            case 'failedSnapshot':
-              b.native.state = WebRtcConnectionState.failed;
             case 'closedSnapshot':
               b.native.snapshotClosed = true;
             default:
@@ -208,7 +250,6 @@ void main() {
           );
           expect(diagnostics['lastFailureCode'], switch (fatal) {
             'unexpected' => 'unexpected',
-            'failedSnapshot' => 'transportUnavailable',
             'closedSnapshot' => 'closed',
             _ => fatal,
           });

@@ -623,6 +623,14 @@ Future<List<String>> captureDebugPrintedLines(
   return printed;
 }
 
+class QuietRecoveryMessageRepository extends FakeMessageRepository
+    implements IncomingQuietRecoveryRepository {
+  @override
+  Future<void> markIncomingQuietRecovery(ConversationMessage expected) async {
+    _existingMessages[expected.id] = expected.copyWith(quietRecovery: true);
+  }
+}
+
 void main() {
   late FakeContactRepository contactRepo;
   late FakeMessageRepository messageRepo;
@@ -1410,6 +1418,64 @@ void main() {
   });
 
   group('handleIncomingChatMessage', () {
+    test(
+      'quiet duplicate suppresses pending display without rewriting content or read state',
+      () async {
+        messageRepo = QuietRecoveryMessageRepository();
+        final incoming = buildP2PMessage(buildValidChatJson());
+        await handleIncomingChatMessage(
+          message: incoming,
+          messageRepo: messageRepo,
+          contactRepo: contactRepo,
+        );
+        ConversationMessage? promoted;
+        final (result, _, _) = await handleIncomingChatMessage(
+          message: incoming.copyWith(quietRecovery: true),
+          messageRepo: messageRepo,
+          contactRepo: contactRepo,
+          promoteNotificationDisplayCustody: (message) async =>
+              promoted = message,
+        );
+        expect(result, HandleChatMessageResult.duplicate);
+        expect(promoted!.quietRecovery, isTrue);
+        expect(promoted!.readAt, isNull);
+        expect(promoted!.text, 'Hello from sender!');
+        expect(messageRepo.saved, hasLength(1));
+      },
+    );
+    test(
+      'three-day quiet recovery commits original content and unread state',
+      () async {
+        final received = buildP2PMessage(
+          buildValidChatJson(timestamp: '2026-09-09T09:28:00.000Z'),
+        ).copyWith(quietRecovery: true);
+        final (result, committed, _) = await handleIncomingChatMessage(
+          message: received,
+          messageRepo: messageRepo,
+          contactRepo: contactRepo,
+        );
+        expect(result, HandleChatMessageResult.chatMessage);
+        expect(committed!.quietRecovery, isTrue);
+        expect(committed.timestamp, '2026-09-09T09:28:00.000Z');
+        expect(committed.text, 'Hello from sender!');
+        expect(committed.readAt, isNull);
+        expect(
+          (await messageRepo.getMessage(committed.id))!.quietRecovery,
+          isTrue,
+        );
+        final (replayResult, _, _) = await handleIncomingChatMessage(
+          message: received.copyWith(quietRecovery: false),
+          messageRepo: messageRepo,
+          contactRepo: contactRepo,
+        );
+        expect(replayResult, HandleChatMessageResult.duplicate);
+        expect(
+          (await messageRepo.getMessage(committed.id))!.quietRecovery,
+          isTrue,
+          reason: 'a delayed normal duplicate cannot re-enable an old alert',
+        );
+      },
+    );
     test(
       'private receive durably saves policy and available state before attachment work',
       () async {

@@ -45,6 +45,11 @@ open class MknoonFirebaseMessagingService : FlutterFirebaseMessagingService() {
             return data.size == 2 && data["v"] == "1" && data["w"] == "1"
         }
 
+        internal fun isExactQuietRecoveryWake(message: RemoteMessage): Boolean =
+            message.notification == null && message.data.size == 3 &&
+                message.data["v"] == "1" && message.data["w"] == "1" &&
+                message.data["quietRecovery"] == "1"
+
         internal fun cancelRecoveryNotification(context: android.content.Context) {
             context.getSystemService(NotificationManager::class.java).cancel(
                 RECOVERY_NOTIFICATION_TAG,
@@ -104,6 +109,15 @@ open class MknoonFirebaseMessagingService : FlutterFirebaseMessagingService() {
             // `w=call` reserves this namespace even when the rest of the
             // payload is malformed. It must never enter ordinary FlutterFire
             // staging, fixed-wake recovery, or user-visible recovery cards.
+            return
+        }
+        if (isExactQuietRecoveryWake(message)) {
+            // Keep the durable scheduling/ACK boundary, with no generic card.
+            // A mixed mailbox still applies each row's own alert disposition.
+            val committed = productionRecoverySeam().recordGenericRecoveryTrigger(
+                DroppedPushRecoveryStore.TriggerKind.FIXED_WAKE,
+            )
+            committed?.let { signalWarmRuntimeRecovery(it.generation) }
             return
         }
         if (!isExactFixedOpaqueWake(message)) {

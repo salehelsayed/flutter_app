@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'bridge.dart';
+import '../notifications/automatic_recovery_notification_policy.dart';
 import '../local_discovery/lan_address_classifier.dart';
 import '../utils/flow_event_emitter.dart';
 
@@ -1086,6 +1087,7 @@ Future<Map<String, dynamic>> callP2PInboxStore(
     details: {'toPeerId': toPeerId},
   );
 
+  final quietRecovery = quietRecoveryForEnvelope(message);
   final request = {
     'cmd': 'inbox:store',
     'payload': {
@@ -1096,7 +1098,8 @@ Future<Map<String, dynamic>> callP2PInboxStore(
       'custodyContract': ?custodyContract,
       'custodyKind': ?custodyKind,
       'custodyExpiresAtOrBeforeMs': ?custodyExpiresAtOrBeforeMs,
-      if (suppressNotification) 'suppressNotification': true,
+      if (suppressNotification || quietRecovery) 'suppressNotification': true,
+      if (quietRecovery) 'quietRecovery': true,
     },
   };
 
@@ -1975,7 +1978,12 @@ Future<Map<String, dynamic>> callP2PMessageSend(
 
   final request = {
     'cmd': 'message:send',
-    'payload': {'peerId': peerId, 'message': message, 'timeoutMs': ?timeoutMs},
+    'payload': {
+      'peerId': peerId,
+      'message': message,
+      'timeoutMs': ?timeoutMs,
+      if (quietRecoveryForEnvelope(message)) 'quietRecovery': true,
+    },
   };
 
   // F5: Go self-bounds the send via SetDeadline, but a MethodChannel/gomobile

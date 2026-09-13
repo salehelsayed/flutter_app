@@ -7,6 +7,10 @@ class ChatMessage {
   final bool isIncoming;
   final String? transport;
 
+  /// Authenticated transport disposition for an old automatic recovery.
+  /// This sidecar never changes the original encrypted envelope.
+  final bool quietRecovery;
+
   /// WIRE CONTRACT (Go->Dart, doc 118 / plan 120 G5): set by Go on an incoming
   /// direct `message:received` event (go-mknoon/node/node.go, attach site) when
   /// `EnableDeferredDirectAck` is true (default). Drives the deferred-ack->notify
@@ -32,6 +36,7 @@ class ChatMessage {
     required this.timestamp,
     required this.isIncoming,
     this.transport,
+    this.quietRecovery = false,
     this.confirmNonce,
     this.predecryptedText,
   });
@@ -57,6 +62,7 @@ class ChatMessage {
       timestamp: timestamp,
       isIncoming: json['isIncoming'] as bool? ?? true,
       transport: json['transport']?.toString(),
+      quietRecovery: json['quietRecovery'] == true,
       // Reads the shared `confirmNonce` wire key produced by Go (see the field
       // doc above + go-mknoon/node/node.go). Must stay byte-identical to Go's
       // msgData["confirmNonce"]; the existing parser pin is in chat_message_test.dart.
@@ -72,6 +78,7 @@ class ChatMessage {
       'timestamp': timestamp,
       'isIncoming': isIncoming,
       if (confirmNonce != null) 'confirmNonce': confirmNonce,
+      if (quietRecovery) 'quietRecovery': true,
     };
   }
 
@@ -82,6 +89,7 @@ class ChatMessage {
     String? timestamp,
     bool? isIncoming,
     String? transport,
+    bool? quietRecovery,
     String? confirmNonce,
     String? predecryptedText,
   }) {
@@ -92,6 +100,7 @@ class ChatMessage {
       timestamp: timestamp ?? this.timestamp,
       isIncoming: isIncoming ?? this.isIncoming,
       transport: transport ?? this.transport,
+      quietRecovery: quietRecovery ?? this.quietRecovery,
       confirmNonce: confirmNonce ?? this.confirmNonce,
       predecryptedText: predecryptedText ?? this.predecryptedText,
     );

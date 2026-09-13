@@ -90,6 +90,7 @@ type PushService struct {
 	journalGroupMessageProviderAttempt groupMessageProviderAttemptJournal
 	groupMessageDispatchAdmission      groupMessageDispatchAdmissionBackend
 	directMessageDispatchAdmission     messageDispatchAdmissionBackend
+	directQuietRecovery                directQuietRecoveryBackend
 }
 
 type pushMessageFactory func() *messaging.Message
@@ -495,6 +496,17 @@ func (ps *PushService) sendPushRouteThroughGateway(
 		)
 	}
 
+	if admissionIdentity != nil && admissionIdentity.direct && ps.directQuietRecovery != nil {
+		unlock := lockDirectRecovery(*admissionIdentity)
+		defer unlock()
+		quiet, err := ps.directQuietRecovery.DirectQuietRecovery(ctx, admissionIdentity.storageKey())
+		if err != nil {
+			return err
+		}
+		if quiet {
+			return errPushDeliverySuppressed
+		}
+	}
 	var admissionLease *messageDispatchAdmissionLease
 	var admissionBackend messageDispatchAdmissionBackend
 	directAdmission := admissionIdentity != nil && admissionIdentity.direct
@@ -2483,6 +2495,8 @@ type inboxMessage struct {
 	// Sender-requested notification policy for exact delivered-original recovery;
 	// never part of the immutable stored envelope or retrieval/ACK contract.
 	SuppressNotification bool `json:"-"`
+	// Durable transport disposition; the opaque encrypted Message is unchanged.
+	QuietRecovery bool `json:"quietRecovery,omitempty"`
 }
 
 func ensureInboxMessageID(entry inboxMessage) inboxMessage {
@@ -2550,14 +2564,7 @@ func (is *InboxStore) WakeOutcomeAdmissionEnabled() bool {
 
 // NewInboxStore creates an InboxStore with an in-memory backend.
 func NewInboxStore(push *PushService) *InboxStore {
-	return &InboxStore{
-		backend:                    newMemoryInboxBackend(),
-		push:                       push,
-		capacity:                   maxMessagesPerPeer,
-		now:                        time.Now,
-		ackCustodyAdmissionEnabled: loadAckCustodyAdmissionEnabledFromEnv(),
-		wakeTokens:                 newMemoryWakeTokenStore(),
-	}
+	return NewInboxStoreWithBackendAndCapacity(newMemoryInboxBackend(), push, maxMessagesPerPeer)
 }
 
 // NewInboxStoreWithBackend creates an InboxStore with a custom backend.
@@ -2572,6 +2579,9 @@ func NewInboxStoreWithBackendAndCapacity(
 ) *InboxStore {
 	if capacity <= 0 {
 		capacity = maxMessagesPerPeer
+	}
+	if push != nil {
+		push.directQuietRecovery, _ = backend.(directQuietRecoveryBackend)
 	}
 	return &InboxStore{
 		backend:                    backend,
@@ -2623,6 +2633,11 @@ type wakeOutcomePreflightFallback struct {
 }
 
 func (is *InboxStore) Store(toPeerId string, entry inboxMessage) (InboxStoreResult, error) {
+	priorQuiet, unlock, policyErr := is.prepareDirectRecoveryStore(toPeerId, &entry)
+	defer unlock()
+	if policyErr != nil {
+		return "", policyErr
+	}
 	entry = ensureInboxMessageID(entry)
 	result, admissionStatus, admission, preflightFallback, handled, err := is.storeWithWakeOutcome(
 		toPeerId,
@@ -2682,6 +2697,9 @@ func (is *InboxStore) Store(toPeerId string, entry inboxMessage) (InboxStoreResu
 	}
 	is.rememberDirectNotificationCustodyOnly(toPeerId, entry, result)
 	if result == InboxStoreResultDuplicate {
+		if priorQuiet && !entry.QuietRecovery {
+			is.launchStoredDirectPush(toPeerId, entry)
+		}
 		// Duplicate — do not fire push notification.
 		log.Printf("[INBOX] Duplicate message for %s from %s — skipped",
 			toPeerId[:min(20, len(toPeerId))],
@@ -2733,6 +2751,13 @@ func (is *InboxStore) storeWithWakeOutcome(
 		return "", zeroStatus, wakeOutcomeAdmission{}, wakeOutcomePreflightFallback{}, false, nil
 	}
 
+	if identity, valid := newDirectMessageDispatchAdmissionIdentity(toPeerID, entry.From, entry.Message); valid {
+		if backend, ok := is.backend.(directQuietRecoveryBackend); ok {
+			if quiet, err := backend.DirectQuietRecovery(context.Background(), identity.storageKey()); err != nil || quiet {
+				return "", zeroStatus, wakeOutcomeAdmission{}, wakeOutcomePreflightFallback{}, false, nil
+			}
+		}
+	}
 	producer, requiredCapability, verifiedEventKey, eligible := is.directWakeOutcomeProducer(toPeerID, entry)
 	if !eligible {
 		return "", zeroStatus, wakeOutcomeAdmission{}, wakeOutcomePreflightFallback{}, false, nil
@@ -2793,7 +2818,13 @@ func (is *InboxStore) preflightDirectWakeOutcome(
 			androidDraft = buildGroupPushMessage("", metadata.GroupID, metadata.SenderTransportPeerID, metadata.MessageID, entry.Message)
 		}
 	}
-	if admission, admitted := is.push.newAndroidRichAdmission(toPeerID, *route, androidDraft, entry.Timestamp, directWakeOutcomeExpiryMs(entry)); admitted {
+	directIdentity := ""
+	if producer == wakeOutcomeProducerDirectMessage {
+		if identity, valid := newDirectMessageDispatchAdmissionIdentity(toPeerID, entry.From, entry.Message); valid {
+			directIdentity = identity.storageKey()
+		}
+	}
+	if admission, admitted := is.push.newAndroidRichAdmission(toPeerID, *route, androidDraft, entry.Timestamp, directWakeOutcomeExpiryMs(entry), directIdentity); admitted {
 		return fallback, admission, true
 	}
 	if producer == wakeOutcomeProducerGroupMessage {
@@ -2832,7 +2863,7 @@ func (is *InboxStore) directWakeOutcomeProducer(
 	toPeerID string,
 	entry inboxMessage,
 ) (wakeOutcomeProducerKind, string, string, bool) {
-	if is == nil || is.push == nil || directNotificationCustodyOnly(toPeerID, entry) {
+	if is == nil || is.push == nil || entry.QuietRecovery || directNotificationCustodyOnly(toPeerID, entry) {
 		return 0, "", "", false
 	}
 	if reaction, recognized, eligible := extractDirectReactionPushMetadata(entry.Message); recognized {
@@ -2889,6 +2920,10 @@ func (is *InboxStore) recordStoredWithoutPush(toPeerId string, entry inboxMessag
 }
 
 func (is *InboxStore) launchStoredDirectPush(toPeerId string, entry inboxMessage) {
+	if entry.QuietRecovery {
+		is.launchQuietRecoveryWake(toPeerId, entry)
+		return
+	}
 	if directNotificationCustodyOnly(toPeerId, entry) {
 		return
 	}
@@ -3058,6 +3093,10 @@ func (is *InboxStore) launchStoredDirectPushAfterPreflight(
 	entry inboxMessage,
 	fallback wakeOutcomePreflightFallback,
 ) {
+	if entry.QuietRecovery {
+		is.launchQuietRecoveryWake(toPeerID, entry)
+		return
+	}
 	if directNotificationCustodyOnly(toPeerID, entry) {
 		return
 	}
@@ -3121,7 +3160,14 @@ func (is *InboxStore) launchDirectPushForWakeAdmission(
 	entry inboxMessage,
 	admission wakeOutcomeAdmission,
 ) {
-	if is == nil || is.push == nil || directNotificationCustodyOnly(toPeerID, entry) {
+	if is == nil || is.push == nil {
+		return
+	}
+	if entry.QuietRecovery {
+		is.launchQuietRecoveryWake(toPeerID, entry)
+		return
+	}
+	if directNotificationCustodyOnly(toPeerID, entry) {
 		return
 	}
 	if len(admission.androidRichMaterial) > 0 {
@@ -4264,6 +4310,7 @@ type inboxRequest struct {
 	WakeToken            string   `json:"wakeToken,omitempty"`
 	WakeTokens           []string `json:"wakeTokens,omitempty"`
 	SuppressNotification bool     `json:"suppressNotification,omitempty"`
+	QuietRecovery        bool     `json:"quietRecovery,omitempty"`
 	// Plan 344 additive selectors. Legacy actions ignore these fields, and old
 	// decoders ignore them under the existing lenient JSON contract.
 	CustodyKind     string `json:"custodyKind,omitempty"`
@@ -4441,6 +4488,7 @@ func HandleInboxStream(
 				Metadata:             req.Metadata,
 				WakeToken:            req.WakeToken, // FDC-09 §12: presented opaque wake-token (transient)
 				SuppressNotification: req.SuppressNotification,
+				QuietRecovery:        req.QuietRecovery,
 			}
 			result, err := inbox.Store(req.To, entry)
 			if err != nil {
@@ -4494,6 +4542,7 @@ func HandleInboxStream(
 				Metadata:             req.Metadata,
 				WakeToken:            req.WakeToken,
 				SuppressNotification: req.SuppressNotification,
+				QuietRecovery:        req.QuietRecovery,
 			}
 			if req.CustodyExpiresAtOrBeforeMs != nil {
 				entry.ExpiresAtMs = *req.CustodyExpiresAtOrBeforeMs

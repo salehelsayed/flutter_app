@@ -564,6 +564,83 @@ func TestAndroidRichRecoveryExpiryPrivacyAndConcurrentClaim(t *testing.T) {
 	})
 }
 
+type wakeClaimConflictEntropy struct {
+	reached chan struct{}
+	release chan struct{}
+}
+
+func (r wakeClaimConflictEntropy) Read(buffer []byte) (int, error) {
+	close(r.reached)
+	<-r.release
+	for index := range buffer {
+		buffer[index] = 1
+	}
+	return len(buffer), nil
+}
+
+func TestWakeOutcomeClaimConflictDoesNotReturnAbortedAuthority(t *testing.T) {
+	f := newAndroidRichTestFixture(t, false)
+	a := richTestAdmission(t, f, "deterministic-claim-conflict")
+	storeRichTestAdmission(t, f, a)
+	member := wakeOutcomeDueMember(richTestPeer, a.correlation)
+	reached, release := make(chan struct{}), make(chan struct{})
+	defer func() {
+		select {
+		case <-release:
+		default:
+			close(release)
+		}
+	}()
+	loser := newRedisWakeOutcomeStore(newTestRedisClient(t, f.redis), f.state.prefix)
+	loser.entropy = wakeClaimConflictEntropy{reached: reached, release: release}
+	type decision struct {
+		claim   wakeOutcomeClaim
+		claimed bool
+		err     error
+	}
+	done := make(chan decision, 1)
+	go func() {
+		claim, claimed, err := loser.claimOne(member, f.now)
+		done <- decision{claim, claimed, err}
+	}()
+	select {
+	case <-reached:
+	case <-time.After(2 * time.Second):
+		t.Fatal("losing worker did not capture its WATCH snapshot")
+	}
+	// The first worker has read pending state and is generating its candidate
+	// token. Commit a second worker's claim before releasing that transaction.
+	winner, won, err := f.state.claimOne(member, f.now)
+	if err != nil || !won {
+		t.Fatalf("winning claim: claimed=%t err=%v", won, err)
+	}
+	close(release)
+	select {
+	case result := <-done:
+		if result.err != nil {
+			t.Fatal(result.err)
+		}
+		if result.claimed || result.claim != (wakeOutcomeClaim{}) {
+			t.Fatalf("aborted WATCH attempt escaped as provider authority: claimed=%t claim=%#v", result.claimed, result.claim)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("losing worker did not finish its WATCH retry")
+	}
+	// Only the committed winner may reach the provider and settle the job.
+	calls := 0
+	f.push.sender = func(context.Context, *messaging.Message) (string, error) {
+		calls++
+		return "accepted", nil
+	}
+	if err := richTestCoordinator(f, f.now).runClaim(context.Background(), winner); err != nil {
+		t.Fatal(err)
+	}
+	if calls != 1 {
+		t.Fatalf("winning provider calls=%d", calls)
+	}
+	requireRichTerminal(t, f, a.correlation)
+}
+
 func TestAndroidRichRecoveryAllCustodyTransactionsFailTogether(t *testing.T) {
 	for _, lane := range []string{"direct", "protected", "group"} {
 		t.Run(lane, func(t *testing.T) {

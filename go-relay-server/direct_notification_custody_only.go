@@ -15,7 +15,7 @@ func directNotificationCustodyOnlyIdentity(
 	recipientPeerID string,
 	entry inboxMessage,
 ) (messageDispatchAdmissionIdentity, bool) {
-	if !entry.SuppressNotification {
+	if !entry.SuppressNotification || entry.QuietRecovery {
 		return messageDispatchAdmissionIdentity{}, false
 	}
 	var envelope map[string]json.RawMessage

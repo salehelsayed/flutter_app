@@ -63,6 +63,7 @@ struct NseInboxRetrievedMessage: Equatable {
   let from: String
   let message: String
   let timestamp: Int64
+  var quietRecovery: Bool = false
 }
 
 struct NseInboxRetrievedPage: Equatable {
@@ -280,7 +281,8 @@ final class NseMailboxWakeCoordinator {
     var messages: [NseInboxRetrievedMessage] = []
     for raw in rawMessages {
       guard let value = raw as? [String: Any],
-            Set(value.keys) == messageKeys,
+            Set(value.keys).subtracting(["quietRecovery"]) == messageKeys,
+            value["quietRecovery"] == nil || exactBool(value["quietRecovery"]) != nil,
             let id = exactString(value["id"], maxBytes: 512),
             let from = exactString(value["from"], maxBytes: 1_024),
             let message = exactString(value["message"], maxBytes: 524_288),
@@ -292,7 +294,8 @@ final class NseMailboxWakeCoordinator {
         id: id,
         from: from,
         message: message,
-        timestamp: timestamp
+        timestamp: timestamp,
+        quietRecovery: exactBool(value["quietRecovery"]) ?? false
       ))
     }
     return NseInboxRetrievedPage(messages: messages, hasMore: hasMore)

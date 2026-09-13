@@ -798,6 +798,12 @@ Future<void> _initializeBackgroundNotifications() async {
 
 @pragma('vm:entry-point')
 Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
+  if (isQuietRecoveryWake(message)) {
+    // No routable notification content. The relay retains the rows until
+    // canonical inbox recovery commits them. Android schedules that recovery
+    // natively; iOS also drains pending custody on its next active runtime.
+    return;
+  }
   if (!kIsWeb && defaultTargetPlatform == TargetPlatform.iOS) {
     // A background FlutterEngine has its own module globals. Reinstall the iOS
     // App Group-backed gate here so its marks and the NSE sidecar live in the
@@ -2071,6 +2077,15 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
   }
 }
 
+/// Only the exact data-only wake may bypass notification fallback handling.
+@visibleForTesting
+bool isQuietRecoveryWake(RemoteMessage message) =>
+    message.notification == null &&
+    message.data.length == 3 &&
+    message.data['v'] == '1' &&
+    message.data['w'] == '1' &&
+    message.data['quietRecovery'] == '1';
+
 final class _BackgroundNotificationClaimOwnershipLost implements Exception {
   const _BackgroundNotificationClaimOwnershipLost();
 }
@@ -2366,6 +2381,7 @@ validateBackgroundDirectNotificationAfterShowInDatabase(
           _trimToNull(message['contact_peer_id']) == peerId &&
           (message['is_incoming'] as num?)?.toInt() == 1;
       if (!canonicalIdentity ||
+          message['quiet_recovery'] == 1 ||
           message['deleted_at'] != null ||
           message['hidden_at'] != null ||
           _isBackgroundDirectPrivateMediaTerminal(

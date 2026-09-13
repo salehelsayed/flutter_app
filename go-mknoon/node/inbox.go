@@ -47,10 +47,11 @@ const (
 
 // InboxMessage represents a message stored in the offline inbox.
 type InboxMessage struct {
-	ID        string `json:"id,omitempty"`
-	From      string `json:"from"`
-	Message   string `json:"message"`
-	Timestamp int64  `json:"timestamp"`
+	ID            string `json:"id,omitempty"`
+	From          string `json:"from"`
+	Message       string `json:"message"`
+	Timestamp     int64  `json:"timestamp"`
+	QuietRecovery bool   `json:"quietRecovery,omitempty"`
 }
 
 type inboxRequest struct {
@@ -81,6 +82,7 @@ type inboxRequest struct {
 	// Sender-confirmed historical delivery may still require immutable relay
 	// custody. This request-only policy omits a new notification, never custody.
 	SuppressNotification bool `json:"suppressNotification,omitempty"`
+	QuietRecovery        bool `json:"quietRecovery,omitempty"`
 	// Plan 344: present only on the additive protected store action. The action
 	// itself selects the contract; this discriminator constrains the two local
 	// custody owners permitted to use it.
@@ -317,6 +319,7 @@ func (n *Node) InboxStoreDetailedWithNotificationPolicy(
 	timeoutMs int,
 	wakeToken string,
 	suppressNotification bool,
+	quietRecovery ...bool,
 ) (InboxStoreOutcome, error) {
 	n.mu.RLock()
 	h := n.host
@@ -372,7 +375,8 @@ func (n *Node) InboxStoreDetailedWithNotificationPolicy(
 			From:                 n.peerId,
 			Message:              message,
 			WakeToken:            wakeToken, // FDC-09 §12 (CV-14): present recipient-issued token; empty => omitted (NET-REL-07)
-			SuppressNotification: suppressNotification,
+			SuppressNotification: suppressNotification || quietRecoveryEnabled(quietRecovery),
+			QuietRecovery:        quietRecoveryEnabled(quietRecovery),
 		}
 
 		reqBytes, err := json.Marshal(req)
@@ -492,6 +496,7 @@ func (n *Node) InboxStoreAckCustodyDetailedWithNotificationPolicy(
 	custodyKind string,
 	custodyExpiresAtOrBeforeMs int64,
 	suppressNotification bool,
+	quietRecovery ...bool,
 ) (InboxStoreOutcome, error) {
 	if custodyExpiresAtOrBeforeMs < 0 ||
 		(custodyExpiresAtOrBeforeMs > 0 && custodyKind != CustodyKindDirectTextV108 && custodyKind != CustodyKindGroupContentV1) {
@@ -501,7 +506,7 @@ func (n *Node) InboxStoreAckCustodyDetailedWithNotificationPolicy(
 	}
 	return n.inboxStoreAckCustodyDetailedWithWakeToken(
 		toPeerID, message, timeoutMs, wakeToken, custodyKind,
-		custodyExpiresAtOrBeforeMs, suppressNotification,
+		custodyExpiresAtOrBeforeMs, suppressNotification, quietRecovery...,
 	)
 }
 
@@ -513,6 +518,7 @@ func (n *Node) inboxStoreAckCustodyDetailedWithWakeToken(
 	custodyKind string,
 	custodyExpiresAtOrBeforeMs int64,
 	suppressNotification bool,
+	quietRecovery ...bool,
 ) (InboxStoreOutcome, error) {
 	if !isSupportedInboxCustodyKind(custodyKind) {
 		return InboxStoreOutcome{ErrorCode: "CUSTODY_INELIGIBLE"},
@@ -544,7 +550,8 @@ func (n *Node) inboxStoreAckCustodyDetailedWithWakeToken(
 		CustodyKind:                custodyKind,
 		CustodyContract:            AckOrExpiryCustodyContract,
 		CustodyExpiresAtOrBeforeMs: custodyExpiresAtOrBeforeMs,
-		SuppressNotification:       suppressNotification,
+		SuppressNotification:       suppressNotification || quietRecoveryEnabled(quietRecovery),
+		QuietRecovery:              quietRecoveryEnabled(quietRecovery),
 	}
 	start := time.Now()
 	var lastErr error
@@ -1357,8 +1364,10 @@ func coalesceAndSortInboxCustodyMessages(messages []InboxMessage) ([]InboxMessag
 			}
 			if message.Timestamp < existing.Timestamp {
 				existing.Timestamp = message.Timestamp
-				byID[message.ID] = existing
 			}
+			// A stale replica must not erase a recovered row's quiet disposition.
+			existing.QuietRecovery = existing.QuietRecovery || message.QuietRecovery
+			byID[message.ID] = existing
 			continue
 		}
 		byID[message.ID] = message
@@ -1960,4 +1969,8 @@ func (n *Node) getRelayInfo(serverAddresses []string) (peer.ID, []ma.Multiaddr, 
 		return "", nil, err
 	}
 	return first.ID, first.Addrs, nil
+}
+
+func quietRecoveryEnabled(value []bool) bool {
+	return len(value) > 0 && value[0]
 }

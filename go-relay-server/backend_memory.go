@@ -99,9 +99,11 @@ func (b *memoryRendezvousBackend) Stats() (namespaces int, totalPeers int) {
 // --- In-memory InboxBackend ---
 
 type memoryInboxBackend struct {
-	mu         sync.Mutex
-	store      map[string][]inboxMessage  // peerId -> messages
-	dedupeKeys map[string]map[string]bool // peerId -> set of direct-inbox dedupe keys
+	quietRecovery             map[string]time.Time
+	quietRecoveryCleanupAfter time.Time
+	mu                        sync.Mutex
+	store                     map[string][]inboxMessage  // peerId -> messages
+	dedupeKeys                map[string]map[string]bool // peerId -> set of direct-inbox dedupe keys
 }
 
 func newMemoryInboxBackend() *memoryInboxBackend {
@@ -122,6 +124,14 @@ func (b *memoryInboxBackend) Store(toPeerId string, entry inboxMessage) (InboxSt
 	dedupeKey := extractDirectInboxDedupeKey(entry.Message)
 	if dedupeKey != "" {
 		if keys, ok := b.dedupeKeys[toPeerId]; ok && keys[dedupeKey] {
+			// Keep the immutable custody while updating exact sender policy.
+			for i := range messages {
+				if messages[i].From == entry.From && messages[i].Message == entry.Message {
+					messages[i].QuietRecovery = entry.QuietRecovery
+					b.store[toPeerId] = messages
+					b.rememberQuietRecoveryLocked(toPeerId, entry)
+				}
+			}
 			// Duplicate — skip store and push.
 			return InboxStoreResultDuplicate, nil
 		}
@@ -141,6 +151,7 @@ func (b *memoryInboxBackend) Store(toPeerId string, entry inboxMessage) (InboxSt
 
 	messages = append(messages, entry)
 	b.store[toPeerId] = messages
+	b.rememberQuietRecoveryLocked(toPeerId, entry)
 
 	// Track the custody identity.
 	if dedupeKey != "" {

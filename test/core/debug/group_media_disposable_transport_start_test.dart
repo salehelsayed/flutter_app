@@ -292,10 +292,8 @@ void main() {
           'lib/debug/debug_e2e_composition_root.dart',
         ).readAsStringSync();
         final wiring = compositionSource;
-        expect(
-          wiring,
-          contains('isAndroidDisposableProfile || isIosDisposableProfile'),
-        );
+        // debug_e2e_composition_root_test.dart covers the profile and authority
+        // policy behavior; this contract checks the nullable root-owned handoff.
         expect(
           wiring,
           contains('if (!activation.suppliesDisposableNodeStart) return null;'),

@@ -1299,45 +1299,188 @@ void main() {
     expect(timers.active, isEmpty);
   });
 
-  test('failure cancels readiness and cannot later connect media', () async {
-    final timers = _ReadinessTimerScheduler();
-    final harness = _Harness(
-      snapshot: _snapshot(CallState.negotiating),
-      mediaReadinessTimerScheduler: timers,
-      maxMediaReadinessSamples: 3,
-    );
-    addTearDown(harness.executor.close);
-    harness.engine.connectionSnapshot = _connectionSnapshot(
-      state: CallConnectionState.connected,
-      ready: false,
-    );
-    harness.engine.emitEvent(_engineEvent(CallConnectionState.connected));
-    await _flushAsync();
-    final staleTimer = timers.active.single;
+  test(
+    'configuration failure cancels readiness and cannot later connect media',
+    () async {
+      final timers = _ReadinessTimerScheduler();
+      final harness = _Harness(
+        snapshot: _snapshot(CallState.negotiating),
+        mediaReadinessTimerScheduler: timers,
+        maxMediaReadinessSamples: 3,
+      );
+      addTearDown(harness.executor.close);
+      harness.engine.connectionSnapshot = _connectionSnapshot(
+        state: CallConnectionState.connected,
+        ready: false,
+      );
+      harness.engine.emitEvent(_engineEvent(CallConnectionState.connected));
+      await _flushAsync();
+      final staleTimer = timers.active.single;
 
-    harness.engine.emitEvent(
-      _engineEvent(
-        CallConnectionState.failed,
-        failureReason: CallFailureReason.transportUnavailable,
-      ),
-    );
-    await _flushAsync();
-    expect(staleTimer.canceled, isTrue);
+      harness.engine.emitEvent(
+        _engineEvent(
+          CallConnectionState.failed,
+          failureReason: CallFailureReason.configurationRejected,
+        ),
+      );
+      await _flushAsync();
+      expect(staleTimer.canceled, isTrue);
 
-    harness.engine.connectionSnapshot = _connectionSnapshot(
-      state: CallConnectionState.connected,
-      ready: true,
-    );
-    await staleTimer.invokeDespiteCancellation();
-    harness.engine.emitEvent(_engineEvent(CallConnectionState.connected));
-    await _flushAsync();
+      harness.engine.connectionSnapshot = _connectionSnapshot(
+        state: CallConnectionState.connected,
+        ready: true,
+      );
+      await staleTimer.invokeDespiteCancellation();
+      harness.engine.emitEvent(_engineEvent(CallConnectionState.connected));
+      await _flushAsync();
 
-    expect(harness.engine.snapshotCalls, 1);
-    expect(harness.dispatched.map((event) => event.type), <CallEventType>[
-      CallEventType.negotiationFailed,
-    ]);
-    expect(timers.active, isEmpty);
-  });
+      expect(harness.engine.snapshotCalls, 1);
+      expect(harness.dispatched.map((event) => event.type), <CallEventType>[
+        CallEventType.negotiationFailed,
+      ]);
+      expect(timers.active, isEmpty);
+    },
+  );
+
+  test(
+    'early ICE transport failure allows later trickle connectivity',
+    () async {
+      final timers = _ReadinessTimerScheduler();
+      final h = _Harness(
+        snapshot: _snapshot(CallState.negotiating),
+        mediaReadinessTimerScheduler: timers,
+      );
+      addTearDown(h.executor.close);
+      h.engine.connectionSnapshot = _connectionSnapshot(
+        state: CallConnectionState.connected,
+        ready: false,
+      );
+      h.engine.emitEvent(_engineEvent(CallConnectionState.connected));
+      await _flushAsync();
+      final staleTimer = timers.active.single;
+
+      h.engine.emitEvent(
+        _engineEvent(
+          CallConnectionState.failed,
+          failureReason: CallFailureReason.transportUnavailable,
+        ),
+      );
+      await _flushAsync();
+      expect(h.dispatched, isEmpty);
+      expect(staleTimer.canceled, isTrue);
+      await staleTimer.invokeDespiteCancellation();
+      expect(h.engine.snapshotCalls, 1);
+
+      h.engine.connectionSnapshot = _connectionSnapshot(
+        state: CallConnectionState.connected,
+        ready: true,
+      );
+      h.engine.emitEvent(_engineEvent(CallConnectionState.connected));
+      await _flushAsync();
+      expect(h.dispatched.map((event) => event.type), [
+        CallEventType.mediaConnected,
+      ]);
+      expect(h.engine.snapshotCalls, 2);
+    },
+  );
+
+  test(
+    'later connected event supersedes a coalesced early ICE failure',
+    () async {
+      final h = _Harness(snapshot: _snapshot(CallState.negotiating));
+      addTearDown(h.executor.close);
+      h.engine.connectionSnapshot = _connectionSnapshot(
+        state: CallConnectionState.connected,
+        ready: true,
+      );
+      h.engine.emitEvent(_engineEvent(CallConnectionState.connected));
+      h.engine.emitEvent(
+        _engineEvent(
+          CallConnectionState.failed,
+          failureReason: CallFailureReason.transportUnavailable,
+        ),
+      );
+      h.engine.emitEvent(_engineEvent(CallConnectionState.connected));
+      await _flushAsync();
+      expect(h.dispatched.map((event) => event.type), [
+        CallEventType.mediaConnected,
+      ]);
+    },
+  );
+
+  test(
+    'early ICE failure cannot overwrite a queued terminal failure',
+    () async {
+      final h = _Harness(snapshot: _snapshot(CallState.negotiating));
+      addTearDown(h.executor.close);
+      h.engine.connectionSnapshot = _connectionSnapshot(
+        state: CallConnectionState.connected,
+        ready: true,
+      );
+      h.engine.emitEvent(_engineEvent(CallConnectionState.connected));
+      h.engine.emitEvent(
+        _engineEvent(
+          CallConnectionState.failed,
+          failureReason: CallFailureReason.configurationRejected,
+        ),
+      );
+      h.engine.emitEvent(
+        _engineEvent(
+          CallConnectionState.failed,
+          failureReason: CallFailureReason.transportUnavailable,
+        ),
+      );
+      h.engine.emitEvent(_engineEvent(CallConnectionState.connected));
+      await _flushAsync();
+      expect(h.dispatched.map((event) => event.type), [
+        CallEventType.negotiationFailed,
+      ]);
+    },
+  );
+
+  test(
+    'snapshot ICE failure can recover before the native failure event',
+    () async {
+      final timers = _ReadinessTimerScheduler();
+      final h = _Harness(
+        snapshot: _snapshot(CallState.negotiating),
+        mediaReadinessTimerScheduler: timers,
+      );
+      addTearDown(h.executor.close);
+      h.engine.snapshotError = CallEngineErrorCode.iceConnectionFailed;
+      h.engine.emitEvent(_engineEvent(CallConnectionState.connected));
+      await _flushAsync();
+      expect(h.dispatched, isEmpty);
+      expect(timers.active, hasLength(1));
+      h.engine.snapshotError = null;
+      h.engine.connectionSnapshot = _connectionSnapshot(
+        state: CallConnectionState.connected,
+        ready: true,
+      );
+      await timers.fireNext();
+      expect(h.dispatched.map((event) => event.type), [
+        CallEventType.mediaConnected,
+      ]);
+    },
+  );
+
+  test(
+    'established call transport failure still terminates immediately',
+    () async {
+      final h = _Harness(snapshot: _snapshot(CallState.connected));
+      addTearDown(h.executor.close);
+      h.engine.emitEvent(
+        _engineEvent(
+          CallConnectionState.failed,
+          failureReason: CallFailureReason.transportUnavailable,
+        ),
+      );
+      await _flushAsync();
+      expect(h.dispatched.map((event) => event.type), [
+        CallEventType.negotiationFailed,
+      ]);
+    },
+  );
 
   test(
     'terminal and call changes stop readiness before another sample',
@@ -1451,6 +1594,70 @@ void main() {
     expect(harness.executor.mediaReadinessPollInterval, isNot(Duration.zero));
     expect(harness.executor.maxMediaReadinessSamples, isNull);
   });
+
+  test(
+    'repeated early ICE failures retain the canonical negotiation deadline',
+    () async {
+      final calls = <String>[];
+      final engine = _FakeEngine(calls);
+      final timers = _CausalTimerScheduler();
+      final history = _CausalHistoryRepository();
+      var cleanupCalls = 0;
+      late final CallCoordinator coordinator;
+      final executor = CallNegotiationEffectExecutor(
+        engine: engine,
+        materialStore: CallNegotiationMaterialStore(),
+        mediaPreparer: _FakePreparer(calls),
+        signaling: _FakeSignaling(calls),
+        configuration: _configuration,
+        dispatchEvent: (event) async {
+          await coordinator.dispatch(event);
+        },
+        readActiveSnapshot: () => coordinator.activeSession,
+        readStagedIceServers: (_) async => const <CallIceServer>[],
+        clock: () => _now,
+      );
+      coordinator = CallCoordinator(
+        reducer: const CallReducer(),
+        cleanupCoordinator: CallCleanupCoordinator([
+          CallCleanupStep('media', (_) async => cleanupCalls++),
+        ]),
+        historyProjector: CallHistoryProjector(history, clock: () => _now),
+        effectExecutor: executor,
+        clock: () => _now,
+        idSource: () => _callId,
+        timerScheduler: timers,
+      );
+      addTearDown(() async {
+        await coordinator.dispose();
+        await executor.close();
+      });
+      await coordinator.dispatch(_coordinatorEvent(CallEventType.place));
+      await coordinator.dispatch(
+        _coordinatorEvent(CallEventType.outgoingInviteReady),
+      );
+      await coordinator.dispatch(_coordinatorEvent(CallEventType.remoteAccept));
+      final deadline = timers.active.single;
+      expect(deadline.delay, const Duration(seconds: 30));
+      for (var i = 0; i < 3; i++) {
+        engine.emitEvent(
+          _engineEvent(
+            CallConnectionState.failed,
+            failureReason: CallFailureReason.transportUnavailable,
+          ),
+        );
+        await _flushAsync();
+        expect(coordinator.activeSession?.state, CallState.negotiating);
+        expect(timers.active, [deadline]);
+      }
+      expect(cleanupCalls, 0);
+      await deadline.callback();
+      await deadline.callback();
+      expect(coordinator.activeSession, isNull);
+      expect(cleanupCalls, 1);
+      expect(history.upsertCalls, 1);
+    },
+  );
 
   test(
     'media loss drives one real ICE restart then one reconnect cleanup',

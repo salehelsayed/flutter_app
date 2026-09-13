@@ -229,6 +229,7 @@ void main() {
     Future<void> Function()? clearIosNotificationRecovery,
     VoidCallback? invalidateAppVisibility,
     Future<void> Function()? retireCanonicalNotificationBinding,
+    Future<void> Function()? eraseLocalAccountDatabase,
     Future<RemoteMessage?> Function()? getInitialRemoteMessage,
     bool Function()? shouldHandleInitialPushOpen,
     Future<IosApnsInitialNotificationOpenDisposition> Function()?
@@ -280,6 +281,7 @@ void main() {
         clearIosNotificationRecovery: clearIosNotificationRecovery,
         invalidateAppVisibility: invalidateAppVisibility,
         retireCanonicalNotificationBinding: retireCanonicalNotificationBinding,
+        eraseLocalAccountDatabase: eraseLocalAccountDatabase ?? () async {},
         getInitialRemoteMessage: getInitialRemoteMessage,
         shouldHandleInitialPushOpen: shouldHandleInitialPushOpen,
         consumeInitialIosApnsNotificationOpen:
@@ -518,6 +520,8 @@ void main() {
       var iosRecoveryClearCount = 0;
       var deliveredClearCount = 0;
       var authorityExistedDuringRecoveryClear = false;
+      const databaseKey = 'test-database-key';
+      await secureKeyStore.write('db_encryption_key', databaseKey);
       final cleanupOrder = <String>[];
 
       await tester.pumpWidget(
@@ -540,6 +544,16 @@ void main() {
           clearDeliveredNotifications: () async {
             deliveredClearCount += 1;
           },
+          eraseLocalAccountDatabase: () async {
+            cleanupOrder.add('database-erased');
+            expect(await secureKeyStore.read('db_encryption_key'), databaseKey);
+            expect(
+              await SecureKeyStoreAccountMigrationAuthorityRepository(
+                secureKeyStore: secureKeyStore,
+              ).loadAuthority(),
+              isNotNull,
+            );
+          },
         ),
       );
       await pumpFrames(tester);
@@ -558,7 +572,9 @@ void main() {
         'visibility-invalidated',
         'canonical-binding-retired',
         'native-recovery-cleared',
+        'database-erased',
       ]);
+      expect(await secureKeyStore.read('db_encryption_key'), isNull);
       expect(authorityExistedDuringRecoveryClear, isTrue);
       expect(
         deliveredClearCount,
@@ -573,6 +589,47 @@ void main() {
         ).loadAuthority(),
         isNull,
       );
+    },
+  );
+
+  testWidgets(
+    'database erase failure preserves the key and migrated-out authority',
+    (tester) async {
+      const peerId = '12D3KooWMigratedOutDatabaseFailure';
+      identityRepository.seed(
+        FakeIdentityRepository.makeIdentity(peerId: peerId),
+      );
+      await saveAuthority(
+        AccountMigrationAuthorityState.migratedOut,
+        accountPeerId: peerId,
+      );
+      await secureKeyStore.write('db_encryption_key', 'retained-key');
+      await tester.pumpWidget(
+        buildRouterApp(
+          eraseLocalAccountDatabase: () async {
+            throw StateError('database close failed');
+          },
+        ),
+      );
+      await pumpFrames(tester);
+      await tester.tap(
+        find.byKey(const ValueKey('account-migration-erase-action')),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(
+        find.byKey(const ValueKey('account-migration-erase-confirm')),
+      );
+      await pumpFrames(tester);
+
+      expect(await secureKeyStore.read('db_encryption_key'), 'retained-key');
+      expect(
+        (await SecureKeyStoreAccountMigrationAuthorityRepository(
+          secureKeyStore: secureKeyStore,
+        ).loadAuthority())?.state,
+        AccountMigrationAuthorityState.migratedOut,
+      );
+      expect(p2pService.startNodeCallCount, 0);
+      expect(find.byType(AccountMigrationBlockedScreen), findsOneWidget);
     },
   );
 

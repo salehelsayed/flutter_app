@@ -21,11 +21,12 @@ import (
 // tokens, notification previews, raw user envelopes, and route leases never
 // enter this independent, expiring notification custody.
 type androidRichPushMaterial struct {
-	Version       int               `json:"version"`
-	RecipientHash string            `json:"recipient_hash"`
-	Correlation   string            `json:"correlation"`
-	ExpiresAtMs   int64             `json:"expires_at_ms"`
-	Data          map[string]string `json:"data"`
+	DirectNotificationIdentity string            `json:"direct_notification_identity,omitempty"`
+	Version                    int               `json:"version"`
+	RecipientHash              string            `json:"recipient_hash"`
+	Correlation                string            `json:"correlation"`
+	ExpiresAtMs                int64             `json:"expires_at_ms"`
+	Data                       map[string]string `json:"data"`
 }
 
 const maxAndroidRichMaterialBytes = 8192
@@ -47,6 +48,9 @@ func (material androidRichPushMaterial) validate(peerID, correlation string) err
 		material.Correlation != correlation || !isCanonicalWakeOutcomeCorrelation(correlation) ||
 		material.ExpiresAtMs <= 0 || material.Data["message_id"] == "" {
 		return errors.New("Android notification recovery identity is invalid")
+	}
+	if material.DirectNotificationIdentity != "" && (!canonicalGroupMessageDispatchAdmissionStorageKey(material.DirectNotificationIdentity) || material.Data["type"] != "new_message") {
+		return errors.New("invalid direct notification identity")
 	}
 	for key := range material.Data {
 		switch key {
@@ -99,6 +103,7 @@ func (ps *PushService) isAndroidRichRecoveryRoute(route pushRouteLease) bool {
 func (ps *PushService) newAndroidRichAdmission(
 	peerID string, route pushRouteLease, draft *messaging.Message,
 	storedAtMs, expiresAtMs int64,
+	directIdentity ...string,
 ) (wakeOutcomeAdmission, bool) {
 	if draft == nil || draft.Token != "" || draft.Notification != nil ||
 		storedAtMs <= 0 || expiresAtMs <= storedAtMs || !ps.isAndroidRichRecoveryRoute(route) {
@@ -116,6 +121,9 @@ func (ps *PushService) newAndroidRichAdmission(
 	expiresAtMs = min(expiresAtMs, storedAtMs+wakeOutcomeRetention.Milliseconds())
 	material := androidRichPushMaterial{Version: 1, RecipientHash: androidRichRecipientHash(peerID),
 		Correlation: correlation, ExpiresAtMs: expiresAtMs, Data: data}
+	if len(directIdentity) > 0 {
+		material.DirectNotificationIdentity = directIdentity[0]
+	}
 	if err := material.validate(peerID, correlation); err != nil {
 		return wakeOutcomeAdmission{}, false
 	}
@@ -198,6 +206,20 @@ func (ps *PushService) sendAndroidRichMaterial(ctx context.Context, peerID strin
 	if err := material.validate(peerID, material.Correlation); err != nil {
 		return pushDeliveryRetryable
 	}
+	var admissionIdentity *messageDispatchAdmissionIdentity
+	if material.Data["type"] == "new_message" {
+		if identity, valid := directMessageDispatchAdmissionIdentityFromStorageKey(material.DirectNotificationIdentity); valid {
+			admissionIdentity = &identity
+		} else {
+			// Retained pre-policy jobs contain the initial direct routing and
+			// ciphertext tuple; reconstruct its original exact admission key.
+			envelope, _ := json.Marshal(map[string]any{"type": "chat_message", "id": material.Data["message_id"],
+				"encrypted": map[string]string{"kem": material.Data["kem"], "ciphertext": material.Data["ciphertext"], "nonce": material.Data["nonce"]}})
+			if identity, valid := newDirectMessageDispatchAdmissionIdentity(peerID, material.Data["sender_id"], string(envelope)); valid {
+				admissionIdentity = &identity
+			}
+		}
+	}
 	for attempt := 0; attempt < 2; attempt++ {
 		route, err := ps.selectPushRoute(peerID, "")
 		if err != nil || route == nil {
@@ -214,7 +236,7 @@ func (ps *PushService) sendAndroidRichMaterial(ctx context.Context, peerID strin
 				return nil, errPushDeliverySuppressed // iOS remains outside this recovery mode.
 			}
 			return &messaging.Message{Data: material.Data, Android: &messaging.AndroidConfig{Priority: "high"}}, nil
-		}, true) // Preserve the incumbent single routing-only provider-size rescue.
+		}, true, admissionIdentity) // Preserve the incumbent single routing-only provider-size rescue.
 		switch {
 		case err == nil:
 			return pushDeliveryAccepted

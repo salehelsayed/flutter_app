@@ -29,6 +29,10 @@ class ConversationMessage {
   /// Whether this message was received from the contact.
   final bool isIncoming;
 
+  /// Received through automatic recovery after its alert age expired.
+  /// Independent of unread/delivery status and retained across restarts.
+  final bool quietRecovery;
+
   /// ISO-8601 timestamp when the row was created locally.
   final String createdAt;
 
@@ -116,6 +120,7 @@ class ConversationMessage {
     required this.status,
     required this.isIncoming,
     required this.createdAt,
+    this.quietRecovery = false,
     this.editedAt,
     this.readAt,
     this.quotedMessageId,
@@ -159,6 +164,7 @@ class ConversationMessage {
       timestamp: map['timestamp'] as String,
       status: map['status'] as String? ?? 'sent',
       isIncoming: (map['is_incoming'] as int? ?? 0) == 1,
+      quietRecovery: map['quiet_recovery'] == 1,
       createdAt: map['created_at'] as String,
       editedAt: map['edited_at'] as String?,
       readAt: map['read_at'] as String?,
@@ -203,6 +209,7 @@ class ConversationMessage {
       'timestamp': timestamp,
       'status': status,
       'is_incoming': isIncoming ? 1 : 0,
+      if (quietRecovery) 'quiet_recovery': 1,
       'created_at': createdAt,
       'edited_at': editedAt,
       'read_at': readAt,
@@ -245,6 +252,7 @@ class ConversationMessage {
     String? timestamp,
     String? status,
     bool? isIncoming,
+    bool? quietRecovery,
     String? createdAt,
     Object? editedAt = _sentinel,
     Object? readAt = _sentinel,
@@ -277,6 +285,7 @@ class ConversationMessage {
       timestamp: timestamp ?? this.timestamp,
       status: status ?? this.status,
       isIncoming: isIncoming ?? this.isIncoming,
+      quietRecovery: quietRecovery ?? this.quietRecovery,
       createdAt: createdAt ?? this.createdAt,
       editedAt: editedAt == _sentinel ? this.editedAt : editedAt as String?,
       readAt: readAt == _sentinel ? this.readAt : readAt as String?,

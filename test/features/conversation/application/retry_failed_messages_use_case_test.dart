@@ -1,3 +1,5 @@
+import 'package:flutter_app/core/notifications/automatic_recovery_notification_policy.dart';
+import 'package:clock/clock.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
@@ -614,6 +616,58 @@ void main() {
         },
       );
     });
+
+    test(
+      'three-day automatic failed retry is quiet while singular manual retry alerts',
+      () async {
+        final now = DateTime.utc(2026, 9, 12, 9, 50);
+        const wire =
+            '{"type":"chat_message","version":"2","id":"old","senderPeerId":"my-peer-id","encrypted":{"kem":"k","ciphertext":"immutable","nonce":"n"}}';
+        identityRepo.seed(makeIdentity());
+        contactRepo.seed([makeContact(peerId: 'peer-target')]);
+        final old = makeFailedMessage(id: 'old').copyWith(
+          wireEnvelope: wire,
+          timestamp: now.subtract(const Duration(days: 3)).toIso8601String(),
+        );
+        final service = FakeP2PService(
+          initialState: const NodeState(isStarted: true, peerId: 'my-peer-id'),
+        );
+        final policies = <bool>[];
+        service.onStoreInInbox = (peer, envelope, {timeoutMs}) async {
+          expect(envelope, wire);
+          policies.add(quietRecoveryForEnvelope(envelope));
+          return true;
+        };
+        messageRepo.seed([old]);
+        final automatic = await withClock(
+          Clock.fixed(now),
+          () => retryFailedMessages(
+            messageRepo: messageRepo,
+            identityRepo: identityRepo,
+            contactRepo: contactRepo,
+            p2pService: service,
+            bridge: bridge,
+          ),
+        );
+        expect(automatic, 1);
+        expect((await messageRepo.getMessage(old.id))!.status, 'inboxed');
+        messageRepo.seed([old]);
+        final manual = await withClock(
+          Clock.fixed(now),
+          () => retryFailedMessage(
+            messageId: old.id,
+            messageRepo: messageRepo,
+            identityRepo: identityRepo,
+            contactRepo: contactRepo,
+            p2pService: service,
+            bridge: bridge,
+          ),
+        );
+        expect(manual, 1);
+        expect(policies, [true, false]);
+        expect(bridge.sendCallCount, 0);
+      },
+    );
 
     test('returns 0 when no identity exists', () async {
       // identityRepo has no identity seeded
@@ -1768,11 +1822,9 @@ void main() {
         3,
         reason: 'load, fresh re-read, then the pre-egress owner barrier',
       );
-      expect(
-        editRepository.ownedAtLookups,
-        <int>[3],
-        reason: 'only the pre-egress lookup could see the physical owner',
-      );
+      expect(editRepository.ownedAtLookups, <int>[
+        3,
+      ], reason: 'only the pre-egress lookup could see the physical owner');
       expect(
         editP2p.storeInInboxCallCount,
         0,
@@ -2446,11 +2498,9 @@ void main() {
             'inbox_done',
             'send_start',
           ]);
-          expect(
-            service.sendTimeouts,
-            <int?>[5500],
-            reason: 'the live T0 begins only after inbox custody fails',
-          );
+          expect(service.sendTimeouts, <int?>[
+            5500,
+          ], reason: 'the live T0 begins only after inbox custody fails');
 
           async.elapse(const Duration(milliseconds: 2200));
           async.flushMicrotasks();

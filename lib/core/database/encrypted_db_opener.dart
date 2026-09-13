@@ -789,6 +789,31 @@ Future<void> _deleteDbAndSidecars(String path) async {
   }
 }
 
+/// Removes the account database before its encryption key can be erased.
+/// The caller must already have blocked account work and retain that authority
+/// until restart. Rekey recovery files must not resurrect the erased database.
+Future<void> eraseEncryptedDatabase(Database database) async {
+  final path = database.path;
+  await database.close();
+  for (final databasePath in [
+    _rekeyTmpPath(path),
+    _preRawBakPath(path),
+    path,
+  ]) {
+    await _deleteDbAndSidecars(databasePath);
+    for (final suffix in ['', ..._dbSidecarSuffixes]) {
+      final filePath = '$databasePath$suffix';
+      if (await FileSystemEntity.type(filePath, followLinks: false) !=
+          FileSystemEntityType.notFound) {
+        throw FileSystemException(
+          'Account database erasure incomplete',
+          filePath,
+        );
+      }
+    }
+  }
+}
+
 /// §F4 — restore a consistent identity.db after an interrupted rekey/migration
 /// swap. Idempotent, so it is safe to run at launch AND again after an abort.
 /// [keyPersisted] distinguishes the two post-swap cases: a passphrase→raw rekey

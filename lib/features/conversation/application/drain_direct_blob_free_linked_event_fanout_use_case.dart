@@ -37,6 +37,7 @@ Future<int> drainDirectBlobFreeLinkedEventFanout({
     }
     final attempt = await drainOwnedDirectInboxCustodyOutboxEntry(
       entry: entry,
+      automaticRecovery: true,
       custodyRepository: custodyRepository,
       storeInAckCustodyInboxDetailed: storeInAckCustodyInboxDetailed,
     );

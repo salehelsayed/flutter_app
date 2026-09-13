@@ -87,6 +87,21 @@ GroupMessage _groupMessage(
 );
 
 void main() {
+  test(
+    'quiet recovered unread content stays out of a fresh notification history',
+    () async {
+      final quiet = _directMessage(0).copyWith(quietRecovery: true);
+      final fresh = _directMessage(1);
+      final snapshot = await buildDirectConversationNotificationSnapshot(
+        messages: [quiet, fresh],
+        contactPeerId: 'peer-alice',
+      );
+      expect(snapshot!.historyLines, ['direct line 1']);
+      expect(snapshot.totalUnreadMessageCount, 1);
+      expect(quiet.readAt, isNull);
+      expect(quiet.status, 'delivered');
+    },
+  );
   test('bounded direct and group unread projection', () async {
     final direct = <ConversationMessage>[
       for (var index = 0; index < 6; index++) _directMessage(index),

@@ -969,6 +969,8 @@ MessageRepositoryImpl _buildMessageRepository(
   dbUpdateMessageStatus: (id, status) =>
       dbUpdateMessageStatus(database, id, status),
   dbLoadMessage: (id) => dbLoadMessage(database, id),
+  dbMarkIncomingQuietRecovery: (expected) =>
+      dbMarkIncomingQuietRecovery(database, expected.toMap()),
   dbCountMessagesForContact: (peerId) =>
       dbCountMessagesForContact(database, peerId),
   dbMarkConversationAsRead: (peerId) =>

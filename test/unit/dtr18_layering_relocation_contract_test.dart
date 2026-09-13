@@ -201,8 +201,10 @@ const _privacySha256 =
 // 409/410 add one optional application-owned field, `orbitCallActivitySource`,
 // forwarded to the routes that can reach Orbit. It is a read-only projection
 // of local call history — no owner moves and no core shim appears.
+// Account erasure forwards database cleanup through the existing startup
+// boundary; no lifecycle owner or dependency moves.
 const _applicationRootNormalizedSha256 =
-    'ca72a72a4cd8aa658f22c9789a4de53f8b4eb8ed5024e694c9fead5bdd26b3a1';
+    'a338ab1811556c86ada4dbafd400d1e179ab2b1f23cca459add2024f27694168';
 // Plan 358 forwards the strict local-path commit's `nowMs` sample through the
 // same already-wired delegate and relocates nothing. Plan 360 additionally
 // constructs the role-aware deferred-runtime-start owner over the SAME
@@ -250,6 +252,8 @@ const _applicationRootNormalizedSha256 =
 // surface on those same repositories and runtime owners. Its final repair
 // defers pending-key replay until protected authority is COMPLETE. No adapter
 // moved.
+// Account erasure closes/deletes this root's existing database before key
+// cleanup; the canonical lease remains owned here until normal teardown.
 const _productionBootstrapNormalizedSha256 =
     // Plan 365 wires the existing strict group-media lifecycle owner into the
     // local cold-start cleanup sequence; no bootstrap responsibility moves.
@@ -313,10 +317,13 @@ const _productionBootstrapNormalizedSha256 =
     // owner or relocation URI; their behavior has separate causal tests.
     // Call privacy adds the existing secure store and approved STUN configuration
     // to this same call composition. No lifecycle or layer ownership changes.
-    '49350bc5838b833b8a407fd3b964fbd7e9a92428a1c63eef46190e54f1280d66';
+    // Quiet recovery wires exact incoming-row annotation into the existing
+    // repository and labels the existing media-sibling drain as automatic.
+    // Both retain their existing lifecycle and database owners.
+    'ddd0a5e2a19e49982e276b422da17bdb614ac9f17a54a2bda63649f07a6bdefd';
 
 const _productionBootstrapWithoutHistoricalNotificationSha256 =
-    '4495142c4dd46c814323a4c3e0caa3e2bce4a569bce6448c9dda20125c49b3a1';
+    'c928ed7ac6bfd48297095821355c9b5b6a7a32cfad1713689e416d2a62724e6f';
 
 const _reviewedResumeExceptionTargets = <String>{
   'lib/features/account_migration/application/'

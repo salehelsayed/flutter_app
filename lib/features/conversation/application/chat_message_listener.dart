@@ -770,7 +770,8 @@ class ChatMessageListener {
                 conversationMessage.media,
                 privateMediaPolicy: conversationMessage.privateMediaPolicy,
               ),
-              suppressNotification: suppressNotification,
+              suppressNotification:
+                  suppressNotification || conversationMessage.quietRecovery,
               forceSilent: forceSilentNotification,
               messageId: conversationMessage.id,
               toneTracker: notificationToneTracker,

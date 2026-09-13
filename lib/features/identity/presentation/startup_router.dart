@@ -399,6 +399,7 @@ class StartupRouter extends StatefulWidget {
   /// account erase can begin clearing account-owned state.
   final VoidCallback? invalidateAppVisibility;
   final Future<void> Function()? retireCanonicalNotificationBinding;
+  final Future<void> Function()? eraseLocalAccountDatabase;
   final Future<void> Function()? retireIosNseInboxTransport;
   final Future<void> Function()? ingestStagedPushEnvelopes;
   final NotificationOpenRouteContext Function(
@@ -524,6 +525,7 @@ class StartupRouter extends StatefulWidget {
     this.clearIosNotificationRecovery,
     this.invalidateAppVisibility,
     this.retireCanonicalNotificationBinding,
+    this.eraseLocalAccountDatabase,
     this.retireIosNseInboxTransport,
     this.ingestStagedPushEnvelopes,
     this.createNotificationRouteContext,
@@ -1506,6 +1508,10 @@ class _StartupRouterState extends State<StartupRouter> {
   }
 
   Future<void> _eraseMigratedOutAccount() async {
+    final eraseDatabase = widget.eraseLocalAccountDatabase;
+    if (eraseDatabase == null) {
+      throw StateError('Local account database erasure is unavailable');
+    }
     widget.invalidateAppVisibility?.call();
     await widget.retireCanonicalNotificationBinding?.call();
     try {
@@ -1519,6 +1525,9 @@ class _StartupRouterState extends State<StartupRouter> {
         details: {'errorType': error.runtimeType.toString()},
       );
     }
+    // Keep the key and blocked authority if closing or deleting the database
+    // fails. Deleting the key first makes the next startup unreadable.
+    await eraseDatabase();
     final staging = MigrationSecureStorageStaging(
       primaryStore: widget.secureKeyStore,
       sharedStore: widget.secureKeyStore,

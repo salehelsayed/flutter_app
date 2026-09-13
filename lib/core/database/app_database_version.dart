@@ -74,4 +74,7 @@
 // existing row starts UNREAD, which is the truthful state for a call the user
 // has not seen. A trigger guards the timestamp because SQLite cannot add a
 // CHECK through ALTER. v118 remains a one-way schema floor.
-const int currentIdentityDatabaseVersion = 118;
+// v119 retains quiet recovery intent through inbox staging and canonical
+// message storage, independently of unread and delivery state. Existing rows
+// default to normal notification policy.
+const int currentIdentityDatabaseVersion = 119;

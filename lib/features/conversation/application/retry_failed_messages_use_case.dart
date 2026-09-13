@@ -1,3 +1,4 @@
+import 'package:flutter_app/core/notifications/automatic_recovery_notification_policy.dart';
 import 'dart:convert';
 import 'dart:io';
 
@@ -372,25 +373,29 @@ Future<int> _retryFailedMessagesInternal({
   var successCount = 0;
 
   for (final msg in failedMessages) {
-    final retried = await _retryFailedMessageCandidate(
-      msg: msg,
-      messageRepo: messageRepo,
-      contactRepo: contactRepo,
-      p2pService: p2pService,
-      bridge: bridge,
-      identity: identity,
-      mediaAttachmentRepo: mediaAttachmentRepo,
-      uploadFn: effectiveUploadFn,
-      mediaFileManager: mediaFileManager,
-      directMediaBlobArtifactStore: directMediaBlobArtifactStore,
-      directMediaBlobCustodyCoordinator: directMediaBlobCustodyCoordinator,
-      uploadRetryProjectionRepo: uploadRetryProjectionRepo,
-      uploadRetryRearmRepo: uploadRetryRearmRepo,
-      tryClaimUploadLease: tryClaimUploadLease,
-      releaseUploadLease: releaseUploadLease,
+    final retried = await runWithAutomaticRecoveryNotificationPolicy(
+      originalTimestamp: msg.timestamp,
       manualRetry: manualRetry,
-      retryDirectInboxCustody: retryDirectInboxCustody,
-      storeExactCustody: storeExactCustody,
+      action: () => _retryFailedMessageCandidate(
+        msg: msg,
+        messageRepo: messageRepo,
+        contactRepo: contactRepo,
+        p2pService: p2pService,
+        bridge: bridge,
+        identity: identity,
+        mediaAttachmentRepo: mediaAttachmentRepo,
+        uploadFn: effectiveUploadFn,
+        mediaFileManager: mediaFileManager,
+        directMediaBlobArtifactStore: directMediaBlobArtifactStore,
+        directMediaBlobCustodyCoordinator: directMediaBlobCustodyCoordinator,
+        uploadRetryProjectionRepo: uploadRetryProjectionRepo,
+        uploadRetryRearmRepo: uploadRetryRearmRepo,
+        tryClaimUploadLease: tryClaimUploadLease,
+        releaseUploadLease: releaseUploadLease,
+        manualRetry: manualRetry,
+        retryDirectInboxCustody: retryDirectInboxCustody,
+        storeExactCustody: storeExactCustody,
+      ),
     );
     if (retried) {
       successCount++;

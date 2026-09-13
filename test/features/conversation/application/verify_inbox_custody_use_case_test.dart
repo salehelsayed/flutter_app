@@ -1,3 +1,4 @@
+import 'package:flutter_app/core/notifications/automatic_recovery_notification_policy.dart';
 // 115 Phase 3.3 — the sender custody-verification sweep: every unconfirmed
 // 'inboxed' row is periodically re-stored (custody repaired) or truthfully
 // downgraded to 'sent' (custody lost, visibly non-delivered) — a cap/TTL
@@ -98,6 +99,34 @@ ConversationMessage makeInboxedRow({
 }
 
 void main() {
+  test(
+    'custody repair uses original message age and preserves recovered custody',
+    () async {
+      final repo = FakeMessageRepository();
+      final old = makeInboxedRow(
+        timestamp: fixedNow.subtract(const Duration(days: 3)).toIso8601String(),
+        custodyCheckedAt: fixedNow.toIso8601String(),
+      );
+      repo.seed([old]);
+      final checked = await verifyInboxCustody(
+        loadInboxCustody: ({required recheckOlderThan}) async => [old],
+        storeInInboxDetailed: (peer, envelope, {timeoutMs}) async {
+          expect(isQuietAutomaticRecovery, true);
+          expect(envelope, old.wireEnvelope);
+          return const InboxStoreOutcome(
+            status: InboxStoreStatus.stored,
+            expiresAtMs: 2000000000000,
+          );
+        },
+        markCustodyChecked: (id, {relayExpiresAtMs}) async {},
+        messageRepo: repo,
+        nowFn: () => fixedNow,
+      );
+      expect(checked, 1);
+      expect((await repo.getMessage(old.id))!.status, 'inboxed');
+    },
+  );
+
   late FakeMessageRepository messageRepo;
   late List<({String id, int? expiresAtMs})> custodyMarks;
 
@@ -432,11 +461,9 @@ void main() {
         expect(repaired, 1);
         expect(store.calls, hasLength(1));
         expect(store.calls.single.peerId, 'peer-target');
-        expect(
-          custodyMarks.map((mark) => mark.id),
-          ['msg-legacy-owner'],
-          reason: 'a marked generation is left untouched, not marked checked',
-        );
+        expect(custodyMarks.map((mark) => mark.id), [
+          'msg-legacy-owner',
+        ], reason: 'a marked generation is left untouched, not marked checked');
       },
     );
   });

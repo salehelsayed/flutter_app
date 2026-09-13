@@ -119,6 +119,7 @@ final class IosCallLifecycleAdapter
          projectTerminalBeforeEnd: true,
          requireAdoptionForAudio: true,
          failStartOnAttachError: true,
+         recoverRetiredUnboundIncoming: true,
          onOutgoingRegistrationResult: onOutgoingRegistrationResult,
        ) {
     if (audioActivationMaxAttempts <= 0 ||

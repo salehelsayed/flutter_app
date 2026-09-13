@@ -31,6 +31,7 @@ import '../../domain/repositories/message_repository.dart';
 class MessageRepositoryImpl
     implements
         MessageRepository,
+        IncomingQuietRecoveryRepository,
         DirectPrivateMediaLifecycleRepository,
         DirectPrivateMediaExactOpeningLeaseRepository,
         DirectPrivateMediaIndeterminateQuarantineRepository,
@@ -62,6 +63,8 @@ class MessageRepositoryImpl
   dbLoadLatestMessageForContact;
   final Future<int> Function(String id, String status) dbUpdateMessageStatus;
   final Future<Map<String, Object?>?> Function(String id) dbLoadMessage;
+  final Future<void> Function(ConversationMessage expected)?
+  dbMarkIncomingQuietRecovery;
   final Future<int> Function(String contactPeerId) dbCountMessagesForContact;
   final Future<int> Function(String contactPeerId) dbMarkConversationAsRead;
   final Future<int> Function(String contactPeerId)? projectConversationRead;
@@ -467,6 +470,7 @@ class MessageRepositoryImpl
     required this.dbLoadLatestMessageForContact,
     required this.dbUpdateMessageStatus,
     required this.dbLoadMessage,
+    this.dbMarkIncomingQuietRecovery,
     required this.dbCountMessagesForContact,
     required this.dbMarkConversationAsRead,
     this.projectConversationRead,
@@ -732,6 +736,16 @@ class MessageRepositoryImpl
       );
       rethrow;
     }
+  }
+
+  @override
+  Future<void> markIncomingQuietRecovery(ConversationMessage expected) async {
+    final mark = dbMarkIncomingQuietRecovery;
+    if (mark == null) {
+      throw StateError('quiet recovery persistence unavailable');
+    }
+    await mark(expected);
+    _messageSnapshots.remove(expected.id);
   }
 
   @override
