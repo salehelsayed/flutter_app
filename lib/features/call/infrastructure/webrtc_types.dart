@@ -36,6 +36,7 @@ enum WebRtcQualityBand { unknown, good, degraded, poor }
 enum WebRtcFailureReason {
   none,
   transportUnavailable,
+  iceConnectionFailed,
   configurationRejected,
   notReady,
   closed,
@@ -69,6 +70,7 @@ final class WebRtcPeerConnectionSnapshot {
     required this.audioReceiveTransceiverCount,
     required this.videoTransceiverCount,
     this.connectionState = WebRtcConnectionState.newConnection,
+    this.iceChecklistFailed = false,
     this.transport = WebRtcTransportClass.unknown,
     this.quality = WebRtcQualityBand.unknown,
     this.selectedPairSucceeded = false,
@@ -91,6 +93,9 @@ final class WebRtcPeerConnectionSnapshot {
   final int audioReceiveTransceiverCount;
   final int videoTransceiverCount;
   final WebRtcConnectionState connectionState;
+
+  /// Explicit native ICE evidence; aggregate peer failure alone is ambiguous.
+  final bool iceChecklistFailed;
   final WebRtcTransportClass transport;
   final WebRtcQualityBand quality;
   final bool selectedPairSucceeded;

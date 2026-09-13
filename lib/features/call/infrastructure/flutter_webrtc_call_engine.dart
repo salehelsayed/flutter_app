@@ -350,7 +350,7 @@ final class FlutterWebRtcPeerConnectionAdapter
           failureReason:
               state ==
                   webrtc.RTCPeerConnectionState.RTCPeerConnectionStateFailed
-              ? WebRtcFailureReason.transportUnavailable
+              ? _nativeFailureReason(connection)
               : WebRtcFailureReason.none,
         ),
       );
@@ -396,11 +396,19 @@ final class FlutterWebRtcPeerConnectionAdapter
         quality: WebRtcQualityBand.unknown,
         failureReason:
             state == webrtc.RTCPeerConnectionState.RTCPeerConnectionStateFailed
-            ? WebRtcFailureReason.transportUnavailable
+            ? _nativeFailureReason(_peerConnection!)
             : WebRtcFailureReason.none,
       ),
     );
   }
+
+  static WebRtcFailureReason _nativeFailureReason(
+    webrtc.RTCPeerConnection connection,
+  ) =>
+      connection.iceConnectionState ==
+          webrtc.RTCIceConnectionState.RTCIceConnectionStateFailed
+      ? WebRtcFailureReason.iceConnectionFailed
+      : WebRtcFailureReason.transportUnavailable;
 
   @override
   Future<CallSessionDescription> createOffer() async {
@@ -681,6 +689,11 @@ final class FlutterWebRtcPeerConnectionAdapter
         connectionState: _mapNullableConnectionState(
           connection.connectionState,
         ),
+        iceChecklistFailed:
+            connection.connectionState ==
+                webrtc.RTCPeerConnectionState.RTCPeerConnectionStateFailed &&
+            _nativeFailureReason(connection) ==
+                WebRtcFailureReason.iceConnectionFailed,
         transport: _webRtcTransport(sample.transport),
         selectedRelayProtocol: _webRtcRelayProtocol(
           sample.selectedRelayProtocol,
@@ -772,11 +785,14 @@ final class FlutterWebRtcPeerConnectionAdapter
   }
 
   static bool _isFailureEvent(WebRtcPeerConnectionEvent event) =>
-      event.kind == WebRtcPeerConnectionEventKind.overflow ||
-      event.kind == WebRtcPeerConnectionEventKind.closed ||
-      event.connectionState == WebRtcConnectionState.failed ||
-      event.connectionState == WebRtcConnectionState.closed ||
-      event.failureReason != WebRtcFailureReason.none;
+      !(event.kind == WebRtcPeerConnectionEventKind.state &&
+          event.connectionState == WebRtcConnectionState.failed &&
+          event.failureReason == WebRtcFailureReason.iceConnectionFailed) &&
+      (event.kind == WebRtcPeerConnectionEventKind.overflow ||
+          event.kind == WebRtcPeerConnectionEventKind.closed ||
+          event.connectionState == WebRtcConnectionState.failed ||
+          event.connectionState == WebRtcConnectionState.closed ||
+          event.failureReason != WebRtcFailureReason.none);
 
   void _retain(WebRtcPeerConnectionEvent event) {
     if (_recentEvents.length == _eventBufferCapacity) {
@@ -1404,6 +1420,8 @@ final class FlutterWebRtcCallEngine
         WebRtcFailureReason.notReady => CallEngineErrorCode.notReady,
         WebRtcFailureReason.transportUnavailable =>
           CallEngineErrorCode.transportUnavailable,
+        WebRtcFailureReason.iceConnectionFailed =>
+          CallEngineErrorCode.iceConnectionFailed,
         WebRtcFailureReason.configurationRejected =>
           CallEngineErrorCode.configurationRejected,
         WebRtcFailureReason.closed => CallEngineErrorCode.closed,
@@ -1417,7 +1435,11 @@ final class FlutterWebRtcCallEngine
       throw const CallEngineException(CallEngineErrorCode.closed);
     }
     if (snapshot.connectionState == WebRtcConnectionState.failed) {
-      throw const CallEngineException(CallEngineErrorCode.iceConnectionFailed);
+      throw CallEngineException(
+        snapshot.iceChecklistFailed
+            ? CallEngineErrorCode.iceConnectionFailed
+            : CallEngineErrorCode.transportUnavailable,
+      );
     }
     final transport = _mapAdapterTransport(snapshot.transport);
     final relaySelectionProven = switch (transport) {
@@ -1951,6 +1973,8 @@ CallFailureReason _mapAdapterFailureReason(WebRtcFailureReason reason) {
       return CallFailureReason.none;
     case WebRtcFailureReason.transportUnavailable:
       return CallFailureReason.transportUnavailable;
+    case WebRtcFailureReason.iceConnectionFailed:
+      return CallFailureReason.iceConnectionFailed;
     case WebRtcFailureReason.configurationRejected:
       return CallFailureReason.configurationRejected;
     case WebRtcFailureReason.notReady:

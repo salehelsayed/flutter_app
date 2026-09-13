@@ -798,7 +798,9 @@ visible and cannot become an ordinary first-attempt PASS.
   negotiation now retains its existing canonical deadline for this specific
   checklist failure, allowing later connected events to supersede it. A native
   failed snapshot has a distinct engine error; adapter/configuration/privacy
-  errors and established-call failure remain terminal. Terminal pending events
+  errors and standalone established-call failure remain terminal. The bounded
+  reconnect classification below supersedes immediate termination for a
+  confirmed checklist failure within an owned reconnect. Terminal pending events
   cannot be overwritten by a later provisional ICE failure. Host tests cover
   both event/snapshot orderings, stale readiness, recovery and unchanged timeout
   cleanup. The physical Android/iPhone13 production path then connected in both
@@ -874,9 +876,15 @@ visible and cannot become an ordinary first-attempt PASS.
   and completed in both UIs. These are causal lifecycle recovery checks, not
   merely fresh-call retries. The observed development courier used IPv4 TCP
   5223; these passes do not establish recovery of the failed IPv6 connection.
-  Audible quality and screen lock were not independently asserted. The added
+  Audible quality and screen lock were not independently asserted. In that run the added
   native successor-audio unit test was syntax-checked but not executed under
-  the user's restriction against building an iOS test harness.
+  the user's restriction against building an iOS test harness. The existing
+  RunnerTests target subsequently executed 78 lifecycle/store tests on the
+  available iPhone 17 Pro simulator, including
+  `testRetiredTerminalReceiptDoesNotReleaseSuccessorAudio`, with zero failures.
+  `.codex-test-logs/call-fallback-priority2/ios-lifecycle.xcresult` and its log
+  retain the executed XCTest evidence. These native controller/store fixtures
+  use fake platform ports; they do not establish live APNs or audible audio.
   This app lifecycle correction cannot repair an OS APNs connection that has
   not delivered a push. The specific network or OS defect
   and a permanent fix remain unconfirmed. These
@@ -923,6 +931,73 @@ visible and cannot become an ordinary first-attempt PASS.
   exiting zero even when its device log reported failed integration tests.
   Direct libp2p signaling can independently reveal an address; this media policy
   does not make all application traffic anonymous.
+  The existing Android native proof now also admits an unreachable documentation
+  IPv6 candidate alongside all native candidates and reports selected address
+  families, DTLS readiness and actual bad-pair requests. The Pixel 6/API 35
+  emulator TCP fallback matrix passed all eight policy/direction cases and
+  restarts (32 endpoint observations); native stats recorded 75 requests toward
+  the bad IPv6 candidate. Both before and after physical Wi-Fi removal, every
+  selected pair was IPv4 TURN/TCP. This proves permitted-path continuity, not
+  loss of an established IPv6 media path. Physical Wi-Fi was restored.
+  The hostname fixture binds an IPv4-only test proxy to the disposable TURN
+  server. The emulator resolved both loopbacks for `localtest.me`, observed
+  IPv6 TCP failure, and completed authenticated native TURN allocation and
+  bidirectional media through IPv4. Its 32 proxy connections and selected
+  relay statistics are separate from DNS evidence. The first attempt required
+  dual-stack DNS on both peers and failed because the Pixel returned only IPv4;
+  that fixture prerequisite failure remains visible. The hostname leg therefore
+  runs on the explicitly discovered emulator. This uses public loopback DNS
+  (rejecting non-loopback answers), test-local sockets and no production TURN
+  account. A subsequent native run used test-local UDP sockets to receive and
+  discard 303 TURN/UDP datagrams while the configured TURN/TCP path carried
+  secure bidirectional media in all 32 endpoint observations. It recorded 64
+  bad-IPv6 connectivity-check requests and retained all 16 protected local TURN
+  observations. This is scoped TURN/UDP loss, not a device-wide UDP firewall
+  test. SDP publication took at most 406 ms; the separate gathering audit took
+  at most 877 ms. Both endpoints closed between calls, the next calls succeeded,
+  fixture sockets/containers/packages were released, and physical Wi-Fi was
+  restored. Audible sound, an established IPv6-path loss and signed-candidate
+  behavior remain unasserted by this local-broker campaign. Evidence is under
+  `.codex-test-logs/call-fallback-priority2/`.
+  The same existing runner accepts an explicit JSON-line credential client for
+  deployed transport isolation. The client must use the production validated
+  provider; credentials remain in memory, are fresh for each call, and are reused
+  only within that call's unexpired restart. The deployed authority permits six
+  requests per subject per minute. A rapid matrix reached that limit after six
+  calls; an independent seventh-request diagnostic returned
+  `TURN_CREDENTIALS_RATE_LIMITED`. Space test calls before creating the peer,
+  without changing setup/recovery deadlines or relaxing credential validation.
+  The paced EC2 TURN/TCP matrix passed 32 endpoint observations, including all
+  four policy pairings in both directions, 16 protected observations, 24 selected
+  TCP relay observations and eight direct observations. All selected families
+  were IPv4; all observations had DTLS and advancing bidirectional RTP. Sixteen
+  fresh credential requests succeeded. SDP publication took at most 512 ms and
+  the independent gathering audit at most 1,616 ms.
+  **Deployed TLS is a separate failing native leg:** the Android matrix connected
+  its normal peers directly, then failed to gather a usable relay for the first
+  mixed protected case. Repeated native diagnostics retained `ContinueSSL`
+  failure and bounded cleanup. The host's certificate-verified TURN/TLS client
+  separately allocated and exchanged 100 exact synthetic payloads per family,
+  over both IPv4 and IPv6. Those host passes do not certify Android native TLS.
+  The pinned Android WebRTC `144.7559.09` library contains 36 extracted DER
+  certificates and no ISRG roots. EC2's served YE2/Root YE/ISRG chain failed
+  independent verification against those certificates; adding the required
+  ISRG Root X2 to a temporary verification file made that check pass. This
+  supports a native trust-anchor incompatibility diagnosis. The upstream
+  [M144 TLS validation path](https://github.com/webrtc-sdk/webrtc/blob/m144_release/rtc_base/openssl_adapter.cc)
+  uses built-in trust and preserves verification failure without a successful
+  custom verifier. No native trust bypass, pin change or service modification
+  was made. Preserve TCP fallback and retain TLS as failed until a secure fix
+  has its own native media proof. Raw/redacted evidence and first failures are
+  under `call-fallback-priority2/remaining/` in the ignored test-log directory.
+  Flutter drive can leave VM-service ADB forwards after exiting. The native
+  proof runner snapshots existing rules and removes only new forwards matching
+  its own device and recorded driver port. An actual ADB ownership control
+  verified removal while preserving pre-existing rules, an unrelated new rule
+  on the same device and a logged port belonging to the other device. Fifteen
+  leaked forwards identified from these campaigns' logs were removed; unrelated
+  forwards were preserved. Receipts are in `remaining/forward-cleanup-control/`
+  and `remaining/owned-forward-cleanup.json` under the same evidence root.
 - **Readiness observation exceptions:** native snapshot reads can throw
   `WebRtcAdapterException(other)` after recording a fixed WebRTC read stage.
   The real engine wrapper now translates this to `observationUnavailable`;
@@ -1030,6 +1105,22 @@ visible and cannot become an ordinary first-attempt PASS.
   `.codex-test-logs/event-delivery/` retains red/green evidence. These deterministic
   host tests establish application queue and cleanup behavior, not native callback
   frequency, long-duration device memory usage or live call quality.
+  Confirmed ICE checklist exhaustion during an already-owned reconnect had
+  also caused premature terminal cleanup. The virtual-clock regression ended
+  at four seconds instead of retaining the existing 15-second window in both
+  event-first and snapshot-first orderings. Native aggregate failure now carries
+  explicit ICE-failed evidence before it qualifies for reconnect recovery;
+  unclassified transport, configuration, closed and privacy failures remain
+  terminal. A bounded disconnect handoff and classification captured at event
+  receipt preserve both recovery and pending hard-failure priority through
+  asynchronous/reentrant delivery. No new recovery owner, setup deadline or
+  restart budget is introduced. Tests recover at 14 seconds or clean up at
+  exactly 15 seconds, retain the 30-second setup deadline, and connect the next
+  call. Initial provisional failure remains covered separately. The original
+  four failures and passing call/bridge/composition preservation suite (1,037
+  tests) are retained under `.codex-test-logs/call-fallback-priority2/`. These
+  controlled native-port/coordinator sequences establish classification and
+  ownership, not the IP family of a live media path.
 - **Local Android audio isolation:** the existing production-call journey now
   fixes its build/cache/driver identity to `com.mknoon.sims.productionaudio`.
   Its activity class remains `com.mknoon.app.MainActivity`. Keep native calls
@@ -1042,6 +1133,70 @@ visible and cannot become an ordinary first-attempt PASS.
   assertions otherwise compete for Android's UiAutomation connection. Treat a
   missing-file message from `adb exec-out cat` as an unavailable capture even
   when its host exit code is zero; it never proves that a control is absent.
+  The current SIMS CLI treats `--prepare-builds` as a build-only selection.
+  Its successful attestation does not execute the audio capability. The change
+  wrapper currently supplies that flag. The existing
+  `run_production_audio_call_sims.dart --mode major --scenario
+  android.production_1to1_audio_call` adapter owns the disposable relay,
+  authenticated coturn and Pion oracle, then invokes both preparation and
+  actual execution. Bare central execution without its attested fixture fails
+  closed. Retain the wrapper's first incomplete result when running this
+  separate diagnostic; `.codex-test-logs/call-fallback-priority2/production-audio/`
+  records the observed build-only plan and zero device-capability execution,
+  and `production-audio-execution/` records the missing-fixture refusal.
+  The outer adapter passed all 27 production-call device assertions on the
+  available Pixel 6 and API 35 emulator; independent report verification also
+  passed. `production-audio-fixture/` retains the exact APK binding, native
+  Answer, bidirectional RTP, controls, cleanup/restoration and the separately
+  bound known-Opus Pion oracle. This source/debug campaign does not establish
+  physical audible sound, deployed-service behavior or signed distribution.
+  A separate deployed EC2 follow-up reused that driver, observer and app-state
+  guard with fresh identities and the default `mknoun.xyz` services. Two
+  relay-only calls selected TURN/UDP; two normal calls selected direct media.
+  Both endpoints passed structural readiness, separate advancing bidirectional
+  RTP diagnostics, native Answer, controls and terminal release; each mode
+  completed a second call. `ec2/observer-profile/` retains exact build arguments,
+  APK hashes, observer receipts and allowlisted media-progress observations.
+  Both deployed DNS families passed host TCP 3478 and certificate-validated
+  TLS 5349 probes; those listener probes do not establish TCP/TLS TURN media.
+  The EC2 follow-up did not fault the service or prove an established IPv6
+  media-path loss. The local fixture/Pion attestation is not reused as an EC2
+  verdict. Endpoint observation hashes are nonce-salted: compare a sample and
+  terminal receipt within one endpoint/run, not across endpoint nonces.
+  A subsequent exact signed Android release caller (`1.0.1(119)`, APK
+  `6bfe15f3ca35a975aaa72a041e93cb10118b70351a1fd41af33317b42a1cd7dd`)
+  completed two deployed calls with the disposable debug Pixel callee. The
+  discovered API 37 emulator ran with a read-only AVD overlay. Fresh contacts
+  used the signed app's actual acceptance UI, then required an encrypted current
+  call-wake receipt. The first attempt requested that receipt before acceptance
+  and correctly failed its `encrypted_current_grant_required` precondition;
+  retain it separately. Both calls passed native Answer, signed call controls,
+  native callee structural readiness and inbound/outbound RTP, terminal binding,
+  native release and next-call success. Separate advancing-RTP diagnostic samples
+  were retained for the second call; the first call's retained diagnostics did
+  not establish advancing counters. Coarse `turn_tls` diagnostics group TCP/TLS
+  and do not override the separately failing native TLS transport isolation.
+  This is one signed caller with a debug callee, not two signed endpoints, iOS
+  parity, upgrade proof or release approval. The existing disposable driver
+  correctly rejects the production package; its guard was preserved, with
+  separate UI-only actions confined to the read-only emulator.
+  Automated acoustic checks decoded the committed known-Opus fixture, injected
+  four 997/1499 Hz bursts into the emulator microphone, and captured host-mic PCM
+  while the Pixel selected its speaker and muted its microphone. The first
+  capture's undrained pipe truncated sampling; a concurrent reader fixed that
+  instrumentation problem. Later captures completed but did not detect the
+  expected burst pattern. Injection acceptance and nonzero source PCM are not
+  proof of remote decoded audio or audible speaker output. A read-only VM stats
+  attempt could not discover the owned callee's VM endpoint. No human listening
+  or raw microphone recording is claimed/retained, and audible output remains
+  unverified. `remaining/followup-summary.json` and its linked run artifacts
+  distinguish the native, production-signaling, signed and acoustic boundaries.
+  Switching a Flutter 3.47 build from device-test Debug to Release with
+  `--no-pub` can retain a generated Android plugin registrant that references
+  the excluded `integration_test` plugin. Both the first and serial retry failed
+  compilation. A normal Release build regenerated the platform metadata and
+  passed with the existing lockfile/pins and canonical call defines; signature
+  verification passed. Regenerating metadata is not a native regression test.
   Retry only inside the existing semantic deadline and reopen the native shade
   for each Answer attempt because an incoming window may replace it. The
   foreground WebRTC harness uses the same current-call guard and per-call TURN

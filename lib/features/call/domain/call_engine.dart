@@ -42,6 +42,9 @@ enum CallQualityBand { unknown, good, degraded, poor }
 enum CallFailureReason {
   none,
   transportUnavailable,
+
+  /// Native ICE, rather than an unclassified aggregate transport, failed.
+  iceConnectionFailed,
   configurationRejected,
   notReady,
   closed,
@@ -54,8 +57,8 @@ enum CallEngineErrorCode {
   configurationRejected,
   transportUnavailable,
 
-  /// Native ICE exhausted its current candidate checklist. Initial negotiation
-  /// may recover when later trickle candidates arrive before its deadline.
+  /// Native ICE exhausted its current candidate checklist. Negotiation or an
+  /// existing reconnect episode may recover before its canonical deadline.
   iceConnectionFailed,
   notReady,
 

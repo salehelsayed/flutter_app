@@ -361,8 +361,16 @@ final class _StatsPeerConnection implements webrtc.RTCPeerConnection {
   Object? statsError;
 
   @override
-  webrtc.RTCPeerConnectionState? get connectionState =>
+  void Function(webrtc.RTCPeerConnectionState)? onConnectionState;
+  @override
+  void Function(webrtc.RTCIceConnectionState)? onIceConnectionState;
+  @override
+  webrtc.RTCIceConnectionState? iceConnectionState;
+  webrtc.RTCPeerConnectionState nativeState =
       webrtc.RTCPeerConnectionState.RTCPeerConnectionStateConnected;
+
+  @override
+  webrtc.RTCPeerConnectionState? get connectionState => nativeState;
 
   @override
   Future<webrtc.RTCRtpTransceiver> addTransceiver({
@@ -424,6 +432,57 @@ Future<void> _createAudioConnection(
 );
 
 void main() {
+  for (final iceState in <webrtc.RTCIceConnectionState?>[
+    null,
+    webrtc.RTCIceConnectionState.RTCIceConnectionStateConnected,
+    webrtc.RTCIceConnectionState.RTCIceConnectionStateFailed,
+  ]) {
+    test('native failed transport requires ICE evidence ($iceState)', () async {
+      final peer = _StatsPeerConnection([[]])..iceConnectionState = iceState;
+      final adapter = FlutterWebRtcPeerConnectionAdapter(
+        peerConnectionFactory: (_) async => peer,
+        configureAndroidAudioFocus: () async {},
+      );
+      final engine = FlutterWebRtcCallEngine(adapter: adapter);
+      final events = <CallEngineEvent>[];
+      final subscription = engine.events.listen(events.add);
+      addTearDown(() async {
+        await engine.close();
+        await subscription.cancel();
+      });
+      await engine.createConnection(
+        const CallConnectionConfiguration(
+          transportPolicy: CallTransportPolicy.all,
+          receiveAudio: true,
+          receiveVideo: false,
+          captureAudio: false,
+          captureVideo: false,
+        ),
+      );
+      peer.nativeState =
+          webrtc.RTCPeerConnectionState.RTCPeerConnectionStateFailed;
+      final checklistFailed =
+          iceState == webrtc.RTCIceConnectionState.RTCIceConnectionStateFailed;
+      // Snapshot first must make the same distinction as either native callback.
+      await expectLater(
+        engine.snapshot(),
+        _throwsCallEngineCode(
+          checklistFailed
+              ? CallEngineErrorCode.iceConnectionFailed
+              : CallEngineErrorCode.transportUnavailable,
+        ),
+      );
+      peer.onConnectionState!(peer.nativeState);
+      if (iceState != null) peer.onIceConnectionState!(iceState);
+      expect(
+        events.last.failureReason,
+        checklistFailed
+            ? CallFailureReason.iceConnectionFailed
+            : CallFailureReason.transportUnavailable,
+      );
+    });
+  }
+
   test(
     'real wrapper proves TURN-backed local prflx from native stats only',
     () async {

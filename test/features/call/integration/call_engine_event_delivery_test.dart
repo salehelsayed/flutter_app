@@ -33,6 +33,81 @@ final _callId = CallId.parse('11111111-1111-4111-8111-111111111111');
 final _nextId = CallId.parse('22222222-2222-4222-8222-222222222222');
 
 void main() {
+  for (final queuedDispatch in [false, true]) {
+    test(
+      'confirmed ICE failure preserves disconnect and recovery '
+      '(dispatch pending=$queuedDispatch)',
+      () => _guarded(() async {
+        final h = _Harness();
+        final gate = Completer<void>();
+        try {
+          await h.start();
+          if (queuedDispatch) {
+            h.dispatchGate = gate;
+            h.blockedDispatchType = CallEventType.mediaLost;
+          }
+          h.peer.emit(_connected);
+          h.peer.emit(_disconnected);
+          if (queuedDispatch) await _until(() => h.dispatches.isNotEmpty);
+          h.peer.iceConnectionState =
+              webrtc.RTCIceConnectionState.RTCIceConnectionStateFailed;
+          h.peer.emit(_failed);
+          h.peer.emit(_connected);
+          expect(
+            h.executor.toDiagnosticMap()['pendingEngineEventCount'],
+            lessThanOrEqualTo(2),
+          );
+          gate.complete();
+          await h.drain();
+          expect(h.dispatches.map((e) => e.type), [CallEventType.mediaLost]);
+          expect(h.coordinator.activeSession?.state, CallState.reconnecting);
+          expect(h.peer.senderReads, 1);
+          expect(h.cleanupCalls, 0);
+          await h.hangup();
+          h.expectReleased();
+        } finally {
+          if (!gate.isCompleted) gate.complete();
+          await h.close();
+        }
+      }),
+    );
+  }
+
+  test(
+    'reentrant confirmed ICE failure keeps disconnect and latest recovery',
+    () => _guarded(() async {
+      final h = _Harness();
+      StreamSubscription<WebRtcPeerConnectionEvent>? subscription;
+      try {
+        await h.start();
+        var entered = false;
+        final before = h.nativeEvents.length;
+        subscription = h.adapter.events.listen((_) {
+          if (entered) return;
+          entered = true;
+          h.peer.emit(_disconnected);
+          h.peer.iceConnectionState =
+              webrtc.RTCIceConnectionState.RTCIceConnectionStateFailed;
+          h.peer.emit(_failed);
+          h.peer.emit(_connected);
+        });
+        h.peer.emit(_connected);
+        await h.drain();
+        expect(h.nativeEvents.skip(before).map((e) => e.connectionState), [
+          WebRtcConnectionState.connected,
+          WebRtcConnectionState.disconnected,
+          WebRtcConnectionState.connected,
+        ]);
+        expect(h.dispatches.map((e) => e.type), [CallEventType.mediaLost]);
+        expect(h.peer.senderReads, 1);
+        expect(h.cleanupCalls, 0);
+      } finally {
+        await subscription?.cancel();
+        await h.close();
+      }
+    }),
+  );
+
   for (final count in [65, 256, 1000]) {
     test(
       '$count processed native and engine events have no lifetime quota',
@@ -277,6 +352,13 @@ void main() {
               h.peer.emit(_connected);
             }
             h.peer.emit(fatal ? _failed : _disconnected);
+            if (fatal) {
+              // An explicitly identified checklist failure cannot overwrite
+              // the already pending unclassified (hard) transport failure.
+              h.peer.iceConnectionState =
+                  webrtc.RTCIceConnectionState.RTCIceConnectionStateFailed;
+              h.peer.emit(_failed);
+            }
             for (var i = 0; i < 1000; i++) {
               h.peer.emit(_connected);
             }
@@ -583,6 +665,9 @@ final class _NativePeer implements webrtc.RTCPeerConnection {
   void Function(webrtc.RTCPeerConnectionState)? onConnectionState;
   @override
   webrtc.RTCPeerConnectionState get connectionState => _connected;
+  @override
+  webrtc.RTCIceConnectionState iceConnectionState =
+      webrtc.RTCIceConnectionState.RTCIceConnectionStateConnected;
   Completer<List<webrtc.RTCRtpSender>>? sendersGate;
   int senderReads = 0;
   int restartCalls = 0;
