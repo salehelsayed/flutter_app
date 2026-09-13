@@ -501,6 +501,7 @@ final class FlutterWebRtcPeerConnectionAdapter
     try {
       await _requireConnection().restartIce();
       _iceGeneration += 1;
+      _rtpProgressSampler.reset();
     } catch (_) {
       throw const WebRtcAdapterException(WebRtcFailureReason.other);
     }
@@ -569,6 +570,7 @@ final class FlutterWebRtcPeerConnectionAdapter
   Future<WebRtcPeerConnectionSnapshot> _snapshotOnce(
     webrtc.RTCPeerConnection connection,
   ) async {
+    final observationGeneration = _iceGeneration;
     try {
       var observationComplete = true;
       T incomplete<T>(T fallback) {
@@ -664,9 +666,14 @@ final class FlutterWebRtcPeerConnectionAdapter
           values: Map<Object?, Object?>.of(report.values),
         ),
       );
-      final sample = _statsSampler.sample(diagnosticRecords);
+      final sample = _statsSampler.sample(
+        diagnosticRecords,
+        iceGeneration: observationGeneration,
+      );
       final observer = onDiagnosticSample;
-      if (observer != null) {
+      if (observer != null &&
+          observationGeneration == _iceGeneration &&
+          !_closed) {
         try {
           final progress = _rtpProgressSampler.sample(diagnosticRecords);
           observer(sample, progress);

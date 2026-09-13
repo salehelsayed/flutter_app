@@ -38,7 +38,7 @@ void main() {
       'confirmed ICE failure preserves disconnect and recovery '
       '(dispatch pending=$queuedDispatch)',
       () => _guarded(() async {
-        final h = _Harness();
+        final h = _Harness(failureSinkThrows: true);
         final gate = Completer<void>();
         try {
           await h.start();
@@ -63,6 +63,12 @@ void main() {
           expect(h.coordinator.activeSession?.state, CallState.reconnecting);
           expect(h.peer.senderReads, 1);
           expect(h.cleanupCalls, 0);
+          expect(h.failureObservations, [
+            (
+              CallFailureReason.iceConnectionFailed,
+              CallFailureDisposition.provisional,
+            ),
+          ]);
           await h.hangup();
           h.expectReleased();
         } finally {
@@ -229,7 +235,7 @@ void main() {
   test(
     'terminal close behind ordinary updates survives later ordinary updates',
     () => _guarded(() async {
-      final h = _Harness();
+      final h = _Harness(failureSinkThrows: true);
       final gate = Completer<List<webrtc.RTCRtpSender>>();
       try {
         await h.start(connected: false);
@@ -252,6 +258,7 @@ void main() {
         );
         gate.complete([]);
         await h.drain();
+        expect(h.failureObservations.last.$2, CallFailureDisposition.terminal);
         expect(h.dispatches.map((e) => e.type), [
           CallEventType.negotiationFailed,
         ]);
@@ -525,8 +532,11 @@ Future<void> _until(bool Function() complete) async {
 }
 
 final class _Harness {
-  _Harness({CallId? callId, int historyCapacity = 64})
-    : callId = callId ?? _callId {
+  _Harness({
+    CallId? callId,
+    int historyCapacity = 64,
+    bool failureSinkThrows = false,
+  }) : callId = callId ?? _callId {
     adapter = FlutterWebRtcPeerConnectionAdapter(
       eventBufferCapacity: historyCapacity,
       configureAndroidAudioFocus: () async {},
@@ -545,6 +555,12 @@ final class _Harness {
       onDone: () => engineDone = true,
     );
     executor = CallNegotiationEffectExecutor(
+      onFailureObservation: (id, reason, disposition) {
+        expect(id, this.callId);
+        failureObservations.add((reason, disposition));
+        if (failureSinkThrows)
+          throw StateError('synthetic diagnostic sink failure');
+      },
       engine: engine,
       materialStore: CallNegotiationMaterialStore(),
       mediaPreparer: _UnusedPreparer(),
@@ -583,6 +599,7 @@ final class _Harness {
   final engineEvents = <CallEngineEvent>[];
   final dispatches = <CallEvent>[];
   final history = _History();
+  final failureObservations = <(CallFailureReason, CallFailureDisposition)>[];
   final polls = _Timers();
   final deadlines = _Timers();
   late final FlutterWebRtcPeerConnectionAdapter adapter;

@@ -760,6 +760,7 @@ final class ProductionCallSignalingGraph
           'connected': session.connectedAt != null,
           'accepted': session.acceptedAt != null,
           'mediaFlowVerified': verified,
+          if (failed) 'failureDisposition': 'terminal',
           if (session.startedAt != null && session.endedAt != null)
             'durationMs': session.endedAt!
                 .difference(session.startedAt!)
@@ -821,12 +822,7 @@ final class ProductionCallSignalingGraph
         'inboundRtpProgress': progress.inbound,
         'outboundRtpProgress': progress.outbound,
         'mediaFlowVerified': verified,
-        'transport': switch (sample.transport) {
-          CallTransportClass.turnUdp => 'turn_udp',
-          CallTransportClass.turnTcpTls => 'turn_tls',
-          CallTransportClass.direct => 'direct',
-          _ => 'unknown',
-        },
+        ...sample.toLocalDiagnosticValues(),
       },
     );
   }
@@ -1809,6 +1805,20 @@ CallSignalingComposition createProductionCallSignalingComposition({
             },
           );
           final negotiationExecutor = CallNegotiationEffectExecutor(
+            onFailureObservation: (id, reason, disposition) {
+              CallDiagnostics.instance.record(
+                stage: 'media',
+                action: 'check',
+                outcome: 'failed',
+                reason: reason == CallFailureReason.iceConnectionFailed
+                    ? 'ice_failed'
+                    : 'transport_failed',
+                traceId: CallDiagnostics.instance.traceForCall(
+                  callId: id.value,
+                ),
+                values: {'failureDisposition': disposition.name},
+              );
+            },
             engine: engine,
             materialStore: negotiationMaterialStore,
             mediaPreparer: mediaPreparer,

@@ -83,6 +83,7 @@ final class CallNegotiationEffectExecutor implements CallEffectExecutor {
     CallTimerScheduler? mediaReadinessTimerScheduler,
     this.mediaReadinessPollInterval = const Duration(milliseconds: 100),
     this.maxMediaReadinessSamples,
+    this.onFailureObservation,
   }) : _mediaReadinessTimerScheduler =
            mediaReadinessTimerScheduler ?? const DartCallTimerScheduler() {
     if (maxPendingLocalCandidates <= 0 ||
@@ -127,6 +128,9 @@ final class CallNegotiationEffectExecutor implements CallEffectExecutor {
   /// Production leaves this unset so the coordinator's negotiation deadline is
   /// the single authority that bounds readiness observation.
   final int? maxMediaReadinessSamples;
+  final void Function(CallId, CallFailureReason, CallFailureDisposition)?
+  onFailureObservation;
+  (CallId, CallFailureReason, CallFailureDisposition)? _lastFailureObservation;
   final CallTimerScheduler _mediaReadinessTimerScheduler;
 
   late final StreamSubscription<CallEngineEvent> _engineEventSubscription;
@@ -723,10 +727,12 @@ final class CallNegotiationEffectExecutor implements CallEffectExecutor {
         _isFailureEngineEvent(event) &&
         !_isProvisionalIceChecklistFailure(event, session);
     if (_isFailureEngineEvent(event)) {
+      _observeFailure(session.callId!, event.failureReason, isTerminalFailure);
       _cancelMediaReadinessWatch(closeActivePhase: isTerminalFailure);
     } else if (event.connectionState != CallConnectionState.connected) {
       _cancelMediaReadinessWatch();
     }
+    if (!_isFailureEngineEvent(event)) _lastFailureObservation = null;
     final pending = _pendingEngineEvent;
     final pendingIsFailure = pending?.isTerminalFailure ?? false;
     // Keep a disconnect edge as well as the latest state: overwriting either
@@ -909,6 +915,14 @@ final class CallNegotiationEffectExecutor implements CallEffectExecutor {
               session.state == CallState.reconnecting) &&
           error is CallEngineException &&
           error.code == CallEngineErrorCode.iceConnectionFailed;
+      if (error is CallEngineException &&
+          error.code == CallEngineErrorCode.iceConnectionFailed) {
+        _observeFailure(
+          session.callId!,
+          CallFailureReason.iceConnectionFailed,
+          !awaitingTrickle,
+        );
+      }
       if (!awaitingTrickle &&
           (error is! CallEngineException ||
               (error.code != CallEngineErrorCode.observationUnavailable &&
@@ -1069,6 +1083,20 @@ final class CallNegotiationEffectExecutor implements CallEffectExecutor {
       _ => 'unexpected',
     };
     if (_lastFailureCode == 'unexpected') _unexpectedFailureCount++;
+  }
+
+  void _observeFailure(CallId callId, CallFailureReason reason, bool terminal) {
+    final disposition = terminal
+        ? CallFailureDisposition.terminal
+        : CallFailureDisposition.provisional;
+    final observation = (callId, reason, disposition);
+    if (_lastFailureObservation == observation) return;
+    _lastFailureObservation = observation;
+    try {
+      onFailureObservation?.call(callId, reason, disposition);
+    } catch (_) {
+      // Classification, deadlines and cleanup remain owned by this executor.
+    }
   }
 
   CallSessionSnapshot? _readSnapshotSafely() {

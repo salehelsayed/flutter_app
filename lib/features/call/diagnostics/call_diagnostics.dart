@@ -12,6 +12,7 @@ import 'package:flutter/widgets.dart';
 import '../../../core/bridge/bridge.dart';
 import '../../../core/diagnostics/diagnostic_archive_writer.dart';
 import 'call_diagnostic_schema.dart';
+import '../../../core/diagnostics/local_connection_diagnostics.dart';
 
 typedef CallDiagnosticUpload =
     Future<Set<String>> Function(List<Map<String, Object?>> events);
@@ -93,6 +94,7 @@ final class CallDiagnostics with WidgetsBindingObserver {
       if (entry.value is List) entry.key: Set<String>.from(entry.value as List),
   };
   static final Map<String, Set<String>> _enumValues = {
+    ...localCallConnectionEnums,
     for (final entry
         in (callDiagnosticSchemaV1['enumValues'] as Map<String, dynamic>)
             .entries)
@@ -750,7 +752,12 @@ final class CallDiagnostics with WidgetsBindingObserver {
         }
       }
       if (!enabled || epoch != _consentEpoch) return;
-      final batch = _pendingUploadBatch();
+      final batch = _pendingUploadBatch()
+          .map(
+            (event) =>
+                withoutLocalConnectionValues(event, localCallConnectionEnums),
+          )
+          .toList();
       if (batch.isEmpty) return;
       _uploading.addAll(batch.map((e) => e['eventId']! as String));
       final Set<String> accepted;

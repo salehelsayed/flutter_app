@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import '../domain/call_engine.dart';
 
 /// Packet-counter progress contains no statistics identifiers or addresses.
@@ -12,6 +14,11 @@ final class CallRtpProgressSample {
 final class CallRtpProgressSampler {
   (int, int)? _inbound;
   (int, int)? _outbound;
+
+  void reset() {
+    _inbound = null;
+    _outbound = null;
+  }
 
   CallRtpProgressSample sample(Iterable<CallStatsRecord> records) {
     (int, int)? inbound;
@@ -93,6 +100,13 @@ final class CallStatsSample {
     required this.transport,
     required this.inboundAudioRtpObserved,
     required this.outboundAudioRtpObserved,
+    this.selectedLocalCandidateFamily = CallAddressFamily.unknown,
+    this.selectedRemoteCandidateFamily = CallAddressFamily.unknown,
+    this.pairRelayInvolvement = CallPairRelayInvolvement.unknown,
+    this.selectedPairState = CallSelectedPairState.unknown,
+    this.observationIceGeneration = 0,
+    this.selectedLocalTransport = CallTransportClass.unknown,
+    this.selectedLocalRelayProtocol = CallRelayProtocol.unknown,
   });
 
   static const empty = CallStatsSample(
@@ -112,13 +126,55 @@ final class CallStatsSample {
   final CallTransportClass transport;
   final bool inboundAudioRtpObserved;
   final bool outboundAudioRtpObserved;
+  final CallAddressFamily selectedLocalCandidateFamily;
+  final CallAddressFamily selectedRemoteCandidateFamily;
+  final CallPairRelayInvolvement pairRelayInvolvement;
+  final CallSelectedPairState selectedPairState;
+
+  /// Owner generation at the start of this stats read, not proof of the
+  /// candidate's native generation (which standard stats do not expose).
+  final int observationIceGeneration;
+
+  /// Local diagnostic route from the same unambiguous pair as the families.
+  /// The existing readiness/privacy transport above retains its contract.
+  final CallTransportClass selectedLocalTransport;
+  final CallRelayProtocol selectedLocalRelayProtocol;
+
+  // Standard candidate stats expose allocation addresses, not the socket
+  // connecting either client to TURN. Neither URL nor relayProtocol proves it.
+  CallAddressFamily get localTurnConnectionFamily => CallAddressFamily.unknown;
+  CallAddressFamily get remoteTurnConnectionFamily => CallAddressFamily.unknown;
+
+  Map<String, Object?> toLocalDiagnosticValues() => {
+    'selectedLocalCandidateFamily': selectedLocalCandidateFamily.name,
+    'selectedRemoteCandidateFamily': selectedRemoteCandidateFamily.name,
+    'localTurnConnectionFamily': localTurnConnectionFamily.name,
+    'remoteTurnConnectionFamily': remoteTurnConnectionFamily.name,
+    'pairRelayInvolvement': pairRelayInvolvement.name,
+    'selectedPairState': selectedPairState.name,
+    'generation': observationIceGeneration,
+    'transport': switch (selectedLocalTransport) {
+      CallTransportClass.direct => 'direct',
+      CallTransportClass.turnUdp => 'turn_udp',
+      CallTransportClass.turnTcpTls => switch (selectedLocalRelayProtocol) {
+        CallRelayProtocol.tcp => 'turn_tcp',
+        CallRelayProtocol.tls => 'turn_tls',
+        _ => 'relay',
+      },
+      CallTransportClass.relay => 'relay',
+      _ => 'unknown',
+    },
+  };
 }
 
 /// Version-tolerant, privacy-safe selected-pair parser.
 final class CallStatsSampler {
   const CallStatsSampler();
 
-  CallStatsSample sample(Iterable<CallStatsRecord> records) {
+  CallStatsSample sample(
+    Iterable<CallStatsRecord> records, {
+    int iceGeneration = 0,
+  }) {
     var inboundAudioRtpObserved = false;
     var outboundAudioRtpObserved = false;
     final byId = <String, CallStatsRecord>{
@@ -166,6 +222,7 @@ final class CallStatsSampler {
         transport: CallTransportClass.unknown,
         inboundAudioRtpObserved: inboundAudioRtpObserved,
         outboundAudioRtpObserved: outboundAudioRtpObserved,
+        observationIceGeneration: iceGeneration,
       );
     }
 
@@ -181,6 +238,25 @@ final class CallStatsSampler {
         ? referencedLocal
         : null;
 
+    // Diagnostic selection is conservative when old/plugin stats contain
+    // several nominated pairs. Keep the existing readiness/privacy predicate
+    // independent of this observation-only extension.
+    final observedPair = _unambiguousSelectedPair(records, byId);
+    CallStatsRecord? referencedCandidate(String key, String type) {
+      final id = _string(observedPair?.values[key]);
+      final candidate = id == null ? null : byId[id];
+      return candidate?.type == type ? candidate : null;
+    }
+
+    final observedLocal = referencedCandidate(
+      'localCandidateId',
+      'local-candidate',
+    );
+    final observedRemote = referencedCandidate(
+      'remoteCandidateId',
+      'remote-candidate',
+    );
+
     return CallStatsSample(
       selectedPairSucceeded: succeeded,
       selectedPairNominated: nominated,
@@ -189,7 +265,113 @@ final class CallStatsSampler {
       transport: _transportClass(local),
       inboundAudioRtpObserved: inboundAudioRtpObserved,
       outboundAudioRtpObserved: outboundAudioRtpObserved,
+      selectedLocalCandidateFamily: _candidateFamily(observedLocal),
+      selectedRemoteCandidateFamily: _candidateFamily(observedRemote),
+      pairRelayInvolvement: _pairRelay(observedLocal, observedRemote),
+      selectedPairState: switch (observedPair?.values['state']) {
+        'succeeded' => CallSelectedPairState.succeeded,
+        'failed' => CallSelectedPairState.failed,
+        'waiting' || 'in-progress' || 'frozen' => CallSelectedPairState.pending,
+        _ => CallSelectedPairState.unknown,
+      },
+      observationIceGeneration: iceGeneration,
+      selectedLocalTransport: _transportClass(observedLocal),
+      selectedLocalRelayProtocol: _selectedRelayProtocol(observedLocal),
     );
+  }
+
+  static CallStatsRecord? _unambiguousSelectedPair(
+    Iterable<CallStatsRecord> records,
+    Map<String, CallStatsRecord> byId,
+  ) {
+    if (byId.length != records.length) return null;
+    final referenced = records
+        .where(
+          (r) =>
+              r.type == 'transport' &&
+              r.values.containsKey('selectedCandidatePairId'),
+        )
+        .toList();
+    if (referenced.isNotEmpty) {
+      final ids = referenced
+          .map((r) => _string(r.values['selectedCandidatePairId']))
+          .toSet();
+      if (ids.length != 1 || ids.single == null) return null;
+      final pair = byId[ids.single];
+      return pair?.type == 'candidate-pair' ? pair : null;
+    }
+    final pairs = records.where((r) => r.type == 'candidate-pair').toList();
+    final selected = pairs.where((r) => _bool(r.values['selected'])).toList();
+    if (selected.isNotEmpty) {
+      return selected.length == 1 ? selected.single : null;
+    }
+    final nominated = pairs.where((r) => _bool(r.values['nominated'])).toList();
+    return nominated.length == 1 ? nominated.single : null;
+  }
+
+  static CallAddressFamily _candidateFamily(CallStatsRecord? candidate) {
+    if (candidate == null) return CallAddressFamily.unknown;
+    final values = candidate.values;
+    final family = _literalFamily(
+      values.containsKey('address') ? values['address'] : values['ip'],
+    );
+    if (values.containsKey('address') &&
+        values.containsKey('ip') &&
+        _literalFamily(values['ip']) != family) {
+      return CallAddressFamily.unknown;
+    }
+    return family;
+  }
+
+  static CallAddressFamily _literalFamily(Object? value) {
+    if (value is! String ||
+        value.length > 64 ||
+        value != value.trim() ||
+        value.contains(RegExp(r'[%\[\]]'))) {
+      return CallAddressFamily.unknown;
+    }
+    final address = InternetAddress.tryParse(value); // No DNS or socket access.
+    if (address == null) return CallAddressFamily.unknown;
+    final bytes = address.rawAddress;
+    if (bytes.every((b) => b == 0)) return CallAddressFamily.unknown;
+    if (address.type == InternetAddressType.IPv4) return CallAddressFamily.ipv4;
+    // Mapped/compatible IPv4 is ambiguous as route evidence; do not unmap it.
+    if (bytes.take(10).every((b) => b == 0) &&
+        ((bytes[10] == 255 && bytes[11] == 255) ||
+            (bytes[10] == 0 &&
+                bytes[11] == 0 &&
+                !(bytes[12] == 0 &&
+                    bytes[13] == 0 &&
+                    bytes[14] == 0 &&
+                    bytes[15] == 1)))) {
+      return CallAddressFamily.unknown;
+    }
+    return CallAddressFamily.ipv6;
+  }
+
+  static CallPairRelayInvolvement _pairRelay(
+    CallStatsRecord? local,
+    CallStatsRecord? remote,
+  ) {
+    bool? relayed(CallStatsRecord? c, {required bool isLocal}) {
+      final type = _string(c?.values['candidateType'])?.toLowerCase();
+      if (type == 'relay' ||
+          (isLocal && c != null && _isTurnBackedPrflx(c, type))) {
+        return true;
+      }
+      // Remote prflx stats do not expose the remote client's TURN port.
+      if (!isLocal && type == 'prflx') return null;
+      if (type == 'host' || type == 'srflx' || type == 'prflx') return false;
+      return null;
+    }
+
+    final l = relayed(local, isLocal: true),
+        r = relayed(remote, isLocal: false);
+    if (l == null || r == null) return CallPairRelayInvolvement.unknown;
+    if (l && r) return CallPairRelayInvolvement.both;
+    if (l) return CallPairRelayInvolvement.local;
+    if (r) return CallPairRelayInvolvement.remote;
+    return CallPairRelayInvolvement.none;
   }
 
   static bool _isAudioRtp(CallStatsRecord record) {

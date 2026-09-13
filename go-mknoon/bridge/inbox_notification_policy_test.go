@@ -59,6 +59,19 @@ func TestInboxStoreNotificationPolicyReachesRelay(t *testing.T) {
 		"autoRegister":   false,
 	})
 	assertOk(t, parseJSON(t, StartNode(string(start))))
+	dialInput, _ := json.Marshal(map[string]interface{}{"peerId": relay.ID().String(), "addresses": []string{relay.Addrs()[0].String()}, "timeoutMs": 1000})
+	dialResponse := parseJSON(t, DialPeer(string(dialInput)))
+	assertOk(t, dialResponse)
+	established := dialResponse["connectionDiagnostics"].([]interface{})
+	if len(established) == 0 {
+		t.Fatal("missing authenticated connection")
+	}
+	for _, raw := range established {
+		r := raw.(map[string]interface{})
+		if r["connectionStage"] != "established" || r["observedLeg"] != "endpoint_to_relay" || r["addressFamily"] != "ipv4" {
+			t.Fatalf("wrong established evidence: %v", r)
+		}
+	}
 	for _, tc := range []struct {
 		name       string
 		protected  bool
@@ -94,9 +107,24 @@ func TestInboxStoreNotificationPolicyReachesRelay(t *testing.T) {
 				input["custodyExpiresAtOrBeforeMs"] = int64(2_000_000_123_456)
 			}
 			raw, _ := json.Marshal(input)
-			assertOk(t, parseJSON(t, InboxStore(string(raw))))
+			response := parseJSON(t, InboxStore(string(raw)))
+			assertOk(t, response)
+			observations, ok := response["connectionDiagnostics"].([]interface{})
+			if !ok || len(observations) == 0 {
+				t.Fatal("missing actual inbox stream diagnostics")
+			}
+			row := observations[len(observations)-1].(map[string]interface{})
+			if row["connectionStage"] != "stream_opened" || row["addressFamily"] != "ipv4" || row["observedLeg"] != "endpoint_to_relay" || row["familyFallback"] != "unknown" {
+				t.Fatalf("wrong relay-leg evidence: %v", row)
+			}
+			if _, exists := response["acked"]; exists {
+				t.Fatal("inbox acceptance promoted recipient ACK")
+			}
 			select {
 			case request := <-requests:
+				if _, exists := request["connectionDiagnostics"]; exists {
+					t.Fatal("local diagnostics leaked onto inbox protocol")
+				}
 				expectedAction := "store"
 				if tc.protected {
 					expectedAction = "store_custody_v1"

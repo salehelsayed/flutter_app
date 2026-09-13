@@ -48,6 +48,17 @@ class AppDiagnosticsTests(unittest.TestCase):
         self.assertTrue(MODULE.validate(e))
         with self.assertRaises(ValueError):MODULE.decode('{"key":1,"key":2}')
 
+    def test_connection_extension_requires_local_projection_before_v1_upload(self):
+        event = self.event()
+        for key, value in {
+            'connectionStage': 'stream_opened', 'connectionOutcome': 'ok',
+            'addressFamily': 'ipv4', 'transportProtocol': 'tcp',
+            'pathClass': 'direct', 'observedLeg': 'endpoint_to_peer',
+            'familyFallback': 'ipv6_to_ipv4',
+        }.items():
+            self.assertFalse(MODULE.validate(dict(event, values={key: value})), key)
+        self.assertTrue(MODULE.validate(event))
+
     def test_failed_then_success_retry_and_owner_partition(self):
         start = self.event()
         failure = dict(start,eventId=str(uuid.uuid4()),sequence=1,stage='finish',outcome='failed',reason='hash_mismatch')

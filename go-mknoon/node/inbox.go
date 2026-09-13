@@ -158,13 +158,14 @@ type InboxWakeOutcomeResult struct {
 }
 
 type InboxStoreOutcome struct {
-	StoreStatus     string
-	ErrorCode       string
-	ErrorMessage    string
-	CustodyContract string
-	ExpiresAtMs     int64
-	Occupancy       int
-	Capacity        int
+	StoreStatus           string
+	ErrorCode             string
+	ErrorMessage          string
+	CustodyContract       string
+	ExpiresAtMs           int64
+	Occupancy             int
+	Capacity              int
+	ConnectionDiagnostics []ConnectionDiagnostic
 }
 
 func parseInboxStoreResponse(respBytes []byte) (InboxStoreOutcome, error) {
@@ -324,7 +325,9 @@ func (n *Node) InboxStoreDetailedWithNotificationPolicy(
 	wakeToken string,
 	suppressNotification bool,
 	quietRecovery ...bool,
-) (InboxStoreOutcome, error) {
+) (resultValue InboxStoreOutcome, resultErr error) {
+	d := &connectionDiagnostics{leg: "endpoint_to_relay"}
+	defer func() { resultValue.ConnectionDiagnostics = d.records }()
 	n.mu.RLock()
 	h := n.host
 	n.mu.RUnlock()
@@ -338,6 +341,7 @@ func (n *Node) InboxStoreDetailedWithNotificationPolicy(
 	totalStart := time.Now()
 	var lastOutcome InboxStoreOutcome
 	err := rs.ForEach(func(relay RelayInfo) error {
+		d.setTarget(relay.ID)
 		timeout := InboxTimeout
 		if timeoutMs > 0 {
 			timeout = time.Duration(timeoutMs) * time.Millisecond
@@ -348,6 +352,7 @@ func (n *Node) InboxStoreDetailedWithNotificationPolicy(
 		// Ensure connected to relay
 		connectStart := time.Now()
 		if err := h.Connect(ctx, peer.AddrInfo{ID: relay.ID, Addrs: relay.Addrs}); err != nil {
+			d.failedDial(err)
 			n.emitEvent("inbox:store_timing", map[string]interface{}{
 				"connectMs": time.Since(connectStart).Milliseconds(),
 				"totalMs":   time.Since(totalStart).Milliseconds(),
@@ -360,6 +365,7 @@ func (n *Node) InboxStoreDetailedWithNotificationPolicy(
 		streamStart := time.Now()
 		connections := h.Network().ConnsToPeer(relay.ID)
 		s, err := h.NewStream(ctx, relay.ID, InboxProtocol)
+		d.stream(s, err)
 		streamOpenMs := time.Since(streamStart).Milliseconds()
 		if err != nil {
 			if len(connections) == 1 {
@@ -532,7 +538,9 @@ func (n *Node) inboxStoreAckCustodyDetailedWithWakeToken(
 	custodyExpiresAtOrBeforeMs int64,
 	suppressNotification bool,
 	quietRecovery ...bool,
-) (InboxStoreOutcome, error) {
+) (resultValue InboxStoreOutcome, resultErr error) {
+	d := &connectionDiagnostics{leg: "endpoint_to_relay"}
+	defer func() { resultValue.ConnectionDiagnostics = d.records }()
 	if !isSupportedInboxCustodyKind(custodyKind) {
 		return InboxStoreOutcome{ErrorCode: "CUSTODY_INELIGIBLE"},
 			fmt.Errorf("%w: unsupported custody kind %q", ErrInboxCustodyIneligible, custodyKind)
@@ -575,9 +583,10 @@ func (n *Node) inboxStoreAckCustodyDetailedWithWakeToken(
 	var fullOutcome *InboxStoreOutcome
 
 	for _, relay := range relays {
+		d.setTarget(relay.ID)
 		var peerResponded bool
 		for _, candidate := range relayInfoAttemptCandidates(relay) {
-			respBytes, err := n.exchangeInboxRequest(h, candidate, req, timeout)
+			respBytes, err := n.exchangeInboxRequest(h, candidate, req, timeout, d)
 			if err != nil {
 				lastErr = err
 				continue
@@ -653,15 +662,22 @@ func (n *Node) exchangeInboxRequest(
 	relay RelayInfo,
 	req inboxRequest,
 	timeout time.Duration,
+	observations ...*connectionDiagnostics,
 ) ([]byte, error) {
+	var d *connectionDiagnostics
+	if len(observations) > 0 {
+		d = observations[0]
+	}
 	ctx, cancel := context.WithTimeout(n.ctx, timeout)
 	defer cancel()
 
 	if err := h.Connect(ctx, peer.AddrInfo{ID: relay.ID, Addrs: relay.Addrs}); err != nil {
+		d.failedDial(err)
 		return nil, fmt.Errorf("connect to relay: %w", err)
 	}
 	connections := h.Network().ConnsToPeer(relay.ID)
 	s, err := h.NewStream(ctx, relay.ID, InboxProtocol)
+	d.stream(s, err)
 	if err != nil {
 		if len(connections) == 1 {
 			n.retireTimedOutSendConnection(connections[0], err)

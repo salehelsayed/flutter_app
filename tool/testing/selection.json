@@ -350,7 +350,7 @@
         "test/features/call/infrastructure/flutter_webrtc_build_contract_test.dart",
         "test/tool/sims/sims_manifest_test.dart"
       ],
-      "boundary": "Direct/mailbox old-generation hangup convergence/cleanup, negotiation material generation/privacy, authenticated remote ICE through the real executor and WebRTC wrapper batch limit, restart filtering and interrupted drain cleanup; native snapshot exception normalization through the real engine/executor/audio owner, bounded observation recovery, exact-call fatal dispatch, stale completion and cleanup; sustained native/engine event delivery, bounded history and coalescing, terminal failure/disconnect priority, provisional initial ICE checklist recovery within the unchanged deadline, reentrant callbacks and terminal fencing; policy-aware TURN retrieval with transient-only direct attempts, strict credential/authentication rejection, exact-call late-result fences, frozen restart policy and canonical setup/reconnect deadlines; mixed local/remote ICE policies in both directions, local SDP/candidate egress including related addresses, and selected local candidate classification; production per-call policy captured at admission for incoming/outgoing/native paths, secure privacy preference persistence and fail-closed loading, feature availability versus rollout restriction, native all/relay configuration, and settings persistence/error visibility; confirmed native ICE checklist classification during an existing reconnect, disconnect dispatch handoff, immutable pending terminal priority, unchanged 15-second recovery expiry and subsequent-call cleanup",
+      "boundary": "Direct/mailbox old-generation hangup convergence/cleanup, negotiation material generation/privacy, authenticated remote ICE through the real executor and WebRTC wrapper batch limit, restart filtering and interrupted drain cleanup; native snapshot exception normalization through the real engine/executor/audio owner, bounded observation recovery, exact-call fatal dispatch, stale completion and cleanup; sustained native/engine event delivery, bounded history and coalescing, terminal failure/disconnect priority, provisional initial ICE checklist recovery within the unchanged deadline, reentrant callbacks and terminal fencing; policy-aware TURN retrieval with transient-only direct attempts, strict credential/authentication rejection, exact-call late-result fences, frozen restart policy and canonical setup/reconnect deadlines; mixed local/remote ICE policies in both directions, local SDP/candidate egress including related addresses, and selected local candidate classification; production per-call policy captured at admission for incoming/outgoing/native paths, secure privacy preference persistence and fail-closed loading, feature availability versus rollout restriction, native all/relay configuration, and settings persistence/error visibility; confirmed native ICE checklist classification during an existing reconnect, disconnect dispatch handoff, immutable pending terminal priority, unchanged 15-second recovery expiry and subsequent-call cleanup; selected-pair family/relay parsing preserves ambiguity, allocation versus TURN-client legs, stale observation generations and authoritative provisional/terminal failure diagnostics",
       "limitations": "Fake crypto/transports/native lifecycle; no microphone/RTP/audible audio evidence",
       "timeout_seconds": 900,
       "estimated_seconds": 3,
@@ -378,7 +378,7 @@
         "test/features/settings/presentation/widgets/app_diagnostics_settings_section_test.dart",
         "test/features/settings/presentation/widgets/call_diagnostics_settings_section_test.dart"
       ],
-      "boundary": "Closed schemas/privacy, bounded app/call recording and persistence, nonblocking bootstrap, and bounded settings previews",
+      "boundary": "Closed schemas/privacy, bounded app/call recording and persistence, nonblocking bootstrap, and bounded settings previews; local-only address-family extensions are stripped from legacy uploads with event identity preserved, malformed native observations rejected, and consent/storage failure isolated from communication results",
       "limitations": "Host tests; synthetic admission benchmarks do not measure device frame pacing or battery, and telemetry correlation alone does not prove custody/content",
       "timeout_seconds": 900,
       "estimated_seconds": null,
@@ -1294,6 +1294,32 @@
         "go-mknoon/integration/ack_custody_mixed_relay_test.go",
         "go-mknoon/integration/ipv6_dual_stack_test.go"
       ]
+    },
+    "connection-diagnostics-go": {
+      "kind": "command",
+      "command": [
+        "go",
+        "test",
+        "./node",
+        "./bridge",
+        "-run",
+        "^Test(ConnectionDiagnostic|ClassifyStreamTransport|SendMessage|R3Deadline|Inbox|ParseInbox|QuietRecovery|CallDiagnostic|AppDiagnostic)",
+        "-count=1",
+        "-v"
+      ],
+      "cwd": "go-mknoon",
+      "success_marker": "--- PASS: TestConnectionDiagnosticSendRecoveryAndAckBoundaries",
+      "boundary": "Coarse literal family parsing; operation-correlated socket failure versus established connection and actual stream; direct/circuit and observed relay leg; bounded sidecars and sink failure isolation; message ACK/deadline/recovery, durable inbox acceptance and quiet notification preservation through the mobile bridge",
+      "limitations": "Host libp2p/bridge fixtures only; circuit underlying relay sockets, native successful-dial internal attempts, TURN client sockets and APNs courier families are not inferred. Does not certify signed devices or live media.",
+      "requirements": [
+        "go"
+      ],
+      "timeout_seconds": 600,
+      "references": [
+        "go-mknoon/node/transport_label_test.go",
+        "go-mknoon/bridge/inbox_notification_policy_test.go",
+        "go-mknoon/node/deadline_contract_test.go"
+      ]
     }
   },
   "areas": [
@@ -2053,6 +2079,32 @@
         "bridge"
       ],
       "why": "Recovery intent crosses immutable sender retries, transport, durable receiver state and notification projection"
+    },
+    {
+      "id": "connection-diagnostics",
+      "patterns": [
+        "lib/core/diagnostics/local_connection_diagnostics.dart",
+        "lib/core/bridge/go_bridge_client.dart",
+        "lib/features/call/infrastructure/call_stats_sampler.dart",
+        "lib/features/call/infrastructure/flutter_webrtc_call_engine.dart",
+        "lib/features/call/application/call_negotiation_effect_executor.dart",
+        "go-mknoon/node/connection_diagnostics.go",
+        "go-mknoon/node/transport_label_test.go",
+        "go-mknoon/node/node.go",
+        "go-mknoon/node/inbox.go",
+        "go-mknoon/bridge/connection_diagnostics.go",
+        "go-mknoon/bridge/bridge.go",
+        "go-mknoon/bridge/inbox_notification_policy_test.go"
+      ],
+      "checks": [
+        "connection-diagnostics-go",
+        "diagnostics",
+        "diagnostics-python",
+        "call-signaling",
+        "bridge",
+        "quiet-recovery"
+      ],
+      "why": "Observation-only family sidecars must preserve receiver compatibility, media readiness/failure disposition and message custody/quiet recovery. Broader existing consumer mappings are retained."
     }
   ],
   "documentation_only": [

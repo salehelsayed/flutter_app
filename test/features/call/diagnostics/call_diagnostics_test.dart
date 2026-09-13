@@ -8,6 +8,7 @@ import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/bridge/go_bridge_client.dart';
 import 'package:flutter_app/features/call/diagnostics/call_diagnostic_schema.dart';
 import 'package:flutter_app/features/call/diagnostics/call_diagnostics.dart';
+import 'package:flutter_app/core/diagnostics/local_connection_diagnostics.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 class DiagnosticBridge implements Bridge {
@@ -98,6 +99,90 @@ void main() {
       true,
     );
   });
+
+  test(
+    'family extension stays local through upload retry export and consent removal',
+    () async {
+      final uploaded = <List<Map<String, Object?>>>[];
+      final diagnostics = await install(
+        upload: (batch) async {
+          uploaded.add(batch);
+          if (uploaded.length == 1) throw StateError('synthetic sink failure');
+          return batch.map((e) => e['eventId']! as String).toSet();
+        },
+      );
+      final trace = diagnostics.beginAttempt();
+      diagnostics.record(
+        stage: 'media',
+        action: 'snapshot',
+        outcome: 'ok',
+        traceId: trace,
+        values: {
+          'transport': 'direct',
+          'structuralReady': false,
+          'selectedLocalCandidateFamily': 'ipv4',
+          'selectedRemoteCandidateFamily': 'ipv6',
+          'localTurnConnectionFamily': 'unknown',
+          'remoteTurnConnectionFamily': 'unknown',
+          'pairRelayInvolvement': 'remote',
+          'selectedPairState': 'failed',
+          'failureDisposition': 'provisional',
+          'address': 'PRIVATE',
+          'sdp': 'PRIVATE',
+        },
+      );
+      diagnostics.finishAttempt(
+        traceId: trace,
+        outcome: 'media_failed',
+        reason: 'ice_failed',
+      );
+      await diagnostics.flush();
+      now = now.add(const Duration(minutes: 2));
+      await diagnostics.flush();
+      final local = (await diagnostics.eventsForTesting()).singleWhere(
+        (e) => e['stage'] == 'media',
+      );
+      expect(
+        local['values'],
+        containsPair('selectedLocalCandidateFamily', 'ipv4'),
+      );
+      final legacyEnums = callDiagnosticSchemaV1['enumValues'] as Map;
+      for (final batch in uploaded) {
+        for (final event in batch) {
+          for (final key in (event['values'] as Map).keys) {
+            expect(localCallConnectionEnums.containsKey(key), isFalse);
+            expect(
+              (callDiagnosticSchemaV1['booleanValues'] as List).contains(key) ||
+                  (callDiagnosticSchemaV1['integerValues'] as List).contains(
+                    key,
+                  ) ||
+                  legacyEnums.containsKey(key),
+              isTrue,
+            );
+          }
+        }
+      }
+      final exported = await diagnostics.exportPreview();
+      expect(exported, contains('selectedLocalCandidateFamily'));
+      expect(exported, isNot(contains('PRIVATE')));
+      final malformed = {
+        ...local,
+        'values': {
+          ...local['values'] as Map,
+          'selectedLocalCandidateFamily': '192.0.2.1',
+        },
+      };
+      expect(CallDiagnostics.validateEvent(malformed), isNull);
+      await diagnostics.setEnabled(false);
+      diagnostics.record(
+        stage: 'media',
+        action: 'snapshot',
+        outcome: 'ok',
+        values: {'selectedLocalCandidateFamily': 'ipv6'},
+      );
+      expect(await diagnostics.eventsForTesting(), isEmpty);
+    },
+  );
 
   test(
     'closed-value normalization preserves private-input filtering and snapshots',

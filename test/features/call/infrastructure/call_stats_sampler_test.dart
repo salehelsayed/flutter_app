@@ -5,6 +5,326 @@ import 'package:flutter_test/flutter_test.dart';
 void main() {
   const sampler = CallStatsSampler();
 
+  List<CallStatsRecord> familyPair({
+    Object? local = '192.0.2.10',
+    Object? remote = '2001:db8::20',
+    String localType = 'host',
+    String remoteType = 'relay',
+    String? relayProtocol,
+    String pairId = 'pair',
+    Map<Object?, Object?> localExtra = const {},
+  }) => [
+    CallStatsRecord(
+      id: 'transport',
+      type: 'transport',
+      values: {'selectedCandidatePairId': pairId, 'dtlsState': 'connected'},
+    ),
+    CallStatsRecord(
+      id: 'pair',
+      type: 'candidate-pair',
+      values: {
+        'state': 'succeeded',
+        'nominated': true,
+        'localCandidateId': 'local',
+        'remoteCandidateId': 'remote',
+      },
+    ),
+    CallStatsRecord(
+      id: 'local',
+      type: 'local-candidate',
+      values: {
+        'address': local,
+        'candidateType': localType,
+        'protocol': 'udp',
+        'relayProtocol': ?relayProtocol,
+        ...localExtra,
+      },
+    ),
+    CallStatsRecord(
+      id: 'remote',
+      type: 'remote-candidate',
+      values: {
+        'address': remote,
+        'candidateType': remoteType,
+        'protocol': 'udp',
+      },
+    ),
+  ];
+
+  test(
+    'selected candidate families are separate from local and whole-pair routes',
+    () {
+      final sample = sampler.sample(familyPair());
+      expect(sample.selectedLocalCandidateFamily, CallAddressFamily.ipv4);
+      expect(sample.selectedRemoteCandidateFamily, CallAddressFamily.ipv6);
+      expect(sample.transport, CallTransportClass.direct);
+      expect(sample.selectedRelayProtocol, CallRelayProtocol.notRelay);
+      expect(sample.pairRelayInvolvement, CallPairRelayInvolvement.remote);
+      expect(sample.localTurnConnectionFamily, CallAddressFamily.unknown);
+      expect(sample.remoteTurnConnectionFamily, CallAddressFamily.unknown);
+    },
+  );
+
+  test(
+    'TURN allocations and remapped local prflx never identify client-to-TURN families',
+    () {
+      for (final type in ['relay', 'prflx']) {
+        final sample = sampler.sample(
+          familyPair(
+            local: '2001:db8::10',
+            remote: '192.0.2.20',
+            localType: type,
+            relayProtocol: 'tcp',
+            localExtra: {
+              'url': 'turn:192.0.2.99:3478?transport=tcp',
+              'relatedAddress': '192.0.2.88',
+              'networkType': 'wifi',
+              'usernameFragment': 'PRIVATE',
+              'port': 6543,
+            },
+          ),
+        );
+        expect(sample.transport, CallTransportClass.turnTcpTls);
+        expect(sample.pairRelayInvolvement, CallPairRelayInvolvement.both);
+        expect(sample.selectedLocalCandidateFamily, CallAddressFamily.ipv6);
+        expect(sample.selectedRemoteCandidateFamily, CallAddressFamily.ipv4);
+        final values = sample.toLocalDiagnosticValues();
+        expect(values['localTurnConnectionFamily'], 'unknown');
+        expect(values['remoteTurnConnectionFamily'], 'unknown');
+        expect(
+          values.toString(),
+          isNot(
+            anyOf(
+              contains('192.0.2'),
+              contains('2001:db8'),
+              contains('PRIVATE'),
+              contains('6543'),
+              contains('turn:'),
+            ),
+          ),
+        );
+      }
+      expect(
+        sampler.sample(familyPair(remoteType: 'prflx')).pairRelayInvolvement,
+        CallPairRelayInvolvement.unknown,
+      );
+    },
+  );
+
+  test(
+    'literal family parsing preserves missing malformed redacted and mapped ambiguity',
+    () {
+      for (final value in <Object?>[
+        null,
+        '',
+        'redacted',
+        'host.local',
+        'turn.example.invalid',
+        '0.0.0.0',
+        '::',
+        '::ffff:192.0.2.1',
+        '::ffff:c000:201',
+        '::192.0.2.1',
+        '::c000:201',
+        '[2001:db8::1]:3478',
+        '[2001:db8::1]',
+        '192.0.2.1:1234',
+        'fe80::1%private-interface',
+        '2001:db8:::1',
+        '999.0.0.1',
+        ' 192.0.2.1',
+        42,
+        true,
+        <String>['192.0.2.1'],
+      ]) {
+        final sample = sampler.sample(familyPair(local: value, remote: value));
+        expect(
+          sample.selectedLocalCandidateFamily,
+          CallAddressFamily.unknown,
+          reason: '$value',
+        );
+        expect(
+          sample.selectedRemoteCandidateFamily,
+          CallAddressFamily.unknown,
+          reason: '$value',
+        );
+      }
+      for (final value in ['2001:db8::1', '2001:DB8:0:1::2', '::1']) {
+        expect(
+          sampler.sample(familyPair(local: value)).selectedLocalCandidateFamily,
+          CallAddressFamily.ipv6,
+        );
+      }
+      expect(
+        sampler
+            .sample(familyPair(local: null, localExtra: {'ip': '192.0.2.1'}))
+            .selectedLocalCandidateFamily,
+        CallAddressFamily.unknown,
+      );
+      expect(
+        sampler
+            .sample(familyPair(localExtra: {'ip': '2001:db8::1'}))
+            .selectedLocalCandidateFamily,
+        CallAddressFamily.unknown,
+      );
+      final legacy = familyPair();
+      final values = Map<Object?, Object?>.of(legacy[2].values)
+        ..remove('address');
+      legacy[2] = CallStatsRecord(
+        id: 'local',
+        type: 'local-candidate',
+        values: {...values, 'ip': '192.0.2.1'},
+      );
+      expect(
+        sampler.sample(legacy).selectedLocalCandidateFamily,
+        CallAddressFamily.ipv4,
+      );
+    },
+  );
+
+  test(
+    'transport reference wins and unobserved candidate pairs cannot supply a family',
+    () {
+      final rows = familyPair();
+      rows.insert(
+        0,
+        const CallStatsRecord(
+          id: 'unused',
+          type: 'candidate-pair',
+          values: {
+            'nominated': true,
+            'selected': true,
+            'localCandidateId': 'unused-local',
+            'state': 'succeeded',
+          },
+        ),
+      );
+      rows.add(
+        const CallStatsRecord(
+          id: 'unused-local',
+          type: 'local-candidate',
+          values: {'address': '2001:db8::99', 'candidateType': 'relay'},
+        ),
+      );
+      expect(
+        sampler.sample(rows).selectedLocalCandidateFamily,
+        CallAddressFamily.ipv4,
+      );
+      rows.removeWhere((r) => r.type == 'transport');
+      expect(
+        sampler.sample(rows).selectedLocalCandidateFamily,
+        CallAddressFamily.ipv6,
+      );
+      final nominatedFirst = sampler.sample([...rows.skip(1), rows.first]);
+      expect(
+        nominatedFirst.transport,
+        CallTransportClass.direct,
+        reason: 'existing readiness/privacy contract is preserved',
+      );
+      expect(nominatedFirst.toLocalDiagnosticValues()['transport'], 'relay');
+      expect(
+        nominatedFirst.selectedLocalCandidateFamily,
+        CallAddressFamily.ipv6,
+        reason:
+            'diagnostic local route and family follow the same selected pair',
+      );
+      rows[0] = const CallStatsRecord(
+        id: 'unused',
+        type: 'candidate-pair',
+        values: {
+          'nominated': true,
+          'localCandidateId': 'unused-local',
+          'state': 'succeeded',
+        },
+      );
+      expect(
+        sampler.sample(rows).selectedLocalCandidateFamily,
+        CallAddressFamily.unknown,
+      );
+      expect(
+        sampler
+            .sample(familyPair(pairId: 'missing'))
+            .selectedLocalCandidateFamily,
+        CallAddressFamily.unknown,
+      );
+      final conflicting = familyPair()
+        ..add(
+          const CallStatsRecord(
+            id: 'other-transport',
+            type: 'transport',
+            values: {'selectedCandidatePairId': 'another-pair'},
+          ),
+        );
+      expect(
+        sampler.sample(conflicting).selectedLocalCandidateFamily,
+        CallAddressFamily.unknown,
+      );
+      final duplicate = familyPair()..add(familyPair(local: '2001:db8::99')[2]);
+      expect(
+        sampler.sample(duplicate).selectedLocalCandidateFamily,
+        CallAddressFamily.unknown,
+      );
+    },
+  );
+
+  test(
+    'pair replacement and ICE observation generations never reuse family evidence',
+    () {
+      final first = sampler.sample(familyPair(), iceGeneration: 0);
+      final second = sampler.sample(
+        familyPair(local: '2001:db8::11', remote: '192.0.2.12'),
+        iceGeneration: 1,
+      );
+      expect(first.selectedLocalCandidateFamily, CallAddressFamily.ipv4);
+      expect(second.selectedLocalCandidateFamily, CallAddressFamily.ipv6);
+      expect(second.toLocalDiagnosticValues()['generation'], 1);
+      final missing = sampler.sample(
+        familyPair(pairId: 'previous-generation'),
+        iceGeneration: 2,
+      );
+      expect(missing.selectedLocalCandidateFamily, CallAddressFamily.unknown);
+      expect(missing.selectedPairState, CallSelectedPairState.unknown);
+      expect(missing.observationIceGeneration, 2);
+      expect(sampler.sample([], iceGeneration: 3).observationIceGeneration, 3);
+    },
+  );
+
+  test('candidate references must point to the correct typed row', () {
+    for (final index in [2, 3]) {
+      final rows = familyPair();
+      rows[index] = CallStatsRecord(
+        id: rows[index].id,
+        type: 'candidate-pair',
+        values: rows[index].values,
+      );
+      final sample = sampler.sample(rows);
+      expect(
+        index == 2
+            ? sample.selectedLocalCandidateFamily
+            : sample.selectedRemoteCandidateFamily,
+        CallAddressFamily.unknown,
+      );
+      expect(sample.pairRelayInvolvement, CallPairRelayInvolvement.unknown);
+    }
+  });
+
+  test(
+    'failed selected pair retains family evidence without becoming ready',
+    () {
+      final rows = familyPair();
+      rows[1] = CallStatsRecord(
+        id: 'pair',
+        type: 'candidate-pair',
+        values: {...rows[1].values, 'state': 'failed'},
+      );
+      final sample = sampler.sample(rows);
+      expect(sample.selectedPairState, CallSelectedPairState.failed);
+      expect(sample.selectedPairSucceeded, isFalse);
+      expect(sample.selectedLocalCandidateFamily, CallAddressFamily.ipv4);
+      expect(sample.inboundAudioRtpObserved, isFalse);
+    },
+  );
+
   test('empty sample cannot prove transport or media readiness', () {
     final sample = sampler.sample(const <CallStatsRecord>[]);
 

@@ -1003,6 +1003,43 @@ visible and cannot become an ordinary first-attempt PASS.
   remote relay fields and missing/unrecognized local evidence cannot certify it.
   See the SDK's [stats collector](https://github.com/webrtc-sdk/webrtc/blob/30d5e63ae91da483e06577b5c35ee91cc5e5c3db/pc/rtc_stats_collector.cc#L1037)
   and [candidate remapping](https://github.com/webrtc-sdk/webrtc/blob/30d5e63ae91da483e06577b5c35ee91cc5e5c3db/p2p/base/connection.cc#L1812).
+  The production family extension derives only `ipv4`, `ipv6` or `unknown`
+  inside the adapters. Local diagnostic route and both candidate families use
+  the same unambiguous selected-pair references; malformed/duplicate references,
+  conflicting selections, hostnames, redaction and mapped/compatible ambiguity
+  preserve unknown. The existing readiness/privacy predicate remains separate.
+  Whole-pair relay involvement does not certify the local route. Candidate
+  addresses describe candidates or TURN allocations; standard stats expose
+  neither client's TURN socket family, so both remain unknown even with numeric
+  TURN URLs or related addresses. The recorded generation identifies the stats
+  read's owner, not an unexposed native candidate generation. Reads spanning a
+  restart are omitted from diagnostics, and RTP progress resets at restart.
+  The executor supplies provisional/terminal failure classification at its
+  existing decision boundary; diagnostic exceptions cannot alter recovery,
+  readiness, cleanup or deadlines.
+  Go command sidecars distinguish typed failed socket attempts, authenticated
+  connections and actual message/inbox streams. They preserve protocol and
+  direct/circuit classification, with separate endpoint-to-relay attribution.
+  A circuit address prefix cannot prove its underlying relay socket's family
+  or the relay-to-peer leg. Fallback requires failed candidate evidence and a
+  later successful connection/stream for the same target, protocol and leg
+  within one command; changing relay targets clears that correlation. Ordinary
+  IPv4 success and hidden attempts inside a successful libp2p dial prove no
+  fallback. Inbox acceptance and recipient ACK remain distinct; a write or
+  successful diagnostic record promotes neither delivery nor notification.
+  New fields use the closed local vocabulary in
+  `lib/core/diagnostics/local_connection_diagnostics.dart`. Both collectors strip
+  them from uploads while retaining event identity and local export evidence;
+  the fixed v1 receiver schemas remain unchanged and reject unprojected
+  extensions. Existing consent, retention, buffer limits and sample cadence
+  remain in force; Go sidecars retain at most 12 coarse records per command.
+  No raw address, IP hash, candidate, credential, message or new native log is
+  emitted by this extension. APNs provider/callback/presentation stages remain
+  separate: ordinary app diagnostics have no supported courier-family source.
+  Host regression evidence, exact commands, initial fixture failures and scoped
+  wrapper omissions are retained under `.codex-test-logs/privacy-family/`.
+  These host contracts do not establish live routes, APNs delivery, audible
+  media, or signed-candidate behavior.
   Host regressions cover all four policy combinations in both directions,
   embedded/trickle ICE before and after restart, egress, and late negotiation
   work after hangup. Existing fingerprint, sender, size/capacity and generation

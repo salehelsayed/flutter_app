@@ -966,12 +966,14 @@ func DialPeer(paramsJSON string) (result string) {
 		return errJSON("INVALID_INPUT", "missing peerId")
 	}
 
-	if err := n.DialPeerWithTimeout(params.PeerId, params.Addresses, params.TimeoutMs); err != nil {
-		return errJSON("DIAL_ERROR", err.Error())
+	observations, err := n.DialPeerWithDiagnostics(params.PeerId, params.Addresses, params.TimeoutMs)
+	if err != nil {
+		return withConnectionDiagnostics(errJSON("DIAL_ERROR", err.Error()), observations)
 	}
 
 	return okJSON(map[string]interface{}{
-		"ok": true,
+		"ok":                    true,
+		"connectionDiagnostics": observations,
 	})
 }
 
@@ -1051,18 +1053,19 @@ func SendMessage(paramsJSON string) (result string) {
 		params.QuietRecovery,
 	)
 	if err != nil {
-		return errJSON("SEND_ERROR", err.Error())
+		return withConnectionDiagnostics(errJSON("SEND_ERROR", err.Error()), sendResult.ConnectionDiagnostics)
 	}
 
 	resp := map[string]interface{}{
-		"ok":           true,
-		"sent":         true,
-		"acked":        sendResult.Acked,
-		"reply":        sendResult.Reply,
-		"transport":    sendResult.Transport,
-		"streamOpenMs": sendResult.StreamOpenMs,
-		"writeMs":      sendResult.WriteMs,
-		"ackWaitMs":    sendResult.AckWaitMs,
+		"ok":                    true,
+		"sent":                  true,
+		"acked":                 sendResult.Acked,
+		"reply":                 sendResult.Reply,
+		"transport":             sendResult.Transport,
+		"streamOpenMs":          sendResult.StreamOpenMs,
+		"writeMs":               sendResult.WriteMs,
+		"ackWaitMs":             sendResult.AckWaitMs,
+		"connectionDiagnostics": sendResult.ConnectionDiagnostics,
 	}
 	if params.CorrelationId != "" {
 		resp["correlationId"] = params.CorrelationId
@@ -1293,7 +1296,8 @@ func InboxStore(paramsJSON string) (result string) {
 	return inboxStoreBridgeResponse(outcome, err)
 }
 
-func inboxStoreBridgeResponse(outcome node.InboxStoreOutcome, err error) string {
+func inboxStoreBridgeResponse(outcome node.InboxStoreOutcome, err error) (result string) {
+	defer func() { result = withConnectionDiagnostics(result, outcome.ConnectionDiagnostics) }()
 	if err != nil {
 		if errors.Is(err, node.ErrInboxFull) {
 			return okJSON(map[string]interface{}{
@@ -1318,7 +1322,8 @@ func inboxStoreBridgeResponse(outcome node.InboxStoreOutcome, err error) string 
 	})
 }
 
-func inboxStoreAckCustodyBridgeResponse(outcome node.InboxStoreOutcome, err error) string {
+func inboxStoreAckCustodyBridgeResponse(outcome node.InboxStoreOutcome, err error) (result string) {
+	defer func() { result = withConnectionDiagnostics(result, outcome.ConnectionDiagnostics) }()
 	if err == nil && (outcome.CustodyContract != node.AckOrExpiryCustodyContract ||
 		(outcome.StoreStatus != "stored" && outcome.StoreStatus != "duplicate")) {
 		err = node.ErrInboxCustodyInvalidReceipt

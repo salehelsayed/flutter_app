@@ -4,17 +4,172 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"net"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/libp2p/go-libp2p/core/crypto"
+	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/libp2p/go-libp2p/core/protocol"
+	"github.com/libp2p/go-libp2p/p2p/net/swarm"
 	ma "github.com/multiformats/go-multiaddr"
 )
+
+func TestConnectionDiagnosticAddressFamilies(t *testing.T) {
+	cases := []struct{ address, family, protocol, path, leg string }{
+		{"/ip4/192.0.2.1/tcp/4001", "ipv4", "tcp", "direct", "endpoint_to_peer"},
+		{"/ip6/2001:db8::1/udp/4001/quic-v1", "ipv6", "quic", "direct", "endpoint_to_peer"},
+		{"/ip6/2001:db8::1/tcp/443/tls/ws", "ipv6", "wss", "direct", "endpoint_to_peer"},
+		{"/ip4/192.0.2.1/tcp/80/ws", "ipv4", "ws", "direct", "endpoint_to_peer"},
+		{"/ip6/::ffff:192.0.2.1/tcp/1", "unknown", "tcp", "direct", "endpoint_to_peer"},
+		{"/ip6/::c000:201/tcp/1", "unknown", "tcp", "direct", "endpoint_to_peer"},
+		{"/ip6/::/tcp/1", "unknown", "tcp", "direct", "endpoint_to_peer"},
+		{"/dns6/private.example/tcp/1", "unknown", "tcp", "direct", "endpoint_to_peer"},
+		{"/ip4/192.0.2.1/ip6/2001:db8::1/tcp/1", "unknown", "tcp", "direct", "endpoint_to_peer"},
+		{"/ip6/2001:db8::1/tcp/1/p2p-circuit", "ipv6", "tcp", "circuit", "endpoint_to_relay"},
+		{"/p2p-circuit", "unknown", "unknown", "circuit", "endpoint_to_relay"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.address, func(t *testing.T) {
+			family, protocol, path, leg := diagnosticAddress(ma.StringCast(tc.address))
+			if family != tc.family || protocol != tc.protocol || path != tc.path || leg != tc.leg {
+				t.Fatalf("coarse result = %s %s %s %s", family, protocol, path, leg)
+			}
+		})
+	}
+	if family, _, _, _ := diagnosticAddress(nil); family != "unknown" {
+		t.Fatal(family)
+	}
+	// Circuit address prefixes alone cannot identify the actual relay socket.
+	r := diagnosticConnection(&stubStreamConn{remoteMultiaddr: ma.StringCast("/ip6/2001:db8::1/tcp/1/p2p-circuit")}, "stream_opened")
+	if r.Family != "unknown" || r.Leg != "endpoint_to_relay" || r.Path != "circuit" {
+		t.Fatalf("circuit = %+v", r)
+	}
+}
+
+func TestConnectionDiagnosticCorrelatedFallbackOnly(t *testing.T) {
+	target := peer.ID("private-peer")
+	failed := func(p peer.ID, cause error) error {
+		return &swarm.DialError{Peer: p, DialErrors: []swarm.TransportError{{Address: ma.StringCast("/ip6/2001:db8::1/tcp/1"), Cause: cause}}}
+	}
+	socketFailure := &net.OpError{Op: "dial", Net: "tcp", Err: errors.New("private error text")}
+	conn := &stubStreamConn{remoteMultiaddr: ma.StringCast("/ip4/192.0.2.1/tcp/1")}
+	for _, tc := range []struct {
+		name     string
+		err      error
+		fallback string
+	}{
+		{"ordinary ipv4 success", nil, "unknown"},
+		{"correlated socket failure", failed(target, socketFailure), "ipv6_to_ipv4"},
+		{"other peer", failed(peer.ID("other-peer"), socketFailure), "unknown"},
+		{"backoff is not attempt", failed(target, swarm.ErrDialBackoff), "unknown"},
+		{"untyped error", errors.New("failed dial private address"), "unknown"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			d := &connectionDiagnostics{target: target}
+			d.failedDial(tc.err)
+			d.connection(conn, "stream_opened")
+			if got := d.records[len(d.records)-1].Fallback; got != tc.fallback {
+				t.Fatalf("fallback %s", got)
+			}
+			raw, _ := json.Marshal(d.records)
+			for _, sensitive := range []string{"private", "192.0.2", "2001:db8", `"port"`, `"address"`, `"peerId"`} {
+				if strings.Contains(string(raw), sensitive) {
+					t.Fatalf("sensitive field %s", sensitive)
+				}
+			}
+		})
+	}
+	d := &connectionDiagnostics{target: target}
+	d.failedDial(failed(target, socketFailure))
+	d.connection(&stubStreamConn{remoteMultiaddr: ma.StringCast("/ip4/192.0.2.1/udp/1/quic-v1")}, "stream_opened")
+	if d.records[len(d.records)-1].Fallback != "unknown" {
+		t.Fatal("different protocol claimed family fallback")
+	}
+	d.setTarget(peer.ID("different-relay"))
+	d.connection(conn, "stream_opened")
+	if d.records[len(d.records)-1].Fallback != "unknown" {
+		t.Fatal("different relay claimed correlated fallback")
+	}
+	reverse := &connectionDiagnostics{target: target}
+	reverse.failedDial(&swarm.DialError{Peer: target, DialErrors: []swarm.TransportError{{Address: ma.StringCast("/ip4/192.0.2.1/tcp/1"), Cause: socketFailure}}})
+	reverse.connection(&stubStreamConn{remoteMultiaddr: ma.StringCast("/ip6/2001:db8::1/tcp/1")}, "stream_opened")
+	if reverse.records[len(reverse.records)-1].Fallback != "ipv4_to_ipv6" {
+		t.Fatal("missing reverse family fallback")
+	}
+	for i := 0; i < 1000; i++ {
+		d.add(unknownConnectionDiagnostic("stream_failed", "failed"))
+	}
+	if len(d.records) != maxConnectionDiagnostics {
+		t.Fatal("unbounded observations")
+	}
+}
+
+type panicDiagnosticConn struct{ network.Conn }
+
+type panicDiagnosticHost struct{ host.Host }
+
+func (panicDiagnosticHost) Network() network.Network { panic("private diagnostic failure") }
+
+func (panicDiagnosticConn) RemoteMultiaddr() ma.Multiaddr { panic("private diagnostic failure") }
+
+func TestConnectionDiagnosticFailureCannotEscape(t *testing.T) {
+	d := &connectionDiagnostics{}
+	d.connection(panicDiagnosticConn{}, "established")
+	d.established(panicDiagnosticHost{})
+	if len(d.records) != 0 {
+		t.Fatal("failed observation retained evidence")
+	}
+}
+
+func TestConnectionDiagnosticSendRecoveryAndAckBoundaries(t *testing.T) {
+	sender := startLocalNodeForMultiRelayTest(t)
+	targetText := generatePeerIDStr(t)
+	target, _ := peer.Decode(targetText)
+	for _, ack := range []bool{true, false} {
+		t.Run(fmt.Sprintf("ack=%v", ack), func(t *testing.T) {
+			calls := 0
+			stream := newStubTransportStream(t, []byte(fmt.Sprintf(`{"ack":%v}`, ack)), targetText, "/ip4/192.0.2.1/tcp/1")
+			sender.openChatStreamHook = func(context.Context, host.Host, peer.ID) (network.Stream, error) {
+				calls++
+				if calls == 1 {
+					return nil, &swarm.DialError{Peer: target, DialErrors: []swarm.TransportError{{Address: ma.StringCast("/ip6/2001:db8::1/tcp/1"), Cause: &net.OpError{Op: "dial", Net: "tcp", Err: errors.New("no addresses: synthetic")}}}}
+				}
+				return stream, nil
+			}
+			sender.recoverPeerForSendHook = func(context.Context, host.Host, peer.ID, string) error { return nil }
+			result, err := sender.SendMessageWithTransport(targetText, "synthetic encrypted frame", 2000)
+			if err != nil || result.Acked != ack || calls != 2 {
+				t.Fatalf("send result changed: ack=%v calls=%d err=%v", result.Acked, calls, err)
+			}
+			foundStream := false
+			for _, r := range result.ConnectionDiagnostics {
+				if r.Stage == "stream_opened" {
+					foundStream = true
+					if r.Fallback != "ipv6_to_ipv4" {
+						t.Fatalf("missing correlated stream: %+v", r)
+					}
+				}
+			}
+			if !foundStream {
+				t.Fatal("missing actual stream observation")
+			}
+			last := result.ConnectionDiagnostics[len(result.ConnectionDiagnostics)-1]
+			want := "unknown"
+			if ack {
+				want = "ok"
+			}
+			if last.Stage != "recipient_ack" || last.Outcome != want {
+				t.Fatalf("ack evidence = %+v", last)
+			}
+		})
+	}
+}
 
 type stubStreamConn struct {
 	remotePeer      peer.ID

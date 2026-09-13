@@ -37,6 +37,16 @@ enum CallTransportClass { unknown, direct, relay, turnUdp, turnTcpTls }
 /// or other connection material.
 enum CallRelayProtocol { notRelay, unknown, udp, tcp, tls }
 
+/// Literal selected-candidate evidence only; never a DNS or network-type guess.
+enum CallAddressFamily { ipv4, ipv6, unknown }
+
+/// Separate from the local route used to verify the local privacy policy.
+enum CallPairRelayInvolvement { none, local, remote, both, unknown }
+
+enum CallSelectedPairState { succeeded, failed, pending, unknown }
+
+enum CallFailureDisposition { provisional, terminal }
+
 enum CallQualityBand { unknown, good, degraded, poor }
 
 enum CallFailureReason {
