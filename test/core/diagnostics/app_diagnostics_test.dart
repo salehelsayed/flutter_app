@@ -9,6 +9,7 @@ import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/diagnostics/app_diagnostic_events.dart';
 import 'package:flutter_app/core/diagnostics/app_diagnostic_schema.dart';
 import 'package:flutter_app/core/diagnostics/app_diagnostics.dart';
+import 'package:flutter_app/core/diagnostics/local_connection_diagnostics.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 class DiagnosticBridge implements Bridge {
@@ -1271,6 +1272,92 @@ void main() {
         retainedLock['values'],
         containsPair('operation', 'notification_flock'),
       );
+    },
+  );
+
+  test(
+    'local connection schema is closed and ordinary v1 mixed batches remain valid',
+    () async {
+      final batches = <List<Map<String, Object?>>>[];
+      final diagnostics = await install(
+        enabled: true,
+        upload: (batch) async {
+          batches.add(batch);
+          return batch.map((event) => event['eventId']! as String).toSet();
+        },
+      );
+      final ordinary = {'durationMs': 12, 'transport': 'direct'};
+      diagnostics.record(
+        feature: 'message',
+        stage: 'send',
+        outcome: 'ok',
+        values: ordinary,
+      );
+      final values = <String, Object?>{
+        'connectionStage': 'stream_opened',
+        'connectionOutcome': 'ok',
+        'addressFamily': 'ipv4',
+        'transportProtocol': 'tcp',
+        'pathClass': 'direct',
+        'observedLeg': 'endpoint_to_peer',
+        'familyFallback': 'ipv6_to_ipv4',
+      };
+      expect(
+        diagnostics.record(
+          feature: 'message',
+          stage: 'bridge',
+          outcome: 'ok',
+          values: values,
+        ),
+        isTrue,
+      );
+      expect(
+        diagnostics.record(
+          feature: 'message',
+          stage: 'bridge',
+          outcome: 'ok',
+          values: {...values, 'addressFamily': '192.0.2.1'},
+        ),
+        isFalse,
+      );
+      expect(
+        diagnostics.record(
+          feature: 'message',
+          stage: 'bridge',
+          outcome: 'ok',
+          values: {...values, 'candidate': 'PRIVATE'},
+        ),
+        isFalse,
+      );
+      await diagnostics.flush();
+      final local = (await diagnostics.eventsForTesting()).singleWhere(
+        (e) => e['stage'] == 'bridge',
+      );
+      expect(local['values'], values);
+      final wire = batches
+          .expand((b) => b)
+          .singleWhere((e) => e['eventId'] == local['eventId']);
+      expect(wire['values'], isEmpty);
+      expect(AppDiagnostics.validateEvent(wire), isNotNull);
+      expect(
+        batches
+            .expand((b) => b)
+            .singleWhere(
+              (e) => e['feature'] == 'message' && e['stage'] == 'send',
+            )['values'],
+        ordinary,
+      );
+      for (final event in batches.expand((b) => b)) {
+        expect(
+          (event['values'] as Map).keys.any(
+            localAppConnectionEnums.containsKey,
+          ),
+          isFalse,
+        );
+      }
+      final preview = await diagnostics.exportPreview();
+      expect(preview, contains('ipv6_to_ipv4'));
+      expect(preview, isNot(anyOf(contains('PRIVATE'), contains('192.0.2'))));
     },
   );
 

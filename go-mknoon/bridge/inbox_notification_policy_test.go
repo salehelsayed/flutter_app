@@ -2,6 +2,7 @@ package bridge
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
@@ -20,6 +21,7 @@ func TestInboxStoreNotificationPolicyReachesRelay(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = relay.Close() })
 	requests := make(chan map[string]interface{}, 8)
+	const envelope = `{"type":"chat_message","id":"historical-message","encrypted":{"kem":"kem","ciphertext":"immutable-ciphertext","nonce":"nonce"}}`
 	relay.SetStreamHandler(node.InboxProtocol, func(stream network.Stream) {
 		defer stream.Close()
 		_ = stream.SetDeadline(time.Now().Add(5 * time.Second))
@@ -30,7 +32,19 @@ func TestInboxStoreNotificationPolicyReachesRelay(t *testing.T) {
 		}
 		requests <- request
 		response := map[string]interface{}{"status": "OK", "storeStatus": "stored"}
-		if request["action"] == "store_custody_v1" {
+		if action, _ := request["action"].(string); strings.HasPrefix(action, "retrieve") {
+			response = map[string]interface{}{
+				"status": "OK", "hasMore": false,
+				"messages": []node.InboxMessage{
+					{ID: "quiet-row", From: relay.ID().String(), Message: envelope, Timestamp: 1700000000000, QuietRecovery: true},
+					{ID: "normal-row", From: relay.ID().String(), Message: "normal encrypted bytes", Timestamp: 1700000000001},
+				},
+			}
+			if action == "retrieve_custody_pending_v1" {
+				response["custodyContract"] = node.AckOrExpiryCustodyContract
+			}
+		}
+		if request["action"] == "store_custody_v1" || request["action"] == "store_custody_quiet_v1" {
 			response["custodyContract"] = node.AckOrExpiryCustodyContract
 			if expiry, exists := request["custodyExpiresAtOrBeforeMs"]; exists {
 				response["expiresAtMs"] = expiry
@@ -45,7 +59,19 @@ func TestInboxStoreNotificationPolicyReachesRelay(t *testing.T) {
 		"autoRegister":   false,
 	})
 	assertOk(t, parseJSON(t, StartNode(string(start))))
-	const envelope = `{"type":"chat_message","id":"historical-message","encrypted":{"kem":"kem","ciphertext":"immutable-ciphertext","nonce":"nonce"}}`
+	dialInput, _ := json.Marshal(map[string]interface{}{"peerId": relay.ID().String(), "addresses": []string{relay.Addrs()[0].String()}, "timeoutMs": 1000})
+	dialResponse := parseJSON(t, DialPeer(string(dialInput)))
+	assertOk(t, dialResponse)
+	established := dialResponse["connectionDiagnostics"].([]interface{})
+	if len(established) == 0 {
+		t.Fatal("missing authenticated connection")
+	}
+	for _, raw := range established {
+		r := raw.(map[string]interface{})
+		if r["connectionStage"] != "established" || r["observedLeg"] != "endpoint_to_relay" || r["addressFamily"] != "ipv4" {
+			t.Fatalf("wrong established evidence: %v", r)
+		}
+	}
 	for _, tc := range []struct {
 		name       string
 		protected  bool
@@ -81,9 +107,37 @@ func TestInboxStoreNotificationPolicyReachesRelay(t *testing.T) {
 				input["custodyExpiresAtOrBeforeMs"] = int64(2_000_000_123_456)
 			}
 			raw, _ := json.Marshal(input)
-			assertOk(t, parseJSON(t, InboxStore(string(raw))))
+			response := parseJSON(t, InboxStore(string(raw)))
+			assertOk(t, response)
+			observations, ok := response["connectionDiagnostics"].([]interface{})
+			if !ok || len(observations) == 0 {
+				t.Fatal("missing actual inbox stream diagnostics")
+			}
+			row := observations[len(observations)-1].(map[string]interface{})
+			if row["connectionStage"] != "stream_opened" || row["addressFamily"] != "ipv4" || row["observedLeg"] != "endpoint_to_relay" || row["familyFallback"] != "unknown" {
+				t.Fatalf("wrong relay-leg evidence: %v", row)
+			}
+			if _, exists := response["acked"]; exists {
+				t.Fatal("inbox acceptance promoted recipient ACK")
+			}
 			select {
 			case request := <-requests:
+				if _, exists := request["connectionDiagnostics"]; exists {
+					t.Fatal("local diagnostics leaked onto inbox protocol")
+				}
+				expectedAction := "store"
+				if tc.protected {
+					expectedAction = "store_custody_v1"
+				}
+				if tc.quiet {
+					expectedAction = "store_quiet_v1"
+					if tc.protected {
+						expectedAction = "store_custody_quiet_v1"
+					}
+				}
+				if request["action"] != expectedAction {
+					t.Errorf("store capability action = %v, want %s", request["action"], expectedAction)
+				}
 				if tc.suppress || tc.quiet {
 					if request["suppressNotification"] != true {
 						t.Errorf("confirmed historical delivery lost notification suppression: %v", request)
@@ -107,6 +161,44 @@ func TestInboxStoreNotificationPolicyReachesRelay(t *testing.T) {
 				}
 			case <-time.After(2 * time.Second):
 				t.Fatal("relay did not receive STORE")
+			}
+		})
+	}
+	for _, tc := range []struct {
+		name string
+		read func() string
+	}{
+		{"receive_legacy", InboxRetrieve},
+		{"receive_with_timeout", func() string { return InboxRetrieveWithParams(`{"timeoutMs":1000}`) }},
+		{"receive_pending", func() string { return InboxRetrievePendingWithParams(`{"timeoutMs":1000}`) }},
+		{"receive_protected", func() string {
+			return InboxRetrievePendingWithParams(`{"timeoutMs":1000,"custodyContract":"ack_or_expiry_v1"}`)
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			response := parseJSON(t, tc.read())
+			assertOk(t, response)
+			if tc.name == "receive_protected" && response["custodyContract"] != node.AckOrExpiryCustodyContract {
+				t.Fatalf("mobile bridge lost protected custody authority: %v", response)
+			}
+			rows, ok := response["messages"].([]interface{})
+			if !ok || len(rows) != 2 {
+				t.Fatalf("mobile inbox page lost rows: %v", response)
+			}
+			quiet, normal := rows[0].(map[string]interface{}), rows[1].(map[string]interface{})
+			if quiet["quietRecovery"] != true || quiet["id"] != "quiet-row" || quiet["from"] != relay.ID().String() || quiet["message"] != envelope || quiet["timestamp"] != float64(1700000000000) {
+				t.Errorf("mobile bridge lost quiet disposition or immutable identity/bytes: %v", quiet)
+			}
+			if _, exists := normal["quietRecovery"]; exists || normal["id"] != "normal-row" || normal["message"] != "normal encrypted bytes" {
+				t.Errorf("mixed page changed ordinary row policy: %v", normal)
+			}
+			select {
+			case request := <-requests:
+				if request["quietRecovery"] != true {
+					t.Errorf("receiver did not declare quiet capability: %v", request)
+				}
+			case <-time.After(2 * time.Second):
+				t.Fatal("relay did not receive retrieval request")
 			}
 		})
 	}

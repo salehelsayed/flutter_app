@@ -842,6 +842,11 @@ void main() {
         transport: CallTransportClass.turnUdp,
         inboundAudioRtpObserved: true,
         outboundAudioRtpObserved: true,
+        selectedLocalCandidateFamily: CallAddressFamily.ipv6,
+        selectedRemoteCandidateFamily: CallAddressFamily.ipv4,
+        pairRelayInvolvement: CallPairRelayInvolvement.local,
+        selectedLocalTransport: CallTransportClass.turnUdp,
+        selectedLocalRelayProtocol: CallRelayProtocol.udp,
       );
       graph.recordMediaDiagnostics(
         _callA,
@@ -861,6 +866,20 @@ void main() {
       );
       await graph.end(_callA);
       final events = await diagnostics.eventsForTesting();
+      final media = events.firstWhere((event) => event['stage'] == 'media');
+      expect(
+        media['values'],
+        containsPair('selectedLocalCandidateFamily', 'ipv6'),
+      );
+      expect(
+        media['values'],
+        containsPair('selectedRemoteCandidateFamily', 'ipv4'),
+      );
+      expect(
+        media['values'],
+        containsPair('localTurnConnectionFamily', 'unknown'),
+      );
+      expect(media['values'], containsPair('transport', 'turn_udp'));
       expect(
         events.any(
           (event) =>

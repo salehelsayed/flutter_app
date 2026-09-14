@@ -35,6 +35,7 @@ void main() {
   for (final entry in <WebRtcFailureReason, String>{
     WebRtcFailureReason.other: 'observationUnavailable',
     WebRtcFailureReason.notReady: 'notReady',
+    WebRtcFailureReason.iceConnectionFailed: 'iceConnectionFailed',
     WebRtcFailureReason.transportUnavailable: 'transportUnavailable',
     WebRtcFailureReason.configurationRejected: 'configurationRejected',
     WebRtcFailureReason.closed: 'closed',
@@ -688,6 +689,7 @@ WebRtcPeerConnectionSnapshot _snapshot({
   audioReceiveTransceiverCount: 1,
   videoTransceiverCount: 0,
   connectionState: state,
+  iceChecklistFailed: state == WebRtcConnectionState.failed,
   transport: transport,
   selectedPairSucceeded: ready,
   selectedPairNominated: ready,

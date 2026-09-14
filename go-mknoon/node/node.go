@@ -1324,17 +1324,30 @@ func (n *Node) reconnectRelaysOwned() (*RecoveryResult, error) {
 // DialPeerWithTimeout connects to a peer with an explicit timeout override.
 // If timeoutMs <= 0, the default PeerDialTimeout is used.
 func (n *Node) DialPeerWithTimeout(peerIdStr string, addresses []string, timeoutMs int) error {
+	_, err := n.DialPeerWithDiagnostics(peerIdStr, addresses, timeoutMs)
+	return err
+}
+
+// DialPeerWithDiagnostics observes authenticated connections after Connect;
+// offered addresses are never reported as established or selected routes.
+func (n *Node) DialPeerWithDiagnostics(peerIdStr string, addresses []string, timeoutMs int) (observations []ConnectionDiagnostic, resultErr error) {
+	d := &connectionDiagnostics{}
+	defer func() { observations = d.records }()
 	n.mu.RLock()
 	h := n.host
 	n.mu.RUnlock()
 
 	if h == nil {
-		return fmt.Errorf("node not started")
+		return nil, fmt.Errorf("node not started")
 	}
 
 	pid, err := peer.Decode(peerIdStr)
 	if err != nil {
-		return fmt.Errorf("invalid peer ID: %w", err)
+		return nil, fmt.Errorf("invalid peer ID: %w", err)
+	}
+	d.setTarget(pid)
+	if n.isRelayPeer(pid) {
+		d.leg = "endpoint_to_relay"
 	}
 
 	var addrs []ma.Multiaddr
@@ -1359,7 +1372,12 @@ func (n *Node) DialPeerWithTimeout(peerIdStr string, addresses []string, timeout
 	ctx = network.WithDialPeerTimeout(ctx, timeout)
 	ctx = network.WithAllowLimitedConn(ctx, "peer-dial")
 
-	return h.Connect(ctx, ai)
+	err = h.Connect(ctx, ai)
+	d.failedDial(err)
+	if err == nil {
+		d.established(h)
+	}
+	return nil, err
 }
 
 // DialPeer connects to a peer, optionally with known addresses.
@@ -1526,14 +1544,38 @@ func (n *Node) DisconnectPeer(peerIdStr string) error {
 type quietRecoveryContextKey struct{}
 
 func (n *Node) openChatStream(ctx context.Context, h host.Host, pid peer.ID) (network.Stream, error) {
+	connections := h.Network().ConnsToPeer(pid)
+	var s network.Stream
+	var err error
 	if quiet, _ := ctx.Value(quietRecoveryContextKey{}).(bool); quiet {
 		// Negotiation failure must never fall back to the alerting protocol.
-		return h.NewStream(ctx, pid, QuietRecoveryChatProtocol)
+		s, err = h.NewStream(ctx, pid, QuietRecoveryChatProtocol)
+	} else if n.openChatStreamHook != nil {
+		s, err = n.openChatStreamHook(ctx, h, pid)
+	} else {
+		s, err = h.NewStream(ctx, pid, ChatProtocol)
 	}
-	if n.openChatStreamHook != nil {
-		return n.openChatStreamHook(ctx, h, pid)
+	diagnosticsFromContext(ctx).stream(s, err)
+	// NewStream hides its selected connection when identify/negotiation fails.
+	// Attribute a timeout only when there was exactly one established candidate;
+	// never close every connection to guess which one failed.
+	if err != nil && len(connections) == 1 {
+		n.retireTimedOutSendConnection(connections[0], err)
 	}
-	return h.NewStream(ctx, pid, ChatProtocol)
+	return s, err
+}
+
+func (n *Node) retireTimedOutSendConnection(conn network.Conn, err error) {
+	if conn == nil || err == nil || (n.ctx != nil && n.ctx.Err() != nil) {
+		return
+	}
+	var timeout interface{ Timeout() bool }
+	if errors.Is(err, context.DeadlineExceeded) || (errors.As(err, &timeout) && timeout.Timeout()) {
+		// A stream reset alone leaves a silently broken multiplexed connection
+		// reusable forever. Retire this socket, retaining all peerstore addresses
+		// and healthy sibling connections for the existing recovery/retry owner.
+		_ = conn.Close()
+	}
 }
 
 func isRetryableChatStreamOpenError(err error) bool {
@@ -1560,10 +1602,6 @@ func (n *Node) recoverPeerForSend(h host.Host, pid peer.ID, peerIdStr string, ti
 		return n.recoverPeerForSendHook(ctx, h, pid, peerIdStr)
 	}
 
-	if err := h.Network().ClosePeer(pid); err != nil {
-		log.Printf("[NODE] SendMessage: ClosePeer(%s) returned: %v", peerIdStr, err)
-	}
-
 	return n.dialPeerViaRelayWithTimeout(peerIdStr, timeout)
 }
 
@@ -1578,10 +1616,6 @@ func (n *Node) recoverPeerForSendWithContext(
 	}
 	if n.recoverPeerForSendHook != nil {
 		return n.recoverPeerForSendHook(ctx, h, pid, peerIdStr)
-	}
-
-	if err := h.Network().ClosePeer(pid); err != nil {
-		log.Printf("[NODE] SendMessage: ClosePeer(%s) returned: %v", peerIdStr, err)
 	}
 
 	return n.dialPeerViaRelayForSend(ctx, h, pid, peerIdStr)
@@ -1649,8 +1683,16 @@ func (n *Node) openChatStreamForSendWithContext(
 	log.Printf("[NODE] SendMessage: open stream to %s failed, attempting peer self-heal: %v", peerIdStr, err)
 
 	if healErr := n.recoverPeerForSendWithContext(ctx, h, pid, peerIdStr); healErr != nil {
+		if d := diagnosticsFromContext(ctx); d != nil {
+			d.failedDial(healErr)
+			d.add(unknownConnectionDiagnostic("recovery", "failed"))
+		}
 		log.Printf("[NODE] SendMessage: peer self-heal failed for %s: %v", peerIdStr, healErr)
 		return nil, err
+	}
+
+	if d := diagnosticsFromContext(ctx); d != nil {
+		d.add(unknownConnectionDiagnostic("recovery", "ok"))
 	}
 
 	s, retryErr := openAttempt()
@@ -1676,12 +1718,13 @@ func (n *Node) SendMessage(peerIdStr string, message string, timeoutMs int) (str
 }
 
 type SendMessageResult struct {
-	Reply        string
-	Acked        bool
-	Transport    string
-	StreamOpenMs int64
-	WriteMs      int64
-	AckWaitMs    int64
+	Reply                 string
+	Acked                 bool
+	Transport             string
+	StreamOpenMs          int64
+	WriteMs               int64
+	AckWaitMs             int64
+	ConnectionDiagnostics []ConnectionDiagnostic
 }
 
 func isAffirmativeAckFrame(reply []byte) bool {
@@ -1749,7 +1792,9 @@ func (n *Node) SendMessageWithTransport(peerIdStr string, message string, timeou
 
 // SendMessageWithNotificationPolicy preserves the exact encrypted frame and
 // negotiates a separate protocol when the receiver must omit a new alert.
-func (n *Node) SendMessageWithNotificationPolicy(peerIdStr string, message string, timeoutMs int, quietRecovery bool) (SendMessageResult, error) {
+func (n *Node) SendMessageWithNotificationPolicy(peerIdStr string, message string, timeoutMs int, quietRecovery bool) (resultValue SendMessageResult, resultErr error) {
+	d := &connectionDiagnostics{}
+	defer func() { resultValue.ConnectionDiagnostics = d.records }()
 	n.mu.RLock()
 	h := n.host
 	n.mu.RUnlock()
@@ -1761,6 +1806,10 @@ func (n *Node) SendMessageWithNotificationPolicy(peerIdStr string, message strin
 	pid, err := peer.Decode(peerIdStr)
 	if err != nil {
 		return SendMessageResult{}, fmt.Errorf("invalid peer ID: %w", err)
+	}
+	d.setTarget(pid)
+	if n.isRelayPeer(pid) {
+		d.leg = "endpoint_to_relay"
 	}
 
 	timeout := SendTimeout
@@ -1779,6 +1828,7 @@ func (n *Node) SendMessageWithNotificationPolicy(peerIdStr string, message strin
 
 	commandCtx, cancelCommand := context.WithDeadline(n.ctx, deadlines.command)
 	defer cancelCommand()
+	commandCtx = context.WithValue(commandCtx, connectionDiagnosticsKey{}, d)
 	if quietRecovery {
 		commandCtx = context.WithValue(commandCtx, quietRecoveryContextKey{}, true)
 	}
@@ -1817,6 +1867,7 @@ func (n *Node) SendMessageWithNotificationPolicy(peerIdStr string, message strin
 	writeStart := time.Now()
 	if err := writeFrame(s, messageBytes); err != nil {
 		_ = s.Reset()
+		n.retireTimedOutSendConnection(s.Conn(), err)
 		return SendMessageResult{StreamOpenMs: streamOpenMs}, fmt.Errorf("write message: %w", err)
 	}
 	writeCompletedAt := n.sendNow()
@@ -1831,12 +1882,17 @@ func (n *Node) SendMessageWithNotificationPolicy(peerIdStr string, message strin
 		StreamOpenMs: streamOpenMs,
 		WriteMs:      writeMs,
 	}
+	// A successful write is not an acknowledgment. Preserve unknown until the
+	// existing affirmative ACK parser has actually accepted the recipient frame.
+	ackObservation := unknownConnectionDiagnostic("recipient_ack", "unknown")
+	defer func() { d.add(ackObservation) }()
 	if err := s.SetDeadline(ackDeadline); err != nil {
 		_ = s.Reset()
 		return writtenResult, nil
 	}
 	if err := s.CloseWrite(); err != nil {
 		_ = s.Reset()
+		n.retireTimedOutSendConnection(s.Conn(), err)
 		return writtenResult, nil
 	}
 
@@ -1847,6 +1903,7 @@ func (n *Node) SendMessageWithNotificationPolicy(peerIdStr string, message strin
 	if err != nil {
 		// Message was written but ACK read failed
 		_ = s.Reset()
+		n.retireTimedOutSendConnection(s.Conn(), err)
 		writtenResult.AckWaitMs = ackWaitMs
 		return writtenResult, nil
 	}
@@ -1858,6 +1915,9 @@ func (n *Node) SendMessageWithNotificationPolicy(peerIdStr string, message strin
 		StreamOpenMs: streamOpenMs,
 		WriteMs:      writeMs,
 		AckWaitMs:    ackWaitMs,
+	}
+	if result.Acked {
+		ackObservation.Outcome = "ok"
 	}
 	if err := s.Close(); err != nil {
 		_ = s.Reset()

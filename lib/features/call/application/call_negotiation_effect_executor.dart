@@ -83,6 +83,7 @@ final class CallNegotiationEffectExecutor implements CallEffectExecutor {
     CallTimerScheduler? mediaReadinessTimerScheduler,
     this.mediaReadinessPollInterval = const Duration(milliseconds: 100),
     this.maxMediaReadinessSamples,
+    this.onFailureObservation,
   }) : _mediaReadinessTimerScheduler =
            mediaReadinessTimerScheduler ?? const DartCallTimerScheduler() {
     if (maxPendingLocalCandidates <= 0 ||
@@ -127,6 +128,9 @@ final class CallNegotiationEffectExecutor implements CallEffectExecutor {
   /// Production leaves this unset so the coordinator's negotiation deadline is
   /// the single authority that bounds readiness observation.
   final int? maxMediaReadinessSamples;
+  final void Function(CallId, CallFailureReason, CallFailureDisposition)?
+  onFailureObservation;
+  (CallId, CallFailureReason, CallFailureDisposition)? _lastFailureObservation;
   final CallTimerScheduler _mediaReadinessTimerScheduler;
 
   late final StreamSubscription<CallEngineEvent> _engineEventSubscription;
@@ -163,6 +167,8 @@ final class CallNegotiationEffectExecutor implements CallEffectExecutor {
   int _mediaReadinessEpoch = 0;
   int _mediaReadinessSampleCount = 0;
   bool _restartAttempted = false;
+  // Also fences a disconnect whose canonical dispatch is still in flight.
+  CallId? _pendingMediaLossCallId;
   bool _candidateEgressFailed = false;
   bool _closed = false;
   bool _engineEventSubscriptionClosed = false;
@@ -712,19 +718,23 @@ final class CallNegotiationEffectExecutor implements CallEffectExecutor {
     if (_closed) return;
     final session = _readSnapshotSafely();
     if (session == null || session.callId == null || session.isTerminal) return;
+    if (event.connectionState == CallConnectionState.disconnected &&
+        !_isFailureEngineEvent(event) &&
+        session.state == CallState.connected) {
+      _pendingMediaLossCallId = session.callId;
+    }
     final isTerminalFailure =
         _isFailureEngineEvent(event) &&
-        !_isInitialIceChecklistFailure(event, session);
+        !_isProvisionalIceChecklistFailure(event, session);
     if (_isFailureEngineEvent(event)) {
+      _observeFailure(session.callId!, event.failureReason, isTerminalFailure);
       _cancelMediaReadinessWatch(closeActivePhase: isTerminalFailure);
     } else if (event.connectionState != CallConnectionState.connected) {
       _cancelMediaReadinessWatch();
     }
+    if (!_isFailureEngineEvent(event)) _lastFailureObservation = null;
     final pending = _pendingEngineEvent;
-    final pendingIsFailure =
-        pending != null &&
-        _isFailureEngineEvent(pending.event) &&
-        !_isInitialIceChecklistFailure(pending.event, pending.session);
+    final pendingIsFailure = pending?.isTerminalFailure ?? false;
     // Keep a disconnect edge as well as the latest state: overwriting either
     // can lose mediaLost or the connected update that starts recovery. This
     // remains one coalesced record (at most two events), never a callback FIFO.
@@ -734,7 +744,8 @@ final class CallNegotiationEffectExecutor implements CallEffectExecutor {
       _pendingEngineEvent = _PendingEngineEvent(
         event,
         session,
-        disconnect: _isFailureEngineEvent(event)
+        isTerminalFailure: isTerminalFailure,
+        disconnect: isTerminalFailure
             ? null
             : event.connectionState == CallConnectionState.disconnected
             ? event
@@ -770,8 +781,7 @@ final class CallNegotiationEffectExecutor implements CallEffectExecutor {
             final failureWaiting =
                 next?.session.callId == pending.session.callId &&
                 next != null &&
-                _isFailureEngineEvent(next.event) &&
-                !_isInitialIceChecklistFailure(next.event, next.session);
+                next.isTerminalFailure;
             if (!identical(disconnect, pending.event) &&
                 !failureWaiting &&
                 _isCurrentSession(pending.session)) {
@@ -799,10 +809,11 @@ final class CallNegotiationEffectExecutor implements CallEffectExecutor {
     _trackedCallIds.add(session.callId!);
 
     if (_isFailureEngineEvent(event)) {
-      if (_isInitialIceChecklistFailure(event, session)) {
+      if (_isProvisionalIceChecklistFailure(event, session)) {
         // A TURN permission rejection for an early private host candidate can
         // exhaust the current checklist before public trickle candidates arrive.
-        // Keep the existing negotiation deadline while native ICE tries them.
+        // The same checklist can fail during an already-owned reconnect.
+        // Keep that phase's deadline and restart budget while native ICE tries.
         _cancelMediaReadinessWatch();
         return;
       }
@@ -817,7 +828,15 @@ final class CallNegotiationEffectExecutor implements CallEffectExecutor {
           session.callId!,
           CallEventType.mediaRecovered,
         ));
-        await _dispatchCanonical(_followUp(CallEventType.mediaLost, session));
+        try {
+          await _dispatchCanonical(_followUp(CallEventType.mediaLost, session));
+        } finally {
+          // The reducer now owns recovery (or terminated). This receipt is
+          // only for the dispatch boundary, never a later healthy episode.
+          if (_pendingMediaLossCallId == session.callId) {
+            _pendingMediaLossCallId = null;
+          }
+        }
       }
       return;
     }
@@ -892,9 +911,18 @@ final class CallNegotiationEffectExecutor implements CallEffectExecutor {
       // A snapshot may observe the same early ICE failure before its state
       // event reaches the drain. Apply the same bounded trickle recovery here.
       final awaitingTrickle =
-          session.state == CallState.negotiating &&
+          (session.state == CallState.negotiating ||
+              session.state == CallState.reconnecting) &&
           error is CallEngineException &&
           error.code == CallEngineErrorCode.iceConnectionFailed;
+      if (error is CallEngineException &&
+          error.code == CallEngineErrorCode.iceConnectionFailed) {
+        _observeFailure(
+          session.callId!,
+          CallFailureReason.iceConnectionFailed,
+          !awaitingTrickle,
+        );
+      }
       if (!awaitingTrickle &&
           (error is! CallEngineException ||
               (error.code != CallEngineErrorCode.observationUnavailable &&
@@ -916,7 +944,10 @@ final class CallNegotiationEffectExecutor implements CallEffectExecutor {
       final type = _mediaReadinessEventType!;
       _closedMediaReadinessPhases.add((session.callId!, type));
       _cancelMediaReadinessWatch(expectedEpoch: epoch);
-      if (type == CallEventType.mediaRecovered) _restartAttempted = false;
+      if (type == CallEventType.mediaRecovered) {
+        _restartAttempted = false;
+        _pendingMediaLossCallId = null;
+      }
       await _dispatchCanonical(_followUp(type, session));
       return;
     }
@@ -1054,6 +1085,20 @@ final class CallNegotiationEffectExecutor implements CallEffectExecutor {
     if (_lastFailureCode == 'unexpected') _unexpectedFailureCount++;
   }
 
+  void _observeFailure(CallId callId, CallFailureReason reason, bool terminal) {
+    final disposition = terminal
+        ? CallFailureDisposition.terminal
+        : CallFailureDisposition.provisional;
+    final observation = (callId, reason, disposition);
+    if (_lastFailureObservation == observation) return;
+    _lastFailureObservation = observation;
+    try {
+      onFailureObservation?.call(callId, reason, disposition);
+    } catch (_) {
+      // Classification, deadlines and cleanup remain owned by this executor.
+    }
+  }
+
   CallSessionSnapshot? _readSnapshotSafely() {
     try {
       return readActiveSnapshot();
@@ -1084,6 +1129,7 @@ final class CallNegotiationEffectExecutor implements CallEffectExecutor {
       final activeCallId = _readSnapshotSafely()?.callId;
       if (activeCallId != null) _trackedCallIds.add(activeCallId);
       _closed = true;
+      _pendingMediaLossCallId = null;
       _cancelMediaReadinessWatch();
       _pendingEngineEvent = null;
       _pendingLocalCandidates.clear();
@@ -1191,7 +1237,20 @@ final class CallNegotiationEffectExecutor implements CallEffectExecutor {
       session.state == CallState.negotiating &&
       event.type == CallEngineEventType.state &&
       event.connectionState == CallConnectionState.failed &&
-      event.failureReason == CallFailureReason.transportUnavailable;
+      (event.failureReason == CallFailureReason.transportUnavailable ||
+          event.failureReason == CallFailureReason.iceConnectionFailed);
+
+  bool _isProvisionalIceChecklistFailure(
+    CallEngineEvent event,
+    CallSessionSnapshot session,
+  ) =>
+      _isInitialIceChecklistFailure(event, session) ||
+      (event.type == CallEngineEventType.state &&
+          event.connectionState == CallConnectionState.failed &&
+          event.failureReason == CallFailureReason.iceConnectionFailed &&
+          (session.state == CallState.reconnecting ||
+              (session.state == CallState.connected &&
+                  _pendingMediaLossCallId == session.callId)));
 
   static CallEventType? _mediaReadinessTypeFor(CallState state) =>
       switch (state) {
@@ -1202,10 +1261,18 @@ final class CallNegotiationEffectExecutor implements CallEffectExecutor {
 }
 
 final class _PendingEngineEvent {
-  const _PendingEngineEvent(this.event, this.session, {this.disconnect});
+  const _PendingEngineEvent(
+    this.event,
+    this.session, {
+    required this.isTerminalFailure,
+    this.disconnect,
+  });
 
   final CallEngineEvent event;
   final CallSessionSnapshot session;
+  // Keep classification at receipt: an awaited disconnect dispatch can finish
+  // while this event is pending, consuming its temporary handoff fence.
+  final bool isTerminalFailure;
   final CallEngineEvent? disconnect;
 
   int get eventCount =>

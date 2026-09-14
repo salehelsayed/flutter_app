@@ -13,6 +13,38 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
+const (
+	quietRecoveryStoreAction        = "store_quiet_v1"
+	quietRecoveryCustodyStoreAction = "store_custody_quiet_v1"
+)
+
+// Retrieval capability is per request. Old receivers ignore a JSON sidecar;
+// keep quiet custody for an upgraded runtime while still paging normal rows.
+// These optional readers leave the frozen storage interfaces unchanged.
+type quietRecoveryInboxReader interface {
+	RetrieveForQuietRecovery(string, int, bool, bool) ([]inboxMessage, bool)
+}
+
+type quietRecoveryCustodyReader interface {
+	RetrieveAckCustodyForQuietRecovery(string, int, bool) ([]inboxMessage, bool, error)
+}
+
+func inboxPageForQuietReceiver(messages []inboxMessage, limit int, includeQuiet bool) ([]inboxMessage, map[int]bool, bool) {
+	page := []inboxMessage{}
+	selected := make(map[int]bool)
+	for index, entry := range messages {
+		if entry.QuietRecovery && !includeQuiet {
+			continue
+		}
+		if len(page) >= limit {
+			return page, selected, true
+		}
+		page = append(page, entry)
+		selected[index] = true
+	}
+	return page, selected, false
+}
+
 // Quiet recovery is sender notification intent, never delivery/read authority.
 // Its independent history survives custody ACK so an older delayed wake cannot
 // turn a recovered message into an alert. A normal explicit retry clears it.

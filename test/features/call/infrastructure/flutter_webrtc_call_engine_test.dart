@@ -6,6 +6,7 @@ import '../../../core/secure_storage/fake_secure_key_store.dart';
 import 'package:flutter_app/features/call/domain/call_engine.dart';
 import 'package:flutter_app/features/call/infrastructure/call_audio_route_adapter.dart';
 import 'package:flutter_app/features/call/infrastructure/flutter_webrtc_call_engine.dart';
+import 'package:flutter_app/features/call/infrastructure/call_stats_sampler.dart';
 import 'package:flutter_app/features/call/infrastructure/webrtc_types.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart' as webrtc;
@@ -361,8 +362,19 @@ final class _StatsPeerConnection implements webrtc.RTCPeerConnection {
   Object? statsError;
 
   @override
-  webrtc.RTCPeerConnectionState? get connectionState =>
+  Future<void> restartIce() async {}
+
+  @override
+  void Function(webrtc.RTCPeerConnectionState)? onConnectionState;
+  @override
+  void Function(webrtc.RTCIceConnectionState)? onIceConnectionState;
+  @override
+  webrtc.RTCIceConnectionState? iceConnectionState;
+  webrtc.RTCPeerConnectionState nativeState =
       webrtc.RTCPeerConnectionState.RTCPeerConnectionStateConnected;
+
+  @override
+  webrtc.RTCPeerConnectionState? get connectionState => nativeState;
 
   @override
   Future<webrtc.RTCRtpTransceiver> addTransceiver({
@@ -424,6 +436,57 @@ Future<void> _createAudioConnection(
 );
 
 void main() {
+  for (final iceState in <webrtc.RTCIceConnectionState?>[
+    null,
+    webrtc.RTCIceConnectionState.RTCIceConnectionStateConnected,
+    webrtc.RTCIceConnectionState.RTCIceConnectionStateFailed,
+  ]) {
+    test('native failed transport requires ICE evidence ($iceState)', () async {
+      final peer = _StatsPeerConnection([[]])..iceConnectionState = iceState;
+      final adapter = FlutterWebRtcPeerConnectionAdapter(
+        peerConnectionFactory: (_) async => peer,
+        configureAndroidAudioFocus: () async {},
+      );
+      final engine = FlutterWebRtcCallEngine(adapter: adapter);
+      final events = <CallEngineEvent>[];
+      final subscription = engine.events.listen(events.add);
+      addTearDown(() async {
+        await engine.close();
+        await subscription.cancel();
+      });
+      await engine.createConnection(
+        const CallConnectionConfiguration(
+          transportPolicy: CallTransportPolicy.all,
+          receiveAudio: true,
+          receiveVideo: false,
+          captureAudio: false,
+          captureVideo: false,
+        ),
+      );
+      peer.nativeState =
+          webrtc.RTCPeerConnectionState.RTCPeerConnectionStateFailed;
+      final checklistFailed =
+          iceState == webrtc.RTCIceConnectionState.RTCIceConnectionStateFailed;
+      // Snapshot first must make the same distinction as either native callback.
+      await expectLater(
+        engine.snapshot(),
+        _throwsCallEngineCode(
+          checklistFailed
+              ? CallEngineErrorCode.iceConnectionFailed
+              : CallEngineErrorCode.transportUnavailable,
+        ),
+      );
+      peer.onConnectionState!(peer.nativeState);
+      if (iceState != null) peer.onIceConnectionState!(iceState);
+      expect(
+        events.last.failureReason,
+        checklistFailed
+            ? CallFailureReason.iceConnectionFailed
+            : CallFailureReason.transportUnavailable,
+      );
+    });
+  }
+
   test(
     'real wrapper proves TURN-backed local prflx from native stats only',
     () async {
@@ -892,6 +955,70 @@ void main() {
       expect(wrapper.isClosed, isFalse);
     },
   );
+
+  test('in-flight stats do not cross an ICE restart in diagnostics', () async {
+    List<webrtc.StatsReport> rows(String address) => [
+      webrtc.StatsReport('transport', 'transport', 1, {
+        'selectedCandidatePairId': 'pair',
+        'dtlsState': 'connected',
+      }),
+      webrtc.StatsReport('pair', 'candidate-pair', 1, {
+        'state': 'succeeded',
+        'localCandidateId': 'local',
+        'remoteCandidateId': 'remote',
+      }),
+      webrtc.StatsReport('local', 'local-candidate', 1, {
+        'address': address,
+        'candidateType': 'host',
+      }),
+      webrtc.StatsReport('remote', 'remote-candidate', 1, {
+        'address': '192.0.2.20',
+        'candidateType': 'relay',
+      }),
+    ];
+    final peer = _StatsPeerConnection([
+      rows('192.0.2.10'),
+      rows('2001:db8::10'),
+    ]);
+    final samples = <CallStatsSample>[];
+    final native = FlutterWebRtcPeerConnectionAdapter(
+      configureAndroidAudioFocus: () async {},
+      peerConnectionFactory: (_) async => peer,
+      onDiagnosticSample: (sample, _) {
+        samples.add(sample);
+        throw StateError('private sink failure');
+      },
+    );
+    final wrapper = FlutterWebRtcCallEngine(adapter: native);
+    addTearDown(wrapper.close);
+    await wrapper.createConnection(
+      const CallConnectionConfiguration(
+        transportPolicy: CallTransportPolicy.all,
+        receiveAudio: true,
+        receiveVideo: false,
+        captureAudio: false,
+        captureVideo: false,
+      ),
+    );
+    final gate = peer.transceiversGate = Completer<void>();
+    final pending = native.snapshot();
+    await Future<void>.delayed(Duration.zero);
+    await native.restartIce();
+    gate.complete();
+    await pending;
+    expect(samples, isEmpty);
+    peer.transceiversGate = null;
+    final snapshot = await wrapper.snapshot();
+    expect(samples.single.observationIceGeneration, 1);
+    expect(samples.single.selectedLocalCandidateFamily, CallAddressFamily.ipv6);
+    expect(snapshot.dtlsReady, isTrue);
+    expect(
+      snapshot.isMediaReady,
+      isFalse,
+      reason: 'diagnostic candidate success cannot attach missing audio',
+    );
+    expect(wrapper.isClosed, isFalse);
+  });
 
   group('privacy-safe WebRTC failure stage guard', () {
     test(

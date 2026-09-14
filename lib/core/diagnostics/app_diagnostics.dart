@@ -11,6 +11,7 @@ import 'package:flutter/widgets.dart';
 
 import '../bridge/bridge.dart';
 import 'app_diagnostic_schema.dart';
+import 'local_connection_diagnostics.dart';
 import 'app_diagnostic_events.dart';
 import 'diagnostic_archive_writer.dart';
 
@@ -86,6 +87,7 @@ final class AppDiagnostics with WidgetsBindingObserver {
         entry.key: Set<Object?>.from(entry.value as List),
   };
   static final _valueEnums = <Object?, Set<Object?>>{
+    ...localAppConnectionEnums,
     for (final entry in (appDiagnosticSchemaV1['enumValues'] as Map).entries)
       entry.key: Set<Object?>.from(entry.value as List),
   };
@@ -449,6 +451,18 @@ final class AppDiagnostics with WidgetsBindingObserver {
       return scoped[key];
     }
     return _attempts[key];
+  }
+
+  /// Existing operation scope only; never derives correlation from payloads.
+  String? currentTraceForFeature(String feature) {
+    final scoped = Zone.current[_attemptContext];
+    if (!enabled || scoped is! Map<String, String>) return null;
+    for (final key in scoped.keys.toList().reversed) {
+      if (!key.startsWith('$feature:')) continue;
+      final trace = key.substring(feature.length + 1);
+      if (isValidTraceId(trace)) return trace;
+    }
+    return null;
   }
 
   /// Each invocation gets its own attempt while preserving a cross-peer trace.
@@ -856,8 +870,11 @@ final class AppDiagnostics with WidgetsBindingObserver {
   static Map<String, Object?> _legacyRelayProjection(
     Map<String, Object?> event,
   ) {
-    final projected = Map<String, Object?>.from(event);
-    final values = event['values'];
+    final projected = withoutLocalConnectionValues(
+      event,
+      localAppConnectionEnums,
+    );
+    final values = projected['values'];
     if (event['feature'] == 'push' &&
         event['stage'] == 'snapshot' &&
         values is Map &&

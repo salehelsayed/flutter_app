@@ -19,15 +19,63 @@ void registerMixedPolicyNativeAudioProof() {
     addTearDown(wire.close);
     final config = await wire.get('config');
     final side = config['side']! as int;
-    final servers = [
+    _TurnUdpBlackhole? udpBlackhole;
+    if (config['unavailableTurnUdp'] != null) {
+      udpBlackhole = await _TurnUdpBlackhole.start();
+      addTearDown(udpBlackhole.close);
+    }
+    final hostnameProbe = config['turnHostnameProbe'] == true;
+    _Ipv4TurnProxy? turnProxy;
+    final dnsFamilies = <String>[];
+    if (hostnameProbe) {
+      turnProxy = await _Ipv4TurnProxy.start();
+      addTearDown(turnProxy.close);
+      // Android's hosts file maps localhost to IPv4 only. This public test
+      // name supplies both loopbacks; reject any non-loopback DNS response.
+      final addresses = await InternetAddress.lookup('localtest.me');
+      expect(
+        addresses.every((a) => a.address == '127.0.0.1' || a.address == '::1'),
+        isTrue,
+      );
+      dnsFamilies.addAll(
+        addresses
+            .map((a) => a.type == InternetAddressType.IPv6 ? 'ipv6' : 'ipv4')
+            .toSet(),
+      );
+      expect(dnsFamilies, containsAll(['ipv4', 'ipv6']));
+      // DNS answers alone do not establish allocation. This fixture accepts
+      // TURN/TCP only on IPv4; explicitly establish that its IPv6 socket fails.
+      await expectLater(
+        Socket.connect(
+          InternetAddress.loopbackIPv6,
+          34793,
+          timeout: const Duration(seconds: 2),
+        ).then((socket) {
+          socket.destroy();
+          throw StateError('unexpected IPv6 TURN listener');
+        }),
+        throwsA(isA<SocketException>()),
+      );
+    }
+    List<CallIceServer> serversFrom(Map<String, Object?> credentials) => [
       CallIceServer(
         urls: [
-          if (config['stun'] case final String stun) stun,
-          config['turn']! as String,
+          if (credentials['stun'] case final String stun) stun,
+          if (config['unavailableTurnUdp'] case final String unavailable)
+            unavailable,
+          hostnameProbe
+              ? 'turn:localtest.me:34793?transport=tcp'
+              : credentials['turn']! as String,
         ],
-        username: config['username']! as String,
-        credential: config['credential']! as String,
-        expiresAt: DateTime.now().toUtc().add(const Duration(hours: 1)),
+        username: credentials['username']! as String,
+        credential: credentials['credential']! as String,
+        expiresAt: switch (credentials['expiresAtMs']) {
+          final int expiresAtMs => DateTime.fromMillisecondsSinceEpoch(
+            expiresAtMs,
+            isUtc: true,
+          ),
+          _ => DateTime.now().toUtc().add(const Duration(hours: 1)),
+        },
       ),
     ];
     final results = <Map<String, Object?>>[];
@@ -36,6 +84,15 @@ void registerMixedPolicyNativeAudioProof() {
         for (final caller in [0, 1]) {
           final name = '${a.name}-${b.name}-$caller';
           final localPolicy = side == 0 ? a : b;
+          final servers = serversFrom(
+            config['perCallCredentials'] == true
+                ? await wire.get('credentials/$name')
+                : config,
+          );
+          expect(
+            servers.single.expiresAt.isAfter(DateTime.now().toUtc()),
+            isTrue,
+          );
           final peer = _NativePeer(localPolicy, servers);
           try {
             await peer.create();
@@ -61,6 +118,9 @@ void registerMixedPolicyNativeAudioProof() {
                 );
                 peer.localDescriptionSent();
               }
+              if (config['brokenIpv6Candidate'] == true) {
+                await peer.addBrokenIpv6Candidate(generation);
+              }
               await peer.exchangeCandidates(wire, phase);
               await peer.waitForMedia();
               final result = await peer.verify(generation);
@@ -85,8 +145,99 @@ void registerMixedPolicyNativeAudioProof() {
         }
       }
     }
-    await wire.post('result', {'passed': true, 'phases': results});
+    if (udpBlackhole != null) expect(udpBlackhole.dropped, greaterThan(0));
+    if (turnProxy != null) expect(turnProxy.connections, greaterThan(0));
+    await wire.post('result', {
+      'passed': true,
+      'phases': results,
+      'turnHostnameDnsFamilies': dnsFamilies,
+      'turnHostnameIpv6SocketUnavailable': hostnameProbe,
+      'turnIpv4ProxyConnections': turnProxy?.connections,
+      'turnUdpDatagramsDropped': udpBlackhole?.dropped,
+    });
   }, timeout: const Timeout(Duration(minutes: 12)));
+}
+
+/// A scoped TURN/UDP blackhole: datagrams reach this fixture and receive no
+/// response. TURN/TCP remains available on its separate configured endpoint.
+final class _TurnUdpBlackhole {
+  _TurnUdpBlackhole(this.socket) {
+    socket.listen((event) {
+      if (event == RawSocketEvent.read) {
+        while (socket.receive() != null) {
+          dropped++;
+        }
+      }
+    });
+  }
+
+  final RawDatagramSocket socket;
+  var dropped = 0;
+  static Future<_TurnUdpBlackhole> start() async => _TurnUdpBlackhole(
+    await RawDatagramSocket.bind(
+      InternetAddress.loopbackIPv4,
+      34792,
+      reuseAddress: false,
+    ),
+  );
+  void close() => socket.close();
+}
+
+/// A test-local IPv4-only TCP endpoint for the existing USB TURN fixture.
+/// It owns only its bound socket and accepted connections, and never logs bytes.
+final class _Ipv4TurnProxy {
+  _Ipv4TurnProxy(this.server) {
+    server.listen((socket) {
+      final task = _forward(socket);
+      pending.add(task);
+      unawaited(task.whenComplete(() => pending.remove(task)));
+    });
+  }
+
+  final ServerSocket server;
+  final sockets = <Socket>{};
+  final pending = <Future<void>>{};
+  var closed = false;
+  var connections = 0;
+
+  static Future<_Ipv4TurnProxy> start() async => _Ipv4TurnProxy(
+    await ServerSocket.bind(InternetAddress.loopbackIPv4, 34793),
+  );
+
+  Future<void> _forward(Socket client) async {
+    sockets.add(client);
+    Socket? upstream;
+    try {
+      upstream = await Socket.connect(
+        InternetAddress.loopbackIPv4,
+        34791,
+        timeout: const Duration(seconds: 2),
+      );
+      sockets.add(upstream);
+      if (closed) return;
+      connections++;
+      await Future.wait([
+        client.cast<List<int>>().pipe(upstream),
+        upstream.cast<List<int>>().pipe(client),
+      ]);
+    } on SocketException {
+      // Native TURN may close an unused allocation/connection on restart.
+    } finally {
+      sockets.remove(client);
+      sockets.remove(upstream);
+      client.destroy();
+      upstream?.destroy();
+    }
+  }
+
+  Future<void> close() async {
+    closed = true;
+    await server.close();
+    for (final socket in sockets.toList()) {
+      socket.destroy();
+    }
+    await Future.wait(pending.toList());
+  }
 }
 
 final class _NativePeer {
@@ -235,6 +386,20 @@ final class _NativePeer {
     await _verifyEgress();
   }
 
+  Future<void> addBrokenIpv6Candidate(int generation) async {
+    // Documentation space cannot provide a working path. Keep every native
+    // direct/STUN/TURN candidate in flight alongside this controlled bad input.
+    await engine.addIceCandidates([
+      CallIceCandidate(
+        value:
+            'candidate:broken6 1 udp 2122260223 2001:db8::bad 49999 typ host',
+        mediaId: '0',
+        mediaLineIndex: 0,
+        iceGeneration: generation,
+      ),
+    ]);
+  }
+
   Future<void> _remoteCandidates(List<dynamic> candidates) async {
     for (final item in candidates) {
       final c = item as Map;
@@ -342,11 +507,44 @@ final class _NativePeer {
       'localUsesTurn': localUsesTurn,
       'localRelayProtocol': local.values['relayProtocol'],
       'remoteCandidateType': remote.values['candidateType'],
+      'selectedLocalFamily': _family(local.values),
+      'selectedRemoteFamily': _family(remote.values),
+      'secureTransportReady': snapshot.dtlsReady,
+      // Admission is separate from evidence that native ICE actually attempted
+      // a bad pair. Preserve both without retaining raw candidate addresses.
+      'brokenIpv6RemoteObserved': stats.any(
+        (r) =>
+            r.type == 'remote-candidate' &&
+            (r.values['address'] ?? r.values['ip']) == '2001:db8::bad',
+      ),
+      'brokenIpv6RequestsSent': stats
+          .where(
+            (r) =>
+                r.type == 'candidate-pair' &&
+                (byId[r.values['remoteCandidateId']]?.values['address'] ??
+                        byId[r.values['remoteCandidateId']]?.values['ip']) ==
+                    '2001:db8::bad',
+          )
+          .fold<int>(
+            0,
+            (sum, r) =>
+                sum + ((r.values['requestsSent'] as num?)?.toInt() ?? 0),
+          ),
       'relatedAddressesSanitized': policy == CallTransportPolicy.relayOnly,
       'sdpAndCandidatePrivacyChecked': policy == CallTransportPolicy.relayOnly,
       'bidirectionalRtpAdvanced': true,
       'transport': snapshot.transport.name,
     };
+  }
+
+  static String _family(Map<dynamic, dynamic> values) {
+    final address = values['address'] ?? values['ip'];
+    if (address is! String) return 'unknown';
+    return InternetAddress.tryParse(address)?.type == InternetAddressType.IPv6
+        ? 'ipv6'
+        : InternetAddress.tryParse(address)?.type == InternetAddressType.IPv4
+        ? 'ipv4'
+        : 'unknown';
   }
 
   Future<Map<String, Object?>> failureStats() async {

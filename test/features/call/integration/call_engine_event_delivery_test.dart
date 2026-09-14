@@ -33,6 +33,87 @@ final _callId = CallId.parse('11111111-1111-4111-8111-111111111111');
 final _nextId = CallId.parse('22222222-2222-4222-8222-222222222222');
 
 void main() {
+  for (final queuedDispatch in [false, true]) {
+    test(
+      'confirmed ICE failure preserves disconnect and recovery '
+      '(dispatch pending=$queuedDispatch)',
+      () => _guarded(() async {
+        final h = _Harness(failureSinkThrows: true);
+        final gate = Completer<void>();
+        try {
+          await h.start();
+          if (queuedDispatch) {
+            h.dispatchGate = gate;
+            h.blockedDispatchType = CallEventType.mediaLost;
+          }
+          h.peer.emit(_connected);
+          h.peer.emit(_disconnected);
+          if (queuedDispatch) await _until(() => h.dispatches.isNotEmpty);
+          h.peer.iceConnectionState =
+              webrtc.RTCIceConnectionState.RTCIceConnectionStateFailed;
+          h.peer.emit(_failed);
+          h.peer.emit(_connected);
+          expect(
+            h.executor.toDiagnosticMap()['pendingEngineEventCount'],
+            lessThanOrEqualTo(2),
+          );
+          gate.complete();
+          await h.drain();
+          expect(h.dispatches.map((e) => e.type), [CallEventType.mediaLost]);
+          expect(h.coordinator.activeSession?.state, CallState.reconnecting);
+          expect(h.peer.senderReads, 1);
+          expect(h.cleanupCalls, 0);
+          expect(h.failureObservations, [
+            (
+              CallFailureReason.iceConnectionFailed,
+              CallFailureDisposition.provisional,
+            ),
+          ]);
+          await h.hangup();
+          h.expectReleased();
+        } finally {
+          if (!gate.isCompleted) gate.complete();
+          await h.close();
+        }
+      }),
+    );
+  }
+
+  test(
+    'reentrant confirmed ICE failure keeps disconnect and latest recovery',
+    () => _guarded(() async {
+      final h = _Harness();
+      StreamSubscription<WebRtcPeerConnectionEvent>? subscription;
+      try {
+        await h.start();
+        var entered = false;
+        final before = h.nativeEvents.length;
+        subscription = h.adapter.events.listen((_) {
+          if (entered) return;
+          entered = true;
+          h.peer.emit(_disconnected);
+          h.peer.iceConnectionState =
+              webrtc.RTCIceConnectionState.RTCIceConnectionStateFailed;
+          h.peer.emit(_failed);
+          h.peer.emit(_connected);
+        });
+        h.peer.emit(_connected);
+        await h.drain();
+        expect(h.nativeEvents.skip(before).map((e) => e.connectionState), [
+          WebRtcConnectionState.connected,
+          WebRtcConnectionState.disconnected,
+          WebRtcConnectionState.connected,
+        ]);
+        expect(h.dispatches.map((e) => e.type), [CallEventType.mediaLost]);
+        expect(h.peer.senderReads, 1);
+        expect(h.cleanupCalls, 0);
+      } finally {
+        await subscription?.cancel();
+        await h.close();
+      }
+    }),
+  );
+
   for (final count in [65, 256, 1000]) {
     test(
       '$count processed native and engine events have no lifetime quota',
@@ -154,7 +235,7 @@ void main() {
   test(
     'terminal close behind ordinary updates survives later ordinary updates',
     () => _guarded(() async {
-      final h = _Harness();
+      final h = _Harness(failureSinkThrows: true);
       final gate = Completer<List<webrtc.RTCRtpSender>>();
       try {
         await h.start(connected: false);
@@ -177,6 +258,7 @@ void main() {
         );
         gate.complete([]);
         await h.drain();
+        expect(h.failureObservations.last.$2, CallFailureDisposition.terminal);
         expect(h.dispatches.map((e) => e.type), [
           CallEventType.negotiationFailed,
         ]);
@@ -277,6 +359,13 @@ void main() {
               h.peer.emit(_connected);
             }
             h.peer.emit(fatal ? _failed : _disconnected);
+            if (fatal) {
+              // An explicitly identified checklist failure cannot overwrite
+              // the already pending unclassified (hard) transport failure.
+              h.peer.iceConnectionState =
+                  webrtc.RTCIceConnectionState.RTCIceConnectionStateFailed;
+              h.peer.emit(_failed);
+            }
             for (var i = 0; i < 1000; i++) {
               h.peer.emit(_connected);
             }
@@ -443,8 +532,11 @@ Future<void> _until(bool Function() complete) async {
 }
 
 final class _Harness {
-  _Harness({CallId? callId, int historyCapacity = 64})
-    : callId = callId ?? _callId {
+  _Harness({
+    CallId? callId,
+    int historyCapacity = 64,
+    bool failureSinkThrows = false,
+  }) : callId = callId ?? _callId {
     adapter = FlutterWebRtcPeerConnectionAdapter(
       eventBufferCapacity: historyCapacity,
       configureAndroidAudioFocus: () async {},
@@ -463,6 +555,12 @@ final class _Harness {
       onDone: () => engineDone = true,
     );
     executor = CallNegotiationEffectExecutor(
+      onFailureObservation: (id, reason, disposition) {
+        expect(id, this.callId);
+        failureObservations.add((reason, disposition));
+        if (failureSinkThrows)
+          throw StateError('synthetic diagnostic sink failure');
+      },
       engine: engine,
       materialStore: CallNegotiationMaterialStore(),
       mediaPreparer: _UnusedPreparer(),
@@ -501,6 +599,7 @@ final class _Harness {
   final engineEvents = <CallEngineEvent>[];
   final dispatches = <CallEvent>[];
   final history = _History();
+  final failureObservations = <(CallFailureReason, CallFailureDisposition)>[];
   final polls = _Timers();
   final deadlines = _Timers();
   late final FlutterWebRtcPeerConnectionAdapter adapter;
@@ -583,6 +682,9 @@ final class _NativePeer implements webrtc.RTCPeerConnection {
   void Function(webrtc.RTCPeerConnectionState)? onConnectionState;
   @override
   webrtc.RTCPeerConnectionState get connectionState => _connected;
+  @override
+  webrtc.RTCIceConnectionState iceConnectionState =
+      webrtc.RTCIceConnectionState.RTCIceConnectionStateConnected;
   Completer<List<webrtc.RTCRtpSender>>? sendersGate;
   int senderReads = 0;
   int restartCalls = 0;

@@ -64,6 +64,9 @@ func RetrievePending(paramsJSON string) (result string) {
 			"message":   message.Message,
 			"timestamp": message.Timestamp,
 		}
+		if message.QuietRecovery {
+			messages[index]["quietRecovery"] = true
+		}
 	}
 	return successJSON(map[string]interface{}{
 		"ok":              true,

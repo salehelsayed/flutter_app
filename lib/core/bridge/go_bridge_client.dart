@@ -7,6 +7,7 @@ import 'package:flutter/services.dart';
 import 'bridge.dart';
 import '../database/db_write_transaction.dart';
 import '../diagnostics/app_diagnostics.dart';
+import '../diagnostics/local_connection_diagnostics.dart';
 import '../../features/p2p/domain/models/chat_message.dart';
 import '../../features/p2p/domain/models/connection_state.dart';
 import '../local_discovery/local_discovery_service.dart';
@@ -1014,6 +1015,57 @@ class GoBridgeClient extends Bridge {
       }
       final sanitized = _sanitizeBridgeResult(result);
       final decoded = jsonDecode(sanitized) as Map;
+      // Observe coarse native boundaries within the existing command/attempt.
+      // No address parsing, payload inspection or diagnostic result owns send.
+      try {
+        final diagnostics = AppDiagnostics.instance;
+        if (diagnostics.enabled &&
+            (cmd == 'peer:dial' ||
+                cmd == 'message:send' ||
+                cmd == 'inbox:store')) {
+          final isMessage = cmd != 'peer:dial';
+          final feature = isMessage ? 'message' : 'network';
+          final trace = isMessage
+              ? diagnostics.currentTraceForFeature('message')
+              : diagnosticTrace;
+          void record(Map<String, Object?> values) => diagnostics.record(
+            feature: feature,
+            stage: switch (values['connectionStage']) {
+              'recipient_ack' => 'receipt',
+              'inbox_acceptance' => 'store',
+              'recovery' => 'recover',
+              _ => 'bridge',
+            },
+            outcome: switch (values['connectionOutcome']) {
+              'ok' => 'ok',
+              'failed' => 'failed',
+              _ => 'unknown',
+            },
+            traceId: trace,
+            values: values,
+          );
+          observeConnectionDiagnostics(
+            decoded['connectionDiagnostics'],
+            record,
+          );
+          if (cmd == 'inbox:store') {
+            final accepted =
+                decoded['ok'] == true &&
+                (decoded['storeStatus'] == 'stored' ||
+                    decoded['storeStatus'] == 'duplicate');
+            record({
+              'connectionStage': 'inbox_acceptance',
+              'connectionOutcome': accepted
+                  ? 'ok'
+                  : decoded['ok'] == false
+                  ? 'failed'
+                  : 'unknown',
+            });
+          }
+        }
+      } catch (_) {
+        // Diagnostics never replace an ordinary bridge result.
+      }
       reportDiagnostic(
         decoded['ok'] == true,
         decoded['ok'] == true

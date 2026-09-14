@@ -2,6 +2,7 @@ name: Mknoon checks
 
 on:
   pull_request:
+    types: [opened, synchronize, reopened, edited, ready_for_review]
   workflow_dispatch:
     inputs:
       mode:
@@ -24,6 +25,8 @@ jobs:
   metadata:
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    outputs:
+      plan_sha256: ${{ steps.plan.outputs.plan_sha256 }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -34,13 +37,19 @@ jobs:
           python3 scripts/mknoon_checks.py validate
           python3 -m unittest discover -s scripts/test -p '*checks_test.py'
           python3 -m unittest discover -s scripts/test -p 'testing_inventory_test.py'
-      - name: Preserve metadata diagnostics
+      - name: Bind the expected candidate and selection
+        id: plan
+        run: python3 scripts/mknoon_checks.py ci-plan --output .codex-test-logs/ci-expected
+      - name: Preserve the independent expected plan
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: metadata-${{ github.sha }}-${{ github.run_attempt }}
-          path: .codex-test-logs/
-          if-no-files-found: ignore
+          name: expected-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            .codex-test-logs/ci-expected/plan.json
+            .codex-test-logs/ci-expected/error.json
+          include-hidden-files: true
+          if-no-files-found: error
 
   selected:
     needs: metadata
@@ -48,7 +57,7 @@ jobs:
     # fixtures first. Fork code must never run on a credentialed device host.
     if: vars.MKNOON_TEST_RUNNER_ENABLED == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: [self-hosted, mknoon-test]
-    timeout-minutes: 4320
+    timeout-minutes: ${{ (github.event_name == 'schedule' || inputs.mode == 'full') && 4320 || 360 }}
     concurrency:
       group: mknoon-shared-test-devices
       cancel-in-progress: false
@@ -58,49 +67,68 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: expected-${{ github.run_id }}-${{ github.run_attempt }}
+          path: .codex-test-logs/ci-expected
       - name: Run the same local selector
         env:
-          EVENT_NAME: ${{ github.event_name }}
-          REQUESTED_MODE: ${{ inputs.mode }}
-          EXPLICIT_BASE: ${{ inputs.baseline }}
-          PR_BASE: ${{ github.event.pull_request.base.sha }}
-          BUILD_LABEL: ${{ inputs.build_label }}
+          MKNOON_PLAN_SHA256: ${{ needs.metadata.outputs.plan_sha256 }}
           DEVICE_CONFIG: ${{ vars.MKNOON_TEST_DEVICE_CONFIG }}
-          CANDIDATE_ARTIFACT: ${{ vars.MKNOON_CANDIDATE_ARTIFACT }}
-          MANUAL_EVIDENCE: ${{ vars.MKNOON_MANUAL_EVIDENCE }}
+          CANDIDATE_ARTIFACT: ${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'release' && vars.MKNOON_CANDIDATE_ARTIFACT || '' }}
+          MANUAL_EVIDENCE: ${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'release' && vars.MKNOON_MANUAL_EVIDENCE || '' }}
         shell: bash
         run: |
           set -euo pipefail
           args=()
-          mode="${REQUESTED_MODE:-change}"
-          if [[ "$EVENT_NAME" == pull_request ]]; then
-            base="$(git merge-base HEAD "$PR_BASE")"
-          elif [[ "$EVENT_NAME" == schedule ]]; then
-            mode=full
-            base="$(git rev-parse HEAD)"
-          else
-            base="$EXPLICIT_BASE"
-          fi
           if [[ -n "$DEVICE_CONFIG" ]]; then args+=(--device-config "$DEVICE_CONFIG"); fi
           if [[ -n "$CANDIDATE_ARTIFACT" ]]; then args+=(--candidate-artifact "$CANDIDATE_ARTIFACT"); fi
           if [[ -n "$MANUAL_EVIDENCE" ]]; then args+=(--evidence "$MANUAL_EVIDENCE"); fi
           flutter pub get
           python3 scripts/mknoon_checks.py validate
-          if [[ "$mode" == full ]]; then
-            python3 scripts/mknoon_checks.py full --base "$base" --output .codex-test-logs/ci-run "${args[@]}"
-          else
-            python3 scripts/mknoon_checks.py run --mode "$mode" --base "$base" --build-label "$BUILD_LABEL" --output .codex-test-logs/ci-run "${args[@]}"
-          fi
+          python3 scripts/mknoon_checks.py ci-run --expected-plan .codex-test-logs/ci-expected/plan.json --output .codex-test-logs/ci-run "${args[@]}"
       - name: Preserve first attempts and incomplete full runs
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: checks-${{ github.sha }}-${{ github.run_attempt }}
+          name: checks-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
             .codex-test-logs/ci-run/plan.json
             .codex-test-logs/ci-run/results.json
             .codex-test-logs/ci-run/partial.json
             .codex-test-logs/ci-run/summary.txt
             .codex-test-logs/ci-run/error.json
+          include-hidden-files: true
           if-no-files-found: error
           retention-days: 90
+
+  required:
+    # Only PR runs emit the required context. A scheduled/release/manual check
+    # of the same SHA must never substitute for the PR's comparison plan.
+    name: ${{ github.event_name == 'pull_request' && 'Mknoon regression checks' || (github.event_name == 'schedule' || inputs.mode == 'full') && 'Mknoon full regression' || inputs.mode == 'release' && 'Mknoon signed-release acceptance' || 'Mknoon change diagnostics' }}
+    needs: [metadata, selected]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        if: always() && needs.metadata.result == 'success'
+        with:
+          name: expected-${{ github.run_id }}-${{ github.run_attempt }}
+          path: .codex-test-logs/ci-expected
+      - uses: actions/download-artifact@v4
+        if: always() && needs.selected.result != 'skipped'
+        with:
+          name: checks-${{ github.run_id }}-${{ github.run_attempt }}
+          path: .codex-test-logs/ci-run
+      - name: Require complete results from this candidate and plan
+        if: always()
+        env:
+          MKNOON_METADATA_RESULT: ${{ needs.metadata.result }}
+          MKNOON_EXECUTION_RESULT: ${{ needs.selected.result }}
+          MKNOON_PLAN_SHA256: ${{ needs.metadata.outputs.plan_sha256 }}
+        run: python3 scripts/mknoon_checks.py ci-verify --expected-plan .codex-test-logs/ci-expected/plan.json --report-directory .codex-test-logs/ci-run --output .codex-test-logs/ci-verdict

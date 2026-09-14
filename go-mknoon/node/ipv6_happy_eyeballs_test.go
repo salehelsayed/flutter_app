@@ -2,21 +2,355 @@ package node
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"errors"
 	"fmt"
 	"net"
+	"net/http/httptest"
 	"reflect"
+	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	libp2p "github.com/libp2p/go-libp2p"
+	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/libp2p/go-libp2p/core/peerstore"
 	"github.com/libp2p/go-libp2p/p2p/net/swarm"
+	quic "github.com/libp2p/go-libp2p/p2p/transport/quic"
+	"github.com/libp2p/go-libp2p/p2p/transport/tcp"
+	"github.com/libp2p/go-libp2p/p2p/transport/websocket"
 	ma "github.com/multiformats/go-multiaddr"
 )
+
+// A socket-scoped fault, never a host firewall rule: establish libp2p through
+// IPv6 first, then discard bytes without FIN/RST in either direction. New IPv6
+// handshakes also stall; the original IPv4 candidate remains usable.
+type establishedPathProxy struct {
+	address ma.Multiaddr
+	drop    atomic.Bool
+}
+
+func newEstablishedPathProxy(t *testing.T, target ma.Multiaddr) *establishedPathProxy {
+	t.Helper()
+	listener, err := net.Listen("tcp6", "[::1]:0")
+	if err != nil {
+		t.Skipf("IPv6 loopback unavailable: %v", err)
+	}
+	port, err := target.ValueForProtocol(ma.P_TCP)
+	if err != nil {
+		t.Fatal(err)
+	}
+	proxy := &establishedPathProxy{address: ma.StringCast(fmt.Sprintf("/ip6/::1/tcp/%d", listener.Addr().(*net.TCPAddr).Port))}
+	var mu sync.Mutex
+	var sockets []net.Conn
+	var workers sync.WaitGroup
+	acceptDone := make(chan struct{})
+	go func() {
+		defer close(acceptDone)
+		for {
+			incoming, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			outgoing, err := net.DialTimeout("tcp4", "127.0.0.1:"+port, time.Second)
+			if err != nil {
+				incoming.Close()
+				continue
+			}
+			mu.Lock()
+			sockets = append(sockets, incoming, outgoing)
+			mu.Unlock()
+			copyUntilClosed := func(dst, src net.Conn) {
+				defer workers.Done()
+				defer src.Close()
+				defer dst.Close()
+				buffer := make([]byte, 32*1024)
+				for {
+					n, err := src.Read(buffer)
+					if err != nil {
+						return
+					}
+					if !proxy.drop.Load() {
+						if _, err := dst.Write(buffer[:n]); err != nil {
+							return
+						}
+					}
+				}
+			}
+			workers.Add(2)
+			go copyUntilClosed(incoming, outgoing)
+			go copyUntilClosed(outgoing, incoming)
+		}
+	}()
+	t.Cleanup(func() {
+		listener.Close()
+		<-acceptDone
+		for _, socket := range sockets {
+			socket.Close()
+		}
+		workers.Wait()
+	})
+	return proxy
+}
+
+func TestSendMessage_EstablishedIPv6BlackholeRecoversWithoutRestart(t *testing.T) {
+	for _, scenario := range []string{"normal", "quiet", "ack_lost", "uncached_quiet_protocol"} {
+		t.Run(scenario, func(t *testing.T) {
+			sender := startLocalNodeForMultiRelayTest(t)
+			callback := &quietRecoveryCallback{received: make(chan map[string]interface{}, 8)}
+			receiver := New(callback)
+			callback.node = receiver
+			receiver.hermeticLocalNetworkForTests = true
+			if _, err := receiver.Start(NodeConfig{PrivateKeyHex: generateTestKey(t), RelayAddresses: []string{}, AutoRegister: false}); err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { receiver.Stop() })
+			var v4 ma.Multiaddr
+			for _, addr := range receiver.Host().Addrs() {
+				if ip := extractIP(addr); ip != nil && ip.IsLoopback() && ip.To4() != nil && !strings.Contains(addr.String(), "/ws") {
+					if _, err := addr.ValueForProtocol(ma.P_TCP); err == nil {
+						v4 = addr
+						break
+					}
+				}
+			}
+			if v4 == nil {
+				t.Fatal("missing IPv4 TCP listener")
+			}
+			proxy := newEstablishedPathProxy(t, v4)
+			pid := receiver.Host().ID()
+			if err := sender.DialPeerWithTimeout(pid.String(), []string{proxy.address.String()}, 3000); err != nil {
+				t.Fatal(err)
+			}
+			conns := sender.Host().Network().ConnsToPeer(pid)
+			if len(conns) != 1 || !conns[0].RemoteMultiaddr().Equal(proxy.address) {
+				t.Fatalf("not established over IPv6: %v", conns)
+			}
+			original := conns[0]
+			sender.Host().Peerstore().ClearAddrs(pid)
+			sender.Host().Peerstore().AddAddrs(pid, []ma.Multiaddr{proxy.address, v4}, peerstore.PermanentAddrTTL)
+			quiet := scenario != "normal"
+			const wire = `{"type":"chat_message","version":"2","id":"established-original","senderPeerId":"synthetic","encrypted":{"kem":"k","ciphertext":"immutable","nonce":"n"}}`
+			warm, err := sender.SendMessageWithNotificationPolicy(pid.String(), wire, 4000, quiet)
+			if err != nil || !warm.Acked {
+				t.Fatalf("IPv6 warm delivery: %+v %v", warm, err)
+			}
+			<-callback.received
+			t.Logf("warm selected=%s", original.RemoteMultiaddr())
+			if scenario == "ack_lost" {
+				callback.beforeConfirm = func() { proxy.drop.Store(true) }
+			} else {
+				proxy.drop.Store(true)
+			}
+			if scenario == "uncached_quiet_protocol" {
+				if err := sender.Host().Peerstore().RemoveProtocols(pid, QuietRecoveryChatProtocol); err != nil {
+					t.Fatal(err)
+				}
+			}
+			start := time.Now()
+			failed, err := sender.SendMessageWithNotificationPolicy(pid.String(), wire, 4000, quiet)
+			if failed.Acked {
+				t.Fatalf("blackhole invented ACK: %+v", failed)
+			}
+			if time.Since(start) > 4500*time.Millisecond {
+				t.Fatal("command renewed its deadline")
+			}
+			if scenario == "ack_lost" {
+				event := <-callback.received
+				if event["content"] != wire || event["from"] != sender.PeerId() || event["to"] != pid.String() || event["quietRecovery"] != true {
+					t.Fatalf("pre-ACK durable delivery changed: %v", event)
+				}
+			}
+			// The existing retry owner calls the same operation with the same
+			// envelope; neither node is restarted and IPv6 stays blackholed.
+			recovered, err := sender.SendMessageWithNotificationPolicy(pid.String(), wire, 4000, quiet)
+			if err != nil || !recovered.Acked {
+				t.Fatalf("established path did not recover: %+v %v", recovered, err)
+			}
+			event := <-callback.received
+			if event["content"] != wire || event["from"] != sender.PeerId() || event["to"] != pid.String() || (event["quietRecovery"] == true) != quiet {
+				t.Fatalf("fallback changed delivery: %v", event)
+			}
+			conns = sender.Host().Network().ConnsToPeer(pid)
+			if !original.IsClosed() || len(conns) == 0 || extractIP(conns[0].RemoteMultiaddr()).To4() == nil {
+				t.Fatalf("missing selected IPv4 recovery: %v", conns)
+			}
+			t.Logf("recovery selected=%s", conns[0].RemoteMultiaddr())
+		})
+	}
+}
+
+func TestInboxStore_EstablishedIPv6BlackholeRecoversWithoutRestart(t *testing.T) {
+	for _, protected := range []bool{false, true} {
+		t.Run(fmt.Sprint(protected), func(t *testing.T) {
+			relay := startAckCustodyTestRelay(t, func(req inboxRequest) string {
+				return `{"status":"OK","storeStatus":"stored","custodyContract":"ack_or_expiry_v1"}`
+			})
+			sender := startLocalNodeForMultiRelayTest(t)
+			v4 := relay.host.Addrs()[0]
+			proxy := newEstablishedPathProxy(t, v4)
+			pid := relay.host.ID()
+			sender.relayAddresses = []string{proxy.address.String() + "/p2p/" + pid.String(), v4.String() + "/p2p/" + pid.String()}
+			if err := sender.DialPeerWithTimeout(pid.String(), []string{proxy.address.String()}, 3000); err != nil {
+				t.Fatal(err)
+			}
+			original := sender.Host().Network().ConnsToPeer(pid)[0]
+			const wire = `{"type":"chat_message","version":"2","id":"inbox-original","encrypted":{"ciphertext":"immutable"}}`
+			store := func() (InboxStoreOutcome, error) {
+				if protected {
+					return sender.InboxStoreAckCustodyDetailedWithNotificationPolicy("recipient", wire, 500, "", CustodyKindDirectTextV108, 0, false, true)
+				}
+				return sender.InboxStoreDetailedWithNotificationPolicy("recipient", wire, 500, "", false, true)
+			}
+			if _, err := store(); err != nil {
+				t.Fatal(err)
+			}
+			if !original.RemoteMultiaddr().Equal(proxy.address) {
+				t.Fatalf("not IPv6: %s", original.RemoteMultiaddr())
+			}
+			proxy.drop.Store(true)
+			if _, err := store(); err == nil {
+				t.Fatal("blackhole falsely accepted custody")
+			}
+			if _, err := store(); err != nil {
+				t.Fatalf("durable retry trapped on stale IPv6: %v", err)
+			}
+			conns := sender.Host().Network().ConnsToPeer(pid)
+			if !original.IsClosed() || len(conns) == 0 || extractIP(conns[0].RemoteMultiaddr()).To4() == nil {
+				t.Fatalf("missing IPv4 inbox recovery: %v", conns)
+			}
+			for _, request := range relay.snapshotActions() {
+				if request.Message != wire || request.To != "recipient" || !request.QuietRecovery || !request.SuppressNotification {
+					t.Fatalf("inbox retry changed bytes/recipient/policy: %+v", request)
+				}
+			}
+			t.Logf("inbox warm=%s recovery=%s", original.RemoteMultiaddr(), conns[0].RemoteMultiaddr())
+		})
+	}
+}
+
+func TestSendMessageRecovery_PreservesHealthyConnection(t *testing.T) {
+	sender := startLocalNodeForMultiRelayTest(t)
+	receiver := startLocalNodeForMultiRelayTest(t)
+	pid := receiver.Host().ID()
+	if err := sender.Host().Connect(context.Background(), peer.AddrInfo{ID: pid, Addrs: receiver.Host().Addrs()}); err != nil {
+		t.Fatal(err)
+	}
+	connections := sender.Host().Network().ConnsToPeer(pid)
+	sender.openChatStreamHook = func(context.Context, host.Host, peer.ID) (network.Stream, error) {
+		return nil, errors.New("failed to open stream: synthetic resource limit")
+	}
+	if _, err := sender.SendMessageWithTransport(pid.String(), "control", 1000); err == nil {
+		t.Fatal("expected resource failure")
+	}
+	for _, connection := range connections {
+		if connection.IsClosed() {
+			t.Fatal("recovery closed a healthy connection without a transport timeout")
+		}
+	}
+	sender.openChatStreamHook = nil
+	if result, err := sender.SendMessageWithTransport(pid.String(), "control", 1000); err != nil || !result.Acked {
+		t.Fatalf("healthy connection no longer usable: %+v %v", result, err)
+	}
+}
+
+func TestDualStackUDPBlackholeFallsBackToTCPAndWSSMessaging(t *testing.T) {
+	for _, transport := range []string{"tcp", "wss"} {
+		t.Run(transport, func(t *testing.T) {
+			udp, err := net.ListenPacket("udp4", "127.0.0.1:0")
+			if err != nil {
+				t.Fatal(err)
+			}
+			attempted := make(chan struct{}, 1)
+			done := make(chan struct{})
+			go func() {
+				defer close(done)
+				buffer := make([]byte, 2048)
+				for {
+					if _, _, err := udp.ReadFrom(buffer); err != nil {
+						return
+					}
+					select {
+					case attempted <- struct{}{}:
+					default:
+					}
+				}
+			}()
+			t.Cleanup(func() { udp.Close(); <-done })
+			address := "/ip4/127.0.0.1/tcp/0"
+			var serverOptions, clientOptions []libp2p.Option
+			if transport == "wss" {
+				// Trust only this fixture's certificate. No system trust changes or
+				// insecure TLS bypass; both peers still use the pinned native transport.
+				certificateServer := httptest.NewTLSServer(nil)
+				certificateServer.Close()
+				roots := x509.NewCertPool()
+				roots.AddCert(certificateServer.Certificate())
+				serverOptions = []libp2p.Option{libp2p.Transport(websocket.New, websocket.WithTLSConfig(certificateServer.TLS))}
+				clientOptions = []libp2p.Option{
+					libp2p.Transport(tcp.NewTCPTransport),
+					libp2p.Transport(quic.NewTransport),
+					libp2p.Transport(websocket.New, websocket.WithTLSClientConfig(&tls.Config{RootCAs: roots, MinVersion: tls.VersionTLS12})),
+				}
+				address += "/wss"
+			}
+			target, err := libp2p.New(append(serverOptions, libp2p.ListenAddrStrings(address), libp2p.DisableRelay())...)
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { target.Close() })
+			frames := make(chan string, 1)
+			target.SetStreamHandler(ChatProtocol, func(s network.Stream) {
+				defer s.Close()
+				wire, err := readFrame(s)
+				if err != nil {
+					return
+				}
+				frames <- string(wire)
+				_ = writeFrame(s, []byte(`{"ack":true}`))
+			})
+			sender := NewNode()
+			sender.hermeticLocalNetworkForTests = true
+			sender.newHost = func(_ NodeConfig, opts []libp2p.Option) (host.Host, error) {
+				return libp2p.New(append(opts, clientOptions...)...)
+			}
+			if _, err := sender.Start(NodeConfig{PrivateKeyHex: generateTestKey(t), RelayAddresses: []string{}, AutoRegister: false}); err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { sender.Stop() })
+			addresses := []string{
+				fmt.Sprintf("/ip4/127.0.0.1/udp/%d/quic-v1", udp.LocalAddr().(*net.UDPAddr).Port),
+				target.Addrs()[0].String(),
+			}
+			if err := sender.DialPeerWithTimeout(target.ID().String(), addresses, 3000); err != nil {
+				t.Fatal(err)
+			}
+			result, err := sender.SendMessageWithTransport(target.ID().String(), "immutable TCP fallback", 1000)
+			if err != nil || !result.Acked || <-frames != "immutable TCP fallback" {
+				t.Fatalf("TCP delivery failed: %+v %v", result, err)
+			}
+			select {
+			case <-attempted:
+			case <-time.After(time.Second):
+				t.Fatal("UDP was never attempted")
+			}
+			connections := sender.Host().Network().ConnsToPeer(target.ID())
+			if len(connections) == 0 || !strings.Contains(connections[0].RemoteMultiaddr().String(), "/tcp/") {
+				t.Fatalf("not a selected TCP path: %v", connections)
+			}
+			selected := connections[0].RemoteMultiaddr().String()
+			if transport == "wss" && !strings.Contains(selected, "/wss") && !strings.Contains(selected, "/tls/ws") {
+				t.Fatalf("not a selected TLS WebSocket path: %s", selected)
+			}
+			t.Logf("UDP blackholed; selected=%s", connections[0].RemoteMultiaddr())
+		})
+	}
+}
 
 func TestLimitRelayAddresses_PreservesFamiliesAndTransportsForFirstPeer(t *testing.T) {
 	first, second := generatePeerIDStr(t), generatePeerIDStr(t)

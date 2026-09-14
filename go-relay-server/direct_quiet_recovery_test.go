@@ -144,8 +144,9 @@ func TestQuietRecoveryPendingWakeRemainsSuppressedAfterAckAndRestart(t *testing.
 }
 
 func TestQuietRecoveryWireAuthorityAndImmutableRetrieval(t *testing.T) {
-	for _, protected := range []bool{false, true} {
-		t.Run(fmt.Sprint(protected), func(t *testing.T) {
+	for _, mode := range []string{"legacy_sidecar", "protected_sidecar", "legacy_action", "protected_action"} {
+		t.Run(mode, func(t *testing.T) {
+			protected := strings.HasPrefix(mode, "protected")
 			f := newDirectReplayProviderFixture(t, true, "ios")
 			backend := newRedisInboxBackend(newTestRedisClient(t, f.redis), f.prefix, 10)
 			inbox := NewInboxStoreWithBackendAndCapacity(backend, f.push, 10)
@@ -159,6 +160,15 @@ func TestQuietRecoveryWireAuthorityAndImmutableRetrieval(t *testing.T) {
 			request := inboxRequest{Action: "store", To: recipient, From: "forged", Message: envelope, QuietRecovery: true, SuppressNotification: true}
 			if protected {
 				request.Action, request.CustodyKind, request.CustodyContract = ackCustodyStoreAction, ackCustodyDirectTextKind, ackCustodyContract
+			}
+			if strings.HasSuffix(mode, "action") {
+				request.Action = "store_quiet_v1"
+				if protected {
+					request.Action = "store_custody_quiet_v1"
+				}
+				// The action itself selects the required policy. A forgotten
+				// optional sidecar cannot quietly change the operation's meaning.
+				request.QuietRecovery, request.SuppressNotification = false, false
 			}
 			stream, err := env.sender.NewStream(context.Background(), env.server.ID(), InboxProtocol)
 			if err != nil {
@@ -183,6 +193,72 @@ func TestQuietRecoveryWireAuthorityAndImmutableRetrieval(t *testing.T) {
 			identity, _ := newDirectMessageDispatchAdmissionIdentity(recipient, "forged", envelope)
 			if quiet, err := backend.DirectQuietRecovery(context.Background(), identity.storageKey()); err != nil || quiet {
 				t.Fatalf("forged sender contaminated policy: %t %v", quiet, err)
+			}
+		})
+	}
+}
+
+func TestQuietRecoveryLegacyReceiverRetainsQuietRowsAndDrainsNormalRows(t *testing.T) {
+	for _, action := range []string{"retrieve", "retrieve_pending", "retrieve_custody_pending_v1"} {
+		t.Run(action, func(t *testing.T) {
+			f := newDirectReplayProviderFixture(t, true, "ios")
+			backend := newRedisInboxBackend(newTestRedisClient(t, f.redis), f.prefix, 10)
+			inbox := NewInboxStoreWithBackendAndCapacity(backend, nil, 10)
+			inbox.SetAckCustodyAdmissionEnabled(true)
+			env := setupInboxStreamEnv(t, inbox, NewGroupInboxStore(10, groupMessageTTL))
+			recipient, sender := env.recipient.ID().String(), env.sender.ID().String()
+			for _, quiet := range []bool{true, false} {
+				entry := inboxMessage{From: sender, Message: ackCustodyTextEnvelope(fmt.Sprint(quiet), sender, "immutable"), Timestamp: time.Now().UnixMilli(), QuietRecovery: quiet}
+				if _, _, err := inbox.StoreAckCustody(recipient, entry, ackCustodyDirectTextKind); err != nil {
+					t.Fatal(err)
+				}
+			}
+			fetch := func(capable bool) inboxResponse {
+				s, err := env.recipient.NewStream(context.Background(), env.server.ID(), InboxProtocol)
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer s.Close()
+				sendInboxReq(t, s, inboxRequest{Action: action, Limit: 1, CustodyContract: ackCustodyContract, QuietRecovery: capable})
+				return recvInboxResp(t, s)
+			}
+			legacy := fetch(false)
+			if legacy.Status != "OK" || len(legacy.Messages) != 1 || legacy.Messages[0].QuietRecovery || legacy.HasMore {
+				t.Fatalf("old receiver got quiet content or a stuck page: %+v", legacy)
+			}
+			if action != "retrieve" {
+				if _, err := inbox.AckAckCustody(recipient, []string{legacy.Messages[0].ID}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			upgraded := fetch(true)
+			if upgraded.Status != "OK" || len(upgraded.Messages) != 1 || !upgraded.Messages[0].QuietRecovery || upgraded.Messages[0].From != sender {
+				t.Fatalf("quiet row was lost before receiver upgrade: %+v", upgraded)
+			}
+		})
+	}
+}
+
+func TestQuietRecoveryMemoryPaginationDoesNotDiscardHiddenRows(t *testing.T) {
+	for name, backend := range map[string]InboxBackend{"memory": newMemoryInboxBackend(), "limited": newMemoryInboxBackendWithLimits(10)} {
+		t.Run(name, func(t *testing.T) {
+			inbox := NewInboxStoreWithBackendAndCapacity(backend, nil, 10)
+			for _, quiet := range []bool{true, false} {
+				if _, err := inbox.Store("recipient", inboxMessage{From: "sender", Message: ackCustodyTextEnvelope(fmt.Sprint(quiet), "sender", "immutable"), QuietRecovery: quiet, Timestamp: time.Now().UnixMilli()}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			page, more := inbox.RetrievePendingWithMeta("recipient", 1, false)
+			if len(page) != 1 || page[0].QuietRecovery || more {
+				t.Fatalf("legacy pending page: %+v more=%v", page, more)
+			}
+			page, more = inbox.RetrieveWithMeta("recipient", 1, false)
+			if len(page) != 1 || page[0].QuietRecovery || more || inbox.Count("recipient") != 1 {
+				t.Fatalf("destructive read discarded quiet custody: %+v more=%v", page, more)
+			}
+			page, more = inbox.RetrievePendingWithMeta("recipient", 1, true)
+			if len(page) != 1 || !page[0].QuietRecovery || more {
+				t.Fatalf("upgraded pending page: %+v more=%v", page, more)
 			}
 		})
 	}

@@ -55,3 +55,11 @@ Return verified identities, selection fingerprint, commands/devices, durations,
 report/evidence paths, first observed failed checkpoints, coverage gaps, and both
 automated and overall statuses. Do not publish, push commits, change remote
 settings, or describe a candidate as release ready without required evidence.
+
+CI release dispatch has the separate `Mknoon signed-release acceptance` context
+and requires an explicit full published-baseline SHA. It verifies candidate,
+selection and workflow-attempt provenance in addition to the existing signed
+evidence contract. Ordinary `Mknoon regression checks`, manual change diagnostics
+and scheduled full results cannot substitute for release acceptance. Keep
+earlier workflow-attempt artifacts and failed first attempts visible; stale
+metadata/results from another attempt cannot satisfy the final check.

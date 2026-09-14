@@ -15,6 +15,21 @@ class CallDiagnosticsOperatorTests(unittest.TestCase):
     def event(self, trace, role='caller', source='flutter', action='finish', media=True):
         return {'schemaVersion': 1, 'eventId': str(uuid.uuid4()), 'traceId': trace, 'source': source, 'role': role, 'runId': str(uuid.uuid4()), 'sequence': 1, 'occurredAtMs': int(time.time()*1000), 'elapsedMs': 1, 'stage': 'terminal' if action == 'finish' else 'signaling', 'action': action, 'outcome': 'completed_after_media' if media else 'ok', 'reason': 'none', 'values': {'mediaFlowVerified': media}}
 
+    def test_local_family_extension_is_not_a_wire_schema_relaxation(self):
+        event = self.event(str(uuid.uuid4()))
+        for key, value in {
+            'selectedLocalCandidateFamily': 'ipv4',
+            'selectedRemoteCandidateFamily': 'ipv6',
+            'localTurnConnectionFamily': 'unknown',
+            'remoteTurnConnectionFamily': 'unknown',
+            'pairRelayInvolvement': 'remote',
+            'selectedPairState': 'failed',
+            'failureDisposition': 'provisional',
+        }.items():
+            extended = dict(event, values={**event['values'], key: value})
+            self.assertFalse(module.valid_event(extended), key)
+        self.assertTrue(module.valid_event(event))
+
     def test_null_events_preserve_valid_terminal_summary(self):
         now = int(time.time()*1000)
         trace = str(uuid.uuid4())

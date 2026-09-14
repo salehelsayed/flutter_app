@@ -8,8 +8,9 @@ import (
 )
 
 type quietRecoveryCallback struct {
-	node     *Node
-	received chan map[string]interface{}
+	node          *Node
+	received      chan map[string]interface{}
+	beforeConfirm func()
 }
 
 func (c *quietRecoveryCallback) OnEvent(raw string) {
@@ -22,6 +23,9 @@ func (c *quietRecoveryCallback) OnEvent(raw string) {
 	}
 	c.received <- event.Data
 	if nonce, ok := event.Data["confirmNonce"].(string); ok {
+		if c.beforeConfirm != nil {
+			c.beforeConfirm()
+		}
 		c.node.ResolveDirectConfirm(nonce, true)
 	}
 }

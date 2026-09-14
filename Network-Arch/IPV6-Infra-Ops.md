@@ -1,350 +1,364 @@
-# IPv6 Infrastructure & Ops Checklist
+# IPv4/IPv6 infrastructure and integrated release validation
 
-## Current Infrastructure
+## Authority and identity
 
-| Component | Value |
-|-----------|-------|
-| **Cloud provider** | AWS EC2 |
-| **Public IPv4** | `13.60.15.36` |
-| **Domain** | `mknoun.xyz` |
-| **SSH** | `ssh ec2-user@mknoun.xyz` |
-| **Reverse proxy** | nginx (TLS termination: WSS:4001 → WS:4000) |
-| **Systemd service** | `/etc/systemd/system/relay-server.service` |
-| **Binary path** | `/usr/local/bin/relay-server` |
-| **Monitoring** | Prometheus `:9090`, node_exporter `:9100`, relay metrics `:2112` |
+This is the current operational companion to [IPV6.md](IPV6.md). The previous
+seven-step IPv6 activation proposal is superseded: relay opt-in, client `/dns/`
+defaults and infrastructure activation already exist. Do not reapply historical
+repair/deployment scripts as desired-state owners.
 
-### Current Ports
+The September 14, 2026 review began with a clean `main` at
+`8e6a569b4b1805249638ceea31c7995ef707b50f`. The explicit change comparison is
+`ad3529a041528c07dd6714a98c0f70fefeb2366b`, verified as an ancestor, also the
+then-local `origin/main`. Four later commits are preserved. That comparison
+is **not** a verified previous published revision. Current application version
+in source is `1.0.1+119`; database schema 119 is a separate identity.
 
-| Port | Protocol | Description |
-|------|----------|-------------|
-| 4000 | TCP/WS | WebSocket (local only — nginx proxies from 4001) |
-| 4001 | TCP/WSS | WebSocket Secure (nginx TLS termination) |
-| 4002 | UDP/QUIC | QUIC-v1 (direct, no proxy) |
-| 4005 | TCP | Raw TCP |
+Only repository edits, local builds, isolated tests and read-only operational
+inspection are authorized. No DNS/firewall changes, service reload/restart,
+credential rotation, publication or deployment were executed. The user also
+authorized creating a new local signed candidate; build number 120 is used for
+that candidate without claiming it is available or unused in a store.
 
----
+Private/raw run evidence is retained in ignored
+`.codex-test-logs/dual-stack-priority4/`. `initial-identity.json` records the clean
+checkout, comparison, original artifact hashes and timestamps;
+`prior-artifact-preservation.json` checks retained copies before build outputs
+are replaced. Artifact presence or a version number is not distribution proof.
 
-## Step 1: Assign IPv6 Address to EC2 Instance
+## Active configuration owners and current observations
 
-### 1a. Enable IPv6 on VPC
+These are read-only observations collected September 14 (Berlin), September 13
+22:54 UTC onward. They are dated observations, not continuous monitoring or
+proof that the deployed source equals this checkout.
 
-If the VPC doesn't already have an IPv6 CIDR block:
+| Boundary | Observation and owner | What it establishes |
+| --- | --- | --- |
+| DNS | `mknoun.xyz` A `13.60.15.36`, TTL 3600; AAAA `2a05:d016:c4d:7100:ec85:94ed:b90d:e20`, TTL 600 | Configured DNS only |
+| Relay process | `/etc/systemd/system/relay-server.service`; `/usr/local/bin/relay-server`; active since September 12 15:15:15 UTC | Running v1.10.7, binary SHA-256 `3b943a329c0ed9cb4ed3401bfddc5b42bf94707fab054bd9ec40d402016c9873`; not the exact candidate source |
+| Relay environment | Base `/etc/mknoon/relay-server.env`; IPv6 drop-in `/etc/systemd/system/relay-server.service.d/60-ipv6.conf` loads `/etc/mknoon/relay-ipv6.env` | Runtime `RELAY_SERVER_IP6` equals AAAA and DNS IPv6 opt-in is true; backend Redis |
+| Relay sockets | IPv4 plus exact configured IPv6: TCP/WS 4000, raw TCP 4005, UDP/QUIC 4002 | Bound listeners, independent of cloud ingress |
+| nginx | `/etc/nginx/sites-enabled/mknoun.xyz`; certificate under `/etc/letsencrypt/live/mknoun.xyz/`; configuration test passed | IPv4/IPv6 WSS 4001 proxies to `http://127.0.0.1:4000`; HTTPS 443 also listens; that does not make 443 a TURN endpoint |
+| coturn | `/usr/lib/systemd/system/coturn.service`, `/etc/turnserver.conf`; TLS files under `/etc/coturn/tls/` | IPv4 and IPv6 UDP/TCP 3478, TLS 5349; allocation range 49152–50175 |
+| TURN address mapping | IPv4 `external-ip=13.60.15.36/172.31.34.24`; IPv6 has its own `relay-ip` | IPv4 mapping does not replace IPv6 allocation configuration |
+| TURN credentials | Runtime advertises `turn:mknoun.xyz:3478?transport=udp`, `turn:mknoun.xyz:3478?transport=tcp`, `turns:mknoun.xyz:5349?transport=tcp` | Issuer configuration; allocation/media tested independently |
+| APNs provider | Default environment `production`, topic `com.mknoon.app.voip`; routing remains per registered token environment | A service default does not establish a development token or signed app environment |
+| Cloud ingress | Read-only AWS instance/security-group inspection in `eu-north-1` matches both public addresses | Both families admit TCP 4001/4005, UDP 4002, UDP/TCP 3478, TCP 5349 and UDP 49152–50175; ICMPv6 is allowed |
+| Cloud routing and NACL | Associated subnet ACL and effective VPC route table were read through existing authorized AWS access | IPv4/IPv6 ingress and egress NACL permits, active default routes to the Internet Gateway, and security-group egress for both families |
 
+Read-only source/configuration hashes and allowlisted directives are in
+`remote-config.json`; actual sockets are in `remote-listeners-keyed.log`.
+The earlier `ec2-user`/default-key SSH attempt failed; the repository's existing
+key and `ubuntu` account succeeded with strict existing host-key verification.
+No secret values were copied into these receipts. The historical
+`docker-ws/fix_coturn_dual_stack_tls.py`, `fix_coturn_hairpin_peer.sh` and
+`deploy_relay_v1100.sh` explain earlier changes but are not canonical deployment
+owners. The general credential contract remains in
+[turn-operations.md](../go-relay-server/docs/turn-operations.md).
+
+The exact private relay IPv4 is the coturn hairpin exception. Keep the existing
+loopback, private, link-local/metadata and multicast exclusions; do not expand
+that exception to an entire private range. WS 4000 binds wildcards in the relay
+but also retains legacy public IPv4 security-group admission on TCP 4000; it is
+not loopback-only. No matching public IPv6 rule exists for raw WS 4000. Do not
+automatically mirror legacy/admin allowances to IPv6 or remove working IPv4
+without checking its consumers. Host UFW is inactive and the inspected nftables
+ruleset is empty. The private `aws-*.private.json` receipts and redacted cloud
+summary preserve the independent cloud configuration evidence. Configuration
+admits the configured allocation range; the media probes sample allocations,
+not every port in that range.
+
+## Evidence matrix
+
+The public probes use fresh disposable libp2p identities with no registered push
+tokens. They authenticate the expected peer
+`12D3KooWGMYMmN1RGUYjWaSV6P3XtnBjwnosnJGNMnttfVCRnd6g`, pin one endpoint/family,
+request reservation and read only their own empty inbox/call mailbox. TURN
+credentials are fetched over that authenticated stream. Public empty reads do
+not prove a text exchange or a call. Local fixtures perform the mutating
+custody/retrieval and call-control assertions without using user accounts.
+
+| Scenario or endpoint | Evidence | Remaining boundary |
+| --- | --- | --- |
+| Public IPv4 TCP 4005, WSS 4001, QUIC 4002 | Current peer authentication, reservation, empty inbox/call retrieval and credential responses pass; `public-relay.jsonl` | Signed-client content/media |
+| Public IPv6 TCP 4005, WSS 4001, QUIC 4002 | Same current checks pass with actual IPv6 connections and normal WSS certificate validation | Native IPv6-only access-network and signed-client content/media |
+| IPv4-only relay compatibility | Current tagged Go fixture passed with preserved `/dns/` client defaults | Whole-device IPv4-only network journey |
+| Healthy dual-stack and mixed-family peers | Production-handler socket fixture passes IPv4/IPv4, IPv6/IPv6 and both mixed directions on TCP/WS/QUIC | Signed peers and native WebRTC media on the requested networks |
+| Broken IPv6 with working IPv4 | Current native socket fault run passed failed handshakes and established chat/inbox path retirement | Network-wide outage and exact signed candidate |
+| Blocked UDP | Current socket-scoped UDP blackhole tests preserve TCP/WSS messages; native TCP media separately passed | No claim of a device-wide UDP firewall or 443-only network |
+| Established-session transition | Current Go fixtures observe successful IPv6 before fault and IPv4 on a later operation, preserving quiet custody | Established IPv6 **media** loss is not proved by messaging or by an always-IPv4 selected pair |
+| Native IPv6-only access network | No authorized isolated network established for this run | Unverified, distinct from IPv6 loopback/public sockets on a dual-stack Mac |
+| DNS64/NAT64 | No authorized isolated DNS64/NAT64 network established | Unverified; do not substitute AAAA, `/dns/`, or direct IPv6 success |
+| TURN control/allocation matrix | `turn-matrix.json` records UDP/TCP/TLS, independently requested connection/allocation families, permissions, exact returned bytes and Refresh(0) cleanup | Initial IPv4 UDP failures remain. Longer fresh diagnostics returned 10/11 payloads before timeout for IPv4 allocation and 100/100 for IPv6 allocation, with cleanup. The narrow server capture saw ten ChannelData frames each way in the failed case; upstream loss versus NAT remapping remains unresolved. IPv6 UDP and all TCP/TLS initial cases returned 100 exact payloads each; host success is not native TLS/RTP/audio proof |
+| Current Android native UDP and TCP | Each transport passed all eight policy/direction cases and their restarts on Pixel/emulator: 32 endpoint receipts, DTLS and advancing bidirectional RTP, 16 fresh credential requests | Disposable debug fixture with isolated USB signaling broker; TURN media was not USB-forwarded. No production signaling, audible quality, signed-device or network-wide route-isolation claim |
+| Current Android native TLS | Ordinary direct cases passed; first protected `all-relayOnly-0` case failed ICE gathering/exchange with no selected pair despite fresh validated credentials | Host TLS success does not certify this native dependency. Both Flutter drivers exited zero, but the existing harness correctly returned FAIL from endpoint receipts |
+| Full application call on isolated IPv4 fixtures | Existing production-call adapter/SIMS passed 27 assertions on the Pixel/emulator pair: fresh accounts/contacts, local production relay and coturn, semantic Start/native Answer, both call surfaces, per-endpoint RTP, known-Opus oracle, controls and cleanup | Separate source/debug artifact. The host oracle proves exact synthetic audio bytes; phone RTP and UI do not establish human-audible quality, signed distribution behavior or background APNs |
+| Port-443-only calling | No advertised TURN 443 path; existing WSS control is 4001 | Documented limitation. Both control and media must be provisioned and independently tested before claiming support |
+| Background call after six-minute idle | September 12–13 sandbox failures/passes remain dated evidence | A new signed-candidate trial must prove suspension, provider acceptance, PushKit, CallKit, adoption and media |
+| Native encrypted database | Three existing integration tests pass on each of Android and iOS; iOS verifies the Android-exported encrypted snapshot's checksum, cipher parameters, schema and retained rows in disposable apps | Synthetic fixtures do not establish upgrade from the unknown previous published binary or signed-candidate compatibility |
+
+The host's current IPv4 and IPv6 route/interface discovery shows Wi-Fi `en0`.
+TURN probe sockets explicitly bind `en0`, verify the connected family and request
+allocation family separately. No cellular, VPN, USB forwarding or alternate
+address can satisfy those TURN probe cases. Socket-scoped local fault tests
+remain explicitly local; they are not network-wide isolation evidence.
+
+Available devices were discovered using Flutter, ADB and simctl: a USB Pixel 6
+(API 37), three USB iPhones, and iOS simulators including a booted iPhone 17 Pro.
+The existing Codex API 35 Android emulator was started without wiping data or
+saving a snapshot, used for the two-peer checks, then stopped. Exact target IDs
+are pinned in the private command/report receipts. Non-iOS-specific two-peer tests use the
+USB Android plus an available Android emulator, with both IDs pinned and setup
+through the existing automated harness. A model/OS-specific leg absent from the
+live inventory is **N/A (target unavailable by project policy)**. Missing network
+scenarios or required artifact evidence remain **unverified**, not N/A or PASS.
+
+## APNs is a separate boundary
+
+Retain the committed investigation in [TESTING.md](../docs/testing/TESTING.md):
+provider-accepted sandbox calls sometimes missed while the device was suspended;
+complete private archives attributed failed development courier connections to
+IPv6 and later reconnections. The September 14 archive recheck confirms that
+the September 12 return-to-Wi-Fi connection **C552 used IPv6 TCP 443**, while the
+unrelated C551 used IPv4 TCP 5223. C552 negotiated the APNs ALPN at 13:05:14 UTC;
+its cancellation followed the development keep-alive failure at 13:16:58 UTC.
+Do not generalize the earlier C542/5223 observation to every trial. The complete
+all-courier exports and a redacted attribution receipt are retained with this
+review's private evidence. Some IPv4 trials passed. The hotspot also
+changed the local path and did not isolate IP version. The app's repaired
+retired-predecessor journal handoff is independently testable and cannot repair
+a push that the OS has not delivered. No permanent IPv6/APNs fix is established.
+
+Reuse the existing six-minute idle procedure, preserving separate trial IDs:
+
+1. Record exact signed artifact hash, build configuration, OS/target, actual
+   `aps-environment`, bundled `MknoonVoipEnvironment`, bundle ID and VoIP topic.
+   Debug/Profile use development; Release uses production in current project
+   settings. Verify the **signed** app with
+   `scripts/verify_ios_voip_signing.sh <Runner.app>`; project settings alone are
+   insufficient. Keep development and production trials separate.
+2. Establish the last successful VoIP receipt, then confirm suspension and wait
+   at least six minutes without calling, foregrounding, polling app-owned code
+   or otherwise waking it. Observe suspension through the existing native/UI
+   harness. Record screen-lock state separately.
+3. Send one synthetic incoming call on isolated accounts. Correlate exact
+   provider acceptance/response identifiers and UTC timestamps with device
+   PushKit callback, CallKit report completion/presentation, native/Dart adoption
+   and media. Provider acceptance is not device receipt; aggregate counters do
+   not identify a trial. Preserve the missed first attempt and caller deadline.
+   Any immediate retry is a different trial.
+4. Exercise cancellation/expiry and late arrival without reviving stale calls.
+   Seed the existing unadopted retired predecessor sequence, acknowledge its
+   exact durable terminal receipt and verify that successor audio/timeouts
+   remain owned. Fake-platform XCTest is separate from live OS presentation.
+5. Attribute the **exact** development/production `apsd` courier connection for
+   the trial from the complete private archive, including connection ID,
+   process/environment, timestamps, interface, family, port and reconnects.
+   DNS answers, a cached numeric address or an unrelated system connection are
+   insufficient. Keep raw native evidence private; share only redacted findings.
+
+Apple's current [Push Notifications Console documentation](https://developer.apple.com/documentation/usernotifications/testing-notifications-using-the-push-notification-console)
+provides development delivery logs for up to seven days, queried with the
+response's `apns-unique-id` and selected bundle ID. Use authorized account access
+and retain the downloaded log; production aggregate metrics are not per-trial
+courier attribution. Use Apple's current
+[APNs profiles and logs](https://developer.apple.com/feedback-assistant/profiles-and-logs/)
+and associated sysdiagnose instructions for further collection. No private API,
+app wake loop, global IPv6 disable or router/user DNS change is an app repair.
+The current HTTP provider retains status/retry classification but discards the
+`apns-unique-id` response header. Existing call trace IDs and provider-acceptance
+receipts cannot reconstruct that Apple identifier. Before a future authorized
+trial, arrange a private, narrowly scoped provider response-header capture and
+retain its association with the trial; do not fabricate a Console lookup from a
+call trace or expose device tokens/JWTs. No Console delivery log was retrieved
+for this review, and this diagnostic gap is not a push-delivery fix.
+
+For escalation, retain the signed identities, exact UTC first-attempt timeline,
+provider response/delivery log if available, full native sysdiagnose, courier
+connection attribution and the unchanged/mutated network variables. Network/OS
+owners can inspect idle-state expiry, routing, ICMPv6/PMTU and packet loss on an
+explicitly authorized isolated network. Apple's
+[APNs network requirements](https://support.apple.com/en-gb/102266) describe device
+5223 and 443 fallback without TLS interception. Prepare an Apple Feedback or
+network-owner escalation package; submitting it requires separate authorization.
+Unresolved APNs attribution does not prevent unrelated repository checks.
+
+## Candidate and compatibility gates
+
+The authoritative native build entry points are
+`scripts/ensure_go_android_bindings.sh`, `scripts/ensure_go_ios_bindings.sh`,
+`scripts/gomobile_binding_inputs.sh`, `go-mknoon/Makefile`, Android `buildGoAar`
+and the iOS Podfile build phase. Their hashes include production Go inputs,
+local replacements, toolchain and platform tooling. Both original stored input
+fingerprints were stale and were rebuilt with pinned Go 1.25.0; the rebuilt
+fingerprints match. Export-name verification alone would not prove freshness.
+The NSE framework deliberately uses the separate `nse_lite` build.
+
+Use Flutter 3.47.2 from the resolved package configuration, not the older default
+PATH. iOS signing uses `scripts/build_ios_appstore_ipa.sh`,
+`ios/ExportOptions-AppStore.plist` and
+`tool/build/voice_call_release_defines.json`; retain its unique archive, dSYMs,
+IPA and provenance. Android release signing is owned by
+`android/app/build.gradle.kts`; no debug signing substitute is permitted for
+release acceptance. Preserve previous outputs before either build.
+
+The new **local, unpublished** artifacts are version `1.0.1`, build `120`:
+
+| Artifact | Retained location | SHA-256 |
+| --- | --- | --- |
+| Signed App Store IPA | `build/releases/1.0.1+120/ios-20260913T230927Z-0aaaeaef191c4e44b4338a093c4f8479/mknoon.ipa` | `9c00c7c47fa0fd8e76f25c656bdbabf8d2fa645a6607ccba4b6e43f7361eb552` |
+| Signed Android AAB | `build/releases/1.0.1+120/android-priority4/app-release.aab` | `59880ecc38ae8727bc9a1e3d1bf84ac7602f9bacc0f619f87659b5cd15e79927` |
+| Linux amd64 relay executable | `.codex-test-logs/dual-stack-priority4/relay-server-linux-amd64` | `ab9e9bb167b58db93a8b7ee3fab26e78f25765b7041e33109ad7d6c77ccdd982` |
+
+The extracted IPA passes the existing signature/environment verifier. Its signed
+`aps-environment`, embedded profile and bundled environment all say `production`;
+application identifiers agree, the profile matches the signing team, and
+debugger attachment is disabled. Its bundle is `com.mknoon.app`, hence the
+runtime VoIP topic is `com.mknoon.app.voip`. This App Store profile has no device
+list and is not proof of a locally installed candidate. The retained iOS
+provenance reports unchanged build inputs and preserves its archive and dSYMs.
+
+The actual signed AAB manifest also reports `com.mknoon.app`, `1.0.1`, code `120`.
+Java's verifying `JarFile` read all 389 signed entries with zero unsigned payload
+entries; signer certificate SHA-256 is
+`5eaa7a55b8daa81ea3399c8931f38c0b5ad2c314cec0f82955cdfa435630142d`.
+`jarsigner -verify` succeeds, with retained self-signed-chain, timestamp and ZIP
+metadata/order warnings; this is not Play upload acceptance or proof of the
+published signing identity. Per-artifact provenance and `candidate-artifacts.json`
+retain the build commands, source/configuration identity and checks. The Linux
+relay was cross-compiled locally, not executed on or installed to production.
+
+The previous published revision/artifact is still unresolved. A fresh candidate
+cannot supply that baseline. A read-only GitHub release query returned no
+distribution records. Current read-only device inventories find developer-built
+`1.0.1(119)` on two available iPhones; the third device query timed out. These
+observations identify neither the signed `1.0.1(120)` IPA nor a published baseline.
+Upgrade a populated isolated installation of the
+**actual previous published build** in place, retaining keys, accounts, contacts,
+groups and history; do not clear data. Host SQLite migration/schema 119 tests
+prove a separate boundary. Run old/new peers in both directions and exercise
+ordinary traffic, quiet sender rejection by old relays, old-recipient retention
+until upgrade, and new-relay/new-recipient quiet display suppression. A relay
+update alone cannot certify native Go projections, Dart policy or old binaries.
+
+Selection and required assertions live in `tool/testing/selection.json`.
+`validate`, explicit-base `plan --mode change --local` and `run` retain all
+selected omissions/failures. The integration boundary runs the existing
+`host-all --batch-flutter --dart-only` sweep once, with Go module checks owned by
+the wrapper; native XCTest is executed separately. No syntax-only native test is
+reported as executed. Release selection still needs the actual published base,
+exact signed artifacts and all required candidate evidence. Passing repository
+checks or producing signed bytes is not release acceptance.
+
+The integration Dart sweep completed with 16,803 passes, 13 skips and one
+failure: `group_private_media_safe_disabled_boundary_test.dart` timed out before
+the expected ordinary download began. Its separate three-test diagnostic passed
+without a code change; the full sweep remains failed. The current simulator
+XCTest run executed 79 tests with zero failures, including retired predecessor
+audio ownership, pending native call storage and the targeted NSE authority
+boundary. This is executed native test evidence, separate from signed-device
+PushKit/CallKit presentation. Logs retain the first build/test failures and all
+diagnostic results; they are not overwritten by successful retries.
+
+The explicit-base change wrapper completed with 43 PASS and five BLOCKED
+selections. Four remain incomplete because tests skipped: conversation (10),
+push (1), storage (1) and Go core (2). Their executed cases had no failures;
+Go core recorded 1,843 passes and relay recorded 1,286 passes. The initial
+device-audio prerequisite block was subsequently exercised through the existing
+local production-call adapter, and the wrapper's SIMS verifier accepted its
+27-assertion report (`device-audio-supplement.json`). The original wrapper result
+remains retained. Quiet recovery recorded 460 passes; migration 17; the tagged
+old/new recovery/IPv4-relay command passed. A focused current native socket run
+executed 14 fallback/address/recovery cases without skips and retained its raw
+output in `native-ipv6-faults.log`. Full per-check commands/results are in
+`change-checks/plan.json` and `results.json`; the release preview explicitly
+blocked on the missing published baseline rather than substituting the review
+base. No full suite was repeated after these focused diagnostics.
+
+## Demonstrated integration gap: quiet protocol admission
+
+A fresh authenticated, deliberately incomplete request (no recipient or payload,
+therefore no stored row or push) returned `Unknown action: store_quiet_v1` and
+`Unknown action: store_custody_quiet_v1` from the current deployed relay.
+`public-quiet-admission.jsonl` preserves that response. The deployed v1.10.7 has
+earlier quiet support, but its version label does not certify the new action-level
+contract now present in this checkout. New clients must retain these failed
+recovery obligations until a compatible relay is available; they must not retry
+the same automatic quiet send through an old action that drops the sidecar.
+
+A relay update containing the current `inbox.go`, `limits.go`, quiet policy and
+backend changes is therefore required for complete new-client quiet delivery.
+The repository patch and local candidate relay binary are reviewable inputs;
+no update was deployed. Validate ordinary traffic and both quiet actions on an
+isolated endpoint before staged rollout. Preserve the actual current binary and
+configuration for rollback. An older relay rollback restores ordinary service
+but cannot complete new quiet obligations; clients must retain them for later
+safe delivery. Do not erase them or loosen old/new protocol admission to make a
+rollback appear complete.
+
+## Staged operational changes and rollback — not executed
+
+No duplicate IPv6 activation is proposed: current public TCP/WSS/QUIC paths are
+working. The quiet protocol update above is a demonstrated integration gap.
+Current native TURN/TLS media still fails. A fresh September 14 chain check
+against the pinned native roots also fails at ISRG Root X2. Adding that public
+root to a temporary verifier input passes; neither the server chain nor the
+native library was changed. The pinned
+[Java certificate callback](https://github.com/webrtc-sdk/webrtc/blob/m144_release/sdk/android/api/org/webrtc/SSLCertificateVerifier.java)
+accepts one DER certificate, and the current Flutter plugin does not install a verifier.
+An unconditional callback or a TLS policy bypass is not a repair.
+
+Prepare a compatible public certificate chain, or a reviewed native dependency
+with the necessary public roots. Before staging a certificate, run the following
+offline preflight with OpenSSL 3 and the retained, hashed root bundle from the
+exact native library. `leaf.pem` and `chain.pem` must be the proposed public
+certificate files; do not add the candidate chain to the trusted root input.
+
+```sh
+: "${TURN_TLS_CANDIDATE_DIR:?Set the prepared certificate directory}"
+openssl verify -no-CApath -no-CAstore -purpose sslserver \
+  -CAfile .codex-test-logs/call-fallback-priority2/remaining/pinned-native-certificates.pem \
+  -untrusted "$TURN_TLS_CANDIDATE_DIR/chain.pem" \
+  -verify_hostname mknoun.xyz "$TURN_TLS_CANDIDATE_DIR/leaf.pem"
+openssl x509 -in "$TURN_TLS_CANDIDATE_DIR/leaf.pem" -checkend 2592000 -noout
 ```
-AWS Console → VPC → Your VPC → Actions → Edit CIDRs → Add IPv6 CIDR
-  → Select "Amazon-provided IPv6 CIDR block"
-```
 
-### 1b. Enable IPv6 on Subnet
-
-```
-AWS Console → VPC → Subnets → Your Subnet → Actions → Edit IPv6 CIDRs
-  → Assign an IPv6 CIDR from the VPC's block
-```
-
-### 1c. Update Route Table
-
-Add a route for IPv6 traffic to the Internet Gateway:
-
-```
-AWS Console → VPC → Route Tables → Your Route Table → Edit Routes
-  → Add: Destination `::/0`, Target: igw-xxxxx (same Internet Gateway as IPv4)
-```
-
-### 1d. Assign IPv6 to EC2 Instance
-
-```
-AWS Console → EC2 → Instances → Your Instance → Actions → Networking
-  → Manage IP Addresses → Assign new IPv6 address (auto-assign)
-```
-
-Or via CLI:
-
-```bash
-# Find the ENI (network interface) ID
-aws ec2 describe-instances --instance-ids i-XXXXX \
-  --query 'Reservations[0].Instances[0].NetworkInterfaces[0].NetworkInterfaceId' \
-  --output text
-
-# Assign IPv6
-aws ec2 assign-ipv6-addresses --network-interface-id eni-XXXXX --ipv6-address-count 1
-```
-
-### 1e. Verify on the Instance
-
-```bash
-ssh ec2-user@mknoun.xyz
-
-# Should show an IPv6 address (2a05:... or 2600:... depending on region)
-ip -6 addr show eth0
-
-# Test IPv6 connectivity
-ping6 -c 3 google.com
-```
-
-**Record the IPv6 address** — you'll need it for DNS and security group steps.
-
----
-
-## Step 2: Security Group — Allow IPv6 Traffic
-
-The existing security group allows IPv4 traffic on ports 4001, 4002, 4005. Add equivalent IPv6 rules:
-
-```
-AWS Console → EC2 → Security Groups → Your SG → Inbound Rules → Edit
-
-Add these rules:
-  Type: Custom TCP    Port: 4001   Source: ::/0   (WSS)
-  Type: Custom TCP    Port: 4005   Source: ::/0   (TCP)
-  Type: Custom UDP    Port: 4002   Source: ::/0   (QUIC)
-```
-
-Or via CLI:
-
-```bash
-SG_ID=sg-XXXXX
-
-aws ec2 authorize-security-group-ingress --group-id $SG_ID \
-  --ip-permissions \
-    IpProtocol=tcp,FromPort=4001,ToPort=4001,Ipv6Ranges='[{CidrIpv6=::/0}]' \
-    IpProtocol=tcp,FromPort=4005,ToPort=4005,Ipv6Ranges='[{CidrIpv6=::/0}]' \
-    IpProtocol=udp,FromPort=4002,ToPort=4002,Ipv6Ranges='[{CidrIpv6=::/0}]'
-```
-
----
-
-## Step 3: DNS — Add AAAA Record
-
-Add an IPv6 DNS record for `mknoun.xyz`:
-
-```
-DNS Provider (Route53 / Cloudflare / etc.)
-  → Add record:
-    Type: AAAA
-    Name: mknoun.xyz
-    Value: <IPv6 address from Step 1e>
-    TTL: 300 (5 min, lower while testing)
-```
-
-### Verify DNS Resolution
-
-```bash
-# Should return the IPv6 address
-dig AAAA mknoun.xyz
-
-# Should return both A and AAAA
-dig mknoun.xyz ANY
-
-# Test from another machine
-host mknoun.xyz
-```
-
-**Important**: Once the AAAA record is live and client code uses `/dns/` (from the IPv6 code plan), clients will start attempting IPv6 connections to the relay. The relay server must be listening on IPv6 (Step 5) before this goes live.
-
-### Rollout Order
-
-To avoid a window where clients try IPv6 but the server isn't ready:
-
-1. Deploy relay server code with IPv6 listen addresses (Step 5) **first**
-2. Add AAAA record **second**
-
-Or: keep using `/dns4/` in client code until the server is fully ready, then flip both the AAAA record and the client `dns4` → `dns` change together.
-
----
-
-## Step 4: nginx — Listen on IPv6
-
-nginx currently handles TLS termination for WSS. Update it to also listen on IPv6.
-
-```bash
-ssh ec2-user@mknoun.xyz
-sudo vi /etc/nginx/conf.d/relay.conf  # or wherever the config lives
-```
-
-Current (IPv4 only):
-```nginx
-server {
-    listen 4001 ssl;
-    # ...
-}
-```
-
-Updated (dual-stack):
-```nginx
-server {
-    listen 4001 ssl;
-    listen [::]:4001 ssl;   # ← ADD THIS
-    # ... rest unchanged ...
-}
-```
-
-```bash
-# Test config
-sudo nginx -t
-
-# Reload
-sudo systemctl reload nginx
-```
-
-### Verify
-
-```bash
-# Should show both IPv4 and IPv6 listeners
-sudo ss -tlnp | grep 4001
-# Expected:
-#   tcp  LISTEN  0  128  0.0.0.0:4001  ...  nginx
-#   tcp  LISTEN  0  128     [::]:4001  ...  nginx
-```
-
----
-
-## Step 5: Relay Server Code — Add IPv6 Listen Addresses
-
-**This is the only code change in `go-relay-server/`.** It's minimal and optional — the server works fine without it, but adding IPv6 listen addresses allows IPv6-capable clients to connect directly to the relay over IPv6.
-
-### 5a. Update listen addresses in `main.go`
-
-```go
-// main.go — listen on both IPv4 and IPv6
-libp2p.ListenAddrStrings(
-    // IPv4
-    fmt.Sprintf("/ip4/0.0.0.0/tcp/%d/ws", wsPort),
-    fmt.Sprintf("/ip4/0.0.0.0/tcp/%d", tcpPort),
-    fmt.Sprintf("/ip4/0.0.0.0/udp/%d/quic-v1", quicPort),
-    // IPv6
-    fmt.Sprintf("/ip6/::/tcp/%d/ws", wsPort),
-    fmt.Sprintf("/ip6/::/tcp/%d", tcpPort),
-    fmt.Sprintf("/ip6/::/udp/%d/quic-v1", quicPort),
-),
-```
-
-### 5b. Update announce addresses in `main.go`
-
-Add IPv6 announce addresses so peers know they can reach the relay via IPv6:
-
-```go
-// Add a serverIP6 constant (or read from env)
-const serverIP6 = "2a05:xxxx:xxxx::xxxx"  // ← your IPv6 from Step 1e
-
-announceAddrs := []ma.Multiaddr{
-    // IPv4 (existing)
-    ma.StringCast(fmt.Sprintf("/dns4/%s/tcp/%d/wss", serverDNS, wssPort)),
-    ma.StringCast(fmt.Sprintf("/ip4/%s/tcp/%d", serverIP4, tcpPort)),
-    ma.StringCast(fmt.Sprintf("/dns4/%s/udp/%d/quic-v1", serverDNS, quicPort)),
-    // IPv6 (new)
-    ma.StringCast(fmt.Sprintf("/dns6/%s/tcp/%d/wss", serverDNS, wssPort)),
-    ma.StringCast(fmt.Sprintf("/ip6/%s/tcp/%d", serverIP6, tcpPort)),
-    ma.StringCast(fmt.Sprintf("/dns6/%s/udp/%d/quic-v1", serverDNS, quicPort)),
-}
-```
-
-**Alternative (simpler)**: Use `/dns/` instead of separate `/dns4/` + `/dns6/`:
-
-```go
-announceAddrs := []ma.Multiaddr{
-    ma.StringCast(fmt.Sprintf("/dns/%s/tcp/%d/wss", serverDNS, wssPort)),
-    ma.StringCast(fmt.Sprintf("/ip4/%s/tcp/%d", serverIP4, tcpPort)),
-    ma.StringCast(fmt.Sprintf("/ip6/%s/tcp/%d", serverIP6, tcpPort)),
-    ma.StringCast(fmt.Sprintf("/dns/%s/udp/%d/quic-v1", serverDNS, quicPort)),
-}
-```
-
-### 5c. Build and deploy
-
-```bash
-ssh ec2-user@mknoun.xyz
-cd ~/go-relay-server   # or wherever the source lives
-make build
-sudo cp relay-server /usr/local/bin/relay-server
-sudo systemctl restart relay-server
-```
-
----
-
-## Step 6: Verify End-to-End
-
-### 6a. Verify relay server listens on IPv6
-
-```bash
-ssh ec2-user@mknoun.xyz
-
-# Check TCP listeners
-sudo ss -tlnp | grep -E '4000|4001|4005'
-# Should show [::] entries alongside 0.0.0.0
-
-# Check UDP listeners (QUIC)
-sudo ss -ulnp | grep 4002
-# Should show [::] entry
-
-# Check relay-server logs
-sudo journalctl -u relay-server -f
-# Should log IPv6 listen addresses
-```
-
-### 6b. Test IPv6 connectivity from outside
-
-```bash
-# From a machine with IPv6 (or use an IPv6 proxy/VPS)
-
-# TCP test
-nc -6 -zv mknoun.xyz 4005
-
-# QUIC test (if you have a QUIC client)
-# Or just verify DNS resolves both:
-dig AAAA mknoun.xyz
-dig A mknoun.xyz
-```
-
-### 6c. Test with a mobile client
-
-1. Connect phone to an IPv6-capable network (e.g., T-Mobile)
-2. Start the app
-3. Check logs for listen addresses — should include `/ip6/` entries
-4. Verify relay connection succeeds
-5. Check connection transport — may show IPv6 if both client and relay support it
-
----
-
-## Step 7: Monitoring
-
-### 7a. Prometheus — no changes needed
-
-The relay server exposes metrics on `:2112/metrics`. These are protocol-agnostic — connection counts, relay reservation counts, etc. They already capture IPv6 connections.
-
-### 7b. Optional: Track IPv6 vs IPv4 connections
-
-If you want to distinguish IPv6 vs IPv4 connections in metrics, add a Prometheus label in the connection event handler. This is optional and low-priority.
-
----
-
-## Rollout Checklist
-
-Execute in this order to avoid any window where clients try IPv6 but the server isn't ready:
-
-| # | Task | Where | Reversible? |
-|---|------|-------|-------------|
-| 1 | Enable IPv6 on VPC/Subnet | AWS Console | Yes |
-| 2 | Assign IPv6 to EC2 instance | AWS Console | Yes |
-| 3 | Add IPv6 security group rules | AWS Console | Yes (remove rules) |
-| 4 | Verify IPv6 connectivity on instance (`ping6 google.com`) | SSH | N/A |
-| 5 | Update nginx to listen on `[::]:4001` | SSH + nginx config | Yes (remove line) |
-| 6 | Update relay server code: add IPv6 listen + announce | Code + deploy | Yes (revert + redeploy) |
-| 7 | Verify relay listens on IPv6 (`ss -tlnp`) | SSH | N/A |
-| 8 | Add AAAA DNS record for `mknoun.xyz` | DNS provider | Yes (delete record) |
-| 9 | Verify DNS resolves both A + AAAA | `dig` | N/A |
-| 10 | Deploy client code: `dns4` → `dns` in relay constants | Client release | Yes (revert) |
-| 11 | Verify mobile client connects via IPv6 | Device testing | N/A |
-
-**Rollback**: If anything goes wrong, remove the AAAA record (Step 8) and clients immediately fall back to IPv4. All other steps can be reverted independently.
-
----
-
-## Cost / Risk Summary
-
-| Item | Impact |
-|------|--------|
-| **AWS cost** | IPv6 on EC2 is free (no additional charge for IPv6 addresses) |
-| **Downtime** | Zero — all changes are additive (IPv4 continues to work throughout) |
-| **Rollback time** | ~1 minute (delete AAAA record → clients use IPv4) |
-| **nginx restart** | `reload` (graceful, no dropped connections) |
-| **relay-server restart** | ~2 seconds (systemd restart, clients auto-reconnect) |
+The retained native root bundle SHA-256 is
+`f698d5011d2f24fb4cb9fdbdf0d619325ba3751a5d97b8114d423158afadc28d`;
+`turn-tls-current-preflight.json` retains the failed current-chain check and
+isolated-root control. Re-establish the bundle's native-library provenance if
+the dependency changes. Passing this preflight is followed by an isolated
+coturn endpoint and the existing native TLS allocation/protected bidirectional
+media matrix, including IPv4 preservation, before promoting certificate paths
+under the active coturn unit. Save the current certificate/key paths and bytes;
+rollback restores them and accounts for allocations lost on a coturn restart.
+No certificate issuance, key replacement, service reload/restart or dependency
+upgrade was performed. Retain working TURN UDP/TCP alternatives throughout.
+
+For a future authorized relay/configuration change:
+
+1. Capture the active binary/configuration hashes, unit/drop-in precedence,
+   IPv4 and IPv6 sockets, certificate chain, DNS TTLs, cloud/host ACLs and current
+   sessions. Keep rollback bytes and existing account/custody data.
+2. Validate the candidate offline with existing fixtures, then on an isolated
+   endpoint with the expected peer identity and configured transports. Check
+   exact bound IPv6 admission, TLS proxy, coturn family-specific relay addresses,
+   the configured allocation range and scoped firewall rules. Keep WS upstream
+   and admin/metrics exposure separate from public client ports.
+3. Preserve IPv4 throughout. Stage listeners/proxy/TURN before any new AAAA or
+   DNS IPv6 advertisement, validate externally per family, and promote only the
+   demonstrated protocols. Do not route TURN through an HTTP-only proxy.
+4. Account for relay restart disconnecting signaling sessions and reservations;
+   a coturn restart separately destroys its allocations. Drain or schedule those
+   disruptions and observe actual reconnect/content/media outcomes. Quiet store
+   actions require compatible relay admission; rollback must fail safely rather
+   than discard the quiet sidecar on an old relay.
+5. If reverting DNS, withdraw the faulty advertisement and restore the known
+   working configuration while keeping service available for cached AAAA,
+   peerstore addresses and established sessions through the measured drain
+   window. DNS removal is **not immediate fallback**: authoritative/recursive/OS
+   caches and existing sessions outlive the edit. Do not remove IPv6 listeners
+   or firewall allowance solely because an AAAA record was deleted.
+6. Observe IPv4 preservation, custody/data retention, fresh connection selection,
+   credential issuance/allocation/media and APNs separately. Record any
+   unexecuted deploy/reload/firewall/DNS steps as unexecuted.

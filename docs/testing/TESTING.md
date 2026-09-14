@@ -10,16 +10,17 @@ The current application uses Flutter with native Go, not the earlier QuickJS
 core. `lib/app/bootstrap/production_application_bootstrap.dart:5296` constructs `GoBridgeClient` over method/event
 channels. Android's `android/app/build.gradle.kts:431` connects `buildGoAar` to
 `preBuild`; `ios/Podfile:63` ensures the GoMknoon/NSE frameworks. `pubspec.yaml`
-currently declares `1.0.1+117`, and its bundled asset entries contain icons,
+currently declares `1.0.1+119`, and its bundled asset entries contain icons,
 JPEGs and MP4s; no JavaScript asset or QuickJS dependency was found in the
 current pubspec/lockfile. Keep JavaScript test/tooling discovery and bundle
 identity handling because retained tooling and future bundled assets can still
 change; do not assume the old runtime architecture is active.
 
 The existing App Store artifact entry point is
-`scripts/build_ios_appstore_ipa.sh --build-number=117`; it applies
-`tool/build/voice_call_release_defines.json`. This implementation did not build
-or distribute an IPA. Candidate evidence must bind the actual selected build
+`scripts/build_ios_appstore_ipa.sh --build-number=<candidate-number>`; it applies
+`tool/build/voice_call_release_defines.json`. The original testing-wrapper work
+did not build or distribute an IPA; later local candidate identities are recorded
+in `Network-Arch/IPV6-Infra-Ops.md`. Candidate evidence must bind the actual selected build
 configuration and signed artifact, not just the Dart revision or version label.
 
 ## Sources of truth
@@ -58,6 +59,16 @@ Verified evidence: `.codex-test-logs/codex-graphify-removal-checks/results.json`
 records 247 passing Codex host tests plus passing fast/workflow/schema checks.
 Python check selectors must enumerate files: wildcard expansion is implemented
 for Flutter selectors, while the Python runner forwards paths to `unittest`.
+
+Fresh-checkout verification exposed two Codex integration errors: the tests
+unconditionally read ignored `.codex/config.toml` and `.codex/hooks.json` from
+the development machine. Clones intentionally have no such local overrides.
+The integration tests now accept their absence and still reject checkpoint
+configuration when those files exist, with isolated positive/negative fixtures.
+No private editor configuration is copied into CI. The existing `codex-tooling`
+manifest area already selects this test file. The original failed selection and
+diagnostic rerun remain in the CI evidence root under
+`publish-worktree/.codex-test-logs/publish-run/` and `publish-codex-diagnostic.log`.
 
 ## Daily commands
 
@@ -117,6 +128,11 @@ stay NOT RUN and cannot produce an overall green result. `--rerun-failed` permit
 one diagnostic rerun and preserves the original failure. Shared reports retain
 allowlisted completion facts and raw-output hashes, not arbitrary private logs;
 use existing redacted AppDiagnostics/SIMS receipts for product checkpoints.
+Flutter and Go `skipped_cases` retain the same hashed case identity as failures
+(including the Go parent/package hashes), so an incomplete selection can be
+traced back to its source without copying dynamic names or skip reasons into
+shared reports. This metadata does not convert a skip into a pass. Parser
+contracts cover private-name/reason canaries and retain the blocked verdict.
 
 ## Device configuration and evidence
 
@@ -173,18 +189,228 @@ failed or unfinished full runs visible to release reviewers. Full regression
 is not the default after each small change or individual TDD plan; follow the
 wave/release cadence in `AGENTS.md`.
 
-`.github/workflows/mknoon-checks.yml` configures a hosted metadata job and the
-same wrapper for change/release checks and serialized weekly full execution.
-Test execution is opt-in through `MKNOON_TEST_RUNNER_ENABLED` and requires an
-appropriately isolated self-hosted runner carrying the `mknoon-test` label,
-device/service setup, and release-baseline inputs. Full jobs disable active-run
-cancellation and allow 4,320 minutes (three days). An unfinished campaign remains
-BLOCKED; if measurement exceeds that bound, implement tracked partitions at one
-revision before claiming the cadence can complete. A committed workflow file
-does not prove the schedule is active or that branch protection requires it.
-No actual remote CI run, schedule activation, or merge-blocking rule has been
-verified by this implementation. Do not publish or change remote repository
-settings without explicit authorization.
+`.github/workflows/mknoon-checks.yml` uses the same wrapper and selection manifest
+for three distinct acceptance modes. Its final hosted job always runs after
+metadata and selected execution; only a PR emits **`Mknoon regression checks`**,
+the exact status context to require on `main`. A manual change diagnostic emits
+`Mknoon change diagnostics`; release dispatch emits `Mknoon signed-release
+acceptance`; scheduled/manual full execution emits `Mknoon full regression`.
+These other contexts cannot substitute for a PR's selection or certify a
+different candidate. PR activity includes base-branch edits, and there are no
+path filters or privileged `pull_request_target` jobs. No push-to-main job is
+needed for enforcement when the pending ruleset requires PR integration.
+
+`ci-plan` resolves the merge base of the event's **PR head and target SHAs**,
+checks both parents of GitHub's synthetic merge candidate, and records all
+three identities. The selected checks execute that merge candidate. Comparing
+from the true common ancestor can conservatively include target-branch changes
+present in the candidate. Computing `merge-base HEAD PR_BASE` after checking out
+the synthetic merge incorrectly returns the target tip instead. A dispatch
+requires an explicit full baseline SHA; a release SHA remains an operator
+attestation of the actual distribution record. A schedule uses its candidate
+SHA and runs the existing full command list.
+
+Metadata publishes an independent `plan.json` and a portable `plan_sha256` job
+output. `ci-run` reconstructs selection on the execution host before calling the
+existing runner. `ci-verify` reconstructs it again on a hosted runner and checks
+the execution plan/results against that output, the candidate source/rules,
+baseline, event, repository, workflow, run ID and attempt. Per-host Python paths
+and prerequisite discovery are excluded from the portable fingerprint;
+execution toolchain facts remain bound between the execution plan and report.
+Every selected ID must appear exactly once with matching commands/paths and
+complete original attempts. Missing results, skips, cancellation, incomplete
+counts, stale evidence, unresolved impact and a metadata-only success all fail
+the final check. A queued job without a runner leaves acceptance pending; it
+never establishes PASS. Source-build tests cannot certify a signed artifact.
+
+Test execution remains opt-in through `MKNOON_TEST_RUNNER_ENABLED == 'true'` and
+requires an isolated disposable self-hosted runner labeled `mknoon-test`.
+Both the workflow gate and `ci-run` refuse fork execution on that host. GitHub
+contributor approval permits the hosted metadata workflow; it does not override
+that restriction. After reviewing the exact fork revision, a maintainer can
+bring the reviewed contribution into an origin branch and open a corresponding
+PR subject to the same gate. The original fork PR remains blocked; do not post
+a substitute success or use a privileged workflow to execute its code.
+
+All selected jobs, including release/full jobs, share
+`mknoon-shared-test-devices`, retain `cancel-in-progress: false` and `queue: max`,
+and the wrapper retains its checkout resource lock. A single dedicated device
+pool must not be shared with unmanaged local campaigns or another repository's
+jobs; GitHub concurrency groups do not serialize other repositories. Ordinary
+change/release jobs have a six-hour ceiling; full jobs retain 4,320 minutes
+(three days). These are limits, not measured completion promises. Timeout or an
+unfinished campaign remains incomplete. If full measurement exceeds its bound,
+partition existing routes at one revision before claiming the cadence completes.
+
+Artifacts use run-ID/attempt names and never overwrite prior attempts. Only the
+allowlisted wrapper plan/result/partial/error/summary files are uploaded, with
+hidden-file inclusion enabled for their ignored `.codex-test-logs` parent.
+Nested device logs, signing material and raw receipts are not uploaded. A
+diagnostic rerun within a report preserves its failed first attempt. Re-running
+only failed GitHub jobs cannot borrow a successful metadata plan from an older
+attempt: use a fresh complete workflow attempt and retain the earlier artifacts
+and conclusions in the review. A later run does not erase a previous failure.
+
+The CI unit files `mknoon_checks_test.py`, `mknoon_ci_checks_test.py` and
+`testing_inventory_test.py` execute isolated Python/Git/parser fixtures. Their
+exact paths are excluded only from the broad infrastructure area and still map
+to `workflow` in `selection.json`; unknown infrastructure retains broad coverage.
+The manifest also retains shared bridge/storage/lifecycle/native/build consumers
+and adds the direct/group projection suites to notification changes: current
+listeners, retry owners and reconciliation import these shared notification
+contracts. Executable selectors remain solely in the manifest.
+
+Local validation of this CI boundary passed 57 selector/CI tests and five
+inventory tests, including real temporary Git histories and isolated failing
+test subprocesses. After repairing the clean-checkout portability defect above,
+the publishing candidate passed all five selected groups (workflow, bootstrap,
+contacts, provider schema and Codex tooling): **323 tests, zero failed/skipped,
+98.637 seconds**, with no diagnostic subset. Candidate/plan and observed counts
+are in the evidence root below under
+`publish-worktree/.codex-test-logs/publish-fixed-run/`. The earlier two failed
+integration tests and diagnostic rerun remain preserved separately; the initial
+development-tree 321-test pass is under `change-run/`. These results validate
+this tooling change, not the separate unpublished application commit. Rule
+validation, Python compilation and whitespace checks passed. Actionlint 1.7.12 initially reported the existing
+custom runner label and its unsupported `queue` schema field. With that label
+declared in an ignored local config, only `queue: max` remains unsupported;
+all other lint checks pass when that exact diagnostic is excluded. The retained
+queue behavior is covered by [GitHub's current workflow syntax](https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax#concurrency)
+and the existing remote run. This is an explicit linter limitation, not an
+unqualified lint pass or a newly executed CI campaign. Both diagnostics remain
+in the ignored evidence root.
+
+### Remote observation and pending activation
+
+Read-only revalidation on **2026-09-13** resolved origin `main` to
+`ad3529a041528c07dd6714a98c0f70fefeb2366b`; the clean starting local HEAD was
+`1df147ccfc7ded0336ea28ed9f4b2d0039a48b81`, one preserved unpublished commit
+ahead. Initial validation compared local changes against that starting HEAD;
+the publishing candidate and its latest validation use origin main directly,
+excluding the unrelated application commit. Source and remote receipts are
+retained in ignored `.codex-test-logs/ci-enforcement-20260913-15_yatv1/`.
+
+The authenticated API returned Actions enabled, this workflow active, **zero
+repository runners, variables and secrets**, `main.protected=false`, empty
+repository/branch rules, and `Branch not protected` from the protection endpoint.
+The token reports administrative capability; no administrative action was
+authorized or taken. The existing fork approval setting is
+`first_time_contributors`, with read-only workflow token defaults and PR-review
+approval disabled. Administrative endpoints that are inaccessible in future
+audits must be reported as **unknown**, never inferred disabled from a 403/404
+alone. Here the successful branch/rules queries corroborate the protection 404.
+
+The actual [scheduled run 34745389097](https://github.com/salehelsayed/flutter_app/actions/runs/34745389097)
+at `5a9bb5c94503d3e48dca734f4d2b2cb06fe8141a` was marked success, but its jobs
+showed `metadata=success` and `selected=skipped`. Its logs record 37 wrapper and
+five inventory tests, with no selected application/full execution. This refutes
+the earlier statement that no remote run/schedule had been observed; it does
+not validate this local implementation or a full campaign. Current origin main
+had no check runs. **Activation remains BLOCKED; remote enforcement is not
+verified.** The user subsequently authorized publishing this CI change, then
+deferred runner setup because no dedicated test machine is available. The
+publishing branch is based directly on origin `main`, preserving the separate
+unpublished application commit locally. Runner activation and the required
+main-branch rule are deferred together; enabling the rule without a runner
+would block every merge.
+
+[Draft PR #2](https://github.com/salehelsayed/flutter_app/pull/2) exercised this
+boundary in [run 34773008050](https://github.com/salehelsayed/flutter_app/actions/runs/34773008050)
+at PR head `bc7f331d87d67492ada4d3b716edd875db247ad1`. Hosted metadata passed
+57 selector/CI and five inventory tests, and uploaded the expected five-check
+plan for synthetic merge `800d274a340a575a2aa33bbd057a07a27df9b391` against the
+verified main baseline above. `selected=skipped`; the final **Mknoon regression
+checks** job failed with exit 2 and `CI selected job disabled, skipped,
+cancelled, failed or not completed`. The downloaded plan's source hash matches
+the locally tested publishing candidate. This verifies refusal of skipped
+execution, not successful remote regression execution or main enforcement.
+The metadata log and downloaded plan remain in the evidence root as
+`remote-pr-metadata.log` and `remote-pr-expected-1/plan.json`.
+
+The minimal pending activation actions, requiring explicit authorization, are:
+
+1. Review this CI change through its pull request and complete the selected
+   checks before integration. Do not register a required context as satisfied
+   by the historical metadata-only run.
+2. Register one dedicated disposable/ephemeral runner with labels
+   `[self-hosted, mknoon-test]`. Its clean image needs Python 3.11+ (`tomllib`), Flutter
+   **3.47.2** (the current pubspec floor) with matching Dart/resolved packages,
+   Go **1.25.0**, Node, and the native toolchains required by selected checks.
+   A macOS image with Xcode/CocoaPods plus Android SDK/JDK/adb supports the current
+   cross-platform selection. Use a dedicated USB Android phone plus an available
+   emulator for ordinary two-peer proof; add live iOS targets for applicable iOS
+   boundaries. Prepare isolated fixture services using existing SIMS contracts.
+   The runner must contain no developer credentials, signing keys, production
+   service credentials or production app data. Do not attach the credentialed
+   development host merely by adding a label. No paid capacity is provisioned
+   by this change.
+3. Place the live, isolated device-config JSON described above at
+   `/opt/mknoon-ci/device-config.json` on that runner. Set the existing variables:
+
+   ```bash
+   gh variable set MKNOON_TEST_DEVICE_CONFIG --repo salehelsayed/flutter_app --body /opt/mknoon-ci/device-config.json
+   gh variable set MKNOON_TEST_RUNNER_ENABLED --repo salehelsayed/flutter_app --body true
+   ```
+
+   Enabling this gate also enables the existing weekly full schedule. The PR
+   path needs no signed-artifact/evidence variables. Mount those reviewed input
+   files only for release dispatch and then set `MKNOON_CANDIDATE_ARTIFACT` and
+   `MKNOON_MANUAL_EVIDENCE` to their runner-local paths. Signing happens through
+   the existing release process, not this CI workflow. For multiple platform
+   artifacts use the local wrapper's repeatable `--candidate-artifact` option;
+   the CI variable currently supplies one artifact per release dispatch.
+4. Inspect a fresh permitted PR run through metadata, selected execution,
+   uploaded plan/results, and the final verdict at the current merge SHA. If a
+   runner is queued/offline, report pending/BLOCKED. Then create the following
+   minimal main ruleset, with **no bypass actors**. GitHub Actions app ID 15368
+   was verified from the actual run's check records. Save the exact JSON to a
+   reviewed local file and, only after approval, submit it with
+   `gh api --method POST repos/salehelsayed/flutter_app/rulesets --input <file>`:
+
+   ```json
+   {
+     "name": "Mknoon main regression checks",
+     "target": "branch",
+     "enforcement": "active",
+     "bypass_actors": [],
+     "conditions": {"ref_name": {"include": ["refs/heads/main"], "exclude": []}},
+     "rules": [
+       {
+         "type": "pull_request",
+         "parameters": {
+           "required_approving_review_count": 0,
+           "dismiss_stale_reviews_on_push": false,
+           "require_code_owner_review": false,
+           "require_last_push_approval": false,
+           "required_review_thread_resolution": false
+         }
+       },
+       {
+         "type": "required_status_checks",
+         "parameters": {
+           "strict_required_status_checks_policy": true,
+           "do_not_enforce_on_create": false,
+           "required_status_checks": [
+             {"context": "Mknoon regression checks", "integration_id": 15368}
+           ]
+         }
+       }
+     ]
+   }
+   ```
+
+5. Read back `/rulesets`, the created ruleset, `/rules/branches/main`, and the
+   PR's required check/merge state. Confirm a failing or incomplete selected
+   result blocks integration and a complete candidate-bound result satisfies
+   the required context with strict branch freshness. Do not infer enforcement
+   from workflow YAML, administrative capability, or a green summary alone.
+
+Ruleset fields follow the [GitHub rules API](https://docs.github.com/en/rest/repos/rules#create-a-repository-ruleset).
+The pending rule requires ordinary PR regression only. Signed release approval
+still requires the actual previous published baseline, mandatory-plus-affected
+automated checks, available-device journeys, exact signed artifact/configuration
+hashes, all required manual receipts and review of outstanding full failures.
+Historical runs and host-source passes cannot fill missing signed evidence.
 
 ## What the inspected checks establish
 
@@ -285,7 +511,9 @@ Use the manifest's required evidence IDs when recording the following journeys:
    receiver and fake provider tests do not alone certify the OS boundary.
    Also place a background incoming call six minutes after the last successful
    VoIP push, confirming suspension before the invite. Correlate provider
-   acceptance, device PushKit receipt and CallKit presentation. Preserve a
+   acceptance, device PushKit receipt, CallKit presentation, native/Dart adoption
+   and media. Verify actual signed APNs environment/topic, cancellation/expiry
+   and retired-predecessor successor-audio ownership independently. Preserve a
    missed first attempt; a successful immediate retry does not satisfy this leg.
 
 Source/configuration/bundle/artifact changes invalidate prior candidate evidence.
@@ -349,6 +577,171 @@ visible and cannot become an ordinary first-attempt PASS.
   its snapshot, commits the competing claim, then verifies the loser returns
   no claim. Red/green evidence is retained in the adjacent
   `quiet-recovery-go-claim-conflict-*` logs.
+  Mixed-version recovery additionally requires action-level relay admission:
+  `store_quiet_v1` and `store_custody_quiet_v1` preserve the existing storage
+  and custody owners, but an older relay rejects them before accepting a row
+  whose unknown quiet sidecar it would discard. Ordinary/manual stores retain
+  their existing actions. Updated retrieval requests declare `quietRecovery`;
+  older receivers continue draining ordinary rows while quiet rows remain in
+  custody for an upgraded runtime. Both pending and destructive legacy reads
+  preserve those hidden rows, and pagination counts only eligible rows. Redis
+  applies destructive selection inside the existing transaction. Existing
+  sidecar-aware senders remain accepted by the updated relay. A sender/relay
+  upgrade alone does not establish quiet display on an old recipient binary.
+  Tagged Go compatibility fixtures cover rejection through store, retrieval and
+  explicit ACK; production relay tests cover authenticated attribution, both
+  backends and old/new reader pagination. SQLite reopen and Dart receive tests
+  preserve original age/bytes/owner, the exact 24-hour boundary, unread state,
+  mixed pages and durable quiet disposition after delayed normal duplicates.
+  The exported mobile inbox JSON builders previously dropped the relay's
+  quiet flag, including protected pending retrieval. The shared NSE response
+  had the same omission. Five actual bridge roundtrips reproduced that loss;
+  all four projections now retain the
+  additive flag on quiet rows while preserving normal row shape, identity,
+  encrypted bytes and protected custody authority. Node/NSE decoding and
+  Dart-only quiet tests alone did not cover these projection boundaries. The
+  memory-bounded iOS extension's fail-closed stub remains unchanged.
+  Evidence is in `.codex-test-logs/dual-stack-recovery/`.
+- **Integrated dual-stack evidence boundaries:** the production relay address
+  plan retains IPv4, requires an explicit assigned public native IPv6 address,
+  and refuses startup after an incomplete opted-in bind. DNS IPv6 advertisement
+  remains an operator assertion about proxy/DNS readiness, not a live probe.
+  The production-handler socket fixture in `dual_stack_application_test.go`
+  exercises TCP, WS and QUIC across both same-family and both mixed-family
+  pairings. It pins a single relay address per peer and verifies authentication,
+  reservation, signed rendezvous record, Redis-backed quiet custody/retrieval/ACK
+  and call-control bytes/sender attribution. A no-listener client cannot silently
+  replace that requested relay family with another path. The fixture's initial
+  request-only protobuf decoder, memory-only custody setup and empty-inbox status
+  assumptions failed before correction; those setup failures remain retained.
+  These are native host socket and production-handler checks, not phone UI,
+  audible media, a native IPv6-only network or DNS64/NAT64.
+  September 14 read-only public probes separately authenticated the expected
+  relay on IPv4/IPv6 TCP 4005, WSS 4001 and QUIC 4002, acquired reservations and
+  received their own empty inbox/call mailbox and credential responses. The
+  active relay executable is a separately hashed v1.10.7; current client-source
+  compatibility is not certified by that version label. A fresh malformed
+  admission probe (no recipient/payload and no stored row) confirmed the deployed
+  relay rejects both new quiet actions as unknown. Current clients retain the
+  obligation safely, but completing quiet recovery requires the compatible relay
+  source; a version label or earlier relay-only quiet activation is insufficient.
+  Runtime owners are recorded in `Network-Arch/IPV6-Infra-Ops.md`; historical
+  repair scripts are not canonical deployment inputs. Current DNS/listeners do not establish packet
+  delivery, and public empty reads do not establish text/call success.
+  The independent host TURN matrix uses fresh credentials validated by current
+  native Go, socket binding to Wi-Fi, strict TLS hostname/certificate validation,
+  authenticated response integrity, explicit permission/channel creation and
+  Refresh(0) cleanup. Connection and requested allocation families vary
+  independently. Both IPv4 UDP-control cases timed out on returned data after
+  successful allocation/permission/channel binding; both IPv6 UDP-control cases
+  and all eight TCP/TLS cases returned 100 exact bidirectional synthetic payloads
+  each. All 24 allocations were explicitly released. A new IPv4 UDP diagnostic,
+  captured on the server for only its two synthetic control sockets, returned
+  6/6 payloads and cleaned up both allocations. A longer follow-up then returned
+  10/11 sent payloads for IPv4 allocation before timing out, while IPv6 allocation
+  returned 100/100. Both allocations in each trial were explicitly released.
+  The narrow server capture saw ten incoming and ten outgoing ChannelData frames
+  in the failed case; it cannot distinguish upstream loss from a changed NAT
+  mapping outside that capture filter. No server/application fault is inferred
+  from that observation alone. These first failures remain visible alongside
+  the diagnostic reruns. Host TLS success does not supersede
+  the separate pinned Android native TLS trust failure below. Port-443-only
+  calling remains unsupported by the observed credential URLs/control endpoint.
+  Evidence is in `.codex-test-logs/dual-stack-priority4/`; network scenarios,
+  signed-device media, idle APNs and actual published-build compatibility retain
+  separate candidate-bound requirements in the executable manifest.
+  Both platform Go binding stamps were stale relative to current source/tooling.
+  Running the existing ensure scripts rebuilt them; current digests then matched.
+  Existing signed outputs were retained and hashed before preparing a new build.
+  A new signed artifact cannot establish the identity of the previous published
+  artifact, and export-name checks alone cannot establish native freshness.
+  The integration Dart sweep retained one first-attempt group-media timing
+  failure: the ordinary download started after the GPL-04A fixture's two-second
+  `_waitUntil` deadline. The entire three-test file passed in a separate run
+  without modification. The fixture now observes the actual `media:download`
+  bridge completion, asserts exactly one download and waits for listener
+  teardown, instead of polling a two-second wall-clock deadline. All three
+  cases pass through the explicit-base wrapper after this test-only repair;
+  production deadlines and private-policy assertions are retained. The original
+  full sweep remains failed; it was not relabeled or repeated for this fixture
+  change. Current simulator XCTest executed 79 lifecycle/store/NSE tests
+  successfully; unsigned simulator APNs-registration errors do not establish
+  signed-device push behavior. The Android native proof's first debug build
+  lacked its generated `native_assets.json`; preserving and invalidating only
+  that build-cache directory allowed a fresh build. Keep the original failure;
+  do not clear application data or broadly clean retained signed outputs.
+  The fresh disposable Android APK then passed the existing Pixel/emulator
+  native UDP and TCP matrices (eight cases plus restarts per transport). Its
+  WebRTC binaries match the new signed AAB for all three bundled ABIs, but its
+  debug entry point and isolated signaling broker remain a separate artifact
+  boundary. The TLS matrix failed at its first protected call with an ICE
+  gathering/exchange deadline and no selected pair; both zero-exit Flutter
+  drivers were correctly overridden by the harness's failed endpoint receipts.
+  This run did not capture a new native TLS certificate error. A fresh server
+  chain check still fails against the 36 extracted pinned native certificates
+  at ISRG Root X2, and passes with that root added only to an isolated verifier
+  input. This confirms the current chain remains incompatible with those roots;
+  it does not substitute for a repaired native TLS media trial or modify trust.
+  The first TCP attempt attached to an unrelated emulator Flutter VM and failed
+  before media proof. A separate diagnostic passed after stopping that app on
+  the owned emulator without clearing its data. Avoid concurrent unrelated
+  Flutter debug processes on this harness's test targets; preserve first results
+  and do not mistake driver exit zero for executed media assertions.
+  The existing local production-call adapter subsequently passed 27 assertions
+  with the normal application entry point, fresh accounts/contacts, a disposable
+  production relay/coturn pair, native Answer, per-endpoint RTP, controls and
+  teardown. Its separate Pion oracle proved exact known-Opus bytes. The existing
+  SIMS artifact validator and wrapper inspector accepted that source/debug proof;
+  it remains distinct from signed distribution, human-audible audio and APNs.
+  `integrated-call-report.json` and `device-audio-supplement.json` retain the
+  artifact binding. A focused current Go socket run also executed all 14 selected
+  IPv6/address/fallback cases without skips. Follow-up execution identifies the
+  conditional gaps: the four conversation files containing the ten opt-in
+  custody skips pass 278 cases with
+  `MKNOON_DIRECT_MEDIA_BLOB_CUSTODY_CLIENT_ENABLED=true`; the exact emission
+  rollback case passes with `MKNOON_EMIT_WAKE_TOKEN=false`. Those are explicitly
+  different build configurations from the default candidate. The skipped host
+  SQLCipher capability is exercised by the existing native integration test:
+  its disposable Android app passes real export, portability export and staged
+  open/row retention. The same three tests also pass on the available iOS
+  simulator: the portability leg verifies the Android snapshot's exact checksum,
+  applies its cipher parameters and reads the expected schema/rows on iOS.
+  Both use the disposable `com.mknoon.sims.sqlcipher` identity, fixture keys and
+  synthetic data, without opening or resetting a user's database. Source/debug
+  native portability does not certify the unknown previous published binary or
+  the signed release artifacts.
+  `TestHolePunchFeasibility_LoopbackUpgradeObservable` and
+  `TestFeasibility_DirectUpgrade_TcpLane` still skip because forced-public
+  loopback hosts do not produce an observed DCUtR upgrade; the IPv6 address-event
+  case passes. No NAT upgrade is claimed. The original four skipped wrapper
+  selections remain incomplete, with separate configuration/native supplements
+  in `continuation-execution-supplements.json`. The explicit-base focused wrapper
+  passes workflow, provider schema and the repaired fixture; omitted selections
+  remain NOT RUN in that focused report. No unrelated broad suite was repeated.
+- **Established dual-stack messaging failure:** a fresh IPv6 handshake stall
+  was already covered, but did not prove recovery of a reused connection.
+  A socket-scoped loopback proxy first delivered over IPv6, then discarded
+  traffic without FIN/RST. Repeated chat and inbox sends remained trapped on
+  that connection after stream deadlines; resetting only the stream did not
+  retire the multiplexed connection. Send failure handling now retires the
+  specific timed-out connection while retaining peerstore candidates and
+  healthy siblings. Hidden stream-open failures are attributed only when one
+  established connection was available; capability rejection and cancellation
+  do not justify closing a healthy connection. The existing retry owner and
+  operation/committed-ACK deadlines remain in charge. Native fixtures observe
+  selected IPv6 before the fault and selected IPv4 on the subsequent attempt
+  without restarting either node, including quiet sends, uncached negotiation,
+  ACK loss after receive and relay custody. A UDP blackhole also preserves TCP
+  and TLS WebSocket messaging, with the selected address observed and a
+  fixture-local trusted certificate for WSS. Dart integration separately proves
+  one display identity after ACK loss and inbox fallback, plus retained failure
+  and restart drain; it uses
+  fake crypto/network, while the database reopen fixture uses real host SQLite.
+  These tests establish neither public IPv6 reachability nor signed mobile or
+  deployed WSS behavior. Initial setup failures (wrong TCP/WS fixture listener,
+  default Go 1.27 QUIC incompatibility, and default Flutter 3.41.4 below the
+  repository SDK floor) remain in the evidence root. Use the repository's Go
+  1.25.0 and Flutter 3.47.2 toolchains, without changing dependency pins.
 - **Voice-upload incident boundary:** a 2026-09-10 iPhone incident showed
   “Uploading media” from about 18:56 until 19:10 Berlin. The relay received only
   131,072 of 670,610 bytes before a stream reset; the phone then disconnected
@@ -518,6 +911,13 @@ visible and cannot become an ordinary first-attempt PASS.
   assertion. Relay readiness alone still does not prove LAN discovery. Redacted
   evidence is retained in
   `.codex-test-logs/live-phones-20260912T084648Z/android-local-discovery.redacted.log`.
+  A separate host fixture reproduced four overlapping native starts when
+  resume and a libp2p address refresh bypassed that startup future. The existing
+  `LocalP2PService` now joins pending startup and coalesces advertising refreshes,
+  publishing a newer port snapshot before the shared refresh completes. The
+  fixture observes one active start and one subsequent refresh; existing failed
+  startup retry, Bonsoir error containment, denial gating and disposal controls
+  still pass. Evidence is under `.codex-test-logs/dual-stack-recovery/`.
 
 - **iOS discovery errors during resume:** physical iPhone13 / iOS 26.5 emitted
   an unhandled Bonsoir `PlatformException(discoveryError)` with native code
@@ -727,6 +1127,43 @@ visible and cannot become an ordinary first-attempt PASS.
   remote relay fields and missing/unrecognized local evidence cannot certify it.
   See the SDK's [stats collector](https://github.com/webrtc-sdk/webrtc/blob/30d5e63ae91da483e06577b5c35ee91cc5e5c3db/pc/rtc_stats_collector.cc#L1037)
   and [candidate remapping](https://github.com/webrtc-sdk/webrtc/blob/30d5e63ae91da483e06577b5c35ee91cc5e5c3db/p2p/base/connection.cc#L1812).
+  The production family extension derives only `ipv4`, `ipv6` or `unknown`
+  inside the adapters. Local diagnostic route and both candidate families use
+  the same unambiguous selected-pair references; malformed/duplicate references,
+  conflicting selections, hostnames, redaction and mapped/compatible ambiguity
+  preserve unknown. The existing readiness/privacy predicate remains separate.
+  Whole-pair relay involvement does not certify the local route. Candidate
+  addresses describe candidates or TURN allocations; standard stats expose
+  neither client's TURN socket family, so both remain unknown even with numeric
+  TURN URLs or related addresses. The recorded generation identifies the stats
+  read's owner, not an unexposed native candidate generation. Reads spanning a
+  restart are omitted from diagnostics, and RTP progress resets at restart.
+  The executor supplies provisional/terminal failure classification at its
+  existing decision boundary; diagnostic exceptions cannot alter recovery,
+  readiness, cleanup or deadlines.
+  Go command sidecars distinguish typed failed socket attempts, authenticated
+  connections and actual message/inbox streams. They preserve protocol and
+  direct/circuit classification, with separate endpoint-to-relay attribution.
+  A circuit address prefix cannot prove its underlying relay socket's family
+  or the relay-to-peer leg. Fallback requires failed candidate evidence and a
+  later successful connection/stream for the same target, protocol and leg
+  within one command; changing relay targets clears that correlation. Ordinary
+  IPv4 success and hidden attempts inside a successful libp2p dial prove no
+  fallback. Inbox acceptance and recipient ACK remain distinct; a write or
+  successful diagnostic record promotes neither delivery nor notification.
+  New fields use the closed local vocabulary in
+  `lib/core/diagnostics/local_connection_diagnostics.dart`. Both collectors strip
+  them from uploads while retaining event identity and local export evidence;
+  the fixed v1 receiver schemas remain unchanged and reject unprojected
+  extensions. Existing consent, retention, buffer limits and sample cadence
+  remain in force; Go sidecars retain at most 12 coarse records per command.
+  No raw address, IP hash, candidate, credential, message or new native log is
+  emitted by this extension. APNs provider/callback/presentation stages remain
+  separate: ordinary app diagnostics have no supported courier-family source.
+  Host regression evidence, exact commands, initial fixture failures and scoped
+  wrapper omissions are retained under `.codex-test-logs/privacy-family/`.
+  These host contracts do not establish live routes, APNs delivery, audible
+  media, or signed-candidate behavior.
   Host regressions cover all four policy combinations in both directions,
   embedded/trickle ICE before and after restart, egress, and late negotiation
   work after hangup. Existing fingerprint, sender, size/capacity and generation
@@ -742,7 +1179,9 @@ visible and cannot become an ordinary first-attempt PASS.
   negotiation now retains its existing canonical deadline for this specific
   checklist failure, allowing later connected events to supersede it. A native
   failed snapshot has a distinct engine error; adapter/configuration/privacy
-  errors and established-call failure remain terminal. Terminal pending events
+  errors and standalone established-call failure remain terminal. The bounded
+  reconnect classification below supersedes immediate termination for a
+  confirmed checklist failure within an owned reconnect. Terminal pending events
   cannot be overwritten by a later provisional ICE failure. Host tests cover
   both event/snapshot orderings, stale readiness, recovery and unchanged timeout
   cleanup. The physical Android/iPhone13 production path then connected in both
@@ -780,7 +1219,13 @@ visible and cannot become an ordinary first-attempt PASS.
   provider acceptance and no incoming presentation before `noAnswer`. The
   complete archive identified its failed development connection C552 as IPv6,
   with keep-alive failure at 13:16:58 UTC; earlier IPv4 observations were for
-  a different connection, C551. Do not infer the environment's route from an
+  a different connection, C551. Re-reading both complete archives on September
+  14 confirms C552 used **TCP 443**, with APNs ALPN and an IPv6 Wi-Fi flow;
+  C551 used IPv4 TCP 5223. The earlier C542/5223 attribution must not be
+  generalized to C552. The new exports are retained under
+  `.codex-test-logs/dual-stack-priority4/apns-dated-*.private.json` and concern
+  the older `20260912T105911Z` development build, not candidate 120.
+  Do not infer the environment's route from an
   arbitrary APNs connection or an address-filtered subset. The original-Wi-Fi /
   hotspot / original-Wi-Fi idle comparison failed / passed / failed without an
   app or token change. Both failed development connections used IPv6 and the
@@ -792,9 +1237,11 @@ visible and cannot become an ordinary first-attempt PASS.
   not establish a permanent fix. DNS filter selection is not route evidence:
   `apsd` reused a cached numeric IPv4 endpoint when IPv6-only answers were
   requested. Identify the development courier connection in the complete
-  native archive for each trial. Preserve APNs bootstrap/configuration lookups
-  when testing courier address-family restrictions; the sandbox bootstrap
-  lookup in this run had no IPv6 address. A post-restart comparison retained
+  native archive for each trial. The historical DNS-filter experiment also
+  depended on APNs bootstrap/configuration lookups; its sandbox bootstrap
+  lookup had no IPv6 address. That experiment is dated evidence, not an app
+  repair or authorization to alter user/router DNS. Any further environment
+  experiment needs an explicitly authorized isolated test network. A post-restart comparison retained
   another IPv6 idle miss: the first observed PushKit callback followed an APNs
   keep-alive failure/reconnect, about 54 seconds after invite acceptance and
   after cancellation. Its payload kind was not independently identified.
@@ -818,9 +1265,15 @@ visible and cannot become an ordinary first-attempt PASS.
   and completed in both UIs. These are causal lifecycle recovery checks, not
   merely fresh-call retries. The observed development courier used IPv4 TCP
   5223; these passes do not establish recovery of the failed IPv6 connection.
-  Audible quality and screen lock were not independently asserted. The added
+  Audible quality and screen lock were not independently asserted. In that run the added
   native successor-audio unit test was syntax-checked but not executed under
-  the user's restriction against building an iOS test harness.
+  the user's restriction against building an iOS test harness. The existing
+  RunnerTests target subsequently executed 78 lifecycle/store tests on the
+  available iPhone 17 Pro simulator, including
+  `testRetiredTerminalReceiptDoesNotReleaseSuccessorAudio`, with zero failures.
+  `.codex-test-logs/call-fallback-priority2/ios-lifecycle.xcresult` and its log
+  retain the executed XCTest evidence. These native controller/store fixtures
+  use fake platform ports; they do not establish live APNs or audible audio.
   This app lifecycle correction cannot repair an OS APNs connection that has
   not delivered a push. The specific network or OS defect
   and a permanent fix remain unconfirmed. These
@@ -867,6 +1320,73 @@ visible and cannot become an ordinary first-attempt PASS.
   exiting zero even when its device log reported failed integration tests.
   Direct libp2p signaling can independently reveal an address; this media policy
   does not make all application traffic anonymous.
+  The existing Android native proof now also admits an unreachable documentation
+  IPv6 candidate alongside all native candidates and reports selected address
+  families, DTLS readiness and actual bad-pair requests. The Pixel 6/API 35
+  emulator TCP fallback matrix passed all eight policy/direction cases and
+  restarts (32 endpoint observations); native stats recorded 75 requests toward
+  the bad IPv6 candidate. Both before and after physical Wi-Fi removal, every
+  selected pair was IPv4 TURN/TCP. This proves permitted-path continuity, not
+  loss of an established IPv6 media path. Physical Wi-Fi was restored.
+  The hostname fixture binds an IPv4-only test proxy to the disposable TURN
+  server. The emulator resolved both loopbacks for `localtest.me`, observed
+  IPv6 TCP failure, and completed authenticated native TURN allocation and
+  bidirectional media through IPv4. Its 32 proxy connections and selected
+  relay statistics are separate from DNS evidence. The first attempt required
+  dual-stack DNS on both peers and failed because the Pixel returned only IPv4;
+  that fixture prerequisite failure remains visible. The hostname leg therefore
+  runs on the explicitly discovered emulator. This uses public loopback DNS
+  (rejecting non-loopback answers), test-local sockets and no production TURN
+  account. A subsequent native run used test-local UDP sockets to receive and
+  discard 303 TURN/UDP datagrams while the configured TURN/TCP path carried
+  secure bidirectional media in all 32 endpoint observations. It recorded 64
+  bad-IPv6 connectivity-check requests and retained all 16 protected local TURN
+  observations. This is scoped TURN/UDP loss, not a device-wide UDP firewall
+  test. SDP publication took at most 406 ms; the separate gathering audit took
+  at most 877 ms. Both endpoints closed between calls, the next calls succeeded,
+  fixture sockets/containers/packages were released, and physical Wi-Fi was
+  restored. Audible sound, an established IPv6-path loss and signed-candidate
+  behavior remain unasserted by this local-broker campaign. Evidence is under
+  `.codex-test-logs/call-fallback-priority2/`.
+  The same existing runner accepts an explicit JSON-line credential client for
+  deployed transport isolation. The client must use the production validated
+  provider; credentials remain in memory, are fresh for each call, and are reused
+  only within that call's unexpired restart. The deployed authority permits six
+  requests per subject per minute. A rapid matrix reached that limit after six
+  calls; an independent seventh-request diagnostic returned
+  `TURN_CREDENTIALS_RATE_LIMITED`. Space test calls before creating the peer,
+  without changing setup/recovery deadlines or relaxing credential validation.
+  The paced EC2 TURN/TCP matrix passed 32 endpoint observations, including all
+  four policy pairings in both directions, 16 protected observations, 24 selected
+  TCP relay observations and eight direct observations. All selected families
+  were IPv4; all observations had DTLS and advancing bidirectional RTP. Sixteen
+  fresh credential requests succeeded. SDP publication took at most 512 ms and
+  the independent gathering audit at most 1,616 ms.
+  **Deployed TLS is a separate failing native leg:** the Android matrix connected
+  its normal peers directly, then failed to gather a usable relay for the first
+  mixed protected case. Repeated native diagnostics retained `ContinueSSL`
+  failure and bounded cleanup. The host's certificate-verified TURN/TLS client
+  separately allocated and exchanged 100 exact synthetic payloads per family,
+  over both IPv4 and IPv6. Those host passes do not certify Android native TLS.
+  The pinned Android WebRTC `144.7559.09` library contains 36 extracted DER
+  certificates and no ISRG roots. EC2's served YE2/Root YE/ISRG chain failed
+  independent verification against those certificates; adding the required
+  ISRG Root X2 to a temporary verification file made that check pass. This
+  supports a native trust-anchor incompatibility diagnosis. The upstream
+  [M144 TLS validation path](https://github.com/webrtc-sdk/webrtc/blob/m144_release/rtc_base/openssl_adapter.cc)
+  uses built-in trust and preserves verification failure without a successful
+  custom verifier. No native trust bypass, pin change or service modification
+  was made. Preserve TCP fallback and retain TLS as failed until a secure fix
+  has its own native media proof. Raw/redacted evidence and first failures are
+  under `call-fallback-priority2/remaining/` in the ignored test-log directory.
+  Flutter drive can leave VM-service ADB forwards after exiting. The native
+  proof runner snapshots existing rules and removes only new forwards matching
+  its own device and recorded driver port. An actual ADB ownership control
+  verified removal while preserving pre-existing rules, an unrelated new rule
+  on the same device and a logged port belonging to the other device. Fifteen
+  leaked forwards identified from these campaigns' logs were removed; unrelated
+  forwards were preserved. Receipts are in `remaining/forward-cleanup-control/`
+  and `remaining/owned-forward-cleanup.json` under the same evidence root.
 - **Readiness observation exceptions:** native snapshot reads can throw
   `WebRtcAdapterException(other)` after recording a fixed WebRTC read stage.
   The real engine wrapper now translates this to `observationUnavailable`;
@@ -974,6 +1494,22 @@ visible and cannot become an ordinary first-attempt PASS.
   `.codex-test-logs/event-delivery/` retains red/green evidence. These deterministic
   host tests establish application queue and cleanup behavior, not native callback
   frequency, long-duration device memory usage or live call quality.
+  Confirmed ICE checklist exhaustion during an already-owned reconnect had
+  also caused premature terminal cleanup. The virtual-clock regression ended
+  at four seconds instead of retaining the existing 15-second window in both
+  event-first and snapshot-first orderings. Native aggregate failure now carries
+  explicit ICE-failed evidence before it qualifies for reconnect recovery;
+  unclassified transport, configuration, closed and privacy failures remain
+  terminal. A bounded disconnect handoff and classification captured at event
+  receipt preserve both recovery and pending hard-failure priority through
+  asynchronous/reentrant delivery. No new recovery owner, setup deadline or
+  restart budget is introduced. Tests recover at 14 seconds or clean up at
+  exactly 15 seconds, retain the 30-second setup deadline, and connect the next
+  call. Initial provisional failure remains covered separately. The original
+  four failures and passing call/bridge/composition preservation suite (1,037
+  tests) are retained under `.codex-test-logs/call-fallback-priority2/`. These
+  controlled native-port/coordinator sequences establish classification and
+  ownership, not the IP family of a live media path.
 - **Local Android audio isolation:** the existing production-call journey now
   fixes its build/cache/driver identity to `com.mknoon.sims.productionaudio`.
   Its activity class remains `com.mknoon.app.MainActivity`. Keep native calls
@@ -986,6 +1522,70 @@ visible and cannot become an ordinary first-attempt PASS.
   assertions otherwise compete for Android's UiAutomation connection. Treat a
   missing-file message from `adb exec-out cat` as an unavailable capture even
   when its host exit code is zero; it never proves that a control is absent.
+  The current SIMS CLI treats `--prepare-builds` as a build-only selection.
+  Its successful attestation does not execute the audio capability. The change
+  wrapper currently supplies that flag. The existing
+  `run_production_audio_call_sims.dart --mode major --scenario
+  android.production_1to1_audio_call` adapter owns the disposable relay,
+  authenticated coturn and Pion oracle, then invokes both preparation and
+  actual execution. Bare central execution without its attested fixture fails
+  closed. Retain the wrapper's first incomplete result when running this
+  separate diagnostic; `.codex-test-logs/call-fallback-priority2/production-audio/`
+  records the observed build-only plan and zero device-capability execution,
+  and `production-audio-execution/` records the missing-fixture refusal.
+  The outer adapter passed all 27 production-call device assertions on the
+  available Pixel 6 and API 35 emulator; independent report verification also
+  passed. `production-audio-fixture/` retains the exact APK binding, native
+  Answer, bidirectional RTP, controls, cleanup/restoration and the separately
+  bound known-Opus Pion oracle. This source/debug campaign does not establish
+  physical audible sound, deployed-service behavior or signed distribution.
+  A separate deployed EC2 follow-up reused that driver, observer and app-state
+  guard with fresh identities and the default `mknoun.xyz` services. Two
+  relay-only calls selected TURN/UDP; two normal calls selected direct media.
+  Both endpoints passed structural readiness, separate advancing bidirectional
+  RTP diagnostics, native Answer, controls and terminal release; each mode
+  completed a second call. `ec2/observer-profile/` retains exact build arguments,
+  APK hashes, observer receipts and allowlisted media-progress observations.
+  Both deployed DNS families passed host TCP 3478 and certificate-validated
+  TLS 5349 probes; those listener probes do not establish TCP/TLS TURN media.
+  The EC2 follow-up did not fault the service or prove an established IPv6
+  media-path loss. The local fixture/Pion attestation is not reused as an EC2
+  verdict. Endpoint observation hashes are nonce-salted: compare a sample and
+  terminal receipt within one endpoint/run, not across endpoint nonces.
+  A subsequent exact signed Android release caller (`1.0.1(119)`, APK
+  `6bfe15f3ca35a975aaa72a041e93cb10118b70351a1fd41af33317b42a1cd7dd`)
+  completed two deployed calls with the disposable debug Pixel callee. The
+  discovered API 37 emulator ran with a read-only AVD overlay. Fresh contacts
+  used the signed app's actual acceptance UI, then required an encrypted current
+  call-wake receipt. The first attempt requested that receipt before acceptance
+  and correctly failed its `encrypted_current_grant_required` precondition;
+  retain it separately. Both calls passed native Answer, signed call controls,
+  native callee structural readiness and inbound/outbound RTP, terminal binding,
+  native release and next-call success. Separate advancing-RTP diagnostic samples
+  were retained for the second call; the first call's retained diagnostics did
+  not establish advancing counters. Coarse `turn_tls` diagnostics group TCP/TLS
+  and do not override the separately failing native TLS transport isolation.
+  This is one signed caller with a debug callee, not two signed endpoints, iOS
+  parity, upgrade proof or release approval. The existing disposable driver
+  correctly rejects the production package; its guard was preserved, with
+  separate UI-only actions confined to the read-only emulator.
+  Automated acoustic checks decoded the committed known-Opus fixture, injected
+  four 997/1499 Hz bursts into the emulator microphone, and captured host-mic PCM
+  while the Pixel selected its speaker and muted its microphone. The first
+  capture's undrained pipe truncated sampling; a concurrent reader fixed that
+  instrumentation problem. Later captures completed but did not detect the
+  expected burst pattern. Injection acceptance and nonzero source PCM are not
+  proof of remote decoded audio or audible speaker output. A read-only VM stats
+  attempt could not discover the owned callee's VM endpoint. No human listening
+  or raw microphone recording is claimed/retained, and audible output remains
+  unverified. `remaining/followup-summary.json` and its linked run artifacts
+  distinguish the native, production-signaling, signed and acoustic boundaries.
+  Switching a Flutter 3.47 build from device-test Debug to Release with
+  `--no-pub` can retain a generated Android plugin registrant that references
+  the excluded `integration_test` plugin. Both the first and serial retry failed
+  compilation. A normal Release build regenerated the platform metadata and
+  passed with the existing lockfile/pins and canonical call defines; signature
+  verification passed. Regenerating metadata is not a native regression test.
   Retry only inside the existing semantic deadline and reopen the native shade
   for each Answer attempt because an incoming window may replace it. The
   foreground WebRTC harness uses the same current-call guard and per-call TURN

@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter/widgets.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
@@ -28,13 +29,18 @@ import '../../../shared/fakes/in_memory_media_attachment_repository.dart';
 const _hash =
     'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
 
-Future<void> _waitUntil(
-  bool Function() predicate, {
-  Duration timeout = const Duration(seconds: 2),
-}) async {
-  final deadline = DateTime.now().add(timeout);
-  while (!predicate() && DateTime.now().isBefore(deadline)) {
-    await Future<void>.delayed(const Duration(milliseconds: 10));
+class _DownloadObservedBridge extends FakeBridge {
+  final downloadObserved = Completer<void>();
+
+  @override
+  Future<String> send(String message) async {
+    final result = await super.send(message);
+    if ((jsonDecode(message) as Map<String, dynamic>)['cmd'] ==
+            'media:download' &&
+        !downloadObserved.isCompleted) {
+      downloadObserved.complete();
+    }
+    return result;
   }
 }
 
@@ -179,7 +185,7 @@ void main() {
       final receiveGroups = InMemoryGroupRepository();
       final receiveMessages = InMemoryGroupMessageRepository();
       final receiveMedia = InMemoryMediaAttachmentRepository();
-      final receiveBridge = FakeBridge();
+      final receiveBridge = _DownloadObservedBridge();
       final notifications = FakeNotificationService();
       await receiveGroups.saveGroup(_group());
       for (final peerId in const ['peer-self', 'peer-a']) {
@@ -209,6 +215,7 @@ void main() {
       final events = StreamController<Map<String, dynamic>>.broadcast();
       listener.start(events.stream);
       addTearDown(() async {
+        await listener.stop();
         listener.dispose();
         await events.close();
       });
@@ -268,13 +275,17 @@ void main() {
 
       final ordinaryMessage = await receive('ordinary-received', const {});
       expect(ordinaryMessage.privateMediaPolicy, ordinary);
-      await _waitUntil(
-        () =>
-            notifications.shown.length == 1 &&
-            receiveBridge.commandLog.contains('media:download'),
-      );
+      // Persistence is emitted before notification and automatic download.
+      // Observe the actual bridge boundary; a short wall-clock poll races the
+      // asynchronous continuation when the integration sweep loads the host.
+      await receiveBridge.downloadObserved.future;
       expect(notifications.shown, hasLength(1));
-      expect(receiveBridge.commandLog, contains('media:download'));
+      expect(
+        receiveBridge.commandLog.where(
+          (command) => command == 'media:download',
+        ),
+        hasLength(1),
+      );
     },
   );
 

@@ -33,7 +33,8 @@
     "signed-audio",
     "signed-full-review",
     "notification-lock-diagnostics",
-    "strict-group-media-manifest"
+    "strict-group-media-manifest",
+    "signed-dual-stack"
   ],
   "checks": {
     "bootstrap": {
@@ -350,7 +351,7 @@
         "test/features/call/infrastructure/flutter_webrtc_build_contract_test.dart",
         "test/tool/sims/sims_manifest_test.dart"
       ],
-      "boundary": "Direct/mailbox old-generation hangup convergence/cleanup, negotiation material generation/privacy, authenticated remote ICE through the real executor and WebRTC wrapper batch limit, restart filtering and interrupted drain cleanup; native snapshot exception normalization through the real engine/executor/audio owner, bounded observation recovery, exact-call fatal dispatch, stale completion and cleanup; sustained native/engine event delivery, bounded history and coalescing, terminal failure/disconnect priority, provisional initial ICE checklist recovery within the unchanged deadline, reentrant callbacks and terminal fencing; policy-aware TURN retrieval with transient-only direct attempts, strict credential/authentication rejection, exact-call late-result fences, frozen restart policy and canonical setup/reconnect deadlines; mixed local/remote ICE policies in both directions, local SDP/candidate egress including related addresses, and selected local candidate classification; production per-call policy captured at admission for incoming/outgoing/native paths, secure privacy preference persistence and fail-closed loading, feature availability versus rollout restriction, native all/relay configuration, and settings persistence/error visibility",
+      "boundary": "Direct/mailbox old-generation hangup convergence/cleanup, negotiation material generation/privacy, authenticated remote ICE through the real executor and WebRTC wrapper batch limit, restart filtering and interrupted drain cleanup; native snapshot exception normalization through the real engine/executor/audio owner, bounded observation recovery, exact-call fatal dispatch, stale completion and cleanup; sustained native/engine event delivery, bounded history and coalescing, terminal failure/disconnect priority, provisional initial ICE checklist recovery within the unchanged deadline, reentrant callbacks and terminal fencing; policy-aware TURN retrieval with transient-only direct attempts, strict credential/authentication rejection, exact-call late-result fences, frozen restart policy and canonical setup/reconnect deadlines; mixed local/remote ICE policies in both directions, local SDP/candidate egress including related addresses, and selected local candidate classification; production per-call policy captured at admission for incoming/outgoing/native paths, secure privacy preference persistence and fail-closed loading, feature availability versus rollout restriction, native all/relay configuration, and settings persistence/error visibility; confirmed native ICE checklist classification during an existing reconnect, disconnect dispatch handoff, immutable pending terminal priority, unchanged 15-second recovery expiry and subsequent-call cleanup; selected-pair family/relay parsing preserves ambiguity, allocation versus TURN-client legs, stale observation generations and authoritative provisional/terminal failure diagnostics",
       "limitations": "Fake crypto/transports/native lifecycle; no microphone/RTP/audible audio evidence",
       "timeout_seconds": 900,
       "estimated_seconds": 3,
@@ -378,7 +379,7 @@
         "test/features/settings/presentation/widgets/app_diagnostics_settings_section_test.dart",
         "test/features/settings/presentation/widgets/call_diagnostics_settings_section_test.dart"
       ],
-      "boundary": "Closed schemas/privacy, bounded app/call recording and persistence, nonblocking bootstrap, and bounded settings previews",
+      "boundary": "Closed schemas/privacy, bounded app/call recording and persistence, nonblocking bootstrap, and bounded settings previews; local-only address-family extensions are stripped from legacy uploads with event identity preserved, malformed native observations rejected, and consent/storage failure isolated from communication results",
       "limitations": "Host tests; synthetic admission benchmarks do not measure device frame pacing or battery, and telemetry correlation alone does not prove custody/content",
       "timeout_seconds": 900,
       "estimated_seconds": null,
@@ -609,9 +610,10 @@
       "kind": "python",
       "paths": [
         "scripts/test/mknoon_checks_test.py",
-        "scripts/test/testing_inventory_test.py"
+        "scripts/test/testing_inventory_test.py",
+        "scripts/test/mknoon_ci_checks_test.py"
       ],
-      "boundary": "Selector, inventory, evidence and runner safety contracts",
+      "boundary": "Selector, inventory, runner safety and candidate-bound CI acceptance contracts",
       "timeout_seconds": 120,
       "estimated_seconds": 7,
       "requirements": [
@@ -920,7 +922,13 @@
         "previous_published_revision_verified",
         "upgrade_preserves_identity_contacts_groups_history",
         "old_to_new_message",
-        "new_to_old_message"
+        "new_to_old_message",
+        "upgrade_preserves_keys_accounts",
+        "schema_119_quiet_metadata_preserved",
+        "quiet_new_sender_old_relay_rejected_safely",
+        "quiet_old_receiver_retains_rows_for_upgrade",
+        "quiet_new_relay_new_receiver_silent_delivery",
+        "ordinary_old_new_exchange_preserved"
       ],
       "boundary": "Upgrade actual previous published binary; old/new peer interoperability using isolated history",
       "timeout_seconds": 1,
@@ -939,7 +947,14 @@
         "ended_and_released",
         "ios_idle_background_voip_call_presented",
         "ios_disabled_capability_voip_wake_completed",
-        "ios_each_required_push_callkit_report_completed"
+        "ios_each_required_push_callkit_report_completed",
+        "ios_signed_apns_environment_topic_verified",
+        "ios_idle_suspension_confirmed",
+        "ios_idle_provider_pushkit_callkit_adoption_media_correlated",
+        "ios_idle_first_attempt_retained",
+        "ios_cancel_expiry_no_stale_resurrection",
+        "ios_retired_predecessor_successor_audio_preserved",
+        "ios_apns_connection_attribution_or_unresolved_recorded"
       ],
       "boundary": "Short signed-candidate bidirectional audio and hangup; candidate includes call feature",
       "timeout_seconds": 1,
@@ -947,7 +962,7 @@
       "investigate": [
         "docs/testing/TESTING.md"
       ],
-      "limitations": "Required signed-candidate observation; cannot be satisfied by host fakes. Include an incoming call after six minutes without a VoIP push while iOS is suspended, correlating provider acceptance, device PushKit receipt and CallKit presentation; retain any initial missed ring even if a retry succeeds. Include a retained unadopted terminal followed by a new incoming call after native retention expires; confirm the old exact receipt is acknowledged without invalidating the new call or releasing its audio and timeouts. Include disabled-capability cold launch and queued/coalesced incoming VoIP pushes; every required CallKit report completion must be observed."
+      "limitations": "Required signed-candidate observation; cannot be satisfied by host fakes. Include an incoming call after six minutes without a VoIP push while iOS is suspended, correlating provider acceptance, device PushKit receipt and CallKit presentation; retain any initial missed ring even if a retry succeeds. Include a retained unadopted terminal followed by a new incoming call after native retention expires; confirm the old exact receipt is acknowledged without invalidating the new call or releasing its audio and timeouts. Include disabled-capability cold launch and queued/coalesced incoming VoIP pushes; every required CallKit report completion must be observed. Development/sandbox and production APNs are separate artifact-bound legs. Attribute the exact system courier connection from complete private native evidence, or explicitly retain unresolved attribution; DNS or another system connection cannot supply its family. Host lifecycle fixes do not prove OS push delivery."
     },
     "go-core": {
       "kind": "go",
@@ -1253,7 +1268,9 @@
         "test/features/conversation/application/verify_inbox_custody_use_case_test.dart",
         "test/features/conversation/application/drain_direct_inbox_custody_outbox_use_case_test.dart",
         "test/features/conversation/application/handle_incoming_chat_message_use_case_test.dart",
-        "test/features/push/application/background_message_handler_test.dart"
+        "test/features/push/application/background_message_handler_test.dart",
+        "test/core/database/helpers/direct_inbox_custody_outbox_db_helpers_test.dart",
+        "test/features/conversation/integration/concurrent_durable_fallback_roundtrip_test.dart"
       ],
       "boundary": "Automatic recovery older than 24 hours preserves exact message delivery and durable quiet intent; fresh/manual sends and notification history remain independent",
       "limitations": "Host Dart, SQLite and bridge contracts; Go module checks and existing Android FCM / iOS NSE native runners cover their separate boundaries. No live APNs/FCM or signed device claim.",
@@ -1266,6 +1283,89 @@
         "lib/core/database/migrations/119_quiet_message_recovery.dart"
       ],
       "inspected": true
+    },
+    "go-messaging-recovery-integration": {
+      "kind": "command",
+      "command": [
+        "go",
+        "test",
+        "-tags=integration",
+        "./integration",
+        "-run",
+        "^Test(QuietRecoveryMixedVersionDelivery|AckCustodyMixedVersionMatrix|DualStackNodeWithIPv4Relay|DialPeerViaRelayMultiAddrFailover)$",
+        "-count=1",
+        "-v"
+      ],
+      "cwd": "go-mknoon",
+      "success_marker": "--- PASS: TestQuietRecoveryMixedVersionDelivery",
+      "boundary": "Tagged native messaging compatibility and IPv4-only relay integration fixtures; complete quiet store/retrieve/ACK fallback",
+      "limitations": "Local libp2p and synthetic relay handlers. Production relay handlers/backends run in go-relay; Dart commit/display and signed-device behavior remain separate.",
+      "requirements": [
+        "go"
+      ],
+      "timeout_seconds": 300,
+      "references": [
+        "go-mknoon/integration/ack_custody_mixed_relay_test.go",
+        "go-mknoon/integration/ipv6_dual_stack_test.go"
+      ]
+    },
+    "connection-diagnostics-go": {
+      "kind": "command",
+      "command": [
+        "go",
+        "test",
+        "./node",
+        "./bridge",
+        "-run",
+        "^Test(ConnectionDiagnostic|ClassifyStreamTransport|SendMessage|R3Deadline|Inbox|ParseInbox|QuietRecovery|CallDiagnostic|AppDiagnostic)",
+        "-count=1",
+        "-v"
+      ],
+      "cwd": "go-mknoon",
+      "success_marker": "--- PASS: TestConnectionDiagnosticSendRecoveryAndAckBoundaries",
+      "boundary": "Coarse literal family parsing; operation-correlated socket failure versus established connection and actual stream; direct/circuit and observed relay leg; bounded sidecars and sink failure isolation; message ACK/deadline/recovery, durable inbox acceptance and quiet notification preservation through the mobile bridge",
+      "limitations": "Host libp2p/bridge fixtures only; circuit underlying relay sockets, native successful-dial internal attempts, TURN client sockets and APNs courier families are not inferred. Does not certify signed devices or live media.",
+      "requirements": [
+        "go"
+      ],
+      "timeout_seconds": 600,
+      "references": [
+        "go-mknoon/node/transport_label_test.go",
+        "go-mknoon/bridge/inbox_notification_policy_test.go",
+        "go-mknoon/node/deadline_contract_test.go"
+      ]
+    },
+    "signed-dual-stack": {
+      "kind": "manual",
+      "assertions": [
+        "dns_a_aaaa_recorded",
+        "listeners_and_advertisements_consistent",
+        "expected_relay_peer_authenticated",
+        "rendezvous_reservation_inbox_call_control",
+        "ipv4_only_text_and_call",
+        "dual_stack_text_and_call",
+        "native_ipv6_only_text_and_call",
+        "dns64_nat64_text_and_call",
+        "broken_ipv6_working_ipv4_text_and_call",
+        "mixed_family_text_and_call",
+        "blocked_udp_text_and_call",
+        "established_session_transition",
+        "route_bypass_excluded",
+        "turn_credentials_allocation_permission_returned_media",
+        "turn_connection_and_allocation_families_separate",
+        "configured_turn_udp_tcp_tls_results",
+        "turn_cleanup",
+        "port_443_only_limit_recorded"
+      ],
+      "boundary": "Exact signed candidate application transport and independent TURN network matrix, with observed families and authenticated content/media outcomes",
+      "limitations": "No connectivity badge, DNS answer, listening socket, host loopback fixture, selected ICE candidate family or unrelated artifact certifies these journeys. Record each network condition independently; unexercised scenarios remain incomplete. Available-target policy applies; unavailable model/OS-specific legs are N/A. Port-443-only support requires provisioned and tested control and media paths; otherwise record the limitation.",
+      "timeout_seconds": 1,
+      "estimated_seconds": null,
+      "investigate": [
+        "Network-Arch/IPV6.md",
+        "Network-Arch/IPV6-Infra-Ops.md",
+        "docs/testing/TESTING.md"
+      ]
     }
   },
   "areas": [
@@ -1311,9 +1411,11 @@
         "direct-chat",
         "small-group",
         "affected-push",
-        "provider-schema"
+        "provider-schema",
+        "affected-conversation",
+        "affected-groups"
       ],
-      "why": "Visibility, shared message events, mute and route ordering affect both conversation families"
+      "why": "Visibility, shared message events, mute and route ordering also feed direct/group projection, listeners and retry owners"
     },
     {
       "id": "identity",
@@ -1544,13 +1646,14 @@
         "tool/testing/*",
         ".agents/skills/mknoon-*/SKILL.md",
         ".github/workflows/mknoon-checks.yml",
-        ".gitignore"
+        ".gitignore",
+        "scripts/test/mknoon_ci_checks_test.py"
       ],
       "checks": [
         "workflow",
         "provider-schema"
       ],
-      "why": "Selection/report/inventory changes must preserve conservative failure semantics"
+      "why": "Selection/report/inventory and final CI acceptance must preserve complete candidate-bound execution and conservative failure semantics"
     },
     {
       "id": "shared-fixtures",
@@ -1756,7 +1859,12 @@
         "workflow",
         "provider-schema"
       ],
-      "why": "Runner/fixture changes need host consumers; changed device tests require current SIMS or explicit new mapping review"
+      "why": "Runner/fixture changes need host consumers; changed device tests require current SIMS or explicit new mapping review; the exact excluded CI unit tests execute disposable Python/Git fixtures only and remain covered by the workflow area",
+      "exclude_paths": [
+        "scripts/test/mknoon_checks_test.py",
+        "scripts/test/mknoon_ci_checks_test.py",
+        "scripts/test/testing_inventory_test.py"
+      ]
     },
     {
       "id": "localization",
@@ -1884,7 +1992,7 @@
         "production-audio-harness-contract",
         "device-audio"
       ],
-      "why": "Changes to the local audio build or driver must preserve exact disposable package ownership and real audio assertions before device execution"
+      "why": "Changes to local or explicitly configured deployed native audio proofs must preserve disposable ownership, validated per-call credentials, transport-specific media evidence and scoped cleanup; host contracts do not certify a deployed transport or signed candidate"
     },
     {
       "id": "direct-media-contact-handoff",
@@ -1988,14 +2096,81 @@
         "go-relay-server/direct_quiet_recovery*",
         "go-mknoon/node/quiet_recovery*",
         "test/core/notifications/automatic_recovery_notification_policy_test.dart",
-        "test/core/database/migrations/119_quiet_message_recovery_test.dart"
+        "test/core/database/migrations/119_quiet_message_recovery_test.dart",
+        "go-mknoon/node/node.go",
+        "go-mknoon/node/config.go",
+        "go-mknoon/node/inbox.go",
+        "go-mknoon/node/ipv6_happy_eyeballs_test.go",
+        "go-mknoon/bridge/bridge.go",
+        "go-mknoon/bridge/inbox_notification_policy_test.go",
+        "go-mknoon/bridge/nse_inbox.go",
+        "go-mknoon/bridge/nse_inbox_test.go",
+        "go-mknoon/internal/nsepush/retrieve.go",
+        "go-mknoon/integration/ack_custody_mixed_relay_test.go",
+        "go-mknoon/integration/ipv6_dual_stack_test.go",
+        "go-relay-server/inbox.go",
+        "go-relay-server/ack_custody.go",
+        "go-relay-server/backend_memory.go",
+        "go-relay-server/backend_redis.go",
+        "go-relay-server/limits.go",
+        "test/core/database/helpers/direct_inbox_custody_outbox_db_helpers_test.dart",
+        "test/features/conversation/integration/concurrent_durable_fallback_roundtrip_test.dart"
       ],
       "checks": [
         "quiet-recovery",
         "go-core",
-        "go-relay"
+        "go-relay",
+        "go-messaging-recovery-integration",
+        "migration",
+        "bridge"
       ],
       "why": "Recovery intent crosses immutable sender retries, transport, durable receiver state and notification projection"
+    },
+    {
+      "id": "connection-diagnostics",
+      "patterns": [
+        "lib/core/diagnostics/local_connection_diagnostics.dart",
+        "lib/core/bridge/go_bridge_client.dart",
+        "lib/features/call/infrastructure/call_stats_sampler.dart",
+        "lib/features/call/infrastructure/flutter_webrtc_call_engine.dart",
+        "lib/features/call/application/call_negotiation_effect_executor.dart",
+        "go-mknoon/node/connection_diagnostics.go",
+        "go-mknoon/node/transport_label_test.go",
+        "go-mknoon/node/node.go",
+        "go-mknoon/node/inbox.go",
+        "go-mknoon/bridge/connection_diagnostics.go",
+        "go-mknoon/bridge/bridge.go",
+        "go-mknoon/bridge/inbox_notification_policy_test.go"
+      ],
+      "checks": [
+        "connection-diagnostics-go",
+        "diagnostics",
+        "diagnostics-python",
+        "call-signaling",
+        "bridge",
+        "quiet-recovery"
+      ],
+      "why": "Observation-only family sidecars must preserve receiver compatibility, media readiness/failure disposition and message custody/quiet recovery. Broader existing consumer mappings are retained."
+    },
+    {
+      "id": "dual-stack-release",
+      "patterns": [
+        "go-relay-server/server_addresses*",
+        "go-relay-server/server_config.go",
+        "go-relay-server/dual_stack_application_test.go",
+        "go-relay-server/turn_credentials*",
+        "go-mknoon/integration/ipv6_dual_stack_test.go",
+        "go-mknoon/node/ipv6_happy_eyeballs_test.go",
+        "lib/core/constants/network_constants.dart"
+      ],
+      "checks": [
+        "go-relay",
+        "go-core",
+        "go-messaging-recovery-integration",
+        "quiet-recovery",
+        "signed-dual-stack"
+      ],
+      "why": "Public address admission and transport proof require authenticated application/TURN evidence for each network family, independent of APNs and signed compatibility."
     }
   ],
   "documentation_only": [
@@ -2132,9 +2307,10 @@
       "kind": "python",
       "paths": [
         "scripts/test/mknoon_checks_test.py",
-        "scripts/test/testing_inventory_test.py"
+        "scripts/test/testing_inventory_test.py",
+        "scripts/test/mknoon_ci_checks_test.py"
       ],
-      "boundary": "Selector, inventory, evidence and runner safety contracts",
+      "boundary": "Selector, inventory, runner safety and candidate-bound CI acceptance contracts",
       "timeout_seconds": 120,
       "estimated_seconds": null,
       "requirements": [
@@ -2151,7 +2327,8 @@
         "unittest",
         "-v",
         "scripts/test/mknoon_checks_test.py",
-        "scripts/test/testing_inventory_test.py"
+        "scripts/test/testing_inventory_test.py",
+        "scripts/test/mknoon_ci_checks_test.py"
       ]
     },
     {

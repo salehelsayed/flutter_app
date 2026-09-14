@@ -40,6 +40,95 @@ Map<String, dynamic> _valid(DateTime now) => {
 };
 
 void main() {
+  for (final reason in [
+    WebRtcFailureReason.transportUnavailable,
+    WebRtcFailureReason.configurationRejected,
+    WebRtcFailureReason.closed,
+    WebRtcFailureReason.other,
+  ]) {
+    _testClock('recovery retains terminal priority for $reason', (time) async {
+      final h = _Harness(time)..response = Future.value(_valid(_epoch));
+      h.start();
+      await time.settle();
+      final b = h.current;
+      b.native.connect(WebRtcTransportClass.direct);
+      await time.settle();
+      b.native.disconnect();
+      await time.settle();
+      b.native.state = WebRtcConnectionState.failed;
+      b.native.emit(reason: reason);
+      b.native.emit(reason: WebRtcFailureReason.iceConnectionFailed);
+      b.native.connect(WebRtcTransportClass.turnUdp);
+      await time.settle();
+      expect(h.coordinator.activeSession, isNull);
+      expect(h.coordinator.lastSnapshot?.endReason, CallEndReason.mediaFailed);
+      expect(b.native.restarts, 1);
+      expect(b.engine.isClosed, isTrue);
+      h.close();
+      await time.settle();
+    });
+  }
+
+  for (final snapshotFirst in [false, true]) {
+    for (final recovers in [false, true]) {
+      _testClock(
+        'reconnecting ICE checklist failure (${snapshotFirst ? 'snapshot' : 'event'} first, recovers=$recovers) keeps the original deadline',
+        (time) async {
+          final h = _Harness(time)..response = Future.value(_valid(_epoch));
+          h.start();
+          await time.settle();
+          final b = h.current;
+          b.native.connect(WebRtcTransportClass.direct);
+          await time.settle();
+          b.native.disconnect();
+          await time.settle();
+          expect(h.coordinator.activeSession?.state, CallState.reconnecting);
+          expect(b.native.restarts, 1);
+          await time.elapse(const Duration(seconds: 4));
+          b.native.state = WebRtcConnectionState.failed;
+          if (snapshotFirst) {
+            // A connected callback can overtake the native failed snapshot.
+            b.native.emit(eventState: WebRtcConnectionState.connected);
+          } else {
+            b.native.emit(reason: WebRtcFailureReason.iceConnectionFailed);
+          }
+          await time.settle();
+          expect(h.coordinator.activeSession?.state, CallState.reconnecting);
+          expect(b.engine.isClosed, isFalse);
+          expect(b.native.restarts, 1);
+          await time.elapse(const Duration(seconds: 10));
+          expect(h.coordinator.activeSession?.state, CallState.reconnecting);
+          if (recovers) {
+            b.native.connect(WebRtcTransportClass.turnTcpTls);
+            await time.elapse(const Duration(milliseconds: 250));
+            expect(h.coordinator.activeSession?.state, CallState.connected);
+            expect(b.native.restarts, 1);
+            await time.elapse(const Duration(seconds: 2));
+            expect(h.coordinator.activeSession?.state, CallState.connected);
+            h.hangup();
+          } else {
+            await time.elapse(const Duration(seconds: 1));
+            expect(h.coordinator.activeSession, isNull);
+            expect(
+              h.coordinator.lastSnapshot?.endReason,
+              CallEndReason.reconnectFailed,
+            );
+          }
+          await time.settle();
+          expect(b.engine.isClosed, isTrue);
+          h.start(id: _next);
+          await time.settle();
+          h.current.native.connect(WebRtcTransportClass.turnUdp);
+          await time.settle();
+          expect(h.coordinator.activeSession?.callId, _next);
+          expect(h.coordinator.activeSession?.state, CallState.connected);
+          h.close();
+          await time.settle();
+        },
+      );
+    }
+  }
+
   for (final policy in CallTransportPolicy.values) {
     _testClock('valid TURN preserves $policy and approved STUN', (time) async {
       final h = _Harness(time, policy: policy)
@@ -547,13 +636,16 @@ final class _Native
     emit();
   }
 
-  void emit() => controller.add(
+  void emit({
+    WebRtcConnectionState? eventState,
+    WebRtcFailureReason reason = WebRtcFailureReason.none,
+  }) => controller.add(
     WebRtcPeerConnectionEvent(
       kind: WebRtcPeerConnectionEventKind.state,
-      connectionState: state,
+      connectionState: eventState ?? state,
       transport: transport,
       quality: WebRtcQualityBand.good,
-      failureReason: WebRtcFailureReason.none,
+      failureReason: reason,
     ),
   );
   @override
@@ -566,6 +658,7 @@ final class _Native
         audioReceiveTransceiverCount: 1,
         videoTransceiverCount: 0,
         connectionState: state,
+        iceChecklistFailed: state == WebRtcConnectionState.failed,
         transport: transport,
         quality: WebRtcQualityBand.good,
         selectedPairSucceeded: true,

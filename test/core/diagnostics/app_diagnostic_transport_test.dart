@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:flutter/services.dart';
 import 'package:flutter_app/core/bridge/go_bridge_client.dart';
 import 'package:flutter_app/core/diagnostics/app_diagnostics.dart';
+import 'package:flutter_app/core/diagnostics/local_connection_diagnostics.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
@@ -98,4 +99,154 @@ void main() {
       expect(await diagnostics.exportPreview(), isNot(contains('SECRET')));
     },
   );
+  const connection = <String, Object?>{
+    'connectionStage': 'stream_opened',
+    'connectionOutcome': 'ok',
+    'addressFamily': 'ipv4',
+    'transportProtocol': 'tcp',
+    'pathClass': 'direct',
+    'observedLeg': 'endpoint_to_peer',
+    'familyFallback': 'unknown',
+  };
+
+  test(
+    'native observation admission bounds rows rejects sensitive fields and contains sink failures',
+    () {
+      final accepted = <Map<String, Object?>>[];
+      observeConnectionDiagnostics([
+        {...connection, 'address': 'PRIVATE'},
+        {...connection, 'addressFamily': '192.0.2.1'},
+        {...connection, 'transportProtocol': null},
+        'PRIVATE',
+        connection,
+      ], accepted.add);
+      expect(accepted, [connection]);
+      observeConnectionDiagnostics(List.filled(1000, connection), accepted.add);
+      expect(accepted, hasLength(13));
+      expect(
+        () => observeConnectionDiagnostics([
+          connection,
+        ], (_) => throw StateError('PRIVATE')),
+        returnsNormally,
+      );
+    },
+  );
+
+  for (final mode in ['enabled', 'disabled', 'broken storage']) {
+    test(
+      'message results and inbox acceptance stay independent of diagnostics: $mode',
+      () async {
+        final directory = await Directory.systemTemp.createTemp(
+          'connection-diag-',
+        );
+        final diagnostics = await AppDiagnostics.installForTesting(
+          directory: directory,
+          enabled: mode != 'disabled',
+          upload: (_) async => {},
+          persist: mode == 'broken storage'
+              ? (_, _) async => throw StateError('PRIVATE')
+              : null,
+        );
+        final bridge = GoBridgeClient();
+        const codec = StandardMethodCodec();
+        messenger.setMockMessageHandler(
+          'com.mknoon/go_bridge_events',
+          (_) async => codec.encodeSuccessEnvelope(null),
+        );
+        messenger.setMockMethodCallHandler(
+          channel,
+          (call) async => jsonEncode(
+            call.method == 'inboxStore'
+                ? {'ok': true, 'storeStatus': 'stored'}
+                : {
+                    'ok': true,
+                    'sent': true,
+                    'acked': false,
+                    'reply': 'PRIVATE',
+                    'connectionDiagnostics': [
+                      connection,
+                      {
+                        ...connection,
+                        'connectionStage': 'recipient_ack',
+                        'connectionOutcome': 'unknown',
+                      },
+                    ],
+                  },
+          ),
+        );
+        await bridge.initialize();
+        addTearDown(() async {
+          await diagnostics.dispose();
+          bridge.dispose();
+          await Future<void>.delayed(Duration.zero);
+          messenger.setMockMethodCallHandler(channel, null);
+          messenger.setMockMessageHandler('com.mknoon/go_bridge_events', null);
+          if (await directory.exists()) await directory.delete(recursive: true);
+        });
+        String? messageTrace;
+        await diagnostics.runWithAttempt(
+          feature: 'message',
+          body: (trace) async {
+            messageTrace = trace;
+            final sent =
+                jsonDecode(
+                      await bridge.send(
+                        jsonEncode({
+                          'cmd': 'message:send',
+                          'payload': {
+                            'peerId': 'PRIVATE',
+                            'message': 'PRIVATE',
+                          },
+                        }),
+                      ),
+                    )
+                    as Map;
+            expect(sent['ok'], isTrue);
+            expect(sent['sent'], isTrue);
+            expect(sent['acked'], isFalse);
+            final stored =
+                jsonDecode(
+                      await bridge.send(
+                        jsonEncode({
+                          'cmd': 'inbox:store',
+                          'payload': {
+                            'peerId': 'PRIVATE',
+                            'message': 'PRIVATE',
+                          },
+                        }),
+                      ),
+                    )
+                    as Map;
+            expect(stored, {'ok': true, 'storeStatus': 'stored'});
+          },
+        );
+        final events = await diagnostics.eventsForTesting();
+        if (mode == 'enabled') {
+          final stream = events.singleWhere(
+            (e) => (e['values'] as Map)['connectionStage'] == 'stream_opened',
+          );
+          expect(stream['traceId'], messageTrace);
+          expect(stream['values'], connection);
+          expect(
+            events.singleWhere((e) => e['stage'] == 'receipt')['outcome'],
+            'unknown',
+          );
+          final stored = events.singleWhere((e) => e['stage'] == 'store');
+          expect(stored['values'], {
+            'connectionStage': 'inbox_acceptance',
+            'connectionOutcome': 'ok',
+          });
+          expect(stored['values'], isNot(contains('acknowledged')));
+        } else {
+          expect(
+            events.where(
+              (e) => (e['values'] as Map).containsKey('connectionStage'),
+            ),
+            isEmpty,
+          );
+        }
+        expect(await diagnostics.exportPreview(), isNot(contains('PRIVATE')));
+      },
+    );
+  }
 }
