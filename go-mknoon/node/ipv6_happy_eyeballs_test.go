@@ -99,13 +99,32 @@ func newEstablishedPathProxy(t *testing.T, target ma.Multiaddr) *establishedPath
 }
 
 func TestSendMessage_EstablishedIPv6BlackholeRecoversWithoutRestart(t *testing.T) {
-	for _, scenario := range []string{"normal", "quiet", "ack_lost", "uncached_quiet_protocol"} {
+	for _, scenario := range []string{"normal", "quiet", "ack_lost", "uncached_quiet_protocol", "registered_stream"} {
 		t.Run(scenario, func(t *testing.T) {
 			sender := startLocalNodeForMultiRelayTest(t)
 			callback := &quietRecoveryCallback{received: make(chan map[string]interface{}, 8)}
 			receiver := New(callback)
 			callback.node = receiver
 			receiver.hermeticLocalNetworkForTests = true
+			// Identify must not advertise an unfaulted QUIC/IPv6 bypass after
+			// the sender installs the intended proxy-IPv6 / direct-IPv4 pair.
+			// The established proxy socket and its drop behavior stay unchanged.
+			receiver.newHost = func(cfg NodeConfig, opts []libp2p.Option) (host.Host, error) {
+				opts = append(opts, func(c *libp2p.Config) error {
+					originalFactory := c.AddrsFactory
+					c.AddrsFactory = func(addrs []ma.Multiaddr) []ma.Multiaddr {
+						var selected []ma.Multiaddr
+						for _, addr := range originalFactory(addrs) {
+							if ip := extractIP(addr); ip != nil && ip.To4() != nil && strings.Contains(addr.String(), "/tcp/") && !strings.Contains(addr.String(), "/ws") {
+								selected = append(selected, addr)
+							}
+						}
+						return selected
+					}
+					return nil
+				})
+				return defaultNewHost(cfg, opts)
+			}
 			if _, err := receiver.Start(NodeConfig{PrivateKeyHex: generateTestKey(t), RelayAddresses: []string{}, AutoRegister: false}); err != nil {
 				t.Fatal(err)
 			}
@@ -132,6 +151,15 @@ func TestSendMessage_EstablishedIPv6BlackholeRecoversWithoutRestart(t *testing.T
 				t.Fatalf("not established over IPv6: %v", conns)
 			}
 			original := conns[0]
+			var sibling network.Stream
+			if scenario == "registered_stream" {
+				var remote network.Stream
+				sibling, remote = sharedTraffic(t, sender.Host(), receiver.Host())
+				if sibling.Conn() != original {
+					t.Fatal("blackhole control did not use the original connection")
+				}
+				sharedProgress(t, sibling, remote, "before-blackhole")
+			}
 			sender.Host().Peerstore().ClearAddrs(pid)
 			sender.Host().Peerstore().AddAddrs(pid, []ma.Multiaddr{proxy.address, v4}, peerstore.PermanentAddrTTL)
 			quiet := scenario != "normal"
@@ -159,6 +187,15 @@ func TestSendMessage_EstablishedIPv6BlackholeRecoversWithoutRestart(t *testing.T
 			}
 			if time.Since(start) > 4500*time.Millisecond {
 				t.Fatal("command renewed its deadline")
+			}
+			if sibling != nil {
+				registered := false
+				for _, stream := range original.GetStreams() {
+					registered = registered || stream.ID() == sibling.ID()
+				}
+				if !registered || original.IsClosed() {
+					t.Fatal("retry must encounter the blackholed connection with its sibling still registered")
+				}
 			}
 			if scenario == "ack_lost" {
 				event := <-callback.received
@@ -200,6 +237,11 @@ func TestInboxStore_EstablishedIPv6BlackholeRecoversWithoutRestart(t *testing.T)
 				t.Fatal(err)
 			}
 			original := sender.Host().Network().ConnsToPeer(pid)[0]
+			sibling, remote := sharedTraffic(t, sender.Host(), relay.host)
+			if sibling.Conn() != original {
+				t.Fatal("inbox sibling used another connection")
+			}
+			sharedProgress(t, sibling, remote, "before-inbox-blackhole")
 			const wire = `{"type":"chat_message","version":"2","id":"inbox-original","encrypted":{"ciphertext":"immutable"}}`
 			store := func() (InboxStoreOutcome, error) {
 				if protected {

@@ -1421,6 +1421,33 @@
       "timeout_seconds": 600,
       "estimated_seconds": null,
       "inspected": true
+    },
+    "go-shared-connection-recovery": {
+      "kind": "command",
+      "command": [
+        "go",
+        "test",
+        "-race",
+        "./node",
+        "-run",
+        "^Test(SendConnectionRecovery_|SendMessage_(SlowCommit|EstablishedIPv6)|InboxStore_(SlowReceipt|EstablishedIPv6)|R3Deadline|QuietRecovery|DualStackUDPBlackhole|SendMessageRecovery_)",
+        "-count=1",
+        "-v"
+      ],
+      "cwd": "go-mknoon",
+      "success_marker": "--- PASS: TestSendMessage_SlowCommitPreservesSharedConnection",
+      "boundary": "Real shared TCP/yamux and QUIC streams preserve bidirectional progress across delayed committed ACKs and inbox receipts; established IPv6 socket blackholes recover on the existing retry, including registered streams and a healthy same-peer connection. Connection-bound checks coalesce within caller budgets and retain cancellation, resource, quiet and successor ownership boundaries.",
+      "limitations": "Local synthetic socket/commit fixtures and focused Go race detection; not public IPv6 reachability, signed-device execution or separate WebRTC audio.",
+      "requirements": [
+        "go"
+      ],
+      "timeout_seconds": 300,
+      "references": [
+        "go-mknoon/node/shared_connection_timeout_test.go",
+        "go-mknoon/node/send_connection_recovery_test.go",
+        "go-mknoon/node/ipv6_happy_eyeballs_test.go",
+        "go-mknoon/node/deadline_contract_test.go"
+      ]
     }
   },
   "areas": [
@@ -2276,6 +2303,30 @@
         "diagnostics-python"
       ],
       "why": "Private per-attempt APNs evidence must preserve provider routing/expiry/retries, authenticated diagnostic privacy, iOS token/journal ownership and the separate retired-predecessor fix. Native and real idle-device proof remain independent."
+    },
+    {
+      "id": "shared-connection-recovery",
+      "patterns": [
+        "go-mknoon/node/node.go",
+        "go-mknoon/node/inbox.go",
+        "go-mknoon/node/send_connection_recovery*",
+        "go-mknoon/node/shared_connection_timeout_test.go",
+        "go-mknoon/node/ipv6_happy_eyeballs_test.go"
+      ],
+      "checks": [
+        "go-shared-connection-recovery",
+        "go-messaging-recovery-integration",
+        "connection-diagnostics-go",
+        "quiet-recovery",
+        "bridge",
+        "direct-chat",
+        "offline-recovery",
+        "small-group",
+        "media-bytes",
+        "media-viewer",
+        "call-signaling"
+      ],
+      "why": "Timeout attribution affects shared message/inbox streams and other communication consumers; preserve exact bytes, committed ACKs, durable fallback and quiet intent alongside causal local transport recovery."
     }
   ],
   "documentation_only": [

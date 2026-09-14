@@ -330,6 +330,7 @@ func (n *Node) InboxStoreDetailedWithNotificationPolicy(
 	defer func() { resultValue.ConnectionDiagnostics = d.records }()
 	n.mu.RLock()
 	h := n.host
+	baseCtx := n.ctx
 	n.mu.RUnlock()
 
 	if h == nil {
@@ -346,8 +347,11 @@ func (n *Node) InboxStoreDetailedWithNotificationPolicy(
 		if timeoutMs > 0 {
 			timeout = time.Duration(timeoutMs) * time.Millisecond
 		}
-		ctx, cancel := context.WithTimeout(n.ctx, timeout)
+		ctx, cancel := context.WithTimeout(baseCtx, timeout)
 		defer cancel()
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 
 		// Ensure connected to relay
 		connectStart := time.Now()
@@ -363,14 +367,15 @@ func (n *Node) InboxStoreDetailedWithNotificationPolicy(
 		connectMs := time.Since(connectStart).Milliseconds()
 
 		streamStart := time.Now()
+		if err := n.checkSendConnections(ctx, h, relay.ID); err != nil {
+			return err
+		}
 		connections := h.Network().ConnsToPeer(relay.ID)
 		s, err := h.NewStream(ctx, relay.ID, InboxProtocol)
 		d.stream(s, err)
 		streamOpenMs := time.Since(streamStart).Milliseconds()
 		if err != nil {
-			if len(connections) == 1 {
-				n.retireTimedOutSendConnection(connections[0], err)
-			}
+			n.noteSendOpenTimeout(ctx, h, relay.ID, connections, s, err)
 			n.emitEvent("inbox:store_timing", map[string]interface{}{
 				"connectMs":    connectMs,
 				"streamOpenMs": streamOpenMs,
@@ -381,7 +386,10 @@ func (n *Node) InboxStoreDetailedWithNotificationPolicy(
 		}
 		streamOK := false
 		defer finishStream(s, &streamOK)
-		setStreamDeadline(s, timeout)
+		deadline, _ := ctx.Deadline()
+		if err := s.SetDeadline(deadline); err != nil {
+			return fmt.Errorf("set inbox deadline: %w", err)
+		}
 
 		req := inboxRequest{
 			Action:               "store",
@@ -403,7 +411,7 @@ func (n *Node) InboxStoreDetailedWithNotificationPolicy(
 
 		writeStart := time.Now()
 		if err := writeFrame(s, reqBytes); err != nil {
-			n.retireTimedOutSendConnection(s.Conn(), err)
+			n.noteSendTimeout(ctx, h, s.Conn(), err)
 			return fmt.Errorf("write request: %w", err)
 		}
 		writeMs := time.Since(writeStart).Milliseconds()
@@ -412,7 +420,7 @@ func (n *Node) InboxStoreDetailedWithNotificationPolicy(
 		respBytes, err := readFrame(s)
 		readMs := time.Since(readStart).Milliseconds()
 		if err != nil {
-			n.retireTimedOutSendConnection(s.Conn(), err)
+			n.noteSendTimeout(ctx, h, s.Conn(), err)
 			return fmt.Errorf("read response: %w", err)
 		}
 
@@ -668,37 +676,51 @@ func (n *Node) exchangeInboxRequest(
 	if len(observations) > 0 {
 		d = observations[0]
 	}
-	ctx, cancel := context.WithTimeout(n.ctx, timeout)
+	n.mu.RLock()
+	baseCtx := n.ctx
+	current := n.host == h
+	n.mu.RUnlock()
+	if !current || baseCtx == nil {
+		return nil, context.Canceled
+	}
+	ctx, cancel := context.WithTimeout(baseCtx, timeout)
 	defer cancel()
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 
 	if err := h.Connect(ctx, peer.AddrInfo{ID: relay.ID, Addrs: relay.Addrs}); err != nil {
 		d.failedDial(err)
 		return nil, fmt.Errorf("connect to relay: %w", err)
 	}
+	if err := n.checkSendConnections(ctx, h, relay.ID); err != nil {
+		return nil, err
+	}
 	connections := h.Network().ConnsToPeer(relay.ID)
 	s, err := h.NewStream(ctx, relay.ID, InboxProtocol)
 	d.stream(s, err)
 	if err != nil {
-		if len(connections) == 1 {
-			n.retireTimedOutSendConnection(connections[0], err)
-		}
+		n.noteSendOpenTimeout(ctx, h, relay.ID, connections, s, err)
 		return nil, fmt.Errorf("open inbox stream: %w", err)
 	}
 	streamOK := false
 	defer finishStream(s, &streamOK)
-	setStreamDeadline(s, timeout)
+	deadline, _ := ctx.Deadline()
+	if err := s.SetDeadline(deadline); err != nil {
+		return nil, fmt.Errorf("set inbox deadline: %w", err)
+	}
 
 	reqBytes, err := json.Marshal(req)
 	if err != nil {
 		return nil, fmt.Errorf("marshal request: %w", err)
 	}
 	if err := writeFrame(s, reqBytes); err != nil {
-		n.retireTimedOutSendConnection(s.Conn(), err)
+		n.noteSendTimeout(ctx, h, s.Conn(), err)
 		return nil, fmt.Errorf("write request: %w", err)
 	}
 	respBytes, err := readFrame(s)
 	if err != nil {
-		n.retireTimedOutSendConnection(s.Conn(), err)
+		n.noteSendTimeout(ctx, h, s.Conn(), err)
 		return nil, fmt.Errorf("read response: %w", err)
 	}
 	streamOK = true
