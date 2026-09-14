@@ -124,6 +124,8 @@ type Node struct {
 	pendingConfirmsMu            sync.Mutex
 	pendingDirectConfirms        map[string]chan directConfirmResult
 	directConfirmTimeoutOverride time.Duration // test seam
+	sendConnectionsMu            sync.Mutex
+	sendConnections              map[network.Conn]*sendConnectionCheck
 
 	// NET-REL-02 Option A test seams (instrument-only).
 	// holePunchTracerForTests injects a test-controlled holepunch.EventTracer;
@@ -643,6 +645,9 @@ func (n *Node) Stop() error {
 	if n.cancel != nil {
 		n.cancel()
 	}
+	n.sendConnectionsMu.Lock()
+	n.sendConnections = nil
+	n.sendConnectionsMu.Unlock()
 	if n.host != nil {
 		// FDC-12: deregister the session Notifiee before closing the host so no
 		// re-point fires after Stop (host.Close() also tears down notifiees, but
@@ -1544,6 +1549,9 @@ func (n *Node) DisconnectPeer(peerIdStr string) error {
 type quietRecoveryContextKey struct{}
 
 func (n *Node) openChatStream(ctx context.Context, h host.Host, pid peer.ID) (network.Stream, error) {
+	if err := n.checkSendConnections(ctx, h, pid); err != nil {
+		return nil, err
+	}
 	connections := h.Network().ConnsToPeer(pid)
 	var s network.Stream
 	var err error
@@ -1556,30 +1564,16 @@ func (n *Node) openChatStream(ctx context.Context, h host.Host, pid peer.ID) (ne
 		s, err = h.NewStream(ctx, pid, ChatProtocol)
 	}
 	diagnosticsFromContext(ctx).stream(s, err)
-	// NewStream hides its selected connection when identify/negotiation fails.
-	// Attribute a timeout only when there was exactly one established candidate;
-	// never close every connection to guess which one failed.
-	if err != nil && len(connections) == 1 {
-		n.retireTimedOutSendConnection(connections[0], err)
-	}
+	n.noteSendOpenTimeout(ctx, h, pid, connections, s, err)
 	return s, err
-}
-
-func (n *Node) retireTimedOutSendConnection(conn network.Conn, err error) {
-	if conn == nil || err == nil || (n.ctx != nil && n.ctx.Err() != nil) {
-		return
-	}
-	var timeout interface{ Timeout() bool }
-	if errors.Is(err, context.DeadlineExceeded) || (errors.As(err, &timeout) && timeout.Timeout()) {
-		// A stream reset alone leaves a silently broken multiplexed connection
-		// reusable forever. Retire this socket, retaining all peerstore addresses
-		// and healthy sibling connections for the existing recovery/retry owner.
-		_ = conn.Close()
-	}
 }
 
 func isRetryableChatStreamOpenError(err error) bool {
 	if err == nil {
+		return false
+	}
+	if errors.Is(err, context.Canceled) || errors.Is(err, network.ErrResourceLimitExceeded) ||
+		errors.Is(err, network.ErrResourceScopeClosed) || errors.Is(err, network.ErrLimitedConn) {
 		return false
 	}
 	if errors.Is(err, context.DeadlineExceeded) {
@@ -1797,6 +1791,7 @@ func (n *Node) SendMessageWithNotificationPolicy(peerIdStr string, message strin
 	defer func() { resultValue.ConnectionDiagnostics = d.records }()
 	n.mu.RLock()
 	h := n.host
+	baseCtx := n.ctx
 	n.mu.RUnlock()
 
 	if h == nil {
@@ -1826,7 +1821,7 @@ func (n *Node) SendMessageWithNotificationPolicy(peerIdStr string, message strin
 		)
 	}
 
-	commandCtx, cancelCommand := context.WithDeadline(n.ctx, deadlines.command)
+	commandCtx, cancelCommand := context.WithDeadline(baseCtx, deadlines.command)
 	defer cancelCommand()
 	commandCtx = context.WithValue(commandCtx, connectionDiagnosticsKey{}, d)
 	if quietRecovery {
@@ -1867,7 +1862,7 @@ func (n *Node) SendMessageWithNotificationPolicy(peerIdStr string, message strin
 	writeStart := time.Now()
 	if err := writeFrame(s, messageBytes); err != nil {
 		_ = s.Reset()
-		n.retireTimedOutSendConnection(s.Conn(), err)
+		n.noteSendTimeout(commandCtx, h, s.Conn(), err)
 		return SendMessageResult{StreamOpenMs: streamOpenMs}, fmt.Errorf("write message: %w", err)
 	}
 	writeCompletedAt := n.sendNow()
@@ -1892,7 +1887,7 @@ func (n *Node) SendMessageWithNotificationPolicy(peerIdStr string, message strin
 	}
 	if err := s.CloseWrite(); err != nil {
 		_ = s.Reset()
-		n.retireTimedOutSendConnection(s.Conn(), err)
+		n.noteSendTimeout(commandCtx, h, s.Conn(), err)
 		return writtenResult, nil
 	}
 
@@ -1903,7 +1898,7 @@ func (n *Node) SendMessageWithNotificationPolicy(peerIdStr string, message strin
 	if err != nil {
 		// Message was written but ACK read failed
 		_ = s.Reset()
-		n.retireTimedOutSendConnection(s.Conn(), err)
+		n.noteSendTimeout(commandCtx, h, s.Conn(), err)
 		writtenResult.AckWaitMs = ackWaitMs
 		return writtenResult, nil
 	}
@@ -1927,8 +1922,7 @@ func (n *Node) SendMessageWithNotificationPolicy(peerIdStr string, message strin
 
 // SendMessageWithTimeout sends a message with explicit timeout enforcement
 // and stream deadline management. On error after NewStream succeeds, the
-// stream is Reset() instead of Close() to signal the transport that the
-// connection may be unhealthy.
+// operation's stream is reset; this does not establish connection liveness.
 func (n *Node) SendMessageWithTimeout(peerIdStr string, message string, timeoutMs int) (string, error) {
 	n.mu.RLock()
 	h := n.host
@@ -1958,7 +1952,7 @@ func (n *Node) SendMessageWithTimeout(peerIdStr string, message string, timeoutM
 
 	// Write message using 4-byte BE framing.
 	if err := writeFrame(s, []byte(message)); err != nil {
-		s.Reset() // signal unhealthy transport
+		s.Reset()
 		return "", fmt.Errorf("write message: %w", err)
 	}
 

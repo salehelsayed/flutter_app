@@ -887,15 +887,51 @@ visible and cannot become an ordinary first-attempt PASS.
   A socket-scoped loopback proxy first delivered over IPv6, then discarded
   traffic without FIN/RST. Repeated chat and inbox sends remained trapped on
   that connection after stream deadlines; resetting only the stream did not
-  retire the multiplexed connection. Send failure handling now retires the
-  specific timed-out connection while retaining peerstore candidates and
-  healthy siblings. Hidden stream-open failures are attributed only when one
-  established connection was available; capability rejection and cancellation
-  do not justify closing a healthy connection. The existing retry owner and
-  operation/committed-ACK deadlines remain in charge. Native fixtures observe
+  retire the multiplexed connection. **The original timeout-only retirement
+  decision is superseded:** a later source-level regression reproduced an ACK
+  read deadline closing a healthy shared connection and resetting independent
+  traffic. Ordinary/quiet direct sends and ordinary/protected inbox receipts
+  all failed before the repair. This is controlled local evidence, not a
+  production incident attribution. The committed-message fixture uses the
+  existing receiver timeout override to hold application commit past the
+  unchanged sender ACK reserve, and resolves confirmation only after its
+  synthetic file commit. Production receipt/confirmation timing is unchanged.
+  TCP/yamux and QUIC fixtures assert both hosts' exact connection identity,
+  bidirectional sibling bytes before/during/after the timeout, no recipient
+  ACK, and a later ordinary send on the original connection.
+  A timeout now resets only its stream and marks its connection for the next
+  existing retry. That retry coalesces a connection-bound multistream handshake
+  within its current budget; it never uses peer-level ping to select another
+  connection. Any returned negotiation bytes (including unsupported/partial
+  responses) preserve the connection. Only an admitted independent stream with
+  a completely written request and no response through its bounded deadline
+  permits retirement. Protocol resource admission is also enforced; partial
+  writes remain inconclusive. Stream admission/resource rejection, resets,
+  cancellation and expired admission do not establish dead transport. A canceled inconclusive
+  check may retain an idle suspect for a later retry; no background work is
+  retained, and Stop clears the state. Hidden stream-open failures only mark
+  an unchanged sole candidate, never close an earlier snapshot. Exact host and
+  connection ownership fence shutdown and successors. Message command and
+  committed-ACK deadlines remain unchanged; inbox connect/check/I/O share the
+  existing attempt deadline instead of renewing I/O time after a check.
+  A coalesced waiter also observes its own half-budget check deadline, leaving
+  its I/O reserve even when another operation owns a longer check; the owner
+  retains the single probe. A gated real-connection regression fails when that
+  waiter is allowed to consume its entire command budget.
+  Native fixtures observe
   selected IPv6 before the fault and selected IPv4 on the subsequent attempt
   without restarting either node, including quiet sends, uncached negotiation,
-  ACK loss after receive and relay custody. A UDP blackhole also preserves TCP
+  ACK loss after receive, relay custody and an open stream still registered on
+  the dead connection. A separate same-peer healthy connection remains usable
+  through concurrent retirement checks. A no-retirement mutation stays trapped
+  on the established IPv6 connection, preserving the need for recovery.
+  Identify advertisements in this fixture are restricted to its intended IPv4
+  target so an unfaulted advertised IPv6/QUIC route cannot satisfy fallback.
+  The original drop conditions and proxy socket are retained. Initial failing
+  assertions and fixture diagnostics, focused race checks and the explicit-base
+  change selection are retained in ignored
+  `.codex-test-logs/shared-connection-recovery/`.
+  A UDP blackhole also preserves TCP
   and TLS WebSocket messaging, with the selected address observed and a
   fixture-local trusted certificate for WSS. Dart integration separately proves
   one display identity after ACK loss and inbox fallback, plus retained failure
@@ -906,6 +942,9 @@ visible and cannot become an ordinary first-attempt PASS.
   default Go 1.27 QUIC incompatibility, and default Flutter 3.41.4 below the
   repository SDK floor) remain in the evidence root. Use the repository's Go
   1.25.0 and Flutter 3.47.2 toolchains, without changing dependency pins.
+  The check wrapper's toolchain header observes the ambient `go version`, while
+  `execute_plan` pins child checks with `GOTOOLCHAIN=go1.25.0`; retain explicit
+  pinned runtime evidence when the ambient header reports another version.
 - **Voice-upload incident boundary:** a 2026-09-10 iPhone incident showed
   “Uploading media” from about 18:56 until 19:10 Berlin. The relay received only
   131,072 of 670,610 bytes before a stream reset; the phone then disconnected
