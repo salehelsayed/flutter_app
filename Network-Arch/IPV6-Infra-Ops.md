@@ -14,11 +14,13 @@ then-local `origin/main`. Four later commits are preserved. That comparison
 is **not** a verified previous published revision. Current application version
 in source is `1.0.1+119`; database schema 119 is a separate identity.
 
-Only repository edits, local builds, isolated tests and read-only operational
-inspection are authorized. No DNS/firewall changes, service reload/restart,
-credential rotation, publication or deployment were executed. The user also
-authorized creating a new local signed candidate; build number 120 is used for
-that candidate without claiming it is available or unused in a store.
+The initial review authorized repository edits, local builds, isolated tests
+and read-only operational inspection. The user subsequently authorized the
+local signed candidate (build 120, with no store-availability claim), source
+commit/push/merge, and then relay redeployment. PR #3 merged as
+`74ecbafeec31cf92c5efd1137f9feac85b2a855b`; that exact clean source was deployed
+on September 14 as recorded below. DNS, firewall, credentials, nginx, coturn and
+app distribution were not changed by this deployment.
 
 Private/raw run evidence is retained in ignored
 `.codex-test-logs/dual-stack-priority4/`. `initial-identity.json` records the clean
@@ -28,15 +30,16 @@ are replaced. Artifact presence or a version number is not distribution proof.
 
 ## Active configuration owners and current observations
 
-These are read-only observations collected September 14 (Berlin), September 13
-22:54 UTC onward. They are dated observations, not continuous monitoring or
-proof that the deployed source equals this checkout.
+Observations began September 13 at 22:54 UTC (September 14 Berlin). The relay
+process row includes the subsequent authorized September 14 deployment.
+These are dated observations, not continuous monitoring; source identity is
+established by the deployment receipt and running executable digest.
 
 | Boundary | Observation and owner | What it establishes |
 | --- | --- | --- |
 | DNS | `mknoun.xyz` A `13.60.15.36`, TTL 3600; AAAA `2a05:d016:c4d:7100:ec85:94ed:b90d:e20`, TTL 600 | Configured DNS only |
-| Relay process | `/etc/systemd/system/relay-server.service`; `/usr/local/bin/relay-server`; active since September 12 15:15:15 UTC | Running v1.10.7, binary SHA-256 `3b943a329c0ed9cb4ed3401bfddc5b42bf94707fab054bd9ec40d402016c9873`; not the exact candidate source |
-| Relay environment | Base `/etc/mknoon/relay-server.env`; IPv6 drop-in `/etc/systemd/system/relay-server.service.d/60-ipv6.conf` loads `/etc/mknoon/relay-ipv6.env` | Runtime `RELAY_SERVER_IP6` equals AAAA and DNS IPv6 opt-in is true; backend Redis |
+| Relay process | `/etc/systemd/system/relay-server.service`; `/usr/local/bin/relay-server`; active since September 14 11:34:32 UTC | Source `74ecbafeec31cf92c5efd1137f9feac85b2a855b`, running executable SHA-256 `7e8927194308e91f9bab78098cbe2ff9d7db1839341daa7ef02b9fc6c036aa2b`; version label remains v1.10.7 |
+| Relay environment | Base `/etc/mknoon/relay-server.env`; IPv6 drop-in `/etc/systemd/system/relay-server.service.d/60-ipv6.conf` loads `/etc/mknoon/relay-ipv6.env`; existing `app-diagnostics.conf` drop-in preserved | Runtime `RELAY_SERVER_IP6` equals AAAA and DNS IPv6 opt-in is true; backend Redis; all active configuration hashes unchanged by redeployment |
 | Relay sockets | IPv4 plus exact configured IPv6: TCP/WS 4000, raw TCP 4005, UDP/QUIC 4002 | Bound listeners, independent of cloud ingress |
 | nginx | `/etc/nginx/sites-enabled/mknoun.xyz`; certificate under `/etc/letsencrypt/live/mknoun.xyz/`; configuration test passed | IPv4/IPv6 WSS 4001 proxies to `http://127.0.0.1:4000`; HTTPS 443 also listens; that does not make 443 a TURN endpoint |
 | coturn | `/usr/lib/systemd/system/coturn.service`, `/etc/turnserver.conf`; TLS files under `/etc/coturn/tls/` | IPv4 and IPv6 UDP/TCP 3478, TLS 5349; allocation range 49152–50175 |
@@ -72,16 +75,18 @@ not every port in that range.
 
 The public probes use fresh disposable libp2p identities with no registered push
 tokens. They authenticate the expected peer
-`12D3KooWGMYMmN1RGUYjWaSV6P3XtnBjwnosnJGNMnttfVCRnd6g`, pin one endpoint/family,
-request reservation and read only their own empty inbox/call mailbox. TURN
-credentials are fetched over that authenticated stream. Public empty reads do
-not prove a text exchange or a call. Local fixtures perform the mutating
-custody/retrieval and call-control assertions without using user accounts.
+`12D3KooWGMYMmN1RGUYjWaSV6P3XtnBjwnosnJGNMnttfVCRnd6g` and pin one endpoint/family.
+The initial probes exercised reservations, empty mailbox reads and TURN
+credentials. The deployment follow-up additionally exchanged synthetic message
+and call-control bytes through production handlers, retrieved and acknowledged
+them, tested legacy-reader quiet retention, and unregistered its rendezvous and
+wake authority. These isolated generated identities are not user accounts;
+opaque byte exchange is not phone display, audible media or APNs proof.
 
 | Scenario or endpoint | Evidence | Remaining boundary |
 | --- | --- | --- |
-| Public IPv4 TCP 4005, WSS 4001, QUIC 4002 | Current peer authentication, reservation, empty inbox/call retrieval and credential responses pass; `public-relay.jsonl` | Signed-client content/media |
-| Public IPv6 TCP 4005, WSS 4001, QUIC 4002 | Same current checks pass with actual IPv6 connections and normal WSS certificate validation | Native IPv6-only access-network and signed-client content/media |
+| Public IPv4 TCP 4005, WSS 4001, QUIC 4002 | After redeployment, authenticated reservations, signed rendezvous, ordinary/quiet custody bytes, legacy-reader retention, call-control exchange, ACK cleanup and fresh credentials pass in both mixed-family directions; `deploy-20260914T1123Z-74ecbafe/public-application-matrix.jsonl` | Signed-client content/media |
+| Public IPv6 TCP 4005, WSS 4001, QUIC 4002 | Same deployment checks pass with actual IPv6 connections and normal WSS certificate validation | Native IPv6-only access-network and signed-client content/media |
 | IPv4-only relay compatibility | Current tagged Go fixture passed with preserved `/dns/` client defaults | Whole-device IPv4-only network journey |
 | Healthy dual-stack and mixed-family peers | Production-handler socket fixture passes IPv4/IPv4, IPv6/IPv6 and both mixed directions on TCP/WS/QUIC | Signed peers and native WebRTC media on the requested networks |
 | Broken IPv6 with working IPv4 | Current native socket fault run passed failed handshakes and established chat/inbox path retirement | Network-wide outage and exact signed candidate |
@@ -90,6 +95,7 @@ custody/retrieval and call-control assertions without using user accounts.
 | Native IPv6-only access network | No authorized isolated network established for this run | Unverified, distinct from IPv6 loopback/public sockets on a dual-stack Mac |
 | DNS64/NAT64 | No authorized isolated DNS64/NAT64 network established | Unverified; do not substitute AAAA, `/dns/`, or direct IPv6 success |
 | TURN control/allocation matrix | `turn-matrix.json` records UDP/TCP/TLS, independently requested connection/allocation families, permissions, exact returned bytes and Refresh(0) cleanup | Initial IPv4 UDP failures remain. Longer fresh diagnostics returned 10/11 payloads before timeout for IPv4 allocation and 100/100 for IPv6 allocation, with cleanup. The narrow server capture saw ten ChannelData frames each way in the failed case; upstream loss versus NAT remapping remains unresolved. IPv6 UDP and all TCP/TLS initial cases returned 100 exact payloads each; host success is not native TLS/RTP/audio proof |
+| TURN after relay redeployment | `deploy-20260914T1123Z-74ecbafe/turn-matrix.json`: fresh validated credentials, UDP/TCP/TLS with IPv4 control/IPv4 allocation and IPv6 control/IPv6 allocation all pass; 100 exact bidirectional payloads per case, permission/channel creation, authenticated responses and all 12 allocations released | Host sockets bound to Wi-Fi; TLS uses normal hostname/CA validation. This six-case smoke does not rerun cross-family allocations or supersede retained intermittent UDP failures, native TLS failure, signed-device or audible-media requirements |
 | Current Android native UDP and TCP | Each transport passed all eight policy/direction cases and their restarts on Pixel/emulator: 32 endpoint receipts, DTLS and advancing bidirectional RTP, 16 fresh credential requests | Disposable debug fixture with isolated USB signaling broker; TURN media was not USB-forwarded. No production signaling, audible quality, signed-device or network-wide route-isolation claim |
 | Current Android native TLS | Ordinary direct cases passed; first protected `all-relayOnly-0` case failed ICE gathering/exchange with no selected pair despite fresh validated credentials | Host TLS success does not certify this native dependency. Both Flutter drivers exited zero, but the existing harness correctly returned FAIL from endpoint receipts |
 | Full application call on isolated IPv4 fixtures | Existing production-call adapter/SIMS passed 27 assertions on the Pixel/emulator pair: fresh accounts/contacts, local production relay and coturn, semantic Start/native Answer, both call surfaces, per-endpoint RTP, known-Opus oracle, controls and cleanup | Separate source/debug artifact. The host oracle proves exact synthetic audio bytes; phone RTP and UI do not establish human-audible quality, signed distribution behavior or background APNs |
@@ -275,31 +281,67 @@ output in `native-ipv6-faults.log`. Full per-check commands/results are in
 blocked on the missing published baseline rather than substituting the review
 base. No full suite was repeated after these focused diagnostics.
 
-## Demonstrated integration gap: quiet protocol admission
+## Quiet protocol admission: initial gap and completed relay deployment
 
 A fresh authenticated, deliberately incomplete request (no recipient or payload,
 therefore no stored row or push) returned `Unknown action: store_quiet_v1` and
-`Unknown action: store_custody_quiet_v1` from the current deployed relay.
-`public-quiet-admission.jsonl` preserves that response. The deployed v1.10.7 has
-earlier quiet support, but its version label does not certify the new action-level
-contract now present in this checkout. New clients must retain these failed
+`Unknown action: store_custody_quiet_v1` from the relay before redeployment.
+`public-quiet-admission.jsonl` preserves that response. That earlier v1.10.7 had
+quiet support, but its version label did not certify the new action-level
+contract. New clients must retain these failed
 recovery obligations until a compatible relay is available; they must not retry
 the same automatic quiet send through an old action that drops the sidecar.
 
-A relay update containing the current `inbox.go`, `limits.go`, quiet policy and
-backend changes is therefore required for complete new-client quiet delivery.
-The repository patch and local candidate relay binary are reviewable inputs;
-no update was deployed. Validate ordinary traffic and both quiet actions on an
-isolated endpoint before staged rollout. Preserve the actual current binary and
-configuration for rollback. An older relay rollback restores ordinary service
-but cannot complete new quiet obligations; clients must retain them for later
-safe delivery. Do not erase them or loosen old/new protocol admission to make a
-rollback appear complete.
+The user-authorized relay-only update completed September 14 at 11:34:32 UTC.
+Go 1.25.0 built clean merge commit `74ecbafeec31cf92c5efd1137f9feac85b2a855b`
+for Linux/amd64 with CGO disabled, `-trimpath`, and
+`-X main.callDiagnosticBuild=74ecbafeec31cf92c5efd1137f9feac85b2a855b`.
+The staged file and running process both have SHA-256
+`7e8927194308e91f9bab78098cbe2ff9d7db1839341daa7ef02b9fc6c036aa2b`.
+The unchanged v1.10.7 label alone cannot distinguish these binaries.
 
-## Staged operational changes and rollback — not executed
+The existing `go-relay` selection passed 1,286 cases with no failures/skips;
+the diagnostic subset leaves other release checks `NOT RUN`. The exact Linux
+binary also started and shut down cleanly in an existing, network-isolated
+Docker fixture with disposable memory storage. Production validation then
+passed all six TCP/WSS/QUIC mixed-family pairings, including both quiet actions,
+ordinary traffic, signed rendezvous/reservations, authenticated sender/byte
+preservation, old-reader retention and call-control store/retrieve/ACK. Existing
+ordinary and protected test rows survived the restart and were acknowledged;
+Redis's process identity, relay identity/configuration and IPv4/IPv6 listeners
+were preserved. nginx and coturn process identities were unchanged.
+
+The first deployment attempt automatically restored the old binary because a
+three-second log guard expired before initialization emitted readiness. That
+failure is retained; the old relay's subsequent startup took about 24 seconds.
+The corrected guard waits up to 60 seconds for the expected peer and durable
+backend summary from the current PID, verifies the executable digest and follows
+with authenticated public requests. No service initialization error was observed.
+The initial retention probe also assumed one legacy row; the protected row's
+compatibility shadow correctly made two. The corrected probe checks both exact
+owned rows, with the failed fixture receipt retained.
+
+Private evidence is under `deploy-20260914T1123Z-74ecbafe/` inside the existing
+ignored evidence root: `candidate.json`, `relay-checks/results.json`,
+`before.json`, `after.json`, `activation-attempt2.log`, `retention-after.jsonl`
+and `public-application-matrix.jsonl`. The root-only rollback directory on the
+relay is `/var/backups/mknoon/relay-20260914T1123Z-74ecbafe-attempt2`.
+It preserves the previous binary (SHA-256
+`3b943a329c0ed9cb4ed3401bfddc5b42bf94707fab054bd9ec40d402016c9873`), unit,
+drop-ins and environment files. Its `rollback.sh` verifies and atomically
+restores only that binary and restarts only `relay-server`; Redis and configuration
+are left intact. The first attempt exercised this same rollback operation.
+
+An older relay rollback restores ordinary service but cannot complete new quiet
+obligations; clients must retain them for later safe delivery. Do not erase them
+or loosen old/new protocol admission to make a rollback appear complete.
+This deployment does not establish signed-client behavior, audible calls,
+previous-published-build compatibility or a fix for sandbox APNs idle misses.
+
+## Remaining operational changes and rollback boundaries
 
 No duplicate IPv6 activation is proposed: current public TCP/WSS/QUIC paths are
-working. The quiet protocol update above is a demonstrated integration gap.
+working. The quiet protocol admission gap was closed by the relay update above.
 Current native TURN/TLS media still fails. A fresh September 14 chain check
 against the pinned native roots also fails at ISRG Root X2. Adding that public
 root to a temporary verifier input passes; neither the server chain nor the
@@ -332,8 +374,9 @@ coturn endpoint and the existing native TLS allocation/protected bidirectional
 media matrix, including IPv4 preservation, before promoting certificate paths
 under the active coturn unit. Save the current certificate/key paths and bytes;
 rollback restores them and accounts for allocations lost on a coturn restart.
-No certificate issuance, key replacement, service reload/restart or dependency
-upgrade was performed. Retain working TURN UDP/TCP alternatives throughout.
+No certificate issuance, key replacement, coturn reload/restart or native
+dependency upgrade was performed. Retain working TURN UDP/TCP alternatives
+throughout.
 
 For a future authorized relay/configuration change:
 

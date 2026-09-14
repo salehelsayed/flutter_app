@@ -619,12 +619,21 @@ visible and cannot become an ordinary first-attempt PASS.
   September 14 read-only public probes separately authenticated the expected
   relay on IPv4/IPv6 TCP 4005, WSS 4001 and QUIC 4002, acquired reservations and
   received their own empty inbox/call mailbox and credential responses. The
-  active relay executable is a separately hashed v1.10.7; current client-source
-  compatibility is not certified by that version label. A fresh malformed
-  admission probe (no recipient/payload and no stored row) confirmed the deployed
-  relay rejects both new quiet actions as unknown. Current clients retain the
-  obligation safely, but completing quiet recovery requires the compatible relay
-  source; a version label or earlier relay-only quiet activation is insufficient.
+  initial relay executable was a separately hashed v1.10.7. A malformed admission
+  probe (no recipient/payload and no stored row) confirmed that it rejected both
+  new quiet actions as unknown; that failure remains recorded. The subsequently
+  authorized relay deployment uses clean merge `74ecbafeec31cf92c5efd1137f9feac85b2a855b`
+  and running binary SHA-256
+  `7e8927194308e91f9bab78098cbe2ff9d7db1839341daa7ef02b9fc6c036aa2b`.
+  Six public TCP/WSS/QUIC mixed-family cases passed signed rendezvous,
+  reservations, ordinary and both quiet store actions, legacy-reader retention,
+  sender/byte preservation, call-control exchange and ACK cleanup using fresh
+  identities without push tokens. Ordinary and protected test rows survived the
+  relay restart; Redis, identity/configuration and listeners were preserved.
+  The first three-second readiness guard triggered a rollback before startup
+  finished. The corrected guard checks the current PID's peer/backend summary
+  within 60 seconds, then verifies public authenticated requests. A version label
+  or successful relay-only activation remains insufficient for client behavior.
   Runtime owners are recorded in `Network-Arch/IPV6-Infra-Ops.md`; historical
   repair scripts are not canonical deployment inputs. Current DNS/listeners do not establish packet
   delivery, and public empty reads do not establish text/call success.
@@ -644,7 +653,13 @@ visible and cannot become an ordinary first-attempt PASS.
   in the failed case; it cannot distinguish upstream loss from a changed NAT
   mapping outside that capture filter. No server/application fault is inferred
   from that observation alone. These first failures remain visible alongside
-  the diagnostic reruns. Host TLS success does not supersede
+  the diagnostic reruns. After the authorized relay update, six host smoke cases
+  passed UDP/TCP/TLS with IPv4 control/IPv4 allocation and IPv6 control/IPv6
+  allocation: fresh validated credentials, permissions/channels, authenticated
+  responses, 100 exact returned payloads each and all 12 allocations released.
+  Those receipts are in `dual-stack-priority4/deploy-20260914T1123Z-74ecbafe/`;
+  they do not rerun cross-family allocations or erase earlier UDP failures.
+  Host TLS success does not supersede
   the separate pinned Android native TLS trust failure below. Port-443-only
   calling remains unsupported by the observed credential URLs/control endpoint.
   Evidence is in `.codex-test-logs/dual-stack-priority4/`; network scenarios,
