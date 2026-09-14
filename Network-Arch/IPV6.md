@@ -1,4 +1,57 @@
-# IPv6 Dual-Stack Support — TDD Implementation Plan
+# IPv4/IPv6 transport — implementation and validation
+
+## Current implementation (2026-09-14)
+
+The IPv4-only baseline below is **historical and superseded**. Current source
+uses dual-stack client listeners and `/dns/` defaults in
+`go-mknoon/node/config.go`, `lib/core/bridge/p2p_bridge_client.dart` and
+`lib/core/constants/network_constants.dart`. Dart passes its selected addresses
+to Go; `MKNOON_RELAY_ADDRESSES` and explicit startup arguments can override the
+defaults. Inspect the actual build arguments and installed artifact before
+claiming those defaults were used. A `/dns/` address permits A and AAAA resolution;
+it does not certify a working route, a particular selection order or a bounded
+fallback on every network.
+
+The relay already implements opt-in IPv6 in
+`go-relay-server/server_addresses.go`, `server_config.go` and `main.go`:
+
+- IPv4 listeners and advertisements remain present.
+- `RELAY_SERVER_IP6` must be an assigned, public native IPv6 address. The relay
+  binds that exact address for TCP, WS and QUIC. Reserved, private, mapped,
+  zoned, unspecified and contradictory DNS-only configurations are rejected.
+- `RELAY_SERVER_DNS_IPV6=true` additionally advertises `/dns6/` WSS/QUIC. It is
+  an operator assertion about DNS/proxy readiness, not a live DNS/TLS probe.
+- Missing opted-in IPv6 listeners suppress IPv6 advertisements and make startup
+  fail. IPv4 rollback therefore requires restoring the previous working process
+  configuration/binary; it is not a promise that a failed replacement remains up.
+
+Native tests cover configured listeners, filtering, failed IPv6 dials and loss
+of an established IPv6 connection, followed by IPv4 recovery without restarting
+the nodes. `go-relay-server/dual_stack_application_test.go` additionally binds
+each peer to one relay address and exercises all four family pairings over TCP,
+WS and QUIC with the production rendezvous, reservation, Redis-backed inbox and
+call-control handlers. It verifies exact quiet bytes, authenticated sender, old
+reader exclusion, retrieval and ACK. These are host socket/protocol fixtures,
+not signed-device text, audible calling, NAT64 or public-network proof.
+
+The reviewed comparison base is
+`ad3529a041528c07dd6714a98c0f70fefeb2366b`; the intended checkout was clean
+`8e6a569b4b1805249638ceea31c7995ef707b50f`, with four subsequent commits retained.
+The September 14 validation patch adds tests/evidence definitions and corrects
+these documents. Current observations, exact command receipts, candidate status,
+the availability-bounded matrix, APNs boundary and operational instructions are
+in [IPV6-Infra-Ops.md](IPV6-Infra-Ops.md). Verified testing limitations live in
+[TESTING.md](../docs/testing/TESTING.md); executable selection remains in
+`tool/testing/selection.json`.
+
+## Historical implementation plan (superseded)
+
+The remainder preserves the original client implementation proposal and its
+then-current IPv4-only baseline. Its line numbers, future-tense instructions,
+full-suite cadence and claims of universal fallback/harmless activation are not
+current implementation or release instructions. Use the current source and
+validation boundaries above.
+
 
 ## Why IPv6?
 
@@ -10,9 +63,9 @@ IPv6 addresses are **globally routable** — every device gets a public address 
 - **Mobile-native**: Many mobile carriers already assign IPv6 (T-Mobile, most carriers in India, parts of Europe/Asia)
 - **Future-proof**: IPv4 exhaustion is real; IPv6 adoption accelerates every year
 
-## Current State
+## Historical IPv4-only baseline (superseded)
 
-The node **only listens on IPv4**:
+At the historical baseline, the node **only listened on IPv4**:
 
 ```go
 // node.go:182-186
@@ -23,7 +76,7 @@ listenAddrs := []string{
 }
 ```
 
-The relay server also **only listens and announces IPv4**:
+At that baseline, the relay server also **only listened and announced IPv4**:
 
 ```go
 // go-relay-server/main.go:57-70
@@ -1023,7 +1076,7 @@ These files still hardcode `/dns4/` or IPv4 literals. They do NOT block this pla
 | `integration_test/scripts/run_transport_e2e.dart` | 513 | `/dns4/mknoun.xyz/...` in relay circuit fallback |
 | `integration_test/scripts/run_wifi_relay_fallback_smoke.dart` | 476, 634 | `/dns4/mknoun.xyz/...` in relay circuit fallback (S1 + S4) |
 
-These are intentionally deferred: the relay smoke test belongs to `go-relay-server/` (excluded from this plan's scope), and the Dart E2E scripts test against the production relay which is IPv4-only today. Updating them to `/dns/` before the relay has an AAAA record would be cosmetic — correct but untestable.
+These are intentionally deferred: the relay smoke test belongs to `go-relay-server/` (excluded from this plan's scope), and the Dart E2E scripts test against the production relay described as IPv4-only at that historical baseline. Updating them to `/dns/` before the relay has an AAAA record would be cosmetic — correct but untestable.
 
 ---
 

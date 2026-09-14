@@ -268,6 +268,7 @@ def parse_execution(kind, output, returncode, timed_out=False, selected_paths=No
     completed = False
     first_failure = None
     failed_cases = []
+    skipped_cases = []
     first_case_ms = None
     runner_done_ms = None
     compilation_diagnostics = []
@@ -298,12 +299,13 @@ def parse_execution(kind, output, returncode, timed_out=False, selected_paths=No
                 result = 'skipped' if e.get('skipped') else ('passed' if e.get('result') == 'success' else 'failed')
                 counts[result] += 1
                 if result == 'failed' and first_failure is None: first_failure = 'test_assertion'
-                if result == 'failed':
+                if result in ('failed', 'skipped'):
                     location = t.get('url') or ''
                     if location.startswith('file:'):
                         location = unquote(urlparse(location).path).replace(str(ROOT) + '/', '')
                         if location.startswith('/'): location = 'external/' + Path(location).name
-                    failed_cases.append({'test_id': e.get('testID'),
+                    cases = failed_cases if result == 'failed' else skipped_cases
+                    cases.append({'test_id': e.get('testID'),
                         'suite_path': suites.get(t.get('suiteID'), '').replace(str(ROOT) + '/', ''),
                         'name_sha256': digest(t.get('name', '')),
                         'reported_location': location,
@@ -323,10 +325,11 @@ def parse_execution(kind, output, returncode, timed_out=False, selected_paths=No
             name, package, action = e.get('Test'), e.get('Package'), e.get('Action')
             if isinstance(name, str) and name and action in ('pass', 'fail', 'skip'):
                 counts[{'pass':'passed','fail':'failed','skip':'skipped'}[action]] += 1
-                if action == 'fail':
+                if action in ('fail', 'skip'):
                     # Dynamic subtest labels and import paths may contain private
                     # data. Hash both, retaining the discoverable parent identity.
-                    failed_cases.append({'name_sha256': digest(name),
+                    cases = failed_cases if action == 'fail' else skipped_cases
+                    cases.append({'name_sha256': digest(name),
                         'top_level_name_sha256': digest(name.split('/', 1)[0]),
                         'package_sha256': digest(package)
                             if isinstance(package, str) and package else None})
@@ -375,7 +378,8 @@ def parse_execution(kind, output, returncode, timed_out=False, selected_paths=No
         status, checkpoint = 'PASS', 'runner_completed'
     return {'status': status, 'checkpoint': checkpoint, 'counts': counts,
             'completion_observed': completed, 'missing_test_files': missing,
-            'failed_cases': failed_cases, 'timed_out': timed_out,
+            'failed_cases': failed_cases, 'skipped_cases': skipped_cases,
+            'timed_out': timed_out,
             'compilation_diagnostics': compilation_diagnostics,
             'observed_test_span_seconds': max(0, runner_done_ms - first_case_ms) / 1000
                 if isinstance(first_case_ms, (int,float)) and isinstance(runner_done_ms, (int,float)) else None,

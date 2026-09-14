@@ -33,7 +33,8 @@
     "signed-audio",
     "signed-full-review",
     "notification-lock-diagnostics",
-    "strict-group-media-manifest"
+    "strict-group-media-manifest",
+    "signed-dual-stack"
   ],
   "checks": {
     "bootstrap": {
@@ -921,7 +922,13 @@
         "previous_published_revision_verified",
         "upgrade_preserves_identity_contacts_groups_history",
         "old_to_new_message",
-        "new_to_old_message"
+        "new_to_old_message",
+        "upgrade_preserves_keys_accounts",
+        "schema_119_quiet_metadata_preserved",
+        "quiet_new_sender_old_relay_rejected_safely",
+        "quiet_old_receiver_retains_rows_for_upgrade",
+        "quiet_new_relay_new_receiver_silent_delivery",
+        "ordinary_old_new_exchange_preserved"
       ],
       "boundary": "Upgrade actual previous published binary; old/new peer interoperability using isolated history",
       "timeout_seconds": 1,
@@ -940,7 +947,14 @@
         "ended_and_released",
         "ios_idle_background_voip_call_presented",
         "ios_disabled_capability_voip_wake_completed",
-        "ios_each_required_push_callkit_report_completed"
+        "ios_each_required_push_callkit_report_completed",
+        "ios_signed_apns_environment_topic_verified",
+        "ios_idle_suspension_confirmed",
+        "ios_idle_provider_pushkit_callkit_adoption_media_correlated",
+        "ios_idle_first_attempt_retained",
+        "ios_cancel_expiry_no_stale_resurrection",
+        "ios_retired_predecessor_successor_audio_preserved",
+        "ios_apns_connection_attribution_or_unresolved_recorded"
       ],
       "boundary": "Short signed-candidate bidirectional audio and hangup; candidate includes call feature",
       "timeout_seconds": 1,
@@ -948,7 +962,7 @@
       "investigate": [
         "docs/testing/TESTING.md"
       ],
-      "limitations": "Required signed-candidate observation; cannot be satisfied by host fakes. Include an incoming call after six minutes without a VoIP push while iOS is suspended, correlating provider acceptance, device PushKit receipt and CallKit presentation; retain any initial missed ring even if a retry succeeds. Include a retained unadopted terminal followed by a new incoming call after native retention expires; confirm the old exact receipt is acknowledged without invalidating the new call or releasing its audio and timeouts. Include disabled-capability cold launch and queued/coalesced incoming VoIP pushes; every required CallKit report completion must be observed."
+      "limitations": "Required signed-candidate observation; cannot be satisfied by host fakes. Include an incoming call after six minutes without a VoIP push while iOS is suspended, correlating provider acceptance, device PushKit receipt and CallKit presentation; retain any initial missed ring even if a retry succeeds. Include a retained unadopted terminal followed by a new incoming call after native retention expires; confirm the old exact receipt is acknowledged without invalidating the new call or releasing its audio and timeouts. Include disabled-capability cold launch and queued/coalesced incoming VoIP pushes; every required CallKit report completion must be observed. Development/sandbox and production APNs are separate artifact-bound legs. Attribute the exact system courier connection from complete private native evidence, or explicitly retain unresolved attribution; DNS or another system connection cannot supply its family. Host lifecycle fixes do not prove OS push delivery."
     },
     "go-core": {
       "kind": "go",
@@ -1319,6 +1333,38 @@
         "go-mknoon/node/transport_label_test.go",
         "go-mknoon/bridge/inbox_notification_policy_test.go",
         "go-mknoon/node/deadline_contract_test.go"
+      ]
+    },
+    "signed-dual-stack": {
+      "kind": "manual",
+      "assertions": [
+        "dns_a_aaaa_recorded",
+        "listeners_and_advertisements_consistent",
+        "expected_relay_peer_authenticated",
+        "rendezvous_reservation_inbox_call_control",
+        "ipv4_only_text_and_call",
+        "dual_stack_text_and_call",
+        "native_ipv6_only_text_and_call",
+        "dns64_nat64_text_and_call",
+        "broken_ipv6_working_ipv4_text_and_call",
+        "mixed_family_text_and_call",
+        "blocked_udp_text_and_call",
+        "established_session_transition",
+        "route_bypass_excluded",
+        "turn_credentials_allocation_permission_returned_media",
+        "turn_connection_and_allocation_families_separate",
+        "configured_turn_udp_tcp_tls_results",
+        "turn_cleanup",
+        "port_443_only_limit_recorded"
+      ],
+      "boundary": "Exact signed candidate application transport and independent TURN network matrix, with observed families and authenticated content/media outcomes",
+      "limitations": "No connectivity badge, DNS answer, listening socket, host loopback fixture, selected ICE candidate family or unrelated artifact certifies these journeys. Record each network condition independently; unexercised scenarios remain incomplete. Available-target policy applies; unavailable model/OS-specific legs are N/A. Port-443-only support requires provisioned and tested control and media paths; otherwise record the limitation.",
+      "timeout_seconds": 1,
+      "estimated_seconds": null,
+      "investigate": [
+        "Network-Arch/IPV6.md",
+        "Network-Arch/IPV6-Infra-Ops.md",
+        "docs/testing/TESTING.md"
       ]
     }
   },
@@ -2105,6 +2151,26 @@
         "quiet-recovery"
       ],
       "why": "Observation-only family sidecars must preserve receiver compatibility, media readiness/failure disposition and message custody/quiet recovery. Broader existing consumer mappings are retained."
+    },
+    {
+      "id": "dual-stack-release",
+      "patterns": [
+        "go-relay-server/server_addresses*",
+        "go-relay-server/server_config.go",
+        "go-relay-server/dual_stack_application_test.go",
+        "go-relay-server/turn_credentials*",
+        "go-mknoon/integration/ipv6_dual_stack_test.go",
+        "go-mknoon/node/ipv6_happy_eyeballs_test.go",
+        "lib/core/constants/network_constants.dart"
+      ],
+      "checks": [
+        "go-relay",
+        "go-core",
+        "go-messaging-recovery-integration",
+        "quiet-recovery",
+        "signed-dual-stack"
+      ],
+      "why": "Public address admission and transport proof require authenticated application/TURN evidence for each network family, independent of APNs and signed compatibility."
     }
   ],
   "documentation_only": [

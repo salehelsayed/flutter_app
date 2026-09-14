@@ -215,6 +215,41 @@ class ParserTest(unittest.TestCase):
         self.assertEqual(checks.parse_execution('node', node_skip, 0)['status'], 'BLOCKED')
         self.assertEqual(checks.parse_execution('node', '1..0\n# pass 0\n# fail 0\n# skipped 0\n', 0)['status'], 'BLOCKED')
 
+    def test_flutter_skip_keeps_discoverable_identity_without_raw_reason_or_name(self):
+        private_name = 'conditional case private-recipient-canary'
+        output = self.flutter(skipped=True, name=private_name) + '\n' + json.dumps({
+            'type': 'print', 'message': 'private-skip-reason-canary',
+        })
+        parsed = self.parse(output)
+        self.assertEqual(parsed['status'], 'BLOCKED')
+        self.assertEqual(parsed['failed_cases'], [])
+        self.assertEqual(len(parsed['skipped_cases']), 1)
+        case = parsed['skipped_cases'][0]
+        self.assertEqual(case['name_sha256'], checks.digest(private_name))
+        self.assertTrue(case['suite_path'].endswith('/test/chat_test.dart'))
+        self.assertNotIn('private-recipient-canary', json.dumps(parsed))
+        self.assertNotIn('private-skip-reason-canary', json.dumps(parsed))
+
+    def test_go_skip_keeps_parent_and_package_hash_without_turning_into_pass(self):
+        parent = 'TestLoopbackFeasibility'
+        name, package = parent + '/private-peer-canary', 'private-import-canary'
+        output = '\n'.join(json.dumps(row) for row in [
+            {'Action': 'output', 'Output': 'private-skip-reason-canary'},
+            {'Action': 'skip', 'Test': name, 'Package': package},
+            {'Action': 'pass', 'Test': 'TestOther', 'Package': package},
+            {'Action': 'pass', 'Package': package},
+        ])
+        parsed = checks.parse_execution('go', output, 0)
+        self.assertEqual(parsed['status'], 'BLOCKED')
+        self.assertEqual(parsed['counts'], {'passed': 1, 'failed': 0, 'skipped': 1})
+        self.assertEqual(parsed['skipped_cases'], [{
+            'name_sha256': checks.digest(name),
+            'top_level_name_sha256': checks.digest(parent),
+            'package_sha256': checks.digest(package),
+        }])
+        self.assertEqual(parsed['failed_cases'], [])
+        self.assertNotIn('private-', json.dumps(parsed))
+
     def test_go_failures_keep_hashed_case_and_package_identity_only(self):
         package = 'example.invalid/PRIVATE_PACKAGE_CANARY/node'
         name = 'TestPrivateNameCanary'

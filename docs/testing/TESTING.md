@@ -10,16 +10,17 @@ The current application uses Flutter with native Go, not the earlier QuickJS
 core. `lib/app/bootstrap/production_application_bootstrap.dart:5296` constructs `GoBridgeClient` over method/event
 channels. Android's `android/app/build.gradle.kts:431` connects `buildGoAar` to
 `preBuild`; `ios/Podfile:63` ensures the GoMknoon/NSE frameworks. `pubspec.yaml`
-currently declares `1.0.1+117`, and its bundled asset entries contain icons,
+currently declares `1.0.1+119`, and its bundled asset entries contain icons,
 JPEGs and MP4s; no JavaScript asset or QuickJS dependency was found in the
 current pubspec/lockfile. Keep JavaScript test/tooling discovery and bundle
 identity handling because retained tooling and future bundled assets can still
 change; do not assume the old runtime architecture is active.
 
 The existing App Store artifact entry point is
-`scripts/build_ios_appstore_ipa.sh --build-number=117`; it applies
-`tool/build/voice_call_release_defines.json`. This implementation did not build
-or distribute an IPA. Candidate evidence must bind the actual selected build
+`scripts/build_ios_appstore_ipa.sh --build-number=<candidate-number>`; it applies
+`tool/build/voice_call_release_defines.json`. The original testing-wrapper work
+did not build or distribute an IPA; later local candidate identities are recorded
+in `Network-Arch/IPV6-Infra-Ops.md`. Candidate evidence must bind the actual selected build
 configuration and signed artifact, not just the Dart revision or version label.
 
 ## Sources of truth
@@ -127,6 +128,11 @@ stay NOT RUN and cannot produce an overall green result. `--rerun-failed` permit
 one diagnostic rerun and preserves the original failure. Shared reports retain
 allowlisted completion facts and raw-output hashes, not arbitrary private logs;
 use existing redacted AppDiagnostics/SIMS receipts for product checkpoints.
+Flutter and Go `skipped_cases` retain the same hashed case identity as failures
+(including the Go parent/package hashes), so an incomplete selection can be
+traced back to its source without copying dynamic names or skip reasons into
+shared reports. This metadata does not convert a skip into a pass. Parser
+contracts cover private-name/reason canaries and retain the blocked verdict.
 
 ## Device configuration and evidence
 
@@ -505,7 +511,9 @@ Use the manifest's required evidence IDs when recording the following journeys:
    receiver and fake provider tests do not alone certify the OS boundary.
    Also place a background incoming call six minutes after the last successful
    VoIP push, confirming suspension before the invite. Correlate provider
-   acceptance, device PushKit receipt and CallKit presentation. Preserve a
+   acceptance, device PushKit receipt, CallKit presentation, native/Dart adoption
+   and media. Verify actual signed APNs environment/topic, cancellation/expiry
+   and retired-predecessor successor-audio ownership independently. Preserve a
    missed first attempt; a successful immediate retry does not satisfy this leg.
 
 Source/configuration/bundle/artifact changes invalidate prior candidate evidence.
@@ -594,6 +602,122 @@ visible and cannot become an ordinary first-attempt PASS.
   Dart-only quiet tests alone did not cover these projection boundaries. The
   memory-bounded iOS extension's fail-closed stub remains unchanged.
   Evidence is in `.codex-test-logs/dual-stack-recovery/`.
+- **Integrated dual-stack evidence boundaries:** the production relay address
+  plan retains IPv4, requires an explicit assigned public native IPv6 address,
+  and refuses startup after an incomplete opted-in bind. DNS IPv6 advertisement
+  remains an operator assertion about proxy/DNS readiness, not a live probe.
+  The production-handler socket fixture in `dual_stack_application_test.go`
+  exercises TCP, WS and QUIC across both same-family and both mixed-family
+  pairings. It pins a single relay address per peer and verifies authentication,
+  reservation, signed rendezvous record, Redis-backed quiet custody/retrieval/ACK
+  and call-control bytes/sender attribution. A no-listener client cannot silently
+  replace that requested relay family with another path. The fixture's initial
+  request-only protobuf decoder, memory-only custody setup and empty-inbox status
+  assumptions failed before correction; those setup failures remain retained.
+  These are native host socket and production-handler checks, not phone UI,
+  audible media, a native IPv6-only network or DNS64/NAT64.
+  September 14 read-only public probes separately authenticated the expected
+  relay on IPv4/IPv6 TCP 4005, WSS 4001 and QUIC 4002, acquired reservations and
+  received their own empty inbox/call mailbox and credential responses. The
+  active relay executable is a separately hashed v1.10.7; current client-source
+  compatibility is not certified by that version label. A fresh malformed
+  admission probe (no recipient/payload and no stored row) confirmed the deployed
+  relay rejects both new quiet actions as unknown. Current clients retain the
+  obligation safely, but completing quiet recovery requires the compatible relay
+  source; a version label or earlier relay-only quiet activation is insufficient.
+  Runtime owners are recorded in `Network-Arch/IPV6-Infra-Ops.md`; historical
+  repair scripts are not canonical deployment inputs. Current DNS/listeners do not establish packet
+  delivery, and public empty reads do not establish text/call success.
+  The independent host TURN matrix uses fresh credentials validated by current
+  native Go, socket binding to Wi-Fi, strict TLS hostname/certificate validation,
+  authenticated response integrity, explicit permission/channel creation and
+  Refresh(0) cleanup. Connection and requested allocation families vary
+  independently. Both IPv4 UDP-control cases timed out on returned data after
+  successful allocation/permission/channel binding; both IPv6 UDP-control cases
+  and all eight TCP/TLS cases returned 100 exact bidirectional synthetic payloads
+  each. All 24 allocations were explicitly released. A new IPv4 UDP diagnostic,
+  captured on the server for only its two synthetic control sockets, returned
+  6/6 payloads and cleaned up both allocations. A longer follow-up then returned
+  10/11 sent payloads for IPv4 allocation before timing out, while IPv6 allocation
+  returned 100/100. Both allocations in each trial were explicitly released.
+  The narrow server capture saw ten incoming and ten outgoing ChannelData frames
+  in the failed case; it cannot distinguish upstream loss from a changed NAT
+  mapping outside that capture filter. No server/application fault is inferred
+  from that observation alone. These first failures remain visible alongside
+  the diagnostic reruns. Host TLS success does not supersede
+  the separate pinned Android native TLS trust failure below. Port-443-only
+  calling remains unsupported by the observed credential URLs/control endpoint.
+  Evidence is in `.codex-test-logs/dual-stack-priority4/`; network scenarios,
+  signed-device media, idle APNs and actual published-build compatibility retain
+  separate candidate-bound requirements in the executable manifest.
+  Both platform Go binding stamps were stale relative to current source/tooling.
+  Running the existing ensure scripts rebuilt them; current digests then matched.
+  Existing signed outputs were retained and hashed before preparing a new build.
+  A new signed artifact cannot establish the identity of the previous published
+  artifact, and export-name checks alone cannot establish native freshness.
+  The integration Dart sweep retained one first-attempt group-media timing
+  failure: the ordinary download started after the GPL-04A fixture's two-second
+  `_waitUntil` deadline. The entire three-test file passed in a separate run
+  without modification. The fixture now observes the actual `media:download`
+  bridge completion, asserts exactly one download and waits for listener
+  teardown, instead of polling a two-second wall-clock deadline. All three
+  cases pass through the explicit-base wrapper after this test-only repair;
+  production deadlines and private-policy assertions are retained. The original
+  full sweep remains failed; it was not relabeled or repeated for this fixture
+  change. Current simulator XCTest executed 79 lifecycle/store/NSE tests
+  successfully; unsigned simulator APNs-registration errors do not establish
+  signed-device push behavior. The Android native proof's first debug build
+  lacked its generated `native_assets.json`; preserving and invalidating only
+  that build-cache directory allowed a fresh build. Keep the original failure;
+  do not clear application data or broadly clean retained signed outputs.
+  The fresh disposable Android APK then passed the existing Pixel/emulator
+  native UDP and TCP matrices (eight cases plus restarts per transport). Its
+  WebRTC binaries match the new signed AAB for all three bundled ABIs, but its
+  debug entry point and isolated signaling broker remain a separate artifact
+  boundary. The TLS matrix failed at its first protected call with an ICE
+  gathering/exchange deadline and no selected pair; both zero-exit Flutter
+  drivers were correctly overridden by the harness's failed endpoint receipts.
+  This run did not capture a new native TLS certificate error. A fresh server
+  chain check still fails against the 36 extracted pinned native certificates
+  at ISRG Root X2, and passes with that root added only to an isolated verifier
+  input. This confirms the current chain remains incompatible with those roots;
+  it does not substitute for a repaired native TLS media trial or modify trust.
+  The first TCP attempt attached to an unrelated emulator Flutter VM and failed
+  before media proof. A separate diagnostic passed after stopping that app on
+  the owned emulator without clearing its data. Avoid concurrent unrelated
+  Flutter debug processes on this harness's test targets; preserve first results
+  and do not mistake driver exit zero for executed media assertions.
+  The existing local production-call adapter subsequently passed 27 assertions
+  with the normal application entry point, fresh accounts/contacts, a disposable
+  production relay/coturn pair, native Answer, per-endpoint RTP, controls and
+  teardown. Its separate Pion oracle proved exact known-Opus bytes. The existing
+  SIMS artifact validator and wrapper inspector accepted that source/debug proof;
+  it remains distinct from signed distribution, human-audible audio and APNs.
+  `integrated-call-report.json` and `device-audio-supplement.json` retain the
+  artifact binding. A focused current Go socket run also executed all 14 selected
+  IPv6/address/fallback cases without skips. Follow-up execution identifies the
+  conditional gaps: the four conversation files containing the ten opt-in
+  custody skips pass 278 cases with
+  `MKNOON_DIRECT_MEDIA_BLOB_CUSTODY_CLIENT_ENABLED=true`; the exact emission
+  rollback case passes with `MKNOON_EMIT_WAKE_TOKEN=false`. Those are explicitly
+  different build configurations from the default candidate. The skipped host
+  SQLCipher capability is exercised by the existing native integration test:
+  its disposable Android app passes real export, portability export and staged
+  open/row retention. The same three tests also pass on the available iOS
+  simulator: the portability leg verifies the Android snapshot's exact checksum,
+  applies its cipher parameters and reads the expected schema/rows on iOS.
+  Both use the disposable `com.mknoon.sims.sqlcipher` identity, fixture keys and
+  synthetic data, without opening or resetting a user's database. Source/debug
+  native portability does not certify the unknown previous published binary or
+  the signed release artifacts.
+  `TestHolePunchFeasibility_LoopbackUpgradeObservable` and
+  `TestFeasibility_DirectUpgrade_TcpLane` still skip because forced-public
+  loopback hosts do not produce an observed DCUtR upgrade; the IPv6 address-event
+  case passes. No NAT upgrade is claimed. The original four skipped wrapper
+  selections remain incomplete, with separate configuration/native supplements
+  in `continuation-execution-supplements.json`. The explicit-base focused wrapper
+  passes workflow, provider schema and the repaired fixture; omitted selections
+  remain NOT RUN in that focused report. No unrelated broad suite was repeated.
 - **Established dual-stack messaging failure:** a fresh IPv6 handshake stall
   was already covered, but did not prove recovery of a reused connection.
   A socket-scoped loopback proxy first delivered over IPv6, then discarded
@@ -1095,7 +1219,13 @@ visible and cannot become an ordinary first-attempt PASS.
   provider acceptance and no incoming presentation before `noAnswer`. The
   complete archive identified its failed development connection C552 as IPv6,
   with keep-alive failure at 13:16:58 UTC; earlier IPv4 observations were for
-  a different connection, C551. Do not infer the environment's route from an
+  a different connection, C551. Re-reading both complete archives on September
+  14 confirms C552 used **TCP 443**, with APNs ALPN and an IPv6 Wi-Fi flow;
+  C551 used IPv4 TCP 5223. The earlier C542/5223 attribution must not be
+  generalized to C552. The new exports are retained under
+  `.codex-test-logs/dual-stack-priority4/apns-dated-*.private.json` and concern
+  the older `20260912T105911Z` development build, not candidate 120.
+  Do not infer the environment's route from an
   arbitrary APNs connection or an address-filtered subset. The original-Wi-Fi /
   hotspot / original-Wi-Fi idle comparison failed / passed / failed without an
   app or token change. Both failed development connections used IPv6 and the
@@ -1107,9 +1237,11 @@ visible and cannot become an ordinary first-attempt PASS.
   not establish a permanent fix. DNS filter selection is not route evidence:
   `apsd` reused a cached numeric IPv4 endpoint when IPv6-only answers were
   requested. Identify the development courier connection in the complete
-  native archive for each trial. Preserve APNs bootstrap/configuration lookups
-  when testing courier address-family restrictions; the sandbox bootstrap
-  lookup in this run had no IPv6 address. A post-restart comparison retained
+  native archive for each trial. The historical DNS-filter experiment also
+  depended on APNs bootstrap/configuration lookups; its sandbox bootstrap
+  lookup had no IPv6 address. That experiment is dated evidence, not an app
+  repair or authorization to alter user/router DNS. Any further environment
+  experiment needs an explicitly authorized isolated test network. A post-restart comparison retained
   another IPv6 idle miss: the first observed PushKit callback followed an APNs
   keep-alive failure/reconnect, about 54 seconds after invite acceptance and
   after cancellation. Its payload kind was not independently identified.

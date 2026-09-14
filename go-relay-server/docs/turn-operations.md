@@ -1,10 +1,14 @@
 # TURN credential operations (VC2-01)
 
 Status: repository support is implemented behind `TURN_CREDENTIALS_ENABLED` and
-is off by default. No production TURN endpoint, allocation, firewall, DNS, TLS,
-certificate, quota, or rotation claim is established by this document. Those
-legs remain open until a separately authorized deployment can provide
-privacy-safe evidence.
+is off by default. The active environment is separate from that source default.
+September 14 read-only inspection found the existing service enabled with
+UDP/TCP 3478 and TLS 5349, IPv4/IPv6 listeners and relay range 49152–50175.
+Current owners, hashes, independent allocation/media results and unresolved
+native TLS/network legs are recorded in
+[IPV6-Infra-Ops.md](../../Network-Arch/IPV6-Infra-Ops.md). Earlier statements that
+production activation was wholly unobserved are superseded by those dated
+observations; they do not establish permanent availability or release approval.
 
 ## Runtime custody
 
@@ -34,8 +38,10 @@ used; the in-process limiter must not be represented as a global quota.
   allocation may continue during a mint outage; this repository does not assume
   how long a deployed coturn allocation survives without a live allocation test.
 - A new allocation or ICE restart must obtain a valid bundle within the bounded
-  retry budget. On failure it stops with a typed error; it must not downgrade to
-  a direct route.
+  retry budget. Privacy-protected calls must not downgrade to a direct route.
+  Normal-mode calls may attempt direct ICE after a typed transient availability
+  failure within the existing deadline; authentication/configuration rejection
+  remains fail-closed. The policy frozen for that call governs recovery.
 - Superseded or closed staged bundles are released from the client lifecycle as
   soon as practical. Long-lived copies in telemetry or persistence are forbidden.
 
@@ -53,12 +59,13 @@ deployed coturn policy. A relay restart must not be treated as proof that coturn
 allocations were preserved, and a coturn restart must not silently enable direct
 fallback.
 
-## Production readiness checklist (currently unproved)
+## Production readiness checklist (requires per-boundary evidence)
 
 - DNS and certificate ownership are approved and observable without exposing
   credential material.
-- UDP/TCP 3478 and TLS/TCP 443 listeners are independently proven where the
-  deployment contract requires them.
+- UDP/TCP 3478 and TLS/TCP 5349 are independently tested. TLS/TCP 443 and
+  443-only calling remain separate unprovisioned/unverified requirements; a
+  normal HTTPS listener is not proof of TURN or application signaling on 443.
 - The relay allocation port range and cloud/network firewalls are documented,
   least-privilege, and tested from the supported networks.
 - Quotas, process/global rate controls, saturation alerts, certificate expiry,
@@ -70,3 +77,13 @@ fallback.
 
 Repository unit, bridge, and device tests may prove grammar and local lifecycle
 behavior. They cannot substitute for these deployed TURN acceptance legs.
+
+The September 14 integrated validation retains native Android TLS as failed:
+the protected call could not select a relay pair. The current public chain also
+fails against the pinned WebRTC trust roots at ISRG Root X2, while a temporary
+verifier input containing that root passes. System-trusted host TLS success does
+not certify the native library. The certificate preflight and staged repair in
+[`IPV6-Infra-Ops.md`](../../Network-Arch/IPV6-Infra-Ops.md#staged-operational-changes-and-rollback--not-executed)
+require normal hostname/chain validation and native protected media proof before
+promotion. Working UDP/TCP alternatives remain configured. No production
+certificate, trust policy, key or service was changed by that validation.
