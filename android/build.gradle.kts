@@ -8,6 +8,18 @@ allprojects {
         google()
         mavenCentral()
     }
+    configurations.configureEach {
+        resolutionStrategy.eachDependency {
+            if (requested.group == "io.github.webrtc-sdk" && requested.name == "android") {
+                // flutter_webrtc 1.6.0 pins .09, whose built-in roots cannot
+                // validate the current public TURN chain. .14 is the first
+                // published Android M144 patch with upstream OS chain validation
+                // (b9233c36); native hostname checks remain enabled.
+                useVersion("144.7559.14")
+                because("TURN/TLS must validate public chains against Android trust anchors")
+            }
+        }
+    }
 }
 
 val configuredVc204ProofBuildRoot =

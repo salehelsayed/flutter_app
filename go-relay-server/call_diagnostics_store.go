@@ -54,6 +54,9 @@ type callDiagnosticStoredEvent struct {
 // Owner, participants and binding digests are private authorization metadata.
 // Operator output includes ONLY Events/Summaries and fixed completeness fields.
 type callDiagnosticRecord struct {
+	// Operator-only response receipts. Never part of Events/Summaries or the
+	// public diagnostic schema. Existing quotas, consent purge and retention apply.
+	APNSResponsesPrivate   []apnsVoIPResponseReceipt            `json:"apnsResponsesPrivate,omitempty"`
 	Owner                  string                               `json:"owner"`
 	Participants           []string                             `json:"participants,omitempty"`
 	HandleDigest           string                               `json:"handleDigest,omitempty"`
@@ -79,6 +82,8 @@ type callDiagnosticMetadata struct {
 	bindings     []string
 }
 type callDiagnosticStore struct {
+	apnsCapture            apnsVoIPCapturePolicy
+	apnsCaptured           int
 	pushGenerations        map[string]uint64
 	beforeConfigurePublish func()
 	metaMu                 sync.Mutex
@@ -861,6 +866,10 @@ func initCallDiagnosticsFromEnvironment() *callDiagnosticStore {
 		log.Print("call_diagnostics storage=unavailable")
 		return nil
 	}
+	s.apnsCapture = parseAPNSVoIPCapturePolicy(
+		os.Getenv("APNS_VOIP_CAPTURE_OWNER_SHA256"),
+		os.Getenv("APNS_VOIP_CAPTURE_UNTIL"), time.Now(),
+	)
 	callDiagnosticStorageReady.Set(1)
 	log.Print("call_diagnostics storage=ready")
 	return s

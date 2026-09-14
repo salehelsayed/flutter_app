@@ -3,21 +3,81 @@
 
 Run with sudo on the relay. Default is a non-mutating preview. --apply backs up
 the config, copies the existing certificate with restricted permissions, and
-restarts coturn only when its allocation port range is unused. No secret value
-is printed. AWS ingress and advertised credential URLs are separate steps.
+restarts coturn only when its allocation port range is unused. --external-ip-only
+instead changes just the public IPv4 mapping, preserving certificates, hooks and
+listeners; applying that mode requires the exact preview config hash. No secret
+value is printed. AWS ingress and advertised credential URLs are separate steps.
 """
 
 import argparse
 import datetime
 import grp
+import hashlib
 import ipaddress
 import json
 import os
+import re
 from pathlib import Path
 import shutil
 import stat
 import subprocess
 import tempfile
+
+
+def render_external_ipv4(original, private_ipv4, public_ipv4):
+    """Change one explicit public/private IPv4 mapping, preserving other bytes."""
+    ipaddress.IPv4Address(private_ipv4)
+    ipaddress.IPv4Address(public_ipv4)
+    pattern = re.compile(r"(?m)^(?P<prefix>[ \t]*external-ip[ \t]*=[ \t]*)(?P<public>[^/\s#]+)/(?P<private>[^\s#]+)")
+    matches = [match for match in pattern.finditer(original)
+               if match['private'] == private_ipv4]
+    if len(matches) != 1:
+        raise ValueError("Exactly one external IPv4 mapping for the assigned private address is required")
+    match = matches[0]
+    ipaddress.IPv4Address(match['public'])
+    return original[:match.start('public')] + public_ipv4 + original[match.end('public'):]
+
+
+def repair_external_ipv4(args, *, config=Path('/etc/turnserver.conf'),
+                         backup_root=Path('/var/backups/mknoon-turn-ipv4')):
+    original = config.read_bytes().decode('utf-8')
+    original_hash = hashlib.sha256(original.encode()).hexdigest()
+    rendered = render_external_ipv4(original, args.private_ipv4, args.public_ipv4)
+    if args.apply and args.expect_config_sha256 != original_hash:
+        raise RuntimeError("Configuration changed or expected hash missing; preview again before applying")
+    pid = int(subprocess.check_output(['systemctl', 'show', 'coturn', '-p', 'MainPID', '--value'], timeout=10))
+    configured = dict(line.split('=', 1) for line in original.splitlines()
+                      if '=' in line and not line.lstrip().startswith('#'))
+    allocations = active_allocation_count(pid, int(configured.get('min-port', 49152)),
+                                         int(configured.get('max-port', 65535)))
+    print(json.dumps({'mode': 'apply' if args.apply else 'preview', 'external_ipv4_only': True,
+                      'config_changed': original != rendered, 'config_sha256': original_hash,
+                      'proposed_sha256': hashlib.sha256(rendered.encode()).hexdigest(),
+                      'active_allocation_sockets': allocations, 'certificates_or_hooks_changed': False}), flush=True)
+    if not args.apply or original == rendered:
+        return
+    if allocations:
+        raise RuntimeError('Active TURN allocations: wait for calls to drain before applying')
+    stamp = datetime.datetime.now(datetime.timezone.utc).strftime('%Y%m%dT%H%M%S%fZ')
+    backup_root.mkdir(parents=True, exist_ok=True, mode=0o700)
+    os.chmod(backup_root, 0o700)
+    backup = backup_root / stamp
+    backup.mkdir(parents=True, mode=0o700)
+    shutil.copy2(config, backup / 'turnserver.conf')
+    metadata = config.stat()
+    if config.read_bytes() != original.encode():
+        raise RuntimeError('Configuration changed during preparation; no repair was applied')
+    atomic_write(config, rendered, stat.S_IMODE(metadata.st_mode), metadata.st_uid, metadata.st_gid)
+    try:
+        subprocess.run(['systemctl', 'restart', 'coturn'], check=True, timeout=30)
+        subprocess.run(['systemctl', 'is-active', '--quiet', 'coturn'], check=True, timeout=10)
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
+        if config.read_bytes() != rendered.encode():
+            raise RuntimeError('Configuration changed after repair; refusing to overwrite another owner')
+        atomic_write(config, original, stat.S_IMODE(metadata.st_mode), metadata.st_uid, metadata.st_gid)
+        subprocess.run(['systemctl', 'restart', 'coturn'], check=False, timeout=30)
+        raise
+    print(json.dumps({'applied': True, 'external_ipv4_only': True, 'backup': str(backup)}), flush=True)
 
 
 def render_config(original, private_ipv4, public_ipv4, public_ipv6):
@@ -87,9 +147,19 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--private-ipv4", required=True)
     parser.add_argument("--public-ipv4", required=True)
-    parser.add_argument("--public-ipv6", required=True)
+    parser.add_argument("--public-ipv6")
+    parser.add_argument("--external-ip-only", action="store_true",
+                        help="Repair only the public/private IPv4 mapping; leave listeners, certificates and hooks untouched")
+    parser.add_argument("--expect-config-sha256",
+                        help="Required preview hash when applying --external-ip-only")
     parser.add_argument("--apply", action="store_true")
     args = parser.parse_args()
+    if args.external_ip_only:
+        return repair_external_ipv4(args)
+    if not args.public_ipv6:
+        parser.error('--public-ipv6 is required for the complete listener/TLS repair')
+    if args.expect_config_sha256:
+        parser.error('--expect-config-sha256 applies only to --external-ip-only')
     config = Path("/etc/turnserver.conf")
     original = config.read_text()
     rendered = render_config(original, args.private_ipv4, args.public_ipv4, args.public_ipv6)

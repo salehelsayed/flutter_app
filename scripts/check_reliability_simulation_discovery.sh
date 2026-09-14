@@ -196,6 +196,18 @@ classify_path() {
       record "support" "$path" "support" "Pinned Android pair and disposable coturn driver for the optional mixed-policy native audio proof; explicit devices and APK required"
       return
       ;;
+    integration_test/scripts/turn_tls_dns_fixture.py)
+      record "support" "$path" "support" "Owned-emulator DNS family isolation for native TURN/TLS; no host or production DNS mutation"
+      return
+      ;;
+    integration_test/scripts/native_turn_tls_contract_test.py)
+      record "support" "$path" "support" "Host refusal controls for native TURN/TLS proof receipts and DNS/socket attribution; executed by native-turn-tls-operations"
+      return
+      ;;
+    integration_test/scripts/turn_path_probe.py|integration_test/scripts/turn_path_probe_test.py)
+      record "support" "$path" "support" "Bounded TURN datagram/framing diagnostic and socket regressions; executed by turn-path-probe, not native app acceptance"
+      return
+      ;;
     integration_test/scripts/run_production_audio_call_sims.dart)
       record "support" "$path" "support" "399 external local-coturn/Pion staging wrapper around the manifest-owned production-main Android call scenario"
       return

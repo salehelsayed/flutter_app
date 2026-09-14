@@ -6,6 +6,9 @@ import 'package:flutter_app/features/call/domain/call_engine.dart';
 import 'package:flutter_app/features/call/infrastructure/flutter_webrtc_call_engine.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart' as rtc;
+// The pinned plugin already uses this logger; this fixture adds no runtime pin.
+// ignore: depend_on_referenced_packages
+import 'package:logger/logger.dart';
 
 /// Optional two-device extension of the existing real-adapter integration test.
 /// The loopback broker carries synthetic test SDP/ICE in memory. Authentication
@@ -19,6 +22,18 @@ void registerMixedPolicyNativeAudioProof() {
     addTearDown(wire.close);
     final config = await wire.get('config');
     final side = config['side']! as int;
+    final tlsLog = _NativeTlsLog();
+    rtc.Helper.setLogger(
+      Logger(printer: SimplePrinter(printTime: false), output: tlsLog),
+      'info',
+    );
+    await rtc.WebRTC.initialize(options: {'logSeverity': 'info'});
+    final policies = config['relayOnly'] == true
+        ? [CallTransportPolicy.relayOnly]
+        : CallTransportPolicy.values;
+    final rejectedTls = config['expectedTlsRejection'] as String?;
+    final negativeControls = <Map<String, Object?>>[];
+    var closedCalls = 0;
     _TurnUdpBlackhole? udpBlackhole;
     if (config['unavailableTurnUdp'] != null) {
       udpBlackhole = await _TurnUdpBlackhole.start();
@@ -79,8 +94,8 @@ void registerMixedPolicyNativeAudioProof() {
       ),
     ];
     final results = <Map<String, Object?>>[];
-    for (final a in CallTransportPolicy.values) {
-      for (final b in CallTransportPolicy.values) {
+    for (final a in policies) {
+      for (final b in policies) {
         for (final caller in [0, 1]) {
           final name = '${a.name}-${b.name}-$caller';
           final localPolicy = side == 0 ? a : b;
@@ -93,11 +108,49 @@ void registerMixedPolicyNativeAudioProof() {
             servers.single.expiresAt.isAfter(DateTime.now().toUtc()),
             isTrue,
           );
+          if (config['requiredTurnDnsFamily'] case final String family) {
+            final hostname = config['turnHostname']! as String;
+            expect(
+              servers.single.urls.single,
+              switch (config['expectedRelayProtocol']) {
+                'udp' => 'turn:$hostname:3478?transport=udp',
+                'tls' => 'turns:$hostname:5349?transport=tcp',
+                _ => throw StateError('Family proof requires UDP or TLS'),
+              },
+            );
+            final addresses = await InternetAddress.lookup(hostname);
+            expect(addresses, isNotEmpty);
+            expect(
+              addresses
+                  .map(
+                    (a) => a.type == InternetAddressType.IPv6 ? 'ipv6' : 'ipv4',
+                  )
+                  .toSet(),
+              {family},
+              reason: 'Only the isolated TURN connection family may resolve',
+            );
+          }
           final peer = _NativePeer(localPolicy, servers);
           try {
+            tlsLog.reset();
             await peer.create();
             await wire.exchange('$name/created', {});
-            for (final generation in [0, 1]) {
+            if (rejectedTls != null) {
+              expect(localPolicy, CallTransportPolicy.relayOnly);
+              expect(servers.single.urls.length, 1);
+              expect(servers.single.urls.single.startsWith('turns:'), isTrue);
+              await peer.localDescription(offer: true);
+              await _until(() async => tlsLog.rejected(rejectedTls));
+              // A connection timeout or lack of candidates alone is not a
+              // certificate rejection. Require the specific native TLS event.
+              expect(peer.raw, isEmpty);
+              expect(
+                (await peer.engine.snapshot()).selectedPairSucceeded,
+                isFalse,
+              );
+              negativeControls.add({'reason': rejectedTls, 'rejected': true});
+            }
+            for (final generation in rejectedTls == null ? [0, 1] : <int>[]) {
               if (generation == 1) {
                 await peer.engine.restartIce(iceServers: servers);
                 peer.clearCandidates();
@@ -124,6 +177,13 @@ void registerMixedPolicyNativeAudioProof() {
               await peer.exchangeCandidates(wire, phase);
               await peer.waitForMedia();
               final result = await peer.verify(generation);
+              if (config['relayOnly'] == true) {
+                expect(
+                  result['localRelayProtocol'],
+                  config['expectedRelayProtocol'],
+                );
+              }
+              result['platformChainValidations'] = tlsLog.validations;
               result.addAll({'case': name, 'generation': generation});
               results.add(result);
               await wire.exchange('$phase/verified', result);
@@ -142,6 +202,8 @@ void registerMixedPolicyNativeAudioProof() {
           // Each subsequent case creates fresh wrappers after both endpoints
           // closed; no candidate subscription or peer is reused across calls.
           await wire.exchange('$name/closed', {'closed': peer.engine.isClosed});
+          expect(peer.engine.isClosed, isTrue);
+          closedCalls++;
         }
       }
     }
@@ -150,12 +212,49 @@ void registerMixedPolicyNativeAudioProof() {
     await wire.post('result', {
       'passed': true,
       'phases': results,
+      'closedCalls': closedCalls,
+      'negativeControls': negativeControls,
       'turnHostnameDnsFamilies': dnsFamilies,
       'turnHostnameIpv6SocketUnavailable': hostnameProbe,
       'turnIpv4ProxyConnections': turnProxy?.connections,
       'turnUdpDatagramsDropped': udpBlackhole?.dropped,
     });
   }, timeout: const Timeout(Duration(minutes: 12)));
+}
+
+/// Reduce native logs to fixed TLS outcomes before anything is printed or
+/// retained. Do not retain certificate subjects, sockets, SDP or credentials.
+final class _NativeTlsLog extends LogOutput {
+  var validations = 0;
+  var chainRejections = 0;
+  var hostnameRejections = 0;
+
+  void reset() {
+    validations = chainRejections = hostnameRejections = 0;
+  }
+
+  bool rejected(String reason) => switch (reason) {
+    'untrusted' => chainRejections > 0,
+    'hostname' => validations > 0 && hostnameRejections > 0,
+    _ => false,
+  };
+
+  @override
+  void output(OutputEvent event) {
+    for (final line in event.lines) {
+      if (line.contains('Validated certificate chain using custom callback')) {
+        validations++;
+      }
+      if (line.contains(
+        'Peer certificate chain was rejected by the platform trust store',
+      )) {
+        chainRejections++;
+      }
+      if (line.contains('TLS post connection check failed')) {
+        hostnameRejections++;
+      }
+    }
+  }
 }
 
 /// A scoped TURN/UDP blackhole: datagrams reach this fixture and receive no

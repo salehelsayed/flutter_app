@@ -12,6 +12,25 @@ spec.loader.exec_module(module)
 
 
 class CallDiagnosticsOperatorTests(unittest.TestCase):
+    def test_private_apns_receipts_never_enter_operator_output(self):
+        now = int(time.time()*1000)
+        trace = str(uuid.uuid4())
+        event = self.event(trace)
+        with tempfile.TemporaryDirectory() as directory:
+            path = pathlib.Path(directory)
+            record = {'createdAtMs': now, 'events': [{'event': event, 'receivedAtMs': now}],
+                      'apnsResponsesPrivate': [{'apnsId': 'private-apns-id-canary',
+                                                'apnsUniqueId': 'private-delivery-id-canary',
+                                                'statusCode': 200}]}
+            (path / (trace+'.json')).write_text(json.dumps(record))
+            rows, rejected = module.read_records(path, now-1000, trace, now_ms=now)
+            output = module.report(rows, rejected, trace, since_ms=now-1000, now_ms=now)
+        self.assertEqual(rejected, 0)
+        self.assertEqual(output['events'], [{'event': event, 'receivedAtMs': now}])
+        self.assertNotIn('private-apns-id-canary', json.dumps(output))
+        self.assertNotIn('private-delivery-id-canary', json.dumps(output))
+        self.assertNotIn('apnsResponsesPrivate', json.dumps(output))
+
     def event(self, trace, role='caller', source='flutter', action='finish', media=True):
         return {'schemaVersion': 1, 'eventId': str(uuid.uuid4()), 'traceId': trace, 'source': source, 'role': role, 'runId': str(uuid.uuid4()), 'sequence': 1, 'occurredAtMs': int(time.time()*1000), 'elapsedMs': 1, 'stage': 'terminal' if action == 'finish' else 'signaling', 'action': action, 'outcome': 'completed_after_media' if media else 'ok', 'reason': 'none', 'values': {'mediaFlowVerified': media}}
 
