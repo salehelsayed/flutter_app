@@ -665,6 +665,155 @@ visible and cannot become an ordinary first-attempt PASS.
   Evidence is in `.codex-test-logs/dual-stack-priority4/`; network scenarios,
   signed-device media, idle APNs and actual published-build compatibility retain
   separate candidate-bound requirements in the executable manifest.
+  **Remaining IPv4/IPv6 scenarios, September 14 follow-up:** current host
+  messaging-fault controls pass 19 parent/subtest records; the production relay
+  TCP/WS/QUIC family fixture passes 13, and the exact tagged old/new quiet/IPv4
+  relay integration command passes 15, all without skips. Ten additional Dart
+  quiet-policy/migration/durable-fallback controls pass. These do not certify
+  phone text display or pending-message reopen on an IPv6-only access network.
+  The existing Pixel 6/API 37 plus API 35 emulator UDP proof passes 32 endpoint
+  observations, with 16 local TURN and 16 direct routes, all selected local
+  candidate families IPv4. Both endpoint receipts have advancing bidirectional
+  RTP, secure readiness and eight closed calls. Its explicit ICE restarts do
+  not prove native detection/recovery after loss of an established IPv6 leg.
+  The separate production-entrypoint IPv4 fixture passes all 27 assertions for
+  one call and its Pion oracle; app state and native call surfaces are restored.
+  Neither artifact is signed-release or human-audible evidence.
+
+  A live relay audit found no assigned global IPv6 on any interface, despite
+  coturn's retained sockets. Networkd had reported `ens5: Failed` after a route
+  timeout. Most new public TURN comparisons stopped at fresh credential
+  retrieval, including the explicit IPv4 bootstrap variant. The native public
+  attempt had two `REQUEST_REJECTED` credential results, zero fresh bundles,
+  no endpoint media receipts and two zero-exit Flutter drivers: this remains
+  a failed fixture prerequisite, not an audio stall or a passing no-path control.
+  Established IPv6 audio failure, native IPv6-only and DNS64/NAT64 complete app
+  journeys remain unverified. A namespace on the relay isolates component
+  traffic but is not a device-facing access network or a translator. Exact
+  topology, remaining prerequisites and current evidence are maintained in
+  `Network-Arch/IPV6-Infra-Ops.md`, with raw receipts in
+  `.codex-test-logs/network-gaps-20260914/`.
+
+  **Relay recovery prerequisite recheck, 19:11 UTC:** the hostname's IPv4
+  address changed after the outage, so the old numeric fixture pin remained
+  unusable. The current address passed SSH verification against the existing
+  host key; global IPv6 was assigned and matched DNS. Relay/TURN TCP ports
+  responded over both families, and the unchanged production-default hostname
+  helper obtained two validated fresh credential bundles. Rediscover numeric
+  pins before resuming tests. These observations clear the service-readiness
+  blocker; they do not rerun native UDP audio, explain historical packet loss
+  or supply the missing IPv6-only/NAT64 device networks. Exact source/helper
+  hashes and receipts are linked from the canonical network verification record.
+
+  **Focused IPv4 UDP follow-up after recovery:** fresh serial UDP4/IPv4,
+  UDP6/IPv4 and TCP4/IPv4 host probes each pass the three predeclared 100/100
+  trials, as does the local UDP4/IPv4 control. The UDP4/IPv6 serial comparison
+  retains one 75/76 data timeout, one pass and one allocation timeout. A separate
+  six-trial paced UDP4 set (three per allocation family, 20 ms, 100-byte records)
+  returns all 600 records with no duplication/reordering/stale responses/control
+  retries and releases all twelve allocations. Exact sequence joins at the
+  relay's ingress/egress capture boundary account for all 1,800 captured packets
+  across the three serial UDP4/IPv4 trials and six paced trials, with zero kernel
+  drops. Later successes do not explain the original aligned 10/11 timeout or
+  locate the uncaptured UDP4/IPv6 failures.
+  The packaged relay-host fixture also passes 15/15 in a fresh isolated namespace
+  using the exact public-service coturn 4.6.1 executable. All 1,500 records return
+  without loss/duplication/reordering; all 30 allocations, its server, generated
+  credential config and remote directory are cleaned up. This is component
+  preservation, not a repaired public mapping or an IPv6-only device network.
+
+  A separate **confirmed configuration defect, since repaired at 20:28 UTC**: after its
+  public IPv4 changed, coturn continued advertising the old address. Three
+  external UDP-peer trials each return 0/3 at the advertised allocation address;
+  three fresh paired controls each return 3/3 at the current server address and
+  allocated port. Same-server TURN hairpin can mask this defect, so two successful
+  allocations or their echo/media exchange are insufficient external reachability
+  evidence. The operator helper's `--external-ip-only` mode changes only the
+  public mapping, preserves other config bytes/certificates/hooks, requires the
+  exact preview hash, refuses active allocations and rolls back failed restarts.
+  Its five offline regressions and actual non-mutating relay preview are separate
+  from the subsequently authorized live deployment. No application recovery code,
+  media retransmission or global deadline changes are justified by these findings.
+
+  Native public UDP media now passes on Pixel 6/API 37 and an owned fresh API 35
+  emulator: both endpoint verdicts, opposite caller directions, explicit ICE
+  restarts, eight secure bidirectional RTP phase receipts and clean hangup.
+  The emulator capture proves IPv4 UDP **media** to TURN; the physical endpoint's
+  connection family remains unobserved. The existing DNS fixture affects only
+  that disposable emulator. QEMU uses unconnected UDP sockets and can timestamp
+  captures with an epoch offset from the host: preserve the two failed family
+  observer attempts, and use capture-relative media recency plus host file
+  freshness. Observer regressions reject control-only/one-way/wrong-port/stale
+  traffic, mixed-family ambiguity and wrong process/capture ownership.
+  This wrapper uses a local signaling broker and explicit restarts, so it does
+  not prove production signaling, spontaneous fault recovery, audible sound or
+  signed-release behavior. Tested APK SHA-256 is
+  `4b117a6e5bc54ea8ae8634e48e5afd7c17c338732d5142af42a2689fb8546f86`
+  (Flutter 3.47.2, flutter_webrtc 1.6.0, Android WebRTC 144.7559.14).
+  Canonical topology, configuration/binary hashes, separate failed/passing
+  artifacts and cleanup are in `Network-Arch/IPV6-Infra-Ops.md`; private raw
+  evidence is under `network-gaps-20260914/udp4-focus-20260914T191758Z/`.
+  After manifest validation, the resolving Flutter 3.47.2 explicit-base local
+  wrapper passes 11 checks/938 cases with zero skips/failures or identity gaps;
+  28 other combined-selection checks remain NOT RUN. The exact source/rules and
+  report hashes are recorded in the canonical network entry. This focused result
+  does not validate unrelated shared edits or replace the wave/release gates.
+
+  **Authorized configuration application:** the user requested the reviewed
+  mapping repair after the undeployed result. Fresh preflight found the same
+  config and zero allocations. The IPv4-only helper applied the one-line change
+  and restarted coturn at 20:28 UTC, preserving the certificate/key, renewal hook,
+  both binaries and the running messaging relay process. All three advertised
+  external-peer cases now receive 3/3, as do all three paired controls; all six
+  allocations release. Original serial UDP4/IPv4, UDP4/IPv6 and TCP4/IPv4 controls
+  each pass 3/3 at 100/100 records. The UDP6/IPv4 comparison separately retains a
+  31/32 data timeout, a permission/channel timeout and one pass. IPv4 captures
+  account for all 600 ingress/egress records with zero kernel drops. The older
+  10/11 timeout remains unexplained; the address repair is not its diagnosis.
+  Both native Android endpoints pass two opposite-direction calls and eight
+  secure RTP/restart phases with the same `4b117a6e…` APK; the emulator capture
+  again proves IPv4 UDP media. Host TLS verification passes both families.
+  Cleanup restores settings and removes only disposable fixtures/data. The
+  explicit-base local operations check passes 3 checks/91 cases with no gaps;
+  36 other combined-selection checks remain NOT RUN. Source/rules are unchanged
+  from the earlier 938-case run; these receipts remain separate. Exact before/after
+  config hashes, artifact identity and scope are in the canonical network record,
+  with raw evidence under `network-gaps-20260914/udp4-apply-20260914T202634Z/`.
+
+  **Independent TURN probe framing:** the retained TLS stream parser had been
+  reused for UDP. An unpadded 101-byte ChannelData datagram reproduced a false
+  timeout because the parser waited for stream padding; concatenating the next
+  datagram could also consume its header as padding. The maintained
+  `integration_test/scripts/turn_path_probe.py` keeps UDP datagrams separate,
+  permits optional padding, preserves TCP/TLS buffering, demultiplexes stale
+  STUN responses/media and validates response integrity. Only STUN control
+  transactions may retry within the existing probe deadline; media never does.
+  Ten socket/namespace-guard regressions preserve these boundaries and bounded
+  cleanup. Use a full Python 3 standard library for the standalone fixture;
+  Debian's `python3-minimal` lacks `hmac` and fails before any socket setup.
+  The full-library Docker attempt also stopped before coturn: its network-none
+  namespace contained down tunnel placeholders, which the strict loopback-only
+  guard rejects. That guard remains intact; these are not successful trials.
+  The original capture was decoded, with ten frames each way and sequences
+  0–4 from both senders at the same relay capture boundary. The historical
+  payloads were aligned **100-byte** records, so the repaired padding bug does
+  **not** explain their missing eleventh payload. Its cause stays unresolved.
+  Predeclared three-trial comparisons and first failures are retained. Fifteen
+  isolated relay-host coturn component trials passed both control families,
+  both sampled allocation families and 101-byte UDP, with all 30 allocations
+  released. Do not promote those loopback/host results to native-app recovery,
+  NAT64, production availability or signed-media acceptance.
+  Its actual runtime identified coturn 4.6.3; the first private relay driver
+  omitted the binary/whole-probe digests. The packaged command captures these
+  identities; its first relay attempt stopped at SSH. The post-recovery packaged
+  execution uses the different, exact public-service 4.6.1 binary and passes as
+  recorded above. Keep these two fixture/binary identities separate.
+  The earlier explicit-base focused wrapper run passed 11 checks/931 cases with
+  no skips or identity gaps; 26 other combined-selection checks remain NOT RUN.
+  The exact source/rules digests, omissions and report hash are recorded in the
+  canonical network verification boundary. This is not full change/release
+  acceptance; each executed source retains its own wrapper report.
+
   Both platform Go binding stamps were stale relative to current source/tooling.
   Running the existing ensure scripts rebuilt them; current digests then matched.
   Existing signed outputs were retained and hashed before preparing a new build.
@@ -1130,7 +1279,8 @@ visible and cannot become an ordinary first-attempt PASS.
   and `rport`. Native `iceTransportPolicy=relay` remains the primary control at
   creation and server replacement/restart; filtering SDP alone does not prevent
   direct connectivity checks. No SDP rewriting or policy downgrade is used.
-  The locked `flutter_webrtc` 1.6.0 Android dependency is WebRTC SDK 144.7559.09.
+  The locked `flutter_webrtc` 1.6.0 package declares WebRTC SDK 144.7559.09;
+  the native TURN/TLS repair below overrides only Android resolution to .14.
   Its M144 source maps relay to `CF_RELAY`, sanitizes TURN related addresses when
   reflexive candidates are forbidden, and skips remote DNS/mDNS resolution in
   relay mode. The stats sampler follows `localCandidateId`; a remote relay with
@@ -1289,6 +1439,65 @@ visible and cannot become an ordinary first-attempt PASS.
   `.codex-test-logs/call-fallback-priority2/ios-lifecycle.xcresult` and its log
   retain the executed XCTest evidence. These native controller/store fixtures
   use fake platform ports; they do not establish live APNs or audible audio.
+  The September 14 incoming-call investigation additionally executed all 119
+  selected RunnerTests lifecycle, PushKit registry, journal and parser tests on
+  the available iPhone 17 Pro simulator, with zero failures/skips. The curated
+  iOS token/shared lifecycle host selection passed 116 tests. These preserve
+  required reporting, cancellation-before-delivery, expiry, duplicate/coalesced
+  pushes, exact retired-terminal acknowledgement and successor audio ownership.
+  The source/configuration and `.xcresult` receipts are retained under
+  `.codex-test-logs/apns-idle-20260914/`; simulator results remain distinct from
+  physical APNs evidence.
+  The real HTTP VoIP provider now has opt-in private response receipts, separate
+  from the existing development alert adapter. Focused pinned Go 1.25.0 tests
+  cover optional/missing/malformed/duplicate response IDs, real response status
+  despite body-read failure, distinct attempts, default-off/owner/consent/window
+  limits, retention and observer/disk/full-queue failure without changing sends.
+  Its focused APNs/wake/diagnostics run passed 141 tests and the receipt race run
+  passed. The operator-report regression confirms private IDs stay out of shared
+  output. Native/Dart delivery owners and invitation expiry policy are unchanged;
+  this is an evidence repair, not a demonstrated OS-delivery fix or deployment.
+  The initial wrapper and pinned Go repeat each retained 1,288 passing and eight
+  failing relay cases during the live relay outage; one post-recovery pinned
+  repeat retained the same live QUIC/WSS/TCP smoke failures. TCP still hardcodes
+  the old IP, while macOS application DNS remained stale after authoritative DNS
+  changed. These failures were not bypassed with networking changes. An
+  intervening unpinned Go 1.27 diagnostic rerun
+  panicked in `crypto/tls` and is not a substitute for the pinned toolchain.
+  Preserve these first failures and report unexecuted selections explicitly.
+  A normal debug APK also needs the existing Gradle property
+  `enableAndroidNativeCalls=true` alongside Dart call defines; the first local
+  Pixel build omitted it and correctly rejected native capability setup. Its
+  replacement was built/installed with that property, preserving both artifacts
+  and the existing identity. Do not classify that setup failure as APNs loss.
+  The physical September 14 repeat set used the existing isolated Pixel 6 caller
+  (Debug 1.0.1(121)) and iPhone 13 recipient (Profile 1.0.1(120), signed
+  development, sandbox registration independently matched to the call actor).
+  After a successful control, all four predeclared idle calls presented: two
+  unlocked after 522.8/394.5 seconds and two locked after 389.6/413.6 seconds of
+  OS-confirmed suspension. Native callback-to-report monotonic durations were
+  50/54/55/46 ms. Both unlocked calls and the second locked call completed normal
+  native answer, adoption, verified media and cleanup (3/4 full idle journeys).
+  The first locked call presented but the automation's slider gesture exceeded
+  the normal caller deadline; retain its no-answer outcome. An earlier control
+  also presented but missed answer due to the wrong accessibility locator. A
+  user unlock interrupted one setup interval before any send; that interval was
+  archived and restarted, not counted as a call or hidden by a retry.
+  The retained Appium MCP/WDA session was a separate process; no recipient app
+  polling, debugger or developer-service/container collection ran during idle.
+  USB power, existing Wi-Fi and Focus/lock observations are recorded in
+  `.codex-test-logs/apns-idle-20260914/REPORT.md`. APNs courier family and current
+  Apple delivery logs remain unavailable; these development passes establish
+  neither production parity nor a universal reliability guarantee.
+  Preflight should inspect the existing diagnostic owner quota: the first two
+  controls retained metadata only because the isolated caller reached 5 MiB.
+  Its old reports were privately archived before using the app's normal clear
+  and re-enable controls. Later per-trace event truncation also requires keeping
+  completeness fields: the second locked call's reserved terminal summaries
+  verified media on both endpoints even though later caller media rows dropped.
+  Missing ordinary rows do not establish a missing callback or media failure.
+  A fresh six-check wrapper subset passed 652 tests without the earlier source
+  invalidation; overall selection remains incomplete and the Go lane failed.
   This app lifecycle correction cannot repair an OS APNs connection that has
   not delivered a push. The specific network or OS defect
   and a permanent fix remain unconfirmed. These
@@ -1377,7 +1586,7 @@ visible and cannot become an ordinary first-attempt PASS.
   were IPv4; all observations had DTLS and advancing bidirectional RTP. Sixteen
   fresh credential requests succeeded. SDP publication took at most 512 ms and
   the independent gathering audit at most 1,616 ms.
-  **Deployed TLS is a separate failing native leg:** the Android matrix connected
+  **Initial deployed TLS failure, retained before the Android repair:** the Android matrix connected
   its normal peers directly, then failed to gather a usable relay for the first
   mixed protected case. Repeated native diagnostics retained `ContinueSSL`
   failure and bounded cleanup. The host's certificate-verified TURN/TLS client
@@ -1387,13 +1596,153 @@ visible and cannot become an ordinary first-attempt PASS.
   certificates and no ISRG roots. EC2's served YE2/Root YE/ISRG chain failed
   independent verification against those certificates; adding the required
   ISRG Root X2 to a temporary verification file made that check pass. This
-  supports a native trust-anchor incompatibility diagnosis. The upstream
-  [M144 TLS validation path](https://github.com/webrtc-sdk/webrtc/blob/m144_release/rtc_base/openssl_adapter.cc)
-  uses built-in trust and preserves verification failure without a successful
-  custom verifier. No native trust bypass, pin change or service modification
-  was made. Preserve TCP fallback and retain TLS as failed until a secure fix
-  has its own native media proof. Raw/redacted evidence and first failures are
+  supports a native trust-anchor incompatibility diagnosis. The inspected `.09`
+  validation path used built-in trust and preserved verification failure without
+  a successful custom verifier; the mutable upstream M144 branch now includes
+  the later repair and cannot identify that old binary. No native trust bypass,
+  pin change or service modification was made in that initial campaign. Its TLS
+  failure is superseded only within the follow-up's proven scope below.
+  Raw/redacted evidence and first failures are
   under `call-fallback-priority2/remaining/` in the ignored test-log directory.
+  **Verified Android TURN/TLS repair:** the follow-up began with clean `main` and
+  explicit comparison base `74ecbafeec31cf92c5efd1137f9feac85b2a855b`; later
+  documentation-only commits through `fcaf1d6ab` were preserved. Current TLS 5349
+  over both families serves the complete valid YE2/Root YE/X2-cross-X1 chain for
+  `mknoun.xyz`, matching coturn/Certbot files and key public hashes. nginx 4001
+  independently serves that chain. Neither expiry (leaf valid September 7 to
+  December 6, 2026), a missing intermediate, nor stale copies explain the failure.
+  The old AAR matches its upstream digest and all 36 retained roots match binary
+  DER bytes and the upstream generated root set. No ISRG X1/X2 anchor is present;
+  current chains fail against the unmodified roots at X2. Either X1 or X2 added
+  separately to an offline control makes verification pass, while both real
+  Android system stores already trust the public chain. The server already sends
+  the CA's default X1-compatible chain; its offered alternatives cannot reach
+  one of the old 36 anchors.
+
+  The only application code/build change is Android's module-scoped override to
+  WebRTC SDK `144.7559.14`, the first published Android M144 patch with upstream
+  whole-chain platform trust fallback. The resolved AAR's upstream SHA-256 is
+  `44c243bb0c6ac5b0a4425e6211f7994b0d60df3cf2f5721c20c6a88aa1a68f64`; bundled
+  native slices match it. This patch also includes Android audio fixes, so the
+  preservation matrix remains necessary. The old roots remain compiled in;
+  platform fallback and native hostname checks are independently observed.
+  `flutter_webrtc` 1.6.0, Flutter, Go, iOS/desktop dependencies, call policy, credentials, deadlines,
+  ICE/lifecycle fencing and production Dart code are unchanged. iOS still uses
+  `.09`; this is not iOS parity or a signed-device/release pass.
+  Gradle dependency insight resolves `.14` for both debug and release classpaths;
+  the media fixtures were debug builds. Android build `1.0.1(120)` was subsequently
+  rebuilt at the user's request: its signed AAB SHA-256 is
+  `7f1d4e8fcb5c24cf6654620fe0c4b708ecb7bb4e053e7e56d7b9ec9a32a73018`, retained in
+  `build/releases/1.0.1+120/android-turn-tls-20260914T132035Z/` with provenance.
+  All three bundled native slices exactly match the `.14` AAR, and the release
+  DEX retains `PlatformCertificateVerifier.verifyServerChain([[B)Z` for JNI.
+  The manifest identifies `com.mknoon.app`, version `1.0.1`, code `120`; all 389
+  signed entries verify with the same release signer and no unsigned payload.
+  The earlier `.09` AAB remains preserved under `android-priority4/` and is
+  superseded as the current Android candidate. The new AAB is unpublished and
+  has not undergone signed-device media validation.
+
+  After a debug integration-test run, Flutter 3.47.2's `--no-pub` also skips
+  release-mode plugin regeneration. A stale `GeneratedPluginRegistrant.java`
+  then references `IntegrationTestPlugin`, while Gradle excludes this dev-only
+  plugin from release, causing `compileReleaseJavaWithJavac` to fail. The initial
+  failed build is retained. Letting the release build perform its normal pub get
+  and plugin regeneration fixes the generated metadata; the dependency lock and
+  all recorded build inputs remained unchanged. Do not hand-edit the generated
+  registrant or include the test plugin in the production release. Evidence is
+  in `.codex-test-logs/native-turn-tls-build120-20260914/`.
+
+  A fresh `.09` baseline repeats `all-relayOnly-0` failing without a selected pair
+  on both endpoints after direct cases pass. Both drivers return zero, with failed
+  endpoint verdicts. The retained before APK's relevant source matches the review
+  base. With `.14`, the same Pixel/API 35 emulator pair passes all 32 mixed-policy
+  TLS observations. A separate TLS-only relay/relay mode passes eight observations:
+  two fresh calls in opposite directions with their ICE restarts, exact native
+  `relayProtocol=tls`, sanitized egress, platform chain validations, advancing
+  bidirectional RTP and both peers closed before the next call. One intended
+  `turns:` service is supplied; UDP/plain TCP/direct cannot satisfy that fixture.
+  The runner now requires exact case/generation coverage, both endpoint verdicts,
+  RTP, local relay provenance and closure, not just driver exit status.
+
+  Native wrong-hostname controls reject four fresh peers after successful chain
+  validation at the independent TLS name check. The self-signed loopback fixture
+  rejects four peers at the platform trust check; its listener records eight
+  `unknown_ca` alerts and no accepted handshake. Timeout, DTLS readiness and a
+  generic TCP label cannot satisfy these controls. No tester trust store was
+  changed, and no verifier bypass or production endpoint downgrade was used.
+
+  Separate IPv4- and IPv6-isolated emulator runs each pass eight endpoint
+  observations, covering both calls/restarts. Native resolution admits only the
+  required family, and owned QEMU/netsimd socket observations independently
+  confirm that emulator-to-TURN connection family. Selected allocation/candidate
+  addresses are IPv4 in both runs. Automatic private DNS and Wi-Fi were disabled
+  only on the owned emulator to retain one virtual network; its original settings
+  were restored and verified. The physical peer's TURN socket family remains unknown. The
+  initial IPv6 observer failure missed QEMU's netsimd child; native media had
+  advanced, but the complete run was correctly failed until attribution was
+  fixed. The first IPv4 trial failed its resolver guard when both families
+  appeared on the next call. Preserve both fixture failures; neither is a
+  certificate/ICE regression, and neither is silently accepted as family proof.
+
+  Subsequent full TCP and UDP matrices each pass 32 endpoint observations, 16
+  fresh credential requests and eight closed calls per endpoint. TCP records 24
+  local TCP relay observations and eight direct observations. UDP records 16
+  local UDP relay observations, including all protected endpoints; normal peers
+  also retain direct and server-reflexive paths. All observations have DTLS and
+  advancing bidirectional audio RTP. Direct local candidates were IPv6 in the
+  TLS matrix and IPv4 in TCP/UDP; unavailable remote families remain unknown.
+  Receipts are `tls-ipv4-network-diagnostic/result.json`,
+  `tls-ipv6-single-network/result.json`, `preservation-tcp/result.json` and
+  `preservation-udp/result.json`. After closure the owned emulator has no
+  established TURN/TLS socket. Disposable packages, owned ADB reverse/forward
+  rules and the DNS container are removed; the test emulator is stopped with
+  its data retained. Production app data and phone trust/network settings are
+  preserved.
+
+  The existing Certbot hook has a prepared replacement with protected snapshots,
+  whole-chain/hostname/date/order/key preflight, atomic pair promotion, coturn-only
+  SIGUSR2 and served-leaf verification/rollback. Five offline tests cover valid
+  promotion and malformed, missing/reversed intermediate, wrong-host, untrusted,
+  mismatched-key, near-expiry and reload-failure controls. A local coturn daemon
+  additionally preserves its PID and existing TLS binding stream while fresh
+  connections see the replacement leaf. Fixture CAs certify these mechanics
+  only; public-root compatibility is proved by the separate native calls above.
+  Five host harness controls reject false receipts/alternate paths and test
+  isolated DNS/socket attribution. The first wrapper invocation exposed a host
+  test import-path error (direct execution had passed); the test now also imports
+  correctly under the wrapper's `python -m unittest` command. That first failure
+  remains visible. Both added `integration_test/scripts` files also require
+  explicit support classifications in `check_reliability_simulation_discovery.sh`;
+  its first two-unclassified-files failure and subsequent corrected discovery
+  pass are retained. Check commands must use the package-config SDK, Flutter
+  3.47.2/Dart 3.13.2: the initial PATH selected Flutter 3.41.4, so the wrapper
+  correctly refused the 24 Flutter groups before executing their tests. The
+  corrected-SDK run is separate evidence, not a relabeling of that refusal.
+  Stable focused wrapper diagnostics subsequently pass `workflow` (64),
+  `affected-media` (537), `native-turn-tls-operations` (10), `affected-calls`
+  (929), `call-signaling` (419) and `production-audio-harness-contract` (128).
+  The two diagnostic reports have the same candidate identity and no input-change
+  gaps; they are `final-diagnostic-checks/results.json` and
+  `native-causal-checks/results.json`. These are diagnostic subsets, so required
+  omitted checks correctly remain `NOT RUN`, not an overall wrapper pass.
+
+  The broader corrected-SDK run retains its first discovery failure and an
+  input-change gap because documentation/classification was edited while it ran.
+  Its per-check observations cannot certify one unchanged complete candidate.
+  Remaining broad gate limitations are ten conversation skips, one push skip,
+  one storage skip and two Go-core skips (1,843 Go-core cases passed, none failed).
+  Go-relay separately passed 1,286 cases. The seven selected SIMS checks—audio,
+  group media, group mute, media, Android notifications, iOS notifications and
+  reconnect—were not run through that wrapper because its isolated account/
+  service configuration was not supplied. The native fixtures above do not
+  impersonate those production-UI journeys or their report schema. No full
+  `host-all`, signed-device campaign or release acceptance is claimed.
+  Neither the hook nor a new app was deployed. Exact operational
+  installation/rollback remains in `go-relay-server/docs/turn-operations.md`.
+  Private evidence and original failures are under
+  `.codex-test-logs/native-turn-tls-20260914/`. Audible two-way sound, signed
+  distribution, iOS parity and a whole-device IPv6-only/NAT64 network remain
+  separate from this native source/debug proof.
   Flutter drive can leave VM-service ADB forwards after exiting. The native
   proof runner snapshots existing rules and removes only new forwards matching
   its own device and recorded driver port. An actual ADB ownership control

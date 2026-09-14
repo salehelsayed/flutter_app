@@ -34,7 +34,7 @@ call-control handlers. It verifies exact quiet bytes, authenticated sender, old
 reader exclusion, retrieval and ACK. These are host socket/protocol fixtures,
 not signed-device text, audible calling, NAT64 or public-network proof.
 
-The reviewed comparison base is
+The initial September 14 reviewed comparison base was
 `ad3529a041528c07dd6714a98c0f70fefeb2366b`; the intended checkout was clean
 `8e6a569b4b1805249638ceea31c7995ef707b50f`, with four subsequent commits retained.
 The September 14 validation patch adds tests/evidence definitions and corrects
@@ -43,6 +43,27 @@ the availability-bounded matrix, APNs boundary and operational instructions are
 in [IPV6-Infra-Ops.md](IPV6-Infra-Ops.md). Verified testing limitations live in
 [TESTING.md](../docs/testing/TESTING.md); executable selection remains in
 `tool/testing/selection.json`.
+
+The later [remaining-scenarios verification](IPV6-Infra-Ops.md#remaining-network-scenarios-current-verification-boundary)
+records the `74ecbafe` comparison against `fcaf1d6a` plus preserved local edits.
+Its 13:30 UTC relay audit found the global IPv6 address unassigned. The 19:11 UTC
+recheck confirmed restored IPv4/IPv6 reachability and fresh credentials at the
+hostname's changed IPv4 address; old numeric test pins must be rediscovered.
+Established IPv6 audio recovery, native IPv6-only access, DNS64/NAT64 and the
+historical IPv4 UDP timeout cause remain unverified. Passing readiness checks,
+isolated relay-host TURN trials and local IPv4 native calls do not close those
+application scenarios.
+
+The focused IPv4 UDP follow-up passes native public TURN/UDP calls on the pinned
+Android pair, with captured emulator-to-TURN IPv4 media. It also reproduces a
+separate current fault: coturn still advertises the old public IPv4 after the
+address changed. Direct external-peer traffic fails at that address and passes
+at the current one; same-server TURN traffic can conceal this mismatch. The
+IPv4-only operator repair was subsequently **authorized and applied at 20:28 UTC**.
+All three external advertised-address checks now pass, with separately verified
+native IPv4 UDP media and preserved configuration/certificates. The
+historical 10/11 timeout cause remains unresolved; it predates this address change.
+Exact trials, failures and scope are in the linked verification record.
 
 ## Historical implementation plan (superseded)
 

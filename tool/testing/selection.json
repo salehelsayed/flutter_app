@@ -1366,6 +1366,61 @@
         "Network-Arch/IPV6-Infra-Ops.md",
         "docs/testing/TESTING.md"
       ]
+    },
+    "native-turn-tls-operations": {
+      "kind": "python",
+      "paths": [
+        "docker-ws/coturn_tls_deploy_test.py",
+        "integration_test/scripts/native_turn_tls_contract_test.py",
+        "docker-ws/fix_coturn_dual_stack_tls_test.py"
+      ],
+      "boundary": "Offline certificate-chain/hostname/key/order admission, atomic renewal snapshots and failed-reload rollback; native endpoint acceptance rejects missing/failing receipts, alternate transports, missing RTP, restart/hangup and DNS/socket-family ambiguity; external IPv4 mapping repair preserves unrelated config bytes, requires the preview hash and idle allocations, and rolls back failed restarts; UDP family evidence requires fresh bidirectional RTP ChannelData in the owned emulator capture with capture-relative timestamps",
+      "limitations": "Synthetic CA tests validate the deployment hook only; public-root compatibility and native TLS media require the separate pinned Android fixture, and live hook installation needs approval. OpenSSL 3 is required. Offline IPv4 repair tests do not certify a deployed mapping; same-server TURN hairpin traffic can mask a stale external IPv4 address. UDP packet attribution covers the owned emulator only.",
+      "timeout_seconds": 120,
+      "estimated_seconds": null,
+      "requirements": [
+        "python3"
+      ],
+      "investigate": [
+        "docker-ws/coturn_tls_deploy.py",
+        "docker-ws/50-mknoon-coturn",
+        "integration_test/scripts/run_mixed_policy_native_audio.py",
+        "integration_test/scripts/turn_tls_dns_fixture.py",
+        "docker-ws/fix_coturn_dual_stack_tls.py"
+      ],
+      "inspected": true
+    },
+    "turn-path-probe": {
+      "kind": "python",
+      "paths": [
+        "integration_test/scripts/turn_path_probe_test.py"
+      ],
+      "boundary": "Real host socket regressions for UDP optional padding, datagram truncation isolation, TCP frame buffering, stale STUN/media demultiplexing, transaction retransmission, response integrity and bounded cleanup; isolated relay fixture refuses routable host namespaces before mutation",
+      "limitations": "Independent diagnostic harness only. Does not explain a historical 100-byte UDP loss, certify native audio, or prove an IPv6-only or DNS64/NAT64 access network. Public trials require disposable validated credentials and separate endpoint receipts.",
+      "timeout_seconds": 30,
+      "requirements": [
+        "python3"
+      ],
+      "investigate": [
+        "integration_test/scripts/turn_path_probe.py"
+      ],
+      "inspected": true
+    },
+    "ios-incoming-call-host": {
+      "kind": "flutter",
+      "paths": [
+        "test/features/call/infrastructure/ios_voip_token_coordinator_test.dart",
+        "test/features/call/infrastructure/ios_call_lifecycle_adapter_test.dart",
+        "test/features/call/infrastructure/android_call_lifecycle_adapter_test.dart"
+      ],
+      "boundary": "VoIP token rotation/invalidation and native journal adoption, exact retired predecessor acknowledgement, cancellation/expiry/duplicate and successor ownership preservation",
+      "limitations": "Host method-channel fixtures. Existing RunnerTests must execute separately; no physical APNs, CallKit UI, signed artifact or audible media claim.",
+      "requirements": [
+        "flutter"
+      ],
+      "timeout_seconds": 600,
+      "estimated_seconds": null,
+      "inspected": true
     }
   },
   "areas": [
@@ -2171,6 +2226,56 @@
         "signed-dual-stack"
       ],
       "why": "Public address admission and transport proof require authenticated application/TURN evidence for each network family, independent of APNs and signed compatibility."
+    },
+    {
+      "id": "native-turn-tls",
+      "patterns": [
+        "android/build.gradle.kts",
+        "docker-ws/coturn_tls_deploy.py",
+        "docker-ws/coturn_tls_deploy_test.py",
+        "docker-ws/50-mknoon-coturn",
+        "integration_test/scripts/run_mixed_policy_native_audio.py",
+        "integration_test/scripts/turn_tls_dns_fixture.py",
+        "integration_test/scripts/native_turn_tls_contract_test.py",
+        "integration_test/support/mixed_policy_native_audio_proof.dart",
+        "docker-ws/fix_coturn_dual_stack_tls.py",
+        "docker-ws/fix_coturn_dual_stack_tls_test.py"
+      ],
+      "checks": [
+        "native-turn-tls-operations",
+        "call-signaling",
+        "production-audio-harness-contract",
+        "device-audio"
+      ],
+      "why": "The Android M144 trust fallback and its proof must retain strict hostname/chain verification, relay-only privacy, mixed-policy ICE/lifecycle behavior and native audio. Existing broad platform and fixture mappings remain; the server hook does not deploy Go. The separate IPv4-only mapping repair preserves existing TLS work; UDP proof must attribute actual guest media rather than DNS or unconnected host sockets."
+    },
+    {
+      "id": "turn-path-probe",
+      "patterns": [
+        "integration_test/scripts/turn_path_probe.py",
+        "integration_test/scripts/turn_path_probe_test.py"
+      ],
+      "checks": [
+        "turn-path-probe",
+        "workflow",
+        "production-audio-harness-contract"
+      ],
+      "why": "The diagnostic must preserve datagram/control boundaries and honest loss accounting. Existing conservative fixture mappings and mandatory native/signed evidence remain."
+    },
+    {
+      "id": "apns-incoming-call-evidence",
+      "patterns": [
+        "go-relay-server/apns_voip_*.go",
+        "go-relay-server/call_diagnostics*.go",
+        "docker-ws/call_diagnostics_test.py"
+      ],
+      "checks": [
+        "go-relay",
+        "ios-incoming-call-host",
+        "call-signaling",
+        "diagnostics-python"
+      ],
+      "why": "Private per-attempt APNs evidence must preserve provider routing/expiry/retries, authenticated diagnostic privacy, iOS token/journal ownership and the separate retired-predecessor fix. Native and real idle-device proof remain independent."
     }
   ],
   "documentation_only": [
@@ -2379,6 +2484,62 @@
         "docker-ws/app_diagnostics_test.py",
         "docker-ws/app_diagnostics_monitor_test.py",
         "docker-ws/call_diagnostics_test.py"
+      ]
+    },
+    {
+      "kind": "python",
+      "paths": [
+        "integration_test/scripts/turn_path_probe_test.py"
+      ],
+      "boundary": "Real host socket regressions for UDP optional padding, datagram truncation isolation, TCP frame buffering, stale STUN/media demultiplexing, transaction retransmission, response integrity and bounded cleanup; isolated relay fixture refuses routable host namespaces before mutation",
+      "limitations": "Independent diagnostic harness only. Does not explain a historical 100-byte UDP loss, certify native audio, or prove an IPv6-only or DNS64/NAT64 access network. Public trials require disposable validated credentials and separate endpoint receipts.",
+      "timeout_seconds": 30,
+      "requirements": [
+        "python3"
+      ],
+      "investigate": [
+        "integration_test/scripts/turn_path_probe.py"
+      ],
+      "inspected": true,
+      "id": "full-turn-path-probe",
+      "command": [
+        "python3",
+        "-m",
+        "unittest",
+        "-v",
+        "integration_test/scripts/turn_path_probe_test.py"
+      ]
+    },
+    {
+      "kind": "python",
+      "paths": [
+        "docker-ws/coturn_tls_deploy_test.py",
+        "integration_test/scripts/native_turn_tls_contract_test.py",
+        "docker-ws/fix_coturn_dual_stack_tls_test.py"
+      ],
+      "boundary": "Offline certificate-chain/hostname/key/order admission, atomic renewal snapshots and failed-reload rollback; native endpoint acceptance rejects missing/failing receipts, alternate transports, missing RTP, restart/hangup and DNS/socket-family ambiguity; external IPv4 mapping repair preserves unrelated config bytes, requires the preview hash and idle allocations, and rolls back failed restarts; UDP family evidence requires fresh bidirectional RTP ChannelData in the owned emulator capture with capture-relative timestamps",
+      "limitations": "Synthetic CA tests validate the deployment hook only; public-root compatibility and native TLS media require the separate pinned Android fixture, and live hook installation needs approval. OpenSSL 3 is required. Offline IPv4 repair tests do not certify a deployed mapping; same-server TURN hairpin traffic can mask a stale external IPv4 address. UDP packet attribution covers the owned emulator only.",
+      "timeout_seconds": 120,
+      "requirements": [
+        "python3"
+      ],
+      "investigate": [
+        "docker-ws/coturn_tls_deploy.py",
+        "docker-ws/50-mknoon-coturn",
+        "integration_test/scripts/run_mixed_policy_native_audio.py",
+        "integration_test/scripts/turn_tls_dns_fixture.py",
+        "docker-ws/fix_coturn_dual_stack_tls.py"
+      ],
+      "inspected": true,
+      "id": "full-native-turn-tls-operations",
+      "command": [
+        "python3",
+        "-m",
+        "unittest",
+        "-v",
+        "docker-ws/coturn_tls_deploy_test.py",
+        "integration_test/scripts/native_turn_tls_contract_test.py",
+        "docker-ws/fix_coturn_dual_stack_tls_test.py"
       ]
     }
   ]

@@ -1,0 +1,7 @@
+#!/bin/sh
+set -eu
+# Replacement for this same existing Certbot deploy hook, not another renewer.
+[ "${RENEWED_LINEAGE:-}" = /etc/letsencrypt/live/mknoun.xyz ] || exit 0
+exec /usr/bin/python3 /usr/local/libexec/mknoon-coturn-tls-deploy.py deploy \
+  --lineage "$RENEWED_LINEAGE" --destination /etc/coturn/tls \
+  --trust /etc/coturn/tls/trust-anchors.pem --hostname mknoun.xyz

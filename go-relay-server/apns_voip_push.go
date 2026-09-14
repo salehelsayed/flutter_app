@@ -351,6 +351,9 @@ type httpAPNSVoIPProvider struct {
 	endpoint      string
 	authorization apnsVoIPAuthorizationSource
 	now           func() time.Time
+	// The production observer only enqueues on the existing bounded diagnostic
+	// worker. It never participates in delivery or retry decisions.
+	responseObserver func(context.Context, apnsVoIPResponseReceipt)
 }
 
 func newHTTPAPNSVoIPProvider(config apnsVoIPConfig) *httpAPNSVoIPProvider {
@@ -407,6 +410,7 @@ func (p *httpAPNSVoIPProvider) Send(
 	httpRequest.Header.Set("apns-expiration", strconv.FormatInt(request.Expiration.Unix(), 10))
 	httpRequest.Header.Set("content-type", "application/json")
 
+	started := time.Now()
 	response, err := p.client.Do(httpRequest)
 	if err != nil {
 		if ctxErr := ctx.Err(); ctxErr != nil {
@@ -415,6 +419,7 @@ func (p *httpAPNSVoIPProvider) Send(
 		return apnsVoIPProviderResponse{}, errAPNSVoIPNetwork
 	}
 	defer response.Body.Close()
+	p.observeResponse(ctx, request, response, started)
 
 	result := apnsVoIPProviderResponse{StatusCode: response.StatusCode}
 	result.RetryAfter, result.RetryAfterValid = parseAPNSVoIPRetryAfter(
