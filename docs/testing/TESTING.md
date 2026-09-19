@@ -3361,6 +3361,21 @@ visible and cannot become an ordinary first-attempt PASS.
   resources do not isolate charging, GPU, modem or ambient heat. A short PSS
   series does not prove a leak. The [beta findings](audio-call-beta-findings.md)
   retain the first ten-minute result, its thermal rise and measured cooldown.
+  Parse `Cached temperatures` and `Current temperatures from HAL` separately,
+  including sensors with negative type values; cached CPU temperatures in the
+  retained dump are not contemporaneous HAL measurements. The [current-source
+  149 comparison](../../.codex-test-logs/audio-call-thermal-20260919/summary.json)
+  kept screen/power/sampling conditions fixed across three ten-minute phases:
+  idle/call/post-call CPU averaged 7.02/63.99/6.92% of one core, while all thermal
+  samples remained status 0. The call's battery-service temperature rose
+  34.8→35.8°C, peaked at 36.1°C after End, and reached 35.1°C after cooldown.
+  Native audio threads dominated the measured increase; thirty-second Flutter
+  frame observations counted 0/30/0 frames. This did not reproduce historical
+  throttling or isolate a defective function, and no with/without `TickerMode`
+  comparison was performed. Changed starting conditions, debug build, PCM duty
+  and unmeasured ambient/power contributions prevent a thermal-fix claim.
+  Endpoint PCM/control/cleanup and [owned-state restoration](../../.codex-test-logs/audio-call-thermal-20260919/restoration.json)
+  passed separately; they do not certify heat, energy use or perceived speech.
   The current SIMS CLI treats `--prepare-builds` as a build-only selection.
   Its successful attestation does not execute the audio capability. The change
   wrapper previously supplied that flag. Its corrected dispatch executes the

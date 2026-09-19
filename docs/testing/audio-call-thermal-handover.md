@@ -1,8 +1,34 @@
 # Android audio-call thermal investigation handover
 
-Prepared 2026-09-19 for a new session in `/Volumes/CrucialX9/flutter_app`.
+Prepared 2026-09-19 in `/Volumes/CrucialX9/flutter_app`; bounded current-source
+follow-up completed the same day.
 
-## Only task to continue
+## Current result
+
+The [current-source comparison](audio-call-beta-findings.md#current-source-thermal-comparison-2026-09-19)
+completed on clean `1adada5d622df6f1a6801b97cf14b14aa9031990`, installed debug
+149, using the available Pixel 6/emulator pair. Three matched ten-minute
+screen-on phases measured idle/call/post-call CPU at 7.02/63.99/6.92% of one
+core. All thermal samples were status 0. Battery-service temperature rose
+34.8→35.8°C during the call, briefly reached 36.1°C after End, and cooled to
+35.1°C. Native audio threads account for the largest measured call workload;
+Flutter frame observations were 0/30/0 over thirty seconds per phase.
+
+Both endpoint PCM probes, normal End and resource cleanup passed. Original
+brightness settings and secure lock were restored, owned Appium sessions and
+VM forwarding ended, and instrumentation was idle. Build 149 remains installed.
+AWS admission and the SSH rule were unchanged. [Raw measurements and conclusion](../../.codex-test-logs/audio-call-thermal-20260919/summary.json),
+[restoration](../../.codex-test-logs/audio-call-thermal-20260919/restoration.json).
+
+**Not reproduced under the measured conditions; no confirmed app defect or
+thermal fix.** Historical attribution remains unresolved. Different initial
+thermal/battery conditions, unmeasured ambient conditions and PCM duty prevent
+a build-137-versus-149 causal conclusion. The existing `TickerMode` change still
+has no measured with/without thermal effect. This result supersedes the pending
+measurement sequence below; the original evidence and limits remain valid.
+No production code changed and no broader regression work was performed.
+
+## Original investigation scope (retained)
 
 Investigate the remaining **thermal/throttling observation during long audio
 calls**. Establish whether current application work materially contributes,
@@ -171,7 +197,7 @@ in a new ignored artifact directory and link a concise conclusion showing:
 The acceptance decision is about the thermal observation. Another functional
 call PASS alone cannot close it.
 
-## Prompt for the new session
+## Original resumption prompt (historical)
 
 > Read AGENTS.md and docs/testing/audio-call-thermal-handover.md. Investigate only
 > the remaining Android audio-call thermal/throttling observation. Use actual
