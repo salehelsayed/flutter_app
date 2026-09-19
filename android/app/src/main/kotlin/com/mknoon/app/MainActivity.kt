@@ -6,10 +6,9 @@ import android.os.Handler
 import android.os.Looper
 import android.os.StatFs
 import android.util.Log
-import com.mknoon.app.call.MknoonCallActionReceiver
 import com.mknoon.app.call.MknoonCallNativeBridge
 import com.mknoon.app.call.MknoonCallRuntime
-import java.util.UUID
+import com.mknoon.app.call.MknoonIncomingCallPresentation
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.embedding.engine.plugins.FlutterPlugin
@@ -37,6 +36,8 @@ class MainActivity : FlutterActivity() {
     private var pictureInPictureHandler: PictureInPictureHandler? = null
     private var droppedPushRecoveryBridge: DroppedPushRecoveryBridge? = null
     private var callNativeBridge: MknoonCallNativeBridge? = null
+    private var androidCallWakeBridge: AndroidCallWakeBridge? = null
+    private var incomingCallPresentation: MknoonIncomingCallPresentation? = null
     private var canonicalRuntimeLeaseBridge: CanonicalRuntimeLeaseBridge? = null
     private var canonicalRuntimeShutdownChannel: MethodChannel? = null
     private var pushNotificationSettingsChannel: MethodChannel? = null
@@ -50,6 +51,10 @@ class MainActivity : FlutterActivity() {
     private var mdnsResolver: MdnsResolver? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        // Ordinary activity restoration can precede a call intent, and also
+        // needs an exit owner for Android's platform splash. Register before
+        // Flutter creates content or allows the first application draw.
+        MknoonIncomingCallPresentation.installSplashExit(this)
         com.mknoon.app.diagnostics.MknoonAppDiagnostics.get(this).record("startup", "launch", "started", "bootstrap")
         // N04: commit launch invalidation before FlutterActivity can expose a
         // stale foreground route to Dart. Failure remains fail-notify inside the
@@ -57,25 +62,24 @@ class MainActivity : FlutterActivity() {
         visibilityLifecycleCoordinator().onLaunch()
         CanonicalRuntimeProbeDiagnostics.recordMainActivityLaunch()
         super.onCreate(savedInstanceState)
-        // A recreated activity (rotation, process restore) receives the
-        // original intent again; only a fresh launch may answer.
-        if (savedInstanceState == null) handleCallAnswerIntent(intent)
-    }
-
-    /**
-     * The incoming-call notification's Answer action is an activity intent so
-     * the app comes forward with the call. The answer itself still runs
-     * through the native runtime, exactly as the broadcast action does.
-     */
-    private fun handleCallAnswerIntent(intent: Intent?) {
-        if (intent?.action != MknoonCallActionReceiver.ACTION_ANSWER) return
-        val raw = intent.getStringExtra(MknoonCallActionReceiver.EXTRA_NATIVE_CALL_ID) ?: return
-        val nativeCallId = runCatching { UUID.fromString(raw) }.getOrNull() ?: return
-        runCatching { MknoonCallRuntime.get(this).controller.answer(nativeCallId) }
+        // A recreated activity receives the original intent again. Restore its
+        // safe call surface, but only a fresh launch may request Answer.
+        incomingCallPresentation = MknoonIncomingCallPresentation(this).also {
+            it.onIntent(intent, answerFromIntent = savedInstanceState == null)
+        }
     }
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
+        if (BuildConfig.DEBUG) {
+            // A FlutterFire background engine can replace plugin singletons.
+            // The debug PCM proof binds the actual canonical foreground engine.
+            runCatching {
+                Class.forName("com.mknoon.app.call.DebugCallAudioOracleReceiver")
+                    .getMethod("bindEngine", FlutterEngine::class.java)
+                    .invoke(null, flutterEngine)
+            }
+        }
         if (BuildConfig.ENABLE_GROUP_EXIT_RELEASE_DIAGNOSTICS_PROOF) {
             val proofPlugin = Class.forName(
                 "dev.flutter.plugins.integration_test.IntegrationTestPlugin",
@@ -113,7 +117,9 @@ class MainActivity : FlutterActivity() {
                         GoBridge(flutterEngine, applicationContext)
                     }.getOrNull()
                 }
-                goBridge != null
+                (goBridge != null).also { attached ->
+                    if (attached) androidCallWakeBridge?.ownerMayBeReady()
+                }
             },
             beginRuntimeDrain = {
                 goBridge?.requestRuntimeDrain() ?: true
@@ -121,6 +127,10 @@ class MainActivity : FlutterActivity() {
             isRuntimeReleased = {
                 goBridge?.isRuntimeReleased() ?: true
             },
+        )
+        androidCallWakeBridge = AndroidCallWakeBridge(
+            messenger = flutterEngine.dartExecutor.binaryMessenger,
+            ownerId = "foreground-${System.identityHashCode(flutterEngine)}",
         )
         droppedPushRecoveryBridge = DroppedPushRecoveryBridge(
             applicationContext,
@@ -261,10 +271,10 @@ class MainActivity : FlutterActivity() {
      * the static catcher.
      */
     override fun onNewIntent(intent: Intent) {
+        incomingCallPresentation?.onIntent(intent, answerFromIntent = true)
         super.onNewIntent(intent)
         setIntent(intent)
         droppedPushRecoveryBridge?.onWarmIntent(intent)
-        handleCallAnswerIntent(intent)
     }
 
     override fun onResume() {
@@ -272,6 +282,7 @@ class MainActivity : FlutterActivity() {
         // Flutter. Dart republishes the top route only against this generation.
         visibilityLifecycleCoordinator().onResume()
         super.onResume()
+        incomingCallPresentation?.onResume()
         receivedMediaEgressHandler?.onResume()
     }
 
@@ -284,9 +295,18 @@ class MainActivity : FlutterActivity() {
     override fun onStop() {
         visibilityLifecycleCoordinator().onStop()
         super.onStop()
+        incomingCallPresentation?.onStop()
+    }
+
+    @Suppress("DEPRECATION")
+    override fun onBackPressed() {
+        if (incomingCallPresentation?.handleBack() == true) return
+        super.onBackPressed()
     }
 
     override fun cleanUpFlutterEngine(flutterEngine: FlutterEngine) {
+        androidCallWakeBridge?.dispose()
+        androidCallWakeBridge = null
         Log.i(
             PICTURE_IN_PICTURE_LIFECYCLE_TAG,
             "[MKNOON_PIP] MainActivity.cleanUpFlutterEngine " +
@@ -484,6 +504,10 @@ class MainActivity : FlutterActivity() {
     }
 
     override fun onDestroy() {
+        androidCallWakeBridge?.dispose()
+        androidCallWakeBridge = null
+        incomingCallPresentation?.dispose()
+        incomingCallPresentation = null
         callNativeBridge?.dispose()
         callNativeBridge = null
         pictureInPictureHandler?.dispose("host_destroyed")

@@ -11,6 +11,7 @@ import java.io.ByteArrayOutputStream
 import java.io.DataInputStream
 import java.io.DataOutputStream
 import java.io.File
+import java.io.FileInputStream
 import java.io.FileOutputStream
 import java.io.IOException
 import java.security.GeneralSecurityException
@@ -24,6 +25,10 @@ import javax.crypto.spec.GCMParameterSpec
 
 internal interface PendingNativeCallBackend {
     fun read(): ByteArray?
+
+    /** No AtomicFile recovery, receipt pruning, key creation, or other writes. */
+    fun readForObservation(): ByteArray? =
+        throw UnsupportedOperationException("protected observation unavailable")
 
     /** A null value is the exact durable delete operation. */
     fun replace(bytes: ByteArray?): Boolean
@@ -293,6 +298,14 @@ internal class PendingNativeCallStore(
         (readState() as? StoredState.Valid)?.descriptor
     }
 
+    override fun observeProtectedJournal(): PendingNativeCallDescriptor? = synchronized(processLock) {
+        when (val state = readState(observationOnly = true)) {
+            StoredState.Empty -> null
+            StoredState.Invalid -> throw IOException("protected journal observation invalid")
+            is StoredState.Valid -> state.descriptor
+        }
+    }
+
     override fun resolveAcknowledgementReceipt(callHandle: String): UUID? =
         synchronized(processLock) {
             val digest = callHandleDigest(callHandle) ?: return@synchronized null
@@ -443,9 +456,9 @@ internal class PendingNativeCallStore(
             payload.expiresAtMs - observedNow <= CallPayloadParser.MAX_FUTURE_SKEW_MS
     }
 
-    private fun readState(): StoredState {
+    private fun readState(observationOnly: Boolean = false): StoredState {
         val bytes = try {
-            backend.read()
+            if (observationOnly) backend.readForObservation() else backend.read()
         } catch (_: Exception) {
             return StoredState.Invalid
         } ?: return StoredState.Empty
@@ -624,6 +637,13 @@ internal class AndroidProtectedPendingNativeCallBackend(
         readProtected(atomicFile, AAD)
     }
 
+    override fun readForObservation(): ByteArray? = synchronized(backendLock) {
+        requireCredentialProtectedStorage()
+        val bytes = readPendingCallFileWithoutRecovery(atomicFile.baseFile, MAX_ENCRYPTED_RECORD_BYTES)
+            ?: return@synchronized null
+        decrypt(bytes, AAD, existingKeyOnly = true)
+    }
+
     override fun replace(bytes: ByteArray?): Boolean = synchronized(backendLock) {
         try {
             requireCredentialProtectedStorage()
@@ -726,7 +746,7 @@ internal class AndroidProtectedPendingNativeCallBackend(
         }
     }
 
-    private fun decrypt(envelope: ByteArray, aad: ByteArray): ByteArray {
+    private fun decrypt(envelope: ByteArray, aad: ByteArray, existingKeyOnly: Boolean = false): ByteArray {
         val input = DataInputStream(ByteArrayInputStream(envelope))
         if (
             input.readInt() != ENVELOPE_MAGIC ||
@@ -750,7 +770,9 @@ internal class AndroidProtectedPendingNativeCallBackend(
             throw GeneralSecurityException("pending call ciphertext trailing bytes")
         }
         val cipher = Cipher.getInstance("AES/GCM/NoPadding")
-        cipher.init(Cipher.DECRYPT_MODE, getOrCreateKey(), GCMParameterSpec(GCM_TAG_BITS, iv))
+        cipher.init(Cipher.DECRYPT_MODE,
+            if (existingKeyOnly) getExistingKey() else getOrCreateKey(),
+            GCMParameterSpec(GCM_TAG_BITS, iv))
         cipher.updateAAD(aad)
         val plaintext = cipher.doFinal(ciphertext)
         if (plaintext.isEmpty() || plaintext.size > PendingNativeCallStore.MAX_RECORD_BYTES) {
@@ -787,6 +809,12 @@ internal class AndroidProtectedPendingNativeCallBackend(
         generator.generateKey()
     }
 
+    private fun getExistingKey(): SecretKey = synchronized(keyLock) {
+        val keyStore = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
+        keyStore.getKey(keyAlias, null) as? SecretKey
+            ?: throw GeneralSecurityException("pending call observation key unavailable")
+    }
+
     private fun atomicFileExists(target: AtomicFile): Boolean =
         target.baseFile.exists() || File(target.baseFile.path + ".bak").exists()
 
@@ -818,6 +846,33 @@ internal class AndroidProtectedPendingNativeCallBackend(
             Os.close(descriptor)
         }
     }
+}
+
+/** Never asks AtomicFile to restore or delete sidecars while gathering evidence. */
+internal fun readPendingCallFileWithoutRecovery(base: File, maximumBytes: Int): ByteArray? {
+    fun rejectSidecars() {
+        if (File(base.path + ".bak").exists() || File(base.path + ".new").exists()) {
+            throw IOException("pending call observation has unsettled sidecar")
+        }
+    }
+    rejectSidecars()
+    if (!base.exists()) return null
+    if (!base.isFile || base.length() <= 0 || base.length() > maximumBytes) {
+        throw IOException("pending call observation bounds invalid")
+    }
+    val bytes = ByteArray(maximumBytes + 1)
+    val count = FileInputStream(base).use { input ->
+        var count = 0
+        while (count < bytes.size) {
+            val read = input.read(bytes, count, bytes.size - count)
+            if (read < 0) break
+            count += read
+        }
+        count
+    }
+    rejectSidecars()
+    if (count !in 1..maximumBytes) throw IOException("pending call observation bounds invalid")
+    return bytes.copyOf(count)
 }
 
 private object PendingNativeCallCodec {

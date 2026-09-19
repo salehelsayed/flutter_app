@@ -7117,23 +7117,100 @@ List<ActiveNotificationCard> extractActiveNotificationCards(
   final records = RegExp(
     r'NotificationRecord\([\s\S]*?(?=\n\s*NotificationRecord\(|$)',
   ).allMatches(activeSection);
-  final packagePattern = RegExp(r'\bpkg=' + RegExp.escape(packageName) + r'\b');
+  // One live identity can appear in more than one dumpsys diagnostic view.
+  // Only a complete, consistent dump may collapse those representations.
+  final canDeduplicate =
+      dump.contains('Current Notification Manager state:') &&
+      RegExp(r'\n\s*Ranking Config:').hasMatch(dump) &&
+      !RegExp(
+        r'DUMP TIMEOUT|Error dumping service|FAILED BINDER TRANSACTION',
+        caseSensitive: false,
+      ).hasMatch(dump);
+  final ownersByKey = <String, String?>{};
+  final projectionsByKey = <String, String>{};
   final cards = <ActiveNotificationCard>[];
   for (final match in records) {
     final record = match.group(0)!;
-    if (!packagePattern.hasMatch(record)) continue;
-    cards.add(
-      ActiveNotificationCard(
-        title: _notificationValue(record, 'android.title'),
-        body: _notificationValue(record, 'android.text'),
-        id: int.tryParse(
-          RegExp(r'\bid=(-?\d+)\b').firstMatch(record)?.group(1) ?? '',
-        ),
-        category: RegExp(r'\bcategory=([^\s,)]+)').firstMatch(record)?.group(1),
-        routePayload: _notificationRouteValue(record),
-        isGroupSummary: isAndroidGroupSummaryNotificationRecord(record),
-      ),
+    final header = record.split('\n').first;
+    final owner = RegExp(r'\bpkg=([^\s,)]+)').firstMatch(header)?.group(1);
+    final key = RegExp(
+      r'\bkey=(.+?): Notification\(',
+    ).firstMatch(header)?.group(1);
+    final keyParts = key == null
+        ? null
+        : RegExp(r'^(-?\d+)\|([^|]+)\|(-?\d+)\|(.*)\|(\d+)$').firstMatch(key);
+    if (key != null) {
+      if (ownersByKey.containsKey(key) &&
+          ownersByKey[key] != owner &&
+          (owner == packageName || ownersByKey[key] == packageName)) {
+        throw const FormatException('Conflicting native notification owners.');
+      }
+      ownersByKey[key] = owner;
+    }
+    if (owner != packageName) {
+      if (keyParts?.group(2) == packageName) {
+        throw const FormatException('Native notification owner/key mismatch.');
+      }
+      continue;
+    }
+    final id = int.tryParse(
+      RegExp(r'\bid=(-?\d+)\b').firstMatch(header)?.group(1) ?? '',
     );
+    final user = RegExp(
+      r'\buser=UserHandle\{(-?\d+)\}',
+    ).firstMatch(header)?.group(1);
+    final tag = RegExp(r'\btag=([^\s,)]+)').firstMatch(header)?.group(1);
+    final channel = RegExp(
+      r'Notification\(channel=([^\s\)]+)',
+    ).firstMatch(header)?.group(1);
+    final uid = RegExp(r'\buid=(\d+)\b').firstMatch(header)?.group(1);
+    if (keyParts != null &&
+        (keyParts.group(2) != owner ||
+            (id != null && int.parse(keyParts.group(3)!) != id) ||
+            (user != null && keyParts.group(1) != user) ||
+            (tag != null && keyParts.group(4) != tag) ||
+            (uid != null && keyParts.group(5) != uid))) {
+      throw const FormatException('Native notification identity/key mismatch.');
+    }
+    final card = ActiveNotificationCard(
+      title: _notificationValue(record, 'android.title'),
+      body: _notificationValue(record, 'android.text'),
+      id: id,
+      category: RegExp(r'\bcategory=([^\s,)]+)').firstMatch(record)?.group(1),
+      routePayload: _notificationRouteValue(record),
+      isGroupSummary: isAndroidGroupSummaryNotificationRecord(record),
+    );
+    if (key != null) {
+      final projection = jsonEncode([
+        owner,
+        id,
+        user,
+        tag,
+        channel,
+        card.title,
+        card.body,
+        card.category,
+        card.routePayload,
+        card.isGroupSummary,
+      ]);
+      final previous = projectionsByKey[key];
+      if (previous != null && previous != projection) {
+        // Do not let body filtering hide a conflicting update of this key.
+        throw const FormatException('Conflicting native notification records.');
+      }
+      projectionsByKey[key] = projection;
+      final completeIdentity =
+          keyParts != null &&
+          id != null &&
+          user != null &&
+          tag != null &&
+          channel != null &&
+          header.trimRight().endsWith(')') &&
+          RegExp(r'^\s*android\.title=', multiLine: true).hasMatch(record) &&
+          RegExp(r'^\s*android\.text=', multiLine: true).hasMatch(record);
+      if (previous != null && canDeduplicate && completeIdentity) continue;
+    }
+    cards.add(card);
   }
   return cards;
 }

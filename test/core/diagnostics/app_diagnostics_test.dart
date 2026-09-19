@@ -12,6 +12,8 @@ import 'package:flutter_app/core/diagnostics/app_diagnostics.dart';
 import 'package:flutter_app/core/diagnostics/local_connection_diagnostics.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import '../../support/diagnostics_backlog_fixture.dart';
+
 class DiagnosticBridge implements Bridge {
   bool online = true;
   final requests = <Map<String, dynamic>>[];
@@ -508,6 +510,65 @@ void main() {
         ),
         hasLength(1),
       );
+    },
+  );
+
+  test(
+    'relay backpressure does not rewrite an unchanged diagnostic archive',
+    () async {
+      final archiveBytes = await writeDiagnosticsBacklogFixture(
+        directory,
+        now: now,
+        platform: 'android',
+      );
+      expect(archiveBytes, greaterThan(4 * 1024 * 1024));
+      var writes = 0;
+      var backpressure = false;
+      var uploads = 0;
+      final diagnostics = await install(
+        persist: (_, _) async => writes++,
+        upload: (events) async {
+          uploads++;
+          return backpressure
+              ? <String>{}
+              : events.map((event) => event['eventId'] as String).toSet();
+        },
+      );
+      expect(
+        (await diagnostics.status())['retainedEvents'],
+        greaterThanOrEqualTo(9760),
+      );
+      final trace = diagnostics.startAttempt(feature: 'network')!;
+      diagnostics.finishAttempt(
+        feature: 'network',
+        traceId: trace,
+        outcome: 'failed',
+        reason: 'bridge_unavailable',
+      );
+      // Commit the evidence before simulating a relay that accepts no rows.
+      await diagnostics.eventsForTesting();
+      final committedWrites = writes;
+      final previousUploads = uploads;
+      backpressure = true;
+      await diagnostics.flush();
+      expect(uploads, previousUploads + 1);
+      expect((await diagnostics.status())['queuedEvents'], 2);
+      expect(writes, committedWrites);
+
+      // Resume bypasses upload backoff. Repeated resumes must not amplify a
+      // slow relay into full archive writes when nothing changed locally.
+      for (var resume = 0; resume < 3; resume++) {
+        diagnostics.didChangeAppLifecycleState(AppLifecycleState.resumed);
+        await diagnostics.flush();
+      }
+      expect(uploads, previousUploads + 4);
+      expect(writes, committedWrites);
+
+      backpressure = false;
+      diagnostics.didChangeAppLifecycleState(AppLifecycleState.resumed);
+      await diagnostics.flush();
+      expect((await diagnostics.status())['queuedEvents'], 0);
+      expect(writes, committedWrites + 1);
     },
   );
 

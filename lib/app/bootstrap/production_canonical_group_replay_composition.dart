@@ -353,6 +353,7 @@ final class ProductionCanonicalProtectedGroupReplayComposition {
     required this.authoritySupport,
     required this.loadIdentity,
     required this.loadLinkedAuthority,
+    required this.readCurrentTransportPeerId,
     required this.applySystemAuthorityReplay,
     required this.retryPendingKeyRepairs,
   });
@@ -365,12 +366,41 @@ final class ProductionCanonicalProtectedGroupReplayComposition {
   final ProductionCanonicalProtectedGroupAuthoritySupport authoritySupport;
   final Future<IdentityModel?> Function() loadIdentity;
   final LoadProductionLinkedInstallationAuthority loadLinkedAuthority;
+
+  /// Independently authorized active local node identity, never an incoming
+  /// envelope's recipient. Foreground and recovery roots read the same service.
+  final String? Function() readCurrentTransportPeerId;
+
+  String? _boundLocalTransport({
+    required String? observedTransport,
+    required IdentityModel identity,
+    required LinkedInstallationAuthoritySnapshot installation,
+  }) {
+    final current = readCurrentTransportPeerId()?.trim();
+    if (observedTransport == null ||
+        observedTransport.isEmpty ||
+        current != observedTransport) {
+      return null;
+    }
+    if (installation.isOrdinaryPrimary) return current;
+    final credential = installation.credential;
+    if (!installation.isActiveLinkedSecondary ||
+        credential == null ||
+        credential.accountPeerId != identity.peerId ||
+        credential.accountPublicKey != identity.publicKey ||
+        credential.transportPeerId != current) {
+      return null;
+    }
+    return current;
+  }
+
   final ApplyProductionProtectedSystemAuthorityReplay
   applySystemAuthorityReplay;
   final Future<void> Function(GroupPendingKeyRepairRetryRequest request)
   retryPendingKeyRepairs;
 
   Future<ProtectedGroupReplayOutcome> replay(ChatMessage message) async {
+    final observedTransport = readCurrentTransportPeerId()?.trim();
     final identity = await loadIdentity();
     if (identity == null ||
         identity.mlKemPublicKey == null ||
@@ -407,9 +437,18 @@ final class ProductionCanonicalProtectedGroupReplayComposition {
           reasonDetail: null,
         );
       }
-      final localTransportPeerId = linkedAuthority.isActiveLinkedSecondary
-          ? linkedAuthority.credential!.transportPeerId
-          : identity.peerId;
+      final localTransportPeerId = _boundLocalTransport(
+        observedTransport: observedTransport,
+        identity: identity,
+        installation: linkedAuthority,
+      );
+      if (localTransportPeerId == null) {
+        return (
+          disposition: ProtectedGroupReplayDisposition.prerequisiteWaiting,
+          reasonCode: 'local_transport_authority_unavailable',
+          reasonDetail: null,
+        );
+      }
       final result = await handleProtectedGroupContentReplay(
         bridge: bridge,
         groupRepository: groupRepository,
@@ -615,12 +654,22 @@ final class ProductionCanonicalProtectedGroupReplayComposition {
       );
     }
 
+    final localTransportPeerId = _boundLocalTransport(
+      observedTransport: observedTransport,
+      identity: identity,
+      installation: linkedAuthority,
+    );
+    if (localTransportPeerId == null) {
+      return (
+        disposition: ProtectedGroupReplayDisposition.prerequisiteWaiting,
+        reasonCode: 'local_transport_authority_unavailable',
+        reasonDetail: null,
+      );
+    }
     GroupPendingKeyRepairRetryRequest? deferredKeyRepair;
     final result = await handleProtectedGroupAuthority(
       message: message,
-      ownTransportPeerId: linkedAuthority.isActiveLinkedSecondary
-          ? linkedAuthority.credential!.transportPeerId
-          : identity.peerId,
+      ownTransportPeerId: localTransportPeerId,
       ownMlKemSecretKey: identity.mlKemSecretKey!,
       groupRepository: groupRepository,
       callDecrypt:

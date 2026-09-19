@@ -676,6 +676,8 @@ void main() {
     expect(profile.compileDefines, <String, String>{
       'E2E_TEST_MODE': 'true',
       'SIMS_ANDROID_DISPOSABLE_PACKAGE_ID': 'com.mknoon.sims.groupmedia269',
+      'MKNOON_ENABLE_DIRECT_LINKED_DEVICES': 'true',
+      'MKNOON_ENABLE_MULTI_DEVICE_SYNC': 'true',
     });
 
     final build = manifest.capabilityById('build.android.e2e.group_media_269')!;

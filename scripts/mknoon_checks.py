@@ -7,6 +7,8 @@ copied into shareable reports; structured completion facts are allowlisted.
 from __future__ import annotations
 
 import argparse
+from contextlib import ExitStack
+import device_campaign_preflight as device_preflight
 import datetime as dt
 import fnmatch
 import hashlib
@@ -163,6 +165,7 @@ def validate(root, rules, files=None):
     sims = json.loads((root / SIMS).read_text()) if (root / SIMS).exists() else {'capabilities': []}
     capability_ids = {c['id'] for c in sims['capabilities']}
     for cid, c in checks.items():
+        errors.extend(message + ': ' + cid for message in device_preflight.validate_metadata(c))
         if not re.fullmatch(r'[a-z0-9_.-]+', cid): errors.append('Invalid check id: ' + cid)
         if c.get('kind') not in ('flutter', 'python', 'node', 'go', 'sims', 'manual', 'command'):
             errors.append('Unknown runner kind: ' + cid)
@@ -179,11 +182,31 @@ def validate(root, rules, files=None):
                     errors.append('Stale test name: ' + cid + ': ' + name)
         if c.get('kind') == 'sims' and c.get('capability') not in capability_ids:
             errors.append('Stale SIMS capability: ' + cid)
+        if c.get('kind') == 'sims':
+            adapter = c.get('adapter')
+            if adapter is not None and (not isinstance(adapter, str)
+                    or not re.fullmatch(r'integration_test/scripts/[a-z0-9_]+\.dart', adapter)
+                    or not (root / adapter).is_file()):
+                errors.append('Invalid/missing SIMS fixture adapter: ' + cid)
+            package = c.get('disposable_android_package')
+            if package is not None and not is_disposable_android_package(package):
+                errors.append('Invalid fixed disposable Android package: ' + cid)
+            if 'requires_disposable_android_package' in c and (
+                    c['requires_disposable_android_package'] is not True or package is not None):
+                errors.append('Invalid disposable Android package policy: ' + cid)
+            if any(role.startswith('android') for role in c.get('device_roles', [])) and (
+                    package is None and c.get('requires_disposable_android_package') is not True):
+                errors.append('Android SIMS execution requires a disposable package policy: ' + cid)
+            if 'requires_firebase_android_client' in c and (
+                    c['requires_firebase_android_client'] is not True or
+                    (package is None and c.get('requires_disposable_android_package') is not True)):
+                errors.append('Invalid Firebase Android client policy: ' + cid)
         for path in c.get('references', []):
             if not (root / path).exists(): errors.append('Missing proof/reference: ' + path)
         if c.get('kind') == 'command' and not c.get('success_marker'):
             errors.append('Command needs explicit completion marker: ' + cid)
     for c in rules.get('full_commands', []):
+        errors.extend(message + ': ' + c.get('id', '?') for message in device_preflight.validate_metadata(c))
         if not c.get('command') or c.get('timeout_seconds', 0) <= 0:
             errors.append('Invalid full command: ' + c.get('id', '?'))
         for arg in c.get('command', []):
@@ -257,8 +280,10 @@ def command_for(check, root, files):
     if kind == 'go':
         return ['go', 'test', '-json', '-count=1', '-timeout=10m', *check['packages']], check['packages']
     if kind == 'sims':
+        if check.get('adapter'):
+            return ['dart', 'run', check['adapter'], '--mode', 'major', '--scenario', check['capability']], [check['capability']]
         return ['dart', 'tool/sims/sims.dart', 'major', '--only', check['capability'],
-                '--prepare-builds', '--continue-on-failure', '--format', 'json'], [check['capability']]
+                '--continue-on-failure', '--format', 'json'], [check['capability']]
     return check.get('command', []), check.get('paths', [])
 
 
@@ -470,9 +495,10 @@ def prerequisites(check, root, device_config, matrix):
     reasons = []
     for executable in check.get('requirements', []):
         if not shutil.which(executable): reasons.append(executable + ' unavailable')
-    if check['kind'] == 'flutter' and not (root / '.dart_tool/package_config.json').exists():
+    uses_flutter_sdk = check['kind'] == 'flutter' or (check['kind'] == 'sims' and 'flutter' in check.get('requirements', []))
+    if uses_flutter_sdk and not (root / '.dart_tool/package_config.json').exists():
         reasons.append('Flutter packages unavailable: run flutter pub get')
-    if check['kind'] == 'flutter' and flutter_sdk_mismatch(root):
+    if uses_flutter_sdk and flutter_sdk_mismatch(root):
         reasons.append('Flutter SDK on PATH differs from package_config; use the SDK that resolved this candidate')
     if check['kind'] in ('sims', 'legacy'):
         if not device_config or device_config.get('isolated_test_environment') is not True:
@@ -495,6 +521,12 @@ def prerequisites(check, root, device_config, matrix):
                     reasons.append('available iOS simulator required')
             if len(set(ids.values())) != len(ids): reasons.append('device roles must be distinct')
             if not device_config.get('fixture_reference'): reasons.append('fixture reference required')
+            try:
+                package = sims_android_package(check, device_config)
+                if check.get('requires_firebase_android_client') and not firebase_android_client_matches(root, package):
+                    reasons.append('Matching Firebase Android client configuration required for disposable package')
+            except InvalidPlan as error:
+                reasons.append(str(error))
     return reasons
 
 
@@ -575,7 +607,7 @@ def main(argv=None):
     parser.add_argument('--output', type=Path)
     parser.add_argument('--build-label', default='', help='Intended signed version, e.g. 1.0.1(117); not proof of artifact version')
     parser.add_argument('--only', help='Comma-separated diagnostic subset; required omitted checks stay NOT RUN')
-    parser.add_argument('--rerun-failed', action='store_true', help='One diagnostic rerun; preserve first failure')
+    parser.add_argument('--rerun-failed', action='store_true', help='One host diagnostic rerun; devices require cleanup review and a fresh run; preserve first failure')
     parser.add_argument('--evidence', type=Path)
     parser.add_argument('--candidate-artifact', action='append', type=Path, default=[])
     parser.add_argument('--device-config', type=Path, help='Ignored JSON attesting disposable accounts/devices/services')
@@ -667,6 +699,7 @@ def execute_plan(args, root, rules, plan, files, device_config, matrix, director
         ordered = sorted(plan['selected'], key=lambda c: (c['kind'] in ('sims','legacy','manual'), c['id'] != 'workflow', c['id']))
         prerequisite_failed = False
         runner_blocked = set()
+        device_cleanup_pending = False
         for c in ordered:
             row = {'id':c['id'], 'kind':c['kind'], 'command':c['command'], 'selected_paths':c['selected_paths'],
                    'investigate':c.get('investigate', []), 'attempts':[]}
@@ -681,49 +714,75 @@ def execute_plan(args, root, rules, plan, files, device_config, matrix, director
                 row.update(status='BLOCKED', checkpoint='prerequisite_unavailable', reasons=c['blocked_prerequisites'])
             elif c['kind'] in runner_blocked:
                 row.update(status='NOT RUN', checkpoint='shared_runner_startup_failed')
+            elif c['kind'] in ('sims','legacy') and device_cleanup_pending:
+                row.update(status='NOT RUN', checkpoint='device_cleanup_review_required')
             elif c['kind'] in ('sims','legacy') and prerequisite_failed:
                 row.update(status='NOT RUN', checkpoint='host_prerequisite_failed')
             else:
                 for attempt in range(2 if args.rerun_failed else 1):
-                    if attempt and row['attempts'][0]['status'] == 'PASS': break
+                    # Device failures need diagnosis and cleanup review before a fresh run.
+                    if attempt and (row['attempts'][0]['status'] == 'PASS' or c['kind'] in ('sims', 'legacy')): break
+                    campaign_started = False
                     try:
-                        env = os.environ.copy()
-                        env['MKNOON_TEST_RUN_ID'] = directory.name + '-' + c['id']
-                        env['GOTOOLCHAIN'] = 'go1.25.0'
-                        if c['kind'] == 'sims':
-                            report_path = directory / (c['id'] + '-' + str(attempt) + '-sims.json')
-                            if report_path.exists(): raise InvalidPlan('Refusing to reuse a SIMS report')
-                            env.update(sims_environment(device_config, report_path))
-                        command = list(c['command'])
-                        if c['kind'] == 'legacy':
-                            legacy_dir = directory / (c['id'] + '-' + str(attempt))
-                            command += ['--android-device', device_config['devices']['android_physical'],
-                                        '--ios-simulator', device_config['devices']['ios_simulator'], '--output', str(legacy_dir)]
-                        out, code, timeout, seconds = launch(command, root / c.get('cwd','.'), c['timeout_seconds'], env)
-                        a = parse_execution(c['kind'], out, code, timeout, c['selected_paths'], c.get('success_marker'))
-                        if c['kind'] == 'sims':
-                            a = inspect_sims(report_path, c['capability'], code, timeout)
-                            if a['status'] == 'PASS':
-                                verify_command = ['dart', 'tool/sims/sims.dart', 'verify-report', str(report_path)]
-                                _, verify_code, verify_timeout, verify_seconds = launch(verify_command, root, 120, env)
-                                seconds += verify_seconds
-                                if verify_code or verify_timeout:
-                                    a.update(status='BLOCKED', checkpoint='sims_report_verification_failed')
-                                else:
-                                    a['report_verification_observed'] = True
-                        if c['kind'] == 'legacy':
-                            a = inspect_legacy(legacy_dir, code, timeout)
-                        a.update(exit_status=code, duration_seconds=seconds, attempt=attempt + 1)
-                        span = a.get('observed_test_span_seconds')
-                        if span is not None:
-                            a['outside_test_span_seconds'] = round(max(0, seconds - span), 3)
+                        with ExitStack() as owners:
+                            env = os.environ.copy()
+                            env['MKNOON_TEST_RUN_ID'] = directory.name + '-' + c['id']
+                            env['GOTOOLCHAIN'] = 'go1.25.0'
+                            if c['kind'] == 'sims':
+                                report_path = directory / (c['id'] + '-' + str(attempt) + '-sims.json')
+                                if report_path.exists(): raise InvalidPlan('Refusing to reuse a SIMS report')
+                                env.update(sims_environment(device_config, report_path, c))
+                            command = list(c['command'])
+                            if c['kind'] == 'legacy':
+                                legacy_dir = directory / (c['id'] + '-' + str(attempt))
+                                command += ['--android-device', device_config['devices']['android_physical'],
+                                            '--ios-simulator', device_config['devices']['ios_simulator'], '--output', str(legacy_dir)]
+                            if c['kind'] in ('sims', 'legacy') and (c.get('device_roles') or c.get('sims_mode')):
+                                targets = [device_config.get('devices', {}).get(role) for role in device_preflight.device_roles(c, device_config)]
+                                owners.enter_context(device_preflight.device_leases([target for target in targets if target]))
+                                preflight = device_preflight.run(c, root, device_config, launch, env)
+                                row.setdefault('preflight', []).append(preflight)
+                                if preflight['status'] != 'PASS':
+                                    raise device_preflight.PreflightBlocked(preflight)
+                            campaign_started = c['kind'] in ('sims', 'legacy')
+                            out, code, timeout, seconds = launch(command, root / c.get('cwd','.'), c['timeout_seconds'], env)
+                            a = parse_execution(c['kind'], out, code, timeout, c['selected_paths'], c.get('success_marker'))
+                            if c['kind'] == 'sims':
+                                a = inspect_sims(report_path, c['capability'], code, timeout)
+                                if a['status'] == 'PASS':
+                                    verify_command = ['dart', 'tool/sims/sims.dart', 'verify-report', str(report_path)]
+                                    _, verify_code, verify_timeout, verify_seconds = launch(verify_command, root, 120, env)
+                                    seconds += verify_seconds
+                                    if verify_code or verify_timeout:
+                                        a.update(status='BLOCKED', checkpoint='sims_report_verification_failed')
+                                    else:
+                                        a['report_verification_observed'] = True
+                            if c['kind'] == 'legacy':
+                                a = inspect_legacy(legacy_dir, code, timeout)
+                            a.update(exit_status=code, duration_seconds=seconds, attempt=attempt + 1)
+                            span = a.get('observed_test_span_seconds')
+                            if span is not None:
+                                a['outside_test_span_seconds'] = round(max(0, seconds - span), 3)
+                    except device_preflight.PreflightBlocked as error:
+                        a = {**error.receipt, 'exit_status': None, 'duration_seconds': 0, 'attempt': attempt + 1}
+                    except device_preflight.DeviceLeaseBusy:
+                        a = {'status': 'BLOCKED', 'checkpoint': 'device_lease_unavailable', 'exit_status': None,
+                             'duration_seconds': 0, 'attempt': attempt + 1,
+                             'remediation': 'Another campaign or an unsafe lease path prevents exclusive ownership. Inspect the owner, let cleanup finish, then retry; never kill a foreign owner.'}
                     except OSError:
                         a = {'status':'BLOCKED','checkpoint':'test_runner_startup','exit_status':None,'duration_seconds':0, 'attempt':attempt + 1}
+                    if campaign_started and a['status'] != 'PASS':
+                        device_cleanup_pending = True
+                        a['cleanup_review_required'] = True
                     row['attempts'].append(a)
                 row.update(status=aggregate(row['attempts']), checkpoint=row['attempts'][0]['checkpoint'])
                 if row['status'] == 'BLOCKED' and row['checkpoint'] in ('compilation_error','test_runner_startup','test_runner_startup_or_process_failure'):
                     runner_blocked.add(c['kind'])
-            if c['kind'] not in ('sims','legacy','manual') and row['status'] != 'PASS': prerequisite_failed = True
+            # A deliberate diagnostic omission is still NOT RUN in the final
+            # report; it is not an observed host failure that blocks a selected
+            # device check. Actual failures/unavailable prerequisites still gate.
+            if c['kind'] not in ('sims','legacy','manual') and row['status'] in ('FAIL', 'BLOCKED'):
+                prerequisite_failed = True
             results.append(row)
             print(row['status'], c['id'], flush=True)
             # Durable partial results survive interruption; they cannot claim completion.
@@ -752,10 +811,56 @@ def execute_plan(args, root, rules, plan, files, device_config, matrix, director
     return EXIT[overall]
 
 
-def sims_environment(config, report):
+def is_disposable_android_package(package):
+    # These runners reset private files to create fresh accounts. A generic
+    # isolation attestation must not authorize resetting the production app.
+    return isinstance(package, str) and re.fullmatch(r'com\.mknoon\.sims\.[a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)*', package) is not None
+
+
+def firebase_android_client_matches(root, package):
+    # Inspect only binding fields; do not copy provider configuration into any
+    # report. Firebase's real registration/delivery proof remains the runner's.
+    try:
+        data = json.loads((root / 'android/app/google-services.json').read_text())
+        if not isinstance(data.get('project_info', {}).get('project_id'), str):
+            return False
+        matches = [client['client_info'] for client in data['client']
+                   if client['client_info']['android_client_info']['package_name'] == package]
+        return len(matches) == 1 and bool(matches[0].get('mobilesdk_app_id'))
+    except (OSError, ValueError, KeyError, TypeError, AttributeError):
+        return False
+
+
+def sims_android_package(check, config):
+    fixed = check.get('disposable_android_package')
+    if fixed is None and not check.get('requires_disposable_android_package'):
+        return None
+    packages = config.get('sims_android_packages', {})
+    if not isinstance(packages, dict):
+        raise InvalidPlan('Explicit disposable Android package mapping required')
+    supplied = packages.get(check['capability'])
+    if fixed is not None and supplied is not None and supplied != fixed:
+        raise InvalidPlan('Configured disposable Android package differs from the campaign build')
+    package = fixed if fixed is not None else supplied
+    if not is_disposable_android_package(package):
+        raise InvalidPlan('Explicit disposable Android package in com.mknoon.sims required')
+    return package
+
+
+def sims_environment(config, report, check=None):
     roles = {'android_physical':'SIMS_ANDROID_PHYSICAL_DEVICE_ID','android_emulator':'SIMS_ANDROID_EMULATOR_DEVICE_ID',
              'ios_simulator':'SIMS_IOS_SIMULATOR_ID','ios_physical':'SIMS_IOS_DEVICE_ID'}
     env = {roles[k]: v for k,v in config.get('devices', {}).items() if k in roles}
+    ids = config.get('devices', {})
+    if ids.get('android_physical') and ids.get('android_emulator'):
+        env['RELIABILITY_MULTI_DEVICE_IDS'] = ids['android_physical'] + ',' + ids['android_emulator']
+    package = sims_android_package(check or {}, config)
+    if package is not None:
+        # Build identity, installed APK and every nested app-state operation use
+        # the same package. Ambient local.properties/environment cannot select
+        # the production app while the config claims a disposable fixture.
+        env.update(ANDROID_APP_PACKAGE=package, SIMS_APP_ID=package,
+                   ORG_GRADLE_PROJECT_androidApplicationId=package)
     env['SIMS_REPORT_PATH'] = str(report)
     env['SIMS_CHECKPOINT_PATH'] = str(report.with_suffix('.checkpoint.json'))
     return env

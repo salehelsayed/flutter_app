@@ -73,6 +73,7 @@ final class CallEvent {
     this.endReason,
     this.candidateId,
     this.transportRoute,
+    this.reconnectGeneration,
   }) : occurredAt = occurredAt.toUtc(),
        expiresAt = expiresAt?.toUtc() {
     if (eventId.trim().isEmpty || eventId.length > 128) {
@@ -100,6 +101,10 @@ final class CallEvent {
   final CallEndReason? endReason;
   final String? candidateId;
   final CallRouteClass? transportRoute;
+
+  /// Optional local media/timer fence, never an authenticated wire value.
+  /// The reducer checks this after queued work reaches its serial lane.
+  final int? reconnectGeneration;
 
   Map<String, Object?> toDiagnosticMap() => <String, Object?>{
     'type': type.name,

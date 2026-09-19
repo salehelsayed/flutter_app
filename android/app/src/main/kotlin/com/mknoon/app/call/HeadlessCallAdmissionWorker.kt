@@ -80,6 +80,7 @@ internal data class HeadlessCallAdmissionCompletion(
     val databaseClosed: Boolean,
     val leaseReleased: Boolean,
     val diagnosticCause: String? = null,
+    val display: MknoonIncomingCallDisplay? = null,
 )
 
 internal data class HeadlessCallAdmissionRunIdentity(
@@ -110,7 +111,9 @@ internal object HeadlessCallAdmissionCompletionProtocol {
     ): HeadlessCallAdmissionCompletion? {
         if (method != "complete") return null
         val values = arguments as? Map<*, *> ?: return null
-        if (values.keys != RESULT_KEYS && values.keys != RESULT_KEYS + "diagnosticCause") return null
+        if (!values.keys.containsAll(RESULT_KEYS) || values.keys.any {
+                it !is String || (it !in RESULT_KEYS && it != "diagnosticCause" && it != "display")
+            }) return null
         val expiresAtMs = positiveIntegralLong(values["expiresAtMs"])
             ?: return null
         if (
@@ -142,6 +145,10 @@ internal object HeadlessCallAdmissionCompletionProtocol {
             leaseReleased = values["leaseReleased"] as? Boolean ?: return null,
             diagnosticCause = (values["diagnosticCause"] as? String)
                 ?.takeIf { MknoonCallDiagnosticSchema.reason.contains(it) },
+            display = if (expected.mode == HeadlessCallAdmissionMode.ADMISSION &&
+                disposition == HeadlessCallAdmissionDisposition.ADMITTED) {
+                MknoonIncomingCallDisplay.parse(values["display"])
+            } else null,
         )
     }
 
@@ -225,6 +232,9 @@ internal class HeadlessCallAdmissionWorkScheduler(
     private val enqueuer: HeadlessCallAdmissionWorkEnqueuer =
         AndroidXHeadlessCallAdmissionWorkEnqueuer(context),
     private val nowMs: () -> Long = System::currentTimeMillis,
+    // Enter foreground before work can finish, using the durable work UUID as
+    // the placeholder owner. No extra authority enters the Dart input contract.
+    private val beforeEnqueue: (UUID) -> Unit = {},
 ) {
     companion object {
         internal const val INPUT_CALL_ID = "call_id"
@@ -233,6 +243,7 @@ internal class HeadlessCallAdmissionWorkScheduler(
         internal const val INPUT_MODE = "mode"
         private const val UNIQUE_PREFIX = "mknoon-headless-call-admission-"
         private const val WORK_TAG = "mknoon-headless-call-admission"
+        private val enqueueLock = Any()
 
         internal fun uniqueName(callId: String): String {
             val digest = MessageDigest.getInstance("SHA-256")
@@ -264,14 +275,7 @@ internal class HeadlessCallAdmissionWorkScheduler(
             .setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
             .addTag(WORK_TAG)
             .build()
-        return runCatching {
-            enqueuer.enqueueUnique(
-                uniqueName(callId),
-                ExistingWorkPolicy.APPEND_OR_REPLACE,
-                request,
-            )
-            true
-        }.getOrDefault(false)
+        return enqueue(callId, request)
     }
 
     /**
@@ -310,15 +314,24 @@ internal class HeadlessCallAdmissionWorkScheduler(
             .setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
             .addTag(WORK_TAG)
             .build()
-        return runCatching {
-            enqueuer.enqueueUnique(
-                uniqueName(callId),
-                ExistingWorkPolicy.APPEND_OR_REPLACE,
-                request,
-            )
-            true
-        }.getOrDefault(false)
+        return enqueue(callId, request)
     }
+
+    private fun enqueue(callId: String, request: OneTimeWorkRequest): Boolean =
+        synchronized(enqueueLock) {
+            // FCM and native decline can submit concurrently through different
+            // scheduler instances. Keep foreground ownership in the same order
+            // as WorkManager's serialized same-call queue.
+            runCatching {
+                beforeEnqueue(request.id)
+                enqueuer.enqueueUnique(
+                    uniqueName(callId),
+                    ExistingWorkPolicy.APPEND_OR_REPLACE,
+                    request,
+                )
+                true
+            }.getOrDefault(false)
+        }
 
     private fun isValidPayload(payload: CallWakePayload, observedNow: Long): Boolean {
         if (observedNow < 0L) return false
@@ -370,14 +383,10 @@ internal class HeadlessCallAdmissionExecution(
     private val nowMs: () -> Long,
     private val timeoutMillis: Long,
     private val nonceFactory: () -> String = { UUID.randomUUID().toString() },
-    private val presentAuthenticated: suspend (String, Long) -> Boolean,
+    private val presentAuthenticated: suspend (String, Long, MknoonIncomingCallDisplay?) -> Boolean,
     private val terminalizeAuthenticated: suspend (String, Long) -> Boolean,
-    /**
-     * Plan 404 (c): the decline reply runs under the call foreground service
-     * started by the native decline; released once the engine is finished,
-     * whatever Dart reported.
-     */
-    private val releaseDeclineReply: suspend (String) -> Unit = {},
+    /** Attempts owned release; unresolved work also requires a native terminal tombstone. */
+    private val releaseAdmission: suspend (String, Boolean) -> Unit = { _, _ -> },
     private val diagnostic: (String?, HeadlessCallAdmissionDiagnostic) -> Unit = { _, _ -> },
     private val monotonicMs: () -> Long = { System.nanoTime() / 1_000_000L },
 ) {
@@ -392,6 +401,29 @@ internal class HeadlessCallAdmissionExecution(
     suspend fun execute(
         inputData: Data,
         runAttemptCount: Int = 0,
+    ): HeadlessCallAdmissionWorkOutcome {
+        var settled = false
+        try {
+            return executeOnce(inputData, runAttemptCount, onSettled = { settled = true })
+        } finally {
+            val callId = inputData.keyValueMap[HeadlessCallAdmissionWorkScheduler.INPUT_CALL_ID]
+                as? String
+            if (callId != null && CANONICAL_CALL_HANDLE.matches(callId)) {
+                // A deferred foreground owner may still be authenticating the
+                // invitation. Preserve its foreground start window unless this
+                // exact call has already ended natively. All releases are also
+                // fenced by work UUID and service mode at delivery time.
+                withContext(NonCancellable) {
+                    runCatching { releaseAdmission(callId, !settled) }
+                }
+            }
+        }
+    }
+
+    private suspend fun executeOnce(
+        inputData: Data,
+        runAttemptCount: Int,
+        onSettled: () -> Unit,
     ): HeadlessCallAdmissionWorkOutcome {
         // This separate operation reference never participates in the nonce or
         // custody protocol. Even allocation, clock, and sink errors are contained.
@@ -430,6 +462,7 @@ internal class HeadlessCallAdmissionExecution(
             ?: return finish("failed", "native_lifecycle_failed")
         val invocation = parseInput(inputData, observedNow)
             ?: return finish("rejected", "invalid_request")
+        if (invocation.mode == HeadlessCallAdmissionMode.DECLINE_REPLY) onSettled()
         diagnosticHandle = invocation.callId
         observe("start", "started", values = mapOf("attemptCount" to runAttemptCount))
         val nonce = runCatching(nonceFactory).getOrNull()
@@ -489,7 +522,6 @@ internal class HeadlessCallAdmissionExecution(
         if (identity.mode == HeadlessCallAdmissionMode.DECLINE_REPLY) {
             // The reply run never presents or terminalizes: the native call
             // already ended when the user declined it.
-            runCatching { releaseDeclineReply(identity.callId) }
             return finish("completed", "none", completionValues)
         }
         val authenticated = completion?.takeIf {
@@ -521,7 +553,7 @@ internal class HeadlessCallAdmissionExecution(
         return when (authenticated.disposition) {
             HeadlessCallAdmissionDisposition.ADMITTED -> {
                 val presented = try {
-                    presentAuthenticated(authenticated.callId, authenticated.expiresAtMs)
+                    presentAuthenticated(authenticated.callId, authenticated.expiresAtMs, authenticated.display)
                 } catch (_: Throwable) {
                     false
                 }
@@ -541,6 +573,7 @@ internal class HeadlessCallAdmissionExecution(
                 } catch (_: Throwable) {
                     false
                 }
+                if (terminalized) onSettled()
                 finish(if (terminalized) "completed" else "failed",
                     if (terminalized) "remote_terminal" else "cleanup_failed", completionValues)
             }
@@ -669,12 +702,12 @@ internal class HeadlessCallAdmissionWorker(
             // The runtime (and its Flutter channel) must be created on main.
             // Presentation itself waits on the Telecom registration callback,
             // which below API 34 arrives on the main looper, so it runs off it.
-            presentAuthenticated = { callId, expiresAtMs ->
+            presentAuthenticated = { callId, expiresAtMs, display ->
                 val runtime = withContext(Dispatchers.Main.immediate) {
                     MknoonCallRuntime.get(applicationContext)
                 }
                 withContext(Dispatchers.Default) {
-                    runtime.presentAuthenticated(callId, expiresAtMs)
+                    runtime.presentAuthenticated(callId, expiresAtMs, display)
                 }
             },
             terminalizeAuthenticated = { callId, expiresAtMs ->
@@ -685,9 +718,9 @@ internal class HeadlessCallAdmissionWorker(
                     runtime.terminalizeAuthenticated(callId, expiresAtMs)
                 }
             },
-            releaseDeclineReply = { callId ->
+            releaseAdmission = { callId, requireTerminal ->
                 withContext(Dispatchers.Main.immediate) {
-                    MknoonCallRuntime.get(applicationContext).stopAdmissionForeground(callId)
+                    MknoonCallForegroundService.releaseAdmission(applicationContext, callId, id, requireTerminal)
                 }
             },
             diagnostic = { handle, event ->

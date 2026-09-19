@@ -1,5 +1,7 @@
 import 'dart:convert';
 
+import 'package:flutter_app/core/debug/intro_e2e_runner.dart' as intro_runner;
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/features/contact_request/application/send_contact_request_use_case.dart';
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
@@ -916,6 +918,90 @@ void main() {
           expect(p2pService.localSendCalls, 0);
           expect(p2pService.sendWithReplyCalls, 1);
           expect(p2pService.storeInInboxCalls, 0);
+        },
+      );
+
+      test(
+        'local call fixture probes its exact relay before real receipt send',
+        () async {
+          const target = 'targetPeer123456789';
+          p2pService.dialResult = false;
+          final probeTargets = <String>[];
+          p2pService.sendWithReplyHandler = (_, _) {
+            final signedData =
+                jsonDecode(bridge.lastSignPayload!['data'] as String)
+                    as Map<String, dynamic>;
+            return SendMessageResult(
+              sent: true,
+              acked: true,
+              reply: jsonEncode({'callWakeReceipt': signedData['cwr']}),
+            );
+          };
+          var now = DateTime.utc(2026, 1, 1);
+          var distributed = false;
+          final result = await intro_runner.retryIntroE2EContactRequest(
+            requireExactCallWakeReceipt: true,
+            probeRelayBeforeSend: () async {
+              probeTargets.add(target);
+              p2pService.dialResult = true;
+              return RelayProbeResult.connected;
+            },
+            sendAttempt: ({required requireExactCallWakeReceipt}) =>
+                sendContactRequest(
+                  p2pService: p2pService,
+                  identityRepo: identityRepo,
+                  bridge: bridge,
+                  targetPeerId: target,
+                  recipientPublicKey: 'recipientPubKey',
+                  resolveCallWakeHandle: (_) async => grant,
+                  onCallWakeHandleDistributed: (_, _) async =>
+                      distributed = true,
+                  requireExactCallWakeReceipt: requireExactCallWakeReceipt,
+                ),
+            now: () => now,
+            delay: (duration) async => now = now.add(duration),
+          );
+          expect(result, SendContactRequestResult.success);
+          expect(probeTargets, [target]);
+          expect(p2pService.lastSentPeerId, target);
+          expect(p2pService.sendWithReplyCalls, 1);
+          expect(p2pService.storeInInboxCalls, 0);
+          expect(distributed, isTrue);
+        },
+      );
+
+      test(
+        'fixture relay connection alone cannot replace an exact wake receipt',
+        () async {
+          p2pService.dialResult = false;
+          var now = DateTime.utc(2026, 1, 1);
+          var distributed = false;
+          final result = await intro_runner.retryIntroE2EContactRequest(
+            requireExactCallWakeReceipt: true,
+            probeRelayBeforeSend: () async {
+              p2pService.dialResult = true;
+              return RelayProbeResult.connected;
+            },
+            sendAttempt: ({required requireExactCallWakeReceipt}) async {
+              final result = await sendContactRequest(
+                p2pService: p2pService,
+                identityRepo: identityRepo,
+                bridge: bridge,
+                targetPeerId: 'targetPeer123456789',
+                recipientPublicKey: 'recipientPubKey',
+                resolveCallWakeHandle: (_) async => grant,
+                onCallWakeHandleDistributed: (_, _) async => distributed = true,
+                requireExactCallWakeReceipt: requireExactCallWakeReceipt,
+              );
+              now = now.add(const Duration(seconds: 120));
+              return result;
+            },
+            now: () => now,
+          );
+          expect(result, SendContactRequestResult.sendFailed);
+          expect(p2pService.sendWithReplyCalls, 1);
+          expect(p2pService.storeInInboxCalls, 0);
+          expect(distributed, isFalse);
         },
       );
 

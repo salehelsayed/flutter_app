@@ -131,7 +131,7 @@ final class PreparedGroupMediaBlobCustodyCoordinator {
     DateTime Function()? clock,
   }) : _artifactStore = artifactStore,
        _prepareArtifact = prepareArtifact,
-       _strictUpload = strictUpload ?? _callStrictGroupUpload,
+       _strictUpload = strictUpload ?? callStrictGroupMediaBlobUpload,
        _clock = clock ?? DateTime.now;
 
   final GroupMediaBlobArtifactStore _artifactStore;
@@ -1150,7 +1150,9 @@ final class _GenerationPublication {
 
 bool _trimmed(String value) => value.trim().isNotEmpty && value == value.trim();
 
-Future<Map<String, dynamic>> _callStrictGroupUpload({
+/// Canonical strict upload leaf, also shared by compile-gated observers.
+/// Observers must delegate here so custody arguments have one network owner.
+Future<Map<String, dynamic>> callStrictGroupMediaBlobUpload({
   required Bridge bridge,
   required String custodyBlobId,
   required String recipientPeerId,

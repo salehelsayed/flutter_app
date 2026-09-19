@@ -3,11 +3,13 @@ import 'dart:io';
 import 'package:flutter_app/core/database/app_database_version.dart';
 import 'package:flutter_app/core/database/migrations/117_call_history.dart';
 import 'package:flutter_app/core/database/production_migration_registry.dart';
+import 'package:flutter_app/features/call/application/call_history_projector.dart';
 import 'package:flutter_app/features/call/data/call_history_repository.dart';
 import 'package:flutter_app/features/call/data/call_history_repository_impl.dart';
 import 'package:flutter_app/features/call/domain/call_end_reason.dart';
 import 'package:flutter_app/features/call/domain/call_id.dart';
 import 'package:flutter_app/features/call/domain/call_session_snapshot.dart';
+import 'package:flutter_app/features/call/domain/call_state.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
@@ -85,6 +87,69 @@ void main() {
     expect(stored?.connectedAt, original.connectedAt);
     expect(await db.query(kCallHistoryTable), hasLength(1));
   });
+
+  test(
+    'fresh projector preserves one terminal row after SQLite reopen',
+    () async {
+      final startedAt = DateTime.utc(2026, 9, 17, 12);
+      final terminal = CallSessionSnapshot.active(
+        callId: CallId.parse('66666666-6666-4666-8666-666666666666'),
+        contactPeerId: 'contact-a',
+        direction: CallDirection.outgoing,
+        state: CallState.ended,
+        callerAccountPeerId: 'local-account',
+        callerDeviceId: 'local-device',
+        startedAt: startedAt,
+        connectedAt: startedAt.add(const Duration(seconds: 1)),
+        endedAt: startedAt.add(const Duration(seconds: 11)),
+        endReason: CallEndReason.localHangup,
+      );
+      final firstAnnouncements = <bool>[];
+      final first = await CallHistoryProjector(
+        repository,
+        clock: () => startedAt.add(const Duration(seconds: 12)),
+        onTerminalProjected: (_, inserted) => firstAnnouncements.add(inserted),
+      ).projectTerminal(terminal);
+      final durableRows = await db.query(kCallHistoryTable);
+      expect(firstAnnouncements, <bool>[true]);
+      expect(durableRows, hasLength(1));
+
+      await db.close();
+      db = await openDatabase(
+        p.join(tempDirectory.path, 'history.db'),
+        version: currentIdentityDatabaseVersion,
+        singleInstance: false,
+        onCreate: runProductionOnCreate,
+        onUpgrade: runProductionOnUpgrade,
+      );
+      repository = CallHistoryRepositoryImpl(db);
+      final replayAnnouncements = <bool>[];
+      final reopenedProjector = CallHistoryProjector(
+        repository,
+        clock: () => startedAt.add(const Duration(minutes: 2)),
+        onTerminalProjected: (_, inserted) => replayAnnouncements.add(inserted),
+      );
+      final replayed = await reopenedProjector.projectTerminal(terminal);
+      final conflictingReplay = await reopenedProjector.projectTerminal(
+        terminal.copyWith(
+          connectedAt: null,
+          endedAt: startedAt.add(const Duration(minutes: 1)),
+          endReason: CallEndReason.signalingFailed,
+        ),
+      );
+
+      expect(replayAnnouncements, <bool>[false, false]);
+      expect(replayed.toMap(), first.toMap());
+      expect(conflictingReplay.toMap(), first.toMap());
+      expect(await db.query(kCallHistoryTable), durableRows);
+      expect(
+        (await reopenedProjector.timelineForContact(
+          'contact-a',
+        )).map((entry) => entry.toMap()),
+        <Map<String, Object?>>[first.toMap()],
+      );
+    },
+  );
 
   test('contact history is scoped and newest first', () async {
     await repository.upsertTerminal(

@@ -30,6 +30,31 @@ enum IncomingCallSignalOutcome {
   superseded,
 }
 
+/// Proof produced only after the ordinary authenticated terminal handling
+/// path commits replay custody. It never authorizes presentation or media.
+final class AuthenticatedIncomingCallTerminal {
+  const AuthenticatedIncomingCallTerminal._({
+    required this.callHandle,
+    required this.signal,
+  });
+
+  final String callHandle;
+  final CallSignal signal;
+
+  @override
+  String toString() => 'AuthenticatedIncomingCallTerminal(redacted)';
+}
+
+final class IncomingCallMailboxHandlingResult {
+  const IncomingCallMailboxHandlingResult({
+    required this.outcome,
+    this.authenticatedTerminal,
+  });
+
+  final IncomingCallSignalOutcome outcome;
+  final AuthenticatedIncomingCallTerminal? authenticatedTerminal;
+}
+
 /// What a mailbox event is, read without consuming it. Lets a drain see that
 /// a terminal signal follows an invite before either is handled.
 final class IncomingCallSignalPeek {
@@ -199,9 +224,27 @@ final class HandleIncomingCallSignal {
     }
   }
 
-  Future<IncomingCallSignalOutcome> handle(
+  Future<IncomingCallSignalOutcome> handle(IncomingCallSignalFrame frame) =>
+      _handle(frame);
+
+  Future<IncomingCallMailboxHandlingResult> handleMailbox(
     IncomingCallSignalFrame frame,
   ) async {
+    AuthenticatedIncomingCallTerminal? terminal;
+    final outcome = await _handle(
+      frame,
+      onCommittedTerminal: (proof) => terminal = proof,
+    );
+    return IncomingCallMailboxHandlingResult(
+      outcome: outcome,
+      authenticatedTerminal: terminal,
+    );
+  }
+
+  Future<IncomingCallSignalOutcome> _handle(
+    IncomingCallSignalFrame frame, {
+    void Function(AuthenticatedIncomingCallTerminal)? onCommittedTerminal,
+  }) async {
     try {
       if (!await callNetworkEffectsAreAllowed(_networkEffectsAllowed)) {
         return IncomingCallSignalOutcome.deferred;
@@ -361,6 +404,20 @@ final class HandleIncomingCallSignal {
       final initialOutcome = _outcome(reduction);
       if (signal.event != CallSignalType.invite) {
         admitted.commitReplay();
+        if (isAuthenticatedRemoteTerminal &&
+            frame.route == CallRouteClass.ephemeralMailbox &&
+            frame.expectedCallHandle == admitted.callHandle &&
+            frame.expectedMessageId == signal.messageId &&
+            frame.expectedExpiresAtMs == signal.expiresAtMs &&
+            frame.expectedRecipientDevicePeerId ==
+                signal.recipientDevicePeerId) {
+          onCommittedTerminal?.call(
+            AuthenticatedIncomingCallTerminal._(
+              callHandle: admitted.callHandle,
+              signal: signal,
+            ),
+          );
+        }
         return settle(initialOutcome);
       }
       final resumableInvite = _canResumeIncomingInvite(

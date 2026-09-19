@@ -1,8 +1,48 @@
 import 'dart:async';
 
-/// Detail-free outcome exposed to presentation after one outgoing-call
-/// request. Adapter and routing failures deliberately stay behind this seam.
-enum OutgoingCallStartResult { started, unavailable, failed }
+/// Safe outcome exposed to presentation after one outgoing-call request.
+/// Only an explicit microphone refusal carries actionable permission feedback;
+/// adapter and routing failures deliberately stay behind this seam.
+enum OutgoingCallStartResult {
+  started,
+  unavailable,
+  failed,
+  microphoneDenied,
+  canceled,
+}
+
+/// Ownership of preflight only. Admission transfers control to the canonical
+/// coordinator; cancellation after that point belongs to its exact call ID.
+final class OutgoingCallStartRequest {
+  OutgoingCallStartRequest({this.onAdmitted, this.isCurrent});
+
+  final void Function()? onAdmitted;
+  final bool Function()? isCurrent;
+  bool _canceled = false;
+  bool _admitted = false;
+
+  bool get isCanceled =>
+      _canceled || (!_admitted && isCurrent?.call() == false);
+  bool get isAdmitted => _admitted;
+
+  void cancel() {
+    if (!_admitted) _canceled = true;
+  }
+
+  void checkPending() {
+    if (isCanceled) throw const OutgoingCallStartCanceled();
+  }
+
+  void admit() {
+    checkPending();
+    _admitted = true;
+    onAdmitted?.call();
+  }
+}
+
+final class OutgoingCallStartCanceled implements Exception {
+  const OutgoingCallStartCanceled();
+}
 
 /// Optional recovery for an explicit call action. Passive availability probes
 /// must not invoke this hook. Recovery never places a call or requests audio.
@@ -28,6 +68,7 @@ abstract interface class OutgoingCallCapability {
   Future<bool> isOutgoingCallAvailableFor(String contactAccountPeerId);
 
   Future<OutgoingCallStartResult> startOutgoingCall(
-    String contactAccountPeerId,
-  );
+    String contactAccountPeerId, {
+    OutgoingCallStartRequest? request,
+  });
 }

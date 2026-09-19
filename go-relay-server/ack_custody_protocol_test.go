@@ -898,7 +898,7 @@ func TestRelayNotificationClosure_GroupContentProtectedCustody(t *testing.T) {
 }
 
 func TestRelayNotificationClosure_GroupMediaBlobCustody(t *testing.T) {
-	t.Setenv(mediaCustodyAdmissionEnabledEnv, "")
+	t.Setenv(mediaCustodyAdmissionEnabledEnv, "false")
 	mediaEnv := setupTestEnv(t)
 	currentNow := directMediaCustodyTestNow
 	mediaEnv.media.SetDirectMediaBlobCustodyNowForTest(func() time.Time { return currentNow })
@@ -917,7 +917,7 @@ func TestRelayNotificationClosure_GroupMediaBlobCustody(t *testing.T) {
 	disabled, ready := directMediaCustodyUpload(t, mediaEnv, mediaEnv.sender, disabledReq, bodyA)
 	if ready || disabled.ErrorCode != mediaCustodyErrorAdmissionOff ||
 		disabled.StoreStatus != mediaCustodyStoreDisabled {
-		t.Fatalf("group kind bypassed shared default-off admission: %#v ready=%v", disabled, ready)
+		t.Fatalf("group kind bypassed explicitly disabled shared admission: %#v ready=%v", disabled, ready)
 	}
 	mediaEnv.media.SetDirectMediaBlobCustodyAdmissionEnabled(true)
 

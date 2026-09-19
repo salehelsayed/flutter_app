@@ -7,6 +7,7 @@ import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 
 const String groupConfigVersionField = 'configVersion';
 const String groupConfigStateHashField = 'stateHash';
+const String groupConfigMembershipVersionField = 'membershipVersion';
 const String groupMetadataUpdatedEventType = 'group_metadata_updated';
 const String groupMetadataActorEventEnvelopeField = 'actorEvent';
 const String groupMetadataActorEventSignedPayloadField = 'signedPayload';
@@ -46,6 +47,16 @@ Map<String, dynamic> buildGroupConfigPayload(
     'avatarMime': group.avatarMime,
     'metadataUpdatedAt': group.lastMetadataEventAt?.toUtc().toIso8601String(),
     groupConfigVersionField: configVersion,
+    // Only export a committed version. A pending event's timestamp override
+    // must never be paired with the previous committed event ID. The complete
+    // config is authenticated by the existing invite signature.
+    if (configVersionOverride == null &&
+        group.lastMembershipEventAt != null &&
+        group.lastMembershipEventId?.trim().isNotEmpty == true)
+      groupConfigMembershipVersionField: {
+        'eventAt': group.lastMembershipEventAt!.toUtc().toIso8601String(),
+        'eventId': group.lastMembershipEventId!,
+      },
     'members': normalizedMembers
         .map((member) => member.toConfigJson())
         .toList(),

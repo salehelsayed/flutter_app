@@ -543,6 +543,138 @@ void main() {
   });
 
   test(
+    'live setup uses only the existing no-send preamble and exact receipt',
+    () async {
+      final runner = _LiveContactSetupRunner();
+      final driver = _liveSetupDriver(runner);
+      await driver.awaitLiveSetupReady(deviceId: 'pixel', role: 'callee');
+      expect(
+        runner.stagedConfig.keys,
+        unorderedEquals(['stepId', 'skip_snapshot']),
+      );
+      expect(runner.stagedConfig['skip_snapshot'], isTrue);
+      expect(runner.configStagedAt, lessThan(runner.foregroundedAt));
+      expect(runner.matchingResultReads, 1);
+      expect(
+        runner.ordinaryInvocations.expand((args) => args),
+        isNot(contains('force-stop')),
+      );
+    },
+  );
+
+  test(
+    'live setup rejects reported failure or an unexpected receipt',
+    () async {
+      for (final runner in [
+        _LiveContactSetupRunner(setupFailure: true),
+        _LiveContactSetupRunner(unexpectedSetupSnapshot: true),
+      ]) {
+        await expectLater(
+          _liveSetupDriver(
+            runner,
+          ).awaitLiveSetupReady(deviceId: 'pixel', role: 'callee'),
+          throwsStateError,
+        );
+      }
+    },
+  );
+
+  test(
+    'live setup rejects completion held beyond its original deadline',
+    () async {
+      var now = DateTime.utc(2026);
+      final runner = _LiveContactSetupRunner(
+        onResultRead: () {
+          now = now.add(const Duration(minutes: 3));
+        },
+      );
+      await expectLater(
+        _liveSetupDriver(
+          runner,
+          now: () => now,
+        ).awaitLiveSetupReady(deviceId: 'pixel', role: 'callee'),
+        throwsA(isA<TimeoutException>()),
+      );
+    },
+  );
+
+  test(
+    'setup diagnostics retain only closed progress and exact step match',
+    () {
+      final projection = projectAndroidProductionAudioCallSetupDiagnostic(
+        jsonEncode({
+          'stepId': 'expected-step',
+          'status': 'failed',
+          'success': false,
+          'phase': 'actions',
+          'error': 'private peer and token',
+          'snapshot': {'privateKey': 'secret'},
+        }),
+        expectedStepId: 'expected-step',
+      );
+      expect(projection, {
+        'capture': 'present',
+        'matchingStep': true,
+        'status': 'failed',
+        'success': false,
+        'phase': 'actions',
+      });
+      expect(
+        projectAndroidProductionAudioCallSetupDiagnostic(
+          '{"status":"private-state","phase":"private-phase","stepId":"old"}',
+          expectedStepId: 'current',
+        ),
+        {
+          'capture': 'present',
+          'matchingStep': false,
+          'status': 'unknown',
+          'phase': 'unknown',
+        },
+      );
+      expect(
+        projectAndroidProductionAudioCallSetupDiagnostic(
+          'partial',
+          expectedStepId: null,
+        ),
+        {'capture': 'malformed'},
+      );
+      expect(
+        projectAndroidProductionAudioCallSetupDiagnostic(
+          null,
+          expectedStepId: null,
+        ),
+        {'capture': 'absent'},
+      );
+    },
+  );
+
+  test(
+    'failed endpoint diagnostic reads leave closed capture status',
+    () async {
+      final directory = await Directory.systemTemp.createTemp(
+        'audio-setup-diag-',
+      );
+      addTearDown(() => directory.delete(recursive: true));
+      await _liveSetupDriver(
+        _UnavailableDiagnosticRunner(),
+        proofDirectory: directory,
+      ).captureFailureArtifacts('failure');
+      final files = directory.listSync().whereType<File>().toList();
+      expect(files, hasLength(2));
+      for (final file in files) {
+        final row = jsonDecode(await file.readAsString()) as Map;
+        expect(row['deviceArtifactsCaptured'], isFalse);
+        expect(row['appProcessLogCaptured'], isFalse);
+        expect(row['setupReceipt'], {'capture': 'absent'});
+        expect(
+          await file.readAsString(),
+          isNot(contains('private diagnostic')),
+        );
+      }
+    },
+  );
+
+  test(
     'contact setup foregrounds the bootstrapped app without a cold relaunch',
     () async {
       final runner = _LiveContactSetupRunner();
@@ -601,6 +733,10 @@ void main() {
         isTrue,
       );
       expect(runner.stagedConfig['require_exact_call_wake_receipt'], isTrue);
+      expect(
+        runner.stagedConfig['probe_configured_relay_before_contact'],
+        isTrue,
+      );
     },
   );
 
@@ -903,6 +1039,70 @@ safe lifecycle marker
     expect(sanitized, isNot(contains('192.168.0.44')));
     expect(sanitized, isNot(contains('52705')));
   });
+
+  test(
+    'both live setup consumers finish before the first contact introduction',
+    () async {
+      final driver = _FakeDriver(
+        requireLiveSetup: true,
+        heldLiveSetupRole: androidProductionAudioCallCalleeRole,
+      );
+      final result = executeAndroidProductionAudioCallCampaign(
+        devices: const <String>['pixel', 'emulator-5554'],
+        apkSha256: _apkSha,
+        profileSha256: _profileSha,
+        relayFixtureIdentitySha256: _fixtureSha,
+        turnAuthoritySha256: _turnAuthoritySha,
+        coturnInstanceIdentitySha256: _coturnInstanceSha,
+        pionOracle: _pionOracle,
+        driver: driver,
+        runId: 'run-399',
+        callerNonce: 'caller-nonce-399',
+        calleeNonce: 'callee-nonce-399',
+      ).then<Object?>((_) => null, onError: (Object error) => error);
+
+      await driver.bootstrapsFinished.future;
+      await Future<void>.delayed(Duration.zero);
+      expect(driver.contactEvents, isEmpty);
+      expect(driver.liveSetupEvents, contains('start:callee'));
+      expect(driver.liveSetupEvents, contains('end:caller'));
+      driver.liveSetupGate.complete();
+      expect(await result, isNull);
+      expect(driver.liveSetupEvents, contains('end:callee'));
+      expect(driver.contactEvents.first, 'start:caller');
+      expect(driver.maximumParallelContacts, 1);
+      expect(driver.restoreCalls, 1);
+    },
+  );
+
+  test(
+    'failed live setup blocks introductions and restores both fixtures',
+    () async {
+      final driver = _FakeDriver(failLiveSetupRole: 'callee');
+      await expectLater(
+        executeAndroidProductionAudioCallCampaign(
+          devices: const <String>['pixel', 'emulator-5554'],
+          apkSha256: _apkSha,
+          profileSha256: _profileSha,
+          relayFixtureIdentitySha256: _fixtureSha,
+          turnAuthoritySha256: _turnAuthoritySha,
+          coturnInstanceIdentitySha256: _coturnInstanceSha,
+          pionOracle: _pionOracle,
+          driver: driver,
+          runId: 'run-399',
+          callerNonce: 'caller-nonce-399',
+          calleeNonce: 'callee-nonce-399',
+        ),
+        throwsStateError,
+      );
+      expect(driver.contactEvents, isEmpty);
+      expect(
+        driver.actions.where((action) => action.startsWith('tap:')),
+        isEmpty,
+      );
+      expect(driver.restoreCalls, 1);
+    },
+  );
 
   test(
     'orchestrator overlaps independent peer work and uses fixed roles',
@@ -1758,6 +1958,9 @@ final class _FakeDriver implements AndroidProductionAudioCallCampaignDriver {
     this.wakeAuthorityReady = true,
     this.missingRtpDirection,
     this.rtpObservationFalseSamples = 0,
+    this.requireLiveSetup = false,
+    this.heldLiveSetupRole,
+    this.failLiveSetupRole,
   });
 
   final String? failLabel;
@@ -1770,6 +1973,14 @@ final class _FakeDriver implements AndroidProductionAudioCallCampaignDriver {
   final bool wakeAuthorityReady;
   final String? missingRtpDirection;
   final int rtpObservationFalseSamples;
+  final bool requireLiveSetup;
+  final String? heldLiveSetupRole;
+  final String? failLiveSetupRole;
+  final liveSetupGate = Completer<void>();
+  final bootstrapsFinished = Completer<void>();
+  var _completedBootstraps = 0;
+  final liveSetupEvents = <String>[];
+  final liveSetupRoles = <String>{};
   final List<String> actions = <String>[];
   int restoreCalls = 0;
   int _parallelClassifications = 0;
@@ -1844,20 +2055,36 @@ final class _FakeDriver implements AndroidProductionAudioCallCampaignDriver {
   Future<AndroidProductionAudioCallIdentity> bootstrapIdentity({
     required String deviceId,
     required String role,
-  }) => _overlap(
-    AndroidProductionAudioCallIdentity(
-      username: role == androidProductionAudioCallCallerRole
-          ? 'Plan399Caller'
-          : 'Plan399Callee',
-      peerId: 'peer-$role',
-      qrPayload: '{"ns":"peer-$role"}',
-      mlKemPublicKey: 'mlkem-$role',
-    ),
-    (value) => _parallelBootstraps = value,
-    () => _parallelBootstraps,
-    (value) => maximumParallelBootstraps = value,
-    () => maximumParallelBootstraps,
-  );
+  }) =>
+      _overlap(
+        AndroidProductionAudioCallIdentity(
+          username: role == androidProductionAudioCallCallerRole
+              ? 'Plan399Caller'
+              : 'Plan399Callee',
+          peerId: 'peer-$role',
+          qrPayload: '{"ns":"peer-$role"}',
+          mlKemPublicKey: 'mlkem-$role',
+        ),
+        (value) => _parallelBootstraps = value,
+        () => _parallelBootstraps,
+        (value) => maximumParallelBootstraps = value,
+        () => maximumParallelBootstraps,
+      ).then((identity) {
+        if (++_completedBootstraps == 2) bootstrapsFinished.complete();
+        return identity;
+      });
+
+  @override
+  Future<void> awaitLiveSetupReady({
+    required String deviceId,
+    required String role,
+  }) async {
+    liveSetupEvents.add('start:$role');
+    if (role == failLiveSetupRole) throw StateError('Live setup failed');
+    if (role == heldLiveSetupRole) await liveSetupGate.future;
+    liveSetupRoles.add(role);
+    liveSetupEvents.add('end:$role');
+  }
 
   @override
   Future<void> establishContact({
@@ -1866,6 +2093,9 @@ final class _FakeDriver implements AndroidProductionAudioCallCampaignDriver {
     required AndroidProductionAudioCallIdentity contact,
   }) async {
     contactEvents.add('start:$ownerRole');
+    if (requireLiveSetup && liveSetupRoles.length != 2) {
+      throw StateError('Peer live services are still deferred after identity');
+    }
     await _overlap<void>(
       null,
       (value) => _parallelContacts = value,
@@ -2163,9 +2393,35 @@ final class _ColdLaunchTimeoutRunner
   }
 }
 
+SystemAndroidProductionAudioCallCampaignDriver _liveSetupDriver(
+  AndroidHostProcessRunner runner, {
+  DateTime Function()? now,
+  Directory? proofDirectory,
+}) => SystemAndroidProductionAudioCallCampaignDriver(
+  physicalDeviceId: 'pixel',
+  emulatorDeviceId: 'emulator-5554',
+  artifact: File('${Directory.systemTemp.path}/plan399-unused.apk'),
+  artifactSha256: _apkSha,
+  packageName: androidProductionAudioCallAppPackage,
+  relayHost: '192.168.0.60',
+  relayPort: 44001,
+  proofDirectory: proofDirectory ?? Directory.systemTemp,
+  runner: runner,
+  now: now,
+);
+
+final class _UnavailableDiagnosticRunner implements AndroidHostProcessRunner {
+  @override
+  Future<ProcessResult> run(String executable, List<String> arguments) async =>
+      ProcessResult(1, 1, 'private diagnostic', 'private diagnostic');
+}
+
 final class _LiveContactSetupRunner
     implements AndroidHostProcessRunnerWithTimeout {
   _LiveContactSetupRunner({
+    this.setupFailure = false,
+    this.unexpectedSetupSnapshot = false,
+    this.onResultRead,
     this.uiNavigation = const <String, Object?>{
       'requestedPeerId': 'peer-callee',
       'opened': true,
@@ -2180,6 +2436,9 @@ final class _LiveContactSetupRunner
   var foregroundedAt = -1;
   var matchingResultReads = 0;
   final Map<String, Object?> uiNavigation;
+  final bool setupFailure;
+  final bool unexpectedSetupSnapshot;
+  final void Function()? onResultRead;
 
   @override
   Future<ProcessResult> run(String executable, List<String> arguments) async {
@@ -2207,7 +2466,7 @@ final class _LiveContactSetupRunner
     }
     if (arguments.length >= 5 && arguments[2] == 'push') {
       final decoded = jsonDecode(File(arguments[3]).readAsStringSync());
-      if (decoded is Map && decoded['add_contacts'] is List) {
+      if (decoded is Map && decoded['stepId'] is String) {
         _stepId = '${decoded['stepId']}';
         stagedConfig = decoded.map<String, Object?>(
           (key, value) => MapEntry('$key', value),
@@ -2226,6 +2485,22 @@ final class _LiveContactSetupRunner
     if (arguments.contains('cat') &&
         arguments.contains('app_flutter/intro_e2e_result.json')) {
       matchingResultReads += 1;
+      onResultRead?.call();
+      if (stagedConfig['skip_snapshot'] == true) {
+        return ProcessResult(
+          1,
+          0,
+          jsonEncode({
+            'stepId': _stepId,
+            'status': setupFailure ? 'failed' : 'complete',
+            'success': !setupFailure,
+            'snapshot': unexpectedSetupSnapshot
+                ? {'contacts': []}
+                : {'skipped': true},
+          }),
+          '',
+        );
+      }
       return ProcessResult(
         1,
         0,

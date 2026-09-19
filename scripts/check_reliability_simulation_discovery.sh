@@ -192,6 +192,18 @@ classify_path() {
   esac
 
   case "$path" in
+    integration_test/diagnostics_reconnect_isolation_harness.dart)
+      record "support" "$path" "support" "Android/iOS diagnostic archive and reconnect fault-injection comparison; controlled native replies and relay transport"
+      return
+      ;;
+    integration_test/relay_recovery_diagnostics_harness.dart)
+      record "support" "$path" "support" "Native relay recovery and diagnostics comparison harness; uploads terminate locally, explicit virtual-device lifecycle driver optional"
+      return
+      ;;
+    integration_test/scripts/run_relay_diagnostics_virtual.py)
+      record "support" "$path" "support" "Pinned running Android emulator/iOS simulator driver for observed relay/diagnostics background-resume trials"
+      return
+      ;;
     integration_test/scripts/run_mixed_policy_native_audio.py)
       record "support" "$path" "support" "Pinned Android pair and disposable coturn driver for the optional mixed-policy native audio proof; explicit devices and APK required"
       return

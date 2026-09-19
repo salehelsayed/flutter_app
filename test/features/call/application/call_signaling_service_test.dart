@@ -3,9 +3,12 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:fake_async/fake_async.dart';
+import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/call/application/call_cleanup_coordinator.dart';
 import 'package:flutter_app/features/call/application/call_coordinator.dart';
+import 'package:flutter_app/features/call/application/call_control_effect_executor.dart';
+import 'package:flutter_app/features/call/application/call_signaling_context_store.dart';
 import 'package:flutter_app/features/call/application/call_endpoint_resolver.dart';
 import 'package:flutter_app/features/call/application/call_history_projector.dart';
 import 'package:flutter_app/features/call/application/call_signaling_service.dart';
@@ -18,6 +21,7 @@ import 'package:flutter_app/features/call/diagnostics/call_diagnostics.dart';
 import 'package:flutter_app/features/call/infrastructure/call_authority_client.dart';
 import 'package:flutter_app/features/call/infrastructure/call_mailbox_client.dart';
 import 'package:flutter_app/features/call/infrastructure/p2p_call_transport.dart';
+import 'package:flutter_app/features/call/infrastructure/production_call_signaling_adapters.dart';
 import 'package:flutter_app/features/call/infrastructure/secure_call_envelope_codec.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -296,6 +300,480 @@ Future<void> _prepare(CallCoordinator coordinator) async {
 }
 
 void main() {
+  test('offline terminate retries exact bytes after local context cleanup', () {
+    fakeAsync((async) {
+      final rig = _TerminalRetryRig(async);
+      Object? failure;
+      rig.send().catchError((Object error) {
+        failure = error;
+      });
+      async.flushMicrotasks();
+      expect(
+        failure,
+        isNotNull,
+        reason: 'local failure must settle immediately',
+      );
+      expect(rig.mailbox.requests, hasLength(1));
+      final original = rig.mailbox.requests.single;
+      rig.contexts.purge(_callId);
+      expect(rig.contexts.length, 0);
+      rig.mailbox.online = true;
+      async.elapse(const Duration(seconds: 3));
+      expect(rig.mailbox.requests.length, greaterThan(1));
+      final retry = rig.mailbox.requests.last;
+      expect(retry.envelopeJson, original.envelopeJson);
+      expect(rig.crypto.encryptions, 1);
+      expect(retry.messageId, original.messageId);
+      expect(retry.expiresAtMs, original.expiresAtMs);
+      expect(retry.recipientDevicePeerId, original.recipientDevicePeerId);
+      expect(retry.callHandle, original.callHandle);
+      expect(
+        rig.contexts.length,
+        0,
+        reason: 'retry must not resurrect context',
+      );
+    });
+  });
+
+  void failInitial(
+    _TerminalRetryRig rig,
+    FakeAsync async, {
+    int lifetimeMs = 40_000,
+    CallId? callId,
+    CallSignalType event = CallSignalType.terminate,
+  }) {
+    var failed = false;
+    rig.send(lifetimeMs: lifetimeMs, callId: callId, event: event).catchError((
+      Object _,
+    ) {
+      failed = true;
+    });
+    async.flushMicrotasks();
+    expect(failed, isTrue);
+  }
+
+  test('terminal retry rechecks refreshed endpoint expiry after key await', () {
+    fakeAsync((async) {
+      final rig = _TerminalRetryRig(async);
+      failInitial(rig, async);
+      rig.endpoint = ResolvedCallEndpoint(
+        accountPeerId: _endpoint.accountPeerId,
+        devicePeerId: _endpoint.devicePeerId,
+        signingPublicKey: _endpoint.signingPublicKey,
+        mlKemPublicKey: _endpoint.mlKemPublicKey,
+        deviceKeyEpoch: _endpoint.deviceKeyEpoch,
+        preferenceEpoch: _endpoint.preferenceEpoch,
+        platform: _endpoint.platform,
+        expiresAtMs: _nowMs + 1000,
+        routingHandle: _endpoint.routingHandle,
+        wakeHandle: _endpoint.wakeHandle,
+      );
+      final key = Completer<void>();
+      rig.keyGate = key.future;
+      async.elapse(const Duration(milliseconds: 1100));
+      rig.mailbox.online = true;
+      key.complete();
+      async.flushMicrotasks();
+      expect(rig.mailbox.requests, hasLength(1));
+      expect(rig.service.pendingTerminalRetryCount, 0);
+      rig.service.close();
+    });
+  });
+
+  test('terminal retry succeeds once and releases retained bytes', () {
+    fakeAsync((async) {
+      final rig = _TerminalRetryRig(async);
+      failInitial(rig, async);
+      expect(rig.service.pendingTerminalRetryCount, 1);
+      rig.mailbox.online = true;
+      async.elapse(const Duration(seconds: 1));
+      expect(rig.mailbox.requests, hasLength(2));
+      expect(rig.service.pendingTerminalRetryCount, 0);
+      async.elapse(const Duration(minutes: 1));
+      expect(rig.mailbox.requests, hasLength(2));
+    });
+  });
+
+  test(
+    'terminal retry work and retention are capped after repeated failure',
+    () {
+      fakeAsync((async) {
+        final rig = _TerminalRetryRig(async);
+        failInitial(rig, async);
+        async.elapse(const Duration(seconds: 16));
+        expect(rig.mailbox.requests, hasLength(6));
+        expect(rig.service.pendingTerminalRetryCount, 0);
+        rig.mailbox.online = true;
+        async.elapse(const Duration(minutes: 1));
+        expect(rig.mailbox.requests, hasLength(6));
+      });
+    },
+  );
+
+  test('terminal retry never extends original message expiry', () {
+    fakeAsync((async) {
+      final rig = _TerminalRetryRig(async);
+      failInitial(rig, async, lifetimeMs: 700);
+      async.elapse(const Duration(milliseconds: 700));
+      expect(rig.mailbox.requests, hasLength(2));
+      expect(rig.service.pendingTerminalRetryCount, 0);
+      rig.mailbox.online = true;
+      async.elapse(const Duration(seconds: 10));
+      expect(rig.mailbox.requests, hasLength(2));
+      expect(rig.mailbox.requests.last.expiresAtMs, _nowMs + 700);
+    });
+  });
+
+  test('terminal retry stops on account change or migration gate closure', () {
+    for (final accountChange in [true, false]) {
+      fakeAsync((async) {
+        final rig = _TerminalRetryRig(async);
+        failInitial(rig, async);
+        if (accountChange) {
+          rig.accountCurrent = false;
+        } else {
+          rig.networkAllowed = false;
+        }
+        rig.mailbox.online = true;
+        async.elapse(const Duration(seconds: 1));
+        expect(rig.service.pendingTerminalRetryCount, 0);
+        rig.accountCurrent = true;
+        rig.networkAllowed = true;
+        async.elapse(const Duration(seconds: 15));
+        expect(rig.mailbox.requests, hasLength(1));
+      });
+    }
+  });
+
+  test('terminal retry fails closed on recipient authority rotation', () {
+    for (final field in ['device', 'key', 'epoch', 'preference', 'wake']) {
+      fakeAsync((async) {
+        final rig = _TerminalRetryRig(async);
+        failInitial(rig, async);
+        rig.endpoint = ResolvedCallEndpoint(
+          accountPeerId: _endpoint.accountPeerId,
+          devicePeerId: field == 'device'
+              ? 'replacement'
+              : _endpoint.devicePeerId,
+          signingPublicKey: field == 'key'
+              ? 'replacement'
+              : _endpoint.signingPublicKey,
+          mlKemPublicKey: _endpoint.mlKemPublicKey,
+          deviceKeyEpoch: field == 'epoch' ? 2 : _endpoint.deviceKeyEpoch,
+          preferenceEpoch: field == 'preference'
+              ? 2
+              : _endpoint.preferenceEpoch,
+          platform: _endpoint.platform,
+          expiresAtMs: _endpoint.expiresAtMs,
+          routingHandle: _endpoint.routingHandle,
+          wakeHandle: field == 'wake' ? 'a' * 32 : _endpoint.wakeHandle,
+        );
+        rig.mailbox.online = true;
+        async.elapse(const Duration(seconds: 2));
+        expect(rig.mailbox.requests, hasLength(1), reason: field);
+        expect(rig.service.pendingTerminalRetryCount, 0, reason: field);
+      });
+    }
+  });
+
+  test(
+    'terminal retry defers transient lookup but rejects explicit revocation',
+    () {
+      for (final code in [
+        CallEndpointResolutionCode.unavailable,
+        CallEndpointResolutionCode.blocked,
+      ]) {
+        fakeAsync((async) {
+          final rig = _TerminalRetryRig(async);
+          failInitial(rig, async);
+          rig.endpointError = CallEndpointResolutionException(code);
+          async.elapse(const Duration(seconds: 1));
+          expect(rig.mailbox.requests, hasLength(1));
+          rig.endpointError = null;
+          rig.mailbox.online = true;
+          async.elapse(const Duration(seconds: 2));
+          expect(
+            rig.mailbox.requests,
+            hasLength(code == CallEndpointResolutionCode.unavailable ? 2 : 1),
+          );
+          expect(rig.service.pendingTerminalRetryCount, 0);
+        });
+      }
+    },
+  );
+
+  test('terminal retry survives the production offline authority response', () {
+    fakeAsync((async) {
+      final rig = _TerminalRetryRig(async);
+      final bridge = _RetryAuthorityBridge();
+      final authority = BridgeCallAuthorityClient(bridge: bridge);
+      failInitial(rig, async);
+      final original = rig.mailbox.requests.single;
+      rig.contexts.purge(_callId);
+      rig.beforeEndpointLookup = () async {
+        await authority.getEndpoint('remote-account');
+      };
+      bridge.errorCode = 'CALL_CONTROL_UNAVAILABLE';
+      async.elapse(const Duration(milliseconds: 500));
+      expect(bridge.lookups, 1);
+      expect(rig.service.pendingTerminalRetryCount, 1);
+      expect(rig.mailbox.requests, hasLength(1));
+
+      bridge.errorCode = null;
+      rig.mailbox.online = true;
+      async.elapse(const Duration(seconds: 1));
+      expect(bridge.lookups, 2);
+      expect(rig.mailbox.requests, hasLength(2));
+      final retry = rig.mailbox.requests.last;
+      expect(retry.envelopeJson, original.envelopeJson);
+      expect(retry.messageId, original.messageId);
+      expect(retry.expiresAtMs, original.expiresAtMs);
+      expect(rig.crypto.encryptions, 1);
+      expect(rig.contexts.length, 0);
+      expect(rig.service.pendingTerminalRetryCount, 0);
+      rig.service.close();
+    });
+  });
+
+  test('terminal retry rejects other production authority refusal codes', () {
+    for (final code in [
+      'CALL_UNAUTHORIZED',
+      'CALL_STALE_EPOCH',
+      'CALL_CONTROL_INVALID_RESPONSE',
+      'CALL_CONTROL_UNSUPPORTED',
+      'ARBITRARY_UNKNOWN_CODE',
+    ]) {
+      fakeAsync((async) {
+        final rig = _TerminalRetryRig(async);
+        final bridge = _RetryAuthorityBridge()..errorCode = code;
+        final authority = BridgeCallAuthorityClient(bridge: bridge);
+        failInitial(rig, async);
+        rig.beforeEndpointLookup = () async {
+          await authority.getEndpoint('remote-account');
+        };
+        async.elapse(const Duration(milliseconds: 500));
+        expect(bridge.lookups, 1, reason: code);
+        expect(rig.service.pendingTerminalRetryCount, 0, reason: code);
+        bridge.errorCode = null;
+        rig.mailbox.online = true;
+        async.elapse(const Duration(seconds: 15));
+        expect(rig.mailbox.requests, hasLength(1), reason: code);
+        rig.service.close();
+      });
+    }
+  });
+
+  test('terminal retry disposal and expiry fence stalled authorization', () {
+    for (final expire in [false, true]) {
+      fakeAsync((async) {
+        final rig = _TerminalRetryRig(async);
+        failInitial(rig, async, lifetimeMs: expire ? 1000 : 40_000);
+        final gate = Completer<void>();
+        rig.endpointGate = gate.future;
+        async.elapse(const Duration(milliseconds: 500));
+        if (expire) {
+          async.elapse(const Duration(milliseconds: 500));
+        } else {
+          rig.service.close();
+        }
+        expect(rig.service.pendingTerminalRetryCount, 0);
+        rig.mailbox.online = true;
+        gate.complete();
+        async.flushMicrotasks();
+        async.elapse(const Duration(seconds: 10));
+        expect(rig.mailbox.requests, hasLength(1));
+      });
+    }
+  });
+
+  test(
+    'terminal retry capacity evicts oldest call without rebinding successors',
+    () {
+      fakeAsync((async) {
+        final rig = _TerminalRetryRig(async);
+        final ids = List.generate(
+          5,
+          (i) => CallId.parse('66666666-6666-4666-8666-66666666666$i'),
+        );
+        for (final id in ids) {
+          failInitial(rig, async, callId: id);
+        }
+        expect(rig.service.pendingTerminalRetryCount, 4);
+        rig.contexts.storeOutgoing(
+          callId: _callId,
+          callHandle: '77777777-7777-4777-8777-777777777777',
+          localAccountPeerId: 'local-account',
+          localDevicePeerId: 'local-device',
+          remoteAccountPeerId: 'successor-account',
+          remoteDevicePeerId: 'successor-device',
+        );
+        rig.mailbox.online = true;
+        async.elapse(const Duration(seconds: 1));
+        expect(rig.mailbox.requests, hasLength(9));
+        expect(rig.service.pendingTerminalRetryCount, 0);
+        final retried = rig.mailbox.requests
+            .skip(5)
+            .map((r) => r.envelopeJson)
+            .toSet();
+        expect(
+          retried,
+          isNot(contains(rig.mailbox.requests.first.envelopeJson)),
+        );
+        expect(
+          rig.contexts.read(_callId)?.remoteAccountPeerId,
+          'successor-account',
+        );
+        expect(rig.contexts.length, 1);
+      });
+    },
+  );
+
+  test(
+    'quiescing cancels old retries while allowing one fresh terminal attempt',
+    () {
+      fakeAsync((async) {
+        final rig = _TerminalRetryRig(async);
+        failInitial(rig, async);
+        expect(rig.service.pendingTerminalRetryCount, 1);
+        rig.service.stopRetries();
+        expect(rig.service.pendingTerminalRetryCount, 0);
+        failInitial(
+          rig,
+          async,
+          callId: CallId.parse('77777777-7777-4777-8777-777777777777'),
+        );
+        expect(rig.mailbox.requests, hasLength(2));
+        expect(rig.service.pendingTerminalRetryCount, 0);
+        rig.mailbox.online = true;
+        async.elapse(const Duration(seconds: 20));
+        expect(rig.mailbox.requests, hasLength(2));
+        rig.service.close();
+      });
+    },
+  );
+
+  test('failed nonterminal invite cannot enter terminal retry queue', () {
+    fakeAsync((async) {
+      final rig = _TerminalRetryRig(async);
+      failInitial(rig, async, event: CallSignalType.invite);
+      rig.mailbox.online = true;
+      async.elapse(const Duration(seconds: 20));
+      expect(rig.mailbox.requests, hasLength(1));
+      expect(rig.service.pendingTerminalRetryCount, 0);
+    });
+  });
+
+  test(
+    'offline cancel cleanup finishes before retry and cannot affect successor',
+    () {
+      fakeAsync((async) {
+        final rig = _TerminalRetryRig(async);
+        rig.mailbox.online = true;
+        final successor = CallId.parse('77777777-7777-4777-8777-777777777777');
+        var callIds = 0;
+        var messageIds = 0;
+        late final CallControlEffectExecutor control;
+        final coordinator = CallCoordinator(
+          reducer: const CallReducer(),
+          cleanupCoordinator: CallCleanupCoordinator([
+            CallCleanupStep('call_signaling_context', (snapshot) async {
+              await control.retireOutgoingPreconnectInvite(snapshot);
+              rig.contexts.purge(snapshot.callId!);
+            }, requiredForTerminalAck: true),
+          ]),
+          historyProjector: CallHistoryProjector(_History()),
+          effectExecutor: control = CallControlEffectExecutor(
+            contextStore: rig.contexts,
+            signalingPort: rig.adapter,
+            clock: () =>
+                DateTime.fromMillisecondsSinceEpoch(rig.nowMs, isUtc: true),
+            idSource: () => CallId.parse(
+              '88888888-8888-4888-8888-88888888888${messageIds++}',
+            ),
+          ),
+          clock: () =>
+              DateTime.fromMillisecondsSinceEpoch(rig.nowMs, isUtc: true),
+          idSource: () => callIds++ == 0 ? _callId : successor,
+        );
+        coordinator.placeCall(
+          contactPeerId: 'remote-account',
+          localAccountPeerId: 'local-account',
+          localDeviceId: 'local-device',
+        );
+        async.flushMicrotasks();
+        coordinator.dispatch(
+          CallEvent(
+            type: CallEventType.remoteRinging,
+            eventId: 'ringing',
+            occurredAt: DateTime.fromMillisecondsSinceEpoch(
+              rig.nowMs,
+              isUtc: true,
+            ),
+            callId: _callId,
+            contactPeerId: 'remote-account',
+          ),
+        );
+        async.flushMicrotasks();
+        expect(coordinator.activeSession?.state, CallState.ringing);
+        rig.mailbox.online = false;
+        var cancelFinished = false;
+        coordinator
+            .dispatch(
+              CallEvent(
+                type: CallEventType.cancel,
+                eventId: 'cancel-offline',
+                occurredAt: DateTime.fromMillisecondsSinceEpoch(
+                  rig.nowMs,
+                  isUtc: true,
+                ),
+                callId: _callId,
+                contactPeerId: 'remote-account',
+              ),
+            )
+            .then((_) {
+              cancelFinished = true;
+            });
+        async.flushMicrotasks();
+        expect(cancelFinished, isTrue);
+        expect(coordinator.terminalCleanupAckReady(_callId), isTrue);
+        expect(rig.contexts.read(_callId), isNull);
+        expect(rig.service.pendingTerminalRetryCount, 1);
+        final cancelledEnvelope = rig.mailbox.requests.last.envelopeJson;
+        rig.mailbox.online = true;
+        coordinator.placeCall(
+          contactPeerId: 'remote-account',
+          localAccountPeerId: 'local-account',
+          localDeviceId: 'local-device',
+        );
+        async.flushMicrotasks();
+        expect(coordinator.activeSession?.callId, successor);
+        final successorContext = rig.contexts.read(successor);
+        async.elapse(const Duration(seconds: 1));
+        expect(rig.mailbox.requests.last.envelopeJson, cancelledEnvelope);
+        expect(coordinator.activeSession?.callId, successor);
+        expect(coordinator.activeSession?.state, CallState.inviting);
+        expect(
+          rig.contexts.read(successor)?.callHandle,
+          successorContext?.callHandle,
+        );
+        expect(rig.contexts.read(_callId), isNull);
+        expect(rig.service.pendingTerminalRetryCount, 0);
+        rig.mailbox.online = false;
+        final beforeShutdown = rig.mailbox.requests.length;
+        rig.service.stopRetries();
+        coordinator.dispose();
+        async.flushMicrotasks();
+        rig.service.close();
+        expect(
+          rig.mailbox.requests.length,
+          beforeShutdown + 1,
+          reason: 'active appShutdown keeps its one normal terminal attempt',
+        );
+        expect(rig.service.pendingTerminalRetryCount, 0);
+      });
+    },
+  );
+
   test(
     'durable diagnostics keep direct success distinct from failed mailbox custody',
     () async {
@@ -560,7 +1038,7 @@ void main() {
     },
   );
 
-  test('a dispatched wake rings the caller back before the callee signals', () {
+  test('a wake receipt confirms custody without recipient alerting', () {
     fakeAsync((clock) {
       final coordinator = _coordinator();
       var prepared = false;
@@ -620,7 +1098,8 @@ void main() {
       expect(clock.elapsed, const Duration(milliseconds: 250));
       expect(direct.result.isCompleted, isFalse);
       expect(coordinator.activeSession?.mailboxCustodyConfirmed, isTrue);
-      expect(coordinator.activeSession?.state, CallState.ringing);
+      expect(coordinator.activeSession?.state, CallState.inviting);
+      expect(coordinator.activeSession?.ringingAt, isNull);
       expect(
         coordinator.activeSession?.recentEventIds,
         contains('11111111-1111-4111-8111-111111111111:wake-dispatched'),
@@ -1146,4 +1625,148 @@ void main() {
       }
     },
   );
+}
+
+final class _TerminalRetryMailbox implements CallMailboxClient {
+  bool online = false;
+  final requests = <CallMailboxStoreRequest>[];
+
+  @override
+  Future<CallMailboxStoreResult> store(CallMailboxStoreRequest request) async {
+    requests.add(request);
+    if (!online) throw StateError('offline');
+    return CallMailboxStoreResult(
+      status: CallMailboxStoreStatus.stored,
+      receiptAtMs: _nowMs,
+      expiresAtMs: request.expiresAtMs,
+      eventCount: 1,
+      totalBytes: request.envelopeJson.length,
+      pendingHandles: 1,
+    );
+  }
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+final class _TerminalRetryRig {
+  _TerminalRetryRig(this.async) {
+    service = CallSignalingService(
+      codec: SecureCallEnvelopeCodec(crypto: crypto, nowMs: () => nowMs),
+      nowMs: () => nowMs,
+      retryJitter: () => 0.5,
+      directTransport: direct,
+      mailboxClient: mailbox,
+      networkEffectsAllowed: () => networkAllowed,
+    );
+    adapter = ProductionCallControlSignalingAdapter(
+      signalingService: service,
+      contextStore: contexts,
+      resolveCurrentEndpoint: (_) async {
+        await endpointGate;
+        await beforeEndpointLookup?.call();
+        if (endpointError != null) throw endpointError!;
+        return endpoint;
+      },
+      loadSenderSigningPrivateKey: () async {
+        await keyGate;
+        if (!accountCurrent) throw StateError('identity changed');
+        return 'local-signing';
+      },
+      clock: () => DateTime.fromMillisecondsSinceEpoch(nowMs, isUtc: true),
+    );
+  }
+
+  final FakeAsync async;
+  final contexts = CallSignalingContextStore();
+  final mailbox = _TerminalRetryMailbox();
+  final crypto = _TerminalRetryCrypto();
+  final direct = _ThrowingDirect();
+  late final CallSignalingService service;
+  late final ProductionCallControlSignalingAdapter adapter;
+  bool networkAllowed = true;
+  bool accountCurrent = true;
+  ResolvedCallEndpoint endpoint = _endpoint;
+  Future<void>? endpointGate;
+  Future<void> Function()? beforeEndpointLookup;
+  Future<void>? keyGate;
+  Object? endpointError;
+  int get nowMs => _nowMs + async.elapsed.inMilliseconds;
+
+  Future<void> send({
+    CallSignalType event = CallSignalType.terminate,
+    CallId? callId,
+    int lifetimeMs = 40_000,
+  }) async {
+    await adapter.send(
+      signal: CallSignal.create(
+        callId: callId ?? _callId,
+        messageId: '55555555-5555-4555-8555-555555555555',
+        event: event,
+        senderAccountPeerId: 'local-account',
+        senderDevicePeerId: 'local-device',
+        recipientAccountPeerId: 'remote-account',
+        recipientDevicePeerId: 'remote-device',
+        senderSequence: 2,
+        iceGeneration: 0,
+        createdAtMs: _nowMs,
+        expiresAtMs: _nowMs + lifetimeMs,
+        payload: event == CallSignalType.invite
+            ? const <String, Object?>{}
+            : const <String, Object?>{'reason': 'caller_cancelled'},
+      ),
+      callHandle: '33333333-3333-4333-8333-333333333333',
+    );
+  }
+}
+
+final class _RetryAuthorityBridge implements Bridge {
+  String? errorCode;
+  int lookups = 0;
+
+  @override
+  Future<String> send(String message) async {
+    expect(jsonDecode(message)['cmd'], 'call_endpoint_get_v1');
+    lookups++;
+    return jsonEncode(
+      errorCode == null
+          ? <String, Object?>{'ok': true, 'found': false}
+          : <String, Object?>{'ok': false, 'errorCode': errorCode},
+    );
+  }
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+final class _TerminalRetryCrypto implements CallEnvelopeCrypto {
+  int encryptions = 0;
+
+  @override
+  Future<CallCiphertext> encrypt({
+    required String recipientMlKemPublicKey,
+    required String plaintext,
+  }) async {
+    final encrypted = await _Crypto().encrypt(
+      recipientMlKemPublicKey: recipientMlKemPublicKey,
+      plaintext: plaintext,
+    );
+    return CallCiphertext(
+      kem: encrypted.kem,
+      ciphertext: encrypted.ciphertext,
+      nonce: base64Encode(utf8.encode('nonce-${++encryptions}')),
+    );
+  }
+
+  @override
+  Future<String> sign({
+    required String senderSigningPrivateKey,
+    required String canonicalData,
+  }) => _Crypto().sign(
+    senderSigningPrivateKey: senderSigningPrivateKey,
+    canonicalData: canonicalData,
+  );
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }

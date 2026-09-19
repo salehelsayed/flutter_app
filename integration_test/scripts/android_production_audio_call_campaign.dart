@@ -440,6 +440,14 @@ abstract interface class AndroidProductionAudioCallCampaignDriver {
     required String role,
   });
 
+  /// Identity export precedes deferred live services. Complete an existing
+  /// no-send setup command on both peers before introducing either contact.
+  /// This proves the setup consumer ran, not that peer transport is healthy.
+  Future<void> awaitLiveSetupReady({
+    required String deviceId,
+    required String role,
+  });
+
   Future<void> establishContact({
     required String ownerDeviceId,
     required String ownerRole,
@@ -573,6 +581,17 @@ Future<Map<String, Object?>> executeAndroidProductionAudioCallCampaign({
     calleeIdentity = identities.last;
     _validateIdentity(callerIdentity);
     _validateIdentity(calleeIdentity);
+
+    await Future.wait<void>(<Future<void>>[
+      driver.awaitLiveSetupReady(
+        deviceId: emulatorDeviceId,
+        role: androidProductionAudioCallCallerRole,
+      ),
+      driver.awaitLiveSetupReady(
+        deviceId: physicalDeviceId,
+        role: androidProductionAudioCallCalleeRole,
+      ),
+    ]);
 
     // The emulator has the slower cold-start path. Let its reciprocal setup
     // finish before the physical peer starts an exact-receipt send; otherwise
@@ -1059,6 +1078,47 @@ decodeAndroidProductionAudioCallPionOracleAttestation(String encoded) {
   );
 }
 
+/// A failure-only projection. Raw setup receipts contain identities and keys.
+/// Keep only closed progress fields; this is never capability PASS authority.
+Map<String, Object?> projectAndroidProductionAudioCallSetupDiagnostic(
+  String? raw, {
+  required String? expectedStepId,
+}) {
+  if (raw == null) return const <String, Object?>{'capture': 'absent'};
+  if (utf8.encode(raw).length > _maximumSavedTextBytes) {
+    return const <String, Object?>{'capture': 'oversized'};
+  }
+  Object? decoded;
+  try {
+    decoded = jsonDecode(raw);
+  } on FormatException {
+    return const <String, Object?>{'capture': 'malformed'};
+  }
+  if (decoded is! Map) {
+    return const <String, Object?>{'capture': 'malformed'};
+  }
+  const statuses = {'running', 'complete', 'failed'};
+  const phases = {
+    'p2p_ready',
+    'health_check',
+    'inbox_drain',
+    'contact_persistence',
+    'actions',
+    'snapshot',
+    'failure_snapshot',
+  };
+  return <String, Object?>{
+    'capture': 'present',
+    'matchingStep':
+        expectedStepId != null && decoded['stepId'] == expectedStepId,
+    'status': statuses.contains(decoded['status'])
+        ? decoded['status']
+        : 'unknown',
+    'phase': phases.contains(decoded['phase']) ? decoded['phase'] : 'unknown',
+    if (decoded['success'] is bool) 'success': decoded['success'],
+  };
+}
+
 final class SystemAndroidProductionAudioCallCampaignDriver
     implements AndroidProductionAudioCallCampaignDriver {
   SystemAndroidProductionAudioCallCampaignDriver({
@@ -1073,7 +1133,9 @@ final class SystemAndroidProductionAudioCallCampaignDriver
     AndroidHostProcessRunner runner = const SystemAndroidHostProcessRunner(),
     int startDispatchMaximumPolls = 180,
     Duration startDispatchPollInterval = const Duration(milliseconds: 250),
+    DateTime Function()? now,
   }) : _runner = runner,
+       _now = now ?? DateTime.now,
        _startDispatchMaximumPolls = startDispatchMaximumPolls,
        _startDispatchPollInterval = startDispatchPollInterval {
     validateAndroidProductionAudioCallAppPackage(packageName);
@@ -1094,6 +1156,7 @@ final class SystemAndroidProductionAudioCallCampaignDriver
   final int relayPort;
   final Directory proofDirectory;
   final AndroidHostProcessRunner _runner;
+  final DateTime Function() _now;
   final int _startDispatchMaximumPolls;
   final Duration _startDispatchPollInterval;
   final Random _random = Random.secure();
@@ -1101,6 +1164,8 @@ final class SystemAndroidProductionAudioCallCampaignDriver
   final Map<String, Future<Set<String>>> _nativeSemanticPackages =
       <String, Future<Set<String>>>{};
   final Map<String, Future<String>> _pendingUiDumps = {};
+  final Map<String, String> _setupSteps = {};
+  final Map<String, String> _setupPhases = {};
 
   @override
   Future<AndroidProductionAudioCallTargetKind> classifyTarget(
@@ -1217,6 +1282,7 @@ final class SystemAndroidProductionAudioCallCampaignDriver
     required String deviceId,
     required String role,
   }) async {
+    _setupPhases[deviceId] = 'identity';
     await _deleteAppFile(deviceId, 'intro_e2e_identity.json');
     await _launch(deviceId);
     final raw = await _waitForAppFile(
@@ -1252,12 +1318,71 @@ final class SystemAndroidProductionAudioCallCampaignDriver
   }
 
   @override
+  Future<void> awaitLiveSetupReady({
+    required String deviceId,
+    required String role,
+  }) async {
+    _requireExpectedDevice(deviceId);
+    final expectedRole = deviceId == emulatorDeviceId
+        ? androidProductionAudioCallCallerRole
+        : androidProductionAudioCallCalleeRole;
+    if (role != expectedRole) {
+      throw ArgumentError(
+        'Live setup role does not match its pinned endpoint.',
+      );
+    }
+    final deadline = _now().add(const Duration(minutes: 3));
+    final stepId = 'production-live-setup-$role-${_token('step')}';
+    _setupSteps[deviceId] = stepId;
+    _setupPhases[deviceId] = 'live_setup';
+    await _deleteAppFile(deviceId, 'intro_e2e_result.json');
+    await _writeAppFile(
+      deviceId,
+      'intro_e2e_config.json',
+      jsonEncode(<String, Object?>{'stepId': stepId, 'skip_snapshot': true}),
+    );
+    await _foreground(deviceId);
+    while (_now().isBefore(deadline)) {
+      final raw = await _readAppFile(deviceId, 'intro_e2e_result.json');
+      if (!_now().isBefore(deadline)) break;
+      if (raw != null) {
+        try {
+          final decoded = jsonDecode(raw);
+          if (decoded is Map && decoded['stepId'] == stepId) {
+            if (decoded['status'] == 'failed' || decoded['success'] == false) {
+              throw StateError('Live setup failed for $role.');
+            }
+            if (decoded['status'] == 'complete' && decoded['success'] == true) {
+              final snapshot = decoded['snapshot'];
+              if (snapshot is! Map ||
+                  snapshot.length != 1 ||
+                  snapshot['skipped'] != true) {
+                throw StateError('Live setup returned an unexpected receipt.');
+              }
+              await _deleteAppFile(deviceId, 'intro_e2e_config.json');
+              await _deleteAppFile(deviceId, 'intro_e2e_result.json');
+              if (!_now().isBefore(deadline)) break;
+              return;
+            }
+          }
+        } on FormatException {
+          // A partially written receipt is not completion authority.
+        }
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 200));
+    }
+    throw TimeoutException('Live setup timed out for $role.');
+  }
+
+  @override
   Future<void> establishContact({
     required String ownerDeviceId,
     required String ownerRole,
     required AndroidProductionAudioCallIdentity contact,
   }) async {
     final stepId = 'production-contact-$ownerRole-${_token('step')}';
+    _setupSteps[ownerDeviceId] = stepId;
+    _setupPhases[ownerDeviceId] = 'contact';
     await _deleteAppFile(ownerDeviceId, 'intro_e2e_result.json');
     await _writeAppFile(
       ownerDeviceId,
@@ -1273,6 +1398,7 @@ final class SystemAndroidProductionAudioCallCampaignDriver
         'open_conversation_with_peer_id': contact.peerId,
         'send_contact_requests_for_added_contacts': true,
         'require_exact_call_wake_receipt': true,
+        'probe_configured_relay_before_contact': true,
       }),
     );
     await _foreground(ownerDeviceId);
@@ -1736,7 +1862,8 @@ final class SystemAndroidProductionAudioCallCampaignDriver
     required String role,
     required String stage,
   }) async {
-    await Future.wait<void>(<Future<void>>[
+    Map<String, Object?> setup = const <String, Object?>{'capture': 'failed'};
+    final captureResults = await Future.wait<bool>(<Future<bool>>[
       _ignoreDiagnosticFailure(
         () async => _captureDeviceArtifacts(
           deviceId: deviceId,
@@ -1751,15 +1878,38 @@ final class SystemAndroidProductionAudioCallCampaignDriver
           stage: stage,
         ),
       ),
+      _ignoreDiagnosticFailure(() async {
+        setup = projectAndroidProductionAudioCallSetupDiagnostic(
+          await _readAppFile(deviceId, 'intro_e2e_result.json'),
+          expectedStepId: _setupSteps[deviceId],
+        );
+      }),
     ]);
+    // Retain closed outcomes even when privacy filtering, process exit or a
+    // tool error prevents an individual diagnostic. Never save the raw receipt.
+    await File(
+      '${proofDirectory.path}/$stage-$role-${_token('capture')}-capture-status.json',
+    ).writeAsString(
+      jsonEncode(<String, Object?>{
+        'schema': 'mknoon.production-audio.failure-capture.v1',
+        'role': role,
+        'setupPhase': _setupPhases[deviceId] ?? 'unknown',
+        'deviceArtifactsCaptured': captureResults[0],
+        'appProcessLogCaptured': captureResults[1],
+        'setupReceipt': setup,
+      }),
+      flush: true,
+    );
   }
 
-  Future<void> _ignoreDiagnosticFailure(Future<void> Function() action) async {
+  Future<bool> _ignoreDiagnosticFailure(Future<void> Function() action) async {
     try {
       await action();
+      return true;
     } on Object {
       // One unavailable diagnostic must not obscure the causal campaign error
       // or prevent another endpoint/diagnostic from being captured.
+      return false;
     }
   }
 

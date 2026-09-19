@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:collection';
+import 'dart:math';
 
 import '../domain/call_engine.dart';
 import '../domain/call_end_reason.dart';
@@ -15,14 +16,22 @@ enum CallNegotiationPortErrorCode {
   permissionDenied,
   mediaUnavailable,
   signalingUnavailable,
+  transportUnavailable,
   iceServersUnavailable,
+}
+
+/// Owns one sealed signaling write; retries cannot outlive its call authority.
+abstract interface class CallNegotiationSignalRetry {
+  Future<void> retry({required bool Function() canApply});
+  void close();
 }
 
 /// A fixed-shape adapter failure. Raw media and signaling data are excluded.
 final class CallNegotiationPortException implements Exception {
-  const CallNegotiationPortException(this.code);
+  const CallNegotiationPortException(this.code, {this.retry});
 
   final CallNegotiationPortErrorCode code;
+  final CallNegotiationSignalRetry? retry;
 
   @override
   String toString() => 'CallNegotiationPortException(${code.name})';
@@ -59,6 +68,16 @@ abstract interface class CallNegotiationSignalingPort {
   });
 }
 
+/// Production signaling can fence a new write resumed outside the effect lane.
+abstract interface class CallNegotiationFencedSignalingPort {
+  Future<void> sendDescription({
+    required CallId callId,
+    required CallSessionDescription description,
+    required int iceGeneration,
+    required bool Function() canApply,
+  });
+}
+
 typedef CallNegotiationEventDispatcher = Future<void> Function(CallEvent event);
 typedef CallNegotiationSnapshotReader = CallSessionSnapshot? Function();
 typedef CallStagedIceServerReader =
@@ -84,8 +103,10 @@ final class CallNegotiationEffectExecutor implements CallEffectExecutor {
     this.mediaReadinessPollInterval = const Duration(milliseconds: 100),
     this.maxMediaReadinessSamples,
     this.onFailureObservation,
+    double Function()? retryJitter,
   }) : _mediaReadinessTimerScheduler =
-           mediaReadinessTimerScheduler ?? const DartCallTimerScheduler() {
+           mediaReadinessTimerScheduler ?? const DartCallTimerScheduler(),
+       _retryJitter = retryJitter ?? Random().nextDouble {
     if (maxPendingLocalCandidates <= 0 ||
         maxPendingRemoteCandidates <= 0 ||
         maxLocalCandidateBatchSize <= 0 ||
@@ -132,6 +153,9 @@ final class CallNegotiationEffectExecutor implements CallEffectExecutor {
   onFailureObservation;
   (CallId, CallFailureReason, CallFailureDisposition)? _lastFailureObservation;
   final CallTimerScheduler _mediaReadinessTimerScheduler;
+  final double Function() _retryJitter;
+  final Set<_RecoverySignalWork> _recoverySignals = {};
+  int _candidateRetryCount = 0;
 
   late final StreamSubscription<CallEngineEvent> _engineEventSubscription;
   late final StreamSubscription<CallIceCandidate> _candidateSubscription;
@@ -153,6 +177,8 @@ final class CallNegotiationEffectExecutor implements CallEffectExecutor {
   CallTimerHandle? _mediaReadinessTimer;
   CallId? _mediaReadinessCallId;
   CallEventType? _mediaReadinessEventType;
+  int? _mediaReadinessIceGeneration;
+  int? _mediaReadinessReconnectGeneration;
   final Set<(CallId, CallEventType)> _closedMediaReadinessPhases =
       <(CallId, CallEventType)>{};
   int _candidateInFlightCount = 0;
@@ -163,10 +189,10 @@ final class CallNegotiationEffectExecutor implements CallEffectExecutor {
   int _staleCompletionCount = 0;
   String? _lastFailureStage;
   String? _lastFailureCode;
-  final Set<CallId> _failureDispatchedCallIds = <CallId>{};
+  final Set<(CallId, int)> _failureDispatchedPhases = {};
   int _mediaReadinessEpoch = 0;
   int _mediaReadinessSampleCount = 0;
-  bool _restartAttempted = false;
+  (CallId, int)? _restartAttemptedPhase;
   // Also fences a disconnect whose canonical dispatch is still in flight.
   CallId? _pendingMediaLossCallId;
   bool _candidateEgressFailed = false;
@@ -206,6 +232,7 @@ final class CallNegotiationEffectExecutor implements CallEffectExecutor {
           return null;
       }
     } on CallNegotiationPortException catch (error) {
+      error.retry?.close();
       if (!_isCurrentSession(snapshot)) {
         _staleCompletionCount++;
         return null;
@@ -300,12 +327,25 @@ final class CallNegotiationEffectExecutor implements CallEffectExecutor {
     }
     await engine.setLocalDescription(answer);
     if (_closed) return null;
-    await signaling.sendDescription(
-      callId: snapshot.callId!,
-      description: answer,
-      iceGeneration: engine.iceGeneration,
+    final generation = engine.iceGeneration;
+    final sent = await _sendRecoverySignal(
+      snapshot,
+      generation,
+      send: () => signaling.sendDescription(
+        callId: snapshot.callId!,
+        description: answer,
+        iceGeneration: generation,
+      ),
+      onSent: () async {
+        if (!_canContinueSignal(snapshot, generation)) return;
+        _announceLocalDescription(generation);
+        _deferReconnectReadiness(snapshot, material.iceGeneration);
+      },
     );
-    _announceLocalDescription(engine.iceGeneration);
+    if (sent && _canContinueSignal(snapshot, generation)) {
+      _announceLocalDescription(generation);
+      _deferReconnectReadiness(snapshot, material.iceGeneration);
+    }
     return null;
   }
 
@@ -330,8 +370,35 @@ final class CallNegotiationEffectExecutor implements CallEffectExecutor {
       return _followUp(CallEventType.negotiationFailed, snapshot);
     }
     await engine.setRemoteDescription(answer);
-    await _acceptRemoteDescription(snapshot, material.iceGeneration);
+    if (!await _acceptRemoteDescription(snapshot, material.iceGeneration)) {
+      return null;
+    }
+    _deferReconnectReadiness(snapshot, material.iceGeneration);
     return null;
+  }
+
+  void _deferReconnectReadiness(CallSessionSnapshot snapshot, int generation) {
+    if (snapshot.state != CallState.reconnecting) return;
+    // A completed restart exchange can retain native CONNECTED throughout.
+    // Sample after SDP without awaiting a canonical dispatch from the effect
+    // that currently owns the coordinator lane.
+    scheduleMicrotask(() async {
+      if (!_isCurrentRemoteWork(snapshot, generation) ||
+          _remoteDescriptionGeneration != generation) {
+        return;
+      }
+      final current = _readSnapshotSafely();
+      if (current == null ||
+          current.state != CallState.reconnecting ||
+          current.reconnectGeneration != snapshot.reconnectGeneration) {
+        return;
+      }
+      try {
+        await _startMediaReadinessWatch(current, CallEventType.mediaRecovered);
+      } catch (error) {
+        await _handleAsyncFailure(error, current, 'postSdpReadiness');
+      }
+    });
   }
 
   Future<CallEvent?> _queueIceCandidate(CallSessionSnapshot snapshot) async {
@@ -405,24 +472,65 @@ final class CallNegotiationEffectExecutor implements CallEffectExecutor {
     }
     // Caller: a local media loss or the callee's request starts exactly one
     // new generation per reconnect episode.
-    if (_restartAttempted) return null;
-    _restartAttempted = true;
+    final phase = (callId, snapshot.reconnectGeneration);
+    if (_restartAttemptedPhase == phase) return null;
+    _restartAttemptedPhase = phase;
     final servers = await _unexpiredStagedIceServers(snapshot);
     final generation = await engine.restartIce(iceServers: servers);
     if (!_isCurrentSession(snapshot)) return null;
-    await signaling.sendIceRestart(callId: callId, iceGeneration: generation);
+    final sent = await _sendRecoverySignal(
+      snapshot,
+      generation,
+      send: () =>
+          signaling.sendIceRestart(callId: callId, iceGeneration: generation),
+      onSent: () => _publishRestartOffer(snapshot, generation),
+    );
+    if (sent) await _publishRestartOffer(snapshot, generation);
+    return null;
+  }
+
+  Future<void> _publishRestartOffer(
+    CallSessionSnapshot snapshot,
+    int generation,
+  ) async {
+    if (!_canContinueSignal(snapshot, generation)) return;
     final offer = await engine.createOffer();
+    if (!_canContinueSignal(snapshot, generation)) return;
     if (!_isAuthenticatedDescription(offer, CallSessionDescriptionType.offer)) {
-      return _followUp(CallEventType.negotiationFailed, snapshot);
+      throw const CallNegotiationPortException(
+        CallNegotiationPortErrorCode.signalingUnavailable,
+      );
     }
     await engine.setLocalDescription(offer);
-    await signaling.sendDescription(
-      callId: callId,
-      description: offer,
-      iceGeneration: generation,
+    if (!_canContinueSignal(snapshot, generation)) return;
+    final sent = await _sendRecoverySignal(
+      snapshot,
+      generation,
+      send: () {
+        final port = signaling;
+        if (port is CallNegotiationFencedSignalingPort) {
+          return (port as CallNegotiationFencedSignalingPort).sendDescription(
+            callId: snapshot.callId!,
+            description: offer,
+            iceGeneration: generation,
+            canApply: () => _canContinueSignal(snapshot, generation),
+          );
+        }
+        return port.sendDescription(
+          callId: snapshot.callId!,
+          description: offer,
+          iceGeneration: generation,
+        );
+      },
+      onSent: () async {
+        if (_canContinueSignal(snapshot, generation)) {
+          _announceLocalDescription(generation);
+        }
+      },
     );
-    _announceLocalDescription(generation);
-    return null;
+    if (sent && _canContinueSignal(snapshot, generation)) {
+      _announceLocalDescription(generation);
+    }
   }
 
   Future<CallEvent?> _mirrorAnnouncedRestart(
@@ -449,11 +557,162 @@ final class CallNegotiationEffectExecutor implements CallEffectExecutor {
     if (snapshot.state != CallState.reconnecting) return null;
     final callId = snapshot.callId!;
     _closedMediaReadinessPhases.remove((callId, CallEventType.mediaRecovered));
-    await signaling.sendIceRestart(
-      callId: callId,
-      iceGeneration: engine.iceGeneration,
+    final generation = engine.iceGeneration;
+    await _sendRecoverySignal(
+      snapshot,
+      generation,
+      send: () =>
+          signaling.sendIceRestart(callId: callId, iceGeneration: generation),
+      onSent: () async {},
     );
     return null;
+  }
+
+  bool _canContinueSignal(CallSessionSnapshot snapshot, int generation) {
+    if (!_isCurrentRemoteWork(snapshot, generation)) return false;
+    final current = _readSnapshotSafely();
+    return snapshot.state != CallState.reconnecting ||
+        (current?.state == CallState.reconnecting &&
+            current?.reconnectGeneration == snapshot.reconnectGeneration);
+  }
+
+  /// Only a classified transport failure may leave the effect lane. The same
+  /// sealed write resumes under its original call/episode/ICE authority; native
+  /// restart and SDP creation are never repeated. The reducer still owns the
+  /// original reconnect timer and all terminal cleanup.
+  Future<bool> _sendRecoverySignal(
+    CallSessionSnapshot snapshot,
+    int generation, {
+    required Future<void> Function() send,
+    required Future<void> Function() onSent,
+    void Function()? onRetired,
+  }) async {
+    try {
+      await send();
+      onRetired?.call();
+      return true;
+    } on CallNegotiationPortException catch (error) {
+      final retry = error.retry;
+      for (final pending in _recoverySignals.toList(growable: false)) {
+        if (!_isCurrentRecoverySignal(pending)) _retireRecoverySignal(pending);
+      }
+      if (snapshot.state == CallState.reconnecting &&
+          !_canContinueSignal(snapshot, generation)) {
+        retry?.close();
+        onRetired?.call();
+        return true;
+      }
+      if (error.code == CallNegotiationPortErrorCode.transportUnavailable &&
+          retry == null &&
+          snapshot.state == CallState.reconnecting) {
+        onRetired?.call();
+        return false; // Delivery budget exhausted; canonical timeout remains.
+      }
+      if (error.code != CallNegotiationPortErrorCode.transportUnavailable ||
+          retry == null ||
+          snapshot.state != CallState.reconnecting ||
+          !_canContinueSignal(snapshot, generation) ||
+          _recoverySignals.length >= 2) {
+        retry?.close();
+        onRetired?.call();
+        rethrow;
+      }
+      final work = _RecoverySignalWork(
+        snapshot,
+        generation,
+        retry,
+        onSent,
+        onRetired,
+        clock().add(const Duration(seconds: 15)),
+      );
+      _recoverySignals.add(work);
+      _scheduleRecoverySignal(work);
+      return false;
+    }
+  }
+
+  bool _isCurrentRecoverySignal(_RecoverySignalWork work) =>
+      _recoverySignals.contains(work) &&
+      clock().isBefore(work.deadline) &&
+      _canContinueSignal(work.snapshot, work.generation);
+
+  void _retireRecoverySignal(_RecoverySignalWork work) {
+    if (!_recoverySignals.remove(work)) return;
+    work.timer?.cancel();
+    work.retry?.close();
+    work.onRetired?.call();
+    work.retry = null;
+    work.onSent = null;
+    work.onRetired = null;
+  }
+
+  void _scheduleRecoverySignal(_RecoverySignalWork work) {
+    if (!_isCurrentRecoverySignal(work) || work.attempts >= 4) {
+      _retireRecoverySignal(work);
+      return;
+    }
+    final baseMs = 500 * (1 << work.attempts);
+    final delay = Duration(
+      milliseconds: (baseMs * (0.8 + 0.4 * _retryJitter().clamp(0.0, 1.0)))
+          .round(),
+    );
+    if (!clock().add(delay).isBefore(work.deadline)) {
+      _retireRecoverySignal(work);
+      return;
+    }
+    work.timer = _mediaReadinessTimerScheduler.schedule(
+      delay,
+      () => _retryRecoverySignal(work),
+    );
+  }
+
+  Future<void> _retryRecoverySignal(_RecoverySignalWork work) async {
+    if (!_isCurrentRecoverySignal(work)) {
+      _retireRecoverySignal(work);
+      return;
+    }
+    work.attempts++;
+    try {
+      await work.retry!.retry(canApply: () => _isCurrentRecoverySignal(work));
+      if (!_isCurrentRecoverySignal(work)) {
+        _retireRecoverySignal(work);
+        return;
+      }
+      final onSent = work.onSent;
+      _retireRecoverySignal(work);
+      try {
+        await onSent?.call();
+      } catch (error) {
+        if (_canContinueSignal(work.snapshot, work.generation)) {
+          if (error is CallNegotiationPortException) error.retry?.close();
+          await _handleAsyncFailure(error, work.snapshot, 'reconnectSignal');
+        }
+      }
+    } on CallNegotiationPortException catch (error) {
+      if (!_isCurrentRecoverySignal(work)) {
+        error.retry?.close();
+        _retireRecoverySignal(work);
+        return;
+      }
+      if (error.code == CallNegotiationPortErrorCode.transportUnavailable) {
+        if (error.retry == null) {
+          _retireRecoverySignal(work);
+        } else {
+          if (!identical(work.retry, error.retry)) work.retry?.close();
+          work.retry = error.retry;
+          _scheduleRecoverySignal(work);
+        }
+        return;
+      }
+      error.retry?.close();
+      _retireRecoverySignal(work);
+      await _handleAsyncFailure(error, work.snapshot, 'reconnectSignal');
+    } catch (error) {
+      _retireRecoverySignal(work);
+      if (_canContinueSignal(work.snapshot, work.generation)) {
+        await _handleAsyncFailure(error, work.snapshot, 'reconnectSignal');
+      }
+    }
   }
 
   Future<List<CallIceServer>> _unexpiredStagedIceServers(
@@ -619,8 +878,16 @@ final class CallNegotiationEffectExecutor implements CallEffectExecutor {
       return;
     }
 
+    _pendingLocalCandidates.removeWhere(
+      (pending) => pending.candidate.iceGeneration != engine.iceGeneration,
+    );
+    for (final work in _recoverySignals.toList(growable: false)) {
+      if (!_isCurrentRecoverySignal(work)) _retireRecoverySignal(work);
+    }
     final pendingCount =
-        _pendingLocalCandidates.length + _candidateInFlightCount;
+        _pendingLocalCandidates.length +
+        _candidateInFlightCount +
+        _candidateRetryCount;
     if (pendingCount >= maxPendingLocalCandidates) {
       _failCandidateEgress(snapshot);
       return;
@@ -632,10 +899,20 @@ final class CallNegotiationEffectExecutor implements CallEffectExecutor {
   }
 
   void _ensureCandidateDrain() {
+    if (_closed) return;
+    // A resumed/new ICE episode supersedes queued candidates and failed writes
+    // from the prior generation before they can consume the bounded queue.
+    _pendingLocalCandidates.removeWhere(
+      (pending) => pending.candidate.iceGeneration != engine.iceGeneration,
+    );
+    for (final work in _recoverySignals.toList(growable: false)) {
+      if (!_isCurrentRecoverySignal(work)) _retireRecoverySignal(work);
+    }
     if (_closed ||
         _candidateEgressFailed ||
         _pendingLocalCandidates.isEmpty ||
-        _candidateDrainInFlight) {
+        _candidateDrainInFlight ||
+        _candidateRetryCount > 0) {
       return;
     }
     if (!_announcedLocalDescriptionGenerations.contains(
@@ -662,7 +939,9 @@ final class CallNegotiationEffectExecutor implements CallEffectExecutor {
         final batch = <CallIceCandidate>[first.candidate];
         while (batch.length < maxLocalCandidateBatchSize &&
             _pendingLocalCandidates.isNotEmpty &&
-            _pendingLocalCandidates.first.callId == first.callId) {
+            _pendingLocalCandidates.first.callId == first.callId &&
+            _pendingLocalCandidates.first.candidate.iceGeneration ==
+                first.candidate.iceGeneration) {
           batch.add(_pendingLocalCandidates.removeFirst().candidate);
         }
         final current = _readSnapshotSafely();
@@ -673,10 +952,23 @@ final class CallNegotiationEffectExecutor implements CallEffectExecutor {
 
         _candidateInFlightCount = batch.length;
         try {
-          await signaling.sendCandidates(
-            callId: first.callId,
-            candidates: List<CallIceCandidate>.unmodifiable(batch),
+          final sent = await _sendRecoverySignal(
+            current,
+            first.candidate.iceGeneration,
+            send: () => signaling.sendCandidates(
+              callId: first.callId,
+              candidates: List<CallIceCandidate>.unmodifiable(batch),
+            ),
+            onSent: () async => scheduleMicrotask(_ensureCandidateDrain),
+            onRetired: () {
+              _candidateRetryCount = 0;
+              scheduleMicrotask(_ensureCandidateDrain);
+            },
           );
+          if (!sent) {
+            _candidateRetryCount = batch.length;
+            return;
+          }
         } catch (error) {
           if (!_isCurrentSession(current)) {
             _staleCompletionCount++;
@@ -822,8 +1114,7 @@ final class CallNegotiationEffectExecutor implements CallEffectExecutor {
     }
     if (event.connectionState == CallConnectionState.disconnected) {
       if (session.state == CallState.connected) {
-        // A new reconnect episode: allow one restart and one recovery watch.
-        _restartAttempted = false;
+        // The reducer gives the next reconnect its own restart budget.
         _closedMediaReadinessPhases.remove((
           session.callId!,
           CallEventType.mediaRecovered,
@@ -877,8 +1168,14 @@ final class CallNegotiationEffectExecutor implements CallEffectExecutor {
   ) async {
     final callId = session.callId!;
     final phase = (callId, type);
+    final generation = type == CallEventType.mediaRecovered
+        ? engine.iceGeneration
+        : null;
     if (_closedMediaReadinessPhases.contains(phase)) return;
-    if (_mediaReadinessCallId == callId && _mediaReadinessEventType == type) {
+    if (_mediaReadinessCallId == callId &&
+        _mediaReadinessEventType == type &&
+        _mediaReadinessIceGeneration == generation &&
+        _mediaReadinessReconnectGeneration == session.reconnectGeneration) {
       return;
     }
 
@@ -888,6 +1185,8 @@ final class CallNegotiationEffectExecutor implements CallEffectExecutor {
     );
     _mediaReadinessCallId = callId;
     _mediaReadinessEventType = type;
+    _mediaReadinessIceGeneration = generation;
+    _mediaReadinessReconnectGeneration = session.reconnectGeneration;
     _mediaReadinessSampleCount = 0;
     final epoch = ++_mediaReadinessEpoch;
     await _sampleMediaReadiness(epoch);
@@ -945,7 +1244,6 @@ final class CallNegotiationEffectExecutor implements CallEffectExecutor {
       _closedMediaReadinessPhases.add((session.callId!, type));
       _cancelMediaReadinessWatch(expectedEpoch: epoch);
       if (type == CallEventType.mediaRecovered) {
-        _restartAttempted = false;
         _pendingMediaLossCallId = null;
       }
       await _dispatchCanonical(_followUp(type, session));
@@ -985,6 +1283,9 @@ final class CallNegotiationEffectExecutor implements CallEffectExecutor {
     if (session == null ||
         session.callId != callId ||
         session.isTerminal ||
+        session.reconnectGeneration != _mediaReadinessReconnectGeneration ||
+        (_mediaReadinessIceGeneration != null &&
+            _mediaReadinessIceGeneration != engine.iceGeneration) ||
         _mediaReadinessTypeFor(session.state) != type) {
       _cancelMediaReadinessWatch(expectedEpoch: epoch);
       return null;
@@ -1022,6 +1323,8 @@ final class CallNegotiationEffectExecutor implements CallEffectExecutor {
     _mediaReadinessTimer = null;
     _mediaReadinessCallId = null;
     _mediaReadinessEventType = null;
+    _mediaReadinessIceGeneration = null;
+    _mediaReadinessReconnectGeneration = null;
     _mediaReadinessSampleCount = 0;
   }
 
@@ -1046,7 +1349,10 @@ final class CallNegotiationEffectExecutor implements CallEffectExecutor {
     CallEndReason? endReason,
   }) {
     if (!_isCurrentSession(session) ||
-        !_failureDispatchedCallIds.add(session.callId!)) {
+        !_failureDispatchedPhases.add((
+          session.callId!,
+          session.reconnectGeneration,
+        ))) {
       return null;
     }
     _closeMediaReadinessPhase(session);
@@ -1120,6 +1426,13 @@ final class CallNegotiationEffectExecutor implements CallEffectExecutor {
     callId: snapshot.callId,
     endReason: endReason,
     candidateId: candidateId,
+    reconnectGeneration:
+        type == CallEventType.mediaConnected ||
+            type == CallEventType.mediaRecovered ||
+            (type == CallEventType.negotiationFailed &&
+                snapshot.state == CallState.reconnecting)
+        ? snapshot.reconnectGeneration
+        : null,
   );
 
   Future<void> close() {
@@ -1129,6 +1442,10 @@ final class CallNegotiationEffectExecutor implements CallEffectExecutor {
       final activeCallId = _readSnapshotSafely()?.callId;
       if (activeCallId != null) _trackedCallIds.add(activeCallId);
       _closed = true;
+      for (final work in _recoverySignals.toList(growable: false)) {
+        _retireRecoverySignal(work);
+      }
+      _candidateRetryCount = 0;
       _pendingMediaLossCallId = null;
       _cancelMediaReadinessWatch();
       _pendingEngineEvent = null;
@@ -1193,7 +1510,7 @@ final class CallNegotiationEffectExecutor implements CallEffectExecutor {
     'closed': _closed,
     'trackedCallCount': _trackedCallIds.length,
     'offerAttempted': _offerAttempted.isNotEmpty,
-    'restartAttempted': _restartAttempted,
+    'restartAttempted': _restartAttemptedForCurrentPhase,
     'candidateEgressFailed': _candidateEgressFailed,
     'mediaReadinessSampling': _mediaReadinessCallId != null,
     'engineEventDrainInFlight': _engineEventDrainInFlight,
@@ -1204,10 +1521,21 @@ final class CallNegotiationEffectExecutor implements CallEffectExecutor {
     'lastFailureStage': _lastFailureStage,
     'lastFailureCode': _lastFailureCode,
     'pendingLocalCandidateCount':
-        _pendingLocalCandidates.length + _candidateInFlightCount,
+        _pendingLocalCandidates.length +
+        _candidateInFlightCount +
+        _candidateRetryCount,
+    'pendingRecoverySignalCount': _recoverySignals.length,
     'pendingRemoteCandidateCount': _pendingRemoteCandidates.length,
     'dispatchFailureCount': _dispatchFailureCount,
   };
+
+  bool get _restartAttemptedForCurrentPhase {
+    final session = _readSnapshotSafely();
+    return session != null &&
+        (session.state == CallState.negotiating ||
+            session.state == CallState.reconnecting) &&
+        _restartAttemptedPhase == (session.callId, session.reconnectGeneration);
+  }
 
   @override
   String toString() => 'CallNegotiationEffectExecutor(${toDiagnosticMap()})';
@@ -1284,4 +1612,23 @@ final class _PendingLocalCandidate {
 
   final CallId callId;
   final CallIceCandidate candidate;
+}
+
+final class _RecoverySignalWork {
+  _RecoverySignalWork(
+    this.snapshot,
+    this.generation,
+    this.retry,
+    this.onSent,
+    this.onRetired,
+    this.deadline,
+  );
+  final CallSessionSnapshot snapshot;
+  final int generation;
+  final DateTime deadline;
+  CallNegotiationSignalRetry? retry;
+  Future<void> Function()? onSent;
+  void Function()? onRetired;
+  CallTimerHandle? timer;
+  int attempts = 0;
 }

@@ -1,3 +1,4 @@
+
 import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_app/features/call/diagnostics/call_diagnostic_schema.dart';
@@ -110,6 +111,29 @@ final class HeadlessCallAdmissionCleanup {
   final bool leaseReleased;
 }
 
+/// Optional local display projection for one already authenticated invite.
+/// It carries no admission, media, caller-supplied name, or persisted authority.
+final class HeadlessIncomingCallDisplay {
+  const HeadlessIncomingCallDisplay({
+    required this.displayName,
+    required this.avatarPng,
+    required this.light,
+  });
+
+  final String displayName;
+  final Uint8List? avatarPng;
+  final bool light;
+
+  Map<String, Object?> toMap() => <String, Object?>{
+    'displayName': displayName,
+    'avatarPng': avatarPng,
+    'light': light,
+  };
+
+  @override
+  String toString() => 'HeadlessIncomingCallDisplay(redacted)';
+}
+
 final class HeadlessCallAdmissionRunReport {
   const HeadlessCallAdmissionRunReport({
     required this.disposition,
@@ -117,6 +141,7 @@ final class HeadlessCallAdmissionRunReport {
     required this.databaseClosed,
     required this.leaseReleased,
     this.diagnosticCause,
+    this.display,
   });
 
   final HeadlessCallAdmissionDisposition disposition;
@@ -126,6 +151,7 @@ final class HeadlessCallAdmissionRunReport {
 
   /// Optional closed diagnostic metadata; it never changes admission authority.
   final String? diagnosticCause;
+  final HeadlessIncomingCallDisplay? display;
 }
 
 typedef RunHeadlessCallAdmission =
@@ -223,6 +249,13 @@ Future<void> runAndroidHeadlessCallAdmission(
         'requiredPersistenceComplete': report.requiredPersistenceComplete,
         'databaseClosed': report.databaseClosed,
         'leaseReleased': report.leaseReleased,
+        if (invocation.mode == HeadlessCallAdmissionMode.admission &&
+            report.disposition == HeadlessCallAdmissionDisposition.admitted &&
+            report.requiredPersistenceComplete &&
+            report.databaseClosed &&
+            report.leaseReleased &&
+            report.display != null)
+          'display': report.display!.toMap(),
         if (report.diagnosticCause != null &&
             (callDiagnosticSchemaV1['reason'] as List).contains(
               report.diagnosticCause,

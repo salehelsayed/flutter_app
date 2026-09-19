@@ -12,6 +12,32 @@ import org.junit.Test
 
 class MknoonCallLifecycleControllerTest {
     @Test
+    fun `PCM observer sees only current adopted active audio owner and authoritative mute`() {
+        val rig = LifecycleRig()
+        val id = rig.payload.nativeCallId
+        var calls = 0
+        fun observe(owner: UUID = id): String = rig.controller.withActiveAudioOwner(owner, "unavailable") { muted ->
+            calls += 1
+            if (muted) "muted" else "active"
+        }
+        assertEquals("unavailable", observe())
+        assertEquals(MknoonCallPresentationResult.PRESENTED, rig.controller.registerOutgoing(rig.payload))
+        assertEquals("unavailable", observe())
+        rig.controller.attach()
+        assertTrue(rig.controller.markAdopted(id))
+        assertTrue(rig.controller.acknowledge(id, requireNotNull(rig.controller.snapshot()).highestSequence, PendingNativeCallAcknowledgement.ADOPTED))
+        assertEquals("unavailable", observe())
+        assertTrue(rig.controller.activateAudio(id))
+        assertEquals("active", observe())
+        assertEquals("unavailable", observe(UUID.randomUUID()))
+        assertTrue(rig.controller.onMuteChanged(id, true))
+        assertEquals("muted", observe())
+        assertTrue(rig.controller.endFromDart(id))
+        assertEquals("unavailable", observe())
+        assertEquals(2, calls)
+    }
+
+    @Test
     fun `diagnostic sink failure cannot change persisted native answer or audio admission`() {
         val rig = LifecycleRig(journalDiagnostic = { _, _ -> error("diagnostic sink unavailable") })
         assertEquals(MknoonCallPresentationResult.PRESENTED, rig.controller.present(rig.payload))
@@ -45,6 +71,106 @@ class MknoonCallLifecycleControllerTest {
         assertEquals(1, rig.platform.showIncomingCalls)
         assertEquals(1, rig.platform.startForegroundCalls)
         assertEquals(0, rig.platform.startMicrophoneCalls)
+    }
+
+    @Test
+    fun `authenticated initial display is visible before first incoming notification without audio admission`() {
+        val rig = LifecycleRig()
+        val initial = MknoonIncomingCallDisplay("Known contact", byteArrayOf(7), true)
+        var notificationMetadata: MknoonLockedCallMetadata? = null
+        rig.platform.onShowIncoming = { id ->
+            assertEquals(rig.payload.nativeCallId, id)
+            assertEquals(1, rig.store.createCalls)
+            assertEquals(1, rig.platform.registerCalls)
+            assertEquals(PendingNativeCallEventType.PRESENTED, rig.controller.snapshot()!!.events.last().type)
+            notificationMetadata = rig.controller.presentation(id)
+        }
+
+        assertEquals(MknoonCallPresentationResult.PRESENTED, rig.controller.present(rig.payload, initial))
+        val visible = requireNotNull(notificationMetadata)
+        assertEquals("Known contact", visible.displayName)
+        assertEquals(7.toByte(), visible.avatarPng!![0])
+        initial.avatarPng!![0] = 8
+        assertEquals(7.toByte(), visible.avatarPng[0])
+        assertTrue(visible.light)
+        assertEquals("ringing", visible.state)
+        assertNull(visible.connectedAtMs)
+        assertFalse(visible.muted)
+        assertFalse(visible.muteAvailable)
+        assertFalse(visible.speakerOn)
+        assertFalse(visible.speakerAvailable)
+        assertEquals("", visible.routeLabel)
+        assertFalse(rig.controller.snapshot()!!.answerRequested)
+        assertEquals(0, rig.platform.requestAudioFocusCalls)
+        assertEquals(0, rig.platform.startMicrophoneCalls)
+    }
+
+    @Test
+    fun `duplicate or busy initial display cannot overwrite exact call foreground presentation`() {
+        val rig = LifecycleRig()
+        val id = rig.payload.nativeCallId
+        val initial = MknoonIncomingCallDisplay("Initial contact", null, true)
+        assertEquals(MknoonCallPresentationResult.PRESENTED, rig.controller.present(rig.payload, initial))
+        val foreground = initial.toRingingMetadata().copy(
+            displayName = "Foreground contact", state = "connected", connectedAtMs = NOW_MS,
+            light = false, muted = true, muteAvailable = true,
+        )
+        assertTrue(rig.controller.updatePresentation(id, foreground))
+        val descriptor = requireNotNull(rig.controller.snapshot())
+        rig.store.createOverride = PendingNativeCallCreateResult.Duplicate(descriptor)
+        val staleDisplay = MknoonIncomingCallDisplay("Stale contact", null, true)
+        assertEquals(MknoonCallPresentationResult.DUPLICATE, rig.controller.present(rig.payload, staleDisplay))
+        assertEquals(foreground, rig.controller.presentation(id))
+
+        val other = rig.payload.copy(nativeCallId = UUID.fromString(OTHER_CALL_ID), callHandle = OTHER_CALL_ID)
+        rig.store.createOverride = PendingNativeCallCreateResult.Busy(descriptor)
+        assertEquals(MknoonCallPresentationResult.BUSY, rig.controller.present(other, staleDisplay))
+        assertEquals(foreground, rig.controller.presentation(id))
+        assertNull(rig.controller.presentation(other.nativeCallId))
+        assertEquals(1, rig.platform.showIncomingCalls)
+        assertEquals(1, rig.platform.registerCalls)
+    }
+
+    @Test
+    fun `terminal cleanup clears initial display and a replay cannot seed the successor`() {
+        val rig = LifecycleRig()
+        val id = rig.payload.nativeCallId
+        val initial = MknoonIncomingCallDisplay("First contact", null, true)
+        assertEquals(MknoonCallPresentationResult.PRESENTED, rig.controller.present(rig.payload, initial))
+        assertTrue(rig.controller.endFromDart(id))
+        assertNull(rig.controller.presentation(id))
+        val terminal = requireNotNull(rig.controller.snapshot())
+        assertTrue(rig.controller.acknowledge(id, terminal.highestSequence, PendingNativeCallAcknowledgement.TERMINAL))
+
+        val successor = rig.payload.copy(nativeCallId = UUID.fromString(OTHER_CALL_ID), callHandle = OTHER_CALL_ID)
+        assertEquals(MknoonCallPresentationResult.PRESENTED, rig.controller.present(successor))
+        assertNull(rig.controller.presentation(successor.nativeCallId))
+        assertEquals(MknoonCallPresentationResult.DUPLICATE, rig.controller.present(rig.payload, initial))
+        assertNull(rig.controller.presentation(successor.nativeCallId))
+        assertNull(rig.controller.presentation(id))
+        assertEquals(2, rig.platform.showIncomingCalls)
+    }
+
+    @Test
+    fun `initial display does not bypass disabled expired persistence or platform gates`() {
+        val initial = MknoonIncomingCallDisplay("Known contact", null, true)
+        val cases = listOf(
+            LifecycleRig(capabilityEnabled = false) to MknoonCallPresentationResult.DISABLED,
+            LifecycleRig().apply { store.createOverride = PendingNativeCallCreateResult.PersistenceFailure } to
+                MknoonCallPresentationResult.PERSISTENCE_FAILED,
+            LifecycleRig().apply { platform.registrationSucceeds = false } to MknoonCallPresentationResult.PLATFORM_FAILED,
+            LifecycleRig().apply { store.appendFailuresRemaining = 1 } to MknoonCallPresentationResult.PERSISTENCE_FAILED,
+        )
+        for ((rig, expected) in cases) {
+            assertEquals(expected, rig.controller.present(rig.payload, initial))
+            assertNull(rig.controller.presentation(rig.payload.nativeCallId))
+            assertEquals(0, rig.platform.showIncomingCalls)
+        }
+        val expired = LifecycleRig()
+        assertEquals(MknoonCallPresentationResult.STALE,
+            expired.controller.present(expired.payload.copy(expiresAtMs = NOW_MS), initial))
+        assertNull(expired.controller.presentation(expired.payload.nativeCallId))
+        assertEquals(0, expired.platform.showIncomingCalls)
     }
 
     @Test
@@ -97,7 +223,7 @@ class MknoonCallLifecycleControllerTest {
         )
 
         assertTrue(rig.controller.endFromDart(rig.payload.nativeCallId))
-        assertFalse(rig.controller.endFromDart(rig.payload.nativeCallId))
+        assertTrue(rig.controller.endFromDart(rig.payload.nativeCallId))
         assertEquals(1, rig.platform.endCalls)
         assertEquals(1, rig.platform.stopEndpointUpdatesCalls)
         assertEquals(1, rig.platform.abandonAudioFocusCalls)
@@ -469,7 +595,7 @@ class MknoonCallLifecycleControllerTest {
         dartEnd.eventSink.events.clear()
 
         assertTrue(dartEnd.controller.endFromDart(dartEnd.payload.nativeCallId))
-        assertFalse(dartEnd.controller.endFromDart(dartEnd.payload.nativeCallId))
+        assertTrue(dartEnd.controller.endFromDart(dartEnd.payload.nativeCallId))
         assertFalse(dartEnd.controller.endFromTelecom(dartEnd.payload.nativeCallId))
         assertEquals(1, dartEnd.platform.endCalls)
         assertEquals(
@@ -1157,6 +1283,60 @@ class MknoonCallLifecycleControllerTest {
     }
 
     @Test
+    fun `recreated adopted journal preserves provider loss until exact terminal acknowledgement`() {
+        val rig = LifecycleRig()
+        val id = rig.payload.nativeCallId
+        assertEquals(MknoonCallPresentationResult.PRESENTED, rig.controller.present(rig.payload))
+        assertNotNull(rig.controller.attach())
+        assertTrue(rig.controller.answer(id))
+        assertTrue(rig.controller.markAdopted(id))
+        assertTrue(rig.controller.acknowledge(id, requireNotNull(rig.controller.snapshot()).highestSequence,
+            PendingNativeCallAcknowledgement.ADOPTED))
+        assertTrue(rig.controller.activateAudio(id))
+        rig.operations.clear()
+        val platform = LifecycleFakePlatform(rig.operations)
+        val restarted = MknoonCallLifecycleController(rig.store, platform,
+            LifecycleFakeEventSink(rig.operations), { true }, { false }, { NOW_MS })
+
+        assertTrue(restarted.reconcileAdoptedJournal())
+        val terminal = requireNotNull(restarted.snapshot())
+        assertEquals(PendingNativeCallEventType.PROVIDER_REMOVED, terminal.terminalEvent?.type)
+        assertEquals(PendingNativeCallAcknowledgement.ADOPTED, terminal.handoffAcknowledgement)
+        assertEquals(PendingNativeCallPhase.JOURNAL, terminal.phase)
+        assertEquals(id, terminal.terminalEvent?.nativeCallId)
+        assertEquals(terminal.highestSequence, terminal.terminalEvent?.sequence)
+        assertEquals(0, rig.store.deleteCalls)
+        assertNull(restarted.activeNativeCallId())
+        assertFalse(restarted.isCleanupPending(id))
+        assertFalse(restarted.answer(id))
+        assertFalse(restarted.activateAudio(id))
+        assertNull(restarted.presentation(id))
+        assertEquals(0, platform.registerCalls)
+        assertEquals(0, platform.showIncomingCalls)
+        assertEquals(0, platform.startForegroundCalls)
+        assertEquals(0, platform.startMicrophoneCalls)
+        val beforeRead = rig.operations.toList()
+        repeat(2) {
+            val observed = restarted.observeJournal()
+            assertEquals(terminal, observed.descriptor)
+            assertFalse(observed.liveOwnerPresent)
+            assertFalse(observed.cleanupPending)
+        }
+        assertEquals(beforeRead, rig.operations)
+        assertFalse(restarted.acknowledge(id, terminal.highestSequence - 1,
+            PendingNativeCallAcknowledgement.TERMINAL))
+        assertEquals(terminal, restarted.snapshot())
+        assertTrue(restarted.acknowledge(id, terminal.highestSequence,
+            PendingNativeCallAcknowledgement.TERMINAL))
+        assertNull(restarted.snapshot())
+        val successor = rig.payload.copy(nativeCallId = UUID.randomUUID(), callHandle = UUID.randomUUID().toString())
+        assertEquals(MknoonCallPresentationResult.PRESENTED, restarted.present(successor))
+        restarted.acknowledge(id, terminal.highestSequence, PendingNativeCallAcknowledgement.TERMINAL)
+        assertEquals(successor.nativeCallId, restarted.snapshot()?.nativeCallId)
+        assertEquals(successor.nativeCallId, restarted.activeNativeCallId())
+    }
+
+    @Test
     fun `startup terminal fence failure blocks attach and ACK until durable repair`() {
         val rig = LifecycleRig()
         assertEquals(MknoonCallPresentationResult.PRESENTED, rig.controller.present(rig.payload))
@@ -1216,6 +1396,80 @@ class MknoonCallLifecycleControllerTest {
         assertEquals(PendingNativeCallPhase.JOURNAL, journal.phase)
         assertNull(journal.terminalEvent)
         assertNull(rig.controller.attach())
+    }
+
+    @Test
+    fun `Dart end confirms an exact retained native decline without repeating cleanup or crossing retirement`() {
+        val rig = LifecycleRig()
+        val callId = rig.payload.nativeCallId
+        assertEquals(MknoonCallPresentationResult.PRESENTED, rig.controller.present(rig.payload))
+        assertNotNull(rig.controller.attach())
+        assertTrue(rig.controller.markAdopted(callId))
+        assertTrue(rig.controller.acknowledge(
+            callId,
+            requireNotNull(rig.controller.snapshot()).highestSequence,
+            PendingNativeCallAcknowledgement.ADOPTED,
+        ))
+        assertTrue(rig.controller.terminate(callId, PendingNativeCallEventType.DECLINE_REQUESTED))
+        val declined = requireNotNull(rig.controller.snapshot())
+        val operationsAfterDecline = rig.operations.toList()
+
+        // A queued canonical terminal snapshot can arrive before the native
+        // journal ACK. End confirms the completed state, not a new event.
+        assertTrue(rig.controller.endFromDart(callId))
+        assertTrue(rig.controller.endFromDart(callId))
+        assertEquals(declined, rig.controller.snapshot())
+        assertEquals(operationsAfterDecline, rig.operations)
+        assertFalse(rig.controller.endFromDart(UUID(9L, 9L)))
+        assertFalse(rig.controller.terminate(callId, PendingNativeCallEventType.DECLINE_REQUESTED))
+        assertTrue(rig.controller.acknowledge(
+            callId,
+            declined.highestSequence,
+            PendingNativeCallAcknowledgement.TERMINAL,
+        ))
+        assertNull(rig.controller.snapshot())
+        assertFalse(rig.controller.endFromDart(callId))
+
+        val successor = callPayload(UUID(8L, 8L))
+        assertEquals(MknoonCallPresentationResult.PRESENTED, rig.controller.present(successor))
+        val successorBefore = requireNotNull(rig.controller.snapshot())
+        val operationsBeforeStale = rig.operations.toList()
+        assertFalse(rig.controller.endFromDart(callId))
+        assertEquals(successorBefore, rig.controller.snapshot())
+        assertEquals(operationsBeforeStale, rig.operations)
+        assertTrue(rig.controller.answer(successor.nativeCallId))
+    }
+
+    @Test
+    fun `Dart end confirms native terminal only after exact cleanup retry completes`() {
+        val rig = LifecycleRig()
+        val callId = rig.payload.nativeCallId
+        assertEquals(MknoonCallPresentationResult.PRESENTED, rig.controller.present(rig.payload))
+        assertNotNull(rig.controller.attach())
+        rig.platform.endFailuresRemaining = 2
+        assertFalse(rig.controller.terminate(callId, PendingNativeCallEventType.DECLINE_REQUESTED))
+        val declined = requireNotNull(rig.controller.snapshot())
+
+        assertFalse(rig.controller.endFromDart(callId))
+        assertTrue(rig.controller.isCleanupPending(callId))
+        assertFalse(rig.controller.acknowledge(
+            callId,
+            declined.highestSequence,
+            PendingNativeCallAcknowledgement.TERMINAL,
+        ))
+        assertTrue(rig.controller.endFromDart(callId))
+        assertFalse(rig.controller.isCleanupPending(callId))
+        assertEquals(declined, rig.controller.snapshot())
+        assertEquals(3, rig.platform.endCalls)
+        assertEquals(1, rig.platform.stopEndpointUpdatesCalls)
+        assertEquals(1, rig.platform.abandonAudioFocusCalls)
+        assertEquals(1, rig.platform.cancelNotificationCalls)
+        assertEquals(1, rig.platform.stopForegroundCalls)
+        assertTrue(rig.controller.acknowledge(
+            callId,
+            declined.highestSequence,
+            PendingNativeCallAcknowledgement.TERMINAL,
+        ))
     }
 
     @Test
@@ -1313,6 +1567,7 @@ internal class LifecycleRig(
 internal class LifecycleFakeStore(
     private val operations: MutableList<String> = mutableListOf(),
 ) : MknoonCallLifecycleStore {
+    override fun observeProtectedJournal(): PendingNativeCallDescriptor? = snapshot()
     var createOverride: PendingNativeCallCreateResult? = null
     var lastDescriptor: PendingNativeCallDescriptor? = null
     var createCalls = 0
@@ -1510,6 +1765,7 @@ internal class LifecycleFakePlatform(
     var stopIncomingRingerCalls = 0
     var onAnswer: (() -> Unit)? = null
     var onRequestAudioFocus: (() -> Unit)? = null
+    var onShowIncoming: ((UUID) -> Unit)? = null
     var endFailuresRemaining = 0
     var requestAudioFocusFailuresRemaining = 0
     var startMicrophoneFailuresRemaining = 0
@@ -1544,6 +1800,7 @@ internal class LifecycleFakePlatform(
     override fun showIncoming(nativeCallId: UUID) {
         showIncomingCalls += 1
         operations += "platform.showIncoming"
+        onShowIncoming?.invoke(nativeCallId)
     }
 
     override fun startForeground(nativeCallId: UUID) {

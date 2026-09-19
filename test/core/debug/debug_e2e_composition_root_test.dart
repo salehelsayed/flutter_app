@@ -9,6 +9,57 @@ import 'package:flutter_test/flutter_test.dart';
 
 void main() {
   test(
+    'strict media observations stay behind debug composition and exact custody reload',
+    () {
+      final production = File(
+        'lib/app/bootstrap/production_application_bootstrap.dart',
+      ).readAsStringSync();
+      final composition = File(
+        'lib/debug/debug_e2e_composition_root.dart',
+      ).readAsStringSync();
+      final owner = File(
+        'lib/features/groups/application/strict_group_media_blob_download_ack_owner.dart',
+      ).readAsStringSync();
+      expect(
+        production,
+        contains(
+          'debugE2EGroupMediaDownloadHooks?.onStrictDownloadAttemptStarted',
+        ),
+      );
+      expect(
+        production,
+        contains('debugE2EGroupMediaDownloadHooks?.onStrictVerifiedCiphertext'),
+      );
+      expect(
+        composition,
+        contains('_reliabilityController.onStrictVerifiedCiphertext('),
+      );
+      expect(
+        composition,
+        contains('loadCurrentAttachment: _loadCurrentAttachment,'),
+      );
+      expect(
+        composition,
+        contains(
+          'loadStrictCustody: ({required groupId, required messageId}) =>',
+        ),
+      );
+      expect(composition, contains('.loadGroupMediaBlobCustodyForMessage('));
+      expect(composition, contains('probeGroupMediaReliabilityAuthority('));
+      expect(
+        composition,
+        contains('refreshGroupMediaReliabilitySenderAuthority('),
+      );
+      expect(
+        production,
+        isNot(contains('refreshGroupMediaReliabilitySenderAuthority(')),
+      );
+      expect(owner, isNot(contains("package:flutter_app/core/debug/")));
+      expect(owner, isNot(contains("package:flutter_app/debug/")));
+    },
+  );
+
+  test(
     'P269 ordinary Android mode uses normal startup while iOS stays distinct',
     () {
       for (final profile in <String>[

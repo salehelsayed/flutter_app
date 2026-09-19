@@ -2,6 +2,7 @@ package main
 
 import (
 	"errors"
+	"os"
 	"path/filepath"
 	"sort"
 	"testing"
@@ -11,12 +12,12 @@ import (
 	"github.com/prometheus/client_golang/prometheus/testutil"
 )
 
-// TC-346-01: admission is an explicit, default-off rollout switch. Disabling
+// TC-346-01: admission defaults on. Explicitly disabling
 // it is a drain operation: only a new upload is gated; reconciliation,
 // download, ACK, expiry, and cleanup of committed rows remain available.
 func TestRelayNotificationClosure_DirectMediaBlobCustodyAdmissionOffDrains(t *testing.T) {
-	t.Run("default off and fail closed", func(t *testing.T) {
-		for _, value := range []string{"", "false", "0", "unexpected", "TRUE-ish"} {
+	t.Run("explicit false and invalid values disable admission", func(t *testing.T) {
+		for _, value := range []string{"false", "FALSE", " false ", "0", "unexpected", "TRUE-ish"} {
 			t.Run(value, func(t *testing.T) {
 				t.Setenv(mediaCustodyAdmissionEnabledEnv, value)
 				if loadDirectMediaBlobCustodyAdmissionEnabledFromEnv() {
@@ -26,13 +27,39 @@ func TestRelayNotificationClosure_DirectMediaBlobCustodyAdmissionOffDrains(t *te
 		}
 	})
 
-	t.Run("only explicit true enables", func(t *testing.T) {
-		for _, value := range []string{"1", "true", "TRUE", " true "} {
+	t.Run("default and explicit true enable admission", func(t *testing.T) {
+		for _, value := range []string{"", " ", "1", "true", "TRUE", " true "} {
 			t.Run(value, func(t *testing.T) {
 				t.Setenv(mediaCustodyAdmissionEnabledEnv, value)
 				if !loadDirectMediaBlobCustodyAdmissionEnabledFromEnv() {
 					t.Fatalf("%s=%q did not enable protected media admission", mediaCustodyAdmissionEnabledEnv, value)
 				}
+			})
+		}
+	})
+
+	t.Run("unset flag accepts protected direct and group transfers", func(t *testing.T) {
+		t.Setenv(mediaCustodyAdmissionEnabledEnv, "")
+		if err := os.Unsetenv(mediaCustodyAdmissionEnabledEnv); err != nil {
+			t.Fatal(err)
+		}
+		for _, kind := range []string{directMediaBlobCustodyKind, groupMediaBlobCustodyKind} {
+			t.Run(kind, func(t *testing.T) {
+				env := setupTestEnv(t)
+				env.media.SetDirectMediaBlobCustodyNowForTest(func() time.Time { return directMediaCustodyTestNow })
+				body := []byte("default-enabled protected ciphertext")
+				req := directMediaCustodyUploadRequest("default-enabled", env.recipient.ID().String(), "application/octet-stream", body)
+				req.CustodyKind = kind
+				proof, ready := directMediaCustodyUpload(t, env, env.sender, req, body)
+				if !ready {
+					t.Fatalf("unset admission flag rejected protected upload: %#v", proof)
+				}
+				requireDirectMediaCustodyProof(t, proof, req, mediaCustodyStoreStored, "")
+				if resp, got := directMediaCustodyDownload(t, env, env.recipient, directMediaCustodyExactRequest(proof, "download")); resp.Status != "OK" || string(got) != string(body) {
+					t.Fatalf("default-enabled protected download = %#v body=%q", resp, got)
+				}
+				ack := directMediaCustodyRequest(t, env, env.recipient, directMediaCustodyExactRequest(proof, mediaCustodyAckAction))
+				requireDirectMediaCustodyProof(t, ack, req, "", mediaCustodyAckAcked)
 			})
 		}
 	})

@@ -16,4 +16,12 @@
     <string name="call_notification_answer">Answer</string>
     <string name="call_notification_decline">Decline</string>
     <string name="call_notification_end">End</string>
+    <string name="call_screen_connecting">Connecting…</string>
+    <string name="call_screen_ended">Call ended</string>
+    <string name="call_screen_connected">Connected</string>
+    <string name="call_screen_reconnecting">Reconnecting</string>
+    <string name="call_screen_mute">Mute</string>
+    <string name="call_screen_unmute">Unmute</string>
+    <string name="call_screen_speaker">Speaker</string>
+    <string name="call_screen_duration">Call duration %1$s</string>
 </resources>

@@ -14,6 +14,9 @@ import 'package:flutter_app/features/call/presentation/foreground_call_overlay.d
 import 'package:flutter_app/features/call/presentation/screens/active_call_screen.dart';
 import 'package:flutter_app/features/call/presentation/screens/incoming_call_screen.dart';
 import 'package:flutter_app/features/call/presentation/screens/outgoing_call_screen.dart';
+import 'package:flutter_app/features/push/application/push_registration_health_notifier.dart';
+import 'package:flutter_app/features/push/domain/push_registration_health.dart';
+import 'package:flutter_app/features/push/presentation/widgets/push_registration_health_surface.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -23,6 +26,7 @@ void main() {
 
   Widget harness({
     required _FakeForegroundCallCapability capability,
+    VoidCallback? onAttached,
     Future<String?> Function(String peerId)? loadContactDisplayName,
     double keyboardInset = 0,
     Widget child = const Scaffold(
@@ -44,6 +48,7 @@ void main() {
       builder: (context) {
         final overlay = ForegroundCallOverlay(
           capability: capability,
+          onAttached: onAttached,
           loadContactDisplayName:
               loadContactDisplayName ?? (_) async => 'Local contact',
           now: () => now,
@@ -59,6 +64,39 @@ void main() {
         );
       },
     ),
+  );
+
+  testWidgets(
+    'call projection attaches and signals readiness without a frame',
+    (tester) async {
+      final capability = _FakeForegroundCallCapability();
+      addTearDown(capability.dispose);
+      var attachmentCount = 0;
+      var subscribedAtAttachment = false;
+      tester.binding.attachRootWidget(
+        tester.binding.wrapWithDefaultView(
+          harness(
+            capability: capability,
+            onAttached: () {
+              subscribedAtAttachment = capability._changes.hasListener;
+              attachmentCount += 1;
+            },
+          ),
+        ),
+      );
+      tester.binding.buildOwner!.buildScope(tester.binding.rootElement!);
+      expect(attachmentCount, 0);
+      // No pump/pumpWidget: the projection owner attaches while Android can
+      // still be withholding frames behind keyguard.
+      await tester.idle();
+      expect(attachmentCount, 1);
+      expect(subscribedAtAttachment, isTrue);
+      expect(capability._changes.hasListener, isTrue);
+      await tester.pump();
+      await tester.pump();
+      expect(attachmentCount, 1);
+      expect(capability.actions, isEmpty);
+    },
   );
 
   group('ForegroundCallOverlay projection', () {
@@ -579,6 +617,32 @@ void main() {
     }
   });
 
+  testWidgets('media failure notice distinguishes a dropped connected call', (
+    tester,
+  ) async {
+    final capability = _FakeForegroundCallCapability();
+    addTearDown(capability.dispose);
+    await tester.pumpWidget(harness(capability: capability));
+
+    // Terminal projection may be the first one observed after returning to the
+    // app. The canonical connection timestamp, not widget history, owns this.
+    capability.emit(
+      _projection(
+        now: now,
+        callId: _activeId,
+        peerId: 'active-peer',
+        direction: CallDirection.outgoing,
+        state: CallState.ended,
+        connectedAt: now.subtract(const Duration(seconds: 30)),
+        endReason: CallEndReason.mediaFailed,
+      ),
+    );
+    await tester.pump();
+
+    expect(find.text('Call audio was interrupted.'), findsOneWidget);
+    expect(find.text('Call audio could not start.'), findsNothing);
+  });
+
   testWidgets('terminal notice expires without changing retained navigation', (
     tester,
   ) async {
@@ -842,6 +906,137 @@ void main() {
     },
   );
   testWidgets(
+    'modal call semantics hide background actions until terminal dismissal',
+    (tester) async {
+      final semantics = tester.ensureSemantics();
+      try {
+        final capability = _FakeForegroundCallCapability();
+        addTearDown(capability.dispose);
+        var backgroundActions = 0;
+        var retryCalls = 0;
+        final health = PushRegistrationHealthNotifier();
+        addTearDown(health.dispose);
+        health.publish(
+          PushRegistrationHealthRecord.retrying(
+            reason: PushRegistrationHealthReason.registrationFailed,
+            consecutiveFailures: 3,
+            firstFailureAt: now,
+            lastAttemptAt: now,
+          ),
+        );
+        await tester.pumpWidget(
+          MaterialApp(
+            locale: const Locale('en'),
+            localizationsDelegates: AppLocalizations.localizationsDelegates,
+            supportedLocales: AppLocalizations.supportedLocales,
+            builder: (context, child) => ForegroundCallOverlay(
+              capability: capability,
+              now: () => now,
+              loadContactDisplayName: (_) async => 'Local contact',
+              child: PushRegistrationHealthSurface(
+                healthListenable: health,
+                onRetry: () => retryCalls++,
+                onOpenNotificationSettings: () {},
+                child: child!,
+              ),
+            ),
+            home: Scaffold(
+              body: Column(
+                children: [
+                  TextButton(
+                    onPressed: () => backgroundActions++,
+                    child: const Text('Start voice call'),
+                  ),
+                  TextButton(
+                    onPressed: () => backgroundActions++,
+                    child: const Text('Start voice recording'),
+                  ),
+                  const Text('Private conversation history'),
+                ],
+              ),
+            ),
+          ),
+        );
+        const backgroundLabels = [
+          'Start voice call',
+          'Start voice recording',
+          'Private conversation history',
+          'Retry',
+        ];
+        for (final label in backgroundLabels) {
+          expect(find.semantics.byLabel(label), findsOneWidget);
+        }
+        final warning = find.semantics.byLabel(
+          RegExp('Notifications need attention'),
+        );
+        expect(warning, findsOneWidget);
+
+        capability.emit(
+          _projection(
+            now: now,
+            callId: _activeId,
+            peerId: 'active-peer',
+            direction: CallDirection.incoming,
+            incomingValidated: true,
+            state: CallState.connected,
+            audio: _audio(),
+          ),
+        );
+        await tester.pump();
+        for (final label in backgroundLabels) {
+          expect(find.semantics.byLabel(label), findsNothing);
+          expect(find.text(label), findsOneWidget);
+        }
+        expect(warning, findsNothing);
+        for (final label in ['Mute', 'Speaker', 'End']) {
+          final node = find.semantics.byLabel(label).evaluate().single;
+          expect(
+            node.getSemanticsData().hasAction(SemanticsAction.tap),
+            isTrue,
+          );
+        }
+        tester.semantics.tap(find.semantics.byLabel('Mute'));
+        await tester.pump();
+        expect(capability.actions, [
+          _RecordedAction('setMuted', _activeId, value: true),
+        ]);
+        expect(backgroundActions, 0);
+        expect(retryCalls, 0);
+
+        capability.emit(
+          _projection(
+            now: now,
+            callId: _activeId,
+            peerId: 'active-peer',
+            direction: CallDirection.incoming,
+            incomingValidated: true,
+            state: CallState.ended,
+          ),
+        );
+        await tester.pump();
+        for (final label in backgroundLabels) {
+          expect(find.semantics.byLabel(label), findsNothing);
+        }
+        expect(warning, findsNothing);
+        await tester.tap(find.byTooltip('Dismiss call status'));
+        await tester.pump();
+        for (final label in backgroundLabels) {
+          expect(find.semantics.byLabel(label), findsOneWidget);
+        }
+        expect(warning, findsOneWidget);
+        tester.semantics.tap(find.semantics.byLabel('Retry'));
+        await tester.pump();
+        expect(retryCalls, 1);
+        tester.semantics.tap(find.semantics.byLabel('Start voice recording'));
+        await tester.pump();
+        expect(backgroundActions, 1);
+      } finally {
+        semantics.dispose();
+      }
+    },
+  );
+
+  testWidgets(
     'a visible call surface releases keyboard focus and blocks refocus until it hides',
     (tester) async {
       final capability = _FakeForegroundCallCapability();
@@ -888,6 +1083,53 @@ void main() {
       composerFocus.requestFocus();
       await tester.pump();
       expect(composerFocus.hasFocus, isTrue);
+    },
+  );
+
+  testWidgets(
+    'covered route animations pause during calls and resume without losing route state',
+    (tester) async {
+      final capability = _FakeForegroundCallCapability();
+      addTearDown(capability.dispose);
+      final retainedKey = GlobalKey<_RetainedAnimationState>();
+      await tester.pumpWidget(
+        harness(
+          capability: capability,
+          child: _RetainedAnimation(key: retainedKey),
+        ),
+      );
+      await tester.pump(const Duration(milliseconds: 100));
+      final retained = retainedKey.currentState!;
+      expect(retained.ticks, greaterThan(0));
+
+      for (final state in [
+        CallState.ringing,
+        CallState.connected,
+        CallState.ended,
+      ]) {
+        capability.emit(
+          _projection(
+            now: now,
+            callId: _outgoingId,
+            peerId: 'outgoing-peer',
+            direction: CallDirection.outgoing,
+            state: state,
+          ),
+        );
+        await tester.pump();
+        final ticksWhileCovered = retained.ticks;
+        await tester.pump(const Duration(milliseconds: 250));
+        expect(retained.ticks, ticksWhileCovered, reason: state.name);
+        expect(retainedKey.currentState, same(retained));
+      }
+
+      await tester.tap(find.byTooltip('Dismiss call status'));
+      await tester.pump();
+      final ticksAfterDismiss = retained.ticks;
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(retained.ticks, greaterThan(ticksAfterDismiss));
+      expect(retainedKey.currentState, same(retained));
+      expect(capability.actions, isEmpty);
     },
   );
 
@@ -945,6 +1187,38 @@ void main() {
   });
 }
 
+class _RetainedAnimation extends StatefulWidget {
+  const _RetainedAnimation({super.key});
+
+  @override
+  State<_RetainedAnimation> createState() => _RetainedAnimationState();
+}
+
+class _RetainedAnimationState extends State<_RetainedAnimation>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _animation;
+  int ticks = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    _animation = AnimationController(
+      vsync: this,
+      duration: const Duration(seconds: 1),
+    )..addListener(() => ticks += 1);
+    _animation.repeat();
+  }
+
+  @override
+  void dispose() {
+    _animation.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => const SizedBox.expand();
+}
+
 final _incomingId = CallId.parse('11111111-1111-4111-8111-111111111111');
 final _outgoingId = CallId.parse('22222222-2222-4222-8222-222222222222');
 final _activeId = CallId.parse('33333333-3333-4333-8333-333333333333');
@@ -956,6 +1230,7 @@ ForegroundCallProjection _projection({
   required CallDirection direction,
   required CallState state,
   bool incomingValidated = false,
+  DateTime? connectedAt,
   CallEndReason? endReason,
   CallAudioControlState? audio,
 }) => ForegroundCallProjection(
@@ -973,9 +1248,11 @@ ForegroundCallProjection _projection({
     startedAt: now.subtract(const Duration(minutes: 1)),
     ringingAt: state.index >= CallState.ringing.index ? now : null,
     acceptedAt: state.index >= CallState.accepted.index ? now : null,
-    connectedAt: state == CallState.connected || state == CallState.reconnecting
-        ? now.subtract(const Duration(seconds: 30))
-        : null,
+    connectedAt:
+        connectedAt ??
+        (state == CallState.connected || state == CallState.reconnecting
+            ? now.subtract(const Duration(seconds: 30))
+            : null),
     endedAt: state == CallState.ended ? now : null,
     endReason: state == CallState.ended
         ? endReason ?? CallEndReason.localHangup

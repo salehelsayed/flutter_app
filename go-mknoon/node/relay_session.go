@@ -64,9 +64,9 @@ const (
 // the manager sets needsGroupRecovery and transitions to watchdog_restart.
 const WatchdogMaxConsecutiveFailures = 5
 
-// RecoveryWaitTimeout is the maximum time a waiter will block on a shared
-// recovery promise before giving up. This prevents permanent hangs when the
-// owning goroutine stalls (panic, deadlock, network hang).
+// RecoveryWaitTimeout bounds the API wait for an owned recovery, measured from
+// its start. Owners and joiners share this deadline. A timeout does not release
+// mutation ownership: the native operation may still be stopping/replacing a host.
 const RecoveryWaitTimeout = 30 * time.Second
 
 // DefaultManualReservationHold bounds a manual-reservation hold when the
@@ -129,8 +129,7 @@ type recoveryPromise struct {
 	done             chan struct{}
 	result           *RecoveryResult
 	err              error
-	manager          *RelaySessionManager // back-reference for timeout gate clearing
-	waitTimeout      time.Duration
+	deadline         time.Time
 	coalescedWaiters int
 }
 
@@ -392,7 +391,7 @@ func (m *RelaySessionManager) HasReservation() bool {
 // BeginRecovery attempts to start a recovery operation. If one is already in
 // progress, it returns the existing promise to wait on (singleflight pattern).
 // Returns (promise, isNew). If isNew is true, the caller owns the recovery and
-// must eventually call CompleteRecovery.
+// must eventually call CompleteRecovery with the same promise.
 func (m *RelaySessionManager) BeginRecovery() (*recoveryPromise, bool) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -409,7 +408,7 @@ func (m *RelaySessionManager) BeginRecovery() (*recoveryPromise, bool) {
 	if waitTimeout <= 0 {
 		waitTimeout = RecoveryWaitTimeout
 	}
-	m.recovery = &recoveryPromise{done: make(chan struct{}), manager: m, waitTimeout: waitTimeout}
+	m.recovery = &recoveryPromise{done: make(chan struct{}), deadline: time.Now().Add(waitTimeout)}
 	m.aggregateState = AggregateRelayRecovering
 
 	return m.recovery, true
@@ -417,32 +416,41 @@ func (m *RelaySessionManager) BeginRecovery() (*recoveryPromise, bool) {
 
 // Wait blocks until the shared recovery completes and returns the final
 // structured outcome to every waiter. If the recovery does not complete
-// within RecoveryWaitTimeout, returns a timeout error.
+// by its original deadline, returns a timeout error without allowing another
+// owner to overlap the still-running native operation.
 func (p *recoveryPromise) Wait() (*RecoveryResult, error) {
 	if p == nil {
 		return nil, nil
 	}
-	waitTimeout := p.waitTimeout
-	if waitTimeout <= 0 {
-		waitTimeout = RecoveryWaitTimeout
-	}
+	// Prefer an already completed outcome even when its deadline has elapsed.
 	select {
 	case <-p.done:
 		return p.result, p.err
-	case <-time.After(waitTimeout):
-		// Clear the stalled recovery gate so the next BeginRecovery can start fresh.
-		if p.manager != nil {
-			p.manager.ClearStalledRecovery()
-		}
-		return &RecoveryResult{RecoveryMode: "timeout"}, fmt.Errorf("RECOVERY_TIMEOUT")
+	default:
+	}
+	timer := time.NewTimer(time.Until(p.deadline))
+	defer timer.Stop()
+	select {
+	case <-p.done:
+		return p.result, p.err
+	case <-timer.C:
+		return &RecoveryResult{
+			RecoveryMode: "timeout",
+			ErrorCode:    "RECOVERY_TIMEOUT",
+			Reason:       "relay recovery exceeded its shared deadline; native operation still owns recovery",
+			RelayState:   string(AggregateRelayRecovering),
+		}, fmt.Errorf("RECOVERY_TIMEOUT")
 	}
 }
 
 // CompleteRecovery signals that recovery is done and publishes the result to
 // all waiting callers.
-func (m *RelaySessionManager) CompleteRecovery(result *RecoveryResult, err error) {
+func (m *RelaySessionManager) CompleteRecovery(recovery *recoveryPromise, result *RecoveryResult, err error) {
 	m.mu.Lock()
-	recovery := m.recovery
+	defer m.mu.Unlock()
+	if recovery == nil || m.recovery != recovery {
+		return
+	}
 	m.recovering = false
 	if result != nil && recovery != nil {
 		result.CoalescedRecoveryRequests = recovery.coalescedWaiters
@@ -453,26 +461,9 @@ func (m *RelaySessionManager) CompleteRecovery(result *RecoveryResult, err error
 	}
 	m.recomputeAggregateLocked()
 	m.recovery = nil
-	m.mu.Unlock()
-
-	if recovery != nil {
-		recovery.result = result
-		recovery.err = err
-		close(recovery.done)
-	}
-}
-
-// ClearStalledRecovery clears the recovery gate after a timeout so the next
-// BeginRecovery call can start fresh. Safe to call concurrently.
-func (m *RelaySessionManager) ClearStalledRecovery() {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if m.recovering {
-		m.recovering = false
-		m.recovery = nil
-		m.recomputeAggregateLocked()
-		log.Printf("[RELAY_SESSION] Cleared stalled recovery gate (timeout)")
-	}
+	recovery.result = result
+	recovery.err = err
+	close(recovery.done)
 }
 
 // IsRecovering returns whether a recovery is currently in progress.

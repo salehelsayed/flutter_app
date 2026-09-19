@@ -20,6 +20,9 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
 import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
+import org.robolectric.annotation.Implementation
+import org.robolectric.annotation.Implements
+import org.robolectric.shadows.ShadowNotificationManager
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [33])
@@ -122,6 +125,34 @@ class MknoonCallNotificationFactoryTest {
     }
 
     @Test
+    @Config(sdk = [28, 33])
+    fun `ringing notification replacements retain full-screen intent without alerting again`() {
+        val callId = UUID.fromString(CALL_ID)
+        val productionFactory = MknoonCallNotificationFactory(context)
+        repeat(3) {
+            val notification = productionFactory.createIncoming(callId)
+            assertNotNull(notification.fullScreenIntent)
+            assertEquals(notification.contentIntent, notification.fullScreenIntent)
+            assertTrue(notification.flags and Notification.FLAG_ONLY_ALERT_ONCE != 0)
+        }
+    }
+
+    @Test
+    @Config(sdk = [34], shadows = [IncomingNotificationPermissionShadow::class])
+    fun `every ringing replacement rechecks Android full-screen permission and retains actionable fallback`() {
+        val callId = UUID.fromString(CALL_ID)
+        val productionFactory = MknoonCallNotificationFactory(context)
+        listOf(true, true, false, false, true).forEach { allowed ->
+            IncomingNotificationPermissionShadow.allowed = allowed
+            val notification = productionFactory.createIncoming(callId)
+            assertEquals(allowed, notification.fullScreenIntent != null)
+            assertNotNull(notification.contentIntent)
+            assertEquals(2, notification.actions.count { it.actionIntent != null })
+            assertTrue(notification.flags and Notification.FLAG_ONLY_ALERT_ONCE != 0)
+        }
+    }
+
+    @Test
     fun `ringtone player is the only incoming call sound owner`() {
         factory.createIncoming(
             nativeCallId = UUID.fromString(CALL_ID),
@@ -135,6 +166,23 @@ class MknoonCallNotificationFactoryTest {
         assertFalse(channel.id == "mknoon_calls")
         assertNull(channel.sound)
         assertFalse(channel.shouldVibrate())
+    }
+
+    @Test
+    @Config(sdk = [24, 28, 34])
+    fun `ongoing notification user tap reopens exact call without automatic launch or answer`() {
+        val callId = UUID.fromString(CALL_ID)
+        val notification = MknoonCallNotificationFactory(context).createOngoing(callId)
+        assertNull(notification.fullScreenIntent)
+        assertNotNull(notification.contentIntent)
+        notification.contentIntent.send(context, 0,
+            Intent(MknoonCallActionReceiver.ACTION_ANSWER)
+                .putExtra(MknoonCallActionReceiver.EXTRA_NATIVE_CALL_ID, "ffffffff-ffff-4fff-8fff-ffffffffffff"))
+        val opened = requireNotNull(shadowOf(context as Application).nextStartedActivity)
+        assertEquals(AndroidMknoonCallPendingIntentFactory.ACTION_OPEN_INCOMING_CALL, opened.action)
+        assertEquals(callId.toString(), opened.getStringExtra(MknoonCallActionReceiver.EXTRA_NATIVE_CALL_ID))
+        assertEquals("mknoon-call://local/$callId", opened.dataString)
+        assertEquals(setOf(MknoonCallActionReceiver.EXTRA_NATIVE_CALL_ID), opened.extras?.keySet())
     }
 
     @Test
@@ -155,7 +203,19 @@ class MknoonCallNotificationFactoryTest {
             ),
             pendingIntents.actionRequests,
         )
-        assertTrue(pendingIntents.fullScreenRequests.isEmpty())
+        assertEquals(listOf(callId), pendingIntents.fullScreenRequests)
+        assertNotNull(notification.contentIntent)
+        assertNull(notification.fullScreenIntent)
+    }
+}
+
+@Implements(NotificationManager::class)
+class IncomingNotificationPermissionShadow : ShadowNotificationManager() {
+    @Implementation(minSdk = 34)
+    protected fun canUseFullScreenIntent(): Boolean = allowed
+
+    companion object {
+        var allowed = false
     }
 }
 

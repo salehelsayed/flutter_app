@@ -1,6 +1,7 @@
 import 'dart:collection';
 
 import '../../../core/utils/flow_event_emitter.dart';
+import '../diagnostics/call_diagnostics.dart';
 import '../domain/call_end_reason.dart';
 import '../domain/call_event.dart';
 import '../domain/call_id.dart';
@@ -42,8 +43,8 @@ final class CallControlSendResult {
   final bool directAccepted;
   final bool mailboxStored;
 
-  /// The relay alerted the callee's device for this signal; the caller may
-  /// treat the far end as ringing.
+  /// The wake provider accepted dispatch. This does not establish that the
+  /// recipient received the wake or presented alerting UI.
   final bool wakeDispatched;
   final CallRouteClass? directRoute;
   final Future<void> mailboxStoreSettled;
@@ -114,6 +115,19 @@ typedef OutgoingMailboxInviteCanceller =
       required String callHandle,
     });
 
+/// Fixed protocol vocabulary keeps preparation failures distinguishable from
+/// transport writes without retaining exception text or endpoint authority.
+enum _OutgoingPreparationStep {
+  endpoint('lookup', 'unavailable'),
+  context('bind', 'unavailable'),
+  nativeRegistration('adopt', 'native_lifecycle_failed');
+
+  const _OutgoingPreparationStep(this.action, this.reason);
+
+  final String action;
+  final String reason;
+}
+
 /// Executes reducer-approved call-control effects without owning transitions.
 final class CallControlEffectExecutor implements CallEffectExecutor {
   /// Default sender lifetime, reserving cross-device clock headroom below the
@@ -129,6 +143,7 @@ final class CallControlEffectExecutor implements CallEffectExecutor {
     required this.idSource,
     OutgoingPreInviteRegistrar? registerOutgoingBeforeInvite,
     OutgoingMailboxInviteCanceller? cancelOutgoingMailboxInvite,
+    this.isOutgoingPreparationCurrent,
     this.signalLifetime = defaultSignalLifetime,
     this.maxAttemptedEffects = 64,
   }) : _registerOutgoingBeforeInvite =
@@ -160,6 +175,7 @@ final class CallControlEffectExecutor implements CallEffectExecutor {
   final CallId Function() idSource;
   final OutgoingPreInviteRegistrar _registerOutgoingBeforeInvite;
   final OutgoingMailboxInviteCanceller _cancelOutgoingMailboxInvite;
+  final bool Function(CallId callId)? isOutgoingPreparationCurrent;
   final Duration signalLifetime;
   final int maxAttemptedEffects;
 
@@ -355,13 +371,16 @@ final class CallControlEffectExecutor implements CallEffectExecutor {
 
   Future<CallEvent?> _prepareOutgoing(CallSessionSnapshot snapshot) async {
     final callId = snapshot.callId!;
+    var step = _OutgoingPreparationStep.endpoint;
     try {
       final prepared = await signalingPort.prepareOutgoingInvite(snapshot);
+      if (isOutgoingPreparationCurrent?.call(callId) == false) return null;
       if (prepared.remoteAccountPeerId != snapshot.contactPeerId) {
         throw const CallControlSignalingPortException(
           CallControlSignalingPortErrorCode.endpointMismatch,
         );
       }
+      step = _OutgoingPreparationStep.context;
       contextStore.storeOutgoing(
         callId: callId,
         callHandle: prepared.callHandle,
@@ -373,7 +392,12 @@ final class CallControlEffectExecutor implements CallEffectExecutor {
         iceGeneration: prepared.iceGeneration,
         invitePayload: prepared.invitePayload,
       );
+      step = _OutgoingPreparationStep.nativeRegistration;
       final registered = await _registerOutgoingBeforeInvite(callId);
+      if (isOutgoingPreparationCurrent?.call(callId) == false) {
+        contextStore.purge(callId);
+        return null;
+      }
       if (!registered) {
         throw const CallControlSignalingPortException(
           CallControlSignalingPortErrorCode.preparationUnavailable,
@@ -384,8 +408,21 @@ final class CallControlEffectExecutor implements CallEffectExecutor {
         snapshot: snapshot,
       );
     } catch (_) {
+      if (isOutgoingPreparationCurrent?.call(callId) == false) {
+        contextStore.purge(callId);
+        return null;
+      }
       _failureCount++;
       contextStore.purge(callId);
+      final diagnostics = CallDiagnostics.instance;
+      diagnostics.record(
+        stage: 'signaling',
+        action: step.action,
+        outcome: 'failed',
+        reason: step.reason,
+        traceId: diagnostics.traceForCall(callId: callId.value),
+        values: const <String, Object?>{'state': 'outgoing_preparing'},
+      );
       return _signalingFailure(snapshot);
     }
   }
@@ -431,8 +468,8 @@ final class CallControlEffectExecutor implements CallEffectExecutor {
       _mailboxStoreSettlements[callId] = result.mailboxStoreSettled;
       if (result.mailboxStored) {
         _mailboxStoredInvites.add(callId);
-        // A dispatched wake confirms custody and alerts the far end at once:
-        // a headless callee rings without signalling until it is answered.
+        // A dispatched wake confirms custody only. Recipient alerting is an
+        // independent authenticated signal, even for a headless recipient.
         return _followUp(
           type: result.wakeDispatched
               ? CallEventType.wakeRequested

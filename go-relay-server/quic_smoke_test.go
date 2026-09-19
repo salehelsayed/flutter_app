@@ -20,7 +20,7 @@ const (
 	// Live relay addresses.
 	quicRelayAddr = "/dns4/mknoun.xyz/udp/4002/quic-v1"
 	wssRelayAddr  = "/dns4/mknoun.xyz/tcp/4001/wss"
-	tcpRelayAddr  = "/ip4/13.60.15.36/tcp/4005"
+	tcpRelayAddr  = "/dns4/mknoun.xyz/tcp/4005"
 )
 
 // TestQUICSmokeIdentify dials the live relay server over QUIC and verifies

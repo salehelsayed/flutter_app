@@ -7,6 +7,78 @@ import '../../../../integration_test/scripts/group_media_reliability_criteria.da
 
 void main() {
   test(
+    'P269 strict sender publication requires exact terminal identity and custody bytes',
+    () {
+      final row = <String, Object?>{
+        'message_id': 'message',
+        'status': 'upload_pending',
+        'strict_publication': <String, Object?>{
+          'message_id': 'message',
+          'status': 'sent',
+          'inbox_stored': true,
+          'is_incoming': false,
+          'wire_envelope_present': false,
+          'retry_payload_present': false,
+          'group_sha256': 'a' * 64,
+          'sender_account_sha256': 'b' * 64,
+          'attachment_content_sha256': 'c' * 64,
+        },
+      };
+      bool valid(Map value) => groupMediaStrictSenderPublicationMatches(
+        value,
+        groupSha256: 'a' * 64,
+        senderAccountSha256: 'b' * 64,
+        ciphertextSha256: 'c' * 64,
+      );
+      expect(valid(row), isTrue);
+      for (final key in (_map(row, 'strict_publication')).keys) {
+        final mutated = _deepCopy(row);
+        _map(mutated, 'strict_publication')[key] = switch (key) {
+          'inbox_stored' => false,
+          'is_incoming' ||
+          'wire_envelope_present' ||
+          'retry_payload_present' => true,
+          _ => 'd' * 64,
+        };
+        expect(valid(mutated), isFalse, reason: key);
+      }
+      for (final status in ['done', 'pending', 'failed']) {
+        expect(valid({...row, 'status': status}), isFalse);
+      }
+      final extra = _deepCopy(row);
+      _map(extra, 'strict_publication')['unvalidated'] = 'secret';
+      expect(valid(extra), isFalse);
+      expect(
+        valid({'message_id': 'message', 'status': 'upload_pending'}),
+        isFalse,
+      );
+    },
+  );
+  test(
+    'historical proof remains compatible but declared authority must be complete',
+    () {
+      final historical = _artifactFixture();
+      expect(validateGroupMediaReliabilityArtifact(historical).ok, isTrue);
+      for (final malformed in <Object?>[
+        null,
+        <String, Object?>{},
+        true,
+        <String, Object?>{
+          'schema': 'mknoon.group-media-authority-setup.v1',
+          'previous_epoch': 1,
+          'current_epoch': 2,
+        },
+      ]) {
+        final artifact = _artifactFixture()
+          ..['strict_authority_setup'] = malformed;
+        final result = validateGroupMediaReliabilityArtifact(artifact);
+        expect(result.ok, isFalse);
+        expect(result.detail, contains('authority'));
+      }
+    },
+  );
+
+  test(
     'P269 mode accepts legacy absence but rejects malformed declarations and identities',
     () {
       expect(

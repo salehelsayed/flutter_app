@@ -142,24 +142,33 @@ do not mount one media directory into concurrent relay processes. One relay
 holds the accepted blob; the contract does not replicate or fan out protected
 bytes across relays.
 
-Admission is deliberately default-off:
+Protected direct and group media admission defaults to enabled when
+`DIRECT_MEDIA_BLOB_CUSTODY_ADMISSION_ENABLED` is unset or blank. To stop new
+protected uploads, explicitly disable admission:
 
 ```text
 DIRECT_MEDIA_BLOB_CUSTODY_ADMISSION_ENABLED=false
 ```
+
+Explicit `true` or `1` enables admission; `false`, `0`, and unrecognized
+nonempty values disable it. Configuration changes take effect on relay restart.
 
 With admission off, a relay rejects only new strict uploads before body
 transfer. It still reconciles, downloads, ACKs, expires, and retries cleanup for
 already committed protected state. Turning admission off is therefore the
 drain control, not permission to delete the `.custody-v1` subtree.
 
-Use a relay-first rollout: deploy the upgraded binary to every relay with
-admission off, verify filesystem ownership/capacity and reconstructed gauges,
-then enable admission only after the upgraded fleet is ready. Capable clients
-come after that relay wave. Once any strict blob has been admitted, do not roll
+Use a relay-first rollout for a mixed-version fleet: explicitly set admission
+to `false` while deploying upgraded binaries, verify filesystem
+ownership/capacity and reconstructed gauges, then remove that override or set
+it to `true` once the upgraded fleet is ready. Capable clients come after that
+relay wave. Verify the same storage prerequisites before starting a new relay
+with default-enabled admission. A deployed binary with the historical
+default-off behavior needs an explicit `true` setting or a binary upgrade;
+changing the source default does not reconfigure an existing process.
+Once any strict blob has been admitted, do not roll
 back to an old binary, which cannot drain protected state. Turn admission off
-and roll forward with an upgraded binary instead. This repository change does
-not enable production admission or add a feature caller.
+and roll forward with an upgraded binary instead.
 
 The fixed-cardinality Prometheus surface is:
 

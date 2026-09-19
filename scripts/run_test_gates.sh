@@ -79,6 +79,9 @@ readonly ONE_TO_ONE_TESTS=(
   "test/features/call/infrastructure/call_media_conflict_adapter_test.dart"
   "test/features/call/infrastructure/call_stats_sampler_test.dart"
   # Durable opt-in call traces, bidirectional RTP evidence, and diagnostic controls.
+  # Read-only canonical/native and SQLite history evidence lives outside
+  # the core/feature test globs; keep its host proof in the call lane.
+  "test/debug/debug_call_evidence_observer_test.dart"
   "test/features/call/diagnostics/call_diagnostics_test.dart"
   "test/features/call/infrastructure/call_rtp_progress_sampler_test.dart"
   "test/features/settings/presentation/widgets/call_diagnostics_settings_section_test.dart"

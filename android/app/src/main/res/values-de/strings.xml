@@ -16,4 +16,12 @@
     <string name="call_notification_answer">Annehmen</string>
     <string name="call_notification_decline">Ablehnen</string>
     <string name="call_notification_end">Beenden</string>
+    <string name="call_screen_connecting">Verbindung wird hergestellt…</string>
+    <string name="call_screen_ended">Anruf beendet</string>
+    <string name="call_screen_connected">Verbunden</string>
+    <string name="call_screen_reconnecting">Verbindung wird wiederhergestellt</string>
+    <string name="call_screen_mute">Stumm</string>
+    <string name="call_screen_unmute">Ton an</string>
+    <string name="call_screen_speaker">Lautsprecher</string>
+    <string name="call_screen_duration">Anrufdauer %1$s</string>
 </resources>

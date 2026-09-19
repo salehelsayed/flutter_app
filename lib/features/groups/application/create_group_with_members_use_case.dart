@@ -12,6 +12,7 @@ import 'package:flutter_app/features/groups/application/group_config_payload.dar
 import 'package:flutter_app/features/groups/application/group_invite_send_latency_trace.dart';
 import 'package:flutter_app/features/groups/application/group_membership_event_watermark.dart';
 import 'package:flutter_app/features/groups/application/group_sender_device_binding.dart';
+import 'package:flutter_app/features/groups/application/protected_group_authority.dart';
 import 'package:flutter_app/features/groups/application/record_group_invite_delivery_attempts.dart';
 import 'package:flutter_app/features/groups/application/send_group_invite_use_case.dart';
 import 'package:flutter_app/features/groups/application/signed_group_transition_audit.dart';
@@ -244,6 +245,9 @@ Future<CreateGroupWithMembersResult> createGroupWithMembers({
       );
     }
   }
+  var protectedInitialCreation =
+      hasProtectedGroupAuthorityAdapter &&
+      hasProtectedGroupPhysicalAuthority(await groupRepo.getMembers(group.id));
   final preTransitionStateHash = await buildGroupTransitionStateHash(
     groupRepo,
     group.id,
@@ -275,6 +279,7 @@ Future<CreateGroupWithMembersResult> createGroupWithMembers({
             : <GroupMemberDeviceIdentity>[deviceBinding],
         joinedAt: DateTime.now().toUtc(),
       );
+      var preparedInitialAuthority = false;
       await addGroupMember(
         bridge: bridge,
         groupRepo: groupRepo,
@@ -282,9 +287,58 @@ Future<CreateGroupWithMembersResult> createGroupWithMembers({
         newMember: newMember,
         selfPeerId: identity.peerId,
         syncBridgeConfig: false,
+        prepareAuthority: !hasProtectedGroupAuthorityAdapter
+            ? null
+            : ({
+                required group,
+                required members,
+                required addedMember,
+                required eventAt,
+                required eventId,
+              }) async {
+                // A validated invitee may introduce the first physical device.
+                // Decide from the proposed roster, before any member write.
+                if (!hasProtectedGroupPhysicalAuthority([
+                  ...members,
+                  addedMember,
+                ])) {
+                  return null;
+                }
+                if (p2pService.currentState.peerId?.trim() !=
+                    currentSenderDeviceId) {
+                  throw StateError('Initial member-add runtime owner changed');
+                }
+                final prepared = await _prepareInitialMemberAuthority(
+                  bridge: bridge,
+                  groupRepo: groupRepo,
+                  identity: identity,
+                  senderDeviceId: currentSenderDeviceId,
+                  group: group,
+                  members: members,
+                  addedMember: addedMember,
+                  eventAt: eventAt,
+                  eventId: eventId,
+                );
+                if (p2pService.currentState.peerId?.trim() !=
+                    currentSenderDeviceId) {
+                  try {
+                    await prepared.rollback();
+                  } catch (error) {
+                    throw GroupMemberAddCommitAmbiguous(cause: error);
+                  }
+                  throw StateError('Initial member-add runtime owner changed');
+                }
+                preparedInitialAuthority = true;
+                return prepared;
+              },
       );
+      protectedInitialCreation =
+          protectedInitialCreation || preparedInitialAuthority;
       addedMembers.add(newMember);
     } catch (e) {
+      // Durable PREPARED owns any uncertain local/native/activation outcome.
+      // Stop the batch; later contacts or legacy fanout must not race repair.
+      if (e is GroupMemberAddCommitAmbiguous) rethrow;
       addMemberFailures.add(
         CreateGroupMemberAddFailure(
           peerId: contact.peerId,
@@ -302,13 +356,19 @@ Future<CreateGroupWithMembersResult> createGroupWithMembers({
   // 4. Build full GroupConfig and update Go topic validator
   final allMembers = await groupRepo.getMembers(group.id);
   final membershipEventAt = DateTime.now().toUtc();
-  final groupForConfig = group.copyWith(
-    lastMembershipEventAt: membershipEventAt,
-  );
+  // Protected additions already committed their exact config and watermark.
+  // Reuse that final authority for invites instead of inventing an unsigned
+  // aggregate transition after the last authenticated member addition.
+  final groupForConfig = protectedInitialCreation
+      ? (await groupRepo.getGroup(group.id) ??
+            (throw StateError(
+              'Created group disappeared before invite fanout',
+            )))
+      : group.copyWith(lastMembershipEventAt: membershipEventAt);
   final groupConfig = buildGroupConfigPayload(
     groupForConfig,
     allMembers,
-    configVersionOverride: membershipEventAt,
+    configVersionOverride: protectedInitialCreation ? null : membershipEventAt,
   );
   final senderBinding = await resolveGroupSenderDeviceBinding(
     groupRepo: groupRepo,
@@ -325,90 +385,92 @@ Future<CreateGroupWithMembersResult> createGroupWithMembers({
     senderPublicKey: identity.publicKey,
   );
 
-  try {
-    await callGroupUpdateConfig(
-      bridge,
-      groupId: group.id,
-      groupConfig: groupConfig,
-    );
-    await recordGroupMembershipEventWatermark(
+  var membersAddedPublishFailed = false;
+  if (!protectedInitialCreation) {
+    try {
+      await callGroupUpdateConfig(
+        bridge,
+        groupId: group.id,
+        groupConfig: groupConfig,
+      );
+      await recordGroupMembershipEventWatermark(
+        groupRepo: groupRepo,
+        groupId: group.id,
+        eventAt: membershipEventAt,
+      );
+    } catch (e) {
+      for (final member in addedMembers) {
+        await groupRepo.removeMember(group.id, member.peerId);
+      }
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'CREATE_GROUP_WITH_MEMBERS_CONFIG_SYNC_ROLLED_BACK',
+        details: {'groupId': group.id, 'error': e.toString()},
+      );
+      return CreateGroupWithMembersResult(
+        group: group,
+        membersAdded: 0,
+        addMemberFailures: addMemberFailures,
+        membershipSyncRolledBack: true,
+      );
+    }
+
+    // 5. Broadcast members_added system message
+    final publishedAt = membershipEventAt;
+    final sourceEventId =
+        'members_added:${group.id}:${identity.peerId}:${publishedAt.microsecondsSinceEpoch}';
+    final sysPayload = await signGroupSystemTransitionPayload(
+      bridge: bridge,
       groupRepo: groupRepo,
       groupId: group.id,
-      eventAt: membershipEventAt,
+      transitionType: 'members_added',
+      sourceEventId: sourceEventId,
+      eventAt: publishedAt,
+      actorPeerId: identity.peerId,
+      actorUsername: identity.username,
+      actorSigningPublicKey: identity.publicKey,
+      actorPrivateKey: identity.privateKey,
+      actorDeviceId: senderBinding.deviceId,
+      actorTransportPeerId: senderBinding.transportPeerId,
+      actorKeyPackageId: senderBinding.keyPackageId,
+      preTransitionStateHash: preTransitionStateHash,
+      systemPayload: {
+        '__sys': 'members_added',
+        'members': addedMembers.map((m) => m.toConfigJson()).toList(),
+        'groupConfig': groupConfig,
+      },
     );
-  } catch (e) {
-    for (final member in addedMembers) {
-      await groupRepo.removeMember(group.id, member.peerId);
-    }
-    emitFlowEvent(
-      layer: 'FL',
-      event: 'CREATE_GROUP_WITH_MEMBERS_CONFIG_SYNC_ROLLED_BACK',
-      details: {'groupId': group.id, 'error': e.toString()},
-    );
-    return CreateGroupWithMembersResult(
-      group: group,
-      membersAdded: 0,
-      addMemberFailures: addMemberFailures,
-      membershipSyncRolledBack: true,
-    );
-  }
+    final sysMessage = jsonEncode(sysPayload);
 
-  // 5. Broadcast members_added system message
-  final publishedAt = membershipEventAt;
-  final sourceEventId =
-      'members_added:${group.id}:${identity.peerId}:${publishedAt.microsecondsSinceEpoch}';
-  final sysPayload = await signGroupSystemTransitionPayload(
-    bridge: bridge,
-    groupRepo: groupRepo,
-    groupId: group.id,
-    transitionType: 'members_added',
-    sourceEventId: sourceEventId,
-    eventAt: publishedAt,
-    actorPeerId: identity.peerId,
-    actorUsername: identity.username,
-    actorSigningPublicKey: identity.publicKey,
-    actorPrivateKey: identity.privateKey,
-    actorDeviceId: senderBinding.deviceId,
-    actorTransportPeerId: senderBinding.transportPeerId,
-    actorKeyPackageId: senderBinding.keyPackageId,
-    preTransitionStateHash: preTransitionStateHash,
-    systemPayload: {
-      '__sys': 'members_added',
-      'members': addedMembers.map((m) => m.toConfigJson()).toList(),
-      'groupConfig': groupConfig,
-    },
-  );
-  final sysMessage = jsonEncode(sysPayload);
-
-  var membersAddedPublishFailed = false;
-  try {
-    final publishResult = await callGroupPublish(
-      bridge,
-      groupId: group.id,
-      text: sysMessage,
-      senderPeerId: identity.peerId,
-      senderPublicKey: identity.publicKey,
-      senderPrivateKey: identity.privateKey,
-      senderUsername: identity.username,
-      senderDeviceId: senderBinding.deviceId,
-      senderTransportPeerId: senderBinding.transportPeerId,
-      senderDevicePublicKey: senderBinding.devicePublicKey,
-      senderKeyPackageId: senderBinding.keyPackageId,
-      messageId: sourceEventId,
-      skipPeerRefresh: true,
-    );
-    if (publishResult['ok'] != true) {
+    try {
+      final publishResult = await callGroupPublish(
+        bridge,
+        groupId: group.id,
+        text: sysMessage,
+        senderPeerId: identity.peerId,
+        senderPublicKey: identity.publicKey,
+        senderPrivateKey: identity.privateKey,
+        senderUsername: identity.username,
+        senderDeviceId: senderBinding.deviceId,
+        senderTransportPeerId: senderBinding.transportPeerId,
+        senderDevicePublicKey: senderBinding.devicePublicKey,
+        senderKeyPackageId: senderBinding.keyPackageId,
+        messageId: sourceEventId,
+        skipPeerRefresh: true,
+      );
+      if (publishResult['ok'] != true) {
+        membersAddedPublishFailed = true;
+      }
+    } catch (e) {
       membersAddedPublishFailed = true;
     }
-  } catch (e) {
-    membersAddedPublishFailed = true;
-  }
-  if (membersAddedPublishFailed) {
-    emitFlowEvent(
-      layer: 'FL',
-      event: 'CREATE_GROUP_WITH_MEMBERS_PUBLISH_WARNING',
-      details: {'groupId': group.id},
-    );
+    if (membersAddedPublishFailed) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'CREATE_GROUP_WITH_MEMBERS_PUBLISH_WARNING',
+        details: {'groupId': group.id},
+      );
+    }
   }
 
   // 6. Send individual P2P invites in parallel
@@ -510,6 +572,139 @@ Future<CreateGroupWithMembersResult> createGroupWithMembers({
     addMemberFailures: addMemberFailures,
     inviteDeliverySkippedMissingKey: inviteDeliverySkippedMissingKey,
     membersAddedPublishFailed: membersAddedPublishFailed,
+  );
+}
+
+/// Uses the existing membership owner for initialized group creation. The
+/// proposed roster is signed once before the member write, including the new
+/// invitee's exact physical binding in immutable pending delivery rows.
+Future<PreparedGroupMemberAddAuthority> _prepareInitialMemberAuthority({
+  required Bridge bridge,
+  required GroupRepository groupRepo,
+  required IdentityModel identity,
+  required String? senderDeviceId,
+  required GroupModel group,
+  required List<GroupMember> members,
+  required GroupMember addedMember,
+  required DateTime eventAt,
+  required String eventId,
+}) async {
+  final senderBinding = await resolveGroupSenderDeviceBinding(
+    groupRepo: groupRepo,
+    groupId: group.id,
+    senderPeerId: identity.peerId,
+    preferredDeviceId: senderDeviceId,
+    preferredTransportPeerId: senderDeviceId,
+    senderPublicKey: identity.publicKey,
+  );
+  final actors = members
+      .where((member) => member.peerId == identity.peerId)
+      .toList(growable: false);
+  final senderDevice = actors.length == 1
+      ? resolveProtectedGroupSenderDevice(
+          actor: actors.single,
+          senderPublicKey: senderBinding.devicePublicKey ?? identity.publicKey,
+          senderDeviceId: senderBinding.deviceId,
+          senderTransportPeerId: senderBinding.transportPeerId,
+        )
+      : null;
+  if (senderDevice == null) {
+    throw StateError('Initial member-add sender device is not authoritative');
+  }
+  final proposedMembers = List<GroupMember>.unmodifiable([
+    ...members,
+    addedMember,
+  ]);
+  final recipients = List<GroupMemberDeviceIdentity>.unmodifiable(
+    freezeProtectedGroupPhysicalRecipients(proposedMembers),
+  );
+  if (recipients.any(
+    (device) => device.mlKemPublicKey?.trim().isNotEmpty != true,
+  )) {
+    throw StateError(
+      'Initial member-add requires complete recipient key bindings',
+    );
+  }
+  final signedPayload = await signGroupSystemTransitionPayload(
+    bridge: bridge,
+    groupRepo: groupRepo,
+    groupId: group.id,
+    transitionType: 'member_added',
+    sourceEventId: eventId,
+    eventAt: eventAt,
+    actorPeerId: identity.peerId,
+    actorUsername: identity.username,
+    actorSigningPublicKey: identity.publicKey,
+    actorPrivateKey: identity.privateKey,
+    actorDeviceId: senderBinding.deviceId,
+    actorTransportPeerId: senderBinding.transportPeerId,
+    actorKeyPackageId: senderBinding.keyPackageId,
+    preTransitionStateHash: await buildGroupTransitionStateHash(
+      groupRepo,
+      group.id,
+    ),
+    systemPayload: {
+      '__sys': 'member_added',
+      'member': addedMember.toConfigJson(),
+      'groupConfig': buildGroupConfigPayload(
+        group.copyWith(lastMembershipEventAt: eventAt),
+        proposedMembers,
+        configVersionOverride: eventAt,
+      ),
+    },
+  );
+  final preparation = await prepareProtectedGroupAuthority(
+    ProtectedGroupAuthorityPrepareRequest(
+      groupId: group.id,
+      transitionId: eventId,
+      control: ProtectedGroupAuthorityControl.memberAdd,
+      replayData: {
+        'groupId': group.id,
+        'senderId': identity.peerId,
+        'senderUsername': identity.username,
+        if (senderBinding.deviceId != null)
+          'senderDeviceId': senderBinding.deviceId,
+        if (senderBinding.transportPeerId != null)
+          'transportPeerId': senderBinding.transportPeerId,
+        'text': jsonEncode(signedPayload),
+        'timestamp': eventAt.toUtc().toIso8601String(),
+        'messageId': eventId,
+      },
+      actorAccountPeerId: identity.peerId,
+      actorAccountPublicKey: identity.publicKey,
+      actorAccountPrivateKey: identity.privateKey,
+      senderDevice: senderDevice,
+      frozenRecipients: recipients,
+    ),
+  );
+  if (preparation == null || !preparation.hasAuthenticatedAuthority) {
+    try {
+      if (!await cancelProtectedGroupAuthority(preparation)) {
+        throw StateError('Initial member-add preparation cleanup refused');
+      }
+    } catch (error) {
+      // An uncleared PREPARED still owns this transition. Do not treat it as
+      // an ordinary rejected contact and continue the creation batch.
+      throw GroupMemberAddCommitAmbiguous(cause: error);
+    }
+    throw StateError('Initial member-add protected preparation failed');
+  }
+  return PreparedGroupMemberAddAuthority(
+    activate: () async {
+      if (!await activateProtectedGroupAuthority(
+        preparation,
+        requireAllCustody: false,
+      )) {
+        throw StateError(
+          'Initial member-add protected authority remains PREPARED',
+        );
+      }
+    },
+    rollback: () async {
+      if (!await cancelProtectedGroupAuthority(preparation)) {
+        throw StateError('Initial member-add durable abort refused');
+      }
+    },
   );
 }
 

@@ -6805,7 +6805,18 @@ JOIN group_messages group_parent
 JOIN groups active_group
   ON active_group.id = group_parent.group_id
 WHERE attachment.owner_lane = ?
-  AND attachment.group_media_blob_custody_fingerprint IS NULL
+  AND (
+    attachment.group_media_blob_custody_fingerprint IS NULL
+    OR EXISTS (
+      SELECT 1 FROM direct_media_blob_custody custody
+      WHERE custody.owner_lane = 'group'
+        AND custody.group_id = group_parent.group_id
+        AND custody.message_id = attachment.message_id
+        AND custody.attachment_id = attachment.id
+        AND custody.direction = 'incoming'
+        AND custody.state = 'incoming_committed'
+    )
+  )
   AND attachment.download_status IN (?, ?, ?)
   AND COALESCE(attachment.download_retry_count, 0) < ?
   AND group_parent.is_incoming = 1

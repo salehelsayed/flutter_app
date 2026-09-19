@@ -8,6 +8,7 @@ import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
 import 'package:flutter_app/features/groups/application/group_avatar_storage.dart';
 import 'package:flutter_app/features/groups/application/group_invite_auth.dart';
+import 'package:flutter_app/features/groups/application/group_config_payload.dart';
 import 'package:flutter_app/features/groups/application/group_pending_key_distribution_service.dart';
 import 'package:flutter_app/features/groups/application/group_membership_event_watermark.dart';
 import 'package:flutter_app/features/groups/domain/models/group_invite_payload.dart';
@@ -987,6 +988,32 @@ materializeAcceptedGroupInvitePayload({
       ? _laterInstant(membershipWatermarkAt!, inviteIssuedAt!)
       : membershipWatermarkAt ?? inviteIssuedAt;
 
+  // The already authenticated invite config may carry the complete committed
+  // membership version. Timestamp-only legacy invitations remain timestamp-only;
+  // never invent a tie-breaker or attach it to a newer reentry issuance floor.
+  String? acceptedMembershipEventId;
+  if (config.containsKey(groupConfigMembershipVersionField)) {
+    final version = config[groupConfigMembershipVersionField];
+    if (version is! Map ||
+        version.length != 2 ||
+        version['eventAt'] is! String ||
+        version['eventId'] is! String) {
+      return (HandleGroupInviteResult.invalidPayload, null);
+    }
+    final eventAt = DateTime.tryParse(version['eventAt'] as String)?.toUtc();
+    final eventId = version['eventId'] as String;
+    if (eventAt == null ||
+        membershipWatermarkAt == null ||
+        !eventAt.isAtSameMomentAs(membershipWatermarkAt) ||
+        eventId.trim().isEmpty ||
+        eventId != eventId.trim()) {
+      return (HandleGroupInviteResult.invalidPayload, null);
+    }
+    if (acceptedMembershipWatermarkAt?.isAtSameMomentAs(eventAt) == true) {
+      acceptedMembershipEventId = eventId;
+    }
+  }
+
   // 6. Persist GroupModel with myRole = member
   final groupModel = GroupModel(
     id: payload.groupId,
@@ -1001,6 +1028,7 @@ materializeAcceptedGroupInvitePayload({
     myRole: GroupRole.member,
     lastMetadataEventAt: metadataUpdatedAt,
     lastMembershipEventAt: acceptedMembershipWatermarkAt,
+    lastMembershipEventId: acceptedMembershipEventId,
   );
 
   final membersList = config['members'] as List<dynamic>? ?? [];

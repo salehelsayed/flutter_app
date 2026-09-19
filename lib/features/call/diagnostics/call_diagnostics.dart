@@ -891,10 +891,14 @@ final class CallDiagnostics with WidgetsBindingObserver {
       return;
     }
     final group = trace is String ? _groups[trace] : null;
-    final terminal = event['stage'] == 'terminal';
-    if (!terminal &&
-        ((group?.events.length ?? 0) >= _maxEvents ||
-            (group?.bytes ?? 0) + _eventSize(event) > _maxAttemptBytes)) {
+    final priority = _attemptEvidencePriority(event);
+    final exceedsQuota =
+        (group?.events.length ?? 0) >= _maxEvents ||
+        (group?.bytes ?? 0) + _eventSize(event) + (priority > 0 ? 256 : 0) >
+            _maxAttemptBytes;
+    if (exceedsQuota &&
+        (priority == 0 ||
+            (priority == 1 && _repeatsLastReportedState(group, event)))) {
       _dropped++;
       if (trace is String) {
         _traceDropped[trace] = (_traceDropped[trace] ?? 0) + 1;
@@ -903,14 +907,26 @@ final class CallDiagnostics with WidgetsBindingObserver {
       _schedulePersist();
       return;
     }
-    if (terminal) {
-      // Reserve room for the terminal summary even when stage events hit quota.
+    if (priority > 0) {
+      // Routine signaling can fill the quota before media starts. Preserve
+      // bounded recent state/failure/cleanup evidence as well as the terminal
+      // summary, without increasing either count or byte limits.
       final eventBytes = _eventSize(event);
       while (group != null &&
           (group.events.length >= _maxEvents ||
               group.bytes + eventBytes + 256 > _maxAttemptBytes) &&
           group.events.isNotEmpty) {
-        _removeEvent(group.events.values.first);
+        final victim = _attemptQuotaVictim(group, priority);
+        if (victim == null) {
+          _dropped++;
+          if (trace is String) {
+            _traceDropped[trace] = (_traceDropped[trace] ?? 0) + 1;
+          }
+          _eventSizes.remove(event['eventId']);
+          _schedulePersist();
+          return;
+        }
+        _removeEvent(victim);
         _dropped++;
         if (trace is String) {
           _traceDropped[trace] = (_traceDropped[trace] ?? 0) + 1;
@@ -929,6 +945,84 @@ final class CallDiagnostics with WidgetsBindingObserver {
     _indexEvent(event);
     _enforceArchiveQuota();
     _schedulePersist();
+  }
+
+  // Higher priorities survive lower-priority quota pressure. Attempt identity
+  // stays available for trace binding; terminal rows cannot be evicted by a
+  // later native callback. At equal priority retain the newest observations.
+  static int _attemptEvidencePriority(Map<String, Object?> event) {
+    final stage = event['stage'];
+    final action = event['action'];
+    final outcome = event['outcome'];
+    final values = event['values'] as Map?;
+    if (stage == 'attempt' && action == 'start') return 3;
+    if (stage == 'terminal') return 2;
+    if (stage == 'signaling' &&
+        action == 'commit' &&
+        values?['state'] != null) {
+      return 1;
+    }
+    if (stage == 'media' &&
+        (outcome == 'media_flow_verified' ||
+            (action == 'check' && outcome == 'failed'))) {
+      return 1;
+    }
+    if ((stage == 'admission' && action == 'stop') ||
+        (stage == 'audio' && action == 'configure')) {
+      return 1;
+    }
+    return 0;
+  }
+
+  static bool _repeatsLastReportedState(
+    _CallDiagnosticGroup? group,
+    Map<String, Object?> incoming,
+  ) {
+    if (group == null ||
+        incoming['stage'] != 'signaling' ||
+        incoming['action'] != 'commit') {
+      return false;
+    }
+    final values = incoming['values'] as Map?;
+    if (values?['state'] == null) return false;
+    Map<String, Object?>? previous;
+    for (final event in group.events.values) {
+      if (event['stage'] == 'signaling' &&
+          event['action'] == 'commit' &&
+          (event['values'] as Map?)?['state'] != null) {
+        previous = event;
+      }
+    }
+    if (previous == null ||
+        previous['source'] != incoming['source'] ||
+        previous['reason'] != incoming['reason'] ||
+        previous['outcome'] != incoming['outcome']) {
+      return false;
+    }
+    final previousValues = previous['values'] as Map;
+    return const [
+      'state',
+      'accepted',
+      'connected',
+      'terminal',
+    ].every((key) => previousValues[key] == values?[key]);
+  }
+
+  static Map<String, Object?>? _attemptQuotaVictim(
+    _CallDiagnosticGroup group,
+    int incomingPriority,
+  ) {
+    // Only the one bounded attempt is inspected, never the entire archive.
+    for (
+      var priority = 0;
+      priority <= incomingPriority && priority < 3;
+      priority++
+    ) {
+      for (final event in group.events.values) {
+        if (_attemptEvidencePriority(event) == priority) return event;
+      }
+    }
+    return null;
   }
 
   void _indexEvent(Map<String, Object?> event) {

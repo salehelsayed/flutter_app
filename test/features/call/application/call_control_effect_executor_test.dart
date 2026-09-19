@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter_app/features/call/application/call_control_effect_executor.dart';
 import 'package:flutter_app/features/call/application/call_cleanup_coordinator.dart';
@@ -6,6 +7,7 @@ import 'package:flutter_app/features/call/application/call_coordinator.dart';
 import 'package:flutter_app/features/call/application/call_history_projector.dart';
 import 'package:flutter_app/features/call/application/call_signaling_context_store.dart';
 import 'package:flutter_app/features/call/data/call_history_repository.dart';
+import 'package:flutter_app/features/call/diagnostics/call_diagnostics.dart';
 import 'package:flutter_app/features/call/domain/call_end_reason.dart';
 import 'package:flutter_app/features/call/domain/call_event.dart';
 import 'package:flutter_app/features/call/domain/call_id.dart';
@@ -18,16 +20,17 @@ final _callId = CallId.parse('55555555-5555-4555-8555-555555555555');
 final _busyCallId = CallId.parse('66666666-6666-4666-8666-666666666666');
 final _now = DateTime.utc(2026, 8, 30, 12);
 
-CallSessionSnapshot _outgoing(CallState state) => CallSessionSnapshot.active(
-  callId: _callId,
-  contactPeerId: 'remote-account',
-  direction: CallDirection.outgoing,
-  state: state,
-  callerAccountPeerId: 'local-account',
-  callerDeviceId: 'local-device',
-  startedAt: _now,
-  observedAt: _now,
-);
+CallSessionSnapshot _outgoing(CallState state, {CallId? callId}) =>
+    CallSessionSnapshot.active(
+      callId: callId ?? _callId,
+      contactPeerId: 'remote-account',
+      direction: CallDirection.outgoing,
+      state: state,
+      callerAccountPeerId: 'local-account',
+      callerDeviceId: 'local-device',
+      startedAt: _now,
+      observedAt: _now,
+    );
 
 CallSessionSnapshot _endedOutgoing({
   CallEndReason endReason = CallEndReason.callerCancelled,
@@ -80,6 +83,256 @@ CallSignal _authenticatedInvite(CallId callId) => CallSignal.create(
 );
 
 void main() {
+  for (final boundary in [
+    'endpoint',
+    'context',
+    'native_refusal',
+    'native_error',
+  ]) {
+    test(
+      'outgoing $boundary failure retains its exact preparation boundary',
+      () async {
+        final diagnostics = await CallDiagnostics.installForTesting();
+        addTearDown(() async {
+          await diagnostics.setEnabled(false);
+          await diagnostics.dispose();
+        });
+        final trace = diagnostics.beginAttempt()!;
+        diagnostics.bindCall(callId: _callId.value, traceId: trace);
+        var fail = true;
+        final port = _Port(
+          beforePrepare: () async {
+            if (fail && boundary == 'endpoint') {
+              throw StateError('secret-token remote-account endpoint-private');
+            }
+          },
+        );
+        final store = CallSignalingContextStore(maxContexts: 1);
+        if (boundary == 'context') {
+          store.storeOutgoing(
+            callId: _busyCallId,
+            callHandle: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+            localAccountPeerId: 'local-account',
+            localDevicePeerId: 'local-device',
+            remoteAccountPeerId: 'remote-account',
+            remoteDevicePeerId: 'remote-device',
+          );
+        }
+        var registrations = 0;
+        final executor = _executor(
+          port,
+          store,
+          registerOutgoingBeforeInvite: (_) async {
+            registrations++;
+            if (fail && boundary == 'native_error') {
+              throw StateError('secret-token native-private');
+            }
+            return !(fail && boundary == 'native_refusal');
+          },
+        );
+        final result = await executor.execute(
+          const CallEffect(CallEffectType.prepareOutgoingInvite),
+          _outgoing(CallState.preparing),
+        );
+        expect(result?.type, CallEventType.negotiationFailed);
+        expect(result?.endReason, CallEndReason.signalingFailed);
+        expect(store.read(_callId), isNull);
+        expect(port.signals, isEmpty);
+        expect(registrations, boundary.startsWith('native') ? 1 : 0);
+        final failures = (await diagnostics.eventsForTesting())
+            .where(
+              (event) =>
+                  event['stage'] == 'signaling' && event['outcome'] == 'failed',
+            )
+            .toList();
+        expect(failures, hasLength(1));
+        expect(failures.single['traceId'], trace);
+        expect(failures.single['action'], switch (boundary) {
+          'endpoint' => 'lookup',
+          'context' => 'bind',
+          _ => 'adopt',
+        });
+        expect(failures.single['reason'], switch (boundary) {
+          'endpoint' || 'context' => 'unavailable',
+          _ => 'native_lifecycle_failed',
+        });
+        expect(failures.single['values'], {'state': 'outgoing_preparing'});
+        final encoded = jsonEncode(failures);
+        for (final secret in [
+          'secret-token',
+          'remote-account',
+          'local-account',
+          'endpoint-private',
+          'native-private',
+          _callId.value,
+        ]) {
+          expect(encoded, isNot(contains(secret)));
+        }
+        if (boundary == 'context') {
+          expect(
+            store.read(_busyCallId),
+            isNotNull,
+            reason: 'failed preparation may only purge its own context',
+          );
+          store.purge(_busyCallId);
+        }
+        fail = false;
+        final ready = await executor.execute(
+          const CallEffect(CallEffectType.prepareOutgoingInvite),
+          _outgoing(CallState.preparing, callId: _busyCallId),
+        );
+        expect(ready?.type, CallEventType.outgoingInviteReady);
+        await executor.execute(
+          const CallEffect(CallEffectType.sendInvite),
+          _outgoing(CallState.inviting, callId: _busyCallId),
+        );
+        expect(port.signals.single.callId, _busyCallId);
+      },
+    );
+  }
+
+  for (final boundary in ['endpoint', 'native']) {
+    test(
+      'late canceled $boundary failure cannot report a current preparation failure',
+      () async {
+        final diagnostics = await CallDiagnostics.installForTesting();
+        addTearDown(() async {
+          await diagnostics.setEnabled(false);
+          await diagnostics.dispose();
+        });
+        final trace = diagnostics.beginAttempt()!;
+        diagnostics.bindCall(callId: _callId.value, traceId: trace);
+        var isCurrent = true;
+        final reached = Completer<void>();
+        final release = Completer<void>();
+        Future<void> block(String step) async {
+          if (boundary != step) return;
+          reached.complete();
+          await release.future;
+          throw StateError('secret-token canceled-predecessor');
+        }
+
+        final store = CallSignalingContextStore();
+        final port = _Port(beforePrepare: () => block('endpoint'));
+        final executor = CallControlEffectExecutor(
+          contextStore: store,
+          signalingPort: port,
+          clock: () => _now,
+          idSource: _MessageIds().next,
+          isOutgoingPreparationCurrent: (_) => isCurrent,
+          registerOutgoingBeforeInvite: (_) async {
+            await block('native');
+            return true;
+          },
+        );
+        final preparation = executor.execute(
+          const CallEffect(CallEffectType.prepareOutgoingInvite),
+          _outgoing(CallState.preparing),
+        );
+        await reached.future;
+        isCurrent = false;
+        release.complete();
+        expect(await preparation, isNull);
+        expect(store.read(_callId), isNull);
+        expect(port.signals, isEmpty);
+        expect(
+          (await diagnostics.eventsForTesting()).where(
+            (event) =>
+                event['stage'] == 'signaling' && event['outcome'] == 'failed',
+          ),
+          isEmpty,
+        );
+      },
+    );
+  }
+
+  for (final boundary in ['signaling', 'native']) {
+    test(
+      'cancel interrupts admitted outgoing $boundary preparation and fences late completion',
+      () async {
+        final reached = Completer<void>();
+        final release = Completer<void>();
+        var shouldBlock = true;
+        Future<void> waitAt(String stage) async {
+          if (!shouldBlock || stage != boundary) return;
+          reached.complete();
+          await release.future;
+        }
+
+        final port = _Port(beforePrepare: () => waitAt('signaling'));
+        final store = CallSignalingContextStore();
+        late CallCoordinator coordinator;
+        var ids = 0;
+        final control = CallControlEffectExecutor(
+          contextStore: store,
+          signalingPort: port,
+          clock: () => _now,
+          idSource: _MessageIds().next,
+          isOutgoingPreparationCurrent: (id) =>
+              coordinator.activeSession?.callId == id &&
+              coordinator.activeSession?.state == CallState.preparing,
+          registerOutgoingBeforeInvite: (_) async {
+            await waitAt('native');
+            return true;
+          },
+        );
+        coordinator = CallCoordinator(
+          reducer: const CallReducer(),
+          cleanupCoordinator: CallCleanupCoordinator([
+            CallCleanupStep(
+              'context',
+              (snapshot) async => store.purge(snapshot.callId!),
+            ),
+          ]),
+          historyProjector: CallHistoryProjector(_History()),
+          effectExecutor: control,
+          clock: () => _now,
+          idSource: () => ids++ == 0 ? _callId : _busyCallId,
+        );
+        addTearDown(coordinator.dispose);
+        Future<CallReduction> place() => coordinator.placeCall(
+          contactPeerId: 'remote-account',
+          localAccountPeerId: 'local-account',
+          localDeviceId: 'local-device',
+        );
+        final first = place();
+        await reached.future;
+        final canceled = await coordinator
+            .dispatch(
+              CallEvent(
+                type: CallEventType.cancel,
+                eventId: 'cancel-while-preparing',
+                occurredAt: _now,
+                callId: _callId,
+              ),
+            )
+            .timeout(const Duration(seconds: 1));
+        expect(canceled.snapshot.endReason, CallEndReason.callerCancelled);
+        expect(coordinator.activeSession, isNull);
+        expect(store.read(_callId), isNull);
+        expect(
+          port.signals.where((s) => s.event == CallSignalType.invite),
+          isEmpty,
+        );
+        shouldBlock = false;
+        await place();
+        expect(coordinator.activeSession?.callId, _busyCallId);
+        expect(coordinator.activeSession?.state, CallState.inviting);
+        release.complete();
+        await first;
+        await Future<void>.delayed(Duration.zero);
+        expect(store.read(_callId), isNull);
+        expect(store.read(_busyCallId), isNotNull);
+        expect(
+          port.signals
+              .where((s) => s.event == CallSignalType.invite)
+              .map((s) => s.callId),
+          [_busyCallId],
+        );
+      },
+    );
+  }
+
   test(
     'direct ringing preserves a cancel behind unsettled mailbox custody',
     () async {
@@ -202,11 +455,8 @@ void main() {
   );
 
   test(
-    'a dispatched wake turns the mailbox custody follow-up into ringing',
+    'a dispatched wake confirms custody without claiming remote ringing',
     () async {
-      // The relay alerted the callee's device; a headless callee signals
-      // nothing until it is answered, so the caller rings back on this
-      // receipt (device 2026-09-05: no ringback when calling a dead Pixel).
       final port = _Port(
         result: CallControlSendResult(
           directAccepted: false,
@@ -241,9 +491,9 @@ void main() {
           localDeviceId: 'local-device',
         ),
       );
-      expect(coordinator.activeSession?.state, CallState.ringing);
+      expect(coordinator.activeSession?.state, CallState.inviting);
       expect(coordinator.activeSession?.mailboxCustodyConfirmed, isTrue);
-      expect(coordinator.activeSession?.ringingAt, _now);
+      expect(coordinator.activeSession?.ringingAt, isNull);
       expect(
         coordinator.activeSession?.recentEventIds,
         contains(startsWith('call-control-wakeRequested-')),
@@ -979,15 +1229,19 @@ final class _MessageIds {
 }
 
 final class _Port implements CallControlSignalingPort {
-  _Port({CallControlSendResult? result, this.onSend, this.failSignalType})
-    : result =
-          result ??
-          CallControlSendResult(
-            directAccepted: true,
-            mailboxStored: false,
-            directRoute: CallRouteClass.direct,
-            mailboxStoreSettled: Future<void>.value(),
-          );
+  _Port({
+    CallControlSendResult? result,
+    this.onSend,
+    this.failSignalType,
+    this.beforePrepare,
+  }) : result =
+           result ??
+           CallControlSendResult(
+             directAccepted: true,
+             mailboxStored: false,
+             directRoute: CallRouteClass.direct,
+             mailboxStoreSettled: Future<void>.value(),
+           );
 
   final CallControlSendResult result;
   final Future<CallControlSendResult> Function(
@@ -996,6 +1250,7 @@ final class _Port implements CallControlSignalingPort {
   )?
   onSend;
   final CallSignalType? failSignalType;
+  final Future<void> Function()? beforePrepare;
   final List<CallSignal> signals = <CallSignal>[];
   final List<String> callHandles = <String>[];
   int prepareCalls = 0;
@@ -1006,6 +1261,7 @@ final class _Port implements CallControlSignalingPort {
     CallSessionSnapshot snapshot,
   ) async {
     prepareCalls++;
+    await beforePrepare?.call();
     return const OutgoingCallSignalingPreparation(
       callHandle: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
       remoteAccountPeerId: 'remote-account',

@@ -15,6 +15,349 @@ void main() {
   });
 
   group('PushRegistrationCoordinator', () {
+    test(
+      'explicit retry refreshes revoked permission and later restoration',
+      () {
+        fakeAsync((async) {
+          final refresh = StreamController<String>.broadcast(sync: true);
+          final notifier = PushRegistrationHealthNotifier();
+          var permissionGranted = true;
+          var permissionCalls = 0;
+          var registerCalls = 0;
+          final coordinator = PushRegistrationCoordinator(
+            requestPermission: () async {
+              permissionCalls++;
+              return permissionGranted;
+            },
+            registerPushToken: () async {
+              registerCalls++;
+              return RegisterPushTokenResult.success;
+            },
+            tokenRefreshStream: refresh.stream,
+            healthStore: _MemoryHealthStore(),
+            healthNotifier: notifier,
+          );
+          coordinator.ensureStarted();
+          async.flushMicrotasks();
+          expect(notifier.value.phase, PushRegistrationHealthPhase.healthy);
+          refresh.add('updated-token');
+          async.flushMicrotasks();
+          expect(registerCalls, 2);
+          expect(
+            permissionCalls,
+            1,
+            reason: 'automatic token refresh does not request permission again',
+          );
+
+          permissionGranted = false;
+          coordinator.retryNow();
+          async.flushMicrotasks();
+          expect(permissionCalls, 2);
+          expect(registerCalls, 2);
+          expect(
+            notifier.value.phase,
+            PushRegistrationHealthPhase.permissionDenied,
+          );
+          expect(
+            notifier.value.action,
+            PushRegistrationHealthAction.openNotificationSettings,
+          );
+          expect(async.pendingTimers, isEmpty);
+
+          permissionGranted = true;
+          coordinator.retryNow();
+          async.flushMicrotasks();
+          expect(permissionCalls, 3);
+          expect(registerCalls, 3);
+          expect(notifier.value.phase, PushRegistrationHealthPhase.healthy);
+          expect(notifier.value.warningVisible, isFalse);
+          coordinator.dispose();
+          notifier.dispose();
+          refresh.close();
+        });
+      },
+    );
+
+    test(
+      'explicit retry after revocation cannot join an older permission grant',
+      () {
+        fakeAsync((async) {
+          final firstRegistration = Completer<RegisterPushTokenResult>();
+          final notifier = PushRegistrationHealthNotifier();
+          var permissionGranted = true;
+          var permissionCalls = 0;
+          var registerCalls = 0;
+          final coordinator = PushRegistrationCoordinator(
+            requestPermission: () async {
+              permissionCalls++;
+              return permissionGranted;
+            },
+            registerPushToken: () {
+              registerCalls++;
+              return firstRegistration.future;
+            },
+            tokenRefreshStream: const Stream.empty(),
+            healthNotifier: notifier,
+          );
+          coordinator.ensureStarted();
+          async.flushMicrotasks();
+          expect(permissionCalls, 1);
+          expect(registerCalls, 1);
+          permissionGranted = false;
+          var retryCompleted = false;
+          coordinator.retryNow().then((_) => retryCompleted = true);
+          async.flushMicrotasks();
+          expect(retryCompleted, isFalse);
+          firstRegistration.complete(RegisterPushTokenResult.success);
+          async.flushMicrotasks();
+          expect(retryCompleted, isTrue);
+          expect(permissionCalls, 2);
+          expect(registerCalls, 1);
+          expect(
+            notifier.value.phase,
+            PushRegistrationHealthPhase.permissionDenied,
+          );
+          expect(async.pendingTimers, isEmpty);
+          coordinator.dispose();
+          notifier.dispose();
+        });
+      },
+    );
+
+    test(
+      'explicit retry after restoration cannot join an older permission denial',
+      () {
+        fakeAsync((async) {
+          final oldPermission = Completer<bool>();
+          final notifier = PushRegistrationHealthNotifier();
+          var permissionCalls = 0;
+          var registerCalls = 0;
+          final coordinator = PushRegistrationCoordinator(
+            requestPermission: () {
+              permissionCalls++;
+              return permissionCalls == 1
+                  ? oldPermission.future
+                  : Future.value(true);
+            },
+            registerPushToken: () async {
+              registerCalls++;
+              return RegisterPushTokenResult.success;
+            },
+            tokenRefreshStream: const Stream.empty(),
+            healthNotifier: notifier,
+          );
+          coordinator.ensureStarted();
+          async.flushMicrotasks();
+          var retryCompleted = false;
+          coordinator.retryNow().then((_) => retryCompleted = true);
+          async.flushMicrotasks();
+          expect(retryCompleted, isFalse);
+          oldPermission.complete(false);
+          async.flushMicrotasks();
+          expect(retryCompleted, isTrue);
+          expect(permissionCalls, 2);
+          expect(registerCalls, 1);
+          expect(notifier.value.phase, PushRegistrationHealthPhase.healthy);
+          expect(notifier.value.warningVisible, isFalse);
+          expect(async.pendingTimers, isEmpty);
+          coordinator.dispose();
+          notifier.dispose();
+        });
+      },
+    );
+
+    test(
+      'binding retry preserves a requested permission restoration check',
+      () {
+        fakeAsync((async) {
+          final store = _ScopedMemoryHealthStore((
+            accountPeerId: 'account-a',
+            installationId: 'installation-1',
+          ));
+          final notifier = PushRegistrationHealthNotifier();
+          var permissionGranted = false;
+          var permissionCalls = 0;
+          var registerCalls = 0;
+          final coordinator = PushRegistrationCoordinator(
+            requestPermission: () async {
+              permissionCalls++;
+              return permissionGranted;
+            },
+            registerPushToken: () async {
+              registerCalls++;
+              return RegisterPushTokenResult.success;
+            },
+            tokenRefreshStream: const Stream.empty(),
+            retryDelay: const Duration(seconds: 10),
+            healthStore: store,
+            healthNotifier: notifier,
+          );
+          coordinator.ensureStarted();
+          async.flushMicrotasks();
+          expect(
+            notifier.value.phase,
+            PushRegistrationHealthPhase.permissionDenied,
+          );
+          expect(async.pendingTimers, isEmpty);
+
+          permissionGranted = true;
+          store.throwOnResolve = true;
+          coordinator.retryNow();
+          async.flushMicrotasks();
+          expect(permissionCalls, 1);
+          expect(registerCalls, 0);
+          store.throwOnResolve = false;
+          async.elapse(const Duration(seconds: 10));
+          async.flushMicrotasks();
+          expect(permissionCalls, 2);
+          expect(registerCalls, 1);
+          expect(notifier.value.phase, PushRegistrationHealthPhase.healthy);
+          expect(notifier.value.warningVisible, isFalse);
+          expect(async.pendingTimers, isEmpty);
+          coordinator.dispose();
+          notifier.dispose();
+        });
+      },
+    );
+
+    for (final fence in ['cutover', 'dispose', 'disabled']) {
+      test(
+        'late binding failure after $fence cannot schedule stale recovery',
+        () {
+          fakeAsync((async) {
+            final resolution = Completer<PushRegistrationHealthBinding>();
+            final store = _ScopedMemoryHealthStore((
+              accountPeerId: 'account-a',
+              installationId: 'installation-1',
+            ))..resolveOverride = () => resolution.future;
+            var enabled = true;
+            var registerCalls = 0;
+            final coordinator = PushRegistrationCoordinator(
+              requestPermission: () async => true,
+              registerPushToken: () async {
+                registerCalls++;
+                return RegisterPushTokenResult.success;
+              },
+              tokenRefreshStream: const Stream.empty(),
+              retryDelay: const Duration(seconds: 10),
+              healthStore: store,
+              isEnabled: () => enabled,
+            );
+            coordinator.ensureStarted();
+            async.flushMicrotasks();
+            switch (fence) {
+              case 'cutover':
+                coordinator.beginAccountBindingCutover();
+              case 'dispose':
+                coordinator.dispose();
+              case 'disabled':
+                enabled = false;
+            }
+            resolution.completeError(StateError('identity became unavailable'));
+            async.flushMicrotasks();
+            expect(async.pendingTimers, isEmpty);
+            async.elapse(const Duration(minutes: 1));
+            async.flushMicrotasks();
+            expect(registerCalls, 0);
+            expect(store.writes, isEmpty);
+            coordinator.dispose();
+          });
+        },
+      );
+    }
+
+    test(
+      'initial binding failure retries without another lifecycle trigger',
+      () {
+        fakeAsync((async) {
+          final store = _ScopedMemoryHealthStore((
+            accountPeerId: 'account-a',
+            installationId: 'installation-1',
+          ))..throwOnResolve = true;
+          final notifier = PushRegistrationHealthNotifier();
+          var permissionCalls = 0;
+          var registerCalls = 0;
+          final coordinator = PushRegistrationCoordinator(
+            requestPermission: () async {
+              permissionCalls++;
+              return true;
+            },
+            registerPushToken: () async {
+              registerCalls++;
+              return RegisterPushTokenResult.success;
+            },
+            tokenRefreshStream: const Stream.empty(),
+            retryDelay: const Duration(seconds: 10),
+            healthStore: store,
+            healthNotifier: notifier,
+          );
+          coordinator.ensureStarted();
+          async.flushMicrotasks();
+          expect(permissionCalls, 0);
+          expect(registerCalls, 0);
+          expect(store.writes, isEmpty);
+          expect(notifier.record, isNull);
+
+          store.throwOnResolve = false;
+          async.elapse(const Duration(seconds: 10));
+          async.flushMicrotasks();
+          expect(permissionCalls, 1);
+          expect(registerCalls, 1);
+          expect(notifier.value.phase, PushRegistrationHealthPhase.healthy);
+          expect(async.pendingTimers, isEmpty);
+          coordinator.dispose();
+          notifier.dispose();
+        });
+      },
+    );
+
+    test('binding outage cannot strand an existing registration warning', () {
+      fakeAsync((async) {
+        final store = _ScopedMemoryHealthStore((
+          accountPeerId: 'account-a',
+          installationId: 'installation-1',
+        ));
+        final notifier = PushRegistrationHealthNotifier();
+        var registerCalls = 0;
+        final coordinator = PushRegistrationCoordinator(
+          requestPermission: () async => true,
+          registerPushToken: () async => ++registerCalls <= 3
+              ? RegisterPushTokenResult.failed
+              : RegisterPushTokenResult.success,
+          tokenRefreshStream: const Stream.empty(),
+          retryDelay: const Duration(seconds: 10),
+          healthStore: store,
+          healthNotifier: notifier,
+        );
+        coordinator.ensureStarted();
+        async.flushMicrotasks();
+        async.elapse(const Duration(seconds: 20));
+        async.flushMicrotasks();
+        expect(registerCalls, 3);
+        expect(notifier.value.warningVisible, isTrue);
+        final failedRecord = notifier.record;
+        final writesBeforeOutage = store.writes.length;
+
+        store.throwOnResolve = true;
+        async.elapse(const Duration(seconds: 10));
+        async.flushMicrotasks();
+        expect(registerCalls, 3);
+        expect(notifier.record, failedRecord);
+        expect(store.writes.length, writesBeforeOutage);
+
+        store.throwOnResolve = false;
+        async.elapse(const Duration(seconds: 10));
+        async.flushMicrotasks();
+        expect(registerCalls, 4);
+        expect(notifier.value.phase, PushRegistrationHealthPhase.healthy);
+        expect(notifier.value.warningVisible, isFalse);
+        expect(store.records[store.binding], notifier.record);
+        expect(async.pendingTimers, isEmpty);
+        coordinator.dispose();
+        notifier.dispose();
+      });
+    });
+
     test('permission denied stops the flow with no retries', () {
       fakeAsync((async) {
         final refreshController = StreamController<String>.broadcast(
@@ -744,6 +1087,8 @@ final class _ScopedMemoryHealthStore
   _ScopedMemoryHealthStore(this.binding);
 
   PushRegistrationHealthBinding binding;
+  bool throwOnResolve = false;
+  Future<PushRegistrationHealthBinding> Function()? resolveOverride;
   final Map<PushRegistrationHealthBinding, PushRegistrationHealthRecord>
   records = {};
   final List<
@@ -755,7 +1100,12 @@ final class _ScopedMemoryHealthStore
   writes = [];
 
   @override
-  Future<PushRegistrationHealthBinding> resolveBinding() async => binding;
+  Future<PushRegistrationHealthBinding> resolveBinding() async {
+    final override = resolveOverride;
+    if (override != null) return override();
+    if (throwOnResolve) throw StateError('identity temporarily unavailable');
+    return binding;
+  }
 
   @override
   Future<PushRegistrationHealthRecord?> read() async =>

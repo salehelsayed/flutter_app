@@ -12,6 +12,7 @@ import 'package:flutter_app/features/call/domain/call_id.dart';
 import 'package:flutter_app/features/call/domain/call_session_snapshot.dart';
 import 'package:flutter_app/features/call/domain/call_state.dart';
 import 'package:flutter_app/features/call/infrastructure/android_call_lifecycle_adapter.dart';
+import 'package:flutter_app/features/call/infrastructure/android_call_admission_settlement.dart';
 import 'package:flutter_app/features/call/infrastructure/call_audio_route_adapter.dart';
 import 'package:flutter_app/features/call/infrastructure/flutter_webrtc_call_engine.dart';
 import 'package:flutter_app/features/call/infrastructure/webrtc_types.dart';
@@ -26,6 +27,137 @@ final _secondCallId = CallId.parse('55555555-5555-4555-8555-555555555555');
 final _now = DateTime.fromMillisecondsSinceEpoch(_nowMs, isUtc: true);
 
 void main() {
+  test(
+    'admission settlement carries exact captured token without canonical acceptance',
+    () async {
+      final token = <String, Object?>{
+        'nativeCallId': _callHandle,
+        'ownerId': '77777777-7777-4777-8777-777777777777',
+        'expiresAtMs': _expiresAtMs,
+        'wakeHandle': 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+      };
+      final native = _NativeHarness()..attachResult = _emptyBatch();
+      native.results['captureAdmissionSettlement'] = token;
+      native.results['settleAuthenticatedAdmission'] = true;
+      final coordinator = _coordinator();
+      final adapter = AndroidCallLifecycleAdapter(
+        invokeMethod: native.invoke,
+        nativeEvents: native.events.stream,
+        coordinator: coordinator,
+        resolveAuthenticatedHandle: (_) => null,
+        clock: () => _now,
+      );
+      await adapter.start();
+      final captured = await adapter.captureAdmissionSettlement(_callHandle);
+      expect(captured, isNotNull);
+      expect(captured.toString(), 'AndroidCallAdmissionToken(redacted)');
+      expect(await adapter.settleAuthenticatedAdmission(captured!), isTrue);
+      expect(
+        native.callsOf('captureAdmissionSettlement').single.arguments,
+        <String, Object?>{'version': 1, 'nativeCallId': _callHandle},
+      );
+      expect(
+        native.callsOf('settleAuthenticatedAdmission').single.arguments,
+        <String, Object?>{'version': 1, 'token': token},
+      );
+      expect(native.callsOf('presentAuthenticated'), isEmpty);
+      expect(native.callsOf('activateAudio'), isEmpty);
+      expect(coordinator.activeSession, isNull);
+      await adapter.close();
+      await coordinator.dispose();
+      await native.events.close();
+    },
+  );
+
+  test('late captured admission after adapter close cannot settle', () async {
+    final capture = Completer<Object?>();
+    final native = _NativeHarness()..attachResult = _emptyBatch();
+    native.results['captureAdmissionSettlement'] = capture.future;
+    final coordinator = _coordinator();
+    final adapter = AndroidCallLifecycleAdapter(
+      invokeMethod: native.invoke,
+      nativeEvents: native.events.stream,
+      coordinator: coordinator,
+      resolveAuthenticatedHandle: (_) => null,
+      clock: () => _now,
+    );
+    await adapter.start();
+    final capturing = adapter.captureAdmissionSettlement(_callHandle);
+    await _until(() => native.callsOf('captureAdmissionSettlement').isNotEmpty);
+    await adapter.close();
+    capture.complete(<String, Object?>{
+      'nativeCallId': _callHandle,
+      'ownerId': '77777777-7777-4777-8777-777777777777',
+      'expiresAtMs': _expiresAtMs,
+      'wakeHandle': 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+    });
+    expect(await capturing, isNull);
+    expect(native.callsOf('settleAuthenticatedAdmission'), isEmpty);
+    await coordinator.dispose();
+    await native.events.close();
+  });
+
+  test(
+    'canonical incoming session prevents placeholder settlement commands',
+    () async {
+      final native = _NativeHarness()..attachResult = _emptyBatch();
+      final coordinator = _coordinator();
+      final adapter = AndroidCallLifecycleAdapter(
+        invokeMethod: native.invoke,
+        nativeEvents: native.events.stream,
+        coordinator: coordinator,
+        resolveAuthenticatedHandle: (_) => _callHandle,
+        clock: () => _now,
+      );
+      await adapter.start();
+      await _prepareIncoming(coordinator);
+      final token = AndroidCallAdmissionToken.fromWire(<String, Object?>{
+        'nativeCallId': _callHandle,
+        'ownerId': '77777777-7777-4777-8777-777777777777',
+        'expiresAtMs': _expiresAtMs,
+        'wakeHandle': 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+      })!;
+      expect(await adapter.captureAdmissionSettlement(_callHandle), isNull);
+      expect(await adapter.settleAuthenticatedAdmission(token), isFalse);
+      expect(native.callsOf('captureAdmissionSettlement'), isEmpty);
+      expect(native.callsOf('settleAuthenticatedAdmission'), isEmpty);
+      await adapter.close();
+      await coordinator.dispose();
+      await native.events.close();
+    },
+  );
+
+  test('admission token rejects malformed or widened native maps', () {
+    final valid = <String, Object?>{
+      'nativeCallId': _callHandle,
+      'ownerId': '77777777-7777-4777-8777-777777777777',
+      'expiresAtMs': _expiresAtMs,
+      'wakeHandle': 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+    };
+    for (final bad in <Object?>[
+      null,
+      true,
+      <String, Object?>{},
+      {...valid, 'extra': true},
+      {...valid, 'nativeCallId': 'AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA'},
+      {...valid, 'expiresAtMs': _expiresAtMs.toDouble()},
+      {...valid, 'expiresAtMs': 0},
+      {...valid, 'expiresAtMs': 9007199254740992},
+      {...valid, 'ownerId': 'bad'},
+      {...valid, 'wakeHandle': 'secret'},
+      {...valid}..remove('ownerId'),
+    ]) {
+      expect(AndroidCallAdmissionToken.fromWire(bad), isNull);
+    }
+    expect(
+      AndroidCallAdmissionToken.fromWire({
+        ...valid,
+        'wakeHandle': _secondCallHandle,
+      }),
+      isNotNull,
+    );
+  });
+
   test('Android native authorization requires every graph gate', () {
     const enabled = <String, bool>{
       'voice_call_capability_v1': true,
@@ -229,6 +361,8 @@ void main() {
       await adapter.activateAudio();
 
       expect(adapter.isBoundTo(_callId), isTrue);
+      expect(adapter.debugBoundNativeHandle(_callId), _callHandle);
+      expect(adapter.debugBoundNativeHandle(_secondCallId), isNull);
       expect(
         native.callsOf('registerOutgoingAuthenticated').single.arguments,
         <String, Object?>{
@@ -245,6 +379,7 @@ void main() {
       );
 
       await adapter.close();
+      expect(adapter.debugBoundNativeHandle(_callId), isNull);
       await coordinator.dispose();
       await native.events.close();
     },
@@ -625,6 +760,105 @@ void main() {
         ),
       ]);
 
+      await adapter.close();
+      await coordinator.dispose();
+      await native.events.close();
+    },
+  );
+
+  test(
+    'late native registration after cancellation preserves authority and next call',
+    () async {
+      final registrationGate = Completer<Object?>();
+      final native = _NativeHarness()
+        ..attachResult = _emptyBatch()
+        ..results['registerOutgoingAuthenticated'] = registrationGate.future;
+      var idCount = 0;
+      final coordinator = _coordinator(
+        idSource: () => idCount++ == 0 ? _callId : _secondCallId,
+      );
+      final adapter = _adapter(native, coordinator, <CallId, String>{
+        _callId: _callHandle,
+        _secondCallId: _secondCallHandle,
+      });
+      native.onInvoke = (method) {
+        if (method == 'end') {
+          native.attachResult = _batch(
+            <Map<String, Object?>>[
+              _event(1, 'late-registration-presented', 'presented'),
+              _event(2, 'late-registration-ended', 'end'),
+            ],
+            direction: 'outgoing',
+            phase: 'journal',
+          );
+        }
+      };
+      await adapter.start();
+      await coordinator.placeCall(
+        contactPeerId: 'remote-account',
+        localAccountPeerId: 'local-account',
+        localDeviceId: 'local-device',
+      );
+      final pending = adapter.registerOutgoing(
+        _callId,
+        expiresAt: DateTime.fromMillisecondsSinceEpoch(
+          _expiresAtMs,
+          isUtc: true,
+        ),
+      );
+      await _until(
+        () => native.callsOf('registerOutgoingAuthenticated').isNotEmpty,
+      );
+      final canceled = await coordinator.dispatch(
+        CallEvent(
+          type: CallEventType.cancel,
+          eventId: 'cancel-during-native-registration',
+          occurredAt: _now,
+          callId: _callId,
+        ),
+      );
+      expect(canceled.snapshot.isTerminal, isTrue);
+      registrationGate.complete(true);
+      expect(await pending, isFalse);
+      await _settle();
+      expect(native.callsOf('failClosed'), isEmpty);
+      expect(native.callsOf('end'), hasLength(1));
+      native.results.remove('registerOutgoingAuthenticated');
+      native.onInvoke = (method) {
+        if (method == 'registerOutgoingAuthenticated') {
+          native.events.add(
+            _batch(
+              <Map<String, Object?>>[
+                _event(
+                  1,
+                  'successor-presented',
+                  'presented',
+                  callHandle: _secondCallHandle,
+                ),
+              ],
+              callHandle: _secondCallHandle,
+              direction: 'outgoing',
+            ),
+          );
+        }
+      };
+      await coordinator.placeCall(
+        contactPeerId: 'remote-account',
+        localAccountPeerId: 'local-account',
+        localDeviceId: 'local-device',
+      );
+      expect(
+        await adapter.registerOutgoing(
+          _secondCallId,
+          expiresAt: DateTime.fromMillisecondsSinceEpoch(
+            _expiresAtMs,
+            isUtc: true,
+          ),
+        ),
+        isTrue,
+      );
+      expect(adapter.isBoundTo(_secondCallId), isTrue);
+      expect(native.callsOf('failClosed'), isEmpty);
       await adapter.close();
       await coordinator.dispose();
       await native.events.close();

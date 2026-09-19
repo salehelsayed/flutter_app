@@ -30,6 +30,9 @@ class IncomingCallScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     final colors = context.backgroundReadableColors;
     final l10n = AppLocalizations.of(context)!;
+    final status = _canRespond
+        ? l10n.call_status_incoming
+        : l10n.call_status_checking_incoming;
 
     return ColoredBox(
       color: colors.surfaceBase,
@@ -55,10 +58,10 @@ class IncomingCallScreen extends StatelessWidget {
               const SizedBox(height: 10),
               Semantics(
                 liveRegion: true,
-                label: _canRespond ? 'Incoming call' : 'Checking incoming call',
+                label: status,
                 excludeSemantics: true,
                 child: Text(
-                  _canRespond ? 'Incoming call' : 'Checking incoming call',
+                  status,
                   style: TextStyle(
                     color: colors.textSecondary,
                     fontSize: 16,

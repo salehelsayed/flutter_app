@@ -226,6 +226,46 @@ class MknoonFirebaseMessagingServiceTest {
     }
 
     @Test
+    @Config(sdk = [33])
+    fun `validated call wake reaches active foreground graph even while recovery lease is refused`() {
+        val broker = CanonicalRuntimeLeaseBroker()
+        val foreground = requireNotNull(broker.acquire("foreground-engine", "binding", CanonicalRuntimeLeaseBroker.Role.FOREGROUND))
+        val signals = AndroidCallWakeSignalRegistry(broker::snapshot)
+        var delivered = 0
+        val registration = signals.register("foreground-engine") { complete -> delivered++; complete(true) }
+        signals.ready(registration)
+        val service = classifierService(mutableListOf(), mutableListOf(), mutableListOf())
+        service.callNowMs = callNowMs
+        service.onWarmCallWake = {
+            // Foreground can synchronously acknowledge a terminal. Its exact
+            // admission must already have been scheduled before delivery.
+            assertEquals(delivered + 1, service.callDispatches.size)
+            signals.signal()
+        }
+        val valid = mapOf("v" to "1", "w" to "call", "c" to "00112233445566778899aabbccddeeff",
+            "h" to "10112233445566778899aabbccddeeff", "e" to (callNowMs + 45_000L).toString())
+        assertNull(broker.acquire("headless-call-recovery", "binding", CanonicalRuntimeLeaseBroker.Role.RECOVERY))
+        service.onMessageReceived(dataMessage(valid))
+        assertEquals(1, delivered)
+        assertEquals(1, service.callDispatches.size)
+        // Warm acceleration is outside the scheduler's deduplication result:
+        // even repeated valid ingress still reaches both incumbent paths.
+        service.onMessageReceived(dataMessage(valid))
+        assertEquals(2, delivered)
+        assertEquals(2, service.callDispatches.size)
+        service.onMessageReceived(dataMessage(valid + ("untrustedName" to "payload")))
+        service.onMessageReceived(notificationBearingMessage(valid))
+        service.onMessageReceived(dataMessage(valid + ("e" to callNowMs.toString())))
+        assertEquals(2, delivered)
+        assertEquals(2, service.callDispatches.size)
+        assertEquals(foreground.ownerId, broker.snapshot().ownerId)
+        assertTrue(service.delegated.isEmpty())
+        assertNull(DroppedPushRecoveryStore(context).pendingGeneration())
+        assertTrue(context.getSystemService(NotificationManager::class.java).activeNotifications.isEmpty())
+        signals.unregister(registration)
+    }
+
+    @Test
     @Config(sdk = [24])
     fun `real deletion override persists before posting without creating a channel on API 24`() {
         service().onDeletedMessages()
@@ -477,6 +517,9 @@ private class RecordingFirebaseMessagingService : MknoonFirebaseMessagingService
     val warmSignals = mutableListOf<Long>()
     var callNowMs = 0L
     val callDispatches = mutableListOf<com.mknoon.app.call.CallWakePayload>()
+    var onWarmCallWake: (() -> Unit)? = null
+
+    override fun signalWarmCallWake() { onWarmCallWake?.invoke() }
 
     override fun callWakeNowMs(): Long = callNowMs
 

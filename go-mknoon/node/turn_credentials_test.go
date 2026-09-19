@@ -5,13 +5,17 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
+	"os"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
 	libp2p "github.com/libp2p/go-libp2p"
 	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/network"
+	"github.com/libp2p/go-libp2p/p2p/net/swarm"
 )
 
 const (
@@ -494,5 +498,62 @@ func TestTurnCredentialsV1_ConnectFailureClassification(t *testing.T) {
 	}
 	if turnCredentialConnectError(errors.Join(ctx.Err(), errors.New("private trust failure"))) != ErrTurnCredentialsRejected {
 		t.Fatal("deadline erased a joined trust failure")
+	}
+}
+
+// These are the real Go socket/transport error shapes returned before any
+// authenticated relay stream exists, not string matches against log text.
+func TestTurnCredentialsV1_NetworkUnreachableClassification(t *testing.T) {
+	networkError := func(code syscall.Errno) error {
+		return &net.OpError{Op: "dial", Net: "tcp", Err: os.NewSyscallError("connect", code)}
+	}
+	for _, code := range []syscall.Errno{syscall.ENETDOWN, syscall.ENETUNREACH, syscall.EHOSTUNREACH} {
+		t.Run(code.Error(), func(t *testing.T) {
+			wrapped := fmt.Errorf("transport context: %w", networkError(code))
+			if turnCredentialConnectError(wrapped) != ErrTurnCredentialsUnavailable {
+				t.Fatal("typed local network outage was classified as credential rejection")
+			}
+			dial := &swarm.DialError{Cause: swarm.ErrAllDialsFailed, DialErrors: []swarm.TransportError{{Cause: wrapped}}}
+			if turnCredentialConnectError(dial) != ErrTurnCredentialsUnavailable {
+				t.Fatal("libp2p dial aggregation erased a proven local network outage")
+			}
+		})
+	}
+	safe := &swarm.DialError{Cause: swarm.ErrAllDialsFailed, DialErrors: []swarm.TransportError{
+		{Cause: networkError(syscall.ENETUNREACH)}, {Cause: networkError(syscall.EHOSTUNREACH)},
+	}}
+	if turnCredentialConnectError(safe) != ErrTurnCredentialsUnavailable {
+		t.Fatal("all typed unreachable dial paths were treated as a trust rejection")
+	}
+}
+
+func TestTurnCredentialsV1_NetworkOutageNeverErasesTrustFailures(t *testing.T) {
+	outage := &net.OpError{Op: "dial", Net: "tcp", Err: os.NewSyscallError("connect", syscall.ENETUNREACH)}
+	trust := errors.New("private peer identity mismatch")
+	cases := []struct {
+		name string
+		err  error
+	}{
+		{"joined network then trust", errors.Join(outage, trust)},
+		{"joined trust then network", errors.Join(trust, outage)},
+		{"joined deadline then trust", errors.Join(context.DeadlineExceeded, trust)},
+		{"joined network only is not a classified dial aggregate", errors.Join(outage)},
+		{"dial trust cause", &swarm.DialError{Cause: trust, DialErrors: []swarm.TransportError{{Cause: outage}}}},
+		{"dial mixed transport causes", &swarm.DialError{Cause: swarm.ErrAllDialsFailed, DialErrors: []swarm.TransportError{{Cause: outage}, {Cause: trust}}}},
+		{"dial mixed reversed", &swarm.DialError{Cause: swarm.ErrAllDialsFailed, DialErrors: []swarm.TransportError{{Cause: trust}, {Cause: outage}}}},
+		{"dial skipped unknown causes", &swarm.DialError{Cause: swarm.ErrAllDialsFailed, DialErrors: []swarm.TransportError{{Cause: outage}}, Skipped: 1}},
+		{"dial no causes", &swarm.DialError{Cause: swarm.ErrAllDialsFailed}},
+		{"unclassified connection error", &net.OpError{Op: "dial", Net: "tcp", Err: trust}},
+		{"permission denied", os.NewSyscallError("connect", syscall.EACCES)},
+		{"connection refused is not route absence", os.NewSyscallError("connect", syscall.ECONNREFUSED)},
+		{"explicit credential rejection", ErrTurnCredentialsRejected},
+		{"invalid response", ErrTurnCredentialsInvalidResponse},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if turnCredentialConnectError(tc.err) != ErrTurnCredentialsRejected {
+				t.Fatal("network availability diluted an unproven/authentication rejection")
+			}
+		})
 	}
 }

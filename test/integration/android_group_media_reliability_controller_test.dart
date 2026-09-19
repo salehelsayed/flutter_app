@@ -14,6 +14,672 @@ import '../../integration_test/support/group_media_android_disposable_app.dart';
 
 void main() {
   test(
+    'P269 wait timeout reaches the existing runner with a closed phase',
+    () async {
+      final directory = await Directory.systemTemp.createTemp('p269-wait-');
+      addTearDown(() => directory.delete(recursive: true));
+      final artifact = File('${directory.path}/app.apk')
+        ..writeAsStringSync('fixture');
+      final guard = File('${directory.path}/build-guard.log')
+        ..writeAsStringSync('');
+      for (final phase in [
+        'sender_send',
+        'receiver_barrier',
+        'private-peer-/path-secret',
+      ]) {
+        var clock = DateTime.utc(2026);
+        final delays = <Duration>[];
+        final result = await runGroupMediaReliabilityRunner(
+          arguments: const [
+            '--scenario',
+            groupMediaForegroundRetryAclRoundtripScenario,
+            '-d',
+            'pixel-usb,emulator-5554',
+          ],
+          environment: {
+            groupMediaReliabilityAndroidArtifactEnvironment: artifact.path,
+            'SIMS_ARTIFACT_PROFILE_ID':
+                groupMediaReliabilityAndroidBuildProfile,
+            'SIMS_PROOF_DIRECTORY': '${directory.path}/proof',
+            'SIMS_BUILD_GUARD_LOG': guard.path,
+            'MKNOON_RELAY_ADDRESSES': '/dns/relay.invalid/tcp/443/wss',
+          },
+          executeScenario: (_) =>
+              waitForAndroidGroupMediaValue<Map<String, Object?>>(
+                phase,
+                const Duration(milliseconds: 400),
+                () async => null,
+                now: () => clock,
+                pause: (duration) async {
+                  delays.add(duration);
+                  clock = clock.add(duration);
+                },
+              ),
+        );
+        final closed = phase.startsWith('private') ? 'unknown' : phase;
+        expect(result.json['status'], 'FAIL');
+        expect(
+          result.json['detail'],
+          'Group media scenario failed at group_wait_${closed}_timeout.',
+        );
+        expect(jsonEncode(result.json), isNot(contains('private-peer')));
+        expect(delays, [
+          const Duration(milliseconds: 200),
+          const Duration(milliseconds: 200),
+        ]);
+      }
+    },
+  );
+
+  test(
+    'P269 wait timeout observes before failure without changing read behavior',
+    () async {
+      var clock = DateTime.utc(2026);
+      var observed = false;
+      await expectLater(
+        waitForAndroidGroupMediaValue<int>(
+          'sender_send',
+          const Duration(milliseconds: 200),
+          () async => null,
+          now: () => clock,
+          pause: (duration) async {
+            clock = clock.add(duration);
+          },
+          onTimeout: () async {
+            observed = true;
+            throw StateError('private observer error');
+          },
+        ),
+        throwsA(
+          isA<GroupMediaReliabilityScenarioFailure>().having(
+            (e) => e.code,
+            'code',
+            'group_wait_sender_send_timeout',
+          ),
+        ),
+      );
+      expect(observed, isTrue);
+      clock = DateTime.utc(2026);
+      final result = await waitForAndroidGroupMediaValue<int>(
+        'sender_send',
+        const Duration(milliseconds: 200),
+        () async {
+          clock = clock.add(const Duration(seconds: 1));
+          return 7;
+        },
+        now: () => clock,
+        onTimeout: () async {
+          fail('successful read must retain old behavior');
+        },
+      );
+      expect(result, 7);
+      final failure = StateError('same read failure');
+      await expectLater(
+        waitForAndroidGroupMediaValue<int>(
+          'sender_send',
+          const Duration(seconds: 1),
+          () async => throw failure,
+        ),
+        throwsA(same(failure)),
+      );
+    },
+  );
+
+  test(
+    'P269 wait timeout snapshot retains closed observations before cleanup',
+    () async {
+      final root = await Directory.systemTemp.createTemp('p269-wait-receipt-');
+      addTearDown(() => root.delete(recursive: true));
+      var clock = DateTime.utc(2026);
+      var cleanupStarted = false;
+      try {
+        await waitForAndroidGroupMediaValue<int>(
+          'receiver_barrier',
+          const Duration(milliseconds: 200),
+          () async => null,
+          now: () => clock,
+          pause: (duration) async {
+            clock = clock.add(duration);
+          },
+          onTimeout: () async {
+            expect(cleanupStarted, isFalse);
+            await retainAndroidGroupMediaWaitTimeout(
+              directory: root,
+              phase: 'receiver_barrier',
+              senderSendCompleted: true,
+              observation: {
+                'matchedBarrierState': true,
+                'barrierName':
+                    'receiver_jpeg_strict_verified_ciphertext_pre_commit',
+                'barrierReached': false,
+                'barrierAttempt': 0,
+                'barrierPriorStatus': 'pending',
+                'recoveryReleased': false,
+                'jpegAttempts': 0,
+                'mp4Attempts': 1,
+                'voiceAttempts': 1,
+                'groupId': 'secret-group',
+                'processId': 999,
+                'rawError': 'secret message /private/file',
+              },
+            );
+          },
+        );
+        fail('timeout must fail');
+      } on GroupMediaReliabilityScenarioFailure catch (error) {
+        expect(error.code, 'group_wait_receiver_barrier_timeout');
+        expect(root.listSync().whereType<File>(), hasLength(1));
+      } finally {
+        cleanupStarted = true;
+      }
+      final file = root.listSync().whereType<File>().single;
+      final raw = await file.readAsString();
+      final receipt = jsonDecode(raw) as Map;
+      expect(
+        file.path,
+        endsWith('wait-timeout-${sha256.convert(utf8.encode(raw))}.json'),
+      );
+      expect(receipt['senderSendCompleted'], isTrue);
+      expect(receipt['waitStage'], 'receiver_barrier');
+      expect(receipt['cause'], 'timeout');
+      expect(receipt['mp4Attempts'], 1);
+      expect(receipt['jpegAttempts'], 0);
+      expect(raw, isNot(contains('secret')));
+      expect(receipt.containsKey('processId'), isFalse);
+      await retainAndroidGroupMediaWaitTimeout(
+        directory: Directory('${root.path}/invalid'),
+        phase: 'private-path-peer',
+        senderSendCompleted: false,
+        observation: {
+          'endpointStatus': 'secret status',
+          'barrierName': 'secret name',
+          'barrierPriorStatus': 'secret status',
+          'jpegAttempts': -1,
+          'mp4Attempts': 'secret count',
+          'voiceAttempts': 100001,
+          'barrierReached': 'true',
+          'barrierAttempt': 1.5,
+          'matchingEndpointObserved': 'true',
+        },
+      );
+      final invalid =
+          jsonDecode(
+                await Directory(
+                  '${root.path}/invalid',
+                ).listSync().whereType<File>().single.readAsString(),
+              )
+              as Map;
+      expect(invalid, {
+        'schema': 'mknoon.group-media-wait-timeout.v1',
+        'waitStage': 'unknown',
+        'cause': 'timeout',
+        'errorCode': 'group_wait_unknown_timeout',
+        'senderSendCompleted': false,
+      });
+    },
+  );
+
+  test(
+    'P269 strict upload controller retains only bound closed native failure',
+    () async {
+      final root = await Directory.systemTemp.createTemp(
+        'native-upload-receipt-',
+      );
+      addTearDown(() => root.delete(recursive: true));
+      var index = 0;
+      Future<Map> retain(Map<String, Object?> overrides) async {
+        final directory = Directory('${root.path}/${index++}');
+        await retainGroupMediaEndpointFailure(
+          directory: directory,
+          config: const {},
+          safeErrorCode: 'sender_strict_preparation',
+          result: {
+            'senderStage': 'strict_preparation',
+            'mediaKind': 'mp4',
+            'preparationState': 'retained',
+            'preparationHasDurableAuthority': true,
+            'preparationUploadResponseOk': false,
+            'preparationUploadErrorCode': 'MEDIA_CUSTODY_ADMISSION_DISABLED',
+            'rawErrorMessage': 'secret',
+            ...overrides,
+          },
+        );
+        return jsonDecode(
+              await directory
+                  .listSync()
+                  .whereType<File>()
+                  .single
+                  .readAsString(),
+            )
+            as Map;
+      }
+
+      final accepted = await retain({});
+      expect(accepted['preparationUploadResponseOk'], isFalse);
+      expect(
+        accepted['preparationUploadErrorCode'],
+        'MEDIA_CUSTODY_ADMISSION_DISABLED',
+      );
+      expect(jsonEncode(accepted), isNot(contains('secret')));
+      for (final overrides in <Map<String, Object?>>[
+        {'preparationUploadErrorCode': 'secret-code'},
+        {'preparationUploadErrorCode': 'MEDIA_CUSTODY_FULL\nsecret'},
+        {'preparationUploadErrorCode': 1},
+        {'preparationUploadResponseOk': true},
+      ]) {
+        expect(
+          (await retain(overrides)).containsKey('preparationUploadErrorCode'),
+          isFalse,
+        );
+      }
+      for (final overrides in <Map<String, Object?>>[
+        {'senderStage': 'strict_publication'},
+        {'preparationState': 'refused'},
+        {'preparationHasDurableAuthority': false},
+        {'preparationUploadResponseOk': 'false'},
+        {'preparationUploadResponseOk': null},
+      ]) {
+        final result = await retain(overrides);
+        expect(result.containsKey('preparationUploadResponseOk'), isFalse);
+        expect(result.containsKey('preparationUploadErrorCode'), isFalse);
+      }
+    },
+  );
+  test('P269 strict sender publication preserves canonical SQL state', () {
+    final artifact = _aggregateFixture();
+    final row =
+        ((_map(_map(artifact, 'role_databases'), 'sender')['rows']! as List)
+                .first
+            as Map);
+    expect(row['status'], 'upload_pending');
+    expect((row['strict_publication']! as Map)['status'], 'sent');
+    expect(validateGroupMediaReliabilityArtifact(artifact).ok, isTrue);
+    final downgraded = (jsonDecode(jsonEncode(artifact))! as Map)
+        .cast<String, Object?>();
+    for (final row
+        in (_map(_map(downgraded, 'role_databases'), 'sender')['rows']! as List)
+            .cast<Map>()) {
+      row.remove('strict_publication');
+      row['status'] = 'done';
+    }
+    expect(validateGroupMediaReliabilityArtifact(downgraded).ok, isFalse);
+    for (final key in [
+      'status',
+      'inbox_stored',
+      'is_incoming',
+      'wire_envelope_present',
+      'retry_payload_present',
+      'message_id',
+      'group_sha256',
+      'sender_account_sha256',
+      'attachment_content_sha256',
+    ]) {
+      expect(
+        () => _aggregateFixture(
+          mutate: (bundle) {
+            for (final phase in ['senderSend', 'senderProbe']) {
+              final rows =
+                  _map(_map(bundle, phase), 'roleDatabase')['rows']! as List;
+              final publication =
+                  (rows.first as Map)['strict_publication']! as Map;
+              publication[key] = switch (key) {
+                'status' => 'pending',
+                'inbox_stored' => false,
+                'is_incoming' ||
+                'wire_envelope_present' ||
+                'retry_payload_present' => true,
+                _ => 'wrong',
+              };
+            }
+          },
+        ),
+        throwsFormatException,
+        reason: key,
+      );
+    }
+    expect(
+      () => _aggregateFixture(
+        mutate: (bundle) {
+          for (final phase in ['senderSend', 'senderProbe']) {
+            final rows =
+                _map(_map(bundle, phase), 'roleDatabase')['rows']! as List;
+            (rows.first as Map).remove('strict_publication');
+          }
+        },
+      ),
+      throwsFormatException,
+    );
+  });
+  test('canonical authority must converge before current Android media', () {
+    final accepted = _aggregateFixture();
+    expect(accepted['strict_authority_setup'], isNotNull);
+    final validation = validateGroupMediaReliabilityArtifact(accepted);
+    expect(validation.ok, isTrue, reason: validation.detail);
+    for (final mutate in <void Function(Map<String, Object?>)>[
+      (b) => _map(b, 'receiverArm').remove('authorityBefore'),
+      (b) => _map(b, 'receiverArm')['groupId'] = 'other-group',
+      (b) => _map(b, 'senderSetup').remove('processId'),
+      (b) => _map(b, 'senderRefresh')['processId'] = 777,
+      (b) => _map(b, 'receiverReady')['processId'] = 777,
+      (b) => _map(_map(b, 'receiverReady'), 'authorityAfter')['keyEpoch'] = 3,
+      (b) =>
+          _map(_map(b, 'receiverReady'), 'authorityAfter')['authoritySha256'] =
+              '0' * 64,
+      (b) =>
+          _map(_map(b, 'receiverReady'), 'authorityAfter')['authorityEventAt'] =
+              '2026-09-18T01:00:01Z',
+      (b) => _map(
+        _map(b, 'receiverReady'),
+        'authorityAfter',
+      )['recipientTransportSha256'] = <String>['0' * 64],
+      (b) => _map(
+        _map(b, 'receiverReady'),
+        'authorityAfter',
+      )['accountPeerIdSha256'] = '0' * 64,
+      (b) => _map(
+        _map(b, 'receiverReady'),
+        'authorityAfter',
+      )['memberRolesSha256'] = '0' * 64,
+      (b) => _map(_map(b, 'receiverReady'), 'authorityAfter')['admission'] =
+          'refuse',
+      (b) => _map(
+        _map(b, 'senderRefresh'),
+        'authorityRefresh',
+      )['deferredPeerCount'] = 1,
+      (b) => _map(
+        _map(b, 'senderRefresh'),
+        'authorityRefresh',
+      )['distributedDeviceCount'] = 0,
+      (b) =>
+          _map(_map(b, 'senderRefresh'), 'authorityRefresh')['previousEpoch'] =
+              0,
+      (b) => _map(
+        _map(_map(b, 'senderRefresh'), 'authorityRefresh'),
+        'after',
+      )['keyEpoch'] = 4,
+    ]) {
+      expect(() => _aggregateFixture(mutate: mutate), throwsFormatException);
+    }
+    expect(() => _aggregateFixture(omitAuthority: true), throwsFormatException);
+    // Export validation independently preserves the identity/epoch/role joins.
+    for (final mutate in <void Function(Map<String, Object?>)>[
+      (a) => _map(a, 'strict_authority_setup')['current_epoch'] = 9,
+      (a) =>
+          _map(a, 'strict_authority_setup')['authority_event_at'] = 'unknown',
+      (a) => _map(
+        _map(a, 'strict_authority_setup'),
+        'receiver',
+      )['account_sha256'] = '0' * 64,
+      (a) => _map(
+        _map(a, 'strict_authority_setup'),
+        'receiver',
+      )['after_roles_sha256'] = '0' * 64,
+      (a) => _map(_map(a, 'strict_authority_setup'), 'sender')['admission'] =
+          'refuse',
+      (a) => _map(a, 'strict_authority_setup')['rawKey'] = 'forbidden',
+    ]) {
+      final changed = (jsonDecode(jsonEncode(accepted)) as Map)
+          .cast<String, Object?>();
+      mutate(changed);
+      expect(validateGroupMediaReliabilityArtifact(changed).ok, isFalse);
+    }
+  });
+
+  test(
+    'authority comparison retains closed operands before rejecting an old receiver epoch',
+    () async {
+      final directory = await Directory.systemTemp.createTemp(
+        'p269-authority-',
+      );
+      addTearDown(() => directory.delete(recursive: true));
+      late Map<String, Object?> bundle;
+      _aggregateFixture(mutate: (value) => bundle = value);
+      final receiverReady = _map(bundle, 'receiverReady');
+      final after = _map(receiverReady, 'authorityAfter');
+      final originalEpoch = after['keyEpoch'];
+      after['keyEpoch'] = 1;
+      receiverReady['unretainedSecret'] = 'private-error-with-key-material';
+      final pending = buildAndRetainAndroidGroupMediaAuthoritySetup(
+        directory: directory,
+        runId: 'authority-retention-run',
+        senderSetup: _map(bundle, 'senderSetup'),
+        receiverArm: _map(bundle, 'receiverArm'),
+        senderRefresh: _map(bundle, 'senderRefresh'),
+        receiverReady: receiverReady,
+      );
+      await expectLater(
+        pending,
+        throwsA(
+          isA<FormatException>().having(
+            (error) => error.message,
+            'message',
+            'Creator rotation and peer authority did not converge',
+          ),
+        ),
+      );
+      final file = directory.listSync().whereType<File>().single;
+      expect(file.path, contains('authority-observations-'));
+      final raw = await file.readAsString();
+      final receipt = (jsonDecode(raw) as Map).cast<String, Object?>();
+      expect(receipt['validation'], 'not_yet_compared');
+      expect(_map(_map(receipt, 'senderRefresh'), 'before')['keyEpoch'], 1);
+      expect(_map(_map(receipt, 'senderRefresh'), 'after')['keyEpoch'], 2);
+      expect(
+        _map(_map(receipt, 'receiverArm'), 'authorityBefore')['keyEpoch'],
+        1,
+      );
+      expect(
+        _map(_map(receipt, 'receiverReady'), 'authorityAfter')['keyEpoch'],
+        1,
+      );
+      expect(_map(receipt, 'senderSetup')['processId'], 333);
+      expect(_map(receipt, 'senderRefresh')['processId'], 333);
+      expect(_map(receipt, 'receiverArm')['processId'], 111);
+      expect(_map(receipt, 'receiverReady')['processId'], 111);
+      for (final secret in [
+        'private-error-with-key-material',
+        'sender-account',
+        'receiver-account',
+        'sender-transport',
+        'receiver-transport',
+        'authority-retention-run',
+      ]) {
+        expect(raw, isNot(contains(secret)));
+      }
+      after['keyEpoch'] = originalEpoch;
+      final expected = buildAndroidGroupMediaAuthoritySetup(
+        runId: 'authority-retention-run',
+        senderSetup: _map(bundle, 'senderSetup'),
+        receiverArm: _map(bundle, 'receiverArm'),
+        senderRefresh: _map(bundle, 'senderRefresh'),
+        receiverReady: receiverReady,
+      );
+      final accepted = await buildAndRetainAndroidGroupMediaAuthoritySetup(
+        directory: directory,
+        runId: 'authority-retention-run',
+        senderSetup: _map(bundle, 'senderSetup'),
+        receiverArm: _map(bundle, 'receiverArm'),
+        senderRefresh: _map(bundle, 'senderRefresh'),
+        receiverReady: receiverReady,
+      );
+      expect(accepted, expected);
+      expect(directory.listSync().whereType<File>(), hasLength(2));
+      expect(await file.readAsString(), raw, reason: 'Keep the first failure.');
+    },
+  );
+
+  test('current distinct Android requires exact strict custody joins', () {
+    final accepted = _aggregateFixture();
+    expect(accepted['strict_media_custody'], isNotNull);
+    for (final mutate in <void Function(Map<String, Object?>)>[
+      (b) => _map(b, 'senderSend').remove('strictMediaCustody'),
+      (b) => _map(
+        _map(_map(b, 'senderSend'), 'strictMediaCustody'),
+        'jpeg',
+      )['recipient_count'] = 2,
+      (b) => _map(
+        _map(_map(b, 'senderSend'), 'strictMediaCustody'),
+        'jpeg',
+      )['custody_fingerprint'] = '0' * 64,
+      (b) => _map(
+        _map(_map(b, 'senderSend'), 'strictMediaCustody'),
+        'jpeg',
+      )['ciphertext_size'] = 0,
+      (b) => _map(
+        _map(b, 'receiverRecovery'),
+        'strictCustodyBoundary',
+      )['local_ready'] = true,
+      (b) => _map(
+        _map(_map(b, 'barrierState'), 'barrier'),
+        'strictCustodyBoundary',
+      )['ack_source_present'] = true,
+    ]) {
+      expect(() => _aggregateFixture(mutate: mutate), throwsFormatException);
+    }
+  });
+
+  test(
+    'P269 strict preparation diagnostic survives reset retention without widening',
+    () async {
+      final dir = await Directory.systemTemp.createTemp(
+        'group-preparation-failure-',
+      );
+      addTearDown(() => dir.delete(recursive: true));
+      for (final (state, durable) in [
+        ('retained', true),
+        ('refused', false),
+        ('refused', true),
+        ('legacyUninitialized', false),
+      ]) {
+        final one = Directory('${dir.path}/$state-$durable');
+        await retainGroupMediaEndpointFailure(
+          directory: one,
+          config: const {},
+          safeErrorCode: 'sender_strict_preparation',
+          result: {
+            'senderStage': 'strict_preparation',
+            'mediaKind': 'mp4',
+            'preparationState': state,
+            'preparationHasDurableAuthority': durable,
+            'rawError': 'secret-native-detail',
+          },
+        );
+        final raw = await one
+            .listSync()
+            .whereType<File>()
+            .single
+            .readAsString();
+        final receipt = jsonDecode(raw);
+        expect(receipt['preparationState'], state);
+        expect(receipt['preparationHasDurableAuthority'], durable);
+        expect(raw, isNot(contains('secret-native-detail')));
+      }
+      for (final (state, durable) in <(Object?, Object?)>[
+        ('complete', true),
+        ('retained', false),
+        ('legacyUninitialized', true),
+        ('secret-native-detail', false),
+        ('refused', 'true'),
+        ('refused', null),
+      ]) {
+        final one = Directory(
+          '${dir.path}/invalid-${state.hashCode}-${durable.hashCode}',
+        );
+        await retainGroupMediaEndpointFailure(
+          directory: one,
+          config: const {},
+          safeErrorCode: 'sender_strict_preparation',
+          result: {
+            'senderStage': 'strict_preparation',
+            'preparationState': state,
+            'preparationHasDurableAuthority': durable,
+          },
+        );
+        final receipt = jsonDecode(
+          await one.listSync().whereType<File>().single.readAsString(),
+        );
+        expect(receipt.containsKey('preparationState'), isFalse);
+        expect(receipt.containsKey('preparationHasDurableAuthority'), isFalse);
+      }
+    },
+  );
+
+  test(
+    'endpoint failure retention exports only closed fields before reset',
+    () async {
+      final dir = await Directory.systemTemp.createTemp('group-failure-');
+      addTearDown(() => dir.delete(recursive: true));
+      await retainGroupMediaEndpointFailure(
+        directory: dir,
+        config: const {},
+        safeErrorCode: 'sender_strict_publication',
+        result: const {
+          'schema': 'fixture',
+          'phase': 'sender_send',
+          'runId': 'run',
+          'nonce': 'nonce',
+          'senderStage': 'strict_publication',
+          'mediaKind': 'jpeg',
+          'errorType': 'GroupMediaReliabilitySenderFailure',
+          'rawSecret': 'never-export',
+        },
+      );
+      final files = dir.listSync().whereType<File>().toList();
+      expect(files, hasLength(1));
+      final raw = await files.single.readAsString();
+      expect(raw, isNot(contains('never-export')));
+      expect(jsonDecode(raw)['senderStage'], 'strict_publication');
+    },
+  );
+
+  for (final stage in ['roleDatabase', '/private/secret']) {
+    test(
+      'receiver recovery retention accepts only closed diagnostics: $stage',
+      () async {
+        final dir = await Directory.systemTemp.createTemp(
+          'group-recovery-failure-',
+        );
+        addTearDown(() => dir.delete(recursive: true));
+        await retainGroupMediaEndpointFailure(
+          directory: dir,
+          config: const {},
+          safeErrorCode: 'receiver_jpeg_not_settled',
+          result: {
+            'phase': 'receiver_recover',
+            'recoveryStage': stage,
+            'firstUploadWork': 0,
+            'firstDownloadWork': 1,
+            'secondUploadWork': '/private/secret',
+            'secondDownloadWork': -1,
+            'downloadAttempts': {
+              'jpeg': 2,
+              'mp4': 1,
+              'voice': 'secret',
+              'secret': 4,
+            },
+            'rawSecret': 'secret',
+          },
+        );
+        final raw = await dir
+            .listSync()
+            .whereType<File>()
+            .single
+            .readAsString();
+        final receipt = jsonDecode(raw) as Map;
+        expect(raw, isNot(contains('secret')));
+        expect(receipt.containsKey('recoveryStage'), stage == 'roleDatabase');
+        if (stage == 'roleDatabase') {
+          expect(receipt['firstUploadWork'], 0);
+          expect(receipt['firstDownloadWork'], 1);
+          expect(receipt['downloadAttempts'], {'jpeg': 2, 'mp4': 1});
+        }
+        expect(receipt.containsKey('secondUploadWork'), isFalse);
+        expect(receipt.containsKey('secondDownloadWork'), isFalse);
+      },
+    );
+  }
+
+  test(
     'P269 legacy receipt absence is compatible but declared null is refused',
     () {
       expect(_aggregateFixture(), isNotEmpty);
@@ -407,18 +1073,29 @@ void main() {
           'GroupMediaReliabilityAuthorityMode.distinctAccountAndTransport',
         ),
       );
+      final uploadSource = fixtureSource.substring(
+        fixtureSource.indexOf(
+          'Future<Map<String, Object?>> _sendGroupMediaReliabilityFixturesForKinds({',
+        ),
+      );
       expect(
         RegExp(
           r'groupMediaReliabilityAuthorityMatches\(',
-        ).allMatches(fixtureSource),
+        ).allMatches(uploadSource),
         hasLength(2),
         reason:
             'P269 must validate authority before and inside the upload leaf',
       );
       expect(
-        RegExp(
-          r'await _waitForLocalTransportPeerId\(p2pService\)',
-        ).allMatches(fixtureSource),
+        RegExp(r'await _waitForLocalTransportPeerId\(p2pService\)').allMatches(
+          fixtureSource.substring(
+                0,
+                fixtureSource.indexOf(
+                  'Future<Map<String, Object?>> probeGroupMediaReliabilityAuthority({',
+                ),
+              ) +
+              uploadSource,
+        ),
         hasLength(2),
         reason:
             'sender setup and publication must both wait for bounded local '
@@ -721,7 +1398,8 @@ void main() {
 
       final mutations = <void Function(Map<String, Object?>)>[
         (bundle) => _map(bundle, 'receiverRecovery')['currentProcessId'] = 111,
-        (bundle) => _map(bundle, 'receiverRecovery')['priorStatus'] = 'pending',
+        (bundle) =>
+            _map(bundle, 'receiverRecovery')['priorStatus'] = 'downloading',
         (bundle) =>
             _map(_map(bundle, 'receiverRecovery'), 'downloadAttempts')['jpeg'] =
                 1,
@@ -1209,6 +1887,7 @@ Map<String, Object?> _aggregateFixture({
         broadDeleteCommands: 0,
       ),
   bool appsLeftInstalled = true,
+  bool omitAuthority = false,
 }) {
   const runId = 'p269-aggregate';
   const messageIds = <String, String>{
@@ -1324,6 +2003,100 @@ Map<String, Object?> _aggregateFixture({
       'roleDatabase': senderDb,
     },
   };
+  if (authorityMode == groupMediaDistinctAuthorityMode) {
+    _map(bundle, 'receiverArm')['authorityBefore'] = _authorityObservation(
+      'receiver',
+      1,
+      false,
+    );
+    bundle['senderRefresh'] = <String, Object?>{
+      'processId': 333,
+      'authorityRefresh': <String, Object?>{
+        'before': _authorityObservation('sender', 1, false),
+        'after': _authorityObservation('sender', 2, true),
+        'previousEpoch': 1,
+        'currentEpoch': 2,
+        'distributedDeviceCount': 1,
+        'deferredPeerCount': 0,
+      },
+    };
+    bundle['receiverReady'] = <String, Object?>{
+      'processId': 111,
+      'authorityAfter': _authorityObservation('receiver', 2, true),
+    };
+    final media = <String, Object?>{};
+    for (final kind in const ['jpeg', 'mp4', 'voice']) {
+      final fingerprint = sha256
+          .convert(utf8.encode('fingerprint-$kind'))
+          .toString();
+      media[kind] = <String, Object?>{
+        'manifest_sha256': sha256
+            .convert(utf8.encode('manifest-$kind'))
+            .toString(),
+        'custody_fingerprint': fingerprint,
+        'custody_blob_id_sha256': sha256
+            .convert(utf8.encode('custody-$kind'))
+            .toString(),
+        'ciphertext_sha256': sha256
+            .convert(utf8.encode('ciphertext-$kind'))
+            .toString(),
+        'ciphertext_size': 128,
+        'recipient_count': 1,
+        'recipient_transport_sha256': sha256
+            .convert(utf8.encode('receiver-transport'))
+            .toString(),
+        'expires_at_ms': 1900000000000,
+      };
+      for (final db in [senderDb, receiverDb]) {
+        for (final raw in db['rows']! as List) {
+          final row = raw as Map<String, Object?>;
+          if (row['media_kind'] == kind) {
+            row['custody_fingerprint'] = fingerprint;
+            if (identical(db, senderDb)) {
+              String scoped(String value) =>
+                  sha256.convert(utf8.encode('$runId\u0000$value')).toString();
+              row['status'] = 'upload_pending';
+              row['strict_publication'] = <String, Object?>{
+                'message_id': row['message_id'],
+                'group_sha256': scoped('group-id'),
+                'sender_account_sha256': scoped('sender-account'),
+                'attachment_content_sha256':
+                    (media[kind]! as Map)['ciphertext_sha256'],
+                'status': 'sent',
+                'inbox_stored': true,
+                'is_incoming': false,
+                'wire_envelope_present': false,
+                'retry_payload_present': false,
+              };
+            }
+          }
+        }
+      }
+    }
+    _map(bundle, 'senderSend')['strictMediaCustody'] = media;
+    final jpeg = media['jpeg'] as Map<String, Object?>;
+    final boundary = <String, Object?>{
+      'state': 'incoming_committed',
+      'local_ready': false,
+      'ack_source_present': false,
+      'custody_projection_sha256': sha256
+          .convert(utf8.encode('row'))
+          .toString(),
+      for (final key in const [
+        'custody_fingerprint',
+        'ciphertext_sha256',
+        'ciphertext_size',
+        'custody_blob_id_sha256',
+      ])
+        key: jpeg[key],
+    };
+    final barrier = _map(_map(bundle, 'barrierState'), 'barrier');
+    barrier['name'] = 'receiver_jpeg_strict_verified_ciphertext_pre_commit';
+    barrier['priorStatus'] = 'pending';
+    barrier['strictCustodyBoundary'] = boundary;
+    _map(bundle, 'receiverRecovery')['priorStatus'] = 'pending';
+    _map(bundle, 'receiverRecovery')['strictCustodyBoundary'] = boundary;
+  }
   final copied = (jsonDecode(jsonEncode(bundle))! as Map)
       .cast<String, Object?>();
   if (authorityMode == groupMediaAccountBoundAuthorityMode) {
@@ -1358,6 +2131,16 @@ Map<String, Object?> _aggregateFixture({
   mutateCleanup?.call(preResetReceipts, postResetReceipts);
   return aggregateAndroidGroupMediaReliabilityEvidence(
     context: context,
+    authoritySetup:
+        authorityMode == groupMediaDistinctAuthorityMode && !omitAuthority
+        ? buildAndroidGroupMediaAuthoritySetup(
+            runId: runId,
+            senderSetup: _map(copied, 'senderSetup'),
+            receiverArm: _map(copied, 'receiverArm'),
+            senderRefresh: _map(copied, 'senderRefresh'),
+            receiverReady: _map(copied, 'receiverReady'),
+          )
+        : null,
     senderExportedAccountPeerId: 'sender-account',
     receiverExportedAccountPeerId: 'receiver-account',
     senderSetup: _map(copied, 'senderSetup'),
@@ -1440,3 +2223,29 @@ Map<String, Object?> _databaseIdentity(Map<String, Object?> settled) =>
 
 Map<String, Object?> _map(Map<String, Object?> value, String key) =>
     (value[key]! as Map).cast<String, Object?>();
+
+Map<String, Object?> _authorityObservation(
+  String role,
+  int epoch,
+  bool strict,
+) {
+  String digest(String value) => sha256.convert(utf8.encode(value)).toString();
+  return <String, Object?>{
+    'schema': 'mknoon.group-media-authority.v1',
+    'groupIdSha256': digest('group-id'),
+    'accountPeerIdSha256': digest('$role-account'),
+    'transportPeerIdSha256': digest('$role-transport'),
+    'memberRolesSha256': digest('exact-roster'),
+    'keyEpoch': epoch,
+    'admission': strict ? 'strict' : 'refuse',
+    'authoritySha256': strict ? digest('authenticated-common-authority') : null,
+    'authorityEventAt': strict ? '2026-09-18T01:00:00Z' : null,
+    'recipientTransportSha256': strict
+        ? <String>[
+            digest(
+              role == 'sender' ? 'receiver-transport' : 'sender-transport',
+            ),
+          ]
+        : <String>[],
+  };
+}

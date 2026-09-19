@@ -88,6 +88,9 @@ Future<MediaAttachment?> downloadMedia({
   GroupMediaAutomaticDownloadAttemptStarted?
   groupMediaAutomaticDownloadAttemptStarted,
   GroupMediaPostClaimPreCommit? groupMediaPostClaimPreCommit,
+  StrictGroupMediaBlobDownloadAttemptStarted?
+  strictGroupMediaDownloadAttemptStarted,
+  StrictGroupMediaBlobVerifiedCiphertext? strictGroupMediaVerifiedCiphertext,
 }) {
   return download_use_case.downloadMedia(
     bridge: bridge,
@@ -109,6 +112,9 @@ Future<MediaAttachment?> downloadMedia({
     groupMediaAutomaticDownloadAttemptStarted:
         groupMediaAutomaticDownloadAttemptStarted,
     groupMediaPostClaimPreCommit: groupMediaPostClaimPreCommit,
+    strictGroupMediaDownloadAttemptStarted:
+        strictGroupMediaDownloadAttemptStarted,
+    strictGroupMediaVerifiedCiphertext: strictGroupMediaVerifiedCiphertext,
   );
 }
 
@@ -4537,6 +4543,410 @@ void main() {
         },
       );
     });
+  });
+
+  group('strict group debug transfer boundary', () {
+    Future<
+      ({
+        MediaRepositoryRealDbFixture fixture,
+        MediaAttachment attachment,
+        DirectMediaBlobCustodyRow custody,
+        MediaFileManager manager,
+      })
+    >
+    prepare() async {
+      final fixture = await MediaRepositoryRealDbFixture.create();
+      addTearDown(fixture.dispose);
+      const groupId = 'tc365-download-group';
+      const messageId = 'tc365-download-message';
+      const attachmentId = 'tc365-download-attachment';
+      const custodyBlobId = 'gmb1_tc365_download_blob';
+      const expiresAtMs = 1_930_000_000_000;
+      final encrypted = _encryptedBytes(_jpegBytes);
+      final contentHash = _hashBytes(encrypted);
+      final fingerprint = computeGroupMediaBlobCustodyFingerprint(
+        groupId: groupId,
+        messageId: messageId,
+        attachmentId: attachmentId,
+        custodyBlobId: custodyBlobId,
+        contentHash: contentHash,
+        ciphertextSize: encrypted.length,
+        recipientPeerIds: const <String>['device-self', 'device-sibling'],
+      );
+      final attachment = MediaAttachment(
+        id: attachmentId,
+        messageId: messageId,
+        mime: 'image/jpeg',
+        size: _jpegBytes.length,
+        mediaType: 'image',
+        downloadStatus: kMediaDownloadStatusPending,
+        createdAt: '2026-08-14T08:00:00.000Z',
+        contentHash: contentHash,
+        encryptionKeyBase64: _mediaKey,
+        encryptionNonce: _mediaNonce,
+        encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+        groupMediaBlobCustodyFingerprint: fingerprint,
+        ownerLane: MediaOwnerLane.group,
+      );
+      final custody = DirectMediaBlobCustodyRow(
+        attachmentId: attachmentId,
+        messageId: messageId,
+        ownerLane: MediaBlobCustodyOwnerLane.group,
+        groupId: groupId,
+        custodyBlobId: custodyBlobId,
+        direction: DirectMediaBlobCustodyDirection.incoming,
+        state: DirectMediaBlobCustodyState.incomingCommitted,
+        inboxCustodyIncarnationId: null,
+        recipientPeerId: null,
+        ciphertextRelativePath: null,
+        custodyKind: kGroupMediaBlobCustodyKind,
+        contentHash: contentHash,
+        ciphertextSize: encrypted.length,
+        expiresAtMs: expiresAtMs,
+        custodyRelayPeerId: null,
+        lastAttemptAt: null,
+        nextAttemptAt: null,
+        createdAt: '2026-08-14T08:00:00.000Z',
+        updatedAt: '2026-08-14T08:00:00.000Z',
+      );
+      await fixture.seedGroupParent(messageId, groupId: groupId);
+      await fixture.repo.saveAttachment(
+        attachment,
+        owner: MediaOwnerLane.group,
+      );
+
+      await fixture.db.insert(kDirectMediaBlobCustodyTable, custody.toMap());
+      final manager = _CanonicalPathFakeMediaFileManager(tempDir.path);
+      bridge
+        ..downloadedBytes = encrypted
+        ..downloadResponse = <String, dynamic>{
+          'ok': true,
+          'id': custodyBlobId,
+          'custodyKind': kGroupMediaBlobCustodyKind,
+          'custodyContract': kDirectMediaBlobCustodyContract,
+          'contentHash': contentHash,
+          'size': encrypted.length,
+          'mime': kDirectMediaBlobTransportMime,
+          'expiresAtMs': expiresAtMs,
+          'custodyRelayPeerId': 'relay-source-tc365',
+        }
+        ..deleteResponse = <String, dynamic>{'ok': false};
+      return (
+        fixture: fixture,
+        attachment: attachment,
+        custody: custody,
+        manager: manager,
+      );
+    }
+
+    test(
+      'winning flight pauses only after verified ciphertext before plaintext or ACK',
+      () async {
+        final f = await prepare();
+        final verified = Completer<void>();
+        final release = Completer<void>();
+        final observed = <String>[];
+        final coordinator = StrictGroupMediaBlobDownloadCoordinator();
+        final owner = StrictGroupMediaBlobDownloadAckOwner(
+          bridge: bridge,
+          mediaAttachmentRepository: f.fixture.repo,
+          mediaFileManager: f.manager,
+          downloadCoordinator: coordinator,
+          now: () => DateTime.fromMillisecondsSinceEpoch(
+            f.custody.expiresAtMs! - 1000,
+          ),
+          onDownloadAttemptStarted: ({required attachment, required custody}) {
+            observed.add('attempt');
+            expect(bridge.commandLog, isEmpty);
+            expect(custody.exactDatabaseProjectionMatches(f.custody), isTrue);
+          },
+          onVerifiedCiphertext:
+              ({required attachment, required custody}) async {
+                observed.add('verified');
+                expect(bridge.commandLog, ['media:download']);
+                expect(
+                  custody.exactDatabaseProjectionMatches(f.custody),
+                  isTrue,
+                );
+                final current = await f.fixture.repo.getAttachmentById(
+                  attachment.id,
+                );
+                expect(current!.downloadStatus, 'pending');
+                expect(current.localPath, isNull);
+                expect(custody.custodyRelayPeerId, isNull);
+                verified.complete();
+                await release.future;
+              },
+        );
+        final first = owner.downloadAndAcknowledge(
+          attachment: f.attachment,
+          groupId: f.custody.groupId!,
+        );
+        // A completed transfer without the real boundary must fail promptly.
+        final boundary = await Future.any<bool>([
+          verified.future.then((_) => true),
+          first.then((_) => false),
+        ]);
+        expect(boundary, isTrue);
+        final secondOwner = StrictGroupMediaBlobDownloadAckOwner(
+          bridge: bridge,
+          mediaAttachmentRepository: f.fixture.repo,
+          mediaFileManager: f.manager,
+          downloadCoordinator: coordinator,
+          onDownloadAttemptStarted: ({required attachment, required custody}) =>
+              fail('duplicate attempt hook'),
+          onVerifiedCiphertext: ({required attachment, required custody}) =>
+              fail('duplicate verified hook'),
+        );
+        final second = secondOwner.downloadAndAcknowledge(
+          attachment: f.attachment,
+          groupId: f.custody.groupId!,
+        );
+        expect(identical(first, second), isTrue);
+        release.complete();
+        expect(await first, isNotNull);
+        expect(await second, isNotNull);
+        expect(observed, ['attempt', 'verified']);
+        expect(bridge.commandLog, [
+          'media:download',
+          'blob:decrypt',
+          'media:delete',
+        ]);
+        // ACK_PENDING retries bypass both transfer observations.
+        bridge.commandLog.clear();
+        expect(
+          await owner.downloadAndAcknowledge(
+            attachment: f.attachment,
+            groupId: f.custody.groupId!,
+          ),
+          isNotNull,
+        );
+        expect(observed, ['attempt', 'verified']);
+        expect(bridge.commandLog, ['media:delete']);
+      },
+    );
+
+    test(
+      'interruption before commit preserves exact custody and fresh owner refetches',
+      () async {
+        final f = await prepare();
+        var attempts = 0;
+        final first = StrictGroupMediaBlobDownloadAckOwner(
+          bridge: bridge,
+          mediaAttachmentRepository: f.fixture.repo,
+          mediaFileManager: f.manager,
+          now: () => DateTime.fromMillisecondsSinceEpoch(
+            f.custody.expiresAtMs! - 1000,
+          ),
+          onDownloadAttemptStarted: ({required attachment, required custody}) =>
+              attempts++,
+          onVerifiedCiphertext: ({required attachment, required custody}) =>
+              throw StateError('simulated interruption'),
+        );
+        expect(
+          await first.downloadAndAcknowledge(
+            attachment: f.attachment,
+            groupId: f.custody.groupId!,
+          ),
+          isNull,
+        );
+        final persisted =
+            await (f.fixture.repo as GroupMediaBlobCustodyRepository)
+                .loadGroupMediaBlobCustodyForMessage(
+                  groupId: f.custody.groupId!,
+                  messageId: f.attachment.messageId,
+                );
+        expect(
+          persisted.single.exactDatabaseProjectionMatches(f.custody),
+          isTrue,
+        );
+        expect(
+          (await f.fixture.repo.getAttachmentById(f.attachment.id))!.localPath,
+          isNull,
+        );
+        expect(bridge.commandLog, ['media:download']);
+        final next = StrictGroupMediaBlobDownloadAckOwner(
+          bridge: bridge,
+          mediaAttachmentRepository: f.fixture.repo,
+          mediaFileManager: f.manager,
+          now: () => DateTime.fromMillisecondsSinceEpoch(
+            f.custody.expiresAtMs! - 1000,
+          ),
+          onDownloadAttemptStarted: ({required attachment, required custody}) =>
+              attempts++,
+        );
+        expect(
+          await next.downloadAndAcknowledge(
+            attachment: f.attachment,
+            groupId: f.custody.groupId!,
+          ),
+          isNotNull,
+        );
+        expect(attempts, 2);
+        expect(bridge.commandLog, [
+          'media:download',
+          'media:download',
+          'blob:decrypt',
+          'media:delete',
+        ]);
+      },
+    );
+
+    for (final intent in MediaDownloadIntent.values) {
+      test(
+        'downloadMedia $intent preserves automatic-only hook wiring',
+        () async {
+          final f = await prepare();
+          final parents = InMemoryGroupMessageRepository();
+          await parents.saveMessage(
+            GroupMessage(
+              id: f.attachment.messageId,
+              groupId: f.custody.groupId!,
+              senderPeerId: 'sender-tc365',
+              text: '',
+              timestamp: DateTime.utc(2026),
+              status: 'delivered',
+              isIncoming: true,
+              createdAt: DateTime.utc(2026),
+            ),
+          );
+          final observations = <String>[];
+          expect(
+            await downloadMedia(
+              bridge: bridge,
+              mediaAttachmentRepo: f.fixture.repo,
+              mediaFileManager: f.manager,
+              attachment: f.attachment,
+              contactPeerId: f.custody.groupId!,
+              owner: MediaOwnerLane.group,
+              groupMessageRepo: parents,
+              enforceGroupMediaPolicy: true,
+              intent: intent,
+              nowMs: () => f.custody.expiresAtMs! - 1000,
+              strictGroupMediaDownloadAttemptStarted:
+                  ({required attachment, required custody}) =>
+                      observations.add('attempt'),
+              strictGroupMediaVerifiedCiphertext:
+                  ({required attachment, required custody}) =>
+                      observations.add('verified'),
+              groupMediaAutomaticDownloadAttemptStarted: (_) =>
+                  fail('legacy attempt'),
+              groupMediaPostClaimPreCommit: (_) => fail('legacy barrier'),
+            ),
+            isNotNull,
+          );
+          expect(
+            observations,
+            intent == MediaDownloadIntent.automatic
+                ? ['attempt', 'verified']
+                : isEmpty,
+          );
+          expect(bridge.commandLog, [
+            'media:download',
+            'blob:decrypt',
+            'media:delete',
+          ]);
+        },
+      );
+    }
+
+    test('held attempt cannot fetch after exact custody is retired', () async {
+      final f = await prepare();
+      final owner = StrictGroupMediaBlobDownloadAckOwner(
+        bridge: bridge,
+        mediaAttachmentRepository: f.fixture.repo,
+        mediaFileManager: f.manager,
+        now: () =>
+            DateTime.fromMillisecondsSinceEpoch(f.custody.expiresAtMs! - 1000),
+        onDownloadAttemptStarted:
+            ({required attachment, required custody}) async {
+              await f.fixture.db.delete(kDirectMediaBlobCustodyTable);
+            },
+        onVerifiedCiphertext: ({required attachment, required custody}) =>
+            fail('retired boundary'),
+      );
+      expect(
+        await owner.downloadAndAcknowledge(
+          attachment: f.attachment,
+          groupId: f.custody.groupId!,
+        ),
+        isNull,
+      );
+      expect(bridge.commandLog, isEmpty);
+    });
+
+    test(
+      'custody retired while transfer is held cannot publish verified boundary',
+      () async {
+        final f = await prepare();
+        var verified = 0;
+        bridge.beforeDownloadResponse = (_) async {
+          await f.fixture.db.delete(kDirectMediaBlobCustodyTable);
+        };
+        final owner = StrictGroupMediaBlobDownloadAckOwner(
+          bridge: bridge,
+          mediaAttachmentRepository: f.fixture.repo,
+          mediaFileManager: f.manager,
+          now: () => DateTime.fromMillisecondsSinceEpoch(
+            f.custody.expiresAtMs! - 1000,
+          ),
+          onVerifiedCiphertext: ({required attachment, required custody}) =>
+              verified++,
+        );
+        expect(
+          await owner.downloadAndAcknowledge(
+            attachment: f.attachment,
+            groupId: f.custody.groupId!,
+          ),
+          isNull,
+        );
+        expect(verified, 0);
+        expect(bridge.commandLog, ['media:download']);
+      },
+    );
+
+    for (final failure in ['receipt', 'bytes', 'crossed', 'expired']) {
+      test('$failure cannot reach verified boundary', () async {
+        final f = await prepare();
+        var attempts = 0;
+        var verified = 0;
+        if (failure == 'receipt') {
+          bridge.downloadResponse['contentHash'] = '0' * 64;
+        }
+        if (failure == 'bytes') bridge.downloadedBytes = [1, 2, 3];
+        final owner = StrictGroupMediaBlobDownloadAckOwner(
+          bridge: bridge,
+          mediaAttachmentRepository: f.fixture.repo,
+          mediaFileManager: f.manager,
+          now: () => DateTime.fromMillisecondsSinceEpoch(
+            f.custody.expiresAtMs! + (failure == 'expired' ? 1 : -1000),
+          ),
+          onDownloadAttemptStarted: ({required attachment, required custody}) =>
+              attempts++,
+          onVerifiedCiphertext: ({required attachment, required custody}) =>
+              verified++,
+        );
+        expect(
+          await owner.downloadAndAcknowledge(
+            attachment: failure == 'crossed'
+                ? f.attachment.copyWith(
+                    groupMediaBlobCustodyFingerprint: '0' * 64,
+                  )
+                : f.attachment,
+            groupId: f.custody.groupId!,
+          ),
+          isNull,
+        );
+        expect(verified, 0);
+        expect(attempts, failure == 'crossed' || failure == 'expired' ? 0 : 1);
+        expect(
+          bridge.commandLog,
+          failure == 'crossed' || failure == 'expired'
+              ? isEmpty
+              : ['media:download'],
+        );
+      });
+    }
   });
 
   for (final storage in <String>['secure', 'legacy']) {

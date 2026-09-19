@@ -16,4 +16,12 @@
     <string name="call_notification_answer">رد</string>
     <string name="call_notification_decline">رفض</string>
     <string name="call_notification_end">إنهاء</string>
+    <string name="call_screen_connecting">جارٍ الاتصال…</string>
+    <string name="call_screen_ended">انتهت المكالمة</string>
+    <string name="call_screen_connected">متصل</string>
+    <string name="call_screen_reconnecting">إعادة الاتصال</string>
+    <string name="call_screen_mute">كتم الصوت</string>
+    <string name="call_screen_unmute">إلغاء الكتم</string>
+    <string name="call_screen_speaker">مكبر الصوت</string>
+    <string name="call_screen_duration">مدة المكالمة %1$s</string>
 </resources>

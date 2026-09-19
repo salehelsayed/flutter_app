@@ -3,15 +3,27 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:crypto/crypto.dart';
+import 'package:flutter_app/core/database/direct_media_blob_custody.dart';
+import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 
 import 'group_media_ios_disposable_profile.dart';
+import 'group_media_reliability_authority_target.dart';
 
 const String groupMediaReliabilityE2EBuildProfile =
     groupMediaAndroidDisposableBuildProfile;
 const String groupMediaReliabilityBarrierName =
     'receiver_jpeg_post_claim_pre_commit';
+const String groupMediaReliabilityStrictBarrierName =
+    'receiver_jpeg_strict_verified_ciphertext_pre_commit';
+
+typedef LoadGroupMediaReliabilityStrictCustody =
+    Future<List<DirectMediaBlobCustodyRow>> Function({
+      required String groupId,
+      required String messageId,
+    });
+
 const String groupMediaReliabilityE2EAction = 'group_media_reliability_android';
 const String groupMediaReliabilityE2ECommandSchema =
     'mknoon.group-media-reliability-command.v1';
@@ -22,6 +34,10 @@ const String groupMediaReliabilityIdentityPhase = 'identity_probe';
 const String groupMediaReliabilitySenderSetupPhase = 'sender_setup';
 const String groupMediaReliabilityReceiverArmPhase = 'receiver_accept_arm';
 const String groupMediaReliabilitySenderSendPhase = 'sender_send';
+const String groupMediaReliabilitySenderAuthorityPhase =
+    'sender_authority_refresh';
+const String groupMediaReliabilityReceiverAuthorityPhase =
+    'receiver_authority_ready';
 const String groupMediaReliabilityReceiverRecoverPhase = 'receiver_recover';
 const String groupMediaReliabilityReceiverRenderPhase = 'receiver_render_probe';
 const String groupMediaReliabilitySenderProbePhase = 'sender_probe';
@@ -145,6 +161,18 @@ typedef GroupMediaReliabilitySetupSender =
       String receiverAccountPeerId,
       String receiverTransportPeerId,
     );
+typedef GroupMediaReliabilityAuthorityProbe =
+    Future<Map<String, Object?>> Function(
+      String groupId, {
+      required bool requireSettled,
+      GroupMediaReliabilityAuthorityTarget? expectedAuthority,
+    });
+typedef GroupMediaReliabilityAuthorityRefresh =
+    Future<Map<String, Object?>> Function(
+      String groupId,
+      String receiverAccountPeerId,
+      String receiverTransportPeerId,
+    );
 typedef GroupMediaReliabilityIdentityProbe =
     Future<Map<String, Object?>> Function(String role);
 typedef GroupMediaReliabilityAcceptReceiver =
@@ -183,12 +211,13 @@ final class GroupMediaReliabilityE2ERequest {
     required this.receiverTransportPeerId,
     required this.messageIds,
     required this.attachmentIds,
+    this.expectedAuthority,
   });
 
   factory GroupMediaReliabilityE2ERequest.fromConfig(
     Map<String, dynamic> config,
   ) {
-    const keys = <String>{
+    final keys = <String>{
       'schema',
       'transport_action',
       'scenario',
@@ -202,6 +231,8 @@ final class GroupMediaReliabilityE2ERequest {
       'receiverTransportPeerId',
       'messageIds',
       'attachmentIds',
+      if (config['phase'] == groupMediaReliabilityReceiverAuthorityPhase)
+        'expectedAuthority',
     };
     if (config.keys.toSet().length != keys.length ||
         !config.keys.toSet().containsAll(keys) ||
@@ -219,6 +250,8 @@ final class GroupMediaReliabilityE2ERequest {
           groupMediaReliabilitySenderSetupPhase,
           groupMediaReliabilityReceiverArmPhase,
           groupMediaReliabilitySenderSendPhase,
+          groupMediaReliabilitySenderAuthorityPhase,
+          groupMediaReliabilityReceiverAuthorityPhase,
           groupMediaReliabilityReceiverRecoverPhase,
           groupMediaReliabilityReceiverRenderPhase,
           groupMediaReliabilitySenderProbePhase,
@@ -229,12 +262,25 @@ final class GroupMediaReliabilityE2ERequest {
     }
     final messageIds = _kindMap(config['messageIds']);
     final attachmentIds = _kindMap(config['attachmentIds']);
+    final groupId = _optionalSafeToken(config['groupId'], maxLength: 160);
+    final expectedAuthority =
+        phase == groupMediaReliabilityReceiverAuthorityPhase
+        ? GroupMediaReliabilityAuthorityTarget.fromJson(
+            config['expectedAuthority'],
+          )
+        : null;
+    if (expectedAuthority != null &&
+        (groupId == null || !expectedAuthority.isForGroup(groupId))) {
+      throw const FormatException(
+        'group-media authority target group rejected',
+      );
+    }
     return GroupMediaReliabilityE2ERequest(
       phase: phase,
       role: role,
       runId: runId,
       nonce: nonce,
-      groupId: _optionalSafeToken(config['groupId'], maxLength: 160),
+      groupId: groupId,
       receiverAccountPeerId: _optionalSafeToken(
         config['receiverAccountPeerId'],
         maxLength: 180,
@@ -245,6 +291,7 @@ final class GroupMediaReliabilityE2ERequest {
       ),
       messageIds: messageIds,
       attachmentIds: attachmentIds,
+      expectedAuthority: expectedAuthority,
     );
   }
 
@@ -257,6 +304,7 @@ final class GroupMediaReliabilityE2ERequest {
   final String? receiverTransportPeerId;
   final Map<String, String> messageIds;
   final Map<String, String> attachmentIds;
+  final GroupMediaReliabilityAuthorityTarget? expectedAuthority;
 
   String get stepId => 'group-media-$phase-$runId';
 }
@@ -275,6 +323,9 @@ Future<Map<String, Object?>> runGroupMediaReliabilityE2EAction({
   required GroupMediaReliabilityRetryPass retryUploads,
   required GroupMediaReliabilityRetryPass retryDownloads,
   GroupMediaReliabilityRenderReceiver? renderReceiver,
+  GroupMediaReliabilityAuthorityProbe? probeAuthority,
+  GroupMediaReliabilityAuthorityRefresh? refreshAuthority,
+  LoadGroupMediaReliabilityStrictCustody? loadStrictCustody,
   String installedProfileId = const String.fromEnvironment(
     'SIMS_BUILD_PROFILE_ID',
   ),
@@ -325,6 +376,43 @@ Future<Map<String, Object?>> runGroupMediaReliabilityE2EAction({
           const <String, String>{},
         ),
       };
+    case groupMediaReliabilitySenderAuthorityPhase:
+      if (authorityMode !=
+              GroupMediaReliabilityAuthorityMode.distinctAccountAndTransport ||
+          request.role != 'sender' ||
+          request.groupId == null ||
+          request.receiverAccountPeerId == null ||
+          request.receiverTransportPeerId == null ||
+          refreshAuthority == null) {
+        throw const FormatException('sender authority refresh tuple rejected');
+      }
+      return <String, Object?>{
+        ...base,
+        'authorityRefresh': await refreshAuthority(
+          request.groupId!,
+          request.receiverAccountPeerId!,
+          request.receiverTransportPeerId!,
+        ),
+      };
+    case groupMediaReliabilityReceiverAuthorityPhase:
+      if (authorityMode !=
+              GroupMediaReliabilityAuthorityMode.distinctAccountAndTransport ||
+          request.role != 'receiver' ||
+          request.groupId == null ||
+          request.expectedAuthority == null ||
+          probeAuthority == null) {
+        throw const FormatException(
+          'receiver authority readiness tuple rejected',
+        );
+      }
+      return <String, Object?>{
+        ...base,
+        'authorityAfter': await probeAuthority(
+          request.groupId!,
+          requireSettled: true,
+          expectedAuthority: request.expectedAuthority,
+        ),
+      };
     case groupMediaReliabilityReceiverArmPhase:
       final groupId = request.groupId;
       if (request.role != 'receiver' || groupId == null) {
@@ -348,6 +436,14 @@ Future<Map<String, Object?>> runGroupMediaReliabilityE2EAction({
         ...base,
         'status': 'armed',
         'groupId': groupId,
+        if (authorityMode ==
+                GroupMediaReliabilityAuthorityMode
+                    .distinctAccountAndTransport &&
+            probeAuthority != null)
+          'authorityBefore': await probeAuthority(
+            groupId,
+            requireSettled: false,
+          ),
         ...accepted,
         'roleDatabaseIdentity': await probeRole(
           request.role,
@@ -385,29 +481,52 @@ Future<Map<String, Object?>> runGroupMediaReliabilityE2EAction({
       if (request.role != 'receiver') {
         throw const FormatException('receiver recovery role rejected');
       }
-      final prior = await controller.releaseRecoveryAfterPriorStatus(
-        loadCurrentAttachment: loadAttachment,
-      );
-      final firstUploadWork = await retryUploads();
-      final firstDownloadWork = await retryDownloads();
-      final secondUploadWork = await retryUploads();
-      final secondDownloadWork = await retryDownloads();
-      return <String, Object?>{
-        ...base,
-        'priorStatus': prior.priorStatus,
-        'previousProcessId': prior.previousProcessId,
-        'currentProcessId': prior.currentProcessId,
-        'firstUploadWork': firstUploadWork,
-        'firstDownloadWork': firstDownloadWork,
-        'secondUploadWork': secondUploadWork,
-        'secondDownloadWork': secondDownloadWork,
-        'downloadAttempts': await controller.loadAttemptCounts(),
-        'roleDatabase': await probeRole(
+      var stage = GroupMediaReliabilityRecoveryStage.priorBoundary;
+      final work = <String, int>{};
+      Map<String, int>? attempts;
+      try {
+        final prior = await controller.releaseRecoveryAfterPriorStatus(
+          loadCurrentAttachment: loadAttachment,
+          loadStrictCustody: loadStrictCustody,
+        );
+        stage = GroupMediaReliabilityRecoveryStage.firstUpload;
+        work['firstUploadWork'] = await retryUploads();
+        stage = GroupMediaReliabilityRecoveryStage.firstDownload;
+        work['firstDownloadWork'] = await retryDownloads();
+        stage = GroupMediaReliabilityRecoveryStage.secondUpload;
+        work['secondUploadWork'] = await retryUploads();
+        stage = GroupMediaReliabilityRecoveryStage.secondDownload;
+        work['secondDownloadWork'] = await retryDownloads();
+        stage = GroupMediaReliabilityRecoveryStage.attemptCounts;
+        attempts = await controller.loadAttemptCounts();
+        stage = GroupMediaReliabilityRecoveryStage.roleDatabase;
+        final roleDatabase = await probeRole(
           request.role,
           request.messageIds,
           request.attachmentIds,
-        ),
-      };
+        );
+        return <String, Object?>{
+          ...base,
+          'priorStatus': prior.priorStatus,
+          if (prior.strictCustody != null)
+            'strictCustodyBoundary': prior.strictCustody,
+          'previousProcessId': prior.previousProcessId,
+          'currentProcessId': prior.currentProcessId,
+          ...work,
+          'downloadAttempts': attempts,
+          'roleDatabase': roleDatabase,
+        };
+      } on Object catch (error, stack) {
+        Error.throwWithStackTrace(
+          GroupMediaReliabilityRecoveryFailure._(
+            stage: stage,
+            cause: error,
+            work: Map.unmodifiable(work),
+            attempts: attempts == null ? null : Map.unmodifiable(attempts),
+          ),
+          stack,
+        );
+      }
     case groupMediaReliabilityReceiverRenderPhase:
       final groupId = request.groupId;
       final render = renderReceiver;
@@ -443,6 +562,105 @@ Future<Map<String, Object?>> runGroupMediaReliabilityE2EAction({
   throw StateError('unreachable group-media phase');
 }
 
+// Native media-custody codes plus closed bridge envelopes. Keep the host
+// retention allowlist equally strict: no native errorMessage is evidence.
+String? groupMediaReliabilityClosedUploadErrorCode(Object? value) =>
+    value is String &&
+        const {
+          'MEDIA_CUSTODY_ADMISSION_DISABLED',
+          'MEDIA_CUSTODY_FULL',
+          'MEDIA_CUSTODY_UNSUPPORTED',
+          'MEDIA_CUSTODY_IDENTITY_CONFLICT',
+          'MEDIA_CUSTODY_INELIGIBLE',
+          'MEDIA_CUSTODY_NOT_AUTHORIZED',
+          'MEDIA_CUSTODY_HASH_MISMATCH',
+          'MEDIA_CUSTODY_ALREADY_ACKED',
+          'MEDIA_CUSTODY_CLEANUP_PENDING',
+          'MEDIA_CUSTODY_STORAGE_ERROR',
+          'MEDIA_CUSTODY_NOT_FOUND',
+          'MEDIA_CUSTODY_COMMIT_INDETERMINATE',
+          'MEDIA_ERROR',
+          'NOT_INITIALIZED',
+          'INVALID_INPUT',
+          'INTERNAL_ERROR',
+          'UNKNOWN_COMMAND',
+          'NULL_RESPONSE',
+          'MISSING_PLUGIN',
+          'PLATFORM_ERROR',
+          'BRIDGE_EXCEPTION',
+          'MALFORMED_RESPONSE',
+        }.contains(value)
+    ? value
+    : null;
+
+/// Closed fixture diagnostics; no exception text, paths or authority material.
+final class GroupMediaReliabilitySenderFailure implements Exception {
+  const GroupMediaReliabilitySenderFailure(
+    this.stage, {
+    this.kind,
+    this.preparationState,
+    this.preparationHasDurableAuthority,
+    this.preparationUploadResponseOk,
+    this.preparationUploadErrorCode,
+  });
+  final String stage;
+  final String? kind;
+  final String? preparationState;
+  final bool? preparationHasDurableAuthority;
+  final bool? preparationUploadResponseOk;
+  final String? preparationUploadErrorCode;
+  bool get hasClosedPreparationResult =>
+      closedStage == 'strict_preparation' &&
+      ((preparationState == 'refused' &&
+              preparationHasDurableAuthority != null) ||
+          (preparationState == 'retained' &&
+              preparationHasDurableAuthority == true) ||
+          (preparationState == 'legacyUninitialized' &&
+              preparationHasDurableAuthority == false));
+
+  String get closedStage =>
+      const {
+        'authority_admission',
+        'authority_rotation',
+        'authority_settlement',
+        'authority_membership',
+        'fixture_material',
+        'legacy_upload',
+        'legacy_publication',
+        'strict_preparation',
+        'strict_publication',
+        'strict_custody_join',
+      }.contains(stage)
+      ? stage
+      : 'unexpected_error';
+}
+
+enum GroupMediaReliabilityRecoveryStage {
+  priorBoundary,
+  firstUpload,
+  firstDownload,
+  secondUpload,
+  secondDownload,
+  attemptCounts,
+  roleDatabase,
+}
+
+/// Retains only the actual failed checkpoint and completed work counts.
+/// The underlying exception is classified without exporting its text.
+final class GroupMediaReliabilityRecoveryFailure implements Exception {
+  const GroupMediaReliabilityRecoveryFailure._({
+    required this.stage,
+    required this.cause,
+    required this.work,
+    required this.attempts,
+  });
+
+  final GroupMediaReliabilityRecoveryStage stage;
+  final Object cause;
+  final Map<String, int> work;
+  final Map<String, int>? attempts;
+}
+
 Map<String, Object?> groupMediaReliabilityE2EFailureReceipt({
   required Map<String, dynamic> config,
   required Object error,
@@ -459,12 +677,44 @@ Map<String, Object?> groupMediaReliabilityE2EFailureReceipt({
     'role': request.role,
     'runId': request.runId,
     'nonce': request.nonce,
-    'errorType': error.runtimeType.toString(),
+    'errorType':
+        (error is GroupMediaReliabilityRecoveryFailure ? error.cause : error)
+            .runtimeType
+            .toString(),
     'errorCode': _groupMediaReliabilityE2EFailureCode(error),
+    if (error is GroupMediaReliabilityRecoveryFailure) ...{
+      'recoveryStage': error.stage.name,
+      ...error.work,
+      if (error.attempts != null) 'downloadAttempts': error.attempts,
+    },
+    if (error is GroupMediaReliabilitySenderFailure) ...{
+      'senderStage': error.closedStage,
+      if (error.hasClosedPreparationResult) ...{
+        'preparationState': error.preparationState,
+        'preparationHasDurableAuthority': error.preparationHasDurableAuthority,
+        if (error.preparationState == 'retained' &&
+            error.preparationUploadResponseOk != null) ...{
+          'preparationUploadResponseOk': error.preparationUploadResponseOk,
+          if (error.preparationUploadResponseOk == false)
+            'preparationUploadErrorCode':
+                ?groupMediaReliabilityClosedUploadErrorCode(
+                  error.preparationUploadErrorCode,
+                ),
+        },
+      },
+      if (const {'jpeg', 'mp4', 'voice'}.contains(error.kind))
+        'mediaKind': error.kind,
+    },
   };
 }
 
 String _groupMediaReliabilityE2EFailureCode(Object error) {
+  if (error is GroupMediaReliabilityRecoveryFailure) {
+    return _groupMediaReliabilityE2EFailureCode(error.cause);
+  }
+  if (error is GroupMediaReliabilitySenderFailure) {
+    return 'sender_${error.closedStage}';
+  }
   final message = switch (error) {
     StateError stateError => stateError.message,
     FormatException formatError => formatError.message,
@@ -496,6 +746,23 @@ String _groupMediaReliabilityE2EFailureCode(Object error) {
     'periodic group download retry is not wired' => 'download_retry_not_wired',
     'group-media role database lacks transport authority' =>
       'role_database_transport',
+    'group-media recovery lacks a fresh process boundary' =>
+      'recovery_process_boundary',
+    'recovery attachment does not match the persisted JPEG tuple' =>
+      'recovery_attachment_tuple',
+    'strict custody reload unavailable' => 'recovery_custody_loader',
+    'strict custody reload ambiguous' => 'recovery_custody_row_count',
+    'strict barrier requires exact committed custody without local or ACK source' =>
+      'recovery_custody_boundary',
+    'strict custody changed across process death' => 'recovery_custody_changed',
+    'JPEG did not retain priorStatus=downloading' => 'recovery_legacy_status',
+    'group-media reliability state is absent' => 'recovery_state_absent',
+    'group-media receiver jpeg row did not settle exactly' =>
+      'receiver_jpeg_not_settled',
+    'group-media receiver mp4 row did not settle exactly' =>
+      'receiver_mp4_not_settled',
+    'group-media receiver voice row did not settle exactly' =>
+      'receiver_voice_not_settled',
     _ => 'unexpected_error',
   };
 }
@@ -542,11 +809,13 @@ final class GroupMediaReliabilityPriorStatusEvidence {
     required this.priorStatus,
     required this.previousProcessId,
     required this.currentProcessId,
+    this.strictCustody,
   });
 
   final String priorStatus;
   final int previousProcessId;
   final int currentProcessId;
+  final Map<String, Object?>? strictCustody;
 }
 
 /// Main-app-only owner for the host-controlled post-claim/pre-commit barrier.
@@ -721,6 +990,104 @@ final class GroupMediaReliabilityE2EController {
     }
   }
 
+  /// Strict counterpart of the ordinary post-claim barrier. The owner has
+  /// verified ciphertext but has not decrypted, promoted, or committed an ACK.
+  Future<void> onStrictVerifiedCiphertext({
+    required MediaAttachment attachment,
+    required DirectMediaBlobCustodyRow custody,
+    required LoadGroupMediaReliabilityAttachment loadCurrentAttachment,
+  }) async {
+    if (!enabled) return;
+    final outcome =
+        await _mutateStateIfPresent<_GroupMediaReliabilityPostClaimOutcome>((
+          state,
+        ) async {
+          final kind = _targetKind(state, attachment);
+          if (kind == null) {
+            return const _GroupMediaReliabilityStateUpdate.unchanged(
+              _GroupMediaReliabilityPostClaimOutcome.ignored(),
+            );
+          }
+          final current = await loadCurrentAttachment(attachment.id);
+          final proof = _strictBoundary(
+            current,
+            custody,
+            groupId: state['groupId'] as String,
+          );
+          if (current == null ||
+              current.messageId != attachment.messageId ||
+              current.groupMediaBlobCustodyFingerprint !=
+                  attachment.groupMediaBlobCustodyFingerprint) {
+            throw StateError('strict barrier attachment changed');
+          }
+          final attempt = (_map(state['attempts'])![kind] as num).toInt();
+          if (attempt <= 0) {
+            throw StateError('strict barrier attempt was not counted');
+          }
+          if (kind != 'jpeg' || attempt != 1 || state['barrier'] != null) {
+            return const _GroupMediaReliabilityStateUpdate.unchanged(
+              _GroupMediaReliabilityPostClaimOutcome.observed(),
+            );
+          }
+          if (attachment.id != state['jpegAttachmentId'] ||
+              attachment.messageId != state['jpegMessageId']) {
+            throw StateError('strict barrier tuple changed');
+          }
+          state['barrier'] = <String, Object?>{
+            'name': groupMediaReliabilityStrictBarrierName,
+            'reached': true,
+            'priorStatus': current.downloadStatus,
+            'attempt': attempt,
+            'processId': currentProcessId,
+            'strictCustodyBoundary': proof,
+          };
+          return _GroupMediaReliabilityStateUpdate.changed(
+            _GroupMediaReliabilityPostClaimOutcome.barrier(
+              shouldBlock: state['recoveryReleased'] != true,
+            ),
+          );
+        });
+    if (outcome?.shouldBlock == true) await _firstJpegBarrierRelease.future;
+  }
+
+  Map<String, Object?> _strictBoundary(
+    MediaAttachment? attachment,
+    DirectMediaBlobCustodyRow custody, {
+    required String groupId,
+  }) {
+    if (attachment == null ||
+        attachment.groupMediaBlobCustodyFingerprint == null ||
+        attachment.ownerLane != MediaOwnerLane.group ||
+        attachment.contentHash != custody.contentHash ||
+        attachment.localPath?.isNotEmpty == true ||
+        attachment.downloadStatus != 'pending' ||
+        custody.ownerLane != MediaBlobCustodyOwnerLane.group ||
+        custody.groupId != groupId ||
+        custody.attachmentId != attachment.id ||
+        custody.messageId != attachment.messageId ||
+        custody.state != DirectMediaBlobCustodyState.incomingCommitted ||
+        custody.direction != DirectMediaBlobCustodyDirection.incoming ||
+        custody.custodyRelayPeerId != null) {
+      throw StateError(
+        'strict barrier requires exact committed custody without local or ACK source',
+      );
+    }
+    return <String, Object?>{
+      'state': 'incoming_committed',
+      'local_ready': false,
+      'ack_source_present': false,
+      'custody_fingerprint': attachment.groupMediaBlobCustodyFingerprint,
+      'custody_projection_sha256': sha256
+          .convert(utf8.encode(jsonEncode(custody.toMap())))
+          .toString(),
+      'ciphertext_sha256': custody.contentHash,
+      'ciphertext_size': custody.ciphertextSize,
+      'custody_blob_id_sha256': sha256
+          .convert(utf8.encode(custody.custodyBlobId))
+          .toString(),
+    };
+  }
+
   String? _targetKind(Map<String, Object?> state, MediaAttachment attachment) {
     final ids = _map(state['mediaAttachmentIds']);
     for (final kind in const <String>['jpeg', 'mp4', 'voice']) {
@@ -753,10 +1120,12 @@ final class GroupMediaReliabilityE2EController {
     throw TimeoutException('group-media JPEG barrier was not reached', timeout);
   }
 
-  /// Fresh-process gate: read `downloading` before permitting attempt two.
+  /// Fresh-process gate: revalidate the exact legacy claim or strict committed
+  /// custody boundary before permitting attempt two.
   Future<GroupMediaReliabilityPriorStatusEvidence>
   releaseRecoveryAfterPriorStatus({
     required LoadGroupMediaReliabilityAttachment loadCurrentAttachment,
+    LoadGroupMediaReliabilityStrictCustody? loadStrictCustody,
   }) async {
     _requireEnabled();
     final evidence =
@@ -775,7 +1144,38 @@ final class GroupMediaReliabilityE2EController {
             );
           }
           final current = await loadCurrentAttachment(jpegAttachmentId);
-          if (current == null || current.downloadStatus != 'downloading') {
+          if (current == null ||
+              current.id != jpegAttachmentId ||
+              current.messageId != state['jpegMessageId']) {
+            throw StateError(
+              'recovery attachment does not match the persisted JPEG tuple',
+            );
+          }
+          Map<String, Object?>? strictProof;
+          if (barrier?['name'] == groupMediaReliabilityStrictBarrierName) {
+            if (loadStrictCustody == null) {
+              throw StateError('strict custody reload unavailable');
+            }
+            final rows = await loadStrictCustody(
+              groupId: state['groupId'] as String,
+              messageId: current.messageId,
+            );
+            final exact = rows
+                .where((row) => row.attachmentId == current.id)
+                .toList();
+            if (exact.length != 1) {
+              throw StateError('strict custody reload ambiguous');
+            }
+            strictProof = _strictBoundary(
+              current,
+              exact.single,
+              groupId: state['groupId'] as String,
+            );
+            if (jsonEncode(strictProof) !=
+                jsonEncode(barrier?['strictCustodyBoundary'])) {
+              throw StateError('strict custody changed across process death');
+            }
+          } else if (current.downloadStatus != 'downloading') {
             throw StateError('JPEG did not retain priorStatus=downloading');
           }
           state['recoveryReleased'] = true;
@@ -783,6 +1183,7 @@ final class GroupMediaReliabilityE2EController {
           return _GroupMediaReliabilityStateUpdate.changed(
             GroupMediaReliabilityPriorStatusEvidence(
               priorStatus: current.downloadStatus,
+              strictCustody: strictProof,
               previousProcessId: previousProcessId,
               currentProcessId: currentProcessId,
             ),

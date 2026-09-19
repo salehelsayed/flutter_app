@@ -1695,6 +1695,7 @@ final class _RecordingOutgoingCallCapability
 
   Completer<bool>? nextAvailabilityCompleter;
   Completer<OutgoingCallStartResult>? startCompleter;
+  final List<OutgoingCallStartRequest?> startRequests = [];
   final List<String> peerIds = <String>[];
   final List<String> availabilityPeerIds = <String>[];
   final StreamController<bool> _availabilityChanges =
@@ -1728,9 +1729,11 @@ final class _RecordingOutgoingCallCapability
 
   @override
   Future<OutgoingCallStartResult> startOutgoingCall(
-    String contactAccountPeerId,
-  ) async {
+    String contactAccountPeerId, {
+    OutgoingCallStartRequest? request,
+  }) async {
     peerIds.add(contactAccountPeerId);
+    startRequests.add(request);
     final error = this.error;
     if (error != null) throw error;
     final completer = startCompleter;
@@ -2279,6 +2282,44 @@ void main() {
   );
 
   testWidgets(
+    'microphone refusal before call admission renders specific permission feedback',
+    (tester) async {
+      final messageRepo = FakeMessageRepository();
+      final capability = _RecordingOutgoingCallCapability(
+        isOutgoingCallAvailable: true,
+        result: OutgoingCallStartResult.microphoneDenied,
+      );
+      await pumpScreen(
+        tester,
+        identityRepo: FakeIdentityRepository(makeIdentity()),
+        messageRepo: messageRepo,
+        chatListener: ChatMessageListener(
+          chatMessageStream: const Stream.empty(),
+          messageRepo: messageRepo,
+          contactRepo: FakeContactRepository(),
+        ),
+        sendFn: _instantSuccessSendFn,
+        outgoingCallCapability: capability,
+      );
+
+      await tester.tap(find.byTooltip('Start voice call'));
+      await tester.pump();
+
+      expect(capability.peerIds, <String>[makeContact().peerId]);
+      expect(capability.startRequests.single!.isAdmitted, isFalse);
+      expect(
+        find.text('Microphone permission is needed to make calls.'),
+        findsOneWidget,
+      );
+      expect(
+        find.text("Couldn't start voice call. Please try again."),
+        findsNothing,
+      );
+      expect(find.byTooltip('Start voice call'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
     'VC2-03 disables call action when trusted endpoint is unavailable',
     (tester) async {
       final messageRepo = FakeMessageRepository();
@@ -2585,6 +2626,229 @@ void main() {
       await tester.pump();
       expect(capability.peerIds, <String>[makeContact().peerId]);
       expect(find.byTooltip('Start voice call'), findsOneWidget);
+    },
+  );
+
+  for (final stage in ['readiness', 'contact', 'start']) {
+    testWidgets(
+      'Connecting appears on the first frame and cancel fences late $stage',
+      (tester) async {
+        final messageRepo = FakeMessageRepository();
+        final readiness = Completer<bool>();
+        final capability = _RecordingOutgoingCallCapability(
+          isOutgoingCallAvailable: stage != 'readiness',
+          result: OutgoingCallStartResult.started,
+          onRecover: () => readiness.future,
+        );
+        addTearDown(capability.close);
+        await pumpScreen(
+          tester,
+          identityRepo: FakeIdentityRepository(makeIdentity()),
+          messageRepo: messageRepo,
+          chatListener: ChatMessageListener(
+            chatMessageStream: const Stream.empty(),
+            messageRepo: messageRepo,
+            contactRepo: FakeContactRepository(),
+          ),
+          sendFn: _instantSuccessSendFn,
+          outgoingCallCapability: capability,
+        );
+        final contact = Completer<bool>();
+        final start = Completer<OutgoingCallStartResult>();
+        if (stage == 'contact') capability.nextAvailabilityCompleter = contact;
+        if (stage == 'start') capability.startCompleter = start;
+        final screen = tester.widget<ConversationScreen>(
+          find.byType(ConversationScreen),
+        );
+        (screen.onCall ?? screen.onCallRetry)!();
+        (screen.onCall ?? screen.onCallRetry)!();
+        await tester.pump();
+        expect(find.text('Connecting'), findsOneWidget);
+        expect(find.byTooltip('Cancel call'), findsOneWidget);
+        expect(capability.peerIds, hasLength(stage == 'start' ? 1 : 0));
+        await tester.tap(find.byTooltip('Cancel call'));
+        await tester.pump();
+        expect(find.text('Connecting'), findsNothing);
+        if (stage == 'start') {
+          expect(capability.startRequests.single!.isCanceled, isTrue);
+        }
+        // A new attempt owns its own pending surface while the old future ends.
+        capability.isOutgoingCallAvailable = true;
+        capability.startCompleter = Completer<OutgoingCallStartResult>();
+        await tester.tap(find.byIcon(Icons.call_outlined));
+        await tester.pump();
+        expect(find.text('Connecting'), findsOneWidget);
+        if (stage == 'readiness') readiness.complete(true);
+        if (stage == 'contact') contact.complete(true);
+        if (stage == 'start') start.complete(OutgoingCallStartResult.failed);
+        await tester.pump();
+        expect(find.text('Connecting'), findsOneWidget);
+        expect(
+          find.text("Couldn't start voice call. Please try again."),
+          findsNothing,
+        );
+        expect(capability.peerIds, hasLength(stage == 'start' ? 2 : 1));
+        capability.startCompleter!.complete(OutgoingCallStartResult.started);
+        await tester.pump();
+        expect(find.text('Connecting'), findsNothing);
+      },
+    );
+  }
+
+  testWidgets(
+    'admission hands presentation and deadlines to the canonical call',
+    (tester) async {
+      late CallDiagnostics diagnostics;
+      await tester.runAsync(() async {
+        diagnostics = await CallDiagnostics.installForTesting();
+      });
+      addTearDown(() async {
+        await diagnostics.setEnabled(false);
+        await diagnostics.dispose();
+      });
+      final messageRepo = FakeMessageRepository();
+      final pending = Completer<OutgoingCallStartResult>();
+      final capability = _RecordingOutgoingCallCapability(
+        isOutgoingCallAvailable: true,
+        result: OutgoingCallStartResult.started,
+      )..startCompleter = pending;
+      addTearDown(capability.close);
+      await pumpScreen(
+        tester,
+        identityRepo: FakeIdentityRepository(makeIdentity()),
+        messageRepo: messageRepo,
+        chatListener: ChatMessageListener(
+          chatMessageStream: const Stream.empty(),
+          messageRepo: messageRepo,
+          contactRepo: FakeContactRepository(),
+        ),
+        sendFn: _instantSuccessSendFn,
+        outgoingCallCapability: capability,
+      );
+      await tester.tap(find.byTooltip('Start voice call'));
+      await tester.pump();
+      expect(find.text('Connecting'), findsOneWidget);
+      final events = await tester.runAsync(diagnostics.eventsForTesting);
+      final frames = events!
+          .where(
+            (event) =>
+                event['stage'] == 'presentation' &&
+                event['action'] == 'present',
+          )
+          .toList();
+      expect(frames, hasLength(1));
+      expect((frames.single['values'] as Map)['state'], 'outgoing_preparing');
+      expect((frames.single['values'] as Map)['durationMs'], isNonNegative);
+      expect(CallDiagnostics.validateEvent(frames.single), isNotNull);
+      final request = capability.startRequests.single!;
+      request.admit();
+      await tester.pump();
+      expect(find.text('Connecting'), findsNothing);
+      await tester.pump(const Duration(seconds: 31));
+      expect(request.isCanceled, isFalse);
+      expect(
+        find.text("Couldn't start voice call. Please try again."),
+        findsNothing,
+      );
+      pending.complete(OutgoingCallStartResult.started);
+      await tester.pump();
+    },
+  );
+
+  testWidgets(
+    'preflight semantics hide conversation actions and restore them on cancel',
+    (tester) async {
+      final semantics = tester.ensureSemantics();
+      try {
+        final messageRepo = FakeMessageRepository();
+        final pending = Completer<OutgoingCallStartResult>();
+        final capability = _RecordingOutgoingCallCapability(
+          isOutgoingCallAvailable: true,
+          result: OutgoingCallStartResult.started,
+        )..startCompleter = pending;
+        addTearDown(capability.close);
+        await pumpScreen(
+          tester,
+          identityRepo: FakeIdentityRepository(makeIdentity()),
+          messageRepo: messageRepo,
+          chatListener: ChatMessageListener(
+            chatMessageStream: const Stream.empty(),
+            messageRepo: messageRepo,
+            contactRepo: FakeContactRepository(),
+          ),
+          sendFn: _instantSuccessSendFn,
+          outgoingCallCapability: capability,
+          audioRecorderService: FakeAudioRecorderService(),
+        );
+        final callAction = find.semantics.byLabel('Start voice call');
+        final recordAction = find.semantics.byLabel(
+          RegExp('Start voice recording'),
+        );
+        expect(callAction, findsOneWidget);
+        expect(recordAction, findsOneWidget);
+        await tester.tap(find.byTooltip('Start voice call'));
+        await tester.pump();
+        expect(callAction, findsNothing);
+        expect(recordAction, findsNothing);
+        expect(find.semantics.byLabel('Connecting'), findsOneWidget);
+        final cancelAction = find.semantics.byPredicate(
+          (node) => node.tooltip == 'Cancel call',
+        );
+        expect(cancelAction, findsOneWidget);
+        tester.semantics.tap(cancelAction);
+        await tester.pump();
+        expect(capability.startRequests.single!.isCanceled, isTrue);
+        expect(callAction, findsOneWidget);
+        expect(recordAction, findsOneWidget);
+        expect(cancelAction, findsNothing);
+        pending.complete(OutgoingCallStartResult.canceled);
+        await tester.pump();
+      } finally {
+        semantics.dispose();
+      }
+    },
+  );
+
+  testWidgets(
+    'Connecting preflight timeout cancels downstream work and permits retry',
+    (tester) async {
+      final messageRepo = FakeMessageRepository();
+      final pending = Completer<OutgoingCallStartResult>();
+      final capability = _RecordingOutgoingCallCapability(
+        isOutgoingCallAvailable: true,
+        result: OutgoingCallStartResult.started,
+      )..startCompleter = pending;
+      addTearDown(capability.close);
+      await pumpScreen(
+        tester,
+        identityRepo: FakeIdentityRepository(makeIdentity()),
+        messageRepo: messageRepo,
+        chatListener: ChatMessageListener(
+          chatMessageStream: const Stream.empty(),
+          messageRepo: messageRepo,
+          contactRepo: FakeContactRepository(),
+        ),
+        sendFn: _instantSuccessSendFn,
+        outgoingCallCapability: capability,
+      );
+      await tester.tap(find.byTooltip('Start voice call'));
+      await tester.pump();
+      expect(find.text('Connecting'), findsOneWidget);
+      await tester.pump(const Duration(seconds: 31));
+      await tester.pump();
+      expect(capability.startRequests.single!.isCanceled, isTrue);
+      expect(find.text('Connecting'), findsNothing);
+      expect(
+        find.text("Couldn't start voice call. Please try again."),
+        findsOneWidget,
+      );
+      capability.startCompleter = null;
+      await tester.tap(find.byTooltip('Start voice call'));
+      await tester.pump();
+      expect(capability.peerIds, hasLength(2));
+      pending.complete(OutgoingCallStartResult.started);
+      await tester.pump();
+      expect(find.text('Connecting'), findsNothing);
     },
   );
 

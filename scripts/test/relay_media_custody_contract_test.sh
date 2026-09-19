@@ -144,6 +144,9 @@ readonly STRICT_SCHEMA_OWNERS=(
   # network owner.
   lib/core/database/helpers/protected_group_content_db_helpers.dart
   lib/core/database/migrations/115_group_media_blob_custody.dart
+  # P269's compile-gated process-death barrier reads the typed custody row to
+  # prove no ACK source or local plaintext exists. It owns no network helper.
+  lib/core/debug/group_media_reliability_e2e.dart
   lib/debug/android_direct_media_blob_custody_e2e.dart
   lib/core/media/direct_media_blob_custody.dart
   lib/core/services/inbox_store_outcome.dart

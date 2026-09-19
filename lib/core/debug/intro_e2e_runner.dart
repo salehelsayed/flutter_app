@@ -19,6 +19,7 @@ import 'package:flutter_app/core/debug/group_media_reliability_e2e.dart';
 import 'package:flutter_app/core/debug/group_media_ios_background_e2e.dart';
 import 'package:flutter_app/core/debug/keepalive_drop_e2e.dart';
 import 'package:flutter_app/core/debug/private_media_outbox_e2e.dart';
+import 'package:flutter_app/core/debug/notification_dual_path_e2e_sender.dart';
 import 'package:flutter_app/core/debug/group_reaction_notification_ios_setup_profile.dart';
 import 'package:flutter_app/core/debug/wake_token_directionality_e2e.dart';
 import 'package:flutter_app/core/secure_storage/secure_key_store.dart';
@@ -355,9 +356,12 @@ final class IntroE2EPollerLifecycle {
 
 IntroE2EPollerLifecycle? _introE2EPollerLifecycle;
 bool _introE2ERunInFlight = false;
+NotificationDualPathSender? _notificationDualPathSender;
 
-Future<void> stopIntroE2EPoller() =>
-    _introE2EPollerLifecycle?.dispose() ?? Future<void>.value();
+Future<void> stopIntroE2EPoller() {
+  _notificationDualPathSender?.close();
+  return _introE2EPollerLifecycle?.dispose() ?? Future<void>.value();
+}
 
 @visibleForTesting
 Future<bool> awaitIntroE2EDrainWithin({
@@ -683,6 +687,7 @@ Future<void> runIntroE2EActions({
       }),
     );
   }
+
   await writeProgress('p2p_ready');
 
   try {
@@ -1111,6 +1116,20 @@ void startIntroE2EPoller({
     return;
   }
   if (_introE2EPollerLifecycle != null) return;
+  final notificationSender = createNotificationDualPathSender(
+    enabled: allowsNotificationDualPathSender(
+      debugMode: kDebugMode,
+      e2eTestMode: kE2ETestMode,
+      productionFcm: kProductionFcmTestMode,
+      installedProfileId: const String.fromEnvironment('SIMS_BUILD_PROFILE_ID'),
+    ),
+    service: p2pService,
+    bridge: bridge,
+    identities: identityRepo,
+    contacts: contactRepo,
+    wakeTokens: receivedWakeTokenStore,
+  );
+  _notificationDualPathSender = notificationSender;
 
   Future<void> tick() async {
     if (_introE2ERunInFlight) return;
@@ -1270,6 +1289,34 @@ void startIntroE2EPoller({
           config: config,
           messageRepo: messageRepo,
         );
+        return;
+      }
+
+      if (config['transport_action'] == notificationDualPathSenderAction) {
+        // Consume once before exposing progress. Final cleanup must not erase
+        // a later command staged after the host sees this action complete.
+        await _deleteConfigIfPresent();
+        try {
+          final request = NotificationDualPathRequest.fromConfig(config);
+          final directory = await getApplicationDocumentsDirectory();
+          final control = NotificationDualPathFileControl(
+            File('${directory.path}/$notificationDualPathReleaseFileName'),
+          );
+          final result = await notificationSender.run(
+            request: request,
+            writePrepared: (value) =>
+                _writeIntroE2EResult(Map<String, dynamic>.from(value)),
+            readControl: control.read,
+            cleanupControl: control.cleanup,
+          );
+          await _writeIntroE2EResult(Map<String, dynamic>.from(result));
+        } catch (error) {
+          await _writeIntroE2EResult(
+            Map<String, dynamic>.from(
+              notificationDualPathFailureReceipt(config, error),
+            ),
+          );
+        }
         return;
       }
 
@@ -1628,6 +1675,22 @@ Future<void> _waitForP2PReady(P2PService p2pService) async {
   throw StateError('P2P node did not expose a usable transport in time');
 }
 
+/// Only the disposable local-call fixture may preconnect through its configured
+/// relay. Production contact policy and other debug campaigns stay unchanged.
+@visibleForTesting
+bool shouldProbeConfiguredRelayForIntroContact({
+  required bool debugMode,
+  required bool e2eTestMode,
+  required String installedProfileId,
+  required bool enabledByConfig,
+  required bool requireExactCallWakeReceipt,
+}) =>
+    debugMode &&
+    e2eTestMode &&
+    installedProfileId == 'android.e2e.production_call_local' &&
+    enabledByConfig &&
+    requireExactCallWakeReceipt;
+
 Future<void> _sendContactRequestsForAddedContacts({
   required Map<String, dynamic> config,
   required P2PService p2pService,
@@ -1656,6 +1719,19 @@ Future<void> _sendContactRequestsForAddedContacts({
     final publicKey = qrMap['pk'] as String;
     final result = await retryIntroE2EContactRequest(
       requireExactCallWakeReceipt: requireExactCallWakeReceipt,
+      probeRelayBeforeSend:
+          shouldProbeConfiguredRelayForIntroContact(
+            debugMode: kDebugMode,
+            e2eTestMode: kE2ETestMode,
+            installedProfileId: const String.fromEnvironment(
+              'SIMS_BUILD_PROFILE_ID',
+            ),
+            enabledByConfig:
+                config['probe_configured_relay_before_contact'] == true,
+            requireExactCallWakeReceipt: requireExactCallWakeReceipt,
+          )
+          ? () => p2pService.probeRelay(peerId)
+          : null,
       sendAttempt: ({required requireExactCallWakeReceipt}) =>
           sendContactRequest(
             p2pService: p2pService,
@@ -1695,6 +1771,7 @@ Future<void> _sendContactRequestsForAddedContacts({
 Future<SendContactRequestResult> retryIntroE2EContactRequest({
   required bool requireExactCallWakeReceipt,
   required SendIntroE2EContactRequestAttempt sendAttempt,
+  Future<RelayProbeResult> Function()? probeRelayBeforeSend,
   DateTime Function()? now,
   IntroE2ERetryDelay? delay,
 }) async {
@@ -1709,16 +1786,51 @@ Future<SendContactRequestResult> retryIntroE2EContactRequest({
   var attempts = 0;
   var result = SendContactRequestResult.sendFailed;
 
+  final probe = requireExactCallWakeReceipt ? probeRelayBeforeSend : null;
   while (true) {
-    result = await sendAttempt(
-      requireExactCallWakeReceipt: requireExactCallWakeReceipt,
-    );
+    if (probe != null) {
+      final remaining = exactRetryDeadline!.difference(readNow());
+      if (remaining <= Duration.zero) {
+        return SendContactRequestResult.sendFailed;
+      }
+      try {
+        // A successful reservation can exist without an advertised circuit for
+        // a private LAN relay. This existing API establishes that exact peer's
+        // circuit; the normal encrypted send still has to validate its receipt.
+        await probe().timeout(remaining);
+      } on Object {
+        // A failed probe never proves contact delivery. Preserve the ordinary
+        // direct attempt if the original window still has time remaining.
+      }
+      if (!readNow().isBefore(exactRetryDeadline)) {
+        return SendContactRequestResult.sendFailed;
+      }
+    }
+    if (probe == null) {
+      result = await sendAttempt(
+        requireExactCallWakeReceipt: requireExactCallWakeReceipt,
+      );
+    } else {
+      try {
+        result = await sendAttempt(
+          requireExactCallWakeReceipt: requireExactCallWakeReceipt,
+        ).timeout(exactRetryDeadline!.difference(readNow()));
+      } on TimeoutException {
+        return SendContactRequestResult.sendFailed;
+      }
+      if (!readNow().isBefore(exactRetryDeadline)) {
+        return SendContactRequestResult.sendFailed;
+      }
+    }
     attempts++;
     if (result == SendContactRequestResult.success) return result;
 
     // Retain the historical interval after every failed ordinary attempt;
     // exact mode uses that same cadence while it awaits reciprocal discovery.
-    await wait(retryDelay);
+    final remaining = exactRetryDeadline?.difference(readNow());
+    await wait(
+      probe != null && remaining! < retryDelay ? remaining : retryDelay,
+    );
     if (!requireExactCallWakeReceipt && attempts >= ordinaryMaxAttempts) {
       return result;
     }

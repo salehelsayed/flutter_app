@@ -6242,6 +6242,54 @@ abstract class AppLocalizations {
   /// **'Call ended'**
   String get call_ended;
 
+  /// No description provided for @call_status_connecting.
+  ///
+  /// In en, this message translates to:
+  /// **'Connecting'**
+  String get call_status_connecting;
+
+  /// No description provided for @call_status_ringing.
+  ///
+  /// In en, this message translates to:
+  /// **'Ringing'**
+  String get call_status_ringing;
+
+  /// No description provided for @call_status_connected.
+  ///
+  /// In en, this message translates to:
+  /// **'Connected'**
+  String get call_status_connected;
+
+  /// No description provided for @call_status_reconnecting.
+  ///
+  /// In en, this message translates to:
+  /// **'Reconnecting'**
+  String get call_status_reconnecting;
+
+  /// No description provided for @call_status_ending.
+  ///
+  /// In en, this message translates to:
+  /// **'Ending'**
+  String get call_status_ending;
+
+  /// No description provided for @call_status_incoming.
+  ///
+  /// In en, this message translates to:
+  /// **'Incoming call'**
+  String get call_status_incoming;
+
+  /// No description provided for @call_status_checking_incoming.
+  ///
+  /// In en, this message translates to:
+  /// **'Checking incoming call'**
+  String get call_status_checking_incoming;
+
+  /// No description provided for @call_duration.
+  ///
+  /// In en, this message translates to:
+  /// **'Call duration {duration}'**
+  String call_duration(String duration);
+
   /// No description provided for @call_dismiss_status.
   ///
   /// In en, this message translates to:

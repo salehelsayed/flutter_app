@@ -625,42 +625,42 @@ void main() {
       expect(reduction.snapshot.state, CallState.inviting);
     });
 
-    test('a dispatched wake alerts the caller like a remote ring', () {
-      // A headless Android callee rings from the relay's wake but signals
-      // nothing until it is answered; the relay's "wake dispatched" receipt is
-      // the caller's only sign that the far end is being alerted.
-      const reducer = CallReducer();
-      final inviting = _reduce(<CallEvent>[
-        _event(CallEventType.place),
-        _event(CallEventType.outgoingInviteReady),
-      ]);
+    test(
+      'a dispatched wake confirms custody without inventing remote alerting',
+      () {
+        const reducer = CallReducer();
+        final inviting = _reduce(<CallEvent>[
+          _event(CallEventType.place),
+          _event(CallEventType.outgoingInviteReady),
+        ]);
 
-      final alerted = reducer.reduce(
-        inviting,
-        _event(CallEventType.wakeRequested),
-      );
-      expect(alerted.decision, CallEventDecision.applied);
-      expect(alerted.snapshot.state, CallState.ringing);
-      expect(alerted.snapshot.ringingAt, _t0);
-      expect(
-        alerted.snapshot.mailboxCustodyConfirmed,
-        isTrue,
-        reason: 'a dispatched wake implies the invite is in the mailbox',
-      );
+        final alerted = reducer.reduce(
+          inviting,
+          _event(CallEventType.wakeRequested),
+        );
+        expect(alerted.decision, CallEventDecision.applied);
+        expect(alerted.snapshot.state, CallState.inviting);
+        expect(alerted.snapshot.ringingAt, isNull);
+        expect(
+          alerted.snapshot.mailboxCustodyConfirmed,
+          isTrue,
+          reason: 'a dispatched wake implies the invite is in the mailbox',
+        );
 
-      final rung = reducer.reduce(
-        alerted.snapshot,
-        _event(CallEventType.remoteRinging),
-      );
-      expect(rung.decision, CallEventDecision.ignored);
-      expect(rung.snapshot.state, CallState.ringing);
+        final rung = reducer.reduce(
+          alerted.snapshot,
+          _event(CallEventType.remoteRinging),
+        );
+        expect(rung.decision, CallEventDecision.applied);
+        expect(rung.snapshot.state, CallState.ringing);
 
-      final accepted = reducer.reduce(
-        alerted.snapshot,
-        _event(CallEventType.remoteAccept),
-      );
-      expect(accepted.snapshot.state, CallState.accepted);
-    });
+        final accepted = reducer.reduce(
+          alerted.snapshot,
+          _event(CallEventType.remoteAccept),
+        );
+        expect(accepted.snapshot.state, CallState.accepted);
+      },
+    );
 
     test('a wake receipt outside inviting changes no state', () {
       const reducer = CallReducer();

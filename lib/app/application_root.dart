@@ -836,9 +836,6 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      widget.onForegroundCallPresentationReady?.call();
-    });
     assert(
       (widget.appVisibilityAuthority == null) ==
           (widget.appVisibilityRouteRegistry == null),
@@ -3377,6 +3374,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
                 );
           final callSurface = ForegroundCallOverlay(
             capability: widget.foregroundCallCapability,
+            onAttached: widget.onForegroundCallPresentationReady,
             loadContactDisplayName: (peerId) async =>
                 (await widget.contactRepository.getContact(peerId))?.username,
             child: appChild,

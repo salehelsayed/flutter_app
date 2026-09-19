@@ -203,8 +203,10 @@ const _privacySha256 =
 // of local call history — no owner moves and no core shim appears.
 // Account erasure forwards database cleanup through the existing startup
 // boundary; no lifecycle owner or dependency moves.
+// Incoming calls signal readiness from the attached overlay subscription
+// instead of a rendered frame; the callback keeps its application owner.
 const _applicationRootNormalizedSha256 =
-    'a338ab1811556c86ada4dbafd400d1e179ab2b1f23cca459add2024f27694168';
+    '6c527c63936f9051ed27b28326f81b4e1832e73d91fdc151712736fb0f3777a8';
 // Plan 358 forwards the strict local-path commit's `nowMs` sample through the
 // same already-wired delegate and relocates nothing. Plan 360 additionally
 // constructs the role-aware deferred-runtime-start owner over the SAME
@@ -320,10 +322,24 @@ const _productionBootstrapNormalizedSha256 =
     // Quiet recovery wires exact incoming-row annotation into the existing
     // repository and labels the existing media-sibling drain as automatic.
     // Both retain their existing lifecycle and database owners.
-    'ddd0a5e2a19e49982e276b422da17bdb614ac9f17a54a2bda63649f07a6bdefd';
+    // Android warm FCM adds only the call-wake channel import and installation
+    // at the existing call composition. Removing those exact additions restores
+    // the reviewed predecessor hashes, including the notification-free remainder;
+    // no lifecycle owner, database callback, or relocation URI changes.
+    // Audio-call beta repair makes Firebase readiness an explicit push retry
+    // prerequisite at this existing app-owned composition. The lazy stream,
+    // database callbacks, lifecycle owners and relocation URIs stay here.
+    // Foreground startup now owns bounded lease contention and a recoverable
+    // pause before its existing database open; early shutdown cancels that
+    // same owner. App composition and all adapter/lifecycle layers stay here.
+    // Protected group replay now reads the existing active node transport;
+    // the app-owned replay handler and account/lifecycle owners remain here.
+    '4995bb2d4f8e34f83e3781b09e3d8d23357d3f6481adfdcabb7243f2b0acade9';
 
+// The P269 strict-custody proof forwards two optional debug download hooks
+// at the existing media owner; no application or notification owner moves.
 const _productionBootstrapWithoutHistoricalNotificationSha256 =
-    'c928ed7ac6bfd48297095821355c9b5b6a7a32cfad1713689e416d2a62724e6f';
+    'e258179590eaf99b1f9f02921ee8dc5ad034733e7dbdc61585e2f4fa9568aca5';
 
 const _reviewedResumeExceptionTargets = <String>{
   'lib/features/account_migration/application/'
@@ -355,6 +371,7 @@ const _reviewedResumeExceptionTargets = <String>{
 
 const _resumeDirectiveFiles = <String>{
   'integration_test/benchmark_background_resume_harness.dart',
+  'integration_test/relay_recovery_diagnostics_harness.dart',
   'integration_test/routing_smoke_harness.dart',
   'integration_test/soak_e2e_test.dart',
   'integration_test/transport_e2e_test.dart',

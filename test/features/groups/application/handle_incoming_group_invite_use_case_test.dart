@@ -484,6 +484,176 @@ void main() {
     contactRepo.seed([_aliceContact()]);
   });
 
+  group('signed invite membership version', () {
+    final at = DateTime.utc(2026, 3, 2, 12, 30, 45);
+    Map<String, dynamic> configWith(Object? version) => {
+      ..._testGroupConfig,
+      groupConfigMembershipVersionField: version,
+    };
+
+    test(
+      'preserves complete version through the existing signed parser',
+      () async {
+        final config = configWith({
+          'eventAt': at.toIso8601String(),
+          'eventId': 'committed-member-event',
+        });
+        final original = _makePayload(
+          groupConfig: config,
+          membershipWatermark: at.toIso8601String(),
+        );
+        final parsed = GroupInvitePayload.fromInnerJson(
+          original.toInnerJson(),
+        )!;
+        expect(
+          parsed.canonicalInviteSignedPayload(),
+          original.inviteSignature!.signedPayload,
+        );
+        expect(
+          parsed.groupConfig[groupConfigMembershipVersionField],
+          config[groupConfigMembershipVersionField],
+        );
+        final (result, _) = await handleIncomingGroupInvite(
+          message: _makeV1Message(payload: parsed),
+          groupRepo: groupRepo,
+          contactRepo: contactRepo,
+          bridge: bridge,
+          ownPeerId: '12D3KooWBob',
+        );
+        expect(result, HandleGroupInviteResult.success);
+        final group = (await groupRepo.getGroup('grp-abc123'))!;
+        expect(group.lastMembershipEventAt, at);
+        expect(group.lastMembershipEventId, 'committed-member-event');
+      },
+    );
+
+    test(
+      'legacy accepted rows are not silently upgraded by a signed resend',
+      () async {
+        final initial = _makePayload(membershipWatermark: at.toIso8601String());
+        Future<HandleGroupInviteResult> accept(
+          GroupInvitePayload payload,
+        ) async => (await handleIncomingGroupInvite(
+          message: _makeV1Message(payload: payload),
+          groupRepo: groupRepo,
+          contactRepo: contactRepo,
+          bridge: bridge,
+          ownPeerId: '12D3KooWBob',
+        )).$1;
+        expect(await accept(initial), HandleGroupInviteResult.success);
+        final before = (await groupRepo.getGroup('grp-abc123'))!;
+        expect(before.lastMembershipEventAt, at);
+        expect(before.lastMembershipEventId, isNull);
+        final resent = _makePayload(
+          groupConfig: configWith({
+            'eventAt': at.toIso8601String(),
+            'eventId': 'committed-member-event',
+          }),
+          membershipWatermark: at.toIso8601String(),
+        );
+        expect(await accept(resent), HandleGroupInviteResult.duplicateGroup);
+        expect(
+          (await groupRepo.getGroup('grp-abc123'))!.toMap(),
+          before.toMap(),
+        );
+      },
+    );
+
+    test('exports only complete committed versions without an override', () {
+      final group = GroupModel(
+        id: 'grp-abc123',
+        name: 'Book Club',
+        type: GroupType.chat,
+        topicName: '/mknoon/group/grp-abc123',
+        createdAt: at,
+        createdBy: '12D3KooWAlice',
+        myRole: GroupRole.member,
+        lastMembershipEventAt: at,
+        lastMembershipEventId: 'committed-member-event',
+      );
+      final config = buildGroupConfigPayload(group, const []);
+      expect(config[groupConfigMembershipVersionField], {
+        'eventAt': at.toIso8601String(),
+        'eventId': 'committed-member-event',
+      });
+      final pendingAt = at.add(const Duration(seconds: 1));
+      expect(
+        buildGroupConfigPayload(
+          group.copyWith(lastMembershipEventAt: pendingAt),
+          const [],
+          configVersionOverride: pendingAt,
+        ),
+        isNot(contains(groupConfigMembershipVersionField)),
+        reason: 'pending time cannot be combined with a previous committed ID',
+      );
+      expect(
+        buildGroupConfigPayload(group, const [], configVersionOverride: at),
+        isNot(contains(groupConfigMembershipVersionField)),
+      );
+      expect(
+        buildGroupConfigPayload(
+          group.copyWith(lastMembershipEventId: ''),
+          const [],
+        ),
+        isNot(contains(groupConfigMembershipVersionField)),
+      );
+    });
+
+    test('rejects unsigned version tampering in the existing parser', () {
+      final payload = _makePayload(
+        groupConfig: configWith({
+          'eventAt': at.toIso8601String(),
+          'eventId': 'committed-member-event',
+        }),
+        membershipWatermark: at.toIso8601String(),
+      );
+      final raw = jsonDecode(payload.toInnerJson()) as Map<String, dynamic>;
+      (raw['groupConfig'] as Map)[groupConfigMembershipVersionField] = {
+        'eventAt': at.toIso8601String(),
+        'eventId': 'other-event',
+      };
+      final parsed = GroupInvitePayload.parseInnerJsonDetailed(jsonEncode(raw));
+      expect(parsed.failure, GroupInvitePayloadParseFailure.invalidSignature);
+      expect(parsed.payload, isNull);
+    });
+
+    for (final entry in <String, Object?>{
+      'mismatched timestamp': {
+        'eventAt': at.add(const Duration(seconds: 1)).toIso8601String(),
+        'eventId': 'event',
+      },
+      'blank ID': {'eventAt': at.toIso8601String(), 'eventId': ''},
+      'noncanonical ID': {
+        'eventAt': at.toIso8601String(),
+        'eventId': ' event ',
+      },
+      'missing ID': {'eventAt': at.toIso8601String()},
+      'wrong ID type': {'eventAt': at.toIso8601String(), 'eventId': 7},
+      'null pair': null,
+    }.entries) {
+      test(
+        'rejects authenticated ${entry.key} before materialization',
+        () async {
+          final payload = _makePayload(
+            groupConfig: configWith(entry.value),
+            membershipWatermark: at.toIso8601String(),
+          );
+          final (result, _) = await handleIncomingGroupInvite(
+            message: _makeV1Message(payload: payload),
+            groupRepo: groupRepo,
+            contactRepo: contactRepo,
+            bridge: bridge,
+            ownPeerId: '12D3KooWBob',
+          );
+          expect(result, HandleGroupInviteResult.invalidPayload);
+          expect(await groupRepo.getGroup('grp-abc123'), isNull);
+          expect(await groupRepo.getLatestKey('grp-abc123'), isNull);
+          expect(bridge.commandLog, isNot(contains('group:join')));
+        },
+      );
+    }
+  });
+
   group('handleIncomingGroupInvite', () {
     test(
       // TC-321-09 (plan 321) — drains fire once per regained-key member and
@@ -494,11 +664,14 @@ void main() {
       () async {
         final drainedPeers = <String>[];
         final keyPersistedAtDrainTime = <bool>[];
-        setDeferredDistributionDrainSink((
-            {required String groupId, required String peerId}) async {
+        setDeferredDistributionDrainSink(({
+          required String groupId,
+          required String peerId,
+        }) async {
           drainedPeers.add(peerId);
-          keyPersistedAtDrainTime
-              .add((await groupRepo.getLatestKey(groupId)) != null);
+          keyPersistedAtDrainTime.add(
+            (await groupRepo.getLatestKey(groupId)) != null,
+          );
         });
         addTearDown(() => setDeferredDistributionDrainSink(null));
 
@@ -514,14 +687,16 @@ void main() {
         expect(
           drainedPeers.toSet(),
           {'12D3KooWAlice', '12D3KooWBob'},
-          reason: 'every keyed roster member drains exactly once on a fresh '
+          reason:
+              'every keyed roster member drains exactly once on a fresh '
               'join (existing == null passes the regained-key gate)',
         );
         expect(drainedPeers.length, 2);
         expect(
           keyPersistedAtDrainTime.every((persisted) => persisted),
           isTrue,
-          reason: 'TC-321-09: drains must run AFTER the join is fully '
+          reason:
+              'TC-321-09: drains must run AFTER the join is fully '
               'persisted (HEAD drains inside the roster loop, before saveKey)',
         );
       },
@@ -874,6 +1049,13 @@ void main() {
         final issuedAt = DateTime.utc(2026, 7, 20, 12);
         final payload = _makePayload(
           groupId: 'grp-atomic-reentry',
+          groupConfig: {
+            ..._testGroupConfig,
+            groupConfigMembershipVersionField: {
+              'eventAt': removedAt.toIso8601String(),
+              'eventId': 'remove-atomic',
+            },
+          },
           membershipWatermark: removedAt.toIso8601String(),
           membershipProofIssuedAt: issuedAt,
         );

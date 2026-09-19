@@ -18,6 +18,7 @@ import 'package:flutter_app/features/groups/application/accept_pending_group_inv
 import 'package:flutter_app/features/groups/application/add_group_member_use_case.dart';
 import 'package:flutter_app/features/groups/application/drain_group_offline_inbox_use_case.dart';
 import 'package:flutter_app/features/groups/application/group_config_payload.dart';
+import 'package:flutter_app/features/groups/application/group_invite_auth.dart';
 import 'package:flutter_app/features/groups/application/group_key_update_signature.dart';
 import 'package:flutter_app/features/groups/application/group_message_listener.dart';
 import 'package:flutter_app/features/groups/application/record_group_invite_delivery_attempts.dart';
@@ -3054,11 +3055,10 @@ void main() {
               (charlieGroup == null ||
                   (charlieSelf == null && charlieKey == null));
         });
-        expect(
-          network.getSubscribers(groupId).toSet(),
-          {alice.peerId, bob.peerId},
-          reason: 'cycle $cycle removal subscribers',
-        );
+        expect(network.getSubscribers(groupId).toSet(), {
+          alice.peerId,
+          bob.peerId,
+        }, reason: 'cycle $cycle removal subscribers');
 
         final (removedResult, removedMessage) = await alice
             .sendGroupMessageViaBridge(
@@ -3073,11 +3073,9 @@ void main() {
         expect(removedMessage.inboxStored, isTrue);
         expect(removedMessage.inboxRetryPayload, isNull);
         expect(removedMessage.keyGeneration, keyEpoch);
-        expect(
-          recipientPeerIdsForMessage(alice, removedMessageId).toSet(),
-          {bob.peerId},
-          reason: '$removedMessageId durable recipients',
-        );
+        expect(recipientPeerIdsForMessage(alice, removedMessageId).toSet(), {
+          bob.peerId,
+        }, reason: '$removedMessageId durable recipients');
         await waitUntil(() async {
           final bobMessages = await bob.loadGroupMessages(groupId);
           return bobMessages.any((message) => message.id == removedMessageId);
@@ -3121,11 +3119,11 @@ void main() {
               bobCharlie != null &&
               charlieGroup != null;
         });
-        expect(
-          network.getSubscribers(groupId).toSet(),
-          {alice.peerId, bob.peerId, charlie.peerId},
-          reason: 'cycle $cycle re-add subscribers',
-        );
+        expect(network.getSubscribers(groupId).toSet(), {
+          alice.peerId,
+          bob.peerId,
+          charlie.peerId,
+        }, reason: 'cycle $cycle re-add subscribers');
 
         final (readdResult, readdMessage) = await bob.sendGroupMessageViaBridge(
           groupId: groupId,
@@ -3139,11 +3137,10 @@ void main() {
         expect(readdMessage.inboxStored, isTrue);
         expect(readdMessage.inboxRetryPayload, isNull);
         expect(readdMessage.keyGeneration, keyEpoch);
-        expect(
-          recipientPeerIdsForMessage(bob, readdMessageId).toSet(),
-          {alice.peerId, charlie.peerId},
-          reason: '$readdMessageId durable recipients',
-        );
+        expect(recipientPeerIdsForMessage(bob, readdMessageId).toSet(), {
+          alice.peerId,
+          charlie.peerId,
+        }, reason: '$readdMessageId durable recipients');
         await waitUntil(() async {
           final aliceMessages = await alice.loadGroupMessages(groupId);
           final charlieMessages = await charlie.loadGroupMessages(groupId);
@@ -3410,11 +3407,9 @@ void main() {
         expect(removedResult.name, 'success');
         expect(removedMessage, isNotNull);
         expect(removedMessage!.status, 'sent');
-        expect(
-          recipientPeerIdsForMessage(alice, removedMessageId).toSet(),
-          {bob.peerId},
-          reason: 'removed-window durable recipients',
-        );
+        expect(recipientPeerIdsForMessage(alice, removedMessageId).toSet(), {
+          bob.peerId,
+        }, reason: 'removed-window durable recipients');
         await waitUntil(() async {
           final bobMessages = await bob.loadGroupMessages(groupId);
           return bobMessages.any((message) => message.id == removedMessageId);
@@ -3524,11 +3519,10 @@ void main() {
           isEmpty,
           reason: 'Charlie must not render removed-window traffic after re-add',
         );
-        expect(
-          charlieAfterDrain.map((message) => message.id).toSet(),
-          {alicePostReaddId, bobPostReaddId},
-          reason: 'Charlie should catch up exactly post-readd messages',
-        );
+        expect(charlieAfterDrain.map((message) => message.id).toSet(), {
+          alicePostReaddId,
+          bobPostReaddId,
+        }, reason: 'Charlie should catch up exactly post-readd messages');
 
         charlie.subscribeToGroup(groupId);
         final (charlieResult, charlieMessage) = await charlie
@@ -3799,11 +3793,9 @@ void main() {
         expect(removedResult.name, 'success');
         expect(removedMessage, isNotNull);
         expect(removedMessage!.keyGeneration, removedKeyEpoch);
-        expect(
-          recipientPeerIdsForMessage(alice, removedMessageId).toSet(),
-          {bob.peerId},
-          reason: 'removed-window durable recipients exclude Charlie',
-        );
+        expect(recipientPeerIdsForMessage(alice, removedMessageId).toSet(), {
+          bob.peerId,
+        }, reason: 'removed-window durable recipients exclude Charlie');
         await waitUntil(() async {
           final bobMessages = await bob.loadGroupMessages(groupId);
           return bobMessages.any((message) => message.id == removedMessageId);
@@ -3860,11 +3852,10 @@ void main() {
           readdKeyEpoch,
           reason: 'Charlie persisted the re-add key before restart',
         );
-        expect(
-          network.getSubscribers(groupId).toSet(),
-          {alice.peerId, bob.peerId},
-          reason: 'Charlie has persisted invite/key but has not joined topic',
-        );
+        expect(network.getSubscribers(groupId).toSet(), {
+          alice.peerId,
+          bob.peerId,
+        }, reason: 'Charlie has persisted invite/key but has not joined topic');
 
         charlie = charlie.restartWithPersistedState();
         charlie.start();
@@ -3874,11 +3865,10 @@ void main() {
           readdKeyEpoch,
           reason: 'Charlie recovered persisted re-add key after restart',
         );
-        expect(
-          network.getSubscribers(groupId).toSet(),
-          {alice.peerId, bob.peerId},
-          reason: 'restart occurs before Charlie topic join',
-        );
+        expect(network.getSubscribers(groupId).toSet(), {
+          alice.peerId,
+          bob.peerId,
+        }, reason: 'restart occurs before Charlie topic join');
 
         final (alicePostResult, alicePostMessage) = await alice
             .sendGroupMessageViaBridge(
@@ -4578,11 +4568,9 @@ void main() {
             );
         expect(removedResult.name, anyOf('success', 'successNoPeers'));
         expect(removedMessage, isNotNull);
-        expect(
-          recipientPeerIdsForMessage(alice, removedMessageId).toSet(),
-          {bob.peerId},
-          reason: 'removed-window durable recipients',
-        );
+        expect(recipientPeerIdsForMessage(alice, removedMessageId).toSet(), {
+          bob.peerId,
+        }, reason: 'removed-window durable recipients');
         expect(
           (await loadGe007Messages(
             bob,
@@ -4693,11 +4681,11 @@ void main() {
         );
 
         final bobAfterDrain = await loadGe007Messages(bob);
-        expect(
-          bobAfterDrain.map((message) => message.id).toSet(),
-          {removedMessageId, alicePostReaddId, charliePostReaddId},
-          reason: 'Bob should catch up every entitled offline message',
-        );
+        expect(bobAfterDrain.map((message) => message.id).toSet(), {
+          removedMessageId,
+          alicePostReaddId,
+          charliePostReaddId,
+        }, reason: 'Bob should catch up every entitled offline message');
 
         bob.subscribeToGroup(groupId);
         final (bobResult, bobMessage) = await bob.sendGroupMessageViaBridge(
@@ -6352,11 +6340,10 @@ void main() {
         final bobMember = members.singleWhere(
           (member) => member.peerId == bobPrimary.peerId,
         );
-        expect(
-          bobMember.devices.map((device) => device.deviceId).toSet(),
-          {bobPrimary.deviceId, bobSibling.deviceId},
-          reason: 'Bob must be one logical member with both active devices',
-        );
+        expect(bobMember.devices.map((device) => device.deviceId).toSet(), {
+          bobPrimary.deviceId,
+          bobSibling.deviceId,
+        }, reason: 'Bob must be one logical member with both active devices');
 
         Future<void> saveParticipantState(
           GroupTestUser user,
@@ -6489,11 +6476,9 @@ void main() {
         expect(network.publishCallCount, 3);
         expect(network.totalDeliveries, 6);
 
-        expect(
-          durableRecipientsFor(alice, aliceMessageId),
-          [bobPrimary.peerId],
-          reason: 'Durable custody should target logical Bob once',
-        );
+        expect(durableRecipientsFor(alice, aliceMessageId), [
+          bobPrimary.peerId,
+        ], reason: 'Durable custody should target logical Bob once');
         expect(durableRecipientsFor(bobPrimary, bobPrimaryMessageId), [
           alice.peerId,
         ]);
@@ -8772,14 +8757,23 @@ void main() {
             ),
           ]);
         final acceptedGroup = (await alice.groupRepo.getGroup(groupId))!;
-        final acceptedMembers = await alice.groupRepo.getMembers(groupId);
-        final acceptedConfig = buildGroupConfigPayload(
-          acceptedGroup,
-          acceptedMembers,
-        );
-        final stateHash = buildGroupConfigStateHash(
-          groupId: groupId,
-          groupConfig: acceptedConfig,
+        final acceptedFreshness =
+            await loadCurrentInviteMembershipFreshnessState(
+              groupRepo: alice.groupRepo,
+              groupId: groupId,
+              inviterPeerId: alice.peerId,
+              trustedInviterPublicKey: alice.publicKey,
+            );
+        expect(acceptedFreshness, isNotNull);
+        final acceptedConfig = acceptedFreshness!.groupConfig;
+        final stateHash = acceptedFreshness.groupConfigStateHash;
+        expect(acceptedConfig[groupConfigMembershipVersionField], {
+          'eventAt': acceptedFreshness.membershipWatermark,
+          'eventId': acceptedGroup.lastMembershipEventId,
+        });
+        expect(
+          acceptedFreshness.membershipWatermark,
+          acceptedGroup.lastMembershipEventAt!.toUtc().toIso8601String(),
         );
         final invitePayload = GroupInvitePayload(
           id: 'ml003-invite',
@@ -8814,7 +8808,7 @@ void main() {
             inviterPublicKey: alice.publicKey,
             keyEpoch: keyEpoch,
             groupConfigStateHash: stateHash,
-            membershipWatermark: stateHash,
+            membershipWatermark: acceptedFreshness.membershipWatermark,
             issuedAt: addDAt,
             expiresAt: addDAt.add(const Duration(days: 1)),
             inviterMemberSnapshot: {
@@ -10366,11 +10360,12 @@ void main() {
 
           for (final user in allUsers) {
             final members = await user.groupRepo.getMembers(groupId);
-            expect(
-              members.map((member) => member.peerId).toSet(),
-              {alice.peerId, bob.peerId, charlie.peerId, dana.peerId},
-              reason: '${user.username} final member set after cycle $cycle',
-            );
+            expect(members.map((member) => member.peerId).toSet(), {
+              alice.peerId,
+              bob.peerId,
+              charlie.peerId,
+              dana.peerId,
+            }, reason: '${user.username} final member set after cycle $cycle');
             final key = await user.groupRepo.getLatestKey(groupId);
             expect(key, isNotNull, reason: user.username);
             expect(key!.keyGeneration, epoch, reason: user.username);
@@ -11273,11 +11268,11 @@ void main() {
                   caseName == 'fifo' || caseName == 'reverse-held';
               for (final user in users) {
                 final members = await user.groupRepo.getMembers(groupId);
-                expect(
-                  members.map((member) => member.peerId).toSet(),
-                  {alice.peerId, bob.peerId, charlie.peerId},
-                  reason: '$caseName ${user.peerId} members',
-                );
+                expect(members.map((member) => member.peerId).toSet(), {
+                  alice.peerId,
+                  bob.peerId,
+                  charlie.peerId,
+                }, reason: '$caseName ${user.peerId} members');
                 final charlieMember = await user.groupRepo.getMember(
                   groupId,
                   charlie.peerId,
@@ -13052,17 +13047,13 @@ void main() {
           final messages = (await user.loadGroupMessages(
             groupId,
           )).where((message) => !message.id.startsWith('sys-')).toList();
-          expect(
-            messages.map((message) => message.id).toList(),
-            [
-              'ms004-a',
-              'ms004-b',
-              'ms004-c',
-              'ms004-0-reply-b-to-a',
-              'ms004-0-reply-c-to-b',
-            ],
-            reason: '${user.username} should render the same stable order',
-          );
+          expect(messages.map((message) => message.id).toList(), [
+            'ms004-a',
+            'ms004-b',
+            'ms004-c',
+            'ms004-0-reply-b-to-a',
+            'ms004-0-reply-c-to-b',
+          ], reason: '${user.username} should render the same stable order');
           expect(
             messages
                 .singleWhere((message) => message.id == 'ms004-0-reply-b-to-a')
@@ -14050,11 +14041,11 @@ void main() {
               if (message.id.startsWith('ms018-')) message.id: message,
           };
 
-          expect(
-            byId.keys.toSet(),
-            {'ms018-before', 'ms018-during', 'ms018-after'},
-            reason: '${user.username} should have exactly the MS018 messages',
-          );
+          expect(byId.keys.toSet(), {
+            'ms018-before',
+            'ms018-during',
+            'ms018-after',
+          }, reason: '${user.username} should have exactly the MS018 messages');
           expect(byId['ms018-before']!.keyGeneration, 1);
           expect(byId['ms018-during']!.keyGeneration, 1);
           expect(byId['ms018-after']!.keyGeneration, 2);

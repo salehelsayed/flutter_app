@@ -3716,7 +3716,39 @@ extension GroupMessageListenerProtectedContentAdapter on GroupMessageListener {
   }
 
   void publishProtectedGroupMessage(GroupMessage message) {
+    if (!_canEmitToStreams) return;
     _emitGroupMessage(message);
+    final mediaRepo = _mediaAttachmentRepo;
+    if (mediaRepo == null ||
+        !_mediaReceiveCoordinator._hasAutomaticMediaRecovery ||
+        !message.isIncoming ||
+        !message.privateMediaPolicy.isOrdinary) {
+      return;
+    }
+
+    // The protected commit publishes only newly applied content. Its parent
+    // projection does not carry media, so recover the exact durable group rows
+    // without making publication wait for a network transfer or host barrier.
+    _trackInFlight(() async {
+      try {
+        final attachments = await mediaRepo.getAttachmentsForMessage(
+          message.id,
+          owner: MediaOwnerLane.group,
+        );
+        if (attachments.isEmpty) return;
+        await _mediaReceiveCoordinator._recoverAutomaticMedia(
+          message,
+          attachmentIds: attachments.map((attachment) => attachment.id),
+        );
+      } catch (_) {
+        // Durable pending rows remain eligible for the normal recovery sweep.
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'GROUP_PROTECTED_MEDIA_RECOVERY_DEFERRED',
+          details: const {},
+        );
+      }
+    }());
   }
 
   void publishProtectedGroupReactionChange(ReactionChange change) {

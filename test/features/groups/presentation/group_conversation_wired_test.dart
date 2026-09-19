@@ -14700,7 +14700,11 @@ void main() {
         await pumpFrames(tester, count: 20);
 
         final sendFuture = await startScreenSend(tester, 'Cancel upload');
-        await pumpUntil(tester, () => uploadStarted.length == 1, maxPumps: 120);
+        await pumpUntilAsyncWorkSettles(
+          tester,
+          () => uploadStarted.length == 1,
+          maxPumps: 120,
+        );
         await pumpFrames(tester, count: 5);
 
         final cancellingScreen = tester.widget<GroupConversationScreen>(

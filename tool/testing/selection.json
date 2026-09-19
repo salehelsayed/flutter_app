@@ -41,6 +41,7 @@
       "kind": "flutter",
       "paths": [
         "test/core/bootstrap/application_bootstrap_test.dart",
+        "test/core/bootstrap/foreground_canonical_runtime_startup_test.dart",
         "test/unit/dtr18_layering_relocation_contract_test.dart"
       ],
       "boundary": "Bootstrap ordering, failure propagation and reviewed app-layer ownership",
@@ -349,7 +350,8 @@
         "test/features/settings/presentation/screens/settings_sub_sheets_test.dart",
         "test/features/call/application/voice_call_release_policy_test.dart",
         "test/features/call/infrastructure/flutter_webrtc_build_contract_test.dart",
-        "test/tool/sims/sims_manifest_test.dart"
+        "test/tool/sims/sims_manifest_test.dart",
+        "test/features/call/infrastructure/android_call_wake_channel_test.dart"
       ],
       "boundary": "Direct/mailbox old-generation hangup convergence/cleanup, negotiation material generation/privacy, authenticated remote ICE through the real executor and WebRTC wrapper batch limit, restart filtering and interrupted drain cleanup; native snapshot exception normalization through the real engine/executor/audio owner, bounded observation recovery, exact-call fatal dispatch, stale completion and cleanup; sustained native/engine event delivery, bounded history and coalescing, terminal failure/disconnect priority, provisional initial ICE checklist recovery within the unchanged deadline, reentrant callbacks and terminal fencing; policy-aware TURN retrieval with transient-only direct attempts, strict credential/authentication rejection, exact-call late-result fences, frozen restart policy and canonical setup/reconnect deadlines; mixed local/remote ICE policies in both directions, local SDP/candidate egress including related addresses, and selected local candidate classification; production per-call policy captured at admission for incoming/outgoing/native paths, secure privacy preference persistence and fail-closed loading, feature availability versus rollout restriction, native all/relay configuration, and settings persistence/error visibility; confirmed native ICE checklist classification during an existing reconnect, disconnect dispatch handoff, immutable pending terminal priority, unchanged 15-second recovery expiry and subsequent-call cleanup; selected-pair family/relay parsing preserves ambiguity, allocation versus TURN-client legs, stale observation generations and authoritative provisional/terminal failure diagnostics",
       "limitations": "Fake crypto/transports/native lifecycle; no microphone/RTP/audible audio evidence",
@@ -392,7 +394,13 @@
         "lib/features/call/diagnostics/",
         "lib/features/settings/presentation/widgets/call_diagnostics_settings_section.dart"
       ],
-      "inspected": true
+      "inspected": true,
+      "references": [
+        "test/support/diagnostics_backlog_fixture.dart",
+        "integration_test/diagnostics_reconnect_isolation_harness.dart",
+        "integration_test/relay_recovery_diagnostics_harness.dart",
+        "integration_test/scripts/run_relay_diagnostics_virtual.py"
+      ]
     },
     "affected-conversation": {
       "kind": "flutter",
@@ -611,7 +619,8 @@
       "paths": [
         "scripts/test/mknoon_checks_test.py",
         "scripts/test/testing_inventory_test.py",
-        "scripts/test/mknoon_ci_checks_test.py"
+        "scripts/test/mknoon_ci_checks_test.py",
+        "scripts/test/device_campaign_preflight_test.py"
       ],
       "boundary": "Selector, inventory, runner safety and candidate-bound CI acceptance contracts",
       "timeout_seconds": 120,
@@ -621,7 +630,8 @@
       ],
       "investigate": [
         "scripts/mknoon_checks.py",
-        "scripts/testing_inventory.py"
+        "scripts/testing_inventory.py",
+        "scripts/device_campaign_preflight.py"
       ],
       "runtime_basis": {
         "kind": "measured",
@@ -718,7 +728,11 @@
       "investigate": [
         "p2p"
       ],
-      "limitations": "Source/debug/profile campaign; does not attest signed distribution artifact. Existing SIMS owns service preflight, build identity, assertions and diagnostics."
+      "limitations": "Source/debug/profile campaign; does not attest signed distribution artifact. Existing SIMS owns service preflight, build identity, assertions and diagnostics.",
+      "disposable_android_package": "com.mknoon.sims.connectivity",
+      "ui_driver": "existing_campaign",
+      "ui_driver_reason": "Existing campaign proves network-triggered drain and rewarm without resume, using typed runtime events; use Appium MCP for UI-only reproduction.",
+      "host_preflight": "one-to-one-runner"
     },
     "device-media": {
       "kind": "sims",
@@ -736,12 +750,18 @@
         "android_emulator"
       ],
       "references": [
-        "tool/sims/critical_features.json"
+        "tool/sims/critical_features.json",
+        "integration_test/scripts/run_direct_media_blob_custody_sims.dart"
       ],
       "investigate": [
         "conversation"
       ],
-      "limitations": "Source/debug/profile campaign; does not attest signed distribution artifact. Existing SIMS owns service preflight, build identity, assertions and diagnostics."
+      "limitations": "Source/debug/profile campaign; does not attest signed distribution artifact. Existing SIMS owns service preflight, build identity, assertions and diagnostics.",
+      "adapter": "integration_test/scripts/run_direct_media_blob_custody_sims.dart",
+      "disposable_android_package": "com.mknoon.sims.directmedia",
+      "ui_driver": "existing_campaign",
+      "ui_driver_reason": "Existing campaign proves authenticated blob custody and restart recovery beyond UI state; use Appium MCP for UI-only reproduction.",
+      "host_preflight": "one-to-one-runner"
     },
     "device-group-media": {
       "kind": "sims",
@@ -764,7 +784,11 @@
       "investigate": [
         "groups"
       ],
-      "limitations": "Source/debug/profile campaign; does not attest signed distribution artifact. Existing SIMS owns service preflight, build identity, assertions and diagnostics."
+      "limitations": "Source/debug/profile campaign; does not attest signed distribution artifact. Existing SIMS owns service preflight, build identity, assertions and diagnostics.",
+      "disposable_android_package": "com.mknoon.sims.groupmedia269",
+      "ui_driver": "existing_campaign",
+      "ui_driver_reason": "Existing campaign proves media custody, ACL and process recovery with typed protocol evidence; use Appium MCP for UI-only reproduction.",
+      "host_preflight": "one-to-one-runner"
     },
     "device-notifications-android": {
       "kind": "sims",
@@ -787,7 +811,12 @@
       "investigate": [
         "notifications"
       ],
-      "limitations": "Source/debug/profile campaign; does not attest signed distribution artifact. Existing SIMS owns service preflight, build identity, assertions and diagnostics."
+      "limitations": "Source/debug/profile campaign; does not attest signed distribution artifact. Existing SIMS owns service preflight, build identity, assertions and diagnostics.",
+      "disposable_android_package": "com.mknoon.sims.notifications",
+      "requires_firebase_android_client": true,
+      "ui_driver": "existing_campaign",
+      "ui_driver_reason": "Existing campaign joins authenticated FCM payload custody, offline visibility, duplicate suppression and exact OS restoration; Appium MCP remains preferred for UI-only reproduction.",
+      "host_preflight": "notification-runner"
     },
     "device-notifications-ios": {
       "kind": "sims",
@@ -809,7 +838,10 @@
       "investigate": [
         "notifications"
       ],
-      "limitations": "Source/debug/profile campaign; does not attest signed distribution artifact. Existing SIMS owns service preflight, build identity, assertions and diagnostics."
+      "limitations": "Source/debug/profile campaign; does not attest signed distribution artifact. Existing SIMS owns service preflight, build identity, assertions and diagnostics.",
+      "ui_driver": "existing_campaign",
+      "ui_driver_reason": "Existing campaign joins APNs/NSE custody with signed native evidence and restoration; UI-only reproduction should use Appium MCP.",
+      "host_preflight": "notification-runner"
     },
     "device-group-mute": {
       "kind": "sims",
@@ -832,7 +864,12 @@
       "investigate": [
         "groups"
       ],
-      "limitations": "Source/debug/profile campaign; does not attest signed distribution artifact. Existing SIMS owns service preflight, build identity, assertions and diagnostics."
+      "limitations": "Source/debug/profile campaign; does not attest signed distribution artifact. Existing SIMS owns service preflight, build identity, assertions and diagnostics.",
+      "disposable_android_package": "com.mknoon.sims.notifications",
+      "requires_firebase_android_client": true,
+      "ui_driver": "existing_campaign",
+      "ui_driver_reason": "Existing campaign proves group delivery, unread state and provider suppression with typed backend evidence; use Appium MCP for UI-only reproduction.",
+      "host_preflight": "notification-runner"
     },
     "device-audio": {
       "kind": "sims",
@@ -850,12 +887,18 @@
         "android_emulator"
       ],
       "references": [
-        "tool/sims/critical_features.json"
+        "tool/sims/critical_features.json",
+        "integration_test/scripts/run_production_audio_call_sims.dart"
       ],
       "investigate": [
         "call"
       ],
-      "limitations": "Source/debug/profile campaign; does not attest signed distribution artifact. Existing SIMS owns service preflight, build identity, assertions and diagnostics."
+      "limitations": "Source/debug/profile campaign; does not attest signed distribution artifact. Existing SIMS owns service preflight, build identity, assertions and diagnostics.",
+      "adapter": "integration_test/scripts/run_production_audio_call_sims.dart",
+      "disposable_android_package": "com.mknoon.sims.productionaudio",
+      "ui_driver": "existing_campaign",
+      "ui_driver_reason": "Existing attested campaign proves RTP, TURN, exact native call ownership and cleanup beyond UI observations; use Appium MCP for separate UI reproduction.",
+      "host_preflight": "one-to-one-runner"
     },
     "signed-startup-contacts": {
       "kind": "manual",
@@ -1041,11 +1084,14 @@
       "kind": "flutter",
       "paths": [
         "test/core/debug/group_media_reliability_e2e_test.dart",
+        "test/core/debug/group_media_reliability_sender_test.dart",
+        "test/core/debug/group_media_reliability_strict_barrier_test.dart",
         "test/integration/android_group_media_reliability_controller_test.dart",
         "test/integration/group_media_reliability_runner_contract_test.dart",
         "test/integration/group_media_ios_background_recovery_test.dart",
         "test/features/groups/integration/group_media_reliability_criteria_test.dart",
-        "test/core/debug/debug_e2e_composition_root_test.dart"
+        "test/core/debug/debug_e2e_composition_root_test.dart",
+        "test/tool/sims/sims_manifest_test.dart"
       ],
       "boundary": "Group media proof admission requires the current identity database schema, explicit matching authority mode and production-coherent ordinary-primary setup while preserving cipher, role, media, retry and receipt checks",
       "limitations": "Host database/receipt fixtures protect the proof contract; real group media delivery requires the separate device campaign.",
@@ -1056,6 +1102,7 @@
       ],
       "investigate": [
         "lib/core/debug/group_media_reliability_e2e_main_actions.dart",
+        "lib/core/debug/group_media_reliability_authority_target.dart",
         "lib/core/database/app_database_version.dart",
         "integration_test/scripts/android_group_media_reliability_controller.dart",
         "integration_test/scripts/group_media_reliability_criteria.dart",
@@ -1194,7 +1241,12 @@
         "test/core/services/p2p_service_inbox_ack_ordering_test.dart",
         "test/features/conversation/application/download_media_use_case_test.dart",
         "test/features/groups/application/delete_group_media_for_me_use_case_test.dart",
-        "test/features/share/application/share_batch_delivery_coordinator_test.dart"
+        "test/features/share/application/share_batch_delivery_coordinator_test.dart",
+        "test/core/bootstrap/production_canonical_group_replay_transport_test.dart",
+        "test/core/bootstrap/production_canonical_group_replay_application_test.dart",
+        "test/features/groups/application/group_message_listener_media_background_task_test.dart",
+        "test/features/groups/application/create_group_with_members_use_case_test.dart",
+        "test/features/groups/application/handle_incoming_group_invite_use_case_test.dart"
       ],
       "names": [
         "strict media waveform boundary:",
@@ -1203,11 +1255,16 @@
         "strict DB key scope",
         "TC-364-03a protected content applies in authenticated authority order before exact ACK",
         "incoming group key boundary",
+        "strict group debug transfer boundary",
         "TC-365-03a strict group blob ACK follows durable plaintext",
         "TC-365-03a delete before download",
-        "TC-366-03b admitted strict group forward preserves provenance through dispatch"
+        "TC-366-03b admitted strict group forward preserves provenance through dispatch",
+        "protected group runtime transport",
+        "protected committed media recovery:",
+        "protected initial creation:",
+        "signed invite membership version"
       ],
-      "boundary": "Strict group media canonical descriptors, exact secure-key resolution under media ownership, atomic protected reconciliation, incoming download/deletion before ACK, and forwarded provenance through durable dispatch",
+      "boundary": "Strict group media canonical descriptors, exact secure-key resolution under media ownership, atomic protected reconciliation, incoming download/deletion before ACK, and forwarded provenance through durable dispatch, and postcommit protected media automatic dispatch with tracked background recovery",
       "limitations": "Host use-case checks plus real SQLite/storage fixtures with fake secure keystore; native keystore, real byte custody and process recovery require separate device evidence.",
       "timeout_seconds": 900,
       "estimated_seconds": null,
@@ -1223,7 +1280,8 @@
         "lib/features/groups/application/protected_group_content_reconciliation.dart",
         "lib/app/bootstrap/production_canonical_group_replay_composition.dart",
         "lib/features/conversation/data/repositories/media_attachment_repository_impl.dart",
-        "lib/features/share/application/share_batch_delivery_coordinator.dart"
+        "lib/features/share/application/share_batch_delivery_coordinator.dart",
+        "lib/features/groups/application/group_message_listener.dart"
       ],
       "inspected": true
     },
@@ -1237,7 +1295,8 @@
         "test/core/bootstrap/production_application_bootstrap_phase_contract_test.dart",
         "test/features/conversation/application/download_media_use_case_test.dart",
         "test/features/groups/application/delete_group_media_for_me_use_case_test.dart",
-        "test/features/conversation/domain/repositories/media_attachment_repository_descriptors_test.dart"
+        "test/features/conversation/domain/repositories/media_attachment_repository_descriptors_test.dart",
+        "test/features/groups/application/retry_incomplete_group_downloads_use_case_test.dart"
       ],
       "boundary": "Complete existing media repository, descriptors, download, group local deletion and canonical inbox/recovery suites preserve key ownership, metadata-only previews, durable files, source-pinned ACK and atomic replay",
       "limitations": "Host real SQLite fixtures with fake secure storage and transport; actual native media/keystore and background lifecycle remain device proof boundaries. Bootstrap source contracts supplement behavioral repository/replay tests.",
@@ -1251,7 +1310,9 @@
         "lib/core/database/helpers/group_messages_db_helpers.dart",
         "lib/app/bootstrap/production_canonical_inbox_projection_composition.dart",
         "lib/app/bootstrap/production_canonical_group_replay_composition.dart",
-        "lib/features/conversation/data/repositories/media_attachment_repository_impl.dart"
+        "lib/features/conversation/data/repositories/media_attachment_repository_impl.dart",
+        "lib/core/database/helpers/media_attachments_db_helpers.dart",
+        "lib/features/groups/application/retry_incomplete_group_downloads_use_case.dart"
       ],
       "inspected": true
     },
@@ -1448,6 +1509,89 @@
         "go-mknoon/node/ipv6_happy_eyeballs_test.go",
         "go-mknoon/node/deadline_contract_test.go"
       ]
+    },
+    "android-call-native": {
+      "kind": "command",
+      "command": [
+        "bash",
+        "scripts/test/run_call_native_unit_tests.sh"
+      ],
+      "success_marker": "gradle exit: 0",
+      "timeout_seconds": 1800,
+      "requirements": [
+        "bash",
+        "java"
+      ],
+      "references": [
+        "scripts/test/run_call_native_unit_tests.sh",
+        "android/app/src/testDebug/kotlin/com/mknoon/app/call/DebugCallAudioSignalTest.kt",
+        "android/app/src/test/kotlin/com/mknoon/app/call/MknoonIncomingCallPresentationTest.kt",
+        "android/app/src/test/kotlin/com/mknoon/app/MainActivityOnNewIntentTest.kt",
+        "android/app/src/test/kotlin/com/mknoon/app/AndroidCallWakeBridgeTest.kt"
+      ],
+      "boundary": "Android incoming call lock-screen privacy and lifecycle, native call actions, notification permissions, admission and cleanup, including activity intent routing",
+      "limitations": "Robolectric/JVM tests do not establish actual keyguard visibility, OS full-screen access, push delivery or audible media. Run with the repository Flutter/JDK toolchain.",
+      "inspected": true
+    },
+    "runtime-roots": {
+      "kind": "flutter",
+      "paths": [
+        "test/unit/runtime_root_inventory_test.dart"
+      ],
+      "boundary": "Explicit non-main entrypoint ownership, runtime-root evidence validation and conservative source inventory drift detection",
+      "limitations": "Host source inventory and parser contracts; does not execute device entrypoints or establish production reachability",
+      "timeout_seconds": 900,
+      "estimated_seconds": null,
+      "requirements": [
+        "flutter"
+      ],
+      "investigate": [
+        "tool/runtime_roots/"
+      ],
+      "inspected": true
+    },
+    "debug-call-evidence": {
+      "kind": "flutter",
+      "paths": [
+        "test/debug/debug_call_evidence_observer_test.dart"
+      ],
+      "boundary": "Debug-only read-only exact canonical/native and SQLite history identity fences",
+      "limitations": "Host SQLite and owner fakes; installed expiry/Answer and restart proof remains device-only",
+      "timeout_seconds": 600,
+      "requirements": [
+        "flutter"
+      ],
+      "inspected": true
+    },
+    "notification-payload-harness-contract": {
+      "kind": "flutter",
+      "paths": [
+        "test/integration/android_notification_payload_campaign_support_test.dart",
+        "test/integration/notification_dual_path_campaign_ordering_test.dart",
+        "test/core/debug/android_notification_payload_e2e_test.dart",
+        "test/core/debug/notification_dual_path_e2e_sender_test.dart",
+        "test/core/debug/intro_e2e_runner_notification_dual_path_test.dart",
+        "test/core/debug/intro_e2e_runner_test.dart",
+        "test/core/debug/intro_e2e_runner_private_media_outbox_test.dart",
+        "test/integration/reaction_notification_proof_support_test.dart",
+        "test/integration/group_muted_notification_criteria_test.dart",
+        "test/integration/group_notification_projection_android_criteria_test.dart",
+        "test/integration/group_reaction_notification_device_criteria_test.dart"
+      ],
+      "boundary": "Exact fixture-owned encrypted notification dispatch, provider-before-live release, cancellation and existing notification action/intro isolation",
+      "limitations": "Controlled host transport and protocol assertions only; actual FCM, notify-capable live arrival, one audible card and exact restoration require device-notifications-android.",
+      "timeout_seconds": 900,
+      "estimated_seconds": null,
+      "requirements": [
+        "flutter"
+      ],
+      "investigate": [
+        "integration_test/scripts/notification_android_payload_campaign.dart",
+        "integration_test/support/android_notification_payload_campaign.dart",
+        "lib/core/debug/notification_dual_path_e2e_sender.dart",
+        "lib/core/debug/intro_e2e_runner.dart"
+      ],
+      "inspected": true
     }
   },
   "areas": [
@@ -1729,7 +1873,9 @@
         ".agents/skills/mknoon-*/SKILL.md",
         ".github/workflows/mknoon-checks.yml",
         ".gitignore",
-        "scripts/test/mknoon_ci_checks_test.py"
+        "scripts/test/mknoon_ci_checks_test.py",
+        "scripts/device_campaign_preflight.py",
+        "scripts/test/device_campaign_preflight_test.py"
       ],
       "checks": [
         "workflow",
@@ -1813,6 +1959,18 @@
       "why": "Relay custody, notification wake, key and mailbox behavior crosses chat/group/media/calls"
     },
     {
+      "id": "reliability-discovery-metadata",
+      "patterns": [
+        "scripts/check_reliability_simulation_discovery.sh"
+      ],
+      "checks": [
+        "workflow",
+        "provider-schema",
+        "affected-media"
+      ],
+      "why": "This script classifies and expands proof inventory paths; it does not build or execute native/device scenarios. The exact PiP discovery contract in affected-media executes it and verifies complete classifications. Preserve mandatory release checks and mappings for the actual native sources/runners; metadata-only support registrations do not alter their runtime behavior."
+    },
+    {
       "id": "platform-build",
       "patterns": [
         "android/*",
@@ -1877,17 +2035,23 @@
         "signed-upgrade-compat",
         "signed-audio"
       ],
-      "why": "Native permissions, bundled assets, dependency versions and build flags can invalidate all runtime consumers and signed-artifact proof"
+      "why": "Native permissions, bundled assets, dependency versions and build flags can invalidate all runtime consumers and signed-artifact proof",
+      "exclude_paths": [
+        "scripts/check_reliability_simulation_discovery.sh"
+      ]
     },
     {
       "id": "group-media-schema-harness",
       "patterns": [
         "lib/core/debug/group_media_reliability_e2e_main_actions.dart",
+        "lib/core/debug/group_media_reliability_authority_target.dart",
         "lib/core/database/app_database_version.dart",
         "integration_test/scripts/android_group_media_reliability_controller.dart",
         "integration_test/scripts/group_media_reliability_criteria.dart",
         "integration_test/scripts/group_media_ios_background_recovery_evidence.dart",
         "test/core/debug/group_media_reliability_e2e_test.dart",
+        "test/core/debug/group_media_reliability_sender_test.dart",
+        "test/core/debug/group_media_reliability_strict_barrier_test.dart",
         "test/integration/android_group_media_reliability_controller_test.dart",
         "test/integration/group_media_reliability_runner_contract_test.dart",
         "test/integration/group_media_ios_background_recovery_test.dart",
@@ -1895,7 +2059,8 @@
         "lib/core/debug/group_media_reliability_e2e.dart",
         "lib/debug/debug_e2e_composition_root.dart",
         "integration_test/scripts/group_media_reliability_runner_contract.dart",
-        "test/core/debug/debug_e2e_composition_root_test.dart"
+        "test/core/debug/debug_e2e_composition_root_test.dart",
+        "lib/features/groups/application/create_group_with_members_use_case.dart"
       ],
       "checks": [
         "group-media-schema-contract",
@@ -1945,7 +2110,8 @@
       "exclude_paths": [
         "scripts/test/mknoon_checks_test.py",
         "scripts/test/mknoon_ci_checks_test.py",
-        "scripts/test/testing_inventory_test.py"
+        "scripts/test/testing_inventory_test.py",
+        "scripts/test/device_campaign_preflight_test.py"
       ]
     },
     {
@@ -2068,7 +2234,8 @@
         "test/integration/android_production_audio_call_campaign_test.dart",
         "tool/sims/build_orchestrator.dart",
         "test/tool/sims/sims_build_cache_test.dart",
-        "test/tool/sims/sims_ios_group_media_269_profile_test.dart"
+        "test/tool/sims/sims_ios_group_media_269_profile_test.dart",
+        "lib/core/debug/intro_e2e_runner.dart"
       ],
       "checks": [
         "production-audio-harness-contract",
@@ -2109,6 +2276,8 @@
       "id": "strict-group-media-manifest",
       "patterns": [
         "lib/features/groups/application/send_group_message_use_case.dart",
+        "lib/features/groups/application/strict_group_media_blob_download_ack_owner.dart",
+        "lib/features/conversation/application/download_media_use_case.dart",
         "lib/features/groups/domain/models/protected_group_media_manifest.dart",
         "lib/features/conversation/application/upload_media_use_case.dart",
         "test/features/groups/application/send_group_message_use_case_test.dart",
@@ -2125,13 +2294,26 @@
         "test/features/conversation/application/download_media_use_case_test.dart",
         "test/features/groups/application/delete_group_media_for_me_use_case_test.dart",
         "lib/features/share/application/share_batch_delivery_coordinator.dart",
-        "test/features/share/application/share_batch_delivery_coordinator_test.dart"
+        "test/features/share/application/share_batch_delivery_coordinator_test.dart",
+        "test/core/bootstrap/production_canonical_group_replay_transport_test.dart",
+        "test/core/bootstrap/production_canonical_group_replay_application_test.dart",
+        "lib/features/groups/application/group_message_listener.dart",
+        "test/features/groups/application/group_message_listener_media_background_task_test.dart",
+        "lib/features/groups/application/create_group_with_members_use_case.dart",
+        "test/features/groups/application/create_group_with_members_use_case_test.dart",
+        "lib/features/groups/application/group_config_payload.dart",
+        "lib/features/groups/application/handle_incoming_group_invite_use_case.dart",
+        "test/features/groups/application/handle_incoming_group_invite_use_case_test.dart",
+        "lib/core/database/helpers/media_attachments_db_helpers.dart",
+        "lib/features/groups/application/prepared_group_media_blob_custody_coordinator.dart",
+        "lib/features/groups/application/retry_incomplete_group_downloads_use_case.dart",
+        "test/features/groups/application/retry_incomplete_group_downloads_use_case_test.dart"
       ],
       "checks": [
         "strict-group-media-manifest",
         "group-media-storage-preservation"
       ],
-      "why": "Strict group media admission, incoming commit and reconciliation must preserve legacy and secure key representations, canonical descriptors, durable plaintext or deletion before ACK, and owned pretransaction snapshots across foreground/headless/retry paths"
+      "why": "Strict group media admission, incoming commit and reconciliation must preserve legacy and secure key representations, canonical descriptors, durable plaintext or deletion before ACK, and owned pretransaction snapshots across foreground/headless/retry paths; newly applied protected media must dispatch the existing automatic recovery owner after its durable commit"
     },
     {
       "id": "bootstrap-relocation-guard",
@@ -2327,6 +2509,103 @@
         "call-signaling"
       ],
       "why": "Timeout attribution affects shared message/inbox streams and other communication consumers; preserve exact bytes, committed ACKs, durable fallback and quiet intent alongside causal local transport recovery."
+    },
+    {
+      "id": "reconnect-diagnostics-isolation",
+      "patterns": [
+        "test/core/services/p2p_service_recovery_watchdog_test.dart",
+        "go-mknoon/node/recovery_deadline_test.go",
+        "test/support/diagnostics_backlog_fixture.dart",
+        "integration_test/diagnostics_reconnect_isolation_harness.dart",
+        "integration_test/relay_recovery_diagnostics_harness.dart",
+        "integration_test/scripts/run_relay_diagnostics_virtual.py"
+      ],
+      "checks": [
+        "diagnostics",
+        "bridge",
+        "affected-transport",
+        "go-core"
+      ],
+      "why": "Stalled recovery and diagnostic backpressure require host ownership/deadline, archive persistence and communication isolation checks. The referenced standalone Android emulator/iOS simulator comparisons run separately on explicit live target IDs; existing broader fixture and native mappings remain."
+    },
+    {
+      "id": "android-call-presentation",
+      "patterns": [
+        "android/app/src/main/kotlin/com/mknoon/app/call/*",
+        "android/app/src/test/kotlin/com/mknoon/app/call/*",
+        "android/app/src/debug/kotlin/com/mknoon/app/call/*",
+        "android/app/src/testDebug/kotlin/com/mknoon/app/call/*",
+        "android/app/src/debug/AndroidManifest.xml",
+        "android/app/src/main/kotlin/com/mknoon/app/MainActivity.kt",
+        "android/app/src/test/kotlin/com/mknoon/app/MainActivityOnNewIntentTest.kt",
+        "android/app/src/main/AndroidManifest.xml",
+        "android/app/src/main/res/values*/strings.xml",
+        "scripts/test/run_call_native_unit_tests.sh",
+        "lib/app/application_root.dart",
+        "lib/features/identity/presentation/startup_router.dart",
+        "lib/features/call/presentation/foreground_call_overlay.dart",
+        "test/features/identity/presentation/screens/startup_router_recovery_test.dart",
+        "test/features/call/presentation/foreground_call_overlay_test.dart",
+        "android/app/src/main/kotlin/com/mknoon/app/AndroidCallWakeBridge.kt",
+        "android/app/src/test/kotlin/com/mknoon/app/AndroidCallWakeBridgeTest.kt"
+      ],
+      "checks": [
+        "android-call-native",
+        "notifications",
+        "call-signaling",
+        "startup",
+        "affected-calls"
+      ],
+      "why": "Native call screens and actions must preserve exact-call ownership, lock-screen privacy, notification fallback, drawable Flutter rendering and qualified call startup without waiting for a frame. Additive to conservative platform/build and feature selections; physical keyguard evidence remains separate."
+    },
+    {
+      "id": "runtime-roots",
+      "patterns": [
+        "tool/runtime_roots/*",
+        "test/unit/runtime_root_inventory_test.dart"
+      ],
+      "checks": [
+        "runtime-roots"
+      ],
+      "why": "Source ownership declarations and inventory implementation must preserve exact entrypoint review and reject unaccounted drift"
+    },
+    {
+      "id": "debug-call-evidence",
+      "patterns": [
+        "lib/debug/debug_call_evidence_observer.dart",
+        "test/debug/debug_call_evidence_observer_test.dart"
+      ],
+      "checks": [
+        "debug-call-evidence",
+        "android-call-native"
+      ],
+      "why": "Debug evidence must preserve exact current owners and read-only history custody"
+    },
+    {
+      "id": "notification-payload-disposable-harness",
+      "patterns": [
+        "integration_test/scripts/notification_android_payload_campaign.dart",
+        "integration_test/scripts/run_notification_tap_device_real.dart",
+        "integration_test/support/android_notification_payload_campaign.dart",
+        "lib/core/debug/android_notification_payload_e2e.dart",
+        "lib/core/debug/android_notification_payload_e2e_protocol.dart",
+        "lib/core/debug/notification_dual_path_e2e_sender.dart",
+        "lib/core/debug/intro_e2e_runner.dart",
+        "test/integration/android_notification_payload_campaign_support_test.dart",
+        "test/integration/notification_dual_path_campaign_ordering_test.dart",
+        "test/core/debug/android_notification_payload_e2e_test.dart",
+        "test/core/debug/notification_dual_path_e2e_sender_test.dart",
+        "test/core/debug/intro_e2e_runner_notification_dual_path_test.dart",
+        "test/core/debug/intro_e2e_runner_test.dart",
+        "test/core/debug/intro_e2e_runner_private_media_outbox_test.dart",
+        "integration_test/scripts/reaction_notification_proof_support.dart",
+        "test/integration/reaction_notification_proof_support_test.dart"
+      ],
+      "checks": [
+        "notification-payload-harness-contract",
+        "device-notifications-android"
+      ],
+      "why": "Notification fixture changes must preserve actual authenticated provider/live dispatch ordering, one-use operation authority, failure retirement and existing alert/custody oracles; host passes do not certify the installed device campaign."
     }
   ],
   "documentation_only": [
@@ -2413,7 +2692,10 @@
       "requirements": [
         "dart",
         "flutter"
-      ]
+      ],
+      "ui_driver": "existing_campaign",
+      "ui_driver_reason": "Existing full regression retains protocol/native assertion owners; Appium MCP is preferred for separate live UI investigation.",
+      "host_preflight": "one-to-one-runner"
     },
     {
       "id": "full-sims",
@@ -2436,7 +2718,10 @@
       "requirements": [
         "dart",
         "flutter"
-      ]
+      ],
+      "ui_driver": "existing_campaign",
+      "ui_driver_reason": "Existing full regression retains protocol/native assertion owners; Appium MCP is preferred for separate live UI investigation.",
+      "host_preflight": "one-to-one-runner"
     },
     {
       "id": "full-legacy",
@@ -2457,14 +2742,18 @@
       "device_roles": [
         "android_physical",
         "ios_simulator"
-      ]
+      ],
+      "ui_driver": "existing_campaign",
+      "ui_driver_reason": "Existing full regression retains protocol/native assertion owners; Appium MCP is preferred for separate live UI investigation.",
+      "host_preflight": "one-to-one-runner"
     },
     {
       "kind": "python",
       "paths": [
         "scripts/test/mknoon_checks_test.py",
         "scripts/test/testing_inventory_test.py",
-        "scripts/test/mknoon_ci_checks_test.py"
+        "scripts/test/mknoon_ci_checks_test.py",
+        "scripts/test/device_campaign_preflight_test.py"
       ],
       "boundary": "Selector, inventory, runner safety and candidate-bound CI acceptance contracts",
       "timeout_seconds": 120,
@@ -2474,7 +2763,8 @@
       ],
       "investigate": [
         "scripts/mknoon_checks.py",
-        "scripts/testing_inventory.py"
+        "scripts/testing_inventory.py",
+        "scripts/device_campaign_preflight.py"
       ],
       "id": "full-workflow",
       "command": [
@@ -2484,7 +2774,8 @@
         "-v",
         "scripts/test/mknoon_checks_test.py",
         "scripts/test/testing_inventory_test.py",
-        "scripts/test/mknoon_ci_checks_test.py"
+        "scripts/test/mknoon_ci_checks_test.py",
+        "scripts/test/device_campaign_preflight_test.py"
       ]
     },
     {

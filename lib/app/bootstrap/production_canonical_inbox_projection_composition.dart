@@ -530,6 +530,7 @@ buildProductionCanonicalInboxProjectionComposition({
           groupMessageListener: groupMessageListener,
           groupKeyUpdateListener: groupKeyUpdateListener,
           authoritySupport: protectedGroupAuthoritySupport,
+          readCurrentTransportPeerId: () => p2pService.currentState.peerId,
           loadIdentity: () async => identity,
           loadLinkedAuthority: (_) async => linkedAuthority,
           applySystemAuthorityReplay: (control, replayData, authority) =>

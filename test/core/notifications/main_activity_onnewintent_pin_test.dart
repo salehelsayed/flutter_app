@@ -19,6 +19,27 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  test('platform splash exit is registered before Flutter creates content', () {
+    final source = File(
+      'android/app/src/main/kotlin/com/mknoon/app/MainActivity.kt',
+    ).readAsStringSync();
+    final create = source.indexOf('override fun onCreate(');
+    final install = source.indexOf(
+      'MknoonIncomingCallPresentation.installSplashExit(this)',
+      create,
+    );
+    final flutterCreate = source.indexOf('super.onCreate(', create);
+    expect(create, greaterThanOrEqualTo(0));
+    expect(install, greaterThan(create));
+    expect(
+      flutterCreate,
+      greaterThan(install),
+      reason:
+          'Ordinary restored launches also need the platform splash callback. '
+          'Registration from a later call intent cannot own that first draw.',
+    );
+  });
+
   test('MainActivity.kt overrides onNewIntent and calls setIntent(intent)', () {
     final file = File(
       'android/app/src/main/kotlin/com/mknoon/app/MainActivity.kt',

@@ -59,6 +59,8 @@ import 'package:flutter_app/core/utils/text_sanitizer.dart';
 import 'package:flutter_app/features/contacts/application/direct_contact_device_trust.dart';
 import 'package:flutter_app/features/call/application/outgoing_call_capability.dart';
 import 'package:flutter_app/features/call/diagnostics/call_diagnostics.dart';
+import 'package:flutter_app/features/call/domain/call_state.dart';
+import 'package:flutter_app/features/call/presentation/screens/outgoing_call_screen.dart';
 import 'package:flutter_app/features/contact_profile/presentation/screens/contact_profile_screen.dart';
 import 'package:flutter_app/features/contacts/application/block_contact_use_case.dart';
 import 'package:flutter_app/features/contacts/application/delete_contact_use_case.dart';
@@ -665,6 +667,8 @@ class _ConversationWiredState extends State<ConversationWired>
   bool _coalesceWantsMarkRead = false;
   bool _coalesceWantsIntroCheck = false;
   bool _outgoingCallStartInFlight = false;
+  OutgoingCallStartRequest? _outgoingCallStartRequest;
+  Timer? _outgoingCallPreflightTimer;
   String? _outgoingDiagnosticTraceId;
   bool _outgoingCallContactAvailable = false;
   int _outgoingCallAvailabilityGeneration = 0;
@@ -7807,6 +7811,8 @@ class _ConversationWiredState extends State<ConversationWired>
 
   @override
   void dispose() {
+    _outgoingCallStartRequest?.cancel();
+    _outgoingCallPreflightTimer?.cancel();
     WidgetsBinding.instance.removeObserver(this);
     final outboxEndpointToken = _privateMediaOutboxE2EEndpointToken;
     _privateMediaOutboxE2EEndpointToken = null;
@@ -8006,25 +8012,75 @@ class _ConversationWiredState extends State<ConversationWired>
     final diagnostics = CallDiagnostics.instance;
     final contactPeerId = _contact.peerId;
     final lifecycleGeneration = _appLifecycleGeneration;
+    final preflightElapsed = Stopwatch()..start();
+    late final OutgoingCallStartRequest request;
+    request = OutgoingCallStartRequest(
+      isCurrent: () =>
+          mounted &&
+          !_contact.isBlocked &&
+          _contact.peerId == contactPeerId &&
+          identical(capability, widget.outgoingCallCapability),
+      onAdmitted: () {
+        _outgoingCallPreflightTimer?.cancel();
+        if (mounted && identical(_outgoingCallStartRequest, request)) {
+          setState(() {});
+        }
+      },
+    );
     bool stillOwnsCallAction() =>
         mounted &&
+        !request.isCanceled &&
+        identical(_outgoingCallStartRequest, request) &&
         !_contact.isBlocked &&
         _contact.peerId == contactPeerId &&
         identical(capability, widget.outgoingCallCapability) &&
         _appLifecycleGeneration == lifecycleGeneration;
-    void finishInterrupted() => diagnostics.finishAttempt(
-      traceId: traceId,
-      outcome: 'interrupted_unknown',
-      reason: 'graph_not_owner',
-    );
+    void finishInterrupted() {
+      if (request.isCanceled) return;
+      request.cancel();
+      diagnostics.finishAttempt(
+        traceId: traceId,
+        outcome: 'interrupted_unknown',
+        reason: 'graph_not_owner',
+      );
+    }
+
     // This explicit tap owns a fresh probe, replacing any older presentation
     // probe whose negative result may arrive after the remote endpoint recovers.
     _outgoingCallAvailabilityGeneration++;
-    setState(() => _outgoingCallStartInFlight = true);
+    FocusManager.instance.primaryFocus?.unfocus();
+    setState(() {
+      _outgoingCallStartInFlight = true;
+      _outgoingCallStartRequest = request;
+    });
+    _outgoingCallPreflightTimer = Timer(const Duration(seconds: 30), () {
+      if (identical(_outgoingCallStartRequest, request) &&
+          !request.isAdmitted) {
+        _cancelOutgoingCallPreflight(timedOut: true);
+      }
+    });
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted &&
+          identical(_outgoingCallStartRequest, request) &&
+          !request.isCanceled &&
+          !request.isAdmitted) {
+        diagnostics.record(
+          stage: 'presentation',
+          action: 'present',
+          outcome: 'ok',
+          traceId: traceId,
+          values: <String, Object?>{
+            'state': 'outgoing_preparing',
+            'durationMs': preflightElapsed.elapsedMilliseconds,
+          },
+        );
+      }
+    });
     var shouldShowFailure = false;
     var result = OutgoingCallStartResult.failed;
     try {
       if (!capability.isOutgoingCallAvailable) {
+        final readinessElapsed = Stopwatch()..start();
         final recovered =
             capability is OutgoingCallReadinessRecovery &&
             await (capability as OutgoingCallReadinessRecovery)
@@ -8040,6 +8096,15 @@ class _ConversationWiredState extends State<ConversationWired>
                     return false;
                   },
                 );
+        diagnostics.record(
+          stage: 'preflight',
+          action: 'recover',
+          outcome: recovered ? 'ok' : 'rejected',
+          traceId: traceId,
+          values: <String, Object?>{
+            'durationMs': readinessElapsed.elapsedMilliseconds,
+          },
+        );
         if (!stillOwnsCallAction()) {
           finishInterrupted();
           return;
@@ -8054,6 +8119,7 @@ class _ConversationWiredState extends State<ConversationWired>
           return;
         }
       }
+      final contactElapsed = Stopwatch()..start();
       final contactAvailable = await capability
           .isOutgoingCallAvailableFor(contactPeerId)
           .timeout(
@@ -8067,6 +8133,16 @@ class _ConversationWiredState extends State<ConversationWired>
               return false;
             },
           );
+      diagnostics.record(
+        stage: 'preflight',
+        action: 'check',
+        outcome: contactAvailable ? 'ok' : 'rejected',
+        traceId: traceId,
+        values: <String, Object?>{
+          'durationMs': contactElapsed.elapsedMilliseconds,
+          'found': contactAvailable,
+        },
+      );
       if (!stillOwnsCallAction()) {
         finishInterrupted();
         return;
@@ -8089,7 +8165,11 @@ class _ConversationWiredState extends State<ConversationWired>
         setState(() => _outgoingCallContactAvailable = true);
       }
       shouldShowFailure = true;
-      result = await capability.startOutgoingCall(contactPeerId);
+      result = await capability.startOutgoingCall(
+        contactPeerId,
+        request: request,
+      );
+      if (request.isCanceled) return;
       if (result != OutgoingCallStartResult.started) {
         diagnostics.finishAttempt(
           traceId: traceId,
@@ -8098,6 +8178,7 @@ class _ConversationWiredState extends State<ConversationWired>
         );
       }
     } catch (_) {
+      if (request.isCanceled) return;
       diagnostics.finishAttempt(
         traceId: traceId,
         outcome: 'preflight_failed',
@@ -8111,16 +8192,42 @@ class _ConversationWiredState extends State<ConversationWired>
         _showOutgoingCallMessage('Voice calling is unavailable right now');
       }
     } finally {
-      if (mounted) {
-        setState(() => _outgoingCallStartInFlight = false);
+      if (identical(_outgoingCallStartRequest, request)) {
+        _outgoingCallPreflightTimer?.cancel();
+        _outgoingCallStartRequest = null;
+        if (mounted) setState(() => _outgoingCallStartInFlight = false);
       }
     }
     if (!mounted ||
+        request.isCanceled ||
         !shouldShowFailure ||
         result == OutgoingCallStartResult.started) {
       return;
     }
-    _showOutgoingCallMessage("Couldn't start voice call. Please try again.");
+    _showOutgoingCallMessage(
+      result == OutgoingCallStartResult.microphoneDenied
+          ? 'Microphone permission is needed to make calls.'
+          : "Couldn't start voice call. Please try again.",
+    );
+  }
+
+  void _cancelOutgoingCallPreflight({bool timedOut = false}) {
+    final request = _outgoingCallStartRequest;
+    if (request == null || request.isAdmitted) return;
+    request.cancel();
+    _outgoingCallPreflightTimer?.cancel();
+    setState(() {
+      _outgoingCallStartRequest = null;
+      _outgoingCallStartInFlight = false;
+    });
+    CallDiagnostics.instance.finishAttempt(
+      traceId: _outgoingDiagnosticTraceId,
+      outcome: timedOut ? 'preflight_failed' : 'canceled',
+      reason: timedOut ? 'timeout' : 'user_action',
+    );
+    if (timedOut) {
+      _showOutgoingCallMessage("Couldn't start voice call. Please try again.");
+    }
   }
 
   void _showOutgoingCallMessage(String message) {
@@ -8189,9 +8296,18 @@ class _ConversationWiredState extends State<ConversationWired>
         (outgoingCallCapability?.isOutgoingCallAvailable ?? false) &&
         _outgoingCallContactAvailable;
 
-    final child = PopScope(
-      canPop: !_uploadActivityController.isTracking,
+    final pendingCall = _outgoingCallStartRequest;
+    final showPreflight =
+        pendingCall != null &&
+        !pendingCall.isCanceled &&
+        !pendingCall.isAdmitted;
+    final conversation = PopScope(
+      canPop: !showPreflight && !_uploadActivityController.isTracking,
       onPopInvokedWithResult: (didPop, result) {
+        if (!didPop && showPreflight) {
+          _cancelOutgoingCallPreflight();
+          return;
+        }
         if (didPop || !_uploadActivityController.isTracking) return;
         unawaited(_handleBackNavigation());
       },
@@ -8339,6 +8455,26 @@ class _ConversationWiredState extends State<ConversationWired>
           highlightedMessageId: _highlightedMessageId,
         ),
       ),
+    );
+    final child = Stack(
+      fit: StackFit.expand,
+      children: <Widget>[
+        ExcludeSemantics(
+          excluding: showPreflight,
+          child: ExcludeFocus(excluding: showPreflight, child: conversation),
+        ),
+        if (showPreflight)
+          Positioned.fill(
+            child: Material(
+              child: OutgoingCallScreen(
+                contactPeerId: _contact.peerId,
+                contactUsername: _contact.username,
+                state: CallState.preparing,
+                onCancel: _cancelOutgoingCallPreflight,
+              ),
+            ),
+          ),
+      ],
     );
     final registry = DirectPrivateMediaRouteObserverScope.maybeRegistryOf(
       context,

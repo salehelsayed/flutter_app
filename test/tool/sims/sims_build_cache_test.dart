@@ -65,6 +65,77 @@ void _write(Directory root, String path, String contents) {
 }
 
 void main() {
+  test(
+    'non-provider disposable package build options invalidate shared APK cache',
+    () {
+      final manifest = SimsManifest.loadSync(
+        File('tool/sims/critical_features.json'),
+      );
+      const packages = <String, String>{
+        'android.e2e.main': 'com.mknoon.sims.connectivity',
+        'android.e2e.direct_media_custody': 'com.mknoon.sims.directmedia',
+      };
+      const disable =
+          '--android-project-arg=disableGoogleServicesForDisposableProof=true';
+      for (final entry in packages.entries) {
+        final profile = manifest.buildProfileById(entry.key)!;
+        final environment = <String, String>{
+          'ANDROID_APP_PACKAGE': entry.value,
+          'SIMS_APP_ID': entry.value,
+          'ORG_GRADLE_PROJECT_androidApplicationId': entry.value,
+        };
+        final options = effectiveSimsBuildArguments(
+          profile,
+          environment: environment,
+        );
+        final productionOptions = effectiveSimsBuildArguments(
+          profile,
+          environment: const {'ANDROID_APP_PACKAGE': 'com.mknoon.app'},
+        );
+        expect(options, contains(disable));
+        expect(productionOptions, isNot(contains(disable)));
+        expect(
+          effectiveSimsApplicationId(profile, environment: environment),
+          entry.value,
+        );
+        final input = _input(
+          profile: profile.id,
+          appId: entry.value,
+          buildOptions: options,
+        );
+        expect(
+          input.inputDigest,
+          isNot(
+            _input(
+              profile: profile.id,
+              appId: entry.value,
+              buildOptions: productionOptions,
+            ).inputDigest,
+          ),
+        );
+        expect(
+          input.inputDigest,
+          isNot(
+            _input(
+              profile: profile.id,
+              appId: 'com.mknoon.app',
+              buildOptions: options,
+            ).inputDigest,
+          ),
+        );
+        final otherProfile = manifest.buildProfileById(
+          'android.production_fcm',
+        )!;
+        expect(
+          effectiveSimsBuildArguments(otherProfile, environment: environment),
+          isNot(contains(disable)),
+          reason:
+              'a package override must never disable real FCM proof configuration',
+        );
+      }
+    },
+  );
+
   test('every built profile gets its exact compile-time profile handshake', () {
     final manifest = SimsManifest.loadSync(
       File('tool/sims/critical_features.json'),

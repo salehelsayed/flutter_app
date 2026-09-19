@@ -857,7 +857,10 @@ final class AppDiagnostics with WidgetsBindingObserver {
         _retryAt = 0;
         _lastError = 'none';
       }
-      await _persist(force: true);
+      // A quota/backpressure response with no ACK changes no archive state.
+      // Retrying it (including resume retries) must not rewrite megabytes of
+      // retained evidence. New observations still persist through dirty state.
+      await _persist(force: acknowledged > 0);
     } catch (_) {
       _backoff('bridge_unavailable');
     }

@@ -11,6 +11,7 @@ import '../domain/call_end_reason.dart';
 import '../domain/call_id.dart';
 import '../domain/call_session_snapshot.dart';
 import '../domain/call_state.dart';
+import 'locked_call_projection.dart';
 import 'screens/active_call_screen.dart';
 import 'screens/incoming_call_screen.dart';
 import 'screens/outgoing_call_screen.dart';
@@ -31,12 +32,17 @@ final class ForegroundCallOverlay extends StatefulWidget {
     required this.loadContactDisplayName,
     required this.child,
     this.now,
+    this.onAttached,
   });
 
   final ForegroundCallCapability? capability;
   final ContactDisplayNameLoader loadContactDisplayName;
   final Widget child;
   final DateTime Function()? now;
+
+  /// The canonical projection subscription is installed. A hidden Android
+  /// activity may attach this host without ever receiving a rendered frame.
+  final VoidCallback? onAttached;
 
   @override
   State<ForegroundCallOverlay> createState() => _ForegroundCallOverlayState();
@@ -60,11 +66,39 @@ class _ForegroundCallOverlayState extends State<ForegroundCallOverlay> {
   Timer? _terminalNoticeTimer;
   CallId? _terminalNoticeCallId;
   bool _terminalNoticeVisible = false;
+  final _lockedProjection = LockedCallProjection();
+  bool _lockedLight = false;
+  AppLocalizations? _lockedL10n;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _lockedLight = context.backgroundReadableColors.isLightSurface;
+    _lockedL10n = AppLocalizations.of(context);
+    _publishLockedProjection();
+  }
+
+  void _publishLockedProjection() {
+    final l10n = _lockedL10n;
+    if (l10n == null) return;
+    unawaited(
+      _lockedProjection.update(
+        capability: widget.capability,
+        projection: _projection,
+        displayName: _contactDisplayName,
+        light: _lockedLight,
+        l10n: l10n,
+      ),
+    );
+  }
 
   @override
   void initState() {
     super.initState();
     _bindCapability(notify: false);
+    scheduleMicrotask(() {
+      if (mounted) widget.onAttached?.call();
+    });
   }
 
   @override
@@ -90,6 +124,7 @@ class _ForegroundCallOverlayState extends State<ForegroundCallOverlay> {
     _nameGeneration += 1;
     unawaited(_subscription?.cancel());
     _terminalNoticeTimer?.cancel();
+    _lockedProjection.dispose();
     super.dispose();
   }
 
@@ -182,6 +217,8 @@ class _ForegroundCallOverlayState extends State<ForegroundCallOverlay> {
       update();
     }
 
+    _publishLockedProjection();
+
     final terminalCallId = terminalNoticeToSchedule;
     if (terminalCallId != null) {
       _terminalNoticeTimer = Timer(
@@ -221,6 +258,7 @@ class _ForegroundCallOverlayState extends State<ForegroundCallOverlay> {
           ? _unknownContactName
           : normalizedName;
     });
+    _publishLockedProjection();
   }
 
   @override
@@ -261,7 +299,7 @@ class _ForegroundCallOverlayState extends State<ForegroundCallOverlay> {
         _ForegroundCallSurface.terminal =>
           _terminalNoticeVisible
               ? _TerminalCallNotice(
-                  message: _terminalMessage(session!.endReason),
+                  message: _terminalMessage(session!),
                   onDismiss: _dismissTerminalNotice,
                 )
               : null,
@@ -278,16 +316,27 @@ class _ForegroundCallOverlayState extends State<ForegroundCallOverlay> {
         // While a call surface is visible it owns the screen: release any
         // keyboard focus held underneath (the conversation composer) and block
         // refocus so the keyboard can never cover the call controls.
-        ExcludeFocus(excluding: surface != null, child: widget.child),
+        TickerMode(
+          // The retained route can contain continuously animated ambient
+          // backgrounds. A call owns the screen; freeze those animations until
+          // it hides, while preserving navigation and non-animation state.
+          enabled: surface == null,
+          child: ExcludeFocus(excluding: surface != null, child: widget.child),
+        ),
         if (surface != null)
           Positioned.fill(
             key: ValueKey<CallId?>(callId),
-            child: Padding(
-              padding: EdgeInsets.only(bottom: keyboardInset),
-              child: Overlay.wrap(
-                child: Material(
-                  type: MaterialType.transparency,
-                  child: surface,
+            child: BlockSemantics(
+              // This screen is modal to accessibility as well as touch/focus.
+              // Keep the retained route painted, but remove its actions and
+              // private history from the platform semantics tree.
+              child: Padding(
+                padding: EdgeInsets.only(bottom: keyboardInset),
+                child: Overlay.wrap(
+                  child: Material(
+                    type: MaterialType.transparency,
+                    child: surface,
+                  ),
                 ),
               ),
             ),
@@ -407,24 +456,29 @@ _ForegroundCallSurface _surfaceKind(CallSessionSnapshot? session) {
   };
 }
 
-String _terminalMessage(CallEndReason? reason) => switch (reason) {
-  CallEndReason.permissionDenied =>
-    'Microphone permission is needed to make calls.',
-  CallEndReason.unsupported => 'Voice calling is unavailable on this device.',
-  CallEndReason.busy => 'The contact is on another call.',
-  CallEndReason.declined => 'Call declined.',
-  CallEndReason.noAnswer => 'No answer.',
-  CallEndReason.signalingFailed => 'Call could not connect.',
-  CallEndReason.mediaFailed => 'Call audio could not start.',
-  CallEndReason.reconnectFailed => 'Call could not reconnect.',
-  CallEndReason.expired => 'The call expired.',
-  CallEndReason.policyRejected => 'Voice calling is unavailable.',
-  CallEndReason.callerCancelled ||
-  CallEndReason.remoteHangup ||
-  CallEndReason.localHangup ||
-  CallEndReason.appShutdown ||
-  null => 'Call ended.',
-};
+String _terminalMessage(CallSessionSnapshot session) =>
+    switch (session.endReason) {
+      CallEndReason.permissionDenied =>
+        'Microphone permission is needed to make calls.',
+      CallEndReason.unsupported =>
+        'Voice calling is unavailable on this device.',
+      CallEndReason.busy => 'The contact is on another call.',
+      CallEndReason.declined => 'Call declined.',
+      CallEndReason.noAnswer => 'No answer.',
+      CallEndReason.signalingFailed => 'Call could not connect.',
+      CallEndReason.mediaFailed =>
+        session.connectedAt == null
+            ? 'Call audio could not start.'
+            : 'Call audio was interrupted.',
+      CallEndReason.reconnectFailed => 'Call could not reconnect.',
+      CallEndReason.expired => 'The call expired.',
+      CallEndReason.policyRejected => 'Voice calling is unavailable.',
+      CallEndReason.callerCancelled ||
+      CallEndReason.remoteHangup ||
+      CallEndReason.localHangup ||
+      CallEndReason.appShutdown ||
+      null => 'Call ended.',
+    };
 
 String? _audioStatusMessage(CallAudioFailure failure) => switch (failure) {
   CallAudioFailure.none => null,

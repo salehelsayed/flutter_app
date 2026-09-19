@@ -301,6 +301,36 @@ final class _SentinelPrepared implements PreparedApplication {
 }
 
 void main() {
+  test(
+    'foreground acquisition cancellation handler precedes database open',
+    () {
+      final production = File(_productionPath).readAsStringSync();
+      final normal = _method(
+        _productionClass(production),
+        '_prepareNormalApplication',
+      ).body.toSource();
+      final owner = normal.indexOf(
+        'ForegroundCanonicalRuntimeStartup<Database>(',
+      );
+      final handler = normal.indexOf("'mknoon/canonical_runtime_shutdown'");
+      final open = normal.indexOf('canonicalWritableRuntimeSession.open(');
+      expect(owner, greaterThanOrEqualTo(0));
+      expect(handler, greaterThan(owner));
+      expect(open, greaterThan(handler));
+      expect(
+        normal.substring(owner, handler),
+        contains('waitForRetry: waitForRetry'),
+      );
+      expect(normal, contains('canonicalWritableRuntimeSession?.shutdown()'));
+      expect(
+        RegExp(
+          r"'databaseClosed'\s*:\s*canonicalWritableRuntimeSession.databaseClosed",
+        ).hasMatch(normal),
+        isTrue,
+      );
+    },
+  );
+
   test('handled production reset bypasses normal composition', () async {
     var resetCalls = 0;
     var normalPrepareCalls = 0;
@@ -1092,7 +1122,15 @@ void main() {
       final production = File(_productionPath).readAsStringSync();
       final handler = File(_handlerPath).readAsStringSync();
       final productionClass = _productionClass(production);
-      final prepare = _method(productionClass, 'prepare').body.toSource();
+      final prepare = _method(productionClass, '_prepare').body.toSource();
+      expect(
+        _method(productionClass, 'prepare').body.toSource(),
+        '=> _prepare();',
+      );
+      expect(
+        _method(productionClass, 'prepareWithRecovery').body.toSource(),
+        contains('_prepare(waitForRetry: waitForRetry)'),
+      );
       final normalMethod = _method(
         productionClass,
         '_prepareNormalApplication',
@@ -1110,7 +1148,9 @@ void main() {
       final inertReturn = prepare.indexOf(
         'return _CallbackPreparedApplication(',
       );
-      final normalCall = prepare.lastIndexOf('_prepareNormalApplication()');
+      final normalCall = prepare.lastIndexOf(
+        '_prepareNormalApplication(waitForRetry: waitForRetry)',
+      );
       expect(reset, greaterThanOrEqualTo(0));
       expect(inertReturn, greaterThan(reset));
       expect(normalCall, greaterThan(inertReturn));
@@ -1141,6 +1181,20 @@ void main() {
         normal.substring(backgroundRegistration, initializerEnd),
         contains('firebaseMessagingBackgroundHandler'),
       );
+
+      final registrationStart = normal.indexOf(
+        'final PushRegistrationCoordinator?',
+      );
+      final registration = normal.substring(
+        registrationStart,
+        normal.indexOf(
+          'if (pushRegistrationCoordinator != null)',
+          registrationStart,
+        ),
+      );
+      expect(registration, contains('ensureReady: () async'));
+      expect(registration, contains('await ensureFirebaseReady()'));
+      expect(registration, contains('return firebaseReadiness.isReady'));
 
       const awaitedPrepopulation =
           'await debugE2EComposition?.prepopulateContactsBeforeRunApp(';

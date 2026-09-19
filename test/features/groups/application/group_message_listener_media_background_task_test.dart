@@ -4,6 +4,9 @@ import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:flutter_app/core/media/media_owner_lane.dart';
+import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
+import 'package:flutter_app/features/groups/domain/models/group_message.dart';
+import 'package:flutter_app/features/groups/domain/models/group_private_media_policy.dart';
 import 'package:flutter_app/features/groups/application/group_message_listener.dart';
 import 'package:flutter_app/features/groups/application/retry_incomplete_group_downloads_use_case.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
@@ -30,6 +33,23 @@ class _AllowAllDownloads implements MediaAutoDownloadDecider {
   }) async => true;
 }
 
+class _ObservedMediaRepository extends InMemoryMediaAttachmentRepository {
+  _ObservedMediaRepository({required this.throwDuringRead});
+
+  final bool throwDuringRead;
+  final List<String> readMessageIds = [];
+
+  @override
+  Future<List<MediaAttachment>> getAttachmentsForMessage(
+    String messageId, {
+    required MediaOwnerLane owner,
+  }) async {
+    readMessageIds.add(messageId);
+    if (throwDuringRead) throw StateError('simulated storage unavailable');
+    return super.getAttachmentsForMessage(messageId, owner: owner);
+  }
+}
+
 class _MutableLifecycleState {
   _MutableLifecycleState(this.value);
 
@@ -50,7 +70,7 @@ class _ListenerHarness {
 
   final InMemoryGroupRepository groupRepo;
   final InMemoryGroupMessageRepository messageRepo;
-  final InMemoryMediaAttachmentRepository mediaRepo;
+  final _ObservedMediaRepository mediaRepo;
   final RetryIncompleteGroupDownloadsUseCase coordinator;
   final GroupMessageListener listener;
   final _MutableLifecycleState lifecycle;
@@ -62,10 +82,13 @@ class _ListenerHarness {
     required String? grantedTaskId,
     Completer<void>? transferGate,
     bool throwDuringTransfer = false,
+    bool throwDuringMediaRead = false,
   }) async {
     final groupRepo = InMemoryGroupRepository();
     final messageRepo = InMemoryGroupMessageRepository();
-    final mediaRepo = InMemoryMediaAttachmentRepository();
+    final mediaRepo = _ObservedMediaRepository(
+      throwDuringRead: throwDuringMediaRead,
+    );
     final operations = <String>[];
     final transferStarted = Completer<void>();
     final lifecycle = _MutableLifecycleState(lifecycleState);
@@ -226,6 +249,46 @@ class _ListenerHarness {
     });
   }
 
+  Future<GroupMessage> commitProtectedMessage(
+    String suffix, {
+    bool withMedia = true,
+    bool incoming = true,
+    GroupPrivateMediaPolicy policy = const GroupPrivateMediaPolicy.ordinary(),
+    MediaOwnerLane owner = MediaOwnerLane.group,
+  }) async {
+    final timestamp = DateTime.utc(2026, 7, 22, 16, 4);
+    final message = GroupMessage(
+      id: 'protected-$suffix',
+      groupId: 'group-1',
+      senderPeerId: incoming ? 'peer-sender' : 'peer-self',
+      text: 'Protected content',
+      timestamp: timestamp,
+      createdAt: timestamp,
+      isIncoming: incoming,
+      privateMediaPolicy: policy,
+    );
+    await messageRepo.saveMessage(message);
+    if (withMedia) {
+      await mediaRepo.saveAttachment(
+        MediaAttachment(
+          id: 'protected-attachment-$suffix',
+          messageId: message.id,
+          mime: 'image/jpeg',
+          size: 4096,
+          mediaType: 'image',
+          downloadStatus: 'pending',
+          contentHash: _validContentHash,
+          encryptionKeyBase64: 'key-$suffix',
+          encryptionNonce: 'nonce-$suffix',
+          encryptionScheme: 'blob_aes_256_gcm_v1',
+          createdAt: timestamp.toIso8601String(),
+        ),
+        owner: owner,
+      );
+    }
+    return message;
+  }
+
   Future<void> close() async {
     await listener.stop();
     listener.dispose();
@@ -233,6 +296,143 @@ class _ListenerHarness {
 }
 
 void main() {
+  test(
+    'protected committed media recovery: starts background recovery without awaiting transfer',
+    () async {
+      final transferGate = Completer<void>();
+      final harness = await _ListenerHarness.create(
+        lifecycleState: AppLifecycleState.paused,
+        grantedTaskId: 'task-protected',
+        transferGate: transferGate,
+      );
+      addTearDown(() async {
+        if (!transferGate.isCompleted) transferGate.complete();
+        await harness.close();
+      });
+      final message = await harness.commitProtectedMessage('durable');
+      expect(
+        message.media,
+        isEmpty,
+        reason: 'protected publication carries the parent, not transient media',
+      );
+      harness.listener.publishProtectedGroupMessage(message);
+      await harness.transferStarted.future.timeout(const Duration(seconds: 2));
+      expect(harness.operations, <String>[
+        'begin',
+        'transfer:protected-attachment-durable',
+      ]);
+      expect(
+        transferGate.isCompleted,
+        isFalse,
+        reason: 'publication must return before the held transfer completes',
+      );
+      var stopped = false;
+      final stop = harness.listener.stop().whenComplete(() => stopped = true);
+      await Future<void>.delayed(Duration.zero);
+      expect(stopped, isFalse);
+      transferGate.complete();
+      await stop;
+      expect(harness.operations.last, 'end:task-protected');
+      expect(
+        (await harness.mediaRepo.getAttachmentById(
+          'protected-attachment-durable',
+        ))!.localPath,
+        '/durable/protected-attachment-durable',
+      );
+    },
+  );
+
+  test(
+    'protected committed media recovery: text, outgoing, private, and other-owner rows do not recover media',
+    () async {
+      final harness = await _ListenerHarness.create(
+        lifecycleState: AppLifecycleState.paused,
+        grantedTaskId: 'must-not-be-used',
+      );
+      addTearDown(harness.close);
+      for (final message in <GroupMessage>[
+        await harness.commitProtectedMessage('text', withMedia: false),
+        await harness.commitProtectedMessage('outgoing', incoming: false),
+        await harness.commitProtectedMessage(
+          'private',
+          policy: const GroupPrivateMediaPolicy.viewOnce(),
+        ),
+        await harness.commitProtectedMessage(
+          'other-owner',
+          owner: MediaOwnerLane.direct,
+        ),
+      ]) {
+        harness.listener.publishProtectedGroupMessage(message);
+      }
+      await harness.listener.stop();
+      expect(harness.operations, isEmpty);
+      expect(harness.mediaRepo.readMessageIds, <String>[
+        'protected-text',
+        'protected-other-owner',
+      ]);
+      harness.listener.publishProtectedGroupMessage(
+        await harness.commitProtectedMessage('stopped'),
+      );
+      await Future<void>.delayed(Duration.zero);
+      expect(harness.mediaRepo.readMessageIds, hasLength(2));
+      expect(harness.operations, isEmpty);
+    },
+  );
+
+  test(
+    'protected committed media recovery: transfer failure releases background lease and remains retryable',
+    () async {
+      final harness = await _ListenerHarness.create(
+        lifecycleState: AppLifecycleState.hidden,
+        grantedTaskId: 'task-protected-failure',
+        throwDuringTransfer: true,
+      );
+      addTearDown(harness.close);
+      final message = await harness.commitProtectedMessage('failed');
+      harness.listener.publishProtectedGroupMessage(message);
+      await harness.transferStarted.future.timeout(const Duration(seconds: 2));
+      await harness.listener.stop();
+      expect(harness.operations, <String>[
+        'begin',
+        'transfer:protected-attachment-failed',
+        'end:task-protected-failure',
+      ]);
+      final attachment = await harness.mediaRepo.getAttachmentById(
+        'protected-attachment-failed',
+      );
+      expect(attachment!.localPath, isNull);
+      expect(attachment.downloadStatus, 'pending');
+    },
+  );
+
+  test(
+    'protected committed media recovery: durable read failure leaves publication intact and pending media retryable',
+    () async {
+      final harness = await _ListenerHarness.create(
+        lifecycleState: AppLifecycleState.paused,
+        grantedTaskId: 'must-not-be-used',
+        throwDuringMediaRead: true,
+      );
+      addTearDown(harness.close);
+      final published = <GroupMessage>[];
+      final subscription = harness.listener.groupMessageStream.listen(
+        published.add,
+      );
+      addTearDown(subscription.cancel);
+      final message = await harness.commitProtectedMessage('read-failed');
+      harness.listener.publishProtectedGroupMessage(message);
+      await Future<void>.delayed(Duration.zero);
+      await harness.listener.stop();
+      expect(published, <GroupMessage>[message]);
+      expect(harness.operations, isEmpty);
+      final attachment = await harness.mediaRepo.getAttachmentById(
+        'protected-attachment-read-failed',
+      );
+      expect(attachment!.downloadStatus, 'pending');
+      expect(attachment.localPath, isNull);
+    },
+  );
+
   test(
     'P269 foreground handoff reservation shares one task with background receive',
     () async {

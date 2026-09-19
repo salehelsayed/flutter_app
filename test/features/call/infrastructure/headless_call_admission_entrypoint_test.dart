@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:flutter_app/features/call/infrastructure/headless_call_admission_entrypoint.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -10,6 +11,68 @@ void main() {
   const callId = '22222222-2222-4222-8222-222222222222';
   const wakeHandle = '33333333333343338333333333333333';
   const expiresAtMs = 1_800_000_045_000;
+
+  test(
+    'only safe admitted admission completion includes the local display envelope',
+    () async {
+      final display = HeadlessIncomingCallDisplay(
+        displayName: 'PRIVATE_STORED_CALLER',
+        avatarPng: Uint8List.fromList([137, 80, 78, 71]),
+        light: true,
+      );
+      expect(display.toString(), isNot(contains(display.displayName)));
+      for (final scenario in [
+        'admitted',
+        'terminal',
+        'deferred',
+        'persistence',
+        'database',
+        'lease',
+        'decline',
+      ]) {
+        final channel = _FakeChannel();
+        await runAndroidHeadlessCallAdmission(
+          [
+            nonce,
+            callId,
+            wakeHandle,
+            '$expiresAtMs',
+            if (scenario == 'decline') 'decline_reply',
+          ],
+          resultChannel: channel,
+          emergencyShutdown: () async => throw StateError('unused'),
+          runAdmission:
+              ({required invocation, required isStopRequested}) async =>
+                  HeadlessCallAdmissionRunReport(
+                    disposition: scenario == 'terminal'
+                        ? HeadlessCallAdmissionDisposition.terminal
+                        : scenario == 'deferred'
+                        ? HeadlessCallAdmissionDisposition.deferred
+                        : HeadlessCallAdmissionDisposition.admitted,
+                    requiredPersistenceComplete: scenario != 'persistence',
+                    databaseClosed: scenario != 'database',
+                    leaseReleased: scenario != 'lease',
+                    display: display,
+                  ),
+        );
+        final payload = channel.payloads.single;
+        expect(payload['nonce'], nonce);
+        expect(payload['callId'], callId);
+        expect(payload['wakeHandle'], wakeHandle);
+        expect(payload['expiresAtMs'], expiresAtMs);
+        if (scenario == 'admitted') {
+          expect(payload['display'], {
+            'displayName': display.displayName,
+            'avatarPng': display.avatarPng,
+            'light': true,
+          });
+        } else {
+          expect(payload.containsKey('display'), isFalse, reason: scenario);
+        }
+        expect(channel.disposed, isTrue);
+      }
+    },
+  );
 
   test('invocation parser accepts only the exact opaque four-field shape', () {
     final invocation = HeadlessCallAdmissionInvocation.parse(const <String>[

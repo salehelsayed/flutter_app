@@ -197,6 +197,40 @@ final class _FakeTimerScheduler implements CallTimerScheduler {
 }
 
 void main() {
+  test(
+    'canceling a queued preflight prevents admission and preserves retry',
+    () async {
+      final history = _MemoryHistoryRepository();
+      final executor = _RecordingExecutor();
+      final coordinator = _coordinator(history: history, executor: executor);
+      addTearDown(coordinator.dispose);
+      var current = true;
+      var admitted = 0;
+      final pending = coordinator.placeCall(
+        contactPeerId: 'contact-a',
+        localAccountPeerId: 'local-account',
+        localDeviceId: 'local-device',
+        canPlace: () => current,
+        onApplied: (_) => admitted++,
+      );
+      current = false;
+      expect((await pending).decision, CallEventDecision.ignored);
+      expect(admitted, 0);
+      expect(executor.effects, isEmpty);
+      expect(coordinator.activeSession, isNull);
+      expect(coordinator.lastSnapshot, isNull);
+      expect(history.rows, isEmpty);
+      await coordinator.placeCall(
+        contactPeerId: 'contact-a',
+        localAccountPeerId: 'local-account',
+        localDeviceId: 'local-device',
+        onApplied: (_) => admitted++,
+      );
+      expect(admitted, 1);
+      expect(coordinator.activeSession?.state, CallState.preparing);
+    },
+  );
+
   test('preparation failure cannot strand an admitted hang-up', () async {
     final history = _MemoryHistoryRepository();
     late final CallCoordinator coordinator;
@@ -243,7 +277,7 @@ void main() {
           localAccountPeerId: 'local-account',
           localDeviceId: 'local-device',
         );
-        expect(coordinator.activeSession?.state, CallState.ringing);
+        expect(coordinator.activeSession?.state, CallState.inviting);
         await timers.fire(deadline.$1);
 
         expect(coordinator.activeSession, isNull);
@@ -531,25 +565,35 @@ void main() {
     },
   );
 
-  test('pending event queue fails closed at its configured bound', () async {
-    final gate = Completer<void>();
-    final history = _MemoryHistoryRepository();
-    final coordinator = _coordinator(
-      history: history,
-      executor: _RecordingExecutor(gate: gate),
-      maxPendingEvents: 1,
-    );
-    addTearDown(coordinator.dispose);
+  test(
+    'pending event queue stays bounded while preparation cancel bypasses it',
+    () async {
+      final gate = Completer<void>();
+      final history = _MemoryHistoryRepository();
+      final coordinator = _coordinator(
+        history: history,
+        executor: _RecordingExecutor(gate: gate),
+        maxPendingEvents: 1,
+      );
+      addTearDown(coordinator.dispose);
 
-    final first = coordinator.dispatch(_event(CallEventType.place));
-    await Future<void>.delayed(Duration.zero);
-    await expectLater(
-      coordinator.dispatch(_event(CallEventType.cancel, eventId: 'cancel')),
-      throwsA(isA<CallEventQueueFullException>()),
-    );
-    gate.complete();
-    await first;
-  });
+      final first = coordinator.dispatch(_event(CallEventType.place));
+      await Future<void>.delayed(Duration.zero);
+      await expectLater(
+        coordinator.dispatch(
+          _event(CallEventType.directAccepted, eventId: 'receipt'),
+        ),
+        throwsA(isA<CallEventQueueFullException>()),
+      );
+      final canceled = await coordinator.dispatch(
+        _event(CallEventType.cancel, eventId: 'cancel'),
+      );
+      expect(canceled.snapshot.endReason, CallEndReason.callerCancelled);
+      expect(coordinator.activeSession, isNull);
+      gate.complete();
+      await first;
+    },
+  );
 
   test('injected 30 second no-answer timer terminates the call', () async {
     final timers = _FakeTimerScheduler();
@@ -741,6 +785,116 @@ void main() {
       );
 
       await timers.fire(const Duration(seconds: 15));
+      expect(coordinator.activeSession, isNull);
+      expect(
+        coordinator.lastSnapshot?.endReason,
+        CallEndReason.reconnectFailed,
+      );
+      expect(history.rows, hasLength(1));
+    },
+  );
+
+  test(
+    'canceled reconnect callback cannot remove a successor deadline',
+    () async {
+      final timers = _FakeTimerScheduler();
+      final history = _MemoryHistoryRepository();
+      final coordinator = _coordinator(
+        history: history,
+        timerScheduler: timers,
+      );
+      addTearDown(coordinator.dispose);
+      for (final type in <CallEventType>[
+        CallEventType.place,
+        CallEventType.outgoingInviteReady,
+        CallEventType.remoteAccept,
+        CallEventType.negotiationReady,
+        CallEventType.mediaConnected,
+        CallEventType.mediaLost,
+      ]) {
+        await coordinator.dispatch(_event(type));
+      }
+      final oldDeadline = timers.scheduled.last;
+      await coordinator.dispatch(_event(CallEventType.mediaRecovered));
+      await coordinator.dispatch(
+        _event(CallEventType.mediaLost, eventId: 'second-loss'),
+      );
+      final successor = timers.scheduled.last;
+      expect(oldDeadline.canceled, isTrue);
+      expect(successor.delay, const Duration(seconds: 15));
+
+      await oldDeadline.callback();
+      expect(coordinator.activeSession?.state, CallState.reconnecting);
+      expect(coordinator.activeSession?.reconnectGeneration, 2);
+      expect(history.rows, isEmpty);
+
+      await coordinator.dispatch(
+        _event(CallEventType.mediaRecovered, eventId: 'second-recovery'),
+      );
+      expect(
+        successor.canceled,
+        isTrue,
+        reason: 'the old callback must not remove the live timer owner',
+      );
+      await oldDeadline.callback();
+      expect(coordinator.activeSession?.state, CallState.connected);
+      expect(history.rows, isEmpty);
+    },
+  );
+
+  test(
+    'queued reconnect timeout cannot end a newer recovery episode',
+    () async {
+      final gate = Completer<void>();
+      final timers = _FakeTimerScheduler();
+      final history = _MemoryHistoryRepository();
+      final coordinator = _coordinator(
+        history: history,
+        timerScheduler: timers,
+        executor: _RecordingExecutor(
+          gate: gate,
+          blockedEffect: CallEffectType.restartIce,
+        ),
+      );
+      addTearDown(coordinator.dispose);
+      for (final type in <CallEventType>[
+        CallEventType.place,
+        CallEventType.outgoingInviteReady,
+        CallEventType.remoteAccept,
+        CallEventType.negotiationReady,
+        CallEventType.mediaConnected,
+      ]) {
+        await coordinator.dispatch(_event(type));
+      }
+      final firstLoss = coordinator.dispatch(_event(CallEventType.mediaLost));
+      await Future<void>.delayed(Duration.zero);
+      expect(coordinator.activeSession?.state, CallState.reconnecting);
+      final oldDeadline = timers.scheduled.last;
+      final recovery = coordinator.dispatch(
+        _event(CallEventType.mediaRecovered),
+      );
+      final secondLoss = coordinator.dispatch(
+        _event(CallEventType.mediaLost, eventId: 'second-loss'),
+      );
+      final oldTimeout = oldDeadline.callback();
+      gate.complete();
+      await Future.wait(<Future<dynamic>>[
+        firstLoss,
+        recovery,
+        secondLoss,
+        oldTimeout,
+      ]);
+
+      expect(coordinator.activeSession?.state, CallState.reconnecting);
+      expect(coordinator.activeSession?.reconnectGeneration, 2);
+      expect(history.rows, isEmpty);
+      final successor = timers.scheduled.last;
+      expect(successor, isNot(same(oldDeadline)));
+      expect(successor.delay, const Duration(seconds: 15));
+      expect(successor.canceled, isFalse);
+
+      await successor.callback();
+      await successor.callback();
       expect(coordinator.activeSession, isNull);
       expect(
         coordinator.lastSnapshot?.endReason,

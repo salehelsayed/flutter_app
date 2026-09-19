@@ -157,6 +157,20 @@ final class CallReducer {
 
     if (snapshot.isIdle) return _reduceIdle(snapshot, event);
 
+    if (event.reconnectGeneration != null &&
+        event.reconnectGeneration != snapshot.reconnectGeneration &&
+        (event.type == CallEventType.mediaConnected ||
+            event.type == CallEventType.mediaRecovered ||
+            event.type == CallEventType.negotiationFailed ||
+            (event.type == CallEventType.timeout &&
+                event.timeoutKind == CallTimeoutKind.reconnect))) {
+      return _unchanged(
+        snapshot,
+        CallEventDecision.ignored,
+        CallReductionReason.stateMismatch,
+      );
+    }
+
     if (event.type == CallEventType.appShutdown) {
       return _terminal(snapshot, event, CallEndReason.appShutdown);
     }
@@ -304,21 +318,13 @@ final class CallReducer {
       );
     }
     if (event.type == CallEventType.wakeRequested) {
-      // The relay alerted the callee's device, which also proves the signal
-      // is in the mailbox. In `inviting` ring back now: a callee woken
-      // headlessly signals nothing until it is answered.
+      // Provider acceptance confirms mailbox custody, not recipient alerting.
+      // Only authenticated remoteRinging may start caller ringback. A headless
+      // recipient can answer directly while the caller still shows Connecting.
       final custody = snapshot.copyWith(
         mailboxCustodyConfirmed: true,
         transportRoute: event.transportRoute ?? CallRouteClass.ephemeralMailbox,
       );
-      if (snapshot.state == CallState.inviting) {
-        return _transition(
-          custody,
-          event,
-          CallState.ringing,
-          ringingAt: event.occurredAt,
-        );
-      }
       return _apply(custody, event);
     }
     if (_isTransportReceipt(event.type)) {
@@ -793,6 +799,11 @@ final class CallReducer {
     return _withEffects(
       snapshot.copyWith(
         state: state,
+        reconnectGeneration:
+            state == CallState.reconnecting &&
+                snapshot.state != CallState.reconnecting
+            ? snapshot.reconnectGeneration + 1
+            : snapshot.reconnectGeneration,
         observedAt: occurredAt,
         ringingAt: ringingAt == null
             ? snapshot.ringingAt

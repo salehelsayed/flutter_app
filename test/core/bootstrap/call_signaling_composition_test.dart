@@ -2,6 +2,8 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:flutter/services.dart';
+import 'package:flutter_app/features/call/infrastructure/android_call_wake_channel.dart';
 import 'package:flutter_app/core/secure_storage/secure_key_store.dart';
 import 'package:flutter_app/features/settings/application/call_privacy_preference_use_cases.dart';
 import 'package:flutter_app/features/call/application/call_negotiation_effect_executor.dart';
@@ -79,6 +81,7 @@ final class _Graph
     List<bool> rearmResults = const <bool>[true],
     this.rearmCompleter,
     this.onShutdown,
+    this.onStart,
     this.throwOnForegroundChanges = false,
     this.throwOnStart = false,
     this.throwOnAdvertise = false,
@@ -93,7 +96,8 @@ final class _Graph
   final bool recordRearmEvent;
   final List<bool> _rearmResults;
   final Completer<bool>? rearmCompleter;
-  final void Function(_Graph graph)? onShutdown;
+  final FutureOr<void> Function(_Graph graph)? onShutdown;
+  final Future<void> Function()? onStart;
   final bool throwOnForegroundChanges;
   final bool throwOnStart;
   final bool throwOnAdvertise;
@@ -242,13 +246,14 @@ final class _Graph
   @override
   Future<void> shutdown() async {
     events.add('call_shutdown');
-    onShutdown?.call(this);
+    await onShutdown?.call(this);
   }
 
   @override
   Future<OutgoingCallStartResult> startOutgoingCall(
-    String contactAccountPeerId,
-  ) async {
+    String contactAccountPeerId, {
+    OutgoingCallStartRequest? request,
+  }) async {
     outgoingPeerIds.add(contactAccountPeerId);
     return outgoingResult;
   }
@@ -256,6 +261,7 @@ final class _Graph
   @override
   Future<bool> start() async {
     events.add('call_subscription');
+    await onStart?.call();
     if (throwOnStart) {
       throw StateError('private listener detail');
     }
@@ -1182,7 +1188,7 @@ void main() {
         traceId,
         () => composition.startOutgoingCall('private-contact-not-for-export'),
       );
-      expect(result, OutgoingCallStartResult.failed);
+      expect(result, OutgoingCallStartResult.microphoneDenied);
       expect(graph.outgoingPeerIds, isEmpty);
       final events = await diagnostics.eventsForTesting();
       expect(
@@ -1844,46 +1850,134 @@ void main() {
     },
   );
 
-  test('outgoing microphone refusal or failure is fixed fail-closed', () async {
-    for (final permissionStatus in <MicPermissionStatus>[
-      MicPermissionStatus.denied,
-      // The shared gateway folds the platform restricted state into this
-      // value because neither can be re-prompted in-app.
-      MicPermissionStatus.permanentlyDenied,
-    ]) {
-      final graph = _Graph(<String>[]);
-      final composition = CallSignalingComposition(
+  for (final boundary in ['microphone', 'capability', 'wake']) {
+    test(
+      'cancel during $boundary preflight fences late completion and allows retry',
+      () async {
+        final reached = Completer<void>();
+        final release = Completer<void>();
+        var shouldBlock = true;
+        Future<void> block(String stage) async {
+          if (stage != boundary || !shouldBlock) return;
+          if (!reached.isCompleted) reached.complete();
+          await release.future;
+        }
+
+        var advertisements = 0;
+        final graph = _Graph(<String>[])
+          ..onAdvertise = () async {
+            if (advertisements++ > 0) await block('capability');
+            return true;
+          };
+        final composition = CallSignalingComposition(
+          featureFlags: _enabledFlags(),
+          platform: CallEndpointPlatform.android,
+          awaitReadiness: () async {},
+          requestOutgoingMicrophonePermission: () async {
+            await block('microphone');
+            return MicPermissionStatus.granted;
+          },
+          ensureOutgoingCallWakeAuthority: (_) async {
+            await block('wake');
+            return true;
+          },
+          buildGraph: () async => graph,
+        );
+        await composition.start();
+        addTearDown(composition.shutdown);
+        final request = OutgoingCallStartRequest();
+        final pending = composition.startOutgoingCall(
+          'canceled-peer',
+          request: request,
+        );
+        await reached.future;
+        request.cancel();
+        shouldBlock = false;
+        expect(
+          await composition.startOutgoingCall('next-peer'),
+          OutgoingCallStartResult.started,
+        );
+        release.complete();
+        expect(await pending, OutgoingCallStartResult.canceled);
+        expect(graph.outgoingPeerIds, ['next-peer']);
+      },
+    );
+  }
+
+  test(
+    'outgoing microphone refusal is typed while adapter failure stays generic',
+    () async {
+      for (final permissionStatus in <MicPermissionStatus>[
+        MicPermissionStatus.denied,
+        // The shared gateway folds the platform restricted state into this
+        // value because neither can be re-prompted in-app.
+        MicPermissionStatus.permanentlyDenied,
+      ]) {
+        final graph = _Graph(<String>[]);
+        var permissionRequests = 0;
+        final composition = CallSignalingComposition(
+          featureFlags: _enabledFlags(),
+          platform: CallEndpointPlatform.ios,
+          awaitReadiness: () async {},
+          requestOutgoingMicrophonePermission: () async {
+            permissionRequests++;
+            return permissionStatus;
+          },
+          buildGraph: () async => graph,
+        );
+        await composition.start();
+
+        expect(
+          await composition.startOutgoingCall('peer-$permissionStatus'),
+          OutgoingCallStartResult.microphoneDenied,
+        );
+        expect(graph.outgoingPeerIds, isEmpty);
+        expect(permissionRequests, 1);
+      }
+
+      final throwingGraph = _Graph(<String>[]);
+      final throwingComposition = CallSignalingComposition(
         featureFlags: _enabledFlags(),
         platform: CallEndpointPlatform.ios,
         awaitReadiness: () async {},
-        requestOutgoingMicrophonePermission: () async => permissionStatus,
-        buildGraph: () async => graph,
+        requestOutgoingMicrophonePermission: () async =>
+            throw StateError('permission adapter details must stay private'),
+        buildGraph: () async => throwingGraph,
       );
-      await composition.start();
+      await throwingComposition.start();
 
       expect(
-        await composition.startOutgoingCall('peer-$permissionStatus'),
+        await throwingComposition.startOutgoingCall('peer-on-throw'),
         OutgoingCallStartResult.failed,
       );
-      expect(graph.outgoingPeerIds, isEmpty);
-    }
+      expect(throwingGraph.outgoingPeerIds, isEmpty);
+    },
+  );
 
-    final throwingGraph = _Graph(<String>[]);
-    final throwingComposition = CallSignalingComposition(
+  test('canceling preflight wins over a late microphone denial', () async {
+    final permission = Completer<MicPermissionStatus>();
+    final graph = _Graph(<String>[]);
+    var permissionRequests = 0;
+    final composition = CallSignalingComposition(
       featureFlags: _enabledFlags(),
-      platform: CallEndpointPlatform.ios,
+      platform: CallEndpointPlatform.android,
       awaitReadiness: () async {},
-      requestOutgoingMicrophonePermission: () async =>
-          throw StateError('permission adapter details must stay private'),
-      buildGraph: () async => throwingGraph,
+      requestOutgoingMicrophonePermission: () {
+        permissionRequests++;
+        return permission.future;
+      },
+      buildGraph: () async => graph,
     );
-    await throwingComposition.start();
-
-    expect(
-      await throwingComposition.startOutgoingCall('peer-on-throw'),
-      OutgoingCallStartResult.failed,
-    );
-    expect(throwingGraph.outgoingPeerIds, isEmpty);
+    addTearDown(composition.shutdown);
+    await composition.start();
+    final request = OutgoingCallStartRequest();
+    final pending = composition.startOutgoingCall('peer', request: request);
+    expect(permissionRequests, 1);
+    request.cancel();
+    permission.complete(MicPermissionStatus.denied);
+    expect(await pending, OutgoingCallStartResult.canceled);
+    expect(graph.outgoingPeerIds, isEmpty);
+    expect(request.isAdmitted, isFalse);
   });
 
   test(
@@ -2206,6 +2300,10 @@ void main() {
           );
           expect(second.outgoingPeerIds, <String>['peer-after-replacement']);
           expect(first.outgoingPeerIds, isEmpty);
+          expect(
+            first.events.where((event) => event == 'call_shutdown'),
+            hasLength(1),
+          );
         },
       );
     }
@@ -2302,6 +2400,370 @@ void main() {
       expect(emitted.last, isNull);
     },
   );
+
+  for (final heldBoundary in ['cancel', 'detach']) {
+    test(
+      'replacement preserves native Answer after old $heldBoundary completes',
+      () async {
+        const handle = '33333333-3333-4333-8333-333333333333';
+        final entered = Completer<void>();
+        final release = Completer<void>();
+        final firstClosed = Completer<void>();
+        final nativeStreams = <StreamController<Object?>>[];
+        final coordinators = <CallCoordinator>[];
+        final adapters = <AndroidCallLifecycleAdapter>[];
+        final graphs = <_Graph>[];
+        final acknowledgements = <Map<String, Object?>>[];
+        var nativeAttached = false;
+        var detachCalls = 0;
+        Future<void> holdFirst(int index, String boundary) async {
+          if (index == 0 && boundary == heldBoundary) {
+            if (!entered.isCompleted) entered.complete();
+            await release.future;
+          }
+          // onCancel and detach both clear this engine's current native sink.
+          nativeAttached = false;
+        }
+
+        final composition = CallSignalingComposition(
+          featureFlags: _enabledFlags(),
+          platform: CallEndpointPlatform.android,
+          awaitReadiness: () async {},
+          isForeground: () => true,
+          buildGraph: () async {
+            final index = graphs.length;
+            final native = StreamController<Object?>(
+              sync: true,
+              onCancel: () => holdFirst(index, 'cancel'),
+            );
+            nativeStreams.add(native);
+            final coordinator = CallCoordinator(
+              reducer: const CallReducer(),
+              cleanupCoordinator: CallCleanupCoordinator(const []),
+              historyProjector: CallHistoryProjector(
+                _UnusedCallHistoryRepository(),
+              ),
+              clock: () => _callNow,
+              idSource: () => _callA,
+            );
+            coordinators.add(coordinator);
+            final adapter = AndroidCallLifecycleAdapter(
+              coordinator: coordinator,
+              resolveAuthenticatedHandle: (_) => handle,
+              clock: () => _callNow,
+              nativeEvents: native.stream,
+              invokeMethod: (method, arguments) async {
+                if (method == 'attach') {
+                  nativeAttached = true;
+                  return const <String, Object?>{
+                    'version': 1,
+                    'descriptor': null,
+                    'events': <Object?>[],
+                    'nativeCallId': null,
+                    'highestSequence': 0,
+                  };
+                }
+                if (method == 'detach') {
+                  detachCalls++;
+                  await holdFirst(index, 'detach');
+                }
+                if (method == 'acknowledge') {
+                  acknowledgements.add(Map.of(arguments));
+                }
+                return true;
+              },
+            );
+            adapters.add(adapter);
+            final graph = _Graph(
+              <String>[],
+              onStart: adapter.start,
+              onShutdown: (_) async {
+                await adapter.close();
+                if (index == 0) firstClosed.complete();
+              },
+            );
+            graphs.add(graph);
+            return graph;
+          },
+        );
+        addTearDown(() async {
+          if (!release.isCompleted) release.complete();
+          await composition.shutdown();
+          for (final coordinator in coordinators) {
+            await coordinator.dispose();
+          }
+          for (final native in nativeStreams) {
+            await native.close();
+          }
+        });
+        await composition.start();
+        graphs.single.callabilityInvalidationsController.add(null);
+        await entered.future;
+        final replacement = composition.start();
+        final resumed = composition.onResume();
+        for (var i = 0; i < 8; i++) {
+          await Future<void>.delayed(Duration.zero);
+        }
+        final buildsWhileOldOwnerHeld = graphs.length;
+        release.complete();
+        await Future.wait([replacement, resumed, firstClosed.future]);
+        expect(graphs, hasLength(2));
+        expect(detachCalls, 1);
+        expect(
+          nativeAttached,
+          isTrue,
+          reason: 'Old native cleanup must precede replacement attach',
+        );
+        expect(buildsWhileOldOwnerHeld, 1);
+
+        final coordinator = coordinators.last;
+        await coordinator.dispatch(
+          CallEvent(
+            type: CallEventType.remoteInvite,
+            eventId: 'replacement-invite',
+            occurredAt: _callNow,
+            callId: _callA,
+            contactPeerId: 'remote-account',
+            localAccountPeerId: 'local-account',
+            localDeviceId: 'local-device',
+            remoteAccountPeerId: 'remote-account',
+            remoteDeviceId: 'remote-device',
+            expiresAt: _callNow.add(const Duration(seconds: 45)),
+            transportRoute: CallRouteClass.direct,
+          ),
+        );
+        await coordinator.dispatch(
+          CallEvent(
+            type: CallEventType.incomingValidated,
+            eventId: 'replacement-validated',
+            occurredAt: _callNow,
+            callId: _callA,
+            contactPeerId: 'remote-account',
+          ),
+        );
+        expect(
+          await adapters.last.present(
+            IncomingCallPresentation(
+              callId: _callA,
+              callerAccountPeerId: 'remote-account',
+              expiresAt: _callNow.add(const Duration(seconds: 45)),
+            ),
+          ),
+          isTrue,
+        );
+        void emit(int sequence, String type) {
+          if (!nativeAttached) return;
+          nativeStreams.last.add(<String, Object?>{
+            'version': 1,
+            'descriptor': <String, Object?>{
+              'callHandle': handle,
+              'expiresAtMs': _callNow
+                  .add(const Duration(seconds: 45))
+                  .millisecondsSinceEpoch,
+              'presented': true,
+              'phase': sequence == 1 ? 'preStart' : 'journal',
+              'direction': 'incoming',
+            },
+            'events': <Object?>[
+              <String, Object?>{
+                'callHandle': handle,
+                'sequence': sequence,
+                'eventId': '00000000-0000-4000-8000-00000000000$sequence',
+                'type': type,
+                'occurredAtMs': _callNow.millisecondsSinceEpoch,
+              },
+            ],
+            'nativeCallId': handle,
+            'highestSequence': sequence,
+          });
+        }
+
+        emit(1, 'presented');
+        await _untilComposition(
+          () => acknowledgements.any(
+            (ack) =>
+                ack['throughSequence'] == 1 && ack['disposition'] == 'ADOPTED',
+          ),
+        );
+        await coordinator.dispatch(
+          CallEvent(
+            type: CallEventType.systemUiPresented,
+            eventId: 'replacement-presented',
+            occurredAt: _callNow,
+            callId: _callA,
+            contactPeerId: 'remote-account',
+          ),
+        );
+        expect(coordinator.activeSession?.state, CallState.ringing);
+        expect(await adapters.last.answerNatively(_callA), isTrue);
+        emit(2, 'answer');
+        await _untilComposition(
+          () => coordinator.activeSession?.state == CallState.accepted,
+        );
+        expect(
+          acknowledgements.where((ack) => ack['throughSequence'] == 1),
+          hasLength(1),
+        );
+      },
+    );
+  }
+
+  for (final queueReplacement in [false, true]) {
+    test(
+      'shutdown waits for withdrawn owner with queued replacement=$queueReplacement',
+      () async {
+        final entered = Completer<void>();
+        final release = Completer<void>();
+        final graph = _Graph(
+          <String>[],
+          onShutdown: (_) async {
+            if (!entered.isCompleted) entered.complete();
+            await release.future;
+          },
+        );
+        var builds = 0;
+        final composition = CallSignalingComposition(
+          featureFlags: _enabledFlags(),
+          platform: CallEndpointPlatform.android,
+          awaitReadiness: () async {},
+          buildGraph: () async {
+            builds++;
+            return graph;
+          },
+          isForeground: () => true,
+        );
+        addTearDown(() async {
+          if (!release.isCompleted) release.complete();
+          await composition.shutdown();
+        });
+        await composition.start();
+        graph.callabilityInvalidationsController.add(null);
+        await entered.future;
+        final queuedStart = queueReplacement
+            ? composition.start()
+            : Future<void>.value();
+        var shutdownCompleted = false;
+        final shutdown = composition.shutdown().then(
+          (_) => shutdownCompleted = true,
+        );
+        final repeatedShutdown = composition.shutdown();
+        for (var i = 0; i < 8; i++) {
+          await Future<void>.delayed(Duration.zero);
+        }
+        expect(shutdownCompleted, isFalse);
+        expect(builds, 1);
+        release.complete();
+        await Future.wait([queuedStart, shutdown, repeatedShutdown]);
+        await composition.start();
+        expect(builds, 1);
+        expect(composition.isStarted, isFalse);
+        expect(
+          graph.events.where((event) => event == 'call_shutdown'),
+          hasLength(1),
+        );
+      },
+    );
+  }
+
+  test(
+    'failed graph withdrawal forbids replacement on indeterminate native owner',
+    () async {
+      final graph = _Graph(
+        <String>[],
+        advertisementResults: const [true, false],
+        onShutdown: (_) => throw StateError('private native close failure'),
+      );
+      var builds = 0;
+      final composition = CallSignalingComposition(
+        featureFlags: _enabledFlags(),
+        platform: CallEndpointPlatform.android,
+        awaitReadiness: () async {},
+        buildGraph: () async {
+          builds++;
+          return graph;
+        },
+        isForeground: () => true,
+      );
+      await composition.start();
+      await composition.onResume();
+      await composition.start();
+      await composition.onResume();
+      await composition.shutdown();
+      expect(builds, 1);
+      expect(composition.isStarted, isFalse);
+      expect(composition.isOutgoingCallAvailable, isFalse);
+      expect(
+        graph.events.where((event) => event == 'call_shutdown'),
+        hasLength(1),
+      );
+    },
+  );
+
+  for (final boundary in ['listener', 'advertisement']) {
+    for (final terminal in [false, true]) {
+      test(
+        '${terminal ? 'shutdown' : 'invalidation'} fences late startup $boundary',
+        () async {
+          final entered = Completer<void>();
+          final release = Completer<void>();
+          Future<void> hold() async {
+            if (!entered.isCompleted) entered.complete();
+            await release.future;
+          }
+
+          final first = _Graph(
+            <String>[],
+            onStart: boundary == 'listener' ? hold : null,
+          );
+          if (boundary == 'advertisement') {
+            first.onAdvertise = () async {
+              await hold();
+              return true;
+            };
+          }
+          final second = _Graph(<String>[]);
+          var builds = 0;
+          final composition = CallSignalingComposition(
+            featureFlags: _enabledFlags(),
+            platform: CallEndpointPlatform.android,
+            awaitReadiness: () async {},
+            buildGraph: () async => builds++ == 0 ? first : second,
+            isForeground: () => true,
+          );
+          addTearDown(() async {
+            if (!release.isCompleted) release.complete();
+            await composition.shutdown();
+          });
+          final starting = composition.start();
+          await entered.future;
+          Future<void>? shutdown;
+          if (terminal) {
+            shutdown = composition.shutdown();
+          } else {
+            first.callabilityInvalidationsController.add(null);
+            await _untilComposition(
+              () => first.events.contains('call_shutdown'),
+            );
+          }
+          release.complete();
+          await starting;
+          await shutdown;
+          expect(composition.isStarted, isFalse);
+          expect(composition.isOutgoingCallAvailable, isFalse);
+          expect(
+            first.events.where((event) => event == 'call_shutdown'),
+            hasLength(1),
+          );
+          if (boundary == 'listener') {
+            expect(first.events, isNot(contains('advertise')));
+          }
+          await composition.start();
+          expect(builds, terminal ? 1 : 2);
+          expect(composition.isStarted, !terminal);
+        },
+      );
+    }
+  }
 
   test(
     'withdrawal publishes null before shutdown and ignores old graph',
@@ -3043,32 +3505,60 @@ void main() {
     await composition.shutdown();
   });
 
-  test('call wake drains the call mailbox on a started graph', () async {
-    final events = <String>[];
-    final flowEvents = <Map<String, dynamic>>[];
-    debugSetFlowEventSink(flowEvents.add);
-    addTearDown(() => debugSetFlowEventSink(null));
-    final composition = CallSignalingComposition(
-      featureFlags: _enabledFlags(),
-      platform: CallEndpointPlatform.ios,
-      awaitReadiness: () async => events.add('readiness'),
-      buildGraph: () async => _Graph(events),
+  for (final platform in [
+    CallEndpointPlatform.android,
+    CallEndpointPlatform.ios,
+  ]) {
+    test(
+      '${platform.name} call wake drains the call mailbox on a started graph',
+      () async {
+        final events = <String>[];
+        final flowEvents = <Map<String, dynamic>>[];
+        debugSetFlowEventSink(flowEvents.add);
+        addTearDown(() => debugSetFlowEventSink(null));
+        final composition = CallSignalingComposition(
+          featureFlags: _enabledFlags(),
+          platform: platform,
+          awaitReadiness: () async => events.add('readiness'),
+          buildGraph: () async => _Graph(events),
+        );
+        await composition.start();
+        expect(composition.isStarted, isTrue);
+        events.clear();
+
+        if (platform == CallEndpointPlatform.android) {
+          final channel = AndroidCallWakeChannel(
+            onCallWake: composition.onCallWake,
+          );
+          await channel.install();
+          addTearDown(channel.dispose);
+          const wire = StandardMethodCodec();
+          final reply = await TestDefaultBinaryMessengerBinding
+              .instance
+              .defaultBinaryMessenger
+              .handlePlatformMessage(
+                AndroidCallWakeChannel.channelName,
+                wire.encodeMethodCall(
+                  const MethodCall(AndroidCallWakeChannel.wakeMethod),
+                ),
+                (_) {},
+              );
+          expect(wire.decodeEnvelope(reply!), isTrue);
+        } else {
+          await composition.onCallWake();
+        }
+
+        expect(events, <String>['call_mailbox_drain']);
+        expect(composition.isStarted, isTrue);
+        final wake = flowEvents
+            .where((event) => event['event'] == 'CALL_SIGNALING_WAKE_RESULT')
+            .toList(growable: false);
+        expect(wake, hasLength(1));
+        expect(wake.single['details'], containsPair('outcome', 'drained'));
+        await composition.shutdown();
+      },
     );
-    await composition.start();
-    expect(composition.isStarted, isTrue);
-    events.clear();
-
-    await composition.onCallWake();
-
-    expect(events, <String>['call_mailbox_drain']);
-    expect(composition.isStarted, isTrue);
-    final wake = flowEvents
-        .where((event) => event['event'] == 'CALL_SIGNALING_WAKE_RESULT')
-        .toList(growable: false);
-    expect(wake, hasLength(1));
-    expect(wake.single['details'], containsPair('outcome', 'drained'));
-    await composition.shutdown();
-  });
+  }
 
   test('call wake starts the graph before draining', () async {
     final events = <String>[];
@@ -3974,97 +4464,375 @@ void main() {
     },
   );
 
-  test(
-    'production revalidates current wake authority after endpoint wait before invite',
-    () async {
-      const contactAccountPeerId = 'remote-account';
-      const nowMs = 2_000_000;
-      final fixture = await _createProductionIosFixture(
-        outgoingContactAccountPeerId: contactAccountPeerId,
-      );
-      await fixture.composition.start();
-      final graph = fixture.graphs.single;
-      final roster = await graph.trustedRosterProvider.loadForContact(
-        contactAccountPeerId,
-      );
-      final trustedDevice = roster.devices.single;
-      final receivedGrant = CallWakeHandleGrant(
-        handle: 'fedcba9876543210fedcba9876543210',
-        recipientDevicePeerId: trustedDevice.devicePeerId,
-        deviceKeyEpoch: trustedDevice.deviceKeyEpoch,
-        generation: 1,
-        issuedAtMs: nowMs - 1_000,
-        expiresAtMs: nowMs + 30_000,
-      );
-      expect(
-        await fixture.receivedCallWakeHandleStore.storeIfStrictlyNewer(
-          issuerAccountPeerId: contactAccountPeerId,
-          grant: receivedGrant,
-          nowMs: nowMs,
-        ),
-        isTrue,
-      );
-      final issued = CallIssuedWakeHandleRecord(
-        contactAccountPeerId: contactAccountPeerId,
-        grant: CallWakeHandleGrant(
-          handle: '0123456789abcdef0123456789abcdef',
-          recipientDevicePeerId: graph.localIdentity.peerId,
-          deviceKeyEpoch: graph.localDeviceKeyEpoch,
+  for (final cancelPreflight in [false, true]) {
+    test(
+      'production fences endpoint wait before invite (canceled: $cancelPreflight)',
+      () async {
+        const contactAccountPeerId = 'remote-account';
+        const nowMs = 2_000_000;
+        final fixture = await _createProductionIosFixture(
+          outgoingContactAccountPeerId: contactAccountPeerId,
+        );
+        await fixture.composition.start();
+        final graph = fixture.graphs.single;
+        final roster = await graph.trustedRosterProvider.loadForContact(
+          contactAccountPeerId,
+        );
+        final trustedDevice = roster.devices.single;
+        final receivedGrant = CallWakeHandleGrant(
+          handle: 'fedcba9876543210fedcba9876543210',
+          recipientDevicePeerId: trustedDevice.devicePeerId,
+          deviceKeyEpoch: trustedDevice.deviceKeyEpoch,
           generation: 1,
           issuedAtMs: nowMs - 1_000,
           expiresAtMs: nowMs + 30_000,
-        ),
-        authorizedSenderDevicePeerIds: <String>{trustedDevice.devicePeerId},
-        distributionPending: false,
-        distributionReceiptVersion:
-            CallIssuedWakeHandleRecord.currentDistributionReceiptVersion,
-      );
-      await fixture.issuedCallWakeHandleStore.write(issued);
+        );
+        expect(
+          await fixture.receivedCallWakeHandleStore.storeIfStrictlyNewer(
+            issuerAccountPeerId: contactAccountPeerId,
+            grant: receivedGrant,
+            nowMs: nowMs,
+          ),
+          isTrue,
+        );
+        final issued = CallIssuedWakeHandleRecord(
+          contactAccountPeerId: contactAccountPeerId,
+          grant: CallWakeHandleGrant(
+            handle: '0123456789abcdef0123456789abcdef',
+            recipientDevicePeerId: graph.localIdentity.peerId,
+            deviceKeyEpoch: graph.localDeviceKeyEpoch,
+            generation: 1,
+            issuedAtMs: nowMs - 1_000,
+            expiresAtMs: nowMs + 30_000,
+          ),
+          authorizedSenderDevicePeerIds: <String>{trustedDevice.devicePeerId},
+          distributionPending: false,
+          distributionReceiptVersion:
+              CallIssuedWakeHandleRecord.currentDistributionReceiptVersion,
+        );
+        await fixture.issuedCallWakeHandleStore.write(issued);
 
-      final endpoint = CallEndpointRecord(
-        accountPeerId: contactAccountPeerId,
-        devicePeerId: trustedDevice.devicePeerId,
-        capabilities: const <String>{'voice_call_v1'},
-        platform: CallEndpointPlatform.android,
-        expiresAtMs: nowMs + 60_000,
-        preferenceEpoch: 1,
-        deviceKeyEpoch: trustedDevice.deviceKeyEpoch,
-        routingHandle: '0123456789abcdef0123456789abcdef',
-      );
-      final endpointResponse = <String, Object?>{
-        'ok': true,
-        'found': true,
-        'canonicalRecord': base64Encode(
-          utf8.encode(endpoint.canonicalRecordJson),
-        ),
-        'endpoint': <String, Object?>{
-          ...endpoint.toCanonicalMap(),
-          'signature': 'c2lnbmF0dXJl',
+        final endpoint = CallEndpointRecord(
+          accountPeerId: contactAccountPeerId,
+          devicePeerId: trustedDevice.devicePeerId,
+          capabilities: const <String>{'voice_call_v1'},
+          platform: CallEndpointPlatform.android,
+          expiresAtMs: nowMs + 60_000,
+          preferenceEpoch: 1,
+          deviceKeyEpoch: trustedDevice.deviceKeyEpoch,
+          routingHandle: '0123456789abcdef0123456789abcdef',
+        );
+        final endpointResponse = <String, Object?>{
+          'ok': true,
+          'found': true,
+          'canonicalRecord': base64Encode(
+            utf8.encode(endpoint.canonicalRecordJson),
+          ),
+          'endpoint': <String, Object?>{
+            ...endpoint.toCanonicalMap(),
+            'signature': 'c2lnbmF0dXJl',
+          },
+        };
+        fixture.bridge.responses['payload.verify'] = const <String, Object?>{
+          'ok': true,
+          'valid': true,
+        };
+        final endpointRequested = Completer<void>();
+        final releaseEndpoint = Completer<Map<String, Object?>>();
+        fixture.bridge.responseHandlers['call_endpoint_get_v1'] = (_) async {
+          if (!endpointRequested.isCompleted) endpointRequested.complete();
+          return releaseEndpoint.future;
+        };
+
+        final request = OutgoingCallStartRequest();
+        final outgoing = graph.startOutgoingCall(
+          contactAccountPeerId,
+          request: request,
+        );
+        await endpointRequested.future;
+        if (cancelPreflight) {
+          request.cancel();
+        } else {
+          await fixture.issuedCallWakeHandleStore.write(
+            issued.copyWith(distributionPending: true),
+          );
+        }
+        releaseEndpoint.complete(endpointResponse);
+
+        expect(
+          await outgoing,
+          cancelPreflight
+              ? OutgoingCallStartResult.canceled
+              : OutgoingCallStartResult.unavailable,
+        );
+        expect(graph.coordinator.activeSession, isNull);
+        expect(graph.coordinator.lastSnapshot, isNull);
+      },
+    );
+  }
+
+  for (final boundary in <String>[
+    'native reconciliation',
+    'final wake authority',
+  ]) {
+    test('production cancellation fences $boundary before admission', () async {
+      const contact = 'remote-account';
+      const oldHandle = '33333333-3333-4333-8333-333333333333';
+      const nowMs = 2_000_000;
+      final nativeEvents = StreamController<Object?>.broadcast(sync: true);
+      final issued = _GatedIssuedWakeStore(_newCallWakeStores().issued);
+      final entered = Completer<void>();
+      final release = Completer<void>();
+      var terminalAckAllowed = false;
+      var holdTerminalAck = false;
+      var terminalAckCount = 0;
+      var terminalAcksBeforeWait = 0;
+      final registrations = <String>[];
+      Map<String, Object?>? latestBatch;
+      Map<String, Object?> batch(
+        String handle, {
+        bool terminal = false,
+        bool outgoing = false,
+      }) => <String, Object?>{
+        'version': 1,
+        'descriptor': <String, Object?>{
+          'callHandle': handle,
+          'expiresAtMs': nowMs + 45_000,
+          'presented': true,
+          'phase': terminal ? 'journal' : 'preStart',
+          'direction': outgoing ? 'outgoing' : 'incoming',
         },
+        'events': <Object?>[
+          <String, Object?>{
+            'callHandle': handle,
+            'sequence': 1,
+            'eventId': '55555555-5555-4555-8555-555555555555',
+            'type': 'presented',
+            'occurredAtMs': nowMs,
+          },
+          if (terminal)
+            <String, Object?>{
+              'callHandle': handle,
+              'sequence': 2,
+              'eventId': '66666666-6666-4666-8666-666666666666',
+              'type': 'remoteCancelled',
+              'occurredAtMs': nowMs,
+            },
+        ],
+        'nativeCallId': handle,
+        'highestSequence': terminal ? 2 : 1,
       };
-      fixture.bridge.responses['payload.verify'] = const <String, Object?>{
-        'ok': true,
-        'valid': true,
-      };
-      final endpointRequested = Completer<void>();
-      final releaseEndpoint = Completer<Map<String, Object?>>();
-      fixture.bridge.responseHandlers['call_endpoint_get_v1'] = (_) async {
-        if (!endpointRequested.isCompleted) endpointRequested.complete();
-        return releaseEndpoint.future;
-      };
-
-      final outgoing = graph.startOutgoingCall(contactAccountPeerId);
-      await endpointRequested.future;
-      await fixture.issuedCallWakeHandleStore.write(
-        issued.copyWith(distributionPending: true),
+      if (boundary == 'native reconciliation') latestBatch = batch(oldHandle);
+      final fixture = await _createProductionIosFixture(
+        nativePlatform: CallEndpointPlatform.android,
+        issuedStore: issued,
+        lifecycleEventStream: nativeEvents.stream,
+        outgoingContactAccountPeerId: contact,
+        nativeHandleOverride: oldHandle,
+        lifecycleOverride: (method, arguments) async {
+          if (method == 'attach') return latestBatch;
+          if (method == 'acknowledge' &&
+              arguments['disposition'] == 'TERMINAL') {
+            terminalAckCount++;
+            expect(arguments['callHandle'], oldHandle);
+            expect(arguments['throughSequence'], 2);
+            if (holdTerminalAck) {
+              if (!entered.isCompleted) entered.complete();
+              await release.future;
+              latestBatch = null;
+              return true;
+            }
+            return terminalAckAllowed;
+          }
+          if (method == 'registerOutgoingAuthenticated') {
+            final handle = arguments['callHandle']! as String;
+            registrations.add(handle);
+            latestBatch = batch(handle, outgoing: true);
+            nativeEvents.add(latestBatch);
+          }
+          return null;
+        },
       );
-      releaseEndpoint.complete(endpointResponse);
-
-      expect(await outgoing, OutgoingCallStartResult.unavailable);
+      addTearDown(() async {
+        if (!release.isCompleted) release.complete();
+        terminalAckAllowed = true;
+        holdTerminalAck = false;
+        await nativeEvents.close();
+      });
+      await fixture.composition.start();
+      final graph = fixture.graphs.single;
+      expect(graph.androidCallLifecycleAdapter, isNotNull);
+      expect(graph.iosCallLifecycleAdapter, isNull);
+      final now = DateTime.fromMillisecondsSinceEpoch(nowMs, isUtc: true);
+      if (boundary == 'native reconciliation') {
+        await graph.coordinator.dispatch(
+          CallEvent(
+            type: CallEventType.remoteInvite,
+            eventId: 'prior-native-invite',
+            occurredAt: now,
+            callId: _callA,
+            contactPeerId: contact,
+            localAccountPeerId: 'local-account',
+            localDeviceId: 'local-account',
+            remoteAccountPeerId: contact,
+            remoteDeviceId: 'remote-device',
+            expiresAt: now.add(const Duration(seconds: 45)),
+            transportRoute: CallRouteClass.direct,
+          ),
+        );
+        await graph.coordinator.dispatch(
+          CallEvent(
+            type: CallEventType.incomingValidated,
+            eventId: 'prior-native-validated',
+            occurredAt: now,
+            callId: _callA,
+            contactPeerId: contact,
+          ),
+        );
+        expect(
+          await graph.androidCallLifecycleAdapter!.present(
+            IncomingCallPresentation(
+              callId: _callA,
+              callerAccountPeerId: contact,
+              expiresAt: now.add(const Duration(seconds: 45)),
+            ),
+          ),
+          isTrue,
+        );
+        latestBatch = batch(oldHandle, terminal: true);
+        nativeEvents.add(latestBatch);
+        await _untilComposition(
+          () => terminalAckCount > 0 && graph.coordinator.activeSession == null,
+        );
+        expect(graph.coordinator.terminalCleanupAckReady(_callA), isTrue);
+        expect(graph.androidCallLifecycleAdapter!.isBoundTo(_callA), isTrue);
+        // Drain earlier native/snapshot work, retaining the refused terminal.
+        // The next held ACK must belong to graph preflight reconciliation.
+        expect(
+          await graph.androidCallLifecycleAdapter!.reconcileBeforeOutgoing(),
+          isFalse,
+        );
+        terminalAcksBeforeWait = terminalAckCount;
+        holdTerminalAck = true;
+      }
+      await _configureCancellationEndpoint(fixture, contact);
+      final priorSnapshot = graph.coordinator.lastSnapshot;
+      final originalRequests = fixture.bridge.requests.length;
+      final authorityReadsBefore = issued.reads;
+      if (boundary == 'final wake authority') {
+        issued.holdNextRead = () async {
+          entered.complete();
+          await release.future;
+        };
+      }
+      final request = OutgoingCallStartRequest();
+      var completed = false;
+      final outgoing = graph
+          .startOutgoingCall(contact, request: request)
+          .whenComplete(() => completed = true);
+      await entered.future.timeout(const Duration(seconds: 2));
+      // This proves the specific native ACK/store read has entered and the
+      // original request is still suspended, rather than relying on a delay.
+      expect(completed, isFalse);
+      expect(request.isAdmitted, isFalse);
       expect(graph.coordinator.activeSession, isNull);
-      expect(graph.coordinator.lastSnapshot, isNull);
-    },
-  );
+      expect(registrations, isEmpty);
+      expect(
+        fixture.bridge.requests
+            .skip(originalRequests)
+            .where((r) => r['cmd'] == 'call_endpoint_get_v1'),
+        hasLength(1),
+      );
+      if (boundary == 'final wake authority') {
+        expect(issued.heldReads, 1);
+        expect(issued.reads, authorityReadsBefore + 1);
+      } else {
+        expect(terminalAckCount, terminalAcksBeforeWait + 1);
+        expect(issued.reads, authorityReadsBefore);
+      }
+      request.cancel();
+      expect(completed, isFalse);
+      release.complete();
+      expect(await outgoing, OutgoingCallStartResult.canceled);
+      expect(request.isAdmitted, isFalse);
+      expect(graph.coordinator.activeSession, isNull);
+      expect(graph.coordinator.lastSnapshot, same(priorSnapshot));
+      if (boundary == 'native reconciliation') {
+        expect(
+          issued.reads,
+          authorityReadsBefore,
+          reason:
+              'Canceled native completion must not reach final authority read',
+        );
+        expect(graph.androidCallLifecycleAdapter!.isBoundTo(_callA), isFalse);
+      }
+      expect(registrations, isEmpty);
+      expect(
+        fixture.bridge.requests
+            .skip(originalRequests)
+            .where(
+              (r) =>
+                  r['cmd'] == 'call_store_v1' || r['cmd'] == 'message.encrypt',
+            ),
+        isEmpty,
+      );
+      final invalidationsBeforeRetry = fixture.lifecycleMethods
+          .where((m) => m == 'failClosed')
+          .length;
+      expect(invalidationsBeforeRetry, 0);
+
+      holdTerminalAck = false;
+      terminalAckAllowed = true;
+      final retry = OutgoingCallStartRequest();
+      expect(
+        await graph.startOutgoingCall(contact, request: retry),
+        OutgoingCallStartResult.started,
+      );
+      expect(retry.isAdmitted, isTrue);
+      final successor = graph.coordinator.activeSession!;
+      expect(successor.callId, isNot(_callA));
+      expect(successor.state, CallState.inviting);
+      expect(registrations, hasLength(1));
+      final invites = fixture.bridge.requests
+          .skip(originalRequests)
+          .where((r) => r['cmd'] == 'call_store_v1')
+          .toList();
+      expect(invites, hasLength(1));
+      expect(
+        (invites.single['payload']! as Map)['callHandle'],
+        registrations.single,
+      );
+      expect(
+        graph.androidCallLifecycleAdapter!.isBoundTo(successor.callId!),
+        isTrue,
+      );
+      final encrypted = fixture.bridge.requests
+          .skip(originalRequests)
+          .where((r) => r['cmd'] == 'message.encrypt')
+          .single;
+      final signal =
+          jsonDecode((encrypted['payload']! as Map)['plaintext'] as String)
+              as Map;
+      expect(signal['call_id'], successor.callId!.value);
+      expect(signal['event'], 'invite');
+      expect(request.isAdmitted, isFalse);
+      expect(fixture.lifecycleMethods.where((m) => m == 'failClosed'), isEmpty);
+      await graph.coordinator.dispatch(
+        CallEvent(
+          type: CallEventType.cancel,
+          eventId: 'successor-fixture-cleanup',
+          occurredAt: now,
+          callId: successor.callId,
+          contactPeerId: contact,
+        ),
+      );
+      expect(graph.coordinator.activeSession, isNull);
+      expect(
+        graph.coordinator.terminalCleanupAckReady(successor.callId!),
+        isTrue,
+      );
+    });
+  }
 
   test(
     'native disable false or throw cannot skip the other rollback legs',
@@ -4673,6 +5441,124 @@ void main() {
   });
 }
 
+final class _GatedIssuedWakeStore implements IssuedCallWakeHandleStore {
+  _GatedIssuedWakeStore(this.delegate);
+  final IssuedCallWakeHandleStore delegate;
+  Future<void> Function()? holdNextRead;
+  int heldReads = 0;
+  int reads = 0;
+  @override
+  Future<CallIssuedWakeHandleRecord?> readForContact(String contact) async {
+    reads++;
+    final record = await delegate.readForContact(contact);
+    final hold = holdNextRead;
+    if (hold != null) {
+      holdNextRead = null;
+      heldReads++;
+      await hold();
+    }
+    return record;
+  }
+
+  @override
+  Future<List<CallIssuedWakeHandleRecord>> readAll() => delegate.readAll();
+  @override
+  Future<void> write(CallIssuedWakeHandleRecord record) =>
+      delegate.write(record);
+  @override
+  Future<void> removeForContact(String contact) =>
+      delegate.removeForContact(contact);
+  @override
+  Future<void> clear() => delegate.clear();
+}
+
+Future<void> _configureCancellationEndpoint(
+  _ProductionIosFixture fixture,
+  String contact,
+) async {
+  const nowMs = 2_000_000;
+  final graph = fixture.graphs.single;
+  final device = (await graph.trustedRosterProvider.loadForContact(
+    contact,
+  )).devices.single;
+  expect(
+    await fixture.receivedCallWakeHandleStore.storeIfStrictlyNewer(
+      issuerAccountPeerId: contact,
+      grant: CallWakeHandleGrant(
+        handle: 'fedcba9876543210fedcba9876543210',
+        recipientDevicePeerId: device.devicePeerId,
+        deviceKeyEpoch: device.deviceKeyEpoch,
+        generation: 1,
+        issuedAtMs: nowMs - 1000,
+        expiresAtMs: nowMs + 60_000,
+      ),
+      nowMs: nowMs,
+    ),
+    isTrue,
+  );
+  await fixture.issuedCallWakeHandleStore.write(
+    CallIssuedWakeHandleRecord(
+      contactAccountPeerId: contact,
+      grant: CallWakeHandleGrant(
+        handle: '0123456789abcdef0123456789abcdef',
+        recipientDevicePeerId: graph.localIdentity.peerId,
+        deviceKeyEpoch: graph.localDeviceKeyEpoch,
+        generation: 1,
+        issuedAtMs: nowMs - 1000,
+        expiresAtMs: nowMs + 60_000,
+      ),
+      authorizedSenderDevicePeerIds: <String>{device.devicePeerId},
+      distributionPending: false,
+      distributionReceiptVersion:
+          CallIssuedWakeHandleRecord.currentDistributionReceiptVersion,
+    ),
+  );
+  final endpoint = CallEndpointRecord(
+    accountPeerId: contact,
+    devicePeerId: device.devicePeerId,
+    capabilities: const <String>{'voice_call_v1'},
+    platform: CallEndpointPlatform.android,
+    expiresAtMs: nowMs + 60_000,
+    preferenceEpoch: 1,
+    deviceKeyEpoch: device.deviceKeyEpoch,
+    routingHandle: '0123456789abcdef0123456789abcdef',
+  );
+  fixture.bridge.responses['call_endpoint_get_v1'] = <String, Object?>{
+    'ok': true,
+    'found': true,
+    'canonicalRecord': base64Encode(utf8.encode(endpoint.canonicalRecordJson)),
+    'endpoint': <String, Object?>{
+      ...endpoint.toCanonicalMap(),
+      'signature': 'c2lnbmF0dXJl',
+    },
+  };
+  fixture.bridge.responses['payload.verify'] = const <String, Object?>{
+    'ok': true,
+    'valid': true,
+  };
+  fixture.bridge.responses['message.encrypt'] = const <String, Object?>{
+    'ok': true,
+    'kem': 'a2Vt',
+    'ciphertext': 'Y2lwaGVy',
+    'nonce': 'bm9uY2U=',
+  };
+  fixture.bridge.responseHandlers['call_store_v1'] = (request) async =>
+      <String, Object?>{
+        'ok': true,
+        'storeStatus': 'stored',
+        'receiptAtMs': nowMs,
+        'expiresAtMs': (request['payload']! as Map)['expiresAtMs'],
+        'eventCount': 1,
+        'totalBytes': 128,
+        'pendingHandles': 1,
+        'wake': 'none',
+      };
+  fixture.bridge.responses['call_cancel_v1'] = const <String, Object?>{
+    'ok': true,
+    'canceled': true,
+  };
+}
+
 final class _ProductionIosFixture {
   const _ProductionIosFixture({
     required this.composition,
@@ -4691,11 +5577,14 @@ final class _ProductionIosFixture {
   final List<Map<String, Object?>> capabilityArguments;
   final StreamController<Object?> tokenEvents;
   final List<ProductionCallSignalingGraph> graphs;
-  final IssuedCallWakeHandleStoreImpl issuedCallWakeHandleStore;
+  final IssuedCallWakeHandleStore issuedCallWakeHandleStore;
   final ReceivedCallWakeHandleStoreImpl receivedCallWakeHandleStore;
 }
 
 Future<_ProductionIosFixture> _createProductionIosFixture({
+  CallEndpointPlatform nativePlatform = CallEndpointPlatform.ios,
+  IssuedCallWakeHandleStore? issuedStore,
+  Stream<Object?>? lifecycleEventStream,
   SecureKeyStore? privacyStore,
   Map<String, bool> privacyFlags = const {},
   Map<String, Object?>? endpointSetResponse,
@@ -4765,11 +5654,13 @@ Future<_ProductionIosFixture> _createProductionIosFixture({
     secureKeyStore: privacyStore ?? FakeSecureKeyStore(),
     featureFlags: <String, bool>{
       ..._enabledFlags(),
-      'voice_call_android_native_enabled': false,
-      'voice_call_ios_native_enabled': true,
+      'voice_call_android_native_enabled':
+          nativePlatform == CallEndpointPlatform.android,
+      'voice_call_ios_native_enabled':
+          nativePlatform == CallEndpointPlatform.ios,
       ...privacyFlags,
     },
-    platform: CallEndpointPlatform.ios,
+    platform: nativePlatform,
     database: database,
     bridge: bridge,
     p2pService: p2p,
@@ -4778,8 +5669,38 @@ Future<_ProductionIosFixture> _createProductionIosFixture({
     networkEffectsAllowed: networkEffectsAllowed ?? () => true,
     isVoiceNoteRecording: () => false,
     microphonePermission: microphonePermission,
-    issuedCallWakeHandleStore: callWakeStores.issued,
+    issuedCallWakeHandleStore: issuedStore ?? callWakeStores.issued,
     receivedCallWakeHandleStore: callWakeStores.received,
+    androidCallLifecycleAdapterFactory:
+        ({
+          required coordinator,
+          required resolveAuthenticatedHandle,
+          required clock,
+        }) => AndroidCallLifecycleAdapter(
+          invokeMethod: (method, arguments) async {
+            lifecycleMethods.add(method);
+            final overridden = await lifecycleOverride?.call(method, arguments);
+            if (overridden != null) return overridden;
+            if (method == 'attach') {
+              return attachResponse ??
+                  const <String, Object?>{
+                    'version': 1,
+                    'descriptor': null,
+                    'events': <Object?>[],
+                    'nativeCallId': null,
+                    'highestSequence': 0,
+                  };
+            }
+            return true;
+          },
+          nativeEvents: lifecycleEventStream ?? const Stream<Object?>.empty(),
+          coordinator: coordinator,
+          resolveAuthenticatedHandle: (callId) =>
+              callId == _callA && nativeHandleOverride != null
+              ? nativeHandleOverride
+              : resolveAuthenticatedHandle(callId),
+          clock: clock,
+        ),
     iosCallLifecycleAdapterFactory:
         ({
           required coordinator,
@@ -4860,7 +5781,7 @@ Future<_ProductionIosFixture> _createProductionIosFixture({
     capabilityArguments: capabilityArguments,
     tokenEvents: tokenEvents,
     graphs: graphs,
-    issuedCallWakeHandleStore: callWakeStores.issued,
+    issuedCallWakeHandleStore: issuedStore ?? callWakeStores.issued,
     receivedCallWakeHandleStore: callWakeStores.received,
   );
 }

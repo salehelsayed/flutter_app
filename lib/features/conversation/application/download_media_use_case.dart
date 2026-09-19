@@ -730,6 +730,9 @@ Future<MediaAttachment?> downloadMedia({
   // durable claim and one successful relay attempt, before validation,
   // promotion, or commit.
   GroupMediaPostClaimPreCommit? groupMediaPostClaimPreCommit,
+  StrictGroupMediaBlobDownloadAttemptStarted?
+  strictGroupMediaDownloadAttemptStarted,
+  StrictGroupMediaBlobVerifiedCiphertext? strictGroupMediaVerifiedCiphertext,
 }) async {
   final diagnostics = AppDiagnostics.instance;
   return diagnostics.runWithAttempt(
@@ -758,6 +761,10 @@ Future<MediaAttachment?> downloadMedia({
           groupMediaAutomaticDownloadAttemptStarted:
               groupMediaAutomaticDownloadAttemptStarted,
           groupMediaPostClaimPreCommit: groupMediaPostClaimPreCommit,
+          strictGroupMediaDownloadAttemptStarted:
+              strictGroupMediaDownloadAttemptStarted,
+          strictGroupMediaVerifiedCiphertext:
+              strictGroupMediaVerifiedCiphertext,
           diagnosticAttempt: diagnosticAttempt,
         );
         diagnostics.finishAttempt(
@@ -819,6 +826,9 @@ Future<MediaAttachment?> _downloadMediaDiagnosed({
   // durable claim and one successful relay attempt, before validation,
   // promotion, or commit.
   GroupMediaPostClaimPreCommit? groupMediaPostClaimPreCommit,
+  StrictGroupMediaBlobDownloadAttemptStarted?
+  strictGroupMediaDownloadAttemptStarted,
+  StrictGroupMediaBlobVerifiedCiphertext? strictGroupMediaVerifiedCiphertext,
   required _MediaDiagnosticAttempt diagnosticAttempt,
 }) async {
   int currentNowMs() =>
@@ -1085,6 +1095,13 @@ Future<MediaAttachment?> _downloadMediaDiagnosed({
           bridge: bridge,
           mediaAttachmentRepository: mediaAttachmentRepo,
           mediaFileManager: mediaFileManager,
+          onDownloadAttemptStarted:
+              effectiveIntent == MediaDownloadIntent.automatic
+              ? strictGroupMediaDownloadAttemptStarted
+              : null,
+          onVerifiedCiphertext: effectiveIntent == MediaDownloadIntent.automatic
+              ? strictGroupMediaVerifiedCiphertext
+              : null,
           now: () =>
               DateTime.fromMillisecondsSinceEpoch(currentNowMs(), isUtc: true),
         ).downloadAndAcknowledge(

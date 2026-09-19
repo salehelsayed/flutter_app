@@ -302,7 +302,7 @@ func TestRelaySession_CoalescesConcurrentRecoveryRequests(t *testing.T) {
 		HealthyRelayCount: 1,
 	}
 
-	m.CompleteRecovery(result, nil)
+	m.CompleteRecovery(recovery1, result, nil)
 
 	r1, err1 := recovery1.Wait()
 	if err1 != nil {
@@ -340,7 +340,7 @@ func TestRelaySession_CoalescesConcurrentRecoveryRequests(t *testing.T) {
 		t.Error("new recovery should use a different promise")
 	}
 
-	m.CompleteRecovery(&RecoveryResult{
+	m.CompleteRecovery(recovery4, &RecoveryResult{
 		RecoveryMode: "in_place",
 		Success:      true,
 		RelayState:   "online",
@@ -415,7 +415,7 @@ func TestRelaySession_WatchdogRestartCountIncrementsOnWatchdogRecovery(t *testin
 		atomic.AddInt32(&count, 1)
 	}()
 
-	m.CompleteRecovery(&RecoveryResult{
+	m.CompleteRecovery(ch, &RecoveryResult{
 		RecoveryMode: "watchdog_restart",
 		Success:      true,
 	}, nil)
@@ -432,7 +432,7 @@ func TestRelaySession_WatchdogRestartCountIncrementsOnWatchdogRecovery(t *testin
 	// In-place recovery should NOT increment.
 	ch2, _ := m.BeginRecovery()
 	go func() { _, _ = ch2.Wait() }()
-	m.CompleteRecovery(&RecoveryResult{
+	m.CompleteRecovery(ch2, &RecoveryResult{
 		RecoveryMode: "in_place",
 		Success:      true,
 	}, nil)
@@ -535,7 +535,7 @@ func TestRelaySession_ResetPreservesInFlightRecovery(t *testing.T) {
 		RelayState:        "online",
 		HealthyRelayCount: 1,
 	}
-	m.CompleteRecovery(expected, nil)
+	m.CompleteRecovery(recovery, expected, nil)
 
 	got, err := recovery.Wait()
 	if err != nil {
@@ -587,132 +587,77 @@ func TestRecoveryPromise_StalledRecoveryTimesOut(t *testing.T) {
 	}
 }
 
-func TestGR003RelaySessionStalledRecoveryClearsGateAfterTimeout(t *testing.T) {
+// A waiter timing out does not prove the native owner stopped. Keep the gate
+// until that owner returns, otherwise two host restarts can run concurrently.
+func TestGR003RelaySessionStalledRecoveryRetainsGateUntilOwnerReturns(t *testing.T) {
 	m := NewRelaySessionManager()
 	m.recoveryWaitTimeout = 20 * time.Millisecond
-
-	stalled, isNew := m.BeginRecovery()
-	if !isNew {
-		t.Fatal("first BeginRecovery should start a new recovery")
-	}
-	if stalled == nil {
-		t.Fatal("first BeginRecovery returned nil promise")
-	}
-
-	waiter, isNew := m.BeginRecovery()
-	if isNew {
-		t.Fatal("second BeginRecovery should coalesce onto the stalled recovery")
-	}
-	if waiter != stalled {
-		t.Fatal("waiter should share the stalled recovery promise")
-	}
-
+	stalled, _ := m.BeginRecovery()
+	waiter, _ := m.BeginRecovery()
 	result, err := waiter.Wait()
 	if err == nil || err.Error() != "RECOVERY_TIMEOUT" {
 		t.Fatalf("Wait() error = %v, want RECOVERY_TIMEOUT", err)
 	}
-	if result == nil {
-		t.Fatal("Wait() returned nil timeout result")
+	if result == nil || result.RecoveryMode != "timeout" || result.ErrorCode != "RECOVERY_TIMEOUT" {
+		t.Fatalf("Wait() result = %+v, want structured timeout", result)
 	}
-	if result.RecoveryMode != "timeout" {
-		t.Fatalf("RecoveryMode = %q, want timeout", result.RecoveryMode)
+	if !m.IsRecovering() {
+		t.Fatal("timeout released the still-running owner")
 	}
-	if m.IsRecovering() {
-		t.Fatal("timeout did not clear the stalled recovery gate")
+	joined, isNew := m.BeginRecovery()
+	if isNew || joined != stalled {
+		t.Fatal("retry must join the outstanding owner")
 	}
-
+	m.CompleteRecovery(stalled, &RecoveryResult{RecoveryMode: "in_place", Success: true}, nil)
 	fresh, isNew := m.BeginRecovery()
-	if !isNew {
-		t.Fatal("BeginRecovery after timeout should start a fresh recovery")
+	if !isNew || fresh == stalled {
+		t.Fatal("completed owner should allow a fresh recovery")
 	}
-	if fresh == nil {
-		t.Fatal("fresh recovery promise is nil")
-	}
-	if fresh == stalled {
-		t.Fatal("fresh recovery reused the stalled promise")
-	}
-
-	m.CompleteRecovery(&RecoveryResult{
-		RecoveryMode: "in_place",
-		Success:      true,
-		RelayState:   string(AggregateRelayOnline),
-	}, nil)
-
-	freshResult, freshErr := fresh.Wait()
-	if freshErr != nil {
-		t.Fatalf("fresh recovery should complete without error: %v", freshErr)
-	}
-	if freshResult == nil || !freshResult.Success || freshResult.RecoveryMode != "in_place" {
-		t.Fatalf("fresh recovery result = %+v, want successful in_place", freshResult)
+	m.CompleteRecovery(fresh, &RecoveryResult{RecoveryMode: "in_place", Success: true}, nil)
+	if got, err := fresh.Wait(); err != nil || got == nil || !got.Success {
+		t.Fatalf("fresh recovery = %+v, %v, want success", got, err)
 	}
 }
 
-func TestRecoveryPromise_TimeoutClearsRecoveryGate(t *testing.T) {
+func TestRecoveryPromise_ExpiredOwnerSurvivesResetUntilCompletion(t *testing.T) {
 	m := NewRelaySessionManager()
-	// The preceding stalled-recovery test owns the real 30-second duration
-	// sentinel. This case only needs to prove the state transition.
 	m.recoveryWaitTimeout = 20 * time.Millisecond
-
-	// Start recovery, never complete.
-	_, isNew := m.BeginRecovery()
-	if !isNew {
-		t.Fatal("expected new recovery")
+	owner, _ := m.BeginRecovery()
+	if _, err := owner.Wait(); err == nil {
+		t.Fatal("expected timeout")
 	}
-
-	// Wait for timeout on a second promise.
-	recovery2, _ := m.BeginRecovery()
-	_, err := recovery2.Wait()
-	if err == nil || err.Error() != "RECOVERY_TIMEOUT" {
-		t.Fatalf("expected RECOVERY_TIMEOUT, got: %v", err)
+	m.Reset()
+	joined, isNew := m.BeginRecovery()
+	if isNew || joined != owner || !m.IsRecovering() {
+		t.Fatal("host reset released the still-running expired owner")
 	}
-
-	// After timeout, recovery gate should be cleared.
-	// A new call should get isNew=true.
-	recovery3, isNew3 := m.BeginRecovery()
-	if !isNew3 {
-		t.Error("after timeout, next BeginRecovery should get isNew=true (gate cleared)")
+	m.CompleteRecovery(owner, &RecoveryResult{RecoveryMode: "watchdog_restart", Success: true}, nil)
+	if m.IsRecovering() {
+		t.Fatal("owner completion did not release the gate")
 	}
-	if recovery3 == nil {
-		t.Fatal("recovery3 should not be nil")
-	}
-
-	// Clean up.
-	m.CompleteRecovery(&RecoveryResult{RecoveryMode: "in_place", Success: true}, nil)
 }
 
-func TestRecoveryPromise_LateCompletionAfterTimeoutIsIgnored(t *testing.T) {
+func TestRecoveryPromise_StaleCompletionCannotCompleteNewOwner(t *testing.T) {
 	m := NewRelaySessionManager()
-	// Exercise late completion without paying the production timeout again.
-	m.recoveryWaitTimeout = 20 * time.Millisecond
-
-	// Start recovery, never complete within timeout.
-	_, isNew := m.BeginRecovery()
+	previous, _ := m.BeginRecovery()
+	m.CompleteRecovery(previous, &RecoveryResult{RecoveryMode: "in_place", Success: true}, nil)
+	current, isNew := m.BeginRecovery()
 	if !isNew {
-		t.Fatal("expected new recovery")
+		t.Fatal("expected new owner after completion")
 	}
-
-	// Wait for timeout.
-	recovery2, _ := m.BeginRecovery()
-	_, err := recovery2.Wait()
-	if err == nil || err.Error() != "RECOVERY_TIMEOUT" {
-		t.Fatalf("expected RECOVERY_TIMEOUT, got: %v", err)
+	m.CompleteRecovery(previous, &RecoveryResult{RecoveryMode: "watchdog_restart", Success: true}, nil)
+	if !m.IsRecovering() || m.WatchdogRestartCount() != 0 {
+		t.Fatal("stale owner changed the active recovery or restart accounting")
 	}
-
-	// Late completion: should NOT panic or crash.
-	m.CompleteRecovery(&RecoveryResult{RecoveryMode: "in_place", Success: true}, nil)
-
-	// Start a new recovery — should work fine.
-	recovery3, isNew3 := m.BeginRecovery()
-	if !isNew3 {
-		t.Error("expected new recovery after late completion")
+	select {
+	case <-current.done:
+		t.Fatal("stale owner completed the current owner's promise")
+	default:
 	}
-	m.CompleteRecovery(&RecoveryResult{RecoveryMode: "in_place", Success: true}, nil)
-	result, err := recovery3.Wait()
-	if err != nil {
-		t.Fatalf("new recovery should succeed: %v", err)
-	}
-	if result.RecoveryMode != "in_place" {
-		t.Errorf("expected in_place, got %s", result.RecoveryMode)
+	expected := &RecoveryResult{RecoveryMode: "in_place", Success: true}
+	m.CompleteRecovery(current, expected, nil)
+	if got, err := current.Wait(); err != nil || got != expected {
+		t.Fatalf("current owner outcome = %+v, %v", got, err)
 	}
 }
 
@@ -795,7 +740,7 @@ func TestRecoveryPromise_NormalRecoveryStillWorks(t *testing.T) {
 	// Complete before timeout fires.
 	go func() {
 		time.Sleep(100 * time.Millisecond)
-		m.CompleteRecovery(expected, nil)
+		m.CompleteRecovery(promise, expected, nil)
 	}()
 
 	r1, err1 := promise.Wait()

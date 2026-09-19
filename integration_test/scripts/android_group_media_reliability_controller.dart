@@ -4,11 +4,121 @@ import 'dart:io';
 
 import 'package:crypto/crypto.dart';
 import 'package:flutter_app/core/database/app_database_version.dart';
+import 'package:flutter_app/core/debug/group_media_reliability_authority_target.dart';
 
 import 'group_media_reliability_criteria.dart';
 import 'group_media_reliability_runner_contract.dart';
 import '../support/android_app_state_guard.dart';
 import '../support/group_media_android_disposable_app.dart';
+
+String _closedGroupMediaWaitPhase(Object? phase) =>
+    const {
+      'identity_sender',
+      'identity_receiver',
+      'contacts_sender',
+      'contacts_receiver',
+      'identity_probe',
+      'sender_setup',
+      'receiver_accept_arm',
+      'sender_authority_refresh',
+      'receiver_authority_ready',
+      'sender_send',
+      'receiver_barrier',
+      'receiver_recover',
+      'receiver_render_probe',
+      'sender_probe',
+    }.contains(phase)
+    ? phase! as String
+    : 'unknown';
+
+String groupMediaWaitTimeoutCode(Object? phase) =>
+    'group_wait_${_closedGroupMediaWaitPhase(phase)}_timeout';
+
+/// Retains only closed observations already read for this exact wait. No new
+/// endpoint reads or IDs, SQL rows, paths, or exception text enter the receipt.
+Future<void> retainAndroidGroupMediaWaitTimeout({
+  required Directory directory,
+  required String phase,
+  required bool senderSendCompleted,
+  Map<String, Object?> observation = const {},
+}) async {
+  final receipt = <String, Object?>{
+    'schema': 'mknoon.group-media-wait-timeout.v1',
+    'waitStage': _closedGroupMediaWaitPhase(phase),
+    'cause': 'timeout',
+    'errorCode': groupMediaWaitTimeoutCode(phase),
+    'senderSendCompleted': senderSendCompleted,
+    for (final key in const [
+      'matchingEndpointObserved',
+      'matchedBarrierState',
+      'barrierReached',
+      'recoveryReleased',
+      'barrierProcessObserved',
+    ])
+      if (observation[key] is bool) key: observation[key],
+    if (const {
+      'complete',
+      'armed',
+      'pending',
+      'running',
+      'failed',
+    }.contains(observation['endpointStatus']))
+      'endpointStatus': observation['endpointStatus'],
+    if (const {
+      'receiver_jpeg_post_claim_pre_commit',
+      'receiver_jpeg_strict_verified_ciphertext_pre_commit',
+    }.contains(observation['barrierName']))
+      'barrierName': observation['barrierName'],
+    if (const {
+      'pending',
+      'downloading',
+      'done',
+      'failed',
+      'upload_pending',
+    }.contains(observation['barrierPriorStatus']))
+      'barrierPriorStatus': observation['barrierPriorStatus'],
+    for (final key in const [
+      'barrierAttempt',
+      'jpegAttempts',
+      'mp4Attempts',
+      'voiceAttempts',
+    ])
+      if (observation[key] is int &&
+          (observation[key]! as int) >= 0 &&
+          (observation[key]! as int) <= 100000)
+        key: observation[key],
+  };
+  final bytes = utf8.encode(jsonEncode(receipt));
+  final digest = sha256.convert(bytes).toString();
+  final file = File('${directory.path}/wait-timeout-$digest.json');
+  await file.parent.create(recursive: true);
+  if (!await file.exists()) await file.writeAsBytes(bytes, flush: true);
+}
+
+/// The host wait loop is injectable for bounded diagnostics tests only.
+Future<T> waitForAndroidGroupMediaValue<T>(
+  String phase,
+  Duration timeout,
+  Future<T?> Function() read, {
+  DateTime Function()? now,
+  Future<void> Function(Duration)? pause,
+  Future<void> Function()? onTimeout,
+}) async {
+  final clock = now ?? DateTime.now;
+  final delay = pause ?? Future<void>.delayed;
+  final deadline = clock().add(timeout);
+  while (clock().isBefore(deadline)) {
+    final value = await read();
+    if (value != null) return value;
+    await delay(const Duration(milliseconds: 200));
+  }
+  try {
+    await onTimeout?.call();
+  } on Object {
+    // Evidence failure cannot replace the original bounded wait failure.
+  }
+  throw GroupMediaReliabilityScenarioFailure(groupMediaWaitTimeoutCode(phase));
+}
 
 final class AndroidGroupMediaProcessTransitionEvidence {
   const AndroidGroupMediaProcessTransitionEvidence({
@@ -444,6 +554,7 @@ final class _AndroidGroupMediaHost {
   final String receiverDeviceId;
   final _AndroidGroupMediaSafetyAuditingRunner runner;
   final AndroidGroupMediaProcessDeathController processController;
+  bool _senderSendCompleted = false;
 
   Future<void> verifyPrerequisites() async {
     late final ProcessResult version;
@@ -655,6 +766,58 @@ final class _AndroidGroupMediaHost {
         maxLength: 180,
       );
 
+      Map<String, Object?>? authoritySetup;
+      if (context.authorityMode == groupMediaDistinctAuthorityMode) {
+        final refreshed = await _runGroupPhase(
+          deviceId: senderDeviceId,
+          phase: 'sender_authority_refresh',
+          role: 'sender',
+          groupId: groupId,
+          receiverAccountPeerId: receiverIdentity.accountPeerId,
+          receiverTransportPeerId: receiverTransport,
+          messageIds: messageIds,
+          attachmentIds: attachmentIds,
+          expectedStatus: 'complete',
+        );
+        final receiverReady = await _runGroupPhase(
+          deviceId: receiverDeviceId,
+          phase: 'receiver_authority_ready',
+          role: 'receiver',
+          groupId: groupId,
+          receiverAccountPeerId: receiverIdentity.accountPeerId,
+          receiverTransportPeerId: receiverTransport,
+          messageIds: messageIds,
+          attachmentIds: attachmentIds,
+          expectedStatus: 'complete',
+          expectedAuthority:
+              GroupMediaReliabilityAuthorityTarget.fromObservation(
+                _object(
+                  _object(
+                    refreshed['authorityRefresh'],
+                    'authority refresh',
+                  )['after'],
+                  'sender authority after',
+                ),
+              ),
+        );
+        authoritySetup = await buildAndRetainAndroidGroupMediaAuthoritySetup(
+          directory: context.proofDirectory,
+          runId: context.runId,
+          senderSetup: senderSetup,
+          receiverArm: receiverArm,
+          senderRefresh: refreshed,
+          receiverReady: receiverReady,
+        );
+        // Preserve the actual setup observations before any media or cleanup.
+        final bytes = utf8.encode(jsonEncode(authoritySetup));
+        final digest = sha256.convert(bytes).toString();
+        final file = File(
+          '${context.proofDirectory.path}/authority-setup-$digest.json',
+        );
+        await file.parent.create(recursive: true);
+        if (!await file.exists()) await file.writeAsBytes(bytes, flush: true);
+      }
+
       final senderSendConfig = _groupPhaseConfig(
         phase: 'sender_send',
         role: 'sender',
@@ -675,6 +838,7 @@ final class _AndroidGroupMediaHost {
       // upload/publication receipt before observing or acting on its receiver
       // barrier, so the emitted flow order is the real causal order.
       final senderSend = await senderSendFuture;
+      _senderSendCompleted = true;
       final barrier = await _waitForBarrierState(
         groupId: groupId,
         messageIds: messageIds,
@@ -744,6 +908,7 @@ final class _AndroidGroupMediaHost {
       await _requirePreparedArtifactCustody('after scenario execution');
       aggregateAfterCleanup = (preResetReceipts, postResetReceipts) =>
           aggregateAndroidGroupMediaReliabilityEvidence(
+            authoritySetup: authoritySetup,
             context: context,
             senderExportedAccountPeerId: senderIdentity.accountPeerId,
             receiverExportedAccountPeerId: receiverIdentity.accountPeerId,
@@ -840,7 +1005,7 @@ final class _AndroidGroupMediaHost {
     required Map<String, String> attachmentIds,
   }) async {
     final value = await _waitForValue<Map<String, Object?>>(
-      'main-app identity',
+      role == 'sender' ? 'identity_sender' : 'identity_receiver',
       const Duration(minutes: 3),
       () => _readAppJson(deviceId, _identityFile),
     );
@@ -929,7 +1094,7 @@ final class _AndroidGroupMediaHost {
     await _stageConfig(deviceId, config);
     final stepId = config['stepId']! as String;
     return _waitForValue<Map<String, Object?>>(
-      'generic app step $stepId',
+      deviceId == senderDeviceId ? 'contacts_sender' : 'contacts_receiver',
       const Duration(minutes: 3),
       () async {
         final result = await _readAppJson(deviceId, _resultFile);
@@ -954,6 +1119,7 @@ final class _AndroidGroupMediaHost {
     required Map<String, String> messageIds,
     required Map<String, String> attachmentIds,
     required String expectedStatus,
+    GroupMediaReliabilityAuthorityTarget? expectedAuthority,
   }) async {
     final config = _groupPhaseConfig(
       phase: phase,
@@ -963,6 +1129,7 @@ final class _AndroidGroupMediaHost {
       receiverTransportPeerId: receiverTransportPeerId,
       messageIds: messageIds,
       attachmentIds: attachmentIds,
+      expectedAuthority: expectedAuthority,
     );
     await _stageConfig(deviceId, config);
     return _waitForGroupEndpoint(
@@ -981,7 +1148,12 @@ final class _AndroidGroupMediaHost {
     required String receiverTransportPeerId,
     required Map<String, String> messageIds,
     required Map<String, String> attachmentIds,
+    GroupMediaReliabilityAuthorityTarget? expectedAuthority,
   }) {
+    if ((phase == 'receiver_authority_ready') != (expectedAuthority != null) ||
+        (expectedAuthority != null && !expectedAuthority.isForGroup(groupId))) {
+      throw const FormatException('group-media authority target rejected');
+    }
     final nonce = 'nonce-${_shortDigest('${context.runId}:$phase:$role')}';
     return <String, Object?>{
       'schema': _commandSchema,
@@ -997,6 +1169,8 @@ final class _AndroidGroupMediaHost {
       'receiverTransportPeerId': receiverTransportPeerId,
       'messageIds': messageIds,
       'attachmentIds': attachmentIds,
+      if (expectedAuthority != null)
+        'expectedAuthority': expectedAuthority.toJson(),
     };
   }
 
@@ -1005,79 +1179,121 @@ final class _AndroidGroupMediaHost {
     required Map<String, Object?> config,
     required String expectedStatus,
     required Duration timeout,
-  }) => _waitForValue<Map<String, Object?>>(
-    'group-media ${config['phase']} endpoint',
-    timeout,
-    () async {
-      final result = await _readAppJson(deviceId, _resultFile);
-      if (result == null ||
-          result['schema'] != _endpointSchema ||
-          result['scenario'] != groupMediaForegroundRetryAclRoundtripScenario ||
-          result['buildProfile'] != groupMediaReliabilityAndroidBuildProfile ||
-          result['stepId'] != config['stepId'] ||
-          result['phase'] != config['phase'] ||
-          result['role'] != config['role'] ||
-          result['runId'] != context.runId ||
-          result['nonce'] != config['nonce']) {
-        return null;
-      }
-      if (result['status'] == 'failed' || result['success'] == false) {
-        final errorCode = result['errorCode'];
-        final safeErrorCode =
-            errorCode is String &&
-                RegExp(r'^[a-z0-9_]{1,80}$').hasMatch(errorCode)
-            ? errorCode
-            : 'unexpected_error';
-        throw GroupMediaReliabilityScenarioFailure(
-          'group_endpoint_${config['phase']}_$safeErrorCode',
-        );
-      }
-      if ((result.containsKey('authorityMode')
-              ? result['authorityMode']
-              : groupMediaDistinctAuthorityMode) !=
-          context.authorityMode) {
-        throw GroupMediaReliabilityScenarioFailure(
-          'group_endpoint_authority_mode_mismatch',
-        );
-      }
-      return result['status'] == expectedStatus && result['success'] == true
-          ? result
-          : null;
-    },
-  );
+  }) {
+    Map<String, Object?> observation = const {
+      'matchingEndpointObserved': false,
+    };
+    return _waitForValue<Map<String, Object?>>(
+      config['phase']! as String,
+      timeout,
+      () async {
+        final result = await _readAppJson(deviceId, _resultFile);
+        if (result == null ||
+            result['schema'] != _endpointSchema ||
+            result['scenario'] !=
+                groupMediaForegroundRetryAclRoundtripScenario ||
+            result['buildProfile'] !=
+                groupMediaReliabilityAndroidBuildProfile ||
+            result['stepId'] != config['stepId'] ||
+            result['phase'] != config['phase'] ||
+            result['role'] != config['role'] ||
+            result['runId'] != context.runId ||
+            result['nonce'] != config['nonce']) {
+          return null;
+        }
+        observation = {
+          'matchingEndpointObserved': true,
+          'endpointStatus': result['status'],
+        };
+        if (result['status'] == 'failed' || result['success'] == false) {
+          final errorCode = result['errorCode'];
+          final safeErrorCode =
+              errorCode is String &&
+                  RegExp(r'^[a-z0-9_]{1,80}$').hasMatch(errorCode)
+              ? errorCode
+              : 'unexpected_error';
+          await retainGroupMediaEndpointFailure(
+            directory: context.proofDirectory,
+            config: config,
+            result: result,
+            safeErrorCode: safeErrorCode,
+          );
+          throw GroupMediaReliabilityScenarioFailure(
+            'group_endpoint_${config['phase']}_$safeErrorCode',
+          );
+        }
+        if ((result.containsKey('authorityMode')
+                ? result['authorityMode']
+                : groupMediaDistinctAuthorityMode) !=
+            context.authorityMode) {
+          throw GroupMediaReliabilityScenarioFailure(
+            'group_endpoint_authority_mode_mismatch',
+          );
+        }
+        return result['status'] == expectedStatus && result['success'] == true
+            ? result
+            : null;
+      },
+      observation: () => observation,
+    );
+  }
 
   Future<Map<String, Object?>> _waitForBarrierState({
     required String groupId,
     required Map<String, String> messageIds,
     required Map<String, String> attachmentIds,
-  }) => _waitForValue<Map<String, Object?>>(
-    _barrierName,
-    const Duration(minutes: 4),
-    () async {
-      final state = await _readAppJson(receiverDeviceId, _stateFile);
-      if (state == null ||
-          state['schema'] != _stateSchema ||
-          state['runId'] != context.runId ||
-          state['groupId'] != groupId ||
-          state['jpegMessageId'] != messageIds['jpeg'] ||
-          state['jpegAttachmentId'] != attachmentIds['jpeg'] ||
-          !_sameStringMap(state['mediaAttachmentIds'], attachmentIds)) {
-        return null;
-      }
-      final barrier = _optionalObject(state['barrier']);
-      if (barrier == null ||
-          barrier['name'] != _barrierName ||
-          barrier['reached'] != true ||
-          barrier['priorStatus'] != 'downloading' ||
-          barrier['attempt'] != 1 ||
-          barrier['processId'] is! int ||
-          (barrier['processId']! as int) <= 0 ||
-          state['recoveryReleased'] != false) {
-        return null;
-      }
-      return state;
-    },
-  );
+  }) {
+    Map<String, Object?> observation = const {'matchedBarrierState': false};
+    return _waitForValue<Map<String, Object?>>(
+      'receiver_barrier',
+      const Duration(minutes: 4),
+      () async {
+        final state = await _readAppJson(receiverDeviceId, _stateFile);
+        if (state == null ||
+            state['schema'] != _stateSchema ||
+            state['runId'] != context.runId ||
+            state['groupId'] != groupId ||
+            state['jpegMessageId'] != messageIds['jpeg'] ||
+            state['jpegAttachmentId'] != attachmentIds['jpeg'] ||
+            !_sameStringMap(state['mediaAttachmentIds'], attachmentIds)) {
+          return null;
+        }
+        final barrier = _optionalObject(state['barrier']);
+        final attempts = _optionalObject(state['attempts']);
+        observation = {
+          'matchedBarrierState': true,
+          'barrierName': barrier?['name'],
+          'barrierReached': barrier?['reached'],
+          'barrierPriorStatus': barrier?['priorStatus'],
+          'barrierAttempt': barrier?['attempt'],
+          'barrierProcessObserved':
+              barrier?['processId'] is int &&
+              (barrier!['processId']! as int) > 0,
+          'recoveryReleased': state['recoveryReleased'],
+          for (final kind in const ['jpeg', 'mp4', 'voice'])
+            '${kind}Attempts': attempts?[kind],
+        };
+        if (barrier == null ||
+            barrier['name'] !=
+                (context.authorityMode == groupMediaDistinctAuthorityMode
+                    ? 'receiver_jpeg_strict_verified_ciphertext_pre_commit'
+                    : _barrierName) ||
+            barrier['reached'] != true ||
+            barrier['priorStatus'] !=
+                (context.authorityMode == groupMediaDistinctAuthorityMode
+                    ? 'pending'
+                    : 'downloading') ||
+            barrier['attempt'] != 1 ||
+            barrier['processId'] is! int ||
+            (barrier['processId']! as int) <= 0 ||
+            state['recoveryReleased'] != false) {
+          return null;
+        }
+        return state;
+      },
+      observation: () => observation,
+    );
+  }
 
   Future<void> _stageConfig(
     String deviceId,
@@ -1283,16 +1499,19 @@ final class _AndroidGroupMediaHost {
   Future<T> _waitForValue<T>(
     String label,
     Duration timeout,
-    Future<T?> Function() read,
-  ) async {
-    final deadline = DateTime.now().add(timeout);
-    while (DateTime.now().isBefore(deadline)) {
-      final value = await read();
-      if (value != null) return value;
-      await Future<void>.delayed(const Duration(milliseconds: 200));
-    }
-    throw TimeoutException('Android group-media timed out at $label', timeout);
-  }
+    Future<T?> Function() read, {
+    Map<String, Object?> Function()? observation,
+  }) => waitForAndroidGroupMediaValue(
+    label,
+    timeout,
+    read,
+    onTimeout: () => retainAndroidGroupMediaWaitTimeout(
+      directory: context.proofDirectory,
+      phase: label,
+      senderSendCompleted: _senderSendCompleted,
+      observation: observation?.call() ?? const {},
+    ),
+  );
 
   Future<String> _shellText(
     String deviceId,
@@ -1360,7 +1579,305 @@ final class _AndroidIdentity {
   final String mlKemPublicKey;
 }
 
+/// Qualifies the real creator rotation and both current production admissions
+/// before the controller can stage any media-send command.
+/// Keep the comparison operands before validation can throw and reset removes
+/// endpoint files. This closed diagnostic is not a successful authority proof.
+Future<Map<String, Object?>> buildAndRetainAndroidGroupMediaAuthoritySetup({
+  required Directory directory,
+  required String runId,
+  required Map<String, Object?> senderSetup,
+  required Map<String, Object?> receiverArm,
+  required Map<String, Object?> senderRefresh,
+  required Map<String, Object?> receiverReady,
+}) async {
+  final hex = RegExp(r'^[a-f0-9]{64}$');
+  Object? digestValue(Object? value) =>
+      value is String && hex.hasMatch(value) ? value : null;
+  Object? integer(Object? value, {int minimum = 0}) =>
+      value is int && value >= minimum ? value : null;
+  Object? timestamp(Object? value) =>
+      value is String &&
+          value.length <= 40 &&
+          value.endsWith('Z') &&
+          DateTime.tryParse(value) != null
+      ? value
+      : null;
+  Map<String, Object?> observation(Object? value) {
+    final row = _optionalObject(value) ?? const <String, Object?>{};
+    final recipients = row['recipientTransportSha256'];
+    return {
+      'schema': row['schema'] == 'mknoon.group-media-authority.v1'
+          ? row['schema']
+          : null,
+      for (final key in const [
+        'groupIdSha256',
+        'accountPeerIdSha256',
+        'transportPeerIdSha256',
+        'memberRolesSha256',
+        'authoritySha256',
+      ])
+        key: digestValue(row[key]),
+      'keyEpoch': integer(row['keyEpoch'], minimum: 1),
+      'admission':
+          const [
+            'strict',
+            'legacyUninitialized',
+            'refuse',
+          ].contains(row['admission'])
+          ? row['admission']
+          : null,
+      'authorityEventAt': timestamp(row['authorityEventAt']),
+      'recipientTransportSha256':
+          recipients is List &&
+              recipients.length <= 2 &&
+              recipients.every((value) => digestValue(value) != null)
+          ? recipients.toList(growable: false)
+          : null,
+    };
+  }
+
+  Map<String, Object?> identity(Map<String, Object?> row) => {
+    'processId': integer(row['processId'], minimum: 1),
+    for (final key in const ['groupId', 'accountPeerId', 'transportPeerId'])
+      '${key}Sha256': row[key] is String && (row[key]! as String).length <= 180
+          ? sha256.convert(utf8.encode(row[key]! as String)).toString()
+          : null,
+  };
+  final refresh =
+      _optionalObject(senderRefresh['authorityRefresh']) ?? const {};
+  final receipt = {
+    'schema': 'mknoon.group-media-authority-observations.v1',
+    'runSha256': _scopedDigest(runId, 'authority-observations'),
+    'validation': 'not_yet_compared',
+    'senderSetup': identity(senderSetup),
+    'receiverArm': {
+      ...identity(receiverArm),
+      'authorityBefore': observation(receiverArm['authorityBefore']),
+    },
+    'senderRefresh': {
+      'processId': integer(senderRefresh['processId'], minimum: 1),
+      'before': observation(refresh['before']),
+      'after': observation(refresh['after']),
+      for (final key in const [
+        'previousEpoch',
+        'currentEpoch',
+        'distributedDeviceCount',
+        'deferredPeerCount',
+      ])
+        key: integer(refresh[key]),
+    },
+    'receiverReady': {
+      'processId': integer(receiverReady['processId'], minimum: 1),
+      'authorityAfter': observation(receiverReady['authorityAfter']),
+    },
+  };
+  final bytes = utf8.encode(jsonEncode(receipt));
+  final digest = sha256.convert(bytes).toString();
+  try {
+    await directory.create(recursive: true);
+    final file = File('${directory.path}/authority-observations-$digest.json');
+    if (!await file.exists()) await file.writeAsBytes(bytes, flush: true);
+  } on FileSystemException {
+    // A diagnostic write failure must not replace the original comparison.
+  }
+  return buildAndroidGroupMediaAuthoritySetup(
+    runId: runId,
+    senderSetup: senderSetup,
+    receiverArm: receiverArm,
+    senderRefresh: senderRefresh,
+    receiverReady: receiverReady,
+  );
+}
+
+Map<String, Object?> buildAndroidGroupMediaAuthoritySetup({
+  required String runId,
+  required Map<String, Object?> senderSetup,
+  required Map<String, Object?> receiverArm,
+  required Map<String, Object?> senderRefresh,
+  required Map<String, Object?> receiverReady,
+}) {
+  final groupId = _requiredToken(senderSetup, 'groupId', maxLength: 160);
+  final senderAccount = _requiredToken(
+    senderSetup,
+    'accountPeerId',
+    maxLength: 180,
+  );
+  final senderTransport = _requiredToken(
+    senderSetup,
+    'transportPeerId',
+    maxLength: 180,
+  );
+  final receiverAccount = _requiredToken(
+    receiverArm,
+    'accountPeerId',
+    maxLength: 180,
+  );
+  final receiverTransport = _requiredToken(
+    receiverArm,
+    'transportPeerId',
+    maxLength: 180,
+  );
+  if (receiverArm['groupId'] != groupId ||
+      senderAccount == receiverAccount ||
+      senderTransport == receiverTransport ||
+      senderAccount == senderTransport ||
+      receiverAccount == receiverTransport ||
+      senderSetup['processId'] is! int ||
+      (senderSetup['processId']! as int) <= 0 ||
+      receiverArm['processId'] is! int ||
+      (receiverArm['processId']! as int) <= 0) {
+    throw const FormatException(
+      'Authority setup requires exact distinct live peers',
+    );
+  }
+  final refresh = _object(
+    senderRefresh['authorityRefresh'],
+    'authority refresh',
+  );
+  final before = _object(refresh['before'], 'sender authority before');
+  final after = _object(refresh['after'], 'sender authority after');
+  final receiverBefore = _object(
+    receiverArm['authorityBefore'],
+    'receiver authority before',
+  );
+  final receiverAfter = _object(
+    receiverReady['authorityAfter'],
+    'receiver authority after',
+  );
+  String digest(String value) => sha256.convert(utf8.encode(value)).toString();
+  final hex = RegExp(r'^[a-f0-9]{64}$');
+  void qualify(
+    Map<String, Object?> row,
+    String account,
+    String transport,
+    String recipient, {
+    required bool settled,
+  }) {
+    const keys = {
+      'schema',
+      'groupIdSha256',
+      'accountPeerIdSha256',
+      'transportPeerIdSha256',
+      'memberRolesSha256',
+      'keyEpoch',
+      'admission',
+      'authoritySha256',
+      'authorityEventAt',
+      'recipientTransportSha256',
+    };
+    if (row.length != keys.length ||
+        !row.keys.toSet().containsAll(keys) ||
+        row['schema'] != 'mknoon.group-media-authority.v1' ||
+        row['groupIdSha256'] != digest(groupId) ||
+        row['accountPeerIdSha256'] != digest(account) ||
+        row['transportPeerIdSha256'] != digest(transport) ||
+        row['memberRolesSha256'] is! String ||
+        !hex.hasMatch(row['memberRolesSha256']! as String) ||
+        row['keyEpoch'] is! int ||
+        (row['keyEpoch']! as int) <= 0 ||
+        !const {
+          'strict',
+          'legacyUninitialized',
+          'refuse',
+        }.contains(row['admission'])) {
+      throw const FormatException('Authority observation identity rejected');
+    }
+    if (settled &&
+        (row['admission'] != 'strict' ||
+            row['authoritySha256'] is! String ||
+            !hex.hasMatch(row['authoritySha256']! as String) ||
+            row['authorityEventAt'] is! String ||
+            !(row['authorityEventAt']! as String).endsWith('Z') ||
+            DateTime.tryParse(row['authorityEventAt']! as String) == null ||
+            jsonEncode(row['recipientTransportSha256']) !=
+                jsonEncode([digest(recipient)]))) {
+      throw const FormatException(
+        'Authority observation is not settled for exact peer',
+      );
+    }
+  }
+
+  qualify(
+    before,
+    senderAccount,
+    senderTransport,
+    receiverTransport,
+    settled: false,
+  );
+  qualify(
+    after,
+    senderAccount,
+    senderTransport,
+    receiverTransport,
+    settled: true,
+  );
+  qualify(
+    receiverBefore,
+    receiverAccount,
+    receiverTransport,
+    senderTransport,
+    settled: false,
+  );
+  qualify(
+    receiverAfter,
+    receiverAccount,
+    receiverTransport,
+    senderTransport,
+    settled: true,
+  );
+  final previous = before['keyEpoch']! as int;
+  final current = after['keyEpoch']! as int;
+  if (current != previous + 1 ||
+      receiverBefore['keyEpoch'] != previous ||
+      receiverAfter['keyEpoch'] != current ||
+      refresh['previousEpoch'] != previous ||
+      refresh['currentEpoch'] != current ||
+      refresh['distributedDeviceCount'] != 1 ||
+      refresh['deferredPeerCount'] != 0 ||
+      before['memberRolesSha256'] != after['memberRolesSha256'] ||
+      receiverBefore['memberRolesSha256'] !=
+          receiverAfter['memberRolesSha256'] ||
+      after['memberRolesSha256'] != receiverAfter['memberRolesSha256'] ||
+      after['authoritySha256'] != receiverAfter['authoritySha256'] ||
+      after['authorityEventAt'] != receiverAfter['authorityEventAt'] ||
+      senderRefresh['processId'] != senderSetup['processId'] ||
+      receiverReady['processId'] != receiverArm['processId']) {
+    throw const FormatException(
+      'Creator rotation and peer authority did not converge',
+    );
+  }
+  Map<String, Object?> role(
+    String account,
+    String transport,
+    Map<String, Object?> old,
+    Map<String, Object?> fresh,
+  ) => {
+    'account_sha256': _scopedDigest(runId, account),
+    'transport_sha256': _scopedDigest(runId, transport),
+    'before_roles_sha256': old['memberRolesSha256'],
+    'after_roles_sha256': fresh['memberRolesSha256'],
+    'admission': 'strict',
+  };
+  return <String, Object?>{
+    'schema': 'mknoon.group-media-authority-setup.v1',
+    'group_sha256': _scopedDigest(runId, groupId),
+    'previous_epoch': previous,
+    'current_epoch': current,
+    'authority_sha256': after['authoritySha256'],
+    'authority_event_at': after['authorityEventAt'],
+    'sender': role(senderAccount, senderTransport, before, after),
+    'receiver': role(
+      receiverAccount,
+      receiverTransport,
+      receiverBefore,
+      receiverAfter,
+    ),
+  };
+}
+
 Map<String, Object?> aggregateAndroidGroupMediaReliabilityEvidence({
+  Map<String, Object?>? authoritySetup,
   required GroupMediaReliabilityRunContext context,
   required String senderExportedAccountPeerId,
   required String receiverExportedAccountPeerId,
@@ -1515,18 +2032,23 @@ Map<String, Object?> aggregateAndroidGroupMediaReliabilityEvidence({
     'receiverRenderedKinds',
   );
 
+  final strict = context.authorityMode == groupMediaDistinctAuthorityMode;
+  final expectedPriorStatus = strict ? 'pending' : 'downloading';
+  final expectedBarrierName = strict
+      ? 'receiver_jpeg_strict_verified_ciphertext_pre_commit'
+      : _barrierName;
   final barrier = _object(barrierState['barrier'], 'barrier');
   final barrierPid = _positiveInt(barrier, 'processId');
   final receiverOldPid = int.parse(receiverTransition.oldPid);
   final receiverFreshPid = int.parse(receiverTransition.freshPid);
-  if (barrier['name'] != _barrierName ||
+  if (barrier['name'] != expectedBarrierName ||
       barrier['reached'] != true ||
-      barrier['priorStatus'] != 'downloading' ||
+      barrier['priorStatus'] != expectedPriorStatus ||
       barrier['attempt'] != 1 ||
       barrierPid != receiverOldPid ||
       !receiverTransition.oldPidGone ||
       !receiverTransition.relaunchedWithoutGroupRoute ||
-      receiverRecovery['priorStatus'] != 'downloading' ||
+      receiverRecovery['priorStatus'] != expectedPriorStatus ||
       receiverRecovery['previousProcessId'] != receiverOldPid ||
       receiverRecovery['currentProcessId'] != receiverFreshPid ||
       receiverRecovery['processId'] != receiverFreshPid ||
@@ -1591,6 +2113,7 @@ Map<String, Object?> aggregateAndroidGroupMediaReliabilityEvidence({
     messageIds: messageIds,
     attachmentIds: attachmentIds,
     requireRows: true,
+    requireStrictSender: strict,
   );
   final senderAfterRestartDb = _RoleDatabaseObservation.parse(
     senderProbe['roleDatabase'],
@@ -1599,6 +2122,7 @@ Map<String, Object?> aggregateAndroidGroupMediaReliabilityEvidence({
     messageIds: messageIds,
     attachmentIds: attachmentIds,
     requireRows: true,
+    requireStrictSender: strict,
   );
   final receiverAfterRestartDb = _RoleDatabaseObservation.parse(
     receiverRecovery['roleDatabase'],
@@ -1620,6 +2144,80 @@ Map<String, Object?> aggregateAndroidGroupMediaReliabilityEvidence({
     );
   }
 
+  Map<String, Object?>? strictProof;
+  if (strict) {
+    if (authoritySetup == null) {
+      throw const FormatException(
+        'Current distinct Android requires strict authority setup',
+      );
+    }
+    if (authoritySetup['group_sha256'] !=
+        _scopedDigest(context.runId, groupId)) {
+      throw const FormatException(
+        'Strict authority setup belongs to another group',
+      );
+    }
+    final receipts = _object(
+      senderSend['strictMediaCustody'],
+      'strict sender custody',
+    );
+    final bound = _object(barrier['strictCustodyBoundary'], 'strict barrier');
+    if (jsonEncode(bound) !=
+        jsonEncode(receiverRecovery['strictCustodyBoundary'])) {
+      throw const FormatException(
+        'strict custody changed across receiver restart',
+      );
+    }
+    final media = <String, Object?>{};
+    for (final kind in const ['jpeg', 'mp4', 'voice']) {
+      final receipt = _object(receipts[kind], 'strict custody $kind');
+      final recipient = sha256
+          .convert(utf8.encode(receiverTransport))
+          .toString();
+      if (receipt['recipient_transport_sha256'] != recipient ||
+          receipt['recipient_count'] != 1) {
+        throw const FormatException('strict manifest receiver mismatch');
+      }
+      for (final db in [
+        senderBeforeRestartDb,
+        senderAfterRestartDb,
+        receiverAfterRestartDb,
+      ]) {
+        final row = db.rows.singleWhere((row) => row['media_kind'] == kind);
+        if (row['custody_fingerprint'] != receipt['custody_fingerprint']) {
+          throw const FormatException(
+            'strict manifest did not join reopened attachment',
+          );
+        }
+        if (identical(db, senderBeforeRestartDb) ||
+            identical(db, senderAfterRestartDb)) {
+          if (receipt['ciphertext_sha256'] is! String ||
+              !groupMediaStrictSenderPublicationMatches(
+                row,
+                groupSha256: _scopedDigest(context.runId, groupId),
+                senderAccountSha256: _scopedDigest(
+                  context.runId,
+                  senderAccount,
+                ),
+                ciphertextSha256: receipt['ciphertext_sha256'] as String?,
+              )) {
+            throw const FormatException(
+              'strict sender SQL publication identity did not bind',
+            );
+          }
+        }
+      }
+      media[kind] = {
+        ...receipt,
+        'recipient_transport_sha256': _scopedDigest(
+          context.runId,
+          receiverTransport,
+        ),
+      };
+    }
+    strictProof = {'media': media, 'barrier': bound};
+  }
+
   final senderTransportDigest = _scopedDigest(context.runId, senderTransport);
   final receiverTransportDigest = _scopedDigest(
     context.runId,
@@ -1633,6 +2231,8 @@ Map<String, Object?> aggregateAndroidGroupMediaReliabilityEvidence({
   final artifact = <String, Object?>{
     'schema': groupMediaReliabilityArtifactSchema,
     'authority_mode': context.authorityMode,
+    'strict_media_custody': ?strictProof,
+    'strict_authority_setup': ?authoritySetup,
     'run_id': context.runId,
     'scenario': groupMediaForegroundRetryAclRoundtripScenario,
     'prepared_artifact': <String, Object?>{
@@ -1717,9 +2317,9 @@ Map<String, Object?> aggregateAndroidGroupMediaReliabilityEvidence({
         'receiver_jpeg_post_claim_pre_commit',
         'receiver',
         <String, Object?>{
-          'barrier_name': _barrierName,
+          'barrier_name': expectedBarrierName,
           'marker_atomic': true,
-          'prior_status': 'downloading',
+          'prior_status': expectedPriorStatus,
           'attempt': 1,
           'old_pid_sha256': oldPidDigest,
         },
@@ -1735,7 +2335,7 @@ Map<String, Object?> aggregateAndroidGroupMediaReliabilityEvidence({
         'pid_changed': true,
       }),
       _flowEvent(6, 'receiver_prior_status_read', 'receiver', <String, Object?>{
-        'prior_status': 'downloading',
+        'prior_status': expectedPriorStatus,
         'after_relaunch': true,
         'attempt': 2,
       }),
@@ -1758,6 +2358,124 @@ Map<String, Object?> aggregateAndroidGroupMediaReliabilityEvidence({
   final validation = validateGroupMediaReliabilityArtifact(artifact);
   if (!validation.ok) throw FormatException(validation.detail);
   return Map<String, Object?>.unmodifiable(artifact);
+}
+
+Future<void> retainGroupMediaEndpointFailure({
+  required Directory directory,
+  required Map<String, Object?> config,
+  required Map<String, Object?> result,
+  required String safeErrorCode,
+}) async {
+  final receipt = <String, Object?>{
+    for (final key in const [
+      'schema',
+      'scenario',
+      'buildProfile',
+      'stepId',
+      'phase',
+      'role',
+      'runId',
+      'nonce',
+    ])
+      key: result[key],
+    'status': 'failed',
+    'success': false,
+    'errorCode': safeErrorCode,
+    if (result['errorType'] is String &&
+        RegExp(r'^[A-Za-z]{1,64}$').hasMatch(result['errorType'] as String))
+      'errorType': result['errorType'],
+    if (result['phase'] == 'receiver_recover' &&
+        const {
+          'priorBoundary',
+          'firstUpload',
+          'firstDownload',
+          'secondUpload',
+          'secondDownload',
+          'attemptCounts',
+          'roleDatabase',
+        }.contains(result['recoveryStage'])) ...{
+      'recoveryStage': result['recoveryStage'],
+      for (final key in const [
+        'firstUploadWork',
+        'firstDownloadWork',
+        'secondUploadWork',
+        'secondDownloadWork',
+      ])
+        if (result[key] is int && (result[key]! as int) >= 0) key: result[key],
+      if (result['downloadAttempts'] case final Map attempts)
+        'downloadAttempts': <String, int>{
+          for (final kind in const ['jpeg', 'mp4', 'voice'])
+            if (attempts[kind] is int && (attempts[kind]! as int) >= 0)
+              kind: attempts[kind]! as int,
+        },
+    },
+    if (const [
+      'authority_admission',
+      'authority_rotation',
+      'authority_settlement',
+      'authority_membership',
+      'fixture_material',
+      'legacy_upload',
+      'legacy_publication',
+      'strict_preparation',
+      'strict_publication',
+      'strict_custody_join',
+    ].contains(result['senderStage']))
+      'senderStage': result['senderStage'],
+    if (const ['jpeg', 'mp4', 'voice'].contains(result['mediaKind']))
+      'mediaKind': result['mediaKind'],
+    if (safeErrorCode == 'sender_strict_preparation' &&
+        result['senderStage'] == 'strict_preparation' &&
+        ((result['preparationState'] == 'refused' &&
+                result['preparationHasDurableAuthority'] is bool) ||
+            (result['preparationState'] == 'retained' &&
+                result['preparationHasDurableAuthority'] == true) ||
+            (result['preparationState'] == 'legacyUninitialized' &&
+                result['preparationHasDurableAuthority'] == false))) ...{
+      'preparationState': result['preparationState'],
+      'preparationHasDurableAuthority':
+          result['preparationHasDurableAuthority'],
+      if (result['preparationState'] == 'retained' &&
+          result['preparationUploadResponseOk'] is bool) ...{
+        'preparationUploadResponseOk': result['preparationUploadResponseOk'],
+        if (result['preparationUploadResponseOk'] == false &&
+            const {
+              'MEDIA_CUSTODY_ADMISSION_DISABLED',
+              'MEDIA_CUSTODY_FULL',
+              'MEDIA_CUSTODY_UNSUPPORTED',
+              'MEDIA_CUSTODY_IDENTITY_CONFLICT',
+              'MEDIA_CUSTODY_INELIGIBLE',
+              'MEDIA_CUSTODY_NOT_AUTHORIZED',
+              'MEDIA_CUSTODY_HASH_MISMATCH',
+              'MEDIA_CUSTODY_ALREADY_ACKED',
+              'MEDIA_CUSTODY_CLEANUP_PENDING',
+              'MEDIA_CUSTODY_STORAGE_ERROR',
+              'MEDIA_CUSTODY_NOT_FOUND',
+              'MEDIA_CUSTODY_COMMIT_INDETERMINATE',
+              'MEDIA_ERROR',
+              'NOT_INITIALIZED',
+              'INVALID_INPUT',
+              'INTERNAL_ERROR',
+              'UNKNOWN_COMMAND',
+              'NULL_RESPONSE',
+              'MISSING_PLUGIN',
+              'PLATFORM_ERROR',
+              'BRIDGE_EXCEPTION',
+              'MALFORMED_RESPONSE',
+            }.contains(result['preparationUploadErrorCode']))
+          'preparationUploadErrorCode': result['preparationUploadErrorCode'],
+      },
+    },
+  };
+  final bytes = utf8.encode(jsonEncode(receipt));
+  final digest = sha256.convert(bytes).toString();
+  try {
+    await directory.create(recursive: true);
+    final file = File('${directory.path}/endpoint-failure-$digest.json');
+    if (!await file.exists()) await file.writeAsBytes(bytes, flush: true);
+  } on FileSystemException {
+    // Preserve the source failure; cleanup still runs in the controller finally.
+  }
 }
 
 Map<String, Object?> _resetReceiptArtifact(
@@ -1816,6 +2534,7 @@ final class _RoleDatabaseObservation {
     required Map<String, String> messageIds,
     required Map<String, String> attachmentIds,
     required bool requireRows,
+    bool requireStrictSender = false,
   }) {
     final map = _object(value, '$role roleDatabase');
     final roleDbPath = map['role_db_path'];
@@ -1843,7 +2562,10 @@ final class _RoleDatabaseObservation {
             row['media_kind'] != kind ||
             row['message_id'] != messageIds[kind] ||
             row['blob_id'] != attachmentIds[kind] ||
-            row['status'] != 'done' ||
+            (requireStrictSender
+                ? !groupMediaStrictSenderPublicationMatches(row)
+                : row['status'] != 'done' ||
+                      row.containsKey('strict_publication')) ||
             row['upload_retry_count'] != 0 ||
             row['download_retry_count'] != 0) {
           throw FormatException('$role SQLCipher row $kind did not settle');

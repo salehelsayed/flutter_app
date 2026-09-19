@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -7,6 +8,420 @@ import 'package:flutter_test/flutter_test.dart';
 import '../../integration_test/support/android_notification_payload_campaign.dart';
 
 void main() {
+  group('controlled token rotation startup barrier', () {
+    AndroidFlowRecord attempt(String trigger) => AndroidFlowRecord(
+      event: 'PUSH_REGISTER_COORDINATOR_ATTEMPT',
+      details: <String, Object?>{'trigger': trigger},
+    );
+    AndroidFlowRecord success(String trigger) => AndroidFlowRecord(
+      event: 'PUSH_REGISTER_COORDINATOR_SUCCESS',
+      details: <String, Object?>{'trigger': trigger},
+    );
+
+    test('unfinished startup and queued resume never release rotation', () {
+      final gate = AndroidNotificationRegistrationQuiescence();
+      final records = <AndroidFlowRecord>[attempt('startup')];
+      expect(gate.observe(records, elapsedMs: 0), isFalse);
+      expect(gate.observe(records, elapsedMs: 9000), isFalse);
+      records.addAll(<AndroidFlowRecord>[
+        success('startup'),
+        attempt('resume'),
+      ]);
+      expect(gate.observe(records, elapsedMs: 10000), isFalse);
+      expect(gate.observe(records, elapsedMs: 15000), isFalse);
+      records.add(success('resume'));
+      expect(gate.observe(records, elapsedMs: 15001), isFalse);
+      expect(gate.observe(records, elapsedMs: 15500), isFalse);
+      expect(gate.observe(records, elapsedMs: 15501), isTrue);
+    });
+
+    test('a queued attempt resets the settled observation window', () {
+      final gate = AndroidNotificationRegistrationQuiescence();
+      final records = <AndroidFlowRecord>[
+        attempt('startup'),
+        success('startup'),
+      ];
+      expect(gate.observe(records, elapsedMs: 0), isFalse);
+      records.add(attempt('resume'));
+      expect(gate.observe(records, elapsedMs: 500), isFalse);
+      records.add(success('resume'));
+      expect(gate.observe(records, elapsedMs: 501), isFalse);
+      expect(gate.observe(records, elapsedMs: 1000), isFalse);
+      expect(gate.observe(records, elapsedMs: 1001), isTrue);
+    });
+
+    test('missing startup, unmatched success and failed outcomes refuse', () {
+      for (final records in <List<AndroidFlowRecord>>[
+        <AndroidFlowRecord>[attempt('resume'), success('resume')],
+        <AndroidFlowRecord>[success('startup')],
+        <AndroidFlowRecord>[
+          attempt('startup'),
+          success('startup'),
+          success('resume'),
+        ],
+        <AndroidFlowRecord>[
+          attempt('startup'),
+          success('startup'),
+          AndroidFlowRecord(
+            event: 'PUSH_REGISTER_COORDINATOR_EXCEPTION',
+            details: const <String, Object?>{'trigger': 'resume'},
+          ),
+        ],
+        <AndroidFlowRecord>[
+          attempt('startup'),
+          success('startup'),
+          AndroidFlowRecord(
+            event: 'PUSH_REGISTER_COORDINATOR_UNKNOWN',
+            details: const <String, Object?>{'trigger': 'resume'},
+          ),
+        ],
+        <AndroidFlowRecord>[
+          attempt('startup'),
+          success('startup'),
+          attempt('startup'),
+          success('startup'),
+        ],
+      ]) {
+        final gate = AndroidNotificationRegistrationQuiescence();
+        expect(gate.observe(records, elapsedMs: 0), isFalse);
+        expect(gate.observe(records, elapsedMs: 10000), isFalse);
+      }
+    });
+
+    test('clock reversal cannot reuse an old settled interval', () {
+      final gate = AndroidNotificationRegistrationQuiescence();
+      final records = <AndroidFlowRecord>[
+        attempt('startup'),
+        success('startup'),
+      ];
+      expect(gate.observe(records, elapsedMs: 1000), isFalse);
+      expect(gate.observe(records, elapsedMs: 1500), isTrue);
+      expect(gate.observe(records, elapsedMs: 900), isFalse);
+      expect(gate.observe(records, elapsedMs: 1399), isFalse);
+      expect(gate.observe(records, elapsedMs: 1400), isTrue);
+    });
+
+    test(
+      'a held observation cannot complete after the original startup bound',
+      () {
+        final gate = AndroidNotificationRegistrationQuiescence();
+        final records = <AndroidFlowRecord>[
+          attempt('startup'),
+          success('startup'),
+        ];
+        expect(gate.observe(records, elapsedMs: 179500), isFalse);
+        expect(gate.observe(records, elapsedMs: 180001), isFalse);
+        expect(gate.observe(records, elapsedMs: 180501), isFalse);
+      },
+    );
+  });
+
+  group('scoped cold and B13 repetition', () {
+    test(
+      'diagnostic evidence uses the ordinary artifact validator before writing',
+      () {
+        final source = File(
+          'integration_test/scripts/notification_android_payload_campaign.dart',
+        ).readAsStringSync();
+        final start = source.indexOf('record: (pair, leg, evidence) async {');
+        final end = source.indexOf('diagnosticCaptures.add(', start);
+        final record = source.substring(start, end);
+        expect(record, contains('validateNotificationArtifact(evidence)'));
+        expect(record, contains('if (!validation.ok)'));
+        expect(
+          record.indexOf('Scoped B13 artifact rejected:'),
+          lessThan(record.indexOf('await file.writeAsString(')),
+        );
+      },
+    );
+
+    test(
+      'three fresh cold-first pairs keep six separate evidence records',
+      () async {
+        final calls = <String>[];
+        final evidence = <Map<String, Object?>>[];
+        await runAndroidNotificationColdB13Probe(
+          cleanup: () async => calls.add('cleanup'),
+          cold: (pair) async {
+            calls.add('cold$pair');
+            return <String, Object?>{'pair': pair, 'leg': 'cold'};
+          },
+          dualPath: (pair) async {
+            calls.add('b13$pair');
+            return <String, Object?>{'pair': pair, 'leg': 'b13'};
+          },
+          record: (pair, leg, value) async {
+            expect(value, <String, Object?>{'pair': pair, 'leg': leg});
+            evidence.add(value);
+            calls.add('record$pair$leg');
+          },
+        );
+        expect(calls, <String>[
+          for (var pair = 1; pair <= 3; pair++) ...<String>[
+            'cleanup',
+            'cold$pair',
+            'record${pair}cold',
+            'b13$pair',
+            'record${pair}b13',
+          ],
+        ]);
+        expect(evidence, hasLength(6));
+        expect(
+          evidence.map((value) => '${value['pair']}:${value['leg']}').toSet(),
+          hasLength(6),
+        );
+      },
+    );
+
+    test('held cold proof cannot start the live B13 contender', () async {
+      final held = Completer<Map<String, Object?>>();
+      var dualCalls = 0;
+      final running = runAndroidNotificationColdB13Probe(
+        cleanup: () async {},
+        cold: (pair) =>
+            pair == 1 ? held.future : Future.value(<String, Object?>{}),
+        dualPath: (_) async {
+          dualCalls++;
+          return <String, Object?>{};
+        },
+        record: (_, _, _) async {},
+      );
+      await Future<void>.delayed(Duration.zero);
+      expect(dualCalls, 0);
+      held.complete(<String, Object?>{});
+      await running;
+      expect(dualCalls, 3);
+    });
+
+    test('a failed second B13 pair stops without a third input', () async {
+      final calls = <String>[];
+      final error = StateError('stable card failed');
+      await expectLater(
+        runAndroidNotificationColdB13Probe(
+          cleanup: () async => calls.add('cleanup'),
+          cold: (pair) async {
+            calls.add('cold$pair');
+            return <String, Object?>{};
+          },
+          dualPath: (pair) async {
+            calls.add('b13$pair');
+            if (pair == 2) throw error;
+            return <String, Object?>{};
+          },
+          record: (pair, leg, _) async => calls.add('record$pair$leg'),
+        ),
+        throwsA(same(error)),
+      );
+      expect(calls, isNot(contains('cold3')));
+      expect(calls, isNot(contains('record2b13')));
+      expect(calls.where((value) => value == 'cleanup'), hasLength(2));
+    });
+
+    test(
+      'failed cleanup or evidence storage never permits later input',
+      () async {
+        for (final failCleanup in <bool>[true, false]) {
+          var coldCalls = 0;
+          var dualCalls = 0;
+          final error = StateError('retention or cleanup failed');
+          await expectLater(
+            runAndroidNotificationColdB13Probe(
+              cleanup: () async {
+                if (failCleanup) throw error;
+              },
+              cold: (_) async {
+                coldCalls++;
+                return <String, Object?>{};
+              },
+              dualPath: (_) async {
+                dualCalls++;
+                return <String, Object?>{};
+              },
+              record: (_, _, _) async => throw error,
+            ),
+            throwsA(same(error)),
+          );
+          expect(coldCalls, failCleanup ? 0 : 1);
+          expect(dualCalls, 0);
+        }
+      },
+    );
+  });
+
+  test('diagnostic mode retains ordinary defaults and common restoration', () {
+    final source = File(
+      'integration_test/scripts/notification_android_payload_campaign.dart',
+    ).readAsStringSync();
+    final cli = File(
+      'integration_test/scripts/run_notification_tap_device_real.dart',
+    ).readAsStringSync();
+    expect(source, contains('this.diagnosticB13Reconciliation = false'));
+    expect(source, contains("'diagnosticIterationsCompleted': 3"));
+    expect(source, contains("'status': 'DIAGNOSTIC_PASS'"));
+    expect(source, contains("'wholeCampaignPass': false"));
+    expect(source, contains("'b13-probe-pair-\$pair-\$leg.json'"));
+    expect(source, contains('_coldWakeLogcatCursor = null;'));
+    expect(source, contains('_coldWakeWindowScannedClean = false;'));
+    final branch = source.indexOf('await runAndroidNotificationColdB13Probe(');
+    final ordinary = source.indexOf(
+      "_phase = 'tc_a6_replay_before_ack_custody';",
+      branch,
+    );
+    final restoration = source.indexOf('appStateGuard.restoreAll', ordinary);
+    final result = source.indexOf("'status': 'DIAGNOSTIC_PASS'", restoration);
+    expect(branch, greaterThan(0));
+    expect(ordinary, greaterThan(branch));
+    expect(restoration, greaterThan(ordinary));
+    expect(result, greaterThan(restoration));
+    expect(cli, contains('diagnosticB13Reconciliation: diagnostic'));
+    expect(cli, contains('The scoped B13 diagnostic requires --artifact-dir.'));
+  });
+
+  group('closed notification card diagnostics', () {
+    const own = 'com.mknoon.sims.notifications';
+    const body = 'private exact fixture body';
+    String record({
+      String package = own,
+      String text = body,
+      int id = 42,
+      String channel = 'mknoon_messages',
+    }) =>
+        'NotificationRecord(0x1: pkg=$package user=UserHandle{0} '
+        'id=$id tag=null key=0|$package|$id|null|10256: '
+        'Notification(channel=$channel shortcut=null))\n'
+        '  android.title=String (private sender)\n'
+        '  android.text=String ($text)\n'
+        '  payload=private-route';
+    Map<String, Object?> snapshot(String dump) =>
+        androidNotificationCardDiagnosticSnapshot(
+          dump,
+          packageName: own,
+          body: body,
+          oracleCardIds: const <int?>[42],
+          oracleChannels: const <String>['mknoon_messages'],
+        );
+
+    test('same-key duplicate views and channel conflicts remain distinct', () {
+      final same = snapshot('${record()}\n${record()}');
+      final records = same['ownedMatchingRecords']! as List;
+      expect(same['oracleCardCount'], 1);
+      expect(same['ownedMatchingRecordCount'], 2);
+      expect(records[0], records[1]);
+      final changed = snapshot(
+        '${record()}\n${record(channel: 'mknoon_messages_silent')}',
+      );
+      final tuples = changed['ownedMatchingRecords']! as List;
+      expect(tuples[0]['nativeKeySha256'], tuples[1]['nativeKeySha256']);
+      expect(tuples[0]['channelSha256'], isNot(tuples[1]['channelSha256']));
+      expect(tuples[1]['channelKind'], 'silent');
+    });
+
+    test('exact package and body ownership excludes adjacent records', () {
+      final result = snapshot(
+        '${record(package: '$own.visibilityproof')}\n'
+        '${record(text: '$body other')}\n${record()}',
+      );
+      expect(result['ownedMatchingRecordCount'], 1);
+      final serialized = jsonEncode(result);
+      for (final privateValue in <String>[
+        own,
+        body,
+        'private sender',
+        'private-route',
+        '10256',
+      ]) {
+        expect(serialized, isNot(contains(privateValue)));
+      }
+    });
+
+    test(
+      'missing cards and changed native IDs are observable without copy',
+      () {
+        final absent = snapshot(
+          'Current Notification Manager state:\nRanking Config:',
+        );
+        expect(absent['ownedMatchingRecordCount'], 0);
+        expect(absent['managerHeaderPresent'], isTrue);
+        expect(absent['rankingSectionPresent'], isTrue);
+        final a = snapshot(record());
+        final b = snapshot(record(id: 43));
+        expect(
+          (a['ownedMatchingRecords']! as List).single['idSha256'],
+          isNot((b['ownedMatchingRecords']! as List).single['idSha256']),
+        );
+      },
+    );
+
+    test('internal errors and unknown channels have closed projections', () {
+      final result = snapshot(
+        '${record(channel: 'private-unknown-channel')}\nDUMP TIMEOUT',
+      );
+      expect(result['internalDumpError'], isTrue);
+      expect(result['managerHeaderPresent'], isFalse);
+      expect(result['rankingSectionPresent'], isFalse);
+      expect(
+        (result['ownedMatchingRecords']! as List).single['channelKind'],
+        'other',
+      );
+      expect(jsonEncode(result), isNot(contains('private-unknown-channel')));
+    });
+
+    test('record and oracle arrays are bounded without hiding truncation', () {
+      final result = androidNotificationCardDiagnosticSnapshot(
+        List.generate(40, (i) => record(id: i)).join('\n'),
+        packageName: own,
+        body: body,
+        oracleCardIds: List<int>.generate(40, (i) => i),
+        oracleChannels: List<String>.filled(40, 'mknoon_messages'),
+      );
+      expect(result['ownedMatchingRecordCount'], 40);
+      expect(result['ownedMatchingRecords'], hasLength(16));
+      expect(result['ownedMatchingRecordsTruncated'], isTrue);
+      expect(result['oracleTuplesTruncated'], isTrue);
+      expect(result['oracleCardIdSha256'], hasLength(16));
+      expect(result['oracleChannelSha256'], hasLength(16));
+      expect(jsonEncode(result).length, lessThan(12000));
+    });
+  });
+
+  test('card instability retains both already-read samples before failing', () {
+    final source = File(
+      'integration_test/scripts/notification_android_payload_campaign.dart',
+    ).readAsStringSync();
+    final start = source.indexOf(
+      '_waitForNotificationObservation(String marker)',
+    );
+    final end = source.indexOf(
+      'Future<void> _requireNoAppNotification()',
+      start,
+    );
+    final gate = source.substring(start, end);
+    expect(gate, contains('firstDump = dump;'));
+    expect(gate, contains('_writeNotificationCardStabilityFailure('));
+    expect(gate, contains('firstDump: firstDump'));
+    expect(gate, contains('failedDump: dump'));
+    expect(gate, contains('const Duration(seconds: 4)'));
+    expect(gate, contains('matching.length != 1'));
+    expect(gate, contains('matching.single.id != firstObservation.card.id'));
+    expect(
+      gate,
+      contains('channels.single != firstObservation.channels.single'),
+    );
+    expect(
+      RegExp(r'await _notificationDump\(\)').allMatches(gate),
+      hasLength(2),
+    );
+    final writer = gate.substring(
+      gate.indexOf('_writeNotificationCardStabilityFailure({'),
+    );
+    expect(writer, isNot(contains('_adb(')));
+    expect(writer, isNot(contains('_notificationDump(')));
+    expect(
+      gate.indexOf('_writeNotificationCardStabilityFailure('),
+      lessThan(gate.indexOf("'Run-bound notification did not preserve")),
+    );
+  });
+
   test('isolated package launch uses the fully qualified native activity', () {
     final source = File(
       'integration_test/scripts/notification_android_payload_campaign.dart',
@@ -55,6 +470,70 @@ void main() {
     expect(leg, contains('blockedSilentImportance != 2'));
   });
 
+  test(
+    'both channel sends require provider delivery before live ACK custody',
+    () {
+      final source = File(
+        'integration_test/scripts/notification_android_payload_campaign.dart',
+      ).readAsStringSync();
+      final start = source.indexOf(
+        'Future<Map<String, Object?>> _runChannelDisabledLeg()',
+      );
+      final end = source.indexOf('Future<int?> _channelImportance', start);
+      final leg = source.substring(start, end);
+
+      // Actual notification04 stored the blocked message through the live path
+      // before the relay recorded custody-only history, so waiting for a push
+      // afterward did not exercise the OS channel. Both sends need the same
+      // real provider/staged-frame barrier; the control cannot race it either.
+      expect(
+        RegExp(r'_sendSpacedProviderMarker\(').allMatches(leg),
+        hasLength(2),
+      );
+      expect(leg, isNot(contains('_sendSpacedMarker(')));
+      for (final gate in <String>[
+        '_requirePostAttempt(',
+        '_waitForStagedEnvelope(',
+        '_requireNoCardForMarker(',
+        '_requireReceiverAlive(',
+        '_restartAndDrain(',
+        "drain['messageCount'] != 1",
+        "drain['pendingRelayEntries'] != 0",
+        'restoredImportance != 4',
+        'restoredSilentImportance != 2',
+        '_requireAudibleChannel(',
+      ]) {
+        expect(leg, contains(gate), reason: gate);
+      }
+    },
+  );
+
+  test('channel provider barrier keeps spacing and exact background PID', () {
+    final source = File(
+      'integration_test/scripts/notification_android_payload_campaign.dart',
+    ).readAsStringSync();
+    final start = source.indexOf('_sendSpacedProviderMarker(String marker,');
+    final end = source.indexOf('/// Proves the wake ARRIVED', start);
+    final send = source.substring(start, end);
+    final tone = send.indexOf('await _awaitToneWindow()');
+    final cursor = send.indexOf('await _deviceLogcatCursor()');
+    final pid = send.indexOf('await _pidof(emulator)');
+    final background = send.indexOf(
+      'await _requireB13ReceiverBackground(receiverPid)',
+    );
+    final barrier = send.indexOf('await _sendB13ProviderBeforeLive(');
+    expect(tone, greaterThanOrEqualTo(0));
+    expect(cursor, greaterThan(tone));
+    expect(pid, greaterThan(cursor));
+    expect(background, greaterThan(pid));
+    expect(barrier, greaterThan(background));
+    expect(send, contains('receiverPid: receiverPid'));
+    expect(send, contains('initialCursor: cursor'));
+    expect(send, contains('sentAt: sentAt'));
+    expect(send, isNot(contains('_sendText(')));
+    expect(send, isNot(contains('_waitForProviderSend(')));
+  });
+
   test('B13 proves the alert from the log and the settled primary card', () {
     final source = File(
       'integration_test/scripts/notification_android_payload_campaign.dart',
@@ -93,6 +572,9 @@ void main() {
     expect(toneGap, greaterThan(background));
     expect(cursor, greaterThan(toneGap));
     expect(leg, contains('messageId: sent.messageId'));
+    expect(leg, contains('_sendB13ProviderBeforeLive('));
+    expect(leg, isNot(contains('await _sendText(')));
+    expect(leg, contains('androidNotificationReleasedLivePathObserved('));
   });
 
   test('log windows come from a live stream, never a post-hoc dump', () {

@@ -3742,6 +3742,32 @@ class AppLocalizationsEn extends AppLocalizations {
   String get call_ended => 'Call ended';
 
   @override
+  String get call_status_connecting => 'Connecting';
+
+  @override
+  String get call_status_ringing => 'Ringing';
+
+  @override
+  String get call_status_connected => 'Connected';
+
+  @override
+  String get call_status_reconnecting => 'Reconnecting';
+
+  @override
+  String get call_status_ending => 'Ending';
+
+  @override
+  String get call_status_incoming => 'Incoming call';
+
+  @override
+  String get call_status_checking_incoming => 'Checking incoming call';
+
+  @override
+  String call_duration(String duration) {
+    return 'Call duration $duration';
+  }
+
+  @override
   String get call_dismiss_status => 'Dismiss call status';
 
   @override

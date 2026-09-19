@@ -757,7 +757,10 @@ class _StartupRouterState extends State<StartupRouter> {
             widget.shareIntentService?.reset();
             widget.shareIntentService?.isSettled = true;
 
-            await _pushStartupReplacement(
+            unawaited(widget.ensureRuntimeServicesReady?.call());
+            unawaited(_ensureMlKemKeys());
+
+            final homeReady = _pushStartupReplacement(
               builder: (routeContext) => ShareTargetPickerWired(
                 shareIntent: pendingIntent,
                 identityRepo: repository,
@@ -792,10 +795,8 @@ class _StartupRouterState extends State<StartupRouter> {
                 },
               ),
             );
-
-            unawaited(widget.ensureRuntimeServicesReady?.call());
-            unawaited(_ensureMlKemKeys());
-            _startP2PInBackground();
+            _startP2PInBackground(homeReady: homeReady);
+            await homeReady;
             break;
           }
 
@@ -814,10 +815,12 @@ class _StartupRouterState extends State<StartupRouter> {
             details: {'contactCount': contactCount},
           );
 
-          await _pushStartupReplacement(builder: buildFeed);
-
-          // Start P2P node in background after navigation
-          _startP2PInBackground();
+          // A locked Android activity can own the canonical runtime without
+          // receiving another frame. Qualified networking must not wait for
+          // the visual route transition before it can admit an incoming call.
+          final homeReady = _pushStartupReplacement(builder: buildFeed);
+          _startP2PInBackground(homeReady: homeReady);
+          await homeReady;
 
           settleShareIntentFlow(
             shareIntentService: widget.shareIntentService,
@@ -1030,20 +1033,14 @@ class _StartupRouterState extends State<StartupRouter> {
 
   /// Start the P2P node in the background.
   ///
-  /// This is called after navigating to the main screen, so failures
-  /// don't block the user experience.
-  Future<void> _startP2PInBackground() async {
-    if (StartupConfig.deferredStartupMode) {
-      // Defer P2P startup to next frame to avoid contending with UI rendering
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        _doStartP2P();
-      });
-    } else {
-      _doStartP2P();
-    }
-  }
+  /// Qualification precedes this request; visual navigation remains separate.
+  /// Yield the current synchronous work without requiring a rendered frame.
+  Future<void> _startP2PInBackground({Future<void>? homeReady}) =>
+      StartupConfig.deferredStartupMode
+      ? Future<void>.microtask(() => _doStartP2P(homeReady: homeReady))
+      : _doStartP2P(homeReady: homeReady);
 
-  Future<void> _doStartP2P() async {
+  Future<void> _doStartP2P({Future<void>? homeReady}) async {
     final ensureRuntimeServicesReady = widget.ensureRuntimeServicesReady;
     if (ensureRuntimeServicesReady != null) {
       await ensureRuntimeServicesReady();
@@ -1122,6 +1119,10 @@ class _StartupRouterState extends State<StartupRouter> {
           }),
         );
       }
+      // Only node/call admission readiness may precede the visual route.
+      // Initial notification opens and cold recovery must keep their existing
+      // home-before-navigation order, including the deferred frame boundary.
+      await _awaitPostStartHomeReady(homeReady);
       // FDC-07: trigger early LAN mDNS discovery on the cold-start branch — AFTER
       // the plan-164 ensureRuntimeServicesReady gate (above; node-start ordering
       // is NOT reordered) and BEFORE the group-rejoin/drain block below.
@@ -1349,6 +1350,7 @@ class _StartupRouterState extends State<StartupRouter> {
         }());
       }
     } else {
+      await _awaitPostStartHomeReady(homeReady);
       // Node startup can fail while cleanup_pending work is entirely local.
       // Queue one isolated pass even though no network prerequisite is usable.
       unawaited(_recoverGroupExitIntentsAtStartup());
@@ -1360,6 +1362,13 @@ class _StartupRouterState extends State<StartupRouter> {
         // completeness or run network inbox drains.
         unawaited(_releaseIosNotificationOpenAfterFailedNodeStart());
       }
+    }
+  }
+
+  Future<void> _awaitPostStartHomeReady(Future<void>? homeReady) async {
+    await homeReady;
+    if (StartupConfig.deferredStartupMode) {
+      await WidgetsBinding.instance.endOfFrame;
     }
   }
 
@@ -1766,7 +1775,7 @@ class _StartupRouterState extends State<StartupRouter> {
     IntroductionListener? introductionListener,
     ShareIntentService? shareIntentService,
   }) async {
-    await _pushStartupReplacement(
+    final homeReady = _pushStartupReplacement(
       builder: (_) => FirstTimeExperienceWired(
         directRouteAuthority: widget.directRouteAuthority,
         resolveCallWakeHandle: widget.resolveCallWakeHandle,
@@ -1815,9 +1824,8 @@ class _StartupRouterState extends State<StartupRouter> {
         accountMigrationSizeGate: widget.accountMigrationSizeGate,
       ),
     );
-
-    // Start P2P in background after navigation
-    _startP2PInBackground();
+    _startP2PInBackground(homeReady: homeReady);
+    await homeReady;
   }
 
   void _setStartupStage(String stage) {

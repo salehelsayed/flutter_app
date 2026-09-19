@@ -41,7 +41,11 @@ class PushRegistrationHealthSurface extends StatelessWidget {
                   ),
                 ),
               ),
-            Expanded(child: child),
+            Expanded(
+              // Route-level BlockSemantics must stay inside the Navigator,
+              // leaving this persistent app-shell warning accessible.
+              child: Semantics(container: true, child: child),
+            ),
           ],
         );
       },

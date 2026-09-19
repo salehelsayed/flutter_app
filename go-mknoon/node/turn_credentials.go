@@ -11,11 +11,13 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 	"unicode/utf8"
 
 	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/peer"
+	"github.com/libp2p/go-libp2p/p2p/net/swarm"
 )
 
 const (
@@ -161,12 +163,12 @@ func requestTurnCredentialsV1(
 	ctx, cancel := context.WithTimeout(parent, RelayProbeTimeout)
 	defer cancel()
 	if err := h.Connect(ctx, peer.AddrInfo{ID: relay.ID, Addrs: relay.Addrs}); err != nil {
-		return TurnCredentialBundle{}, turnCredentialConnectError(err)
+		return TurnCredentialBundle{}, annotateTurnCredentialFailure(turnCredentialConnectError(err), "connect", err)
 	}
 
 	stream, err := h.NewStream(ctx, relay.ID, InboxProtocol)
 	if err != nil {
-		return TurnCredentialBundle{}, turnCredentialConnectError(err)
+		return TurnCredentialBundle{}, annotateTurnCredentialFailure(turnCredentialConnectError(err), "new_stream", err)
 	}
 	streamOK := false
 	defer finishStream(stream, &streamOK)
@@ -207,19 +209,40 @@ func requestTurnCredentialsV1(
 	return parseTurnCredentialsV1Response(responseBytes, now)
 }
 
-// Before an authenticated stream exists, an arbitrary transport error may be
-// a peer identity or security negotiation rejection. Only a proven deadline
-// permits transient treatment; do not expose the underlying address/error.
+// Before an authenticated stream exists, arbitrary failures may be identity or
+// security rejections. Only a proven deadline or typed OS route unavailability
+// permits transient treatment; never inspect or expose address/error text.
 func turnCredentialConnectError(err error) error {
-	// Unwrap only a single causal chain. A joined dial failure can contain both
-	// a deadline and a trust rejection, and must remain conservative. Context
-	// expiry alone must never relabel a separately reported authentication error.
-	for cause := err; cause != nil; cause = errors.Unwrap(cause) {
-		if cause == context.DeadlineExceeded {
-			return ErrTurnCredentialsUnavailable
-		}
+	if turnCredentialTransportUnavailable(err, 32) {
+		return ErrTurnCredentialsUnavailable
 	}
 	return ErrTurnCredentialsRejected
+}
+
+func turnCredentialTransportUnavailable(err error, remaining int) bool {
+	for cause := err; cause != nil && remaining > 0; cause = errors.Unwrap(cause) {
+		remaining--
+		switch cause {
+		case context.DeadlineExceeded, syscall.ENETDOWN, syscall.ENETUNREACH, syscall.EHOSTUNREACH:
+			return true
+		}
+		if dial, ok := cause.(*swarm.DialError); ok {
+			// libp2p aggregates address attempts. Every recorded branch must prove
+			// an outage; truncated, empty, unknown and mixed trust failures cannot
+			// authorize fallback. Arbitrary errors.Join values remain rejected.
+			if dial == nil || dial.Skipped != 0 || len(dial.DialErrors) == 0 ||
+				(dial.Cause != swarm.ErrAllDialsFailed && dial.Cause != context.DeadlineExceeded) {
+				return false
+			}
+			for _, attempt := range dial.DialErrors {
+				if !turnCredentialTransportUnavailable(attempt.Cause, remaining) {
+					return false
+				}
+			}
+			return true
+		}
+	}
+	return false
 }
 
 func parseTurnCredentialsV1Response(raw []byte, now time.Time) (TurnCredentialBundle, error) {

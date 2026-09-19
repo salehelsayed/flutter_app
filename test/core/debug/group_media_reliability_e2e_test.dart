@@ -2,11 +2,13 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:crypto/crypto.dart';
 import 'package:flutter_app/core/debug/group_media_reliability_e2e.dart';
 import 'package:flutter_app/core/debug/group_media_reliability_e2e_main_actions.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
 import 'package:flutter_app/core/database/app_database_version.dart';
+import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sqflite_sqlcipher/sqflite.dart';
 
@@ -24,6 +26,201 @@ import '../../shared/fakes/in_memory_contact_repository.dart';
 import '../../features/identity/domain/repositories/fake_identity_repository.dart';
 
 void main() {
+  test(
+    'P269 strict upload observer delegates unchanged request and response',
+    () async {
+      for (final response in <Map<String, dynamic>>[
+        {
+          'ok': false,
+          'errorCode': 'MEDIA_CUSTODY_ADMISSION_DISABLED',
+          'errorMessage': 'secret',
+        },
+        {'ok': false, 'errorCode': 'secret-native-code'},
+        {'ok': true, 'id': 'blob', 'extra': 'unchanged'},
+        {'ok': 'not-bool', 'errorCode': 'MEDIA_CUSTODY_FULL'},
+      ]) {
+        final bridge = FakeBridge()..responses['media:upload'] = response;
+        final observations = <(bool?, String?)>[];
+        final result = await callGroupMediaReliabilityObservedUpload(
+          bridge: bridge,
+          custodyBlobId: 'blob',
+          recipientPeerId: 'recipient',
+          ciphertextPath: '/private/ciphertext',
+          contentHash: 'a' * 64,
+          ciphertextSize: 80,
+          onResponse: (ok, code) => observations.add((ok, code)),
+        );
+        expect(result, response);
+        expect(bridge.sendCallCount, 1);
+        expect(jsonDecode(bridge.sentMessages.single), {
+          'cmd': 'media:upload',
+          'payload': {
+            'id': 'blob',
+            'to': 'recipient',
+            'mime': 'application/octet-stream',
+            'filePath': '/private/ciphertext',
+            'custodyContract': 'ack_or_expiry_v1',
+            'custodyKind': 'group_media_blob_v1',
+            'contentHash': 'a' * 64,
+          },
+        });
+        expect(observations, [
+          (
+            response['ok'] is bool ? response['ok'] as bool : null,
+            response['ok'] == false &&
+                    response['errorCode'] == 'MEDIA_CUSTODY_ADMISSION_DISABLED'
+                ? 'MEDIA_CUSTODY_ADMISSION_DISABLED'
+                : null,
+          ),
+        ]);
+      }
+      final rejected = FakeBridge()
+        ..responses['media:upload'] = {
+          'ok': false,
+          'errorCode': 'MEDIA_CUSTODY_FULL',
+        };
+      expect(
+        await callGroupMediaReliabilityObservedUpload(
+          bridge: rejected,
+          custodyBlobId: 'blob',
+          recipientPeerId: 'recipient',
+          ciphertextPath: '/private/ciphertext',
+          contentHash: 'a' * 64,
+          ciphertextSize: 80,
+          onResponse: (_, _) => throw StateError('observer failed'),
+        ),
+        {'ok': false, 'errorCode': 'MEDIA_CUSTODY_FULL'},
+      );
+      final throwing = FakeBridge()..throwOnSend = true;
+      var observed = false;
+      await expectLater(
+        callGroupMediaReliabilityObservedUpload(
+          bridge: throwing,
+          custodyBlobId: 'blob',
+          recipientPeerId: 'recipient',
+          ciphertextPath: '/private/ciphertext',
+          contentHash: 'a' * 64,
+          ciphertextSize: 80,
+          onResponse: (_, _) {
+            observed = true;
+          },
+        ),
+        throwsA(isA<Exception>()),
+      );
+      expect(observed, isFalse);
+      expect(throwing.sendCallCount, 1);
+    },
+  );
+
+  test('P269 strict upload endpoint keeps only actual closed native code', () {
+    Map<String, Object?> receipt({
+      String stage = 'strict_preparation',
+      String state = 'retained',
+      bool durable = true,
+      bool? ok = false,
+      String? code = 'MEDIA_CUSTODY_ADMISSION_DISABLED',
+    }) => groupMediaReliabilityE2EFailureReceipt(
+      config: _command(
+        phase: groupMediaReliabilitySenderSendPhase,
+        role: 'sender',
+      ),
+      error: GroupMediaReliabilitySenderFailure(
+        stage,
+        kind: 'mp4',
+        preparationState: state,
+        preparationHasDurableAuthority: durable,
+        preparationUploadResponseOk: ok,
+        preparationUploadErrorCode: code,
+      ),
+    );
+    expect(receipt()['preparationUploadResponseOk'], isFalse);
+    expect(
+      receipt()['preparationUploadErrorCode'],
+      'MEDIA_CUSTODY_ADMISSION_DISABLED',
+    );
+    for (final code in [
+      null,
+      'secret-native-code',
+      'MEDIA_CUSTODY_FULL\nsecret',
+    ]) {
+      final result = receipt(code: code);
+      expect(result['preparationUploadResponseOk'], isFalse);
+      expect(result.containsKey('preparationUploadErrorCode'), isFalse);
+      expect(jsonEncode(result), isNot(contains('secret')));
+    }
+    final accepted = receipt(ok: true);
+    expect(accepted['preparationUploadResponseOk'], isTrue);
+    expect(accepted.containsKey('preparationUploadErrorCode'), isFalse);
+    for (final result in [
+      receipt(stage: 'strict_publication'),
+      receipt(state: 'refused'),
+      receipt(durable: false),
+      receipt(ok: null),
+    ]) {
+      expect(result.containsKey('preparationUploadResponseOk'), isFalse);
+      expect(result.containsKey('preparationUploadErrorCode'), isFalse);
+    }
+  });
+  test(
+    'P269 strict sender SQL probe preserves raw state and rejects incomplete publication',
+    () async {
+      final messages = {
+        for (final kind in ['jpeg', 'mp4', 'voice']) kind: 'message-$kind',
+      };
+      final attachments = {
+        for (final kind in messages.keys) kind: 'attachment-$kind',
+      };
+      Future<Map<String, Object?>> probe({
+        String role = 'sender',
+        String status = 'upload_pending',
+        Map<String, Object?> mutation = const {},
+      }) => probeGroupMediaReliabilityRoleDatabase(
+        role: role,
+        runId: 'run',
+        transportPeerId: 'transport',
+        messageIds: messages,
+        attachmentIds: attachments,
+        database: _PublicationProbeDatabase(mutation),
+        mediaAttachmentRepository: _PublicationProbeMedia(status),
+      );
+      final result = await probe();
+      final rows = result['rows']! as List;
+      expect(rows, hasLength(3));
+      for (final row in rows.cast<Map>()) {
+        expect(row['status'], 'upload_pending');
+        expect(
+          (row['strict_publication']! as Map)['message_id'],
+          row['message_id'],
+        );
+        expect((row['strict_publication']! as Map)['status'], 'sent');
+      }
+      for (final mutation in <Map<String, Object?>>[
+        {'id': 'unrelated'},
+        {'status': 'pending'},
+        {'inbox_stored': 0},
+        {'is_incoming': 1},
+        {'wire_envelope': 'pending'},
+        {'inbox_retry_payload': 'pending'},
+        {'group_id': ''},
+        {'sender_peer_id': ''},
+      ]) {
+        await expectLater(
+          probe(mutation: mutation),
+          throwsStateError,
+          reason: '$mutation',
+        );
+      }
+      await expectLater(probe(role: 'receiver'), throwsStateError);
+      await expectLater(probe(status: 'done'), throwsStateError);
+      final receiver = await probe(role: 'receiver', status: 'done');
+      expect(
+        (receiver['rows']! as List).cast<Map>().every(
+          (row) => !row.containsKey('strict_publication'),
+        ),
+        isTrue,
+      );
+    },
+  );
   test(
     'P269 ordinary-primary setup uses signed creation and exact uninitialized member roster',
     () async {
@@ -387,6 +584,118 @@ void main() {
     );
   });
 
+  test(
+    'P269 strict preparation diagnostic keeps actual closed result pair',
+    () {
+      final command = _command(
+        phase: groupMediaReliabilitySenderSendPhase,
+        role: 'sender',
+      );
+      for (final (state, durable) in [
+        ('refused', false),
+        ('refused', true),
+        ('retained', true),
+        ('legacyUninitialized', false),
+      ]) {
+        final receipt = groupMediaReliabilityE2EFailureReceipt(
+          config: command,
+          error: GroupMediaReliabilitySenderFailure(
+            'strict_preparation',
+            kind: 'mp4',
+            preparationState: state,
+            preparationHasDurableAuthority: durable,
+          ),
+        );
+        expect(receipt['errorCode'], 'sender_strict_preparation');
+        expect(receipt['preparationState'], state);
+        expect(receipt['preparationHasDurableAuthority'], durable);
+      }
+      for (final error in [
+        const GroupMediaReliabilitySenderFailure(
+          'strict_preparation',
+          kind: 'mp4',
+        ),
+        const GroupMediaReliabilitySenderFailure(
+          'strict_preparation',
+          preparationState: 'secret-native-error',
+          preparationHasDurableAuthority: false,
+        ),
+        const GroupMediaReliabilitySenderFailure(
+          'strict_publication',
+          preparationState: 'retained',
+          preparationHasDurableAuthority: true,
+        ),
+        const GroupMediaReliabilitySenderFailure(
+          'strict_preparation',
+          preparationState: 'retained',
+          preparationHasDurableAuthority: false,
+        ),
+        const GroupMediaReliabilitySenderFailure(
+          'strict_preparation',
+          preparationState: 'complete',
+          preparationHasDurableAuthority: true,
+        ),
+      ]) {
+        final receipt = groupMediaReliabilityE2EFailureReceipt(
+          config: command,
+          error: error,
+        );
+        expect(receipt.containsKey('preparationState'), isFalse);
+        expect(receipt.containsKey('preparationHasDurableAuthority'), isFalse);
+        expect(jsonEncode(receipt), isNot(contains('secret-native-error')));
+      }
+    },
+  );
+
+  test('P269 receiver authority command requires an exact closed target', () {
+    Map<String, dynamic> command() => _command(
+      phase: groupMediaReliabilityReceiverAuthorityPhase,
+      role: 'receiver',
+    );
+    final accepted = GroupMediaReliabilityE2ERequest.fromConfig(command());
+    expect(accepted.expectedAuthority?.toJson(), _authorityTarget());
+    for (final invalid in <Object?>[
+      null,
+      'secret-target',
+      <Object?>[],
+      <String, Object?>{},
+      {..._authorityTarget()}..remove('authoritySha256'),
+      {..._authorityTarget(), 'unexpected': 'secret'},
+      {..._authorityTarget(), 'keyEpoch': 0},
+      {..._authorityTarget(), 'keyEpoch': 2.0},
+      {..._authorityTarget(), 'keyEpoch': '2'},
+      {..._authorityTarget(), 'authoritySha256': 'secret'},
+      {..._authorityTarget(), 'memberRolesSha256': 'secret'},
+      {..._authorityTarget(), 'groupIdSha256': 'c' * 64},
+      {..._authorityTarget(), 'authorityEventAt': 'not-a-date'},
+      {..._authorityTarget(), 'authorityEventAt': '2026-09-19T00:00:00'},
+    ]) {
+      expect(
+        () => GroupMediaReliabilityE2ERequest.fromConfig({
+          ...command(),
+          'expectedAuthority': invalid,
+        }),
+        throwsFormatException,
+      );
+    }
+    expect(
+      () => GroupMediaReliabilityE2ERequest.fromConfig(
+        command()..remove('expectedAuthority'),
+      ),
+      throwsFormatException,
+    );
+    expect(
+      () => GroupMediaReliabilityE2ERequest.fromConfig({
+        ..._command(
+          phase: groupMediaReliabilitySenderSendPhase,
+          role: 'sender',
+        ),
+        'expectedAuthority': _authorityTarget(),
+      }),
+      throwsFormatException,
+    );
+  });
+
   test('P269 endpoint failures expose only stable redacted codes', () {
     final command = _command(
       phase: groupMediaReliabilitySenderSetupPhase,
@@ -439,6 +748,8 @@ void main() {
       );
       String? setupAccount;
       String? setupTransport;
+      final authorityCalls = <String>[];
+      Map<String, Object?>? receivedTarget;
 
       var mode = GroupMediaReliabilityAuthorityMode.distinctAccountAndTransport;
       Future<Map<String, Object?>> invoke(Map<String, dynamic> config) =>
@@ -459,7 +770,20 @@ void main() {
               setupTransport = transport;
               return const <String, Object?>{'groupId': 'group-id'};
             },
-            acceptReceiver: (_) async => null,
+            acceptReceiver: (_) async => const <String, Object?>{
+              'accountPeerId': 'receiver-account',
+              'transportPeerId': 'receiver-transport',
+            },
+            probeAuthority:
+                (group, {required requireSettled, expectedAuthority}) async {
+                  authorityCalls.add('probe:$group:$requireSettled');
+                  receivedTarget = expectedAuthority?.toJson();
+                  return <String, Object?>{'observed': requireSettled};
+                },
+            refreshAuthority: (group, account, transport) async {
+              authorityCalls.add('refresh:$group:$account:$transport');
+              return const <String, Object?>{'rotated': true};
+            },
             sendMedia: (_, _, _, _, _) async => const <String, Object?>{},
             probeRole: (role, _, _) async => <String, Object?>{'role': role},
             retryUploads: () async => 0,
@@ -473,11 +797,67 @@ void main() {
       expect(identity['accountPeerId'], 'receiver-account');
       expect(identity['transportPeerId'], 'receiver-transport');
       expect(identity['authorityMode'], 'distinctAccountAndTransport');
+      final armed = await invoke(
+        _command(
+          phase: groupMediaReliabilityReceiverArmPhase,
+          role: 'receiver',
+        ),
+      );
+      expect(armed['authorityBefore'], <String, Object?>{'observed': false});
+      final refreshed = await invoke(
+        _command(
+          phase: groupMediaReliabilitySenderAuthorityPhase,
+          role: 'sender',
+        ),
+      );
+      expect(refreshed['authorityRefresh'], <String, Object?>{'rotated': true});
+      final ready = await invoke(
+        _command(
+          phase: groupMediaReliabilityReceiverAuthorityPhase,
+          role: 'receiver',
+        ),
+      );
+      expect(ready['authorityAfter'], <String, Object?>{'observed': true});
+      expect(receivedTarget, _authorityTarget());
+      expect(authorityCalls, <String>[
+        'probe:group-id:false',
+        'refresh:group-id:receiver-account:receiver-transport',
+        'probe:group-id:true',
+      ]);
+      for (final invalid in <(String, String)>[
+        (groupMediaReliabilitySenderAuthorityPhase, 'receiver'),
+        (groupMediaReliabilityReceiverAuthorityPhase, 'sender'),
+      ]) {
+        await expectLater(
+          invoke(_command(phase: invalid.$1, role: invalid.$2)),
+          throwsFormatException,
+        );
+      }
+      expect(authorityCalls, hasLength(3));
       mode = GroupMediaReliabilityAuthorityMode.accountBoundLegacy;
       final ordinaryIdentity = await invoke(
         _command(phase: groupMediaReliabilityIdentityPhase, role: 'receiver'),
       );
       expect(ordinaryIdentity['authorityMode'], 'accountBoundLegacy');
+      await expectLater(
+        invoke(
+          _command(
+            phase: groupMediaReliabilitySenderAuthorityPhase,
+            role: 'sender',
+          ),
+        ),
+        throwsFormatException,
+      );
+      await expectLater(
+        invoke(
+          _command(
+            phase: groupMediaReliabilityReceiverAuthorityPhase,
+            role: 'receiver',
+          ),
+        ),
+        throwsFormatException,
+      );
+      expect(authorityCalls, hasLength(3));
       expect(
         ordinaryIdentity['accountPeerId'],
         ordinaryIdentity['transportPeerId'],
@@ -632,102 +1012,189 @@ void main() {
     },
   );
 
-  test(
-    'P269 fresh-process endpoint reads prior status then drives the same gated retry callbacks twice',
-    () async {
-      final directory = await Directory.systemTemp.createTemp(
-        'p269-group-media-endpoint-',
-      );
-      addTearDown(() async {
-        if (directory.existsSync()) await directory.delete(recursive: true);
-      });
-      final first = GroupMediaReliabilityE2EController(
-        enabled: true,
-        stateDirectory: directory,
-        currentProcessId: 301,
-      );
-      await first.arm(
-        const GroupMediaReliabilityBarrierRequest(
-          runId: 'p269-endpoint',
-          groupId: 'group-id',
-          jpegMessageId: 'message-jpeg',
-          jpegAttachmentId: 'blob-jpeg',
-          mediaMessageIds: <String, String>{
-            'jpeg': 'message-jpeg',
-            'mp4': 'message-mp4',
-            'voice': 'message-voice',
-          },
-          mediaAttachmentIds: <String, String>{
-            'jpeg': 'blob-jpeg',
-            'mp4': 'blob-mp4',
-            'voice': 'blob-voice',
-          },
-        ),
-      );
-      unawaited(() async {
-        final jpeg = _attachment(
-          id: 'blob-jpeg',
-          messageId: 'message-jpeg',
-          mime: 'image/jpeg',
+  for (final failureStage in [
+    null,
+    GroupMediaReliabilityRecoveryStage.priorBoundary,
+    GroupMediaReliabilityRecoveryStage.firstUpload,
+    GroupMediaReliabilityRecoveryStage.firstDownload,
+    GroupMediaReliabilityRecoveryStage.secondUpload,
+    GroupMediaReliabilityRecoveryStage.secondDownload,
+    GroupMediaReliabilityRecoveryStage.roleDatabase,
+  ]) {
+    test(
+      'P269 fresh-process endpoint preserves retry order and exact failure evidence: ${failureStage?.name ?? 'success'}',
+      () async {
+        final directory = await Directory.systemTemp.createTemp(
+          'p269-group-media-endpoint-',
         );
-        await first.onAutomaticDownloadAttemptStarted(attachment: jpeg);
-        await first.onPostClaimPreCommit(
-          attachment: jpeg,
-          loadCurrentAttachment: (_) async => _attachment(
+        addTearDown(() async {
+          if (directory.existsSync()) await directory.delete(recursive: true);
+        });
+        final first = GroupMediaReliabilityE2EController(
+          enabled: true,
+          stateDirectory: directory,
+          currentProcessId: 301,
+        );
+        await first.arm(
+          const GroupMediaReliabilityBarrierRequest(
+            runId: 'p269-endpoint',
+            groupId: 'group-id',
+            jpegMessageId: 'message-jpeg',
+            jpegAttachmentId: 'blob-jpeg',
+            mediaMessageIds: <String, String>{
+              'jpeg': 'message-jpeg',
+              'mp4': 'message-mp4',
+              'voice': 'message-voice',
+            },
+            mediaAttachmentIds: <String, String>{
+              'jpeg': 'blob-jpeg',
+              'mp4': 'blob-mp4',
+              'voice': 'blob-voice',
+            },
+          ),
+        );
+        unawaited(() async {
+          final jpeg = _attachment(
             id: 'blob-jpeg',
             messageId: 'message-jpeg',
             mime: 'image/jpeg',
-            status: 'downloading',
-          ),
-        );
-      }());
-      await first.waitForBarrierReached();
+          );
+          await first.onAutomaticDownloadAttemptStarted(attachment: jpeg);
+          await first.onPostClaimPreCommit(
+            attachment: jpeg,
+            loadCurrentAttachment: (_) async => _attachment(
+              id: 'blob-jpeg',
+              messageId: 'message-jpeg',
+              mime: 'image/jpeg',
+              status: 'downloading',
+            ),
+          );
+        }());
+        await first.waitForBarrierReached();
 
-      final second = GroupMediaReliabilityE2EController(
-        enabled: true,
-        stateDirectory: directory,
-        currentProcessId: 302,
-      );
-      final uploadReturns = <int>[0, 0];
-      final downloadReturns = <int>[1, 0];
-      var uploadCalls = 0;
-      var downloadCalls = 0;
-      final result = await runGroupMediaReliabilityE2EAction(
-        config: _command(
+        final second = GroupMediaReliabilityE2EController(
+          enabled: true,
+          stateDirectory: directory,
+          currentProcessId: 302,
+        );
+        final uploadReturns = <int>[0, 0];
+        final downloadReturns = <int>[1, 0];
+        var uploadCalls = 0;
+        var downloadCalls = 0;
+        final config = _command(
           phase: groupMediaReliabilityReceiverRecoverPhase,
           role: 'receiver',
-        ),
-        controller: second,
-        loadAttachment: (_) async => _attachment(
-          id: 'blob-jpeg',
-          messageId: 'message-jpeg',
-          mime: 'image/jpeg',
-          status: 'downloading',
-        ),
-        probeIdentity: (_) async => throw StateError('wrong phase'),
-        setupSender: (_, _) async => throw StateError('wrong phase'),
-        acceptReceiver: (_) async => throw StateError('wrong phase'),
-        sendMedia: (_, _, _, _, _) async => throw StateError('wrong phase'),
-        probeRole: (role, _, _) async => <String, Object?>{
-          'role': role,
-          'reopened': true,
-        },
-        retryUploads: () async => uploadReturns[uploadCalls++],
-        retryDownloads: () async => downloadReturns[downloadCalls++],
-        installedProfileId: groupMediaReliabilityE2EBuildProfile,
-      );
+        );
+        final pending = runGroupMediaReliabilityE2EAction(
+          config: config,
+          controller: second,
+          loadAttachment: (_) async =>
+              failureStage == GroupMediaReliabilityRecoveryStage.priorBoundary
+              ? throw StateError('strict custody changed across process death')
+              : _attachment(
+                  id: 'blob-jpeg',
+                  messageId: 'message-jpeg',
+                  mime: 'image/jpeg',
+                  status: 'downloading',
+                ),
+          probeIdentity: (_) async => throw StateError('wrong phase'),
+          setupSender: (_, _) async => throw StateError('wrong phase'),
+          acceptReceiver: (_) async => throw StateError('wrong phase'),
+          sendMedia: (_, _, _, _, _) async => throw StateError('wrong phase'),
+          probeRole: (role, _, _) async =>
+              failureStage == GroupMediaReliabilityRecoveryStage.roleDatabase
+              ? throw StateError(
+                  'group-media receiver jpeg row did not settle exactly',
+                )
+              : <String, Object?>{'role': role, 'reopened': true},
+          retryUploads: () async {
+            final stage = uploadCalls++ == 0
+                ? GroupMediaReliabilityRecoveryStage.firstUpload
+                : GroupMediaReliabilityRecoveryStage.secondUpload;
+            if (stage == failureStage) throw StateError('/private/secret');
+            return uploadReturns[uploadCalls - 1];
+          },
+          retryDownloads: () async {
+            final stage = downloadCalls++ == 0
+                ? GroupMediaReliabilityRecoveryStage.firstDownload
+                : GroupMediaReliabilityRecoveryStage.secondDownload;
+            if (stage == failureStage) throw StateError('/private/secret');
+            return downloadReturns[downloadCalls - 1];
+          },
+          installedProfileId: groupMediaReliabilityE2EBuildProfile,
+        );
 
-      expect(result['priorStatus'], 'downloading');
-      expect(result['previousProcessId'], 301);
-      expect(result['currentProcessId'], 302);
-      expect(result['firstUploadWork'], 0);
-      expect(result['firstDownloadWork'], 1);
-      expect(result['secondUploadWork'], 0);
-      expect(result['secondDownloadWork'], 0);
-      expect(uploadCalls, 2);
-      expect(downloadCalls, 2);
-    },
-  );
+        if (failureStage != null) {
+          await expectLater(
+            pending,
+            throwsA(
+              predicate<Object>((error) {
+                final receipt = groupMediaReliabilityE2EFailureReceipt(
+                  config: config,
+                  error: error,
+                );
+                expect(receipt['recoveryStage'], failureStage.name);
+                expect(receipt['errorType'], 'StateError');
+                expect(receipt['errorCode'], switch (failureStage) {
+                  GroupMediaReliabilityRecoveryStage.priorBoundary =>
+                    'recovery_custody_changed',
+                  GroupMediaReliabilityRecoveryStage.roleDatabase =>
+                    'receiver_jpeg_not_settled',
+                  _ => 'unexpected_error',
+                });
+                expect(jsonEncode(receipt), isNot(contains('secret')));
+                for (final (stage, key, value) in [
+                  (
+                    GroupMediaReliabilityRecoveryStage.firstUpload,
+                    'firstUploadWork',
+                    0,
+                  ),
+                  (
+                    GroupMediaReliabilityRecoveryStage.firstDownload,
+                    'firstDownloadWork',
+                    1,
+                  ),
+                  (
+                    GroupMediaReliabilityRecoveryStage.secondUpload,
+                    'secondUploadWork',
+                    0,
+                  ),
+                  (
+                    GroupMediaReliabilityRecoveryStage.secondDownload,
+                    'secondDownloadWork',
+                    0,
+                  ),
+                ]) {
+                  if (stage.index < failureStage.index) {
+                    expect(receipt[key], value);
+                  } else {
+                    expect(receipt.containsKey(key), isFalse);
+                  }
+                }
+                expect(
+                  receipt.containsKey('downloadAttempts'),
+                  failureStage ==
+                      GroupMediaReliabilityRecoveryStage.roleDatabase,
+                );
+                return error is GroupMediaReliabilityRecoveryFailure;
+              }),
+            ),
+          );
+          return;
+        }
+        final result = await pending;
+        expect(result['priorStatus'], 'downloading');
+        expect(result['previousProcessId'], 301);
+        expect(result['currentProcessId'], 302);
+        expect(result['firstUploadWork'], 0);
+        expect(result['firstDownloadWork'], 1);
+        expect(result['secondUploadWork'], 0);
+        expect(result['secondDownloadWork'], 0);
+        expect(uploadCalls, 2);
+        expect(downloadCalls, 2);
+      },
+    );
+  }
 
   test(
     'P269 polling an old snapshot cannot erase a serialized copy-on-write barrier',
@@ -1004,6 +1471,14 @@ void main() {
   );
 }
 
+Map<String, Object?> _authorityTarget() => {
+  'groupIdSha256': sha256.convert(utf8.encode('group-id')).toString(),
+  'keyEpoch': 2,
+  'authoritySha256': 'a' * 64,
+  'authorityEventAt': '2026-09-19T00:00:00.000Z',
+  'memberRolesSha256': 'b' * 64,
+};
+
 Map<String, dynamic> _command({required String phase, required String role}) =>
     <String, dynamic>{
       'schema': groupMediaReliabilityE2ECommandSchema,
@@ -1027,6 +1502,8 @@ Map<String, dynamic> _command({required String phase, required String role}) =>
         'mp4': 'blob-mp4',
         'voice': 'blob-voice',
       },
+      if (phase == groupMediaReliabilityReceiverAuthorityPhase)
+        'expectedAuthority': _authorityTarget(),
     };
 
 MediaAttachment _attachment({
@@ -1085,3 +1562,55 @@ final class _RoleProbeDatabase extends Fake implements Database {
 
 final class _UnusedRoleMediaRepository extends Fake
     implements MediaAttachmentRepository {}
+
+final class _PublicationProbeDatabase extends _RoleProbeDatabase {
+  _PublicationProbeDatabase(this.mutation)
+    : super(currentIdentityDatabaseVersion);
+  final Map<String, Object?> mutation;
+  @override
+  Future<List<Map<String, Object?>>> rawQuery(
+    String sql, [
+    List<Object?>? arguments,
+  ]) async {
+    if (!sql.startsWith('SELECT id, group_id')) {
+      return super.rawQuery(sql, arguments);
+    }
+    return [
+      {
+        'id': arguments!.single,
+        'group_id': 'group',
+        'sender_peer_id': 'account',
+        'is_incoming': 0,
+        'status': 'sent',
+        'inbox_stored': 1,
+        'wire_envelope': null,
+        'inbox_retry_payload': null,
+        ...mutation,
+      },
+    ];
+  }
+}
+
+final class _PublicationProbeMedia extends Fake
+    implements MediaAttachmentRepository {
+  _PublicationProbeMedia(this.status);
+  final String status;
+  @override
+  Future<List<MediaAttachment>> getAttachmentsForMessage(
+    String messageId, {
+    MediaOwnerLane? owner,
+  }) async => [
+    MediaAttachment(
+      id: messageId.replaceFirst('message-', 'attachment-'),
+      messageId: messageId,
+      mime: 'image/jpeg',
+      mediaType: 'image',
+      size: 64,
+      createdAt: '2026-09-18T00:00:00Z',
+      downloadStatus: status,
+      ownerLane: MediaOwnerLane.group,
+      groupMediaBlobCustodyFingerprint: 'a' * 64,
+      contentHash: 'b' * 64,
+    ),
+  ];
+}

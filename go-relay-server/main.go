@@ -144,7 +144,7 @@ func main() {
 		log.Fatalf("Failed to initialize media store: %v", err)
 	}
 	log.Printf(
-		"[MEDIA_CUSTODY] contract=%s admission_enabled=%v (default off; %s)",
+		"[MEDIA_CUSTODY] contract=%s admission_enabled=%v (default on; %s)",
 		directMediaBlobCustodyContract,
 		media.DirectMediaBlobCustodyAdmissionEnabled(),
 		mediaCustodyAdmissionEnabledEnv,

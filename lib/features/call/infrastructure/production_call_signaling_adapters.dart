@@ -142,6 +142,7 @@ final class ProductionCallControlSignalingAdapter
           callHandle: callHandle,
           endpoint: endpoint,
           senderSigningPrivateKey: signingPrivateKey,
+          authorizeTerminalRetry: _terminalRetryAuthorizer(endpoint),
         );
       } on CallSignalingException catch (error) {
         throw CallControlSignalingPortException(
@@ -171,6 +172,28 @@ final class ProductionCallControlSignalingAdapter
         CallControlSignalingPortErrorCode.transportUnavailable,
       );
     }
+  }
+
+  Future<bool> Function() _terminalRetryAuthorizer(
+    ResolvedCallEndpoint endpoint,
+  ) =>
+      () => _authorizeTerminalRetry(endpoint);
+
+  Future<bool> _authorizeTerminalRetry(ResolvedCallEndpoint original) async {
+    // Resolve without re-pinning: terminal cleanup already purged the call's
+    // context, and this delivery must not recreate it or bind a successor.
+    final current = await _resolveRetryEndpoint(
+      _resolveCurrentEndpoint,
+      original,
+    );
+    if (!_sameEndpointAuthority(original, current) ||
+        current.expiresAtMs <= _clock().toUtc().millisecondsSinceEpoch) {
+      return false;
+    }
+    // The production loader verifies the graph's current account authority.
+    // Read it last, after endpoint awaits, and never retain it for retry.
+    await _loadSigningKey();
+    return current.expiresAtMs > _clock().toUtc().millisecondsSinceEpoch;
   }
 
   /// Re-resolves the exact accepted endpoint for every control write and
@@ -280,7 +303,9 @@ final class ProductionCallControlSignalingAdapter
 /// Adapts authenticated SDP, ICE, and restart material to call-only transport.
 /// Raw negotiation material and authenticated bindings never enter diagnostics.
 final class ProductionCallNegotiationSignalingAdapter
-    implements CallNegotiationSignalingPort {
+    implements
+        CallNegotiationSignalingPort,
+        CallNegotiationFencedSignalingPort {
   ProductionCallNegotiationSignalingAdapter({
     required CallSignalingService signalingService,
     required CallSignalingContextStore contextStore,
@@ -323,6 +348,7 @@ final class ProductionCallNegotiationSignalingAdapter
     required CallId callId,
     required CallSessionDescription description,
     required int iceGeneration,
+    bool Function()? canApply,
   }) => _guarded(() async {
     final fingerprint = description.fingerprint;
     if (description.value.isEmpty ||
@@ -345,8 +371,9 @@ final class ProductionCallNegotiationSignalingAdapter
         'description': description.value,
         'fingerprint': fingerprint,
       },
+      onDelivered: _descriptionDelivered,
+      canApply: canApply,
     );
-    _descriptionSendCount++;
   });
 
   @override
@@ -362,20 +389,53 @@ final class ProductionCallNegotiationSignalingAdapter
         );
       }
     }
-    for (final candidate in batch) {
-      await _transmit(
-        callId: callId,
-        event: CallSignalType.ice,
-        iceGeneration: candidate.iceGeneration,
-        payload: <String, Object?>{
-          'candidate': candidate.value,
-          'media_id': candidate.mediaId,
-          'media_line_index': candidate.mediaLineIndex,
-        },
-      );
-      _candidateSendCount++;
-    }
+    await _sendCandidateTail(callId, batch, 0);
   });
+
+  Future<void> _sendCandidateTail(
+    CallId callId,
+    List<CallIceCandidate> batch,
+    int start, {
+    bool Function()? canApply,
+  }) async {
+    for (var index = start; index < batch.length; index++) {
+      final candidate = batch[index];
+      try {
+        await _transmit(
+          callId: callId,
+          event: CallSignalType.ice,
+          iceGeneration: candidate.iceGeneration,
+          payload: <String, Object?>{
+            'candidate': candidate.value,
+            'media_id': candidate.mediaId,
+            'media_line_index': candidate.mediaLineIndex,
+          },
+          canApply: canApply,
+          onDelivered: _candidateDelivered,
+        );
+      } on CallNegotiationPortException catch (error) {
+        final retry = error.retry;
+        if (error.code != CallNegotiationPortErrorCode.transportUnavailable ||
+            retry == null) {
+          rethrow;
+        }
+        throw CallNegotiationPortException(
+          error.code,
+          retry: _candidateTailRetry(retry, callId, batch, index + 1),
+        );
+      }
+    }
+  }
+
+  CallNegotiationSignalRetry _candidateTailRetry(
+    CallNegotiationSignalRetry first,
+    CallId callId,
+    List<CallIceCandidate> batch,
+    int next,
+  ) => _CandidateBatchRetry(
+    first,
+    (canApply) => _sendCandidateTail(callId, batch, next, canApply: canApply),
+  );
 
   /// Sends the authenticated generation boundary before a fresh restart offer.
   /// The executor owns the order and creates the fresh offer after this returns.
@@ -394,8 +454,8 @@ final class ProductionCallNegotiationSignalingAdapter
       event: CallSignalType.iceRestart,
       iceGeneration: iceGeneration,
       payload: const <String, Object?>{},
+      onDelivered: _restartDelivered,
     );
-    _restartSendCount++;
   });
 
   Future<void> _transmit({
@@ -403,18 +463,26 @@ final class ProductionCallNegotiationSignalingAdapter
     required CallSignalType event,
     required int iceGeneration,
     required Map<String, Object?> payload,
+    required void Function() onDelivered,
+    bool Function()? canApply,
   }) async {
     final initial = _contextStore.read(callId);
-    if (initial == null) {
+    if (initial == null || canApply?.call() == false) {
       throw const CallNegotiationPortException(
         CallNegotiationPortErrorCode.signalingUnavailable,
       );
     }
 
-    final endpoint = await _resolveExactEndpoint(initial, event: event);
+    final endpoint = await _resolveExactEndpoint(
+      initial,
+      event: event,
+      canApply: canApply,
+    );
     final signingPrivateKey = await _loadSigningKey();
     final current = _contextStore.read(callId);
-    if (current == null || !_sameBinding(initial, current)) {
+    if (current == null ||
+        !_sameBinding(initial, current) ||
+        canApply?.call() == false) {
       throw const CallNegotiationPortException(
         CallNegotiationPortErrorCode.signalingUnavailable,
       );
@@ -438,12 +506,78 @@ final class ProductionCallNegotiationSignalingAdapter
       expiresAtMs: now.add(signalLifetime).millisecondsSinceEpoch,
       payload: payload,
     );
-    await _signalingService.transmit(
-      signal: signal,
-      callHandle: current.callHandle,
-      endpoint: endpoint,
-      senderSigningPrivateKey: signingPrivateKey,
+    try {
+      await _signalingService.transmit(
+        signal: signal,
+        callHandle: current.callHandle,
+        endpoint: endpoint,
+        senderSigningPrivateKey: signingPrivateKey,
+        retainForRetry: true,
+        canApply: canApply,
+      );
+      onDelivered();
+    } on CallSignalingException catch (error) {
+      final retry = error.retry;
+      if (error.code == CallSignalingErrorCode.transportUnavailable) {
+        throw CallNegotiationPortException(
+          CallNegotiationPortErrorCode.transportUnavailable,
+          retry: retry == null
+              ? null
+              : _negotiationRetry(
+                  retry,
+                  current,
+                  endpoint,
+                  signal.iceGeneration,
+                  onDelivered,
+                ),
+        );
+      }
+      throw const CallNegotiationPortException(
+        CallNegotiationPortErrorCode.signalingUnavailable,
+      );
+    }
+  }
+
+  void _descriptionDelivered() => _descriptionSendCount++;
+  void _candidateDelivered() => _candidateSendCount++;
+  void _restartDelivered() => _restartSendCount++;
+
+  CallNegotiationSignalRetry _negotiationRetry(
+    CallSignalTransmissionRetry retry,
+    CallSignalingContext context,
+    ResolvedCallEndpoint endpoint,
+    int iceGeneration,
+    void Function() onDelivered,
+  ) => _ProductionNegotiationSignalRetry(
+    retry,
+    () => _authorizeNegotiationRetry(context, endpoint, iceGeneration),
+    onDelivered,
+  );
+
+  Future<bool> _authorizeNegotiationRetry(
+    CallSignalingContext initial,
+    ResolvedCallEndpoint original,
+    int iceGeneration,
+  ) async {
+    bool currentBinding() {
+      final current = _contextStore.read(initial.callId);
+      return current != null &&
+          _sameBinding(initial, current) &&
+          current.iceGeneration == iceGeneration;
+    }
+
+    if (!currentBinding()) return false;
+    final endpoint = await _resolveRetryEndpoint(
+      _resolveCurrentEndpoint,
+      original,
     );
+    if (!_sameEndpointAuthority(original, endpoint) ||
+        endpoint.expiresAtMs <= _clock().toUtc().millisecondsSinceEpoch) {
+      return false;
+    }
+    await _loadSigningKey();
+    return currentBinding() &&
+        endpoint.expiresAtMs > _clock().toUtc().millisecondsSinceEpoch;
   }
 
   /// Re-resolves the exact accepted endpoint for every negotiation write and
@@ -452,6 +586,7 @@ final class ProductionCallNegotiationSignalingAdapter
   Future<ResolvedCallEndpoint> _resolveExactEndpoint(
     CallSignalingContext context, {
     required CallSignalType event,
+    bool Function()? canApply,
   }) async {
     late final ResolvedCallEndpoint endpoint;
     try {
@@ -491,6 +626,14 @@ final class ProductionCallNegotiationSignalingAdapter
     }
     if (endpoint.accountPeerId != context.remoteAccountPeerId ||
         endpoint.devicePeerId != context.remoteDevicePeerId) {
+      throw const CallNegotiationPortException(
+        CallNegotiationPortErrorCode.signalingUnavailable,
+      );
+    }
+    final current = _contextStore.read(context.callId);
+    if (current == null ||
+        !_sameBinding(context, current) ||
+        canApply?.call() == false) {
       throw const CallNegotiationPortException(
         CallNegotiationPortErrorCode.signalingUnavailable,
       );
@@ -593,3 +736,150 @@ CallRouteClass? _routeClass(CallDirectRoute route) => switch (route) {
   CallDirectRoute.circuitRelay => CallRouteClass.circuitRelay,
   CallDirectRoute.unknown => null,
 };
+
+Future<ResolvedCallEndpoint> _resolveRetryEndpoint(
+  ResolveCurrentCallEndpoint resolve,
+  ResolvedCallEndpoint original,
+) async {
+  try {
+    return await resolve(original.accountPeerId);
+  } on CallEndpointResolutionException catch (error) {
+    if (error.code == CallEndpointResolutionCode.unavailable) {
+      throw const CallSignalingException(
+        CallSignalingErrorCode.transportUnavailable,
+      );
+    }
+    rethrow;
+  } on CallAuthorityException catch (error) {
+    if (error.code == CallAuthorityErrorCode.bridgeFailure &&
+        (error.relayErrorCode == null ||
+            error.relayErrorCode == 'CALL_CONTROL_UNAVAILABLE')) {
+      // The production Go bridge uses this explicit code when the relay
+      // transport is unavailable. Other relay refusals remain fail-closed.
+      throw const CallSignalingException(
+        CallSignalingErrorCode.transportUnavailable,
+      );
+    }
+    rethrow;
+  }
+}
+
+bool _sameEndpointAuthority(
+  ResolvedCallEndpoint first,
+  ResolvedCallEndpoint next,
+) =>
+    first.accountPeerId == next.accountPeerId &&
+    first.devicePeerId == next.devicePeerId &&
+    first.signingPublicKey == next.signingPublicKey &&
+    first.mlKemPublicKey == next.mlKemPublicKey &&
+    first.deviceKeyEpoch == next.deviceKeyEpoch &&
+    first.preferenceEpoch == next.preferenceEpoch &&
+    first.platform == next.platform &&
+    first.routingHandle == next.routingHandle &&
+    first.wakeHandle == next.wakeHandle;
+
+final class _ProductionNegotiationSignalRetry
+    implements CallNegotiationSignalRetry {
+  _ProductionNegotiationSignalRetry(
+    this._transmission,
+    this._authorize,
+    this._onDelivered,
+  );
+  CallSignalTransmissionRetry? _transmission;
+  Future<bool> Function()? _authorize;
+  void Function()? _onDelivered;
+
+  @override
+  Future<void> retry({required bool Function() canApply}) async {
+    final transmission = _transmission;
+    final authorize = _authorize;
+    if (transmission == null || authorize == null || !canApply()) {
+      close();
+      throw const CallNegotiationPortException(
+        CallNegotiationPortErrorCode.signalingUnavailable,
+      );
+    }
+    try {
+      await transmission.retry(authorize: authorize, canApply: canApply);
+      if (!canApply()) {
+        throw const CallNegotiationPortException(
+          CallNegotiationPortErrorCode.signalingUnavailable,
+        );
+      }
+      _onDelivered?.call();
+      close();
+    } on CallSignalingException catch (error) {
+      if (error.code == CallSignalingErrorCode.transportUnavailable) {
+        final available = transmission.isAvailable;
+        if (!available) close();
+        throw CallNegotiationPortException(
+          CallNegotiationPortErrorCode.transportUnavailable,
+          retry: available ? this : null,
+        );
+      }
+      close();
+      throw const CallNegotiationPortException(
+        CallNegotiationPortErrorCode.signalingUnavailable,
+      );
+    } catch (_) {
+      close();
+      throw const CallNegotiationPortException(
+        CallNegotiationPortErrorCode.signalingUnavailable,
+      );
+    }
+  }
+
+  @override
+  void close() {
+    _transmission?.close();
+    _transmission = null;
+    _authorize = null;
+    _onDelivered = null;
+  }
+}
+
+final class _CandidateBatchRetry implements CallNegotiationSignalRetry {
+  _CandidateBatchRetry(this._first, this._tail);
+  CallNegotiationSignalRetry? _first;
+  Future<void> Function(bool Function())? _tail;
+
+  @override
+  Future<void> retry({required bool Function() canApply}) async {
+    final first = _first;
+    final tail = _tail;
+    if (first == null || tail == null || !canApply()) {
+      close();
+      throw const CallNegotiationPortException(
+        CallNegotiationPortErrorCode.signalingUnavailable,
+      );
+    }
+    try {
+      await first.retry(canApply: canApply);
+    } on CallNegotiationPortException catch (error) {
+      if (error.code == CallNegotiationPortErrorCode.transportUnavailable &&
+          error.retry != null) {
+        if (!identical(_first, error.retry)) {
+          _first?.close();
+          _first = error.retry;
+        }
+        throw CallNegotiationPortException(error.code, retry: this);
+      }
+      close();
+      rethrow;
+    }
+    _first = null;
+    first.close();
+    try {
+      await tail(canApply);
+    } finally {
+      close();
+    }
+  }
+
+  @override
+  void close() {
+    _first?.close();
+    _first = null;
+    _tail = null;
+  }
+}

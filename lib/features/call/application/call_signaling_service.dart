@@ -1,5 +1,6 @@
 import '../diagnostics/call_diagnostics.dart';
 import 'dart:async';
+import 'dart:math';
 
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 
@@ -20,9 +21,10 @@ enum CallSignalingErrorCode {
 }
 
 final class CallSignalingException implements Exception {
-  const CallSignalingException(this.code);
+  const CallSignalingException(this.code, {this.retry});
 
   final CallSignalingErrorCode code;
+  final CallSignalTransmissionRetry? retry;
 
   @override
   String toString() => 'Call signaling failed: ${code.name}';
@@ -51,7 +53,8 @@ final class CallSignalTransportResult {
   final bool mailboxStored;
 
   /// The relay alerted the callee's device for this signal (its store
-  /// receipt said `wake: dispatched`). The caller may ring back on it.
+  /// receipt said `wake: dispatched`). Recipient alerting still requires the
+  /// authenticated remote ringing signal.
   final bool wakeDispatched;
   final CallDirectRoute directRoute;
   final bool _directSettled;
@@ -84,7 +87,7 @@ enum _CallSignalingLeg {
 /// stream and ephemeral call mailbox. Neither leg uses chat serialization,
 /// durable chat outbox, or the generic retrier.
 final class CallSignalingService {
-  const CallSignalingService({
+  CallSignalingService({
     required SecureCallEnvelopeCodec codec,
     required CallDirectTransport directTransport,
     required CallMailboxClient mailboxClient,
@@ -92,17 +95,58 @@ final class CallSignalingService {
     // coordinator: [transmit] works, [send] fails closed.
     CallCoordinator? coordinator,
     required CallNetworkEffectsAllowed networkEffectsAllowed,
+    int Function()? nowMs,
+    double Function()? retryJitter,
   }) : _codec = codec,
        _directTransport = directTransport,
        _mailboxClient = mailboxClient,
        _coordinator = coordinator,
-       _networkEffectsAllowed = networkEffectsAllowed;
+       _networkEffectsAllowed = networkEffectsAllowed,
+       _nowMs = nowMs ?? _systemNowMs,
+       _retryJitter = retryJitter ?? Random().nextDouble;
 
   final SecureCallEnvelopeCodec _codec;
   final CallDirectTransport _directTransport;
   final CallMailboxClient _mailboxClient;
   final CallCoordinator? _coordinator;
   final CallNetworkEffectsAllowed _networkEffectsAllowed;
+  final int Function() _nowMs;
+  final double Function() _retryJitter;
+  final Map<String, _TerminalSignalRetry> _terminalRetries = {};
+  final Map<String, CallSignalTransmissionRetry> _transmissionRetries = {};
+  bool _closed = false;
+  bool _terminalRetriesStopped = false;
+
+  static const _terminalRetryBudget = Duration(seconds: 15);
+  static const _maxTerminalRetries = 5;
+  static const _maxPendingTerminalRetries = 4;
+  static int _systemNowMs() => DateTime.now().toUtc().millisecondsSinceEpoch;
+
+  /// Only fixed counts are exposed; retained signaling bytes stay private.
+  int get pendingTerminalRetryCount => _terminalRetries.length;
+  int get pendingTransmissionRetryCount => _transmissionRetries.length;
+
+  /// Quiesces retry work immediately while preserving the coordinator's one
+  /// normal appShutdown terminal send. No failed send can re-arm retries.
+  void stopRetries() {
+    if (_terminalRetriesStopped) return;
+    _terminalRetriesStopped = true;
+    for (final entry in _terminalRetries.values.toList(growable: false)) {
+      _removeTerminalRetry(entry);
+    }
+    for (final entry in _transmissionRetries.values.toList(growable: false)) {
+      entry.close();
+    }
+  }
+
+  /// Closes all signaling after runtime/coordinator shutdown settles. Already
+  /// submitted writes remain bounded by their transport owner.
+  void close() {
+    if (_closed) return;
+    _closed = true;
+    stopRetries();
+  }
+
   static final RegExp _wakeHandleGrammar = RegExp(r'^[0-9a-f]{32}$');
 
   Future<CallSignalTransportResult> send({
@@ -131,7 +175,15 @@ final class CallSignalingService {
     required String callHandle,
     required ResolvedCallEndpoint endpoint,
     required String senderSigningPrivateKey,
+    Future<bool> Function()? authorizeTerminalRetry,
+    bool retainForRetry = false,
+    bool Function()? canApply,
   }) async {
+    if (_closed || canApply?.call() == false) {
+      throw const CallSignalingException(
+        CallSignalingErrorCode.migrationPaused,
+      );
+    }
     var networkEffectsAllowed = false;
     try {
       networkEffectsAllowed = await callNetworkEffectsAreAllowed(
@@ -140,7 +192,7 @@ final class CallSignalingService {
     } catch (_) {
       networkEffectsAllowed = false;
     }
-    if (!networkEffectsAllowed) {
+    if (_closed || !networkEffectsAllowed || canApply?.call() == false) {
       throw const CallSignalingException(
         CallSignalingErrorCode.migrationPaused,
       );
@@ -162,6 +214,11 @@ final class CallSignalingService {
       senderSigningPrivateKey: senderSigningPrivateKey,
     );
 
+    if (_closed || canApply?.call() == false) {
+      throw const CallSignalingException(
+        CallSignalingErrorCode.migrationPaused,
+      );
+    }
     // Invoke both before awaiting either so a slow/unreachable direct path can
     // never delay custody at the call mailbox.
     final directFuture = _sendDirect(
@@ -170,15 +227,273 @@ final class CallSignalingService {
       envelopeJson: envelope,
     );
     final mailboxFuture = _storeMailbox(
-      signal: signal,
+      messageId: signal.messageId,
+      createdAtMs: signal.createdAtMs,
+      expiresAtMs: signal.expiresAtMs,
       callHandle: callHandle,
       endpoint: endpoint,
       envelope: envelope,
     );
-    return _firstSufficientResult(
-      directFuture: directFuture,
-      mailboxFuture: mailboxFuture,
+    try {
+      return await _firstSufficientResult(
+        directFuture: directFuture,
+        mailboxFuture: mailboxFuture,
+      );
+    } on CallSignalingException catch (error) {
+      if (error.code == CallSignalingErrorCode.transportUnavailable &&
+          authorizeTerminalRetry != null &&
+          (signal.event == CallSignalType.terminate ||
+              signal.event == CallSignalType.reject)) {
+        _retainTerminalRetry(
+          signal: signal,
+          callHandle: callHandle,
+          endpoint: endpoint,
+          envelope: envelope,
+          authorize: authorizeTerminalRetry,
+        );
+      }
+      if (error.code == CallSignalingErrorCode.transportUnavailable &&
+          retainForRetry &&
+          (signal.event == CallSignalType.offer ||
+              signal.event == CallSignalType.answer ||
+              signal.event == CallSignalType.ice ||
+              signal.event == CallSignalType.iceRestart)) {
+        throw CallSignalingException(
+          error.code,
+          retry: _retainTransmission(
+            signal: signal,
+            callHandle: callHandle,
+            endpoint: endpoint,
+            envelope: envelope,
+          ),
+        );
+      }
+      // The original result is unchanged. Local terminal cleanup must never
+      // await connectivity restoration or keep a media/native owner alive.
+      rethrow;
+    }
+  }
+
+  void _retainTerminalRetry({
+    required CallSignal signal,
+    required String callHandle,
+    required ResolvedCallEndpoint endpoint,
+    required String envelope,
+    required Future<bool> Function() authorize,
+  }) {
+    final deadlineMs = min(
+      min(signal.expiresAtMs, endpoint.expiresAtMs),
+      signal.createdAtMs + _terminalRetryBudget.inMilliseconds,
     );
+    if (_closed || _terminalRetriesStopped || _nowMs() >= deadlineMs) return;
+    if (_terminalRetries.containsKey(signal.callId.value)) return;
+    while (_terminalRetries.length >= _maxPendingTerminalRetries) {
+      _removeTerminalRetry(_terminalRetries.values.first);
+    }
+    final entry = _TerminalSignalRetry(
+      signal: signal,
+      callHandle: callHandle,
+      endpoint: endpoint,
+      envelope: envelope,
+      authorize: authorize,
+      deadlineMs: deadlineMs,
+    );
+    _terminalRetries[signal.callId.value] = entry;
+    // This timer also retires retained bytes when authorization or transport
+    // stays pending. Its completion cannot start a successor retry.
+    entry.expiryTimer = Timer(
+      Duration(milliseconds: deadlineMs - _nowMs()),
+      () => _removeTerminalRetry(entry),
+    );
+    _scheduleTerminalRetry(entry);
+  }
+
+  bool _terminalRetryIsCurrent(_TerminalSignalRetry entry) =>
+      !_closed &&
+      !_terminalRetriesStopped &&
+      identical(_terminalRetries[entry.callKey], entry) &&
+      _nowMs() < entry.deadlineMs;
+
+  void _removeTerminalRetry(_TerminalSignalRetry entry) {
+    if (!identical(_terminalRetries[entry.callKey], entry)) return;
+    _terminalRetries.remove(entry.callKey);
+    entry.retryTimer?.cancel();
+    entry.expiryTimer?.cancel();
+    entry.clear();
+  }
+
+  void _scheduleTerminalRetry(_TerminalSignalRetry entry) {
+    if (!_terminalRetryIsCurrent(entry) ||
+        entry.attempts >= _maxTerminalRetries) {
+      _removeTerminalRetry(entry);
+      return;
+    }
+    final baseMs = min(500 * (1 << entry.attempts), 4000);
+    final jitter = _retryJitter().clamp(0.0, 1.0);
+    final delayMs = (baseMs * (0.8 + 0.4 * jitter)).round();
+    if (_nowMs() + delayMs >= entry.deadlineMs) return;
+    entry.retryTimer = Timer(
+      Duration(milliseconds: delayMs),
+      () => unawaited(_retryTerminal(entry)),
+    );
+  }
+
+  Future<void> _retryTerminal(_TerminalSignalRetry entry) async {
+    if (!_terminalRetryIsCurrent(entry)) return;
+    entry.attempts++;
+    try {
+      if (!await callNetworkEffectsAreAllowed(_networkEffectsAllowed) ||
+          !_terminalRetryIsCurrent(entry) ||
+          !await entry.authorize!() ||
+          !_terminalRetryIsCurrent(entry)) {
+        _removeTerminalRetry(entry);
+        return;
+      }
+      final result = await _firstSufficientResult(
+        directFuture: _sendDirect(
+          callHandle: entry.callHandle!,
+          recipientDevicePeerId: entry.endpoint!.devicePeerId,
+          envelopeJson: entry.envelope!,
+        ),
+        mailboxFuture: _storeMailbox(
+          messageId: entry.signal!.messageId,
+          createdAtMs: entry.signal!.createdAtMs,
+          expiresAtMs: entry.signal!.expiresAtMs,
+          callHandle: entry.callHandle!,
+          endpoint: entry.endpoint!,
+          envelope: entry.envelope!,
+        ),
+      );
+      if (result.delivered) _removeTerminalRetry(entry);
+    } on CallSignalingException catch (error) {
+      if (error.code == CallSignalingErrorCode.transportUnavailable) {
+        _scheduleTerminalRetry(entry);
+      } else {
+        _removeTerminalRetry(entry);
+      }
+    } catch (_) {
+      // Identity/authority failures are not transport retry permission.
+      _removeTerminalRetry(entry);
+    }
+  }
+
+  CallSignalTransmissionRetry? _retainTransmission({
+    required CallSignal signal,
+    required String callHandle,
+    required ResolvedCallEndpoint endpoint,
+    required String envelope,
+  }) {
+    final deadlineMs = min(
+      min(signal.expiresAtMs, endpoint.expiresAtMs),
+      signal.createdAtMs + _terminalRetryBudget.inMilliseconds,
+    );
+    if (_closed || _terminalRetriesStopped || _nowMs() >= deadlineMs) {
+      return null;
+    }
+    final key = '${signal.callId.value}:${signal.messageId}';
+    _transmissionRetries[key]?.close();
+    while (_transmissionRetries.length >= _maxPendingTerminalRetries) {
+      _transmissionRetries.values.first.close();
+    }
+    final retry = CallSignalTransmissionRetry._(
+      this,
+      key,
+      deadlineMs,
+      _CallRetryTransmission(
+        messageId: signal.messageId,
+        createdAtMs: signal.createdAtMs,
+        expiresAtMs: signal.expiresAtMs,
+        callHandle: callHandle,
+        endpoint: endpoint,
+        envelope: envelope,
+      ),
+    );
+    _transmissionRetries[key] = retry;
+    retry._expiryTimer = Timer(
+      Duration(milliseconds: deadlineMs - _nowMs()),
+      retry.close,
+    );
+    return retry;
+  }
+
+  bool _transmissionRetryIsCurrent(CallSignalTransmissionRetry retry) =>
+      !_closed &&
+      !_terminalRetriesStopped &&
+      identical(_transmissionRetries[retry._key], retry) &&
+      retry._transmission != null &&
+      _nowMs() < retry._deadlineMs;
+
+  void _closeTransmissionRetry(CallSignalTransmissionRetry retry) {
+    if (identical(_transmissionRetries[retry._key], retry)) {
+      _transmissionRetries.remove(retry._key);
+    }
+    retry._expiryTimer?.cancel();
+    retry._transmission = null;
+  }
+
+  Future<CallSignalTransportResult> _retryTransmission(
+    CallSignalTransmissionRetry retry, {
+    required Future<bool> Function() authorize,
+    required bool Function() canApply,
+  }) async {
+    if (!_transmissionRetryIsCurrent(retry) ||
+        !canApply() ||
+        retry._attempts >= 4) {
+      retry.close();
+      throw const CallSignalingException(
+        CallSignalingErrorCode.transportUnavailable,
+      );
+    }
+    retry._attempts++;
+    try {
+      if (!await callNetworkEffectsAreAllowed(_networkEffectsAllowed) ||
+          !_transmissionRetryIsCurrent(retry) ||
+          !canApply()) {
+        throw const CallSignalingException(
+          CallSignalingErrorCode.migrationPaused,
+        );
+      }
+      if (!await authorize() ||
+          !_transmissionRetryIsCurrent(retry) ||
+          !canApply()) {
+        throw const CallSignalingException(
+          CallSignalingErrorCode.endpointMismatch,
+        );
+      }
+      final material = retry._transmission!;
+      final result = await _firstSufficientResult(
+        directFuture: _sendDirect(
+          callHandle: material.callHandle,
+          recipientDevicePeerId: material.endpoint.devicePeerId,
+          envelopeJson: material.envelope,
+        ),
+        mailboxFuture: _storeMailbox(
+          messageId: material.messageId,
+          createdAtMs: material.createdAtMs,
+          expiresAtMs: material.expiresAtMs,
+          callHandle: material.callHandle,
+          endpoint: material.endpoint,
+          envelope: material.envelope,
+        ),
+      );
+      if (!_transmissionRetryIsCurrent(retry) || !canApply()) {
+        throw const CallSignalingException(
+          CallSignalingErrorCode.migrationPaused,
+        );
+      }
+      retry.close();
+      return result;
+    } on CallSignalingException catch (error) {
+      if (error.code != CallSignalingErrorCode.transportUnavailable ||
+          !_transmissionRetryIsCurrent(retry) ||
+          retry._attempts >= 4) {
+        retry.close();
+      }
+      rethrow;
+    } catch (_) {
+      retry.close();
+      rethrow;
+    }
   }
 
   Future<CallSignalTransportResult> _firstSufficientResult({
@@ -365,7 +680,9 @@ final class CallSignalingService {
   }
 
   Future<_MailboxLegResult> _storeMailbox({
-    required CallSignal signal,
+    required String messageId,
+    required int createdAtMs,
+    required int expiresAtMs,
     required String callHandle,
     required ResolvedCallEndpoint endpoint,
     required String envelope,
@@ -385,15 +702,14 @@ final class CallSignalingService {
         CallMailboxStoreRequest(
           recipientDevicePeerId: endpoint.devicePeerId,
           callHandle: callHandle,
-          messageId: signal.messageId,
+          messageId: messageId,
           envelopeJson: envelope,
-          expiresAtMs: signal.expiresAtMs,
+          expiresAtMs: expiresAtMs,
           wakeHandle: endpoint.wakeHandle,
         ),
       );
       final stored =
-          result.expiresAtMs > signal.createdAtMs &&
-          result.expiresAtMs <= signal.expiresAtMs;
+          result.expiresAtMs > createdAtMs && result.expiresAtMs <= expiresAtMs;
       record(stored);
       _emitLegResult(
         _CallSignalingLeg.mailboxStore,
@@ -440,3 +756,96 @@ final class CallSignalingService {
 }
 
 typedef _MailboxLegResult = ({bool stored, bool wakeDispatched});
+
+/// Call-owned encrypted delivery material only. No signer key, raw context,
+/// native resource, media owner, or coordinator event survives local cleanup.
+final class _TerminalSignalRetry {
+  _TerminalSignalRetry({
+    required this.signal,
+    required this.callHandle,
+    required this.endpoint,
+    required this.envelope,
+    required this.authorize,
+    required this.deadlineMs,
+  }) : callKey = signal!.callId.value;
+
+  final String callKey;
+  CallSignal? signal;
+  String? callHandle;
+  ResolvedCallEndpoint? endpoint;
+  String? envelope;
+  Future<bool> Function()? authorize;
+  final int deadlineMs;
+
+  void clear() {
+    signal = null;
+    callHandle = null;
+    endpoint = null;
+    envelope = null;
+    authorize = null;
+  }
+
+  int attempts = 0;
+  Timer? retryTimer;
+  Timer? expiryTimer;
+}
+
+/// Opaque, disposable resubmission of one already encrypted negotiation signal.
+/// It contains no plaintext SDP/candidates, sender key or coordinator state.
+/// The caller owns scheduling and the stricter canonical reconnect deadline.
+final class CallSignalTransmissionRetry {
+  CallSignalTransmissionRetry._(
+    this._owner,
+    this._key,
+    this._deadlineMs,
+    this._transmission,
+  );
+
+  final CallSignalingService _owner;
+  final String _key;
+  final int _deadlineMs;
+  _CallRetryTransmission? _transmission;
+  Timer? _expiryTimer;
+  Future<CallSignalTransportResult>? _inFlight;
+  int _attempts = 0;
+
+  Future<CallSignalTransportResult> retry({
+    required Future<bool> Function() authorize,
+    required bool Function() canApply,
+  }) {
+    final running = _inFlight;
+    if (running != null) return running;
+    late final Future<CallSignalTransportResult> work;
+    work = _owner
+        ._retryTransmission(this, authorize: authorize, canApply: canApply)
+        .whenComplete(() {
+          if (identical(_inFlight, work)) _inFlight = null;
+        });
+    _inFlight = work;
+    return work;
+  }
+
+  bool get isAvailable => _owner._transmissionRetryIsCurrent(this);
+
+  void close() => _owner._closeTransmissionRetry(this);
+
+  @override
+  String toString() => 'CallSignalTransmissionRetry';
+}
+
+final class _CallRetryTransmission {
+  const _CallRetryTransmission({
+    required this.messageId,
+    required this.createdAtMs,
+    required this.expiresAtMs,
+    required this.callHandle,
+    required this.endpoint,
+    required this.envelope,
+  });
+  final String messageId;
+  final int createdAtMs;
+  final int expiresAtMs;
+  final String callHandle;
+  final ResolvedCallEndpoint endpoint;
+  final String envelope;
+}

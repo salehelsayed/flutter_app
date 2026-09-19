@@ -2307,6 +2307,158 @@ I/flutter: [FLOW] {"event":"GROUP_SEND_MSG_TIMING","details":{"outcome":"success
   });
 
   group('extractActiveNotificationCards', () {
+    String keyedRecord({
+      String package = 'com.mknoon.sims.notifications',
+      String key = '0|com.mknoon.sims.notifications|77|null|10333',
+      int id = 77,
+      String tag = 'null',
+      String channel = 'mknoon_messages',
+      String body = 'Exact fixture message',
+      String title = 'Fixture sender',
+    }) =>
+        '''
+  NotificationRecord(0x123: pkg=$package user=UserHandle{0} id=$id tag=$tag importance=4${key.isEmpty ? '' : ' key=$key'}: Notification(${channel.isEmpty ? '' : 'channel=$channel '}flags=AUTO_CANCEL))
+    android.title=String ($title)
+    android.text=String ($body)
+''';
+
+    String completeDump(Iterable<String> records) =>
+        '''
+Current Notification Manager state:
+  Active Notifications:
+${records.join()}Ranking Config:
+''';
+
+    const fixturePackage = 'com.mknoon.sims.notifications';
+
+    test('deduplicates the retained B13 exact native tuple shape', () {
+      // Diagnostic01 retained two complete same-ID/key/primary-channel
+      // projections. Raw dump text was not retained; this is that closed
+      // representation reconstructed with synthetic, nonprivate identity.
+      final record = keyedRecord();
+      final cards = extractActiveNotificationCards(
+        completeDump([record, record.replaceFirst('0x123', '0x456')]),
+        packageName: fixturePackage,
+      );
+      expect(cards, hasLength(1));
+      expect(cards.single.id, 77);
+      expect(cards.single.body, 'Exact fixture message');
+    });
+
+    test('different native keys remain two cards even with the same ID', () {
+      final cards = extractActiveNotificationCards(
+        completeDump([
+          keyedRecord(),
+          keyedRecord(
+            key: '0|com.mknoon.sims.notifications|77|second|10333',
+            tag: 'second',
+          ),
+        ]),
+        packageName: fixturePackage,
+      );
+      expect(cards, hasLength(2));
+    });
+
+    for (final conflict in ['id', 'channel', 'package', 'body', 'title']) {
+      test('same native key with conflicting $conflict fails closed', () {
+        final changed = keyedRecord(
+          id: conflict == 'id' ? 78 : 77,
+          channel: conflict == 'channel'
+              ? 'mknoon_messages_silent'
+              : 'mknoon_messages',
+          package: conflict == 'package'
+              ? '$fixturePackage.companion'
+              : fixturePackage,
+          body: conflict == 'body'
+              ? 'Changed message'
+              : 'Exact fixture message',
+          title: conflict == 'title' ? 'Changed sender' : 'Fixture sender',
+        );
+        for (final records in [
+          [keyedRecord(), changed],
+          [changed, keyedRecord()],
+        ]) {
+          expect(
+            () => extractActiveNotificationCards(
+              completeDump(records),
+              packageName: fixturePackage,
+            ),
+            throwsFormatException,
+          );
+        }
+      });
+    }
+
+    test('missing or incomplete native identity stays conservative', () {
+      for (final record in [
+        keyedRecord(key: ''),
+        keyedRecord(key: 'incomplete-key'),
+        keyedRecord(channel: ''),
+        keyedRecord().replaceFirst(' user=UserHandle{0}', ''),
+        keyedRecord().replaceFirst(
+          '    android.text=String (Exact fixture message)\n',
+          '',
+        ),
+        keyedRecord().replaceFirst('flags=AUTO_CANCEL))', 'flags=AUTO_CANCEL'),
+      ]) {
+        expect(
+          extractActiveNotificationCards(
+            completeDump([record, record]),
+            packageName: fixturePackage,
+          ),
+          hasLength(2),
+        );
+      }
+    });
+
+    test('native key components cannot contradict the header identity', () {
+      for (final record in [
+        keyedRecord(key: '1|com.mknoon.sims.notifications|77|null|10333'),
+        keyedRecord(key: '0|com.mknoon.sims.notifications|77|other|10333'),
+        keyedRecord().replaceFirst('importance=4', 'uid=10334 importance=4'),
+      ]) {
+        expect(
+          () => extractActiveNotificationCards(
+            completeDump([record, record]),
+            packageName: fixturePackage,
+          ),
+          throwsFormatException,
+        );
+      }
+    });
+
+    test('partial or failed dumps cannot become a deduplicated proof', () {
+      final dump = completeDump([keyedRecord(), keyedRecord()]);
+      for (final incomplete in [
+        dump.replaceFirst('Current Notification Manager state:', ''),
+        dump.replaceFirst('Ranking Config:', ''),
+        '$dump\nDUMP TIMEOUT',
+        '$dump\nError dumping service',
+      ]) {
+        expect(
+          extractActiveNotificationCards(
+            incomplete,
+            packageName: fixturePackage,
+          ),
+          hasLength(2),
+        );
+      }
+    });
+
+    test('complete companion ownership never matches a package prefix', () {
+      final cards = extractActiveNotificationCards(
+        completeDump([
+          keyedRecord(),
+          keyedRecord(
+            package: '$fixturePackage.companion',
+            key: '0|$fixturePackage.companion|77|null|10334',
+          ),
+        ]),
+        packageName: fixturePackage,
+      );
+      expect(cards, hasLength(1));
+    });
+
     test('normalizes managed payload envelopes to the navigation route', () {
       final payload = encodeConversationNotificationPayload(
         routePayload: 'group:proof-group|message:proof-message',

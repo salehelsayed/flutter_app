@@ -245,6 +245,61 @@ void main() {
       expect(rows.single.custodyRelayPeerId, isNull);
     }
 
+    for (final mutation in [
+      'none',
+      'missing',
+      'group',
+      'message',
+      'attachment',
+    ]) {
+      test(
+        'restart paging selects exact committed group custody: $mutation',
+        () async {
+          final input = await seed('secure');
+          final before = await fixture.rawAttachmentRow(attachmentId);
+          if (mutation == 'missing') {
+            await fixture.db.delete(kDirectMediaBlobCustodyTable);
+          } else if (mutation != 'none') {
+            await fixture.db.update(kDirectMediaBlobCustodyTable, {
+              '${mutation}_id': 'unrelated-$mutation',
+            });
+          }
+          final page = await fixture.repo.loadRecoverableGroupDownloadPage(
+            limit: 1,
+          );
+          if (mutation == 'none') {
+            expect(page.map((row) => row.attachment.id), [attachmentId]);
+            expect(page.single.groupId, groupId);
+            expect(
+              page.single.attachment.groupMediaBlobCustodyFingerprint,
+              input.attachment.groupMediaBlobCustodyFingerprint,
+            );
+            expect(page.single.attachment.encryptionKeyBase64, key);
+            expect(
+              await fixture.repo.loadRecoverableGroupDownloadPage(
+                after: page.single.cursor,
+                limit: 1,
+              ),
+              isEmpty,
+            );
+            expect(await commit(input.attachment, input.custody), isTrue);
+            expect(
+              await fixture.repo.loadRecoverableGroupDownloadPage(limit: 1),
+              isEmpty,
+            );
+          } else {
+            expect(page, isEmpty);
+            expect(
+              await fixture.rawAttachmentRow(attachmentId),
+              before,
+              reason:
+                  'missing or crossed custody must never demote the fingerprinted row',
+            );
+          }
+        },
+      );
+    }
+
     for (final storage in <String>['legacy', 'secure']) {
       test(
         '$storage exact key preserves its stored representation after commit',
@@ -311,7 +366,9 @@ void main() {
               case 'message':
                 expected = expected.copyWith(messageId: 'other-message');
               case 'custody':
-                custody = custody.copyWith(updatedAt: '2026-09-10T00:00:02.000Z');
+                custody = custody.copyWith(
+                  updatedAt: '2026-09-10T00:00:02.000Z',
+                );
             }
             expect(await commit(expected, custody), isFalse);
             await expectPending();
@@ -8385,11 +8442,10 @@ END
       expect(authority.lane, OutgoingDirectMediaCaptionEditLane.strictMedia);
       expect(authority.parent!.id, messageId);
       expect(authority.parent!.contactPeerId, recipient);
-      expect(
-        authority.attachments.map((a) => a.id).toList(),
-        <String>['$messageId-a', '$messageId-b'],
-        reason: 'canonical order is created_at ASC then id ASC',
-      );
+      expect(authority.attachments.map((a) => a.id).toList(), <String>[
+        '$messageId-a',
+        '$messageId-b',
+      ], reason: 'canonical order is created_at ASC then id ASC');
       expect(
         authority.attachments.map((a) => a.encryptionKeyBase64).toList(),
         <String>['raw-key-$messageId-a', 'raw-key-$messageId-b'],
@@ -9104,11 +9160,10 @@ END
           isTrue,
           reason: 'the strict relay upload must see complete v111',
         );
-        expect(
-          networkOrder,
-          <String>['lan', 'strict-upload'],
-          reason: 'LAN is acceleration only and never cancels strict custody',
-        );
+        expect(networkOrder, <String>[
+          'lan',
+          'strict-upload',
+        ], reason: 'LAN is acceleration only and never cancels strict custody');
         final rows = await blobRepository.loadDirectMediaBlobCustodyForMessage(
           candidate.parent.id,
         );

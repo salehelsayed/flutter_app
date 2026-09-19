@@ -4,6 +4,7 @@ import pathlib
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 HERE=pathlib.Path(__file__).parent
 sys.path.insert(0,str(HERE))
@@ -168,5 +169,26 @@ class MonitorTests(unittest.TestCase):
         self.assertEqual(len(snapshot['groups']),monitor.MAX_ENTRIES)
         self.assertEqual(snapshot['groupsTruncated'],800)
         self.assertLess((self.output/'snapshot.json').stat().st_size,monitor.MAX_FILE_BYTES)
+
+    def test_loss_sample_collection_keeps_first_counters_and_overflow_evidence(self):
+        for count in range(7):
+            self.record([self.event()], dropped=count)
+        samples = {}
+        with mock.patch.object(monitor.operator, 'MAX_LOSS_COUNTERS', 4):
+            monitor.operator.report(self.directory, now_ms=self.now, _loss_samples=samples)
+            self.assertEqual(len(samples), 5, 'Retain only the baseline capacity plus overflow evidence')
+            expected = [monitor.operator.hashlib.sha256(
+                ('server:'+format(i,'064x')+':'+str(self.now)+':'+self.owner+':1').encode()
+            ).hexdigest() for i in range(1,6)]
+            self.assertEqual(list(samples), expected)
+            first, baseline = monitor.operator.counter_interval(samples, {}, self.now)
+            self.assertTrue(first['baselineTruncated'])
+            self.assertEqual(list(baseline['counters']), expected[:4])
+            self.assertTrue(baseline['truncated'])
+            samples[expected[0]]['count'] += 3
+            second, _ = monitor.operator.counter_interval(samples, baseline, self.now+300000)
+            self.assertEqual(second['byLayer']['server']['observedIncreaseLowerBound'], 3)
+            self.assertTrue(second['baselineTruncated'])
+            self.assertIsNone(second['newDroppedEvents'])
 
 if __name__=='__main__':unittest.main()

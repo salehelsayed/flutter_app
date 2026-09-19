@@ -56,19 +56,44 @@ class NativeRuntimeOwnershipSourceTest {
         val source = repoFile(
             "lib/app/bootstrap/production_application_bootstrap.dart",
         ).readText()
+        val owner = repoFile(
+            "lib/app/bootstrap/foreground_canonical_runtime_startup.dart",
+        ).readText()
+        val construct = source.indexOf("ForegroundCanonicalRuntimeStartup<Database>(")
+        val closeCallback = source.indexOf("await database.close().timeout", construct)
         val shutdownStart = source.indexOf("Future<bool> shutdownCanonicalRuntime()")
-        val drain = source.indexOf("writableSession.drainCloseRelease(", shutdownStart)
-        val quiesce = source.indexOf("canonicalRuntimeLeaseGateway!.quiesceRuntime()", drain)
-        val close = source.indexOf("db.close().timeout", quiesce)
-        val channel = source.indexOf("'mknoon/canonical_runtime_shutdown'", close)
+        val delegate = source.indexOf("canonicalWritableRuntimeSession?.shutdown()", shutdownStart)
+        val channel = source.indexOf("'mknoon/canonical_runtime_shutdown'", delegate)
+        val open = source.indexOf("await canonicalWritableRuntimeSession.open(", channel)
 
-        assertTrue(shutdownStart >= 0)
-        assertTrue(drain > shutdownStart)
+        assertTrue(construct >= 0)
+        assertTrue(closeCallback > construct)
+        assertTrue(shutdownStart > closeCallback)
+        assertTrue(delegate > shutdownStart)
+        assertTrue(channel > delegate)
+        assertTrue("shutdown handler must exist before acquisition/open", open > channel)
+        assertTrue(source.contains("isDatabaseOpen: (database) => database.isOpen"))
+        assertTrue(source.contains("'databaseClosed': canonicalWritableRuntimeSession.databaseClosed"))
+        assertTrue(source.contains("await shutdownCanonicalRuntime();"))
+        assertTrue(source.contains("'leaseState': snapshot.state.name"))
+
+        val cancel = owner.indexOf("_cancelled = true;", owner.indexOf("Future<bool> shutdown()"))
+        val cleanup = owner.indexOf("_shutdownOwnedRuntime()", cancel)
+        val settle = owner.indexOf("await _opening;", cleanup)
+        val drain = owner.indexOf("_session.drainCloseRelease(", settle)
+        val quiesce = owner.indexOf("await _gateway.quiesceRuntime()", drain)
+        val close = owner.indexOf("await _closeDatabase(_database);", quiesce)
+        val closed = owner.indexOf("if (!databaseClosed)", close)
+        val released = owner.indexOf("state.state == CanonicalRuntimeLeaseState.released", closed)
+        assertTrue(cancel >= 0)
+        assertTrue(cleanup > cancel)
+        assertTrue(settle > cleanup)
+        assertTrue(drain > settle)
         assertTrue(quiesce > drain)
         assertTrue(close > quiesce)
-        assertTrue(channel > close)
-        assertTrue(source.contains("'databaseClosed': !db.isOpen"))
-        assertTrue(source.contains("await shutdownCanonicalRuntime();"))
+        assertTrue(closed > close)
+        assertTrue(released > closed)
+
     }
 
     private fun sourceFile(name: String): File = sequenceOf(

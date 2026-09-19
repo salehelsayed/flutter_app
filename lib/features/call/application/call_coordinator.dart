@@ -182,6 +182,8 @@ final class CallCoordinator {
     required String contactPeerId,
     required String localAccountPeerId,
     required String localDeviceId,
+    bool Function()? canPlace,
+    void Function(CallReduction reduction)? onApplied,
   }) {
     final callId = idSource();
     return dispatch(
@@ -195,6 +197,8 @@ final class CallCoordinator {
         localDeviceId: localDeviceId,
         remoteAccountPeerId: contactPeerId,
       ),
+      canApply: canPlace,
+      onApplied: onApplied,
     );
   }
 
@@ -204,6 +208,7 @@ final class CallCoordinator {
   Future<CallReduction> dispatch(
     CallEvent event, {
     void Function(CallReduction reduction)? onApplied,
+    bool Function()? canApply,
   }) {
     if (_disposed || _disposing) {
       return Future<CallReduction>.error(
@@ -219,6 +224,18 @@ final class CallCoordinator {
     final completer = Completer<CallReduction>();
     _tail = _tail.then<void>((_) async {
       try {
+        // A preflight can be canceled while waiting behind earlier work.
+        // Check on the serial lane before any snapshot, history or effect.
+        if (canApply != null && !canApply()) {
+          completer.complete(
+            CallReduction.coordinatorDecision(
+              snapshot: _active ?? CallSessionSnapshot.idle(now: clock()),
+              decision: CallEventDecision.ignored,
+              reason: CallReductionReason.stateMismatch,
+            ),
+          );
+          return;
+        }
         completer.complete(await _dispatchNow(event, onApplied: onApplied));
       } catch (error, stackTrace) {
         completer.completeError(error, stackTrace);
@@ -368,6 +385,7 @@ final class CallCoordinator {
           // Remote answers can also wait while buffered ICE is drained. Let
           // terminal events retire that work through the same cleanup fence.
           (effect) =>
+              effect.type == CallEffectType.prepareOutgoingInvite ||
               _isMediaPreparationEffect(effect.type) ||
               effect.type == CallEffectType.deliverAnswer,
         )
@@ -577,10 +595,10 @@ final class CallCoordinator {
     }
     _timers.remove(effect.type)?.cancel();
     var fired = false;
-    _timers[effect.type] = _timerScheduler.schedule(remaining, () async {
-      if (fired) return;
+    late final CallTimerHandle timer;
+    timer = _timerScheduler.schedule(remaining, () async {
+      if (fired || !identical(_timers[effect.type], timer)) return;
       fired = true;
-      _timers.remove(effect.type);
       if (_disposed ||
           _terminalIds.contains(callId) ||
           _active?.callId != callId) {
@@ -606,17 +624,28 @@ final class CallCoordinator {
               ? snapshot.callerDeviceId
               : null,
           timeoutKind: timeoutKind,
+          reconnectGeneration: timeoutKind == CallTimeoutKind.reconnect
+              ? snapshot.reconnectGeneration
+              : null,
         ),
+        timerType: effect.type,
+        timer: timer,
       );
     });
+    _timers[effect.type] = timer;
   }
 
   /// Timer events have one reserved bounded path behind the public queue.
   /// There are at most the fixed effect-keyed timers in [_timers], so this
   /// cannot grow with caller traffic and cannot be rejected by queue pressure.
-  Future<void> _enqueueTimerEvent(CallEvent event) {
+  Future<void> _enqueueTimerEvent(
+    CallEvent event, {
+    required CallEffectType timerType,
+    required CallTimerHandle timer,
+  }) {
     final interrupted = _interruptPreparation(event);
     if (interrupted != null) {
+      _timers.remove(timerType);
       return interrupted.then<void>((_) {}).catchError((Object _) {
         _reportInternalFailure(
           CallCoordinatorInternalFailure.timerDispatchFailed,
@@ -624,7 +653,10 @@ final class CallCoordinator {
       });
     }
     final scheduled = _tail.then<void>((_) async {
-      if (_disposed) return;
+      // Keep the fired timer's ownership until reduction. Recovery can cancel
+      // it and install the next episode's deadline while this event is queued.
+      if (_disposed || !identical(_timers[timerType], timer)) return;
+      _timers.remove(timerType);
       try {
         await _dispatchNow(event);
       } catch (_) {

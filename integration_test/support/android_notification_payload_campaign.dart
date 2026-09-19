@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:crypto/crypto.dart';
@@ -6,6 +7,327 @@ import 'package:flutter_app/core/debug/android_notification_payload_e2e_protocol
 const String androidNotificationCapabilityId =
     'notifications.android_payload_campaign';
 const String androidNotificationBuildProfileId = 'android.production_fcm';
+
+/// A diagnostic repetition, never the complete notification capability.
+/// Each pair retains the original cold and B13 implementations and budgets.
+Future<void> runAndroidNotificationColdB13Probe({
+  required Future<void> Function() cleanup,
+  required Future<Map<String, Object?>> Function(int pair) cold,
+  required Future<Map<String, Object?>> Function(int pair) dualPath,
+  required Future<void> Function(
+    int pair,
+    String leg,
+    Map<String, Object?> evidence,
+  )
+  record,
+}) async {
+  for (var pair = 1; pair <= 3; pair++) {
+    await cleanup();
+    final coldEvidence = await cold(pair);
+    await record(pair, 'cold', coldEvidence);
+    final dualEvidence = await dualPath(pair);
+    await record(pair, 'b13', dualEvidence);
+  }
+}
+
+/// The prepared wire stays inside the sender. The host carries only its exact
+/// operation binding and hashes, and cannot release another message.
+final class AndroidNotificationDualPathSendProof {
+  const AndroidNotificationDualPathSendProof({
+    required this.prepared,
+    required this.completed,
+    required this.liveCursor,
+  });
+
+  final Map<String, Object?> prepared;
+  final Map<String, Object?> completed;
+  final String liveCursor;
+}
+
+Map<String, Object?> validateAndroidNotificationDualPathPrepared({
+  required Map<String, Object?> request,
+  required Map<String, Object?> receipt,
+}) {
+  const keys = <String>{
+    'schema',
+    'status',
+    'success',
+    'stepId',
+    'runId',
+    'nonce',
+    'targetPeerId',
+    'messageId',
+    'wireSha256',
+    'ciphertextSha256',
+    'expiresAtMs',
+  };
+  final hash = RegExp(r'^[0-9a-f]{64}$');
+  final id = receipt['messageId'];
+  if (receipt.keys.toSet().difference(keys).isNotEmpty ||
+      receipt.length != keys.length ||
+      receipt['schema'] != notificationDualPathSenderSchema ||
+      receipt['status'] != 'prepared' ||
+      receipt['success'] != true ||
+      <String>[
+        'stepId',
+        'runId',
+        'nonce',
+        'targetPeerId',
+      ].any((key) => receipt[key] != request[key]) ||
+      id is! String ||
+      !RegExp(
+        r'^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$',
+      ).hasMatch(id) ||
+      receipt['wireSha256'] is! String ||
+      !hash.hasMatch(receipt['wireSha256']! as String) ||
+      receipt['ciphertextSha256'] is! String ||
+      !hash.hasMatch(receipt['ciphertextSha256']! as String) ||
+      receipt['expiresAtMs'] is! int ||
+      (receipt['expiresAtMs']! as int) <= 0) {
+    throw const FormatException('dual-path prepared binding rejected');
+  }
+  return Map<String, Object?>.unmodifiable(receipt);
+}
+
+Map<String, Object?> validateAndroidNotificationDualPathComplete({
+  required Map<String, Object?> prepared,
+  required Map<String, Object?> receipt,
+}) {
+  final expected = <String, Object?>{...prepared, 'status': 'complete'};
+  if (receipt.length != expected.length + 2 ||
+      expected.entries.any((entry) => receipt[entry.key] != entry.value) ||
+      receipt['acked'] != true ||
+      !<String>{'direct', 'relay', 'local'}.contains(receipt['transport'])) {
+    throw const FormatException('dual-path live completion rejected');
+  }
+  return Map<String, Object?>.unmodifiable(receipt);
+}
+
+/// One sender budget includes preparation, real provider observation and the
+/// released live send. Every completed read is checked before granting the
+/// next action; slow I/O cannot gain fresh authority after the deadline.
+Future<AndroidNotificationDualPathSendProof>
+coordinateAndroidNotificationDualPathSend({
+  required Map<String, Object?> request,
+  required Future<void> Function() stage,
+  required Future<Map<String, Object?>> Function(Duration remaining) prepared,
+  required Future<void> Function(
+    Map<String, Object?> binding,
+    Duration remaining,
+  )
+  providerAccepted,
+  required Future<String> Function() beforeLiveRelease,
+  required Future<void> Function(Map<String, Object?> binding) release,
+  required Future<Map<String, Object?>> Function(Duration remaining) completed,
+  required Future<void> Function(
+    Map<String, Object?> binding,
+    Duration remaining,
+  )
+  providerCorroborated,
+  required Future<void> Function(Map<String, Object?>? binding) cancel,
+  required Future<void> Function() cleanup,
+  required void Function(Object error) recordCleanupFailure,
+  Duration Function()? elapsed,
+}) async {
+  final stopwatch = Stopwatch()..start();
+  final readElapsed = elapsed ?? () => stopwatch.elapsed;
+  const budget = Duration(minutes: 3);
+  Duration remaining() {
+    final value = budget - readElapsed();
+    if (value <= Duration.zero) {
+      throw TimeoutException('dual-path sender deadline exhausted');
+    }
+    return value;
+  }
+
+  Map<String, Object?>? binding;
+  AndroidNotificationDualPathSendProof? proof;
+  Object? firstError;
+  StackTrace? firstStack;
+  try {
+    remaining();
+    await stage();
+    final raw = await prepared(remaining());
+    remaining();
+    binding = validateAndroidNotificationDualPathPrepared(
+      request: request,
+      receipt: raw,
+    );
+    final providerStarted = readElapsed();
+    final available = remaining();
+    final providerBudget = available < const Duration(minutes: 2)
+        ? available
+        : const Duration(minutes: 2);
+    await providerAccepted(binding, providerBudget);
+    if (readElapsed() - providerStarted >= providerBudget) {
+      throw TimeoutException(
+        'dual-path receiver observation deadline exhausted',
+      );
+    }
+    remaining();
+    final cursor = await beforeLiveRelease();
+    remaining();
+    await release(binding);
+    remaining();
+    final complete = await completed(remaining());
+    remaining();
+    final validatedComplete = validateAndroidNotificationDualPathComplete(
+      prepared: binding,
+      receipt: complete,
+    );
+    // Receiver proof already authorizes release. Slow relay journal reads
+    // must not let background inbox recovery win before that live send.
+    // Corroboration still gates success within the original sender budget.
+    await providerCorroborated(binding, remaining());
+    remaining();
+    proof = AndroidNotificationDualPathSendProof(
+      prepared: binding,
+      completed: validatedComplete,
+      liveCursor: cursor,
+    );
+  } catch (error, stack) {
+    firstError = error;
+    firstStack = stack;
+    try {
+      await cancel(binding);
+    } catch (cleanupError) {
+      recordCleanupFailure(cleanupError);
+    }
+  }
+  try {
+    await cleanup();
+    if (firstError == null) {
+      remaining();
+    }
+  } catch (error, stack) {
+    if (firstError == null) {
+      firstError = error;
+      firstStack = stack;
+    } else {
+      recordCleanupFailure(error);
+    }
+  }
+  if (firstError != null) Error.throwWithStackTrace(firstError, firstStack!);
+  return proof!;
+}
+
+bool androidNotificationReceiverBackgrounded(
+  String activities, {
+  required String packageName,
+}) {
+  final resumed = activities
+      .split('\n')
+      .where(
+        (line) =>
+            RegExp(
+              r'\b(?:mResumedActivity|topResumedActivity)\s*[:=]',
+            ).hasMatch(line) &&
+            line.contains('ActivityRecord{'),
+      )
+      .toList();
+  if (resumed.isEmpty) {
+    throw const FormatException('receiver activity ownership unavailable');
+  }
+  final ownActivity = RegExp('${RegExp.escape(packageName)}/');
+  return resumed.every((line) => !ownActivity.hasMatch(line));
+}
+
+/// Inbox recovery is deliberately silent on Android. A generic listener
+/// marker alone cannot certify the released notify-capable live contender.
+bool androidNotificationReleasedLivePathObserved(
+  String logcat, {
+  required String messageId,
+}) {
+  if (messageId.isEmpty) return false;
+  final prefix = safeNotificationIdPrefix(messageId);
+  var liveStores = 0;
+  var listenerAfterLive = false;
+  for (final line in const LineSplitter().convert(logcat)) {
+    if (!line.contains('[FLOW]')) continue;
+    final index = line.indexOf('[FLOW] ');
+    if (index < 0) return false;
+    final Object? decoded;
+    try {
+      decoded = jsonDecode(line.substring(index + '[FLOW] '.length));
+    } on FormatException {
+      return false;
+    }
+    if (decoded is! Map ||
+        decoded['event'] is! String ||
+        decoded['details'] is! Map) {
+      return false;
+    }
+    final details = decoded['details'] as Map;
+    if (details['id'] != prefix) continue;
+    if (decoded['event'] == 'CHAT_MSG_RECEIVE_STORED') {
+      if (!<String>{
+        'local',
+        'direct',
+        'relay',
+      }.contains(details['transport'])) {
+        return false;
+      }
+      liveStores++;
+    }
+    if (liveStores == 1 &&
+        decoded['event'] == androidNotificationLivePathAttemptEvent) {
+      listenerAfterLive = true;
+    }
+  }
+  return liveStores == 1 && listenerAfterLive;
+}
+
+/// The real background receipt and exact staged encrypted tuple bind delivery
+/// to this prepared message before live release. No SSH read is needed here.
+bool androidNotificationPreparedReceiverObserved({
+  required Map<String, Object?> prepared,
+  required String? stagedEnvelope,
+  required String expectedSenderPeerId,
+  required DateTime notBefore,
+  required String receiverLog,
+}) {
+  if (stagedEnvelope == null || prepared['messageId'] is! String) {
+    return false;
+  }
+  final String messageId = prepared['messageId']! as String;
+  final AndroidStagedEnvelopeObservation staged;
+  try {
+    staged = parseAndroidStagedEnvelopeObservation(
+      stagedEnvelope,
+      expectedMessageId: messageId,
+      expectedSenderPeerId: expectedSenderPeerId,
+      notBefore: notBefore,
+    );
+  } on Object {
+    return false;
+  }
+  if (staged.ciphertextSha256 != prepared['ciphertextSha256']) return false;
+  return androidNotificationFlowRecords(receiverLog).any(
+    (record) =>
+        record.event == androidNotificationFcmPathAttemptEvent &&
+        record.details['messageIdPrefix'] ==
+            safeNotificationIdPrefix(messageId),
+  );
+}
+
+/// Relay success rows omit recipient identity, so they are corroboration only.
+/// The complete proof still requires this original conjunction after release.
+bool androidNotificationPreparedProviderObserved({
+  required Map<String, Object?> prepared,
+  required String? stagedEnvelope,
+  required String expectedSenderPeerId,
+  required DateTime notBefore,
+  required String receiverLog,
+  required String relayJournal,
+}) =>
+    relayJournalContainsAndroidProviderSend(relayJournal) &&
+    androidNotificationPreparedReceiverObserved(
+      prepared: prepared,
+      stagedEnvelope: stagedEnvelope,
+      expectedSenderPeerId: expectedSenderPeerId,
+      notBefore: notBefore,
+      receiverLog: receiverLog,
+    );
 
 const Set<String> androidNotificationKnownAppOpModes = <String>{
   'allow',
@@ -651,6 +973,153 @@ List<String> androidNotificationChannelsForBody(
     }
   }
   return channelsByNativeKey.values.toList(growable: false);
+}
+
+/// Closed failure evidence only. This does not decide whether a card is stable
+/// or change either existing parser. Never persist raw notification copy,
+/// routes, package names, native keys or unexpected channel names.
+Map<String, Object?> androidNotificationCardDiagnosticSnapshot(
+  String dump, {
+  required String packageName,
+  required String body,
+  required List<int?> oracleCardIds,
+  required List<String> oracleChannels,
+}) {
+  String digest(String value) => sha256.convert(utf8.encode(value)).toString();
+  const limit = 16;
+  final oversized = dump.length > 8 * 1024 * 1024;
+  final result = <String, Object?>{
+    'dumpSha256': digest(dump),
+    'dumpCharacters': dump.length,
+    'packageSha256': digest(packageName),
+    'bodySha256': digest(body),
+    'managerHeaderPresent': dump.contains(
+      'Current Notification Manager state:',
+    ),
+    'rankingSectionPresent': RegExp(r'\n\s*Ranking Config:').hasMatch(dump),
+    'internalDumpError': RegExp(
+      r'DUMP TIMEOUT|Error dumping service|FAILED BINDER TRANSACTION',
+      caseSensitive: false,
+    ).hasMatch(dump),
+    'oversized': oversized,
+    'oracleCardCount': oracleCardIds.length,
+    'oracleCardIdSha256': oracleCardIds
+        .take(limit)
+        .map((id) => id == null ? null : digest('$id'))
+        .toList(growable: false),
+    'oracleChannelCount': oracleChannels.length,
+    'oracleChannelSha256': oracleChannels
+        .take(limit)
+        .map(digest)
+        .toList(growable: false),
+    'oracleTuplesTruncated':
+        oracleCardIds.length > limit || oracleChannels.length > limit,
+  };
+  final tuples = <Map<String, Object?>>[];
+  var count = 0;
+  if (!oversized) {
+    // Deliberately retain duplicate native keys and conflicting channels.
+    // They distinguish repeated diagnostic views from a changed publication.
+    final records = RegExp(
+      r'NotificationRecord\([\s\S]*?(?=\n\s*NotificationRecord\(|$)',
+    ).allMatches(dump);
+    for (final match in records) {
+      final record = match.group(0)!;
+      final header = record.split('\n').first;
+      final owner = RegExp(r'\bpkg=([^\s,)]+)').firstMatch(header)?.group(1);
+      if (owner != packageName) continue;
+      final text = RegExp(
+        r'^\s*android\.text=(.+)$',
+        multiLine: true,
+      ).firstMatch(record)?.group(1)?.trim();
+      if (text != body && text != 'String ($body)') continue;
+      count++;
+      if (tuples.length == limit) continue;
+      final id = RegExp(r'\bid=(-?\d+)\b').firstMatch(header)?.group(1);
+      final key = RegExp(
+        r'\bkey=(.*?): Notification\(',
+      ).firstMatch(header)?.group(1);
+      final channel = RegExp(
+        r'Notification\(channel=([^\s\)]+)',
+      ).firstMatch(header)?.group(1);
+      tuples.add(<String, Object?>{
+        'idSha256': id == null ? null : digest(id),
+        'nativeKeySha256': key == null ? null : digest(key),
+        'channelSha256': channel == null ? null : digest(channel),
+        'channelKind': switch (channel) {
+          null => 'missing',
+          'mknoon_messages' => 'primary',
+          'mknoon_messages_silent' => 'silent',
+          _ => 'other',
+        },
+      });
+    }
+  }
+  return <String, Object?>{
+    ...result,
+    'ownedMatchingRecordCount': oversized ? null : count,
+    'ownedMatchingRecordsTruncated': count > limit,
+    'ownedMatchingRecords': tuples,
+  };
+}
+
+/// A fresh-process setup barrier for the controlled token-rotation fixture.
+/// Startup and queued resume work must finish before deleting the token:
+/// otherwise a valid coalesced resume registration can own the refresh.
+final class AndroidNotificationRegistrationQuiescence {
+  String? _settledKey;
+  int? _settledAtMs;
+
+  bool observe(List<AndroidFlowRecord> records, {required int elapsedMs}) {
+    final pending = <String, int>{};
+    final sequence = <List<String>>[];
+    var startupAttempts = 0;
+    var startupSuccesses = 0;
+    var valid =
+        elapsedMs >= 0 &&
+        elapsedMs <= const Duration(minutes: 3).inMilliseconds;
+    for (final record in records) {
+      if (!record.event.startsWith('PUSH_REGISTER_COORDINATOR_')) continue;
+      final trigger = record.details['trigger'];
+      if (trigger is! String || trigger.isEmpty || trigger != trigger.trim()) {
+        valid = false;
+        break;
+      }
+      sequence.add(<String>[record.event, trigger]);
+      if (record.event == 'PUSH_REGISTER_COORDINATOR_ATTEMPT') {
+        pending[trigger] = (pending[trigger] ?? 0) + 1;
+        if (trigger == 'startup') startupAttempts++;
+      } else if (record.event == 'PUSH_REGISTER_COORDINATOR_SUCCESS') {
+        final count = pending[trigger] ?? 0;
+        if (count == 0) {
+          valid = false;
+          break;
+        }
+        pending[trigger] = count - 1;
+        if (trigger == 'startup') startupSuccesses++;
+      } else {
+        // Failed, refused or unknown coordinator outcomes cannot establish
+        // that this fresh process is ready for a controlled stream trigger.
+        valid = false;
+        break;
+      }
+    }
+    if (!valid ||
+        startupAttempts != 1 ||
+        startupSuccesses != 1 ||
+        pending.values.any((count) => count != 0)) {
+      _settledKey = null;
+      _settledAtMs = null;
+      return false;
+    }
+    final key = sha256.convert(utf8.encode(jsonEncode(sequence))).toString();
+    if (key != _settledKey || elapsedMs < (_settledAtMs ?? elapsedMs)) {
+      _settledKey = key;
+      _settledAtMs = elapsedMs;
+      return false;
+    }
+    return elapsedMs - _settledAtMs! >= 500;
+  }
 }
 
 /// One `[FLOW] {…}` diagnostic record recovered from a logcat window.

@@ -120,6 +120,9 @@ GroupMediaReliabilityValidation validateGroupMediaReliabilityArtifact(
     <String>{
       ..._artifactKeys,
       if (artifact.containsKey('authority_mode')) 'authority_mode',
+      if (artifact.containsKey('strict_media_custody')) 'strict_media_custody',
+      if (artifact.containsKey('strict_authority_setup'))
+        'strict_authority_setup',
     },
     r'$',
     failures,
@@ -179,14 +182,34 @@ GroupMediaReliabilityValidation validateGroupMediaReliabilityArtifact(
   );
   _validateAcl(artifact['acl_entries'], identityDigests, failures);
   _validateMedia(artifact['media'], failures);
-  _validateRoleDatabases(artifact['role_databases'], runId, failures);
+  final strict = artifact.containsKey('strict_media_custody');
+  _validateRoleDatabases(
+    artifact['role_databases'],
+    runId,
+    failures,
+    strict: strict,
+    requireStrictSenderPublication: artifact.containsKey(
+      'strict_authority_setup',
+    ),
+  );
   _validateRetryPasses(artifact['retry_passes'], failures);
   _validateCleanup(
     artifact['cleanup'],
     artifact['prepared_artifact'],
     failures,
   );
-  _validateFlowEvents(artifact['flow_events'], failures);
+  if (strict) _validateStrictCustody(artifact, identityDigests, failures);
+  if (artifact.containsKey('strict_authority_setup')) {
+    if (!strict || authorityMode != groupMediaDistinctAuthorityMode) {
+      failures.add('strict authority setup requires distinct strict custody');
+    }
+    _validateStrictAuthoritySetup(
+      artifact['strict_authority_setup'],
+      identityDigests,
+      failures,
+    );
+  }
+  _validateFlowEvents(artifact['flow_events'], failures, strict: strict);
 
   final senderDevice = deviceDigests['sender'];
   final receiverDevice = deviceDigests['receiver'];
@@ -429,6 +452,240 @@ void _validateMedia(Object? value, List<String> failures) {
   );
 }
 
+void _validateStrictAuthoritySetup(
+  Object? value,
+  Map<String, Map<String, String>> identities,
+  List<String> failures,
+) {
+  const path = 'strict_authority_setup';
+  final setup = _object(value, path, failures);
+  if (setup == null) return;
+  _expectExactKeys(
+    setup,
+    const {
+      'schema',
+      'group_sha256',
+      'previous_epoch',
+      'current_epoch',
+      'authority_sha256',
+      'authority_event_at',
+      'sender',
+      'receiver',
+    },
+    path,
+    failures,
+  );
+  if (setup['schema'] != 'mknoon.group-media-authority-setup.v1') {
+    failures.add('$path schema rejected');
+  }
+  _requiredDigest(setup, 'group_sha256', path, failures);
+  _requiredDigest(setup, 'authority_sha256', path, failures);
+  final previous = setup['previous_epoch'];
+  final current = setup['current_epoch'];
+  if (previous is! int ||
+      previous <= 0 ||
+      current is! int ||
+      current != previous + 1) {
+    failures.add('$path must advance exactly one real key epoch');
+  }
+  final eventAt = setup['authority_event_at'];
+  if (eventAt is! String ||
+      !eventAt.endsWith('Z') ||
+      DateTime.tryParse(eventAt) == null) {
+    failures.add('$path authority event time rejected');
+  }
+  String? roster;
+  for (final role in const ['sender', 'receiver']) {
+    final row = _object(setup[role], '$path.$role', failures);
+    if (row == null) continue;
+    _expectExactKeys(
+      row,
+      const {
+        'account_sha256',
+        'transport_sha256',
+        'before_roles_sha256',
+        'after_roles_sha256',
+        'admission',
+      },
+      '$path.$role',
+      failures,
+    );
+    final before = _requiredDigest(
+      row,
+      'before_roles_sha256',
+      '$path.$role',
+      failures,
+    );
+    final after = _requiredDigest(
+      row,
+      'after_roles_sha256',
+      '$path.$role',
+      failures,
+    );
+    if (row['account_sha256'] != identities[role]?['account'] ||
+        row['transport_sha256'] != identities[role]?['transport'] ||
+        row['admission'] != 'strict' ||
+        before != after ||
+        (roster != null && roster != after)) {
+      failures.add(
+        '$path.$role identity, unchanged roles, or strict admission did not bind',
+      );
+    }
+    roster = after;
+  }
+}
+
+void _validateStrictCustody(
+  Map<String, Object?> artifact,
+  Map<String, Map<String, String>> identities,
+  List<String> failures,
+) {
+  final strict = _object(
+    artifact['strict_media_custody'],
+    'strict_media_custody',
+    failures,
+  );
+  if (strict == null) return;
+  _expectExactKeys(
+    strict,
+    const {'media', 'barrier'},
+    'strict_media_custody',
+    failures,
+  );
+  final media = _object(
+    strict['media'],
+    'strict_media_custody.media',
+    failures,
+  );
+  final barrier = _object(
+    strict['barrier'],
+    'strict_media_custody.barrier',
+    failures,
+  );
+  if (media == null || barrier == null) return;
+  _expectExactKeys(media, _mediaKinds, 'strict_media_custody.media', failures);
+  for (final kind in _mediaKinds) {
+    final row = _object(media[kind], 'strict_media_custody.$kind', failures);
+    if (row == null) continue;
+    _expectExactKeys(
+      row,
+      const {
+        'manifest_sha256',
+        'custody_fingerprint',
+        'custody_blob_id_sha256',
+        'ciphertext_sha256',
+        'ciphertext_size',
+        'recipient_count',
+        'recipient_transport_sha256',
+        'expires_at_ms',
+      },
+      'strict_media_custody.$kind',
+      failures,
+    );
+    for (final key in const [
+      'manifest_sha256',
+      'custody_fingerprint',
+      'custody_blob_id_sha256',
+      'ciphertext_sha256',
+      'recipient_transport_sha256',
+    ]) {
+      _requiredDigest(row, key, 'strict_media_custody.$kind', failures);
+    }
+    if (row['ciphertext_size'] is! int ||
+        (row['ciphertext_size'] as int) <= 0 ||
+        row['expires_at_ms'] is! int ||
+        (row['expires_at_ms'] as int) <= 0 ||
+        row['recipient_count'] != 1 ||
+        row['recipient_transport_sha256'] !=
+            identities['receiver']?['transport']) {
+      failures.add('strict custody target or byte contract rejected');
+    }
+    final databases = _object(
+      artifact['role_databases'],
+      'role_databases',
+      failures,
+    );
+    for (final role in const ['sender', 'receiver']) {
+      final db = _object(databases?[role], role, failures);
+      final rows = db?['rows'];
+      if (rows is! List) continue;
+      final matches = rows
+          .whereType<Map>()
+          .where((r) => r['media_kind'] == kind)
+          .toList();
+      if (matches.length != 1 ||
+          matches.single['custody_fingerprint'] != row['custody_fingerprint']) {
+        failures.add('strict custody does not join $role $kind');
+      }
+      if (role == 'sender' &&
+          matches.length == 1 &&
+          matches.single.containsKey('strict_publication')) {
+        final setup = artifact['strict_authority_setup'];
+        final groupHash = setup is Map ? setup['group_sha256'] : null;
+        if (groupHash is! String ||
+            row['ciphertext_sha256'] is! String ||
+            !groupMediaStrictSenderPublicationMatches(
+              matches.single,
+              groupSha256: groupHash,
+              senderAccountSha256: identities['sender']?['account'],
+              ciphertextSha256: row['ciphertext_sha256'] as String?,
+            )) {
+          failures.add(
+            'strict sender terminal identity/ciphertext did not join $kind',
+          );
+        }
+      }
+    }
+  }
+  _expectExactKeys(
+    barrier,
+    const {
+      'state',
+      'local_ready',
+      'ack_source_present',
+      'custody_fingerprint',
+      'custody_projection_sha256',
+      'ciphertext_sha256',
+      'ciphertext_size',
+      'custody_blob_id_sha256',
+    },
+    'strict_media_custody.barrier',
+    failures,
+  );
+  _expectValue(
+    barrier,
+    'state',
+    'incoming_committed',
+    'strict barrier',
+    failures,
+  );
+  _expectValue(barrier, 'local_ready', false, 'strict barrier', failures);
+  _expectValue(
+    barrier,
+    'ack_source_present',
+    false,
+    'strict barrier',
+    failures,
+  );
+  _requiredDigest(
+    barrier,
+    'custody_projection_sha256',
+    'strict barrier',
+    failures,
+  );
+  final jpeg = _object(media['jpeg'], 'strict jpeg', failures);
+  for (final key in const [
+    'custody_fingerprint',
+    'ciphertext_sha256',
+    'ciphertext_size',
+    'custody_blob_id_sha256',
+  ]) {
+    if (jpeg?[key] != barrier[key]) {
+      failures.add('strict JPEG boundary mismatch $key');
+    }
+  }
+}
+
 void _validateExactKindCounts(
   Object? value,
   String path,
@@ -446,8 +703,10 @@ void _validateExactKindCounts(
 void _validateRoleDatabases(
   Object? value,
   String? runId,
-  List<String> failures,
-) {
+  List<String> failures, {
+  bool strict = false,
+  bool requireStrictSenderPublication = false,
+}) {
   const path = r'$.role_databases';
   final databases = _object(value, path, failures);
   if (databases == null) return;
@@ -512,6 +771,10 @@ void _validateRoleDatabases(
       rolePath,
       runId,
       failures,
+      strict: strict,
+      strictSender: strict && role == 'sender',
+      requireStrictPublication:
+          requireStrictSenderPublication && role == 'sender',
     );
   }
 
@@ -554,8 +817,11 @@ List<Map<String, Object?>> _validateDatabaseRows(
   Object? value,
   String parentPath,
   String? runId,
-  List<String> failures,
-) {
+  List<String> failures, {
+  bool strict = false,
+  bool strictSender = false,
+  bool requireStrictPublication = false,
+}) {
   final path = '$parentPath.rows';
   if (value is! List || value.length != _mediaKinds.length) {
     failures.add('$path must contain exactly jpeg, mp4, and voice rows');
@@ -570,7 +836,7 @@ List<Map<String, Object?>> _validateDatabaseRows(
     rows.add(row);
     _expectExactKeys(
       row,
-      const <String>{
+      <String>{
         'run_id',
         'media_kind',
         'message_id',
@@ -578,15 +844,28 @@ List<Map<String, Object?>> _validateDatabaseRows(
         'status',
         'upload_retry_count',
         'download_retry_count',
+        if (strict) 'custody_fingerprint',
+        if (strictSender && row.containsKey('strict_publication'))
+          'strict_publication',
       },
       rowPath,
       failures,
     );
+    if (strict) _requiredDigest(row, 'custody_fingerprint', rowPath, failures);
     if (runId != null) _expectValue(row, 'run_id', runId, rowPath, failures);
     _expectValue(row, 'media_kind', kinds[index], rowPath, failures);
     _requiredSafeIdentifier(row, 'message_id', rowPath, failures);
     _requiredSafeIdentifier(row, 'blob_id', rowPath, failures);
-    _expectValue(row, 'status', 'done', rowPath, failures);
+    if (strictSender &&
+        (requireStrictPublication || row.containsKey('strict_publication'))) {
+      if (!groupMediaStrictSenderPublicationMatches(row)) {
+        failures.add('$rowPath strict sender publication did not settle');
+      }
+    } else {
+      // Historical artifacts recorded done. The current Android producer
+      // independently requires the strict SQL publication projection.
+      _expectValue(row, 'status', 'done', rowPath, failures);
+    }
     _expectValue(row, 'upload_retry_count', 0, rowPath, failures);
     _expectValue(row, 'download_retry_count', 0, rowPath, failures);
   }
@@ -607,6 +886,57 @@ List<Map<String, Object?>> _validateDatabaseRows(
     failures.add('$path must bind three distinct blob_id values');
   }
   return rows;
+}
+
+/// Validates the raw terminal-parent projection retained by the same SQL probe
+/// as the attachment. A strict outgoing attachment remains upload_pending;
+/// completion belongs to its protected parent and immutable custody manifest.
+bool groupMediaStrictSenderPublicationMatches(
+  Map row, {
+  String? groupSha256,
+  String? senderAccountSha256,
+  String? ciphertextSha256,
+}) {
+  final value = row['strict_publication'];
+  if (row['status'] != 'upload_pending' || value is! Map) return false;
+  const keys = <String>{
+    'message_id',
+    'group_sha256',
+    'sender_account_sha256',
+    'attachment_content_sha256',
+    'status',
+    'inbox_stored',
+    'is_incoming',
+    'wire_envelope_present',
+    'retry_payload_present',
+  };
+  final digest = RegExp(r'^[0-9a-f]{64}$');
+  if (value.length != keys.length ||
+      !value.keys.every(keys.contains) ||
+      row['message_id'] is! String ||
+      (row['message_id'] as String).isEmpty ||
+      value['message_id'] != row['message_id'] ||
+      value['status'] != 'sent' ||
+      value['inbox_stored'] != true ||
+      value['is_incoming'] != false ||
+      value['wire_envelope_present'] != false ||
+      value['retry_payload_present'] != false) {
+    return false;
+  }
+  for (final key in [
+    'group_sha256',
+    'sender_account_sha256',
+    'attachment_content_sha256',
+  ]) {
+    if (value[key] is! String || !digest.hasMatch(value[key] as String)) {
+      return false;
+    }
+  }
+  return (groupSha256 == null || value['group_sha256'] == groupSha256) &&
+      (senderAccountSha256 == null ||
+          value['sender_account_sha256'] == senderAccountSha256) &&
+      (ciphertextSha256 == null ||
+          value['attachment_content_sha256'] == ciphertextSha256);
 }
 
 void _validateRetryPasses(Object? value, List<String> failures) {
@@ -763,7 +1093,11 @@ String? _validateResetReceipt(
   return digest;
 }
 
-void _validateFlowEvents(Object? value, List<String> failures) {
+void _validateFlowEvents(
+  Object? value,
+  List<String> failures, {
+  bool strict = false,
+}) {
   const path = r'$.flow_events';
   if (value is! List || value.isEmpty) {
     failures.add('$path must be a non-empty event list');
@@ -840,13 +1174,14 @@ void _validateFlowEvents(Object? value, List<String> failures) {
       }
     }
   }
-  _validateProcessFlowEvents(factsByEvent, failures);
+  _validateProcessFlowEvents(factsByEvent, failures, strict: strict);
 }
 
 void _validateProcessFlowEvents(
   Map<String, Map<String, Object?>> factsByEvent,
-  List<String> failures,
-) {
+  List<String> failures, {
+  bool strict = false,
+}) {
   final uploads = factsByEvent['sender_uploads_settled'];
   final publications = factsByEvent['sender_publications_settled'];
   final barrier = factsByEvent['receiver_jpeg_post_claim_pre_commit'];
@@ -950,12 +1285,20 @@ void _validateProcessFlowEvents(
   _expectValue(
     barrier,
     'barrier_name',
-    'receiver_jpeg_post_claim_pre_commit',
+    strict
+        ? 'receiver_jpeg_strict_verified_ciphertext_pre_commit'
+        : 'receiver_jpeg_post_claim_pre_commit',
     barrierPath,
     failures,
   );
   _expectValue(barrier, 'marker_atomic', true, barrierPath, failures);
-  _expectValue(barrier, 'prior_status', 'downloading', barrierPath, failures);
+  _expectValue(
+    barrier,
+    'prior_status',
+    strict ? 'pending' : 'downloading',
+    barrierPath,
+    failures,
+  );
   _expectValue(barrier, 'attempt', 1, barrierPath, failures);
   final oldPid = _requiredDigest(
     barrier,
@@ -1013,7 +1356,13 @@ void _validateProcessFlowEvents(
     priorPath,
     failures,
   );
-  _expectValue(prior, 'prior_status', 'downloading', priorPath, failures);
+  _expectValue(
+    prior,
+    'prior_status',
+    strict ? 'pending' : 'downloading',
+    priorPath,
+    failures,
+  );
   _expectValue(prior, 'after_relaunch', true, priorPath, failures);
   _expectValue(prior, 'attempt', 2, priorPath, failures);
 

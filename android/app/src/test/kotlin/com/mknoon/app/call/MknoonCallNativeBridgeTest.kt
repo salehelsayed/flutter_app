@@ -20,6 +20,86 @@ import org.robolectric.annotation.Config
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [33])
 class MknoonCallNativeBridgeTest {
+    @Test fun `admission settlement does not block main behind Telecom and checks owner at execution`() {
+        val rig = LifecycleRig()
+        val relay = MknoonCallEventRelay()
+        val work = mutableListOf<Runnable>()
+        var reads = 0
+        var commits = 0
+        val token = MknoonCallAdmissionToken(rig.payload.nativeCallId, UUID.randomUUID(), 41_000L, "a".repeat(32))
+        val bridge = MknoonCallNativeBridge(controller = rig.controller, messenger = null, relay = relay,
+            admissionSettlementCapture = { reads++; token },
+            admissionSettlementCommit = { commits++; true },
+            registrationExecutor = java.util.concurrent.Executor { work += it })
+        val capture = CapturingCallBridgeResult()
+        val commit = CapturingCallBridgeResult()
+        bridge.onMethodCall(MethodCall("captureAdmissionSettlement", mapOf("version" to 1, "nativeCallId" to token.nativeCallId.toString())), capture)
+        bridge.onMethodCall(MethodCall("settleAuthenticatedAdmission", mapOf("version" to 1, "token" to token.toMap())), commit)
+        assertEquals(2, work.size)
+        assertEquals(0, reads)
+        assertEquals(0, commits)
+        MknoonCallNativeBridge(controller = rig.controller, messenger = null, relay = relay)
+        work.forEach { it.run() }
+        org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper()).idle()
+        assertEquals(0, reads)
+        assertEquals(0, commits)
+        assertEquals(null, capture.value)
+        assertEquals(false, commit.value)
+    }
+
+    @Test fun `admission settlement requires exact versioned token and current bridge ownership`() {
+        val rig = LifecycleRig()
+        val relay = MknoonCallEventRelay()
+        val token = MknoonCallAdmissionToken(rig.payload.nativeCallId, UUID.randomUUID(), 41_000L, "a".repeat(32))
+        var captures = 0
+        var commits = 0
+        val bridge = MknoonCallNativeBridge(controller = rig.controller, messenger = null, relay = relay,
+            admissionSettlementCapture = { id -> captures++; token.takeIf { token.nativeCallId == id } },
+            admissionSettlementCommit = { commits++; it == token })
+        fun call(name: String, args: Any?) = CapturingCallBridgeResult().also {
+            bridge.onMethodCall(MethodCall(name, args), it)
+        }
+        val capture = mapOf("version" to 1, "nativeCallId" to token.nativeCallId.toString())
+        val commit = mapOf("version" to 1, "token" to token.toMap())
+        assertEquals(token.toMap(), call("captureAdmissionSettlement", capture).value)
+        assertEquals(true, call("settleAuthenticatedAdmission", commit).value)
+        for (bad in listOf(capture - "version", capture + ("extra" to true), capture + ("version" to 2))) {
+            assertEquals("bad_args", call("captureAdmissionSettlement", bad).errorCode)
+        }
+        for (bad in listOf(commit - "version", commit + ("extra" to true), commit + ("token" to (token.toMap() - "wakeHandle")))) {
+            assertEquals("bad_args", call("settleAuthenticatedAdmission", bad).errorCode)
+        }
+        // New bridge owns the relay. A late old engine callback cannot capture
+        // current work or write a terminal receipt through the stale bridge.
+        MknoonCallNativeBridge(controller = rig.controller, messenger = null, relay = relay)
+        assertEquals(null, call("captureAdmissionSettlement", capture).value)
+        assertEquals(false, call("settleAuthenticatedAdmission", commit).value)
+        assertEquals(1, captures)
+        assertEquals(1, commits)
+    }
+
+    @Test fun `admission settlement callback errors and disposed bridges fail closed`() {
+        val rig = LifecycleRig()
+        val token = MknoonCallAdmissionToken(rig.payload.nativeCallId, UUID.randomUUID(), 41_000L, "a".repeat(32))
+        var captures = 0
+        var commits = 0
+        val bridge = MknoonCallNativeBridge(controller = rig.controller, messenger = null,
+            admissionSettlementCapture = { captures++; error("private") },
+            admissionSettlementCommit = { commits++; error("private") })
+        fun call(name: String, args: Any?) = CapturingCallBridgeResult().also {
+            bridge.onMethodCall(MethodCall(name, args), it)
+        }
+        val capture = mapOf("version" to 1, "nativeCallId" to token.nativeCallId.toString())
+        val commit = mapOf("version" to 1, "token" to token.toMap())
+        assertEquals(null, call("captureAdmissionSettlement", capture).value)
+        assertEquals(false, call("settleAuthenticatedAdmission", commit).value)
+        bridge.dispose()
+        assertEquals(null, call("captureAdmissionSettlement", capture).value)
+        assertEquals(false, call("settleAuthenticatedAdmission", commit).value)
+        assertEquals(1, captures)
+        assertEquals(1, commits)
+    }
+
     @Test fun `shared wire context survives native capability wrapper without changing authority fields`() {
         for (wire in nativeDiagnosticWireContexts().values) {
             val rig = LifecycleRig()
@@ -425,7 +505,7 @@ class MknoonCallNativeBridgeTest {
         assertTrue(rig.controller.answerFromTelecom(rig.payload.nativeCallId))
         assertBridgeSuccess(bridge, "activateAudio", idArguments, expected = true)
         assertBridgeSuccess(bridge, "end", idArguments, expected = true)
-        assertBridgeSuccess(bridge, "end", idArguments, expected = false)
+        assertBridgeSuccess(bridge, "end", idArguments, expected = true)
 
         assertEquals(1, rig.platform.startMicrophoneCalls)
         assertEquals(1, rig.platform.endCalls)
@@ -464,6 +544,10 @@ class MknoonCallNativeBridgeTest {
             CapturingCallBridgeResult(),
         )
 
+        assertBridgeSuccess(oldBridge, "detach", mapOf("version" to 1), expected = false)
+        val staleAttach = CapturingCallBridgeResult()
+        oldBridge.onMethodCall(MethodCall("attach", mapOf("version" to 1)), staleAttach)
+        assertEquals(null, (staleAttach.value as Map<*, *>)["descriptor"])
         oldBridge.dispose()
         val staleResult = CapturingCallBridgeResult()
         oldBridge.onMethodCall(
@@ -528,6 +612,70 @@ class MknoonCallNativeBridgeTest {
                 (events.single() as Map<*, *>)["type"]
             },
         )
+    }
+
+    @Test
+    fun `graph retry on the same engine replays timeout and receives the next incoming answer`() {
+        val rig = LifecycleRig()
+        val relay = MknoonCallEventRelay()
+        val controller = MknoonCallLifecycleController(
+            store = rig.store,
+            platform = rig.platform,
+            eventSink = relay,
+            capabilityEnabled = { true },
+            recordAudioPermissionGranted = { true },
+            nowMs = { NOW_MS },
+        )
+        val bridge = MknoonCallNativeBridge(controller, messenger = null, relay = relay)
+        val withdrawnSink = CapturingCallEventSink()
+        bridge.onListen(null, withdrawnSink)
+        bridge.onMethodCall(
+            MethodCall("attach", mapOf("version" to 1)),
+            CapturingCallBridgeResult(),
+        )
+        // A failed graph advertisement closes its Dart adapter, including
+        // EventChannel cancellation AND the explicit MethodChannel detach.
+        bridge.onCancel(null)
+        assertBridgeSuccess(bridge, "detach", mapOf("version" to 1), expected = true)
+
+        val retriedSink = CapturingCallEventSink()
+        bridge.onListen(null, retriedSink)
+        bridge.onMethodCall(
+            MethodCall("attach", mapOf("version" to 1)),
+            CapturingCallBridgeResult(),
+        )
+        assertEquals(MknoonCallPresentationResult.PRESENTED, controller.present(rig.payload))
+        assertTrue(controller.terminate(rig.payload.nativeCallId, PendingNativeCallEventType.EXPIRED))
+        val terminalReplay = CapturingCallBridgeResult()
+        bridge.onMethodCall(MethodCall("attach", mapOf("version" to 1)), terminalReplay)
+        val terminalEnvelope = terminalReplay.value as Map<*, *>
+        assertNotNull("The replacement adapter must receive the exact terminal replay", terminalEnvelope["descriptor"])
+        assertEquals(rig.payload.nativeCallId.toString(), terminalEnvelope["nativeCallId"])
+        assertBridgeSuccess(
+            bridge,
+            "acknowledge",
+            mapOf(
+                "version" to 1,
+                "callHandle" to rig.payload.callHandle,
+                "throughSequence" to terminalEnvelope["highestSequence"],
+                "disposition" to "TERMINAL",
+            ),
+            expected = true,
+        )
+        assertEquals(null, controller.snapshot())
+
+        val successor = callPayload(UUID.fromString(OTHER_CALL_ID))
+        assertEquals(MknoonCallPresentationResult.PRESENTED, controller.present(successor))
+        assertTrue(controller.answer(successor.nativeCallId))
+        assertTrue(withdrawnSink.values.isEmpty())
+        assertEquals(
+            listOf("presented", "expired", "presented", "answer"),
+            retriedSink.values.map { envelope ->
+                (((envelope as Map<*, *>)["events"] as List<*>).single() as Map<*, *>)["type"]
+            },
+        )
+        assertEquals(successor.nativeCallId, controller.snapshot()?.nativeCallId)
+        assertTrue(requireNotNull(controller.snapshot()).answerRequested)
     }
 
     @Test
@@ -718,7 +866,7 @@ class MknoonCallNativeBridgeTest {
     }
 
     @Test
-    fun `normal detach preserves pre-start descriptor for engine recreation`() {
+    fun `normal graph detach preserves descriptor and permits the same engine to reattach`() {
         val rig = LifecycleRig()
         assertEquals(MknoonCallPresentationResult.PRESENTED, rig.controller.present(rig.payload))
         val relay = MknoonCallEventRelay()
@@ -731,9 +879,9 @@ class MknoonCallNativeBridgeTest {
         assertEquals(null, requireNotNull(rig.controller.snapshot()).terminalEvent)
         assertEquals(0, rig.platform.endCalls)
 
-        val staleAttach = CapturingCallBridgeResult()
-        bridge.onMethodCall(MethodCall("attach", mapOf("version" to 1)), staleAttach)
-        assertEquals(null, (staleAttach.value as Map<*, *>)["descriptor"])
+        val resumedAttach = CapturingCallBridgeResult()
+        bridge.onMethodCall(MethodCall("attach", mapOf("version" to 1)), resumedAttach)
+        assertNotNull((resumedAttach.value as Map<*, *>)["descriptor"])
 
         val replacement = MknoonCallNativeBridge(
             rig.controller,
@@ -746,6 +894,28 @@ class MknoonCallNativeBridgeTest {
             replacementAttach,
         )
         assertNotNull((replacementAttach.value as Map<*, *>)["descriptor"])
+        assertBridgeSuccess(bridge, "detach", mapOf("version" to 1), expected = false)
+        val supersededAttach = CapturingCallBridgeResult()
+        bridge.onMethodCall(MethodCall("attach", mapOf("version" to 1)), supersededAttach)
+        assertEquals(null, (supersededAttach.value as Map<*, *>)["descriptor"])
+    }
+
+    @Test
+    fun `local normal detach remains resumable but engine disposal permanently fences attach`() {
+        val rig = LifecycleRig()
+        assertEquals(MknoonCallPresentationResult.PRESENTED, rig.controller.present(rig.payload))
+        val bridge = MknoonCallNativeBridge(rig.controller, messenger = null)
+        assertBridgeSuccess(bridge, "detach", mapOf("version" to 1), expected = true)
+        val resumed = CapturingCallBridgeResult()
+        bridge.onMethodCall(MethodCall("attach", mapOf("version" to 1)), resumed)
+        assertNotNull((resumed.value as Map<*, *>)["descriptor"])
+
+        bridge.dispose()
+        val disposed = CapturingCallBridgeResult()
+        bridge.onMethodCall(MethodCall("attach", mapOf("version" to 1)), disposed)
+        assertEquals(null, (disposed.value as Map<*, *>)["descriptor"])
+        assertBridgeSuccess(bridge, "detach", mapOf("version" to 1), expected = false)
+        assertEquals(null, requireNotNull(rig.controller.snapshot()).terminalEvent)
     }
 
     @Test
@@ -781,6 +951,70 @@ class MknoonCallNativeBridgeTest {
             "speaker",
             (current.value as Map<*, *>)["route"],
         )
+    }
+
+    @Test
+    fun `native decline followed by canonical end succeeds until exact ACK without affecting the next call`() {
+        val rig = LifecycleRig()
+        val bridge = MknoonCallNativeBridge(rig.controller, messenger = null)
+        val callId = rig.payload.nativeCallId
+        val handleArguments = mapOf("version" to 1, "callHandle" to rig.payload.callHandle)
+        assertEquals(MknoonCallPresentationResult.PRESENTED, rig.controller.present(rig.payload))
+        assertTrue(rig.controller.markAdopted(callId))
+        assertBridgeSuccess(bridge, "acknowledge", handleArguments + mapOf(
+            "throughSequence" to requireNotNull(rig.controller.snapshot()).highestSequence,
+            "disposition" to "ADOPTED",
+        ), expected = true)
+        assertTrue(rig.controller.terminate(callId, PendingNativeCallEventType.DECLINE_REQUESTED))
+        val declined = requireNotNull(rig.controller.snapshot())
+
+        assertBridgeSuccess(bridge, "end", handleArguments, expected = true)
+        assertEquals(declined, rig.controller.snapshot())
+        assertEquals(1, rig.platform.endCalls)
+        assertBridgeSuccess(bridge, "acknowledge", handleArguments + mapOf(
+            "throughSequence" to declined.highestSequence,
+            "disposition" to "TERMINAL",
+        ), expected = true)
+        // Match the durable store's receipt lookup after the journal is gone.
+        rig.store.receiptNativeCallIds[rig.payload.callHandle] = callId
+        assertBridgeSuccess(bridge, "end", handleArguments, expected = false)
+
+        val successor = callPayload(UUID.fromString(OTHER_CALL_ID))
+        assertEquals(MknoonCallPresentationResult.PRESENTED, rig.controller.present(successor))
+        val successorBefore = requireNotNull(rig.controller.snapshot())
+        val operationsBeforeStale = rig.operations.toList()
+        assertBridgeSuccess(bridge, "end", handleArguments, expected = false)
+        assertEquals(successorBefore, rig.controller.snapshot())
+        assertEquals(operationsBeforeStale, rig.operations)
+        assertTrue(rig.controller.answer(successor.nativeCallId))
+    }
+
+    @Test
+    fun `presentation metadata is bounded exact call ephemeral and superseded bridge cannot overwrite`() {
+        val rig = LifecycleRig()
+        assertEquals(MknoonCallPresentationResult.PRESENTED, rig.controller.present(rig.payload))
+        val relay = MknoonCallEventRelay()
+        val old = MknoonCallNativeBridge(rig.controller, null, relay)
+        val args = mapOf("version" to 1, "callHandle" to rig.payload.callHandle,
+            "displayName" to "Trusted", "avatarPng" to null, "state" to "ringing", "connectedAtMs" to null,
+            "light" to false, "muted" to false, "muteAvailable" to false, "speakerOn" to false,
+            "speakerAvailable" to false, "routeLabel" to "")
+        fun update(bridge: MknoonCallNativeBridge, values: Map<String, Any?>): CapturingCallBridgeResult {
+            val result = CapturingCallBridgeResult()
+            bridge.onMethodCall(MethodCall("updatePresentation", values), result)
+            return result
+        }
+        assertEquals(true, update(old, args).value)
+        assertEquals("Trusted", rig.controller.presentation(rig.payload.nativeCallId)?.displayName)
+        val current = MknoonCallNativeBridge(rig.controller, null, relay)
+        assertEquals(false, update(old, args + ("displayName" to "Stale")).value)
+        assertEquals("Trusted", rig.controller.presentation(rig.payload.nativeCallId)?.displayName)
+        assertEquals(null, update(current, args + ("state" to "payload-controlled")).value)
+        assertEquals(null, update(current, args + ("avatarPng" to ByteArray(512 * 1024 + 1))).value)
+        assertEquals(null, update(current, args + ("callHandle" to "unknown")).value)
+        rig.controller.terminate(rig.payload.nativeCallId, PendingNativeCallEventType.DECLINE_REQUESTED)
+        assertEquals(null, rig.controller.presentation(rig.payload.nativeCallId))
+        assertEquals(false, update(current, args).value)
     }
 
     private fun acknowledgementArguments(

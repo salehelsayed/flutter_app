@@ -1,5 +1,7 @@
 import 'dart:async';
 
+import 'package:flutter_app/features/call/application/call_audio_controller.dart';
+import 'package:flutter_app/features/call/application/call_audio_interruption_coordinator.dart';
 import 'package:flutter_app/features/call/application/call_cleanup_coordinator.dart';
 import 'package:flutter_app/features/call/application/call_coordinator.dart';
 import 'package:flutter_app/features/call/application/call_history_projector.dart';
@@ -69,6 +71,451 @@ Future<void> _flushAsync([int turns = 8]) async {
 }
 
 void main() {
+  test(
+    'queued fatal retry result cannot terminate a newer reconnect episode',
+    () async {
+      final timers = _ReadinessTimerScheduler();
+      final retry = _FakeSignalRetry()
+        ..error = const CallNegotiationPortException(
+          CallNegotiationPortErrorCode.signalingUnavailable,
+        );
+      final harness = _Harness(
+        snapshot: _snapshot(
+          CallState.reconnecting,
+        ).copyWith(reconnectGeneration: 1),
+        mediaReadinessTimerScheduler: timers,
+      );
+      addTearDown(harness.executor.close);
+      harness.signaling.restartError = CallNegotiationPortException(
+        CallNegotiationPortErrorCode.transportUnavailable,
+        retry: retry,
+      );
+      await harness.executor.execute(
+        const CallEffect(CallEffectType.restartIce),
+        harness.snapshot,
+      );
+      await timers.fireNext();
+      final failure = harness.dispatched.single;
+      expect(failure.type, CallEventType.negotiationFailed);
+      expect(failure.reconnectGeneration, 1);
+      const reducer = CallReducer();
+      expect(
+        reducer.reduce(harness.snapshot, failure).snapshot.state,
+        CallState.ended,
+      );
+      final next = harness.snapshot.copyWith(reconnectGeneration: 2);
+      final result = reducer.reduce(next, failure);
+      expect(result.decision, CallEventDecision.ignored);
+      expect(result.snapshot.state, CallState.reconnecting);
+      expect(result.effects, isEmpty);
+      // Ignoring the queued old failure must not suppress a real new failure.
+      harness.snapshot = next;
+      harness.signaling.restartError = const CallNegotiationPortException(
+        CallNegotiationPortErrorCode.signalingUnavailable,
+      );
+      final currentFailure = await harness.executor.execute(
+        const CallEffect(CallEffectType.requestIceRestart),
+        next,
+      );
+      expect(currentFailure?.reconnectGeneration, 2);
+      expect(
+        reducer.reduce(next, currentFailure!).snapshot.state,
+        CallState.ended,
+      );
+    },
+  );
+
+  test(
+    'exhausted production transport owner waits for reconnect timeout',
+    () async {
+      final timers = _ReadinessTimerScheduler();
+      final retry = _FakeSignalRetry()
+        ..error = const CallNegotiationPortException(
+          CallNegotiationPortErrorCode.transportUnavailable,
+        );
+      final harness = _Harness(
+        snapshot: _snapshot(CallState.reconnecting),
+        mediaReadinessTimerScheduler: timers,
+      );
+      addTearDown(harness.executor.close);
+      harness.signaling.restartError = CallNegotiationPortException(
+        CallNegotiationPortErrorCode.transportUnavailable,
+        retry: retry,
+      );
+      await harness.executor.execute(
+        const CallEffect(CallEffectType.restartIce),
+        harness.snapshot,
+      );
+      await timers.fireNext();
+      expect(harness.dispatched, isEmpty);
+      expect(harness.snapshot.state, CallState.reconnecting);
+      expect(retry.closed, isTrue);
+      expect(timers.active, isEmpty);
+    },
+  );
+
+  test(
+    'stale retry owners do not consume successor reconnect capacity',
+    () async {
+      final timers = _ReadinessTimerScheduler();
+      final harness = _Harness(
+        snapshot: _snapshot(
+          CallState.reconnecting,
+          direction: CallDirection.incoming,
+        ),
+        mediaReadinessTimerScheduler: timers,
+      );
+      addTearDown(harness.executor.close);
+      final previous = <_FakeSignalRetry>[];
+      for (var generation = 0; generation < 3; generation++) {
+        final retry = _FakeSignalRetry();
+        harness.snapshot = harness.snapshot.copyWith(
+          reconnectGeneration: generation,
+        );
+        harness.signaling.restartError = CallNegotiationPortException(
+          CallNegotiationPortErrorCode.transportUnavailable,
+          retry: retry,
+        );
+        expect(
+          await harness.executor.execute(
+            const CallEffect(CallEffectType.requestIceRestart),
+            harness.snapshot,
+          ),
+          isNull,
+        );
+        for (final old in previous) {
+          expect(old.closed, isTrue);
+        }
+        previous.add(retry);
+        expect(
+          harness.executor.toDiagnosticMap()['pendingRecoverySignalCount'],
+          1,
+        );
+      }
+      await timers.fireNext();
+      expect(previous.last.attempts, 1);
+      expect(harness.dispatched, isEmpty);
+    },
+  );
+  for (final boundary in ['ended', 'successor', 'episode', 'ice', 'close']) {
+    test('pending reconnect retry cannot resume after $boundary', () async {
+      final timers = _ReadinessTimerScheduler();
+      final gate = Completer<void>();
+      final retry = _FakeSignalRetry()..gate = gate;
+      final harness = _Harness(
+        snapshot: _snapshot(CallState.reconnecting),
+        mediaReadinessTimerScheduler: timers,
+      );
+      addTearDown(harness.executor.close);
+      harness.signaling.restartError = CallNegotiationPortException(
+        CallNegotiationPortErrorCode.transportUnavailable,
+        retry: retry,
+      );
+      expect(
+        await harness.executor.execute(
+          const CallEffect(CallEffectType.restartIce),
+          harness.snapshot,
+        ),
+        isNull,
+      );
+      final pending = timers.fireNext();
+      await _flushAsync();
+      expect(retry.attempts, 1);
+      switch (boundary) {
+        case 'ended':
+          harness.snapshot = _snapshot(CallState.ended);
+        case 'successor':
+          harness.snapshot = _snapshot(
+            CallState.reconnecting,
+            callId: _otherCallId,
+          );
+        case 'episode':
+          harness.snapshot = harness.snapshot.copyWith(
+            reconnectGeneration: harness.snapshot.reconnectGeneration + 1,
+          );
+        case 'ice':
+          harness.engine._iceGeneration++;
+        case 'close':
+          await harness.executor.close();
+      }
+      gate.complete();
+      await pending;
+      expect(harness.engine.createOfferCalls, 0);
+      expect(harness.signaling.descriptions, isEmpty);
+      expect(harness.dispatched, isEmpty);
+      expect(retry.closed, isTrue);
+      expect(timers.active, isEmpty);
+    });
+  }
+
+  test(
+    'permanent transport loss uses four bounded retries and leaves deadline authoritative',
+    () async {
+      final timers = _ReadinessTimerScheduler();
+      final retry = _FakeSignalRetry()..unavailable = true;
+      final harness = _Harness(
+        snapshot: _snapshot(CallState.reconnecting),
+        mediaReadinessTimerScheduler: timers,
+      );
+      addTearDown(harness.executor.close);
+      harness.signaling.restartError = CallNegotiationPortException(
+        CallNegotiationPortErrorCode.transportUnavailable,
+        retry: retry,
+      );
+      expect(
+        await harness.executor.execute(
+          const CallEffect(CallEffectType.restartIce),
+          harness.snapshot,
+        ),
+        isNull,
+      );
+      for (var index = 0; index < 4; index++) {
+        await timers.fireNext();
+      }
+      expect(retry.attempts, 4);
+      expect(retry.closed, isTrue);
+      expect(timers.active, isEmpty);
+      expect(harness.dispatched, isEmpty);
+      expect(harness.snapshot.state, CallState.reconnecting);
+      expect(harness.engine.restartCalls, 1);
+      expect(
+        timers.scheduled.fold<int>(
+          0,
+          (total, timer) => total + timer.delay.inMilliseconds,
+        ),
+        lessThan(15000),
+      );
+    },
+  );
+
+  test(
+    'new ICE episode discards an offline candidate backlog before fresh egress',
+    () async {
+      final timers = _ReadinessTimerScheduler();
+      final gate = Completer<void>();
+      final retry = _FakeSignalRetry()..gate = gate;
+      final harness = _Harness(
+        snapshot: _snapshot(CallState.negotiating),
+        mediaReadinessTimerScheduler: timers,
+        maxPendingLocalCandidates: 2,
+      );
+      addTearDown(harness.executor.close);
+      await harness.executor.execute(
+        const CallEffect(CallEffectType.startNegotiation),
+        harness.snapshot,
+      );
+      harness.snapshot = _snapshot(
+        CallState.reconnecting,
+      ).copyWith(reconnectGeneration: 1);
+      harness.signaling.candidateError = CallNegotiationPortException(
+        CallNegotiationPortErrorCode.transportUnavailable,
+        retry: retry,
+      );
+      harness.engine.emitCandidate(
+        const CallIceCandidate(
+          value: 'candidate:old-failed',
+          mediaId: 'audio',
+          mediaLineIndex: 0,
+        ),
+      );
+      await _flushAsync();
+      harness.engine.emitCandidate(
+        const CallIceCandidate(
+          value: 'candidate:old-queued',
+          mediaId: 'audio',
+          mediaLineIndex: 0,
+        ),
+      );
+      final pending = timers.fireNext();
+      await _flushAsync();
+      harness.signaling.candidateError = null;
+      harness.snapshot = harness.snapshot.copyWith(reconnectGeneration: 2);
+      harness.engine.onRestart = () => harness.engine.emitCandidate(
+        CallIceCandidate(
+          value: 'candidate:fresh',
+          mediaId: 'audio',
+          mediaLineIndex: 0,
+          iceGeneration: harness.engine.iceGeneration,
+        ),
+      );
+      await harness.executor.execute(
+        const CallEffect(CallEffectType.restartIce),
+        harness.snapshot,
+      );
+      await _flushAsync();
+      expect(
+        harness.signaling.candidateBatches
+            .expand((batch) => batch.$2)
+            .map((candidate) => candidate.value),
+        ['candidate:old-failed', 'candidate:fresh'],
+      );
+      expect(retry.closed, isTrue);
+      gate.complete();
+      await pending;
+      expect(harness.dispatched, isEmpty);
+      expect(
+        harness.executor.toDiagnosticMap()['pendingLocalCandidateCount'],
+        0,
+      );
+    },
+  );
+  test(
+    'candidate transport retry retains bounded batch and resumes pending drain',
+    () async {
+      final timers = _ReadinessTimerScheduler();
+      final retry = _FakeSignalRetry();
+      final harness = _Harness(
+        snapshot: _snapshot(CallState.negotiating),
+        mediaReadinessTimerScheduler: timers,
+      );
+      addTearDown(harness.executor.close);
+      await harness.executor.execute(
+        const CallEffect(CallEffectType.startNegotiation),
+        harness.snapshot,
+      );
+      harness.snapshot = _snapshot(CallState.reconnecting);
+      harness.signaling.candidateError = CallNegotiationPortException(
+        CallNegotiationPortErrorCode.transportUnavailable,
+        retry: retry,
+      );
+      harness.engine.emitCandidate(
+        const CallIceCandidate(
+          value: 'candidate:first',
+          mediaId: 'audio',
+          mediaLineIndex: 0,
+        ),
+      );
+      await _flushAsync();
+      harness.engine.emitCandidate(
+        const CallIceCandidate(
+          value: 'candidate:second',
+          mediaId: 'audio',
+          mediaLineIndex: 0,
+        ),
+      );
+      await _flushAsync();
+      expect(harness.signaling.candidateBatches, hasLength(1));
+      expect(
+        harness.executor.toDiagnosticMap()['pendingLocalCandidateCount'],
+        2,
+      );
+      harness.signaling.candidateError = null;
+      await timers.fireNext();
+      await _flushAsync();
+      expect(retry.attempts, 1);
+      expect(harness.signaling.candidateBatches, hasLength(2));
+      expect(
+        harness.executor.toDiagnosticMap()['pendingLocalCandidateCount'],
+        0,
+      );
+      expect(harness.dispatched, isEmpty);
+    },
+  );
+  test(
+    'transient reconnect signaling resumes the same restart without ending',
+    () async {
+      final timers = _ReadinessTimerScheduler();
+      final retry = _FakeSignalRetry();
+      final harness = _Harness(
+        snapshot: _snapshot(CallState.reconnecting),
+        mediaReadinessTimerScheduler: timers,
+      );
+      addTearDown(harness.executor.close);
+      harness.signaling.restartError = CallNegotiationPortException(
+        CallNegotiationPortErrorCode.transportUnavailable,
+        retry: retry,
+      );
+      final result = await harness.executor.execute(
+        const CallEffect(CallEffectType.restartIce),
+        harness.snapshot,
+      );
+      expect(result, isNull);
+      expect(harness.engine.restartCalls, 1);
+      expect(harness.engine.createOfferCalls, 0);
+      expect(harness.dispatched, isEmpty);
+      await timers.fireNext();
+      expect(retry.attempts, 1);
+      expect(harness.engine.restartCalls, 1);
+      expect(harness.engine.createOfferCalls, 1);
+      expect(harness.signaling.descriptions, hasLength(1));
+      expect(retry.closed, isTrue);
+      expect(harness.dispatched, isEmpty);
+    },
+  );
+
+  test(
+    'transient reconnect answer retries without recreating local SDP',
+    () async {
+      final timers = _ReadinessTimerScheduler();
+      final retry = _FakeSignalRetry();
+      final harness = _Harness(
+        snapshot: _snapshot(CallState.reconnecting),
+        mediaReadinessTimerScheduler: timers,
+      );
+      addTearDown(harness.executor.close);
+      harness.signaling.descriptionError = CallNegotiationPortException(
+        CallNegotiationPortErrorCode.transportUnavailable,
+        retry: retry,
+      );
+      expect(
+        await harness.executor.execute(
+          const CallEffect(CallEffectType.restartIce),
+          harness.snapshot,
+        ),
+        isNull,
+      );
+      expect(harness.engine.createOfferCalls, 1);
+      expect(harness.engine.localDescriptions, hasLength(1));
+      await timers.fireNext();
+      expect(retry.attempts, 1);
+      expect(harness.engine.createOfferCalls, 1);
+      expect(harness.engine.localDescriptions, hasLength(1));
+      expect(retry.closed, isTrue);
+    },
+  );
+
+  test(
+    'initial negotiation transport failures remain terminal and release retry bytes',
+    () async {
+      final timers = _ReadinessTimerScheduler();
+      final retry = _FakeSignalRetry();
+      final harness = _Harness(
+        snapshot: _snapshot(CallState.accepted),
+        mediaReadinessTimerScheduler: timers,
+      );
+      addTearDown(harness.executor.close);
+      harness.signaling.descriptionError = CallNegotiationPortException(
+        CallNegotiationPortErrorCode.transportUnavailable,
+        retry: retry,
+      );
+      final result = await harness.executor.execute(
+        const CallEffect(CallEffectType.startNegotiation),
+        harness.snapshot,
+      );
+      expect(result?.type, CallEventType.negotiationFailed);
+      expect(retry.closed, isTrue);
+      expect(timers.active, isEmpty);
+    },
+  );
+
+  test('reconnect authority failures remain terminal without retry', () async {
+    final timers = _ReadinessTimerScheduler();
+    final harness = _Harness(
+      snapshot: _snapshot(CallState.reconnecting),
+      mediaReadinessTimerScheduler: timers,
+    );
+    addTearDown(harness.executor.close);
+    harness.signaling.restartError = const CallNegotiationPortException(
+      CallNegotiationPortErrorCode.signalingUnavailable,
+    );
+    final result = await harness.executor.execute(
+      const CallEffect(CallEffectType.restartIce),
+      harness.snapshot,
+    );
+    expect(result?.type, CallEventType.negotiationFailed);
+    expect(timers.active, isEmpty);
+  });
+
   for (final replaced in [false, true]) {
     test(
       'restart credentials cannot mutate ${replaced ? 'a replacement' : 'an ended call'}',
@@ -352,6 +799,432 @@ void main() {
       }
     },
   );
+
+  for (final immediatelyReady in <bool>[false, true]) {
+    test(
+      immediatelyReady
+          ? 'fresh remote restart with immediate readiness does not deadlock the coordinator'
+          : 'fresh remote restart recovers after early connected without another native state event',
+      () async {
+        final calls = <String>[];
+        final materialStore = CallNegotiationMaterialStore();
+        final engine = _FakeEngine(calls);
+        final signaling = _FakeSignaling(calls);
+        final deadlines = _CausalTimerScheduler();
+        final readiness = _ReadinessTimerScheduler();
+        final history = _CausalHistoryRepository();
+        final dispatched = <CallEventType>[];
+        var cleanupCalls = 0;
+        late final CallCoordinator coordinator;
+        final executor = CallNegotiationEffectExecutor(
+          engine: engine,
+          materialStore: materialStore,
+          mediaPreparer: _FakePreparer(calls),
+          signaling: signaling,
+          configuration: _configuration,
+          dispatchEvent: (event) async {
+            dispatched.add(event.type);
+            await coordinator.dispatch(event);
+          },
+          readActiveSnapshot: () => coordinator.activeSession,
+          readStagedIceServers: (_) async => <CallIceServer>[
+            CallIceServer(
+              urls: <String>['turns:relay.invalid'],
+              username: 'fixture',
+              credential: 'fixture',
+              expiresAt: _now.add(const Duration(minutes: 5)),
+            ),
+          ],
+          mediaReadinessTimerScheduler: readiness,
+          clock: () => _now,
+        );
+        coordinator = CallCoordinator(
+          reducer: const CallReducer(),
+          cleanupCoordinator: CallCleanupCoordinator(<CallCleanupStep>[
+            CallCleanupStep('media', (_) async => cleanupCalls++),
+          ]),
+          historyProjector: CallHistoryProjector(history, clock: () => _now),
+          effectExecutor: executor,
+          clock: () => _now,
+          idSource: () => _callId,
+          timerScheduler: deadlines,
+        );
+        addTearDown(() async {
+          await coordinator.dispose();
+          await executor.close();
+        });
+
+        Future<void> receiveOffer(int generation) async {
+          final eventId = 'ready-restart-offer-$generation';
+          materialStore.store(
+            _material(
+              eventId: eventId,
+              type: CallNegotiationMaterialType.offer,
+              generation: generation,
+              payload: {
+                'description': 'remote-offer-$generation',
+                'fingerprint': _fingerprint,
+              },
+            ),
+          );
+          await coordinator.dispatch(
+            CallEvent(
+              type: CallEventType.remoteOffer,
+              eventId: eventId,
+              occurredAt: _now,
+              callId: _callId,
+            ),
+          );
+        }
+
+        for (final type in <CallEventType>[
+          CallEventType.remoteInvite,
+          CallEventType.incomingValidated,
+          CallEventType.systemUiPresented,
+          CallEventType.answer,
+        ]) {
+          await coordinator.dispatch(_coordinatorEvent(type));
+        }
+        await receiveOffer(0);
+        engine.connectionSnapshot = _connectionSnapshot(
+          state: CallConnectionState.connected,
+          ready: true,
+        );
+        engine.emitEvent(_engineEvent(CallConnectionState.connected));
+        await _flushAsync();
+        expect(coordinator.activeSession?.state, CallState.connected);
+
+        engine.connectionSnapshot = _connectionSnapshot(
+          state: CallConnectionState.disconnected,
+          ready: false,
+        );
+        engine.emitEvent(_engineEvent(CallConnectionState.disconnected));
+        await _flushAsync();
+        expect(coordinator.activeSession?.state, CallState.reconnecting);
+        expect(signaling.restartGenerations, <int>[0]);
+        expect(engine.restartCalls, 0, reason: 'the caller owns the restart');
+
+        // Native connectivity recovers before the caller's fresh announcement.
+        engine.connectionSnapshot = _connectionSnapshot(
+          state: CallConnectionState.connected,
+          ready: true,
+        );
+        engine.emitEvent(_engineEvent(CallConnectionState.connected));
+        await _flushAsync();
+        expect(coordinator.activeSession?.state, CallState.connected);
+        expect(
+          dispatched.where((e) => e == CallEventType.mediaRecovered),
+          hasLength(1),
+        );
+        expect(readiness.active, isEmpty);
+
+        // Keep the native state connected, but withhold structural readiness
+        // until the new generation's offer and answer have both been applied.
+        engine.connectionSnapshot = _connectionSnapshot(
+          state: CallConnectionState.connected,
+          ready: false,
+        );
+        const restartId = 'fresh-caller-restart-1';
+        materialStore.store(
+          _material(
+            eventId: restartId,
+            type: CallNegotiationMaterialType.iceRestart,
+            generation: 1,
+            payload: {},
+          ),
+        );
+        await coordinator.dispatch(
+          CallEvent(
+            type: CallEventType.remoteIceRestart,
+            eventId: restartId,
+            occurredAt: _now,
+            callId: _callId,
+          ),
+        );
+        expect(coordinator.activeSession?.state, CallState.reconnecting);
+        expect(engine.iceGeneration, 1);
+        expect(engine.restartCalls, 1);
+        final reconnectDeadline = deadlines.active.single;
+        expect(reconnectDeadline.delay, const Duration(seconds: 15));
+        if (immediatelyReady) {
+          engine.onLocalDescriptionSet = () {
+            engine.connectionSnapshot = _connectionSnapshot(
+              state: CallConnectionState.connected,
+              ready: true,
+            );
+          };
+        }
+        await receiveOffer(1).timeout(const Duration(seconds: 1));
+        expect(engine.remoteDescriptions.last.value, 'remote-offer-1');
+        expect(engine.localDescriptions, hasLength(2));
+        expect(signaling.descriptions.last.$3, 1);
+
+        // A fresh observation after restart/SDP is ready. The adapter does not
+        // promise a redundant CONNECTED callback for an unchanged native state.
+        // No native candidate-generation identity is asserted by this fixture.
+        engine.connectionSnapshot = _connectionSnapshot(
+          state: CallConnectionState.connected,
+          ready: true,
+        );
+        await _flushAsync();
+        for (
+          var sample = 0;
+          sample < 3 && readiness.active.isNotEmpty;
+          sample++
+        ) {
+          await readiness.fireNext();
+          await _flushAsync();
+        }
+        expect(
+          coordinator.activeSession?.state,
+          CallState.connected,
+          reason:
+              'ready media must recover without a redundant native state edge',
+        );
+        expect(
+          dispatched.where((e) => e == CallEventType.mediaRecovered),
+          hasLength(2),
+        );
+        expect(reconnectDeadline.canceled, isTrue);
+        await reconnectDeadline.callback();
+        expect(coordinator.activeSession?.state, CallState.connected);
+        expect(cleanupCalls, 0);
+        expect(history.upsertCalls, 0);
+      },
+    );
+  }
+
+  test(
+    'post-SDP readiness replaces and fences an older generation sample',
+    () async {
+      final timers = _ReadinessTimerScheduler();
+      final harness = _Harness(
+        snapshot: _snapshot(
+          CallState.reconnecting,
+          direction: CallDirection.incoming,
+        ),
+        mediaReadinessTimerScheduler: timers,
+      );
+      addTearDown(harness.executor.close);
+      Future<void> receiveOffer(int generation) async {
+        final eventId = 'sample-generation-$generation';
+        harness.snapshot = _snapshot(
+          CallState.reconnecting,
+          direction: CallDirection.incoming,
+          recentEventIds: <String>[eventId],
+        );
+        harness.engine.restartGeneration = generation;
+        harness.materialStore.store(
+          _material(
+            eventId: eventId,
+            type: CallNegotiationMaterialType.offer,
+            generation: generation,
+            payload: {
+              'description': 'offer-$generation',
+              'fingerprint': _fingerprint,
+            },
+          ),
+        );
+        await harness.executor.execute(
+          const CallEffect(CallEffectType.deliverOffer),
+          harness.snapshot,
+        );
+        await _flushAsync();
+      }
+
+      final oldSample = Completer<CallConnectionSnapshot>();
+      harness.engine.snapshotGate = oldSample;
+      await receiveOffer(1);
+      expect(harness.engine.snapshotCalls, 1);
+      expect(harness.dispatched, isEmpty);
+
+      harness.engine.snapshotGate = null;
+      harness.engine.connectionSnapshot = _connectionSnapshot(
+        state: CallConnectionState.connected,
+        ready: false,
+      );
+      await receiveOffer(2);
+      expect(harness.engine.iceGeneration, 2);
+      expect(harness.engine.snapshotCalls, 2);
+      expect(timers.active, hasLength(1));
+
+      oldSample.complete(
+        _connectionSnapshot(state: CallConnectionState.connected, ready: true),
+      );
+      await _flushAsync();
+      expect(
+        harness.dispatched,
+        isEmpty,
+        reason:
+            'a ready observation owned by generation 1 cannot recover generation 2',
+      );
+      expect(timers.active, hasLength(1));
+
+      harness.engine.connectionSnapshot = _connectionSnapshot(
+        state: CallConnectionState.connected,
+        ready: true,
+      );
+      await timers.fireNext();
+      await _flushAsync();
+      expect(harness.dispatched.map((event) => event.type), <CallEventType>[
+        CallEventType.mediaRecovered,
+      ]);
+      expect(timers.active, isEmpty);
+      expect(harness.engine.restartCalls, 2);
+    },
+  );
+
+  test(
+    'stale SDP completion cannot arm a newer generation readiness watch',
+    () async {
+      final timers = _ReadinessTimerScheduler();
+      final harness = _Harness(
+        snapshot: _snapshot(
+          CallState.reconnecting,
+          direction: CallDirection.incoming,
+          recentEventIds: <String>['held-offer'],
+        ),
+        mediaReadinessTimerScheduler: timers,
+      );
+      addTearDown(harness.executor.close);
+      harness.materialStore.store(
+        _material(
+          eventId: 'held-offer',
+          type: CallNegotiationMaterialType.offer,
+          generation: 1,
+          payload: {'description': 'held-offer', 'fingerprint': _fingerprint},
+        ),
+      );
+      final sent = Completer<void>();
+      harness.signaling.descriptionGate = sent;
+      final pending = harness.executor.execute(
+        const CallEffect(CallEffectType.deliverOffer),
+        harness.snapshot,
+      );
+      await _flushAsync();
+      expect(harness.signaling.descriptions.single.$3, 1);
+      expect(harness.engine.snapshotCalls, 0);
+
+      harness.engine.restartGeneration = 2;
+      await harness.engine.restartIce();
+      harness.engine.connectionSnapshot = _connectionSnapshot(
+        state: CallConnectionState.connected,
+        ready: true,
+      );
+      sent.complete();
+      await pending;
+      await _flushAsync();
+      expect(harness.engine.snapshotCalls, 0);
+      expect(harness.dispatched, isEmpty);
+      expect(timers.active, isEmpty);
+    },
+  );
+
+  for (final initialNegotiation in <bool>[false, true]) {
+    test(
+      'generation change ${initialNegotiation ? 'preserves initial' : 'fences recovery'} readiness sampling',
+      () async {
+        final harness = _Harness(
+          snapshot: _snapshot(
+            initialNegotiation ? CallState.negotiating : CallState.reconnecting,
+          ),
+        );
+        addTearDown(harness.executor.close);
+        final oldSample = Completer<CallConnectionSnapshot>();
+        harness.engine.snapshotGate = oldSample;
+        harness.engine.emitEvent(_engineEvent(CallConnectionState.connected));
+        await _flushAsync();
+        expect(harness.engine.snapshotCalls, 1);
+        await harness.engine.restartIce();
+        oldSample.complete(
+          _connectionSnapshot(
+            state: CallConnectionState.connected,
+            ready: true,
+          ),
+        );
+        await _flushAsync();
+        expect(
+          harness.dispatched.map((event) => event.type),
+          initialNegotiation
+              ? <CallEventType>[CallEventType.mediaConnected]
+              : isEmpty,
+        );
+        expect(
+          harness.executor.toDiagnosticMap()['mediaReadinessSampling'],
+          isFalse,
+        );
+      },
+    );
+  }
+
+  for (final offer in <bool>[false, true]) {
+    test(
+      'post-SDP ${offer ? 'offer' : 'answer'} preserves one watch and a closed recovered phase',
+      () async {
+        final timers = _ReadinessTimerScheduler();
+        final harness = _Harness(
+          snapshot: _snapshot(
+            CallState.reconnecting,
+            direction: offer ? CallDirection.incoming : CallDirection.outgoing,
+          ),
+          mediaReadinessTimerScheduler: timers,
+        );
+        addTearDown(harness.executor.close);
+        Future<void> receiveDescription(int duplicate) async {
+          final eventId = 'same-generation-$duplicate';
+          harness.snapshot = _snapshot(
+            CallState.reconnecting,
+            direction: offer ? CallDirection.incoming : CallDirection.outgoing,
+            recentEventIds: <String>[eventId],
+          );
+          harness.materialStore.store(
+            _material(
+              eventId: eventId,
+              type: offer
+                  ? CallNegotiationMaterialType.offer
+                  : CallNegotiationMaterialType.answer,
+              payload: {
+                'description': 'same-generation-sdp',
+                'fingerprint': _fingerprint,
+              },
+            ),
+          );
+          await harness.executor.execute(
+            CallEffect(
+              offer
+                  ? CallEffectType.deliverOffer
+                  : CallEffectType.deliverAnswer,
+            ),
+            harness.snapshot,
+          );
+          await _flushAsync();
+        }
+
+        harness.engine.connectionSnapshot = _connectionSnapshot(
+          state: CallConnectionState.connected,
+          ready: false,
+        );
+        await receiveDescription(0);
+        await receiveDescription(1);
+        expect(harness.engine.snapshotCalls, 1);
+        expect(timers.active, hasLength(1));
+        harness.engine.connectionSnapshot = _connectionSnapshot(
+          state: CallConnectionState.connected,
+          ready: true,
+        );
+        await timers.fireNext();
+        await _flushAsync();
+        expect(harness.dispatched.map((event) => event.type), <CallEventType>[
+          CallEventType.mediaRecovered,
+        ]);
+        await receiveDescription(2);
+        expect(harness.engine.snapshotCalls, 2);
+        expect(harness.dispatched, hasLength(1));
+        expect(timers.active, isEmpty);
+        expect(harness.engine.restartCalls, 0);
+      },
+    );
+  }
 
   test('state gates prevent early SDP, ICE, restart, and media work', () async {
     final harness = _Harness(snapshot: _snapshot(CallState.ringing));
@@ -1483,6 +2356,44 @@ void main() {
   );
 
   test(
+    'an old readiness result cannot recover a new episode with unchanged ICE',
+    () async {
+      final h = _Harness(
+        snapshot: _snapshot(
+          CallState.reconnecting,
+          direction: CallDirection.incoming,
+        ),
+      );
+      addTearDown(h.executor.close);
+      final oldReadiness = Completer<CallConnectionSnapshot>();
+      h.engine.snapshotGate = oldReadiness;
+      h.engine.emitEvent(_engineEvent(CallConnectionState.connected));
+      await _flushAsync();
+      expect(h.engine.snapshotCalls, 1);
+
+      // Focus-driven recovery and a new loss advance the canonical episode
+      // while the callee waits for the caller's new ICE generation.
+      h.snapshot = h.snapshot.copyWith(reconnectGeneration: 1);
+      oldReadiness.complete(
+        _connectionSnapshot(state: CallConnectionState.connected, ready: true),
+      );
+      await _flushAsync();
+      expect(h.dispatched, isEmpty);
+
+      h.engine.snapshotGate = null;
+      h.engine.connectionSnapshot = _connectionSnapshot(
+        state: CallConnectionState.connected,
+        ready: true,
+      );
+      h.engine.emitEvent(_engineEvent(CallConnectionState.connected));
+      await _flushAsync();
+      expect(h.dispatched.map((event) => event.type), <CallEventType>[
+        CallEventType.mediaRecovered,
+      ]);
+    },
+  );
+
+  test(
     'terminal and call changes stop readiness before another sample',
     () async {
       for (final replacement in <CallSessionSnapshot>[
@@ -1659,6 +2570,180 @@ void main() {
     },
   );
 
+  for (final queuedRecovery in <bool>[false, true]) {
+    test(
+      queuedRecovery
+          ? 'queued old recovery cannot connect a newer reconnect episode'
+          : 'each audio-focus reconnect owns one restart after focus-driven recovery',
+      () async {
+        final calls = <String>[];
+        final engine = _FakeEngine(calls);
+        final signaling = _FakeSignaling(calls);
+        final timers = _CausalTimerScheduler();
+        final dispatched = <CallEvent>[];
+        final intents = StreamController<CallAudioInterruptionIntent>.broadcast(
+          sync: true,
+        );
+        late final CallCoordinator coordinator;
+        final executor = CallNegotiationEffectExecutor(
+          engine: engine,
+          materialStore: CallNegotiationMaterialStore(),
+          mediaPreparer: _FakePreparer(calls),
+          signaling: signaling,
+          configuration: _configuration,
+          dispatchEvent: (event) async {
+            dispatched.add(event);
+            await coordinator.dispatch(event);
+          },
+          readActiveSnapshot: () => coordinator.activeSession,
+          readStagedIceServers: (_) async => <CallIceServer>[
+            CallIceServer(
+              urls: <String>['turns:relay.invalid'],
+              username: 'fixture',
+              credential: 'fixture',
+              expiresAt: _now.add(const Duration(minutes: 5)),
+            ),
+          ],
+          clock: () => _now,
+        );
+        coordinator = CallCoordinator(
+          reducer: const CallReducer(),
+          cleanupCoordinator: CallCleanupCoordinator(<CallCleanupStep>[]),
+          historyProjector: CallHistoryProjector(
+            _CausalHistoryRepository(),
+            clock: () => _now,
+          ),
+          effectExecutor: executor,
+          clock: () => _now,
+          idSource: () => _callId,
+          timerScheduler: timers,
+        );
+        final interruptions = CallAudioInterruptionCoordinator(
+          intents: intents.stream,
+          readActiveSession: () => coordinator.activeSession,
+          readMediaSnapshot: engine.snapshot,
+          dispatchEvent: (event, {canApply}) async {
+            dispatched.add(event);
+            await coordinator.dispatch(event, canApply: canApply);
+          },
+          clock: () => _now,
+        );
+        addTearDown(() async {
+          final gate = signaling.descriptionGate;
+          if (gate != null && !gate.isCompleted) gate.complete();
+          await interruptions.close();
+          await intents.close();
+          await coordinator.dispose();
+          await executor.close();
+        });
+
+        await coordinator.dispatch(_coordinatorEvent(CallEventType.place));
+        await coordinator.dispatch(
+          _coordinatorEvent(CallEventType.outgoingInviteReady),
+        );
+        await coordinator.dispatch(
+          _coordinatorEvent(CallEventType.remoteAccept),
+        );
+        engine.connectionSnapshot = _connectionSnapshot(
+          state: CallConnectionState.connected,
+          ready: true,
+        );
+        engine.emitEvent(_engineEvent(CallConnectionState.connected));
+        await _flushAsync();
+        expect(coordinator.activeSession?.state, CallState.connected);
+
+        if (queuedRecovery) {
+          final signalingGate = Completer<void>();
+          signaling.descriptionGate = signalingGate;
+          final firstRestart = coordinator.dispatch(
+            _coordinatorEvent(CallEventType.remoteIceRestart),
+          );
+          await _flushAsync();
+          expect(coordinator.activeSession?.state, CallState.reconnecting);
+          expect(engine.restartCalls, 1);
+          final firstDeadline = timers.active.single;
+
+          intents.add(CallAudioInterruptionIntent.recover);
+          await _flushAsync();
+          final secondRestart = coordinator.dispatch(
+            CallEvent(
+              type: CallEventType.remoteIceRestart,
+              eventId: 'next-episode-request',
+              occurredAt: _now,
+              callId: _callId,
+            ),
+          );
+          engine.emitEvent(_engineEvent(CallConnectionState.connected));
+          await _flushAsync();
+          expect(
+            dispatched.where(
+              (event) => event.type == CallEventType.mediaRecovered,
+            ),
+            hasLength(2),
+          );
+
+          engine.restartGeneration = 2;
+          signalingGate.complete();
+          await firstRestart;
+          await secondRestart;
+          await _flushAsync();
+
+          expect(coordinator.activeSession?.state, CallState.reconnecting);
+          expect(engine.restartCalls, 2);
+          expect(firstDeadline.canceled, isTrue);
+          final secondDeadline = timers.active.single;
+          expect(secondDeadline.delay, const Duration(seconds: 15));
+
+          // A fresh result for episode 2 still completes that exact recovery.
+          intents.add(CallAudioInterruptionIntent.recover);
+          await _flushAsync();
+          expect(coordinator.activeSession?.state, CallState.connected);
+          expect(secondDeadline.canceled, isTrue);
+          return;
+        }
+
+        for (var generation = 1; generation <= 2; generation++) {
+          engine.restartGeneration = generation;
+          engine.connectionSnapshot = _connectionSnapshot(
+            state: CallConnectionState.connected,
+            ready: false,
+          );
+          intents.add(CallAudioInterruptionIntent.pausedReconnect);
+          await _flushAsync();
+          expect(coordinator.activeSession?.state, CallState.reconnecting);
+          expect(engine.restartCalls, generation);
+          final deadline = timers.active.single;
+          expect(deadline.delay, const Duration(seconds: 15));
+
+          // Repeated requests during this episode cannot spend a second restart
+          // or postpone its original deadline.
+          await coordinator.dispatch(
+            CallEvent(
+              type: CallEventType.remoteIceRestart,
+              eventId: 'repeated-request-$generation',
+              occurredAt: _now,
+              callId: _callId,
+            ),
+          );
+          expect(engine.restartCalls, generation);
+          expect(timers.active, <_CausalScheduled>[deadline]);
+
+          // Audio focus can recover with the native connection still CONNECTED,
+          // so no new engine state event resets the executor's restart budget.
+          engine.connectionSnapshot = _connectionSnapshot(
+            state: CallConnectionState.connected,
+            ready: true,
+          );
+          intents.add(CallAudioInterruptionIntent.recover);
+          await _flushAsync();
+          expect(coordinator.activeSession?.state, CallState.connected);
+          expect(deadline.canceled, isTrue);
+        }
+        expect(signaling.restartGenerations, <int>[1, 2]);
+      },
+    );
+  }
+
   test(
     'media loss drives one real ICE restart then one reconnect cleanup',
     () async {
@@ -1746,6 +2831,111 @@ void main() {
         coordinator.lastSnapshot?.endReason,
         CallEndReason.reconnectFailed,
       );
+      expect(cleanupCalls, 1);
+      expect(history.upsertCalls, 1);
+      expect(history.rows, hasLength(1));
+    },
+  );
+
+  test(
+    'offline restart keeps original reconnect deadline and End remains responsive',
+    () async {
+      final calls = <String>[];
+      final materialStore = CallNegotiationMaterialStore();
+      final engine = _FakeEngine(calls);
+      final preparer = _FakePreparer(calls);
+      final signaling = _FakeSignaling(calls);
+      final timers = _CausalTimerScheduler();
+      final retryTimers = _ReadinessTimerScheduler();
+      final retryGate = Completer<void>();
+      final retry = _FakeSignalRetry()..gate = retryGate;
+      final history = _CausalHistoryRepository();
+      final currentServer = CallIceServer(
+        urls: <String>['turns:relay.invalid'],
+        username: 'current-user',
+        credential: 'current-secret',
+        expiresAt: _now.add(const Duration(minutes: 5)),
+      );
+      var cleanupCalls = 0;
+      late final CallCoordinator coordinator;
+      final executor = CallNegotiationEffectExecutor(
+        engine: engine,
+        mediaReadinessTimerScheduler: retryTimers,
+        materialStore: materialStore,
+        mediaPreparer: preparer,
+        signaling: signaling,
+        configuration: _configuration,
+        dispatchEvent: (event) async {
+          await coordinator.dispatch(event);
+        },
+        readActiveSnapshot: () => coordinator.activeSession,
+        readStagedIceServers: (_) async => <CallIceServer>[currentServer],
+        clock: () => _now,
+      );
+      coordinator = CallCoordinator(
+        reducer: const CallReducer(),
+        cleanupCoordinator: CallCleanupCoordinator(<CallCleanupStep>[
+          CallCleanupStep('media', (_) async => cleanupCalls++),
+        ]),
+        historyProjector: CallHistoryProjector(history, clock: () => _now),
+        effectExecutor: executor,
+        clock: () => _now,
+        idSource: () => _callId,
+        timerScheduler: timers,
+      );
+      addTearDown(() async {
+        await coordinator.dispose();
+        await executor.close();
+      });
+
+      await coordinator.dispatch(_coordinatorEvent(CallEventType.place));
+      await coordinator.dispatch(
+        _coordinatorEvent(CallEventType.outgoingInviteReady),
+      );
+      await coordinator.dispatch(_coordinatorEvent(CallEventType.remoteAccept));
+      expect(coordinator.activeSession?.state, CallState.negotiating);
+
+      engine.connectionSnapshot = _connectionSnapshot(
+        state: CallConnectionState.connected,
+        ready: true,
+      );
+      engine.emitEvent(_engineEvent(CallConnectionState.connected));
+      await _flushAsync();
+      expect(coordinator.activeSession?.state, CallState.connected);
+
+      signaling.restartError = CallNegotiationPortException(
+        CallNegotiationPortErrorCode.transportUnavailable,
+        retry: retry,
+      );
+      engine.connectionSnapshot = _connectionSnapshot(
+        state: CallConnectionState.disconnected,
+        ready: false,
+      );
+      engine.emitEvent(_engineEvent(CallConnectionState.disconnected));
+      await _flushAsync();
+
+      expect(coordinator.activeSession?.state, CallState.reconnecting);
+      expect(engine.restartCalls, 1);
+      expect(signaling.restartGenerations, <int>[engine.restartGeneration]);
+      final reconnectTimer = timers.active.single;
+      expect(reconnectTimer.delay, const Duration(seconds: 15));
+
+      engine.emitEvent(_engineEvent(CallConnectionState.disconnected));
+      await _flushAsync();
+      expect(engine.restartCalls, 1);
+      expect(timers.active, <_CausalScheduled>[reconnectTimer]);
+
+      final pendingRetry = retryTimers.fireNext();
+      await _flushAsync();
+      // A transport await runs outside the canonical lane: End can reduce now.
+      await coordinator.dispatch(_coordinatorEvent(CallEventType.end));
+      expect(coordinator.activeSession, isNull);
+      expect(coordinator.lastSnapshot?.endReason, CallEndReason.localHangup);
+      expect(reconnectTimer.canceled, isTrue);
+      retryGate.complete();
+      await pendingRetry;
+      expect(engine.createOfferCalls, 1); // Initial negotiation only.
+      expect(retry.closed, isTrue);
       expect(cleanupCalls, 1);
       expect(history.upsertCalls, 1);
       expect(history.rows, hasLength(1));
@@ -2099,6 +3289,7 @@ final class _FakeSignaling implements CallNegotiationSignalingPort {
   Completer<void>? candidateGate;
   Completer<void>? descriptionGate;
   CallNegotiationPortException? descriptionError;
+  CallNegotiationPortException? restartError;
   CallNegotiationPortException? candidateError;
 
   @override
@@ -2108,6 +3299,7 @@ final class _FakeSignaling implements CallNegotiationSignalingPort {
   }) async {
     log.add('signal.restart');
     restartGenerations.add(iceGeneration);
+    if (restartError case final error?) throw error;
   }
 
   @override
@@ -2180,6 +3372,9 @@ final class _FakeEngine implements CallEngine {
   bool failClose = false;
   Completer<void>? closeGate;
   Completer<void>? localDescriptionGate;
+  void Function()? onLocalDescriptionSet;
+  void Function()? onRestart;
+  Completer<CallConnectionSnapshot>? snapshotGate;
   int snapshotCalls = 0;
   int restartGeneration = 1;
   int _iceGeneration = 0;
@@ -2241,6 +3436,7 @@ final class _FakeEngine implements CallEngine {
     final candidate = candidateOnSetLocal;
     if (candidate != null) _candidates.add(candidate);
     if (localError case final code?) throw CallEngineException(code);
+    onLocalDescriptionSet?.call();
   }
 
   @override
@@ -2265,7 +3461,9 @@ final class _FakeEngine implements CallEngine {
     log.add('engine.restart');
     lastRestartServers = List<CallIceServer>.of(iceServers);
     if (restartError case final code?) throw CallEngineException(code);
-    return _iceGeneration = restartGeneration;
+    _iceGeneration = restartGeneration;
+    onRestart?.call();
+    return _iceGeneration;
   }
 
   @override
@@ -2285,6 +3483,8 @@ final class _FakeEngine implements CallEngine {
   Future<CallConnectionSnapshot> snapshot() async {
     snapshotCalls++;
     if (snapshotError case final code?) throw CallEngineException(code);
+    final gate = snapshotGate;
+    if (gate != null) return gate.future;
     return connectionSnapshot;
   }
 
@@ -2297,4 +3497,28 @@ final class _FakeEngine implements CallEngine {
       throw const CallEngineException(CallEngineErrorCode.other);
     }
   }
+}
+
+final class _FakeSignalRetry implements CallNegotiationSignalRetry {
+  int attempts = 0;
+  bool closed = false;
+  bool unavailable = false;
+  CallNegotiationPortException? error;
+  Completer<void>? gate;
+  @override
+  Future<void> retry({required bool Function() canApply}) async {
+    attempts++;
+    if (gate != null) await gate!.future;
+    if (closed || !canApply()) return;
+    if (error case final error?) throw error;
+    if (unavailable) {
+      throw CallNegotiationPortException(
+        CallNegotiationPortErrorCode.transportUnavailable,
+        retry: this,
+      );
+    }
+  }
+
+  @override
+  void close() => closed = true;
 }

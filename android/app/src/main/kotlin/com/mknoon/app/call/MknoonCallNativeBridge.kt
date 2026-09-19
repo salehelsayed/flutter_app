@@ -153,6 +153,8 @@ internal class MknoonCallNativeBridge(
     private val beforeAttach: (() -> Unit)? = null,
     private val authenticatedPresenter: ((String, Long) -> Boolean)? = null,
     private val authenticatedOutgoingRegistrar: ((String, Long) -> Boolean)? = null,
+    private val admissionSettlementCapture: ((UUID) -> MknoonCallAdmissionToken?)? = null,
+    private val admissionSettlementCommit: ((MknoonCallAdmissionToken) -> Boolean)? = null,
     private val ringbackStarter: ((String) -> Boolean)? = null,
     private val ringbackStopper: ((String) -> Boolean)? = null,
     private val mainHandler: Handler = Handler(Looper.getMainLooper()),
@@ -245,9 +247,12 @@ internal class MknoonCallNativeBridge(
             "requestRoute" -> requestRoute(call.arguments, result)
             "readAudioState" -> readAudioState(call.arguments, result)
             "project" -> project(call.arguments, result)
+            "updatePresentation" -> updatePresentation(call.arguments, result)
             "presentAuthenticated" -> presentAuthenticated(call.arguments, result)
             "registerOutgoingAuthenticated" ->
                 registerOutgoingAuthenticated(call.arguments, result)
+            "captureAdmissionSettlement" -> captureAdmissionSettlement(call.arguments, result)
+            "settleAuthenticatedAdmission" -> settleAuthenticatedAdmission(call.arguments, result)
             "setCapability" -> setCapabilityEnabled(call.arguments, result)
             "setCapabilityEnabled" -> setCapabilityEnabled(call.arguments, result)
             "readCapability" -> readCapability(call.arguments, result)
@@ -336,7 +341,11 @@ internal class MknoonCallNativeBridge(
 
     private fun detach(arguments: Any?, result: MethodChannel.Result) {
         if (!nullOrVersionOnly(arguments)) return badArguments(result)
-        val detached = detachControllerIfOwned(invalidate = true)
+        // Dart can withdraw and retry its call graph on the same engine (for
+        // example after endpoint advertisement fails). Detach that adapter's
+        // sink, but retain this engine bridge's relay ownership for reattach.
+        // dispose/failClosed and superseding bridges remain permanent fences.
+        val detached = detachControllerIfOwned(invalidate = false)
         synchronized(sinkLock) {
             sinkGeneration += 1L
             eventSink = null
@@ -455,6 +464,15 @@ internal class MknoonCallNativeBridge(
         )
     }
 
+    private fun updatePresentation(arguments: Any?, result: MethodChannel.Result) {
+        val map = dartIdentityMap(arguments, MknoonLockedCallMetadata.fields) ?: return badArguments(result)
+        val nativeCallId = resolveCallHandle(map["callHandle"]) ?: return badArguments(result)
+        val metadata = MknoonLockedCallMetadata.parse(map) ?: return badArguments(result)
+        val update = { controller.updatePresentation(nativeCallId, metadata) }
+        result.success(relay?.withCurrent(relayListener, relayGeneration, false, update)
+            ?: synchronized(localOwnershipLock) { if (locallyCurrent) update() else false })
+    }
+
     private fun project(arguments: Any?, result: MethodChannel.Result) {
         val map = dartIdentityMap(arguments, setOf("state")) ?: return badArguments(result)
         val nativeCallId = resolveCallHandle(map["callHandle"])
@@ -479,6 +497,45 @@ internal class MknoonCallNativeBridge(
         if (alreadyPresented) return result.success(true)
         dispatchRegistration(result) {
             authenticatedPresenter?.invoke(callHandle, expiresAtMs) == true
+        }
+    }
+
+    private fun captureAdmissionSettlement(arguments: Any?, result: MethodChannel.Result) {
+        val fields = arguments as? Map<*, *> ?: return badArguments(result)
+        if (fields.keys != setOf("version", "nativeCallId") || !validVersion(fields["version"])) return badArguments(result)
+        val raw = fields["nativeCallId"] as? String ?: return badArguments(result)
+        if (!CANONICAL_CALL_HANDLE.matches(raw)) return badArguments(result)
+        val nativeCallId = parseUuid(raw) ?: return badArguments(result)
+        val capture = { runCatching { admissionSettlementCapture?.invoke(nativeCallId)?.toMap() }.getOrNull() }
+        dispatchAdmissionSettlement(result) {
+            relay?.withCurrent(relayListener, relayGeneration, null, capture)
+                ?: synchronized(localOwnershipLock) { if (locallyCurrent && relay == null) capture() else null }
+        }
+    }
+
+    private fun settleAuthenticatedAdmission(arguments: Any?, result: MethodChannel.Result) {
+        val fields = arguments as? Map<*, *> ?: return badArguments(result)
+        if (fields.keys != setOf("version", "token") || !validVersion(fields["version"])) return badArguments(result)
+        val token = MknoonCallAdmissionToken.parse(fields["token"]) ?: return badArguments(result)
+        val commit = { runCatching { admissionSettlementCommit?.invoke(token) == true }.getOrDefault(false) }
+        dispatchAdmissionSettlement(result) {
+            relay?.withCurrent(relayListener, relayGeneration, false, commit)
+                ?: synchronized(localOwnershipLock) { locallyCurrent && commit() }
+        }
+    }
+
+    private fun dispatchAdmissionSettlement(result: MethodChannel.Result, operation: () -> Any?) {
+        // These operations share the authenticated-ingress lock with Telecom
+        // registration. Never wait for it on main: older Telecom implementations
+        // need main to complete a registration already holding that lock.
+        val executor = registrationExecutor
+        if (executor == null || Looper.myLooper() != Looper.getMainLooper()) {
+            result.success(operation())
+        } else {
+            executor.execute {
+                val value = operation()
+                mainHandler.post { result.success(value) }
+            }
         }
     }
 

@@ -6,6 +6,8 @@ import tempfile
 import time
 import unittest
 import uuid
+import weakref
+from unittest import mock
 
 SPEC = importlib.util.spec_from_file_location('app_diagnostics', pathlib.Path(__file__).with_name('app_diagnostics.py'))
 MODULE = importlib.util.module_from_spec(SPEC)
@@ -153,6 +155,75 @@ class AppDiagnosticsTests(unittest.TestCase):
         self.assertTrue(result['evidenceIncomplete'])
         self.assertIsNone(result['loss']['window']['newDroppedEvents'])
         self.assertNotIn('telemetry_loss',[a['kind'] for a in result['alerts']])
+
+    def test_historical_events_are_released_while_report_scans_remaining_files(self):
+        # Old records must still be validated/count towards the retained baseline,
+        # but a larger archive must not retain every parsed historical event.
+        old_time = self.now - 2*3600000
+        for _ in range(64):
+            events = [self.event(feature='runtime', stage='process', outcome='ok') for _ in range(8)]
+            self.record(events)
+            path = self.directory/(format(self.count,'064x')+'.json')
+            record = json.loads(path.read_text())
+            for row in record['events']:
+                row['receivedAtMs'] = old_time
+            path.write_text(json.dumps(record))
+        current = self.event(stage='finish', outcome='failed', reason='hash_mismatch')
+        self.record([current])
+        original = MODULE.bounded_json
+        refs, live_counts = [], []
+        class ParsedEvent(dict):
+            pass
+        def observe(path, maximum):
+            record = original(path, maximum)
+            if 'events' in record:
+                for row in record['events']:
+                    row['event'] = ParsedEvent(row['event'])
+                    refs.append(weakref.ref(row['event']))
+                live_counts.append(sum(ref() is not None for ref in refs))
+            return record
+        with mock.patch.object(MODULE, 'bounded_json', side_effect=observe):
+            result = MODULE.report(self.directory, hours=1, now_ms=self.now)
+        self.assertEqual(result['health']['recordFiles'], 65)
+        self.assertEqual(result['eventReports'], 1)
+        self.assertEqual(result['errors'][0]['baselineEventCount'], 512)
+        self.assertLessEqual(max(live_counts), 24,
+                             'Historical parsed events accumulate across record reads')
+
+    def test_standalone_report_does_not_build_unused_monitor_counter_identities(self):
+        self.record([self.event(feature='runtime', stage='snapshot', outcome='ok',
+                                values={'droppedEvents':7})], dropped=3)
+        original = MODULE.hashlib.sha256
+        def no_monitor_identity(raw=b''):
+            self.assertFalse(raw.startswith((b'server:', b'client:')),
+                             'Standalone reports do not consume monitor counter samples')
+            return original(raw)
+        with mock.patch.object(MODULE.hashlib, 'sha256', side_effect=no_monitor_identity):
+            result = MODULE.report(self.directory, now_ms=self.now)
+        self.assertEqual(result['health']['droppedEvents'], 3)
+        self.assertEqual(result['health']['clientReportedDroppedEvents'], 7)
+
+    def test_old_health_uses_latest_snapshot_and_chronological_run_counter_order(self):
+        runs = {name:str(uuid.uuid4()) for name in 'ABC'}
+        # File order differs from first-observed chronological run order. The
+        # second B sample ties all sort keys, so the later file must win.
+        for name, age, count in [('A',100,9), ('B',200,4), ('C',50,6),
+                                 ('C',300,1), ('B',200,7), ('A',250,3)]:
+            self.record([self.event(feature='runtime', stage='snapshot', outcome='ok',
+                                    runId=runs[name], values={'droppedEvents':count})])
+            path = self.directory/(format(self.count,'064x')+'.json')
+            record = json.loads(path.read_text())
+            record['events'][0]['receivedAtMs'] = self.now-2*3600000-age
+            path.write_text(json.dumps(record))
+        samples = {}
+        result = MODULE.report(self.directory, hours=1, now_ms=self.now, _loss_samples=samples)
+        client = [(key,value) for key,value in samples.items() if value['layer']=='client']
+        expected = [hashlib.sha256(('client:'+self.owner+':'+runs[name]).encode()).hexdigest()
+                    for name in 'CAB']
+        self.assertEqual([key for key,_ in client], expected)
+        self.assertEqual([value['count'] for _,value in client], [6,9,7])
+        self.assertEqual(result['health']['clientReportedDroppedEvents'], 6)
+        self.assertEqual(result['eventReports'], 0)
 
     def test_client_reported_loss_remains_distinct_from_server_loss(self):
         self.record([self.event(feature='runtime',stage='snapshot',outcome='ok',values={'droppedEvents':4})])

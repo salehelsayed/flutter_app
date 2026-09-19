@@ -239,7 +239,14 @@ Future<void> main(List<String> args) async {
     return;
   }
 
-  if (scenario == 'android_payload_campaign') {
+  if (scenario == 'android_payload_campaign' ||
+      scenario == androidNotificationB13ProbeScenarioId) {
+    final diagnostic = scenario == androidNotificationB13ProbeScenarioId;
+    if (diagnostic && (artifactDir == null || artifactDir.trim().isEmpty)) {
+      stderr.writeln('The scoped B13 diagnostic requires --artifact-dir.');
+      exitCode = 64;
+      return;
+    }
     final suppliedDevices = devices;
     final physical =
         _valueFor(args, '--physical') ??
@@ -281,9 +288,17 @@ Future<void> main(List<String> args) async {
             Platform.environment['FIREBASE_SERVICE_ACCOUNT'],
         relayAddresses: Platform.environment['MKNOON_RELAY_ADDRESSES'],
         verbose: args.contains('--verbose'),
+        diagnosticB13Reconciliation: diagnostic,
       ),
     );
-    _emitResult(result.json);
+    _emitResult(<String, Object?>{
+      ...result.json,
+      if (diagnostic) ...<String, Object?>{
+        'schema': 'mknoon.notification-b13-reconciliation-probe.v1',
+        'scope': androidNotificationB13ProbeScenarioId,
+        'wholeCampaignPass': false,
+      },
+    });
     exitCode = result.processExitCode;
     return;
   }
@@ -356,11 +371,21 @@ List<_Scenario> _selectedScenarios(String scenario) {
         .where((item) => _androidPayloadCampaignIds.contains(item.id))
         .toList(growable: false);
   }
+  if (scenario == androidNotificationB13ProbeScenarioId) {
+    return _scenarios
+        .where(
+          (item) => <String>{
+            'payload_fast_path_cold_kill',
+            'tc_b13_dual_path_single_alert',
+          }.contains(item.id),
+        )
+        .toList(growable: false);
+  }
   final matches = _scenarios.where((item) => item.id == scenario).toList();
   if (matches.isEmpty) {
     stderr.writeln(
       'Unknown --scenario "$scenario". Expected all, '
-      'android_payload_campaign, or one of: '
+      'android_payload_campaign, $androidNotificationB13ProbeScenarioId, or one of: '
       '${_scenarios.map((item) => item.id).join(', ')}',
     );
     exit(64);

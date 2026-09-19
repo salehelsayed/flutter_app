@@ -1,6 +1,7 @@
 package bridge
 
 import (
+	"encoding/json"
 	"errors"
 
 	"github.com/mknoon/go-mknoon/node"
@@ -44,6 +45,18 @@ func TurnCredentialsV1() (result string) {
 }
 
 func turnCredentialsV1ErrorJSON(err error) string {
+	response := turnCredentialsV1ErrorJSONWithoutDiagnostic(err)
+	// These advisory fields never change the error code or fallback policy.
+	// The node returns only fixed enums/booleans and bounded counts, never raw errors.
+	var decoded map[string]interface{}
+	if json.Unmarshal([]byte(response), &decoded) != nil {
+		return response
+	}
+	decoded["failureDiagnostic"] = node.TurnCredentialFailureDiagnostics(err)
+	return okJSON(decoded)
+}
+
+func turnCredentialsV1ErrorJSONWithoutDiagnostic(err error) string {
 	switch {
 	case errors.Is(err, node.ErrTurnCredentialsUnsupported):
 		return okJSON(map[string]interface{}{

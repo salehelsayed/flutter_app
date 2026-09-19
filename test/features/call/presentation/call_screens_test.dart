@@ -11,19 +11,20 @@ import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
-  Widget wrap(Widget child) => MaterialApp(
-    locale: const Locale('en'),
-    localizationsDelegates: AppLocalizations.localizationsDelegates,
-    supportedLocales: AppLocalizations.supportedLocales,
-    home: Theme(
-      data: ThemeData(
-        extensions: const <ThemeExtension<dynamic>>[
-          BackgroundReadableColors.dark,
-        ],
-      ),
-      child: Scaffold(body: child),
-    ),
-  );
+  Widget wrap(Widget child, {Locale locale = const Locale('en')}) =>
+      MaterialApp(
+        locale: locale,
+        localizationsDelegates: AppLocalizations.localizationsDelegates,
+        supportedLocales: AppLocalizations.supportedLocales,
+        home: Theme(
+          data: ThemeData(
+            extensions: const <ThemeExtension<dynamic>>[
+              BackgroundReadableColors.dark,
+            ],
+          ),
+          child: Scaffold(body: child),
+        ),
+      );
 
   CallControls controls({
     bool isMuted = false,
@@ -53,7 +54,111 @@ void main() {
   );
 
   group('foreground call screens', () {
-    testWidgets('outgoing call distinguishes Calling from remote Ringing', (
+    for (final entry in const {
+      'de': (
+        connecting: 'Verbindung wird hergestellt',
+        ringing: 'Klingelt',
+        connected: 'Verbunden',
+        reconnecting: 'Verbindung wird wiederhergestellt',
+        ending: 'Anruf wird beendet',
+        incoming: 'Eingehender Anruf',
+        checking: 'Eingehender Anruf wird geprüft',
+        duration: 'Anrufdauer 01:05',
+      ),
+      'ar': (
+        connecting: 'جارٍ الاتصال',
+        ringing: 'جارٍ الرنين',
+        connected: 'متصل',
+        reconnecting: 'إعادة الاتصال',
+        ending: 'جارٍ إنهاء المكالمة',
+        incoming: 'مكالمة واردة',
+        checking: 'جارٍ التحقق من المكالمة الواردة',
+        duration: 'مدة المكالمة 01:05',
+      ),
+    }.entries) {
+      testWidgets('call status and duration semantics use ${entry.key}', (
+        tester,
+      ) async {
+        final semantics = tester.ensureSemantics();
+        try {
+          final locale = Locale(entry.key);
+          final labels = entry.value;
+          final now = DateTime.utc(2026, 8, 30, 12);
+          for (final state in {
+            CallState.preparing: labels.connecting,
+            CallState.ringing: labels.ringing,
+          }.entries) {
+            await tester.pumpWidget(
+              wrap(
+                OutgoingCallScreen(
+                  contactPeerId: 'alice-peer',
+                  contactUsername: 'Alice',
+                  state: state.key,
+                  onCancel: () {},
+                ),
+                locale: locale,
+              ),
+            );
+            expect(find.text(state.value), findsOneWidget);
+            expect(find.semantics.byLabel(state.value), findsOneWidget);
+          }
+          for (final state in {
+            CallState.incomingValidating: labels.checking,
+            CallState.ringing: labels.incoming,
+          }.entries) {
+            await tester.pumpWidget(
+              wrap(
+                IncomingCallScreen(
+                  contactPeerId: 'alice-peer',
+                  contactUsername: 'Alice',
+                  state: state.key,
+                  onAnswer: () {},
+                  onDecline: () {},
+                ),
+                locale: locale,
+              ),
+            );
+            expect(find.text(state.value), findsOneWidget);
+            expect(find.semantics.byLabel(state.value), findsOneWidget);
+          }
+          for (final state in {
+            CallState.negotiating: labels.connecting,
+            CallState.connected: labels.connected,
+            CallState.reconnecting: labels.reconnecting,
+            CallState.ending: labels.ending,
+          }.entries) {
+            await tester.pumpWidget(
+              wrap(
+                ActiveCallScreen(
+                  contactPeerId: 'alice-peer',
+                  contactUsername: 'Alice',
+                  state: state.key,
+                  connectedAt: now.subtract(const Duration(seconds: 65)),
+                  now: () => now,
+                  controls: controls(),
+                ),
+                locale: locale,
+              ),
+            );
+            expect(find.text(state.value), findsOneWidget);
+            expect(find.semantics.byLabel(state.value), findsOneWidget);
+            if (state.key == CallState.connected ||
+                state.key == CallState.reconnecting) {
+              expect(
+                find.semantics.byLabel(RegExp(RegExp.escape(labels.duration))),
+                findsOneWidget,
+              );
+            }
+            expect(find.text('Connected'), findsNothing);
+            expect(find.text('Connecting'), findsNothing);
+          }
+        } finally {
+          semantics.dispose();
+        }
+      });
+    }
+
+    testWidgets('outgoing call distinguishes Connecting from remote Ringing', (
       tester,
     ) async {
       var cancelCount = 0;
@@ -70,7 +175,7 @@ void main() {
       );
 
       expect(find.text('Alice'), findsOneWidget);
-      expect(find.text('Calling'), findsOneWidget);
+      expect(find.text('Connecting'), findsOneWidget);
       expect(find.text('Ringing'), findsNothing);
       await tester.tap(find.byTooltip('Cancel call'));
       expect(cancelCount, 1);
@@ -88,7 +193,7 @@ void main() {
         ),
       );
 
-      expect(find.text('Calling'), findsNothing);
+      expect(find.text('Connecting'), findsNothing);
       expect(find.text('Ringing'), findsOneWidget);
       await tester.tap(find.byTooltip('Cancel call'));
       expect(cancelCount, 2);

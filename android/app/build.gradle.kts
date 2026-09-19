@@ -373,6 +373,8 @@ kotlin {
 
 dependencies {
     implementation(fileTree(mapOf("dir" to "libs", "include" to listOf("*.aar"))))
+    // Expose flutter_webrtc 1.6.0's existing native API to the debug-only PCM oracle.
+    debugImplementation("io.github.webrtc-sdk:android:144.7559.09")
     coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.4")
     // Plan 329: the app-owned FCM service subclasses FlutterFire's service.
     // firebase_messaging keeps this dependency non-transitive at the app

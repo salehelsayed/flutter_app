@@ -1,3 +1,4 @@
+import 'package:flutter_app/debug/debug_call_evidence_observer.dart';
 import 'package:flutter_app/core/notifications/app_visibility_snapshot.dart';
 import 'package:flutter_app/core/diagnostics/app_diagnostics.dart';
 import 'dart:async';
@@ -32,6 +33,7 @@ import 'package:flutter_app/features/call/data/call_history_orbit_activity_sourc
 import 'package:flutter_app/features/call/data/call_history_conversation_timeline_source.dart';
 import 'package:flutter_app/features/call/application/voice_call_feature_flags.dart';
 import 'package:flutter_app/features/call/infrastructure/ios_call_wake_channel.dart';
+import 'package:flutter_app/features/call/infrastructure/android_call_wake_channel.dart';
 import 'package:flutter_app/features/call/infrastructure/android_call_lifecycle_adapter.dart';
 import 'package:flutter_app/features/call/infrastructure/call_authority_client.dart';
 import 'package:flutter_app/features/call/infrastructure/issued_call_wake_handle_store_impl.dart';
@@ -390,6 +392,7 @@ import 'package:flutter_app/features/feed/data/feed_cleared_repository_impl.dart
 
 import 'package:flutter_app/app/application_root.dart';
 import 'package:flutter_app/app/bootstrap/application_bootstrap.dart';
+import 'package:flutter_app/app/bootstrap/foreground_canonical_runtime_startup.dart';
 
 /// 164 (cold-start-3): retained reference to the launch-time shared-Keychain
 /// mirror backfill so it runs off the pre-runApp critical path without the
@@ -483,7 +486,8 @@ Stream<void> _mergeVoidStreams(Iterable<Stream<void>> inputs) {
   });
 }
 
-final class ProductionApplicationBootstrap implements ApplicationBootstrap {
+final class ProductionApplicationBootstrap
+    implements ApplicationBootstrap, RecoverableApplicationBootstrap {
   const ProductionApplicationBootstrap({
     this.disposableProfileOverride,
     this.disposableResetOverride,
@@ -500,7 +504,16 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
   final Future<PreparedApplication> Function()? normalPrepareOverride;
 
   @override
-  Future<PreparedApplication> prepare() async {
+  Future<PreparedApplication> prepare() => _prepare();
+
+  @override
+  Future<PreparedApplication> prepareWithRecovery({
+    required Future<void> Function() waitForRetry,
+  }) => _prepare(waitForRetry: waitForRetry);
+
+  Future<PreparedApplication> _prepare({
+    Future<void> Function()? waitForRetry,
+  }) async {
     final isDisposableProfile =
         disposableProfileOverride?.call() ??
         DebugE2ECompositionRoot.isInstalledDisposableProfile;
@@ -520,10 +533,12 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
     if (prepareOverride != null) {
       return prepareOverride();
     }
-    return _prepareNormalApplication();
+    return _prepareNormalApplication(waitForRetry: waitForRetry);
   }
 
-  Future<PreparedApplication> _prepareNormalApplication() async {
+  Future<PreparedApplication> _prepareNormalApplication({
+    Future<void> Function()? waitForRetry,
+  }) async {
     const isGroupMediaIosDisposableProfile =
         DebugE2ECompositionRoot.isInstalledIosDisposableProfile;
     StartupTiming.instance.mark('app_start');
@@ -669,9 +684,36 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
         : null;
     final canonicalWritableRuntimeSession = canonicalRuntimeLeaseGateway == null
         ? null
-        : CanonicalWritableRuntimeSession(
+        : ForegroundCanonicalRuntimeStartup<Database>(
             gateway: canonicalRuntimeLeaseGateway,
+            waitForRetry: waitForRetry,
+            closeDatabase: (database) async {
+              if (database.isOpen) {
+                await database.close().timeout(const Duration(seconds: 2));
+              }
+            },
+            isDatabaseOpen: (database) => database.isOpen,
           );
+    Future<bool> shutdownCanonicalRuntime() =>
+        canonicalWritableRuntimeSession?.shutdown() ?? Future<bool>.value(true);
+    if (canonicalWritableRuntimeSession != null) {
+      const MethodChannel(
+        'mknoon/canonical_runtime_shutdown',
+      ).setMethodCallHandler((call) async {
+        if (call.method != 'shutdown') {
+          throw MissingPluginException(
+            'Unsupported canonical runtime shutdown method: ${call.method}',
+          );
+        }
+        final released = await shutdownCanonicalRuntime();
+        final snapshot = await canonicalRuntimeLeaseGateway!.status();
+        return <String, Object?>{
+          'released': released,
+          'databaseClosed': canonicalWritableRuntimeSession.databaseClosed,
+          'leaseState': snapshot.state.name,
+        };
+      });
+    }
     final pendingNotificationOverlayBindingPublisher =
         canonicalRuntimeLeaseGateway == null
         ? null
@@ -820,76 +862,12 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
     );
     final db = canonicalWritableRuntimeSession == null
         ? await openIdentityDatabase()
-        : await canonicalWritableRuntimeSession.acquireThenOpen(
+        : await canonicalWritableRuntimeSession.open(
             binding: canonicalRuntimeStartupBinding!.leaseBinding,
             openDatabase: openIdentityDatabase,
-            closeDatabaseOnRuntimeAttachFailure: (database) async {
-              await database.close();
-              return true;
-            },
           );
     await repairDirectNotificationDurabilityDeleteTriggers(db);
     await repairLegacyPushMessageTransports(db);
-    Future<bool>? canonicalRuntimeShutdownInFlight;
-    Future<bool> shutdownCanonicalRuntime() {
-      final current = canonicalRuntimeShutdownInFlight;
-      if (current != null) return current;
-      final writableSession = canonicalWritableRuntimeSession;
-      if (writableSession == null) return Future<bool>.value(true);
-      late final Future<bool> operation;
-      operation = () async {
-        try {
-          await writableSession.drainCloseRelease(
-            stopRuntime: () async {
-              if (!await canonicalRuntimeLeaseGateway!.quiesceRuntime()) {
-                throw StateError('Go runtime did not quiesce');
-              }
-            },
-            closeDatabase: () async {
-              if (db.isOpen) {
-                await db.close().timeout(const Duration(seconds: 2));
-              }
-            },
-          );
-          final snapshot = await canonicalRuntimeLeaseGateway!.status();
-          return snapshot.state == CanonicalRuntimeLeaseState.released &&
-              !db.isOpen;
-        } catch (error) {
-          // Failure is deliberately sticky in native DRAINING state. The
-          // Activity retains its engine until this attempt replies/times out;
-          // neither side may infer DB close from plugin detach.
-          if (kDebugMode) {
-            debugPrint('[TEARDOWN] canonical runtime retained: $error');
-          }
-          return false;
-        } finally {
-          if (identical(canonicalRuntimeShutdownInFlight, operation)) {
-            canonicalRuntimeShutdownInFlight = null;
-          }
-        }
-      }();
-      canonicalRuntimeShutdownInFlight = operation;
-      return operation;
-    }
-
-    if (canonicalWritableRuntimeSession != null) {
-      const MethodChannel(
-        'mknoon/canonical_runtime_shutdown',
-      ).setMethodCallHandler((call) async {
-        if (call.method != 'shutdown') {
-          throw MissingPluginException(
-            'Unsupported canonical runtime shutdown method: ${call.method}',
-          );
-        }
-        final released = await shutdownCanonicalRuntime();
-        final snapshot = await canonicalRuntimeLeaseGateway!.status();
-        return <String, Object?>{
-          'released': released,
-          'databaseClosed': !db.isOpen,
-          'leaseState': snapshot.state.name,
-        };
-      });
-    }
     StartupTiming.instance.mark('database_ready');
     await DebugE2ECompositionRoot.armGroupReactionNotificationIosSetupBootstrapReadinessIfConfigured(
       documentsPath: appDocDir.path,
@@ -6258,6 +6236,7 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
     // terminal SNAPSHOT instead would read the table before the insert.
     final callHistoryProjected = StreamController<void>.broadcast();
     final callHistoryRepository = CallHistoryRepositoryImpl(db);
+    DebugCallEvidenceObserver? debugCallEvidenceObserver;
     final receivedCallWakeHandleRecovery =
         ReceivedCallWakeHandleRecoveryCoordinator(
           receivedCallWakeHandleStore: receivedCallWakeHandleStore,
@@ -6340,6 +6319,30 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
                 },
           ),
       onGraphBuilt: (graph) {
+        if (kDebugMode && Platform.isAndroid) {
+          try {
+            final observer = DebugCallEvidenceObserver(
+              database: db,
+              accountPeerId: graph.localIdentity.peerId,
+              readSession: () => graph.coordinator.activeSession,
+              readNativeHandle: (session) => session.callId == null
+                  ? null
+                  : graph.androidCallLifecycleAdapter?.debugBoundNativeHandle(
+                      session.callId!,
+                    ),
+              readAccount: () async =>
+                  (await repository.loadIdentity())?.peerId,
+              isCurrent: () =>
+                  callSignalingComposition.isStarted &&
+                  !callSignalingComposition.isShutdown,
+              nowMs: () => DateTime.now().toUtc().millisecondsSinceEpoch,
+            );
+            debugCallEvidenceObserver = observer;
+            DebugCallEvidenceObserver.install(observer);
+          } catch (_) {
+            // Debug observation must never control graph availability.
+          }
+        }
         try {
           debugE2EComposition?.bindAndroidProductionAudioCallObservationSource(
             AndroidProductionAudioCallObservationSource(
@@ -6367,6 +6370,15 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
         }
       },
     );
+    if (Platform.isAndroid) {
+      // A warm foreground owner prevents the headless worker acquiring the
+      // writable lease. Forward strict FCM call wakes to that existing owner.
+      unawaited(
+        AndroidCallWakeChannel(
+          onCallWake: callSignalingComposition.onCallWake,
+        ).install(),
+      );
+    }
     if (Platform.isIOS) {
       // PushKit presents a call natively while the app may be suspended; the
       // wake channel drains the call mailbox so the Dart session exists before
@@ -6480,6 +6492,10 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
     final PushRegistrationCoordinator? pushRegistrationCoordinator =
         pushRegistrationEnabled
         ? PushRegistrationCoordinator(
+            ensureReady: () async {
+              await ensureFirebaseReady();
+              return firebaseReadiness.isReady;
+            },
             requestPermission: requestPushPermission,
             registerPushToken: () async {
               // The headless Android FCM engine has no live P2P state. Persist the
@@ -6533,7 +6549,7 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
             // subscription, no startup registerPushToken()). Keep it non-null and
             // make the token-refresh stream LAZY: a Stream.multi whose body touches
             // FirebaseMessaging.instance only at listen-time, which happens inside
-            // the coordinator's ensureStarted() — after runtime services are ready.
+            // a registration attempt after its Firebase readiness gate succeeds.
             tokenRefreshStream: Stream<String>.multi(
               (controller) => unawaited(
                 controller.addStream(FirebaseMessaging.instance.onTokenRefresh),
@@ -6900,6 +6916,10 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
                   ?.onAutomaticDownloadAttemptStarted,
           groupMediaPostClaimPreCommit:
               debugE2EGroupMediaDownloadHooks?.onPostClaimPreCommit,
+          strictGroupMediaDownloadAttemptStarted:
+              debugE2EGroupMediaDownloadHooks?.onStrictDownloadAttemptStarted,
+          strictGroupMediaVerifiedCiphertext:
+              debugE2EGroupMediaDownloadHooks?.onStrictVerifiedCiphertext,
         );
       },
     );
@@ -8752,6 +8772,7 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
           groupMessageListener: groupMessageListener,
           groupKeyUpdateListener: groupKeyUpdateListener,
           authoritySupport: protectedGroupAuthoritySupport,
+          readCurrentTransportPeerId: () => p2pService.currentState.peerId,
           loadIdentity: repository.loadIdentity,
           loadLinkedAuthority: (expectedAccountPeerId) =>
               linkedInstallationAuthority.load(
@@ -10380,6 +10401,9 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
           }
         },
         onAppDetached: () async {
+          if (kDebugMode && Platform.isAndroid) {
+            DebugCallEvidenceObserver.uninstall(debugCallEvidenceObserver);
+          }
           try {
             await callSignalingComposition.shutdown();
             if (canonicalWritableRuntimeSession != null) {

@@ -18,6 +18,10 @@ class PushRegistrationCoordinator {
   final Future<bool> Function() requestPermission;
   final Future<RegisterPushTokenResult> Function() registerPushToken;
   final Stream<String> tokenRefreshStream;
+
+  /// Initializes the push runtime before touching its permission/token APIs.
+  /// A false result stays retryable and is not a permission denial.
+  final Future<bool> Function()? ensureReady;
   final Duration retryDelay;
   final bool Function() isEnabled;
   final Map<String, dynamic> Function()? registrationSuccessDetails;
@@ -30,6 +34,8 @@ class PushRegistrationCoordinator {
   Future<void>? _inFlightAttempt;
   int _tokenRefreshGeneration = 0;
   int? _inFlightTokenRefreshGeneration;
+  int _permissionCheckGeneration = 0;
+  int? _inFlightPermissionCheckGeneration;
   _PushRegistrationHealthAuthority? _inFlightAuthority;
   Future<void> _healthOperationTail = Future<void>.value();
   _PushPermissionState _permissionState = _PushPermissionState.unknown;
@@ -44,6 +50,7 @@ class PushRegistrationCoordinator {
     required this.requestPermission,
     required this.registerPushToken,
     required this.tokenRefreshStream,
+    this.ensureReady,
     this.retryDelay = const Duration(seconds: 15),
     bool Function()? isEnabled,
     this.registrationSuccessDetails,
@@ -63,6 +70,12 @@ class PushRegistrationCoordinator {
     }
 
     _started = true;
+
+    await _attemptRegistration(checkPermission: true, trigger: 'startup');
+  }
+
+  void _ensureTokenRefreshSubscription() {
+    if (_tokenRefreshSubscription != null) return;
     _tokenRefreshSubscription = tokenRefreshStream.listen((_) {
       _tokenRefreshGeneration++;
       logPushDiagnostic('token_refresh_event');
@@ -75,8 +88,6 @@ class PushRegistrationCoordinator {
         _attemptRegistration(checkPermission: false, trigger: 'token_refresh'),
       );
     });
-
-    await _attemptRegistration(checkPermission: true, trigger: 'startup');
   }
 
   Future<void> retryNow() async {
@@ -84,15 +95,15 @@ class PushRegistrationCoordinator {
       return;
     }
 
+    // Resume and explicit Retry must observe settings changed outside the app.
+    // Automatic token/timer retries keep their existing no-reprompt policy.
+    _permissionCheckGeneration++;
     if (!_started) {
       await ensureStarted();
       return;
     }
 
-    await _attemptRegistration(
-      checkPermission: _permissionState != _PushPermissionState.granted,
-      trigger: 'resume',
-    );
+    await _attemptRegistration(checkPermission: true, trigger: 'resume');
   }
 
   /// Synchronously fences all registration-health work owned by the account
@@ -133,8 +144,23 @@ class PushRegistrationCoordinator {
     _retryTimer?.cancel();
     _retryTimer = null;
 
+    final resolutionAuthority = (
+      epoch: _healthAuthorityEpoch,
+      binding: _healthBinding,
+    );
     final authority = await _resolveAndHydrateHealthAuthority();
-    if (authority == null || _disposed || !isEnabled()) {
+    if (authority == null) {
+      // Identity/transport readiness can disappear while restoring a device
+      // or account. Keep the retry alive without publishing unbound health.
+      // A cutover or disposal fences this timer through the captured authority.
+      _scheduleRetry(
+        trigger: 'binding_unavailable',
+        authority: resolutionAuthority,
+        checkPermission: checkPermission,
+      );
+      return;
+    }
+    if (_disposed || !isEnabled()) {
       return;
     }
 
@@ -142,17 +168,21 @@ class PushRegistrationCoordinator {
     if (inFlightAttempt != null) {
       final inFlightAuthority = _inFlightAuthority;
       final inFlightTokenGeneration = _inFlightTokenRefreshGeneration;
+      final inFlightPermissionGeneration = _inFlightPermissionCheckGeneration;
       await inFlightAttempt;
       if ((inFlightAuthority == authority &&
-              inFlightTokenGeneration == _tokenRefreshGeneration) ||
+              inFlightTokenGeneration == _tokenRefreshGeneration &&
+              (!checkPermission ||
+                  inFlightPermissionGeneration ==
+                      _permissionCheckGeneration)) ||
           !_isCurrentHealthAuthority(authority) ||
           _disposed ||
           !isEnabled()) {
         return;
       }
-      // A changed token or account binding cannot be covered by the older
-      // attempt. Retry after it settles; overlapping refreshes join that one
-      // follow-up and register the latest token without concurrent writes.
+      // A changed token/account or requested permission observation cannot be
+      // covered by an older attempt. Retry after it settles; overlapping
+      // triggers join one follow-up without concurrent registration writes.
       await _attemptRegistration(
         checkPermission: checkPermission,
         trigger: trigger,
@@ -167,6 +197,9 @@ class PushRegistrationCoordinator {
     );
     _inFlightAuthority = authority;
     _inFlightTokenRefreshGeneration = _tokenRefreshGeneration;
+    _inFlightPermissionCheckGeneration = checkPermission
+        ? _permissionCheckGeneration
+        : null;
     _inFlightAttempt = attempt;
     try {
       await attempt;
@@ -175,6 +208,7 @@ class PushRegistrationCoordinator {
         _inFlightAttempt = null;
         _inFlightAuthority = null;
         _inFlightTokenRefreshGeneration = null;
+        _inFlightPermissionCheckGeneration = null;
       }
     }
   }
@@ -209,6 +243,19 @@ class PushRegistrationCoordinator {
     );
 
     try {
+      if (!_isCurrentHealthAuthority(authority) || !isEnabled()) return;
+      final prepare = ensureReady;
+      if (prepare != null) {
+        final ready = await prepare();
+        if (!_isCurrentHealthAuthority(authority) || !isEnabled()) return;
+        if (!ready) {
+          throw StateError('Push runtime is not ready.');
+        }
+      }
+      // Firebase initialization is best-effort at startup. Every recovery
+      // attempt must establish it before the lazy stream or permission API
+      // can access FirebaseMessaging.instance.
+      _ensureTokenRefreshSubscription();
       if (checkPermission || _permissionState == _PushPermissionState.unknown) {
         final granted = await requestPermission();
         if (!_isCurrentHealthAuthority(authority)) return;
@@ -292,7 +339,7 @@ class PushRegistrationCoordinator {
           return;
       }
     } catch (e) {
-      if (!_isCurrentHealthAuthority(authority)) return;
+      if (!_isCurrentHealthAuthority(authority) || !isEnabled()) return;
       await _recordTransientFailure(
         previous: previousHealth,
         reason: PushRegistrationHealthReason.exception,
@@ -499,6 +546,7 @@ class PushRegistrationCoordinator {
     required String trigger,
     Object? error,
     required _PushRegistrationHealthAuthority authority,
+    bool checkPermission = false,
   }) {
     if (!_isCurrentHealthAuthority(authority) || !isEnabled()) {
       return;
@@ -532,7 +580,7 @@ class PushRegistrationCoordinator {
       }
       unawaited(
         _attemptRegistration(
-          checkPermission: false,
+          checkPermission: checkPermission,
           trigger: 'scheduled_retry',
         ),
       );

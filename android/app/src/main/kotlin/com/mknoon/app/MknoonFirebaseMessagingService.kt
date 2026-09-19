@@ -101,7 +101,13 @@ open class MknoonFirebaseMessagingService : FlutterFirebaseMessagingService() {
                 appDiagnostics.record("push", "parse", "ok", traceId = appTrace)
                 if (trace != null) diagnostics.bind(parsed.payload.callHandle, trace)
                 diagnostics.record(parsed.payload.callHandle, "push", "receive", "ok", context = mapOf("role" to "callee"))
+                // Headless recovery cannot acquire a lease while the live
+                // foreground graph owns it. Wake that exact existing graph as
+                // well; its authenticated mailbox remains the admission owner.
                 dispatchValidatedCallWake(parsed.payload)
+                // Register the exact pending admission before foreground Dart
+                // can consume and acknowledge its terminal mailbox row.
+                signalWarmCallWake()
             } else {
                 appDiagnostics.record("push", "parse", "rejected", "invalid_payload", traceId = appTrace)
                 diagnostics.record(stage = "push", action = "parse", outcome = "rejected", reason = "rejected_payload")
@@ -179,9 +185,25 @@ open class MknoonFirebaseMessagingService : FlutterFirebaseMessagingService() {
 
     internal open fun callWakeNowMs(): Long = System.currentTimeMillis()
 
+    internal open fun signalWarmCallWake() {
+        ProcessAndroidCallWakeSignals.registry.signal()
+    }
+
     internal open fun dispatchValidatedCallWake(payload: CallWakePayload) {
-        if (!HeadlessCallAdmissionWorkScheduler(applicationContext).enqueue(payload)) return
-        startCallAdmissionForeground(payload)
+        var ownerId: java.util.UUID? = null
+        val queued = HeadlessCallAdmissionWorkScheduler(
+            applicationContext,
+            beforeEnqueue = { workId ->
+                ownerId = workId
+                com.mknoon.app.call.ProcessMknoonCallAdmissionSettlements.store.register(payload, workId)
+                startCallAdmissionForeground(payload, workId)
+            },
+        ).enqueue(payload)
+        if (!queued) ownerId?.let {
+            MknoonCallForegroundService.releaseAdmission(
+                applicationContext, payload.nativeCallId.toString(), it,
+            )
+        }
     }
 
     /**
@@ -190,7 +212,7 @@ open class MknoonFirebaseMessagingService : FlutterFirebaseMessagingService() {
      * window; upgrading an already-foreground service to ringing is always
      * allowed, while starting one from the background then is not.
      */
-    private fun startCallAdmissionForeground(payload: CallWakePayload) {
+    private fun startCallAdmissionForeground(payload: CallWakePayload, ownerId: java.util.UUID) {
         if (!BuildConfig.ENABLE_ANDROID_NATIVE_CALLS || Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
             return
         }
@@ -200,6 +222,9 @@ open class MknoonFirebaseMessagingService : FlutterFirebaseMessagingService() {
                 MknoonCallForegroundService.EXTRA_NATIVE_CALL_ID,
                 payload.nativeCallId.toString(),
             )
+            .putExtra(MknoonCallForegroundService.EXTRA_ADMISSION_OWNER_ID, ownerId.toString())
+            .putExtra(MknoonCallForegroundService.EXTRA_ADMISSION_EXPIRES_AT_MS, payload.expiresAtMs)
+            .putExtra(MknoonCallForegroundService.EXTRA_ADMISSION_WAKE_HANDLE, payload.wakeHandle)
         runCatching { applicationContext.startForegroundService(intent) }
     }
 

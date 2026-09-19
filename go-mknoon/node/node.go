@@ -859,13 +859,32 @@ func (n *Node) RefreshRelaySession() *RecoveryResult {
 	n.mu.RUnlock()
 
 	recovery, isNew := mgr.BeginRecovery()
-	if !isNew {
-		return waitForSharedRecoveryResult(recovery)
+	if isNew {
+		go runRelayRecoveryOwned(mgr, recovery, func() (*RecoveryResult, error) {
+			return n.refreshRelaySessionOwned(), nil
+		})
 	}
+	return waitForSharedRecoveryResult(recovery)
+}
 
-	result := n.refreshRelaySessionOwned()
-	mgr.CompleteRecovery(result, nil)
-	return result
+// The native work retains its ownership after the API wait expires. Keep the
+// bridge's panic containment across this goroutine boundary and always release
+// ownership when the work really exits.
+func runRelayRecoveryOwned(mgr *RelaySessionManager, recovery *recoveryPromise, work func() (*RecoveryResult, error)) {
+	var result *RecoveryResult
+	var err error
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			err = fmt.Errorf("relay recovery panic: %v", recovered)
+			result = &RecoveryResult{
+				RecoveryMode: "failed",
+				ErrorCode:    "RECOVERY_PANIC",
+				Reason:       err.Error(),
+			}
+		}
+		mgr.CompleteRecovery(recovery, result, err)
+	}()
+	result, err = work()
 }
 
 func waitForSharedRecoveryResult(recovery *recoveryPromise) *RecoveryResult {
@@ -1223,13 +1242,10 @@ func (n *Node) ReconnectRelays() (*RecoveryResult, error) {
 	n.mu.RUnlock()
 
 	recovery, isNew := mgr.BeginRecovery()
-	if !isNew {
-		return waitForSharedRecoveryOutcome(recovery)
+	if isNew {
+		go runRelayRecoveryOwned(mgr, recovery, n.reconnectRelaysOwned)
 	}
-
-	result, err := n.reconnectRelaysOwned()
-	mgr.CompleteRecovery(result, err)
-	return result, err
+	return waitForSharedRecoveryOutcome(recovery)
 }
 
 func (n *Node) reconnectRelaysOwned() (*RecoveryResult, error) {

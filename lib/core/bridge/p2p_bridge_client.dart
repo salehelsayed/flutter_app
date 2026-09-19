@@ -10,6 +10,14 @@ import '../utils/flow_event_emitter.dart';
 /// without racing the native timeout itself.
 const Duration p2pBridgeWatchdogMargin = Duration(milliseconds: 500);
 
+/// Matches Go's RecoveryWaitTimeout. The native owner retains exclusive
+/// recovery ownership after this deadline until its work actually finishes.
+const Duration p2pRelayRecoveryTimeout = Duration(seconds: 30);
+
+/// Status is a local snapshot, not a network operation. Match bridge health's
+/// existing limit so a missing native reply cannot hold foreground recovery.
+const Duration p2pNodeStatusTimeout = Duration(seconds: 5);
+
 /// Default rendezvous server address (WSS).
 /// Uses /dns/ (not /dns4/) to resolve both A and AAAA records for dual-stack.
 const String defaultRendezvousAddress =
@@ -153,21 +161,18 @@ Future<Map<String, dynamic>> callP2PNodeStart(
   return response;
 }
 
-/// Calls the bridge to perform a full Stop() + Start() restart of the
-/// libp2p node to recover circuit addresses. This is the correct recovery
-/// path after the app returns from background and the relay connection has
-/// dropped.
-///
-/// A full restart is needed because go-libp2p's AutoRelay does not
-/// reliably re-reserve after disconnection.
-///
-/// Returns: `{ "ok": true }` on success.
+/// Attempts in-place relay recovery, with a native host restart fallback.
+/// A native deadline bounds recovery; this extra bridge watchdog also covers
+/// a missing MethodChannel reply. Timing out does not cancel native work or
+/// authorize a second native owner. Late replies cannot resume this caller.
 Future<Map<String, dynamic>> callP2PRelayReconnect(Bridge bridge) async {
   emitFlowEvent(layer: 'FL', event: 'P2P_RELAY_RECONNECT_REQUEST', details: {});
 
   final request = {'cmd': 'relay:reconnect', 'payload': <String, dynamic>{}};
 
-  final responseJson = await bridge.send(jsonEncode(request));
+  final responseJson = await bridge
+      .send(jsonEncode(request))
+      .timeout(p2pRelayRecoveryTimeout + p2pBridgeWatchdogMargin);
   final response = jsonDecode(responseJson) as Map<String, dynamic>;
 
   emitFlowEvent(
@@ -220,6 +225,7 @@ Future<Map<String, dynamic>> callP2PTurnCredentialsV1(
           'ok': false,
           'unsupported': result['unsupported'],
           'errorCode': result['errorCode'],
+          ..._turnCredentialsV1FailureDiagnostics(decoded),
         },
       );
       return result;
@@ -252,10 +258,129 @@ Future<Map<String, dynamic>> callP2PTurnCredentialsV1(
     );
     return result;
   } on FormatException {
-    return _invalidTurnCredentialsV1Result();
+    final result = _invalidTurnCredentialsV1Result();
+    _emitTurnCredentialsV1LocalFailure(result, 'bridge_format');
+    return result;
   } catch (_) {
-    return _turnCredentialsV1RejectedResult();
+    final result = _turnCredentialsV1RejectedResult();
+    _emitTurnCredentialsV1LocalFailure(result, 'bridge_exception');
+    return result;
   }
+}
+
+void _emitTurnCredentialsV1LocalFailure(
+  Map<String, dynamic> result,
+  String stage,
+) {
+  try {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'P2P_TURN_CREDENTIALS_V1_RESPONSE',
+      details: <String, dynamic>{
+        'ok': false,
+        'unsupported': false,
+        'errorCode': result['errorCode'],
+        'responseStage': stage,
+      },
+    );
+  } catch (_) {
+    // Advisory logging must not replace the original typed bridge failure.
+  }
+}
+
+// Advisory native diagnostics never participate in fallback classification.
+// Accept exact local enums and bounded primitives only, never native error text.
+Map<String, dynamic> _turnCredentialsV1FailureDiagnostics(
+  Map<String, dynamic> response,
+) {
+  const nativeCodes = {
+    'TURN_CREDENTIALS_REJECTED',
+    'TURN_CREDENTIALS_TRANSIENT',
+    'TURN_CREDENTIALS_UNAVAILABLE',
+    'TURN_CREDENTIALS_UNSUPPORTED',
+    'TURN_CREDENTIALS_INVALID_RESPONSE',
+    'TURN_CREDENTIALS_UNAUTHORIZED',
+    'NOT_INITIALIZED',
+    'INTERNAL_ERROR',
+    'INVALID_REQUEST',
+    'UNKNOWN_COMMAND',
+    'NULL_RESPONSE',
+    'MISSING_PLUGIN',
+    'PLATFORM_ERROR',
+    'BRIDGE_EXCEPTION',
+    'INVALID_INPUT',
+    'MALFORMED_RESPONSE',
+  };
+  const stages = {'connect', 'new_stream', 'relay_response', 'unspecified'};
+  const kinds = {
+    'unknown',
+    'deadline',
+    'canceled',
+    'network_down',
+    'network_unreachable',
+    'host_unreachable',
+    'connection_refused',
+    'connection_reset',
+    'network_reset',
+    'timed_out',
+    'permission_denied',
+    'address_unavailable',
+    'dial_backoff',
+    'dial_blackhole',
+    'no_transport',
+    'all_dials_failed',
+    'no_addresses',
+    'no_good_addresses',
+    'dns_timeout',
+    'dns_not_found',
+    'dns_other',
+    'dial_aggregate',
+    'joined_errors',
+    'chain_limit',
+    'relay_unauthorized',
+    'relay_invalid_request',
+    'relay_rate_limited',
+    'relay_unavailable',
+    'relay_unknown',
+    'invalid_response',
+    'unsupported',
+    'unavailable',
+    'rejected',
+  };
+  final code = response['errorCode'];
+  final result = <String, dynamic>{
+    'responseStage': 'native_failure',
+    'nativeErrorCode': nativeCodes.contains(code)
+        ? code
+        : code == null
+        ? 'missing'
+        : 'unrecognized',
+  };
+  final diagnostic = response['failureDiagnostic'];
+  if (diagnostic is! Map) return result;
+  final stage = diagnostic['stage'];
+  final kind = diagnostic['kind'];
+  if (stages.contains(stage)) result['nativeFailureStage'] = stage;
+  if (kinds.contains(kind)) result['nativeFailureKind'] = kind;
+  final cause = diagnostic['dialCauseKind'];
+  if (kinds.contains(cause)) result['nativeDialCauseKind'] = cause;
+  final transportKinds = diagnostic['dialTransportKinds'];
+  if (transportKinds is List &&
+      transportKinds.length <= 8 &&
+      transportKinds.every(kinds.contains)) {
+    result['nativeDialTransportKinds'] = List<String>.from(transportKinds);
+  }
+  for (final field in ['dialComplete', 'dialTruncated', 'dialAllTransient']) {
+    final value = diagnostic[field];
+    if (value is bool) {
+      result['native${field[0].toUpperCase()}${field.substring(1)}'] = value;
+    }
+  }
+  final count = diagnostic['dialAttemptCount'];
+  if (count is int && count >= 0 && count <= 8) {
+    result['nativeDialAttemptCount'] = count;
+  }
+  return result;
 }
 
 Map<String, dynamic> _validateTurnCredentialsV1Success(
@@ -745,7 +870,9 @@ Future<Map<String, dynamic>> callP2PNodeStatus(Bridge bridge) async {
 
   final request = {'cmd': 'node:status', 'payload': <String, dynamic>{}};
 
-  final responseJson = await bridge.send(jsonEncode(request));
+  final responseJson = await bridge
+      .send(jsonEncode(request))
+      .timeout(p2pNodeStatusTimeout);
   final response = jsonDecode(responseJson) as Map<String, dynamic>;
 
   emitFlowEvent(

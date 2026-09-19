@@ -78,9 +78,9 @@ internal class AndroidMknoonCallPendingIntentFactory(
     private fun requestCode(nativeCallId: UUID, discriminator: String): Int =
         (nativeCallId.hashCode() xor discriminator.hashCode()) and Int.MAX_VALUE
 
-    private companion object {
+    companion object {
         const val ACTION_OPEN_INCOMING_CALL = "com.mknoon.app.call.action.OPEN_INCOMING"
-        const val ACTION_ANSWER_ACTIVITY = "com.mknoon.app.call.action.ANSWER_ACTIVITY"
+        private const val ACTION_ANSWER_ACTIVITY = "com.mknoon.app.call.action.ANSWER_ACTIVITY"
     }
 }
 
@@ -101,7 +101,7 @@ internal class MknoonCallNotificationFactory(
 
     fun createIncoming(
         nativeCallId: UUID,
-        fullScreenAllowed: Boolean,
+        fullScreenAllowed: Boolean = canPresentFullScreen(),
     ): Notification {
         ensureChannel()
         val decline = pendingIntents.action(
@@ -149,6 +149,15 @@ internal class MknoonCallNotificationFactory(
         return builder.build()
     }
 
+    // Every replacement of the ringing notification must retain the same
+    // permission-gated intent. Removing it during startForeground/project can
+    // race the system's initial full-screen launch. ONLY_ALERT_ONCE prevents
+    // those replacements from launching or alerting repeatedly.
+    private fun canPresentFullScreen(): Boolean =
+        Build.VERSION.SDK_INT < Build.VERSION_CODES.UPSIDE_DOWN_CAKE ||
+            applicationContext.getSystemService(NotificationManager::class.java)
+                .canUseFullScreenIntent()
+
     fun createOngoing(nativeCallId: UUID): Notification {
         ensureChannel()
         val end = pendingIntents.action(nativeCallId, MknoonCallActionReceiver.ACTION_END)
@@ -161,6 +170,9 @@ internal class MknoonCallNotificationFactory(
             .setOngoing(true)
             .setAutoCancel(false)
             .setOnlyAlertOnce(true)
+            // A user tap can restore this exact admitted call after Home or
+            // unlock/relock. Never auto-launch an ongoing call over keyguard.
+            .setContentIntent(pendingIntents.fullScreen(nativeCallId))
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             Api31.applyOngoing(builder, applicationContext, end)
         } else {

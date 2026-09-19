@@ -1,3 +1,6 @@
+import 'dart:async';
+
+import 'package:flutter/services.dart';
 import 'package:flutter_app/app/bootstrap/production_headless_call_admission.dart';
 import 'package:flutter_app/core/notifications/canonical_runtime_lease.dart';
 import 'package:flutter_app/core/secure_storage/secure_key_store.dart';
@@ -15,6 +18,216 @@ void main() {
     callId: '22222222-2222-4222-8222-222222222222',
     wakeHandle: '33333333333343338333333333333333',
     expiresAtMs: 1_800_000_045_000,
+  );
+
+  final display = HeadlessIncomingCallDisplay(
+    displayName: 'Stored caller',
+    avatarPng: Uint8List.fromList([137, 80, 78, 71]),
+    light: true,
+  );
+
+  test(
+    'authenticated invite display crosses only after replay rollback and cleanup',
+    () async {
+      final order = <String>[];
+      final authenticate = _signalAuthenticator();
+      final mailbox = _Mailbox([_event()]);
+      final session = MailboxProductionHeadlessCallAdmissionSession(
+        mailboxClient: mailbox,
+        authenticateEvent: ({required invocation, required event}) async {
+          order.add('authenticate');
+          final value = await authenticate(
+            invocation: invocation,
+            event: event,
+          );
+          return HeadlessAuthenticatedMailboxEvent(
+            event: value.event,
+            signal: value.signal,
+            rollbackReplay: () => order.add('rollback'),
+          );
+        },
+        resolveDisplay: (invite) async {
+          order.add('display');
+          expect(invite.senderAccountPeerId, 'caller-account');
+          expect(invite.callId.value, invocation.callId);
+          expect(invite.event, CallSignalType.invite);
+          return display;
+        },
+        closeResources: () async {
+          order.add('close');
+          return _Session.safeCleanup;
+        },
+      );
+      final report = await ProductionHeadlessCallAdmissionRunner(
+        backend: _Backend(session),
+        nowMs: () => 1_800_000_000_000,
+      ).run(invocation: invocation, isStopRequested: () => false);
+      expect(order, ['authenticate', 'display', 'rollback', 'close']);
+      expect(report.disposition, HeadlessCallAdmissionDisposition.admitted);
+      expect(report.display, same(display));
+      expect(report.databaseClosed && report.leaseReleased, isTrue);
+      expect(mailbox.ackedMessageIds, isEmpty);
+    },
+  );
+
+  test(
+    'terminal deferred companion and missing authenticated signals never resolve display',
+    () async {
+      for (final scenario in [
+        'terminal',
+        'deferred',
+        'companion',
+        'missing-signal',
+        'decline',
+      ]) {
+        var reads = 0;
+        final authenticate = _signalAuthenticator();
+        final session = MailboxProductionHeadlessCallAdmissionSession(
+          mailboxClient: _Mailbox([
+            _event(
+              expiresAtMs: scenario == 'companion'
+                  ? invocation.expiresAtMs - 1000
+                  : invocation.expiresAtMs,
+            ),
+            if (scenario == 'terminal' || scenario == 'deferred')
+              _event(messageId: '55555555-5555-4555-8555-555555555555'),
+          ]),
+          authenticateEvent: ({required invocation, required event}) async {
+            if (scenario == 'deferred' && event.messageId.startsWith('555')) {
+              throw const IncomingCallPrePresentationAdmissionException(
+                IncomingCallPrePresentationAdmissionFailureCode.deferred,
+              );
+            }
+            final value = await authenticate(
+              invocation: invocation,
+              event: event,
+            );
+            return scenario == 'missing-signal'
+                ? HeadlessAuthenticatedMailboxEvent(
+                    event: value.event,
+                    rollbackReplay: () {},
+                  )
+                : value;
+          },
+          resolveDisplay: (_) async {
+            reads++;
+            return display;
+          },
+          closeResources: () async => _Session.safeCleanup,
+        );
+        await session.evaluate(
+          scenario == 'decline'
+              ? HeadlessCallAdmissionInvocation(
+                  nonce: invocation.nonce,
+                  callId: invocation.callId,
+                  wakeHandle: invocation.wakeHandle,
+                  expiresAtMs: invocation.expiresAtMs,
+                  mode: HeadlessCallAdmissionMode.declineReply,
+                )
+              : invocation,
+        );
+        expect(reads, 0, reason: scenario);
+        expect(session.display, isNull, reason: scenario);
+      }
+    },
+  );
+
+  test(
+    'display errors and deadline never alter admitted custody or publish late completion',
+    () async {
+      for (final throwsError in [true, false]) {
+        final lateDisplay = Completer<HeadlessIncomingCallDisplay?>();
+        final mailbox = _Mailbox([_event()]);
+        var closed = false;
+        final session = MailboxProductionHeadlessCallAdmissionSession(
+          mailboxClient: mailbox,
+          authenticateEvent: _signalAuthenticator(),
+          displayTimeout: const Duration(milliseconds: 5),
+          resolveDisplay: (_) => throwsError
+              ? Future.error(StateError('corrupt local image'))
+              : lateDisplay.future,
+          closeResources: () async {
+            closed = true;
+            return _Session.safeCleanup;
+          },
+        );
+        final report = await ProductionHeadlessCallAdmissionRunner(
+          backend: _Backend(session),
+          nowMs: () => 1_800_000_000_000,
+        ).run(invocation: invocation, isStopRequested: () => false);
+        expect(report.disposition, HeadlessCallAdmissionDisposition.admitted);
+        expect(report.display, isNull);
+        expect(closed, isTrue);
+        expect(mailbox.ackedMessageIds, isEmpty);
+        lateDisplay.complete(display);
+        await Future<void>.delayed(Duration.zero);
+        expect(session.display, isNull);
+        expect(report.display, isNull);
+      }
+    },
+  );
+
+  test(
+    'unsafe cleanup stop and expiry discard an already resolved display',
+    () async {
+      for (final scenario in ['database', 'lease', 'stop', 'expiry']) {
+        var closed = false;
+        final session = MailboxProductionHeadlessCallAdmissionSession(
+          mailboxClient: _Mailbox([_event()]),
+          authenticateEvent: _signalAuthenticator(),
+          resolveDisplay: (_) async => display,
+          closeResources: () async {
+            closed = true;
+            return HeadlessCallAdmissionCleanup(
+              databaseClosed: scenario != 'database',
+              leaseReleased: scenario != 'lease',
+            );
+          },
+        );
+        final report =
+            await ProductionHeadlessCallAdmissionRunner(
+              backend: _Backend(session),
+              nowMs: () => scenario == 'expiry' && closed
+                  ? invocation.expiresAtMs
+                  : 1_800_000_000_000,
+            ).run(
+              invocation: invocation,
+              isStopRequested: () => scenario == 'stop' && closed,
+            );
+        expect(session.display, same(display), reason: scenario);
+        expect(
+          report.disposition,
+          HeadlessCallAdmissionDisposition.deferred,
+          reason: scenario,
+        );
+        expect(report.display, isNull, reason: scenario);
+      }
+    },
+  );
+
+  test(
+    'foreground-owned native lease is graph_not_owner rather than bridge_unavailable',
+    () async {
+      final lease = _DiagnosticLeaseGateway(
+        fail: false,
+        failure: PlatformException(
+          code: 'lease_unavailable',
+          message: 'PRIVATE_FOREGROUND_OWNER',
+        ),
+      );
+      final report = await ProductionHeadlessCallAdmissionRunner(
+        backend: AndroidProductionHeadlessCallAdmissionBackend(
+          secureKeyStore: _DiagnosticSecureStore(hasBinding: true),
+          leaseGateway: lease,
+        ),
+        nowMs: () => 1_800_000_000_000,
+      ).run(invocation: invocation, isStopRequested: () => false);
+      expect(report.disposition, HeadlessCallAdmissionDisposition.deferred);
+      expect(report.diagnosticCause, 'graph_not_owner');
+      expect(report.requiredPersistenceComplete, isFalse);
+      expect(report.databaseClosed && report.leaseReleased, isTrue);
+      expect(lease.acquireCalls, 1);
+    },
   );
 
   test(
@@ -1110,12 +1323,14 @@ final class _DiagnosticSecureStore implements SecureKeyStore {
 }
 
 final class _DiagnosticLeaseGateway implements CanonicalRuntimeLeaseGateway {
-  _DiagnosticLeaseGateway({required this.fail});
+  _DiagnosticLeaseGateway({required this.fail, this.failure});
   final bool fail;
+  final Object? failure;
   int acquireCalls = 0;
   @override
   Future<CanonicalRuntimeLeaseSnapshot> acquire(String binding) async {
     acquireCalls++;
+    if (failure != null) throw failure!;
     if (fail) throw StateError('PRIVATE_LEASE_BRIDGE_ERROR');
     return const CanonicalRuntimeLeaseSnapshot(
       state: CanonicalRuntimeLeaseState.draining,

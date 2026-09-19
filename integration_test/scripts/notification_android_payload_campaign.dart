@@ -28,6 +28,7 @@ final class AndroidNotificationCampaignOptions {
     required this.verbose,
     this.serviceAccountPath,
     this.relayAddresses,
+    this.diagnosticB13Reconciliation = false,
   });
 
   final String? physicalDeviceId;
@@ -39,7 +40,11 @@ final class AndroidNotificationCampaignOptions {
   final bool verbose;
   final String? serviceAccountPath;
   final String? relayAddresses;
+  final bool diagnosticB13Reconciliation;
 }
+
+const androidNotificationB13ProbeScenarioId =
+    'android_b13_reconciliation_probe';
 
 final class AndroidNotificationCampaignResult {
   const AndroidNotificationCampaignResult(this.processExitCode, this.json);
@@ -230,6 +235,8 @@ final class _AndroidNotificationCampaign {
   String? _g24AppOpModeAfterRecovery;
   String? _g24AppOpModeAfterCampaignRestore;
   int _notificationTapInvocation = 0;
+  final List<String> _dualPathCleanupFailures = <String>[];
+  _DualPathHostObservation? _lastDualPathHostObservation;
 
   int get assertionsAttempted => _assertionsAttempted;
 
@@ -238,11 +245,20 @@ final class _AndroidNotificationCampaign {
   Future<AndroidNotificationCampaignResult> run() async {
     _phase = 'preflight';
     await _preflight();
+    if (options.diagnosticB13Reconciliation &&
+        proofDirectory.existsSync() &&
+        proofDirectory.listSync().isNotEmpty) {
+      throw const _Blocked(
+        'freshDiagnosticOutputRequired',
+        'The scoped B13 diagnostic requires a fresh, separate output directory.',
+      );
+    }
     await proofDirectory.create(recursive: true);
     await _removeScenarioArtifacts();
     await _startDeviceLogStream();
 
     final captured = <Map<String, Object?>>[];
+    final diagnosticCaptures = <Map<String, Object?>>[];
     Map<String, Object?>? permissionAppOpDivergence;
     String? permissionAppOpDivergenceNotApplicableReason;
     AndroidAppStateGuard? appStateGuard;
@@ -276,59 +292,104 @@ final class _AndroidNotificationCampaign {
       );
       await _requireNoAppNotification();
 
-      _phase = 'tc_a6_replay_before_ack_custody';
-      final a6 = await _runA6();
-      captured.add(await _writeScenarioArtifact(a6));
+      if (options.diagnosticB13Reconciliation) {
+        await runAndroidNotificationColdB13Probe(
+          cleanup: _cleanupCampaignNotifications,
+          cold: (pair) {
+            _phase = 'b13_probe_pair_${pair}_cold';
+            _coldWakeLogcatCursor = null;
+            _coldWakeWindowScannedClean = false;
+            return _runColdPayloadLegClassified();
+          },
+          dualPath: (pair) {
+            _phase = 'b13_probe_pair_${pair}_b13';
+            return _runB13DualPathLeg();
+          },
+          record: (pair, leg, evidence) async {
+            final validation = validateNotificationArtifact(evidence);
+            if (!validation.ok) {
+              throw _Failure(
+                'Scoped B13 artifact rejected: ${validation.detail}',
+                assertionsAttempted: _assertionsAttempted,
+              );
+            }
+            final file = File(
+              '${proofDirectory.path}${Platform.pathSeparator}'
+              'b13-probe-pair-$pair-$leg.json',
+            );
+            await file.writeAsString(
+              jsonEncode(<String, Object?>{
+                ...evidence,
+                'diagnosticOnly': true,
+                'wholeCampaignPass': false,
+                'pair': pair,
+                'leg': leg,
+              }),
+              flush: true,
+            );
+            diagnosticCaptures.add(<String, Object?>{
+              'pair': pair,
+              'leg': leg,
+              'path': file.path,
+              'sha256': sha256.convert(file.readAsBytesSync()).toString(),
+            });
+          },
+        );
+      } else {
+        _phase = 'tc_a6_replay_before_ack_custody';
+        final a6 = await _runA6();
+        captured.add(await _writeScenarioArtifact(a6));
 
-      _phase = 'tc_b11_b12_warm_payload';
-      final warm = await _runWarmPayloadLeg();
-      captured
-        ..add(await _writeScenarioArtifact(warm.b11))
-        ..add(await _writeScenarioArtifact(warm.b12));
+        _phase = 'tc_b11_b12_warm_payload';
+        final warm = await _runWarmPayloadLeg();
+        captured
+          ..add(await _writeScenarioArtifact(warm.b11))
+          ..add(await _writeScenarioArtifact(warm.b12));
 
-      _phase = 'tc_b12_cold_kill';
-      final cold = await _runColdPayloadLegClassified();
-      captured.add(await _writeScenarioArtifact(cold));
+        _phase = 'tc_b12_cold_kill';
+        final cold = await _runColdPayloadLegClassified();
+        captured.add(await _writeScenarioArtifact(cold));
 
-      _phase = 'tc_b13_dual_path_single_alert';
-      final dualPath = await _runB13DualPathLeg();
-      captured.add(await _writeScenarioArtifact(dualPath));
+        _phase = 'tc_b13_dual_path_single_alert';
+        final dualPath = await _runB13DualPathLeg();
+        captured.add(await _writeScenarioArtifact(dualPath));
 
-      _phase = 'tc_g7_permission_denied';
-      final permissionDenied = await _runPermissionDeniedLeg();
-      captured.add(await _writeScenarioArtifact(permissionDenied));
+        _phase = 'tc_g7_permission_denied';
+        final permissionDenied = await _runPermissionDeniedLeg();
+        captured.add(await _writeScenarioArtifact(permissionDenied));
 
-      _phase = 'tc_g24_permission_appop_divergence';
-      try {
-        permissionAppOpDivergence = await _runPermissionAppOpDivergenceLeg();
-      } on _G24NotApplicable catch (error) {
-        // API 33+ can expose POST_NOTIFICATION through appops while refusing
-        // the UID override because the operation is runtime-permission-backed.
-        // That target cannot express G24. Restore the attempted mutation now
-        // so every remaining, runnable campaign leg still executes.
-        if (_g24AppOpMutated) {
-          await _restoreLegLocalNotificationAppOp();
+        _phase = 'tc_g24_permission_appop_divergence';
+        try {
+          permissionAppOpDivergence = await _runPermissionAppOpDivergenceLeg();
+        } on _G24NotApplicable catch (error) {
+          // API 33+ can expose POST_NOTIFICATION through appops while refusing
+          // the UID override because the operation is runtime-permission-backed.
+          // That target cannot express G24. Restore the attempted mutation now
+          // so every remaining, runnable campaign leg still executes.
+          if (_g24AppOpMutated) {
+            await _restoreLegLocalNotificationAppOp();
+          }
+          permissionAppOpDivergenceNotApplicableReason = error.reason;
         }
-        permissionAppOpDivergenceNotApplicableReason = error.reason;
+
+        _phase = 'tc_g7_token_refresh_mid_session';
+        final tokenRefresh = await _runTokenRefreshLeg();
+        captured.add(await _writeScenarioArtifact(tokenRefresh));
+
+        _phase = 'tc_g7_channel_disabled';
+        final channelDisabled = await _runChannelDisabledLeg();
+        captured.add(await _writeScenarioArtifact(channelDisabled));
+
+        _phase = 'tc_g7_doze_delivery';
+        final dozeDelivery = await _runDozeDeliveryLeg();
+        captured.add(await _writeScenarioArtifact(dozeDelivery));
       }
-
-      _phase = 'tc_g7_token_refresh_mid_session';
-      final tokenRefresh = await _runTokenRefreshLeg();
-      captured.add(await _writeScenarioArtifact(tokenRefresh));
-
-      _phase = 'tc_g7_channel_disabled';
-      final channelDisabled = await _runChannelDisabledLeg();
-      captured.add(await _writeScenarioArtifact(channelDisabled));
-
-      _phase = 'tc_g7_doze_delivery';
-      final dozeDelivery = await _runDozeDeliveryLeg();
-      captured.add(await _writeScenarioArtifact(dozeDelivery));
       proofCompleted = true;
     } catch (error) {
       legFailure = error;
       rethrow;
     } finally {
-      final restorationFailures = <String>[];
+      final restorationFailures = <String>[..._dualPathCleanupFailures];
       Future<void> attempt(String label, Future<void> Function() action) async {
         try {
           await action();
@@ -376,6 +437,7 @@ final class _AndroidNotificationCampaign {
           await _removeAppFile(emulator, 'intro_e2e_result.json');
         });
         await attempt('sender-config', () async {
+          await _removeAppFile(physical, notificationDualPathReleaseFileName);
           await _removeAppFile(physical, 'intro_e2e_config.json');
           await _removeAppFile(physical, 'intro_e2e_result.json');
         });
@@ -407,6 +469,46 @@ final class _AndroidNotificationCampaign {
     }
 
     _phase = 'final-artifact';
+    if (options.diagnosticB13Reconciliation) {
+      if (diagnosticCaptures.length != 6 ||
+          !appStateGuard.restored ||
+          _g24AppOpModeAfterCampaignRestore != _campaignEntryAppOpMode ||
+          !_isRegularFile(apk) ||
+          sha256.convert(apk.readAsBytesSync()).toString() != apkSha256) {
+        throw _Failure(
+          'Scoped B13 proof or exact restoration/artifact binding is incomplete.',
+          assertionsAttempted: _assertionsAttempted,
+        );
+      }
+      final payload = <String, Object?>{
+        'schema': 'mknoon.notification-b13-reconciliation-probe.v1',
+        'status': 'DIAGNOSTIC_PASS',
+        'scope': androidNotificationB13ProbeScenarioId,
+        'wholeCampaignPass': false,
+        'diagnosticIterationsCompleted': 3,
+        'assertionsAttempted': 6,
+        'exitCode': 0,
+        'artifactPresent': true,
+        'preparedArtifactSha256': apkSha256,
+        'captureArtifacts': diagnosticCaptures,
+        'appStateRestored': true,
+        'networkStateRestored': !_networkMutated,
+        'notificationStateRestored': true,
+        'notificationAppOpStateRestored': true,
+        'childBuildCount': 0,
+      };
+      final file = File(
+        '${proofDirectory.path}${Platform.pathSeparator}b13-probe-result.json',
+      );
+      await file.writeAsString(jsonEncode(payload), flush: true);
+      return AndroidNotificationCampaignResult(0, <String, Object?>{
+        ...payload,
+        'diagnosticArtifact': <String, Object?>{
+          'path': file.path,
+          'sha256': sha256.convert(file.readAsBytesSync()).toString(),
+        },
+      });
+    }
     if (_g24AppOpModeAfterCampaignRestore == null) {
       await _removeScenarioArtifacts();
       throw _Failure(
@@ -1088,9 +1190,12 @@ final class _AndroidNotificationCampaign {
 
   /// TC-B13 — dual-path single alert.
   ///
-  /// The receiver is BACKGROUNDED BUT CONNECTED: HOME only, no kill and no
-  /// stop-node, so the live bridge and the real FCM wake race for the same
-  /// message. A foreground receiver would not work — the foreground FCM drain
+  /// The receiver remains backgrounded and connected. The paired sender stores
+  /// one real encrypted envelope, then waits for provider observation before
+  /// releasing those same bytes through the real notify-capable live protocol.
+  /// An ordinary live-first send can correctly suppress the later custody
+  /// notification, so it cannot guarantee this two-producer fixture.
+  /// A foreground receiver would not work — the foreground FCM drain
   /// never reaches a notification decision
   /// (`handle_foreground_remote_message_use_case.dart:13-20` drains with
   /// `needsNotification: false` and emits no suppression event).
@@ -1125,12 +1230,25 @@ final class _AndroidNotificationCampaign {
     final toneGap = await _awaitToneWindow();
     final logcatCursor = await _deviceLogcatCursor();
     final sentAt = DateTime.now().toUtc();
-    final sent = await _sendText(
-      marker,
+    final receiverPid = await _pidof(emulator);
+    if (!RegExp(r'^[1-9][0-9]*$').hasMatch(receiverPid)) {
+      throw _Failure(
+        'B13 receiver process is unavailable.',
+        assertionsAttempted: _assertionsAttempted,
+      );
+    }
+    await _requireB13ReceiverBackground(receiverPid);
+    final dualSend = await _sendB13ProviderBeforeLive(
+      marker: marker,
       runId: runId,
-      receiverPeerId: receiverIdentity.peerId,
+      receiverPid: receiverPid,
+      sentAt: sentAt,
+      initialCursor: logcatCursor,
     );
-    await _waitForProviderSend(sentAt);
+    final sent = _SentMessage(
+      messageId: dualSend.prepared['messageId']! as String,
+      transport: dualSend.completed['transport']! as String,
+    );
     await _waitForNotification(marker);
 
     // The winning ALERT is read from the cursor-scoped log. The settled
@@ -1162,26 +1280,55 @@ final class _AndroidNotificationCampaign {
     // dual-path proof, so a missing marker is an inconclusive RED — never a
     // silent pass.
     String? dualPathLog;
+    final observation = _lastDualPathHostObservation!;
+    observation.mark('dual_arrival_observation_started');
     final deadline = DateTime.now().add(const Duration(minutes: 2));
     while (DateTime.now().isBefore(deadline)) {
       final window = await _logcatSince(logcatCursor);
-      if (notificationWindowProvesDualPathAttempt(
+      observation.nominalWindow = androidNotificationDualPathWindowDiagnostic(
         window,
         messageId: sent.messageId,
-      )) {
-        dualPathLog = window;
-        break;
+      );
+      observation.nominalMarkers = notificationWindowProvesDualPathAttempt(
+        window,
+        messageId: sent.messageId,
+      );
+      // Preserve the gate's short-circuit behavior. Null explicitly records
+      // that this iteration never sampled the released-live window.
+      observation.releasedLive = null;
+      observation.liveWindow = null;
+      if (observation.nominalMarkers!) {
+        final liveWindow = await _logcatSince(dualSend.liveCursor);
+        observation.liveWindow = androidNotificationDualPathWindowDiagnostic(
+          liveWindow,
+          messageId: sent.messageId,
+        );
+        observation.releasedLive = androidNotificationReleasedLivePathObserved(
+          liveWindow,
+          messageId: sent.messageId,
+        );
+        if (observation.releasedLive!) {
+          dualPathLog = window;
+          break;
+        }
       }
       await Future<void>.delayed(const Duration(seconds: 2));
     }
     if (dualPathLog == null) {
+      observation.mark('dual_arrival_observation_failed');
+      final detail = await _retainDualPathFailure(
+        observation,
+        gate: 'released_live_arrival',
+      );
       throw _Failure(
-        'B13 inconclusive: the cursor-scoped window did not record BOTH a '
-        'live-listener arrival and an FCM receipt, so this run cannot be '
-        'accepted as dual-path evidence.',
+        'B13 inconclusive: nominal FCM/listener markers='
+        '${observation.nominalMarkers}; released notify-capable live '
+        'store/listener proof=${observation.releasedLive} '
+        '(null means not sampled). Both predicates are required.$detail',
         assertionsAttempted: _assertionsAttempted,
       );
     }
+    observation.mark('dual_arrival_observed');
 
     // Exactly one card must already exist once both paths have attempted. Its
     // settled channel is re-read after the typed losing-path reconciliation
@@ -1251,6 +1398,16 @@ final class _AndroidNotificationCampaign {
         'messageIdPrefix': safeNotificationIdPrefix(sent.messageId),
         'senderTransport': sent.transport,
         'receiverBackgroundedButConnected': true,
+        'receiverProcessPinnedThroughRelease': true,
+        'providerObservedBeforeLiveRelease': true,
+        'relayProviderCorroboratedAfterLiveCompletion': true,
+        'hostObservation': observation.snapshot(),
+        'exactFcmCiphertextStagedBeforeLiveRelease': true,
+        'relaySuccessRowHasRecipientBinding': false,
+        'sameEncryptedWireSha256': dualSend.prepared['wireSha256'],
+        'sameCiphertextSha256': dualSend.prepared['ciphertextSha256'],
+        'liveDispatchAcknowledged': dualSend.completed['acked'],
+        'releasedNotifyCapableLiveArrival': true,
         'livePathAttemptEvent': androidNotificationLivePathAttemptEvent,
         'fcmPathAttemptEvent': androidNotificationFcmPathAttemptEvent,
         'losingPathSuppression': losingSuppression,
@@ -1378,6 +1535,38 @@ final class _AndroidNotificationCampaign {
       receiverPeerId: receiverIdentity.peerId,
     );
     await _waitForProviderSend(sentAt);
+    return (sent: sent, toneGap: toneGap, cursor: cursor, sentAt: sentAt);
+  }
+
+  /// Uses the same immutable provider-first dispatch as B13. An ordinary
+  /// live send can acquire delivered ACK custody before its push hedge; that
+  /// intentionally suppresses the provider and cannot exercise an OS channel.
+  Future<
+    ({_SentMessage sent, Duration toneGap, String cursor, DateTime sentAt})
+  >
+  _sendSpacedProviderMarker(String marker, {required String runId}) async {
+    final toneGap = await _awaitToneWindow();
+    final cursor = await _deviceLogcatCursor();
+    final sentAt = DateTime.now().toUtc();
+    final receiverPid = await _pidof(emulator);
+    if (!RegExp(r'^[1-9][0-9]*$').hasMatch(receiverPid)) {
+      throw _Failure(
+        'Channel probe receiver process is unavailable.',
+        assertionsAttempted: _assertionsAttempted,
+      );
+    }
+    await _requireB13ReceiverBackground(receiverPid);
+    final proof = await _sendB13ProviderBeforeLive(
+      marker: marker,
+      runId: runId,
+      receiverPid: receiverPid,
+      sentAt: sentAt,
+      initialCursor: cursor,
+    );
+    final sent = _SentMessage(
+      messageId: proof.prepared['messageId']! as String,
+      transport: proof.completed['transport']! as String,
+    );
     return (sent: sent, toneGap: toneGap, cursor: cursor, sentAt: sentAt);
   }
 
@@ -2132,21 +2321,29 @@ final class _AndroidNotificationCampaign {
     await _cleanupCampaignNotifications();
     _campaignNotificationBodies.add(marker);
 
-    // The coordinator subscribes to onTokenRefresh inside ensureStarted(), so
-    // the startup attempt must be inside this window before staging anything.
+    // A refresh during startup may correctly join a queued resume attempt.
+    // Settle that fresh process first so this leg exercises the standalone
+    // token-refresh trigger, whose original success/PID gates remain below.
     await _terminateReceiver();
     final startupCursor = await _deviceLogcatCursor();
     await _launch(emulator);
     await _identity(emulator);
+    final registrationQuiescence = AndroidNotificationRegistrationQuiescence();
+    final startupObservationClock = Stopwatch()..start();
     await _waitFor(
-      'startup push registration attempt',
+      'startup push registration quiescence',
       const Duration(minutes: 3),
-      () async => (await _flowRecordsSince(startupCursor)).any(
-        (record) =>
-            record.event == 'PUSH_REGISTER_COORDINATOR_ATTEMPT' &&
-            record.hasDetails(const <String, Object?>{'trigger': 'startup'}),
+      () async => registrationQuiescence.observe(
+        await _flowRecordsSince(startupCursor),
+        elapsedMs: startupObservationClock.elapsedMilliseconds,
       ),
     );
+    if (startupObservationClock.elapsed > const Duration(minutes: 3)) {
+      throw _Failure(
+        'Startup push registration exceeded its original three-minute bound.',
+        assertionsAttempted: _assertionsAttempted,
+      );
+    }
     final pidBeforeRotation = await _pidof(emulator);
     if (pidBeforeRotation.isEmpty) {
       throw _Failure(
@@ -2311,7 +2508,7 @@ final class _AndroidNotificationCampaign {
     }
 
     await _backgroundReceiver();
-    final send = await _sendSpacedMarker(marker, runId: runId);
+    final send = await _sendSpacedProviderMarker(marker, runId: runId);
     final attempt = await _requirePostAttempt(
       send.cursor,
       'G7 channel disabled',
@@ -2360,7 +2557,10 @@ final class _AndroidNotificationCampaign {
     _channelToggledOff = false;
 
     await _backgroundReceiver();
-    final control = await _sendSpacedMarker(controlMarker, runId: '$runId-ctl');
+    final control = await _sendSpacedProviderMarker(
+      controlMarker,
+      runId: '$runId-ctl',
+    );
     final controlObservation = await _waitForNotificationObservation(
       controlMarker,
     );
@@ -2380,6 +2580,9 @@ final class _AndroidNotificationCampaign {
         'senderTransport': send.sent.transport,
         'stagedEnvelope': staged.toJson(),
         'channelDisabledBackgroundReceiptCount': attempt.receipts,
+        'channelDisabledProviderBeforeLiveRelease': true,
+        'channelReenabledProviderBeforeLiveRelease': true,
+        'providerJournalRecipientBinding': false,
         'channelDisabledPostAttemptEvent': attempt.postAttemptEvent,
         'channelDisabledImportance': blockedImportance,
         'channelDisabledSilentImportance': blockedSilentImportance,
@@ -2650,6 +2853,293 @@ final class _AndroidNotificationCampaign {
     }
   }
 
+  Future<void> _requireB13ReceiverBackground(String expectedPid) async {
+    final before = await _pidof(emulator);
+    final activities = await _shellText(emulator, const <String>[
+      'dumpsys',
+      'activity',
+      'activities',
+    ]);
+    final after = await _pidof(emulator);
+    if (before != expectedPid ||
+        after != expectedPid ||
+        !androidNotificationReceiverBackgrounded(
+          activities,
+          packageName: packageName,
+        )) {
+      throw _Failure(
+        'B13 receiver lost its background process binding.',
+        assertionsAttempted: _assertionsAttempted,
+      );
+    }
+  }
+
+  Future<Map<String, Object?>> _dualPathSenderReceipt(
+    Map<String, Object?> request, {
+    required String status,
+    required Duration timeout,
+    bool terminalOnly = false,
+  }) async {
+    final raw = await _waitForValue<String>(
+      'exact dual-path sender $status',
+      timeout,
+      () => _readAppFile(physical, 'intro_e2e_result.json'),
+      accept: (raw) {
+        try {
+          final value = _object(jsonDecode(raw));
+          return value['stepId'] == request['stepId'] &&
+              (value['status'] == status ||
+                  value['status'] == 'failed' ||
+                  (terminalOnly && value['status'] == 'complete'));
+        } on Object {
+          return false;
+        }
+      },
+    );
+    final value = _object(jsonDecode(raw));
+    if (value['schema'] != notificationDualPathSenderSchema ||
+        <String>[
+          'stepId',
+          'runId',
+          'nonce',
+          'targetPeerId',
+        ].any((key) => value[key] != request[key])) {
+      throw _Failure(
+        'Dual-path sender receipt binding changed.',
+        assertionsAttempted: _assertionsAttempted,
+      );
+    }
+    if (!terminalOnly && value['status'] == 'failed') {
+      throw _Failure(
+        'The exact dual-path sender action failed.',
+        assertionsAttempted: _assertionsAttempted,
+      );
+    }
+    if (terminalOnly &&
+        (value['cleanupErrorCode'] != null ||
+            !((value['status'] == 'failed' && value['success'] == false) ||
+                (value['status'] == 'complete' && value['success'] == true)))) {
+      throw _Failure(
+        'The exact dual-path sender did not retire.',
+        assertionsAttempted: _assertionsAttempted,
+      );
+    }
+    return value;
+  }
+
+  Future<AndroidNotificationDualPathSendProof> _sendB13ProviderBeforeLive({
+    required String marker,
+    required String runId,
+    required String receiverPid,
+    required DateTime sentAt,
+    required String initialCursor,
+  }) async {
+    final observation = _DualPathHostObservation();
+    _lastDualPathHostObservation = observation;
+    String? acceptedStagedEnvelope;
+    String? acceptedReceiverLog;
+    final request = <String, Object?>{
+      'transport_action': notificationDualPathSenderAction,
+      'stepId': 'notification-dual-$runId',
+      'runId': runId,
+      'nonce': _token('nonce'),
+      'targetPeerId': receiverIdentity.peerId,
+      'text': marker,
+      'timeoutMs': const Duration(minutes: 3).inMilliseconds,
+    };
+    try {
+      final proof = await coordinateAndroidNotificationDualPathSend(
+        request: request,
+        stage: () async {
+          observation.mark('stage_started');
+          await _removeAppFile(physical, notificationDualPathReleaseFileName);
+          await _stageConfig(physical, request);
+        },
+        prepared: (remaining) async {
+          final binding = await _dualPathSenderReceipt(
+            request,
+            status: 'prepared',
+            timeout: remaining,
+          );
+          observation.messageId = binding['messageId'] as String?;
+          observation.mark('prepared_observed');
+          return binding;
+        },
+        providerAccepted: (binding, remaining) async {
+          observation.mark('receiver_delivery_observation_started');
+          final clock = Stopwatch()..start();
+          await _waitFor(
+            'exact background FCM and staged ciphertext before live release',
+            remaining,
+            () async {
+              observation.receiverPolls++;
+              final staged = await _stagedEnvelopeJson(
+                binding['messageId']! as String,
+              );
+              final receiverLog = await _logcatSince(initialCursor);
+              observation.receiverWindow =
+                  androidNotificationDualPathWindowDiagnostic(
+                    receiverLog,
+                    messageId: binding['messageId']! as String,
+                  );
+              final accepted = androidNotificationPreparedReceiverObserved(
+                prepared: binding,
+                stagedEnvelope: staged,
+                expectedSenderPeerId: senderIdentity.peerId,
+                notBefore: sentAt,
+                receiverLog: receiverLog,
+              );
+              if (clock.elapsed >= remaining) {
+                throw const FormatException('receiver delivery deadline');
+              }
+              if (accepted) {
+                acceptedStagedEnvelope = staged;
+                acceptedReceiverLog = receiverLog;
+              }
+              return accepted;
+            },
+          );
+          observation.mark('receiver_delivery_observed');
+        },
+        beforeLiveRelease: () async {
+          observation.mark('receiver_pin_started');
+          await _requireB13ReceiverBackground(receiverPid);
+          final cursor = await _deviceLogcatCursor();
+          observation.mark('receiver_pin_completed');
+          return cursor;
+        },
+        release: (binding) async {
+          observation.mark('live_release_started');
+          await _writeAppFile(
+            physical,
+            notificationDualPathReleaseFileName,
+            jsonEncode(<String, Object?>{
+              for (final key in <String>[
+                'schema',
+                'stepId',
+                'runId',
+                'nonce',
+                'messageId',
+                'wireSha256',
+              ])
+                key: binding[key],
+            }),
+          );
+          observation.mark('live_release_written');
+        },
+        completed: (remaining) async {
+          observation.mark('live_completion_observation_started');
+          final result = await _dualPathSenderReceipt(
+            request,
+            status: 'complete',
+            timeout: remaining,
+          );
+          observation.mark('live_completion_observed');
+          return result;
+        },
+        providerCorroborated: (binding, remaining) async {
+          observation.mark('provider_journal_observation_started');
+          final clock = Stopwatch()..start();
+          await _waitFor(
+            'relay provider corroboration after exact live completion',
+            remaining,
+            () async {
+              observation.journalPolls++;
+              // Production may remove staging after commit. Retain the exact
+              // immutable tuple and FCM sample that qualified before release;
+              // only the independent relay corroboration is read later.
+              final staged = acceptedStagedEnvelope;
+              final receiverLog = acceptedReceiverLog;
+              if (staged == null || receiverLog == null) {
+                throw const FormatException(
+                  'pre-release delivery proof absent',
+                );
+              }
+              if (clock.elapsed >= remaining) {
+                throw const FormatException('provider corroboration deadline');
+              }
+              observation.journalReadStarted();
+              final journal = await _relayJournalSince(sentAt);
+              observation.journalReadCompleted(journal);
+              if (clock.elapsed >= remaining) {
+                throw const FormatException('provider corroboration deadline');
+              }
+              return androidNotificationPreparedProviderObserved(
+                prepared: binding,
+                stagedEnvelope: staged,
+                expectedSenderPeerId: senderIdentity.peerId,
+                notBefore: sentAt,
+                receiverLog: receiverLog,
+                relayJournal: journal,
+              );
+            },
+          );
+          observation.mark('provider_journal_corroborated');
+        },
+        cancel: (_) async {
+          await _writeAppFile(
+            physical,
+            notificationDualPathReleaseFileName,
+            jsonEncode(<String, Object?>{
+              'schema': notificationDualPathSenderSchema,
+              'stepId': request['stepId'],
+              'runId': request['runId'],
+              'nonce': request['nonce'],
+              'decision': 'cancel',
+            }),
+          );
+          await _dualPathSenderReceipt(
+            request,
+            status: 'failed',
+            timeout: const Duration(seconds: 10),
+            terminalOnly: true,
+          );
+        },
+        cleanup: () =>
+            _removeAppFile(physical, notificationDualPathReleaseFileName),
+        recordCleanupFailure: (_) =>
+            _dualPathCleanupFailures.add('dual-path-sender-retirement'),
+      );
+      observation.mark('sender_proof_completed');
+      return proof;
+    } on Object {
+      observation.mark('sender_proof_failed');
+      await _retainDualPathFailure(observation, gate: 'sender_proof');
+      rethrow;
+    }
+  }
+
+  Future<String> _retainDualPathFailure(
+    _DualPathHostObservation observation, {
+    required String gate,
+  }) async {
+    try {
+      final file = File(
+        '${proofDirectory.path}${Platform.pathSeparator}'
+        'notification-dual-path-failure-'
+        '${DateTime.now().microsecondsSinceEpoch}.json',
+      );
+      final encoded = jsonEncode(<String, Object?>{
+        'schema': 'mknoon.notification-dual-path-observation.v1',
+        'status': 'diagnostic_only',
+        'phase': _phase,
+        'apkSha256': apkSha256,
+        'failedGate': gate,
+        ...observation.snapshot(),
+      });
+      if (utf8.encode(encoded).length > 16384) {
+        throw const FormatException('closed dual-path diagnostic too large');
+      }
+      await file.writeAsString(encoded, flush: true);
+      return ' Diagnostic: ${file.path} '
+          'sha256=${sha256.convert(utf8.encode(encoded))}.';
+    } on Object {
+      // Retain the original failure even if the local closed projection cannot
+      // be saved. This function never adds an observation or retries a gate.
+      return ' Closed dual-path diagnostic unavailable.';
+    }
+  }
+
   Future<_SentMessage> _sendText(
     String text, {
     required String runId,
@@ -2912,6 +3402,8 @@ final class _AndroidNotificationCampaign {
   /// cancelled or moved to the low-importance channel.
   Future<({ActiveNotificationCard card, List<String> channels})>
   _waitForNotificationObservation(String marker) async {
+    var firstDump = '';
+    var firstObservedHostMs = 0;
     final firstObservation =
         await _waitForValue<
           ({ActiveNotificationCard card, List<String> channels})
@@ -2925,6 +3417,8 @@ final class _AndroidNotificationCampaign {
               packageName: packageName,
             ).where((card) => card.body == marker).toList(growable: false);
             if (matching.length != 1) return null;
+            firstDump = dump;
+            firstObservedHostMs = DateTime.now().millisecondsSinceEpoch;
             return (
               card: matching.single,
               channels: androidNotificationChannelsForBody(
@@ -2954,9 +3448,28 @@ final class _AndroidNotificationCampaign {
           channels.length != 1 ||
           firstObservation.channels.length != 1 ||
           channels.single != firstObservation.channels.single) {
+        var diagnosticDetail = ' Closed card snapshot unavailable.';
+        try {
+          final diagnostic = await _writeNotificationCardStabilityFailure(
+            marker: marker,
+            firstDump: firstDump,
+            failedDump: dump,
+            firstObservedHostMs: firstObservedHostMs,
+            failedObservedHostMs: DateTime.now().millisecondsSinceEpoch,
+            firstIds: <int?>[firstObservation.card.id],
+            failedIds: matching.map((card) => card.id).toList(growable: false),
+            firstChannels: firstObservation.channels,
+            failedChannels: channels,
+          );
+          diagnosticDetail =
+              ' Diagnostic: ${diagnostic.path} sha256=${diagnostic.sha256}.';
+        } on Object {
+          // The original stability failure remains authoritative even if a
+          // local diagnostic write fails. Never re-read or retry the gate.
+        }
         throw _Failure(
           'Run-bound notification did not preserve one stable card/channel '
-          'through the reconciliation window.',
+          'through the reconciliation window.$diagnosticDetail',
           assertionsAttempted: _assertionsAttempted,
         );
       }
@@ -2966,6 +3479,52 @@ final class _AndroidNotificationCampaign {
     // spacing owed to the NEXT audible-asserting send is keyed here.
     _lastCardObservedAt = DateTime.now();
     return settledObservation;
+  }
+
+  Future<({String path, String sha256})>
+  _writeNotificationCardStabilityFailure({
+    required String marker,
+    required String firstDump,
+    required String failedDump,
+    required int firstObservedHostMs,
+    required int failedObservedHostMs,
+    required List<int?> firstIds,
+    required List<int?> failedIds,
+    required List<String> firstChannels,
+    required List<String> failedChannels,
+  }) async {
+    final file = File(
+      '${proofDirectory.path}${Platform.pathSeparator}'
+      'notification-card-stability-failure-'
+      '${DateTime.now().microsecondsSinceEpoch}.json',
+    );
+    final data = <String, Object?>{
+      'schema': 'mknoon.notification-card-stability.v1',
+      'status': 'diagnostic_only',
+      'phase': _phase,
+      'apkSha256': apkSha256,
+      'firstObservedHostMs': firstObservedHostMs,
+      'failedObservedHostMs': failedObservedHostMs,
+      'first': androidNotificationCardDiagnosticSnapshot(
+        firstDump,
+        packageName: packageName,
+        body: marker,
+        oracleCardIds: firstIds,
+        oracleChannels: firstChannels,
+      ),
+      'failed': androidNotificationCardDiagnosticSnapshot(
+        failedDump,
+        packageName: packageName,
+        body: marker,
+        oracleCardIds: failedIds,
+        oracleChannels: failedChannels,
+      ),
+    };
+    await file.writeAsString(jsonEncode(data), flush: true);
+    return (
+      path: file.path,
+      sha256: sha256.convert(file.readAsBytesSync()).toString(),
+    );
   }
 
   Future<void> _requireNoAppNotification() async {
@@ -3756,6 +4315,126 @@ final class _AndroidNotificationCampaign {
     final bytes = List<int>.generate(12, (_) => _random.nextInt(256));
     return '$prefix-${base64Url.encode(bytes).replaceAll('=', '')}';
   }
+}
+
+/// Diagnostic-only projection; it never authorizes a delivery or card gate.
+/// No raw message, sender, ciphertext, transport value or log line is emitted.
+Map<String, Object?> androidNotificationDualPathWindowDiagnostic(
+  String window, {
+  required String messageId,
+}) {
+  final transports = <String, int>{
+    'local': 0,
+    'direct': 0,
+    'relay': 0,
+    'inbox': 0,
+    'other': 0,
+  };
+  var malformedFlowRows = 0;
+  var fcmReceipts = 0;
+  var listeners = 0;
+  final prefix = safeNotificationIdPrefix(messageId);
+  for (final line in const LineSplitter().convert(window)) {
+    if (!line.contains('[FLOW]')) continue;
+    final index = line.indexOf('[FLOW] ');
+    Object? value;
+    try {
+      if (index >= 0) {
+        value = jsonDecode(line.substring(index + '[FLOW] '.length));
+      }
+    } on FormatException {
+      // Count malformed input instead of copying it into the artifact.
+    }
+    if (value is! Map ||
+        value['event'] is! String ||
+        value['details'] is! Map) {
+      malformedFlowRows++;
+      continue;
+    }
+    final details = value['details'] as Map;
+    if (value['event'] == androidNotificationFcmPathAttemptEvent &&
+        details['messageIdPrefix'] == prefix) {
+      fcmReceipts++;
+    }
+    if (details['id'] != prefix) continue;
+    if (value['event'] == androidNotificationLivePathAttemptEvent) listeners++;
+    if (value['event'] == 'CHAT_MSG_RECEIVE_STORED') {
+      final transport = details['transport'];
+      final key = transports.containsKey(transport)
+          ? transport as String
+          : 'other';
+      transports[key] = transports[key]! + 1;
+    }
+  }
+  return <String, Object?>{
+    'sha256': sha256.convert(utf8.encode(window)).toString(),
+    'utf8Bytes': utf8.encode(window).length,
+    'malformedFlowRows': malformedFlowRows,
+    'fcmReceipts': fcmReceipts,
+    'listeners': listeners,
+    'storedTransportCounts': transports,
+  };
+}
+
+final class _DualPathHostObservation {
+  final Stopwatch _clock = Stopwatch()..start();
+  final List<Map<String, Object?>> _trace = <Map<String, Object?>>[];
+  String? messageId;
+  bool? nominalMarkers;
+  bool? releasedLive;
+  int receiverPolls = 0;
+  int journalPolls = 0;
+  Map<String, Object?>? receiverWindow;
+  Map<String, Object?>? nominalWindow;
+  Map<String, Object?>? liveWindow;
+  Map<String, Object?>? journalWindow;
+  Map<String, Object?>? journalLastReadStarted;
+  Map<String, Object?>? journalLastReadCompleted;
+
+  Map<String, Object?> _timestamp() => <String, Object?>{
+    'hostMs': DateTime.now().millisecondsSinceEpoch,
+    'elapsedMs': _clock.elapsedMilliseconds,
+  };
+
+  void mark(String stage) {
+    if (_trace.length < 24) {
+      _trace.add(<String, Object?>{'stage': stage, ..._timestamp()});
+    }
+  }
+
+  void journalReadStarted() {
+    journalLastReadStarted = _timestamp();
+  }
+
+  void journalReadCompleted(String journal) {
+    journalLastReadCompleted = _timestamp();
+    journalWindow = <String, Object?>{
+      'sha256': sha256.convert(utf8.encode(journal)).toString(),
+      'utf8Bytes': utf8.encode(journal).length,
+      'providerSuccessObserved': relayJournalContainsAndroidProviderSend(
+        journal,
+      ),
+      'recipientBinding': false,
+    };
+  }
+
+  Map<String, Object?> snapshot() => <String, Object?>{
+    'clockBasis': 'host_wall_and_monotonic_diagnostic_only',
+    'messageIdSha256': messageId == null
+        ? null
+        : sha256.convert(utf8.encode(messageId!)).toString(),
+    'trace': List<Map<String, Object?>>.of(_trace),
+    'receiverPolls': receiverPolls,
+    'journalPolls': journalPolls,
+    'journalLastReadStarted': journalLastReadStarted,
+    'journalLastReadCompleted': journalLastReadCompleted,
+    'nominalMarkers': nominalMarkers,
+    'releasedLive': releasedLive,
+    'receiverWindow': receiverWindow,
+    'nominalWindow': nominalWindow,
+    'releasedLiveWindow': liveWindow,
+    'journalWindow': journalWindow,
+  };
 }
 
 final class _NetworkState {

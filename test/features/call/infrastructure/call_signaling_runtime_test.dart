@@ -13,6 +13,9 @@ import 'package:flutter_app/features/call/domain/call_id.dart';
 import 'package:flutter_app/features/call/domain/call_signal.dart';
 import 'package:flutter_app/features/call/domain/call_session_snapshot.dart';
 import 'package:flutter_app/features/call/domain/call_state.dart';
+import 'package:flutter_app/features/call/domain/call_wake_handle_grant.dart';
+import 'package:flutter_app/features/call/domain/issued_call_wake_handle_store.dart';
+import 'package:flutter_app/features/call/infrastructure/android_call_admission_settlement.dart';
 import 'package:flutter_app/features/call/infrastructure/call_mailbox_client.dart';
 import 'package:flutter_app/features/call/infrastructure/call_signaling_runtime.dart';
 import 'package:flutter_app/features/call/infrastructure/call_trusted_roster_provider.dart';
@@ -87,6 +90,9 @@ final class _Mailbox implements CallMailboxClient {
   int acks = 0;
   int ackAttempts = 0;
   bool failAcks = false;
+  int? ackResult;
+  Future<void>? ackBarrier;
+  final ackEntered = Completer<void>();
   Future<void>? retrieveBarrier;
 
   @override
@@ -111,9 +117,12 @@ final class _Mailbox implements CallMailboxClient {
     required List<String> messageIds,
   }) async {
     ackAttempts++;
+    if (!ackEntered.isCompleted) ackEntered.complete();
+    await ackBarrier;
     if (failAcks) throw StateError('temporary mailbox failure');
-    acks += messageIds.length;
-    return messageIds.length;
+    final count = ackResult ?? messageIds.length;
+    acks += count;
+    return count;
   }
 
   @override
@@ -281,6 +290,7 @@ _runtimeWithRealHandler({
   required _Mailbox mailbox,
   required _RuntimeCrypto crypto,
   CallEffectExecutor effects = const NoopCallEffectExecutor(),
+  PrepareCallMailboxSettlement? prepareMailboxSettlement,
 }) async {
   final coordinator = _coordinator(effects: effects);
   final presenter = _RuntimePresenter();
@@ -312,6 +322,12 @@ _runtimeWithRealHandler({
         outcomes.add(outcome);
         return outcome;
       },
+      handleMailboxIncoming: (frame) async {
+        final result = await handler.handleMailbox(frame);
+        outcomes.add(result.outcome);
+        return result;
+      },
+      prepareMailboxSettlement: prepareMailboxSettlement,
       coordinator: coordinator,
       networkEffectsAllowed: () => true,
     ),
@@ -323,7 +339,454 @@ _runtimeWithRealHandler({
   );
 }
 
+final class _AdmissionPort implements AndroidCallAdmissionSettlementPort {
+  bool available = true;
+  bool foreground = true;
+  int captures = 0;
+  int commits = 0;
+  String owner = '77777777-7777-4777-8777-777777777777';
+  String handle = '33333333-3333-4333-8333-333333333333';
+  String wake = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+  Future<void>? captureBarrier;
+  final captureEntered = Completer<void>();
+  @override
+  bool get admissionSettlementAvailable => available;
+  @override
+  Future<AndroidCallAdmissionToken?> captureAdmissionSettlement(
+    String nativeCallId,
+  ) async {
+    captures++;
+    final token = AndroidCallAdmissionToken.fromWire(<String, Object?>{
+      'nativeCallId': handle,
+      'ownerId': owner,
+      'expiresAtMs': _runtimeNowMs + 600000,
+      'wakeHandle': wake,
+    });
+    if (!captureEntered.isCompleted) captureEntered.complete();
+    await captureBarrier;
+    return token;
+  }
+
+  @override
+  Future<bool> settleAuthenticatedAdmission(
+    AndroidCallAdmissionToken token,
+  ) async {
+    commits++;
+    if (!available ||
+        token.ownerId != owner ||
+        token.nativeCallId != handle ||
+        token.wakeHandle != wake) {
+      return false;
+    }
+    foreground = false;
+    return true;
+  }
+}
+
+final class _IssuedWakeStore implements IssuedCallWakeHandleStore {
+  CallIssuedWakeHandleRecord? record = CallIssuedWakeHandleRecord(
+    contactAccountPeerId: 'sender-account',
+    grant: CallWakeHandleGrant(
+      handle: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+      recipientDevicePeerId: 'recipient-device',
+      deviceKeyEpoch: 1,
+      generation: 1,
+      issuedAtMs: _runtimeNowMs - 1,
+      expiresAtMs: _runtimeNowMs + 3600000,
+    ),
+    authorizedSenderDevicePeerIds: const <String>['sender-device'],
+    distributionPending: false,
+    distributionReceiptVersion: 1,
+  );
+  Future<void>? barrier;
+  final readEntered = Completer<void>();
+  int reads = 0;
+  Future<void>? finalReadBarrier;
+  final finalReadEntered = Completer<void>();
+  @override
+  Future<CallIssuedWakeHandleRecord?> readForContact(
+    String contactAccountPeerId,
+  ) async {
+    reads++;
+    if (!readEntered.isCompleted) readEntered.complete();
+    await barrier;
+    if (reads == 2) {
+      if (!finalReadEntered.isCompleted) finalReadEntered.complete();
+      await finalReadBarrier;
+    }
+    return record?.contactAccountPeerId == contactAccountPeerId ? record : null;
+  }
+
+  @override
+  Future<List<CallIssuedWakeHandleRecord>> readAll() async => [?record];
+  @override
+  Future<void> write(CallIssuedWakeHandleRecord value) async => record = value;
+  @override
+  Future<void> removeForContact(String contactAccountPeerId) async =>
+      record = null;
+  @override
+  Future<void> clear() async => record = null;
+}
+
+Future<CallMailboxEvent> _terminalMailboxEvent(
+  SecureCallEnvelopeCodec codec, {
+  CallSignalType type = CallSignalType.terminate,
+  String frameHandle = '33333333-3333-4333-8333-333333333333',
+  String frameSender = 'sender-device',
+  String frameRecipient = 'recipient-device',
+  String? frameMessageId,
+  int? frameExpiry,
+  bool invalidSignature = false,
+}) async {
+  final signal = _runtimeSignal(
+    messageId: '55555555-5555-4555-8555-555555555555',
+    event: type,
+    sequence: 2,
+    payload: <String, Object?>{
+      'reason': type == CallSignalType.reject ? 'declined' : 'remote_hangup',
+    },
+  );
+  var envelope = await codec.encode(
+    signal: signal,
+    callHandle: '33333333-3333-4333-8333-333333333333',
+    recipientMlKemPublicKey: 'recipient-mlkem-public',
+    senderSigningPrivateKey: 'sender-signing-key',
+  );
+  if (invalidSignature) {
+    final object = jsonDecode(envelope) as Map<String, dynamic>;
+    object['signature'] = base64Encode(utf8.encode('untrusted'));
+    envelope = jsonEncode(object);
+  }
+  return CallMailboxEvent(
+    callHandle: frameHandle,
+    messageId: frameMessageId ?? signal.messageId,
+    authenticatedSenderDevicePeerId: frameSender,
+    recipientDevicePeerId: frameRecipient,
+    envelopeJson: envelope,
+    receiptAtMs: _runtimeNowMs,
+    expiresAtMs: frameExpiry ?? signal.expiresAtMs,
+  );
+}
+
+void _queueEvent(_Mailbox mailbox, CallMailboxEvent event) => mailbox.pages.add(
+  CallMailboxRetrieveResult(
+    events: [event],
+    receiptAtMs: _runtimeNowMs,
+    expiresAtMs: event.expiresAtMs,
+    hasMore: false,
+  ),
+);
+
 void main() {
+  for (final variant in <String>[
+    'terminate',
+    'reject',
+    'signature',
+    'sender',
+    'recipient',
+    'message',
+    'expiry',
+    'old_handle',
+    'native_successor',
+    'wake_mismatch',
+    'unauthorized_device',
+    'revoked',
+    'account_changed',
+    'already_active',
+    'crypto_unavailable',
+    'empty',
+    'zero_ack',
+    'grant_rotates',
+  ]) {
+    test('native terminal settlement preserves $variant authority', () async {
+      final stream = StreamController<ChatMessage>.broadcast();
+      addTearDown(stream.close);
+      final mailbox = _Mailbox();
+      final native = _AdmissionPort();
+      final grants = _IssuedWakeStore();
+      if (variant == 'native_successor') {
+        native.handle = '66666666-6666-4666-8666-666666666666';
+      }
+      if (variant == 'wake_mismatch') {
+        native.wake = 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
+      }
+      if (variant == 'unauthorized_device') {
+        grants.record = grants.record!.copyWith(
+          authorizedSenderDevicePeerIds: ['other-device'],
+        );
+      }
+      if (variant == 'revoked') {
+        grants.record = grants.record!.copyWith(revokePending: true);
+      }
+      if (variant == 'already_active') native.available = false;
+      if (variant == 'zero_ack') mailbox.ackResult = 0;
+      var accountReads = 0;
+      final built = await _runtimeWithRealHandler(
+        directStream: stream.stream,
+        mailbox: mailbox,
+        crypto: _RuntimeCrypto()
+          ..throwOnVerify = variant == 'crypto_unavailable',
+        prepareMailboxSettlement: (frame) =>
+            prepareAndroidCallAdmissionSettlement(
+              frame: frame,
+              native: native,
+              issuedWakeHandles: grants,
+              localAccountPeerId: 'recipient-account',
+              localDevicePeerId: 'recipient-device',
+              localDeviceKeyEpoch: 1,
+              isCurrentLocalAuthority: () async {
+                accountReads++;
+                if (variant == 'grant_rotates' && accountReads == 2) {
+                  grants.record = grants.record!.copyWith(revokePending: true);
+                }
+                return variant != 'account_changed';
+              },
+              nowMs: () => _runtimeNowMs,
+            ),
+      );
+      addTearDown(built.runtime.shutdown);
+      final event = await _terminalMailboxEvent(
+        built.codec,
+        type: variant == 'reject'
+            ? CallSignalType.reject
+            : CallSignalType.terminate,
+        invalidSignature: variant == 'signature',
+        frameHandle: variant == 'old_handle'
+            ? '66666666-6666-4666-8666-666666666666'
+            : '33333333-3333-4333-8333-333333333333',
+        frameSender: variant == 'sender' ? 'other-device' : 'sender-device',
+        frameRecipient: variant == 'recipient'
+            ? 'other-recipient'
+            : 'recipient-device',
+        frameMessageId: variant == 'message'
+            ? '66666666-6666-4666-8666-666666666666'
+            : null,
+        frameExpiry: variant == 'expiry' ? _runtimeNowMs + 45001 : null,
+      );
+      if (variant != 'empty') _queueEvent(mailbox, event);
+      await built.runtime.start();
+      final succeeds = variant == 'terminate' || variant == 'reject';
+      expect(native.foreground, !succeeds);
+      expect(native.commits, succeeds ? 1 : 0);
+      expect(
+        mailbox.acks,
+        const ['empty', 'crypto_unavailable', 'zero_ack'].contains(variant)
+            ? 0
+            : 1,
+      );
+      expect(built.presenter.presentations, 0);
+      expect(built.coordinator.activeSession, isNull);
+    });
+  }
+
+  test(
+    'account cutover during final grant read prevents native settlement',
+    () async {
+      final stream = StreamController<ChatMessage>.broadcast();
+      addTearDown(stream.close);
+      final mailbox = _Mailbox();
+      final native = _AdmissionPort();
+      final gate = Completer<void>();
+      final grants = _IssuedWakeStore()..finalReadBarrier = gate.future;
+      var authorityCurrent = true;
+      final built = await _runtimeWithRealHandler(
+        directStream: stream.stream,
+        mailbox: mailbox,
+        crypto: _RuntimeCrypto(),
+        prepareMailboxSettlement: (frame) =>
+            prepareAndroidCallAdmissionSettlement(
+              frame: frame,
+              native: native,
+              issuedWakeHandles: grants,
+              localAccountPeerId: 'recipient-account',
+              localDevicePeerId: 'recipient-device',
+              localDeviceKeyEpoch: 1,
+              isCurrentLocalAuthority: () async => authorityCurrent,
+              nowMs: () => _runtimeNowMs,
+            ),
+      );
+      addTearDown(built.runtime.shutdown);
+      _queueEvent(mailbox, await _terminalMailboxEvent(built.codec));
+      final starting = built.runtime.start();
+      await grants.finalReadEntered.future;
+      authorityCurrent = false;
+      gate.complete();
+      await starting;
+      expect(mailbox.acks, 1);
+      expect(native.commits, 0);
+      expect(native.foreground, isTrue);
+    },
+  );
+
+  for (final replacement in <bool>[false, true]) {
+    test(
+      'failed ACK retains original settlement token across replay replacement=$replacement',
+      () async {
+        final stream = StreamController<ChatMessage>.broadcast();
+        addTearDown(stream.close);
+        final mailbox = _Mailbox()..failAcks = true;
+        final native = _AdmissionPort();
+        final grants = _IssuedWakeStore();
+        final built = await _runtimeWithRealHandler(
+          directStream: stream.stream,
+          mailbox: mailbox,
+          crypto: _RuntimeCrypto(),
+          prepareMailboxSettlement: (frame) =>
+              prepareAndroidCallAdmissionSettlement(
+                frame: frame,
+                native: native,
+                issuedWakeHandles: grants,
+                localAccountPeerId: 'recipient-account',
+                localDevicePeerId: 'recipient-device',
+                localDeviceKeyEpoch: 1,
+                isCurrentLocalAuthority: () async => true,
+                nowMs: () => _runtimeNowMs,
+              ),
+        );
+        addTearDown(built.runtime.shutdown);
+        final event = await _terminalMailboxEvent(built.codec);
+        _queueEvent(mailbox, event);
+        await built.runtime.start();
+        expect(native.foreground, isTrue);
+        expect(native.commits, 0);
+        if (replacement) native.owner = '88888888-8888-4888-8888-888888888888';
+        mailbox.failAcks = false;
+        _queueEvent(mailbox, event);
+        await built.runtime.onResume();
+        expect(
+          native.captures,
+          1,
+          reason: 'Replay must never capture a replacement WorkRequest',
+        );
+        expect(native.commits, 1);
+        expect(native.foreground, replacement);
+        expect(mailbox.acks, 1);
+      },
+    );
+  }
+
+  for (final phase in <String>['capture', 'ack', 'grant']) {
+    test(
+      'shutdown during $phase prevents late native admission settlement',
+      () async {
+        final stream = StreamController<ChatMessage>.broadcast();
+        addTearDown(stream.close);
+        final gate = Completer<void>();
+        final mailbox = _Mailbox();
+        final native = _AdmissionPort();
+        final grants = _IssuedWakeStore();
+        if (phase == 'capture') native.captureBarrier = gate.future;
+        if (phase == 'ack') mailbox.ackBarrier = gate.future;
+        if (phase == 'grant') grants.barrier = gate.future;
+        final built = await _runtimeWithRealHandler(
+          directStream: stream.stream,
+          mailbox: mailbox,
+          crypto: _RuntimeCrypto(),
+          prepareMailboxSettlement: (frame) =>
+              prepareAndroidCallAdmissionSettlement(
+                frame: frame,
+                native: native,
+                issuedWakeHandles: grants,
+                localAccountPeerId: 'recipient-account',
+                localDevicePeerId: 'recipient-device',
+                localDeviceKeyEpoch: 1,
+                isCurrentLocalAuthority: () async => true,
+                nowMs: () => _runtimeNowMs,
+              ),
+        );
+        addTearDown(built.runtime.shutdown);
+        _queueEvent(mailbox, await _terminalMailboxEvent(built.codec));
+        final starting = built.runtime.start();
+        await switch (phase) {
+          'capture' => native.captureEntered.future,
+          'ack' => mailbox.ackEntered.future,
+          _ => grants.readEntered.future,
+        };
+        final closing = built.runtime.shutdown();
+        gate.complete();
+        await starting;
+        await closing;
+        expect(native.commits, 0);
+        expect(native.foreground, isTrue);
+      },
+    );
+  }
+  test(
+    'foreground terminal ACK retires deferred native admission without a canonical session',
+    () async {
+      final stream = StreamController<ChatMessage>.broadcast();
+      addTearDown(stream.close);
+      final mailbox = _Mailbox();
+      var admissionForeground = true;
+      var captures = 0;
+      var settlements = 0;
+      final built = await _runtimeWithRealHandler(
+        directStream: stream.stream,
+        mailbox: mailbox,
+        crypto: _RuntimeCrypto(),
+        prepareMailboxSettlement: (frame) async {
+          captures++;
+          expect(mailbox.acks, 0);
+          return (terminal, {required canApply}) async {
+            expect(
+              mailbox.acks,
+              1,
+              reason: 'Durable mailbox ACK precedes native release',
+            );
+            expect(terminal.callHandle, frame.expectedCallHandle);
+            expect(terminal.signal.messageId, frame.expectedMessageId);
+            expect(terminal.signal.event, CallSignalType.terminate);
+            settlements++;
+            admissionForeground = false;
+          };
+        },
+      );
+      addTearDown(built.runtime.shutdown);
+      final terminal = _runtimeSignal(
+        messageId: '55555555-5555-4555-8555-555555555555',
+        event: CallSignalType.terminate,
+        sequence: 2,
+        payload: const <String, Object?>{'reason': 'remote_hangup'},
+      );
+      final envelope = await built.codec.encode(
+        signal: terminal,
+        callHandle: '33333333-3333-4333-8333-333333333333',
+        recipientMlKemPublicKey: 'recipient-mlkem-public',
+        senderSigningPrivateKey: 'sender-signing-key',
+      );
+      mailbox.pages.add(
+        CallMailboxRetrieveResult(
+          events: <CallMailboxEvent>[
+            CallMailboxEvent(
+              callHandle: '33333333-3333-4333-8333-333333333333',
+              messageId: terminal.messageId,
+              authenticatedSenderDevicePeerId: 'sender-device',
+              recipientDevicePeerId: 'recipient-device',
+              envelopeJson: envelope,
+              receiptAtMs: _runtimeNowMs,
+              expiresAtMs: terminal.expiresAtMs,
+            ),
+          ],
+          receiptAtMs: _runtimeNowMs,
+          expiresAtMs: terminal.expiresAtMs,
+          hasMore: false,
+        ),
+      );
+      expect(built.coordinator.activeSession, isNull);
+      await built.runtime.start();
+      expect(mailbox.acks, 1);
+      expect(built.presenter.presentations, 0);
+      expect(built.coordinator.activeSession, isNull);
+      expect(
+        admissionForeground,
+        isFalse,
+        reason:
+            'graph_not_owner custody is completed by the authenticated foreground terminal',
+      );
+      expect(captures, 1);
+      expect(settlements, 1);
+    },
+  );
   for (final useMailbox in <bool>[false, true]) {
     test(
       '${useMailbox ? 'mailbox' : 'direct'} hang-up interrupts admitted accept preparation',

@@ -17,6 +17,10 @@ internal interface MknoonCallLifecycleStore {
 
     fun snapshot(): PendingNativeCallDescriptor?
 
+    /** Strict observation must not reconcile state or prune acknowledgement receipts. */
+    fun observeProtectedJournal(): PendingNativeCallDescriptor? =
+        throw UnsupportedOperationException("protected journal observation unavailable")
+
     fun acknowledge(
         nativeCallId: UUID,
         highestConsumedSequence: Long,
@@ -121,6 +125,12 @@ internal data class MknoonCallAudioState(
     val availableRoutes: List<String>,
 )
 
+internal data class MknoonCallJournalObservation(
+    val descriptor: PendingNativeCallDescriptor?,
+    val liveOwnerPresent: Boolean,
+    val cleanupPending: Boolean,
+)
+
 /**
  * Serializes native call ownership around the one durable pending descriptor.
  *
@@ -163,6 +173,7 @@ internal class MknoonCallLifecycleController(
     private var lastRoute = "system_default"
     private var availableRoutes = emptyList<String>()
     private var lastAudioActive: Boolean? = null
+    private var lockedMetadata: Pair<UUID, MknoonLockedCallMetadata>? = null
     private var cleanupState: NativeCleanupState? = null
     private var ownedCallId: UUID? = null
     private var ownedExpiresAtMs: Long? = null
@@ -171,7 +182,7 @@ internal class MknoonCallLifecycleController(
     private val terminalTombstones = linkedMapOf<UUID, Long>()
     private var terminalAckWaiter: TerminalAckWaiter? = null
 
-    fun present(payload: CallWakePayload): MknoonCallPresentationResult = synchronized(lock) {
+    fun present(payload: CallWakePayload, initialDisplay: MknoonIncomingCallDisplay? = null): MknoonCallPresentationResult = synchronized(lock) {
         if (!safeBoolean(capabilityEnabled)) return@synchronized MknoonCallPresentationResult.DISABLED
         if (adoptedState != null || cleanupState != null) {
             return@synchronized MknoonCallPresentationResult.BUSY
@@ -221,6 +232,10 @@ internal class MknoonCallLifecycleController(
                 return@synchronized MknoonCallPresentationResult.PERSISTENCE_FAILED
             }
         resetVolatileState()
+        // The descriptor was newly committed and registered. Seed the first
+        // notification/full-screen frame before it can create MainActivity;
+        // duplicates return above and cannot replace foreground metadata.
+        initialDisplay?.let { lockedMetadata = payload.nativeCallId to it.toRingingMetadata() }
         runCatching { onPresented(payload.nativeCallId, payload.expiresAtMs) }
             .onFailure {
                 terminateInternal(
@@ -512,11 +527,16 @@ internal class MknoonCallLifecycleController(
     }
 
     fun endFromDart(nativeCallId: UUID): Boolean = synchronized(lock) {
-        terminateInternal(
+        val newlyCompleted = terminateInternal(
             nativeCallId,
             PendingNativeCallEventType.END_REQUESTED,
             endPlatform = true,
         )
+        // A canonical terminal snapshot can follow native Decline/End before
+        // its journal ACK. Dart needs confirmation that exact cleanup is done,
+        // not whether this request appended another terminal event. Retired or
+        // unknown UUIDs have no retained lifecycle and remain rejected.
+        newlyCompleted || (cleanupState == null && hasTerminalLifecycleLocked(nativeCallId))
     }
 
     fun endFromTelecom(nativeCallId: UUID): Boolean = synchronized(lock) {
@@ -901,6 +921,20 @@ internal class MknoonCallLifecycleController(
         snapshotInternal()
     }
 
+    /** One protected read with ownership sampled under the same lock; no reconciliation. */
+    internal fun observeJournal(): MknoonCallJournalObservation = synchronized(lock) {
+        // Unlike snapshotInternal, preserve read errors so observers cannot call them empty.
+        val descriptor = store.observeProtectedJournal()
+        MknoonCallJournalObservation(
+            descriptor = descriptor,
+            liveOwnerPresent = descriptor?.terminalEvent == null && descriptor != null ||
+                adoptedState?.terminal == false || ownedCallId != null ||
+                answerRequestedCallId != null || telecomActiveCallId != null ||
+                audioResourcesCallId != null || audioTransition != null,
+            cleanupPending = cleanupState != null,
+        )
+    }
+
     fun activeNativeCallId(): UUID? = synchronized(lock) {
         snapshotInternal()?.takeIf { it.terminalEvent == null }?.nativeCallId
             ?: adoptedState?.takeIf { !it.terminal }?.nativeCallId
@@ -1004,8 +1038,33 @@ internal class MknoonCallLifecycleController(
         false
     }
 
+    fun updatePresentation(nativeCallId: UUID, metadata: MknoonLockedCallMetadata): Boolean = synchronized(lock) {
+        if (cleanupState != null || !hasActiveLifecycle(nativeCallId)) return@synchronized false
+        lockedMetadata = nativeCallId to metadata
+        true
+    }
+
+    fun presentation(nativeCallId: UUID): MknoonLockedCallMetadata? = synchronized(lock) {
+        if (cleanupState != null || !hasActiveLifecycle(nativeCallId)) return@synchronized null
+        lockedMetadata?.takeIf { it.first == nativeCallId }?.second
+    }
+
     fun audioState(): MknoonCallAudioState = synchronized(lock) {
         audioStateLocked()
+    }
+
+    /** Bounded observation under the exact adopted audio owner, without store I/O. */
+    internal fun <T> withActiveAudioOwner(
+        nativeCallId: UUID,
+        otherwise: T,
+        observe: (muted: Boolean) -> T,
+    ): T = synchronized(lock) {
+        if (
+            audioResourcesCallId != nativeCallId ||
+            lastAudioActive != true ||
+            cleanupState != null ||
+            adoptedState?.let { it.nativeCallId == nativeCallId && !it.terminal } != true
+        ) otherwise else observe(lastMuted == true)
     }
 
     fun audioState(nativeCallId: UUID): MknoonCallAudioState? = synchronized(lock) {
@@ -1137,6 +1196,7 @@ internal class MknoonCallLifecycleController(
         lastRoute = "system_default"
         availableRoutes = emptyList()
         lastAudioActive = false
+        lockedMetadata = null
         return firstDurableTerminal && cleanup.complete
     }
 
@@ -1290,6 +1350,7 @@ internal class MknoonCallLifecycleController(
         lastRoute = "system_default"
         availableRoutes = emptyList()
         lastAudioActive = null
+        lockedMetadata = null
     }
 
     private fun PendingNativeCallEventType.isTerminalLifecycleEvent(): Boolean = when (this) {

@@ -1,6 +1,8 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:flutter/services.dart';
+import 'package:flutter_app/features/call/infrastructure/android_call_wake_channel.dart';
 import 'package:flutter_app/features/call/application/call_cleanup_coordinator.dart';
 import 'package:flutter_app/features/call/application/call_control_effect_executor.dart';
 import 'package:flutter_app/features/call/application/call_coordinator.dart';
@@ -275,6 +277,7 @@ final class _MailboxBackedControlPort implements CallControlSignalingPort {
 }
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
   for (final route in <CallRouteClass>[
     CallRouteClass.direct,
     CallRouteClass.ephemeralMailbox,
@@ -416,110 +419,138 @@ void main() {
     });
   }
 
-  test(
-    'authenticated direct and mailbox duplicate converge on one session and UI',
-    () async {
-      final now = DateTime.utc(2026, 8, 30, 12);
-      final nowMs = now.millisecondsSinceEpoch;
-      const callHandle = '33333333-3333-4333-8333-333333333333';
-      final signal = CallSignal.create(
-        callId: CallId.parse('22222222-2222-4222-8222-222222222222'),
-        messageId: '11111111-1111-4111-8111-111111111111',
-        event: CallSignalType.invite,
-        senderAccountPeerId: 'sender-account',
-        senderDevicePeerId: 'sender-device',
-        recipientAccountPeerId: 'recipient-account',
-        recipientDevicePeerId: 'recipient-device',
-        senderSequence: 1,
-        iceGeneration: 0,
-        createdAtMs: nowMs,
-        expiresAtMs: nowMs + 45_000,
-        payload: const <String, Object?>{},
-      );
-      final codec = SecureCallEnvelopeCodec(
-        crypto: _Crypto(),
-        nowMs: () => nowMs,
-      );
-      final envelope = await codec.encode(
-        signal: signal,
-        callHandle: callHandle,
-        recipientMlKemPublicKey: 'recipient-mlkem-public',
-        senderSigningPrivateKey: 'sender-signing-key',
-      );
-      final mailbox = _Mailbox(
-        CallMailboxRetrieveResult(
-          events: <CallMailboxEvent>[
-            CallMailboxEvent(
-              callHandle: callHandle,
-              messageId: signal.messageId,
-              authenticatedSenderDevicePeerId: 'sender-device',
-              recipientDevicePeerId: 'recipient-device',
-              envelopeJson: envelope,
-              receiptAtMs: nowMs,
-              expiresAtMs: signal.expiresAtMs,
+  for (final warmFcmOnly in [false, true]) {
+    test(
+      warmFcmOnly
+          ? 'warm Android FCM drains authenticated stored invite with no direct delivery'
+          : 'authenticated direct and mailbox duplicate converge on one session and UI',
+      () async {
+        final now = DateTime.utc(2026, 8, 30, 12);
+        final nowMs = now.millisecondsSinceEpoch;
+        const callHandle = '33333333-3333-4333-8333-333333333333';
+        final signal = CallSignal.create(
+          callId: CallId.parse('22222222-2222-4222-8222-222222222222'),
+          messageId: '11111111-1111-4111-8111-111111111111',
+          event: CallSignalType.invite,
+          senderAccountPeerId: 'sender-account',
+          senderDevicePeerId: 'sender-device',
+          recipientAccountPeerId: 'recipient-account',
+          recipientDevicePeerId: 'recipient-device',
+          senderSequence: 1,
+          iceGeneration: 0,
+          createdAtMs: nowMs,
+          expiresAtMs: nowMs + 45_000,
+          payload: const <String, Object?>{},
+        );
+        final codec = SecureCallEnvelopeCodec(
+          crypto: _Crypto(),
+          nowMs: () => nowMs,
+        );
+        final envelope = await codec.encode(
+          signal: signal,
+          callHandle: callHandle,
+          recipientMlKemPublicKey: 'recipient-mlkem-public',
+          senderSigningPrivateKey: 'sender-signing-key',
+        );
+        final mailbox = _Mailbox(
+          CallMailboxRetrieveResult(
+            events: <CallMailboxEvent>[
+              CallMailboxEvent(
+                callHandle: callHandle,
+                messageId: signal.messageId,
+                authenticatedSenderDevicePeerId: 'sender-device',
+                recipientDevicePeerId: 'recipient-device',
+                envelopeJson: envelope,
+                receiptAtMs: nowMs,
+                expiresAtMs: signal.expiresAtMs,
+              ),
+            ],
+            receiptAtMs: nowMs,
+            expiresAtMs: signal.expiresAtMs,
+            hasMore: false,
+          ),
+        );
+        final coordinator = CallCoordinator(
+          reducer: const CallReducer(),
+          cleanupCoordinator: CallCleanupCoordinator(const <CallCleanupStep>[]),
+          historyProjector: CallHistoryProjector(_History()),
+          clock: () => now,
+          idSource: () => signal.callId,
+        );
+        final presenter = _Presenter();
+        final handler = HandleIncomingCallSignal(
+          codec: codec,
+          coordinator: coordinator,
+          trustedRosterProvider: const _Roster(),
+          localAuthorityProvider: () async => const CallLocalDeviceAuthority(
+            accountPeerId: 'recipient-account',
+            devicePeerId: 'recipient-device',
+            mlKemSecretKey: 'recipient-mlkem-secret',
+          ),
+          incomingCallPresenter: presenter,
+          networkEffectsAllowed: () => true,
+        );
+        final direct = StreamController<ChatMessage>.broadcast();
+        final runtime = CallSignalingRuntime(
+          directCallSignalStream: direct.stream,
+          mailboxClient: mailbox,
+          handleIncoming: handler.handle,
+          coordinator: coordinator,
+          networkEffectsAllowed: () => true,
+        );
+        addTearDown(runtime.shutdown);
+        addTearDown(direct.close);
+
+        if (warmFcmOnly) {
+          final pendingInvite = mailbox.page;
+          mailbox.page = null;
+          await runtime.start();
+          expect(coordinator.activeSession, isNull);
+          expect(presenter.presentations, 0);
+          mailbox.page = pendingInvite;
+          final channel = AndroidCallWakeChannel(onCallWake: runtime.onResume);
+          await channel.install();
+          addTearDown(channel.dispose);
+          const wire = StandardMethodCodec();
+          final reply = await TestDefaultBinaryMessengerBinding
+              .instance
+              .defaultBinaryMessenger
+              .handlePlatformMessage(
+                AndroidCallWakeChannel.channelName,
+                wire.encodeMethodCall(
+                  const MethodCall(AndroidCallWakeChannel.wakeMethod),
+                ),
+                (_) {},
+              );
+          expect(wire.decodeEnvelope(reply!), isTrue);
+        } else {
+          await runtime.start();
+          direct.add(
+            ChatMessage(
+              from: 'sender-device',
+              to: 'recipient-device',
+              content: envelope,
+              timestamp: now.toIso8601String(),
+              isIncoming: true,
+              transport: 'direct',
             ),
-          ],
-          receiptAtMs: nowMs,
-          expiresAtMs: signal.expiresAtMs,
-          hasMore: false,
-        ),
-      );
-      final coordinator = CallCoordinator(
-        reducer: const CallReducer(),
-        cleanupCoordinator: CallCleanupCoordinator(const <CallCleanupStep>[]),
-        historyProjector: CallHistoryProjector(_History()),
-        clock: () => now,
-        idSource: () => signal.callId,
-      );
-      final presenter = _Presenter();
-      final handler = HandleIncomingCallSignal(
-        codec: codec,
-        coordinator: coordinator,
-        trustedRosterProvider: const _Roster(),
-        localAuthorityProvider: () async => const CallLocalDeviceAuthority(
-          accountPeerId: 'recipient-account',
-          devicePeerId: 'recipient-device',
-          mlKemSecretKey: 'recipient-mlkem-secret',
-        ),
-        incomingCallPresenter: presenter,
-        networkEffectsAllowed: () => true,
-      );
-      final direct = StreamController<ChatMessage>.broadcast();
-      final runtime = CallSignalingRuntime(
-        directCallSignalStream: direct.stream,
-        mailboxClient: mailbox,
-        handleIncoming: handler.handle,
-        coordinator: coordinator,
-        networkEffectsAllowed: () => true,
-      );
-      addTearDown(runtime.shutdown);
-      addTearDown(direct.close);
+          );
+        }
+        await Future<void>.delayed(Duration.zero);
+        await runtime.settle();
 
-      await runtime.start();
-      direct.add(
-        ChatMessage(
-          from: 'sender-device',
-          to: 'recipient-device',
-          content: envelope,
-          timestamp: now.toIso8601String(),
-          isIncoming: true,
-          transport: 'direct',
-        ),
-      );
-      await Future<void>.delayed(Duration.zero);
-      await runtime.settle();
+        expect(coordinator.activeSession?.state, CallState.ringing);
+        expect(presenter.presentations, 1);
 
-      expect(coordinator.activeSession?.state, CallState.ringing);
-      expect(presenter.presentations, 1);
+        await runtime.onResume();
 
-      await runtime.onResume();
-
-      expect(coordinator.activeSession?.callId, signal.callId);
-      expect(coordinator.activeSession?.state, CallState.ringing);
-      expect(presenter.presentations, 1);
-      expect(mailbox.acked, 1);
-    },
-  );
+        expect(coordinator.activeSession?.callId, signal.callId);
+        expect(coordinator.activeSession?.state, CallState.ringing);
+        expect(presenter.presentations, 1);
+        expect(mailbox.acked, 1);
+      },
+    );
+  }
 
   test('caller cancellation stores its terminate behind the invite so a late '
       'recipient drain never rings', () async {

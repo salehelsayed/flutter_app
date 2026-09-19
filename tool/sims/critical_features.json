@@ -54,7 +54,7 @@
       "platform": "android",
       "artifactKind": "universal-debug-apk",
       "buildRequired": true,
-      "compileDefines": {"E2E_TEST_MODE": "true", "SIMS_ANDROID_DISPOSABLE_PACKAGE_ID": "com.mknoon.sims.groupmedia269"},
+      "compileDefines": {"E2E_TEST_MODE": "true", "SIMS_ANDROID_DISPOSABLE_PACKAGE_ID": "com.mknoon.sims.groupmedia269", "MKNOON_ENABLE_DIRECT_LINKED_DEVICES": "true", "MKNOON_ENABLE_MULTI_DEVICE_SYNC": "true"},
       "declaredException": false
     },
     {

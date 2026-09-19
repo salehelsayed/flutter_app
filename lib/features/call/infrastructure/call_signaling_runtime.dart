@@ -1,4 +1,8 @@
 import 'dart:async';
+import 'dart:convert';
+
+import 'package:crypto/crypto.dart';
+import '../../../core/utils/flow_event_emitter.dart';
 
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 
@@ -15,6 +19,20 @@ typedef HandleCallSignalFrame =
 typedef PeekCallSignalFrame =
     Future<IncomingCallSignalPeek?> Function(IncomingCallSignalFrame frame);
 
+typedef HandleMailboxCallSignalFrame =
+    Future<IncomingCallMailboxHandlingResult> Function(
+      IncomingCallSignalFrame frame,
+    );
+typedef CommitCallMailboxSettlement =
+    Future<void> Function(
+      AuthenticatedIncomingCallTerminal terminal, {
+      required bool Function() canApply,
+    });
+typedef PrepareCallMailboxSettlement =
+    Future<CommitCallMailboxSettlement?> Function(
+      IncomingCallSignalFrame frame,
+    );
+
 /// Owns only call signaling resources: one dedicated router subscription, a
 /// serial inbound lane, and call-mailbox resume drains. It never owns or tears
 /// down the shared router, P2P service, bridge, or chat lifecycle.
@@ -24,6 +42,8 @@ final class CallSignalingRuntime {
     required CallMailboxClient mailboxClient,
     required HandleCallSignalFrame handleIncoming,
     PeekCallSignalFrame? peekIncoming,
+    HandleMailboxCallSignalFrame? handleMailboxIncoming,
+    PrepareCallMailboxSettlement? prepareMailboxSettlement,
     required CallCoordinator coordinator,
     required CallNetworkEffectsAllowed networkEffectsAllowed,
     this.maxMailboxPagesPerDrain = 8,
@@ -32,6 +52,8 @@ final class CallSignalingRuntime {
        _mailboxClient = mailboxClient,
        _handleIncoming = handleIncoming,
        _peekIncoming = peekIncoming,
+       _handleMailboxIncoming = handleMailboxIncoming,
+       _prepareMailboxSettlement = prepareMailboxSettlement,
        _coordinator = coordinator,
        _networkEffectsAllowed = networkEffectsAllowed {
     if (maxMailboxPagesPerDrain < 1 || maxMailboxPagesPerDrain > 32) {
@@ -49,6 +71,8 @@ final class CallSignalingRuntime {
   final CallMailboxClient _mailboxClient;
   final HandleCallSignalFrame _handleIncoming;
   final PeekCallSignalFrame? _peekIncoming;
+  final HandleMailboxCallSignalFrame? _handleMailboxIncoming;
+  final PrepareCallMailboxSettlement? _prepareMailboxSettlement;
   final CallCoordinator _coordinator;
   final CallNetworkEffectsAllowed _networkEffectsAllowed;
   final int maxMailboxPagesPerDrain;
@@ -60,6 +84,9 @@ final class CallSignalingRuntime {
   int _pendingOperations = 0;
   bool _disposed = false;
   bool _shuttingDown = false;
+  static const int maxPendingTerminalSettlements = 16;
+  final Map<String, _PendingMailboxTerminalSettlement> _terminalSettlements =
+      {};
 
   bool get isStarted => _directSubscription != null && !_disposed;
   bool get isDisposed => _disposed;
@@ -145,18 +172,61 @@ final class CallSignalingRuntime {
       final superseded = await _supersededInvites(page.events);
       for (var index = 0; index < page.events.length; index++) {
         final event = page.events[index];
-        if (_disposed) return;
+        if (_disposed || _shuttingDown) return;
+        final frame = _frameFor(
+          event,
+          terminalFollows: superseded.contains(index),
+        );
+        final prepare = _prepareMailboxSettlement;
+        final fingerprint = prepare == null
+            ? null
+            : _settlementFingerprint(event);
+        var pending = fingerprint == null
+            ? null
+            : _terminalSettlements[fingerprint];
+        CommitCallMailboxSettlement? commit = pending?.commit;
+        if (commit == null && prepare != null) {
+          try {
+            commit = await prepare(frame);
+          } catch (_) {
+            // Ordinary handling keeps custody when native capture is unavailable.
+          }
+          if (_disposed || _shuttingDown) return;
+        }
         late final IncomingCallSignalOutcome outcome;
+        AuthenticatedIncomingCallTerminal? terminal;
         try {
-          outcome = await _handleIncoming(
-            _frameFor(event, terminalFollows: superseded.contains(index)),
-          );
+          final handleMailbox = _handleMailboxIncoming;
+          if (handleMailbox == null) {
+            outcome = await _handleIncoming(frame);
+          } else {
+            final handled = await handleMailbox(frame);
+            outcome = handled.outcome;
+            terminal = handled.authenticatedTerminal;
+          }
         } catch (_) {
           // Transient application/authority failure retains mailbox custody.
           return;
         }
         if (outcome == IncomingCallSignalOutcome.deferred) {
           return;
+        }
+        if (_disposed || _shuttingDown) return;
+        if (fingerprint != null) {
+          if (terminal != null && commit != null) {
+            pending = _PendingMailboxTerminalSettlement(terminal, commit);
+            _terminalSettlements[fingerprint] = pending;
+            while (_terminalSettlements.length >
+                maxPendingTerminalSettlements) {
+              _terminalSettlements.remove(_terminalSettlements.keys.first);
+            }
+            _settlementDiagnostic('authenticated', terminal.signal.event.name);
+          } else if (outcome != IncomingCallSignalOutcome.duplicate) {
+            // A retained proof may cover only its byte-identical replay. A
+            // newly rejected row cannot borrow prior authenticated authority.
+            _terminalSettlements.remove(fingerprint);
+            pending = null;
+          }
         }
         try {
           final acked = await _mailboxClient.ack(
@@ -167,6 +237,22 @@ final class CallSignalingRuntime {
         } catch (_) {
           // Custody remains at the call mailbox and will replay on next resume.
           return;
+        }
+        if (fingerprint != null) _terminalSettlements.remove(fingerprint);
+        if (pending != null && !_disposed && !_shuttingDown) {
+          _settlementDiagnostic(
+            'acknowledged',
+            pending.terminal.signal.event.name,
+          );
+          try {
+            await pending.commit(
+              pending.terminal,
+              canApply: () => !_disposed && !_shuttingDown,
+            );
+          } catch (_) {
+            // The durable ACK remains complete; native custody fails closed.
+            _settlementDiagnostic('failed', pending.terminal.signal.event.name);
+          }
         }
       }
       if (!page.hasMore) return;
@@ -237,6 +323,7 @@ final class CallSignalingRuntime {
   Future<void> shutdown() async {
     if (_disposed || _shuttingDown) return;
     _shuttingDown = true;
+    _terminalSettlements.clear();
     try {
       await _startInFlight;
       _disposed = true;
@@ -273,4 +360,41 @@ final class CallSignalingRuntime {
     }
     return CallRouteClass.direct;
   }
+
+  static String _settlementFingerprint(CallMailboxEvent event) => sha256
+      .convert(
+        utf8.encode(
+          jsonEncode(<Object?>[
+            event.callHandle,
+            event.messageId,
+            event.authenticatedSenderDevicePeerId,
+            event.recipientDevicePeerId,
+            event.expiresAtMs,
+            event.envelopeJson,
+          ]),
+        ),
+      )
+      .toString();
+
+  static void _settlementDiagnostic(String outcome, String terminalKind) {
+    try {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'CALL_FOREGROUND_ADMISSION_SETTLEMENT',
+        details: <String, Object?>{
+          'stage': 'mailbox',
+          'outcome': outcome,
+          'terminalKind': terminalKind,
+        },
+      );
+    } catch (_) {
+      // Diagnostics never authorize or prevent settlement.
+    }
+  }
+}
+
+final class _PendingMailboxTerminalSettlement {
+  const _PendingMailboxTerminalSettlement(this.terminal, this.commit);
+  final AuthenticatedIncomingCallTerminal terminal;
+  final CommitCallMailboxSettlement commit;
 }

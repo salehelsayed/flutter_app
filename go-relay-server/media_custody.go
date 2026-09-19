@@ -148,7 +148,7 @@ type directMediaBlobCustodyStoreConfig struct {
 
 func loadDirectMediaBlobCustodyAdmissionEnabledFromEnv() bool {
 	switch strings.ToLower(strings.TrimSpace(os.Getenv(mediaCustodyAdmissionEnabledEnv))) {
-	case "1", "true":
+	case "", "1", "true":
 		return true
 	default:
 		return false

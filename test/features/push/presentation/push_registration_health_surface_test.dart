@@ -217,6 +217,106 @@ void main() {
     },
   );
 
+  testWidgets(
+    'warning and Retry stay in active semantics beside a pushed Navigator route',
+    (tester) async {
+      final semantics = tester.ensureSemantics();
+      try {
+        final notifier = PushRegistrationHealthNotifier();
+        addTearDown(notifier.dispose);
+        final navigatorKey = GlobalKey<NavigatorState>();
+        final homeKey = GlobalKey<_PreservedHealthRouteState>();
+        final pushedKey = GlobalKey<_PreservedHealthRouteState>();
+        var retries = 0;
+        final warning = PushRegistrationHealthRecord.retrying(
+          reason: PushRegistrationHealthReason.registrationFailed,
+          consecutiveFailures: 3,
+          firstFailureAt: DateTime.utc(2026, 9, 17),
+          lastAttemptAt: DateTime.utc(2026, 9, 17, 1),
+        );
+        await tester.pumpWidget(
+          MaterialApp(
+            navigatorKey: navigatorKey,
+            locale: const Locale('en'),
+            localizationsDelegates: AppLocalizations.localizationsDelegates,
+            supportedLocales: AppLocalizations.supportedLocales,
+            builder: (context, child) => PushRegistrationHealthSurface(
+              healthListenable: notifier,
+              onRetry: () => retries++,
+              onOpenNotificationSettings: () {},
+              child: child!,
+            ),
+            home: _PreservedHealthRoute(key: homeKey, name: 'home'),
+          ),
+        );
+        await tester.pumpAndSettle();
+        tester.semantics.tap(find.semantics.byLabel('Increment home route'));
+        await tester.pump();
+        final homeState = homeKey.currentState!;
+        final navigator = navigatorKey.currentState!;
+        navigator.push<void>(
+          MaterialPageRoute<void>(
+            builder: (_) =>
+                _PreservedHealthRoute(key: pushedKey, name: 'pushed'),
+          ),
+        );
+        await tester.pumpAndSettle();
+        final pushedState = pushedKey.currentState!;
+        tester.semantics.tap(find.semantics.byLabel('Increment pushed route'));
+        await tester.pump();
+        expect(pushedState.count, 1);
+
+        notifier.publish(warning);
+        await tester.pumpAndSettle();
+        expect(find.text('Notifications need attention'), findsOneWidget);
+        expect(find.text('Retry'), findsOneWidget);
+        // Active tree membership matters: widget semantics can retain detached
+        // nodes that the Navigator has blocked from accessibility traversal.
+        expect(
+          find.semantics.byLabel(RegExp('Notifications need attention')),
+          findsOneWidget,
+        );
+        expect(find.semantics.byLabel('Retry'), findsOneWidget);
+        expect(
+          find.semantics.byLabel('Increment pushed route'),
+          findsOneWidget,
+        );
+        tester.semantics.tap(find.semantics.byLabel('Retry'));
+        await tester.pump();
+        expect(retries, 1);
+        expect(navigatorKey.currentState, same(navigator));
+        expect(pushedKey.currentState, same(pushedState));
+        expect(navigator.canPop(), isTrue);
+        expect(pushedState.count, 1);
+
+        notifier.publish(
+          PushRegistrationHealthRecord.healthy(
+            at: DateTime.utc(2026, 9, 17, 2),
+          ),
+        );
+        await tester.pumpAndSettle();
+        expect(find.semantics.byLabel('Retry'), findsNothing);
+        tester.semantics.tap(find.semantics.byLabel('Increment pushed route'));
+        await tester.pump();
+        notifier.publish(warning);
+        await tester.pumpAndSettle();
+        expect(find.semantics.byLabel('Retry'), findsOneWidget);
+        expect(pushedKey.currentState, same(pushedState));
+        expect(pushedState.count, 2);
+        navigator.pop();
+        await tester.pumpAndSettle();
+        expect(navigatorKey.currentState, same(navigator));
+        expect(homeKey.currentState, same(homeState));
+        expect(homeState.count, 1);
+        expect(navigator.canPop(), isFalse);
+        expect(find.semantics.byLabel('Retry'), findsOneWidget);
+        expect(find.semantics.byLabel('Increment home route'), findsOneWidget);
+      } finally {
+        semantics.dispose();
+      }
+    },
+  );
+
   test('production composes one shared account-bound health surface', () {
     final root = File('lib/app/application_root.dart').readAsStringSync();
     final bootstrap = File(
@@ -256,4 +356,29 @@ void main() {
       expect(routeSource, isNot(contains('PushRegistrationHealthWarning(')));
     }
   });
+}
+
+class _PreservedHealthRoute extends StatefulWidget {
+  const _PreservedHealthRoute({super.key, required this.name});
+  final String name;
+
+  @override
+  State<_PreservedHealthRoute> createState() => _PreservedHealthRouteState();
+}
+
+class _PreservedHealthRouteState extends State<_PreservedHealthRoute> {
+  int count = 0;
+
+  @override
+  Widget build(BuildContext context) => Scaffold(
+    body: Column(
+      children: [
+        Text('${widget.name} count $count'),
+        TextButton(
+          onPressed: () => setState(() => count++),
+          child: Text('Increment ${widget.name} route'),
+        ),
+      ],
+    ),
+  );
 }

@@ -6,8 +6,8 @@ import 'package:flutter_app/l10n/app_localizations.dart';
 
 /// Foreground-only outgoing call presentation.
 ///
-/// [state] is the canonical reducer state. In particular, this surface never
-/// invents `Ringing` before the authenticated remote ringing event is reduced.
+/// [state] projects the canonical reducer, or `preparing` while the conversation
+/// owns cancellable preflight. Ringing requires authenticated remote alerting.
 class OutgoingCallScreen extends StatelessWidget {
   const OutgoingCallScreen({
     super.key,
@@ -26,6 +26,7 @@ class OutgoingCallScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     final colors = context.backgroundReadableColors;
     final l10n = AppLocalizations.of(context)!;
+    final status = _status(l10n);
 
     return ColoredBox(
       color: colors.surfaceBase,
@@ -51,10 +52,10 @@ class OutgoingCallScreen extends StatelessWidget {
               const SizedBox(height: 10),
               Semantics(
                 liveRegion: true,
-                label: _status,
+                label: status,
                 excludeSemantics: true,
                 child: Text(
-                  _status,
+                  status,
                   style: TextStyle(
                     color: colors.textSecondary,
                     fontSize: 16,
@@ -90,12 +91,11 @@ class OutgoingCallScreen extends StatelessWidget {
     );
   }
 
-  String get _status => switch (state) {
-    CallState.ringing => 'Ringing',
-    CallState.accepted || CallState.negotiating => 'Connecting',
-    CallState.connected => 'Connected',
-    CallState.reconnecting => 'Reconnecting',
-    CallState.ending || CallState.ended => 'Ending',
-    _ => 'Calling',
+  String _status(AppLocalizations l10n) => switch (state) {
+    CallState.ringing => l10n.call_status_ringing,
+    CallState.connected => l10n.call_status_connected,
+    CallState.reconnecting => l10n.call_status_reconnecting,
+    CallState.ending || CallState.ended => l10n.call_status_ending,
+    _ => l10n.call_status_connecting,
   };
 }

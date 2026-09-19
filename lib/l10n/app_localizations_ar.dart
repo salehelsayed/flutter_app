@@ -3801,6 +3801,32 @@ class AppLocalizationsAr extends AppLocalizations {
   String get call_ended => 'انتهت المكالمة';
 
   @override
+  String get call_status_connecting => 'جارٍ الاتصال';
+
+  @override
+  String get call_status_ringing => 'جارٍ الرنين';
+
+  @override
+  String get call_status_connected => 'متصل';
+
+  @override
+  String get call_status_reconnecting => 'إعادة الاتصال';
+
+  @override
+  String get call_status_ending => 'جارٍ إنهاء المكالمة';
+
+  @override
+  String get call_status_incoming => 'مكالمة واردة';
+
+  @override
+  String get call_status_checking_incoming => 'جارٍ التحقق من المكالمة الواردة';
+
+  @override
+  String call_duration(String duration) {
+    return 'مدة المكالمة $duration';
+  }
+
+  @override
   String get call_dismiss_status => 'إغلاق حالة المكالمة';
 
   @override

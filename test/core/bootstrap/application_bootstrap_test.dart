@@ -1,6 +1,6 @@
 import 'dart:async';
 
-import 'package:flutter/widgets.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter_app/app/bootstrap/application_bootstrap.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -78,7 +78,78 @@ final class _FakePrepared implements PreparedApplication {
   }
 }
 
+final class _RecoverableBootstrap
+    implements ApplicationBootstrap, RecoverableApplicationBootstrap {
+  _RecoverableBootstrap(this.prepared);
+  final PreparedApplication prepared;
+  final finish = Completer<void>();
+  int preparations = 0;
+  int retries = 0;
+
+  @override
+  Future<PreparedApplication> prepare() => throw StateError('wrong path');
+
+  @override
+  Future<PreparedApplication> prepareWithRecovery({
+    required Future<void> Function() waitForRetry,
+  }) async {
+    preparations++;
+    await waitForRetry();
+    retries++;
+    await finish.future;
+    return prepared;
+  }
+}
+
 void main() {
+  testWidgets(
+    'bounded startup failure exposes Retry and resumes one preparation',
+    (tester) async {
+      final trace = <String>[];
+      const root = SizedBox(key: ValueKey('recovered-root'));
+      final bootstrap = _RecoverableBootstrap(_FakePrepared(trace, root));
+      final host = _FakeHost(trace);
+      final operation = runApplicationBootstrap(
+        bootstrapFactory: () => bootstrap,
+        host: host,
+      );
+      await tester.pumpWidget(host.launchedRoot!);
+      expect(find.text('Failed to initialize'), findsOneWidget);
+      expect(find.text('Retry'), findsOneWidget);
+      expect(bootstrap.preparations, 1);
+      await tester.tap(find.text('Retry'));
+      await tester.pump();
+      expect(bootstrap.retries, 1);
+      expect(
+        tester.widget<FilledButton>(find.byType(FilledButton)).onPressed,
+        isNull,
+      );
+      expect(find.byType(CircularProgressIndicator), findsOneWidget);
+      bootstrap.finish.complete();
+      await operation;
+      await tester.pumpWidget(host.launchedRoot!);
+      expect(find.byKey(const ValueKey('recovered-root')), findsOneWidget);
+      expect(find.text('Retry'), findsNothing);
+      expect(bootstrap.preparations, 1);
+      expect(trace.where((event) => event == 'post'), hasLength(1));
+    },
+  );
+
+  test('intentional startup cancellation launches no completed app', () async {
+    final trace = <String>[];
+    final host = _FakeHost(trace);
+    await runApplicationBootstrap(
+      bootstrapFactory: () => _FakeBootstrap(
+        trace,
+        _FakePrepared(trace, const SizedBox()),
+        failure: const ApplicationBootstrapCancelled(),
+      ),
+      host: host,
+    );
+    expect(host.launchedRoot, isNull);
+    expect(trace, ['binding', 'prepare']);
+  });
+
   test(
     'runs binding bootstrap creation prepare root launch and post-launch in order',
     () async {

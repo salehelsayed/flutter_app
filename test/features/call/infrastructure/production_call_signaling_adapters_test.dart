@@ -2,6 +2,8 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:fake_async/fake_async.dart';
+import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/features/call/application/call_cleanup_coordinator.dart';
 import 'package:flutter_app/features/call/application/call_control_effect_executor.dart';
 import 'package:flutter_app/features/call/application/call_coordinator.dart';
@@ -31,6 +33,410 @@ final _callId = CallId.parse('11111111-1111-4111-8111-111111111111');
 const _callHandle = '22222222-2222-4222-8222-222222222222';
 
 void main() {
+  CallNegotiationPortException failure(
+    Future<void> operation,
+    FakeAsync async,
+  ) {
+    Object? failed;
+    operation.catchError((Object error) {
+      failed = error;
+    });
+    async.flushMicrotasks();
+    expect(failed, isA<CallNegotiationPortException>());
+    return failed! as CallNegotiationPortException;
+  }
+
+  test(
+    'fenced restart offer suppresses writes after End across every await',
+    () {
+      for (final boundary in ['endpoint', 'key', 'network', 'crypto']) {
+        fakeAsync((async) {
+          final rig = _NegotiationRetryHarness(async);
+          final gate = Completer<void>();
+          switch (boundary) {
+            case 'endpoint':
+              rig.endpointGate = gate.future;
+            case 'key':
+              rig.keyGate = gate.future;
+            case 'network':
+              rig.networkGate = gate.future;
+            case 'crypto':
+              rig.crypto.encryptGate = gate.future;
+          }
+          var current = true;
+          Object? rejected;
+          rig.adapter
+              .sendDescription(
+                callId: _callId,
+                iceGeneration: 1,
+                canApply: () => current,
+                description: const CallSessionDescription(
+                  type: CallSessionDescriptionType.offer,
+                  value: 'private-sdp',
+                  fingerprint: 'private-fingerprint',
+                ),
+              )
+              .catchError((Object e) {
+                rejected = e;
+              });
+          async.flushMicrotasks();
+          current = false;
+          expect(
+            rig.contexts.read(_callId),
+            isNotNull,
+            reason: 'End authority precedes the eventual context cleanup',
+          );
+          gate.complete();
+          async.flushMicrotasks();
+          expect(
+            rejected,
+            isA<CallNegotiationPortException>(),
+            reason: boundary,
+          );
+          expect(rig.mailbox.requests, isEmpty, reason: boundary);
+          expect(
+            rig.service.pendingTransmissionRetryCount,
+            0,
+            reason: boundary,
+          );
+          rig.service.close();
+        });
+      }
+    },
+  );
+
+  test(
+    'reconnect retry rechecks refreshed endpoint expiry after key await',
+    () {
+      fakeAsync((async) {
+        final rig = _NegotiationRetryHarness(async);
+        rig.mailbox.storeSucceeds = false;
+        final first = failure(
+          rig.adapter.sendIceRestart(callId: _callId, iceGeneration: 1),
+          async,
+        );
+        rig.endpoint = _endpoint(expiresAtMs: _nowMs + 500);
+        final key = Completer<void>();
+        rig.keyGate = key.future;
+        Object? rejected;
+        first.retry!.retry(canApply: () => true).catchError((Object e) {
+          rejected = e;
+        });
+        async.flushMicrotasks();
+        async.elapse(const Duration(milliseconds: 600));
+        rig.mailbox.storeSucceeds = true;
+        key.complete();
+        async.flushMicrotasks();
+        expect(rejected, isA<CallNegotiationPortException>());
+        expect(rig.mailbox.requests, hasLength(1));
+        rig.service.close();
+      });
+    },
+  );
+
+  test(
+    'reconnect retry preserves sealed restart and SDP bytes and metadata',
+    () {
+      for (final event in ['restart', 'offer', 'answer']) {
+        fakeAsync((async) {
+          final rig = _NegotiationRetryHarness(async);
+          rig.mailbox.storeSucceeds = false;
+          final failed = failure(
+            event == 'restart'
+                ? rig.adapter.sendIceRestart(callId: _callId, iceGeneration: 1)
+                : rig.adapter.sendDescription(
+                    callId: _callId,
+                    iceGeneration: 1,
+                    description: CallSessionDescription(
+                      type: event == 'offer'
+                          ? CallSessionDescriptionType.offer
+                          : CallSessionDescriptionType.answer,
+                      value: 'private-sdp',
+                      fingerprint: 'private-fingerprint',
+                    ),
+                  ),
+            async,
+          );
+          expect(
+            failed.code,
+            CallNegotiationPortErrorCode.transportUnavailable,
+          );
+          expect(failed.retry, isNotNull);
+          expect(rig.service.pendingTransmissionRetryCount, 1);
+          final original = rig.mailbox.requests.single;
+          final sequence = rig.contexts.read(_callId)!.nextSenderSequence;
+          rig.mailbox.storeSucceeds = true;
+          var delivered = false;
+          failed.retry!.retry(canApply: () => true).then((_) {
+            delivered = true;
+          });
+          async.flushMicrotasks();
+          expect(delivered, isTrue);
+          expect(rig.mailbox.requests, hasLength(2));
+          final retry = rig.mailbox.requests.last;
+          expect(retry.envelopeJson, original.envelopeJson);
+          expect(retry.messageId, original.messageId);
+          expect(retry.expiresAtMs, original.expiresAtMs);
+          expect(retry.callHandle, original.callHandle);
+          expect(retry.recipientDevicePeerId, original.recipientDevicePeerId);
+          expect(rig.crypto.plaintexts, hasLength(1));
+          expect(rig.contexts.read(_callId)!.nextSenderSequence, sequence);
+          expect(rig.service.pendingTransmissionRetryCount, 0);
+          _expectRedacted('$failed');
+          failed.retry!.close();
+          rig.service.close();
+        });
+      }
+    },
+  );
+
+  test(
+    'reconnect retry survives the production offline authority response',
+    () {
+      fakeAsync((async) {
+        final rig = _NegotiationRetryHarness(async);
+        final bridge = _RetryAuthorityBridge();
+        final authority = BridgeCallAuthorityClient(bridge: bridge);
+        rig.mailbox.storeSucceeds = false;
+        final first = failure(
+          rig.adapter.sendIceRestart(callId: _callId, iceGeneration: 1),
+          async,
+        );
+        final original = rig.mailbox.requests.single;
+        rig.beforeEndpointLookup = () async {
+          await authority.getEndpoint('remote-account');
+        };
+        bridge.errorCode = 'CALL_CONTROL_UNAVAILABLE';
+        final unavailable = failure(
+          first.retry!.retry(canApply: () => true),
+          async,
+        );
+        expect(
+          unavailable.code,
+          CallNegotiationPortErrorCode.transportUnavailable,
+        );
+        expect(unavailable.retry, same(first.retry));
+        expect(rig.service.pendingTransmissionRetryCount, 1);
+        expect(rig.mailbox.requests, hasLength(1));
+
+        bridge.errorCode = null;
+        rig.mailbox.storeSucceeds = true;
+        var delivered = false;
+        unavailable.retry!.retry(canApply: () => true).then((_) {
+          delivered = true;
+        });
+        async.flushMicrotasks();
+        expect(delivered, isTrue);
+        expect(bridge.lookups, 2);
+        expect(rig.mailbox.requests, hasLength(2));
+        final retry = rig.mailbox.requests.last;
+        expect(retry.envelopeJson, original.envelopeJson);
+        expect(retry.messageId, original.messageId);
+        expect(retry.expiresAtMs, original.expiresAtMs);
+        expect(rig.crypto.plaintexts, hasLength(1));
+        expect(rig.service.pendingTransmissionRetryCount, 0);
+        rig.service.close();
+      });
+    },
+  );
+
+  test('reconnect retry rejects other production authority refusal codes', () {
+    for (final code in [
+      'CALL_UNAUTHORIZED',
+      'CALL_STALE_EPOCH',
+      'CALL_CONTROL_INVALID_RESPONSE',
+      'CALL_CONTROL_UNSUPPORTED',
+      'ARBITRARY_UNKNOWN_CODE',
+    ]) {
+      fakeAsync((async) {
+        final rig = _NegotiationRetryHarness(async);
+        final bridge = _RetryAuthorityBridge()..errorCode = code;
+        final authority = BridgeCallAuthorityClient(bridge: bridge);
+        rig.mailbox.storeSucceeds = false;
+        final first = failure(
+          rig.adapter.sendIceRestart(callId: _callId, iceGeneration: 1),
+          async,
+        );
+        rig.beforeEndpointLookup = () async {
+          await authority.getEndpoint('remote-account');
+        };
+        final refused = failure(
+          first.retry!.retry(canApply: () => true),
+          async,
+        );
+        expect(
+          refused.code,
+          CallNegotiationPortErrorCode.signalingUnavailable,
+          reason: code,
+        );
+        expect(refused.retry, isNull, reason: code);
+        expect(rig.service.pendingTransmissionRetryCount, 0, reason: code);
+        expect(rig.mailbox.requests, hasLength(1), reason: code);
+        rig.service.close();
+      });
+    }
+  });
+
+  test(
+    'reconnect candidate retry resumes remaining tail without resending accepted prefix',
+    () {
+      fakeAsync((async) {
+        final rig = _NegotiationRetryHarness(async);
+        rig.mailbox.failAtStores.addAll([2, 4]);
+        final first = failure(
+          rig.adapter.sendCandidates(
+            callId: _callId,
+            candidates: [
+              for (var i = 0; i < 3; i++)
+                CallIceCandidate(
+                  value: 'candidate-$i',
+                  iceGeneration: 1,
+                  mediaId: 'audio',
+                  mediaLineIndex: 0,
+                ),
+            ],
+          ),
+          async,
+        );
+        expect(rig.mailbox.requests, hasLength(2));
+        final second = failure(first.retry!.retry(canApply: () => true), async);
+        expect(second.code, CallNegotiationPortErrorCode.transportUnavailable);
+        expect(second.retry, isNotNull);
+        first.retry!.close();
+        var delivered = false;
+        second.retry!.retry(canApply: () => true).then((_) {
+          delivered = true;
+        });
+        async.flushMicrotasks();
+        expect(delivered, isTrue);
+        expect(rig.mailbox.requests, hasLength(5));
+        final requests = rig.mailbox.requests;
+        expect(requests[1].envelopeJson, requests[2].envelopeJson);
+        expect(requests[3].envelopeJson, requests[4].envelopeJson);
+        expect(rig.crypto.plaintexts, hasLength(3));
+        expect(rig.contexts.read(_callId)!.nextSenderSequence, 4);
+        expect(rig.adapter.toDiagnosticMap()['candidateSendCount'], 3);
+        expect(rig.service.pendingTransmissionRetryCount, 0);
+        rig.service.close();
+      });
+    },
+  );
+
+  test(
+    'reconnect retry fences current binding and phase after awaited authority',
+    () {
+      for (final invalidation in [
+        'context',
+        'generation',
+        'phase',
+        'shutdown',
+        'expiry',
+      ]) {
+        fakeAsync((async) {
+          final rig = _NegotiationRetryHarness(async);
+          rig.mailbox.storeSucceeds = false;
+          final first = failure(
+            rig.adapter.sendIceRestart(callId: _callId, iceGeneration: 1),
+            async,
+          );
+          final gate = Completer<void>();
+          rig.endpointGate = gate.future;
+          var current = true;
+          Object? rejected;
+          first.retry!.retry(canApply: () => current).catchError((Object e) {
+            rejected = e;
+          });
+          async.flushMicrotasks();
+          switch (invalidation) {
+            case 'context':
+              rig.contexts.purge(_callId);
+            case 'generation':
+              rig.contexts.reserveNextMetadata(_callId, iceGeneration: 2);
+            case 'phase':
+              current = false;
+            case 'shutdown':
+              rig.service.stopRetries();
+            case 'expiry':
+              async.elapse(const Duration(seconds: 15));
+          }
+          rig.mailbox.storeSucceeds = true;
+          gate.complete();
+          async.flushMicrotasks();
+          expect(
+            rejected,
+            isA<CallNegotiationPortException>(),
+            reason: invalidation,
+          );
+          expect(rig.mailbox.requests, hasLength(1), reason: invalidation);
+          expect(
+            rig.service.pendingTransmissionRetryCount,
+            0,
+            reason: invalidation,
+          );
+          if (invalidation == 'context') {
+            expect(rig.contexts.pinnedEndpoint(_callId), isNull);
+          }
+          first.retry!.close();
+          rig.service.close();
+        });
+      }
+    },
+  );
+
+  test(
+    'reconnect retry is bounded and current account or recipient revocation stops it',
+    () {
+      for (final invalidation in [
+        'account',
+        'recipient',
+        'network',
+        'attempts',
+      ]) {
+        fakeAsync((async) {
+          final rig = _NegotiationRetryHarness(async);
+          rig.mailbox.storeSucceeds = false;
+          final first = failure(
+            rig.adapter.sendIceRestart(callId: _callId, iceGeneration: 1),
+            async,
+          );
+          if (invalidation == 'account') rig.accountCurrent = false;
+          if (invalidation == 'recipient') {
+            rig.endpoint = _endpoint(devicePeerId: 'replacement');
+          }
+          if (invalidation == 'network') rig.networkAllowed = false;
+          if (invalidation == 'attempts') {
+            late CallNegotiationPortException exhausted;
+            for (var i = 0; i < 4; i++) {
+              exhausted = failure(
+                first.retry!.retry(canApply: () => true),
+                async,
+              );
+            }
+            expect(
+              exhausted.code,
+              CallNegotiationPortErrorCode.transportUnavailable,
+            );
+            expect(exhausted.retry, isNull);
+          } else {
+            failure(first.retry!.retry(canApply: () => true), async);
+          }
+          expect(
+            rig.mailbox.requests,
+            hasLength(invalidation == 'attempts' ? 5 : 1),
+          );
+          expect(rig.service.pendingTransmissionRetryCount, 0);
+          rig.mailbox.storeSucceeds = true;
+          failure(first.retry!.retry(canApply: () => true), async);
+          expect(
+            rig.mailbox.requests,
+            hasLength(invalidation == 'attempts' ? 5 : 1),
+          );
+          rig.service.close();
+        });
+      }
+    },
+  );
+
   group('ProductionCallControlSignalingAdapter', () {
     test('prepares a fresh opaque binding with audio-only metadata', () async {
       final harness = _ServiceHarness();
@@ -931,6 +1337,7 @@ CallSignalingContextStore _outgoingContext({int nextSenderSequence = 1}) {
 ResolvedCallEndpoint _endpoint({
   String accountPeerId = 'remote-account',
   String devicePeerId = 'remote-device',
+  int expiresAtMs = _nowMs + 60_000,
 }) => ResolvedCallEndpoint(
   accountPeerId: accountPeerId,
   devicePeerId: devicePeerId,
@@ -939,7 +1346,7 @@ ResolvedCallEndpoint _endpoint({
   deviceKeyEpoch: 2,
   preferenceEpoch: 3,
   platform: CallEndpointPlatform.android,
-  expiresAtMs: _nowMs + 60_000,
+  expiresAtMs: expiresAtMs,
   routingHandle: '0123456789abcdef0123456789abcdef',
   wakeHandle: 'fedcba9876543210fedcba9876543210',
 );
@@ -1048,6 +1455,7 @@ final class _ServiceHarness {
 }
 
 final class _CaptureCrypto implements CallEnvelopeCrypto {
+  Future<void>? encryptGate;
   final List<String> plaintexts = <String>[];
   final List<String> recipientKeys = <String>[];
 
@@ -1056,6 +1464,7 @@ final class _CaptureCrypto implements CallEnvelopeCrypto {
     required String recipientMlKemPublicKey,
     required String plaintext,
   }) async {
+    await encryptGate;
     plaintexts.add(plaintext);
     recipientKeys.add(recipientMlKemPublicKey);
     return CallCiphertext(
@@ -1108,12 +1517,18 @@ final class _Mailbox implements CallMailboxClient {
 
   final Future<void>? storeGate;
   int stores = 0;
+  bool storeSucceeds = true;
+  final Set<int> failAtStores = {};
+  final List<CallMailboxStoreRequest> requests = [];
   CallMailboxWakeStatus wake = CallMailboxWakeStatus.none;
 
   @override
   Future<CallMailboxStoreResult> store(CallMailboxStoreRequest request) async {
     stores++;
+    requests.add(request);
+    final fail = !storeSucceeds || failAtStores.contains(stores);
     await storeGate;
+    if (fail) throw StateError('offline');
     return CallMailboxStoreResult(
       status: CallMailboxStoreStatus.stored,
       receiptAtMs: _nowMs,
@@ -1162,4 +1577,76 @@ final class _History implements CallHistoryRepository {
 
   @override
   Future<void> upsertTerminal(CallHistoryEntry entry) async {}
+}
+
+final class _RetryAuthorityBridge implements Bridge {
+  String? errorCode;
+  int lookups = 0;
+
+  @override
+  Future<String> send(String message) async {
+    expect(jsonDecode(message)['cmd'], 'call_endpoint_get_v1');
+    lookups++;
+    return jsonEncode(
+      errorCode == null
+          ? <String, Object?>{'ok': true, 'found': false}
+          : <String, Object?>{'ok': false, 'errorCode': errorCode},
+    );
+  }
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+final class _NegotiationRetryHarness {
+  _NegotiationRetryHarness(this.async) {
+    service = CallSignalingService(
+      codec: SecureCallEnvelopeCodec(crypto: crypto, nowMs: () => nowMs),
+      nowMs: () => nowMs,
+      directTransport: _Direct(
+        const CallDirectSendResult(
+          outcome: CallDirectTransportOutcome.failed,
+          transportAcknowledged: false,
+          route: CallDirectRoute.unknown,
+        ),
+      ),
+      mailboxClient: mailbox,
+      networkEffectsAllowed: () async {
+        await networkGate;
+        return networkAllowed;
+      },
+    );
+    adapter = ProductionCallNegotiationSignalingAdapter(
+      signalingService: service,
+      contextStore: contexts,
+      resolveCurrentEndpoint: (_) async {
+        await endpointGate;
+        await beforeEndpointLookup?.call();
+        return endpoint;
+      },
+      loadSenderSigningPrivateKey: () async {
+        await keyGate;
+        if (!accountCurrent) throw StateError('account changed');
+        return 'private-signer-key';
+      },
+      clock: () => DateTime.fromMillisecondsSinceEpoch(nowMs, isUtc: true),
+      messageIdSource: () =>
+          CallId.parse('88888888-8888-4888-8888-88888888888${nextMessage++}'),
+    );
+  }
+  final FakeAsync async;
+  final contexts = _outgoingContext();
+  final crypto = _CaptureCrypto();
+  final mailbox = _Mailbox(null);
+  late final CallSignalingService service;
+  late final ProductionCallNegotiationSignalingAdapter adapter;
+  ResolvedCallEndpoint endpoint = _endpoint();
+  bool accountCurrent = true;
+  bool networkAllowed = true;
+  Future<void>? endpointGate;
+  Future<void> Function()? beforeEndpointLookup;
+  Future<void>? keyGate;
+  Future<void>? networkGate;
+  int nextMessage = 0;
+  int get nowMs => _nowMs + async.elapsed.inMilliseconds;
 }

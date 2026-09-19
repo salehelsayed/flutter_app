@@ -40,6 +40,184 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
   test(
+    'failure flow preserves fixed native cause before rejected projection',
+    () async {
+      final events = <Map<String, dynamic>>[];
+      debugSetFlowEventSink(events.add);
+      addTearDown(() => debugSetFlowEventSink(null));
+      for (final code in ['NOT_INITIALIZED', 'TURN_CREDENTIALS_REJECTED']) {
+        final result = await callP2PTurnCredentialsV1(
+          _TurnCredentialBridge()
+            ..response = {
+              'ok': false,
+              'errorCode': code,
+              'failureDiagnostic': {
+                'stage': 'connect',
+                'kind': 'dial_aggregate',
+                'dialCauseKind': 'all_dials_failed',
+                'dialTransportKinds': ['network_unreachable', 'dial_backoff'],
+                'dialComplete': true,
+                'dialAllTransient': false,
+                'dialAttemptCount': 2,
+              },
+            },
+        );
+        expect(result['errorCode'], 'TURN_CREDENTIALS_REJECTED');
+        final details = events.last['details'] as Map;
+        expect(details['nativeErrorCode'], code);
+        expect(details['nativeFailureStage'], 'connect');
+        expect(details['nativeFailureKind'], 'dial_aggregate');
+        expect(details['nativeDialTransportKinds'], [
+          'network_unreachable',
+          'dial_backoff',
+        ]);
+        expect(details['nativeDialAllTransient'], isFalse);
+      }
+    },
+  );
+
+  test(
+    'failure flow ignores arbitrary native diagnostic fields and text',
+    () async {
+      final events = <Map<String, dynamic>>[];
+      debugSetFlowEventSink(events.add);
+      addTearDown(() => debugSetFlowEventSink(null));
+      final result = await callP2PTurnCredentialsV1(
+        _TurnCredentialBridge()
+          ..response = {
+            'ok': false,
+            'errorCode': 'private-native-secret',
+            'failureDiagnostic': {
+              'stage': 'private-stage-secret',
+              'kind': 'private-kind-secret',
+              'dialCauseKind': 'private-cause-secret',
+              'dialTransportKinds': ['private-address-secret'],
+              'dialComplete': 'private-boolean-secret',
+              'dialAttemptCount': 'private-count-secret',
+              'message': 'private-raw-secret',
+              'password': 'private-password-secret',
+            },
+          },
+      );
+      expect(result['errorCode'], 'TURN_CREDENTIALS_REJECTED');
+      final details = events.last['details'] as Map;
+      expect(details['nativeErrorCode'], 'unrecognized');
+      expect(details.containsKey('nativeFailureStage'), isFalse);
+      expect(jsonEncode(events), isNot(contains('private-')));
+    },
+  );
+
+  test(
+    'actual Go bridge preserves native diagnostics through sanitization',
+    () async {
+      final events = <Map<String, dynamic>>[];
+      debugSetFlowEventSink(events.add);
+      addTearDown(() => debugSetFlowEventSink(null));
+      final messenger =
+          TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+      const channel = MethodChannel('com.mknoon/go_bridge');
+      addTearDown(() => messenger.setMockMethodCallHandler(channel, null));
+      for (final mode in ['rejected', 'platform']) {
+        messenger.setMockMethodCallHandler(channel, (call) async {
+          expect(call.method, 'relayTurnCredentialsV1');
+          if (mode == 'platform') throw PlatformException(code: 'unavailable');
+          return jsonEncode({
+            'ok': false,
+            'errorCode': 'TURN_CREDENTIALS_REJECTED',
+            'errorMessage': 'Credential retrieval rejected',
+            'failureDiagnostic': {
+              'stage': 'new_stream',
+              'kind': 'dial_backoff',
+            },
+          });
+        });
+        final result = await callP2PTurnCredentialsV1(GoBridgeClient());
+        expect(result['errorCode'], 'TURN_CREDENTIALS_REJECTED');
+        final details =
+            events.lastWhere(
+                  (e) => e['event'] == 'P2P_TURN_CREDENTIALS_V1_RESPONSE',
+                )['details']
+                as Map;
+        expect(
+          details['nativeErrorCode'],
+          mode == 'platform' ? 'PLATFORM_ERROR' : 'TURN_CREDENTIALS_REJECTED',
+        );
+        if (mode == 'rejected') {
+          expect(details['nativeFailureStage'], 'new_stream');
+          expect(details['nativeFailureKind'], 'dial_backoff');
+        }
+      }
+    },
+  );
+
+  test(
+    'oversized diagnostic aggregates are omitted and exceptions have fixed stages',
+    () async {
+      final events = <Map<String, dynamic>>[];
+      debugSetFlowEventSink(events.add);
+      addTearDown(() => debugSetFlowEventSink(null));
+      await callP2PTurnCredentialsV1(
+        _TurnCredentialBridge()
+          ..response = {
+            'ok': false,
+            'errorCode': 'TURN_CREDENTIALS_REJECTED',
+            'failureDiagnostic': {
+              'dialTransportKinds': List.filled(9, 'unknown'),
+              'dialAttemptCount': 100,
+              'dialTruncated': true,
+            },
+          },
+      );
+      final details = events.last['details'] as Map;
+      expect(details.containsKey('nativeDialTransportKinds'), isFalse);
+      expect(details.containsKey('nativeDialAttemptCount'), isFalse);
+      expect(details['nativeDialTruncated'], isTrue);
+      for (final sample in [
+        (
+          _TurnCredentialBridge()..rawResponse = '{private-malformed',
+          'bridge_format',
+        ),
+        (
+          _TurnCredentialBridge()..error = StateError('private-exception'),
+          'bridge_exception',
+        ),
+      ]) {
+        final result = await callP2PTurnCredentialsV1(sample.$1);
+        expect(result['ok'], isFalse);
+        expect((events.last['details'] as Map)['responseStage'], sample.$2);
+      }
+      expect(jsonEncode(events), isNot(contains('private-')));
+    },
+  );
+
+  test(
+    'local failure logging cannot replace the typed bridge result',
+    () async {
+      debugSetFlowEventSink((event) {
+        if (event['event'] == 'P2P_TURN_CREDENTIALS_V1_RESPONSE') {
+          throw StateError('diagnostic-sink-failed');
+        }
+      });
+      addTearDown(() => debugSetFlowEventSink(null));
+      for (final sample in [
+        (
+          _TurnCredentialBridge()..rawResponse = '{malformed',
+          'TURN_CREDENTIALS_INVALID_RESPONSE',
+        ),
+        (
+          _TurnCredentialBridge()..error = StateError('native-error'),
+          'TURN_CREDENTIALS_REJECTED',
+        ),
+      ]) {
+        expect(
+          (await callP2PTurnCredentialsV1(sample.$1))['errorCode'],
+          sample.$2,
+        );
+      }
+    },
+  );
+
+  test(
     'legacy ambiguous native outage is not permission for direct fallback',
     () async {
       final legacy = _TurnCredentialBridge()

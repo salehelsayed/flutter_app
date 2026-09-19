@@ -345,8 +345,11 @@ final class AndroidForegroundWebRtcCanonicalEndpoint {
           intents: audioController.interruptionIntents,
           readActiveSession: () => coordinator.activeSession,
           readMediaSnapshot: engine.snapshot,
-          dispatchEvent: (event) async {
-            final reduction = await coordinator.dispatch(event);
+          dispatchEvent: (event, {canApply}) async {
+            final reduction = await coordinator.dispatch(
+              event,
+              canApply: canApply,
+            );
             telemetry.recordInterruptionDispatch(event, reduction);
           },
           clock: clock.now,

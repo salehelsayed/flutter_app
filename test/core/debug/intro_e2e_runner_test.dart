@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:fake_async/fake_async.dart';
+import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/debug/intro_e2e_runner.dart' as intro_runner;
 import 'package:flutter_app/features/contact_request/application/send_contact_request_use_case.dart'
     as contact_request;
@@ -317,11 +318,10 @@ void main() {
     await supervisor.terminate(
       terminationGrace: const Duration(milliseconds: 5),
     );
-    expect(
-      child.signals,
-      <ProcessSignal>[ProcessSignal.sigterm, ProcessSignal.sigkill],
-      reason: 'late/finally cleanup must not signal the child twice',
-    );
+    expect(child.signals, <ProcessSignal>[
+      ProcessSignal.sigterm,
+      ProcessSignal.sigkill,
+    ], reason: 'late/finally cleanup must not signal the child twice');
   });
 
   test('acceptance and cleanup guards are wired into both runners', () {
@@ -516,6 +516,145 @@ void main() {
     },
   );
 
+  test('relay contact probe requires every local-call fixture authority', () {
+    bool allows({
+      bool debug = true,
+      bool e2e = true,
+      String profile = 'android.e2e.production_call_local',
+      bool config = true,
+      bool exact = true,
+    }) => intro_runner.shouldProbeConfiguredRelayForIntroContact(
+      debugMode: debug,
+      e2eTestMode: e2e,
+      installedProfileId: profile,
+      enabledByConfig: config,
+      requireExactCallWakeReceipt: exact,
+    );
+    expect(allows(), isTrue);
+    expect(allows(debug: false), isFalse);
+    expect(allows(e2e: false), isFalse);
+    expect(allows(profile: 'android.production_fcm'), isFalse);
+    expect(allows(profile: ''), isFalse);
+    expect(allows(config: false), isFalse);
+    expect(allows(exact: false), isFalse);
+  });
+
+  test('ordinary setup never invokes an offered relay probe', () async {
+    var probes = 0;
+    var sends = 0;
+    final result = await intro_runner.retryIntroE2EContactRequest(
+      requireExactCallWakeReceipt: false,
+      probeRelayBeforeSend: () async {
+        probes++;
+        return RelayProbeResult.connected;
+      },
+      sendAttempt: ({required requireExactCallWakeReceipt}) async {
+        expect(requireExactCallWakeReceipt, isFalse);
+        sends++;
+        return contact_request.SendContactRequestResult.sendFailed;
+      },
+      delay: (_) async {},
+    );
+    expect(result, contact_request.SendContactRequestResult.sendFailed);
+    expect(probes, 0);
+    expect(sends, 8);
+  });
+
+  for (final outcome in ['error', 'timeout', 'noReservation']) {
+    test(
+      'relay probe $outcome preserves direct exact-receipt rejection',
+      () async {
+        var now = DateTime.utc(2026, 1, 1);
+        var probes = 0;
+        var sends = 0;
+        final result = await intro_runner.retryIntroE2EContactRequest(
+          requireExactCallWakeReceipt: true,
+          probeRelayBeforeSend: () async {
+            probes++;
+            if (outcome == 'error') {
+              throw StateError('fixture relay unavailable');
+            }
+            if (outcome == 'timeout') {
+              throw TimeoutException('native probe bound');
+            }
+            return RelayProbeResult.noReservation;
+          },
+          sendAttempt: ({required requireExactCallWakeReceipt}) async {
+            expect(requireExactCallWakeReceipt, isTrue);
+            sends++;
+            return contact_request.SendContactRequestResult.sendFailed;
+          },
+          now: () => now,
+          delay: (duration) async => now = now.add(duration),
+        );
+        expect(result, contact_request.SendContactRequestResult.sendFailed);
+        expect(probes, 60);
+        expect(sends, 60);
+        expect(now, DateTime.utc(2026, 1, 1).add(const Duration(seconds: 120)));
+      },
+    );
+  }
+
+  test('a held relay probe cannot outlive the original contact window', () {
+    fakeAsync((async) {
+      final clock = async.getClock(DateTime.utc(2026, 1, 1));
+      final probe = Completer<RelayProbeResult>();
+      contact_request.SendContactRequestResult? result;
+      var sends = 0;
+      intro_runner
+          .retryIntroE2EContactRequest(
+            requireExactCallWakeReceipt: true,
+            probeRelayBeforeSend: () => probe.future,
+            sendAttempt: ({required requireExactCallWakeReceipt}) async {
+              sends++;
+              return contact_request.SendContactRequestResult.success;
+            },
+            now: clock.now,
+          )
+          .then((value) => result = value);
+      async.flushMicrotasks();
+      async.elapse(const Duration(seconds: 119));
+      expect(result, isNull);
+      async.elapse(const Duration(seconds: 1));
+      expect(result, contact_request.SendContactRequestResult.sendFailed);
+      probe.complete(RelayProbeResult.connected);
+      async.flushMicrotasks();
+      expect(sends, 0);
+    });
+  });
+
+  test(
+    'late exact receipt after relay probe cannot reset the contact deadline',
+    () {
+      fakeAsync((async) {
+        final clock = async.getClock(DateTime.utc(2026, 1, 1));
+        final send = Completer<contact_request.SendContactRequestResult>();
+        contact_request.SendContactRequestResult? result;
+        var probes = 0;
+        intro_runner
+            .retryIntroE2EContactRequest(
+              requireExactCallWakeReceipt: true,
+              probeRelayBeforeSend: () async {
+                probes++;
+                await Future<void>.delayed(const Duration(seconds: 5));
+                return RelayProbeResult.connected;
+              },
+              sendAttempt: ({required requireExactCallWakeReceipt}) =>
+                  send.future,
+              now: clock.now,
+            )
+            .then((value) => result = value);
+        async.flushMicrotasks();
+        async.elapse(const Duration(seconds: 120));
+        expect(result, contact_request.SendContactRequestResult.sendFailed);
+        send.complete(contact_request.SendContactRequestResult.success);
+        async.flushMicrotasks();
+        expect(result, contact_request.SendContactRequestResult.sendFailed);
+        expect(probes, 1);
+      });
+    },
+  );
+
   test('ordinary contact setup remains bounded to eight attempts', () async {
     var attempts = 0;
     final exactReceiptRequirements = <bool>[];
@@ -593,6 +732,11 @@ void main() {
       expect(
         helper,
         contains('requireExactCallWakeReceipt: requireExactCallWakeReceipt,'),
+      );
+      expect(helper, contains('() => p2pService.probeRelay(peerId)'));
+      expect(
+        helper,
+        contains("config['probe_configured_relay_before_contact'] == true"),
       );
     },
   );

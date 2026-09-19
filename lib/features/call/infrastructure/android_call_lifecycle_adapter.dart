@@ -1,3 +1,5 @@
+import 'package:flutter/foundation.dart' show kDebugMode;
+import 'package:flutter_app/features/call/application/locked_call_presentation.dart';
 import '../diagnostics/call_diagnostics.dart';
 import 'dart:async';
 
@@ -11,6 +13,7 @@ import '../domain/call_id.dart';
 import '../domain/call_session_snapshot.dart';
 import '../domain/call_state.dart';
 import 'call_audio_route_adapter.dart';
+import 'android_call_admission_settlement.dart';
 
 typedef NativeCallLifecycleMethodInvoker =
     Future<Object?> Function(String method, Map<String, Object?> arguments);
@@ -177,6 +180,7 @@ final class AndroidCallLifecycleAdapter
     implements
         NativeCallLifecycleInvalidations,
         NativeCallLifecycleAdapter,
+        AndroidCallAdmissionSettlementPort,
         IncomingCallPresenter,
         CallForegroundAudioSession,
         CallAudioRoutePort {
@@ -273,6 +277,54 @@ final class AndroidCallLifecycleAdapter
   int? _failedMuteSequence;
 
   @override
+  bool get admissionSettlementAvailable =>
+      !_closed &&
+      !_invalid &&
+      _boundCallId == null &&
+      _descriptor == null &&
+      _coordinator.activeSession == null;
+
+  @override
+  Future<AndroidCallAdmissionToken?> captureAdmissionSettlement(
+    String nativeCallId,
+  ) async {
+    if (!admissionSettlementAvailable ||
+        CallId.tryParse(nativeCallId) == null) {
+      return null;
+    }
+    try {
+      final raw = await _invokeMethod(
+        'captureAdmissionSettlement',
+        <String, Object?>{
+          'version': protocolVersion,
+          'nativeCallId': nativeCallId,
+        },
+      ).timeout(_failClosedTimeout);
+      if (!admissionSettlementAvailable) return null;
+      final token = AndroidCallAdmissionToken.fromWire(raw);
+      return token?.nativeCallId == nativeCallId ? token : null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  @override
+  Future<bool> settleAuthenticatedAdmission(
+    AndroidCallAdmissionToken token,
+  ) async {
+    if (!admissionSettlementAvailable) return false;
+    try {
+      final applied = await _invokeMethod(
+        'settleAuthenticatedAdmission',
+        <String, Object?>{'version': protocolVersion, 'token': token.toWire()},
+      ).timeout(_failClosedTimeout);
+      return applied == true && admissionSettlementAvailable;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  @override
   Stream<CallAudioSessionInterruption> get interruptions =>
       _interruptions.stream;
 
@@ -320,6 +372,10 @@ final class AndroidCallLifecycleAdapter
   @override
   bool isBoundTo(CallId callId) =>
       !_closed && !_invalid && _boundCallId == callId && _boundHandle != null;
+
+  /// Debug observation only; never resolves or adopts a missing native owner.
+  String? debugBoundNativeHandle(CallId callId) =>
+      kDebugMode && isBoundTo(callId) ? _boundHandle : null;
 
   @override
   Future<void> start() => _startFuture ??= _startOnce();
@@ -484,17 +540,32 @@ final class AndroidCallLifecycleAdapter
         NativeOutgoingRegistrationReason.invalidLatched,
       );
     }
+    if (!_hasCurrentOutgoingSession(callId)) {
+      return _outgoingRegistrationRejected(
+        NativeOutgoingRegistrationStage.adoptionCompletion,
+        NativeOutgoingRegistrationReason.sessionMismatch,
+      );
+    }
     if (!_outgoingAdoptionComplete(callId)) {
       try {
         final replay = await _invokeMethod(
           'attach',
           _versionArguments(),
         ).timeout(_failClosedTimeout);
-        if (!_closed && !_invalid && _boundCallId == callId) {
+        if (!_closed &&
+            !_invalid &&
+            _boundCallId == callId &&
+            _hasCurrentOutgoingSession(callId)) {
           await _ingest(replay);
           await _reconcileBoundEvents();
         }
       } catch (_) {
+        if (!_hasCurrentOutgoingSession(callId)) {
+          return _outgoingRegistrationRejected(
+            NativeOutgoingRegistrationStage.adoptionCompletion,
+            NativeOutgoingRegistrationReason.sessionMismatch,
+          );
+        }
         _emitOutgoingRegistrationResult(
           NativeOutgoingRegistrationStage.adoptionCompletion,
           NativeOutgoingRegistrationStatus.error,
@@ -516,6 +587,12 @@ final class AndroidCallLifecycleAdapter
         NativeOutgoingRegistrationReason.invalidLatched,
       );
     }
+    if (!_hasCurrentOutgoingSession(callId)) {
+      return _outgoingRegistrationRejected(
+        NativeOutgoingRegistrationStage.adoptionCompletion,
+        NativeOutgoingRegistrationReason.sessionMismatch,
+      );
+    }
     if (!_outgoingAdoptionComplete(callId)) {
       _emitOutgoingRegistrationResult(
         NativeOutgoingRegistrationStage.adoptionCompletion,
@@ -531,6 +608,15 @@ final class AndroidCallLifecycleAdapter
       NativeOutgoingRegistrationReason.none,
     );
     return true;
+  }
+
+  /// A canceled call may finish native registration after canonical cleanup.
+  /// That stale completion cannot revoke the authority of the current graph.
+  bool _hasCurrentOutgoingSession(CallId callId) {
+    final active = _coordinator.activeSession;
+    return active?.callId == callId &&
+        active?.direction == CallDirection.outgoing &&
+        active?.isTerminal == false;
   }
 
   bool _outgoingAdoptionComplete(CallId callId) {
@@ -1680,6 +1766,21 @@ final class AndroidCallLifecycleAdapter
       if (event.type.isTerminal) return event;
     }
     return null;
+  }
+
+  /// Presentation failure never revokes call authority or ends media.
+  Future<void> updateLockedPresentation(
+    CallId callId,
+    LockedCallPresentation presentation,
+  ) async {
+    if (_closed || _invalid || _boundCallId != callId) return;
+    final handle = _boundHandle;
+    if (handle == null) return;
+    await _invokeBoolean('updatePresentation', <String, Object?>{
+      'version': protocolVersion,
+      'callHandle': handle,
+      ...presentation.toMap(),
+    });
   }
 
   bool _bind(CallId callId, String handle) {

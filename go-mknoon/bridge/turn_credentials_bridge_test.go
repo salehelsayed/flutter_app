@@ -107,3 +107,21 @@ func TestTurnCredentialsV1Bridge_TypedSafeFailures(t *testing.T) {
 		})
 	}
 }
+
+func TestTurnCredentialsV1Bridge_FailureDiagnosticDoesNotCollapseOrEcho(t *testing.T) {
+	for _, tc := range []struct{ code, kind string }{
+		{"TURN_CREDENTIALS_UNAUTHORIZED", "relay_unauthorized"},
+		{"private-peer-and-credential", "relay_unknown"},
+	} {
+		got := parseJSON(t, turnCredentialsV1ErrorJSON(&node.TurnCredentialsRelayError{Code: tc.code}))
+		assertNotOk(t, got, "TURN_CREDENTIALS_REJECTED")
+		detail, ok := got["failureDiagnostic"].(map[string]any)
+		if !ok || detail["stage"] != "relay_response" || detail["kind"] != tc.kind {
+			t.Fatal("fixed relay diagnostic was lost before native projection")
+		}
+		encoded, _ := json.Marshal(got)
+		if strings.Contains(string(encoded), "private-peer-and-credential") {
+			t.Fatal("failure diagnostic leaked unrecognized relay text")
+		}
+	}
+}

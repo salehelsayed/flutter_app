@@ -155,7 +155,7 @@ func TestDirectMediaBlobCustodyDeviceFixtureContract(t *testing.T) {
 	}
 	if !fixture.stores.Inbox.AckCustodyAdmissionEnabled() ||
 		!fixture.media.DirectMediaBlobCustodyAdmissionEnabled() {
-		t.Fatal("fixture did not enable both default-off custody admissions")
+		t.Fatal("fixture did not enable both custody admissions")
 	}
 	if _, ok := fixture.stores.InboxBackend.(*redisInboxBackend); !ok {
 		t.Fatalf("fixture inbox backend = %T, want production Redis backend", fixture.stores.InboxBackend)

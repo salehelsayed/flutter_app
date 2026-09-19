@@ -317,8 +317,9 @@ final class _OutgoingCallCapabilitySentinel implements OutgoingCallCapability {
 
   @override
   Future<OutgoingCallStartResult> startOutgoingCall(
-    String contactAccountPeerId,
-  ) async => OutgoingCallStartResult.started;
+    String contactAccountPeerId, {
+    OutgoingCallStartRequest? request,
+  }) async => OutgoingCallStartResult.started;
 }
 
 DirectEventFanoutAuthoring _fanoutSentinel(String senderTransportPeerId) {

@@ -10,6 +10,81 @@ import org.junit.Test
 
 class PendingNativeCallStoreTest {
     @Test
+    fun `observation leaves AtomicFile sidecars untouched and refuses ambiguous or oversized bytes`() {
+        val folder = kotlin.io.path.createTempDirectory("journal-observation").toFile()
+        try {
+            val base = java.io.File(folder, "journal.bin")
+            assertNull(readPendingCallFileWithoutRecovery(base, 16))
+            base.writeBytes(byteArrayOf(1, 2, 3))
+            assertTrue(byteArrayOf(1, 2, 3).contentEquals(readPendingCallFileWithoutRecovery(base, 16)))
+            for (suffix in listOf(".bak", ".new")) {
+                val sidecar = java.io.File(base.path + suffix)
+                sidecar.writeBytes(byteArrayOf(4, 5))
+                assertTrue(runCatching { readPendingCallFileWithoutRecovery(base, 16) }.isFailure)
+                assertTrue(byteArrayOf(1, 2, 3).contentEquals(base.readBytes()))
+                assertTrue(byteArrayOf(4, 5).contentEquals(sidecar.readBytes()))
+                base.delete()
+                assertTrue(runCatching { readPendingCallFileWithoutRecovery(base, 16) }.isFailure)
+                assertFalse(base.exists())
+                sidecar.delete()
+                base.writeBytes(byteArrayOf(1, 2, 3))
+            }
+            for (bytes in listOf(byteArrayOf(), ByteArray(17))) {
+                base.writeBytes(bytes)
+                assertTrue(runCatching { readPendingCallFileWithoutRecovery(base, 16) }.isFailure)
+                assertTrue(bytes.contentEquals(base.readBytes()))
+            }
+        } finally { folder.deleteRecursively() }
+    }
+
+    @Test
+    fun `strict observation reads real valid journal without any backend writes or receipts`() {
+        val backend = InMemoryPendingNativeCallBackend()
+        val created = created(store(backend).create(payloadA())).descriptor
+        val original = backend.committedBytes()
+        val writes = backend.replaceCalls
+        val receiptForbidden = object : PendingNativeCallBackend {
+            override fun read(): ByteArray? = error("normal read forbidden")
+            override fun readForObservation(): ByteArray? = original
+            override fun replace(bytes: ByteArray?): Boolean = error("writes forbidden")
+            override fun readAcknowledgementReceipt(): ByteArray? = error("receipt read forbidden")
+            override fun replaceAcknowledgementReceipt(bytes: ByteArray?): Boolean = error("receipt write forbidden")
+        }
+        assertEquals(created, PendingNativeCallStore(receiptForbidden) { error("clock forbidden") }.observeProtectedJournal())
+        assertTrue(original.contentEquals(backend.committedBytes()))
+        assertEquals(writes, backend.replaceCalls)
+    }
+
+    @Test
+    fun `strict observation distinguishes invalid and throwing protected reads from an empty store`() {
+        assertNull(store(InMemoryPendingNativeCallBackend()).observeProtectedJournal())
+        for (backend in listOf(
+            InMemoryPendingNativeCallBackend(byteArrayOf(1, 2, 3)),
+            ControllablePendingNativeCallBackend().apply { throwOnRead = true },
+        )) {
+            val callStore = PendingNativeCallStore(backend) { NOW_MS }
+            val result = runCatching { callStore.observeProtectedJournal() }
+            assertTrue("Invalid protected record must not report empty", result.isFailure)
+        }
+    }
+
+    @Test
+    fun `strict observation never reads or prunes expired acknowledgement receipts`() {
+        val backend = InMemoryPendingNativeCallBackend()
+        var now = NOW_MS
+        val callStore = PendingNativeCallStore(backend) { now }
+        created(callStore.create(payloadA()))
+        val terminal = appended(callStore.append(NATIVE_CALL_ID_A, PendingNativeCallEventType.PROVIDER_REMOVED)).descriptor
+        assertTrue(callStore.acknowledge(NATIVE_CALL_ID_A, terminal.highestSequence, PendingNativeCallAcknowledgement.TERMINAL))
+        val receipt = requireNotNull(backend.committedReceiptBytes())
+        now += 1_000_000L
+        val before = backend.replaceCalls
+        repeat(2) { assertNull(callStore.observeProtectedJournal()) }
+        assertTrue("Observer pruned durable receipt", receipt.contentEquals(backend.committedReceiptBytes()))
+        assertEquals(before, backend.replaceCalls)
+    }
+
+    @Test
     fun `one bounded descriptor returns duplicate for the same wake and busy for another call`() {
         val backend = InMemoryPendingNativeCallBackend()
         val store = store(backend)
@@ -694,6 +769,8 @@ private open class InMemoryPendingNativeCallBackend(
 
     override fun read(): ByteArray? = durableBytes?.copyOf()
 
+    override fun readForObservation(): ByteArray? = read()
+
     override fun replace(bytes: ByteArray?): Boolean {
         replaceCalls += 1
         if (bytes == null) deleteCalls += 1
@@ -721,6 +798,7 @@ private class ControllablePendingNativeCallBackend(
     initialBytes: ByteArray? = null,
     initialReceiptBytes: ByteArray? = null,
 ) : PendingNativeCallBackend {
+    override fun readForObservation(): ByteArray? = read()
     private var durableBytes: ByteArray? = initialBytes?.copyOf()
     private var durableReceiptBytes: ByteArray? = initialReceiptBytes?.copyOf()
     var failReplace: Boolean = false

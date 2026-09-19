@@ -287,6 +287,25 @@ void main() {
         64 * 1024 - bytes,
         lessThan(utf8.encode(jsonEncode(retained.last)).length + 16),
       );
+      diagnostics.record(
+        traceId: trace,
+        stage: 'signaling',
+        action: 'commit',
+        outcome: 'ok',
+        values: {'state': 'reconnecting'},
+      );
+      final withRecovery = await diagnostics.eventsForTesting();
+      expect(
+        withRecovery.last['values'],
+        containsPair('state', 'reconnecting'),
+      );
+      expect(
+        withRecovery.fold<int>(
+          0,
+          (n, e) => n + utf8.encode(jsonEncode(e)).length,
+        ),
+        lessThanOrEqualTo(64 * 1024),
+      );
       diagnostics.finishAttempt(
         traceId: trace,
         outcome: 'media_failed',
@@ -1346,6 +1365,205 @@ void main() {
       expect(events.last['values'], containsPair('truncated', true));
       expect(events.last['values'], containsPair('completeness', 'truncated'));
       expect((await diagnostics.status())['droppedEvents'], greaterThan(0));
+    },
+  );
+
+  test(
+    'quota preserves recovery and applied cleanup evidence after signaling noise',
+    () async {
+      final diagnostics = await install();
+      final trace = diagnostics.beginAttempt()!;
+      for (var i = 0; i < 280; i++) {
+        diagnostics.record(
+          traceId: trace,
+          stage: 'authority',
+          action: 'lookup',
+          outcome: 'ok',
+        );
+      }
+      for (final state in ['connected', 'reconnecting', 'connected']) {
+        diagnostics.record(
+          traceId: trace,
+          stage: 'signaling',
+          action: 'commit',
+          outcome: 'ok',
+          values: {'state': state},
+        );
+      }
+      diagnostics.record(
+        traceId: trace,
+        stage: 'media',
+        action: 'check',
+        outcome: 'failed',
+        reason: 'ice_failed',
+        values: {'failureDisposition': 'provisional'},
+      );
+      diagnostics.record(
+        traceId: trace,
+        stage: 'media',
+        action: 'check',
+        outcome: 'media_flow_verified',
+      );
+      diagnostics.record(
+        traceId: trace,
+        stage: 'audio',
+        action: 'configure',
+        outcome: 'ok',
+        values: {'foreground': true},
+      );
+      diagnostics.finishAttempt(
+        traceId: trace,
+        outcome: 'dropped_after_media',
+        reason: 'media_stalled',
+      );
+      diagnostics.record(
+        traceId: trace,
+        stage: 'admission',
+        action: 'stop',
+        outcome: 'ok',
+        values: {'foreground': false, 'ownerMatched': true, 'terminal': true},
+      );
+      final events = await diagnostics.eventsForTesting();
+      expect(events.where((e) => e['stage'] == 'attempt'), hasLength(1));
+      expect(
+        events
+            .where((e) => e['stage'] == 'signaling')
+            .map((e) => (e['values'] as Map)['state']),
+        ['connected', 'reconnecting', 'connected'],
+      );
+      expect(
+        events.singleWhere(
+          (e) => e['stage'] == 'media' && e['outcome'] == 'failed',
+        )['reason'],
+        'ice_failed',
+      );
+      expect(
+        events.singleWhere(
+          (e) => e['outcome'] == 'media_flow_verified',
+        )['stage'],
+        'media',
+      );
+      expect(
+        events.singleWhere((e) => e['stage'] == 'audio')['values'],
+        containsPair('foreground', true),
+      );
+      expect(events.where((e) => e['stage'] == 'terminal'), hasLength(1));
+      expect(events.last['stage'], 'admission');
+      expect(events.length, lessThanOrEqualTo(256));
+      expect(
+        events.fold<int>(0, (n, e) => n + utf8.encode(jsonEncode(e)).length),
+        lessThanOrEqualTo(64 * 1024),
+      );
+      expect((await diagnostics.status())['droppedEvents'], greaterThan(0));
+      expect(events.last['values'], containsPair('completeness', 'truncated'));
+    },
+  );
+
+  test(
+    'repeated late milestones cannot displace attempt or terminal and remain bounded after restart',
+    () async {
+      var diagnostics = await install();
+      final trace = diagnostics.beginAttempt()!;
+      diagnostics.finishAttempt(
+        traceId: trace,
+        outcome: 'dropped_after_media',
+        reason: 'media_stalled',
+      );
+      for (var i = 0; i < 450; i++) {
+        diagnostics.record(
+          traceId: trace,
+          stage: 'signaling',
+          action: 'commit',
+          outcome: 'ok',
+          values: {'state': i.isEven ? 'connected' : 'reconnecting'},
+        );
+      }
+      diagnostics.record(
+        traceId: trace,
+        stage: 'admission',
+        action: 'stop',
+        outcome: 'ok',
+        values: {'foreground': false, 'ownerMatched': true, 'terminal': true},
+      );
+      for (var i = 0; i < 50; i++) {
+        diagnostics.record(
+          traceId: trace,
+          stage: 'authority',
+          action: 'lookup',
+          outcome: 'ok',
+        );
+      }
+      final before = await diagnostics.eventsForTesting();
+      expect(before.where((e) => e['stage'] == 'attempt'), hasLength(1));
+      expect(
+        before.where((e) => e['stage'] == 'terminal').single['outcome'],
+        'dropped_after_media',
+      );
+      expect(before.last['stage'], 'admission');
+      expect(before.length, lessThanOrEqualTo(256));
+      expect(
+        before.fold<int>(0, (n, e) => n + utf8.encode(jsonEncode(e)).length),
+        lessThanOrEqualTo(64 * 1024),
+      );
+      await diagnostics.dispose();
+      diagnostics = await install(enabled: null);
+      final after = await diagnostics.eventsForTesting();
+      expect(
+        after.map((e) => e['eventId']).toSet(),
+        before.map((e) => e['eventId']).toSet(),
+      );
+    },
+  );
+
+  test(
+    'unchanged state callbacks cannot evict recovery edges at quota',
+    () async {
+      final diagnostics = await install();
+      final trace = diagnostics.beginAttempt()!;
+      for (var i = 0; i < 280; i++) {
+        diagnostics.record(
+          traceId: trace,
+          stage: 'authority',
+          action: 'lookup',
+          outcome: 'ok',
+        );
+      }
+      for (final state in ['connected', 'reconnecting', 'connected']) {
+        diagnostics.record(
+          traceId: trace,
+          stage: 'signaling',
+          action: 'commit',
+          outcome: 'ok',
+          values: {'state': state, 'accepted': true, 'connected': true},
+        );
+      }
+      diagnostics.record(
+        traceId: trace,
+        stage: 'media',
+        action: 'check',
+        outcome: 'failed',
+        reason: 'ice_failed',
+      );
+      for (var i = 0; i < 400; i++) {
+        diagnostics.record(
+          traceId: trace,
+          stage: 'signaling',
+          action: 'commit',
+          outcome: 'ok',
+          values: {'state': 'connected', 'accepted': true, 'connected': true},
+        );
+      }
+      final events = await diagnostics.eventsForTesting();
+      expect(
+        events
+            .where((e) => e['stage'] == 'signaling')
+            .map((e) => (e['values'] as Map)['state']),
+        ['connected', 'reconnecting', 'connected'],
+      );
+      expect(
+        events.singleWhere((e) => e['stage'] == 'media')['reason'],
+        'ice_failed',
+      );
     },
   );
 

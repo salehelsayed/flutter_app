@@ -3829,6 +3829,32 @@ class AppLocalizationsDe extends AppLocalizations {
   String get call_ended => 'Anruf beendet';
 
   @override
+  String get call_status_connecting => 'Verbindung wird hergestellt';
+
+  @override
+  String get call_status_ringing => 'Klingelt';
+
+  @override
+  String get call_status_connected => 'Verbunden';
+
+  @override
+  String get call_status_reconnecting => 'Verbindung wird wiederhergestellt';
+
+  @override
+  String get call_status_ending => 'Anruf wird beendet';
+
+  @override
+  String get call_status_incoming => 'Eingehender Anruf';
+
+  @override
+  String get call_status_checking_incoming => 'Eingehender Anruf wird geprüft';
+
+  @override
+  String call_duration(String duration) {
+    return 'Anrufdauer $duration';
+  }
+
+  @override
   String get call_dismiss_status => 'Anrufstatus schließen';
 
   @override

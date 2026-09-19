@@ -84,6 +84,28 @@ class RepositoryFixture(unittest.TestCase):
 
 
 class SelectionTest(RepositoryFixture):
+    def test_android_sims_policy_and_adapter_validation_fail_closed(self):
+        self.write('tool/sims/critical_features.json', json.dumps({'capabilities': [{'id': 'fixture.android'}]}))
+        adapter = 'integration_test/scripts/fixture_android.dart'
+        self.write(adapter, '// fixture adapter, not executed\n')
+        check = {'kind': 'sims', 'capability': 'fixture.android', 'boundary': 'Android fixture',
+                 'timeout_seconds': 10, 'device_roles': ['android_physical', 'android_emulator'],
+                 'adapter': adapter, 'requires_disposable_android_package': True,
+                 'ui_driver': 'existing_campaign', 'ui_driver_reason': 'Isolated scheduler fixture'}
+        self.rules['checks']['android'] = check
+        checks.validate(self.root, self.rules)
+        for update in ({'adapter': '../other.dart'}, {'adapter': 'integration_test/scripts/missing.dart'},
+                       {'disposable_android_package': 'com.mknoon.app'},
+                       {'requires_disposable_android_package': False}):
+            with self.subTest(update=update):
+                rules = copy.deepcopy(self.rules)
+                rules['checks']['android'].update(update)
+                with self.assertRaises(checks.InvalidPlan):
+                    checks.validate(self.root, rules)
+        del check['requires_disposable_android_package']
+        with self.assertRaises(checks.InvalidPlan):
+            checks.validate(self.root, self.rules)
+
     def test_release_mandatory_survives_empty_and_documentation_only_diff(self):
         for paths in ([], ['README.md']):
             with self.subTest(paths=paths):
@@ -423,6 +445,23 @@ class ExternalReportRegressionTest(unittest.TestCase):
                 self.assertEqual(self.inspect([self.verdict(**update)])['status'], 'BLOCKED')
         self.assertEqual(self.inspect([self.verdict()], validationErrors=['schema failure'])['status'], 'BLOCKED')
 
+    def test_capability_dispatch_executes_assertions_instead_of_only_building(self):
+        capability = 'fixture.executed'
+        command, selected = checks.command_for({'kind': 'sims', 'capability': capability}, self.root, [])
+        # Model the real CLI distinction: --prepare-builds retains build rows
+        # only. The existing report verifier must never accept those as proof.
+        rows = [self.verdict('build.fixture')] if '--prepare-builds' in command else [self.verdict(capability)]
+        self.assertEqual(selected, [capability])
+        self.assertEqual(self.inspect(rows)['status'], 'PASS')
+        self.assertEqual(self.inspect([self.verdict('build.fixture')])['checkpoint'], 'zero_capability_execution')
+
+    def test_fixture_adapter_is_the_execution_owner_when_mapped(self):
+        check = {'kind': 'sims', 'capability': 'android.production_1to1_audio_call',
+                 'adapter': 'integration_test/scripts/run_production_audio_call_sims.dart'}
+        command, selected = checks.command_for(check, self.root, [])
+        self.assertEqual(command, ['dart', 'run', check['adapter'], '--mode', 'major', '--scenario', check['capability']])
+        self.assertEqual(selected, [check['capability']])
+
     def test_sims_timeout_preserves_observed_failure(self):
         self.assertEqual(self.inspect([self.verdict(status='FAIL', exitCode=1)], timeout=True)['status'], 'FAIL')
         self.assertEqual(self.inspect([self.verdict()], timeout=True)['status'], 'BLOCKED')
@@ -473,6 +512,8 @@ class EvidenceAndExecutionTest(RepositoryFixture):
             self.assertTrue(checks.flutter_sdk_mismatch(self.root))
             reasons = checks.prerequisites({'kind': 'flutter'}, self.root, {}, {})
             self.assertTrue(any('Flutter SDK on PATH differs' in reason for reason in reasons))
+            sims_reasons = checks.prerequisites({'kind': 'sims', 'requirements': ['flutter']}, self.root, {}, {})
+            self.assertTrue(any('Flutter SDK on PATH differs' in reason for reason in sims_reasons))
             matched = executable.parent.parent / 'packages/flutter'
             config.write_text(json.dumps({'packages': [{'name': 'flutter', 'rootUri': matched.as_uri()}]}))
             self.assertFalse(checks.flutter_sdk_mismatch(self.root))
@@ -484,6 +525,61 @@ class EvidenceAndExecutionTest(RepositoryFixture):
         config = {'isolated_test_environment': True, 'devices': {'android_physical': 'p', 'android_emulator': 'e'}, 'fixture_reference': 'disposable'}
         matrix = {'flutter': [{'id': 'p', 'targetPlatform': 'android-arm64', 'emulator': False}], 'adb': ['p']}
         self.assertIn('target unavailable: android_emulator', checks.prerequisites(check, self.root, config, matrix))
+
+    def test_actual_android_campaign_requires_a_disposable_package_before_launch(self):
+        check = {'kind': 'sims', 'capability': 'android.direct_media_blob_custody',
+                 'device_roles': ['android_physical', 'android_emulator'],
+                 'requires_disposable_android_package': True}
+        config = {'isolated_test_environment': True,
+                  'devices': {'android_physical': 'p', 'android_emulator': 'e'},
+                  'fixture_reference': 'real disposable fixture'}
+        matrix = {'flutter': [{'id': 'p', 'targetPlatform': 'android-arm64', 'emulator': False},
+                              {'id': 'e', 'targetPlatform': 'android-arm64', 'emulator': True}], 'adb': ['p', 'e']}
+        for package in (None, 'com.mknoon.app', 'com.mknoon.sims.', 'com.mknoon.sims.bad-id', False):
+            with self.subTest(package=package):
+                config['sims_android_packages'] = {check['capability']: package}
+                reasons = checks.prerequisites(check, self.root, config, matrix)
+                self.assertTrue(any('disposable Android package' in reason for reason in reasons))
+        config['sims_android_packages'] = {check['capability']: 'com.mknoon.sims.directmedia'}
+        self.assertEqual(checks.prerequisites(check, self.root, config, matrix), [])
+        env = checks.sims_environment(config, self.root / 'report.json', check)
+        for name in ('ANDROID_APP_PACKAGE', 'SIMS_APP_ID', 'ORG_GRADLE_PROJECT_androidApplicationId'):
+            self.assertEqual(env[name], 'com.mknoon.sims.directmedia')
+        self.assertEqual(env['RELIABILITY_MULTI_DEVICE_IDS'], 'p,e')
+
+    def test_fixed_campaign_package_cannot_be_redirected_by_config(self):
+        check = {'kind': 'sims', 'capability': 'android.production_1to1_audio_call',
+                 'disposable_android_package': 'com.mknoon.sims.productionaudio'}
+        config = {'devices': {'android_physical': 'p', 'android_emulator': 'e'}}
+        env = checks.sims_environment(config, self.root / 'report.json', check)
+        self.assertEqual(env['ANDROID_APP_PACKAGE'], check['disposable_android_package'])
+        config['sims_android_packages'] = {check['capability']: 'com.mknoon.sims.other'}
+        with self.assertRaises(checks.InvalidPlan):
+            checks.sims_environment(config, self.root / 'report.json', check)
+
+    def test_fcm_campaign_requires_matching_config_without_exposing_values(self):
+        check = {'kind': 'sims', 'capability': 'notifications.android_payload_campaign',
+                 'disposable_android_package': 'com.mknoon.sims.notifications',
+                 'requires_firebase_android_client': True, 'device_roles': []}
+        config = {'isolated_test_environment': True, 'fixture_reference': 'real downloaded fixture'}
+        path = 'android/app/google-services.json'
+        for contents in (None, '{', json.dumps({'client': [{'client_info': {
+                'android_client_info': {'package_name': 'com.mknoon.app'}}}]})):
+            with self.subTest(contents=contents):
+                if contents is not None:
+                    self.write(path, contents)
+                reasons = checks.prerequisites(check, self.root, config, {})
+                self.assertIn('Matching Firebase Android client configuration required for disposable package', reasons)
+        self.write(path, json.dumps({'project_info': {'project_id': 'isolated-fixture'}, 'client': [{'client_info': {
+            'mobilesdk_app_id': 'fixture-app', 'android_client_info': {'package_name': 'com.mknoon.sims.notifications'}}}]}))
+        self.assertEqual(checks.prerequisites(check, self.root, config, {}), [])
+
+    def test_package_binding_does_not_invent_android_roles_for_ios(self):
+        env = checks.sims_environment({'devices': {'ios_physical': 'i'}}, self.root / 'report.json',
+                                     {'kind': 'sims', 'capability': 'notifications.ios_payload_fast_path'})
+        self.assertEqual(env['SIMS_IOS_DEVICE_ID'], 'i')
+        self.assertNotIn('RELIABILITY_MULTI_DEVICE_IDS', env)
+        self.assertNotIn('ANDROID_APP_PACKAGE', env)
 
     def manual_fixture(self):
         receipt = self.write('.codex-test-logs/manual/receipt.json', '{"observed":true}\n')
@@ -547,6 +643,90 @@ class EvidenceAndExecutionTest(RepositoryFixture):
         manual = next(row for row in report['results'] if row['id'] == 'manual')
         self.assertEqual(manual['status'], 'NOT RUN')
         self.assertEqual(manual['checkpoint'], 'diagnostic_subset')
+
+    def test_device_only_subset_executes_without_promoting_omitted_host_checks(self):
+        code, report, launched = self.execute_device_subset()
+        rows = {r['id']: r for r in report['results']}
+        self.assertEqual(rows['device']['status'], 'PASS')
+        self.assertEqual(rows['fast']['status'], 'NOT RUN')
+        self.assertEqual(report['status'], 'NOT RUN')
+        self.assertNotEqual(code, 0)
+        self.assertEqual(len(launched), 2, 'only fake device execution and report verification run')
+
+    def test_selected_host_failure_or_unavailable_prerequisite_still_blocks_device(self):
+        for status in ('FAIL', 'BLOCKED'):
+            with self.subTest(status=status):
+                _, report, launched = self.execute_device_subset(host_status=status)
+                rows = {r['id']: r for r in report['results']}
+                self.assertEqual(rows['fast']['status'], status)
+                self.assertEqual(rows['device']['status'], 'NOT RUN')
+                self.assertEqual(rows['device']['checkpoint'], 'host_prerequisite_failed')
+                self.assertFalse(any(command[0] == 'dart' for command in launched))
+
+    def execute_device_subset(self, host_status=None, preflight_status=None, device_failure=False, retry=False, second_device=False):
+        self.write('tool/sims/critical_features.json', json.dumps({'capabilities': [{'id': 'fixture.device'}]}))
+        self.rules['checks']['device'] = {'kind': 'sims', 'capability': 'fixture.device',
+                                          'boundary': 'fake device scheduler boundary', 'timeout_seconds': 10,
+                                          'device_roles': ['android_physical'],
+                                          'disposable_android_package': 'com.mknoon.sims.fixture',
+                                          'ui_driver': 'existing_campaign', 'ui_driver_reason': 'Isolated scheduler fixture'}
+        device_checks = ['device']
+        if second_device:
+            self.rules['checks']['device-next'] = copy.deepcopy(self.rules['checks']['device'])
+            device_checks.append('device-next')
+        self.rules['areas'].append({'id': 'device-fixture', 'patterns': ['lib/shared.dart', 'tool/sims/critical_features.json'],
+                                    'checks': device_checks, 'why': 'isolated scheduling sentinel'})
+        self.write('lib/shared.dart', 'candidate requiring the fake device boundary\n')
+        args = self.args(only=','.join((['fast'] if host_status else []) + device_checks), rerun_failed=retry)
+        if host_status == 'FAIL':
+            self.write('fixture_test.py', 'import unittest\nclass Fixture(unittest.TestCase):\n    def test_fixture(self):\n        self.fail("intentional host gate failure")\n')
+        directory = self.root / '.codex-test-logs' / ('device-subset-' + str(time.monotonic_ns()))
+        directory.mkdir(parents=True)
+        with mock.patch.object(checks, 'toolchain_identity', return_value={'fixture_python': sys.executable}):
+            plan, files = checks.make_plan(args, self.root, self.rules)
+        for row in plan['selected']:
+            row['blocked_prerequisites'] = ['fixture prerequisite unavailable'] if row['id'] == 'fast' and host_status == 'BLOCKED' else []
+        launched = []
+        real_launch = checks.launch
+        def launch(command, cwd, timeout, env=None):
+            launched.append(command)
+            if command[0] == sys.executable:
+                return real_launch(command, cwd, timeout, env)
+            self.assertEqual(command[0], 'dart')
+            # Stub the external boundary: this test must never start Flutter,
+            # Dart, adb, an app or an external service.
+            if 'verify-report' not in command:
+                verdict = ExternalReportRegressionTest.verdict('fixture.device')
+                if device_failure:
+                    verdict.update(status='FAIL', exitCode=1)
+                Path(env['SIMS_REPORT_PATH']).write_text(json.dumps({'verdicts': [verdict], 'validationErrors': []}))
+            return '', 0, False, .001
+        with contextlib.redirect_stdout(io.StringIO()), \
+                mock.patch.object(checks, 'launch', side_effect=launch), \
+                mock.patch.object(checks.device_preflight, 'device_leases', return_value=contextlib.nullcontext()), \
+                mock.patch.object(checks.device_preflight, 'run', return_value=preflight_status or {'status': 'PASS', 'checkpoint': 'fixture_ready'}), \
+                mock.patch.object(checks, 'toolchain_identity', return_value={'fixture_python': sys.executable}):
+            code = checks.execute_plan(args, self.root, self.rules, plan, files, {}, {}, directory, time.monotonic())
+        return code, json.loads((directory / 'results.json').read_text()), launched
+
+    def test_device_preflight_block_never_launches_or_blindly_retries(self):
+        _, report, launched = self.execute_device_subset(
+            preflight_status={'status': 'BLOCKED', 'checkpoint': 'device_automation_busy'}, retry=True)
+        row = next(r for r in report['results'] if r['id'] == 'device')
+        self.assertEqual(row['status'], 'BLOCKED')
+        self.assertEqual(row['checkpoint'], 'device_automation_busy')
+        self.assertEqual(len(row['attempts']), 1)
+        self.assertEqual(launched, [])
+
+    def test_device_failure_requires_cleanup_review_before_next_campaign(self):
+        _, report, launched = self.execute_device_subset(device_failure=True, retry=True, second_device=True)
+        rows = {r['id']: r for r in report['results']}
+        self.assertEqual(rows['device']['status'], 'FAIL')
+        self.assertEqual(len(rows['device']['attempts']), 1)
+        self.assertTrue(rows['device']['attempts'][0]['cleanup_review_required'])
+        self.assertEqual(rows['device-next']['status'], 'NOT RUN')
+        self.assertEqual(rows['device-next']['checkpoint'], 'device_cleanup_review_required')
+        self.assertEqual(len(launched), 1)
 
     def test_source_modified_during_passing_execution_invalidates_evidence(self):
         self.write('fixture_test.py', 'import unittest\nfrom pathlib import Path\nclass Fixture(unittest.TestCase):\n    def test_mutates_candidate(self):\n        Path("lib/shared.dart").write_text("changed during run")\n        self.assertTrue(True)\n')

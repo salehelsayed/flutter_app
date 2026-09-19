@@ -1,3 +1,4 @@
+import 'package:flutter_app/features/call/application/locked_call_presentation.dart';
 import 'package:flutter_app/features/call/data/call_history_repository.dart';
 import 'dart:async';
 
@@ -53,6 +54,7 @@ import '../../features/call/infrastructure/call_audio_route_adapter.dart';
 import '../../features/call/infrastructure/call_authority_client.dart';
 import '../../features/call/infrastructure/call_foreground_audio_session_adapter.dart';
 import '../../features/call/infrastructure/call_mailbox_client.dart';
+import '../../features/call/infrastructure/android_call_admission_settlement.dart';
 import '../../features/call/infrastructure/call_media_conflict_adapter.dart';
 import '../../features/call/infrastructure/call_microphone_permission_adapter.dart';
 import '../../features/call/infrastructure/call_signaling_runtime.dart';
@@ -114,6 +116,7 @@ final class ProductionCallSignalingGraph
     implements
         CallSignalingGraphLifecycle,
         ForegroundCallCapability,
+        LockedCallPresentationPort,
         ForegroundCallBackgroundLifecycle,
         CallSignalingCallabilityInvalidations,
         CallSignalingDiagnosticInvalidations,
@@ -319,31 +322,58 @@ final class ProductionCallSignalingGraph
   /// Intersects current local trust with the independently verified relay
   /// capability before the coordinator is permitted to create a session.
   Future<PreparedOutgoingCall> prepareOutgoingCall(
-    String contactAccountPeerId,
-  ) async {
+    String contactAccountPeerId, {
+    OutgoingCallStartRequest? request,
+  }) async {
     final diagnostics = CallDiagnostics.instance;
     var reason = 'graph_shutdown';
     try {
+      request?.checkPending();
       _requireOutgoingGraphActive();
       reason = 'network_unavailable';
       return await runCallNetworkActionIfAllowed(
         gate: _networkEffectsAllowed,
         action: () async {
+          request?.checkPending();
           reason = 'graph_shutdown';
           _requireOutgoingGraphActive();
           reason = 'endpoint_invalid';
+          final endpointElapsed = Stopwatch()..start();
           final endpoint = await _resolveEndpoint(contactAccountPeerId);
+          request?.checkPending();
+          diagnostics.record(
+            stage: 'preflight',
+            action: 'lookup',
+            outcome: 'ok',
+            values: <String, Object?>{
+              'durationMs': endpointElapsed.elapsedMilliseconds,
+            },
+          );
           reason = 'graph_shutdown';
           _requireOutgoingGraphActive();
           reason = 'native_lifecycle_failed';
+          final nativeElapsed = Stopwatch()..start();
           final nativeLifecycleReady =
               await _nativeCallLifecycleAdapter?.reconcileBeforeOutgoing() ??
               true;
+          request?.checkPending();
+          diagnostics.record(
+            stage: 'preflight',
+            action: 'adopt',
+            outcome: nativeLifecycleReady ? 'ok' : 'rejected',
+            values: <String, Object?>{
+              'durationMs': nativeElapsed.elapsedMilliseconds,
+            },
+          );
           if (!nativeLifecycleReady) {
             throw StateError('native call lifecycle is unavailable');
           }
           reason = 'wake_authority_missing';
-          if (!await _hasCurrentOutgoingWakeAuthority(contactAccountPeerId)) {
+          final hasWakeAuthority = await _hasCurrentOutgoingWakeAuthority(
+            contactAccountPeerId,
+          );
+          request?.checkPending();
+          if (!hasWakeAuthority) {
             throw const _OutgoingCallWakeAuthorityUnavailable();
           }
           reason = 'graph_shutdown';
@@ -354,6 +384,12 @@ final class ProductionCallSignalingGraph
             contactPeerId: contactAccountPeerId,
             localAccountPeerId: localIdentity.peerId,
             localDeviceId: localIdentity.peerId,
+            canPlace: () => request?.isCanceled != true && !_shuttingDown,
+            onApplied: (reduction) {
+              if (reduction.decision == CallEventDecision.applied) {
+                request?.admit();
+              }
+            },
           );
           if (reduction.decision != CallEventDecision.applied) {
             diagnostics.finishAttempt(
@@ -364,6 +400,8 @@ final class ProductionCallSignalingGraph
           return PreparedOutgoingCall(endpoint: endpoint, reduction: reduction);
         },
       );
+    } on OutgoingCallStartCanceled {
+      rethrow;
     } catch (_) {
       diagnostics.record(
         stage: 'preflight',
@@ -452,16 +490,39 @@ final class ProductionCallSignalingGraph
 
   @override
   Future<OutgoingCallStartResult> startOutgoingCall(
-    String contactAccountPeerId,
-  ) async {
+    String contactAccountPeerId, {
+    OutgoingCallStartRequest? request,
+  }) async {
     try {
-      final prepared = await prepareOutgoingCall(contactAccountPeerId);
+      final prepared = await prepareOutgoingCall(
+        contactAccountPeerId,
+        request: request,
+      );
+      if (request?.isCanceled == true) return OutgoingCallStartResult.canceled;
       return prepared.reduction.decision == CallEventDecision.applied
           ? OutgoingCallStartResult.started
           : OutgoingCallStartResult.unavailable;
+    } on OutgoingCallStartCanceled {
+      return OutgoingCallStartResult.canceled;
     } on _OutgoingCallWakeAuthorityUnavailable {
       return OutgoingCallStartResult.unavailable;
     }
+  }
+
+  @override
+  Future<void> updateLockedPresentation(
+    CallId callId,
+    LockedCallPresentation presentation,
+  ) async {
+    if (_shuttingDown ||
+        coordinator.activeSession?.callId != callId ||
+        coordinator.activeSession?.isTerminal != false) {
+      return;
+    }
+    await androidCallLifecycleAdapter?.updateLockedPresentation(
+      callId,
+      presentation,
+    );
   }
 
   @override
@@ -1134,6 +1195,7 @@ final class ProductionCallSignalingGraph
   Future<void> shutdown() async {
     if (_shuttingDown) return;
     _shuttingDown = true;
+    signalingService.stopRetries();
     _clearConnectionSnapshotReader();
     _publishForeground(null);
     Object? firstError;
@@ -1149,6 +1211,7 @@ final class ProductionCallSignalingGraph
     }
 
     await attempt(runtime.shutdown);
+    signalingService.close();
     await attempt(_sessionSubscription.cancel);
     final ringbackCoordinator = _ringback;
     if (ringbackCoordinator != null) {
@@ -1495,6 +1558,7 @@ CallSignalingComposition createProductionCallSignalingComposition({
         final current = await loadIdentity();
         if (current == null ||
             current.peerId != identity.peerId ||
+            current.publicKey != identity.publicKey ||
             current.privateKey.trim().isEmpty) {
           throw StateError('call identity changed');
         }
@@ -1630,6 +1694,7 @@ CallSignalingComposition createProductionCallSignalingComposition({
           androidLifecycleAdapter ?? iosLifecycleAdapter;
       final signalingService = CallSignalingService(
         codec: codec,
+        nowMs: clock,
         directTransport: P2PCallTransport(p2pService: p2pService),
         mailboxClient: mailbox,
         coordinator: coordinator,
@@ -1647,6 +1712,9 @@ CallSignalingComposition createProductionCallSignalingComposition({
         signalingPort: controlAdapter,
         clock: callClock,
         idSource: _newCallId,
+        isOutgoingPreparationCurrent: (callId) =>
+            coordinator.activeSession?.callId == callId &&
+            coordinator.activeSession?.state == CallState.preparing,
         cancelOutgoingMailboxInvite:
             ({required recipientDevicePeerId, required callHandle}) =>
                 mailbox.cancel(
@@ -1842,8 +1910,8 @@ CallSignalingComposition createProductionCallSignalingComposition({
             intents: audioController.interruptionIntents,
             readActiveSession: () => coordinator.activeSession,
             readMediaSnapshot: engine.snapshot,
-            dispatchEvent: (event) async {
-              await coordinator.dispatch(event);
+            dispatchEvent: (event, {canApply}) async {
+              await coordinator.dispatch(event, canApply: canApply);
             },
             clock: callClock,
           );
@@ -1933,7 +2001,29 @@ CallSignalingComposition createProductionCallSignalingComposition({
         directCallSignalStream: messageRouter.callSignalStream,
         mailboxClient: mailbox,
         handleIncoming: handler.handle,
+        handleMailboxIncoming: handler.handleMailbox,
         peekIncoming: handler.peek,
+        prepareMailboxSettlement:
+            nativeLifecycleAdapter is AndroidCallAdmissionSettlementPort
+            ? (frame) => prepareAndroidCallAdmissionSettlement(
+                frame: frame,
+                native:
+                    nativeLifecycleAdapter
+                        as AndroidCallAdmissionSettlementPort,
+                issuedWakeHandles: issuedCallWakeHandleStore,
+                localAccountPeerId: identity.peerId,
+                localDevicePeerId: identity.peerId,
+                localDeviceKeyEpoch: localDeviceKeyEpoch,
+                isCurrentLocalAuthority: () async {
+                  final current = await loadIdentity();
+                  return current != null &&
+                      current.peerId == identity.peerId &&
+                      current.publicKey == identity.publicKey &&
+                      current.mlKemPublicKey == identity.mlKemPublicKey;
+                },
+                nowMs: clock,
+              )
+            : null,
         coordinator: coordinator,
         networkEffectsAllowed: networkEffectsAllowed,
       );

@@ -6,6 +6,14 @@
     <uses-permission android:name="android.permission.INTERNET"/>
     <application>
         <receiver
+            android:name=".call.DebugCallAudioOracleReceiver"
+            android:exported="true"
+            android:permission="android.permission.DUMP">
+            <intent-filter>
+                <action android:name="com.mknoon.app.debug.CALL_AUDIO_ORACLE" />
+            </intent-filter>
+        </receiver>
+        <receiver
             android:name=".CanonicalRuntimeH0ProbeReceiver"
             android:exported="true"
             android:permission="android.permission.DUMP">

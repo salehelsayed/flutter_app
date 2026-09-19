@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/features/push/application/firebase_readiness.dart';
 
@@ -6,90 +8,105 @@ import 'package:flutter_app/features/push/application/firebase_readiness.dart';
 // instead of permanently deafening push (the pre-191 latch-before-try bug).
 void main() {
   test(
-    'init throws once → next ensureReady retries and succeeds; '
-    'onFirstSuccess fires exactly once',
+    'concurrent startup and registration share one initialization',
     () async {
+      final initialization = Completer<void>();
       var attempts = 0;
-      var firstSuccessCount = 0;
-      final errors = <Object>[];
-
+      var successes = 0;
       final readiness = FirebaseReadiness(
-        initialize: () async {
-          attempts += 1;
-          if (attempts == 1) {
-            throw StateError('transient init failure');
-          }
+        initialize: () {
+          attempts++;
+          return initialization.future;
         },
-        onFirstSuccess: () => firstSuccessCount += 1,
-        onError: (error, _) => errors.add(error),
+        onFirstSuccess: () => successes++,
       );
-
-      // Attempt 1 throws inside initialize → swallowed, NOT latched, retryable.
-      await readiness.ensureReady();
-      expect(readiness.isReady, isFalse);
+      final startup = readiness.ensureReady();
+      final registration = readiness.ensureReady();
       expect(attempts, 1);
-      expect(firstSuccessCount, 0);
-      expect(errors, hasLength(1));
-
-      // Attempt 2 succeeds → latches, fires onFirstSuccess exactly once.
-      await readiness.ensureReady();
+      expect(readiness.isReady, isFalse);
+      initialization.complete();
+      await Future.wait([startup, registration]);
       expect(readiness.isReady, isTrue);
-      expect(attempts, 2);
-      expect(firstSuccessCount, 1);
-
-      // Attempt 3 is a no-op (already ready): no re-init, no second success.
-      await readiness.ensureReady();
-      expect(attempts, 2);
-      expect(firstSuccessCount, 1);
+      expect(successes, 1);
     },
   );
 
-  test(
-    'success latches: second ensureReady is a no-op '
-    '(no double init/background-handler registration)',
-    () async {
-      var attempts = 0;
+  test('init throws once → next ensureReady retries and succeeds; '
+      'onFirstSuccess fires exactly once', () async {
+    var attempts = 0;
+    var firstSuccessCount = 0;
+    final errors = <Object>[];
 
-      final readiness = FirebaseReadiness(initialize: () async => attempts += 1);
+    final readiness = FirebaseReadiness(
+      initialize: () async {
+        attempts += 1;
+        if (attempts == 1) {
+          throw StateError('transient init failure');
+        }
+      },
+      onFirstSuccess: () => firstSuccessCount += 1,
+      onError: (error, _) => errors.add(error),
+    );
 
-      await readiness.ensureReady();
-      await readiness.ensureReady();
-      await readiness.ensureReady();
+    // Attempt 1 throws inside initialize → swallowed, NOT latched, retryable.
+    await readiness.ensureReady();
+    expect(readiness.isReady, isFalse);
+    expect(attempts, 1);
+    expect(firstSuccessCount, 0);
+    expect(errors, hasLength(1));
 
-      expect(readiness.isReady, isTrue);
-      expect(
-        attempts,
-        1,
-        reason:
-            'a consumed success latch must prevent a second '
-            'Firebase.initializeApp()/onBackgroundMessage registration',
-      );
-    },
-  );
+    // Attempt 2 succeeds → latches, fires onFirstSuccess exactly once.
+    await readiness.ensureReady();
+    expect(readiness.isReady, isTrue);
+    expect(attempts, 2);
+    expect(firstSuccessCount, 1);
 
-  test(
-    'addOnReadyListener fires once on first success; a listener registered '
-    'AFTER readiness runs immediately',
-    () async {
-      var earlyCount = 0;
-      var lateCount = 0;
+    // Attempt 3 is a no-op (already ready): no re-init, no second success.
+    await readiness.ensureReady();
+    expect(attempts, 2);
+    expect(firstSuccessCount, 1);
+  });
 
-      final readiness = FirebaseReadiness(initialize: () async {});
-      readiness.addOnReadyListener(() => earlyCount += 1);
+  test('success latches: second ensureReady is a no-op '
+      '(no double init/background-handler registration)', () async {
+    var attempts = 0;
 
-      expect(earlyCount, 0);
-      await readiness.ensureReady();
-      expect(earlyCount, 1);
+    final readiness = FirebaseReadiness(initialize: () async => attempts += 1);
 
-      // A listener added after readiness latched runs synchronously now (the
-      // third arm point registering late must still arm the push listeners).
-      readiness.addOnReadyListener(() => lateCount += 1);
-      expect(lateCount, 1);
+    await readiness.ensureReady();
+    await readiness.ensureReady();
+    await readiness.ensureReady();
 
-      // Idempotent: a further ensureReady never re-fires listeners.
-      await readiness.ensureReady();
-      expect(earlyCount, 1);
-      expect(lateCount, 1);
-    },
-  );
+    expect(readiness.isReady, isTrue);
+    expect(
+      attempts,
+      1,
+      reason:
+          'a consumed success latch must prevent a second '
+          'Firebase.initializeApp()/onBackgroundMessage registration',
+    );
+  });
+
+  test('addOnReadyListener fires once on first success; a listener registered '
+      'AFTER readiness runs immediately', () async {
+    var earlyCount = 0;
+    var lateCount = 0;
+
+    final readiness = FirebaseReadiness(initialize: () async {});
+    readiness.addOnReadyListener(() => earlyCount += 1);
+
+    expect(earlyCount, 0);
+    await readiness.ensureReady();
+    expect(earlyCount, 1);
+
+    // A listener added after readiness latched runs synchronously now (the
+    // third arm point registering late must still arm the push listeners).
+    readiness.addOnReadyListener(() => lateCount += 1);
+    expect(lateCount, 1);
+
+    // Idempotent: a further ensureReady never re-fires listeners.
+    await readiness.ensureReady();
+    expect(earlyCount, 1);
+    expect(lateCount, 1);
+  });
 }

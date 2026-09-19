@@ -42,6 +42,7 @@ final class CallSessionSnapshot {
     required this.transportRoute,
     required this.incomingValidated,
     required this.mailboxCustodyConfirmed,
+    required this.reconnectGeneration,
     required List<String> recentEventIds,
     required List<String> pendingCandidateIds,
     required List<String> recentCandidateIds,
@@ -67,6 +68,7 @@ final class CallSessionSnapshot {
         transportRoute: null,
         incomingValidated: false,
         mailboxCustodyConfirmed: false,
+        reconnectGeneration: 0,
         recentEventIds: const <String>[],
         pendingCandidateIds: const <String>[],
         recentCandidateIds: const <String>[],
@@ -89,6 +91,7 @@ final class CallSessionSnapshot {
     CallRouteClass? transportRoute,
     bool incomingValidated = false,
     bool mailboxCustodyConfirmed = false,
+    int reconnectGeneration = 0,
     List<String> recentEventIds = const <String>[],
     List<String> pendingCandidateIds = const <String>[],
     List<String> recentCandidateIds = const <String>[],
@@ -121,6 +124,7 @@ final class CallSessionSnapshot {
       transportRoute: transportRoute,
       incomingValidated: incomingValidated,
       mailboxCustodyConfirmed: mailboxCustodyConfirmed,
+      reconnectGeneration: reconnectGeneration,
       recentEventIds: recentEventIds,
       pendingCandidateIds: pendingCandidateIds,
       recentCandidateIds: recentCandidateIds,
@@ -143,6 +147,10 @@ final class CallSessionSnapshot {
   final CallRouteClass? transportRoute;
   final bool incomingValidated;
   final bool mailboxCustodyConfirmed;
+
+  /// Local recovery episode, independent of ICE generation and wall-clock time.
+  /// Only a canonical transition into reconnecting advances this counter.
+  final int reconnectGeneration;
   final List<String> recentEventIds;
 
   /// Candidates awaiting handoff to the bounded media executor.
@@ -172,6 +180,7 @@ final class CallSessionSnapshot {
     Object? transportRoute = _unset,
     bool? incomingValidated,
     bool? mailboxCustodyConfirmed,
+    int? reconnectGeneration,
     List<String>? recentEventIds,
     List<String>? pendingCandidateIds,
     List<String>? recentCandidateIds,
@@ -205,6 +214,7 @@ final class CallSessionSnapshot {
     incomingValidated: incomingValidated ?? this.incomingValidated,
     mailboxCustodyConfirmed:
         mailboxCustodyConfirmed ?? this.mailboxCustodyConfirmed,
+    reconnectGeneration: reconnectGeneration ?? this.reconnectGeneration,
     recentEventIds: recentEventIds ?? this.recentEventIds,
     pendingCandidateIds: pendingCandidateIds ?? this.pendingCandidateIds,
     recentCandidateIds: recentCandidateIds ?? this.recentCandidateIds,

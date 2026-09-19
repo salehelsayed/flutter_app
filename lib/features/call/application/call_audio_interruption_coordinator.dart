@@ -9,7 +9,8 @@ import 'call_audio_controller.dart';
 typedef CallAudioSessionSnapshotReader = CallSessionSnapshot? Function();
 typedef CallAudioMediaSnapshotReader =
     Future<CallConnectionSnapshot> Function();
-typedef CallAudioEventDispatcher = Future<void> Function(CallEvent event);
+typedef CallAudioEventDispatcher =
+    Future<void> Function(CallEvent event, {bool Function()? canApply});
 
 /// Converts coarse foreground audio-focus intents into canonical reducer
 /// events. Recovery still requires the engine's full silence-safe readiness;
@@ -37,14 +38,22 @@ final class CallAudioInterruptionCoordinator {
   Future<void> _tail = Future<void>.value();
   Future<void>? _closeFuture;
   int _eventSequence = 0;
+  int _interruptionRevision = 0;
   bool _closed = false;
 
   void _onIntent(CallAudioInterruptionIntent intent) {
     if (_closed) return;
-    _tail = _tail.then((_) => _handle(intent)).catchError((_) {});
+    // Invalidate an outstanding readiness read at ingress. The serialized
+    // handler for this loss can otherwise sit behind that read while its stale
+    // result incorrectly reconnects a call whose audio focus was lost again.
+    if (intent == CallAudioInterruptionIntent.pausedReconnect) {
+      _interruptionRevision++;
+    }
+    final revision = _interruptionRevision;
+    _tail = _tail.then((_) => _handle(intent, revision)).catchError((_) {});
   }
 
-  Future<void> _handle(CallAudioInterruptionIntent intent) async {
+  Future<void> _handle(CallAudioInterruptionIntent intent, int revision) async {
     if (_closed) return;
     final session = _readActiveSession();
     final callId = session?.callId;
@@ -57,13 +66,16 @@ final class CallAudioInterruptionCoordinator {
           type = CallEventType.mediaLost;
         }
       case CallAudioInterruptionIntent.recover:
+        if (revision != _interruptionRevision) return;
         CallConnectionSnapshot media;
         try {
           media = await _readMediaSnapshot();
         } catch (_) {
           return;
         }
-        if (!media.isMediaReady) return;
+        if (!_canRecover(session, revision) || !media.isMediaReady) {
+          return;
+        }
         type = switch (session.state) {
           CallState.negotiating => CallEventType.mediaConnected,
           CallState.reconnecting => CallEventType.mediaRecovered,
@@ -78,8 +90,22 @@ final class CallAudioInterruptionCoordinator {
         occurredAt: _clock().toUtc(),
         callId: callId,
         contactPeerId: session.contactPeerId,
+        reconnectGeneration: intent == CallAudioInterruptionIntent.recover
+            ? session.reconnectGeneration
+            : null,
       ),
+      canApply: intent == CallAudioInterruptionIntent.recover
+          ? () => _canRecover(session, revision)
+          : null,
     );
+  }
+
+  bool _canRecover(CallSessionSnapshot session, int revision) {
+    if (_closed || revision != _interruptionRevision) return false;
+    final current = _readActiveSession();
+    return current?.callId == session.callId &&
+        current?.state == session.state &&
+        current?.reconnectGeneration == session.reconnectGeneration;
   }
 
   Future<void> close() {

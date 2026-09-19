@@ -19,6 +19,10 @@ const String _androidProductionAudioCallApplicationId =
 const String _androidGroupMedia269ProfileId = 'android.e2e.group_media_269';
 const String _androidGroupMedia269ApplicationId =
     'com.mknoon.sims.groupmedia269';
+const _androidNonProviderDisposablePackages = <String, String>{
+  'android.e2e.main': 'com.mknoon.sims.connectivity',
+  'android.e2e.direct_media_custody': 'com.mknoon.sims.directmedia',
+};
 const String simsIosDeviceProductValidatorInputName =
     'ios-device-product-validator.schema';
 const String simsIosDeviceProductValidatorSchema =
@@ -1182,6 +1186,12 @@ List<String> effectiveSimsBuildArguments(
         '--android-project-arg=disableGoogleServicesForDisposableProof=true',
         '--android-project-arg=enableGroupMedia269DisposableProof=true',
       ],
+      if (_androidNonProviderDisposablePackages[profile.id] ==
+          effectiveSimsApplicationId(
+            profile,
+            environment: effectiveEnvironment,
+          ))
+        '--android-project-arg=disableGoogleServicesForDisposableProof=true',
       '--target=$entrypoint',
       ...defineArgs,
     ];

@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Runs the Android call-package JVM unit tests (Telecom lifecycle, native
-# bridge, notification factory, pending store, headless admission worker).
+# bridge, notification factory, lock-screen presentation, pending store,
+# headless admission worker) plus MainActivity intent/visibility preservation.
 # Host-only: the Gradle wrapper needs the Mac toolchain. Run via host-run.
 set -euo pipefail
 
@@ -17,7 +18,10 @@ set +e
 "$GRADLEW" -p "$REPO_ROOT/android" --console=plain \
   :app:testDebugUnitTest \
   --tests 'com.mknoon.app.call.*' \
+  --tests 'com.mknoon.app.MainActivityOnNewIntentTest' \
+  --tests 'com.mknoon.app.MainActivityAppVisibilityTest' \
   --tests 'com.mknoon.app.MknoonFirebaseMessagingServiceTest' \
+  --tests 'com.mknoon.app.AndroidCallWakeBridgeTest' \
   >"$LOG" 2>&1
 status=$?
 set -e

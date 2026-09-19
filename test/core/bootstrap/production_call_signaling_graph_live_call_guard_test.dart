@@ -11,6 +11,8 @@ import 'package:flutter_app/core/services/incoming_message_router.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/call/application/call_endpoint_resolver.dart';
+import 'package:flutter_app/features/call/application/call_signaling_service.dart';
+import 'package:flutter_app/features/call/domain/call_signal.dart';
 import 'package:flutter_app/features/call/application/voice_call_feature_flags.dart';
 import 'package:flutter_app/features/call/domain/call_event.dart';
 import 'package:flutter_app/features/call/domain/call_id.dart';
@@ -649,7 +651,51 @@ void main() {
     await fixture.composition.start();
     expect(fixture.composition.isStarted, isTrue);
 
+    final service = fixture.graphs.single.signalingService;
     await fixture.composition.shutdown();
+    final writesAfterShutdown = fixture.bridge.commands.length;
+    await expectLater(
+      service.transmit(
+        signal: CallSignal.create(
+          callId: _callA,
+          messageId: '55555555-5555-4555-8555-555555555555',
+          event: CallSignalType.terminate,
+          senderAccountPeerId: 'local-account',
+          senderDevicePeerId: 'local-device',
+          recipientAccountPeerId: 'remote-account',
+          recipientDevicePeerId: 'remote-device',
+          senderSequence: 2,
+          iceGeneration: 0,
+          createdAtMs: 2_000_000,
+          expiresAtMs: 2_040_000,
+          payload: const {'reason': 'caller_cancelled'},
+        ),
+        callHandle: '33333333-3333-4333-8333-333333333333',
+        endpoint: const ResolvedCallEndpoint(
+          accountPeerId: 'remote-account',
+          devicePeerId: 'remote-device',
+          signingPublicKey: 'remote-public-key',
+          mlKemPublicKey: 'remote-kem',
+          deviceKeyEpoch: 1,
+          preferenceEpoch: 1,
+          platform: CallEndpointPlatform.ios,
+          expiresAtMs: 2_060_000,
+          routingHandle: '0123456789abcdef0123456789abcdef',
+          wakeHandle: 'fedcba9876543210fedcba9876543210',
+        ),
+        senderSigningPrivateKey: 'local-private-key',
+        authorizeTerminalRetry: () async => true,
+      ),
+      throwsA(
+        isA<CallSignalingException>().having(
+          (e) => e.code,
+          'closed graph',
+          CallSignalingErrorCode.migrationPaused,
+        ),
+      ),
+    );
+    expect(fixture.bridge.commands.length, writesAfterShutdown);
+    expect(service.pendingTerminalRetryCount, 0);
 
     expect(
       fixture.bridge.commands.where(

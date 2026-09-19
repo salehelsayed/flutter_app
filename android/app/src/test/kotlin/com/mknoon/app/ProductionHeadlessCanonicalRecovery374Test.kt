@@ -698,9 +698,11 @@ class ProductionHeadlessCanonicalRecovery374Test {
         val seam = sourceFile("ProductionDeletedBatchRecovery.kt").readText()
 
         // Plan 375 generalized the one seam entry: deletion and fixed ingress
-        // both route through recordGenericRecoveryTrigger on one construction.
+        // and quiet ingress route through recordGenericRecoveryTrigger on one construction.
         assertEquals(1, service.windowedCount("ProductionDeletedBatchRecovery("))
-        assertEquals(2, service.windowedCount(".recordGenericRecoveryTrigger("))
+        assertEquals(3, service.windowedCount(".recordGenericRecoveryTrigger("))
+        assertEquals(2, service.windowedCount("DroppedPushRecoveryStore.TriggerKind.FIXED_WAKE"))
+        assertEquals(1, service.windowedCount("DroppedPushRecoveryStore.TriggerKind.DELETED_BATCH"))
         assertFalse(service.contains(".commitAndSchedule"))
         assertFalse(service.contains(".recordDeletion"))
         assertFalse(service.contains(".recordFixedWake"))

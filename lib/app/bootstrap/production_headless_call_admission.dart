@@ -1,3 +1,6 @@
+import 'dart:io';
+
+import 'package:flutter/services.dart';
 import 'package:flutter_app/core/bridge/go_bridge_client.dart';
 import 'package:flutter_app/core/bridge/p2p_bridge_client.dart';
 import 'package:flutter_app/core/database/app_database_version.dart';
@@ -36,9 +39,13 @@ import 'package:flutter_app/features/call/infrastructure/headless_call_admission
 import 'package:flutter_app/features/call/infrastructure/production_call_endpoint_resolution.dart';
 import 'package:flutter_app/features/call/infrastructure/received_call_wake_handle_store_impl.dart';
 import 'package:flutter_app/features/call/infrastructure/secure_call_envelope_codec.dart';
+import 'package:flutter_app/features/call/presentation/locked_call_projection.dart';
+import 'package:flutter_app/features/settings/application/background_preference_use_cases.dart';
+import 'package:flutter_app/features/settings/domain/models/background_preference.dart';
 import 'package:flutter_app/features/identity/application/linked_installation_authority.dart';
 import 'package:flutter_app/features/identity/data/repositories/identity_repository_impl.dart';
 import 'package:sqflite_sqlcipher/sqflite.dart';
+import 'package:path_provider/path_provider.dart';
 
 final class HeadlessAuthenticatedMailboxEvent {
   const HeadlessAuthenticatedMailboxEvent({
@@ -94,24 +101,36 @@ typedef HeadlessCallHistoryRecorder =
 final class MailboxProductionHeadlessCallAdmissionSession
     implements
         ProductionHeadlessCallAdmissionSession,
-        HeadlessCallAdmissionDiagnosticSource {
+        HeadlessCallAdmissionDiagnosticSource,
+        HeadlessCallAdmissionDisplaySource {
   MailboxProductionHeadlessCallAdmissionSession({
     required CallMailboxClient mailboxClient,
     required AuthenticateHeadlessMailboxEvent authenticateEvent,
     required Future<HeadlessCallAdmissionCleanup> Function() closeResources,
     HeadlessDeclineReplySender? declineReplySender,
     HeadlessCallHistoryRecorder? historyRecorder,
+    Future<HeadlessIncomingCallDisplay?> Function(CallSignal invite)?
+    resolveDisplay,
+    Duration displayTimeout = const Duration(seconds: 1),
   }) : _mailboxClient = mailboxClient,
        _authenticateEvent = authenticateEvent,
        _closeResources = closeResources,
        _declineReplySender = declineReplySender,
-       _historyRecorder = historyRecorder;
+       _historyRecorder = historyRecorder,
+       _resolveDisplay = resolveDisplay,
+       _displayTimeout = displayTimeout;
 
   final CallMailboxClient _mailboxClient;
   final AuthenticateHeadlessMailboxEvent _authenticateEvent;
   final HeadlessDeclineReplySender? _declineReplySender;
   final HeadlessCallHistoryRecorder? _historyRecorder;
   final Future<HeadlessCallAdmissionCleanup> Function() _closeResources;
+  final Future<HeadlessIncomingCallDisplay?> Function(CallSignal invite)?
+  _resolveDisplay;
+  final Duration _displayTimeout;
+  @override
+  HeadlessIncomingCallDisplay? get display => _display;
+  HeadlessIncomingCallDisplay? _display;
   Future<HeadlessCallAdmissionDisposition>? _evaluation;
   Future<HeadlessCallAdmissionCleanup>? _cleanup;
 
@@ -226,6 +245,17 @@ final class MailboxProductionHeadlessCallAdmissionSession
         return HeadlessCallAdmissionDisposition.deferred;
       }
       if (boundInvites == 1 && companionInvites == 0) {
+        // All rows have now been authenticated and a companion terminal ruled
+        // out. The display projection cannot affect admission/replay custody,
+        // and its bounded work never waits for a foreground widget or frame.
+        final resolve = _resolveDisplay;
+        if (resolve != null && inviteSignal != null) {
+          try {
+            _display = await resolve(inviteSignal).timeout(_displayTimeout);
+          } catch (_) {
+            _display = null;
+          }
+        }
         return HeadlessCallAdmissionDisposition.admitted;
       }
       if (boundInvites == 0 && companionInvites > 0 && !rejectedRows) {
@@ -419,6 +449,10 @@ abstract interface class HeadlessCallAdmissionDiagnosticSource {
   String? get diagnosticCause;
 }
 
+abstract interface class HeadlessCallAdmissionDisplaySource {
+  HeadlessIncomingCallDisplay? get display;
+}
+
 abstract interface class ProductionHeadlessCallAdmissionBackend {
   Future<ProductionHeadlessCallAdmissionSession?> acquire(
     HeadlessCallAdmissionInvocation invocation,
@@ -482,6 +516,9 @@ final class ProductionHeadlessCallAdmissionRunner {
           : null;
       failureCause = 'adoption_failed';
       final disposition = await session.evaluate(invocation);
+      final display = session is HeadlessCallAdmissionDisplaySource
+          ? (session as HeadlessCallAdmissionDisplaySource).display
+          : null;
       failureCause = 'cleanup_failed';
       final cleanup = await session.close();
       if (!cleanup.databaseClosed || !cleanup.leaseReleased) {
@@ -504,6 +541,9 @@ final class ProductionHeadlessCallAdmissionRunner {
         databaseClosed: true,
         leaseReleased: true,
         diagnosticCause: _readDiagnosticCause(diagnosticSource),
+        display: disposition == HeadlessCallAdmissionDisposition.admitted
+            ? display
+            : null,
       );
     } catch (_) {
       HeadlessCallAdmissionCleanup cleanup;
@@ -787,6 +827,45 @@ final class AndroidProductionHeadlessCallAdmissionBackend
       declineReplySender: (invite, callHandle) =>
           declineReply.sendDeclineFor(invite, callHandle: callHandle),
       historyRecorder: recordTerminalCallHistory,
+      resolveDisplay: (invite) async {
+        // These are local reads under the same authenticated DB owner. Start
+        // them together; a timed-out projection never starts a later DB read,
+        // sends a native update, or changes the saved call transport policy.
+        final deadline = DateTime.now().add(const Duration(seconds: 1));
+        final local = await Future.wait<Object?>([
+          database.query(
+            'contacts',
+            columns: const <String>['username'],
+            where: 'peer_id = ?',
+            whereArgs: <Object?>[invite.senderAccountPeerId],
+            limit: 1,
+          ),
+          loadBackgroundPreference(secureKeyStore: _secureKeyStore),
+          getApplicationDocumentsDirectory(),
+        ]);
+        if (DateTime.now().isAfter(deadline)) return null;
+        final rows = local[0] as List<Map<String, Object?>>;
+        final name = rows.isEmpty ? null : rows.first['username'];
+        final normalized = name is String ? name.trim() : '';
+        final displayName = normalized.isEmpty ? 'Unknown contact' : normalized;
+        final light = local[1] == BackgroundPreference.daylightLagoon;
+        final directory = local[2] as Directory;
+        final remaining =
+            deadline.difference(DateTime.now()).inMilliseconds - 50;
+        if (remaining <= 0) return null;
+        final png = await LockedCallProjection.renderAvatar(
+          invite.senderAccountPeerId,
+          light,
+          documentsDirectory: directory.path,
+        ).timeout(Duration(milliseconds: remaining), onTimeout: () => null);
+        return HeadlessIncomingCallDisplay(
+          displayName: displayName.length > 128
+              ? displayName.substring(0, 128)
+              : displayName,
+          avatarPng: png != null && png.length <= 512 * 1024 ? png : null,
+          light: light,
+        );
+      },
       closeResources: _closeResources,
     );
     _activeSession = session;
@@ -907,8 +986,14 @@ final class _DiagnosticAdmissionLeaseGateway
     final CanonicalRuntimeLeaseSnapshot snapshot;
     try {
       snapshot = await _delegate.acquire(binding);
-    } catch (_) {
-      _onCause('bridge_unavailable');
+    } catch (error) {
+      // An existing foreground canonical owner is expected contention, not a
+      // missing/broken method channel. Never record native exception details.
+      _onCause(
+        error is PlatformException && error.code == 'lease_unavailable'
+            ? 'graph_not_owner'
+            : 'bridge_unavailable',
+      );
       rethrow;
     }
     if (snapshot.state != CanonicalRuntimeLeaseState.active) {

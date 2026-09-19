@@ -82,8 +82,8 @@ def bounded_json(path, maximum):
     return decode(path.read_bytes())
 
 
-def read_records(directory, now_ms, loss_samples=None):
-    rows, health = [], collections.Counter()
+def read_records(directory, now_ms, loss_samples=None, consume=None):
+    rows, health, owners = [], collections.Counter(), set()
     consent_path = directory / 'consent.json'
     if not consent_path.exists():
         return [], {'collectorState': 'no_consent_file', 'recordFiles': 0, 'invalidRecords': 0, 'droppedEvents': 0}
@@ -117,20 +117,25 @@ def read_records(directory, now_ms, loss_samples=None):
                 raise ValueError('drop count')
             if loss_samples is not None:
                 identity = hashlib.sha256(('server:'+path.stem+':'+str(record['createdAtMs'])+':'+owner+':'+str(record.get('consentEpoch'))).encode()).hexdigest()
-                loss_samples[identity] = {'count': dropped, 'lowerBound': record.get('discardLedgerSaturated') is True, 'layer': 'server'}
+                _record_loss_sample(loss_samples, identity, {'count': dropped, 'lowerBound': record.get('discardLedgerSaturated') is True, 'layer': 'server'})
             health['droppedEvents'] += dropped
             health['lossCountLowerBound'] += int(record.get('discardLedgerSaturated') is True)
             for row in ordinary + list(finals.values()):
                 if not isinstance(row, dict) or set(row) != {'receivedAtMs', 'event'} or not integer(row['receivedAtMs']) or not validate(row['event']):
                     health['invalidEvents'] += 1
                     continue
-                rows.append({'_owner': owner, 'receivedAtMs': row['receivedAtMs'], 'event': row['event']})
+                observation = {'_owner': owner, 'receivedAtMs': row['receivedAtMs'], 'event': row['event']}
+                owners.add(owner)
+                if consume is None:
+                    rows.append(observation)
+                else:
+                    consume(observation)
         except (ValueError, TypeError, KeyError, OSError):
             health['invalidRecords'] += 1
     result = dict(health)
     result['collectorState'] = 'readable'
     result['consentingOwners'] = sum(isinstance(v, dict) and v.get('enabled') is True and not v.get('erasePending', False) and now_ms - v.get('updatedAtMs', 0) <= retention for v in consent.values())
-    result['retainedOwnerCount'] = len({r['_owner'] for r in rows})
+    result['retainedOwnerCount'] = len(owners)
     return rows, result
 
 
@@ -172,7 +177,20 @@ def group_attempts(rows):
     return sorted(attempts, key=lambda a: (a['firstReceivedAtMs'], a['runId'], a['feature']))
 
 
-def aggregate(attempts, rows, baseline_rows, health):
+def _error_signature(row):
+    e = row['event']
+    values = e['values']
+    error_class = values.get('errorClass')
+    fingerprint = values.get('fingerprint')
+    # Older Flutter producers hashed only the class when no app frame was
+    # available. That hash has no more specificity than the class itself.
+    if error_class and fingerprint == hashlib.sha256((error_class+'|').encode()).hexdigest():
+        fingerprint = None
+    return (e['feature'], e['platform'], e['build'], e['stage'], e['reason'],
+            fingerprint, error_class, values.get('osReasonCode'), values.get('operation'))
+
+
+def aggregate(attempts, rows, baseline_signatures, baseline_count, health):
     groups = collections.defaultdict(list)
     for attempt in attempts:
         groups[(attempt['feature'], attempt['build'], attempt['platform'])].append(attempt)
@@ -188,29 +206,17 @@ def aggregate(attempts, rows, baseline_rows, health):
             alerts.append({'kind': 'technical_failure_rate', 'feature': feature, 'build': build, 'platform': platform, 'count': technical, 'denominator': denominator, 'threshold': .2, 'minimumSamples': 5})
         if len(items) >= 5 and incomplete / len(items) >= .2:
             alerts.append({'kind': 'missing_final_rate', 'feature': feature, 'build': build, 'platform': platform, 'count': incomplete, 'denominator': len(items), 'threshold': .2, 'minimumSamples': 5})
-    def signature(row):
-        e = row['event']
-        values = e['values']
-        error_class = values.get('errorClass')
-        fingerprint = values.get('fingerprint')
-        # Older Flutter producers hashed only the class when no app frame was
-        # available. That hash has no more specificity than the class itself.
-        if error_class and fingerprint == hashlib.sha256((error_class+'|').encode()).hexdigest():
-            fingerprint = None
-        return (e['feature'], e['platform'], e['build'], e['stage'], e['reason'],
-                fingerprint, error_class, values.get('osReasonCode'), values.get('operation'))
-    prior = {signature(r) for r in baseline_rows if r['event']['outcome'] in FAILURE}
-    errors = collections.Counter(signature(r) for r in rows if r['event']['outcome'] in FAILURE)
+    errors = collections.Counter(_error_signature(r) for r in rows if r['event']['outcome'] in FAILURE)
     error_summaries = []
     for key, count in sorted(errors.items(), key=lambda item: tuple(str(x) for x in item[0])):
         feature, platform, build, stage, reason, fingerprint, error_class, os_reason_code, operation = key
-        entry = {'feature': feature, 'platform': platform, 'build': build, 'stage': stage, 'reason': reason, 'fingerprint': fingerprint, 'eventReports': count, 'newInRetainedBaseline': key not in prior, 'baselineEventCount': len(baseline_rows)}
+        entry = {'feature': feature, 'platform': platform, 'build': build, 'stage': stage, 'reason': reason, 'fingerprint': fingerprint, 'eventReports': count, 'newInRetainedBaseline': key not in baseline_signatures, 'baselineEventCount': baseline_count}
         entry['fingerprintSpecificity'] = 'reported' if fingerprint else 'class_only' if error_class else 'none'
         for name, value in [('errorClass', error_class), ('osReasonCode', os_reason_code), ('operation', operation)]:
             if value is not None:
                 entry[name] = value
         error_summaries.append(entry)
-        if key not in prior and count >= 3:
+        if key not in baseline_signatures and count >= 3:
             alerts.append({'kind': 'new_error_signature', **entry, 'minimumReports': 3})
     if health.get('droppedEvents', 0) or health.get('invalidEvents', 0) or health.get('invalidRecords', 0) or health.get('clientReportedDroppedEvents', 0):
         alerts.append({'kind': 'telemetry_coverage_gap', 'scope': 'retained_lifetime_and_validation', 'droppedEvents': health.get('droppedEvents', 0), 'lossCountIsLowerBound': bool(health.get('lossCountLowerBound')), 'invalidEvents': health.get('invalidEvents', 0), 'invalidRecords': health.get('invalidRecords', 0), 'clientReportedDroppedEvents': health.get('clientReportedDroppedEvents', 0)})
@@ -220,6 +226,13 @@ def aggregate(attempts, rows, baseline_rows, health):
 # Baselines are private hashed counter identities, never part of an operator report.
 MAX_LOSS_COUNTERS = 2048
 LOSS_BASELINE_TTL_MS = 14 * 86400000
+
+
+def _record_loss_sample(samples, identity, value):
+    # counter_interval uses the first capacity entries plus a truncation flag.
+    # One extra entry preserves that flag without retaining the full corpus.
+    if identity in samples or len(samples) <= MAX_LOSS_COUNTERS:
+        samples[identity] = value
 
 
 def counter_interval(samples, previous, now_ms):
@@ -272,11 +285,39 @@ def counter_interval(samples, previous, now_ms):
 
 def report(directory, hours=24, limit=100, trace=None, run=None, now_ms=None, support_code=None, _loss_samples=None):
     now_ms = int(time.time() * 1000) if now_ms is None else now_ms
-    samples = {} if _loss_samples is None else _loss_samples
-    retained, health = read_records(pathlib.Path(directory), now_ms, samples)
     cutoff = now_ms - int(hours * 3600000)
-    baseline = [r for r in retained if r['receivedAtMs'] < cutoff]
-    rows = [r for r in retained if cutoff <= r['receivedAtMs'] <= now_ms]
+    rows, baseline_signatures = [], set()
+    baseline_count = 0
+    latest_client_health, latest_run_health = {}, {}
+    first_run_order = {}
+    snapshot_sequence = 0
+    def observe(row):
+        nonlocal baseline_count, snapshot_sequence
+        e = row['event']
+        if row['receivedAtMs'] < cutoff:
+            baseline_count += 1
+            if e['outcome'] in FAILURE:
+                baseline_signatures.add(_error_signature(row))
+        elif row['receivedAtMs'] <= now_ms:
+            rows.append(row)
+        # Retained-lifetime counters are independent of the report window and
+        # detail filter. Compare keys directly instead of sorting all events.
+        if row['receivedAtMs'] <= now_ms and e['source'] == 'flutter' and e['feature'] == 'runtime' and e['stage'] == 'snapshot' and 'droppedEvents' in e['values']:
+            order = (row['receivedAtMs'], e['occurredAtMs'], e['sequence'])
+            targets = [(latest_client_health, row['_owner'])]
+            if _loss_samples is not None:
+                run_identity = (row['_owner'], e['runId'])
+                first_order = order + (snapshot_sequence,)
+                if run_identity not in first_run_order or first_order < first_run_order[run_identity]:
+                    first_run_order[run_identity] = first_order
+                targets.append((latest_run_health, run_identity))
+            snapshot_sequence += 1
+            for snapshots, identity in targets:
+                # Equal keys keep the later record in the reader's stable order,
+                # matching the former stable sort followed by assignment.
+                if identity not in snapshots or order >= snapshots[identity][0]:
+                    snapshots[identity] = (order, row)
+    _, health = read_records(pathlib.Path(directory), now_ms, _loss_samples, consume=observe)
     if trace or run or support_code:
         matched = [r for r in rows if
                    (not trace or r['event'].get('traceId') == trace) and
@@ -288,20 +329,15 @@ def report(directory, hours=24, limit=100, trace=None, run=None, now_ms=None, su
         event_ids = {(r['_owner'], r['event']['eventId']) for r in matched}
         rows = [r for r in rows if (r['_owner'], r['event']['eventId']) in event_ids or
                 (r['_owner'], r['event']['feature'], r['event'].get('attemptId')) in attempts_matched]
-    latest_client_health, latest_run_health = {}, {}
-    # These counters describe retained lifetimes, independent of the event window
-    # or detail filter. A new process is an incomparable baseline, not new loss.
-    for row in sorted(retained, key=lambda r: (r['receivedAtMs'], r['event']['occurredAtMs'], r['event']['sequence'])):
-        e = row['event']
-        if row['receivedAtMs'] <= now_ms and e['source'] == 'flutter' and e['feature'] == 'runtime' and e['stage'] == 'snapshot' and 'droppedEvents' in e['values']:
-            latest_client_health[row['_owner']] = row
-            latest_run_health[(row['_owner'], e['runId'])] = row
-    for (owner, run_id), row in latest_run_health.items():
+    # The former full-history stable sort inserted run counters in order of
+    # their earliest snapshot. Preserve that cohort when the baseline is capped.
+    for owner, run_id in sorted(latest_run_health, key=first_run_order.__getitem__):
+        _, row = latest_run_health[(owner, run_id)]
         key = hashlib.sha256(('client:'+owner+':'+run_id).encode()).hexdigest()
-        samples[key] = {'count': row['event']['values']['droppedEvents'], 'lowerBound': False, 'reportedAtMs': row['receivedAtMs'], 'layer': 'client'}
-    health['clientReportedDroppedEvents'] = sum(r['event']['values']['droppedEvents'] for r in latest_client_health.values())
+        _record_loss_sample(_loss_samples, key, {'count': row['event']['values']['droppedEvents'], 'lowerBound': False, 'reportedAtMs': row['receivedAtMs'], 'layer': 'client'})
+    health['clientReportedDroppedEvents'] = sum(r['event']['values']['droppedEvents'] for _, r in latest_client_health.values())
     attempts = group_attempts(rows)
-    summary = aggregate(attempts, rows, baseline, health)
+    summary = aggregate(attempts, rows, baseline_signatures, baseline_count, health)
     result = {'schemaVersion': 1, 'generatedAtMs': now_ms, 'windowHours': hours, 'retentionDays': SCHEMA['limits']['serverRetentionDays'], 'evidenceScope': 'Authenticated endpoint reports; receipt time is server-observed. UUID joins are diagnostic correlation, not proof of message custody, participants or content. Missing/disabled/offline/legacy endpoint records remain unknown.', 'health': health, 'eventReports': len(rows), 'attemptsObserved': len(attempts), **summary, 'attempts': attempts[-limit:], 'attemptsTruncated': max(0, len(attempts)-limit)}
     result['loss'] = {'retainedLifetime': {
         'droppedEvents': health.get('droppedEvents', 0),

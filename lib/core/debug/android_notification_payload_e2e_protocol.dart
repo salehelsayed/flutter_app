@@ -1,3 +1,8 @@
+const notificationDualPathSenderSchema = 'mknoon.notification-dual-path.v1';
+const notificationDualPathSenderAction = 'notification_dual_path_sender_v1';
+const notificationDualPathReleaseFileName =
+    'notification_dual_path_release.json';
+
 const String androidNotificationPayloadE2ERequestSchema =
     'mknoon.plan258.android-notification-request.v1';
 const String androidNotificationPayloadE2EResultSchema =

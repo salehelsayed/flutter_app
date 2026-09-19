@@ -5,6 +5,7 @@ import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/features/call/domain/call_state.dart';
 import 'package:flutter_app/features/call/presentation/widgets/call_controls.dart';
 import 'package:flutter_app/features/home/presentation/widgets/user_avatar.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
 
 /// Foreground active-call presentation driven by the canonical reducer state.
 ///
@@ -129,6 +130,8 @@ class _ActiveCallScreenState extends State<ActiveCallScreen> {
     String? formattedDuration, {
     bool compact = false,
   }) {
+    final l10n = AppLocalizations.of(context)!;
+    final status = _status(l10n);
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
@@ -149,10 +152,10 @@ class _ActiveCallScreenState extends State<ActiveCallScreen> {
         Semantics(
           container: true,
           liveRegion: true,
-          label: _status,
+          label: status,
           excludeSemantics: true,
           child: Text(
-            _status,
+            status,
             style: TextStyle(
               color: widget.state == CallState.connected
                   ? colors.connectedHeading
@@ -166,7 +169,7 @@ class _ActiveCallScreenState extends State<ActiveCallScreen> {
           SizedBox(height: compact ? 6 : 8),
           Text(
             formattedDuration,
-            semanticsLabel: 'Call duration $formattedDuration',
+            semanticsLabel: l10n.call_duration(formattedDuration),
             style: TextStyle(
               color: colors.textPrimary,
               fontSize: 18,
@@ -178,11 +181,11 @@ class _ActiveCallScreenState extends State<ActiveCallScreen> {
     );
   }
 
-  String get _status => switch (widget.state) {
-    CallState.reconnecting => 'Reconnecting',
-    CallState.connected => 'Connected',
-    CallState.ending || CallState.ended => 'Ending',
-    _ => 'Connecting',
+  String _status(AppLocalizations l10n) => switch (widget.state) {
+    CallState.reconnecting => l10n.call_status_reconnecting,
+    CallState.connected => l10n.call_status_connected,
+    CallState.ending || CallState.ended => l10n.call_status_ending,
+    _ => l10n.call_status_connecting,
   };
 
   String get _formattedDuration {

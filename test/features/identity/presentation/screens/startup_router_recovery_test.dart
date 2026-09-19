@@ -26,6 +26,7 @@ import 'package:flutter_app/features/groups/domain/repositories/group_repository
 import 'package:flutter_app/features/home/presentation/screens/first_time_experience_wired.dart';
 import 'package:flutter_app/features/identity/presentation/screens/identity_choice_wired.dart';
 import 'package:flutter_app/features/identity/presentation/startup_router.dart';
+import 'package:flutter_app/features/identity/application/linked_installation_authority.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 import 'package:flutter_app/features/posts/application/pending_post_target_store.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
@@ -215,6 +216,10 @@ void main() {
   }
 
   Widget buildRouterApp({
+    Future<void>? initialShareIntentCapture,
+    Future<void> Function()? ensureRuntimeServicesReady,
+    Future<void> Function()? afterP2PNodeStarted,
+    LinkedInstallationAuthoritySnapshot? linkedAuthorityOverride,
     AccountMigrationReceiverStartFn? accountMigrationStartReceiver,
     AccountMigrationReceiverStopFn? accountMigrationStopReceiver,
     AccountMigrationReceiverEvents? accountMigrationReceiverEvents,
@@ -250,6 +255,10 @@ void main() {
       supportedLocales: AppLocalizations.supportedLocales,
       navigatorObservers: navigatorObservers,
       home: StartupRouter(
+        initialShareIntentCapture: initialShareIntentCapture,
+        ensureRuntimeServicesReady: ensureRuntimeServicesReady,
+        afterP2PNodeStarted: afterP2PNodeStarted,
+        linkedAuthorityOverride: linkedAuthorityOverride,
         repository: identityRepository,
         feedClearedRepository: InMemoryFeedClearedRepository(),
         contactRepository: contactRepository,
@@ -332,6 +341,119 @@ void main() {
     await saveAuthority(
       AccountMigrationAuthorityState.active,
       accountPeerId: peerId,
+    );
+  }
+
+  testWidgets(
+    'qualified call runtime starts with no further frame while the home route waits',
+    (tester) async {
+      await seedActiveReturningAccount('peer-returning');
+      final qualification = Completer<void>();
+      final runtimeReady = Completer<void>();
+      var runtimeRequests = 0;
+      var callSignalingStarts = 0;
+      await tester.pumpWidget(
+        buildRouterApp(
+          initialShareIntentCapture: qualification.future,
+          ensureRuntimeServicesReady: () {
+            runtimeRequests += 1;
+            return runtimeReady.future;
+          },
+          afterP2PNodeStarted: () async {
+            expect(p2pService.startNodeCallCount, 1);
+            callSignalingStarts += 1;
+          },
+        ),
+      );
+      expect(p2pService.startNodeCallCount, 0);
+      qualification.complete();
+      // idle drains only asynchronous work. It does not draw the next frame,
+      // reproducing a canonical runtime hosted behind Android's keyguard.
+      await tester.idle();
+      expect(runtimeRequests, 1);
+      expect(p2pService.startNodeCallCount, 0);
+      expect(callSignalingStarts, 0);
+
+      runtimeReady.complete();
+      await tester.idle();
+      expect(p2pService.startNodeCallCount, 1);
+      expect(callSignalingStarts, 1);
+      expect(find.byType(StartupRouter), findsOneWidget);
+      expect(find.byType(FeedWired), findsNothing);
+
+      await pumpFrames(tester);
+      expect(find.byType(FeedWired), findsOneWidget);
+      expect(p2pService.startNodeCallCount, 1);
+      expect(callSignalingStarts, 1);
+    },
+  );
+
+  testWidgets(
+    'qualified account without contacts starts with no further frame before setup navigation',
+    (tester) async {
+      await seedActiveReturningAccount('peer-returning');
+      contactRepository.seed([]);
+      final qualification = Completer<void>();
+      var callSignalingStarts = 0;
+      await tester.pumpWidget(
+        buildRouterApp(
+          initialShareIntentCapture: qualification.future,
+          afterP2PNodeStarted: () async => callSignalingStarts += 1,
+        ),
+      );
+      qualification.complete();
+      await tester.idle();
+      expect(p2pService.startNodeCallCount, 1);
+      expect(callSignalingStarts, 1);
+      expect(find.byType(FirstTimeExperienceWired), findsNothing);
+      await pumpFrames(tester);
+      expect(find.byType(FirstTimeExperienceWired), findsOneWidget);
+      expect(p2pService.startNodeCallCount, 1);
+    },
+  );
+
+  for (final unqualified in [
+    'missing identity',
+    'blocked migration',
+    'linked',
+  ]) {
+    testWidgets(
+      '$unqualified cannot start primary call runtime with no further frame',
+      (tester) async {
+        if (unqualified != 'missing identity') {
+          await seedActiveReturningAccount('peer-returning');
+        }
+        if (unqualified == 'blocked migration') {
+          await saveAuthority(
+            AccountMigrationAuthorityState.migrationImportStaging,
+          );
+        }
+        final qualification = Completer<void>();
+        var callSignalingStarts = 0;
+        var runtimeRequests = 0;
+        await tester.pumpWidget(
+          buildRouterApp(
+            initialShareIntentCapture: qualification.future,
+            linkedAuthorityOverride: unqualified == 'linked'
+                ? const LinkedInstallationAuthoritySnapshot(
+                    disposition: LinkedInstallationDisposition.active,
+                    credential: null,
+                    failClosedReason: null,
+                  )
+                : null,
+            ensureRuntimeServicesReady: () async => runtimeRequests += 1,
+            afterP2PNodeStarted: () async => callSignalingStarts += 1,
+          ),
+        );
+        qualification.complete();
+        await tester.idle();
+        expect(p2pService.startNodeCallCount, 0);
+        expect(callSignalingStarts, 0);
+        // The active-linked route retains its separate role-aware owner.
+        expect(runtimeRequests, unqualified == 'linked' ? 1 : 0);
+        expect(find.byType(FeedWired), findsNothing);
+        await tester.pumpWidget(const SizedBox.shrink());
+      },
     );
   }
 

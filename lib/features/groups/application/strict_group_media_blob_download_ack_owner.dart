@@ -16,6 +16,18 @@ import 'package:flutter_app/features/conversation/domain/repositories/media_atta
 typedef StrictGroupMediaBlobBeforeSourcePinnedAck =
     FutureOr<void> Function(DirectMediaBlobCustodyRow row);
 
+typedef StrictGroupMediaBlobDownloadAttemptStarted =
+    FutureOr<void> Function({
+      required MediaAttachment attachment,
+      required DirectMediaBlobCustodyRow custody,
+    });
+
+typedef StrictGroupMediaBlobVerifiedCiphertext =
+    FutureOr<void> Function({
+      required MediaAttachment attachment,
+      required DirectMediaBlobCustodyRow custody,
+    });
+
 /// Process-scoped single-flight owner for one strict incoming group blob.
 ///
 /// A second caller may join only when it names the same immutable attachment
@@ -91,6 +103,8 @@ final class StrictGroupMediaBlobDownloadAckOwner {
     required this.mediaFileManager,
     StrictGroupMediaBlobDownloadCoordinator? downloadCoordinator,
     this.beforeSourcePinnedAck,
+    this.onDownloadAttemptStarted,
+    this.onVerifiedCiphertext,
     DateTime Function()? now,
   }) : downloadCoordinator =
            downloadCoordinator ??
@@ -102,6 +116,10 @@ final class StrictGroupMediaBlobDownloadAckOwner {
   final MediaFileManager mediaFileManager;
   final StrictGroupMediaBlobDownloadCoordinator downloadCoordinator;
   final StrictGroupMediaBlobBeforeSourcePinnedAck? beforeSourcePinnedAck;
+  // Optional observations supplied by the compile-gated debug composition.
+  // Default callers keep the existing transfer and commit behavior.
+  final StrictGroupMediaBlobDownloadAttemptStarted? onDownloadAttemptStarted;
+  final StrictGroupMediaBlobVerifiedCiphertext? onVerifiedCiphertext;
   final DateTime Function() now;
 
   GroupMediaBlobCustodyRepository? get _repository =>
@@ -205,6 +223,23 @@ final class StrictGroupMediaBlobDownloadAckOwner {
 
     String? sourceRelayPeerId;
     try {
+      if (onDownloadAttemptStarted case final observe?) {
+        await observe(attachment: currentAttachment, custody: custody);
+        // A paused debug observer grants no new authority. Requalify its
+        // exact row and expiry before allowing the original transfer.
+        final current = await _loadExactIncomingCustody(
+          repository: repository,
+          attachment: currentAttachment,
+          groupId: groupId,
+        );
+        if (current == null ||
+            !current.exactDatabaseProjectionMatches(custody) ||
+            current.expiresAtMs! <= now().toUtc().millisecondsSinceEpoch ||
+            await _loadExactCurrentAttachment(attachment: currentAttachment) ==
+                null) {
+          return null;
+        }
+      }
       final result = await callP2PMediaDownload(
         bridge,
         id: custody.custodyBlobId,
@@ -222,6 +257,21 @@ final class StrictGroupMediaBlobDownloadAckOwner {
         return null;
       }
       sourceRelayPeerId = result['custodyRelayPeerId'] as String;
+      if (onVerifiedCiphertext case final observe?) {
+        final current = await _loadExactIncomingCustody(
+          repository: repository,
+          attachment: currentAttachment,
+          groupId: groupId,
+        );
+        if (current == null ||
+            !current.exactDatabaseProjectionMatches(custody) ||
+            current.expiresAtMs! <= now().toUtc().millisecondsSinceEpoch ||
+            await _loadExactCurrentAttachment(attachment: currentAttachment) ==
+                null) {
+          return null;
+        }
+        await observe(attachment: currentAttachment, custody: current);
+      }
 
       final expectedCustody = custody;
       final committed = await repository.runGroupMediaBlobCustodyLifecycle(

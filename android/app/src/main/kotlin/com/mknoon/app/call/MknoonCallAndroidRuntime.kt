@@ -150,8 +150,6 @@ internal class MknoonCallRuntime private constructor(context: Context) {
     companion object {
         private const val PREFERENCES = "mknoon_android_call_capability_v1"
         private const val CAPABILITY_KEY = "dart_capability_enabled"
-        private const val TERMINAL_TOMBSTONE_PREFIX = "terminal_tombstone_"
-        private const val MAX_TERMINAL_TOMBSTONES = 32
         private const val STARTUP_CONVERGENCE_ATTEMPTS = 16
         private const val STARTUP_CONVERGENCE_RETRY_MS = 250L
         private const val CLEANUP_RETRY_ATTEMPTS = 8
@@ -163,6 +161,9 @@ internal class MknoonCallRuntime private constructor(context: Context) {
 
         @Volatile
         private var instance: MknoonCallRuntime? = null
+
+        /** Observation only: never constructs or reconciles a native runtime. */
+        internal fun existingInstance(): MknoonCallRuntime? = instance
 
         fun get(context: Context): MknoonCallRuntime =
             instance ?: synchronized(this) {
@@ -195,7 +196,7 @@ internal class MknoonCallRuntime private constructor(context: Context) {
     private val expiryJobs = ConcurrentHashMap<UUID, Job>()
     private val cleanupJobs = ConcurrentHashMap<UUID, Job>()
     private val authenticatedIngressLock = Any()
-    private val terminalTombstoneLock = Any()
+    private val terminalTombstones = MknoonCallTerminalTombstones(preferences)
     internal val eventRelay = MknoonCallEventRelay()
     private lateinit var androidPlatform: AndroidMknoonCallPlatform
 
@@ -228,8 +229,14 @@ internal class MknoonCallRuntime private constructor(context: Context) {
             onCleanupPending = ::scheduleCleanupRetry,
             onDeclineWithoutOwner = ::scheduleHeadlessDeclineReply,
             diagnosticSink = AndroidMknoonCallLifecycleDiagnosticSink,
-            journalDiagnostic = diagnostics::journal,
-            answerDiagnostic = { handle, outcome, reason -> diagnostics.record(handle, "answer", "accept", outcome, reason) },
+            journalDiagnostic = { handle, type ->
+                observeDebugLifecycle(handle, "journal", type.name)
+                diagnostics.journal(handle, type)
+            },
+            answerDiagnostic = { handle, outcome, reason ->
+                observeDebugLifecycle(handle, "answer", outcome)
+                diagnostics.record(handle, "answer", "accept", outcome, reason)
+            },
         )
         reconcilePersistedDescriptor()
     }
@@ -243,38 +250,47 @@ internal class MknoonCallRuntime private constructor(context: Context) {
      * (device 2026-09-05 18:23Z). The worker releases the service when done.
      */
     private fun scheduleHeadlessDeclineReply(descriptor: PendingNativeCallDescriptor): Boolean {
-        if (!HeadlessCallAdmissionWorkScheduler(applicationContext).enqueueDeclineReply(descriptor)) {
-            return false
+        var ownerId: UUID? = null
+        var started = false
+        val queued = HeadlessCallAdmissionWorkScheduler(
+            applicationContext,
+            beforeEnqueue = { workId ->
+                ownerId = workId
+                ProcessMknoonCallAdmissionSettlements.store.register(
+                    CallWakePayload(descriptor.nativeCallId, descriptor.callHandle,
+                        descriptor.wakeHandle, System.currentTimeMillis(), descriptor.expiresAtMs),
+                    workId, declineReply = true,
+                )
+                if (BuildConfig.ENABLE_ANDROID_NATIVE_CALLS && Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    val intent = Intent(applicationContext, MknoonCallForegroundService::class.java)
+                        .setAction(MknoonCallForegroundService.ACTION_START_ADMISSION)
+                        .putExtra(
+                            MknoonCallForegroundService.EXTRA_NATIVE_CALL_ID,
+                            descriptor.nativeCallId.toString(),
+                        )
+                        .putExtra(MknoonCallForegroundService.EXTRA_ADMISSION_OWNER_ID, workId.toString())
+                        .putExtra(MknoonCallForegroundService.EXTRA_ADMISSION_DECLINE_REPLY, true)
+                        .putExtra(MknoonCallForegroundService.EXTRA_ADMISSION_EXPIRES_AT_MS, descriptor.expiresAtMs)
+                        .putExtra(MknoonCallForegroundService.EXTRA_ADMISSION_WAKE_HANDLE, descriptor.wakeHandle)
+                    started = runCatching { applicationContext.startForegroundService(intent) }.isSuccess
+                    if (started) {
+                        declineReplyHandler.postDelayed(
+                            { stopAdmissionForeground(descriptor.nativeCallId.toString(), workId) },
+                            DECLINE_REPLY_RELEASE_BACKSTOP_MS,
+                        )
+                    }
+                }
+            },
+        ).enqueueDeclineReply(descriptor)
+        if (!queued && started) ownerId?.let {
+            stopAdmissionForeground(descriptor.nativeCallId.toString(), it)
         }
-        if (!BuildConfig.ENABLE_ANDROID_NATIVE_CALLS || Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
-            return false
-        }
-        val intent = Intent(applicationContext, MknoonCallForegroundService::class.java)
-            .setAction(MknoonCallForegroundService.ACTION_START_ADMISSION)
-            .putExtra(
-                MknoonCallForegroundService.EXTRA_NATIVE_CALL_ID,
-                descriptor.nativeCallId.toString(),
-            )
-        val started = runCatching { applicationContext.startForegroundService(intent) }.isSuccess
-        if (started) {
-            // Backstop: a reply run that never reaches its release still frees
-            // the service (a STOP for an inactive call is a no-op).
-            val callId = descriptor.nativeCallId.toString()
-            declineReplyHandler.postDelayed(
-                { stopAdmissionForeground(callId) },
-                DECLINE_REPLY_RELEASE_BACKSTOP_MS,
-            )
-        }
-        return started
+        return queued && started
     }
 
-    /** Releases the admission foreground state a decline reply run held. */
-    internal fun stopAdmissionForeground(callId: String) {
-        val nativeCallId = runCatching { UUID.fromString(callId) }.getOrNull() ?: return
-        val intent = Intent(applicationContext, MknoonCallForegroundService::class.java)
-            .setAction(MknoonCallForegroundService.ACTION_STOP)
-            .putExtra(MknoonCallForegroundService.EXTRA_NATIVE_CALL_ID, nativeCallId.toString())
-        runCatching { applicationContext.startService(intent) }
+    /** Releases only the placeholder owned by this scheduled work request. */
+    internal fun stopAdmissionForeground(callId: String, ownerId: UUID) {
+        MknoonCallForegroundService.releaseAdmission(applicationContext, callId, ownerId, requireTerminal = false)
     }
 
     fun setCapabilityEnabled(enabled: Boolean): Boolean {
@@ -310,7 +326,9 @@ internal class MknoonCallRuntime private constructor(context: Context) {
             Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
             preferences.getBoolean(CAPABILITY_KEY, false)
 
-    fun present(payload: CallWakePayload): MknoonCallPresentationResult =
+    fun present(payload: CallWakePayload): MknoonCallPresentationResult = present(payload, null)
+
+    private fun present(payload: CallWakePayload, display: MknoonIncomingCallDisplay?): MknoonCallPresentationResult =
         synchronized(authenticatedIngressLock) {
             if (
                 isCapabilityEnabled() &&
@@ -326,7 +344,7 @@ internal class MknoonCallRuntime private constructor(context: Context) {
             }?.let {
                 return@synchronized MknoonCallPresentationResult.DUPLICATE
             }
-            controller.present(payload).also { result ->
+            controller.present(payload, display).also { result ->
                 diagnostics.record(payload.callHandle, "presentation", "present",
                     if (result == MknoonCallPresentationResult.PRESENTED) "ok" else if (result == MknoonCallPresentationResult.DUPLICATE) "duplicate" else "failed",
                     if (result == MknoonCallPresentationResult.PRESENTED) "none" else "native_lifecycle_failed",
@@ -338,7 +356,10 @@ internal class MknoonCallRuntime private constructor(context: Context) {
             }
         }
 
-    fun presentAuthenticated(callHandle: String, expiresAtMs: Long): Boolean {
+    fun presentAuthenticated(callHandle: String, expiresAtMs: Long): Boolean =
+        presentAuthenticated(callHandle, expiresAtMs, null)
+
+    fun presentAuthenticated(callHandle: String, expiresAtMs: Long, display: MknoonIncomingCallDisplay?): Boolean {
         val observedNow = System.currentTimeMillis()
         return presentAuthenticatedCall(
             callHandle = callHandle,
@@ -347,7 +368,7 @@ internal class MknoonCallRuntime private constructor(context: Context) {
             capabilityEnabled = isCapabilityEnabled(),
             handleGrammar = AUTHENTICATED_HANDLE,
             wakeHandle = { UUID.randomUUID().toString() },
-            present = ::present,
+            present = { payload -> present(payload, display) },
         )
     }
 
@@ -384,9 +405,9 @@ internal class MknoonCallRuntime private constructor(context: Context) {
         )
     }
 
-    fun registerOutgoingAuthenticated(callHandle: String, expiresAtMs: Long): Boolean {
+    fun registerOutgoingAuthenticated(callHandle: String, expiresAtMs: Long): Boolean = synchronized(authenticatedIngressLock) {
         val observedNow = System.currentTimeMillis()
-        return presentAuthenticatedCall(
+        presentAuthenticatedCall(
             callHandle = callHandle,
             expiresAtMs = expiresAtMs,
             observedNowMs = observedNow,
@@ -396,6 +417,27 @@ internal class MknoonCallRuntime private constructor(context: Context) {
             present = controller::registerOutgoing,
         )
     }
+
+    private fun captureAdmissionSettlement(nativeCallId: UUID): MknoonCallAdmissionToken? =
+        synchronized(authenticatedIngressLock) {
+            if (!isCapabilityEnabled() || admissionSettlementHasNativeOwner(controller::observeJournal)) null
+            else ProcessMknoonCallAdmissionSettlements.store.capture(nativeCallId)
+        }
+
+    private fun settleAuthenticatedAdmission(token: MknoonCallAdmissionToken): Boolean =
+        synchronized(authenticatedIngressLock) {
+            // The foreground caller supplies cryptographic terminal/ACK proof.
+            // Native independently fences the exact work and refuses any live
+            // native owner. Never terminate or rewrite a native journal here.
+            commitAuthenticatedAdmissionSettlement(
+                store = ProcessMknoonCallAdmissionSettlements.store,
+                token = token,
+                capabilityEnabled = isCapabilityEnabled(),
+                hasNativeOwner = admissionSettlementHasNativeOwner(controller::observeJournal),
+                recordTerminal = ::recordTerminalTombstone,
+                release = { MknoonCallForegroundService.releaseSettledAdmission(applicationContext, it) },
+            )
+        }
 
     fun createBridge(messenger: BinaryMessenger): MknoonCallNativeBridge =
         MknoonCallNativeBridge(
@@ -408,6 +450,8 @@ internal class MknoonCallRuntime private constructor(context: Context) {
             beforeAttach = ::settleUnconsumableTerminalBeforeAttach,
             authenticatedPresenter = ::presentAuthenticated,
             authenticatedOutgoingRegistrar = ::registerOutgoingAuthenticated,
+            admissionSettlementCapture = ::captureAdmissionSettlement,
+            admissionSettlementCommit = ::settleAuthenticatedAdmission,
             ringbackStarter = ::startOutgoingRingback,
             ringbackStopper = ::stopOutgoingRingback,
             registrationExecutor = registrationExecutor,
@@ -600,45 +644,10 @@ internal class MknoonCallRuntime private constructor(context: Context) {
     }
 
     private fun recordTerminalTombstone(nativeCallId: UUID, expiresAtMs: Long): Boolean =
-        synchronized(terminalTombstoneLock) {
-            val observedNow = System.currentTimeMillis()
-            val editor = preferences.edit()
-            val retained = preferences.all.entries
-                .mapNotNull { (key, value) ->
-                    if (!key.startsWith(TERMINAL_TOMBSTONE_PREFIX)) return@mapNotNull null
-                    val expiry = value as? Long ?: return@mapNotNull null
-                    if (expiry <= observedNow) {
-                        editor.remove(key)
-                        return@mapNotNull null
-                    }
-                    key to expiry
-                }
-                .sortedBy { it.second }
-                .toMutableList()
-            val key = TERMINAL_TOMBSTONE_PREFIX + nativeCallId
-            retained.removeAll { it.first == key }
-            if (expiresAtMs > observedNow) {
-                while (retained.size >= MAX_TERMINAL_TOMBSTONES) {
-                    editor.remove(retained.removeAt(0).first)
-                }
-                editor.putLong(key, expiresAtMs)
-            } else {
-                editor.remove(key)
-            }
-            editor.commit()
-        }
+        terminalTombstones.record(nativeCallId, expiresAtMs, System.currentTimeMillis())
 
     private fun hasTerminalTombstone(nativeCallId: UUID, observedNow: Long): Boolean =
-        synchronized(terminalTombstoneLock) {
-            val key = TERMINAL_TOMBSTONE_PREFIX + nativeCallId
-            val expiresAtMs = preferences.all[key] as? Long ?: 0L
-            if (expiresAtMs <= observedNow) {
-                if (expiresAtMs != 0L) preferences.edit().remove(key).apply()
-                false
-            } else {
-                true
-            }
-        }
+        terminalTombstones.contains(nativeCallId, observedNow)
 
     private inner class AndroidMknoonCallForegroundRuntime(
         private val service: Service,
@@ -650,6 +659,16 @@ internal class MknoonCallRuntime private constructor(context: Context) {
 
         override fun isAudioActive(nativeCallId: UUID): Boolean =
             controller.activeNativeCallId() == nativeCallId && controller.audioState().active
+
+        override fun isTerminalLifecycle(nativeCallId: UUID): Boolean =
+            hasTerminalTombstone(nativeCallId, System.currentTimeMillis())
+
+        override fun onAdmissionEvent(nativeCallId: UUID, event: MknoonCallAdmissionEvent) {
+            diagnostics.record(
+                nativeCallId.toString(), "admission", event.action, event.outcome, event.reason,
+                values = event.values,
+            )
+        }
 
         override fun startAdmission(nativeCallId: UUID) {
             val notification = notifications.createAdmission(nativeCallId)
@@ -670,7 +689,6 @@ internal class MknoonCallRuntime private constructor(context: Context) {
         override fun startRinging(nativeCallId: UUID) {
             val notification = notifications.createIncoming(
                 nativeCallId = nativeCallId,
-                fullScreenAllowed = false,
             )
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                 service.startForeground(
@@ -697,19 +715,44 @@ internal class MknoonCallRuntime private constructor(context: Context) {
         override fun startActive(nativeCallId: UUID) {
             stopIncomingRingtone(nativeCallId, "active")
             val notification = notifications.createOngoing(nativeCallId)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                service.startForeground(
-                    MknoonCallNotificationFactory.NOTIFICATION_ID,
-                    notification,
-                    ServiceInfo.FOREGROUND_SERVICE_TYPE_PHONE_CALL or
-                        ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE,
-                )
-            } else {
-                service.startForeground(
-                    MknoonCallNotificationFactory.NOTIFICATION_ID,
-                    notification,
-                )
-            }
+            applyMknoonCallForegroundAudio(
+                startForeground = {
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                        service.startForeground(
+                            MknoonCallNotificationFactory.NOTIFICATION_ID,
+                            notification,
+                            ServiceInfo.FOREGROUND_SERVICE_TYPE_PHONE_CALL or
+                                ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE,
+                        )
+                    } else {
+                        service.startForeground(
+                            MknoonCallNotificationFactory.NOTIFICATION_ID,
+                            notification,
+                        )
+                    }
+                },
+                reportApplied = { applied ->
+                    android.util.Log.i(
+                        MKNOON_CALL_FOREGROUND_AUDIO_TAG,
+                        formatMknoonCallForegroundAudioApplied(applied),
+                    )
+                    // audio/activate is the earlier controller submission. This
+                    // separate event proves onStartCommand applied microphone
+                    // foreground mode; neither event proves captured PCM or ICE.
+                    diagnostics.record(
+                        nativeCallId.toString(),
+                        "audio",
+                        "configure",
+                        if (applied) "ok" else "failed",
+                        if (applied) "none" else "audio_activation_failed",
+                        values = if (applied) {
+                            mapOf("foreground" to true, "audioActive" to true)
+                        } else {
+                            emptyMap()
+                        },
+                    )
+                },
+            )
         }
 
         override fun startInactive(nativeCallId: UUID) {
@@ -761,7 +804,22 @@ private class AndroidMknoonCallPlatform(
     private val sessions = ConcurrentHashMap<UUID, CallControlScope>()
     private val endpointJobs = ConcurrentHashMap<UUID, Job>()
     private val availableEndpoints = ConcurrentHashMap<UUID, List<CallEndpointCompat>>()
-    private val locallyDisconnecting = ConcurrentHashMap.newKeySet<UUID>()
+    private val locallyDisconnecting = ConcurrentHashMap<UUID, CallControlScope>()
+    private val callbackReleases = MknoonTelecomCallbackRelease(
+        scope = scope,
+        current = sessions::get,
+        disconnect = { session: CallControlScope ->
+            session.disconnect(DisconnectCause(DisconnectCause.LOCAL)) is CallControlResult.Success
+        },
+        markLocal = { id, session -> locallyDisconnecting[id] = session },
+        clearLocal = { id, session -> locallyDisconnecting.remove(id, session) },
+        report = { outcome ->
+            android.util.Log.i(
+                MKNOON_TELECOM_DISCONNECT_DIAGNOSTIC_TAG,
+                "CALL_ANDROID_DISCONNECT_RELEASE outcome=${outcome.name.lowercase()}",
+            )
+        },
+    )
     private val registered = AtomicBoolean(false)
 
     override fun registerIncoming(
@@ -809,11 +867,15 @@ private class AndroidMknoonCallPlatform(
                         }
                     },
                     onDisconnect = {
-                        if (locallyDisconnecting.contains(nativeCallId)) {
+                        val exactScope = registeredScope.get()
+                        if (exactScope != null && locallyDisconnecting[nativeCallId] === exactScope) {
                             emitMknoonTelecomDisconnectDiagnostic(
                                 MknoonTelecomDisconnectSource.TELECOM_CALLBACK_LOCAL,
                             )
                         } else {
+                            check(exactScope != null && sessions[nativeCallId] === exactScope) {
+                                "stale native disconnect callback"
+                            }
                             emitMknoonTelecomDisconnectDiagnostic(
                                 MknoonTelecomDisconnectSource.TELECOM_CALLBACK_REMOTE,
                             )
@@ -837,12 +899,12 @@ private class AndroidMknoonCallPlatform(
                     },
                     onSetInactive = {
                         val applied = controller().deactivateAudioFromTelecom(nativeCallId)
-                        val released = disconnectCallbackScope(
+                        val releaseQueued = disconnectCallbackScope(
                             nativeCallId,
                             registeredScope.get(),
                             MknoonTelecomDisconnectSource.SET_INACTIVE,
                         )
-                        check(applied && released) {
+                        check(applied && releaseQueued) {
                             "native inactive transition rejected"
                         }
                     },
@@ -872,12 +934,13 @@ private class AndroidMknoonCallPlatform(
             } finally {
                 val exactScope = registeredScope.get()
                 exactScope?.let {
-                    sessions.remove(nativeCallId, exactScope)
-                }
-                locallyDisconnecting.remove(nativeCallId)
-                stopEndpointUpdates(nativeCallId)
-                if (exactScope != null && !controller().hasTerminalLifecycle(nativeCallId)) {
-                    controller().endFromTelecom(nativeCallId)
+                    callbackReleases.retire(nativeCallId, exactScope)
+                    if (sessions.remove(nativeCallId, exactScope)) {
+                        stopEndpointUpdates(nativeCallId)
+                        if (!controller().hasTerminalLifecycle(nativeCallId)) {
+                            controller().endFromTelecom(nativeCallId)
+                        }
+                    }
                 }
             }
         }
@@ -890,31 +953,19 @@ private class AndroidMknoonCallPlatform(
     }
 
     override fun showIncoming(nativeCallId: UUID) {
-        val fullScreenAllowed = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-            notificationManager.canUseFullScreenIntent()
-        } else {
-            true
-        }
         notificationManager.notify(
             MknoonCallNotificationFactory.NOTIFICATION_ID,
-            notificationFactory.createIncoming(nativeCallId, fullScreenAllowed),
+            notificationFactory.createIncoming(nativeCallId),
         )
     }
 
-    private suspend fun disconnectCallbackScope(
+    private fun disconnectCallbackScope(
         nativeCallId: UUID,
         callScope: CallControlScope?,
         source: MknoonTelecomDisconnectSource,
     ): Boolean {
         emitMknoonTelecomDisconnectDiagnostic(source)
-        locallyDisconnecting.add(nativeCallId)
-        val released = releaseTelecomCallbackSession {
-            callScope?.disconnect(
-                DisconnectCause(DisconnectCause.LOCAL),
-            ) is CallControlResult.Success
-        }
-        if (!released) locallyDisconnecting.remove(nativeCallId)
-        return released
+        return callbackReleases.request(nativeCallId, callScope)
     }
 
     override fun startForeground(nativeCallId: UUID) {
@@ -927,19 +978,25 @@ private class AndroidMknoonCallPlatform(
     }
 
     override fun answer(nativeCallId: UUID) {
-        val session = sessions[nativeCallId] ?: error("call session unavailable")
-        val outcome = runBlocking {
-            withTimeout(CONTROL_TIMEOUT_MS) {
-                session.answer(CallAttributesCompat.CALL_TYPE_AUDIO_CALL)
-            }
-        }
-        check(outcome is CallControlResult.Success) { "Telecom answer rejected" }
+        val session = sessions[nativeCallId]
+        performMknoonTelecomAnswer(
+            answer = session?.let { exactSession ->
+                suspend { exactSession.answer(CallAttributesCompat.CALL_TYPE_AUDIO_CALL) }
+            },
+            timeoutMs = CONTROL_TIMEOUT_MS,
+            diagnostic = {
+                android.util.Log.i(
+                    MKNOON_TELECOM_ANSWER_DIAGNOSTIC_TAG,
+                    formatMknoonTelecomAnswerDiagnostic(it),
+                )
+            },
+        )
     }
 
     override fun end(nativeCallId: UUID) {
         val session = sessions[nativeCallId] ?: return
         emitMknoonTelecomDisconnectDiagnostic(MknoonTelecomDisconnectSource.EXPLICIT_END)
-        locallyDisconnecting.add(nativeCallId)
+        locallyDisconnecting[nativeCallId] = session
         val outcome = try {
             runBlocking {
                 withTimeout(CONTROL_TIMEOUT_MS) {
@@ -947,11 +1004,11 @@ private class AndroidMknoonCallPlatform(
                 }
             }
         } catch (error: Exception) {
-            locallyDisconnecting.remove(nativeCallId)
+            locallyDisconnecting.remove(nativeCallId, session)
             throw error
         }
         if (outcome !is CallControlResult.Success) {
-            locallyDisconnecting.remove(nativeCallId)
+            locallyDisconnecting.remove(nativeCallId, session)
             error("Telecom disconnect rejected")
         }
     }
@@ -1066,7 +1123,7 @@ private class AndroidMknoonCallPlatform(
 
     override fun project(nativeCallId: UUID, state: String): Boolean {
         val notification = when (state) {
-            "ringing" -> notificationFactory.createIncoming(nativeCallId, fullScreenAllowed = false)
+            "ringing" -> notificationFactory.createIncoming(nativeCallId)
             "accepted", "active", "inactive" -> notificationFactory.createOngoing(nativeCallId)
             else -> return false
         }
@@ -1192,8 +1249,9 @@ internal suspend fun releaseTelecomCallbackSession(
     if (attempts !in 1..3) return false
     repeat(attempts) { attempt ->
         val released = try {
-            // Keep the terminal-ACK wait plus provider release below Telecom's
-            // 5s callback budget. Durable terminal custody survives failure.
+            // Bound the provider await independently of Telecom's callback.
+            // A synchronous Binder submission can itself outlast cancellation;
+            // callback release therefore runs in the process-owned scope.
             withTimeout(750L) { disconnect() }
         } catch (_: Throwable) {
             false
@@ -1286,4 +1344,14 @@ internal fun executeFailClosed(
     val disabled = runCatching(persistDisable).getOrDefault(false)
     val cleaned = runCatching(cleanup).getOrDefault(false)
     return disabled && cleaned
+}
+
+/** No debug observer is linked into profile/release, and failures cannot affect call authority. */
+private fun observeDebugLifecycle(handle: String, kind: String, outcome: String) {
+    if (!com.mknoon.app.BuildConfig.DEBUG) return
+    runCatching {
+        Class.forName("com.mknoon.app.call.DebugCallLifecycleObservation")
+            .getMethod("record", String::class.java, String::class.java, String::class.java)
+            .invoke(null, handle, kind, outcome)
+    }
 }

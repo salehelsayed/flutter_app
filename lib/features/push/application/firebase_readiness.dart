@@ -30,6 +30,7 @@ class FirebaseReadiness {
   final List<void Function()> _onReadyListeners = <void Function()>[];
 
   bool _ready = false;
+  Future<void>? _initializing;
 
   /// Whether a successful [initialize] has latched.
   bool get isReady => _ready;
@@ -46,7 +47,8 @@ class FirebaseReadiness {
     _onReadyListeners.add(listener);
   }
 
-  /// Runs [initialize]; on success latches ready and notifies every registered
+  /// Shares an in-flight [initialize] across startup and registration callers.
+  /// On success latches ready and notifies every registered
   /// on-ready listener exactly once. If [initialize] throws, the failure is
   /// reported to [onError] and the latch stays CLEAR so the next call retries
   /// (the error is swallowed so callers on the startup path are not broken).
@@ -54,6 +56,18 @@ class FirebaseReadiness {
     if (_ready) {
       return;
     }
+    final running = _initializing;
+    if (running != null) return running;
+    final attempt = _initializeAndNotify();
+    _initializing = attempt;
+    try {
+      await attempt;
+    } finally {
+      if (identical(_initializing, attempt)) _initializing = null;
+    }
+  }
+
+  Future<void> _initializeAndNotify() async {
     try {
       await _initialize();
     } catch (error, stackTrace) {

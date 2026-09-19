@@ -4,6 +4,8 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/groups/application/create_group_with_members_use_case.dart';
+import 'package:flutter_app/features/groups/application/add_group_member_use_case.dart';
+import 'package:flutter_app/features/groups/application/protected_group_authority.dart';
 import 'package:flutter_app/features/groups/application/group_config_payload.dart';
 import 'package:flutter_app/features/groups/application/send_group_invite_use_case.dart';
 import 'package:flutter_app/features/groups/domain/models/group_invite_delivery_attempt.dart';
@@ -292,6 +294,134 @@ class _PublishOrderingP2PService extends FakeP2PService {
   }
 }
 
+Map<String, GroupMemberDeviceIdentity> _initialPhysicalBindings(
+  List<ContactModel> contacts,
+) => {
+  for (final contact in contacts)
+    contact.peerId: GroupMemberDeviceIdentity(
+      deviceId: 'device-${contact.peerId}',
+      transportPeerId: 'device-${contact.peerId}',
+      deviceSigningPublicKey: contact.publicKey,
+      mlKemPublicKey: contact.mlKemPublicKey,
+      keyPackageId: 'package-${contact.peerId}',
+      keyPackagePublicMaterial: contact.mlKemPublicKey,
+    ),
+};
+
+class _InitialCreationAuthority {
+  _InitialCreationAuthority(
+    this.repo,
+    this.bridge, {
+    this.activationSucceeds = true,
+    this.throwDuringNativeCommit = false,
+    this.afterPrepare,
+    this.omitAuthenticatedProof = false,
+    this.cancelSucceeds = true,
+    this.throwDuringCancel = false,
+  });
+
+  final InMemoryGroupRepository repo;
+  final PassthroughCryptoBridge bridge;
+  final bool activationSucceeds;
+  final bool throwDuringNativeCommit;
+  final void Function()? afterPrepare;
+  final bool omitAuthenticatedProof;
+  final bool cancelSucceeds;
+  final bool throwDuringCancel;
+  final requests = <ProtectedGroupAuthorityPrepareRequest>[];
+  final preparations = <ProtectedGroupAuthorityPreparation>[];
+  final events = <String>[];
+
+  void install() {
+    setProtectedGroupAuthorityAdapter(
+      prepare: (request) async {
+        final text = jsonDecode(request.replayData['text'] as String) as Map;
+        final added = text['member'] as Map;
+        final peer = added['peerId'] as String;
+        expect(
+          await repo.getMember(request.groupId, peer),
+          isNull,
+          reason: 'PREPARED must precede the initial member write',
+        );
+        expect(request.control, ProtectedGroupAuthorityControl.memberAdd);
+        requests.add(request);
+        events.add('prepare:$peer');
+        final prepared = await buildProtectedGroupAuthorityRows(
+          groupId: request.groupId,
+          transitionId: request.transitionId,
+          control: request.control,
+          replayData: request.replayData,
+          keyEpoch: (await repo.getLatestKey(request.groupId))!.keyGeneration,
+          actorAccountPeerId: request.actorAccountPeerId,
+          actorAccountPublicKey: request.actorAccountPublicKey,
+          actorAccountPrivateKey: request.actorAccountPrivateKey,
+          senderDevice: request.senderDevice,
+          frozenRecipients: request.frozenRecipients,
+          callSign: (_, _) async => {'ok': true, 'signature': 'host-signature'},
+          callEncrypt:
+              ({required recipientMlKemPublicKey, required plaintext}) async =>
+                  {
+                    'ok': true,
+                    'kem': 'host-kem',
+                    'ciphertext': plaintext,
+                    'nonce': 'host-nonce',
+                  },
+        );
+        expect(prepared.hasAuthenticatedAuthority, isTrue);
+        preparations.add(prepared);
+        if (throwDuringNativeCommit) bridge.throwOnSend = true;
+        afterPrepare?.call();
+        return omitAuthenticatedProof
+            ? ProtectedGroupAuthorityPreparation(
+                groupId: prepared.groupId,
+                rows: prepared.rows,
+                control: prepared.control,
+                replayData: prepared.replayData,
+              )
+            : prepared;
+      },
+      activate: (prepared, {required requireAllCustody}) async {
+        expect(requireAllCustody, isFalse);
+        final request = requests.singleWhere(
+          (r) => r.transitionId == prepared.authorityProof!.eventId,
+        );
+        final text = jsonDecode(request.replayData['text'] as String) as Map;
+        final peer = (text['member'] as Map)['peerId'] as String;
+        expect(await repo.getMember(request.groupId, peer), isNotNull);
+        final group = (await repo.getGroup(request.groupId))!;
+        expect(group.lastMembershipEventId, request.transitionId);
+        expect(
+          group.lastMembershipEventAt,
+          DateTime.parse(request.replayData['timestamp'] as String),
+        );
+        final updates = bridge.sentMessages
+            .map((m) => jsonDecode(m) as Map)
+            .where((m) => m['cmd'] == 'group:updateConfig')
+            .toList();
+        expect(updates, isNotEmpty);
+        expect(
+          (updates.last['payload'] as Map)['groupConfig'],
+          text['groupConfig'],
+        );
+        events.add('activate:$peer');
+        return activationSucceeds;
+      },
+      cancel: (prepared) async {
+        final text = jsonDecode(prepared.replayData!['text'] as String) as Map;
+        final peer = (text['member'] as Map)['peerId'] as String;
+        expect(
+          await repo.getMember(prepared.groupId, peer),
+          isNull,
+          reason: 'durable abort follows proven local rollback',
+        );
+        events.add('abort:$peer');
+        if (throwDuringCancel) throw StateError('durable cancellation failed');
+        return cancelSucceeds;
+      },
+    );
+  }
+}
+
 void main() {
   group('createGroupWithMembers', () {
     late PassthroughCryptoBridge bridge;
@@ -314,6 +444,400 @@ void main() {
         'keyEpoch': 1,
       };
     });
+
+    tearDown(setProtectedGroupAuthorityAdapter);
+
+    test(
+      'protected initial creation: complete frozen recipient coverage and canonical watermark survive invites',
+      () async {
+        p2pService = FakeP2PService(
+          initialState: const NodeState(
+            peerId: 'device-admin-phone',
+            isStarted: true,
+          ),
+        );
+        final authority = _InitialCreationAuthority(groupRepo, bridge)
+          ..install();
+        final contacts = [contactAlice, contactBob];
+        final result = await createGroupWithMembers(
+          bridge: bridge,
+          groupRepo: groupRepo,
+          p2pService: p2pService,
+          identity: testIdentity,
+          selectedContacts: contacts,
+          selectedContactDeviceBindings: _initialPhysicalBindings(contacts),
+          type: GroupType.chat,
+          name: 'Strict initial group',
+        );
+        expect(result.membersAdded, 2);
+        expect(result.invitesSent, 2);
+        expect(authority.requests, hasLength(2));
+        expect(authority.events, [
+          'prepare:peer-alice',
+          'activate:peer-alice',
+          'prepare:peer-bob',
+          'activate:peer-bob',
+        ]);
+        expect(
+          authority.requests.first.frozenRecipients
+              .map((d) => d.transportPeerId)
+              .toSet(),
+          {'device-admin-phone', 'device-peer-alice'},
+        );
+        expect(
+          authority.requests.last.frozenRecipients
+              .map((d) => d.transportPeerId)
+              .toSet(),
+          {'device-admin-phone', 'device-peer-alice', 'device-peer-bob'},
+        );
+        expect(
+          authority.preparations.first.rows
+              .expand((r) => r.recipientPeerIds)
+              .toSet(),
+          {'device-peer-alice'},
+        );
+        expect(
+          authority.preparations.last.rows
+              .expand((r) => r.recipientPeerIds)
+              .toSet(),
+          {'device-peer-alice', 'device-peer-bob'},
+        );
+        final finalRequest = authority.requests.last;
+        final finalConfig =
+            (jsonDecode(finalRequest.replayData['text'] as String)
+                as Map)['groupConfig'];
+        expect(result.group.lastMembershipEventId, finalRequest.transitionId);
+        expect(
+          bridge.commandLog.where((c) => c == 'group:updateConfig'),
+          hasLength(2),
+        );
+        expect(
+          bridge.commandLog.where((c) => c == 'group:publish'),
+          isEmpty,
+          reason:
+              'no later legacy aggregate can replace canonical initial authority',
+        );
+        for (final sent in p2pService.sentMessageLog) {
+          final envelope = jsonDecode(sent.content) as Map;
+          final invite = GroupInvitePayload.fromInnerJson(
+            (envelope['encrypted'] as Map)['ciphertext'] as String,
+          )!;
+          expect(invite.groupConfig, {
+            ...Map<String, dynamic>.from(finalConfig as Map),
+            groupConfigMembershipVersionField: {
+              'eventAt': finalRequest.replayData['timestamp'],
+              'eventId': finalRequest.transitionId,
+            },
+          });
+        }
+      },
+    );
+
+    test(
+      'protected initial creation: proven native rejection aborts after rollback without legacy fallback',
+      () async {
+        p2pService = FakeP2PService(
+          initialState: const NodeState(
+            peerId: 'device-admin-phone',
+            isStarted: true,
+          ),
+        );
+        final authority = _InitialCreationAuthority(groupRepo, bridge)
+          ..install();
+        bridge.responses['group:updateConfig'] = {
+          'ok': false,
+          'errorCode': 'CONFIG_REJECTED',
+        };
+        final result = await createGroupWithMembers(
+          bridge: bridge,
+          groupRepo: groupRepo,
+          p2pService: p2pService,
+          identity: testIdentity,
+          selectedContacts: [contactAlice],
+          selectedContactDeviceBindings: _initialPhysicalBindings([
+            contactAlice,
+          ]),
+          type: GroupType.chat,
+        );
+        expect(authority.events, ['prepare:peer-alice', 'abort:peer-alice']);
+        expect(result.membersAdded, 0);
+        expect(result.addMemberFailures, hasLength(1));
+        expect(
+          await groupRepo.getMember(result.group.id, contactAlice.peerId),
+          isNull,
+        );
+        expect(p2pService.sentMessageLog, isEmpty);
+        expect(bridge.commandLog.where((c) => c == 'group:publish'), isEmpty);
+      },
+    );
+
+    for (final failure in ['native_ambiguous', 'activation_pending']) {
+      test(
+        'protected initial creation: $failure retains PREPARED and stops later contacts and invites',
+        () async {
+          p2pService = FakeP2PService(
+            initialState: const NodeState(
+              peerId: 'device-admin-phone',
+              isStarted: true,
+            ),
+          );
+          final authority = _InitialCreationAuthority(
+            groupRepo,
+            bridge,
+            activationSucceeds: failure != 'activation_pending',
+            throwDuringNativeCommit: failure == 'native_ambiguous',
+          )..install();
+          await expectLater(
+            createGroupWithMembers(
+              bridge: bridge,
+              groupRepo: groupRepo,
+              p2pService: p2pService,
+              identity: testIdentity,
+              selectedContacts: [contactAlice, contactBob],
+              selectedContactDeviceBindings: _initialPhysicalBindings([
+                contactAlice,
+                contactBob,
+              ]),
+              type: GroupType.chat,
+            ),
+            throwsA(isA<GroupMemberAddCommitAmbiguous>()),
+          );
+          expect(authority.requests, hasLength(1));
+          expect(
+            authority.events.where((e) => e.startsWith('abort:')),
+            isEmpty,
+          );
+          expect(
+            await groupRepo.getMember('test-group-id', contactAlice.peerId),
+            isNotNull,
+          );
+          expect(
+            await groupRepo.getMember('test-group-id', contactBob.peerId),
+            isNull,
+          );
+          expect(p2pService.sentMessageLog, isEmpty);
+          expect(bridge.commandLog.where((c) => c == 'group:publish'), isEmpty);
+        },
+      );
+    }
+
+    test(
+      'protected initial creation: ordinary same-account primary keeps original legacy publish',
+      () async {
+        p2pService = FakeP2PService(
+          initialState: NodeState(peerId: testIdentity.peerId, isStarted: true),
+        );
+        final authority = _InitialCreationAuthority(groupRepo, bridge)
+          ..install();
+        final result = await createGroupWithMembers(
+          bridge: bridge,
+          groupRepo: groupRepo,
+          p2pService: p2pService,
+          identity: testIdentity,
+          selectedContacts: [contactAlice],
+          type: GroupType.chat,
+        );
+        expect(result.membersAdded, 1);
+        expect(result.invitesSent, 1);
+        expect(authority.requests, isEmpty);
+        expect(
+          bridge.commandLog.where((c) => c == 'group:updateConfig'),
+          hasLength(1),
+        );
+        expect(
+          bridge.commandLog.where((c) => c == 'group:publish'),
+          hasLength(1),
+        );
+        expect(
+          (await groupRepo.getMember(
+            result.group.id,
+            testIdentity.peerId,
+          ))!.hasInitializedDeviceAuthority,
+          isFalse,
+        );
+      },
+    );
+
+    test(
+      'protected initial creation: first physical invitee establishes history with account-bound creator',
+      () async {
+        p2pService = FakeP2PService(
+          initialState: NodeState(peerId: testIdentity.peerId, isStarted: true),
+        );
+        final authority = _InitialCreationAuthority(groupRepo, bridge)
+          ..install();
+        final result = await createGroupWithMembers(
+          bridge: bridge,
+          groupRepo: groupRepo,
+          p2pService: p2pService,
+          identity: testIdentity,
+          selectedContacts: [contactAlice],
+          selectedContactDeviceBindings: _initialPhysicalBindings([
+            contactAlice,
+          ]),
+          type: GroupType.chat,
+        );
+        expect(result.membersAdded, 1);
+        expect(result.invitesSent, 1);
+        expect(authority.requests, hasLength(1));
+        expect(
+          authority.requests.single.senderDevice.transportPeerId,
+          testIdentity.peerId,
+        );
+        expect(
+          authority.preparations.single.rows
+              .expand((r) => r.recipientPeerIds)
+              .toSet(),
+          {'device-peer-alice'},
+        );
+        expect(
+          result.group.lastMembershipEventId,
+          authority.requests.single.transitionId,
+        );
+        expect(bridge.commandLog.where((c) => c == 'group:publish'), isEmpty);
+      },
+    );
+
+    test(
+      'protected initial creation: preparation refusal reports incomplete member and never legacy readiness',
+      () async {
+        p2pService = FakeP2PService(
+          initialState: const NodeState(
+            peerId: 'device-admin-phone',
+            isStarted: true,
+          ),
+        );
+        var prepares = 0;
+        setProtectedGroupAuthorityAdapter(
+          prepare: (_) async {
+            prepares++;
+            return null;
+          },
+          activate: (_, {required requireAllCustody}) async =>
+              throw StateError('unexpected activation'),
+          cancel: (_) async =>
+              throw StateError('unexpected persisted preparation'),
+        );
+        final result = await createGroupWithMembers(
+          bridge: bridge,
+          groupRepo: groupRepo,
+          p2pService: p2pService,
+          identity: testIdentity,
+          selectedContacts: [contactAlice],
+          selectedContactDeviceBindings: _initialPhysicalBindings([
+            contactAlice,
+          ]),
+          type: GroupType.chat,
+        );
+        expect(prepares, 1);
+        expect(result.membersAdded, 0);
+        expect(result.addMemberFailures, hasLength(1));
+        expect(result.hasWarnings, isTrue);
+        expect(
+          await groupRepo.getMember(result.group.id, contactAlice.peerId),
+          isNull,
+        );
+        expect(p2pService.sentMessageLog, isEmpty);
+        expect(bridge.commandLog.where((c) => c == 'group:publish'), isEmpty);
+      },
+    );
+
+    test(
+      'protected initial creation: runtime cutover after preparation aborts before local member commit',
+      () async {
+        p2pService = FakeP2PService(
+          initialState: const NodeState(
+            peerId: 'device-admin-phone',
+            isStarted: true,
+          ),
+        );
+        final authority = _InitialCreationAuthority(
+          groupRepo,
+          bridge,
+          afterPrepare: () {
+            p2pService.emitState(
+              const NodeState(peerId: 'changed-runtime', isStarted: true),
+            );
+          },
+        )..install();
+        final result = await createGroupWithMembers(
+          bridge: bridge,
+          groupRepo: groupRepo,
+          p2pService: p2pService,
+          identity: testIdentity,
+          selectedContacts: [contactAlice],
+          selectedContactDeviceBindings: _initialPhysicalBindings([
+            contactAlice,
+          ]),
+          type: GroupType.chat,
+        );
+        expect(result.membersAdded, 0);
+        expect(result.hasWarnings, isTrue);
+        expect(authority.events, ['prepare:peer-alice', 'abort:peer-alice']);
+        expect(
+          await groupRepo.getMember(result.group.id, contactAlice.peerId),
+          isNull,
+        );
+        expect(p2pService.sentMessageLog, isEmpty);
+        expect(
+          bridge.commandLog.where((c) => c == 'group:updateConfig'),
+          isEmpty,
+        );
+        expect(bridge.commandLog.where((c) => c == 'group:publish'), isEmpty);
+      },
+    );
+
+    for (final throws in [false, true]) {
+      test(
+        'protected initial creation: failed cancellation ${throws ? 'throws' : 'refuses'} retains ambiguous owner and stops batch',
+        () async {
+          p2pService = FakeP2PService(
+            initialState: const NodeState(
+              peerId: 'device-admin-phone',
+              isStarted: true,
+            ),
+          );
+          final authority = _InitialCreationAuthority(
+            groupRepo,
+            bridge,
+            omitAuthenticatedProof: true,
+            cancelSucceeds: false,
+            throwDuringCancel: throws,
+          )..install();
+          await expectLater(
+            createGroupWithMembers(
+              bridge: bridge,
+              groupRepo: groupRepo,
+              p2pService: p2pService,
+              identity: testIdentity,
+              selectedContacts: [contactAlice, contactBob],
+              selectedContactDeviceBindings: _initialPhysicalBindings([
+                contactAlice,
+                contactBob,
+              ]),
+              type: GroupType.chat,
+            ),
+            throwsA(isA<GroupMemberAddCommitAmbiguous>()),
+          );
+          expect(authority.requests, hasLength(1));
+          expect(authority.events, ['prepare:peer-alice', 'abort:peer-alice']);
+          expect(
+            await groupRepo.getMember('test-group-id', contactAlice.peerId),
+            isNull,
+          );
+          expect(
+            await groupRepo.getMember('test-group-id', contactBob.peerId),
+            isNull,
+          );
+          expect(p2pService.sentMessageLog, isEmpty);
+          expect(
+            bridge.commandLog.where((c) => c == 'group:updateConfig'),
+            isEmpty,
+          );
+          expect(bridge.commandLog.where((c) => c == 'group:publish'), isEmpty);
+        },
+      );
+    }
 
     test('creates group and returns GroupModel', () async {
       final result = await createGroupWithMembers(
@@ -833,10 +1357,7 @@ void main() {
         // (start_node_use_case.dart:81 boots the node from identity.peerId),
         // so the creator stamp would be informationally-empty self-binding.
         p2pService = FakeP2PService(
-          initialState: NodeState(
-            peerId: testIdentity.peerId,
-            isStarted: true,
-          ),
+          initialState: NodeState(peerId: testIdentity.peerId, isStarted: true),
         );
 
         final result = await createGroupWithMembers(
@@ -857,7 +1378,8 @@ void main() {
         expect(
           creator!.devices,
           isEmpty,
-          reason: 'a self-bound creator stamp initializes the roster and '
+          reason:
+              'a self-bound creator stamp initializes the roster and '
               'strands every send on the strict-authority refusal lane',
         );
 

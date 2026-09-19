@@ -87,6 +87,19 @@
       ]
     },
     {
+      "path": "integration_test/diagnostics_reconnect_isolation_harness.dart",
+      "owner": "diagnostics / QA",
+      "reason": "Device-tagged diagnostics isolation harness with controlled bridge/native responses and real collector/archive work; comparison does not claim real relay or OS recovery.",
+      "condition": "Retain as an explicitly selected device harness; reclassify only after reviewing its invocation and replacement diagnostics evidence.",
+      "seedsTooling": false,
+      "evidence": [
+        {
+          "kind": "dart-main",
+          "source": "integration_test/diagnostics_reconnect_isolation_harness.dart"
+        }
+      ]
+    },
+    {
       "path": "integration_test/direct_private_media_device_local_journey_harness.dart",
       "owner": "QA / release",
       "reason": "Non-convention Dart main remains visible pending exact invocation ownership.",
@@ -226,6 +239,19 @@
         {
           "kind": "dart-main",
           "source": "integration_test/performance_harness.dart"
+        }
+      ]
+    },
+    {
+      "path": "integration_test/relay_recovery_diagnostics_harness.dart",
+      "owner": "diagnostics / QA",
+      "reason": "Device-tagged real Go/MethodChannel relay recovery diagnostics harness, optionally requiring externally observed OS background/resume; does not prove deep sleep.",
+      "condition": "Retain as an explicitly selected device harness; reclassify only after reviewing its invocation and replacement diagnostics evidence.",
+      "seedsTooling": false,
+      "evidence": [
+        {
+          "kind": "dart-main",
+          "source": "integration_test/relay_recovery_diagnostics_harness.dart"
         }
       ]
     },

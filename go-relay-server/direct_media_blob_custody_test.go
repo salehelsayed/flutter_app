@@ -218,9 +218,9 @@ func directMediaCustodyFindBlocked(store *MediaStore, to, id string) *directMedi
 }
 
 // TC-346-01: the raw framed handler recognizes only the additive exact action,
-// gates a new store before READY by default, and emits literal typed outcomes.
+// gates a new store before READY when disabled, and emits literal typed outcomes.
 func TestRelayNotificationClosure_DirectMediaBlobCustodyActionProofAndAdmissionContract(t *testing.T) {
-	t.Setenv(mediaCustodyAdmissionEnabledEnv, "")
+	t.Setenv(mediaCustodyAdmissionEnabledEnv, "false")
 	env := setupTestEnv(t)
 	env.media.SetDirectMediaBlobCustodyNowForTest(func() time.Time { return directMediaCustodyTestNow })
 	body := []byte("strict encrypted media")
@@ -230,13 +230,13 @@ func TestRelayNotificationClosure_DirectMediaBlobCustodyActionProofAndAdmissionC
 	disabled, ready := directMediaCustodyUpload(t, env, env.sender, req, body)
 	if ready || disabled.Status != "ERROR" || disabled.ErrorCode != mediaCustodyErrorAdmissionOff ||
 		disabled.Error != mediaCustodyErrorAdmissionOff || disabled.StoreStatus != mediaCustodyStoreDisabled {
-		t.Fatalf("default-off response = %#v ready=%v", disabled, ready)
+		t.Fatalf("explicitly disabled response = %#v ready=%v", disabled, ready)
 	}
 	if got := testutil.ToFloat64(mediaCustodyOutcomesCounter.WithLabelValues(mediaCustodyMetricDisabled)) - disabledBefore; got != 1 {
 		t.Fatalf("disabled metric delta = %v, want 1", got)
 	}
 	if got := testutil.ToFloat64(mediaCustodyAdmissionEnabledGauge); got != 0 {
-		t.Fatalf("default-off admission gauge = %v, want 0", got)
+		t.Fatalf("explicitly disabled admission gauge = %v, want 0", got)
 	}
 
 	env.media.SetDirectMediaBlobCustodyAdmissionEnabled(true)

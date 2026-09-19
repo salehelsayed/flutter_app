@@ -9,6 +9,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_app/app/bootstrap/android_production_audio_call_e2e_observer.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/database/helpers/contacts_db_helpers.dart';
+import 'package:flutter_app/core/database/direct_media_blob_custody.dart';
 import 'package:flutter_app/core/debug/android_production_audio_call_e2e.dart';
 import 'package:flutter_app/core/debug/auto_setup_config.dart';
 import 'package:flutter_app/core/debug/group_media_disposable_transport_start.dart';
@@ -106,6 +107,22 @@ final class DebugE2EGroupMediaDownloadHooks {
       _reliabilityController.onAutomaticDownloadAttemptStarted(
         attachment: attachment,
       );
+
+  Future<void> onStrictDownloadAttemptStarted({
+    required MediaAttachment attachment,
+    required DirectMediaBlobCustodyRow custody,
+  }) => _reliabilityController.onAutomaticDownloadAttemptStarted(
+    attachment: attachment,
+  );
+
+  Future<void> onStrictVerifiedCiphertext({
+    required MediaAttachment attachment,
+    required DirectMediaBlobCustodyRow custody,
+  }) => _reliabilityController.onStrictVerifiedCiphertext(
+    attachment: attachment,
+    custody: custody,
+    loadCurrentAttachment: _loadCurrentAttachment,
+  );
 
   Future<void> onPostClaimPreCommit(MediaAttachment attachment) async {
     await _reliabilityController.onPostClaimPreCommit(
@@ -953,6 +970,12 @@ final class DebugE2ECompositionRoot {
           controller: _groupMediaReliabilityE2EController,
           loadAttachment:
               dependencies.mediaAttachmentRepository.getAttachmentById,
+          loadStrictCustody: ({required groupId, required messageId}) =>
+              dependencies.mediaAttachmentRepository
+                  .loadGroupMediaBlobCustodyForMessage(
+                    groupId: groupId,
+                    messageId: messageId,
+                  ),
           probeIdentity: (role) async {
             final identity = await dependencies.identityRepository
                 .loadIdentity();
@@ -975,6 +998,31 @@ final class DebugE2ECompositionRoot {
               'transportPeerId': transportPeerId,
             };
           },
+          probeAuthority:
+              (groupId, {required requireSettled, expectedAuthority}) =>
+                  probeGroupMediaReliabilityAuthority(
+                    groupId: groupId,
+                    p2pService: dependencies.p2pService,
+                    identityRepository: dependencies.identityRepository,
+                    groupRepository: dependencies.groupRepository,
+                    inviteDeliveryAttemptRepository:
+                        dependencies.groupInviteDeliveryAttemptRepository,
+                    requireSettled: requireSettled,
+                    expectedAuthority: expectedAuthority,
+                  ),
+          refreshAuthority:
+              (groupId, receiverAccountPeerId, receiverTransportPeerId) =>
+                  refreshGroupMediaReliabilitySenderAuthority(
+                    groupId: groupId,
+                    receiverAccountPeerId: receiverAccountPeerId,
+                    receiverTransportPeerId: receiverTransportPeerId,
+                    bridge: dependencies.bridge,
+                    p2pService: dependencies.p2pService,
+                    identityRepository: dependencies.identityRepository,
+                    groupRepository: dependencies.groupRepository,
+                    inviteDeliveryAttemptRepository:
+                        dependencies.groupInviteDeliveryAttemptRepository,
+                  ),
           setupSender: (receiverAccountPeerId, receiverTransportPeerId) =>
               setupGroupMediaReliabilitySender(
                 receiverAccountPeerId: receiverAccountPeerId,
