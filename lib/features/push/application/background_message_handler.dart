@@ -3078,7 +3078,7 @@ Future<ConversationNotificationSnapshot?>
 _loadBackgroundDirectConversationSnapshot(Database db, String peerId) async {
   try {
     final rows = await dbLoadMessagesForContact(db, peerId);
-    return buildDirectConversationNotificationSnapshot(
+    return await buildDirectConversationNotificationSnapshot(
       messages: rows.map(
         (row) => ConversationMessage.fromMap(Map<String, dynamic>.from(row)),
       ),
@@ -3109,7 +3109,7 @@ Future<ConversationNotificationSnapshot?>
 _loadBackgroundGroupConversationSnapshot(Database db, String groupId) async {
   try {
     final rows = await dbLoadAllGroupMessages(db, groupId);
-    return buildGroupConversationNotificationSnapshot(
+    return await buildGroupConversationNotificationSnapshot(
       messages: rows.map(
         (row) => GroupMessage.fromMap(Map<String, dynamic>.from(row)),
       ),

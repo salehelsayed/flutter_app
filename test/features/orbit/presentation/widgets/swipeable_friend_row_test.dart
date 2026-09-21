@@ -49,6 +49,23 @@ void main() {
     );
   }
 
+  testWidgets('UI25 cancelled row swipe settles closed without an action', (tester) async {
+    var archives = 0;
+    await tester.pumpWidget(buildSwipeableRow(onArchive: () => archives++));
+    final original = tester.getTopLeft(find.text('Friend Content'));
+    final gesture = await tester.startGesture(tester.getCenter(find.text('Friend Content')));
+    await gesture.moveBy(const Offset(-30, 0));
+    await gesture.moveBy(const Offset(-20, 0));
+    await gesture.moveBy(const Offset(-20, 0));
+    await tester.pump();
+    expect(tester.getTopLeft(find.text('Friend Content')).dx, lessThan(original.dx));
+    await gesture.cancel();
+    await tester.pumpAndSettle();
+    expect(tester.getTopLeft(find.text('Friend Content')), original);
+    expect(openRowNotifier.value, isNull);
+    expect(archives, 0);
+  });
+
   group('SwipeableFriendRow', () {
     testWidgets('renders child content at rest', (tester) async {
       await tester.pumpWidget(buildSwipeableRow());

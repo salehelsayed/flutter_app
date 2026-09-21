@@ -529,6 +529,7 @@ func TestCallDiagnosticsRuntimeRotationKeepsOwnerAndRecordLimits(t *testing.T) {
 		}
 		ownerBytes += len(encoded)
 	}
+	s.rebuildByteIndexesLocked() // Fixture above bypasses production persistence.
 	count := len(s.records)
 	if s.appendEventResult("full-owner", runtimeDiagnosticTestEvent(run, "ios", "publish", "failed"), false, 1) != callDiagnosticAppendRetry || len(s.records) != count {
 		t.Fatal("rotation bypassed hard owner quota or evicted retained evidence")

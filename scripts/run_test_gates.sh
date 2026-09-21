@@ -579,6 +579,7 @@ readonly INTRO_TESTS=(
 )
 
 readonly GROUP_TESTS=(
+  "test/core/debug/debug_e2e_composition_root_test.dart"
   # Plan 395: strict group-invite identity, provider-transport open dedupe,
   # one direct preparation drain, ApplicationRoot group membership routing,
   # and ordinary-group preservation are shared notification/group owners.
@@ -999,6 +1000,8 @@ readonly GROUP_TESTS=(
   "test/core/notifications/app_root_notification_open_test.dart"
   "test/features/push/application/set_presence_use_case_test.dart"
   "test/features/groups/integration/group_notification_visibility_staging_test.dart"
+  "test/core/debug/group_media_reliability_sender_test.dart"
+  "test/unit/dtr18_layering_relocation_contract_test.dart"
 )
 
 readonly POSTS_TESTS=(
@@ -1186,6 +1189,8 @@ run_gate_command() {
   for path in "$@"; do
     if [[ "$path" == integration_test/* ]]; then
       integration_tests+=("$path")
+    elif [[ "${MKNOON_FULL_HOST_OWNER:-}" == host.dart.all && "$path" == test/* ]]; then
+      printf 'HOST_RESULT_ALIAS host.dart.all %s\n' "$path"
     else
       host_tests+=("$path")
     fi
@@ -2038,8 +2043,8 @@ main() {
       while IFS= read -r path; do
         sim_args+=("$path")
       done < <(integration_test_args)
-      # Single dispatched entrypoint: build the app once and re-run per
-      # BENCHMARK key via --dart-define (no per-harness rebuild).
+      # Every BENCHMARK dart-define is a distinct compile input; keep each
+      # selector separate and let Flutter validate its build inputs.
       local -a benchmark_keys=(
         ROUTING_PATHS
         BACKGROUND_RESUME

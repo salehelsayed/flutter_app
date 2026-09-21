@@ -39,6 +39,10 @@ String cliPeerFixturePath() => configuredCliPeerFixture.isNotEmpty
 /// Returns the decoded JSON object, or `null` when the fixture file does not
 /// exist or fails to parse (the canonical "no CLI peer — skip" signal).
 Map<String, dynamic>? loadCliPeerFixture() {
+  const inline = String.fromEnvironment('CLI_PEER_FIXTURE_JSON');
+  if (inline.isNotEmpty) {
+    return jsonDecode(inline) as Map<String, dynamic>;
+  }
   final file = File(cliPeerFixturePath());
   if (!file.existsSync()) return null;
   try {

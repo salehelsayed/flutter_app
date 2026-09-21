@@ -339,6 +339,12 @@ android {
     testOptions {
         unitTests {
             isIncludeAndroidResources = true
+            all {
+                // Robolectric loads several Android SDK sandboxes in the full suite.
+                it.maxHeapSize = "2g"
+                it.maxParallelForks = 1
+                it.forkEvery = 20
+            }
         }
     }
 

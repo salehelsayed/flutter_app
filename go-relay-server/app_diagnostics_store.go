@@ -20,6 +20,7 @@ const appDiagnosticBucketBytes = 128 << 10
 const appDiagnosticRecordBytes = 192 << 10
 const appDiagnosticFinalSlots = 32
 const appDiagnosticDiscardLimit = 256
+const appDiagnosticPriorityBytes = 16 << 10
 
 type appDiagnosticConsent struct {
 	Epoch        int64 `json:"consentEpoch"`
@@ -57,6 +58,8 @@ type appDiagnosticStore struct {
 	ownerSizes        map[string]int
 	usedBytes         int
 	eventIndex        map[string]string
+	nextExpiryMs      int64
+	pendingWrite      *diagnosticRepair
 }
 
 func appDiagnosticOwner(actor string) string {
@@ -144,7 +147,6 @@ func newAppDiagnosticStore(dir string, quota int, now func() time.Time) (*appDia
 	if err != nil {
 		return nil, err
 	}
-	total := 0
 	for _, entry := range entries {
 		name := entry.Name()
 		if !strings.HasSuffix(name, ".json") || !appDiagnosticHash.MatchString(strings.TrimSuffix(name, ".json")) {
@@ -153,10 +155,6 @@ func newAppDiagnosticStore(dir string, quota int, now func() time.Time) (*appDia
 		info, err := entry.Info()
 		if err != nil || !info.Mode().IsRegular() || info.Size() > appDiagnosticRecordBytes {
 			return nil, errors.New("invalid app diagnostic file")
-		}
-		total += int(info.Size())
-		if total > quota+appDiagnosticRecordBytes {
-			return nil, errors.New("app diagnostic quota exceeded")
 		}
 		raw, err := os.ReadFile(filepath.Join(dir, name))
 		if err != nil {
@@ -244,6 +242,9 @@ func (s *appDiagnosticStore) persistConsent(next map[string]appDiagnosticConsent
 func (s *appDiagnosticStore) configure(actor string, enabled bool, epoch int64, clear bool) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if err := repairDiagnosticWrite(&s.pendingWrite, s.write, s.remove); err != nil {
+		return err
+	}
 	if actor == "" || epoch <= 0 {
 		return errAppDiagnosticInvalid
 	}
@@ -278,6 +279,7 @@ func (s *appDiagnosticStore) configure(actor string, enabled bool, epoch int64, 
 		return err
 	}
 	s.consent = next
+	s.noteExpiry(c.UpdatedAtMs)
 	if c.ErasePending {
 		for key, r := range s.records {
 			if r.OwnerDigest != owner {
@@ -301,6 +303,11 @@ func (s *appDiagnosticStore) configure(actor string, enabled bool, epoch int64, 
 	return nil
 }
 func (s *appDiagnosticStore) expireLocked() error {
+	if err := repairDiagnosticWrite(&s.pendingWrite, s.write, s.remove); err != nil {
+		return err
+	}
+	// On error leave the deadline due so the next attempt retries cleanup.
+	s.nextExpiryMs = 0
 	now := s.now().UnixMilli()
 	for key, r := range s.records {
 		if now-r.CreatedAtMs <= appDiagnosticRetention.Milliseconds() {
@@ -336,7 +343,21 @@ func (s *appDiagnosticStore) expireLocked() error {
 		delete(s.records, key)
 	}
 
+	s.nextExpiryMs = 1<<63 - 1
+	for _, r := range s.records {
+		s.noteExpiry(r.CreatedAtMs)
+	}
+	for _, c := range s.consent {
+		s.noteExpiry(c.UpdatedAtMs)
+	}
 	return nil
+}
+
+func (s *appDiagnosticStore) noteExpiry(created int64) {
+	due := created + appDiagnosticRetention.Milliseconds() + 1
+	if s.nextExpiryMs != 0 && due < s.nextExpiryMs {
+		s.nextExpiryMs = due
+	}
 }
 
 // Accepted/discarded IDs are durable before acknowledgement. Global/owner/disk
@@ -351,8 +372,15 @@ func (s *appDiagnosticStore) append(actor string, epoch int64, raw []byte) (stri
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if err := s.expireLocked(); err != nil {
+	if err := repairDiagnosticWrite(&s.pendingWrite, s.write, s.remove); err != nil {
+		diagnosticRefusal("app", "upload", "persistence")
 		return "retry", "sink_unavailable"
+	}
+	if s.now().UnixMilli() >= s.nextExpiryMs {
+		if err := s.expireLocked(); err != nil {
+			diagnosticRefusal("app", "upload", "persistence")
+			return "retry", "sink_unavailable"
+		}
 	}
 	owner := appDiagnosticOwner(actor)
 	c := s.consent[owner]
@@ -360,9 +388,11 @@ func (s *appDiagnosticStore) append(actor string, epoch int64, raw []byte) (stri
 		return "retry", "sink_unavailable"
 	}
 	if !c.Enabled {
+		diagnosticRefusal("app", "upload", "consent")
 		return "retry", "diagnostics_disabled"
 	}
 	if epoch <= 0 || epoch != c.Epoch {
+		diagnosticRefusal("app", "upload", "epoch")
 		return "retry", "stale_epoch"
 	}
 	eventID := e["eventId"].(string)
@@ -381,6 +411,7 @@ func (s *appDiagnosticStore) append(actor string, epoch int64, raw []byte) (stri
 		if known == hex.EncodeToString(digest[:]) {
 			return "accepted", "none"
 		}
+		diagnosticRefusal("app", "upload", "conflict")
 		return "rejected", "invalid_request"
 	}
 	prior := s.records[bucket]
@@ -443,14 +474,35 @@ func (s *appDiagnosticStore) append(actor string, epoch int64, raw []byte) (stri
 		encoded, _ = json.Marshal(&record)
 	}
 	if len(encoded) > appDiagnosticRecordBytes {
+		diagnosticRefusal("app", "upload", "record_bytes")
 		return "retry", "quota_exceeded"
 	}
 	total := s.usedBytes - s.sizes[bucket] + len(encoded)
 	owned := s.ownerSizes[owner] - s.sizes[bucket] + len(encoded)
-	if total > s.quota || owned > s.ownerQuota {
+	if total > s.quota {
+		diagnosticRefusal("app", "upload", "global_bytes")
 		return "retry", "quota_exceeded"
 	}
-	if err := s.write(filepath.Join(s.dir, bucket+".json"), encoded); err != nil {
+	if owned > s.ownerQuota {
+		diagnosticRefusal("app", "upload", "owner_bytes")
+		return "retry", "quota_exceeded"
+	}
+	if !final && result == "accepted" {
+		if total > s.quota-appDiagnosticPriorityBytes {
+			diagnosticRefusal("app", "upload", "global_bytes")
+			return "retry", "quota_exceeded"
+		}
+		if owned > s.ownerQuota-appDiagnosticPriorityBytes {
+			diagnosticRefusal("app", "upload", "owner_bytes")
+			return "retry", "quota_exceeded"
+		}
+	}
+	var previous []byte
+	if prior != nil {
+		previous = mustDiagnosticJSON(prior)
+	}
+	if err := transactionalDiagnosticWrite(&s.pendingWrite, s.write, s.remove, filepath.Join(s.dir, bucket+".json"), encoded, previous); err != nil {
+		diagnosticRefusal("app", "upload", "persistence")
 		return "retry", "sink_unavailable"
 	}
 	s.unindexRecord(bucket)
@@ -462,6 +514,7 @@ func (s *appDiagnosticStore) append(actor string, epoch int64, raw []byte) (stri
 // Indexes contain only private owner digests and canonical event hashes. They
 // avoid scanning or serializing the whole retained archive on each upload.
 func (s *appDiagnosticStore) indexRecord(key string, r *appDiagnosticRecord) {
+	s.noteExpiry(r.CreatedAtMs)
 	if s.sizes == nil {
 		s.sizes = map[string]int{}
 		s.ownerSizes = map[string]int{}

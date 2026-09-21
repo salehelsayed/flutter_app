@@ -72,23 +72,22 @@ class MediaDownloadMatrixControl extends StatelessWidget {
     final readableColors = context.backgroundReadableColors;
 
     String laneLabel(MediaConversationKind kind) => switch (kind) {
-          MediaConversationKind.oneToOne => l10n.settings_media_lane_direct,
-          MediaConversationKind.discussion =>
-            l10n.settings_media_lane_discussions,
-          MediaConversationKind.announcement =>
-            l10n.settings_media_lane_announcements,
-        };
+      MediaConversationKind.oneToOne => l10n.settings_media_lane_direct,
+      MediaConversationKind.discussion => l10n.settings_media_lane_discussions,
+      MediaConversationKind.announcement =>
+        l10n.settings_media_lane_announcements,
+    };
     String typeLabel(String mediaType) => switch (mediaType) {
-          'image' => l10n.settings_media_type_image,
-          'video' => l10n.settings_media_type_video,
-          'audio' => l10n.settings_media_type_audio,
-          _ => l10n.settings_media_type_file,
-        };
+      'image' => l10n.settings_media_type_image,
+      'video' => l10n.settings_media_type_video,
+      'audio' => l10n.settings_media_type_audio,
+      _ => l10n.settings_media_type_file,
+    };
     String choiceLabel(MediaDownloadNetworkChoice choice) => switch (choice) {
-          MediaDownloadNetworkChoice.off => l10n.settings_media_network_off,
-          MediaDownloadNetworkChoice.wifi => l10n.settings_media_network_wifi,
-          MediaDownloadNetworkChoice.all => l10n.settings_media_network_all,
-        };
+      MediaDownloadNetworkChoice.off => l10n.settings_media_network_off,
+      MediaDownloadNetworkChoice.wifi => l10n.settings_media_network_wifi,
+      MediaDownloadNetworkChoice.all => l10n.settings_media_network_all,
+    };
 
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 20),
@@ -137,41 +136,85 @@ class MediaDownloadMatrixControl extends StatelessWidget {
             ),
             for (final type in kMediaDownloadPreferenceTypes) ...[
               const SizedBox(height: 8),
-              Row(
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  Expanded(
-                    child: Text(
-                      typeLabel(type),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        color: readableColors.textPrimary,
-                        fontSize: 13,
-                        fontWeight: FontWeight.w500,
-                      ),
+                  Text(
+                    typeLabel(type),
+                    style: TextStyle(
+                      color: readableColors.textPrimary,
+                      fontSize: 13,
+                      fontWeight: FontWeight.w500,
                     ),
                   ),
-                  Flexible(
-                    flex: 3,
-                    child: FittedBox(
-                      fit: BoxFit.scaleDown,
-                      child: SegmentedButton<MediaDownloadNetworkChoice>(
-                    key: ValueKey('media-download-${kind.name}-$type'),
-                    showSelectedIcon: false,
-                    style: const ButtonStyle(
-                      visualDensity: VisualDensity.compact,
-                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                    ),
-                    segments: [
-                      for (final choice in MediaDownloadNetworkChoice.values)
-                        ButtonSegment(
-                          value: choice,
-                          label: Text(
-                            choiceLabel(choice),
-                            style: const TextStyle(fontSize: 11),
+                  const SizedBox(height: 6),
+                  LayoutBuilder(
+                    builder: (context, constraints) {
+                      final labelStyle =
+                          (Theme.of(context).textTheme.labelLarge ??
+                                  const TextStyle())
+                              .copyWith(fontSize: 13);
+                      // Preserve the accepted 390dp / 1x geometry (350dp after
+                      // this control's insets). Only dense, wrapped choices need
+                      // the bounded corner and vertical glyph clearance.
+                      final dense =
+                          constraints.maxWidth < 350 ||
+                          MediaQuery.textScalerOf(context).scale(13) > 13;
+                      final wraps =
+                          dense &&
+                          MediaDownloadNetworkChoice.values.any((choice) {
+                            final painter = TextPainter(
+                              text: TextSpan(
+                                text: choiceLabel(choice),
+                                style: labelStyle,
+                              ),
+                              textDirection: Directionality.of(context),
+                              textScaler: MediaQuery.textScalerOf(context),
+                            )..layout();
+                            // Reserve the selected checkmark, its gap and end padding.
+                            final needsWrap =
+                                painter.width + 52 > constraints.maxWidth / 3;
+                            painter.dispose();
+                            return needsWrap;
+                          });
+                      return SegmentedButton<MediaDownloadNetworkChoice>(
+                        key: ValueKey('media-download-${kind.name}-$type'),
+                        showSelectedIcon: true,
+                        expandedInsets: EdgeInsets.zero,
+                        style: ButtonStyle(
+                          // Tall stadium ends consume the label's corners. Keep the
+                          // accepted normal silhouette; bounded rounding and
+                          // label insets contain dense, wrapped scaled text.
+                          shape: wraps
+                              ? const WidgetStatePropertyAll(
+                                  RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.all(
+                                      Radius.circular(12),
+                                    ),
+                                  ),
+                                )
+                              : null,
+                          padding: const WidgetStatePropertyAll(
+                            EdgeInsets.symmetric(horizontal: 8, vertical: 10),
                           ),
                         ),
-                    ],
+                        segments: [
+                          for (final choice
+                              in MediaDownloadNetworkChoice.values)
+                            ButtonSegment(
+                              value: choice,
+                              label: Padding(
+                                padding: wraps
+                                    ? const EdgeInsets.symmetric(vertical: 12)
+                                    : EdgeInsets.zero,
+                                child: Text(
+                                  choiceLabel(choice),
+                                  textAlign: TextAlign.center,
+                                  style: const TextStyle(fontSize: 13),
+                                ),
+                              ),
+                            ),
+                        ],
                         selected: {choiceFor(preferences, kind, type)},
                         onSelectionChanged: (selection) => onChanged(
                           applyChoice(
@@ -181,8 +224,8 @@ class MediaDownloadMatrixControl extends StatelessWidget {
                             selection.single,
                           ),
                         ),
-                      ),
-                    ),
+                      );
+                    },
                   ),
                 ],
               ),

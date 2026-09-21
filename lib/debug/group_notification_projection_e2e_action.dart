@@ -3,7 +3,7 @@ import 'dart:io';
 
 import 'package:crypto/crypto.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
-import 'package:flutter_app/core/debug/group_media_reliability_e2e_main_actions.dart';
+import 'package:flutter_app/debug/group_media_reliability_e2e_main_actions.dart';
 import 'package:flutter_app/core/debug/group_media_reliability_e2e.dart';
 import 'package:flutter_app/core/debug/group_notification_projection_e2e.dart';
 import 'package:flutter_app/core/media/audio_recorder_service.dart';

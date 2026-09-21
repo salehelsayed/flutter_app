@@ -19,7 +19,7 @@ import 'package:flutter_app/core/debug/group_media_ios_background_e2e_overlay.da
 import 'package:flutter_app/core/debug/group_media_ios_disposable_profile.dart';
 import 'package:flutter_app/core/debug/group_media_ios_disposable_reset.dart';
 import 'package:flutter_app/core/debug/group_media_reliability_e2e.dart';
-import 'package:flutter_app/core/debug/group_media_reliability_e2e_main_actions.dart';
+import 'package:flutter_app/debug/group_media_reliability_e2e_main_actions.dart';
 import 'package:flutter_app/core/debug/group_reaction_notification_ios_setup_profile.dart';
 import 'package:flutter_app/core/debug/intro_e2e_runner.dart';
 import 'package:flutter_app/core/debug/ios_receiver_bootstrap.dart';

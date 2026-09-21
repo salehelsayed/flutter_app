@@ -3405,6 +3405,17 @@ Future<void> main(List<String> args) async {
     failureArtifactsDir: failureArtifactsDir,
     log: _log,
   );
+  final reportPath = Platform.environment['GMP_SWEEP_REPORT'];
+  if (reportPath != null && reportPath.isNotEmpty) {
+    await File(reportPath).writeAsString(jsonEncode({
+      'sweepRunId': sweepRunId,
+      'scenarios': [for (final row in result.scenarios) {
+        'scenario': row.scenario, 'passed': row.passed,
+        if (row.orchestratorVerdictPath != null)
+          'failureArtifact': row.orchestratorVerdictPath,
+      }],
+    }));
+  }
   if (result.hasFailures) {
     exit(result.exitCode);
   }

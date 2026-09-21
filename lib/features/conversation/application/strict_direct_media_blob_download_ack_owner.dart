@@ -530,7 +530,7 @@ final class StrictDirectMediaBlobDownloadAckOwner {
           'ok',
           values: {'acknowledged': true},
         );
-        return incomingRepository.deleteIncomingDirectMediaBlobAckIfExact(
+        return await incomingRepository.deleteIncomingDirectMediaBlobAckIfExact(
           expected,
         );
       }

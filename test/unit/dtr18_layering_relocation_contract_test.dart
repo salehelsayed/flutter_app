@@ -205,8 +205,12 @@ const _privacySha256 =
 // boundary; no lifecycle owner or dependency moves.
 // Incoming calls signal readiness from the attached overlay subscription
 // instead of a rendered frame; the callback keeps its application owner.
+// UI-25 keeps explicit notification retry at the app-shell owner and retains
+// its coordinator future through the health notifier; no lifecycle owner moves.
+// Strict async analysis now keeps read-acknowledgement failures inside their
+// existing catch; the sole additional normalized-source change is `return await`.
 const _applicationRootNormalizedSha256 =
-    '6c527c63936f9051ed27b28326f81b4e1832e73d91fdc151712736fb0f3777a8';
+    '93d55922ed389bf89ebda8df9ae9fef66256ca5320a3b2b82e7a1186f2e078a9';
 // Plan 358 forwards the strict local-path commit's `nowMs` sample through the
 // same already-wired delegate and relocates nothing. Plan 360 additionally
 // constructs the role-aware deferred-runtime-start owner over the SAME
@@ -609,7 +613,7 @@ void main() {
     final placements = (manifest['placementExceptions'] as List<dynamic>)
         .cast<Map<String, dynamic>>();
 
-    expect(dependencies, hasLength(169));
+    expect(dependencies, hasLength(153));
     expect(placements, isEmpty);
     expect(_reviewedResumeExceptionTargets, hasLength(18));
     for (final target in _reviewedResumeExceptionTargets) {

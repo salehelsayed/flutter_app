@@ -2043,7 +2043,7 @@ class GroupMessageListener {
               !_privateMediaAvailability.allowsMediaDerivatives(
                 message.privateMediaPolicy,
               ))) {
-        return _finalDispositionForExactReady(
+        return await _finalDispositionForExactReady(
           entry,
           DurableLocalNotificationCanonicalDisposition.suppressedPolicy,
           onExactReady: onExactReady,
@@ -2081,7 +2081,7 @@ class GroupMessageListener {
           : acknowledged
           ? DurableLocalNotificationCanonicalDisposition.read
           : _durableDisposition(decisionWithoutAcknowledgement);
-      return _finalDispositionForExactReady(
+      return await _finalDispositionForExactReady(
         entry,
         disposition,
         onExactReady: onExactReady,
@@ -2127,7 +2127,7 @@ class GroupMessageListener {
       );
       if (!policy.shouldDisplay ||
           (target != null && !target.privateMediaPolicy.isOrdinary)) {
-        return _finalDispositionForExactReady(
+        return await _finalDispositionForExactReady(
           entry,
           DurableLocalNotificationCanonicalDisposition.suppressedPolicy,
           onExactReady: onExactReady,
@@ -2176,7 +2176,7 @@ class GroupMessageListener {
           : acknowledged
           ? DurableLocalNotificationCanonicalDisposition.read
           : _durableDisposition(decisionWithoutAcknowledgement);
-      return _finalDispositionForExactReady(
+      return await _finalDispositionForExactReady(
         entry,
         disposition,
         onExactReady: onExactReady,

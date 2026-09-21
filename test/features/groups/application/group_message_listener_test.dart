@@ -9650,11 +9650,9 @@ void main() {
           DeleteSelfRemovedGroupShellResult.deleted,
         );
         expect(await terminalFaultRepo.getGroup('group-1'), isNull);
-        expect(
-          terminalFaultBridge.commandLog,
-          ['group:leave'],
-          reason: 'marker-owned cleanup must not repeat native leave',
-        );
+        expect(terminalFaultBridge.commandLog, [
+          'group:leave',
+        ], reason: 'marker-owned cleanup must not repeat native leave');
 
         final presentationFaultRepo = await seededRepository();
         final presentationFaultMessages = InMemoryGroupMessageRepository();
@@ -11289,11 +11287,11 @@ void main() {
               reason: permutation.name,
             );
             final members = await caseGroupRepo.getMembers(groupId);
-            expect(
-              members.map((member) => member.peerId).toSet(),
-              {'peer-admin', 'peer-sender', 'peer-charlie'},
-              reason: permutation.name,
-            );
+            expect(members.map((member) => member.peerId).toSet(), {
+              'peer-admin',
+              'peer-sender',
+              'peer-charlie',
+            }, reason: permutation.name);
             expect(
               (await caseGroupRepo.getMember(
                 groupId,
@@ -15512,6 +15510,7 @@ void main() {
           getAppLifecycleState: () => AppLifecycleState.paused,
         );
         notifListener.start(sourceController.stream);
+        addTearDown(notifListener.dispose);
 
         sourceController.add({
           'groupId': 'group-1',
@@ -15524,6 +15523,9 @@ void main() {
         });
 
         await expectNotificationCount(notifService, 1);
+        // OS publication precedes the durable dedupe marker. Join the admitted
+        // handler before inspecting or consuming that marker.
+        await notifListener.stop().timeout(const Duration(seconds: 2));
         expect(spyGate.markCalls, hasLength(1));
         expect(
           spyGate.markCalls.single.payload,

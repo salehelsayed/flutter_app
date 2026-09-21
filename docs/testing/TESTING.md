@@ -6,6 +6,15 @@ testing lessons and limitations. It is not a release approval or a run ledger.
 
 ## Current architecture and build boundary
 
+Feature-dependent group-media and dual-path notification debug composition now
+lives in `lib/debug/`. Its relocation removed 16 existing core dependency
+exceptions and the nine newly unapproved imports; the exact remaining ratchet is
+153. The `debug-composition-boundaries` selection covers both old and new paths,
+the exception snapshots, and the existing causal debug tests. Preserve the
+build-profile, entrypoint, discovery, and group-gate contracts when moving these
+helpers. Focused evidence is in
+`.codex-test-logs/failure-fixes-20260920/architecture-debug.log`.
+
 The current application uses Flutter with native Go, not the earlier QuickJS
 core. `lib/app/bootstrap/production_application_bootstrap.dart:5296` constructs `GoBridgeClient` over method/event
 channels. Android's `android/app/build.gradle.kts:431` connects `buildGoAar` to
@@ -280,12 +289,319 @@ python3 scripts/mknoon_checks.py full --base "$BASE_REF" --device-config "$DEVIC
 ```
 
 Use a clean isolated checkout; add `--local` only for an intentionally recorded
-working-tree candidate. Existing full entry points remain intact. The wrapper
-serializes their configured commands and retains one source identity. Never
-merge green partitions from different commits into a full-suite PASS. Keep
-failed or unfinished full runs visible to release reviewers. Full regression
-is not the default after each small change or individual TDD plan; follow the
-wave/release cadence in `AGENTS.md`.
+working-tree candidate. Full planning records the current bytes without starting
+product tests. It returns exit 2 when reconciliation finds uncovered or manual
+obligations; the complete `plan.json` remains available for review. Execution
+without a device config can run host selections, while campaigns stay blocked.
+
+```bash
+python3 scripts/mknoon_checks.py full --plan --jobs 3 --flutter-workers 4 --sims-jobs 2
+python3 scripts/mknoon_checks.py full --base "$BASE_REF" --local \
+  --jobs 3 --flutter-workers 4 --sims-jobs 2 --device-config "$DEVICE_CONFIG"
+```
+
+All three worker limits default to **1**, accept 1–64, and belong to the recorded
+plan. `--jobs` schedules checks with declared nonconflicting resources;
+`--flutter-workers` bounds each compatible Flutter batch, including the existing
+host gate through `MKNOON_HOST_FLUTTER_WORKERS`; `--sims-jobs` enables the existing
+SIMS scheduler and sets `SIMS_MAX_PARALLEL`. `SIMS_HOST_CONCURRENCY` receives the
+host worker bound. Unknown metadata serializes. Device/device-control names
+share ownership, staging-relay exclusions remain intact, and all host prerequisites
+finish before device campaigns. Failed dependencies stay unrun. The checkout
+lock remains, with an additional cooperating cross-checkout lease for shared
+Flutter/native/AAR outputs. SIMS Flutter/native host rows also share an exclusive
+build resource. This does not fence unmanaged external build processes.
+
+`selection.json` owns `full_inventory`: audited listing expansion, automatic
+source selectors, source registrations, scenario catalogs and explicit exclusions.
+`discover` and `full --plan` reconcile tracked and nonignored source files,
+nested packages and Go modules against those selections. Each obligation has a
+stable path/selector/configuration identity. Fixtures, generated/vendor/archive
+files and support applications are labeled. Unknown source tests and missing
+scenario mappings remain visible gaps, not successful wrapper registrations.
+The static reliability classification listing does not start Dart or execute
+scenarios; detailed `--records-tsv`/`--checks-tsv` retain their expansion checks.
+
+Full SIMS commands now execute proofs: `--prepare-builds` is not an execution
+command. SIMS automatically prepares unique build profiles and hands attested
+artifacts to its existing adapters. Cache validation still binds source,
+entrypoint, compile defines, platform/architecture, toolchain, provider/signing
+configuration and artifact bytes. Runtime-only reuse remains limited to existing
+supported profiles. Legacy routes without that adapter continue their own builds;
+no unchecked file-existence shortcut was added. Full mode sets
+`SIMS_GROUP_MULTI_PARTY_SCENARIO=all`; direct and change-mode callers retain the
+nine-case smoke default. The adapter requires one terminal report row for every
+one of the 109 actual catalogue keys (the aggregate `all` key is not a scenario).
+A zero child exit with a missing, duplicated or failed scenario is incomplete.
+Both group-media platforms have typed SIMS owners; the iOS row declares its
+signed iOS bundle and Android companion dependencies/read resources. Only those
+attested artifacts reach the child; ambient artifact paths remain rejected.
+New capabilities append without shifting existing array indices used by runtime
+root mappings; discovery contracts check the preserved indices and new suffix.
+
+`full_inventory` also owns exact singleton reaction selections, all eight UI
+performance dispatches, the 17 original benchmark dispatches and their distinct
+CLI-peer fixtures, native proof wrappers, true-release PB266 instrumentation,
+plugin JUnit and standalone Dart assertion mains. FEED aliases its existing
+direct `registerFeedPerf()` entrypoint, including its explicit skipped cases.
+Changed standalone Dart mains reuse these exact assertion-enabled adapters in
+change selection; an unknown non-host Dart test still fails closed.
+The six previously missing UI performance dispatches select desktop macOS,
+where their registrations execute; mobile self-skips are not performance proof.
+The iOS media stable-ID leg has its own pinned simulator selection. General UI
+and posts routes remain in legacy.
+
+The protected `gate benchmark-sim` partitions those same 17 scenarios into
+`A,B,BR,C,D,E,F,G,I,J,K,L,M,N,R` on the pinned `android-physical` role and `GP,H`
+on the pinned `ios-simulator-a` role (`devices.ios_simulator`). Both roles are
+leased and freshly preflighted before either invocation. Each invocation uses
+an exact `--scenarios` list and must return exactly one target/selection-bound
+`FULL_BENCHMARK_SELECTION` receipt after its children complete. An independent
+assertion failure does not omit the other partition or erase the failure;
+cancellation and timeout still stop owned work. Android ROUTING_PATHS retains
+its inline CLI fixture and pinned stage channel with all eight stage proofs.
+
+GP/H retain the existing iOS simulator + host Go CLI topology documented in
+`Test-Flight-Improv/Network-Transport-libp2p-Feature/03b-benchmark-test-inventory.md`
+(H-Sim, GP-Sim and the simulator rerun notes). This is specifically a shared
+host-filesystem protocol: the scripts pass an absolute private temporary
+`BENCHMARK_SHARED_DIR` and run ID; the app harnesses use `File` directly at
+`gp_<run>_<name>` / `h_<run>_<name>`. GP also reads the absolute
+`CLI_PEER_FIXTURE` through `loadCliPeerFixture`. There is no Android or physical
+iPhone path broker in these scripts. Protected GP/H therefore reject those
+roles (and desktop roles) before launching any child. The boundary regression
+executes the actual harness file helpers with the captured compile defines,
+proving fixture and signal path agreement; its synthetic leaves do not certify
+an installed simulator app or produce product benchmark results.
+
+Protected benchmark scripts require `MKNOON_RELAY_ADDRESSES`, supplied from
+`full_suite.relay_addresses`, before any child starts. The bounded parser accepts
+comma-separated DNS/IP TCP (optionally WS/WSS) or UDP/QUIC-v1 multiaddresses with
+Ed25519/SHA-256 libp2p peer IDs; missing, empty and malformed inputs fail closed.
+The same normalized list is sent explicitly as Go `start.params.relayAddresses`
+and Flutter `--dart-define=MKNOON_RELAY_ADDRESSES=...`. Only direct, unprotected
+invocations with the variable absent retain legacy public defaults. The audited
+route hashes the suite, both independently launching scripts, the boundary and
+completion helpers, and the host-file protocol sources.
+
+The full legacy command depends on the SIMS aggregate. Its curated host paths
+emit explicit `HOST_RESULT_ALIAS host.dart.all <path>` rows and consume the
+canonical host result. The seven old directory sweeps, host benchmark duplicate
+and exact duplicate typed campaign routes are omitted with result aliases in the
+ledger. Direct legacy invocation retains its 95-route default. Go tagged/race
+variants and non-equivalent platform/configuration routes remain distinct;
+protected legacy work uses the exact per-route contracts in
+`tool/testing/legacy_target_contracts.json`. Each known leaf verifies its target
+owner source hashes, acquires its own device leases and completes fresh
+preflight before any build, preparation or device action. Unknown routes or
+changed owners block that route; independent known routes remain runnable.
+This is not universal assertion-level deduplication of nested legacy composites.
+
+Additional adapters execute inside `mknoon_checks.py`'s existing scheduler and
+leases. `--plan` records each concrete command template, target role and required
+configuration key. Runtime values belong under `full_suite` in `--device-config`;
+per-check overrides live under `full_suite.adapters.<check-id>`. For example:
+
+```json
+{
+  "isolated_test_environment": true,
+  "fixture_reference": "private/isolated-fixture-receipt.json",
+  "devices": {
+    "android_physical": "PINNED_USB_ANDROID",
+    "android_emulator": "PINNED_ANDROID_EMULATOR",
+    "ios_physical": "PINNED_USB_IPHONE",
+    "ios_simulator": "PINNED_IOS_SIMULATOR",
+    "macos": "macos"
+  },
+  "full_suite": {
+    "service_account": "private/provider.json",
+    "relay_target": "AUTHORIZED_STAGING_TARGET",
+    "relay_key": "private/staging-key",
+    "relay_addresses": "AUTHORIZED_RELAY_ADDRESSES",
+    "group_staging_manifest": "private/group-staging.json",
+    "direct_staging_manifest": "private/direct-staging.json",
+    "group_media_ios_fixture_driver": "private/group-media-observer",
+    "ios_ui_fixtures": "private/ios-ui-fixtures.json",
+    "adapters": {
+      "full.reaction.android_physical_recipient": {
+        "staging_manifest": "private/direct-staging.json",
+        "capture_manifest": "private/direct-capture.json"
+      }
+    }
+  }
+}
+```
+
+These are placeholders, not a runnable provider configuration. Supply only live
+pinned targets and authorized isolated fixtures. Four-party group campaigns use
+`devices.ios_simulator_a` through `_d` plus the existing explicit
+`full_suite.ios_disposable_simulator_ids` authorization. An absent optional target
+is `N/A (target unavailable by project policy)` after successful live discovery;
+unknown discovery, absent configuration/credentials, or an unavailable supplied
+target remains precisely blocked. Missing fixtures are runtime prerequisites,
+separate from inventory completeness.
+
+XCTest adapters build into fresh private DerivedData and run each exact method,
+checking named passing test cases rather than accepting `TEST SUCCEEDED` alone.
+`ios_ui_fixtures` is a private JSON object keyed by `Class/testMethod`; each entry
+contains `target_id` and an `environment` object with the method's `MKNOON_`
+variables. Its prepared application, notification, call and provider state must
+match that method's source contract. Fixture helpers that wait for a host action
+still need that live fixture; the adapter does not invent a notification/call.
+The synchronized group-media XCTest stays owned by its existing iOS controller.
+The empty macOS `testExample` template and the Java FlutterTestRunner bootstrap
+are documented support; the latter's actual Dart assertions additionally run in
+a true release instrumentation variant. The APNs ten-minute external-provider
+capture stays explicitly manual. No manual capture, deployment or simulator-wide
+shutdown helper is launched automatically.
+
+Composite file, scenario, listing and result-alias mappings carry exact
+`receipt_bindings` by capability or route. Every original attempt participates:
+an unavailable child remains N/A, a missing or duplicate child remains NOT RUN,
+and an earlier child FAIL survives later PASS. Parent PASS cannot replace a
+child receipt. Filtered or ambiguous runner argv cannot own a whole file. The
+host batch's audited `Flutter batch path` listing retains its canonical
+`host.dart.all` owner; full mode does not launch a second automatic host batch.
+The legacy dispatch's exact file-to-route mappings are explicit in the manifest.
+Their registration does not waive runtime prerequisites or target protection.
+
+The wrapper passes its leased runtime assignments to SIMS through
+`SIMS_PROTECTED_DEVICE_ASSIGNMENTS_JSON`. Binding pins every supplied role,
+blocks discovered but unprotected targets and automatic preparation, and retains
+policy N/A for genuinely absent targets. Extra configured roles used by nested
+legacy SIMS routes also receive device leases and Android preflight. Omitted
+pins cannot inherit an ambient peer. Opaque SIMS rows declaring `unknown`
+resources block under this boundary because their device selections are not
+accounted for; a shared build lease never substitutes for device ownership.
+
+Native proof adapters `full.native.371` and `full.native.373` require
+`devices.ios_simulator`. The wrapper leases that exact ID and rechecks its live
+simulator availability before invoking the native script. Both scripts require
+`MKNOON_NATIVE_IOS_SIMULATOR_ID`, select only that ID, reject protected-map
+mismatches and refuse fallback. Their host and simulator assertions remain one
+combined obligation: absent simulator hardware makes the combined adapter N/A,
+not a claim that host execution proved XCTest assertions. Native/XCTest failures
+retain the campaign cleanup barrier. Availability checks do not establish that
+external iOS automation is idle.
+
+`devices.android_emulator_second` and `devices.ios_simulator_a` through `_d`
+are supported extra roles. `ios_simulator` aliases the `_a` role; conflicting
+pins are invalid. Every forwarded SIMS target, including configured extra roles
+and the macOS performance target, is protected and leased; each configured
+Android role gets instrumentation preflight. Do not supply an unpinned target
+through ambient environment variables.
+
+The protected full invocation executes all **80 selected legacy routes** and all
+**67 cleaned reliability selections** through `scripts/legacy_target_contracts.py`.
+The shell listings still determine the selection; their ordinary direct defaults
+remain unchanged (95 routes for direct full regression). The reliability adapter
+is serialized with `performance.global` and has an explicit legacy build
+exception because its audited children own their existing builds. Device
+ownership comes from each route's leases and preflight. The `unknown` resource
+guard remains in force for opaque SIMS rows.
+
+Use the same one-command full runner with an explicit baseline and pinned config:
+
+```bash
+python3 scripts/mknoon_checks.py full --base "$BASE_REF" --local \
+  --device-config "$DEVICE_CONFIG" --jobs 3 --flutter-workers 4 --sims-jobs 2
+```
+
+`isolated_test_environment: true` and `fixture_reference` are required for device
+routes. Set `full_suite.relay_addresses` to the authorized isolated relay; the
+adapter never substitutes the legacy production default. Supply the provider
+and signing inputs already required by each typed campaign. Missing fixture or
+provider inputs remain BLOCKED. Static SDK/analyzer/classification commands run
+without device pins. Successful discovery is required before an absent optional
+target can become N/A; an invalid supplied pin never becomes N/A.
+
+Roles stay local to each route. Android-capable two-peer transports use
+`android_physical` plus `android_emulator`. Existing wrappers whose protocol uses
+host-shared simulator directories receive `ios_simulator` (canonical alias
+`ios_simulator_a`) and `ios_simulator_b`; four-role wrappers additionally receive
+`ios_simulator_c` and `_d`. The intro reset route requires
+`full_suite.ios_disposable_simulator_ids` naming exactly those four pinned IDs.
+No absent optional simulator is selected or booted automatically. The direct
+private-media journey receives its actual `--sender`/`--recipient` arguments;
+the visibility proof receives fresh build/artifact/result directories and its
+exact scenario. All original general UI, posts, and scenario selections remain.
+
+Each route writes a private log and an exact hash-bound receipt. The parent
+requires unique, ordered child identities, matching summaries and unchanged
+logs. Reliability source and scenario obligations join these route receipts;
+parent success cannot replace a missing child. Device failures retain the
+cleanup barrier; host-only routes can still run. Original first failures remain
+visible after a diagnostic rerun.
+
+`ROUTING_PATHS` now requests CLI unregister at the actual R-Sim-3 boundary. A
+fresh run secret authenticates a bounded loopback request carrying run, target,
+stage and nonce. The host waits for the CLI's successful namespace acknowledgment;
+the app validates and consumes the exact response before sending the stage's
+message. The host also requires the matching app print receipt. Registration
+is restored afterward. The existing R-Sim-7 offline/reconnect phases use the
+same channel for acknowledged stop/restart and relay/circuit readiness.
+
+The channel supports iOS simulators and macOS loopback, plus an explicitly
+pinned Android `adb reverse tcp:0` mapping removed during cleanup. Physical iOS
+has no supported stage transport and produces an aggregate failure, while
+independent scenarios still run. Inline run-specific peer identity avoids an
+unreadable host fixture path on Android. No ambient signal file is accepted.
+The reader still requires all eight distinct stage completions and rejects
+`[SKIP]`/`[BLOCKED]`, wrong names, missing/duplicate stage or consumption receipts.
+A failed scenario cannot yield `FULL_BENCHMARK_COMPLETED` or stop an independent
+peer scenario from being attempted.
+
+The causal host contracts are runnable without a product/device campaign:
+
+```bash
+python3 -m unittest -v scripts/test/mknoon_full_legacy_binding_test.py
+flutter test --no-pub test/tool/sims/legacy_target_contract_binding_test.dart \
+  test/tool/sims/routing_stage_handshake_test.dart
+```
+
+These use real local subprocesses, synthetic inventory and fixture tool/peer
+boundaries. They verify orchestration, leases and stage coordination; they do
+not certify product measurements, physical-device behavior or a signed build.
+The former blanket-block tests were replaced by protected positive execution
+and invalid-command/binding refusal assertions; the privacy, native-pin,
+filtered-selection and exact-child regressions remain required.
+
+`results.json` joins obligations to original attempts, records scheduling wait and
+execution durations, and retains allowlisted integer SIMS cache/build/profile
+timings and typed schedule traces. Capability/profile IDs must come from the
+selected source plan; nested verdict details, resource diagnostics and arbitrary
+producer strings stay private. Separate install timing is null where a legacy
+adapter does not expose it. Raw SIMS reports, adapter fixture exceptions and `*.raw.log` files are private
+and excluded from the CI artifact allowlist. The host regressions in
+`scripts/test/mknoon_full_review_regression_test.py` cover these receipt, binding
+and argv-scope boundaries using synthetic evidence and production binding code.
+`scripts/test/mknoon_full_composition_test.py` exercises the combined adapters,
+exact mappings, per-step privacy, pinned native selectors and unknown-command
+refusal. The legacy binding suite exercises all 147 selected route launches,
+receipt corruption controls and the benchmark stage channel.
+Timeouts/cancellation kill owned process groups, retain partial results and leave
+unstarted work unrun. Failed first attempts remain failures after diagnostic
+reruns. Never merge green partitions from different candidates; source or
+configuration drift invalidates the invocation.
+
+Verification uses temporary Git repositories and real fixture subprocesses for
+serial/parallel equivalence, exact argv/configuration, prerequisite blocking,
+scenario completeness, native completion readers, resource exclusion, dependency
+failure, cancellation and raw-evidence retention. Group full mode, benchmark
+failure propagation and the declared iOS companion artifact handoff have causal
+RED/GREEN receipts. Native manifest contracts require both the original host CPU
+resource and the shared native build lock. SDK-dependent verification uses the
+real pinned Flutter 3.47.2 SDK. The existing Python timeout test still requires
+`ps`, which this worker sandbox denies; its assertion remains intact. The legacy
+simultaneous shell contract still depends on the absent
+`.claude/skills/sims/scripts/run_with_devices.sh`. The standalone iOS bootstrap
+contract checks the current group request v2/result v3/host receipt v3 schemas;
+projection fixtures include `authorizedTransportPeerIds`, including its empty
+list value, in exact projection comparisons. Support/manual source exceptions
+are hash-bound so adding assertions to those files requires ownership review.
+Full product/physical-device and signed-candidate execution: **NOT RUN**.
+No speedup or release acceptance is inferred from fixture timing. Full regression
+is not the default per-plan gate; follow the wave/release cadence in `AGENTS.md`.
 
 `.github/workflows/mknoon-checks.yml` uses the same wrapper and selection manifest
 for three distinct acceptance modes. Its final hosted job always runs after
@@ -565,6 +881,87 @@ do not count `test(...)` strings as executions. Runner listings took about
   configuration, bundled assets and selector changes can affect consumers far
   beyond nearby tests. Keep conservative mappings until evidence supports
   narrower impact.
+
+- Tap gestures can retain a recognizer while an index-based slot changes entity.
+  UI-25 widget regressions reproduced wrong-peer activation in Orbit and wrong
+  contact selection in the invite, create-group and introduction picker factories.
+  Keying the gesture owner by entity cancels the old press; Orbit retains its
+  separate seat/entrance state. Tests release the old press after replacement,
+  then verify a fresh tap activates the visible entity exactly once.
+- The shared recording button retains immediate provisional start, but stop/send
+  must use the winning tap recognizer and one primary pointer. Raw pointer-up
+  previously sent after dragging off and a second pointer produced duplicate
+  stops. `voice_record_button_test.dart` covers those causal failures, quick
+  start cancellation, removal, target edges and semantic activation. Direct and
+  group conversation consumers remain separate preservation obligations.
+  A stationary start must survive the Tooltip long-press deadline; touch
+  tooltips cannot compete with the recording tap recognizer. Removing an idle
+  mic after the tap-down deadline rejects that recognizer during descendant
+  teardown, while the owning element is inactive. Cancellation must still abort
+  the provisional start once, without `Feedback.forTap`'s render-object lookup.
+  The pending-idle-start teardown test reproduced the inactive-element exception
+  before removing that feedback call and passed afterward; receipts are
+  `.codex-test-logs/ui25-taps-high/correction/l2-{red,green}.jsonl`.
+- Recording action names follow the existing composer phase: arming cancels
+  startup, an active stop also sends, stopping exposes no activation, and
+  auto-stop review has separate send/discard actions. The localized action
+  [tests](../../test/features/conversation/presentation/widgets/action_discoverability_test.dart)
+  traverse the active semantics tree and assert single callbacks and
+  disabled states in English, German and Arabic. Standard `IconButton` names
+  are exposed through the SDK's tooltip semantic field; custom gesture controls
+  use one named button node without a second activation handler.
+  Orbit's create action uses `Semantics.identifier` separately from its spoken
+  open/closed label. Stable keys preserve its semantic node across scrim and
+  menu insertion; both FAB anchors retain identity after selection/dismissal.
+  The [fixture contract](../../test/integration/group_reaction_notification_device_criteria_test.dart)
+  now matches Android `resource-id`, as documented by the
+  installed SDK. These host assertions do not establish native identifier
+  exposure, actual screen-reader focus, or user comprehension.
+- The horizontal reply recognizer already arbitrates against vertical scrolling;
+  a second threshold applied to each delta discarded slow right swipes. The
+  waveform's provisional tap-down likewise sought even when a later scroll or
+  pointer cancel rejected the tap. `swipe_to_quote_bubble_test.dart` and
+  `waveform_seek_bar_test.dart` preserve slow-input accumulation and seek-on-tap
+  completion. The navigation badge is decorative and must not intercept its
+  underlying button. These UI-25 results are host widget evidence, with raw
+  first failures and corrections under `.codex-test-logs/ui25-taps-high/`;
+  native input, screen readers and installed-build proof remain separate.
+
+- Notification setup Retry must retain the actual coordinator future at the
+  app-shell owner. A `VoidCallback` that discards that future cannot by itself
+  establish pending state or prevent a second permission-refresh request.
+  `push_registration_health_surface_test.dart` exercises the real coordinator
+  with deferred registration, failure/recovery, rapid activation, and notifier
+  clear/disposal fencing. Permission denial retains its settings action.
+- The approved UI-25 loading label fits Orbit's existing top-strip reservation;
+  skeleton geometry and settled list position are unchanged. Geometry checks
+  must advance the existing zero-delay, 400 ms row entrance before comparing
+  settled coordinates. Settings network choices wrap without a scale-down box
+  at 320 logical pixels and 2x text in English, German and Arabic, but the first
+  no-overflow host assertions did not detect glyphs clipped by the outer stadium.
+  The row and settings readability tests now load the pinned SDK's Roboto and Noto Naskh Arabic fonts:
+  each of four name-prefix characters must have a complete visible renderer box,
+  and every network-label character must lie inside the segmented renderer's
+  actual resolved inner clipping path (including its vertical target inset).
+  The separate shape-only differential deliberately omits target-size gates so
+  the originals' FittedBox/small targets cannot mask clipping attribution; its
+  selected-label-only variant also prevents another label from masking the
+  selected choice. Row
+  stress includes both badges/counts and the formatter's English `Active now`
+  in all locales; that formatter is not localized. The host font environment
+  still differs from the native device, which remains a separate proof boundary.
+  Raw REDs, exact source restoration hashes and normal/stress host renders are
+  under the additive `approved-050608/native-layout-correction/` evidence root.
+  The existing media preference failure key is consumed only in the catch branch that
+  restores the prior matrix; a deferred-write test confirms no restoration
+  message during pending work and successful retry clears the error.
+  These are host widget/persistence boundaries, not native rendering or
+  screen-reader proof. The `ui-approved-recovery-readability` check owns the
+  executable selection. MediaGrid's composition tests must mount the production
+  localization delegates now that even its loading leaf contains localized
+  text; missing delegates caused three wrapper failures without changing the
+  existing aspect-ratio and thumbnail assertions. First failures and focused receipts are under
+  `/Users/I560101/.hermes/profiles/se/artifacts/mknoon-ui-ux/approved-050608/implementation-logs/`.
 
 ## Signed-candidate checklist
 
@@ -2447,6 +2844,27 @@ visible and cannot become an ordinary first-attempt PASS.
   assertions otherwise compete for Android's UiAutomation connection. Treat a
   missing-file message from `adb exec-out cat` as an unavailable capture even
   when its host exit code is zero; it never proves that a control is absent.
+  The September 20 Start-voice-call timeout also retained an emulator screenshot
+  with a System UI ANR dialog covering the conversation. A later Appium MCP
+  capture confirmed the dialog was still present; selecting its Wait action
+  removed it. This establishes an OS-overlay obstruction, not an app-control
+  regression or passing audio journey. Preserve the original failure, recover
+  the owned test target, and retain the unchanged semantic assertion and
+  deadline for the fresh campaign. Evidence is under
+  `.codex-test-logs/failure-fixes-20260920/appium_*` and the original timestamped
+  failure captures in `build/sims/proofs/android.production_1to1_audio_call/`.
+  The September 21 fresh run passed all 27 unchanged assertions on USB Pixel
+  `21071FDF600CSC` plus the available, responsive `emulator-5556`; the original
+  `emulator-5554` stalled Android services during Appium setup. The source/debug
+  APK was freshly prepared, then consumed through its attested cache identity.
+  The wrapper verified the scenario report; native calls were released on both
+  peers, app state was restored, and neither disposable package process remained.
+  Receipts and retained captures are under
+  `.codex-test-logs/failure-fixes-20260920/audio-after-host/` and `audio-proof/`.
+  This scenario PASS does not turn diagnostic omissions, unrelated unmapped
+  workspace additions, skipped host cases or missing provider fixtures into
+  complete release coverage. A failed Flutter discovery with live ADB targets
+  is an observation failure, not evidence that the hardware is unavailable.
   Appium's embedded MCP process needs its own `ANDROID_HOME` or
   `ANDROID_SDK_ROOT`; a working shell `adb` does not establish that environment
   in an already-running MCP server. A fresh instance of the unchanged local
@@ -3484,6 +3902,48 @@ correlation alone does not prove custody, displayed content, or recipient open.
 Only report a checkpoint that the retained instrumentation actually observes.
 State an investigation area separately from a proven root cause.
 
+- **Go final-only diagnostic records:** `app_diagnostics_store.go` leaves the
+  ordinary-event slice nil when only finals have been stored, so JSON contains
+  `events: null`. The Python reader treats only that null as an empty list;
+  missing/empty lists retain their behavior and other non-list values remain
+  invalid records. `test_go_final_only_null_events_retains_valid_final` fails on
+  the original reader with one invalid record and no final observation.
+  Synthetic preservation tests cover finish/crash/hang report and streaming
+  observations, malformed finals/events, consent/erase/epoch and retention
+  filters, file/count bounds, strict JSON, drop accounting, output privacy,
+  receipt-time windows and detail limits. Finals still require schema validation;
+  accepting the Go representation does not establish a missing start or duration.
+
+- **Queued relay diagnostic publication:** accepted contexts carry both actor
+  privacy generation and exact admitted trace lifetime. Clear, participant erase,
+  disable/re-enable, successful expiry and same-ID recreation must invalidate old
+  spans, bindings, authority references and private APNs receipts at publication,
+  not only enqueue. APNs capture snapshots actor/context before queue admission;
+  the worker checks lifetime under the same lock as persistence. Keep valid new
+  contexts, trace-less compatibility, provider behavior, capture caps, quota
+  accounting and public-schema privacy as separate controls. Parent causal probes
+  reproduce stale publication on inherited source and pass unchanged on the
+  reviewed candidate; these host tests do not prove live APNs or phone behavior.
+  The reviewed main composition has 1,340 passing Go race leaves with five
+  explicitly skipped live transport cases and 55 disjoint operator Python tests.
+  A subsequent main `go-relay` wrapper run completed its Go process without test
+  failures, but correctly remains BLOCKED for those five skips; 66 other selected
+  checks were NOT RUN by that diagnostic subset. Do not call it whole-tree green.
+  This source integration is distinct from the deployed-base relay binary and
+  does not establish rollout completion or mobile distribution.
+
+- **Native diagnostic test worker exhaustion:** the full Android suite exhausted
+  its shared Robolectric worker heap in `MknoonAppDiagnosticSpoolTest`, producing
+  13 heap errors and a consent assertion failure in the exhausted process.
+  The Gradle daemon's heap setting does not size the test worker. A bounded
+  2 GiB test worker, one fork at a time, recycled after 20 classes passed the
+  focused spool/resource tests and all 572 full-suite cases with no skips.
+  Production spool code was unchanged; this is test-process evidence, not a
+  production memory-use claim. Keep the full-suite check as well as the focused
+  test because an isolated pass cannot reproduce accumulated SDK sandboxes.
+  Original JUnit failures remain in `.codex-test-logs/all-tests-20260920/`;
+  corrected full-suite XML and the Gradle log are in
+  `.codex-test-logs/failure-fixes-20260920/`.
 - **Confirmed diagnostic performance regression:** recording app/call events
   could synchronously scan and JSON-encode the retained archive on Flutter's
   UI isolate despite `unawaited` persistence; native collectors also queued
@@ -3589,6 +4049,29 @@ State an investigation area separately from a proven root cause.
   failure mechanism is not independently proven. Preserve both results under
   `artifacts/relay-startup-20260916/tdd-change-investigation/` rather than
   relabeling the original lane as PASS.
+  The September 21 change lane failed the same case; its unchanged isolated
+  case and whole-file reruns passed (180 whole-file cases, three skips), again
+  without a retained raw exception from the lane. The case now closes its
+  owned database inside `tester.runAsync` before the final pump and Flutter's
+  pending-timer check; `addTearDown` remains a failure-path fallback. The
+  updated whole file also passed 180 cases with the same three skips; the
+  exact affected-conversation lane then completed 2,618 passed, zero failed
+  and ten pre-existing skipped cases. Its wrapper classification remains
+  BLOCKED for skips, not PASS. This
+  closes the known cleanup gap without changing production recovery or its
+  assertions; retain the original lane failure and the exact lane diagnostic
+  under `.codex-test-logs/failure-fixes-20260920/`.
+- **Group live-first dedupe test synchronization:** notification publication in
+  `maybeShowNotification` precedes the awaited durable remote-announcement
+  marker. `FakeNotificationService.shown` therefore cannot establish marker
+  completion. The group listener symmetric-dedupe test now joins its admitted
+  handler with `stop()` before checking the exact marker and consuming it;
+  payload, message ID and consume assertions remain unchanged. The first broad
+  lane failure did not retain its raw exception, and the unchanged focused
+  test passed; this identifies a source-level synchronization gap, not a proven
+  attribution of that original exception. The updated exact affected-groups
+  lane passed all 3,195 cases with no skips. Keep both results under
+  `.codex-test-logs/failure-fixes-20260920/`.
 - **Standalone diagnostic harness discovery:** the PiP native-contract suite
   inventories every integration harness and driver, including files named
   `_harness.dart`. Adding the relay/diagnostics harnesses without explicit
@@ -3653,6 +4136,8 @@ Explicit invocations in a new Codex session opened at this repository are:
 Use $mknoon-change-check with base <verified-ref> for my local changes.
 Use $mknoon-release-check with previous published revision <verified-ref>.
 Use $mknoon-test-maintenance for the changed tests and confirmed regression.
+Use $mknoon-all-tests to run every repository test and report all failures and gaps.
+Use $mknoon-all-tests, fix failures as you go, and continue the remaining tests.
 ```
 
 The skills live in `.agents/skills/<name>/SKILL.md` with name/description
@@ -3664,8 +4149,24 @@ same scripts directly, without invoking a skill automatically.
 Existing `run-flutter-host-gates`, `flutter-test-orchestrator`, and
 `flutter-full-regression-runner` were inspected as prior art. They provide host
 execution, advisory selection, or full sweeps; they lack this baseline-aware
-release evidence contract. The three new skills are small adapters over one
+release evidence contract. The four repository-local skills are small adapters over one
 wrapper, not copies of selector logic or a new orchestration system.
+
+`mknoon-all-tests` uses the full-inventory workflow described above, including
+host, backend, native, device, contract and performance obligations. It audits
+expanded child receipts and reports failures, unrun checks, coverage gaps and
+availability-bounded device exclusions separately. Its private-media checklist
+is a completeness sentinel, not a restriction on selection. Creating or auditing
+the skill does not launch a full regression run; invoking it by name does.
+
+Its optional repair mode works between completed wrapper checks: fresh `--only`
+invocations include the selected check's dependency closure, preserve original
+failures, verify repairs and continue the remaining queue. It does not pause
+inside a composite suite or resume an existing wrapper ledger. Source changes
+require affected rechecks and retain earlier evidence under its original
+candidate identity. One final full run on the stable repaired candidate is
+required before claiming complete passing execution; diagnostic checkpoints
+across different candidates cannot establish that claim.
 
 When tests, runners, fixtures, shared dependencies, configuration or confirmed
 regressions change, refresh discovery, inspect the affected assertions, update

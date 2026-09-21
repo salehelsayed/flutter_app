@@ -117,6 +117,16 @@ final class SimsProcessExecutor {
       _artifactEnvironmentName(row.buildProfileId):
           ?preparedArtifacts[row.buildProfileId],
     });
+    // A multi-platform proof may consume a companion build. Only a prepared
+    // artifact with BOTH a declared build dependency and read lease is exposed;
+    // ambient paths and unrelated cached artifacts remain stripped above.
+    for (final resource in row.resources) {
+      if (!resource.name.startsWith('build:') || resource.access != ResourceAccess.read) continue;
+      final profile = resource.name.substring('build:'.length);
+      if (!row.dependencies.contains('build.$profile')) continue;
+      final artifact = preparedArtifacts[profile];
+      if (artifact != null) childEnvironment[_artifactEnvironmentName(profile)] = artifact;
+    }
     String executable = row.command.first;
     File? buildViolationLog;
     if (!row.declaredBuildException) {

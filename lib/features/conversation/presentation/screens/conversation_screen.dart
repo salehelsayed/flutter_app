@@ -396,7 +396,7 @@ class ConversationScreen extends StatefulWidget {
     this.showCallAction = false,
     this.callActionEnabled = false,
     this.callActionInFlight = false,
-    this.callUnavailableMessage = 'Voice calling is unavailable right now',
+    this.callUnavailableMessage = '',
     this.isLoadingMore = false,
     this.hasMoreOlderMessages = true,
     this.initialLoadDone = false,
@@ -787,7 +787,9 @@ class _ConversationScreenState extends State<ConversationScreen>
             callActionInFlight:
                 widget.callActionInFlight ||
                 (!widget.callActionEnabled && widget.onCall != null),
-            callUnavailableMessage: widget.callUnavailableMessage,
+            callUnavailableMessage: widget.callUnavailableMessage.isEmpty
+                ? AppLocalizations.of(context)!.voice_call_unavailable
+                : widget.callUnavailableMessage,
           ),
           // Intro banner above messages (when messages exist)
           AnimatedSwitcher(

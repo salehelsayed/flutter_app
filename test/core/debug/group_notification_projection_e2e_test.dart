@@ -1,5 +1,5 @@
 import 'package:flutter_app/core/debug/group_notification_projection_e2e.dart';
-import 'package:flutter_app/core/debug/group_media_reliability_e2e_main_actions.dart';
+import 'package:flutter_app/debug/group_media_reliability_e2e_main_actions.dart';
 import 'package:flutter_app/features/groups/application/send_group_message_use_case.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_test/flutter_test.dart';

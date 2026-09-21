@@ -95,24 +95,44 @@ class PushRegistrationHealthWarning extends StatelessWidget {
                       const SizedBox(height: 8),
                       Align(
                         alignment: AlignmentDirectional.centerStart,
-                        child: TextButton(
-                          key: const ValueKey(
-                            'push-registration-health-action',
-                          ),
-                          onPressed: opensSettings
-                              ? onOpenNotificationSettings
-                              : onRetry,
-                          style: TextButton.styleFrom(
-                            foregroundColor: warning,
-                            minimumSize: const Size(48, 48),
-                            padding: const EdgeInsets.symmetric(horizontal: 8),
-                          ),
-                          child: Text(
-                            opensSettings
-                                ? l10n.push_registration_health_open_notification_settings
-                                : l10n.push_registration_health_retry,
-                          ),
-                        ),
+                        child: opensSettings
+                            ? TextButton(
+                                key: const ValueKey(
+                                  'push-registration-health-action',
+                                ),
+                                onPressed: onOpenNotificationSettings,
+                                style: TextButton.styleFrom(
+                                  foregroundColor: warning,
+                                  minimumSize: const Size(48, 48),
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 8,
+                                  ),
+                                ),
+                                child: Text(
+                                  l10n.push_registration_health_open_notification_settings,
+                                ),
+                              )
+                            : OutlinedButton(
+                                key: const ValueKey(
+                                  'push-registration-health-action',
+                                ),
+                                onPressed: health.retryInProgress
+                                    ? null
+                                    : onRetry,
+                                style: OutlinedButton.styleFrom(
+                                  foregroundColor: warning,
+                                  side: BorderSide(color: warning),
+                                  minimumSize: const Size(48, 48),
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 8,
+                                  ),
+                                ),
+                                child: Text(
+                                  health.retryInProgress
+                                      ? l10n.push_registration_health_retrying
+                                      : l10n.push_registration_health_retry,
+                                ),
+                              ),
                       ),
                     ],
                   ),

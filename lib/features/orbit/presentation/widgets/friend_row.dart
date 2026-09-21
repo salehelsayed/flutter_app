@@ -65,101 +65,173 @@ class FriendRow extends StatelessWidget {
           // (surfaceBorder == border) on dark.
           border: Border.all(color: readableColors.surfaceBorder),
         ),
-        child: Row(
-          children: [
-            // Avatar (tap → contact profile; falls back to opening the chat)
-            GestureDetector(
-              onTap: onAvatarTap ?? onTap,
-              behavior: HitTestBehavior.opaque,
-              child: UserAvatar(peerId: friend.peerId, size: 48),
-            ),
-            const SizedBox(width: 14),
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            const titleStyle = TextStyle(
+              fontSize: 15,
+              fontWeight: FontWeight.w600,
+            );
+            const metaStyle = TextStyle(fontSize: 12);
+            double textWidth(String text, TextStyle style) {
+              final painter = TextPainter(
+                text: TextSpan(
+                  text: text,
+                  style: DefaultTextStyle.of(context).style.merge(style),
+                ),
+                textDirection: Directionality.of(context),
+                textScaler: MediaQuery.textScalerOf(context),
+              )..layout();
+              final width = painter.width;
+              painter.dispose();
+              return width;
+            }
 
-            // Info column
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
+            // Retain the horizontal card when it can show a useful name prefix.
+            // Otherwise give name, badge and metadata separate bounded lines.
+            final prefix = friend.username.characters.take(4).toString();
+            final nameWidth = textWidth(
+              prefix.length < friend.username.length ? '$prefix…' : prefix,
+              titleStyle,
+            );
+            final badgeWidth = showInnerCircleBadge
+                ? textWidth(
+                        l10n.orbit_inner_circle_badge,
+                        const TextStyle(
+                          fontSize: 10,
+                          fontWeight: FontWeight.w600,
+                          letterSpacing: 0.3,
+                        ),
+                      ) +
+                      22
+                : 0.0;
+            final countWidth = !hideUnreadBadge && friend.unreadCount > 0
+                ? textWidth(
+                        friend.unreadCount > 99
+                            ? '99+'
+                            : '${friend.unreadCount}',
+                        const TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ) +
+                      12
+                : 16.0;
+            final timeWidth = textWidth(relativeTime, metaStyle);
+            final metaWidth = timeWidth > countWidth ? timeWidth : countWidth;
+            final stacked =
+                constraints.maxWidth <
+                48 + 14 + nameWidth + badgeWidth + 10 + metaWidth;
+            final title = Text(
+              friend.username,
+              maxLines: 1,
+              style: TextStyle(
+                fontSize: 15,
+                fontWeight: FontWeight.w600,
+                color: readableColors.textPrimary,
+              ),
+              overflow: TextOverflow.ellipsis,
+            );
+            final badge = Container(
+              padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+              decoration: BoxDecoration(
+                color: readableColors.isLightSurface
+                    ? const Color(0xFFE5F4EA)
+                    : const Color(0x261DB954),
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Text(
+                l10n.orbit_inner_circle_badge,
+                style: const TextStyle(
+                  fontSize: 10,
+                  fontWeight: FontWeight.w600,
+                  letterSpacing: 0.3,
+                  color: Color(0xCC1DB954), // rgba(29,185,84,0.8)
+                ),
+              ),
+            );
+            final time = Text(
+              relativeTime,
+              style: TextStyle(fontSize: 12, color: readableColors.textMuted),
+            );
+            final trailing = (!hideUnreadBadge && friend.unreadCount > 0)
+                ? UnreadCountBadge(count: friend.unreadCount)
+                : Icon(
+                    Icons.chevron_right,
+                    size: 16,
+                    color: readableColors.iconMuted,
+                  );
+
+            return Row(
+              children: [
+                GestureDetector(
+                  onTap: onAvatarTap ?? onTap,
+                  behavior: HitTestBehavior.opaque,
+                  child: UserAvatar(peerId: friend.peerId, size: 48),
+                ),
+                const SizedBox(width: 14),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Flexible(
-                        child: Text(
-                          friend.username,
+                      if (stacked) ...[
+                        title,
+                        if (showInnerCircleBadge) ...[
+                          const SizedBox(height: 4),
+                          badge,
+                        ],
+                      ] else
+                        Row(
+                          children: [
+                            Flexible(child: title),
+                            if (showInnerCircleBadge) ...[
+                              const SizedBox(width: 8),
+                              badge,
+                            ],
+                          ],
+                        ),
+                      if (previewText.isNotEmpty) ...[
+                        const SizedBox(height: 4),
+                        Text(
+                          previewText,
+                          textDirection: previewDirection,
                           style: TextStyle(
-                            fontSize: 15,
-                            fontWeight: FontWeight.w600,
-                            color: readableColors.textPrimary,
+                            fontSize: 12,
+                            color: readableColors.textMuted,
                           ),
+                          maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                         ),
-                      ),
-                      if (showInnerCircleBadge) ...[
-                        const SizedBox(width: 8),
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 7,
-                            vertical: 2,
-                          ),
-                          decoration: BoxDecoration(
-                            color: readableColors.isLightSurface
-                                ? const Color(0xFFE5F4EA)
-                                : const Color(0x261DB954),
-                            borderRadius: BorderRadius.circular(10),
-                          ),
-                          child: Text(
-                            l10n.orbit_inner_circle_badge,
-                            style: const TextStyle(
-                              fontSize: 10,
-                              fontWeight: FontWeight.w600,
-                              letterSpacing: 0.3,
-                              color: Color(0xCC1DB954), // rgba(29,185,84,0.8)
-                            ),
-                          ),
+                      ],
+                      if (stacked) ...[
+                        const SizedBox(height: 4),
+                        Row(
+                          children: [
+                            if (relativeTime.isNotEmpty)
+                              Expanded(child: time)
+                            else
+                              const Spacer(),
+                            const SizedBox(width: 10),
+                            trailing,
+                          ],
                         ),
                       ],
                     ],
                   ),
-                  if (previewText.isNotEmpty) ...[
-                    const SizedBox(height: 2),
-                    Text(
-                      previewText,
-                      textDirection: previewDirection,
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: readableColors.textMuted,
-                      ),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ],
+                ),
+                if (!stacked) ...[
+                  const SizedBox(width: 10),
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.end,
+                    children: [
+                      if (relativeTime.isNotEmpty) time,
+                      const SizedBox(height: 4),
+                      trailing,
+                    ],
+                  ),
                 ],
-              ),
-            ),
-
-            // Meta column
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.end,
-              children: [
-                if (relativeTime.isNotEmpty)
-                  Text(
-                    relativeTime,
-                    style: TextStyle(
-                      fontSize: 12,
-                      color: readableColors.textMuted,
-                    ),
-                  ),
-                const SizedBox(height: 4),
-                if (!hideUnreadBadge && friend.unreadCount > 0)
-                  UnreadCountBadge(count: friend.unreadCount)
-                else
-                  Icon(
-                    Icons.chevron_right,
-                    size: 16,
-                    color: readableColors.iconMuted,
-                  ),
               ],
-            ),
-          ],
+            );
+          },
         ),
       ),
     );

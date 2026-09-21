@@ -29,6 +29,7 @@ python3 - "$tmp_dir/legacy-all.txt" "$tmp_dir/legacy-owned.txt" \
   "$tmp_dir/full.json" <<'PY'
 import json
 import re
+import shlex
 import sys
 
 all_text, owned_text = [open(path, encoding="utf-8").read() for path in sys.argv[1:3]]
@@ -63,9 +64,38 @@ require(owned_count == expected_owned,
 rows = {row["id"]: row for row in full["rows"]}
 aggregate = rows.get("reliability.full.cleaned_legacy")
 require(aggregate is not None, "typed full omitted the cleaned legacy aggregate")
-require(aggregate.get("resources") == [{"name": "unknown", "access": "exclusive"}],
-        "unmigrated legacy aggregate is not fail-closed/exclusive")
+# The temporary unknown-owner blanket blocker is superseded by exact audited
+# per-route ownership. Preserve every selection and reject source/target drift.
+require(aggregate.get("resources") == [{"name": "performance.global", "access": "exclusive"}],
+        "protected legacy aggregate lost its serialization boundary")
+require("legacy.protected-target-contract" in aggregate.get("targetCapabilities", []),
+        "legacy aggregate omitted the protected adapter boundary")
+sys.path.insert(0, "scripts")
+import legacy_target_contracts as legacy
+catalog = legacy.contracts()["reliability"]
 command = aggregate.get("command", [])
+additional_excluded = {command[index + 1] for index, value in enumerate(command)
+                       if value == "--exclude-path"} - set(excluded) - set(duplicates)
+selected = []
+for line in owned_text.splitlines():
+    if not re.match(r"^\s+\d+\. ", line):
+        continue
+    argv = shlex.split(re.sub(r"^\s*\d+\. ", "", line))
+    path = next(s.removeprefix("./") for s in argv if s.endswith((".dart", ".sh")))
+    if path in additional_excluded:
+        continue
+    scenario = argv[argv.index("--scenario") + 1] if "--scenario" in argv else ""
+    scenario = next((s.split("=", 1)[1] for s in argv
+                     if s.startswith("--dart-define=GROUP_SIM_SCENARIO=")), scenario)
+    selected.append(path + (":" + scenario if scenario else ""))
+require(set(selected) == set(catalog) and len(selected) == len(catalog),
+        "legacy selection lacks an exact unique audited target contract")
+for label, contract in catalog.items():
+    require(bool(contract["commands"]) and bool(contract["sources"]),
+            f"empty target contract: {label}")
+    for path, digest in contract["sources"].items():
+        require(legacy.checks.file_hash(legacy.ROOT / path) == digest,
+                f"unaudited target owner drift: {path}")
 for path, typed_id in excluded.items():
     require(path in all_text, f"baseline legacy inventory omitted expected path {path}")
     require(path not in owned_text, f"legacy aggregate still duplicates {path}")

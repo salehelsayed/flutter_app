@@ -65,7 +65,7 @@ Map<String, dynamic> _makeGroupConfig({
       'publicKey': 'receiverPubKey64',
       'mlKemPublicKey': _receiverMlKemPublicKey,
     },
-    if (extraMembers != null) ...extraMembers,
+    ...?extraMembers,
   ];
 
   return {

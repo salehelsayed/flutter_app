@@ -1191,7 +1191,10 @@ _sendChatMessageDiagnosed({
         return (SendChatMessageResult.sendFailed, null);
       }
       if (custody != null && custody.recipientPeerId != targetPeerId) {
-        return drainExistingCustody(custody, reason: 'caller_recipient_drift');
+        return await drainExistingCustody(
+          custody,
+          reason: 'caller_recipient_drift',
+        );
       }
       preexistingDirectMediaCustody = custody;
     } catch (error) {
@@ -3041,7 +3044,7 @@ _sendChatMessageDiagnosed({
             }
             transportMetrics?.recordAttempt(leg: 'reuse', succeeded: true);
             recordMetrics(transport: reuseVia, rung: 'reuse');
-            return _completeSuccessfulSend(
+            return await _completeSuccessfulSend(
               p2pService: p2pService,
               messageRepo: messageRepo,
               payload: payload,

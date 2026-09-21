@@ -202,7 +202,7 @@ class IntroductionListener {
               'transportSenderPeerId': transportSenderPeerId,
             },
           );
-          return finish(
+          return await finish(
             const IntroductionMessageProcessOutcome(
               state: IntroductionMessageProcessState.rejected,
               reasonCode: 'transport_sender_mismatch',
@@ -228,7 +228,7 @@ class IntroductionListener {
               event: 'INTRO_LISTENER_DECRYPT_FAILED',
               details: {'errorCode': result['errorCode'] ?? 'unknown'},
             );
-            return finish(
+            return await finish(
               const IntroductionMessageProcessOutcome(
                 state: IntroductionMessageProcessState.rejected,
                 reasonCode: 'decryption_failed',
@@ -241,7 +241,7 @@ class IntroductionListener {
             event: 'INTRO_LISTENER_NO_SECRET_KEY',
             details: {},
           );
-          return finish(
+          return await finish(
             const IntroductionMessageProcessOutcome(
               state: IntroductionMessageProcessState.retryableError,
               reasonCode: 'missing_mlkem_secret',
@@ -262,7 +262,7 @@ class IntroductionListener {
           event: 'INTRO_LISTENER_PARSE_FAILED',
           details: {'contentLength': message.content.length},
         );
-        return finish(
+        return await finish(
           const IntroductionMessageProcessOutcome(
             state: IntroductionMessageProcessState.rejected,
             reasonCode: 'parse_failed',
@@ -278,7 +278,7 @@ class IntroductionListener {
           event: 'INTRO_LISTENER_INVALID_PAYLOAD',
           details: {},
         );
-        return finish(
+        return await finish(
           const IntroductionMessageProcessOutcome(
             state: IntroductionMessageProcessState.rejected,
             reasonCode: 'invalid_payload',
@@ -299,7 +299,7 @@ class IntroductionListener {
             'transportSenderPeerId': transportSenderPeerId,
           },
         );
-        return finish(
+        return await finish(
           const IntroductionMessageProcessOutcome(
             state: IntroductionMessageProcessState.rejected,
             reasonCode: 'transport_sender_mismatch',
@@ -323,7 +323,7 @@ class IntroductionListener {
                   : senderPeerId,
             },
           );
-          return finish(
+          return await finish(
             const IntroductionMessageProcessOutcome(
               state: IntroductionMessageProcessState.blockedSender,
               reasonCode: 'blocked_sender',
@@ -340,7 +340,7 @@ class IntroductionListener {
           event: 'INTRO_LISTENER_NO_OWN_PEER_ID',
           details: {},
         );
-        return finish(
+        return await finish(
           const IntroductionMessageProcessOutcome(
             state: IntroductionMessageProcessState.retryableError,
             reasonCode: 'missing_own_peer_id',
@@ -460,7 +460,7 @@ class IntroductionListener {
           );
         }
 
-        return finish(
+        return await finish(
           IntroductionMessageProcessOutcome(
             state: IntroductionMessageProcessState.stored,
             reasonCode: 'stored',
@@ -480,7 +480,7 @@ class IntroductionListener {
             details: {'introductionId': model.id, 'action': payload.action},
           );
         }
-        return finish(
+        return await finish(
           IntroductionMessageProcessOutcome(
             state: IntroductionMessageProcessState.stored,
             reasonCode: 'already_exists',
@@ -490,7 +490,7 @@ class IntroductionListener {
       }
 
       if (result == HandleIntroductionResult.deferred) {
-        return finish(
+        return await finish(
           const IntroductionMessageProcessOutcome(
             state: IntroductionMessageProcessState.deferred,
             reasonCode: 'response_deferred',
@@ -500,7 +500,7 @@ class IntroductionListener {
 
       if (result == HandleIntroductionResult.rejected ||
           result == HandleIntroductionResult.blocked) {
-        return finish(
+        return await finish(
           const IntroductionMessageProcessOutcome(
             state: IntroductionMessageProcessState.rejected,
             reasonCode: 'handler_rejected',
@@ -508,7 +508,7 @@ class IntroductionListener {
         );
       }
 
-      return finish(
+      return await finish(
         const IntroductionMessageProcessOutcome(
           state: IntroductionMessageProcessState.retryableError,
           reasonCode: 'handler_error',

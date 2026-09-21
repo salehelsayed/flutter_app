@@ -31,6 +31,8 @@ class ExpandableFab extends StatefulWidget {
   final double fabSize;
   final EdgeInsets? safeAreaPadding;
   final String? fabSemanticLabel;
+  final String? openFabSemanticLabel;
+  final String? fabSemanticIdentifier;
   final bool quietOutlined;
   final bool refinedNeutral;
 
@@ -41,6 +43,8 @@ class ExpandableFab extends StatefulWidget {
     this.fabSize = 56,
     this.safeAreaPadding,
     this.fabSemanticLabel,
+    this.openFabSemanticLabel,
+    this.fabSemanticIdentifier,
     this.quietOutlined = false,
     this.refinedNeutral = false,
   });
@@ -94,6 +98,7 @@ class _ExpandableFabState extends State<ExpandableFab>
     final readableColors = context.backgroundReadableColors;
 
     final glowFab = GlowFab(
+      key: const ValueKey('expandable-fab-toggle-visual'),
       size: widget.fabSize,
       onPressed: _toggle,
       backgroundColor: readableColors.ctaBg,
@@ -116,12 +121,18 @@ class _ExpandableFabState extends State<ExpandableFab>
         ),
       ),
     );
-    final fab = widget.fabSemanticLabel == null
+    final fab =
+        widget.fabSemanticLabel == null && widget.fabSemanticIdentifier == null
         ? glowFab
         : Semantics(
+            key: const ValueKey('expandable-fab-toggle'),
             container: true,
             button: true,
-            label: widget.fabSemanticLabel,
+            enabled: true,
+            identifier: widget.fabSemanticIdentifier,
+            label: _isOpen
+                ? widget.openFabSemanticLabel ?? widget.fabSemanticLabel
+                : widget.fabSemanticLabel,
             onTap: _toggle,
             child: ExcludeSemantics(child: glowFab),
           );
@@ -140,6 +151,7 @@ class _ExpandableFabState extends State<ExpandableFab>
 
     final positioned = isTopRight
         ? Positioned(
+            key: const ValueKey('expandable-fab-actions'),
             top: (widget.safeAreaPadding?.top ?? 0) + 8,
             right: 16,
             child: Column(
@@ -149,6 +161,7 @@ class _ExpandableFabState extends State<ExpandableFab>
             ),
           )
         : Positioned(
+            key: const ValueKey('expandable-fab-actions'),
             bottom: 16,
             right: 16,
             child: Column(

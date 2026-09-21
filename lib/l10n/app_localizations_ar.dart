@@ -1311,7 +1311,8 @@ class AppLocalizationsAr extends AppLocalizations {
   String get settings_media_network_all => 'واي فاي + بيانات الجوال';
 
   @override
-  String get settings_media_save_fail => 'تعذّر الحفظ. حاول مجددًا.';
+  String get settings_media_save_fail =>
+      'تعذّر الحفظ. تمت استعادة الإعدادات السابقة. حاول مرة أخرى.';
 
   @override
   String get settings_media_storage_usage => 'استخدام التخزين';
@@ -3759,7 +3760,7 @@ class AppLocalizationsAr extends AppLocalizations {
       'حدثت مشكلة مؤقتة أثناء إعداد الإشعارات.';
 
   @override
-  String get push_registration_health_retry => 'إعادة المحاولة';
+  String get push_registration_health_retry => 'إعادة محاولة إعداد الإشعارات';
 
   @override
   String get push_registration_health_open_notification_settings =>
@@ -4067,4 +4068,78 @@ class AppLocalizationsAr extends AppLocalizations {
   @override
   String get settings_call_privacy_save_failed =>
       'تعذّر حفظ اختيارك. يرجى المحاولة مجددًا.';
+
+  @override
+  String get voice_record_action => 'تسجيل رسالة صوتية';
+
+  @override
+  String get voice_record_hint => 'اضغط لبدء التسجيل';
+
+  @override
+  String get voice_cancel_start_action => 'إلغاء بدء التسجيل';
+
+  @override
+  String get voice_cancel_start_hint => 'اضغط لإلغاء بدء التسجيل';
+
+  @override
+  String get voice_stop_send_action => 'إيقاف التسجيل وإرسال الرسالة الصوتية';
+
+  @override
+  String get voice_stop_send_hint =>
+      'اضغط لإيقاف التسجيل وإرسال الرسالة الصوتية';
+
+  @override
+  String get voice_finishing_label => 'جارٍ إنهاء الرسالة الصوتية';
+
+  @override
+  String get voice_review_send_action => 'إرسال الرسالة الصوتية';
+
+  @override
+  String get voice_review_discard_action => 'حذف التسجيل';
+
+  @override
+  String get action_back => 'رجوع';
+
+  @override
+  String get action_contact_profile => 'عرض ملف جهة الاتصال';
+
+  @override
+  String get action_conversation_options => 'خيارات المحادثة';
+
+  @override
+  String get action_add_attachment => 'إضافة مرفق';
+
+  @override
+  String get action_send_message => 'إرسال رسالة';
+
+  @override
+  String get action_group_information => 'معلومات المجموعة';
+
+  @override
+  String get action_start_voice_call => 'بدء مكالمة صوتية';
+
+  @override
+  String get action_starting_voice_call => 'جارٍ بدء المكالمة الصوتية';
+
+  @override
+  String get voice_call_device_unavailable =>
+      'المكالمات الصوتية غير متاحة على هذا الجهاز';
+
+  @override
+  String get orbit_create_group_action => 'إنشاء مجموعة';
+
+  @override
+  String get orbit_close_create_menu_action => 'إغلاق قائمة الإنشاء';
+
+  @override
+  String get voice_call_unavailable => 'المكالمات الصوتية غير متاحة حاليًا';
+
+  @override
+  String get push_registration_health_retrying => 'جارٍ إعادة المحاولة…';
+
+  @override
+  String get orbit_loading_contacts => 'جارٍ تحميل جهات الاتصال…';
+
+  @override
+  String get media_loading => 'جارٍ تحميل الوسائط…';
 }

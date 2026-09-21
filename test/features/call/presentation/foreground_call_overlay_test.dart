@@ -961,7 +961,7 @@ void main() {
           'Start voice call',
           'Start voice recording',
           'Private conversation history',
-          'Retry',
+          'Retry notification setup',
         ];
         for (final label in backgroundLabels) {
           expect(find.semantics.byLabel(label), findsOneWidget);
@@ -1024,7 +1024,9 @@ void main() {
           expect(find.semantics.byLabel(label), findsOneWidget);
         }
         expect(warning, findsOneWidget);
-        tester.semantics.tap(find.semantics.byLabel('Retry'));
+        tester.semantics.tap(
+          find.semantics.byLabel('Retry notification setup'),
+        );
         await tester.pump();
         expect(retryCalls, 1);
         tester.semantics.tap(find.semantics.byLabel('Start voice recording'));

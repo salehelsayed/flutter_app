@@ -189,7 +189,7 @@ Future<int> retryIncompleteGroupUploads({
         }
         // Strict group custody owns its own immutable survivor rows. Re-enter
         // the automatic drain without resetting retry state or source paths.
-        return retryIncompleteGroupUploads(
+        return await retryIncompleteGroupUploads(
           groupRepo: groupRepo,
           groupMsgRepo: groupMsgRepo,
           mediaAttachmentRepo: mediaAttachmentRepo,

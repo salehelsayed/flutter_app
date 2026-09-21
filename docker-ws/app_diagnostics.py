@@ -110,6 +110,8 @@ def read_records(directory, now_ms, loss_samples=None, consume=None):
                 health['expiredRecords'] += 1
                 continue
             ordinary, finals = record.get('events', []), record.get('finals', {})
+            if ordinary is None:
+                ordinary = []  # Go nil slices serialize as null in final-only records.
             if not isinstance(ordinary, list) or not isinstance(finals, dict) or len(ordinary) > SCHEMA['limits']['serverTraceEvents'] or len(finals) > 32:
                 raise ValueError('event count')
             dropped = record.get('dropped', 0)

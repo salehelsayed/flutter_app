@@ -558,8 +558,9 @@ final class _Harness {
       onFailureObservation: (id, reason, disposition) {
         expect(id, this.callId);
         failureObservations.add((reason, disposition));
-        if (failureSinkThrows)
+        if (failureSinkThrows) {
           throw StateError('synthetic diagnostic sink failure');
+        }
       },
       engine: engine,
       materialStore: CallNegotiationMaterialStore(),

@@ -149,6 +149,7 @@ support_paths=(
   integration_test/scripts/run_production_audio_call_sims.dart
   integration_test/support/android_production_audio_call_evidence.dart
   lib/core/debug/android_production_audio_call_e2e.dart
+  lib/debug/notification_dual_path_e2e_sender.dart
   integration_test/scripts/run_direct_media_blob_custody_sims.dart
   integration_test/scripts/run_android_notification_recovery_completion_sims.dart
   integration_test/scripts/android_direct_media_blob_custody_campaign.dart
@@ -181,7 +182,7 @@ support_paths=(
   lib/core/debug/group_media_ios_disposable_profile.dart
   lib/core/debug/group_media_ios_disposable_reset.dart
   lib/core/debug/group_media_reliability_e2e.dart
-  lib/core/debug/group_media_reliability_e2e_main_actions.dart
+  lib/debug/group_media_reliability_e2e_main_actions.dart
   integration_test/scripts/validate_group_reaction_notification_artifacts.dart
   integration_test/group_notification_projection_android_proof_test.dart
   integration_test/group_muted_notification_proof_test.dart
@@ -376,24 +377,25 @@ jq -e '
 
 # The Plan 379 row stays at its ratcheted index because runtime-roots keyPaths
 # select capabilities by ARRAY INDEX. The call-proof and Plan 399 rows are
-# append-only after the Plan 393 suffix.
+# append-only after the Plan 393 suffix. The full-suite iOS group-media owner
+# appends after them without displacing any existing runtime-root index.
 jq -e '
   .capabilities[41].id == "groups.muted_notification_campaign" and
-  [.capabilities[-5].id, .capabilities[-4].id, .capabilities[-3].id, .capabilities[-2].id, .capabilities[-1].id] == [
+  [.capabilities[-6].id, .capabilities[-5].id, .capabilities[-4].id, .capabilities[-3].id, .capabilities[-2].id, .capabilities[-1].id] == [
     "notifications.android_typed_reaction_smoke",
     "groups.strict_notification_closure",
     "android.foreground_webrtc_audio",
     "build.android.e2e.production_call_local",
-    "android.production_1to1_audio_call"
+    "android.production_1to1_audio_call",
+    "groups.media_send_reliability_ios"
   ]
 ' \
   tool/sims/critical_features.json >/dev/null ||
   fail 'the ratcheted Plan 379/393 capability suffix drifted'
 
 # Plan 269 keeps one discoverable prepared-artifact runner with exactly two
-# independently listable target-bounded scenarios. The manifest owns only the
-# Android production-critical row; discovery must not create a second PASS
-# owner for either criteria/support helper.
+# independently listable target-bounded scenarios. Each platform has its own
+# manifest owner; discovery must not create a PASS owner for support helpers.
 group_media_runner=integration_test/scripts/run_group_media_send_reliability.dart
 assert_record_once group runner "$group_media_runner"
 for scenario in \
@@ -457,6 +459,21 @@ jq -e '
   .[0].artifactValidator == "validateGroupMediaReliabilityArtifact"
 ' tool/sims/critical_features.json >/dev/null ||
   fail 'Plan 269 manifest capability is incomplete or duplicated'
+
+jq -e '
+  [.capabilities[] | select(.id == "groups.media_send_reliability_ios")] |
+  length == 1 and
+  .[0].automationReady == true and
+  .[0].buildProfile == "ios.device.group_media_269" and
+  .[0].dependencies == ["build.ios.device.group_media_269", "build.android.e2e.group_media_269"] and
+  .[0].command == ["dart", "run", "integration_test/scripts/run_group_media_send_reliability.dart", "--scenario", "group_media_ios_receiver_background_recovery"] and
+  any(.[0].resources[]; .name == "build:ios.device.group_media_269" and .access == "read") and
+  any(.[0].resources[]; .name == "build:android.e2e.group_media_269" and .access == "read") and
+  any(.[0].resources[]; .name == "device:ios-physical" and .access == "exclusive") and
+  any(.[0].resources[]; .name == "device:android-physical" and .access == "exclusive") and
+  .[0].artifactValidator == "validateGroupMediaIosBackgroundRecoveryArtifact"
+' tool/sims/critical_features.json >/dev/null ||
+  fail 'Plan 269 iOS manifest capability is incomplete or duplicated'
 
 grep -Fq $'support\tsupport\tintegration_test/scripts/run_ios_notification_payload_sims.dart\ttyped notification facade/campaign: Android and prebuilt physical-iOS APNs/NSE campaigns are automation-ready; live iOS credentials and dedicated-device teardown remain typed BLOCKED prerequisites; manifest owns execution' \
   "$records" || fail 'iOS notification discovery note is stale or loses typed credential blocking'

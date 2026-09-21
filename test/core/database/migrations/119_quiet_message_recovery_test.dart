@@ -1,3 +1,5 @@
+// ignore_for_file: file_names
+
 import 'dart:io';
 
 import 'package:flutter_app/core/database/helpers/inbox_staging_db_helpers.dart';

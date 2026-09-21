@@ -96,7 +96,12 @@ class NavBarButton extends StatelessWidget {
           ),
         ),
         if (badgeCount > 0)
-          Positioned(top: -4, right: -2, child: _NavBadge(count: badgeCount)),
+          Positioned(
+            top: -4,
+            right: -2,
+            // Decorative count must not intercept the button beneath it.
+            child: IgnorePointer(child: _NavBadge(count: badgeCount)),
+          ),
       ],
     );
   }

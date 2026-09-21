@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/media/group_media_integrity_policy.dart';
 import 'package:flutter_app/core/media/group_media_size_policy.dart';
@@ -127,6 +128,106 @@ void main() {
     supportedLocales: AppLocalizations.supportedLocales,
     home: Scaffold(body: child),
   );
+
+  for (final light in [false, true]) {
+    testWidgets('UI25 08.2 loading label retains spinner and theme $light', (
+      tester,
+    ) async {
+      final colors = light
+          ? BackgroundReadableColors.representativeLight
+          : BackgroundReadableColors.dark;
+      await tester.pumpWidget(
+        MaterialApp(
+          locale: const Locale('en'),
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
+          theme: ThemeData(extensions: [colors]),
+          home: Scaffold(
+            body: SizedBox(
+              width: 160,
+              height: 160,
+              child: MediaGridCell(
+                attachment: _attachment(
+                  id: 'loading',
+                  mime: 'image/jpeg',
+                  mediaType: 'image',
+                  downloadStatus: 'pending',
+                  localPath: null,
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      final text = tester.widget<Text>(find.text('Loading media…'));
+      expect(text.style!.fontSize, 12);
+      expect(text.style!.color, colors.textMuted);
+      final spinner = tester.widget<CircularProgressIndicator>(
+        find.byType(CircularProgressIndicator),
+      );
+      expect(spinner.color, const Color(0xFF4ecdc4));
+      expect(spinner.strokeWidth, 2);
+      expect(
+        tester.getSize(find.byType(CircularProgressIndicator)),
+        const Size(20, 20),
+      );
+      expect(tester.takeException(), isNull);
+    });
+    testWidgets(
+      'UI25 08.3 visible retry retains complete accessible name $light',
+      (tester) async {
+        final semantics = tester.ensureSemantics();
+
+        final colors = light
+            ? BackgroundReadableColors.representativeLight
+            : BackgroundReadableColors.dark;
+        var retries = 0;
+        await tester.pumpWidget(
+          MaterialApp(
+            locale: const Locale('en'),
+            localizationsDelegates: AppLocalizations.localizationsDelegates,
+            supportedLocales: AppLocalizations.supportedLocales,
+            theme: ThemeData(extensions: [colors]),
+            home: Scaffold(
+              body: SizedBox(
+                width: 180,
+                height: 180,
+                child: MediaGridCell(
+                  attachment: _attachment(
+                    id: 'retry',
+                    mime: 'image/jpeg',
+                    mediaType: 'image',
+                    downloadStatus: 'failed',
+                    localPath: null,
+                  ),
+                  onRetryUnavailableMedia: () => retries++,
+                ),
+              ),
+            ),
+          ),
+        );
+        expect(find.text('Retry'), findsOneWidget);
+        expect(
+          tester.widget<Text>(find.text('Media unavailable')).style!.color,
+          colors.textSecondary,
+        );
+        expect(
+          tester.widget<Icon>(find.byIcon(Icons.broken_image_outlined)).color,
+          colors.iconMuted,
+        );
+        expect(
+          find.semantics.byLabel('Retry unavailable media'),
+          findsOneWidget,
+        );
+        await tester.tap(find.text('Retry'));
+        expect(retries, 1);
+        tester.semantics.tap(find.semantics.byLabel('Retry unavailable media'));
+        expect(retries, 2);
+        semantics.dispose();
+        expect(tester.takeException(), isNull);
+      },
+    );
+  }
 
   testWidgets(
     '127 round-3: own-sent media with a RELATIVE localPath renders (resolved at '
@@ -430,39 +531,40 @@ void main() {
     expect(find.text('GIF'), findsNothing);
   });
 
-  testWidgets('renders upload_pending media as waiting without an active spinner', (
-    tester,
-  ) async {
-    await tester.pumpWidget(
-      wrap(
-        SizedBox(
-          width: 180,
-          height: 180,
-          child: MediaGridCell(
-            attachment: _attachment(
-              id: 'pending-upload',
-              mime: 'image/jpeg',
-              mediaType: 'image',
-              downloadStatus: 'upload_pending',
-              localPath: jpgFile.path,
-              size: 0,
+  testWidgets(
+    'renders upload_pending media as waiting without an active spinner',
+    (tester) async {
+      await tester.pumpWidget(
+        wrap(
+          SizedBox(
+            width: 180,
+            height: 180,
+            child: MediaGridCell(
+              attachment: _attachment(
+                id: 'pending-upload',
+                mime: 'image/jpeg',
+                mediaType: 'image',
+                downloadStatus: 'upload_pending',
+                localPath: jpgFile.path,
+                size: 0,
+              ),
             ),
           ),
         ),
-      ),
-    );
-    await tester.pump();
+      );
+      await tester.pump();
 
-    expect(find.text('Media pending upload'), findsOneWidget);
-    expect(find.text('Uploading media'), findsNothing);
-    expect(find.byType(CircularProgressIndicator), findsNothing);
-    expect(find.byIcon(Icons.schedule_rounded), findsOneWidget);
-    expect(
-      find.text('Recipients will receive this after the upload finishes.'),
-      findsOneWidget,
-    );
-    expect(find.byIcon(Icons.broken_image_outlined), findsNothing);
-  });
+      expect(find.text('Media pending upload'), findsOneWidget);
+      expect(find.text('Uploading media'), findsNothing);
+      expect(find.byType(CircularProgressIndicator), findsNothing);
+      expect(find.byIcon(Icons.schedule_rounded), findsOneWidget);
+      expect(
+        find.text('Recipients will receive this after the upload finishes.'),
+        findsOneWidget,
+      );
+      expect(find.byIcon(Icons.broken_image_outlined), findsNothing);
+    },
+  );
 
   testWidgets('renders failed placeholder for legacy invalid done media', (
     tester,
@@ -1088,40 +1190,37 @@ void main() {
     },
   );
 
-  testWidgets(
-    '143: done image cell passes a non-null sized placeholder to '
-    'MediaThumbnailImage (wiring lock)',
-    (tester) async {
-      // Preservation lock for the empty-while-decoding fix: that fix renders
-      // `MediaThumbnailImage.placeholder` during image decode, so the cell MUST
-      // keep supplying a non-null sized placeholder for done image cells. If a
-      // future change nulled it, the fix would render SizedBox.shrink (empty)
-      // again — this test fails first.
-      await tester.pumpWidget(
-        wrap(
-          SizedBox(
-            width: 120,
-            height: 120,
-            child: MediaGridCell(
-              attachment: _attachment(
-                id: 'img-ph-wiring',
-                mime: 'image/jpeg',
-                mediaType: 'image',
-                downloadStatus: 'done',
-                localPath: jpgFile.path,
-              ),
+  testWidgets('143: done image cell passes a non-null sized placeholder to '
+      'MediaThumbnailImage (wiring lock)', (tester) async {
+    // Preservation lock for the empty-while-decoding fix: that fix renders
+    // `MediaThumbnailImage.placeholder` during image decode, so the cell MUST
+    // keep supplying a non-null sized placeholder for done image cells. If a
+    // future change nulled it, the fix would render SizedBox.shrink (empty)
+    // again — this test fails first.
+    await tester.pumpWidget(
+      wrap(
+        SizedBox(
+          width: 120,
+          height: 120,
+          child: MediaGridCell(
+            attachment: _attachment(
+              id: 'img-ph-wiring',
+              mime: 'image/jpeg',
+              mediaType: 'image',
+              downloadStatus: 'done',
+              localPath: jpgFile.path,
             ),
           ),
         ),
-      );
-      await tester.pump();
+      ),
+    );
+    await tester.pump();
 
-      final mti = tester.widget<MediaThumbnailImage>(
-        find.byType(MediaThumbnailImage),
-      );
-      expect(mti.placeholder, isNotNull);
-    },
-  );
+    final mti = tester.widget<MediaThumbnailImage>(
+      find.byType(MediaThumbnailImage),
+    );
+    expect(mti.placeholder, isNotNull);
+  });
 
   testWidgets(
     '229: evicted image video and file show removed state and explicit retry',
@@ -1152,10 +1251,16 @@ void main() {
 
         // Truthful removed state — never an indefinite loader, never the
         // generic unavailable copy.
-        expect(find.text('Local copy removed'), findsOneWidget,
-            reason: '${spec.mediaType} must render the removed state');
-        expect(find.byType(CircularProgressIndicator), findsNothing,
-            reason: '${spec.mediaType} must not render as loading');
+        expect(
+          find.text('Local copy removed'),
+          findsOneWidget,
+          reason: '${spec.mediaType} must render the removed state',
+        );
+        expect(
+          find.byType(CircularProgressIndicator),
+          findsNothing,
+          reason: '${spec.mediaType} must not render as loading',
+        );
         expect(find.text('Media unavailable'), findsNothing);
 
         // Explicit, user-authoritative Retry (not budget-gated).
@@ -1164,8 +1269,11 @@ void main() {
         expect(retryCount, 0, reason: 'build must never dispatch a retry');
         await tester.tap(find.byKey(retryKey));
         await tester.pump();
-        expect(retryCount, 1,
-            reason: '${spec.mediaType} retry fires exactly once per tap');
+        expect(
+          retryCount,
+          1,
+          reason: '${spec.mediaType} retry fires exactly once per tap',
+        );
       }
 
       // Without a retry callback the removed state stays truthful but

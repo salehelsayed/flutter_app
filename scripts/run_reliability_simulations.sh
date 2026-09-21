@@ -7,6 +7,7 @@ cd "$ROOT_DIR"
 
 CHECKER="$ROOT_DIR/scripts/check_reliability_simulation_discovery.sh"
 
+original_args=("$@")
 scope="all"
 dry_run=0
 continue_on_failure=0
@@ -139,6 +140,10 @@ while (($# > 0)); do
       ;;
   esac
 done
+
+if [ "$dry_run" -eq 0 ] && [ -n "${SIMS_PROTECTED_DEVICE_ASSIGNMENTS_JSON:-}" ]; then
+  exec python3 scripts/legacy_target_contracts.py reliability "${original_args[@]}"
+fi
 
 if [ "$simultaneous" -eq 1 ] &&
    ! [[ "$max_parallel" =~ ^([1-9]|[1-5][0-9]|6[0-4])$ ]]; then

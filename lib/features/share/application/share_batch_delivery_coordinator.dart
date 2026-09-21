@@ -1430,7 +1430,7 @@ class DefaultShareBatchDeliveryCoordinator
           );
           final sender = sendToGroupFn;
           if (sender == null) {
-            return _sendToGroup(
+            return await _sendToGroup(
               identity: identity,
               shareIntent: targetIntent,
               group: current,

@@ -240,9 +240,13 @@ Future<void> main(List<String> arguments) async {
         blockPreparationRequired: false,
       );
     }
-    if (_hasSymbolicDeviceResources(plan)) {
+    if (_hasSymbolicDeviceResources(plan) ||
+        Platform.environment.containsKey('SIMS_PROTECTED_DEVICE_ASSIGNMENTS_JSON')) {
       final unresolvedPlan = plan;
-      var inventory = discoveredInventory!;
+      var inventory = discoveredInventory ?? SimsLiveDeviceInventory(
+        targets: const <SimsLiveDeviceTarget>[],
+        sourceResults: const <SimsDiscoverySourceResult>[],
+      );
       deviceBinding = SimsDevicePlanBinding.bind(
         unresolvedPlan,
         inventory,

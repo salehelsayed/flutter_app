@@ -211,7 +211,7 @@ Future<bool> ensurePostRecipientDirectConnection({
       );
       return false;
     }
-    return _dialDiscoveredPostRecipient(
+    return await _dialDiscoveredPostRecipient(
       p2pService: p2pService,
       recipientPeerId: recipientPeerId,
       discoveredPeer: discoveredPeer,

@@ -54,13 +54,16 @@ FLUTTER_DEVICE_ID=macos ./scripts/run_test_gates.sh transport
 ```
 
 Current Plan-258 status: the orchestration/cache/scheduler/device-resolution
-stack and all active campaign drivers are implemented. The logical `major`
-plan has 26 active rows, six declared reusable device build profiles, and 11
-device/campaign consumers. Live preflight—not missing-driver placeholders—now
-decides whether each campaign can run: absent policy-bounded topology is `N/A`,
-while missing provider, relay, signing, staging, or disposable-iOS-receiver
-attestation is `BLOCKED`. Android campaigns restore the exact pre-run APK,
-private app data, permissions, process, and relevant OS state before PASS. The
+stack and all active campaign drivers are implemented. Counts move with the
+manifest, so `./scripts/run_test_gates.sh sims major --list` is authoritative;
+as of 2026-09-20 the logical `major` plan has 43 rows — 11 build-preparation
+rows, 21 device/campaign rows, and 11 host/static rows — over eleven declared
+reusable device build profiles (`full` has 32 rows, `smoke` has 3). Live
+preflight—not missing-driver placeholders—now decides whether each campaign
+can run: absent policy-bounded topology is `N/A`, while missing provider,
+relay, signing, staging, or disposable-iOS-receiver attestation is `BLOCKED`.
+Android campaigns restore the exact pre-run APK, private app data,
+permissions, process, and relevant OS state before PASS. The
 Android recorder and performance campaign reuse the centrally prepared
 `android.e2e.standard` APK through an acknowledged runtime tuple; performance
 keeps four strict budgets: FEED average build `<8 ms`, FEED build p99 `<24 ms`,
@@ -102,7 +105,7 @@ flutter test -d <device-id> <integration_test-file>
 
 | Area / Journey | First Thing To Run | Then Run When Needed | Notes |
 |---|---|---|---|
-| Major-update / release confidence | `$sims` or `./scripts/run_test_gates.sh sims major --list` | Execute the unfiltered `major`; `--simultaneous` may reduce safe wall time; after an authorized `--fix-as-you-go` / `--only <stable-id>` / `--resume` loop, run one separate clean `major` | `major` is capability-deduplicated and typed. Only `PASS` or a policy-valid unavailable-target `N/A` satisfies a mandatory row. `full`, `smoke`, filtered, continued, retried, and resumed runs are diagnostic, not release green. Six reusable device profiles serve 11 active device/campaign rows; compatible consumers share their central artifact and no child runner may rebuild. Live targets, credentials/configuration, state-safety policy, and cache contents decide actual builds and verdicts, so the report is authoritative. All active rows have automated drivers; configuration or target blockers remain visible rather than becoming a false PASS. |
+| Major-update / release confidence | `$sims` or `./scripts/run_test_gates.sh sims major --list` | Execute the unfiltered `major`; `--simultaneous` may reduce safe wall time; after an authorized `--fix-as-you-go` / `--only <stable-id>` / `--resume` loop, run one separate clean `major` | `major` is capability-deduplicated and typed. Only `PASS` or a policy-valid unavailable-target `N/A` satisfies a mandatory row. `full`, `smoke`, filtered, continued, retried, and resumed runs are diagnostic, not release green. Eleven reusable device profiles serve 21 active device/campaign rows (counts as of 2026-09-20; `--list` is authoritative); compatible consumers share their central artifact and no child runner may rebuild. Live targets, credentials/configuration, state-safety policy, and cache contents decide actual builds and verdicts, so the report is authoritative. All active rows have automated drivers; configuration or target blockers remain visible rather than becoming a false PASS. |
 | Startup / bootstrap | `./scripts/run_test_gates.sh baseline` | `FLUTTER_DEVICE_ID=macos ./scripts/run_test_gates.sh transport` | Baseline catches routing/loading breakage; transport gate catches real reconnect/fallback seams |
 | Contact bootstrap / QR | `./scripts/run_test_gates.sh baseline` | `flutter test --no-pub test/features/contact_request/integration/contact_request_flow_test.dart` | Use the direct contact flow when request acceptance or key-exchange behavior changes |
 | 1:1 text / media / voice reliability | `./scripts/run_test_gates.sh 1to1` | direct files under `test/features/conversation/integration/` as needed | This is the main shared-pipeline gate; production messaging bugs should usually add a permanent regression here or beside it |

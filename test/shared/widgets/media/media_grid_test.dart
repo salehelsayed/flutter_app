@@ -2,6 +2,9 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
+import 'package:flutter_app/core/theme/background_readable_colors.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/media/video_thumbnail_cache.dart';
 import 'package:flutter_app/shared/widgets/media/media_grid.dart';
@@ -122,9 +125,172 @@ void main() {
     }
   });
 
-  Widget wrap(Widget child) => MaterialApp(home: Scaffold(body: child));
+  Widget wrap(Widget child) => MaterialApp(
+    locale: const Locale('en'),
+    localizationsDelegates: AppLocalizations.localizationsDelegates,
+    supportedLocales: AppLocalizations.supportedLocales,
+    home: Scaffold(body: child),
+  );
 
   group('MediaGrid', () {
+    for (final locale in ['en', 'de', 'ar']) {
+      for (final width in [320.0, 360.0]) {
+        for (final brightness in Brightness.values) {
+          testWidgets(
+            'R1 full grid retry $locale ${width.toInt()} $brightness at 2x',
+            (tester) async {
+              final semantics = tester.ensureSemantics();
+              try {
+                final retried = <String>[];
+                final opened = <int>[];
+                await tester.pumpWidget(
+                  MaterialApp(
+                    locale: Locale(locale),
+                    localizationsDelegates:
+                        AppLocalizations.localizationsDelegates,
+                    supportedLocales: AppLocalizations.supportedLocales,
+                    theme: ThemeData(
+                      brightness: brightness,
+                      extensions: [
+                        brightness == Brightness.light
+                            ? BackgroundReadableColors.representativeLight
+                            : BackgroundReadableColors.dark,
+                      ],
+                    ),
+                    home: Scaffold(
+                      body: MediaQuery(
+                        data: const MediaQueryData(
+                          textScaler: TextScaler.linear(2),
+                        ),
+                        child: Center(
+                          child: SizedBox(
+                            width: width,
+                            child: MediaGrid(
+                              media: List.generate(
+                                2,
+                                (i) => _makeMedia(
+                                  i,
+                                ).copyWith(downloadStatus: 'failed'),
+                              ),
+                              onTap: opened.add,
+                              onRetryUnavailableMedia: (item) =>
+                                  retried.add(item.id),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                );
+                expect(tester.takeException(), isNull);
+                final l10n = AppLocalizations.of(
+                  tester.element(find.byType(MediaGrid)),
+                )!;
+                expect(find.text(l10n.btn_retry), findsNWidgets(2));
+                expect(
+                  find.semantics.byLabel(l10n.media_retry_unavailable),
+                  findsNWidgets(2),
+                );
+                expect(
+                  retried,
+                  isEmpty,
+                  reason: 'build never dispatches retry',
+                );
+                for (var i = 0; i < 2; i++) {
+                  final tile = find.byKey(
+                    ValueKey('media-grid-cell-msg-1-media-$i'),
+                  );
+                  final button = find.byKey(
+                    ValueKey('unavailable-media-retry-msg-1-media-$i'),
+                  );
+                  final label = find.descendant(
+                    of: button,
+                    matching: find.text(l10n.btn_retry),
+                  );
+                  final tileRect = tester.getRect(tile);
+                  final buttonRect = tester.getRect(button);
+                  expect(tileRect.width, closeTo((width - 3) / 2, 0.01));
+                  expect(tileRect.height, tileRect.width);
+                  expect(buttonRect.width, greaterThanOrEqualTo(48));
+                  expect(buttonRect.height, greaterThanOrEqualTo(48));
+                  expect(tileRect.intersect(buttonRect), buttonRect);
+                  final paragraph = tester.renderObject<RenderParagraph>(label);
+                  expect(paragraph.text.toPlainText(), l10n.btn_retry);
+                  expect(paragraph.didExceedMaxLines, isFalse);
+                  expect(paragraph.maxLines, isNull);
+                  expect(paragraph.textScaler.scale(14), 28);
+                  expect(paragraph.text.style!.fontSize, 14);
+                  // Every glyph must be laid out and painted inside the action
+                  // and tile. A passing RenderFlex assertion alone misses clips.
+                  final paragraphRect = tester.getRect(label);
+                  expect(buttonRect.intersect(paragraphRect), paragraphRect);
+                  for (var char = 0; char < l10n.btn_retry.length; char++) {
+                    if (l10n.btn_retry[char] == ' ') continue;
+                    final boxes = paragraph.getBoxesForSelection(
+                      TextSelection(baseOffset: char, extentOffset: char + 1),
+                    );
+                    expect(boxes, isNotEmpty);
+                    for (final box in boxes) {
+                      final rect = box.toRect().shift(
+                        paragraph.localToGlobal(Offset.zero),
+                      );
+                      expect(
+                        paragraphRect.inflate(0.01).contains(rect.topLeft),
+                        isTrue,
+                      );
+                      expect(
+                        paragraphRect.inflate(0.01).contains(rect.bottomRight),
+                        isTrue,
+                      );
+                      expect(
+                        buttonRect.inflate(0.01).contains(rect.topLeft),
+                        isTrue,
+                      );
+                      expect(
+                        buttonRect.inflate(0.01).contains(rect.bottomRight),
+                        isTrue,
+                      );
+                    }
+                  }
+                  final node = tester.getSemantics(button);
+                  expect(node.label, l10n.media_retry_unavailable);
+                  expect(
+                    node.getSemanticsData().hasAction(SemanticsAction.tap),
+                    isTrue,
+                  );
+                  expect(
+                    node.getSemanticsData().flagsCollection.isButton,
+                    isTrue,
+                  );
+                  await tester.tap(label);
+                  expect(
+                    retried,
+                    List.generate(i * 3 + 1, (n) => 'media-${n ~/ 3}'),
+                  );
+                  // The target's edge must also hit this action, not its neighbor.
+                  await tester.tapAt(
+                    buttonRect.centerLeft + const Offset(4, 0),
+                  );
+                  tester.semantics.tap(
+                    find.semantics.byLabel(l10n.media_retry_unavailable).at(i),
+                  );
+                  expect(
+                    retried,
+                    List.generate((i + 1) * 3, (n) => 'media-${n ~/ 3}'),
+                  );
+                  expect(opened, isEmpty);
+                  await tester.pump();
+                  expect(tester.takeException(), isNull);
+                }
+              } finally {
+                semantics.dispose();
+              }
+            },
+          );
+        }
+      }
+    }
+
     testWidgets('renders single item with 4:3 AspectRatio', (tester) async {
       await tester.pumpWidget(wrap(MediaGrid(media: [_makeMedia(0)])));
       expect(find.byType(AspectRatio), findsOneWidget);

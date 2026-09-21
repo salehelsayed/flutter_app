@@ -1295,7 +1295,8 @@ class AppLocalizationsEn extends AppLocalizations {
   String get settings_media_network_all => 'Wi-Fi + cellular';
 
   @override
-  String get settings_media_save_fail => 'Couldn\'t save. Try again.';
+  String get settings_media_save_fail =>
+      'Couldn\'t save. Previous settings restored. Try again.';
 
   @override
   String get settings_media_storage_usage => 'Storage usage';
@@ -3700,7 +3701,7 @@ class AppLocalizationsEn extends AppLocalizations {
       'Notification setup hit a temporary problem.';
 
   @override
-  String get push_registration_health_retry => 'Retry';
+  String get push_registration_health_retry => 'Retry notification setup';
 
   @override
   String get push_registration_health_open_notification_settings =>
@@ -3999,4 +4000,78 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String get settings_call_privacy_save_failed =>
       'Could not save your choice. Please try again.';
+
+  @override
+  String get voice_record_action => 'Record voice message';
+
+  @override
+  String get voice_record_hint => 'Tap to start recording';
+
+  @override
+  String get voice_cancel_start_action => 'Cancel recording start';
+
+  @override
+  String get voice_cancel_start_hint => 'Tap to cancel starting the recording';
+
+  @override
+  String get voice_stop_send_action => 'Stop and send voice message';
+
+  @override
+  String get voice_stop_send_hint =>
+      'Tap to stop recording and send the voice message';
+
+  @override
+  String get voice_finishing_label => 'Finishing voice message';
+
+  @override
+  String get voice_review_send_action => 'Send voice message';
+
+  @override
+  String get voice_review_discard_action => 'Discard recording';
+
+  @override
+  String get action_back => 'Back';
+
+  @override
+  String get action_contact_profile => 'View contact profile';
+
+  @override
+  String get action_conversation_options => 'Conversation options';
+
+  @override
+  String get action_add_attachment => 'Add attachment';
+
+  @override
+  String get action_send_message => 'Send message';
+
+  @override
+  String get action_group_information => 'Group information';
+
+  @override
+  String get action_start_voice_call => 'Start voice call';
+
+  @override
+  String get action_starting_voice_call => 'Starting voice call';
+
+  @override
+  String get voice_call_device_unavailable =>
+      'Voice calling is unavailable for this device';
+
+  @override
+  String get orbit_create_group_action => 'Create group';
+
+  @override
+  String get orbit_close_create_menu_action => 'Close create menu';
+
+  @override
+  String get voice_call_unavailable => 'Voice calling is unavailable right now';
+
+  @override
+  String get push_registration_health_retrying => 'Trying again…';
+
+  @override
+  String get orbit_loading_contacts => 'Loading contacts…';
+
+  @override
+  String get media_loading => 'Loading media…';
 }

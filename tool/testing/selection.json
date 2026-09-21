@@ -620,10 +620,16 @@
         "scripts/test/mknoon_checks_test.py",
         "scripts/test/testing_inventory_test.py",
         "scripts/test/mknoon_ci_checks_test.py",
-        "scripts/test/device_campaign_preflight_test.py"
+        "scripts/test/device_campaign_preflight_test.py",
+        "scripts/test/mknoon_full_checks_test.py",
+        "scripts/test/full_suite_adapters_test.py",
+        "scripts/test/mknoon_full_review_regression_test.py",
+        "scripts/test/mknoon_full_composition_test.py",
+        "scripts/test/mknoon_full_legacy_binding_test.py",
+        "scripts/test/mknoon_full_benchmark_boundary_test.py"
       ],
       "boundary": "Selector, inventory, runner safety and candidate-bound CI acceptance contracts",
-      "timeout_seconds": 120,
+      "timeout_seconds": 180,
       "estimated_seconds": 7,
       "requirements": [
         "python3"
@@ -631,7 +637,8 @@
       "investigate": [
         "scripts/mknoon_checks.py",
         "scripts/testing_inventory.py",
-        "scripts/device_campaign_preflight.py"
+        "scripts/device_campaign_preflight.py",
+        "scripts/full_suite_adapters.py"
       ],
       "runtime_basis": {
         "kind": "measured",
@@ -640,7 +647,10 @@
         "source_sha256": "531120e4323b7346d0e6d48a97c31da476046c2619c9b6cd40e6f7eadb956e4a",
         "evidence": ".codex-test-logs/workflow-compatible-host/results.json",
         "environment": "macOS ARM64, Flutter 3.47.2; warm resolved packages; host only"
-      }
+      },
+      "resources": [
+        "isolated:workflow"
+      ]
     },
     "provider-schema": {
       "kind": "node",
@@ -663,7 +673,10 @@
         "source_sha256": "531120e4323b7346d0e6d48a97c31da476046c2619c9b6cd40e6f7eadb956e4a",
         "evidence": ".codex-test-logs/workflow-compatible-host/results.json",
         "environment": "macOS ARM64, Flutter 3.47.2; warm resolved packages; host only"
-      }
+      },
+      "resources": [
+        "isolated:provider-schema"
+      ]
     },
     "diagnostics-python": {
       "kind": "python",
@@ -1101,7 +1114,7 @@
         "flutter"
       ],
       "investigate": [
-        "lib/core/debug/group_media_reliability_e2e_main_actions.dart",
+        "lib/debug/group_media_reliability_e2e_main_actions.dart",
         "lib/core/debug/group_media_reliability_authority_target.dart",
         "lib/core/database/app_database_version.dart",
         "integration_test/scripts/android_group_media_reliability_controller.dart",
@@ -1588,8 +1601,113 @@
       "investigate": [
         "integration_test/scripts/notification_android_payload_campaign.dart",
         "integration_test/support/android_notification_payload_campaign.dart",
-        "lib/core/debug/notification_dual_path_e2e_sender.dart",
+        "lib/debug/notification_dual_path_e2e_sender.dart",
         "lib/core/debug/intro_e2e_runner.dart"
+      ],
+      "inspected": true
+    },
+    "ui-tap-gestures": {
+      "kind": "flutter",
+      "paths": [
+        "test/features/orbit/presentation/widgets/orbital_visualization_test.dart",
+        "test/features/orbit/presentation/widgets/orbital_avatar_test.dart",
+        "test/features/orbit/presentation/widgets/orbital_arcs_test.dart",
+        "test/features/orbit/presentation/widgets/swipeable_friend_row_test.dart",
+        "test/features/feed/presentation/widgets/nav_bar_button_test.dart",
+        "test/features/feed/presentation/widgets/swipe_to_quote_bubble_test.dart",
+        "test/features/conversation/presentation/widgets/voice_record_button_test.dart",
+        "test/features/conversation/presentation/widgets/compose_area_test.dart",
+        "test/features/conversation/presentation/screens/conversation_screen_test.dart",
+        "test/features/groups/presentation/group_conversation_screen_test.dart",
+        "test/features/groups/presentation/contact_picker_screen_test.dart",
+        "test/features/groups/presentation/create_group_picker_screen_test.dart",
+        "test/features/introduction/presentation/screens/friend_picker_test.dart",
+        "test/shared/widgets/media/waveform_seek_bar_test.dart"
+      ],
+      "boundary": "Exact entity after Orbit/picker replacement; Orbit center/edge/halo and animated probes; recording primary-pointer arbitration and cancellation; navigation badge pass-through; slow reply swipe in direct/group consumers; waveform seek only on a recognized tap",
+      "limitations": "Deterministic Flutter host input and fake callbacks; no installed native build, screen-reader, device ergonomics or actual message/call delivery proof",
+      "timeout_seconds": 900,
+      "estimated_seconds": null,
+      "requirements": [
+        "flutter"
+      ],
+      "inspected": true
+    },
+    "ui-action-discoverability": {
+      "kind": "flutter",
+      "paths": [
+        "test/features/conversation/presentation/widgets/action_discoverability_test.dart",
+        "test/features/conversation/presentation/widgets/compose_area_test.dart",
+        "test/features/conversation/presentation/widgets/voice_record_button_test.dart",
+        "test/features/conversation/presentation/widgets/voice_record_button_tone_test.dart",
+        "test/features/conversation/presentation/widgets/conversation_header_test.dart",
+        "test/features/groups/presentation/widgets/expandable_fab_test.dart",
+        "test/features/groups/presentation/widgets/expandable_fab_tone_test.dart",
+        "test/integration/group_reaction_notification_device_criteria_test.dart"
+      ],
+      "boundary": "Localized recording phases and bounded existing actions retain a single semantic activation, availability and gesture contracts; Orbit spoken labels are separate from its stable automation identifier",
+      "limitations": "Host widget semantics and locator parsing only; native identifier exposure, screen-reader focus and installed rendering require separate device evidence",
+      "timeout_seconds": 900,
+      "estimated_seconds": null,
+      "requirements": [
+        "flutter"
+      ],
+      "inspected": true
+    },
+    "ui-approved-recovery-readability": {
+      "kind": "flutter",
+      "paths": [
+        "test/features/push/presentation/push_registration_health_surface_test.dart",
+        "test/features/push/application/push_registration_coordinator_test.dart",
+        "test/features/orbit/presentation/screens/orbit_screen_loading_test.dart",
+        "test/features/orbit/presentation/widgets/friend_row_test.dart",
+        "test/features/orbit/presentation/widgets/group_row_bidi_test.dart",
+        "test/features/orbit/presentation/widgets/group_row_stuck_rejoin_test.dart",
+        "test/features/orbit/presentation/widgets/swipeable_friend_row_test.dart",
+        "test/features/orbit/presentation/widgets/swipeable_group_row_test.dart",
+        "test/features/settings/presentation/widgets/ui25_settings_readability_test.dart",
+        "test/features/settings/presentation/screens/settings_wired_test.dart",
+        "test/features/settings/presentation/screens/settings_sub_sheets_test.dart",
+        "test/features/settings/domain/models/media_download_preferences_test.dart",
+        "test/features/settings/application/media_download_policy_test.dart",
+        "test/shared/widgets/media/media_grid_cell_test.dart",
+        "test/shared/widgets/media/media_grid_test.dart",
+        "test/features/call/presentation/foreground_call_overlay_test.dart"
+      ],
+      "boundary": "UI-25 approved notification retry settlement and duplicate activation, genuine Orbit loading placement, friend/group spacing, Settings subtitle and localized network choices, persisted rollback, media state/retry policy and readable roles",
+      "limitations": "Host widget/state and persistence doubles; native rendering, OS interaction, screen readers and installed candidate remain separate proof",
+      "timeout_seconds": 900,
+      "estimated_seconds": null,
+      "requirements": [
+        "flutter"
+      ],
+      "inspected": true
+    },
+    "debug-composition-boundaries": {
+      "kind": "flutter",
+      "paths": [
+        "test/unit/architecture_boundary_checker_test.dart",
+        "test/unit/dtr18_layering_relocation_contract_test.dart",
+        "test/unit/dtr18_placement_closure_contract_test.dart",
+        "test/core/debug/debug_e2e_composition_root_test.dart",
+        "test/core/debug/group_media_reliability_sender_test.dart",
+        "test/core/debug/group_notification_projection_e2e_test.dart",
+        "test/core/debug/group_media_reliability_e2e_test.dart",
+        "test/core/debug/notification_dual_path_e2e_sender_test.dart",
+        "test/core/debug/intro_e2e_runner_notification_dual_path_test.dart",
+        "test/features/groups/application/group_message_listener_decomposition_contract_test.dart",
+        "test/core/services/p2p_service_impl_composition_contract_test.dart"
+      ],
+      "boundary": "Exact architecture exception ratchet and debug composition relocation preserve group-media and dual-path notification behavior.",
+      "limitations": "Host fixtures establish composition and source boundaries; live delivery requires its separate device campaign.",
+      "timeout_seconds": 900,
+      "estimated_seconds": null,
+      "requirements": [
+        "flutter"
+      ],
+      "investigate": [
+        "lib/debug/",
+        "tool/architecture_guard/"
       ],
       "inspected": true
     }
@@ -1875,7 +1993,16 @@
         ".gitignore",
         "scripts/test/mknoon_ci_checks_test.py",
         "scripts/device_campaign_preflight.py",
-        "scripts/test/device_campaign_preflight_test.py"
+        "scripts/test/device_campaign_preflight_test.py",
+        "scripts/test/mknoon_full_checks_test.py",
+        "scripts/full_suite_adapters.py",
+        "scripts/test/full_suite_adapters_test.py",
+        "scripts/test/mknoon_full_review_regression_test.py",
+        "scripts/test/mknoon_full_composition_test.py",
+        "scripts/legacy_target_contracts.py",
+        "tool/testing/legacy_target_contracts.json",
+        "scripts/test/mknoon_full_legacy_binding_test.py",
+        "scripts/test/mknoon_full_benchmark_boundary_test.py"
       ],
       "checks": [
         "workflow",
@@ -2043,7 +2170,7 @@
     {
       "id": "group-media-schema-harness",
       "patterns": [
-        "lib/core/debug/group_media_reliability_e2e_main_actions.dart",
+        "lib/debug/group_media_reliability_e2e_main_actions.dart",
         "lib/core/debug/group_media_reliability_authority_target.dart",
         "lib/core/database/app_database_version.dart",
         "integration_test/scripts/android_group_media_reliability_controller.dart",
@@ -2111,7 +2238,10 @@
         "scripts/test/mknoon_checks_test.py",
         "scripts/test/mknoon_ci_checks_test.py",
         "scripts/test/testing_inventory_test.py",
-        "scripts/test/device_campaign_preflight_test.py"
+        "scripts/test/device_campaign_preflight_test.py",
+        "scripts/test/mknoon_full_checks_test.py",
+        "scripts/test/mknoon_full_review_regression_test.py",
+        "scripts/test/mknoon_full_composition_test.py"
       ]
     },
     {
@@ -2589,7 +2719,7 @@
         "integration_test/support/android_notification_payload_campaign.dart",
         "lib/core/debug/android_notification_payload_e2e.dart",
         "lib/core/debug/android_notification_payload_e2e_protocol.dart",
-        "lib/core/debug/notification_dual_path_e2e_sender.dart",
+        "lib/debug/notification_dual_path_e2e_sender.dart",
         "lib/core/debug/intro_e2e_runner.dart",
         "test/integration/android_notification_payload_campaign_support_test.dart",
         "test/integration/notification_dual_path_campaign_ordering_test.dart",
@@ -2606,6 +2736,131 @@
         "device-notifications-android"
       ],
       "why": "Notification fixture changes must preserve actual authenticated provider/live dispatch ordering, one-use operation authority, failure retirement and existing alert/custody oracles; host passes do not certify the installed device campaign."
+    },
+    {
+      "id": "ui-tap-gestures",
+      "patterns": [
+        "lib/features/orbit/presentation/widgets/orbital_avatar.dart",
+        "lib/features/orbit/presentation/widgets/orbital_visualization.dart",
+        "lib/features/feed/presentation/widgets/nav_bar_button.dart",
+        "lib/features/feed/presentation/widgets/swipe_to_quote_bubble.dart",
+        "lib/features/conversation/presentation/widgets/voice_record_button.dart",
+        "lib/features/conversation/presentation/widgets/compose_area.dart",
+        "lib/features/groups/presentation/screens/contact_picker_screen.dart",
+        "lib/features/groups/presentation/screens/create_group_picker_screen.dart",
+        "lib/features/introduction/presentation/screens/friend_picker_screen.dart",
+        "lib/shared/widgets/media/waveform_seek_bar.dart",
+        "test/features/orbit/presentation/widgets/orbital_visualization_test.dart",
+        "test/features/orbit/presentation/widgets/orbital_avatar_test.dart",
+        "test/features/orbit/presentation/widgets/orbital_arcs_test.dart",
+        "test/features/orbit/presentation/widgets/swipeable_friend_row_test.dart",
+        "test/features/feed/presentation/widgets/nav_bar_button_test.dart",
+        "test/features/feed/presentation/widgets/swipe_to_quote_bubble_test.dart",
+        "test/features/conversation/presentation/widgets/voice_record_button_test.dart",
+        "test/features/conversation/presentation/widgets/compose_area_test.dart",
+        "test/features/conversation/presentation/screens/conversation_screen_test.dart",
+        "test/features/groups/presentation/group_conversation_screen_test.dart",
+        "test/features/groups/presentation/contact_picker_screen_test.dart",
+        "test/features/groups/presentation/create_group_picker_screen_test.dart",
+        "test/features/introduction/presentation/screens/friend_picker_test.dart",
+        "test/shared/widgets/media/waveform_seek_bar_test.dart"
+      ],
+      "checks": [
+        "ui-tap-gestures"
+      ],
+      "why": "Shared recording and reply controls have direct and group consumers; preserve cross-family gesture arbitration and exact target identity alongside existing affected lanes"
+    },
+    {
+      "id": "ui-action-discoverability",
+      "patterns": [
+        "lib/features/conversation/presentation/widgets/voice_record_button.dart",
+        "lib/features/conversation/presentation/widgets/compose_area.dart",
+        "lib/features/conversation/presentation/widgets/conversation_header.dart",
+        "lib/features/conversation/presentation/screens/conversation_screen.dart",
+        "lib/features/feed/presentation/widgets/feed_composer.dart",
+        "lib/features/groups/presentation/screens/group_conversation_screen.dart",
+        "lib/features/groups/presentation/widgets/expandable_fab.dart",
+        "lib/features/orbit/presentation/screens/orbit_screen.dart",
+        "lib/shared/widgets/action_semantics.dart",
+        "lib/l10n/*",
+        "integration_test/scripts/capture_group_reaction_notification_device.dart",
+        "test/features/conversation/presentation/widgets/action_discoverability_test.dart",
+        "test/features/conversation/presentation/widgets/compose_area_test.dart",
+        "test/features/conversation/presentation/widgets/voice_record_button_test.dart",
+        "test/features/conversation/presentation/widgets/voice_record_button_tone_test.dart",
+        "test/features/conversation/presentation/widgets/conversation_header_test.dart",
+        "test/features/groups/presentation/widgets/expandable_fab_test.dart",
+        "test/features/groups/presentation/widgets/expandable_fab_tone_test.dart",
+        "test/integration/group_reaction_notification_device_criteria_test.dart"
+      ],
+      "checks": [
+        "ui-action-discoverability"
+      ],
+      "why": "The bounded action semantics tests cross direct, group, Feed and Orbit consumers; retain them when any named surface or its localization changes"
+    },
+    {
+      "id": "ui-approved-recovery-readability",
+      "patterns": [
+        "lib/features/push/application/push_registration_health_notifier.dart",
+        "lib/features/push/presentation/widgets/push_registration_health_warning.dart",
+        "lib/app/application_root.dart",
+        "lib/features/orbit/presentation/screens/orbit_screen.dart",
+        "lib/features/orbit/presentation/widgets/friend_row.dart",
+        "lib/features/orbit/presentation/widgets/group_row.dart",
+        "lib/features/settings/presentation/widgets/settings_group.dart",
+        "lib/features/settings/presentation/widgets/media_download_matrix_control.dart",
+        "lib/features/settings/presentation/screens/settings_wired.dart",
+        "lib/shared/widgets/media/media_grid_cell.dart",
+        "lib/l10n/*",
+        "test/features/push/presentation/push_registration_health_surface_test.dart",
+        "test/features/push/application/push_registration_coordinator_test.dart",
+        "test/features/orbit/presentation/screens/orbit_screen_loading_test.dart",
+        "test/features/orbit/presentation/widgets/friend_row_test.dart",
+        "test/features/orbit/presentation/widgets/group_row_bidi_test.dart",
+        "test/features/orbit/presentation/widgets/group_row_stuck_rejoin_test.dart",
+        "test/features/orbit/presentation/widgets/swipeable_friend_row_test.dart",
+        "test/features/orbit/presentation/widgets/swipeable_group_row_test.dart",
+        "test/features/settings/presentation/widgets/ui25_settings_readability_test.dart",
+        "test/features/settings/presentation/screens/settings_wired_test.dart",
+        "test/features/settings/presentation/screens/settings_sub_sheets_test.dart",
+        "test/features/settings/domain/models/media_download_preferences_test.dart",
+        "test/features/settings/application/media_download_policy_test.dart",
+        "test/shared/widgets/media/media_grid_cell_test.dart",
+        "test/shared/widgets/media/media_grid_test.dart",
+        "test/features/call/presentation/foreground_call_overlay_test.dart"
+      ],
+      "checks": [
+        "ui-approved-recovery-readability"
+      ],
+      "why": "Preserve all seven approved 05/06/08 visual and recovery outcomes and their real owners; retain existing broad mappings and rejected search/call behavior"
+    },
+    {
+      "id": "debug-composition-boundaries",
+      "patterns": [
+        "test/unit/architecture_boundary_checker_test.dart",
+        "test/unit/dtr18_layering_relocation_contract_test.dart",
+        "test/unit/dtr18_placement_closure_contract_test.dart",
+        "test/core/debug/debug_e2e_composition_root_test.dart",
+        "test/core/debug/group_media_reliability_sender_test.dart",
+        "test/core/debug/group_notification_projection_e2e_test.dart",
+        "test/core/debug/group_media_reliability_e2e_test.dart",
+        "test/core/debug/notification_dual_path_e2e_sender_test.dart",
+        "test/core/debug/intro_e2e_runner_notification_dual_path_test.dart",
+        "tool/architecture_guard/*",
+        "lib/debug/group_notification_projection_e2e_action.dart",
+        "lib/core/debug/group_media_reliability_e2e_main_actions.dart",
+        "lib/core/debug/notification_dual_path_e2e_sender.dart",
+        "lib/debug/group_media_reliability_e2e_main_actions.dart",
+        "lib/debug/notification_dual_path_e2e_sender.dart",
+        "test/features/groups/application/group_message_listener_decomposition_contract_test.dart",
+        "test/core/services/p2p_service_impl_composition_contract_test.dart"
+      ],
+      "checks": [
+        "debug-composition-boundaries",
+        "group-media-schema-contract",
+        "notification-payload-harness-contract"
+      ],
+      "why": "Track both sides of the core-to-debug relocation and retain exact architecture, group custody and notification sender preservation checks."
     }
   ],
   "documentation_only": [
@@ -2682,7 +2937,6 @@
         "dart",
         "tool/sims/sims.dart",
         "major",
-        "--prepare-builds",
         "--continue-on-failure",
         "--format",
         "json"
@@ -2695,7 +2949,10 @@
       ],
       "ui_driver": "existing_campaign",
       "ui_driver_reason": "Existing full regression retains protocol/native assertion owners; Appium MCP is preferred for separate live UI investigation.",
-      "host_preflight": "one-to-one-runner"
+      "host_preflight": "one-to-one-runner",
+      "environment": {
+        "SIMS_GROUP_MULTI_PARTY_SCENARIO": "all"
+      }
     },
     {
       "id": "full-sims",
@@ -2708,7 +2965,6 @@
         "full",
         "--only",
         "reliability.full.cleaned_legacy",
-        "--prepare-builds",
         "--continue-on-failure",
         "--format",
         "json"
@@ -2721,31 +2977,61 @@
       ],
       "ui_driver": "existing_campaign",
       "ui_driver_reason": "Existing full regression retains protocol/native assertion owners; Appium MCP is preferred for separate live UI investigation.",
-      "host_preflight": "one-to-one-runner"
+      "protected_target_boundary": "audited_per_route"
     },
     {
       "id": "full-legacy",
       "kind": "legacy",
       "command": [
         "bash",
-        "scripts/run_flutter_full_regression.sh"
+        "scripts/run_flutter_full_regression.sh",
+        "--exclude-label",
+        "all core tests",
+        "--exclude-label",
+        "all feature tests",
+        "--exclude-label",
+        "all shared tests",
+        "--exclude-label",
+        "all security tests",
+        "--exclude-label",
+        "all unit tests",
+        "--exclude-label",
+        "all repo integration tests under test/",
+        "--exclude-label",
+        "all performance tests",
+        "--exclude-label",
+        "gate benchmark",
+        "--exclude-label",
+        "integration_test group_announcement_reaction_notification_proof_test.dart",
+        "--exclude-label",
+        "integration_test group_reaction_notification_sqlcipher_probe_test.dart",
+        "--exclude-label",
+        "integration_test intro_accept_notification_android_proof_test.dart",
+        "--exclude-label",
+        "integration_test notification_tap_message_visible_proof_test.dart",
+        "--exclude-label",
+        "integration_test one_to_one_reaction_notification_proof_test.dart",
+        "--exclude-label",
+        "integration_test voice_message_e2e_test.dart",
+        "--exclude-label",
+        "integration_test group_strict_notification_proof_test.dart"
       ],
       "boundary": "Existing fixed 95-route full regression entry point",
       "timeout_seconds": 345600,
       "requirements": [
-        "bash",
-        "dart",
-        "flutter",
-        "adb",
-        "xcrun"
+        "python3",
+        "bash"
       ],
-      "device_roles": [
-        "android_physical",
-        "ios_simulator"
-      ],
+      "device_roles": [],
       "ui_driver": "existing_campaign",
       "ui_driver_reason": "Existing full regression retains protocol/native assertion owners; Appium MCP is preferred for separate live UI investigation.",
-      "host_preflight": "one-to-one-runner"
+      "environment": {
+        "MKNOON_FULL_HOST_OWNER": "host.dart.all"
+      },
+      "dependencies": [
+        "full-sims-major"
+      ],
+      "protected_target_boundary": "audited_per_route"
     },
     {
       "kind": "python",
@@ -2753,10 +3039,16 @@
         "scripts/test/mknoon_checks_test.py",
         "scripts/test/testing_inventory_test.py",
         "scripts/test/mknoon_ci_checks_test.py",
-        "scripts/test/device_campaign_preflight_test.py"
+        "scripts/test/device_campaign_preflight_test.py",
+        "scripts/test/mknoon_full_checks_test.py",
+        "scripts/test/full_suite_adapters_test.py",
+        "scripts/test/mknoon_full_review_regression_test.py",
+        "scripts/test/mknoon_full_composition_test.py",
+        "scripts/test/mknoon_full_legacy_binding_test.py",
+        "scripts/test/mknoon_full_benchmark_boundary_test.py"
       ],
       "boundary": "Selector, inventory, runner safety and candidate-bound CI acceptance contracts",
-      "timeout_seconds": 120,
+      "timeout_seconds": 180,
       "estimated_seconds": null,
       "requirements": [
         "python3"
@@ -2775,7 +3067,16 @@
         "scripts/test/mknoon_checks_test.py",
         "scripts/test/testing_inventory_test.py",
         "scripts/test/mknoon_ci_checks_test.py",
-        "scripts/test/device_campaign_preflight_test.py"
+        "scripts/test/device_campaign_preflight_test.py",
+        "scripts/test/mknoon_full_checks_test.py",
+        "scripts/test/full_suite_adapters_test.py",
+        "scripts/test/mknoon_full_review_regression_test.py",
+        "scripts/test/mknoon_full_composition_test.py",
+        "scripts/test/mknoon_full_legacy_binding_test.py",
+        "scripts/test/mknoon_full_benchmark_boundary_test.py"
+      ],
+      "resources": [
+        "isolated:full-workflow"
       ]
     },
     {
@@ -2798,6 +3099,9 @@
         "--test",
         "--test-reporter=tap",
         "scripts/test/send_fcm_provider_probe_contract_test.js"
+      ],
+      "resources": [
+        "isolated:full-provider-schema"
       ]
     },
     {
@@ -2826,6 +3130,9 @@
         "docker-ws/app_diagnostics_test.py",
         "docker-ws/app_diagnostics_monitor_test.py",
         "docker-ws/call_diagnostics_test.py"
+      ],
+      "resources": [
+        "isolated:full-diagnostics-python"
       ]
     },
     {
@@ -2850,6 +3157,9 @@
         "unittest",
         "-v",
         "integration_test/scripts/turn_path_probe_test.py"
+      ],
+      "resources": [
+        "isolated:full-turn-path-probe"
       ]
     },
     {
@@ -2882,7 +3192,4685 @@
         "docker-ws/coturn_tls_deploy_test.py",
         "integration_test/scripts/native_turn_tls_contract_test.py",
         "docker-ws/fix_coturn_dual_stack_tls_test.py"
+      ],
+      "resources": [
+        "isolated:full-native-turn-tls-operations"
       ]
+    },
+    {
+      "id": "full.contract.ios_receiver_bootstrap",
+      "kind": "full_adapter",
+      "command": [
+        "dart",
+        "--enable-asserts",
+        "scripts/test/ios_receiver_bootstrap_contract_test.dart"
+      ],
+      "steps": [
+        {
+          "command": [
+            "dart",
+            "--enable-asserts",
+            "scripts/test/ios_receiver_bootstrap_contract_test.dart"
+          ],
+          "format": "assert_main"
+        }
+      ],
+      "boundary": "Exact source-owned proof adapter",
+      "timeout_seconds": 14400,
+      "resources": [
+        "unknown"
+      ]
+    },
+    {
+      "id": "full.contract.ios_sender_projection_fixture",
+      "kind": "full_adapter",
+      "command": [
+        "dart",
+        "--enable-asserts",
+        "scripts/test/ios_sender_projection_fixture_contract_test.dart"
+      ],
+      "steps": [
+        {
+          "command": [
+            "dart",
+            "--enable-asserts",
+            "scripts/test/ios_sender_projection_fixture_contract_test.dart"
+          ],
+          "format": "assert_main"
+        }
+      ],
+      "boundary": "Exact source-owned proof adapter",
+      "timeout_seconds": 14400,
+      "resources": [
+        "unknown"
+      ]
+    },
+    {
+      "id": "full.reaction.head_provenance",
+      "kind": "full_adapter",
+      "command": [
+        "dart",
+        "run",
+        "integration_test/scripts/run_1to1_reaction_notification_device.dart",
+        "--scenario",
+        "head_provenance",
+        "--recipient",
+        "{device:android_physical}",
+        "--artifact-dir",
+        "{output}",
+        "--sender",
+        "{device:android_emulator}",
+        "--service-account",
+        "{config:service_account}",
+        "--relay-target",
+        "{config:relay_target}",
+        "--relay-key",
+        "{config:relay_key}",
+        "--staging-manifest",
+        "{config:staging_manifest}"
+      ],
+      "steps": [
+        {
+          "command": [
+            "dart",
+            "run",
+            "integration_test/scripts/run_1to1_reaction_notification_device.dart",
+            "--scenario",
+            "head_provenance",
+            "--recipient",
+            "{device:android_physical}",
+            "--artifact-dir",
+            "{output}",
+            "--sender",
+            "{device:android_emulator}",
+            "--service-account",
+            "{config:service_account}",
+            "--relay-target",
+            "{config:relay_target}",
+            "--relay-key",
+            "{config:relay_key}",
+            "--staging-manifest",
+            "{config:staging_manifest}"
+          ],
+          "format": "marker",
+          "marker": "Plan-256 proof artifact validated for head_provenance."
+        }
+      ],
+      "boundary": "Singleton reaction capture followed by its exact Dart artifact assertion main.",
+      "timeout_seconds": 14400,
+      "resources": [
+        "unknown"
+      ],
+      "device_roles": [
+        "android_physical",
+        "android_emulator"
+      ],
+      "ui_driver": "existing_campaign",
+      "ui_driver_reason": "Existing native/protocol assertions require their source-owned campaign or XCTest fixture; generic UI automation cannot establish these internals.",
+      "required_config": [
+        "service_account",
+        "relay_target",
+        "relay_key",
+        "staging_manifest"
+      ],
+      "config_files": [
+        "service_account",
+        "relay_key",
+        "staging_manifest"
+      ]
+    },
+    {
+      "id": "full.reaction.android_durable_reaction_background_connected",
+      "kind": "full_adapter",
+      "command": [
+        "dart",
+        "run",
+        "integration_test/scripts/run_1to1_reaction_notification_device.dart",
+        "--scenario",
+        "android_durable_reaction_background_connected",
+        "--recipient",
+        "{device:android_physical}",
+        "--artifact-dir",
+        "{output}",
+        "--sender",
+        "{device:android_emulator}",
+        "--service-account",
+        "{config:service_account}",
+        "--relay-target",
+        "{config:relay_target}",
+        "--relay-key",
+        "{config:relay_key}",
+        "--staging-manifest",
+        "{config:staging_manifest}"
+      ],
+      "steps": [
+        {
+          "command": [
+            "dart",
+            "run",
+            "integration_test/scripts/run_1to1_reaction_notification_device.dart",
+            "--scenario",
+            "android_durable_reaction_background_connected",
+            "--recipient",
+            "{device:android_physical}",
+            "--artifact-dir",
+            "{output}",
+            "--sender",
+            "{device:android_emulator}",
+            "--service-account",
+            "{config:service_account}",
+            "--relay-target",
+            "{config:relay_target}",
+            "--relay-key",
+            "{config:relay_key}",
+            "--staging-manifest",
+            "{config:staging_manifest}"
+          ],
+          "format": "marker",
+          "marker": "Plan-256 proof artifact validated for android_durable_reaction_background_connected."
+        }
+      ],
+      "boundary": "Singleton reaction capture followed by its exact Dart artifact assertion main.",
+      "timeout_seconds": 14400,
+      "resources": [
+        "unknown"
+      ],
+      "device_roles": [
+        "android_physical",
+        "android_emulator"
+      ],
+      "ui_driver": "existing_campaign",
+      "ui_driver_reason": "Existing native/protocol assertions require their source-owned campaign or XCTest fixture; generic UI automation cannot establish these internals.",
+      "required_config": [
+        "service_account",
+        "relay_target",
+        "relay_key",
+        "staging_manifest"
+      ],
+      "config_files": [
+        "service_account",
+        "relay_key",
+        "staging_manifest"
+      ]
+    },
+    {
+      "id": "full.reaction.android_background_crypto_preflight",
+      "kind": "full_adapter",
+      "command": [
+        "dart",
+        "run",
+        "integration_test/scripts/run_1to1_reaction_notification_device.dart",
+        "--scenario",
+        "android_background_crypto_preflight",
+        "--recipient",
+        "{device:android_physical}",
+        "--artifact-dir",
+        "{output}",
+        "--service-account",
+        "{config:service_account}",
+        "--relay-target",
+        "{config:relay_target}",
+        "--relay-key",
+        "{config:relay_key}",
+        "--staging-manifest",
+        "{config:staging_manifest}"
+      ],
+      "steps": [
+        {
+          "command": [
+            "dart",
+            "run",
+            "integration_test/scripts/run_1to1_reaction_notification_device.dart",
+            "--scenario",
+            "android_background_crypto_preflight",
+            "--recipient",
+            "{device:android_physical}",
+            "--artifact-dir",
+            "{output}",
+            "--service-account",
+            "{config:service_account}",
+            "--relay-target",
+            "{config:relay_target}",
+            "--relay-key",
+            "{config:relay_key}",
+            "--staging-manifest",
+            "{config:staging_manifest}"
+          ],
+          "format": "marker",
+          "marker": "Plan-256 proof artifact validated for android_background_crypto_preflight."
+        }
+      ],
+      "boundary": "Singleton reaction capture followed by its exact Dart artifact assertion main.",
+      "timeout_seconds": 14400,
+      "resources": [
+        "unknown"
+      ],
+      "device_roles": [
+        "android_physical"
+      ],
+      "ui_driver": "existing_campaign",
+      "ui_driver_reason": "Existing native/protocol assertions require their source-owned campaign or XCTest fixture; generic UI automation cannot establish these internals.",
+      "required_config": [
+        "service_account",
+        "relay_target",
+        "relay_key",
+        "staging_manifest"
+      ],
+      "config_files": [
+        "service_account",
+        "relay_key",
+        "staging_manifest"
+      ]
+    },
+    {
+      "id": "full.reaction.android_first_wake_profile_aot",
+      "kind": "full_adapter",
+      "command": [
+        "dart",
+        "run",
+        "integration_test/scripts/run_1to1_reaction_notification_device.dart",
+        "--scenario",
+        "android_first_wake_profile_aot",
+        "--recipient",
+        "{device:android_physical}",
+        "--artifact-dir",
+        "{output}",
+        "--sender",
+        "{device:android_emulator}",
+        "--service-account",
+        "{config:service_account}",
+        "--relay-target",
+        "{config:relay_target}",
+        "--relay-key",
+        "{config:relay_key}",
+        "--staging-manifest",
+        "{config:staging_manifest}",
+        "--require-alert"
+      ],
+      "steps": [
+        {
+          "command": [
+            "dart",
+            "run",
+            "integration_test/scripts/run_1to1_reaction_notification_device.dart",
+            "--scenario",
+            "android_first_wake_profile_aot",
+            "--recipient",
+            "{device:android_physical}",
+            "--artifact-dir",
+            "{output}",
+            "--sender",
+            "{device:android_emulator}",
+            "--service-account",
+            "{config:service_account}",
+            "--relay-target",
+            "{config:relay_target}",
+            "--relay-key",
+            "{config:relay_key}",
+            "--staging-manifest",
+            "{config:staging_manifest}",
+            "--require-alert"
+          ],
+          "format": "marker",
+          "marker": "Plan-256 proof artifact validated for android_first_wake_profile_aot."
+        }
+      ],
+      "boundary": "Singleton reaction capture followed by its exact Dart artifact assertion main.",
+      "timeout_seconds": 14400,
+      "resources": [
+        "unknown"
+      ],
+      "device_roles": [
+        "android_physical",
+        "android_emulator"
+      ],
+      "ui_driver": "existing_campaign",
+      "ui_driver_reason": "Existing native/protocol assertions require their source-owned campaign or XCTest fixture; generic UI automation cannot establish these internals.",
+      "required_config": [
+        "service_account",
+        "relay_target",
+        "relay_key",
+        "staging_manifest"
+      ],
+      "config_files": [
+        "service_account",
+        "relay_key",
+        "staging_manifest"
+      ]
+    },
+    {
+      "id": "full.reaction.android_message_unread_lifecycle",
+      "kind": "full_adapter",
+      "command": [
+        "dart",
+        "run",
+        "integration_test/scripts/run_1to1_reaction_notification_device.dart",
+        "--scenario",
+        "android_message_unread_lifecycle",
+        "--recipient",
+        "{device:android_physical}",
+        "--artifact-dir",
+        "{output}",
+        "--sender",
+        "{device:android_emulator}",
+        "--service-account",
+        "{config:service_account}",
+        "--relay-target",
+        "{config:relay_target}",
+        "--relay-key",
+        "{config:relay_key}",
+        "--staging-manifest",
+        "{config:staging_manifest}",
+        "--capture-manifest",
+        "{config:capture_manifest}"
+      ],
+      "steps": [
+        {
+          "command": [
+            "dart",
+            "run",
+            "integration_test/scripts/run_1to1_reaction_notification_device.dart",
+            "--scenario",
+            "android_message_unread_lifecycle",
+            "--recipient",
+            "{device:android_physical}",
+            "--artifact-dir",
+            "{output}",
+            "--sender",
+            "{device:android_emulator}",
+            "--service-account",
+            "{config:service_account}",
+            "--relay-target",
+            "{config:relay_target}",
+            "--relay-key",
+            "{config:relay_key}",
+            "--staging-manifest",
+            "{config:staging_manifest}",
+            "--capture-manifest",
+            "{config:capture_manifest}"
+          ],
+          "format": "marker",
+          "marker": "Plan-256 proof artifact validated for android_message_unread_lifecycle."
+        }
+      ],
+      "boundary": "Singleton reaction capture followed by its exact Dart artifact assertion main.",
+      "timeout_seconds": 14400,
+      "resources": [
+        "unknown"
+      ],
+      "device_roles": [
+        "android_physical",
+        "android_emulator"
+      ],
+      "ui_driver": "existing_campaign",
+      "ui_driver_reason": "Existing native/protocol assertions require their source-owned campaign or XCTest fixture; generic UI automation cannot establish these internals.",
+      "required_config": [
+        "service_account",
+        "relay_target",
+        "relay_key",
+        "staging_manifest",
+        "capture_manifest"
+      ],
+      "config_files": [
+        "service_account",
+        "relay_key",
+        "staging_manifest",
+        "capture_manifest"
+      ]
+    },
+    {
+      "id": "full.reaction.android_physical_recipient",
+      "kind": "full_adapter",
+      "command": [
+        "dart",
+        "run",
+        "integration_test/scripts/run_1to1_reaction_notification_device.dart",
+        "--scenario",
+        "android_physical_recipient",
+        "--recipient",
+        "{device:android_physical}",
+        "--artifact-dir",
+        "{output}",
+        "--sender",
+        "{device:android_emulator}",
+        "--service-account",
+        "{config:service_account}",
+        "--relay-target",
+        "{config:relay_target}",
+        "--relay-key",
+        "{config:relay_key}",
+        "--staging-manifest",
+        "{config:staging_manifest}",
+        "--capture-manifest",
+        "{config:capture_manifest}"
+      ],
+      "steps": [
+        {
+          "command": [
+            "dart",
+            "run",
+            "integration_test/scripts/run_1to1_reaction_notification_device.dart",
+            "--scenario",
+            "android_physical_recipient",
+            "--recipient",
+            "{device:android_physical}",
+            "--artifact-dir",
+            "{output}",
+            "--sender",
+            "{device:android_emulator}",
+            "--service-account",
+            "{config:service_account}",
+            "--relay-target",
+            "{config:relay_target}",
+            "--relay-key",
+            "{config:relay_key}",
+            "--staging-manifest",
+            "{config:staging_manifest}",
+            "--capture-manifest",
+            "{config:capture_manifest}"
+          ],
+          "format": "marker",
+          "marker": "Plan-256 proof artifact validated for android_physical_recipient."
+        }
+      ],
+      "boundary": "Singleton reaction capture followed by its exact Dart artifact assertion main.",
+      "timeout_seconds": 14400,
+      "resources": [
+        "unknown"
+      ],
+      "device_roles": [
+        "android_physical",
+        "android_emulator"
+      ],
+      "ui_driver": "existing_campaign",
+      "ui_driver_reason": "Existing native/protocol assertions require their source-owned campaign or XCTest fixture; generic UI automation cannot establish these internals.",
+      "required_config": [
+        "service_account",
+        "relay_target",
+        "relay_key",
+        "staging_manifest",
+        "capture_manifest"
+      ],
+      "config_files": [
+        "service_account",
+        "relay_key",
+        "staging_manifest",
+        "capture_manifest"
+      ]
+    },
+    {
+      "id": "full.reaction.ios_physical_recipient",
+      "kind": "full_adapter",
+      "command": [
+        "dart",
+        "run",
+        "integration_test/scripts/run_1to1_reaction_notification_device.dart",
+        "--scenario",
+        "ios_physical_recipient",
+        "--recipient",
+        "{device:ios_physical}",
+        "--artifact-dir",
+        "{output}",
+        "--sender",
+        "{device:android_emulator}",
+        "--service-account",
+        "{config:service_account}",
+        "--relay-target",
+        "{config:relay_target}",
+        "--relay-key",
+        "{config:relay_key}",
+        "--staging-manifest",
+        "{config:staging_manifest}",
+        "--capture-manifest",
+        "{config:capture_manifest}"
+      ],
+      "steps": [
+        {
+          "command": [
+            "dart",
+            "run",
+            "integration_test/scripts/run_1to1_reaction_notification_device.dart",
+            "--scenario",
+            "ios_physical_recipient",
+            "--recipient",
+            "{device:ios_physical}",
+            "--artifact-dir",
+            "{output}",
+            "--sender",
+            "{device:android_emulator}",
+            "--service-account",
+            "{config:service_account}",
+            "--relay-target",
+            "{config:relay_target}",
+            "--relay-key",
+            "{config:relay_key}",
+            "--staging-manifest",
+            "{config:staging_manifest}",
+            "--capture-manifest",
+            "{config:capture_manifest}"
+          ],
+          "format": "marker",
+          "marker": "Plan-256 proof artifact validated for ios_physical_recipient."
+        }
+      ],
+      "boundary": "Singleton reaction capture followed by its exact Dart artifact assertion main.",
+      "timeout_seconds": 14400,
+      "resources": [
+        "unknown"
+      ],
+      "device_roles": [
+        "ios_physical",
+        "android_emulator"
+      ],
+      "ui_driver": "existing_campaign",
+      "ui_driver_reason": "Existing native/protocol assertions require their source-owned campaign or XCTest fixture; generic UI automation cannot establish these internals.",
+      "required_config": [
+        "service_account",
+        "relay_target",
+        "relay_key",
+        "staging_manifest",
+        "capture_manifest"
+      ],
+      "config_files": [
+        "service_account",
+        "relay_key",
+        "staging_manifest",
+        "capture_manifest"
+      ]
+    },
+    {
+      "id": "full.group-reaction.ios_announcement_reaction_recipient",
+      "kind": "full_adapter",
+      "command": [
+        "dart",
+        "run",
+        "integration_test/scripts/run_group_reaction_notification_device.dart",
+        "--scenario",
+        "ios_announcement_reaction_recipient",
+        "--sender",
+        "{device:android_emulator}",
+        "--recipient",
+        "{device:ios_physical}",
+        "--artifact-dir",
+        "{output}",
+        "--service-account",
+        "{config:service_account}",
+        "--relay-target",
+        "{config:relay_target}",
+        "--relay-key",
+        "{config:relay_key}",
+        "--staging-manifest",
+        "{config:staging_manifest}"
+      ],
+      "steps": [
+        {
+          "command": [
+            "dart",
+            "run",
+            "integration_test/scripts/run_group_reaction_notification_device.dart",
+            "--scenario",
+            "ios_announcement_reaction_recipient",
+            "--sender",
+            "{device:android_emulator}",
+            "--recipient",
+            "{device:ios_physical}",
+            "--artifact-dir",
+            "{output}",
+            "--service-account",
+            "{config:service_account}",
+            "--relay-target",
+            "{config:relay_target}",
+            "--relay-key",
+            "{config:relay_key}",
+            "--staging-manifest",
+            "{config:staging_manifest}"
+          ],
+          "format": "marker",
+          "marker": "Plan 257 proof artifact validated for ios_announcement_reaction_recipient."
+        }
+      ],
+      "boundary": "Exact source-owned proof adapter",
+      "timeout_seconds": 14400,
+      "resources": [
+        "unknown"
+      ],
+      "device_roles": [
+        "android_emulator",
+        "ios_physical"
+      ],
+      "ui_driver": "existing_campaign",
+      "ui_driver_reason": "Existing native/protocol assertions require their source-owned campaign or XCTest fixture; generic UI automation cannot establish these internals.",
+      "required_config": [
+        "service_account",
+        "relay_target",
+        "relay_key",
+        "staging_manifest"
+      ],
+      "config_files": [
+        "service_account",
+        "relay_key",
+        "staging_manifest"
+      ]
+    },
+    {
+      "id": "full.group-reaction.ios_chat_group_message_and_reaction_recipient",
+      "kind": "full_adapter",
+      "command": [
+        "dart",
+        "run",
+        "integration_test/scripts/run_group_reaction_notification_device.dart",
+        "--scenario",
+        "ios_chat_group_message_and_reaction_recipient",
+        "--sender",
+        "{device:android_emulator}",
+        "--recipient",
+        "{device:ios_physical}",
+        "--artifact-dir",
+        "{output}",
+        "--service-account",
+        "{config:service_account}",
+        "--relay-target",
+        "{config:relay_target}",
+        "--relay-key",
+        "{config:relay_key}",
+        "--staging-manifest",
+        "{config:staging_manifest}"
+      ],
+      "steps": [
+        {
+          "command": [
+            "dart",
+            "run",
+            "integration_test/scripts/run_group_reaction_notification_device.dart",
+            "--scenario",
+            "ios_chat_group_message_and_reaction_recipient",
+            "--sender",
+            "{device:android_emulator}",
+            "--recipient",
+            "{device:ios_physical}",
+            "--artifact-dir",
+            "{output}",
+            "--service-account",
+            "{config:service_account}",
+            "--relay-target",
+            "{config:relay_target}",
+            "--relay-key",
+            "{config:relay_key}",
+            "--staging-manifest",
+            "{config:staging_manifest}"
+          ],
+          "format": "marker",
+          "marker": "Plan 257 proof artifact validated for ios_chat_group_message_and_reaction_recipient."
+        }
+      ],
+      "boundary": "Exact source-owned proof adapter",
+      "timeout_seconds": 14400,
+      "resources": [
+        "unknown"
+      ],
+      "device_roles": [
+        "android_emulator",
+        "ios_physical"
+      ],
+      "ui_driver": "existing_campaign",
+      "ui_driver_reason": "Existing native/protocol assertions require their source-owned campaign or XCTest fixture; generic UI automation cannot establish these internals.",
+      "required_config": [
+        "service_account",
+        "relay_target",
+        "relay_key",
+        "staging_manifest"
+      ],
+      "config_files": [
+        "service_account",
+        "relay_key",
+        "staging_manifest"
+      ]
+    },
+    {
+      "id": "full.performance.feed_init",
+      "kind": "full_adapter",
+      "command": [
+        "flutter",
+        "test",
+        "--no-pub",
+        "--machine",
+        "-d",
+        "{device:macos}",
+        "--dart-define=PERF_TARGET=FEED_INIT",
+        "integration_test/performance_harness.dart"
+      ],
+      "steps": [
+        {
+          "command": [
+            "flutter",
+            "test",
+            "--no-pub",
+            "--machine",
+            "-d",
+            "{device:macos}",
+            "--dart-define=PERF_TARGET=FEED_INIT",
+            "integration_test/performance_harness.dart"
+          ],
+          "format": "flutter",
+          "paths": [
+            "integration_test/performance_harness.dart"
+          ]
+        }
+      ],
+      "boundary": "Desktop UI performance registration; mobile self-skips do not substitute for proof.",
+      "timeout_seconds": 14400,
+      "resources": [
+        "unknown"
+      ],
+      "device_roles": [
+        "macos"
+      ],
+      "ui_driver": "existing_campaign",
+      "ui_driver_reason": "Existing native/protocol assertions require their source-owned campaign or XCTest fixture; generic UI automation cannot establish these internals."
+    },
+    {
+      "id": "full.performance.shell_switch",
+      "kind": "full_adapter",
+      "command": [
+        "flutter",
+        "test",
+        "--no-pub",
+        "--machine",
+        "-d",
+        "{device:macos}",
+        "--dart-define=PERF_TARGET=SHELL_SWITCH",
+        "integration_test/performance_harness.dart"
+      ],
+      "steps": [
+        {
+          "command": [
+            "flutter",
+            "test",
+            "--no-pub",
+            "--machine",
+            "-d",
+            "{device:macos}",
+            "--dart-define=PERF_TARGET=SHELL_SWITCH",
+            "integration_test/performance_harness.dart"
+          ],
+          "format": "flutter",
+          "paths": [
+            "integration_test/performance_harness.dart"
+          ]
+        }
+      ],
+      "boundary": "Desktop UI performance registration; mobile self-skips do not substitute for proof.",
+      "timeout_seconds": 14400,
+      "resources": [
+        "unknown"
+      ],
+      "device_roles": [
+        "macos"
+      ],
+      "ui_driver": "existing_campaign",
+      "ui_driver_reason": "Existing native/protocol assertions require their source-owned campaign or XCTest fixture; generic UI automation cannot establish these internals."
+    },
+    {
+      "id": "full.performance.feed_orbit_offscreen",
+      "kind": "full_adapter",
+      "command": [
+        "flutter",
+        "test",
+        "--no-pub",
+        "--machine",
+        "-d",
+        "{device:macos}",
+        "--dart-define=PERF_TARGET=FEED_ORBIT_OFFSCREEN",
+        "integration_test/performance_harness.dart"
+      ],
+      "steps": [
+        {
+          "command": [
+            "flutter",
+            "test",
+            "--no-pub",
+            "--machine",
+            "-d",
+            "{device:macos}",
+            "--dart-define=PERF_TARGET=FEED_ORBIT_OFFSCREEN",
+            "integration_test/performance_harness.dart"
+          ],
+          "format": "flutter",
+          "paths": [
+            "integration_test/performance_harness.dart"
+          ]
+        }
+      ],
+      "boundary": "Desktop UI performance registration; mobile self-skips do not substitute for proof.",
+      "timeout_seconds": 14400,
+      "resources": [
+        "unknown"
+      ],
+      "device_roles": [
+        "macos"
+      ],
+      "ui_driver": "existing_campaign",
+      "ui_driver_reason": "Existing native/protocol assertions require their source-owned campaign or XCTest fixture; generic UI automation cannot establish these internals."
+    },
+    {
+      "id": "full.performance.conversation",
+      "kind": "full_adapter",
+      "command": [
+        "flutter",
+        "test",
+        "--no-pub",
+        "--machine",
+        "-d",
+        "{device:macos}",
+        "--dart-define=PERF_TARGET=CONVERSATION",
+        "integration_test/performance_harness.dart"
+      ],
+      "steps": [
+        {
+          "command": [
+            "flutter",
+            "test",
+            "--no-pub",
+            "--machine",
+            "-d",
+            "{device:macos}",
+            "--dart-define=PERF_TARGET=CONVERSATION",
+            "integration_test/performance_harness.dart"
+          ],
+          "format": "flutter",
+          "paths": [
+            "integration_test/performance_harness.dart"
+          ]
+        }
+      ],
+      "boundary": "Desktop UI performance registration; mobile self-skips do not substitute for proof.",
+      "timeout_seconds": 14400,
+      "resources": [
+        "unknown"
+      ],
+      "device_roles": [
+        "macos"
+      ],
+      "ui_driver": "existing_campaign",
+      "ui_driver_reason": "Existing native/protocol assertions require their source-owned campaign or XCTest fixture; generic UI automation cannot establish these internals."
+    },
+    {
+      "id": "full.performance.conversation_sub",
+      "kind": "full_adapter",
+      "command": [
+        "flutter",
+        "test",
+        "--no-pub",
+        "--machine",
+        "-d",
+        "{device:macos}",
+        "--dart-define=PERF_TARGET=CONVERSATION_SUB",
+        "integration_test/performance_harness.dart"
+      ],
+      "steps": [
+        {
+          "command": [
+            "flutter",
+            "test",
+            "--no-pub",
+            "--machine",
+            "-d",
+            "{device:macos}",
+            "--dart-define=PERF_TARGET=CONVERSATION_SUB",
+            "integration_test/performance_harness.dart"
+          ],
+          "format": "flutter",
+          "paths": [
+            "integration_test/performance_harness.dart"
+          ]
+        }
+      ],
+      "boundary": "Desktop UI performance registration; mobile self-skips do not substitute for proof.",
+      "timeout_seconds": 14400,
+      "resources": [
+        "unknown"
+      ],
+      "device_roles": [
+        "macos"
+      ],
+      "ui_driver": "existing_campaign",
+      "ui_driver_reason": "Existing native/protocol assertions require their source-owned campaign or XCTest fixture; generic UI automation cannot establish these internals."
+    },
+    {
+      "id": "full.performance.orbit",
+      "kind": "full_adapter",
+      "command": [
+        "flutter",
+        "test",
+        "--no-pub",
+        "--machine",
+        "-d",
+        "{device:macos}",
+        "--dart-define=PERF_TARGET=ORBIT",
+        "integration_test/performance_harness.dart"
+      ],
+      "steps": [
+        {
+          "command": [
+            "flutter",
+            "test",
+            "--no-pub",
+            "--machine",
+            "-d",
+            "{device:macos}",
+            "--dart-define=PERF_TARGET=ORBIT",
+            "integration_test/performance_harness.dart"
+          ],
+          "format": "flutter",
+          "paths": [
+            "integration_test/performance_harness.dart"
+          ]
+        }
+      ],
+      "boundary": "Desktop UI performance registration; mobile self-skips do not substitute for proof.",
+      "timeout_seconds": 14400,
+      "resources": [
+        "unknown"
+      ],
+      "device_roles": [
+        "macos"
+      ],
+      "ui_driver": "existing_campaign",
+      "ui_driver_reason": "Existing native/protocol assertions require their source-owned campaign or XCTest fixture; generic UI automation cannot establish these internals."
+    },
+    {
+      "id": "full.media-stable-id.ios",
+      "kind": "full_adapter",
+      "command": [
+        "flutter",
+        "test",
+        "--no-pub",
+        "--machine",
+        "-d",
+        "{device:ios_simulator}",
+        "integration_test/media_stable_id_smoke_test.dart"
+      ],
+      "steps": [
+        {
+          "command": [
+            "flutter",
+            "test",
+            "--no-pub",
+            "--machine",
+            "-d",
+            "{device:ios_simulator}",
+            "integration_test/media_stable_id_smoke_test.dart"
+          ],
+          "format": "flutter",
+          "paths": [
+            "integration_test/media_stable_id_smoke_test.dart"
+          ]
+        }
+      ],
+      "boundary": "Exact source-owned proof adapter",
+      "timeout_seconds": 14400,
+      "resources": [
+        "unknown"
+      ],
+      "device_roles": [
+        "ios_simulator"
+      ],
+      "ui_driver": "existing_campaign",
+      "ui_driver_reason": "Existing native/protocol assertions require their source-owned campaign or XCTest fixture; generic UI automation cannot establish these internals."
+    },
+    {
+      "id": "full.native.371",
+      "kind": "full_adapter",
+      "command": [
+        "bash",
+        "scripts/test/run_app_visibility_native_371.sh"
+      ],
+      "steps": [
+        {
+          "command": [
+            "bash",
+            "scripts/test/run_app_visibility_native_371.sh"
+          ],
+          "format": "marker",
+          "marker": "PASS: Plan 371 native host contract;"
+        }
+      ],
+      "boundary": "Exact source-owned proof adapter",
+      "timeout_seconds": 14400,
+      "resources": [
+        "unknown"
+      ],
+      "environment": {
+        "PLAN371_NATIVE_RESULT_DIR": "{output}",
+        "MKNOON_NATIVE_IOS_SIMULATOR_ID": "{device:ios_simulator}"
+      },
+      "device_roles": [
+        "ios_simulator"
+      ],
+      "ui_driver": "existing_campaign",
+      "ui_driver_reason": "Existing native XCTest and build/mutation assertions require their source wrapper; the exact simulator is pinned, preflighted and leased."
+    },
+    {
+      "id": "full.native.373",
+      "kind": "full_adapter",
+      "command": [
+        "bash",
+        "scripts/test/run_ios_nse_native_373.sh"
+      ],
+      "steps": [
+        {
+          "command": [
+            "bash",
+            "scripts/test/run_ios_nse_native_373.sh"
+          ],
+          "format": "marker",
+          "marker": "PASS: Plan 373 iOS NSE native host contract;"
+        }
+      ],
+      "boundary": "Exact source-owned proof adapter",
+      "timeout_seconds": 14400,
+      "resources": [
+        "unknown"
+      ],
+      "environment": {
+        "PLAN373_NATIVE_RESULT_DIR": "{output}",
+        "MKNOON_NATIVE_IOS_SIMULATOR_ID": "{device:ios_simulator}"
+      },
+      "device_roles": [
+        "ios_simulator"
+      ],
+      "ui_driver": "existing_campaign",
+      "ui_driver_reason": "Existing native XCTest and build/mutation assertions require their source wrapper; the exact simulator is pinned, preflighted and leased."
+    },
+    {
+      "id": "full.native.374",
+      "kind": "full_adapter",
+      "command": [
+        "bash",
+        "scripts/test/run_android_headless_recovery_native_374.sh"
+      ],
+      "steps": [
+        {
+          "command": [
+            "bash",
+            "scripts/test/run_android_headless_recovery_native_374.sh"
+          ],
+          "format": "marker",
+          "marker": "PASS: Plan 374/375/393 Android native suite selected 9 classes / 73 methods;"
+        }
+      ],
+      "boundary": "Exact source-owned proof adapter",
+      "timeout_seconds": 14400,
+      "resources": [
+        "unknown"
+      ],
+      "environment": {
+        "PLAN374_NATIVE_RESULT_DIR": "{output}"
+      }
+    },
+    {
+      "id": "full.native.background-push-crypto",
+      "kind": "full_adapter",
+      "command": [
+        "./android/gradlew",
+        "-p",
+        "android",
+        "--console=plain",
+        ":background_push_crypto:testDebugUnitTest",
+        "--rerun-tasks"
+      ],
+      "steps": [
+        {
+          "command": [
+            "./android/gradlew",
+            "-p",
+            "android",
+            "--console=plain",
+            ":background_push_crypto:testDebugUnitTest",
+            "--rerun-tasks"
+          ],
+          "format": "junit",
+          "report_glob": "build/background_push_crypto/test-results/testDebugUnitTest/TEST-*.xml",
+          "classes": [
+            "com.mknoon.background_push_crypto.BackgroundPushCryptoPluginTest"
+          ]
+        }
+      ],
+      "boundary": "Exact source-owned proof adapter",
+      "timeout_seconds": 14400,
+      "resources": [
+        "unknown"
+      ]
+    },
+    {
+      "id": "full.native.app-visibility",
+      "kind": "full_adapter",
+      "command": [
+        "bash",
+        "scripts/run_app_visibility_android_e2e.sh",
+        "--build-only",
+        "--artifact-dir",
+        "{output}/build"
+      ],
+      "steps": [
+        {
+          "command": [
+            "bash",
+            "scripts/run_app_visibility_android_e2e.sh",
+            "--build-only",
+            "--artifact-dir",
+            "{output}/build"
+          ],
+          "format": "marker",
+          "marker": "Built Plan 371 Android proof APKs once"
+        },
+        {
+          "command": [
+            "bash",
+            "scripts/run_app_visibility_android_e2e.sh",
+            "--device-id",
+            "{device:android_physical}",
+            "--artifact-dir",
+            "{output}/build",
+            "--result-dir",
+            "{output}/results",
+            "--scenario",
+            "app_visibility_lifecycle"
+          ],
+          "format": "marker",
+          "marker": "(two phases, host force-stop, zero skips)"
+        }
+      ],
+      "boundary": "Exact source-owned proof adapter",
+      "timeout_seconds": 14400,
+      "resources": [
+        "unknown"
+      ],
+      "device_roles": [
+        "android_physical"
+      ],
+      "ui_driver": "existing_campaign",
+      "ui_driver_reason": "Existing native/protocol assertions require their source-owned campaign or XCTest fixture; generic UI automation cannot establish these internals."
+    },
+    {
+      "id": "full.benchmark.run_group_publish_benchmark",
+      "kind": "full_adapter",
+      "command": [
+        "go",
+        "build",
+        "-o",
+        "bin/testpeer",
+        "./cmd/testpeer/"
+      ],
+      "steps": [
+        {
+          "command": [
+            "go",
+            "build",
+            "-o",
+            "bin/testpeer",
+            "./cmd/testpeer/"
+          ],
+          "cwd": "go-mknoon",
+          "format": "build",
+          "expected_files": [
+            "go-mknoon/bin/testpeer"
+          ]
+        },
+        {
+          "command": [
+            "dart",
+            "run",
+            "integration_test/scripts/run_group_publish_benchmark.dart",
+            "-d",
+            "{device:ios_simulator}"
+          ],
+          "format": "marker",
+          "marker": "FULL_BENCHMARK_COMPLETED run_group_publish_benchmark"
+        }
+      ],
+      "boundary": "Exact source-owned proof adapter",
+      "timeout_seconds": 14400,
+      "resources": [
+        "unknown"
+      ],
+      "device_roles": [
+        "ios_simulator"
+      ],
+      "ui_driver": "existing_campaign",
+      "ui_driver_reason": "Existing native/protocol assertions require their source-owned campaign or XCTest fixture; generic UI automation cannot establish these internals.",
+      "required_config": [
+        "relay_addresses"
+      ],
+      "environment": {
+        "MKNOON_RELAY_ADDRESSES": "{config:relay_addresses}"
+      }
+    },
+    {
+      "id": "full.benchmark.run_timeout_accuracy_benchmark",
+      "kind": "full_adapter",
+      "command": [
+        "go",
+        "build",
+        "-o",
+        "bin/testpeer",
+        "./cmd/testpeer/"
+      ],
+      "steps": [
+        {
+          "command": [
+            "go",
+            "build",
+            "-o",
+            "bin/testpeer",
+            "./cmd/testpeer/"
+          ],
+          "cwd": "go-mknoon",
+          "format": "build",
+          "expected_files": [
+            "go-mknoon/bin/testpeer"
+          ]
+        },
+        {
+          "command": [
+            "dart",
+            "run",
+            "integration_test/scripts/run_timeout_accuracy_benchmark.dart",
+            "-d",
+            "{device:ios_simulator}"
+          ],
+          "format": "marker",
+          "marker": "FULL_BENCHMARK_COMPLETED run_timeout_accuracy_benchmark"
+        }
+      ],
+      "boundary": "Exact source-owned proof adapter",
+      "timeout_seconds": 14400,
+      "resources": [
+        "unknown"
+      ],
+      "device_roles": [
+        "ios_simulator"
+      ],
+      "ui_driver": "existing_campaign",
+      "ui_driver_reason": "Existing native/protocol assertions require their source-owned campaign or XCTest fixture; generic UI automation cannot establish these internals.",
+      "required_config": [
+        "relay_addresses"
+      ],
+      "environment": {
+        "MKNOON_RELAY_ADDRESSES": "{config:relay_addresses}"
+      }
+    },
+    {
+      "id": "full.benchmark.peer-suite",
+      "kind": "full_adapter",
+      "command": [
+        "go",
+        "build",
+        "-o",
+        "bin/testpeer",
+        "./cmd/testpeer/"
+      ],
+      "steps": [
+        {
+          "command": [
+            "go",
+            "build",
+            "-o",
+            "bin/testpeer",
+            "./cmd/testpeer/"
+          ],
+          "cwd": "go-mknoon",
+          "format": "build",
+          "expected_files": [
+            "go-mknoon/bin/testpeer"
+          ]
+        },
+        {
+          "command": [
+            "dart",
+            "run",
+            "integration_test/scripts/run_benchmark_suite.dart",
+            "-d",
+            "{device:ios_simulator}",
+            "--scenarios",
+            "A,D,E,J,L,R",
+            "--fixture-dir",
+            "{output}/fixtures"
+          ],
+          "format": "marker",
+          "marker": "FULL_BENCHMARK_COMPLETED peer-suite"
+        }
+      ],
+      "boundary": "Exact source-owned proof adapter",
+      "timeout_seconds": 14400,
+      "resources": [
+        "unknown"
+      ],
+      "device_roles": [
+        "ios_simulator"
+      ],
+      "ui_driver": "existing_campaign",
+      "ui_driver_reason": "Existing native/protocol assertions require their source-owned campaign or XCTest fixture; generic UI automation cannot establish these internals.",
+      "required_config": [
+        "relay_addresses"
+      ],
+      "environment": {
+        "MKNOON_RELAY_ADDRESSES": "{config:relay_addresses}"
+      }
+    },
+    {
+      "id": "full.xctest.notificationtapuitests.testnotificationtap",
+      "kind": "full_adapter",
+      "command": [
+        "xcodebuild",
+        "build-for-testing",
+        "-workspace",
+        "ios/Runner.xcworkspace",
+        "-scheme",
+        "Runner",
+        "-configuration",
+        "Debug",
+        "-destination",
+        "id={device:ios_physical}",
+        "-derivedDataPath",
+        "{output}/derived",
+        "-only-testing:RunnerUITests/NotificationTapUITests/testNotificationTap"
+      ],
+      "steps": [
+        {
+          "command": [
+            "xcodebuild",
+            "build-for-testing",
+            "-workspace",
+            "ios/Runner.xcworkspace",
+            "-scheme",
+            "Runner",
+            "-configuration",
+            "Debug",
+            "-destination",
+            "id={device:ios_physical}",
+            "-derivedDataPath",
+            "{output}/derived",
+            "-only-testing:RunnerUITests/NotificationTapUITests/testNotificationTap"
+          ],
+          "format": "marker",
+          "marker": "** TEST BUILD SUCCEEDED **"
+        },
+        {
+          "command": [
+            "xcodebuild",
+            "test-without-building",
+            "-xctestrun",
+            "{output}/active.xctestrun",
+            "-destination",
+            "id={device:ios_physical}",
+            "-only-testing:RunnerUITests/NotificationTapUITests/testNotificationTap",
+            "-resultBundlePath",
+            "{output}/result.xcresult"
+          ],
+          "format": "xctest",
+          "selectors": [
+            "NotificationTapUITests/testNotificationTap"
+          ],
+          "xctest_fixture": "{config:ios_ui_fixtures}",
+          "xctestrun_directory": "{output}/derived/Build/Products",
+          "xctestrun_output": "{output}/active.xctestrun",
+          "target_id": "{device:ios_physical}"
+        }
+      ],
+      "boundary": "Exact native XCTest method with source-built products and a selector-bound prepared app/provider fixture; native state assertions must complete.",
+      "timeout_seconds": 3600,
+      "resources": [
+        "unknown"
+      ],
+      "device_roles": [
+        "ios_physical"
+      ],
+      "required_config": [
+        "ios_ui_fixtures"
+      ],
+      "config_files": [
+        "ios_ui_fixtures"
+      ],
+      "xctest_fixture_selector": "NotificationTapUITests/testNotificationTap",
+      "ui_driver": "existing_campaign",
+      "ui_driver_reason": "Existing XCTest assertions inspect native notification/call state; the supplied fixture must establish the method-specific app/provider state before its action."
+    },
+    {
+      "id": "full.xctest.notificationtapuitests.testcoldnotificationtap",
+      "kind": "full_adapter",
+      "command": [
+        "xcodebuild",
+        "build-for-testing",
+        "-workspace",
+        "ios/Runner.xcworkspace",
+        "-scheme",
+        "Runner",
+        "-configuration",
+        "Debug",
+        "-destination",
+        "id={device:ios_physical}",
+        "-derivedDataPath",
+        "{output}/derived",
+        "-only-testing:RunnerUITests/NotificationTapUITests/testColdNotificationTap"
+      ],
+      "steps": [
+        {
+          "command": [
+            "xcodebuild",
+            "build-for-testing",
+            "-workspace",
+            "ios/Runner.xcworkspace",
+            "-scheme",
+            "Runner",
+            "-configuration",
+            "Debug",
+            "-destination",
+            "id={device:ios_physical}",
+            "-derivedDataPath",
+            "{output}/derived",
+            "-only-testing:RunnerUITests/NotificationTapUITests/testColdNotificationTap"
+          ],
+          "format": "marker",
+          "marker": "** TEST BUILD SUCCEEDED **"
+        },
+        {
+          "command": [
+            "xcodebuild",
+            "test-without-building",
+            "-xctestrun",
+            "{output}/active.xctestrun",
+            "-destination",
+            "id={device:ios_physical}",
+            "-only-testing:RunnerUITests/NotificationTapUITests/testColdNotificationTap",
+            "-resultBundlePath",
+            "{output}/result.xcresult"
+          ],
+          "format": "xctest",
+          "selectors": [
+            "NotificationTapUITests/testColdNotificationTap"
+          ],
+          "xctest_fixture": "{config:ios_ui_fixtures}",
+          "xctestrun_directory": "{output}/derived/Build/Products",
+          "xctestrun_output": "{output}/active.xctestrun",
+          "target_id": "{device:ios_physical}"
+        }
+      ],
+      "boundary": "Exact native XCTest method with source-built products and a selector-bound prepared app/provider fixture; native state assertions must complete.",
+      "timeout_seconds": 3600,
+      "resources": [
+        "unknown"
+      ],
+      "device_roles": [
+        "ios_physical"
+      ],
+      "required_config": [
+        "ios_ui_fixtures"
+      ],
+      "config_files": [
+        "ios_ui_fixtures"
+      ],
+      "xctest_fixture_selector": "NotificationTapUITests/testColdNotificationTap",
+      "ui_driver": "existing_campaign",
+      "ui_driver_reason": "Existing XCTest assertions inspect native notification/call state; the supplied fixture must establish the method-specific app/provider state before its action."
+    },
+    {
+      "id": "full.xctest.notificationtapuitests.testpreparewarmnotificationtap",
+      "kind": "full_adapter",
+      "command": [
+        "xcodebuild",
+        "build-for-testing",
+        "-workspace",
+        "ios/Runner.xcworkspace",
+        "-scheme",
+        "Runner",
+        "-configuration",
+        "Debug",
+        "-destination",
+        "id={device:ios_physical}",
+        "-derivedDataPath",
+        "{output}/derived",
+        "-only-testing:RunnerUITests/NotificationTapUITests/testPrepareWarmNotificationTap"
+      ],
+      "steps": [
+        {
+          "command": [
+            "xcodebuild",
+            "build-for-testing",
+            "-workspace",
+            "ios/Runner.xcworkspace",
+            "-scheme",
+            "Runner",
+            "-configuration",
+            "Debug",
+            "-destination",
+            "id={device:ios_physical}",
+            "-derivedDataPath",
+            "{output}/derived",
+            "-only-testing:RunnerUITests/NotificationTapUITests/testPrepareWarmNotificationTap"
+          ],
+          "format": "marker",
+          "marker": "** TEST BUILD SUCCEEDED **"
+        },
+        {
+          "command": [
+            "xcodebuild",
+            "test-without-building",
+            "-xctestrun",
+            "{output}/active.xctestrun",
+            "-destination",
+            "id={device:ios_physical}",
+            "-only-testing:RunnerUITests/NotificationTapUITests/testPrepareWarmNotificationTap",
+            "-resultBundlePath",
+            "{output}/result.xcresult"
+          ],
+          "format": "xctest",
+          "selectors": [
+            "NotificationTapUITests/testPrepareWarmNotificationTap"
+          ],
+          "xctest_fixture": "{config:ios_ui_fixtures}",
+          "xctestrun_directory": "{output}/derived/Build/Products",
+          "xctestrun_output": "{output}/active.xctestrun",
+          "target_id": "{device:ios_physical}"
+        }
+      ],
+      "boundary": "Exact native XCTest method with source-built products and a selector-bound prepared app/provider fixture; native state assertions must complete.",
+      "timeout_seconds": 3600,
+      "resources": [
+        "unknown"
+      ],
+      "device_roles": [
+        "ios_physical"
+      ],
+      "required_config": [
+        "ios_ui_fixtures"
+      ],
+      "config_files": [
+        "ios_ui_fixtures"
+      ],
+      "xctest_fixture_selector": "NotificationTapUITests/testPrepareWarmNotificationTap",
+      "ui_driver": "existing_campaign",
+      "ui_driver_reason": "Existing XCTest assertions inspect native notification/call state; the supplied fixture must establish the method-specific app/provider state before its action."
+    },
+    {
+      "id": "full.xctest.notificationtapuitests.testtapexistingnotification",
+      "kind": "full_adapter",
+      "command": [
+        "xcodebuild",
+        "build-for-testing",
+        "-workspace",
+        "ios/Runner.xcworkspace",
+        "-scheme",
+        "Runner",
+        "-configuration",
+        "Debug",
+        "-destination",
+        "id={device:ios_physical}",
+        "-derivedDataPath",
+        "{output}/derived",
+        "-only-testing:RunnerUITests/NotificationTapUITests/testTapExistingNotification"
+      ],
+      "steps": [
+        {
+          "command": [
+            "xcodebuild",
+            "build-for-testing",
+            "-workspace",
+            "ios/Runner.xcworkspace",
+            "-scheme",
+            "Runner",
+            "-configuration",
+            "Debug",
+            "-destination",
+            "id={device:ios_physical}",
+            "-derivedDataPath",
+            "{output}/derived",
+            "-only-testing:RunnerUITests/NotificationTapUITests/testTapExistingNotification"
+          ],
+          "format": "marker",
+          "marker": "** TEST BUILD SUCCEEDED **"
+        },
+        {
+          "command": [
+            "xcodebuild",
+            "test-without-building",
+            "-xctestrun",
+            "{output}/active.xctestrun",
+            "-destination",
+            "id={device:ios_physical}",
+            "-only-testing:RunnerUITests/NotificationTapUITests/testTapExistingNotification",
+            "-resultBundlePath",
+            "{output}/result.xcresult"
+          ],
+          "format": "xctest",
+          "selectors": [
+            "NotificationTapUITests/testTapExistingNotification"
+          ],
+          "xctest_fixture": "{config:ios_ui_fixtures}",
+          "xctestrun_directory": "{output}/derived/Build/Products",
+          "xctestrun_output": "{output}/active.xctestrun",
+          "target_id": "{device:ios_physical}"
+        }
+      ],
+      "boundary": "Exact native XCTest method with source-built products and a selector-bound prepared app/provider fixture; native state assertions must complete.",
+      "timeout_seconds": 3600,
+      "resources": [
+        "unknown"
+      ],
+      "device_roles": [
+        "ios_physical"
+      ],
+      "required_config": [
+        "ios_ui_fixtures"
+      ],
+      "config_files": [
+        "ios_ui_fixtures"
+      ],
+      "xctest_fixture_selector": "NotificationTapUITests/testTapExistingNotification",
+      "ui_driver": "existing_campaign",
+      "ui_driver_reason": "Existing XCTest assertions inspect native notification/call state; the supplied fixture must establish the method-specific app/provider state before its action."
+    },
+    {
+      "id": "full.xctest.notificationtapuitests.testautomatelocalnetworkpermission",
+      "kind": "full_adapter",
+      "command": [
+        "xcodebuild",
+        "build-for-testing",
+        "-workspace",
+        "ios/Runner.xcworkspace",
+        "-scheme",
+        "Runner",
+        "-configuration",
+        "Debug",
+        "-destination",
+        "id={device:ios_physical}",
+        "-derivedDataPath",
+        "{output}/derived",
+        "-only-testing:RunnerUITests/NotificationTapUITests/testAutomateLocalNetworkPermission"
+      ],
+      "steps": [
+        {
+          "command": [
+            "xcodebuild",
+            "build-for-testing",
+            "-workspace",
+            "ios/Runner.xcworkspace",
+            "-scheme",
+            "Runner",
+            "-configuration",
+            "Debug",
+            "-destination",
+            "id={device:ios_physical}",
+            "-derivedDataPath",
+            "{output}/derived",
+            "-only-testing:RunnerUITests/NotificationTapUITests/testAutomateLocalNetworkPermission"
+          ],
+          "format": "marker",
+          "marker": "** TEST BUILD SUCCEEDED **"
+        },
+        {
+          "command": [
+            "xcodebuild",
+            "test-without-building",
+            "-xctestrun",
+            "{output}/active.xctestrun",
+            "-destination",
+            "id={device:ios_physical}",
+            "-only-testing:RunnerUITests/NotificationTapUITests/testAutomateLocalNetworkPermission",
+            "-resultBundlePath",
+            "{output}/result.xcresult"
+          ],
+          "format": "xctest",
+          "selectors": [
+            "NotificationTapUITests/testAutomateLocalNetworkPermission"
+          ],
+          "xctest_fixture": "{config:ios_ui_fixtures}",
+          "xctestrun_directory": "{output}/derived/Build/Products",
+          "xctestrun_output": "{output}/active.xctestrun",
+          "target_id": "{device:ios_physical}"
+        }
+      ],
+      "boundary": "Exact native XCTest method with source-built products and a selector-bound prepared app/provider fixture; native state assertions must complete.",
+      "timeout_seconds": 3600,
+      "resources": [
+        "unknown"
+      ],
+      "device_roles": [
+        "ios_physical"
+      ],
+      "required_config": [
+        "ios_ui_fixtures"
+      ],
+      "config_files": [
+        "ios_ui_fixtures"
+      ],
+      "xctest_fixture_selector": "NotificationTapUITests/testAutomateLocalNetworkPermission",
+      "ui_driver": "existing_campaign",
+      "ui_driver_reason": "Existing XCTest assertions inspect native notification/call state; the supplied fixture must establish the method-specific app/provider state before its action."
+    },
+    {
+      "id": "full.xctest.notificationtapuitests.testsettlelocalnetworkpermissionforcampaign",
+      "kind": "full_adapter",
+      "command": [
+        "xcodebuild",
+        "build-for-testing",
+        "-workspace",
+        "ios/Runner.xcworkspace",
+        "-scheme",
+        "Runner",
+        "-configuration",
+        "Debug",
+        "-destination",
+        "id={device:ios_physical}",
+        "-derivedDataPath",
+        "{output}/derived",
+        "-only-testing:RunnerUITests/NotificationTapUITests/testSettleLocalNetworkPermissionForCampaign"
+      ],
+      "steps": [
+        {
+          "command": [
+            "xcodebuild",
+            "build-for-testing",
+            "-workspace",
+            "ios/Runner.xcworkspace",
+            "-scheme",
+            "Runner",
+            "-configuration",
+            "Debug",
+            "-destination",
+            "id={device:ios_physical}",
+            "-derivedDataPath",
+            "{output}/derived",
+            "-only-testing:RunnerUITests/NotificationTapUITests/testSettleLocalNetworkPermissionForCampaign"
+          ],
+          "format": "marker",
+          "marker": "** TEST BUILD SUCCEEDED **"
+        },
+        {
+          "command": [
+            "xcodebuild",
+            "test-without-building",
+            "-xctestrun",
+            "{output}/active.xctestrun",
+            "-destination",
+            "id={device:ios_physical}",
+            "-only-testing:RunnerUITests/NotificationTapUITests/testSettleLocalNetworkPermissionForCampaign",
+            "-resultBundlePath",
+            "{output}/result.xcresult"
+          ],
+          "format": "xctest",
+          "selectors": [
+            "NotificationTapUITests/testSettleLocalNetworkPermissionForCampaign"
+          ],
+          "xctest_fixture": "{config:ios_ui_fixtures}",
+          "xctestrun_directory": "{output}/derived/Build/Products",
+          "xctestrun_output": "{output}/active.xctestrun",
+          "target_id": "{device:ios_physical}"
+        }
+      ],
+      "boundary": "Exact native XCTest method with source-built products and a selector-bound prepared app/provider fixture; native state assertions must complete.",
+      "timeout_seconds": 3600,
+      "resources": [
+        "unknown"
+      ],
+      "device_roles": [
+        "ios_physical"
+      ],
+      "required_config": [
+        "ios_ui_fixtures"
+      ],
+      "config_files": [
+        "ios_ui_fixtures"
+      ],
+      "xctest_fixture_selector": "NotificationTapUITests/testSettleLocalNetworkPermissionForCampaign",
+      "ui_driver": "existing_campaign",
+      "ui_driver_reason": "Existing XCTest assertions inspect native notification/call state; the supplied fixture must establish the method-specific app/provider state before its action."
+    },
+    {
+      "id": "full.xctest.notificationtapuitests.testairplanetogglestatedecodercontract",
+      "kind": "full_adapter",
+      "command": [
+        "xcodebuild",
+        "build-for-testing",
+        "-workspace",
+        "ios/Runner.xcworkspace",
+        "-scheme",
+        "Runner",
+        "-configuration",
+        "Debug",
+        "-destination",
+        "id={device:ios_simulator}",
+        "-derivedDataPath",
+        "{output}/derived",
+        "-only-testing:RunnerUITests/NotificationTapUITests/testAirplaneToggleStateDecoderContract"
+      ],
+      "steps": [
+        {
+          "command": [
+            "xcodebuild",
+            "build-for-testing",
+            "-workspace",
+            "ios/Runner.xcworkspace",
+            "-scheme",
+            "Runner",
+            "-configuration",
+            "Debug",
+            "-destination",
+            "id={device:ios_simulator}",
+            "-derivedDataPath",
+            "{output}/derived",
+            "-only-testing:RunnerUITests/NotificationTapUITests/testAirplaneToggleStateDecoderContract"
+          ],
+          "format": "marker",
+          "marker": "** TEST BUILD SUCCEEDED **"
+        },
+        {
+          "command": [
+            "xcodebuild",
+            "test-without-building",
+            "-xctestrun",
+            "{output}/active.xctestrun",
+            "-destination",
+            "id={device:ios_simulator}",
+            "-only-testing:RunnerUITests/NotificationTapUITests/testAirplaneToggleStateDecoderContract",
+            "-resultBundlePath",
+            "{output}/result.xcresult"
+          ],
+          "format": "xctest",
+          "selectors": [
+            "NotificationTapUITests/testAirplaneToggleStateDecoderContract"
+          ],
+          "xctest_fixture": "{config:ios_ui_fixtures}",
+          "xctestrun_directory": "{output}/derived/Build/Products",
+          "xctestrun_output": "{output}/active.xctestrun",
+          "target_id": "{device:ios_simulator}"
+        }
+      ],
+      "boundary": "Exact native XCTest method with source-built products and a selector-bound prepared app/provider fixture; native state assertions must complete.",
+      "timeout_seconds": 3600,
+      "resources": [
+        "unknown"
+      ],
+      "device_roles": [
+        "ios_simulator"
+      ],
+      "required_config": [
+        "ios_ui_fixtures"
+      ],
+      "config_files": [
+        "ios_ui_fixtures"
+      ],
+      "xctest_fixture_selector": "NotificationTapUITests/testAirplaneToggleStateDecoderContract",
+      "ui_driver": "existing_campaign",
+      "ui_driver_reason": "Existing XCTest assertions inspect native notification/call state; the supplied fixture must establish the method-specific app/provider state before its action."
+    },
+    {
+      "id": "full.xctest.notificationtapuitests.testpreparepayloadfastpathnotificationtap",
+      "kind": "full_adapter",
+      "command": [
+        "xcodebuild",
+        "build-for-testing",
+        "-workspace",
+        "ios/Runner.xcworkspace",
+        "-scheme",
+        "Runner",
+        "-configuration",
+        "Debug",
+        "-destination",
+        "id={device:ios_physical}",
+        "-derivedDataPath",
+        "{output}/derived",
+        "-only-testing:RunnerUITests/NotificationTapUITests/testPreparePayloadFastPathNotificationTap"
+      ],
+      "steps": [
+        {
+          "command": [
+            "xcodebuild",
+            "build-for-testing",
+            "-workspace",
+            "ios/Runner.xcworkspace",
+            "-scheme",
+            "Runner",
+            "-configuration",
+            "Debug",
+            "-destination",
+            "id={device:ios_physical}",
+            "-derivedDataPath",
+            "{output}/derived",
+            "-only-testing:RunnerUITests/NotificationTapUITests/testPreparePayloadFastPathNotificationTap"
+          ],
+          "format": "marker",
+          "marker": "** TEST BUILD SUCCEEDED **"
+        },
+        {
+          "command": [
+            "xcodebuild",
+            "test-without-building",
+            "-xctestrun",
+            "{output}/active.xctestrun",
+            "-destination",
+            "id={device:ios_physical}",
+            "-only-testing:RunnerUITests/NotificationTapUITests/testPreparePayloadFastPathNotificationTap",
+            "-resultBundlePath",
+            "{output}/result.xcresult"
+          ],
+          "format": "xctest",
+          "selectors": [
+            "NotificationTapUITests/testPreparePayloadFastPathNotificationTap"
+          ],
+          "xctest_fixture": "{config:ios_ui_fixtures}",
+          "xctestrun_directory": "{output}/derived/Build/Products",
+          "xctestrun_output": "{output}/active.xctestrun",
+          "target_id": "{device:ios_physical}"
+        }
+      ],
+      "boundary": "Exact native XCTest method with source-built products and a selector-bound prepared app/provider fixture; native state assertions must complete.",
+      "timeout_seconds": 3600,
+      "resources": [
+        "unknown"
+      ],
+      "device_roles": [
+        "ios_physical"
+      ],
+      "required_config": [
+        "ios_ui_fixtures"
+      ],
+      "config_files": [
+        "ios_ui_fixtures"
+      ],
+      "xctest_fixture_selector": "NotificationTapUITests/testPreparePayloadFastPathNotificationTap",
+      "ui_driver": "existing_campaign",
+      "ui_driver_reason": "Existing XCTest assertions inspect native notification/call state; the supplied fixture must establish the method-specific app/provider state before its action."
+    },
+    {
+      "id": "full.xctest.notificationtapuitests.testbackgroundregisteredpayloadfastpathnotificationtap",
+      "kind": "full_adapter",
+      "command": [
+        "xcodebuild",
+        "build-for-testing",
+        "-workspace",
+        "ios/Runner.xcworkspace",
+        "-scheme",
+        "Runner",
+        "-configuration",
+        "Debug",
+        "-destination",
+        "id={device:ios_physical}",
+        "-derivedDataPath",
+        "{output}/derived",
+        "-only-testing:RunnerUITests/NotificationTapUITests/testBackgroundRegisteredPayloadFastPathNotificationTap"
+      ],
+      "steps": [
+        {
+          "command": [
+            "xcodebuild",
+            "build-for-testing",
+            "-workspace",
+            "ios/Runner.xcworkspace",
+            "-scheme",
+            "Runner",
+            "-configuration",
+            "Debug",
+            "-destination",
+            "id={device:ios_physical}",
+            "-derivedDataPath",
+            "{output}/derived",
+            "-only-testing:RunnerUITests/NotificationTapUITests/testBackgroundRegisteredPayloadFastPathNotificationTap"
+          ],
+          "format": "marker",
+          "marker": "** TEST BUILD SUCCEEDED **"
+        },
+        {
+          "command": [
+            "xcodebuild",
+            "test-without-building",
+            "-xctestrun",
+            "{output}/active.xctestrun",
+            "-destination",
+            "id={device:ios_physical}",
+            "-only-testing:RunnerUITests/NotificationTapUITests/testBackgroundRegisteredPayloadFastPathNotificationTap",
+            "-resultBundlePath",
+            "{output}/result.xcresult"
+          ],
+          "format": "xctest",
+          "selectors": [
+            "NotificationTapUITests/testBackgroundRegisteredPayloadFastPathNotificationTap"
+          ],
+          "xctest_fixture": "{config:ios_ui_fixtures}",
+          "xctestrun_directory": "{output}/derived/Build/Products",
+          "xctestrun_output": "{output}/active.xctestrun",
+          "target_id": "{device:ios_physical}"
+        }
+      ],
+      "boundary": "Exact native XCTest method with source-built products and a selector-bound prepared app/provider fixture; native state assertions must complete.",
+      "timeout_seconds": 3600,
+      "resources": [
+        "unknown"
+      ],
+      "device_roles": [
+        "ios_physical"
+      ],
+      "required_config": [
+        "ios_ui_fixtures"
+      ],
+      "config_files": [
+        "ios_ui_fixtures"
+      ],
+      "xctest_fixture_selector": "NotificationTapUITests/testBackgroundRegisteredPayloadFastPathNotificationTap",
+      "ui_driver": "existing_campaign",
+      "ui_driver_reason": "Existing XCTest assertions inspect native notification/call state; the supplied fixture must establish the method-specific app/provider state before its action."
+    },
+    {
+      "id": "full.xctest.notificationtapuitests.testpayloadfastpathnotificationtap",
+      "kind": "full_adapter",
+      "command": [
+        "xcodebuild",
+        "build-for-testing",
+        "-workspace",
+        "ios/Runner.xcworkspace",
+        "-scheme",
+        "Runner",
+        "-configuration",
+        "Debug",
+        "-destination",
+        "id={device:ios_physical}",
+        "-derivedDataPath",
+        "{output}/derived",
+        "-only-testing:RunnerUITests/NotificationTapUITests/testPayloadFastPathNotificationTap"
+      ],
+      "steps": [
+        {
+          "command": [
+            "xcodebuild",
+            "build-for-testing",
+            "-workspace",
+            "ios/Runner.xcworkspace",
+            "-scheme",
+            "Runner",
+            "-configuration",
+            "Debug",
+            "-destination",
+            "id={device:ios_physical}",
+            "-derivedDataPath",
+            "{output}/derived",
+            "-only-testing:RunnerUITests/NotificationTapUITests/testPayloadFastPathNotificationTap"
+          ],
+          "format": "marker",
+          "marker": "** TEST BUILD SUCCEEDED **"
+        },
+        {
+          "command": [
+            "xcodebuild",
+            "test-without-building",
+            "-xctestrun",
+            "{output}/active.xctestrun",
+            "-destination",
+            "id={device:ios_physical}",
+            "-only-testing:RunnerUITests/NotificationTapUITests/testPayloadFastPathNotificationTap",
+            "-resultBundlePath",
+            "{output}/result.xcresult"
+          ],
+          "format": "xctest",
+          "selectors": [
+            "NotificationTapUITests/testPayloadFastPathNotificationTap"
+          ],
+          "xctest_fixture": "{config:ios_ui_fixtures}",
+          "xctestrun_directory": "{output}/derived/Build/Products",
+          "xctestrun_output": "{output}/active.xctestrun",
+          "target_id": "{device:ios_physical}"
+        }
+      ],
+      "boundary": "Exact native XCTest method with source-built products and a selector-bound prepared app/provider fixture; native state assertions must complete.",
+      "timeout_seconds": 3600,
+      "resources": [
+        "unknown"
+      ],
+      "device_roles": [
+        "ios_physical"
+      ],
+      "required_config": [
+        "ios_ui_fixtures"
+      ],
+      "config_files": [
+        "ios_ui_fixtures"
+      ],
+      "xctest_fixture_selector": "NotificationTapUITests/testPayloadFastPathNotificationTap",
+      "ui_driver": "existing_campaign",
+      "ui_driver_reason": "Existing XCTest assertions inspect native notification/call state; the supplied fixture must establish the method-specific app/provider state before its action."
+    },
+    {
+      "id": "full.xctest.notificationtapuitests.testobservepayloadnotificationrecovery",
+      "kind": "full_adapter",
+      "command": [
+        "xcodebuild",
+        "build-for-testing",
+        "-workspace",
+        "ios/Runner.xcworkspace",
+        "-scheme",
+        "Runner",
+        "-configuration",
+        "Debug",
+        "-destination",
+        "id={device:ios_physical}",
+        "-derivedDataPath",
+        "{output}/derived",
+        "-only-testing:RunnerUITests/NotificationTapUITests/testObservePayloadNotificationRecovery"
+      ],
+      "steps": [
+        {
+          "command": [
+            "xcodebuild",
+            "build-for-testing",
+            "-workspace",
+            "ios/Runner.xcworkspace",
+            "-scheme",
+            "Runner",
+            "-configuration",
+            "Debug",
+            "-destination",
+            "id={device:ios_physical}",
+            "-derivedDataPath",
+            "{output}/derived",
+            "-only-testing:RunnerUITests/NotificationTapUITests/testObservePayloadNotificationRecovery"
+          ],
+          "format": "marker",
+          "marker": "** TEST BUILD SUCCEEDED **"
+        },
+        {
+          "command": [
+            "xcodebuild",
+            "test-without-building",
+            "-xctestrun",
+            "{output}/active.xctestrun",
+            "-destination",
+            "id={device:ios_physical}",
+            "-only-testing:RunnerUITests/NotificationTapUITests/testObservePayloadNotificationRecovery",
+            "-resultBundlePath",
+            "{output}/result.xcresult"
+          ],
+          "format": "xctest",
+          "selectors": [
+            "NotificationTapUITests/testObservePayloadNotificationRecovery"
+          ],
+          "xctest_fixture": "{config:ios_ui_fixtures}",
+          "xctestrun_directory": "{output}/derived/Build/Products",
+          "xctestrun_output": "{output}/active.xctestrun",
+          "target_id": "{device:ios_physical}"
+        }
+      ],
+      "boundary": "Exact native XCTest method with source-built products and a selector-bound prepared app/provider fixture; native state assertions must complete.",
+      "timeout_seconds": 3600,
+      "resources": [
+        "unknown"
+      ],
+      "device_roles": [
+        "ios_physical"
+      ],
+      "required_config": [
+        "ios_ui_fixtures"
+      ],
+      "config_files": [
+        "ios_ui_fixtures"
+      ],
+      "xctest_fixture_selector": "NotificationTapUITests/testObservePayloadNotificationRecovery",
+      "ui_driver": "existing_campaign",
+      "ui_driver_reason": "Existing XCTest assertions inspect native notification/call state; the supplied fixture must establish the method-specific app/provider state before its action."
+    },
+    {
+      "id": "full.xctest.notificationtapuitests.testverifypayloadnotificationrecoveryretirement",
+      "kind": "full_adapter",
+      "command": [
+        "xcodebuild",
+        "build-for-testing",
+        "-workspace",
+        "ios/Runner.xcworkspace",
+        "-scheme",
+        "Runner",
+        "-configuration",
+        "Debug",
+        "-destination",
+        "id={device:ios_physical}",
+        "-derivedDataPath",
+        "{output}/derived",
+        "-only-testing:RunnerUITests/NotificationTapUITests/testVerifyPayloadNotificationRecoveryRetirement"
+      ],
+      "steps": [
+        {
+          "command": [
+            "xcodebuild",
+            "build-for-testing",
+            "-workspace",
+            "ios/Runner.xcworkspace",
+            "-scheme",
+            "Runner",
+            "-configuration",
+            "Debug",
+            "-destination",
+            "id={device:ios_physical}",
+            "-derivedDataPath",
+            "{output}/derived",
+            "-only-testing:RunnerUITests/NotificationTapUITests/testVerifyPayloadNotificationRecoveryRetirement"
+          ],
+          "format": "marker",
+          "marker": "** TEST BUILD SUCCEEDED **"
+        },
+        {
+          "command": [
+            "xcodebuild",
+            "test-without-building",
+            "-xctestrun",
+            "{output}/active.xctestrun",
+            "-destination",
+            "id={device:ios_physical}",
+            "-only-testing:RunnerUITests/NotificationTapUITests/testVerifyPayloadNotificationRecoveryRetirement",
+            "-resultBundlePath",
+            "{output}/result.xcresult"
+          ],
+          "format": "xctest",
+          "selectors": [
+            "NotificationTapUITests/testVerifyPayloadNotificationRecoveryRetirement"
+          ],
+          "xctest_fixture": "{config:ios_ui_fixtures}",
+          "xctestrun_directory": "{output}/derived/Build/Products",
+          "xctestrun_output": "{output}/active.xctestrun",
+          "target_id": "{device:ios_physical}"
+        }
+      ],
+      "boundary": "Exact native XCTest method with source-built products and a selector-bound prepared app/provider fixture; native state assertions must complete.",
+      "timeout_seconds": 3600,
+      "resources": [
+        "unknown"
+      ],
+      "device_roles": [
+        "ios_physical"
+      ],
+      "required_config": [
+        "ios_ui_fixtures"
+      ],
+      "config_files": [
+        "ios_ui_fixtures"
+      ],
+      "xctest_fixture_selector": "NotificationTapUITests/testVerifyPayloadNotificationRecoveryRetirement",
+      "ui_driver": "existing_campaign",
+      "ui_driver_reason": "Existing XCTest assertions inspect native notification/call state; the supplied fixture must establish the method-specific app/provider state before its action."
+    },
+    {
+      "id": "full.xctest.notificationtapuitests.testrestorepayloadfastpathnetwork",
+      "kind": "full_adapter",
+      "command": [
+        "xcodebuild",
+        "build-for-testing",
+        "-workspace",
+        "ios/Runner.xcworkspace",
+        "-scheme",
+        "Runner",
+        "-configuration",
+        "Debug",
+        "-destination",
+        "id={device:ios_physical}",
+        "-derivedDataPath",
+        "{output}/derived",
+        "-only-testing:RunnerUITests/NotificationTapUITests/testRestorePayloadFastPathNetwork"
+      ],
+      "steps": [
+        {
+          "command": [
+            "xcodebuild",
+            "build-for-testing",
+            "-workspace",
+            "ios/Runner.xcworkspace",
+            "-scheme",
+            "Runner",
+            "-configuration",
+            "Debug",
+            "-destination",
+            "id={device:ios_physical}",
+            "-derivedDataPath",
+            "{output}/derived",
+            "-only-testing:RunnerUITests/NotificationTapUITests/testRestorePayloadFastPathNetwork"
+          ],
+          "format": "marker",
+          "marker": "** TEST BUILD SUCCEEDED **"
+        },
+        {
+          "command": [
+            "xcodebuild",
+            "test-without-building",
+            "-xctestrun",
+            "{output}/active.xctestrun",
+            "-destination",
+            "id={device:ios_physical}",
+            "-only-testing:RunnerUITests/NotificationTapUITests/testRestorePayloadFastPathNetwork",
+            "-resultBundlePath",
+            "{output}/result.xcresult"
+          ],
+          "format": "xctest",
+          "selectors": [
+            "NotificationTapUITests/testRestorePayloadFastPathNetwork"
+          ],
+          "xctest_fixture": "{config:ios_ui_fixtures}",
+          "xctestrun_directory": "{output}/derived/Build/Products",
+          "xctestrun_output": "{output}/active.xctestrun",
+          "target_id": "{device:ios_physical}"
+        }
+      ],
+      "boundary": "Exact native XCTest method with source-built products and a selector-bound prepared app/provider fixture; native state assertions must complete.",
+      "timeout_seconds": 3600,
+      "resources": [
+        "unknown"
+      ],
+      "device_roles": [
+        "ios_physical"
+      ],
+      "required_config": [
+        "ios_ui_fixtures"
+      ],
+      "config_files": [
+        "ios_ui_fixtures"
+      ],
+      "xctest_fixture_selector": "NotificationTapUITests/testRestorePayloadFastPathNetwork",
+      "ui_driver": "existing_campaign",
+      "ui_driver_reason": "Existing XCTest assertions inspect native notification/call state; the supplied fixture must establish the method-specific app/provider state before its action."
+    },
+    {
+      "id": "full.xctest.notificationtapuitests.testreactionnotificationtap",
+      "kind": "full_adapter",
+      "command": [
+        "xcodebuild",
+        "build-for-testing",
+        "-workspace",
+        "ios/Runner.xcworkspace",
+        "-scheme",
+        "Runner",
+        "-configuration",
+        "Debug",
+        "-destination",
+        "id={device:ios_physical}",
+        "-derivedDataPath",
+        "{output}/derived",
+        "-only-testing:RunnerUITests/NotificationTapUITests/testReactionNotificationTap"
+      ],
+      "steps": [
+        {
+          "command": [
+            "xcodebuild",
+            "build-for-testing",
+            "-workspace",
+            "ios/Runner.xcworkspace",
+            "-scheme",
+            "Runner",
+            "-configuration",
+            "Debug",
+            "-destination",
+            "id={device:ios_physical}",
+            "-derivedDataPath",
+            "{output}/derived",
+            "-only-testing:RunnerUITests/NotificationTapUITests/testReactionNotificationTap"
+          ],
+          "format": "marker",
+          "marker": "** TEST BUILD SUCCEEDED **"
+        },
+        {
+          "command": [
+            "xcodebuild",
+            "test-without-building",
+            "-xctestrun",
+            "{output}/active.xctestrun",
+            "-destination",
+            "id={device:ios_physical}",
+            "-only-testing:RunnerUITests/NotificationTapUITests/testReactionNotificationTap",
+            "-resultBundlePath",
+            "{output}/result.xcresult"
+          ],
+          "format": "xctest",
+          "selectors": [
+            "NotificationTapUITests/testReactionNotificationTap"
+          ],
+          "xctest_fixture": "{config:ios_ui_fixtures}",
+          "xctestrun_directory": "{output}/derived/Build/Products",
+          "xctestrun_output": "{output}/active.xctestrun",
+          "target_id": "{device:ios_physical}"
+        }
+      ],
+      "boundary": "Exact native XCTest method with source-built products and a selector-bound prepared app/provider fixture; native state assertions must complete.",
+      "timeout_seconds": 3600,
+      "resources": [
+        "unknown"
+      ],
+      "device_roles": [
+        "ios_physical"
+      ],
+      "required_config": [
+        "ios_ui_fixtures"
+      ],
+      "config_files": [
+        "ios_ui_fixtures"
+      ],
+      "xctest_fixture_selector": "NotificationTapUITests/testReactionNotificationTap",
+      "ui_driver": "existing_campaign",
+      "ui_driver_reason": "Existing XCTest assertions inspect native notification/call state; the supplied fixture must establish the method-specific app/provider state before its action."
+    },
+    {
+      "id": "full.xctest.notificationtapuitests.testcreateannouncementreactionfixture",
+      "kind": "full_adapter",
+      "command": [
+        "xcodebuild",
+        "build-for-testing",
+        "-workspace",
+        "ios/Runner.xcworkspace",
+        "-scheme",
+        "Runner",
+        "-configuration",
+        "Debug",
+        "-destination",
+        "id={device:ios_physical}",
+        "-derivedDataPath",
+        "{output}/derived",
+        "-only-testing:RunnerUITests/NotificationTapUITests/testCreateAnnouncementReactionFixture"
+      ],
+      "steps": [
+        {
+          "command": [
+            "xcodebuild",
+            "build-for-testing",
+            "-workspace",
+            "ios/Runner.xcworkspace",
+            "-scheme",
+            "Runner",
+            "-configuration",
+            "Debug",
+            "-destination",
+            "id={device:ios_physical}",
+            "-derivedDataPath",
+            "{output}/derived",
+            "-only-testing:RunnerUITests/NotificationTapUITests/testCreateAnnouncementReactionFixture"
+          ],
+          "format": "marker",
+          "marker": "** TEST BUILD SUCCEEDED **"
+        },
+        {
+          "command": [
+            "xcodebuild",
+            "test-without-building",
+            "-xctestrun",
+            "{output}/active.xctestrun",
+            "-destination",
+            "id={device:ios_physical}",
+            "-only-testing:RunnerUITests/NotificationTapUITests/testCreateAnnouncementReactionFixture",
+            "-resultBundlePath",
+            "{output}/result.xcresult"
+          ],
+          "format": "xctest",
+          "selectors": [
+            "NotificationTapUITests/testCreateAnnouncementReactionFixture"
+          ],
+          "xctest_fixture": "{config:ios_ui_fixtures}",
+          "xctestrun_directory": "{output}/derived/Build/Products",
+          "xctestrun_output": "{output}/active.xctestrun",
+          "target_id": "{device:ios_physical}"
+        }
+      ],
+      "boundary": "Exact native XCTest method with source-built products and a selector-bound prepared app/provider fixture; native state assertions must complete.",
+      "timeout_seconds": 3600,
+      "resources": [
+        "unknown"
+      ],
+      "device_roles": [
+        "ios_physical"
+      ],
+      "required_config": [
+        "ios_ui_fixtures"
+      ],
+      "config_files": [
+        "ios_ui_fixtures"
+      ],
+      "xctest_fixture_selector": "NotificationTapUITests/testCreateAnnouncementReactionFixture",
+      "ui_driver": "existing_campaign",
+      "ui_driver_reason": "Existing XCTest assertions inspect native notification/call state; the supplied fixture must establish the method-specific app/provider state before its action."
+    },
+    {
+      "id": "full.xctest.notificationtapuitests.testauthorannouncementreactiontarget",
+      "kind": "full_adapter",
+      "command": [
+        "xcodebuild",
+        "build-for-testing",
+        "-workspace",
+        "ios/Runner.xcworkspace",
+        "-scheme",
+        "Runner",
+        "-configuration",
+        "Debug",
+        "-destination",
+        "id={device:ios_physical}",
+        "-derivedDataPath",
+        "{output}/derived",
+        "-only-testing:RunnerUITests/NotificationTapUITests/testAuthorAnnouncementReactionTarget"
+      ],
+      "steps": [
+        {
+          "command": [
+            "xcodebuild",
+            "build-for-testing",
+            "-workspace",
+            "ios/Runner.xcworkspace",
+            "-scheme",
+            "Runner",
+            "-configuration",
+            "Debug",
+            "-destination",
+            "id={device:ios_physical}",
+            "-derivedDataPath",
+            "{output}/derived",
+            "-only-testing:RunnerUITests/NotificationTapUITests/testAuthorAnnouncementReactionTarget"
+          ],
+          "format": "marker",
+          "marker": "** TEST BUILD SUCCEEDED **"
+        },
+        {
+          "command": [
+            "xcodebuild",
+            "test-without-building",
+            "-xctestrun",
+            "{output}/active.xctestrun",
+            "-destination",
+            "id={device:ios_physical}",
+            "-only-testing:RunnerUITests/NotificationTapUITests/testAuthorAnnouncementReactionTarget",
+            "-resultBundlePath",
+            "{output}/result.xcresult"
+          ],
+          "format": "xctest",
+          "selectors": [
+            "NotificationTapUITests/testAuthorAnnouncementReactionTarget"
+          ],
+          "xctest_fixture": "{config:ios_ui_fixtures}",
+          "xctestrun_directory": "{output}/derived/Build/Products",
+          "xctestrun_output": "{output}/active.xctestrun",
+          "target_id": "{device:ios_physical}"
+        }
+      ],
+      "boundary": "Exact native XCTest method with source-built products and a selector-bound prepared app/provider fixture; native state assertions must complete.",
+      "timeout_seconds": 3600,
+      "resources": [
+        "unknown"
+      ],
+      "device_roles": [
+        "ios_physical"
+      ],
+      "required_config": [
+        "ios_ui_fixtures"
+      ],
+      "config_files": [
+        "ios_ui_fixtures"
+      ],
+      "xctest_fixture_selector": "NotificationTapUITests/testAuthorAnnouncementReactionTarget",
+      "ui_driver": "existing_campaign",
+      "ui_driver_reason": "Existing XCTest assertions inspect native notification/call state; the supplied fixture must establish the method-specific app/provider state before its action."
+    },
+    {
+      "id": "full.xctest.notificationtapuitests.testcreatechatgroupnotificationfixture",
+      "kind": "full_adapter",
+      "command": [
+        "xcodebuild",
+        "build-for-testing",
+        "-workspace",
+        "ios/Runner.xcworkspace",
+        "-scheme",
+        "Runner",
+        "-configuration",
+        "Debug",
+        "-destination",
+        "id={device:ios_physical}",
+        "-derivedDataPath",
+        "{output}/derived",
+        "-only-testing:RunnerUITests/NotificationTapUITests/testCreateChatGroupNotificationFixture"
+      ],
+      "steps": [
+        {
+          "command": [
+            "xcodebuild",
+            "build-for-testing",
+            "-workspace",
+            "ios/Runner.xcworkspace",
+            "-scheme",
+            "Runner",
+            "-configuration",
+            "Debug",
+            "-destination",
+            "id={device:ios_physical}",
+            "-derivedDataPath",
+            "{output}/derived",
+            "-only-testing:RunnerUITests/NotificationTapUITests/testCreateChatGroupNotificationFixture"
+          ],
+          "format": "marker",
+          "marker": "** TEST BUILD SUCCEEDED **"
+        },
+        {
+          "command": [
+            "xcodebuild",
+            "test-without-building",
+            "-xctestrun",
+            "{output}/active.xctestrun",
+            "-destination",
+            "id={device:ios_physical}",
+            "-only-testing:RunnerUITests/NotificationTapUITests/testCreateChatGroupNotificationFixture",
+            "-resultBundlePath",
+            "{output}/result.xcresult"
+          ],
+          "format": "xctest",
+          "selectors": [
+            "NotificationTapUITests/testCreateChatGroupNotificationFixture"
+          ],
+          "xctest_fixture": "{config:ios_ui_fixtures}",
+          "xctestrun_directory": "{output}/derived/Build/Products",
+          "xctestrun_output": "{output}/active.xctestrun",
+          "target_id": "{device:ios_physical}"
+        }
+      ],
+      "boundary": "Exact native XCTest method with source-built products and a selector-bound prepared app/provider fixture; native state assertions must complete.",
+      "timeout_seconds": 3600,
+      "resources": [
+        "unknown"
+      ],
+      "device_roles": [
+        "ios_physical"
+      ],
+      "required_config": [
+        "ios_ui_fixtures"
+      ],
+      "config_files": [
+        "ios_ui_fixtures"
+      ],
+      "xctest_fixture_selector": "NotificationTapUITests/testCreateChatGroupNotificationFixture",
+      "ui_driver": "existing_campaign",
+      "ui_driver_reason": "Existing XCTest assertions inspect native notification/call state; the supplied fixture must establish the method-specific app/provider state before its action."
+    },
+    {
+      "id": "full.xctest.notificationtapuitests.testauthorchatgroupreactiontarget",
+      "kind": "full_adapter",
+      "command": [
+        "xcodebuild",
+        "build-for-testing",
+        "-workspace",
+        "ios/Runner.xcworkspace",
+        "-scheme",
+        "Runner",
+        "-configuration",
+        "Debug",
+        "-destination",
+        "id={device:ios_physical}",
+        "-derivedDataPath",
+        "{output}/derived",
+        "-only-testing:RunnerUITests/NotificationTapUITests/testAuthorChatGroupReactionTarget"
+      ],
+      "steps": [
+        {
+          "command": [
+            "xcodebuild",
+            "build-for-testing",
+            "-workspace",
+            "ios/Runner.xcworkspace",
+            "-scheme",
+            "Runner",
+            "-configuration",
+            "Debug",
+            "-destination",
+            "id={device:ios_physical}",
+            "-derivedDataPath",
+            "{output}/derived",
+            "-only-testing:RunnerUITests/NotificationTapUITests/testAuthorChatGroupReactionTarget"
+          ],
+          "format": "marker",
+          "marker": "** TEST BUILD SUCCEEDED **"
+        },
+        {
+          "command": [
+            "xcodebuild",
+            "test-without-building",
+            "-xctestrun",
+            "{output}/active.xctestrun",
+            "-destination",
+            "id={device:ios_physical}",
+            "-only-testing:RunnerUITests/NotificationTapUITests/testAuthorChatGroupReactionTarget",
+            "-resultBundlePath",
+            "{output}/result.xcresult"
+          ],
+          "format": "xctest",
+          "selectors": [
+            "NotificationTapUITests/testAuthorChatGroupReactionTarget"
+          ],
+          "xctest_fixture": "{config:ios_ui_fixtures}",
+          "xctestrun_directory": "{output}/derived/Build/Products",
+          "xctestrun_output": "{output}/active.xctestrun",
+          "target_id": "{device:ios_physical}"
+        }
+      ],
+      "boundary": "Exact native XCTest method with source-built products and a selector-bound prepared app/provider fixture; native state assertions must complete.",
+      "timeout_seconds": 3600,
+      "resources": [
+        "unknown"
+      ],
+      "device_roles": [
+        "ios_physical"
+      ],
+      "required_config": [
+        "ios_ui_fixtures"
+      ],
+      "config_files": [
+        "ios_ui_fixtures"
+      ],
+      "xctest_fixture_selector": "NotificationTapUITests/testAuthorChatGroupReactionTarget",
+      "ui_driver": "existing_campaign",
+      "ui_driver_reason": "Existing XCTest assertions inspect native notification/call state; the supplied fixture must establish the method-specific app/provider state before its action."
+    },
+    {
+      "id": "full.xctest.notificationtapuitests.testchatgroupnotificationtap",
+      "kind": "full_adapter",
+      "command": [
+        "xcodebuild",
+        "build-for-testing",
+        "-workspace",
+        "ios/Runner.xcworkspace",
+        "-scheme",
+        "Runner",
+        "-configuration",
+        "Debug",
+        "-destination",
+        "id={device:ios_physical}",
+        "-derivedDataPath",
+        "{output}/derived",
+        "-only-testing:RunnerUITests/NotificationTapUITests/testChatGroupNotificationTap"
+      ],
+      "steps": [
+        {
+          "command": [
+            "xcodebuild",
+            "build-for-testing",
+            "-workspace",
+            "ios/Runner.xcworkspace",
+            "-scheme",
+            "Runner",
+            "-configuration",
+            "Debug",
+            "-destination",
+            "id={device:ios_physical}",
+            "-derivedDataPath",
+            "{output}/derived",
+            "-only-testing:RunnerUITests/NotificationTapUITests/testChatGroupNotificationTap"
+          ],
+          "format": "marker",
+          "marker": "** TEST BUILD SUCCEEDED **"
+        },
+        {
+          "command": [
+            "xcodebuild",
+            "test-without-building",
+            "-xctestrun",
+            "{output}/active.xctestrun",
+            "-destination",
+            "id={device:ios_physical}",
+            "-only-testing:RunnerUITests/NotificationTapUITests/testChatGroupNotificationTap",
+            "-resultBundlePath",
+            "{output}/result.xcresult"
+          ],
+          "format": "xctest",
+          "selectors": [
+            "NotificationTapUITests/testChatGroupNotificationTap"
+          ],
+          "xctest_fixture": "{config:ios_ui_fixtures}",
+          "xctestrun_directory": "{output}/derived/Build/Products",
+          "xctestrun_output": "{output}/active.xctestrun",
+          "target_id": "{device:ios_physical}"
+        }
+      ],
+      "boundary": "Exact native XCTest method with source-built products and a selector-bound prepared app/provider fixture; native state assertions must complete.",
+      "timeout_seconds": 3600,
+      "resources": [
+        "unknown"
+      ],
+      "device_roles": [
+        "ios_physical"
+      ],
+      "required_config": [
+        "ios_ui_fixtures"
+      ],
+      "config_files": [
+        "ios_ui_fixtures"
+      ],
+      "xctest_fixture_selector": "NotificationTapUITests/testChatGroupNotificationTap",
+      "ui_driver": "existing_campaign",
+      "ui_driver_reason": "Existing XCTest assertions inspect native notification/call state; the supplied fixture must establish the method-specific app/provider state before its action."
+    },
+    {
+      "id": "full.xctest.notificationtapuitests.testannouncementreactionnotificationtap",
+      "kind": "full_adapter",
+      "command": [
+        "xcodebuild",
+        "build-for-testing",
+        "-workspace",
+        "ios/Runner.xcworkspace",
+        "-scheme",
+        "Runner",
+        "-configuration",
+        "Debug",
+        "-destination",
+        "id={device:ios_physical}",
+        "-derivedDataPath",
+        "{output}/derived",
+        "-only-testing:RunnerUITests/NotificationTapUITests/testAnnouncementReactionNotificationTap"
+      ],
+      "steps": [
+        {
+          "command": [
+            "xcodebuild",
+            "build-for-testing",
+            "-workspace",
+            "ios/Runner.xcworkspace",
+            "-scheme",
+            "Runner",
+            "-configuration",
+            "Debug",
+            "-destination",
+            "id={device:ios_physical}",
+            "-derivedDataPath",
+            "{output}/derived",
+            "-only-testing:RunnerUITests/NotificationTapUITests/testAnnouncementReactionNotificationTap"
+          ],
+          "format": "marker",
+          "marker": "** TEST BUILD SUCCEEDED **"
+        },
+        {
+          "command": [
+            "xcodebuild",
+            "test-without-building",
+            "-xctestrun",
+            "{output}/active.xctestrun",
+            "-destination",
+            "id={device:ios_physical}",
+            "-only-testing:RunnerUITests/NotificationTapUITests/testAnnouncementReactionNotificationTap",
+            "-resultBundlePath",
+            "{output}/result.xcresult"
+          ],
+          "format": "xctest",
+          "selectors": [
+            "NotificationTapUITests/testAnnouncementReactionNotificationTap"
+          ],
+          "xctest_fixture": "{config:ios_ui_fixtures}",
+          "xctestrun_directory": "{output}/derived/Build/Products",
+          "xctestrun_output": "{output}/active.xctestrun",
+          "target_id": "{device:ios_physical}"
+        }
+      ],
+      "boundary": "Exact native XCTest method with source-built products and a selector-bound prepared app/provider fixture; native state assertions must complete.",
+      "timeout_seconds": 3600,
+      "resources": [
+        "unknown"
+      ],
+      "device_roles": [
+        "ios_physical"
+      ],
+      "required_config": [
+        "ios_ui_fixtures"
+      ],
+      "config_files": [
+        "ios_ui_fixtures"
+      ],
+      "xctest_fixture_selector": "NotificationTapUITests/testAnnouncementReactionNotificationTap",
+      "ui_driver": "existing_campaign",
+      "ui_driver_reason": "Existing XCTest assertions inspect native notification/call state; the supplied fixture must establish the method-specific app/provider state before its action."
+    },
+    {
+      "id": "full.xctest.vc205calllifecycleuitests.testbootstraptrustedcontactfromqr",
+      "kind": "full_adapter",
+      "command": [
+        "xcodebuild",
+        "build-for-testing",
+        "-workspace",
+        "ios/Runner.xcworkspace",
+        "-scheme",
+        "Runner",
+        "-configuration",
+        "Debug",
+        "-destination",
+        "id={device:ios_physical}",
+        "-derivedDataPath",
+        "{output}/derived",
+        "-only-testing:RunnerUITests/VC205CallLifecycleUITests/testBootstrapTrustedContactFromQR"
+      ],
+      "steps": [
+        {
+          "command": [
+            "xcodebuild",
+            "build-for-testing",
+            "-workspace",
+            "ios/Runner.xcworkspace",
+            "-scheme",
+            "Runner",
+            "-configuration",
+            "Debug",
+            "-destination",
+            "id={device:ios_physical}",
+            "-derivedDataPath",
+            "{output}/derived",
+            "-only-testing:RunnerUITests/VC205CallLifecycleUITests/testBootstrapTrustedContactFromQR"
+          ],
+          "format": "marker",
+          "marker": "** TEST BUILD SUCCEEDED **"
+        },
+        {
+          "command": [
+            "xcodebuild",
+            "test-without-building",
+            "-xctestrun",
+            "{output}/active.xctestrun",
+            "-destination",
+            "id={device:ios_physical}",
+            "-only-testing:RunnerUITests/VC205CallLifecycleUITests/testBootstrapTrustedContactFromQR",
+            "-resultBundlePath",
+            "{output}/result.xcresult"
+          ],
+          "format": "xctest",
+          "selectors": [
+            "VC205CallLifecycleUITests/testBootstrapTrustedContactFromQR"
+          ],
+          "xctest_fixture": "{config:ios_ui_fixtures}",
+          "xctestrun_directory": "{output}/derived/Build/Products",
+          "xctestrun_output": "{output}/active.xctestrun",
+          "target_id": "{device:ios_physical}"
+        }
+      ],
+      "boundary": "Exact native XCTest method with source-built products and a selector-bound prepared app/provider fixture; native state assertions must complete.",
+      "timeout_seconds": 3600,
+      "resources": [
+        "unknown"
+      ],
+      "device_roles": [
+        "ios_physical"
+      ],
+      "required_config": [
+        "ios_ui_fixtures"
+      ],
+      "config_files": [
+        "ios_ui_fixtures"
+      ],
+      "xctest_fixture_selector": "VC205CallLifecycleUITests/testBootstrapTrustedContactFromQR",
+      "ui_driver": "existing_campaign",
+      "ui_driver_reason": "Existing XCTest assertions inspect native notification/call state; the supplied fixture must establish the method-specific app/provider state before its action."
+    },
+    {
+      "id": "full.xctest.vc205calllifecycleuitests.testtapstartvoicecallonalreadyrunningapp",
+      "kind": "full_adapter",
+      "command": [
+        "xcodebuild",
+        "build-for-testing",
+        "-workspace",
+        "ios/Runner.xcworkspace",
+        "-scheme",
+        "Runner",
+        "-configuration",
+        "Debug",
+        "-destination",
+        "id={device:ios_physical}",
+        "-derivedDataPath",
+        "{output}/derived",
+        "-only-testing:RunnerUITests/VC205CallLifecycleUITests/testTapStartVoiceCallOnAlreadyRunningApp"
+      ],
+      "steps": [
+        {
+          "command": [
+            "xcodebuild",
+            "build-for-testing",
+            "-workspace",
+            "ios/Runner.xcworkspace",
+            "-scheme",
+            "Runner",
+            "-configuration",
+            "Debug",
+            "-destination",
+            "id={device:ios_physical}",
+            "-derivedDataPath",
+            "{output}/derived",
+            "-only-testing:RunnerUITests/VC205CallLifecycleUITests/testTapStartVoiceCallOnAlreadyRunningApp"
+          ],
+          "format": "marker",
+          "marker": "** TEST BUILD SUCCEEDED **"
+        },
+        {
+          "command": [
+            "xcodebuild",
+            "test-without-building",
+            "-xctestrun",
+            "{output}/active.xctestrun",
+            "-destination",
+            "id={device:ios_physical}",
+            "-only-testing:RunnerUITests/VC205CallLifecycleUITests/testTapStartVoiceCallOnAlreadyRunningApp",
+            "-resultBundlePath",
+            "{output}/result.xcresult"
+          ],
+          "format": "xctest",
+          "selectors": [
+            "VC205CallLifecycleUITests/testTapStartVoiceCallOnAlreadyRunningApp"
+          ],
+          "xctest_fixture": "{config:ios_ui_fixtures}",
+          "xctestrun_directory": "{output}/derived/Build/Products",
+          "xctestrun_output": "{output}/active.xctestrun",
+          "target_id": "{device:ios_physical}"
+        }
+      ],
+      "boundary": "Exact native XCTest method with source-built products and a selector-bound prepared app/provider fixture; native state assertions must complete.",
+      "timeout_seconds": 3600,
+      "resources": [
+        "unknown"
+      ],
+      "device_roles": [
+        "ios_physical"
+      ],
+      "required_config": [
+        "ios_ui_fixtures"
+      ],
+      "config_files": [
+        "ios_ui_fixtures"
+      ],
+      "xctest_fixture_selector": "VC205CallLifecycleUITests/testTapStartVoiceCallOnAlreadyRunningApp",
+      "ui_driver": "existing_campaign",
+      "ui_driver_reason": "Existing XCTest assertions inspect native notification/call state; the supplied fixture must establish the method-specific app/provider state before its action."
+    },
+    {
+      "id": "full.xctest.vc205calllifecycleuitests.testansweralreadypresentedsystemcall",
+      "kind": "full_adapter",
+      "command": [
+        "xcodebuild",
+        "build-for-testing",
+        "-workspace",
+        "ios/Runner.xcworkspace",
+        "-scheme",
+        "Runner",
+        "-configuration",
+        "Debug",
+        "-destination",
+        "id={device:ios_physical}",
+        "-derivedDataPath",
+        "{output}/derived",
+        "-only-testing:RunnerUITests/VC205CallLifecycleUITests/testAnswerAlreadyPresentedSystemCall"
+      ],
+      "steps": [
+        {
+          "command": [
+            "xcodebuild",
+            "build-for-testing",
+            "-workspace",
+            "ios/Runner.xcworkspace",
+            "-scheme",
+            "Runner",
+            "-configuration",
+            "Debug",
+            "-destination",
+            "id={device:ios_physical}",
+            "-derivedDataPath",
+            "{output}/derived",
+            "-only-testing:RunnerUITests/VC205CallLifecycleUITests/testAnswerAlreadyPresentedSystemCall"
+          ],
+          "format": "marker",
+          "marker": "** TEST BUILD SUCCEEDED **"
+        },
+        {
+          "command": [
+            "xcodebuild",
+            "test-without-building",
+            "-xctestrun",
+            "{output}/active.xctestrun",
+            "-destination",
+            "id={device:ios_physical}",
+            "-only-testing:RunnerUITests/VC205CallLifecycleUITests/testAnswerAlreadyPresentedSystemCall",
+            "-resultBundlePath",
+            "{output}/result.xcresult"
+          ],
+          "format": "xctest",
+          "selectors": [
+            "VC205CallLifecycleUITests/testAnswerAlreadyPresentedSystemCall"
+          ],
+          "xctest_fixture": "{config:ios_ui_fixtures}",
+          "xctestrun_directory": "{output}/derived/Build/Products",
+          "xctestrun_output": "{output}/active.xctestrun",
+          "target_id": "{device:ios_physical}"
+        }
+      ],
+      "boundary": "Exact native XCTest method with source-built products and a selector-bound prepared app/provider fixture; native state assertions must complete.",
+      "timeout_seconds": 3600,
+      "resources": [
+        "unknown"
+      ],
+      "device_roles": [
+        "ios_physical"
+      ],
+      "required_config": [
+        "ios_ui_fixtures"
+      ],
+      "config_files": [
+        "ios_ui_fixtures"
+      ],
+      "xctest_fixture_selector": "VC205CallLifecycleUITests/testAnswerAlreadyPresentedSystemCall",
+      "ui_driver": "existing_campaign",
+      "ui_driver_reason": "Existing XCTest assertions inspect native notification/call state; the supplied fixture must establish the method-specific app/provider state before its action."
+    },
+    {
+      "id": "full.native.pb266-release",
+      "kind": "full_adapter",
+      "command": [
+        "./android/gradlew",
+        "-p",
+        "android",
+        "--console=plain",
+        ":app:connectedReleaseAndroidTest",
+        "-PenableGroupExitReleaseDiagnosticsProof=true",
+        "-PandroidApplicationId=com.mknoon.app.pb266proof",
+        "-PdisableGoogleServicesForDisposableProof=true",
+        "-Ptarget={root}/integration_test/group_exit_release_diagnostics_sqlcipher_proof_test.dart",
+        "-Pandroid.testInstrumentationRunnerArguments.class=com.mknoon.app.GroupExitReleaseDiagnosticsTest",
+        "--rerun-tasks"
+      ],
+      "steps": [
+        {
+          "command": [
+            "./android/gradlew",
+            "-p",
+            "android",
+            "--console=plain",
+            ":app:connectedReleaseAndroidTest",
+            "-PenableGroupExitReleaseDiagnosticsProof=true",
+            "-PandroidApplicationId=com.mknoon.app.pb266proof",
+            "-PdisableGoogleServicesForDisposableProof=true",
+            "-Ptarget={root}/integration_test/group_exit_release_diagnostics_sqlcipher_proof_test.dart",
+            "-Pandroid.testInstrumentationRunnerArguments.class=com.mknoon.app.GroupExitReleaseDiagnosticsTest",
+            "--rerun-tasks"
+          ],
+          "format": "junit",
+          "report_glob": "build/app/outputs/androidTest-results/connected/release/**/TEST-*.xml",
+          "classes": [
+            "com.mknoon.app.GroupExitReleaseDiagnosticsTest"
+          ]
+        }
+      ],
+      "boundary": "True release APK instrumentation runs the PB266 Dart assertions, separately from legacy profile drive.",
+      "timeout_seconds": 7200,
+      "resources": [
+        "unknown"
+      ],
+      "device_roles": [
+        "android_physical"
+      ],
+      "environment": {
+        "ANDROID_SERIAL": "{device:android_physical}"
+      },
+      "ui_driver": "existing_campaign",
+      "ui_driver_reason": "Native FlutterTestRunner executes SQLCipher proof in a true release process; Appium cannot establish compile mode or encrypted database state."
+    },
+    {
+      "id": "full.native.vc204",
+      "kind": "full_adapter",
+      "command": [
+        "bash",
+        "scripts/run_vc204_android_call_lifecycle_e2e.sh",
+        "--build-only",
+        "--artifact-dir",
+        "{output}/build"
+      ],
+      "steps": [
+        {
+          "command": [
+            "bash",
+            "scripts/run_vc204_android_call_lifecycle_e2e.sh",
+            "--build-only",
+            "--artifact-dir",
+            "{output}/build"
+          ],
+          "format": "marker",
+          "marker": "Built VC2-04"
+        },
+        {
+          "command": [
+            "bash",
+            "scripts/run_vc204_android_call_lifecycle_e2e.sh",
+            "--device-id",
+            "{device:android_physical}",
+            "--artifact-dir",
+            "{output}/build",
+            "--result-dir",
+            "{output}/results",
+            "--scenario",
+            "vc204_android_call_lifecycle"
+          ],
+          "format": "marker",
+          "marker": "PASS: vc204_android_call_lifecycle on explicit target"
+        }
+      ],
+      "boundary": "Fresh disposable VC204 build and exact bounded lifecycle instrumentation phases.",
+      "timeout_seconds": 14400,
+      "resources": [
+        "unknown"
+      ],
+      "device_roles": [
+        "android_physical"
+      ],
+      "ui_driver": "existing_campaign",
+      "ui_driver_reason": "Native call lifecycle instrumentation asserts protocol and OS state with bounded host phases."
     }
-  ]
+  ],
+  "full_inventory": {
+    "automatic": [
+      {
+        "family": "flutter_host",
+        "patterns": [
+          "test/*",
+          "packages/*/test/*"
+        ]
+      },
+      {
+        "family": "python_unittest",
+        "patterns": [
+          "*_test.py",
+          "*/test_*.py"
+        ]
+      },
+      {
+        "family": "javascript_node",
+        "patterns": [
+          "scripts/test/*"
+        ]
+      },
+      {
+        "family": "go",
+        "patterns": [
+          "go-mknoon/*",
+          "go-relay-server/*",
+          "tool/*_test.go"
+        ]
+      }
+    ],
+    "exclusions": [
+      {
+        "pattern": "test_driver/integration_test.dart",
+        "reason": "Flutter integration driver support, not a standalone test suite"
+      },
+      {
+        "pattern": "macos/RunnerTests/RunnerTests.swift",
+        "reason": "Empty generated XCTest template: testExample contains comments only, no executable assertions.",
+        "source_sha256": "6bc180bc77c7def7a21d197233e25dff42cc493ab9d294632edafc18fdf0ac44"
+      },
+      {
+        "pattern": "android/app/src/groupExitReleaseDiagnosticsAndroidTest/java/com/mknoon/app/GroupExitReleaseDiagnosticsTest.java",
+        "reason": "FlutterTestRunner/ActivityTestRule bootstrap with no assertion methods; Dart PB266 proof has its own profile and release variants.",
+        "source_sha256": "90910619ad8a988300b7ef6cacf42d0911e6d26a839772dee054b3c7220f4ae7"
+      },
+      {
+        "pattern": "integration_test/apns_provider_probe_harness.dart",
+        "reason": "Provider capture support app waits ten minutes for externally driven provider sends and foreground/background/terminated probes (source comments and ready_for_provider_send marker); its token readiness check alone does not prove delivery. No automated provider-send/lifecycle driver owns this capture recipe.",
+        "status": "MANUAL",
+        "source_sha256": "068e5356cf8ceac0ba1d2ea6d8ed24b85d29b60bea4028aebcacc44f4473d161"
+      },
+      {
+        "pattern": "integration_test/scripts/run_transport_census_cli.dart",
+        "reason": "Diagnostic metrics harvester controlled by --condition/--n/--cold; writes census observations, no pass/fail product assertion. It is an optional measurement recipe, not an automated test suite.",
+        "source_sha256": "f0fdc263204d2d082aeb4929dbf5dffd02c8e3c2210eb8bb13e6d7d0d873dc97"
+      }
+    ],
+    "listings": [
+      {
+        "id": "host",
+        "owner": "full-sims-major",
+        "command": [
+          "bash",
+          "scripts/run_host_test_gates.sh",
+          "host-all",
+          "--dart-only",
+          "--batch-flutter",
+          "--list"
+        ],
+        "required_paths": [
+          "scripts/run_host_test_gates.sh"
+        ],
+        "format": "numbered_plan",
+        "capability": "host.dart.all"
+      },
+      {
+        "id": "performance",
+        "owner": "full-sims-major",
+        "command": [
+          "bash",
+          "scripts/run_host_test_gates.sh",
+          "performance-host",
+          "--list"
+        ],
+        "required_paths": [
+          "scripts/run_host_test_gates.sh"
+        ],
+        "format": "numbered_plan",
+        "capability": "performance.host"
+      },
+      {
+        "id": "sims_contracts",
+        "owner": "full-sims-major",
+        "command": [
+          "bash",
+          "scripts/run_test_gates.sh",
+          "sims-contracts",
+          "--list"
+        ],
+        "required_paths": [
+          "scripts/run_test_gates.sh"
+        ],
+        "format": "numbered_plan",
+        "capability": "sims.contracts"
+      },
+      {
+        "id": "flutter_full_routes",
+        "owner": "full-legacy",
+        "command": [
+          "bash",
+          "scripts/run_flutter_full_regression.sh",
+          "--dry-run",
+          "--exclude-label",
+          "all core tests",
+          "--exclude-label",
+          "all feature tests",
+          "--exclude-label",
+          "all shared tests",
+          "--exclude-label",
+          "all security tests",
+          "--exclude-label",
+          "all unit tests",
+          "--exclude-label",
+          "all repo integration tests under test/",
+          "--exclude-label",
+          "all performance tests",
+          "--exclude-label",
+          "gate benchmark",
+          "--exclude-label",
+          "integration_test group_announcement_reaction_notification_proof_test.dart",
+          "--exclude-label",
+          "integration_test group_reaction_notification_sqlcipher_probe_test.dart",
+          "--exclude-label",
+          "integration_test intro_accept_notification_android_proof_test.dart",
+          "--exclude-label",
+          "integration_test notification_tap_message_visible_proof_test.dart",
+          "--exclude-label",
+          "integration_test one_to_one_reaction_notification_proof_test.dart",
+          "--exclude-label",
+          "integration_test voice_message_e2e_test.dart",
+          "--exclude-label",
+          "integration_test group_strict_notification_proof_test.dart"
+        ],
+        "required_paths": [
+          "scripts/run_flutter_full_regression.sh"
+        ],
+        "format": "full_routes",
+        "temporary_output": true
+      }
+    ],
+    "mappings": [
+      {
+        "owner": "full-sims-major",
+        "patterns": [
+          "android/app/src/test/*",
+          "android/app/src/testDebug/*"
+        ],
+        "reason": "native.android.unit executes the complete testDebugUnitTest task",
+        "capability": "native.android.unit"
+      },
+      {
+        "owner": "full-sims-major",
+        "patterns": [
+          "ios/RunnerTests/*Tests.swift"
+        ],
+        "reason": "native.ios.runner_tests selects the complete RunnerTests target",
+        "source_registration": "ios/Runner.xcodeproj/project.pbxproj",
+        "capability": "native.ios.runner_tests"
+      },
+      {
+        "owner": "full-sims-major",
+        "patterns": [
+          "packages/background_push_crypto/test/*_test.dart"
+        ],
+        "reason": "nested.background_push_crypto executes the package test root",
+        "capability": "nested.background_push_crypto"
+      },
+      {
+        "owner": "full-sims-major",
+        "patterns": [
+          "go-mknoon/*_test.go"
+        ],
+        "untagged_only": true,
+        "reason": "Unfiltered Go module runner; build-tag variants stay separate",
+        "capability": "go.node.all"
+      },
+      {
+        "owner": "full-sims-major",
+        "patterns": [
+          "go-relay-server/*_test.go"
+        ],
+        "untagged_only": true,
+        "reason": "Unfiltered Go module runner; build-tag variants stay separate",
+        "capability": "go.relay.integration"
+      },
+      {
+        "owner": "full-legacy",
+        "patterns": [
+          "integration_test/benchmark_harness.dart"
+        ],
+        "reason": "Exact BENCHMARK variants are reconciled against the existing benchmark-sim loop",
+        "route": "gate benchmark-sim"
+      },
+      {
+        "owner": "full-sims-major",
+        "patterns": [
+          "integration_test/scripts/run_group_multi_party_device_real.dart"
+        ],
+        "reason": "Exact typed SIMS adapter launches the source runner (group all; intro both directions).",
+        "capability": "groups.multi_party_release"
+      },
+      {
+        "owner": "full-sims-major",
+        "patterns": [
+          "integration_test/scripts/run_intro_accept_notification_android.dart"
+        ],
+        "reason": "Exact typed SIMS adapter launches the source runner (group all; intro both directions).",
+        "capability": "intro.accept_notification_campaign"
+      },
+      {
+        "owner": "full.contract.ios_receiver_bootstrap",
+        "patterns": [
+          "scripts/test/ios_receiver_bootstrap_contract_test.dart"
+        ],
+        "reason": "Exact source-owned proof adapter"
+      },
+      {
+        "owner": "full.contract.ios_sender_projection_fixture",
+        "patterns": [
+          "scripts/test/ios_sender_projection_fixture_contract_test.dart"
+        ],
+        "reason": "Exact source-owned proof adapter"
+      },
+      {
+        "owner": "full-sims-major",
+        "patterns": [
+          "integration_test/scripts/run_group_reaction_notification_device.dart"
+        ],
+        "reason": "Five Android singleton captures are launched and artifact-validated by run_group_reaction_notification_sims.dart; iOS variants have separate obligations.",
+        "capability": "groups.reaction_notification_campaign"
+      },
+      {
+        "owner": "full-legacy",
+        "patterns": [
+          "integration_test/performance_harness.dart"
+        ],
+        "reason": "Legacy IDENTITY_PROGRESS plus direct FEED; six desktop selectors have separate exact obligations.",
+        "route": "integration_test identity_progress_performance_test.dart"
+      },
+      {
+        "owner": "full.media-stable-id.ios",
+        "patterns": [
+          "integration_test/scripts/run_media_delivery_ui_smoke.dart"
+        ],
+        "reason": "Equivalent underlying test with pinned iOS target; original Android direct-file route remains in legacy."
+      },
+      {
+        "owner": "full.native.background-push-crypto",
+        "patterns": [
+          "packages/background_push_crypto/android/src/test/kotlin/com/mknoon/background_push_crypto/BackgroundPushCryptoPluginTest.kt"
+        ],
+        "reason": "Exact source-owned proof adapter"
+      },
+      {
+        "owner": "full.native.app-visibility",
+        "patterns": [
+          "android/app/src/appVisibility371AndroidTest/kotlin/com/mknoon/app/AppVisibilityLifecycleInstrumentationTest.kt"
+        ],
+        "reason": "Exact source-owned proof adapter"
+      },
+      {
+        "owner": "full.native.vc204",
+        "patterns": [
+          "android/app/src/vc204AndroidTest/kotlin/com/mknoon/app/call/Vc204AndroidCallLifecycleInstrumentationTest.kt"
+        ],
+        "reason": "Fresh disposable VC204 build and exact bounded lifecycle instrumentation phases."
+      },
+      {
+        "owner": "full.benchmark.run_group_publish_benchmark",
+        "patterns": [
+          "integration_test/scripts/run_group_publish_benchmark.dart"
+        ],
+        "reason": "Exact source-owned proof adapter"
+      },
+      {
+        "owner": "full.benchmark.run_timeout_accuracy_benchmark",
+        "patterns": [
+          "integration_test/scripts/run_timeout_accuracy_benchmark.dart"
+        ],
+        "reason": "Exact source-owned proof adapter"
+      },
+      {
+        "owner": "full.benchmark.peer-suite",
+        "patterns": [
+          "integration_test/scripts/run_benchmark_suite.dart"
+        ],
+        "reason": "Exact source-owned proof adapter"
+      },
+      {
+        "owner": "full-sims-major",
+        "patterns": [
+          "ios/RunnerUITests/GroupMediaBackgroundRecoveryUITests.swift"
+        ],
+        "reason": "group_media_ios_background_recovery_evidence.dart names the sole XCTest selector; the iOS group-media controller drives its two native background phases and validates their receipts.",
+        "capability": "groups.media_send_reliability_ios"
+      },
+      {
+        "owner": "full.xctest.notificationtapuitests.testnotificationtap",
+        "patterns": [
+          "ios/RunnerUITests/NotificationTapUITests.swift"
+        ],
+        "reason": "Exact method NotificationTapUITests/testNotificationTap; file result requires all explicitly enumerated method owners."
+      },
+      {
+        "owner": "full.xctest.notificationtapuitests.testcoldnotificationtap",
+        "patterns": [
+          "ios/RunnerUITests/NotificationTapUITests.swift"
+        ],
+        "reason": "Exact method NotificationTapUITests/testColdNotificationTap; file result requires all explicitly enumerated method owners."
+      },
+      {
+        "owner": "full.xctest.notificationtapuitests.testpreparewarmnotificationtap",
+        "patterns": [
+          "ios/RunnerUITests/NotificationTapUITests.swift"
+        ],
+        "reason": "Exact method NotificationTapUITests/testPrepareWarmNotificationTap; file result requires all explicitly enumerated method owners."
+      },
+      {
+        "owner": "full.xctest.notificationtapuitests.testtapexistingnotification",
+        "patterns": [
+          "ios/RunnerUITests/NotificationTapUITests.swift"
+        ],
+        "reason": "Exact method NotificationTapUITests/testTapExistingNotification; file result requires all explicitly enumerated method owners."
+      },
+      {
+        "owner": "full.xctest.notificationtapuitests.testautomatelocalnetworkpermission",
+        "patterns": [
+          "ios/RunnerUITests/NotificationTapUITests.swift"
+        ],
+        "reason": "Exact method NotificationTapUITests/testAutomateLocalNetworkPermission; file result requires all explicitly enumerated method owners."
+      },
+      {
+        "owner": "full.xctest.notificationtapuitests.testsettlelocalnetworkpermissionforcampaign",
+        "patterns": [
+          "ios/RunnerUITests/NotificationTapUITests.swift"
+        ],
+        "reason": "Exact method NotificationTapUITests/testSettleLocalNetworkPermissionForCampaign; file result requires all explicitly enumerated method owners."
+      },
+      {
+        "owner": "full.xctest.notificationtapuitests.testairplanetogglestatedecodercontract",
+        "patterns": [
+          "ios/RunnerUITests/NotificationTapUITests.swift"
+        ],
+        "reason": "Exact method NotificationTapUITests/testAirplaneToggleStateDecoderContract; file result requires all explicitly enumerated method owners."
+      },
+      {
+        "owner": "full.xctest.notificationtapuitests.testpreparepayloadfastpathnotificationtap",
+        "patterns": [
+          "ios/RunnerUITests/NotificationTapUITests.swift"
+        ],
+        "reason": "Exact method NotificationTapUITests/testPreparePayloadFastPathNotificationTap; file result requires all explicitly enumerated method owners."
+      },
+      {
+        "owner": "full.xctest.notificationtapuitests.testbackgroundregisteredpayloadfastpathnotificationtap",
+        "patterns": [
+          "ios/RunnerUITests/NotificationTapUITests.swift"
+        ],
+        "reason": "Exact method NotificationTapUITests/testBackgroundRegisteredPayloadFastPathNotificationTap; file result requires all explicitly enumerated method owners."
+      },
+      {
+        "owner": "full.xctest.notificationtapuitests.testpayloadfastpathnotificationtap",
+        "patterns": [
+          "ios/RunnerUITests/NotificationTapUITests.swift"
+        ],
+        "reason": "Exact method NotificationTapUITests/testPayloadFastPathNotificationTap; file result requires all explicitly enumerated method owners."
+      },
+      {
+        "owner": "full.xctest.notificationtapuitests.testobservepayloadnotificationrecovery",
+        "patterns": [
+          "ios/RunnerUITests/NotificationTapUITests.swift"
+        ],
+        "reason": "Exact method NotificationTapUITests/testObservePayloadNotificationRecovery; file result requires all explicitly enumerated method owners."
+      },
+      {
+        "owner": "full.xctest.notificationtapuitests.testverifypayloadnotificationrecoveryretirement",
+        "patterns": [
+          "ios/RunnerUITests/NotificationTapUITests.swift"
+        ],
+        "reason": "Exact method NotificationTapUITests/testVerifyPayloadNotificationRecoveryRetirement; file result requires all explicitly enumerated method owners."
+      },
+      {
+        "owner": "full.xctest.notificationtapuitests.testrestorepayloadfastpathnetwork",
+        "patterns": [
+          "ios/RunnerUITests/NotificationTapUITests.swift"
+        ],
+        "reason": "Exact method NotificationTapUITests/testRestorePayloadFastPathNetwork; file result requires all explicitly enumerated method owners."
+      },
+      {
+        "owner": "full.xctest.notificationtapuitests.testreactionnotificationtap",
+        "patterns": [
+          "ios/RunnerUITests/NotificationTapUITests.swift"
+        ],
+        "reason": "Exact method NotificationTapUITests/testReactionNotificationTap; file result requires all explicitly enumerated method owners."
+      },
+      {
+        "owner": "full.xctest.notificationtapuitests.testcreateannouncementreactionfixture",
+        "patterns": [
+          "ios/RunnerUITests/NotificationTapUITests.swift"
+        ],
+        "reason": "Exact method NotificationTapUITests/testCreateAnnouncementReactionFixture; file result requires all explicitly enumerated method owners."
+      },
+      {
+        "owner": "full.xctest.notificationtapuitests.testauthorannouncementreactiontarget",
+        "patterns": [
+          "ios/RunnerUITests/NotificationTapUITests.swift"
+        ],
+        "reason": "Exact method NotificationTapUITests/testAuthorAnnouncementReactionTarget; file result requires all explicitly enumerated method owners."
+      },
+      {
+        "owner": "full.xctest.notificationtapuitests.testcreatechatgroupnotificationfixture",
+        "patterns": [
+          "ios/RunnerUITests/NotificationTapUITests.swift"
+        ],
+        "reason": "Exact method NotificationTapUITests/testCreateChatGroupNotificationFixture; file result requires all explicitly enumerated method owners."
+      },
+      {
+        "owner": "full.xctest.notificationtapuitests.testauthorchatgroupreactiontarget",
+        "patterns": [
+          "ios/RunnerUITests/NotificationTapUITests.swift"
+        ],
+        "reason": "Exact method NotificationTapUITests/testAuthorChatGroupReactionTarget; file result requires all explicitly enumerated method owners."
+      },
+      {
+        "owner": "full.xctest.notificationtapuitests.testchatgroupnotificationtap",
+        "patterns": [
+          "ios/RunnerUITests/NotificationTapUITests.swift"
+        ],
+        "reason": "Exact method NotificationTapUITests/testChatGroupNotificationTap; file result requires all explicitly enumerated method owners."
+      },
+      {
+        "owner": "full.xctest.notificationtapuitests.testannouncementreactionnotificationtap",
+        "patterns": [
+          "ios/RunnerUITests/NotificationTapUITests.swift"
+        ],
+        "reason": "Exact method NotificationTapUITests/testAnnouncementReactionNotificationTap; file result requires all explicitly enumerated method owners."
+      },
+      {
+        "owner": "full.xctest.vc205calllifecycleuitests.testbootstraptrustedcontactfromqr",
+        "patterns": [
+          "ios/RunnerUITests/VC205CallLifecycleUITests.swift"
+        ],
+        "reason": "Exact method VC205CallLifecycleUITests/testBootstrapTrustedContactFromQR; file result requires all explicitly enumerated method owners."
+      },
+      {
+        "owner": "full.xctest.vc205calllifecycleuitests.testtapstartvoicecallonalreadyrunningapp",
+        "patterns": [
+          "ios/RunnerUITests/VC205CallLifecycleUITests.swift"
+        ],
+        "reason": "Exact method VC205CallLifecycleUITests/testTapStartVoiceCallOnAlreadyRunningApp; file result requires all explicitly enumerated method owners."
+      },
+      {
+        "owner": "full.xctest.vc205calllifecycleuitests.testansweralreadypresentedsystemcall",
+        "patterns": [
+          "ios/RunnerUITests/VC205CallLifecycleUITests.swift"
+        ],
+        "reason": "Exact method VC205CallLifecycleUITests/testAnswerAlreadyPresentedSystemCall; file result requires all explicitly enumerated method owners."
+      },
+      {
+        "owner": "full-sims-major",
+        "patterns": [
+          "integration_test/group_announcement_reaction_notification_proof_test.dart"
+        ],
+        "reason": "Legacy route invokes exact SIMS groups.reaction_notification_campaign; full execution aliases its verified result.",
+        "capability": "groups.reaction_notification_campaign"
+      },
+      {
+        "owner": "full-sims-major",
+        "patterns": [
+          "integration_test/group_reaction_notification_sqlcipher_probe_test.dart"
+        ],
+        "reason": "Legacy route invokes exact SIMS groups.reaction_notification_campaign; full execution aliases its verified result.",
+        "capability": "groups.reaction_notification_campaign"
+      },
+      {
+        "owner": "full-sims-major",
+        "patterns": [
+          "integration_test/intro_accept_notification_android_proof_test.dart"
+        ],
+        "reason": "Legacy route invokes exact SIMS intro.accept_notification_campaign; full execution aliases its verified result.",
+        "capability": "intro.accept_notification_campaign"
+      },
+      {
+        "owner": "full-sims-major",
+        "patterns": [
+          "integration_test/notification_tap_message_visible_proof_test.dart"
+        ],
+        "reason": "Legacy route invokes exact SIMS notifications.android_payload_campaign; full execution aliases its verified result.",
+        "capability": "notifications.android_payload_campaign"
+      },
+      {
+        "owner": "full-sims-major",
+        "patterns": [
+          "integration_test/one_to_one_reaction_notification_proof_test.dart"
+        ],
+        "reason": "Legacy route invokes exact SIMS notifications.android_typed_reaction_smoke; full execution aliases its verified result.",
+        "capability": "notifications.android_typed_reaction_smoke"
+      },
+      {
+        "owner": "full-sims-major",
+        "patterns": [
+          "integration_test/voice_message_e2e_test.dart"
+        ],
+        "reason": "Legacy route invokes exact SIMS android.voice_recorder_native_smoke; full execution aliases its verified result.",
+        "capability": "android.voice_recorder_native_smoke"
+      },
+      {
+        "owner": "full-sims-major",
+        "patterns": [
+          "integration_test/group_strict_notification_proof_test.dart"
+        ],
+        "reason": "Legacy route invokes exact SIMS groups.strict_notification_closure; full execution aliases its verified result.",
+        "capability": "groups.strict_notification_closure"
+      },
+      {
+        "owner": "full.native.vc204",
+        "patterns": [
+          "scripts/run_vc204_android_call_lifecycle_e2e.sh"
+        ],
+        "reason": "Fresh disposable VC204 build and exact bounded lifecycle instrumentation phases."
+      },
+      {
+        "owner": "full-sims-major",
+        "patterns": [
+          "integration_test/scripts/run_1to1_reaction_notification_device.dart"
+        ],
+        "reason": "Typed Android smoke plus seven separately enumerated singleton configurations own the runner catalogue.",
+        "capability": "notifications.android_typed_reaction_smoke"
+      },
+      {
+        "owner": "full-sims-major",
+        "patterns": [
+          "integration_test/scripts/run_group_media_send_reliability.dart"
+        ],
+        "reason": "Exact Android and iOS typed SIMS selectors consume their prepared profile artifacts.",
+        "capability": "groups.media_send_reliability"
+      },
+      {
+        "owner": "full-sims-major",
+        "patterns": [
+          "integration_test/scripts/run_group_media_send_reliability.dart"
+        ],
+        "reason": "Whole runner completion also requires this exact selected platform/scenario adapter.",
+        "capability": "groups.media_send_reliability_ios"
+      },
+      {
+        "owner": "full.reaction.head_provenance",
+        "patterns": [
+          "integration_test/scripts/run_1to1_reaction_notification_device.dart"
+        ],
+        "reason": "Whole runner completion also requires this exact selected platform/scenario adapter."
+      },
+      {
+        "owner": "full.reaction.android_durable_reaction_background_connected",
+        "patterns": [
+          "integration_test/scripts/run_1to1_reaction_notification_device.dart"
+        ],
+        "reason": "Whole runner completion also requires this exact selected platform/scenario adapter."
+      },
+      {
+        "owner": "full.reaction.android_background_crypto_preflight",
+        "patterns": [
+          "integration_test/scripts/run_1to1_reaction_notification_device.dart"
+        ],
+        "reason": "Whole runner completion also requires this exact selected platform/scenario adapter."
+      },
+      {
+        "owner": "full.reaction.android_first_wake_profile_aot",
+        "patterns": [
+          "integration_test/scripts/run_1to1_reaction_notification_device.dart"
+        ],
+        "reason": "Whole runner completion also requires this exact selected platform/scenario adapter."
+      },
+      {
+        "owner": "full.reaction.android_message_unread_lifecycle",
+        "patterns": [
+          "integration_test/scripts/run_1to1_reaction_notification_device.dart"
+        ],
+        "reason": "Whole runner completion also requires this exact selected platform/scenario adapter."
+      },
+      {
+        "owner": "full.reaction.android_physical_recipient",
+        "patterns": [
+          "integration_test/scripts/run_1to1_reaction_notification_device.dart"
+        ],
+        "reason": "Whole runner completion also requires this exact selected platform/scenario adapter."
+      },
+      {
+        "owner": "full.reaction.ios_physical_recipient",
+        "patterns": [
+          "integration_test/scripts/run_1to1_reaction_notification_device.dart"
+        ],
+        "reason": "Whole runner completion also requires this exact selected platform/scenario adapter."
+      },
+      {
+        "owner": "full.group-reaction.ios_announcement_reaction_recipient",
+        "patterns": [
+          "integration_test/scripts/run_group_reaction_notification_device.dart"
+        ],
+        "reason": "Whole runner completion also requires this exact selected platform/scenario adapter."
+      },
+      {
+        "owner": "full.group-reaction.ios_chat_group_message_and_reaction_recipient",
+        "patterns": [
+          "integration_test/scripts/run_group_reaction_notification_device.dart"
+        ],
+        "reason": "Whole runner completion also requires this exact selected platform/scenario adapter."
+      },
+      {
+        "owner": "full.performance.feed_init",
+        "patterns": [
+          "integration_test/performance_harness.dart"
+        ],
+        "reason": "Whole runner completion also requires this exact selected platform/scenario adapter."
+      },
+      {
+        "owner": "full.performance.shell_switch",
+        "patterns": [
+          "integration_test/performance_harness.dart"
+        ],
+        "reason": "Whole runner completion also requires this exact selected platform/scenario adapter."
+      },
+      {
+        "owner": "full.performance.feed_orbit_offscreen",
+        "patterns": [
+          "integration_test/performance_harness.dart"
+        ],
+        "reason": "Whole runner completion also requires this exact selected platform/scenario adapter."
+      },
+      {
+        "owner": "full.performance.conversation",
+        "patterns": [
+          "integration_test/performance_harness.dart"
+        ],
+        "reason": "Whole runner completion also requires this exact selected platform/scenario adapter."
+      },
+      {
+        "owner": "full.performance.conversation_sub",
+        "patterns": [
+          "integration_test/performance_harness.dart"
+        ],
+        "reason": "Whole runner completion also requires this exact selected platform/scenario adapter."
+      },
+      {
+        "owner": "full.performance.orbit",
+        "patterns": [
+          "integration_test/performance_harness.dart"
+        ],
+        "reason": "Whole runner completion also requires this exact selected platform/scenario adapter."
+      },
+      {
+        "owner": "full-legacy",
+        "route": "integration_test android_notification_recovery_completion_proof_test.dart",
+        "patterns": [
+          "integration_test/android_notification_recovery_completion_proof_test.dart"
+        ],
+        "reason": "Audited run_integration_test dispatch in scripts/run_flutter_full_regression.sh; exact source file or its explicit equivalent case, with the original route receipt required."
+      },
+      {
+        "owner": "full-legacy",
+        "route": "integration_test announcement_private_media_platform_proof_test.dart",
+        "patterns": [
+          "integration_test/announcement_private_media_platform_proof_test.dart"
+        ],
+        "reason": "Audited run_integration_test dispatch in scripts/run_flutter_full_regression.sh; exact source file or its explicit equivalent case, with the original route receipt required."
+      },
+      {
+        "owner": "full-legacy",
+        "route": "integration_test bidi_text_smoke_test.dart",
+        "patterns": [
+          "integration_test/bidi_text_smoke_test.dart"
+        ],
+        "reason": "Audited run_integration_test dispatch in scripts/run_flutter_full_regression.sh; exact source file or its explicit equivalent case, with the original route receipt required."
+      },
+      {
+        "owner": "full-legacy",
+        "route": "integration_test direct_forwarded_marker_sqlcipher_proof_test.dart",
+        "patterns": [
+          "integration_test/direct_forwarded_marker_sqlcipher_proof_test.dart"
+        ],
+        "reason": "Audited run_integration_test dispatch in scripts/run_flutter_full_regression.sh; exact source file or its explicit equivalent case, with the original route receipt required."
+      },
+      {
+        "owner": "full-legacy",
+        "route": "integration_test feed_performance_test.dart",
+        "patterns": [
+          "integration_test/feed_performance_test.dart"
+        ],
+        "reason": "Audited run_integration_test dispatch in scripts/run_flutter_full_regression.sh; exact source file or its explicit equivalent case, with the original route receipt required."
+      },
+      {
+        "owner": "full-legacy",
+        "route": "integration_test group_admin_metadata_convergence_simulator_test.dart",
+        "patterns": [
+          "integration_test/group_admin_metadata_convergence_simulator_test.dart"
+        ],
+        "reason": "Audited run_integration_test dispatch in scripts/run_flutter_full_regression.sh; exact source file or its explicit equivalent case, with the original route receipt required."
+      },
+      {
+        "owner": "full-legacy",
+        "route": "integration_test group_conversation_polish_proof_test.dart",
+        "patterns": [
+          "integration_test/group_conversation_polish_proof_test.dart"
+        ],
+        "reason": "Audited run_integration_test dispatch in scripts/run_flutter_full_regression.sh; exact source file or its explicit equivalent case, with the original route receipt required."
+      },
+      {
+        "owner": "full-legacy",
+        "route": "integration_test group_delete_preserves_friends_simulator_test.dart",
+        "patterns": [
+          "integration_test/group_delete_preserves_friends_simulator_test.dart"
+        ],
+        "reason": "Audited run_integration_test dispatch in scripts/run_flutter_full_regression.sh; exact source file or its explicit equivalent case, with the original route receipt required."
+      },
+      {
+        "owner": "full-legacy",
+        "route": "integration_test group_invite_accept_spinner_simulator_test.dart",
+        "patterns": [
+          "integration_test/group_invite_accept_spinner_simulator_test.dart"
+        ],
+        "reason": "Audited run_integration_test dispatch in scripts/run_flutter_full_regression.sh; exact source file or its explicit equivalent case, with the original route receipt required."
+      },
+      {
+        "owner": "full-legacy",
+        "route": "integration_test group_media_deletion_journal_sqlcipher_proof_test.dart",
+        "patterns": [
+          "integration_test/group_media_deletion_journal_sqlcipher_proof_test.dart"
+        ],
+        "reason": "Audited run_integration_test dispatch in scripts/run_flutter_full_regression.sh; exact source file or its explicit equivalent case, with the original route receipt required."
+      },
+      {
+        "owner": "full-legacy",
+        "route": "integration_test group_muted_notification_proof_test.dart",
+        "patterns": [
+          "integration_test/group_muted_notification_proof_test.dart"
+        ],
+        "reason": "Audited run_integration_test dispatch in scripts/run_flutter_full_regression.sh; exact source file or its explicit equivalent case, with the original route receipt required."
+      },
+      {
+        "owner": "full-legacy",
+        "route": "integration_test group_new_member_media_simulator_proof_test.dart",
+        "patterns": [
+          "integration_test/group_new_member_media_simulator_proof_test.dart"
+        ],
+        "reason": "Audited run_integration_test dispatch in scripts/run_flutter_full_regression.sh; exact source file or its explicit equivalent case, with the original route receipt required."
+      },
+      {
+        "owner": "full-legacy",
+        "route": "integration_test group_notification_projection_android_proof_test.dart",
+        "patterns": [
+          "integration_test/group_notification_projection_android_proof_test.dart"
+        ],
+        "reason": "Audited run_integration_test dispatch in scripts/run_flutter_full_regression.sh; exact source file or its explicit equivalent case, with the original route receipt required."
+      },
+      {
+        "owner": "full-legacy",
+        "route": "integration_test group_private_media_platform_proof_test.dart",
+        "patterns": [
+          "integration_test/group_private_media_platform_proof_test.dart"
+        ],
+        "reason": "Audited run_integration_test dispatch in scripts/run_flutter_full_regression.sh; exact source file or its explicit equivalent case, with the original route receipt required."
+      },
+      {
+        "owner": "full-legacy",
+        "route": "integration_test group_terminal_send_failed_proof_test.dart",
+        "patterns": [
+          "integration_test/group_terminal_send_failed_proof_test.dart"
+        ],
+        "reason": "Audited run_integration_test dispatch in scripts/run_flutter_full_regression.sh; exact source file or its explicit equivalent case, with the original route receipt required."
+      },
+      {
+        "owner": "full-legacy",
+        "route": "integration_test identity_progress_performance_test.dart",
+        "patterns": [
+          "integration_test/identity_progress_performance_test.dart"
+        ],
+        "reason": "Audited run_integration_test dispatch in scripts/run_flutter_full_regression.sh; exact source file or its explicit equivalent case, with the original route receipt required."
+      },
+      {
+        "owner": "full-legacy",
+        "route": "integration_test loading_states_smoke_test.dart",
+        "patterns": [
+          "integration_test/loading_states_smoke_test.dart"
+        ],
+        "reason": "Audited run_integration_test dispatch in scripts/run_flutter_full_regression.sh; exact source file or its explicit equivalent case, with the original route receipt required."
+      },
+      {
+        "owner": "full-legacy",
+        "route": "integration_test media_library_state_sqlcipher_proof_test.dart",
+        "patterns": [
+          "integration_test/media_library_state_sqlcipher_proof_test.dart"
+        ],
+        "reason": "Audited run_integration_test dispatch in scripts/run_flutter_full_regression.sh; exact source file or its explicit equivalent case, with the original route receipt required."
+      },
+      {
+        "owner": "full-legacy",
+        "route": "integration_test media_notification_playback_continuity_test.dart",
+        "patterns": [
+          "integration_test/media_notification_playback_continuity_test.dart"
+        ],
+        "reason": "Audited run_integration_test dispatch in scripts/run_flutter_full_regression.sh; exact source file or its explicit equivalent case, with the original route receipt required."
+      },
+      {
+        "owner": "full-legacy",
+        "route": "integration_test posts_phase1_fake_test.dart",
+        "patterns": [
+          "integration_test/posts_phase1_fake_test.dart"
+        ],
+        "reason": "Audited run_integration_test dispatch in scripts/run_flutter_full_regression.sh; exact source file or its explicit equivalent case, with the original route receipt required."
+      },
+      {
+        "owner": "full-legacy",
+        "route": "integration_test posts_phase2_fake_test.dart",
+        "patterns": [
+          "integration_test/posts_phase2_fake_test.dart"
+        ],
+        "reason": "Audited run_integration_test dispatch in scripts/run_flutter_full_regression.sh; exact source file or its explicit equivalent case, with the original route receipt required."
+      },
+      {
+        "owner": "full-legacy",
+        "route": "integration_test posts_phase3_fake_test.dart",
+        "patterns": [
+          "integration_test/posts_phase3_fake_test.dart"
+        ],
+        "reason": "Audited run_integration_test dispatch in scripts/run_flutter_full_regression.sh; exact source file or its explicit equivalent case, with the original route receipt required."
+      },
+      {
+        "owner": "full-legacy",
+        "route": "integration_test posts_phase4_fake_test.dart",
+        "patterns": [
+          "integration_test/posts_phase4_fake_test.dart"
+        ],
+        "reason": "Audited run_integration_test dispatch in scripts/run_flutter_full_regression.sh; exact source file or its explicit equivalent case, with the original route receipt required."
+      },
+      {
+        "owner": "full-legacy",
+        "route": "integration_test posts_phase5_fake_test.dart",
+        "patterns": [
+          "integration_test/posts_phase5_fake_test.dart"
+        ],
+        "reason": "Audited run_integration_test dispatch in scripts/run_flutter_full_regression.sh; exact source file or its explicit equivalent case, with the original route receipt required."
+      },
+      {
+        "owner": "full-legacy",
+        "route": "integration_test received_media_native_egress_proof_test.dart",
+        "patterns": [
+          "integration_test/received_media_native_egress_proof_test.dart"
+        ],
+        "reason": "Audited run_integration_test dispatch in scripts/run_flutter_full_regression.sh; exact source file or its explicit equivalent case, with the original route receipt required."
+      },
+      {
+        "owner": "full-legacy",
+        "route": "integration_test received_video_picture_in_picture_proof_test.dart",
+        "patterns": [
+          "integration_test/received_video_picture_in_picture_proof_test.dart"
+        ],
+        "reason": "Audited run_integration_test dispatch in scripts/run_flutter_full_regression.sh; exact source file or its explicit equivalent case, with the original route receipt required."
+      },
+      {
+        "owner": "full-legacy",
+        "route": "integration_test settings_background_choice_smoke_test.dart",
+        "patterns": [
+          "integration_test/settings_background_choice_smoke_test.dart"
+        ],
+        "reason": "Audited run_integration_test dispatch in scripts/run_flutter_full_regression.sh; exact source file or its explicit equivalent case, with the original route receipt required."
+      },
+      {
+        "owner": "full-legacy",
+        "route": "integration_test smoke_test.dart",
+        "patterns": [
+          "integration_test/smoke_test.dart"
+        ],
+        "reason": "Audited run_integration_test dispatch in scripts/run_flutter_full_regression.sh; exact source file or its explicit equivalent case, with the original route receipt required."
+      },
+      {
+        "owner": "full-legacy",
+        "route": "integration_test feed_performance_test.dart",
+        "patterns": [
+          "integration_test/performance_harness.dart"
+        ],
+        "reason": "FEED delegates to the same registerFeedPerf entrypoint as this direct legacy route; other selectors retain their separate owners."
+      }
+    ],
+    "catalogs": [
+      {
+        "path": "integration_test/scripts/group_multi_party_device_criteria.dart",
+        "pattern": "(?m)^  '([^']+)':",
+        "variant": "ios-simulator-group",
+        "reason": "All 109 exact catalogue selectors execute through full-mode SIMS with per-scenario completion evidence.",
+        "bindings": [
+          {
+            "owner": "full-sims-major",
+            "path": "integration_test/scripts/group_multi_party_device_criteria.dart",
+            "start": "const _scenarioRequirements =",
+            "end": "};",
+            "pattern": "(?m)^  '([^']+)':",
+            "capability": "groups.multi_party_release"
+          }
+        ],
+        "start": "const _scenarioRequirements =",
+        "end": "};",
+        "exclude_selectors": [
+          "all"
+        ]
+      },
+      {
+        "path": "integration_test/scripts/run_1to1_reaction_notification_device.dart",
+        "start": "const List<_Scenario>",
+        "end": "final RegExp",
+        "pattern": "id: '([^']+)'",
+        "variant": "reaction-recipient-platform",
+        "reason": "Exact singleton runner and per-scenario artifact validator; physical iOS is a separate target prerequisite.",
+        "bindings": [
+          {
+            "owner": "full-sims-major",
+            "path": "integration_test/scripts/run_1to1_reaction_notification_sims.dart",
+            "pattern": "const String _scenarioId = '([^']+)'",
+            "capability": "notifications.android_typed_reaction_smoke"
+          },
+          {
+            "owner": "full.reaction.head_provenance",
+            "selectors": [
+              "head_provenance"
+            ]
+          },
+          {
+            "owner": "full.reaction.android_durable_reaction_background_connected",
+            "selectors": [
+              "android_durable_reaction_background_connected"
+            ]
+          },
+          {
+            "owner": "full.reaction.android_background_crypto_preflight",
+            "selectors": [
+              "android_background_crypto_preflight"
+            ]
+          },
+          {
+            "owner": "full.reaction.android_first_wake_profile_aot",
+            "selectors": [
+              "android_first_wake_profile_aot"
+            ]
+          },
+          {
+            "owner": "full.reaction.android_message_unread_lifecycle",
+            "selectors": [
+              "android_message_unread_lifecycle"
+            ]
+          },
+          {
+            "owner": "full.reaction.android_physical_recipient",
+            "selectors": [
+              "android_physical_recipient"
+            ]
+          },
+          {
+            "owner": "full.reaction.ios_physical_recipient",
+            "selectors": [
+              "ios_physical_recipient"
+            ]
+          }
+        ]
+      },
+      {
+        "path": "integration_test/benchmark_harness.dart",
+        "pattern": "case '([^']+)'",
+        "variant": "compile:BENCHMARK",
+        "reason": "Benchmark dispatcher selector absent from the existing benchmark-sim gate",
+        "command_template": [
+          "flutter",
+          "test",
+          "--no-pub",
+          "-d",
+          "<pinned-device>",
+          "--dart-define=BENCHMARK={selector}",
+          "integration_test/benchmark_harness.dart"
+        ],
+        "bindings": [
+          {
+            "owner": "full-legacy",
+            "path": "scripts/run_test_gates.sh",
+            "start": "local -a benchmark_keys=(",
+            "end": ")",
+            "pattern": "(?m)^\\s+([A-Z_]+)\\s*$",
+            "route": "gate benchmark-sim"
+          }
+        ]
+      },
+      {
+        "path": "integration_test/performance_harness.dart",
+        "pattern": "case '([^']+)'",
+        "variant": "compile:PERF_TARGET",
+        "reason": "Eight UI dispatches remain distinct from 17 benchmark selectors. FEED aliases the direct main; IDENTITY_PROGRESS aliases its legacy dispatch.",
+        "command_template": [
+          "flutter",
+          "test",
+          "--no-pub",
+          "-d",
+          "<pinned-device>",
+          "--dart-define=PERF_TARGET={selector}",
+          "integration_test/performance_harness.dart"
+        ],
+        "bindings": [
+          {
+            "owner": "full-legacy",
+            "path": "scripts/run_flutter_full_regression.sh",
+            "pattern": "--dart-define=PERF_TARGET=([A-Z_]+)",
+            "route": "integration_test identity_progress_performance_test.dart"
+          },
+          {
+            "owner": "full-legacy",
+            "selectors": [
+              "FEED"
+            ],
+            "route": "integration_test feed_performance_test.dart"
+          },
+          {
+            "owner": "full.performance.feed_init",
+            "selectors": [
+              "FEED_INIT"
+            ]
+          },
+          {
+            "owner": "full.performance.shell_switch",
+            "selectors": [
+              "SHELL_SWITCH"
+            ]
+          },
+          {
+            "owner": "full.performance.feed_orbit_offscreen",
+            "selectors": [
+              "FEED_ORBIT_OFFSCREEN"
+            ]
+          },
+          {
+            "owner": "full.performance.conversation",
+            "selectors": [
+              "CONVERSATION"
+            ]
+          },
+          {
+            "owner": "full.performance.conversation_sub",
+            "selectors": [
+              "CONVERSATION_SUB"
+            ]
+          },
+          {
+            "owner": "full.performance.orbit",
+            "selectors": [
+              "ORBIT"
+            ]
+          }
+        ]
+      },
+      {
+        "path": "integration_test/scripts/group_reaction_notification_device_criteria.dart",
+        "start": "groupReactionNotificationScenarios =",
+        "end": "\n];",
+        "pattern": "id: ('[^']+'|\\w+)",
+        "resolve_constants": true,
+        "variant": "group-reaction-recipient-platform",
+        "reason": "All seven base scenarios: Android typed campaign and two explicit physical-iOS singletons.",
+        "bindings": [
+          {
+            "owner": "full-sims-major",
+            "selectors": [
+              "android_group_message_unread_lifecycle",
+              "android_announcement_message_unread_lifecycle",
+              "android_group_reaction_recipient",
+              "android_announcement_reaction_recipient",
+              "android_group_reaction_recipient_background_connected"
+            ],
+            "capability": "groups.reaction_notification_campaign"
+          },
+          {
+            "owner": "full.group-reaction.ios_announcement_reaction_recipient",
+            "selectors": [
+              "ios_announcement_reaction_recipient"
+            ]
+          },
+          {
+            "owner": "full.group-reaction.ios_chat_group_message_and_reaction_recipient",
+            "selectors": [
+              "ios_chat_group_message_and_reaction_recipient"
+            ]
+          }
+        ]
+      },
+      {
+        "path": "ios/RunnerUITests/NotificationTapUITests.swift",
+        "pattern": "func (test\\w+)\\(",
+        "variant": "native-xctest",
+        "reason": "Each XCTest method is separately selected; new methods fail closed until their fixture binding is reviewed.",
+        "bindings": [
+          {
+            "owner": "full.xctest.notificationtapuitests.testnotificationtap",
+            "selectors": [
+              "testNotificationTap"
+            ]
+          },
+          {
+            "owner": "full.xctest.notificationtapuitests.testcoldnotificationtap",
+            "selectors": [
+              "testColdNotificationTap"
+            ]
+          },
+          {
+            "owner": "full.xctest.notificationtapuitests.testpreparewarmnotificationtap",
+            "selectors": [
+              "testPrepareWarmNotificationTap"
+            ]
+          },
+          {
+            "owner": "full.xctest.notificationtapuitests.testtapexistingnotification",
+            "selectors": [
+              "testTapExistingNotification"
+            ]
+          },
+          {
+            "owner": "full.xctest.notificationtapuitests.testautomatelocalnetworkpermission",
+            "selectors": [
+              "testAutomateLocalNetworkPermission"
+            ]
+          },
+          {
+            "owner": "full.xctest.notificationtapuitests.testsettlelocalnetworkpermissionforcampaign",
+            "selectors": [
+              "testSettleLocalNetworkPermissionForCampaign"
+            ]
+          },
+          {
+            "owner": "full.xctest.notificationtapuitests.testairplanetogglestatedecodercontract",
+            "selectors": [
+              "testAirplaneToggleStateDecoderContract"
+            ]
+          },
+          {
+            "owner": "full.xctest.notificationtapuitests.testpreparepayloadfastpathnotificationtap",
+            "selectors": [
+              "testPreparePayloadFastPathNotificationTap"
+            ]
+          },
+          {
+            "owner": "full.xctest.notificationtapuitests.testbackgroundregisteredpayloadfastpathnotificationtap",
+            "selectors": [
+              "testBackgroundRegisteredPayloadFastPathNotificationTap"
+            ]
+          },
+          {
+            "owner": "full.xctest.notificationtapuitests.testpayloadfastpathnotificationtap",
+            "selectors": [
+              "testPayloadFastPathNotificationTap"
+            ]
+          },
+          {
+            "owner": "full.xctest.notificationtapuitests.testobservepayloadnotificationrecovery",
+            "selectors": [
+              "testObservePayloadNotificationRecovery"
+            ]
+          },
+          {
+            "owner": "full.xctest.notificationtapuitests.testverifypayloadnotificationrecoveryretirement",
+            "selectors": [
+              "testVerifyPayloadNotificationRecoveryRetirement"
+            ]
+          },
+          {
+            "owner": "full.xctest.notificationtapuitests.testrestorepayloadfastpathnetwork",
+            "selectors": [
+              "testRestorePayloadFastPathNetwork"
+            ]
+          },
+          {
+            "owner": "full.xctest.notificationtapuitests.testreactionnotificationtap",
+            "selectors": [
+              "testReactionNotificationTap"
+            ]
+          },
+          {
+            "owner": "full.xctest.notificationtapuitests.testcreateannouncementreactionfixture",
+            "selectors": [
+              "testCreateAnnouncementReactionFixture"
+            ]
+          },
+          {
+            "owner": "full.xctest.notificationtapuitests.testauthorannouncementreactiontarget",
+            "selectors": [
+              "testAuthorAnnouncementReactionTarget"
+            ]
+          },
+          {
+            "owner": "full.xctest.notificationtapuitests.testcreatechatgroupnotificationfixture",
+            "selectors": [
+              "testCreateChatGroupNotificationFixture"
+            ]
+          },
+          {
+            "owner": "full.xctest.notificationtapuitests.testauthorchatgroupreactiontarget",
+            "selectors": [
+              "testAuthorChatGroupReactionTarget"
+            ]
+          },
+          {
+            "owner": "full.xctest.notificationtapuitests.testchatgroupnotificationtap",
+            "selectors": [
+              "testChatGroupNotificationTap"
+            ]
+          },
+          {
+            "owner": "full.xctest.notificationtapuitests.testannouncementreactionnotificationtap",
+            "selectors": [
+              "testAnnouncementReactionNotificationTap"
+            ]
+          }
+        ]
+      },
+      {
+        "path": "ios/RunnerUITests/VC205CallLifecycleUITests.swift",
+        "pattern": "func (test\\w+)\\(",
+        "variant": "native-xctest",
+        "reason": "Each XCTest method is separately selected; new methods fail closed until their fixture binding is reviewed.",
+        "bindings": [
+          {
+            "owner": "full.xctest.vc205calllifecycleuitests.testbootstraptrustedcontactfromqr",
+            "selectors": [
+              "testBootstrapTrustedContactFromQR"
+            ]
+          },
+          {
+            "owner": "full.xctest.vc205calllifecycleuitests.testtapstartvoicecallonalreadyrunningapp",
+            "selectors": [
+              "testTapStartVoiceCallOnAlreadyRunningApp"
+            ]
+          },
+          {
+            "owner": "full.xctest.vc205calllifecycleuitests.testansweralreadypresentedsystemcall",
+            "selectors": [
+              "testAnswerAlreadyPresentedSystemCall"
+            ]
+          }
+        ]
+      }
+    ],
+    "classifications": {
+      "id": "reliability_classifications",
+      "command": [
+        "bash",
+        "scripts/check_reliability_simulation_discovery.sh",
+        "--classifications-tsv"
+      ],
+      "required_paths": [
+        "scripts/check_reliability_simulation_discovery.sh"
+      ],
+      "format": "classifications_tsv"
+    },
+    "obligations": [
+      {
+        "path": "integration_test/media_stable_id_smoke_test.dart",
+        "selector": "ios",
+        "variant": "platform",
+        "owner": "full.media-stable-id.ios"
+      },
+      {
+        "path": "integration_test/media_stable_id_smoke_test.dart",
+        "selector": "android",
+        "variant": "platform",
+        "owner": "full-legacy",
+        "route": "integration_test media_stable_id_smoke_test.dart"
+      },
+      {
+        "path": "integration_test/scripts/run_group_media_send_reliability.dart",
+        "selector": "group_media_foreground_retry_acl_roundtrip",
+        "variant": "android",
+        "owner": "full-sims-major",
+        "capability": "groups.media_send_reliability"
+      },
+      {
+        "path": "integration_test/scripts/run_group_media_send_reliability.dart",
+        "selector": "group_media_ios_receiver_background_recovery",
+        "variant": "ios",
+        "owner": "full-sims-major",
+        "owner_capability": "groups.media_send_reliability_ios",
+        "capability": "groups.media_send_reliability_ios"
+      },
+      {
+        "path": "scripts/test/run_app_visibility_native_371.sh",
+        "selector": "native-proof-flags-and-membership",
+        "variant": "host-and-ios-simulator",
+        "owner": "full.native.371"
+      },
+      {
+        "path": "scripts/test/run_ios_nse_native_373.sh",
+        "selector": "native-proof-flags-and-membership",
+        "variant": "host-and-ios-simulator",
+        "owner": "full.native.373"
+      },
+      {
+        "path": "scripts/test/run_android_headless_recovery_native_374.sh",
+        "selector": "native-proof-flags-and-membership",
+        "variant": "host",
+        "owner": "full.native.374"
+      },
+      {
+        "path": "ios/RunnerUITests/GroupMediaBackgroundRecoveryUITests.swift",
+        "selector": "testReceiverBackgroundRecovery",
+        "variant": "ios-physical",
+        "owner": "full-sims-major",
+        "owner_capability": "groups.media_send_reliability_ios",
+        "capability": "groups.media_send_reliability_ios"
+      },
+      {
+        "path": "integration_test/group_exit_release_diagnostics_sqlcipher_proof_test.dart",
+        "selector": "PB266-15",
+        "variant": "android-release-instrumentation",
+        "owner": "full.native.pb266-release"
+      },
+      {
+        "path": "scripts/run_flutter_full_regression.sh",
+        "selector": "gate benchmark",
+        "variant": "result-alias",
+        "owner": "full-sims-major",
+        "owner_capability": "performance.host",
+        "reason": "Exact equivalent capability executes once; the original legacy route remains available to direct callers.",
+        "capability": "performance.host"
+      },
+      {
+        "path": "scripts/run_flutter_full_regression.sh",
+        "selector": "integration_test group_announcement_reaction_notification_proof_test.dart",
+        "variant": "result-alias",
+        "owner": "full-sims-major",
+        "owner_capability": "groups.reaction_notification_campaign",
+        "reason": "Exact equivalent capability executes once; the original legacy route remains available to direct callers.",
+        "capability": "groups.reaction_notification_campaign"
+      },
+      {
+        "path": "scripts/run_flutter_full_regression.sh",
+        "selector": "integration_test group_reaction_notification_sqlcipher_probe_test.dart",
+        "variant": "result-alias",
+        "owner": "full-sims-major",
+        "owner_capability": "groups.reaction_notification_campaign",
+        "reason": "Exact equivalent capability executes once; the original legacy route remains available to direct callers.",
+        "capability": "groups.reaction_notification_campaign"
+      },
+      {
+        "path": "scripts/run_flutter_full_regression.sh",
+        "selector": "integration_test intro_accept_notification_android_proof_test.dart",
+        "variant": "result-alias",
+        "owner": "full-sims-major",
+        "owner_capability": "intro.accept_notification_campaign",
+        "reason": "Exact equivalent capability executes once; the original legacy route remains available to direct callers.",
+        "capability": "intro.accept_notification_campaign"
+      },
+      {
+        "path": "scripts/run_flutter_full_regression.sh",
+        "selector": "integration_test notification_tap_message_visible_proof_test.dart",
+        "variant": "result-alias",
+        "owner": "full-sims-major",
+        "owner_capability": "notifications.android_payload_campaign",
+        "reason": "Exact equivalent capability executes once; the original legacy route remains available to direct callers.",
+        "capability": "notifications.android_payload_campaign"
+      },
+      {
+        "path": "scripts/run_flutter_full_regression.sh",
+        "selector": "integration_test one_to_one_reaction_notification_proof_test.dart",
+        "variant": "result-alias",
+        "owner": "full-sims-major",
+        "owner_capability": "notifications.android_typed_reaction_smoke",
+        "reason": "Exact equivalent capability executes once; the original legacy route remains available to direct callers.",
+        "capability": "notifications.android_typed_reaction_smoke"
+      },
+      {
+        "path": "scripts/run_flutter_full_regression.sh",
+        "selector": "integration_test voice_message_e2e_test.dart",
+        "variant": "result-alias",
+        "owner": "full-sims-major",
+        "owner_capability": "android.voice_recorder_native_smoke",
+        "reason": "Exact equivalent capability executes once; the original legacy route remains available to direct callers.",
+        "capability": "android.voice_recorder_native_smoke"
+      },
+      {
+        "path": "scripts/run_flutter_full_regression.sh",
+        "selector": "integration_test group_strict_notification_proof_test.dart",
+        "variant": "result-alias",
+        "owner": "full-sims-major",
+        "owner_capability": "groups.strict_notification_closure",
+        "reason": "Exact equivalent capability executes once; the original legacy route remains available to direct callers.",
+        "capability": "groups.strict_notification_closure"
+      }
+    ],
+    "gate_aliases": [
+      {
+        "path": "scripts/run_test_gates.sh",
+        "arrays": [
+          "BASELINE_TESTS",
+          "ONE_TO_ONE_TESTS",
+          "FEED_TESTS",
+          "INTRO_TESTS",
+          "GROUP_TESTS",
+          "POSTS_TESTS",
+          "TRANSPORT_TESTS",
+          "RUNTIME_TELEMETRY_TESTS"
+        ],
+        "owner": "full-sims-major",
+        "owner_capability": "host.dart.all",
+        "capability": "host.dart.all"
+      }
+    ]
+  }
 }

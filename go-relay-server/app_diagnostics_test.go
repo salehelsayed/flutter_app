@@ -351,6 +351,7 @@ func TestAppDiagnosticConsentExpiryAlsoErasesNewerRecords(t *testing.T) {
 	c := s.consent[appDiagnosticOwner("a")]
 	c.UpdatedAtMs = time.Now().Add(-15 * 24 * time.Hour).UnixMilli()
 	s.consent[appDiagnosticOwner("a")] = c
+	s.noteExpiry(c.UpdatedAtMs) // Fixture bypasses configure.
 	e := appTestEvent()
 	appExpect(t, s, "a", 1, e, "retry", "diagnostics_disabled")
 	if len(s.records) != 0 {

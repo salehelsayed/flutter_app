@@ -2782,7 +2782,7 @@ void main() {
         );
         final callAction = find.semantics.byLabel('Start voice call');
         final recordAction = find.semantics.byLabel(
-          RegExp('Start voice recording'),
+          RegExp('Record voice message'),
         );
         expect(callAction, findsOneWidget);
         expect(recordAction, findsOneWidget);
@@ -4318,7 +4318,12 @@ void main() {
               .isEmpty,
         );
         await tester.pumpWidget(const SizedBox.shrink());
+        // The loading shell does not join the private-parent recovery read.
+        // Close the owned database in real async time before Flutter checks
+        // pending timers; addTearDown remains the failure-path fallback.
+        await tester.runAsync(fixture.dispose);
         await tester.pump();
+        expect(fixture.db.isOpen, isFalse);
       },
     );
 
@@ -13125,7 +13130,7 @@ void main() {
       },
     );
 
-    for (final throws in [true, false])
+    for (final throws in [true, false]) {
       testWidgets(
         'voice ${throws ? 'send exception' : 'queued upload'} releases uploading UI and keeps its pending recording',
         (tester) async {
@@ -13243,6 +13248,7 @@ void main() {
           await tester.pump();
         },
       );
+    }
 
     testWidgets(
       'voice relay fallback passes optimistic attachment id to sendVoiceMessage',

@@ -32,7 +32,7 @@ void main() {
           }) async {
             final existing = rows[key(groupId, peerId)];
             rows[key(groupId, peerId)] = {
-              if (existing != null) ...existing,
+              ...?existing,
               'group_id': groupId,
               'peer_id': peerId,
               'status': status,

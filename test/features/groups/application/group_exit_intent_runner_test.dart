@@ -405,7 +405,7 @@ class _TriggerProbeIntentRepo extends _IntentRepo {
     }
     try {
       await releaseBlockedLoads.future;
-      return super.forGroup(groupId);
+      return await super.forGroup(groupId);
     } finally {
       _activeBlockedLoads--;
     }

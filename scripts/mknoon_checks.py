@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import argparse
 from contextlib import ExitStack
+from concurrent.futures import ThreadPoolExecutor, wait, FIRST_COMPLETED
+import threading
 import device_campaign_preflight as device_preflight
 import datetime as dt
 import fnmatch
@@ -29,6 +31,7 @@ ROOT = Path(__file__).resolve().parents[1]
 RULES = Path('tool/testing/selection.json')
 SIMS = Path('tool/sims/critical_features.json')
 EXIT = {'PASS': 0, 'FAIL': 1, 'BLOCKED': 2, 'NOT RUN': 3}
+_LAUNCH_CONTEXT = threading.local()
 
 
 class InvalidPlan(ValueError):
@@ -205,10 +208,16 @@ def validate(root, rules, files=None):
             if not (root / path).exists(): errors.append('Missing proof/reference: ' + path)
         if c.get('kind') == 'command' and not c.get('success_marker'):
             errors.append('Command needs explicit completion marker: ' + cid)
+    validate_schedule(rules.get('full_commands', []))
     for c in rules.get('full_commands', []):
         errors.extend(message + ': ' + c.get('id', '?') for message in device_preflight.validate_metadata(c))
+        if not re.fullmatch(r'[a-z0-9_.-]+', c.get('id','')) or c.get('kind') not in ('flutter','python','node','go','sims','legacy','command','full_adapter'):
+            errors.append('Invalid full check identity/kind: ' + c.get('id','?'))
         if not c.get('command') or c.get('timeout_seconds', 0) <= 0:
             errors.append('Invalid full command: ' + c.get('id', '?'))
+        if c.get('kind') == 'full_adapter':
+            from full_suite_adapters import validate as validate_adapter
+            errors.extend(message + ': ' + c['id'] for message in validate_adapter(c, root))
         for arg in c.get('command', []):
             if arg.startswith(('scripts/', 'tool/')) and not (root / arg).exists():
                 errors.append('Stale full command reference: ' + arg)
@@ -222,6 +231,8 @@ def validate(root, rules, files=None):
                 errors.append('Invalid skill metadata: ' + name)
             if 'scripts/mknoon_checks.py' not in text or 'docs/testing/TESTING.md' not in text:
                 errors.append('Stale shared workflow reference: ' + name)
+    from testing_inventory import validate_policy
+    errors.extend(validate_policy(root, rules, files))
     if errors: raise InvalidPlan('\n'.join(errors))
     return files
 
@@ -259,7 +270,20 @@ def select(rules, changes, mode, files, root):
                     'timeout_seconds': 900, 'estimated_seconds': None, 'investigate': [path]}
                 add(cid, 'added/modified/renamed test: ' + path)
             else:
-                unmapped.append(path)
+                # Standalone assertion mains are not Flutter package:test files.
+                # Reuse only an exact, already validated source-owned recipe;
+                # new external test files still require an ownership decision.
+                owners = [c for c in rules.get('full_commands', [])
+                          if c.get('kind') == 'full_adapter'
+                          and c.get('command') == ['dart', '--enable-asserts', path]
+                          and len(c.get('steps', [])) == 1
+                          and c['steps'][0].get('format') == 'assert_main']
+                if len(owners) == 1:
+                    owner = owners[0]
+                    rules['checks'][owner['id']] = {**owner, 'paths': [path]}
+                    add(owner['id'], 'changed standalone assertion main: ' + path)
+                else:
+                    unmapped.append(path)
     return {'selected': [{'id': cid, 'reasons': sorted(set(why)), **rules['checks'][cid]}
                          for cid, why in sorted(selected.items())],
             'affected_areas': sorted(areas), 'unmapped_changes': sorted(set(unmapped)),
@@ -267,11 +291,17 @@ def select(rules, changes, mode, files, root):
             'not_selected': sorted(set(rules['checks']) - set(selected))}
 
 
+def positive_int(value):
+    value = int(value)
+    if value < 1 or value > 64: raise argparse.ArgumentTypeError('must be between 1 and 64')
+    return value
+
+
 def command_for(check, root, files):
     kind = check['kind']
     if kind == 'flutter':
         paths = expand_paths(root, check['paths'], files)
-        command = ['flutter', 'test', '--no-pub', '--machine', '--concurrency=1', '--timeout=2m', *paths]
+        command = ['flutter', 'test', '--no-pub', '--machine', '--concurrency=' + str(check.get('workers', 1)), '--timeout=2m', *paths]
         if check.get('names'): command += ['--name', '|'.join(re.escape(n) for n in check['names'])]
         return command, paths
     if kind == 'python':
@@ -419,7 +449,15 @@ def launch(command, cwd, timeout, env=None):
                              start_new_session=True)
         timed_out = False
         try:
-            p.wait(timeout=timeout)
+            deadline = start + timeout
+            while p.poll() is None:
+                cancel = getattr(_LAUNCH_CONTEXT, 'cancel_event', None)
+                if cancel is not None and cancel.is_set():
+                    raise InterruptedError('run cancelled')
+                remaining = deadline - time.monotonic()
+                if remaining <= 0: raise subprocess.TimeoutExpired(command, timeout)
+                try: p.wait(timeout=min(.1, remaining))
+                except subprocess.TimeoutExpired: pass
         except subprocess.TimeoutExpired:
             timed_out = True
             try: os.killpg(p.pid, signal.SIGTERM)
@@ -431,9 +469,12 @@ def launch(command, cwd, timeout, env=None):
             try: os.killpg(p.pid, signal.SIGKILL)
             except ProcessLookupError: pass
             p.wait(timeout=5)
-        except BaseException:
-            os.killpg(p.pid, signal.SIGKILL); p.wait(timeout=5)
-            raise
+        except BaseException as error:
+            try: os.killpg(p.pid, signal.SIGKILL)
+            except ProcessLookupError: pass
+            p.wait(timeout=5)
+            if not isinstance(error, InterruptedError): raise
+            timed_out = True
         output.seek(0)
         data = output.read().decode('utf-8', 'replace')
     return data, p.returncode, timed_out, round(time.monotonic() - start, 3)
@@ -444,7 +485,7 @@ def aggregate(attempts):
     statuses = [a['status'] for a in attempts]
     for status in ('FAIL', 'BLOCKED', 'NOT RUN'):
         if status in statuses: return status
-    return 'PASS' if statuses else 'NOT RUN'
+    return 'N/A' if statuses and set(statuses) == {'N/A'} else 'PASS' if statuses else 'NOT RUN'
 
 
 def manual_result(check, evidence, identity, root, artifact_hashes):
@@ -473,7 +514,7 @@ def manual_result(check, evidence, identity, root, artifact_hashes):
 
 
 def devices(root):
-    matrix = {'flutter': [], 'adb': [], 'ios_simulators': [], 'errors': []}
+    matrix = {'flutter': [], 'adb': [], 'ios_simulators': [], 'native_ios_simulators': [], 'errors': []}
     commands = [('flutter', ['flutter','devices','--machine']), ('adb',['adb','devices']),
                 ('ios_simulators',['xcrun','simctl','list','devices','available','--json'])]
     for name, command in commands:
@@ -486,9 +527,20 @@ def devices(root):
                 matrix[name] = [{k: d.get(k) for k in ('id','targetPlatform','emulator','sdk')} for d in json.loads(out)]
             elif name == 'adb': matrix[name] = [l.split()[0] for l in out.splitlines() if l.endswith('\tdevice')]
             else:
-                matrix[name] = [d['udid'] for rows in json.loads(out)['devices'].values() for d in rows if d.get('isAvailable')]
+                simulator_rows = json.loads(out)['devices']
+                matrix[name] = [d['udid'] for rows in simulator_rows.values() for d in rows if d.get('isAvailable')]
+                matrix['native_ios_simulators'] = [d['udid'] for runtime, rows in simulator_rows.items() for d in rows
+                    if 'iOS' in runtime and d.get('isAvailable') and d.get('name', '').startswith('iPhone')]
         except (ValueError, OSError): matrix['errors'].append(name + ' discovery failed')
     return matrix
+
+
+def per_route_legacy(check):
+    if check.get('protected_target_boundary') != 'audited_per_route': return False
+    if check['kind'] == 'legacy':
+        return check['command'][:2] == ['bash', 'scripts/run_flutter_full_regression.sh']
+    return (check['kind'] == 'sims' and check.get('capability') == 'reliability.full.cleaned_legacy'
+            and check['command'][:5] == ['dart', 'tool/sims/sims.dart', 'full', '--only', 'reliability.full.cleaned_legacy'])
 
 
 def prerequisites(check, root, device_config, matrix):
@@ -500,12 +552,15 @@ def prerequisites(check, root, device_config, matrix):
         reasons.append('Flutter packages unavailable: run flutter pub get')
     if uses_flutter_sdk and flutter_sdk_mismatch(root):
         reasons.append('Flutter SDK on PATH differs from package_config; use the SDK that resolved this candidate')
-    if check['kind'] in ('sims', 'legacy'):
+    if check['kind'] == 'full_adapter':
+        from full_suite_adapters import prerequisites as adapter_prerequisites
+        reasons.extend(adapter_prerequisites(check, device_config, matrix))
+    if check['kind'] in ('sims', 'legacy') and not per_route_legacy(check):
         if not device_config or device_config.get('isolated_test_environment') is not True:
             reasons.append('isolated device/account/service configuration required')
         else:
             ids = device_config.get('devices', {})
-            needed = check.get('device_roles', [] if check.get('sims_mode') else ['android_physical','android_emulator'])
+            needed = device_preflight.device_roles(check, device_config)
             available = {d['id']: d for d in matrix.get('flutter', [])}
             for role in needed:
                 target = ids.get(role)
@@ -513,11 +568,11 @@ def prerequisites(check, root, device_config, matrix):
                 d = available[target]
                 if role.startswith('android') and (target not in matrix['adb'] or not d['targetPlatform'].startswith('android')):
                     reasons.append('Android target is not live: ' + role)
-                if role == 'android_emulator' and not d['emulator']: reasons.append('second Android target must be an emulator')
+                if role.startswith('android_emulator') and not d['emulator']: reasons.append('second Android target must be an emulator')
                 if role == 'android_physical' and d['emulator']: reasons.append('primary Android target must be physical')
                 if role.startswith('ios') and d['targetPlatform'] != 'ios': reasons.append('iOS target required')
                 if role == 'ios_physical' and d['emulator']: reasons.append('physical iPhone required for this proof')
-                if role == 'ios_simulator' and (not d['emulator'] or target not in matrix['ios_simulators']):
+                if role.startswith('ios_simulator') and (not d['emulator'] or target not in matrix['ios_simulators']):
                     reasons.append('available iOS simulator required')
             if len(set(ids.values())) != len(ids): reasons.append('device roles must be distinct')
             if not device_config.get('fixture_reference'): reasons.append('fixture reference required')
@@ -574,7 +629,7 @@ def plan_fingerprint(plan):
         selected.append(row)
     return digest({**{k: plan.get(k) for k in (
         'mode', 'baseline', 'candidate_build', 'identity', 'changes',
-        'not_selected', 'unmapped_changes', 'ci')}, 'selected': selected})
+        'not_selected', 'unmapped_changes', 'ci', 'obligations', 'coverage_gaps', 'runner_expansions', 'execution_settings')}, 'selected': selected})
 
 
 def make_plan(args, root, rules, *, capture_toolchains=True):
@@ -586,6 +641,7 @@ def make_plan(args, root, rules, *, capture_toolchains=True):
     identity = source_identity(root, files, rules)
     selection = select(json.loads(json.dumps(rules)), changes, args.mode, files, root)
     for c in selection['selected']:
+        if c['kind'] == 'flutter': c['workers'] = getattr(args, 'flutter_workers', 1)
         c['command'], c['selected_paths'] = command_for(c, root, files)
     known = sum(c.get('estimated_seconds') or 0 for c in selection['selected'])
     return {'schema_version':1, 'mode':args.mode, 'baseline':baseline,
@@ -601,6 +657,9 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('action', choices=['discover','validate','plan','run','full','devices',
                                          'ci-plan','ci-run','ci-verify'])
+    parser.add_argument('--jobs', type=positive_int, default=1, help='Maximum independent checks (default: 1); unknown resources serialize')
+    parser.add_argument('--flutter-workers', type=positive_int, default=1, help='Bounded workers in each compatible Flutter invocation (default: 1)')
+    parser.add_argument('--sims-jobs', type=positive_int, default=1, help='SIMS resource scheduler capacity (default: 1)')
     parser.add_argument('--mode', choices=['change','release'], default='change')
     parser.add_argument('--base', help='Explicit comparison ref; releases: actual previous published revision')
     parser.add_argument('--local', action='store_true', help='Include staged, unstaged and nonignored untracked changes')
@@ -679,7 +738,142 @@ def main(argv=None):
         return 2
 
 
+def validate_schedule(rows):
+    ids = [r['id'] for r in rows]
+    if len(ids) != len(set(ids)): raise InvalidPlan('Duplicate schedule id')
+    remaining = {}
+    for row in rows:
+        resources = row.get('resources')
+        if resources is not None and (not isinstance(resources, list) or
+                any(not isinstance(r, str) or not r for r in resources)):
+            raise InvalidPlan('Invalid resources: ' + row['id'])
+        deps = row.get('dependencies', [])
+        if not isinstance(deps, list) or any(d not in ids for d in deps):
+            raise InvalidPlan('Unknown dependency: ' + row['id'])
+        remaining[row['id']] = set(deps)
+    while remaining:
+        ready = {k for k,v in remaining.items() if not v}
+        if not ready: raise InvalidPlan('Schedule dependency cycle')
+        remaining = {k:v-ready for k,v in remaining.items() if k not in ready}
+
+
+def is_campaign(check):
+    return check['kind'] in ('sims', 'legacy') or (check['kind'] == 'full_adapter' and bool(check.get('device_roles')))
+
+
+def check_resources(check):
+    resources = set(check.get('resources') or ['unknown'])
+    if any(r not in ('performance.global', 'shared-native-build') and not r.startswith(
+            ('isolated:', 'device:', 'device-control:', 'build:', 'artifact:', 'relay-mutation:')) for r in resources):
+        resources.add('unknown')
+    resources = {r.replace('device-control:', 'device:', 1) for r in resources}
+    if 'unknown' in resources: resources.add('shared-native-build')
+    if check['kind'] in ('flutter', 'sims', 'legacy') or any(
+            word in ' '.join(check.get('command', [])) for word in ('gradlew', 'xcodebuild', 'flutter')):
+        resources.add('shared-native-build')
+    if is_campaign(check):
+        resources.add('device-campaign-barrier')
+    return resources
+
+
+def resources_compatible(left, right):
+    a, b = check_resources(left), check_resources(right)
+    return not ({'unknown', 'performance.global'} & (a | b) or a & b)
+
+
+def obligation_results(obligations, results):
+    ledger = []
+    for obligation in obligations:
+        row = dict(obligation)
+        owners = row.get('owners', [])
+        if owners:
+            row['status'] = aggregate([results[i] for i in owners])
+        bindings = row.get('receipt_bindings', [])
+        if not bindings and (row.get('family') == 'sims' or row.get('owner_capability')):
+            bindings = [dict(owner=owner, capability=row.get('owner_capability', row['selector'])) for owner in owners]
+        if bindings:
+            outcomes = []
+            for binding in bindings:
+                parent = results[binding['owner']]
+                key = next((k for k in ('capability', 'route') if k in binding), None)
+                if key is None:
+                    outcomes.append(parent); continue
+                attempts = parent.get('attempts', [])
+                if not attempts:
+                    outcomes.append(dict(status=parent['status'] if parent['status'] in ('FAIL','BLOCKED') else 'NOT RUN'))
+                for attempt in attempts:
+                    receipts = [r for r in attempt.get(key+'_results', []) if r['id'] == binding[key]]
+                    outcomes.extend(receipts if len(receipts) == 1 else [dict(status='NOT RUN', reason='No unique child execution receipt')])
+            row['status'] = 'N/A' if outcomes and all(r['status']=='N/A' for r in outcomes) else aggregate(outcomes)
+            reason = next((r.get('reason') for r in outcomes if r['status'] == row['status'] and r.get('reason')), None)
+            if reason: row['reason'] = reason
+        ledger.append(row)
+    return ledger
+
+
+def safe_sims_facts(data, capability_ids=(), profile_ids=()):
+    """Share only typed facts and identities already selected from project source.
+
+    Producer diagnostics (including nested verdicts/resources and arbitrary map
+    keys) stay in the private SIMS report. A string that looks like an ID is not
+    an allowlist: stdout can contain arbitrary identifier-shaped private text.
+    """
+    def counts(source, keys):
+        return {k: source[k] for k in keys if type(source.get(k)) is int and source[k] >= 0}
+
+    def ids(values, allowed):
+        return [v for v in values if isinstance(v, str) and v in allowed] if isinstance(values, list) else []
+
+    builds = data.get('builds') if isinstance(data.get('builds'), dict) else {}
+    safe_builds = counts(builds, ('requestedProfiles', 'actualBuilds', 'hits', 'misses',
+                                  'invalidations', 'totalElapsedMs'))
+    for key in ('builtProfileIds', 'cacheHitProfileIds', 'failedProfileIds'):
+        safe_builds[key] = ids(builds.get(key), profile_ids)
+    timings = builds.get('profileElapsedMs', {})
+    safe_builds['profileElapsedMs'] = counts(timings, profile_ids) if isinstance(timings, dict) else {}
+    schedule = data.get('schedule') if isinstance(data.get('schedule'), dict) else {}
+    safe_schedule = counts(schedule, ('maxObservedConcurrency',))
+    for key in ('selectedIds', 'attemptedIds', 'terminalIds'):
+        safe_schedule[key] = ids(schedule.get(key), capability_ids)
+    if schedule.get('causalFailureId') in capability_ids:
+        safe_schedule['causalFailureId'] = schedule['causalFailureId']
+    traces = []
+    for trace in schedule.get('traces', []):
+        if not isinstance(trace, dict) or trace.get('capabilityId') not in capability_ids: continue
+        safe = dict(capabilityId=trace['capabilityId'], **counts(trace, ('dependencyWaitMs',)))
+        for key in ('startedAt', 'endedAt'):
+            value = trace.get(key)
+            if isinstance(value, str) and re.fullmatch(r'\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d{1,6})?Z', value):
+                try: safe[key] = dt.datetime.fromisoformat(value).isoformat()
+                except ValueError: pass
+        traces.append(safe)
+    safe_schedule['traces'] = traces
+    return dict(builds=safe_builds, schedule=safe_schedule)
+
+
+def sims_receipt_details(path, attempt, capability_ids=(), profile_ids=()):
+    if not path.is_file(): return {}
+    data = json.loads(path.read_text())
+    receipts = []
+    for verdict in data.get('verdicts', []):
+        cid = verdict.get('capabilityId')
+        observed = verdict.get('status')
+        status = observed if observed in ('FAIL', 'BLOCKED', 'NOT RUN') else 'BLOCKED'
+        if observed == 'PASS' and attempt.get('report_verification_observed'):
+            status = 'PASS'
+        if (observed == 'N/A' and attempt.get('report_verification_observed') and
+                verdict.get('reason') == 'target_unavailable_by_project_policy'):
+            status = 'N/A'
+        receipts.append(dict(id=cid if cid in capability_ids else None, status=status,
+                             observed_status=observed if observed in ('PASS', 'FAIL', 'BLOCKED', 'NOT RUN', 'N/A') else None,
+                             reason='target_unavailable_by_project_policy' if status == 'N/A' else None,
+                             assertions_attempted=verdict.get('assertionsAttempted')
+                             if type(verdict.get('assertionsAttempted')) is int and verdict['assertionsAttempted'] >= 0 else None))
+    return dict(capability_results=receipts, **safe_sims_facts(data, capability_ids, profile_ids), install_seconds=None)
+
+
 def execute_plan(args, root, rules, plan, files, device_config, matrix, directory, started):
+    os.chmod(directory, 0o700)
     plan['plan_sha256'] = plan_fingerprint(plan)
     (directory / 'plan.json').write_text(json.dumps(plan, indent=2) + '\n')
     evidence = json.loads(args.evidence.read_text()) if args.evidence else {}
@@ -696,11 +890,28 @@ def execute_plan(args, root, rules, plan, files, device_config, matrix, director
     with lock.open('a') as handle:
         try: fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError: raise InvalidPlan('Another Mknoon check run owns shared build resources')
-        ordered = sorted(plan['selected'], key=lambda c: (c['kind'] in ('sims','legacy','manual'), c['id'] != 'workflow', c['id']))
+        ordered = sorted(plan['selected'], key=lambda c: (is_campaign(c) or c['kind'] == 'manual', c['id'] != 'workflow', c['id']))
         prerequisite_failed = False
         runner_blocked = set()
         device_cleanup_pending = False
-        for c in ordered:
+        validate_schedule(ordered)
+        campaign_descendants = {c['id'] for c in ordered if is_campaign(c)}
+        while True:
+            downstream = {c['id'] for c in ordered if set(c.get('dependencies', [])) & campaign_descendants}
+            if downstream <= campaign_descendants: break
+            campaign_descendants |= downstream
+        host_prerequisite_ids = {c['id'] for c in ordered if c['kind'] != 'manual' and c['id'] not in campaign_descendants}
+        schedule_started = time.monotonic()
+        cancel_event = threading.Event()
+        results_by_id = {}
+        pending = list(ordered)
+        active = {}
+        max_running = 0
+        jobs = getattr(args, 'jobs', 1)
+
+        def execute_check(c):
+            _LAUNCH_CONTEXT.cancel_event = cancel_event
+            check_started = time.monotonic()
             row = {'id':c['id'], 'kind':c['kind'], 'command':c['command'], 'selected_paths':c['selected_paths'],
                    'investigate':c.get('investigate', []), 'attempts':[]}
             if only and c['id'] not in only:
@@ -710,46 +921,106 @@ def execute_plan(args, root, rules, plan, files, device_config, matrix, director
                     row.update(status='BLOCKED', checkpoint='manual_evidence_baseline_mismatch')
                 else:
                     row.update(manual_result(c, evidence, plan['identity'], root, artifact_hashes))
-            elif c['blocked_prerequisites']:
+            elif c.get('target_availability') == 'N/A':
+                row.update(status='N/A', checkpoint='target_unavailable_by_project_policy')
+            elif c['kind'] == 'legacy' and c['command'][:2] != ['bash', 'scripts/run_flutter_full_regression.sh']:
+                row.update(status='BLOCKED', checkpoint='unknown_legacy_command')
+            elif c.get('blocked_prerequisites'):
                 row.update(status='BLOCKED', checkpoint='prerequisite_unavailable', reasons=c['blocked_prerequisites'])
             elif c['kind'] in runner_blocked:
                 row.update(status='NOT RUN', checkpoint='shared_runner_startup_failed')
-            elif c['kind'] in ('sims','legacy') and device_cleanup_pending:
+            elif is_campaign(c) and device_cleanup_pending and not per_route_legacy(c):
                 row.update(status='NOT RUN', checkpoint='device_cleanup_review_required')
-            elif c['kind'] in ('sims','legacy') and prerequisite_failed:
+            elif is_campaign(c) and prerequisite_failed:
                 row.update(status='NOT RUN', checkpoint='host_prerequisite_failed')
+            elif not per_route_legacy(c) and any(results_by_id[d]['status'] != 'PASS' for d in c.get('dependencies', [])):
+                row.update(status='NOT RUN', checkpoint='dependency_failed')
             else:
                 for attempt in range(2 if args.rerun_failed else 1):
                     # Device failures need diagnosis and cleanup review before a fresh run.
-                    if attempt and (row['attempts'][0]['status'] == 'PASS' or c['kind'] in ('sims', 'legacy')): break
+                    if attempt and (row['attempts'][0]['status'] == 'PASS' or is_campaign(c)): break
                     campaign_started = False
                     try:
                         with ExitStack() as owners:
+                            if 'shared-native-build' in check_resources(c):
+                                owners.enter_context(device_preflight.device_leases(['mknoon.shared-native-build']))
                             env = os.environ.copy()
                             env['MKNOON_TEST_RUN_ID'] = directory.name + '-' + c['id']
+                            env['MKNOON_HOST_FLUTTER_WORKERS'] = str(getattr(args, 'flutter_workers', 1))
+                            env['SIMS_MAX_PARALLEL'] = str(getattr(args, 'sims_jobs', 1))
+                            env['SIMS_HOST_CONCURRENCY'] = str(getattr(args, 'flutter_workers', 1))
                             env['GOTOOLCHAIN'] = 'go1.25.0'
+                            if per_route_legacy(c):
+                                env['MKNOON_LEGACY_CLEANUP_PENDING'] = '1' if device_cleanup_pending else '0'
+                            if c['kind'] != 'full_adapter': env.update(c.get('environment', {}))
+                            if c['kind'] in ('sims', 'legacy'):
+                                env.pop('RELIABILITY_MULTI_DEVICE_IDS', None)
+                            if c['kind'] == 'full_adapter' and c.get('device_roles'):
+                                protected_config = dict(device_config, full_suite={}, devices={role: device_config.get('devices', {}).get(role)
+                                    for role in c['device_roles'] if device_config.get('devices', {}).get(role)})
+                                env.update(sims_environment(protected_config, directory / (c['id'] + '-binding.json'), c))
                             if c['kind'] == 'sims':
                                 report_path = directory / (c['id'] + '-' + str(attempt) + '-sims.json')
                                 if report_path.exists(): raise InvalidPlan('Refusing to reuse a SIMS report')
                                 env.update(sims_environment(device_config, report_path, c))
+                                if c.get('capability') == 'reliability.full.cleaned_legacy':
+                                    env['MKNOON_LEGACY_RECEIPT_DIRECTORY'] = str(directory / (c['id'] + '-' + str(attempt) + '-routes'))
                             command = list(c['command'])
                             if c['kind'] == 'legacy':
+                                env.update(sims_environment(device_config, directory / (c['id'] + '-nested-sims.json'), c))
                                 legacy_dir = directory / (c['id'] + '-' + str(attempt))
-                                command += ['--android-device', device_config['devices']['android_physical'],
-                                            '--ios-simulator', device_config['devices']['ios_simulator'], '--output', str(legacy_dir)]
-                            if c['kind'] in ('sims', 'legacy') and (c.get('device_roles') or c.get('sims_mode')):
+                                command += ['--output', str(legacy_dir)]
+                                env['MKNOON_LEGACY_CLEANUP_PENDING'] = '1' if device_cleanup_pending else '0'
+                                # Consume the canonical host alias only with its
+                                # exact child receipt, even if another SIMS child failed.
+                                host = results_by_id.get('full-sims-major', {})
+                                receipts = [r for a in host.get('attempts', []) for r in a.get('capability_results', []) if r.get('id') == 'host.dart.all']
+                                if len(receipts) != 1 or receipts[0]['status'] != 'PASS':
+                                    env.pop('MKNOON_FULL_HOST_OWNER', None)
+                            if is_campaign(c) and not per_route_legacy(c) and (c.get('device_roles') or c.get('sims_mode')):
                                 targets = [device_config.get('devices', {}).get(role) for role in device_preflight.device_roles(c, device_config)]
                                 owners.enter_context(device_preflight.device_leases([target for target in targets if target]))
                                 preflight = device_preflight.run(c, root, device_config, launch, env)
                                 row.setdefault('preflight', []).append(preflight)
                                 if preflight['status'] != 'PASS':
                                     raise device_preflight.PreflightBlocked(preflight)
-                            campaign_started = c['kind'] in ('sims', 'legacy')
-                            out, code, timeout, seconds = launch(command, root / c.get('cwd','.'), c['timeout_seconds'], env)
-                            a = parse_execution(c['kind'], out, code, timeout, c['selected_paths'], c.get('success_marker'))
+                            campaign_started = is_campaign(c)
+                            if c['kind'] == 'full_adapter':
+                                from full_suite_adapters import bind, inspect, prepare_step
+                                adapter_dir = directory / (c['id'] + '-' + str(attempt + 1) + '-proof')
+                                adapter_dir.mkdir()
+                                steps, adapter_env = bind(c, device_config, root, adapter_dir)
+                                env.update(adapter_env)
+                                step_results, outputs, seconds = [], [], 0
+                                for step in steps:
+                                    prepare_step(step)
+                                    # Never accept stale native XML from an earlier Gradle invocation.
+                                    before = {str(p):p.stat().st_mtime_ns for p in root.glob(step.get('report_glob','__no_reports__'))}
+                                    step_out, code, timeout, duration = launch(step['command'], root / step.get('cwd','.'), c['timeout_seconds'], env)
+                                    seconds += duration
+                                    outputs.append(step_out)
+                                    partial_raw = directory / (c['id'] + '-' + str(attempt + 1) + '.raw.log')
+                                    partial_raw.write_text('\n'.join(outputs))
+                                    os.chmod(partial_raw, 0o600)
+                                    proof = inspect(step, step_out, code, timeout, root)
+                                    if step.get('format') == 'junit' and before and all(Path(p).exists() and Path(p).stat().st_mtime_ns == h for p,h in before.items()):
+                                        proof.update(status='BLOCKED', checkpoint='stale_native_results')
+                                    step_results.append(proof)
+                                    if proof['status'] != 'PASS': break
+                                out = '\n'.join(outputs)
+                                a = dict(step_results[-1], step_results=step_results)
+                            else:
+                                out, code, timeout, seconds = launch(command, root / c.get('cwd','.'), c['timeout_seconds'], env)
+                            raw_path = directory / (c['id'] + '-' + str(attempt + 1) + '.raw.log')
+                            raw_path.write_text(out)
+                            os.chmod(raw_path, 0o600)
+                            if c['kind'] != 'full_adapter':
+                                a = parse_execution(c['kind'], out, code, timeout, c['selected_paths'], c.get('success_marker'))
                             if c['kind'] == 'sims':
-                                a = inspect_sims(report_path, c['capability'], code, timeout)
-                                if a['status'] == 'PASS':
+                                if report_path.is_file(): os.chmod(report_path, 0o600)
+                                a = inspect_sims(report_path, c['capability'], code, timeout,
+                                    c['selected_paths'] if c.get('expanded_capabilities') else None)
+                                if a['status'] in ('PASS', 'N/A'):
                                     verify_command = ['dart', 'tool/sims/sims.dart', 'verify-report', str(report_path)]
                                     _, verify_code, verify_timeout, verify_seconds = launch(verify_command, root, 120, env)
                                     seconds += verify_seconds
@@ -757,8 +1028,16 @@ def execute_plan(args, root, rules, plan, files, device_config, matrix, director
                                         a.update(status='BLOCKED', checkpoint='sims_report_verification_failed')
                                     else:
                                         a['report_verification_observed'] = True
+                                a.update(sims_receipt_details(report_path, a, c['selected_paths'],
+                                    [r['buildProfile'] for r in c.get('expanded_capabilities', []) if r.get('buildProfile')]))
+                            if c.get('capability') == 'reliability.full.cleaned_legacy':
+                                nested_dir = Path(env['MKNOON_LEGACY_RECEIPT_DIRECTORY'])
+                                a['route_results'] = legacy_receipt_details(nested_dir, a, c.get('expanded_legacy_routes', []))
                             if c['kind'] == 'legacy':
-                                a = inspect_legacy(legacy_dir, code, timeout)
+                                a = inspect_legacy(legacy_dir, code, timeout, c.get('expanded_routes'))
+                                a['route_results'] = legacy_receipt_details(legacy_dir, a, c.get('expanded_routes', []))
+                            if cancel_event.is_set() and a['status'] != 'FAIL':
+                                a.update(status='BLOCKED', checkpoint='run_cancelled', cancelled=True)
                             a.update(exit_status=code, duration_seconds=seconds, attempt=attempt + 1)
                             span = a.get('observed_test_span_seconds')
                             if span is not None:
@@ -769,25 +1048,88 @@ def execute_plan(args, root, rules, plan, files, device_config, matrix, director
                         a = {'status': 'BLOCKED', 'checkpoint': 'device_lease_unavailable', 'exit_status': None,
                              'duration_seconds': 0, 'attempt': attempt + 1,
                              'remediation': 'Another campaign or an unsafe lease path prevents exclusive ownership. Inspect the owner, let cleanup finish, then retry; never kill a foreign owner.'}
+                    except ValueError as error:
+                        diagnostic = directory / (c['id'] + '-' + str(attempt + 1) + '.diagnostic.raw.log')
+                        diagnostic.write_text(str(error))
+                        os.chmod(diagnostic, 0o600)
+                        a = {'status':'BLOCKED','checkpoint':'adapter_fixture_invalid',
+                             'exit_status':None,'duration_seconds':0,'attempt':attempt + 1}
                     except OSError:
                         a = {'status':'BLOCKED','checkpoint':'test_runner_startup','exit_status':None,'duration_seconds':0, 'attempt':attempt + 1}
                     if campaign_started and a['status'] != 'PASS':
-                        device_cleanup_pending = True
                         a['cleanup_review_required'] = True
                     row['attempts'].append(a)
                 row.update(status=aggregate(row['attempts']), checkpoint=row['attempts'][0]['checkpoint'])
-                if row['status'] == 'BLOCKED' and row['checkpoint'] in ('compilation_error','test_runner_startup','test_runner_startup_or_process_failure'):
-                    runner_blocked.add(c['kind'])
-            # A deliberate diagnostic omission is still NOT RUN in the final
-            # report; it is not an observed host failure that blocks a selected
-            # device check. Actual failures/unavailable prerequisites still gate.
-            if c['kind'] not in ('sims','legacy','manual') and row['status'] in ('FAIL', 'BLOCKED'):
+            row['wait_seconds'] = round(check_started - schedule_started, 3)
+            row['execution_seconds'] = round(time.monotonic() - check_started, 3)
+            return row
+        def commit(row):
+            nonlocal prerequisite_failed, device_cleanup_pending
+            results_by_id[row['id']] = row
+            if row['id'] in host_prerequisite_ids and row['status'] in ('FAIL', 'BLOCKED'):
                 prerequisite_failed = True
-            results.append(row)
-            print(row['status'], c['id'], flush=True)
-            # Durable partial results survive interruption; they cannot claim completion.
-            (directory / 'partial.json').write_text(json.dumps({'status':'NOT RUN','identity':plan['identity'],'results':results}, indent=2) + '\n')
+            if any(a.get('cleanup_review_required') for a in row['attempts']):
+                device_cleanup_pending = True
+            if row['kind'] != 'full_adapter' and row['status'] == 'BLOCKED' and row['checkpoint'] in ('compilation_error', 'test_runner_startup', 'test_runner_startup_or_process_failure'):
+                runner_blocked.add(row['kind'])
+            print(row['status'], row['id'], flush=True)
+            (directory / 'partial.json').write_text(json.dumps({
+                'status': 'NOT RUN', 'identity': plan['identity'],
+                'selected_ids': [c['id'] for c in ordered],
+                'results': [results_by_id[c['id']] for c in ordered if c['id'] in results_by_id]}, indent=2) + '\n')
+
+        old_term = None
+        if threading.current_thread() is threading.main_thread():
+            old_term = signal.signal(signal.SIGTERM, lambda *_: cancel_event.set())
+        try:
+            with ThreadPoolExecutor(max_workers=jobs) as pool:
+                try:
+                    while pending or active:
+                        for c in list(pending):
+                            if cancel_event.is_set(): break
+                            if (only and c['id'] not in only) or c.get('blocked_prerequisites') or c['kind'] == 'manual':
+                                pending.remove(c)
+                                commit(execute_check(c))
+                                continue
+                            if len(active) >= jobs: continue
+                            if any(d not in results_by_id for d in c.get('dependencies', [])): continue
+                            # Device failure/cleanup barriers remain invocation-wide. All
+                            # host prerequisites finish before a campaign acquires leases.
+                            if is_campaign(c) and any(
+                                    x['id'] in host_prerequisite_ids
+                                    for x in pending + list(active.values()) if x is not c): continue
+                            if any(not resources_compatible(c, x) for x in active.values()): continue
+                            pending.remove(c)
+                            active[pool.submit(execute_check, c)] = c
+                            max_running = max(max_running, len(active))
+                        if active:
+                            done, _ = wait(active, timeout=.1, return_when=FIRST_COMPLETED)
+                            for future in done:
+                                c = active.pop(future)
+                                commit(future.result())
+                        elif pending and not cancel_event.is_set():
+                            raise InvalidPlan('Schedule dependency cycle or unavailable dependency')
+                        if cancel_event.is_set(): break
+                except KeyboardInterrupt:
+                    cancel_event.set()
+                except BaseException:
+                    cancel_event.set()
+                    raise
+                finally:
+                    # Signal every owned process group before draining the pool.
+                    if cancel_event.is_set():
+                        for future, c in list(active.items()):
+                            commit(future.result())
+                        for c in pending:
+                            commit(dict(id=c['id'], kind=c['kind'], command=c['command'],
+                                selected_paths=c['selected_paths'], attempts=[], status='NOT RUN',
+                                checkpoint='run_cancelled', wait_seconds=round(time.monotonic()-schedule_started, 3)))
+        finally:
+            if old_term is not None: signal.signal(signal.SIGTERM, old_term)
+        results = [results_by_id[c['id']] for c in ordered]
     gaps = ['Unmapped behavior-affecting change: ' + p for p in plan['unmapped_changes']]
+    gaps += ['Uncovered full obligation: ' + oid for oid in plan.get('coverage_gaps', [])]
+    if cancel_event.is_set(): gaps.append('Run cancelled; unfinished obligations retained')
     current = source_identity(root, source_files(root), rules)
     if current != plan['identity']: gaps.append('Source/configuration changed during execution; candidate evidence invalidated')
     if plan.get('toolchains') and toolchain_identity(root) != plan['toolchains']:
@@ -798,6 +1140,8 @@ def execute_plan(args, root, rules, plan, files, device_config, matrix, director
     overall = aggregate(results)
     if gaps and overall != 'FAIL': overall = 'BLOCKED'
     report = {**{k:plan[k] for k in ('mode','baseline','candidate_build','identity','not_selected')},
+              'obligations': obligation_results(plan.get('obligations', []), results_by_id),
+              'scheduling': {'jobs': jobs, 'max_observed_concurrency': max_running},
               'schema_version':1, 'automated_status':auto, 'status':overall,
               'plan_sha256':plan['plan_sha256'], 'ci':plan.get('ci'),
               'artifact_sha256':artifact_hashes, 'devices':matrix,
@@ -849,9 +1193,23 @@ def sims_android_package(check, config):
 
 def sims_environment(config, report, check=None):
     roles = {'android_physical':'SIMS_ANDROID_PHYSICAL_DEVICE_ID','android_emulator':'SIMS_ANDROID_EMULATOR_DEVICE_ID',
-             'ios_simulator':'SIMS_IOS_SIMULATOR_ID','ios_physical':'SIMS_IOS_DEVICE_ID'}
-    env = {roles[k]: v for k,v in config.get('devices', {}).items() if k in roles}
+             'android_emulator_second':'SIMS_ANDROID_EMULATOR_SECOND_DEVICE_ID',
+             'ios_simulator':'SIMS_IOS_SIMULATOR_ID','ios_physical':'SIMS_IOS_DEVICE_ID',
+             'macos':'SIMS_MACOS_DEVICE_ID',
+             **{'ios_simulator_'+p:'SIMS_IOS_SIMULATOR_'+p.upper()+'_DEVICE_ID' for p in 'abcd'}}
+    if any(k not in roles or not isinstance(v, str) or not v.strip() for k,v in config.get('devices', {}).items()):
+        raise InvalidPlan('Invalid protected device role or ID')
+    # Clear omitted pins as well: raw legacy adapters must not inherit an
+    # unleased peer from the launching shell.
+    env = {name: '' for name in roles.values()}
+    env.update({roles[k]: v for k,v in config.get('devices', {}).items()})
     ids = config.get('devices', {})
+    pins = {('ios-simulator-a' if k == 'ios_simulator' else k.replace('_', '-')): v for k,v in ids.items()}
+    if ids.get('ios_simulator') and ids.get('ios_simulator_a') != ids['ios_simulator'] and ids.get('ios_simulator_a'):
+        raise InvalidPlan('Conflicting iOS simulator role aliases')
+    env['SIMS_PROTECTED_DEVICE_ASSIGNMENTS_JSON'] = json.dumps(pins, sort_keys=True)
+    env['SIMS_IOS_PHYSICAL_DEVICE_ID'] = ids.get('ios_physical', '')
+    env['SIMS_IOS_SIMULATOR_A_DEVICE_ID'] = pins.get('ios-simulator-a', '')
     if ids.get('android_physical') and ids.get('android_emulator'):
         env['RELIABILITY_MULTI_DEVICE_IDS'] = ids['android_physical'] + ',' + ids['android_emulator']
     package = sims_android_package(check or {}, config)
@@ -861,12 +1219,35 @@ def sims_environment(config, report, check=None):
         # the production app while the config claims a disposable fixture.
         env.update(ANDROID_APP_PACKAGE=package, SIMS_APP_ID=package,
                    ORG_GRADLE_PROJECT_androidApplicationId=package)
+    supplied = config.get('full_suite', {})
+    bindings = {
+        'relay_addresses':['MKNOON_RELAY_ADDRESSES'],
+        'service_account':['SIMS_PROVIDER_FCM_CREDENTIAL_PATH','FIREBASE_SERVICE_ACCOUNT'],
+        'relay_target':['MKNOON_257_RELAY_TARGET','MKNOON_256_RELAY_TARGET'],
+        'relay_key':['MKNOON_257_RELAY_KEY','MKNOON_256_RELAY_KEY'],
+        'group_staging_manifest':['MKNOON_257_STAGING_MANIFEST'],
+        'direct_staging_manifest':['MKNOON_256_STAGING_MANIFEST'],
+        'group_media_ios_fixture_driver':['SIMS_GROUP_MEDIA_IOS_FIXTURE_DRIVER'],
+        'ios_disposable_simulator_ids':['SIMS_IOS_DISPOSABLE_SIMULATOR_IDS'],
+    }
+    for key, names in bindings.items():
+        if key in supplied:
+            if not isinstance(supplied[key], str): raise InvalidPlan('full_suite.' + key + ' must be a string')
+            if key == 'ios_disposable_simulator_ids' and any(
+                    value.strip() not in pins.values() for value in supplied[key].split(',') if value.strip()):
+                raise InvalidPlan('Disposable simulator authorization must stay inside protected device assignments')
+            env.update({name:supplied[key] for name in names})
+    for letter in 'abcd':
+        target=config.get('devices', {}).get('ios_simulator_'+letter)
+        if target: env['SIMS_IOS_SIMULATOR_'+letter.upper()+'_DEVICE_ID']=target
+    env['MKNOON_LEGACY_CONFIG_JSON'] = json.dumps(supplied)
+    env['MKNOON_LEGACY_ISOLATED'] = '1' if config.get('isolated_test_environment') is True and config.get('fixture_reference') else '0'
     env['SIMS_REPORT_PATH'] = str(report)
     env['SIMS_CHECKPOINT_PATH'] = str(report.with_suffix('.checkpoint.json'))
     return env
 
 
-def inspect_sims(path, capability, code, timeout):
+def inspect_sims(path, capability, code, timeout, selected_capabilities=None):
     if not path.is_file(): return {'status':'BLOCKED','checkpoint':'runner_timeout' if timeout else 'missing_sims_report'}
     data = json.loads(path.read_text())
     verdicts = data.get('verdicts', [])
@@ -877,7 +1258,13 @@ def inspect_sims(path, capability, code, timeout):
     if timeout: return {'status':'BLOCKED','checkpoint':'runner_timeout'}
     if len({v.get('capabilityId') for v in rows}) != len(rows) or data.get('validationErrors'):
         return {'status':'BLOCKED','checkpoint':'invalid_sims_evidence'}
-    not_applicable = [row for row in rows if capability == '*' and row.get('status') == 'N/A'
+    if selected_capabilities is not None:
+        observed = {v.get('capabilityId') for v in verdicts}
+        expected = set(selected_capabilities)
+        if observed != expected:
+            return {'status':'BLOCKED', 'checkpoint':'incomplete_sims_selection',
+                    'missing_capabilities':sorted(expected-observed), 'unexpected_capability_count':len(observed-expected)}
+    not_applicable = [row for row in rows if (capability == '*' or capability == 'reliability.full.cleaned_legacy') and row.get('status') == 'N/A'
                       and row.get('reason') == 'target_unavailable_by_project_policy'
                       and row.get('blocker') == 'targetUnavailable'
                       and row.get('targetCapabilityAvailable') is False
@@ -885,32 +1272,81 @@ def inspect_sims(path, capability, code, timeout):
                       and not row.get('artifactPresent') and not row.get('artifactEvidence')
                       and row.get('exitCode') in (None,0)]
     checked = [row for row in rows if row not in not_applicable]
+    if capability == 'reliability.full.cleaned_legacy' and not code and not checked and not_applicable:
+        return dict(status='N/A', checkpoint='target_unavailable_by_project_policy', sims_report_sha256=file_hash(path))
     if code or not checked or any(row.get('status') != 'PASS' or not row.get('assertionsAttempted')
                    or not row.get('artifactPresent') or row.get('exitCode') != 0
                    or row.get('printOnly') is not False or row.get('blocker') is not None for row in checked):
         return {'status':'BLOCKED','checkpoint':'incomplete_sims_evidence'}
     return {'status':'PASS','checkpoint':'sims_assertions_and_artifact_observed','sims_report_sha256':file_hash(path),
-            'timed_out':False, 'builds':data.get('builds', {}), 'not_applicable':[r['capabilityId'] for r in not_applicable]}
+            'timed_out':False, **safe_sims_facts(data, selected_capabilities or ([capability] if capability != '*' else [])),
+            'not_applicable':[r['capabilityId'] for r in not_applicable if r['capabilityId'] in (selected_capabilities or [])]}
 
 
-def inspect_legacy(directory, code, timeout):
+def legacy_receipt_details(directory, attempt, expected_routes):
+    summary = directory / 'summary.tsv'
+    if not summary.is_file(): return []
+    protected = directory / 'routes.json'
+    if protected.is_file():
+        data = json.loads(protected.read_text())
+        expected_ids = [r['label'] for r in expected_routes]
+        if not isinstance(data, list) or not all(isinstance(r, dict) for r in data): return []
+        if len(set(expected_ids)) != len(expected_ids) or [r.get('id') for r in data] != expected_ids: return []
+        summaries = [line.split('\t')[:2] for line in summary.read_text().splitlines()]
+        if summaries != [[r.get('status'), r.get('id')] for r in data]: return []
+        checkpoints = {'protected_legacy_route_completed','target_unavailable_by_project_policy',
+                       'target_binding_unavailable','device_cleanup_review_required','legacy_child_failed',
+                       'legacy_contract_invalid','legacy_child_incomplete','missing_legacy_child_receipt','run_cancelled',
+                       'device_automation_busy','device_automation_unobserved','device_target_unavailable'}
+        receipts = []
+        for i, r in enumerate(data, 1):
+            log = directory / 'logs' / f'{i:03d}.log'
+            if (r.get('status') not in ('PASS','FAIL','BLOCKED','NOT RUN','N/A') or
+                    r.get('checkpoint') not in checkpoints or not log.is_file() or
+                    file_hash(log) != r.get('log_sha256') or
+                    (r['status'] == 'N/A' and r['checkpoint'] != 'target_unavailable_by_project_policy')):
+                return []
+            receipts.append(dict(id=r['id'], status=r['status'], checkpoint=r['checkpoint']))
+        return receipts
+    expected = {r['label'] for r in expected_routes}
+    rows = [r.split('\t') for r in summary.read_text().splitlines()]
+    receipts = []
+    for row in rows:
+        if len(row) < 2 or row[1] not in expected: continue
+        status = 'FAIL' if row[0] == 'FAIL' else 'BLOCKED'
+        if row[0] == 'PASS' and attempt['status'] == 'PASS': status = 'PASS'
+        receipts.append(dict(id=row[1], status=status))
+    return receipts
+
+
+def inspect_legacy(directory, code, timeout, expected_routes=None):
     summary = directory / 'summary.tsv'
     if not summary.is_file(): return {'status':'BLOCKED','checkpoint':'missing_full_regression_summary'}
     rows = [r.split('\t') for r in summary.read_text().splitlines() if r]
     statuses = [r[0] for r in rows]
+    expected_count = len(expected_routes) if expected_routes is not None else 95
+    missing_routes = sorted({r['label'] for r in expected_routes or []} - {r[1] for r in rows if len(r)>1})
     if 'FAIL' in statuses: return {'status':'FAIL','checkpoint':'legacy_route_failure',
-                                 'failed_route_numbers':[i + 1 for i,r in enumerate(rows) if r[0] == 'FAIL']}
-    if code or timeout or len(rows) != 95 or set(statuses) != {'PASS'}:
+                                 'failed_route_numbers':[i + 1 for i,r in enumerate(rows) if r[0] == 'FAIL'],
+                                 'missing_routes':missing_routes}
+    if expected_routes is not None and (len({r[1] for r in rows if len(r)>1}) != len(rows) or
+            {r[1] for r in rows if len(r)>1} != {r['label'] for r in expected_routes}):
+        return {'status':'BLOCKED','checkpoint':'legacy_route_selection_mismatch','missing_routes':missing_routes}
+    protected_receipts = legacy_receipt_details(directory, {}, expected_routes or []) if (directory / 'routes.json').is_file() else []
+    if (directory / 'routes.json').is_file() and len(protected_receipts) != expected_count:
+        return dict(status='BLOCKED', checkpoint='invalid_legacy_child_receipts')
+    allowed = {'PASS', 'N/A'} if len(protected_receipts) == expected_count else {'PASS'}
+    if code or timeout or len(rows) != expected_count or not set(statuses) <= allowed:
         return {'status':'BLOCKED','checkpoint':'incomplete_full_regression_routes'}
     logs = list((directory / 'logs').glob('*.log'))
-    if len(logs) != 95: return {'status':'BLOCKED','checkpoint':'missing_full_regression_logs'}
+    if len(logs) != expected_count: return {'status':'BLOCKED','checkpoint':'missing_full_regression_logs'}
     for log in logs:
         text = log.read_text(errors='replace')
         if re.search(r'No tests ran|No tests were found|0 tests? (?:passed|ran)|(?:Ran|Executed)\s+0\s+tests?|unbound variable|command not found', text, re.I):
             return {'status':'BLOCKED','checkpoint':'legacy_runner_incomplete', 'route_log':log.name}
         if re.search(r'~[1-9]\d*|--- SKIP:|\b[1-9]\d* (?:tests? )?skipped|\bskipped[=: ]+[1-9]\d*|"skipped"\s*:\s*true', text, re.I):
             return {'status':'BLOCKED','checkpoint':'legacy_skipped_tests', 'route_log':log.name}
-    return {'status':'PASS','checkpoint':'legacy_95_routes_completed', 'route_count':95,
+    return {'status':'PASS','checkpoint':'legacy_95_routes_completed' if expected_routes is None else 'legacy_selected_routes_completed', 'route_count':expected_count,
             'timed_out':False, 'summary_sha256':file_hash(summary),
             'limitation':'Legacy per-route summaries are retained; case-level counts are not available for every nested runner.'}
 
@@ -920,32 +1356,47 @@ def make_full_plan(args, root, rules, *, capture_toolchains=True):
     if not args.local and git(root,'status','--porcelain','--untracked-files=normal').strip():
         raise InvalidPlan('Full source is dirty; use --local or clean checkout')
     files = source_files(root)
-    plan = {'mode':'full', 'baseline':baseline, 'candidate_build':args.build_label,
+    plan = {'execution_settings': {'jobs':getattr(args,'jobs',1), 'flutter_workers':getattr(args,'flutter_workers',1), 'sims_jobs':getattr(args,'sims_jobs',1)},
+            'mode':'full', 'baseline':baseline, 'candidate_build':args.build_label,
             'toolchains':toolchain_identity(root) if capture_toolchains else {},
             'identity':source_identity(root,files,rules), 'not_selected':[], 'unmapped_changes':[], 'selected':[]}
     for c in rules['full_commands']:
         check = dict(c)
+        check['command'] = list(c['command'])
+        if c['kind'] == 'sims' and getattr(args, 'sims_jobs', 1) > 1:
+            check['command'].append('--simultaneous')
         check['selected_paths'] = expand_paths(root, c.get('paths',[]), files) if c['kind'] == 'flutter' else c.get('paths',[])
         plan['selected'].append(check)
+    if rules.get('full_inventory'):
+        from testing_inventory import reconcile
+        plan.update(reconcile(root, rules, plan['selected'], files, getattr(args, 'flutter_workers', 1)))
+    validate_schedule(plan['selected'])
     return plan, files
 
 
 def full_run(args, root, rules, directory, started):
     """Existing full entry points, serialized and identity-bound; no resume erasure."""
     validate(root, rules)
-    commands = rules['full_commands']
-    (directory / 'full-plan.json').write_text(json.dumps(commands, indent=2) + '\n')
     if args.plan:
-        for c in commands: print(c['id'], ' '.join(c['command']))
-        print('Full plan:', directory / 'full-plan.json'); return 0
+        if not args.base: args.base = 'HEAD'
+        args.local = True  # preview records the current bytes; never authorizes execution
+        plan, _ = make_full_plan(args, root, rules, capture_toolchains=False)
+        plan['plan_sha256'] = plan_fingerprint(plan)
+        (directory / 'plan.json').write_text(json.dumps(plan, indent=2) + '\n')
+        (directory / 'full-plan.json').write_text(json.dumps(plan, indent=2) + '\n')
+        print(f"Planned {len(plan['selected'])} checks; {len(plan.get('obligations', []))} obligations; {len(plan.get('coverage_gaps', []))} coverage gaps")
+        print('Full plan:', directory / 'plan.json')
+        return 2 if plan.get('coverage_gaps') else 0
     if not args.base: raise InvalidPlan('Full execution requires --base to record a common tested revision')
     config = json.loads(args.device_config.read_text()) if args.device_config else {}
-    if not config.get('isolated_test_environment'): raise InvalidPlan('Full execution requires --device-config for isolated environments')
     # Full legacy campaigns may span days. No cancellation/resume or cross-revision merge.
     plan, files = make_full_plan(args, root, rules)
-    matrix = devices(root)
+    matrix = devices(root) if config else {}
     for check in plan['selected']:
         check['blocked_prerequisites'] = prerequisites(check,root,config,matrix)
+        if check['kind'] == 'full_adapter':
+            from full_suite_adapters import availability
+            check['target_availability'] = availability(check,config,matrix)
     # Preserve full workflow failures independently of release summaries.
     (directory / 'plan.json').write_text(json.dumps(plan,indent=2) + '\n')
     return execute_plan(args,root,rules,plan,files,config,matrix,directory,started)
@@ -1011,6 +1462,7 @@ def verify_ci_results(expected, execution_plan, report, context, fingerprint,
     require_ci(expected.get('ci') == context, 'CI expected event/candidate provenance mismatch')
     require_ci(execution_plan.get('plan_sha256') == fingerprint
                and plan_fingerprint(execution_plan) == fingerprint, 'CI execution plan mismatch')
+    require_ci(not expected.get('coverage_gaps'), 'Full inventory obligations remain uncovered or manual')
     require_ci(not expected['unmapped_changes'], 'Unmapped changes remain unresolved')
     require_ci(report.get('schema_version') == 1 and report.get('ci') == context
                and report.get('plan_sha256') == fingerprint, 'CI result provenance missing or stale')
@@ -1018,6 +1470,15 @@ def verify_ci_results(expected, execution_plan, report, context, fingerprint,
         require_ci(report.get(key) == execution_plan.get(key), 'CI result identity mismatch: ' + key)
     require_ci(report.get('status') == 'PASS' and report.get('automated_status') == 'PASS'
                and report.get('gaps') == [], 'CI report is failed, blocked or incomplete')
+    expected_obligations = execution_plan.get('obligations', [])
+    actual_obligations = report.get('obligations', [])
+    require_ci(len(actual_obligations) == len(expected_obligations) and
+               {o['id'] for o in actual_obligations} == {o['id'] for o in expected_obligations},
+               'CI full obligation ledger mismatch')
+    require_ci(actual_obligations == obligation_results(expected_obligations, {r['id']:r for r in report.get('results', [])}),
+               'CI full obligation outcomes differ from their execution receipts')
+    for obligation in actual_obligations:
+        require_ci(obligation['status'] in ('PASS', 'EXCLUDED', 'INACTIVE', 'N/A'), 'Incomplete full obligation')
     selected = {c['id']: c for c in execution_plan['selected']}
     rows = report.get('results', [])
     require_ci(bool(selected) and len(selected) == len(execution_plan['selected'])
@@ -1054,8 +1515,8 @@ def verify_ci_results(expected, execution_plan, report, context, fingerprint,
                            and attempt.get('report_verification_observed') is True,
                            label + ' lacks verified device evidence')
             elif kind == 'legacy':
-                require_ci(attempt.get('checkpoint') == 'legacy_95_routes_completed'
-                           and attempt.get('route_count') == 95 and is_hash(attempt.get('summary_sha256')),
+                require_ci(attempt.get('checkpoint') == ('legacy_selected_routes_completed' if check.get('expanded_routes') else 'legacy_95_routes_completed')
+                           and attempt.get('route_count') == len(check.get('expanded_routes', [None]*95)) and is_hash(attempt.get('summary_sha256')),
                            label + ' lacks complete full-regression evidence')
             else:
                 counts = attempt.get('counts', {})

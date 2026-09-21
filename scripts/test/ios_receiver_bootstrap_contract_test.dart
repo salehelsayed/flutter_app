@@ -102,9 +102,9 @@ void main() {
     }
   }
   for (final required in const <String>[
-    'mknoon.sims.ios-group-notification-observation-request.v1',
-    'mknoon.sims.ios-group-notification-observation-result.v1',
-    'mknoon.sims.ios-group-notification-observation-host-receipt.v1',
+    'mknoon.sims.ios-group-notification-observation-request.v2',
+    'mknoon.sims.ios-group-notification-observation-result.v3',
+    'mknoon.sims.ios-group-notification-observation-host-receipt.v3',
     '"expectedGroupIdSha256": group_sha256',
     '"expectedEventIdSha256": event_sha256',
     '"expectedTargetMessageIdSha256": target_message_sha256',

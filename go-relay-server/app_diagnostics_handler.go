@@ -27,7 +27,7 @@ func initAppDiagnosticsFromEnvironment() *appDiagnosticStore {
 	quota := appDiagnosticGlobalBytes
 	if raw := os.Getenv("APP_DIAGNOSTICS_MAX_BYTES"); raw != "" {
 		n, err := strconv.Atoi(raw)
-		if err != nil || n < 1<<20 || n > 1<<30 {
+		if err != nil || n < 1<<20 || n > appDiagnosticGlobalBytes {
 			log.Print("app_diagnostics state=invalid_config")
 			return nil
 		}
@@ -38,6 +38,9 @@ func initAppDiagnosticsFromEnvironment() *appDiagnosticStore {
 		log.Print("app_diagnostics state=sink_unavailable")
 		return nil
 	}
+	s.ownerQuota = diagnosticOwnerQuota("APP_DIAGNOSTICS_OWNER_MAX_BYTES", appDiagnosticOwnerBytes, quota)
+	diagnosticOwnerLimit.WithLabelValues("app").Set(float64(s.ownerQuota))
+	diagnosticGlobalLimit.WithLabelValues("app").Set(float64(s.quota))
 	appDiagnosticReady.Set(1)
 	log.Print("app_diagnostics state=ready")
 	return s

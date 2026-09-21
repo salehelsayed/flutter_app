@@ -4,6 +4,7 @@ import 'dart:io';
 
 import 'package:fake_async/fake_async.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter/widgets.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/bridge/go_bridge_client.dart';
 import 'package:flutter_app/features/call/diagnostics/call_diagnostic_schema.dart';
@@ -70,6 +71,517 @@ void main() {
     persist: persist,
     bridge: bridge,
   );
+
+  for (final reason in [
+    null,
+    'quota_exceeded',
+    'sink_unavailable',
+    'unknown-private-detail',
+  ]) {
+    test(
+      'retry cooldown retains partial ACK delay and status: $reason',
+      () async {
+        final bridge = DiagnosticBridge();
+        final diagnostics = await install(bridge: bridge);
+        final batches = <List<dynamic>>[];
+        String? blocked;
+        var recovered = false;
+        bridge.response = (request) {
+          final events = request['events'] as List? ?? [];
+          if (request['op'] == 'upload') {
+            batches.add(events);
+            blocked ??= events.first['eventId'] as String;
+          }
+          final data = <String, Object?>{
+            'supported': true,
+            'enabled': request['enabled'] ?? true,
+            if (reason != null && request['op'] == 'upload') 'reason': reason,
+            'acceptedEventIds': events
+                .where((e) => recovered || e['eventId'] != blocked)
+                .map((e) => e['eventId'])
+                .toList(),
+          };
+          return Future.value(jsonEncode({'ok': true, 'data': data}));
+        };
+        diagnostics.record(stage: 'runtime', action: 'snapshot', outcome: 'ok');
+        diagnostics.record(stage: 'runtime', action: 'snapshot', outcome: 'ok');
+        await diagnostics.flush();
+        expect(batches, hasLength(1));
+        expect((await diagnostics.status())['queuedEvents'], 1);
+        expect(
+          (await diagnostics.status())['lastError'],
+          reason == 'quota_exceeded' || reason == 'sink_unavailable'
+              ? reason
+              : 'bridge_unavailable',
+        );
+        final frozen = Map<String, dynamic>.from(batches.single.first as Map);
+        // Fresh accepted observations must not restart a refused row immediately.
+        for (final seconds in [10, 20, 40, 80, 160, 300, 300]) {
+          diagnostics.record(
+            traceId: '00000000-0000-4000-8000-000000000001',
+            stage: 'runtime',
+            action: 'snapshot',
+            outcome: 'ok',
+          );
+          now = now.add(Duration(seconds: seconds - 1));
+          final count = batches.length;
+          await diagnostics.flush();
+          expect(batches, hasLength(count));
+          now = now.add(const Duration(seconds: 1));
+          await diagnostics.flush();
+          expect(batches, hasLength(count + 1));
+          expect(
+            batches.last.singleWhere((e) => e['eventId'] == blocked),
+            frozen,
+          );
+          expect((await diagnostics.status())['queuedEvents'], 1);
+          expect((await diagnostics.status())['lastError'], isNot('none'));
+        }
+        recovered = true;
+        now = now.add(const Duration(seconds: 300));
+        await diagnostics.flush();
+        expect((await diagnostics.status())['queuedEvents'], 0);
+        expect((await diagnostics.status())['lastError'], 'none');
+        final completed = batches.length;
+        await diagnostics.flush();
+        expect(batches, hasLength(completed));
+        diagnostics.record(stage: 'runtime', action: 'snapshot', outcome: 'ok');
+        await diagnostics.flush();
+        expect(batches, hasLength(completed + 1));
+      },
+    );
+  }
+
+  for (final failure in ['no-ack', 'unknown-ack', 'exception', 'unsupported']) {
+    test(
+      'retry cooldown survives resume and reattachment while configure stays prompt: $failure',
+      () async {
+        final bridge = DiagnosticBridge();
+        final diagnostics = await install(bridge: bridge);
+        var uploads = 0;
+        var recovered = false;
+        bridge.response = (request) {
+          final events = request['events'] as List? ?? [];
+          if (request['op'] == 'upload') {
+            uploads++;
+            if (!recovered && failure == 'exception') {
+              throw StateError('private transport detail');
+            }
+          }
+          final data = <String, Object?>{
+            'supported':
+                recovered ||
+                failure != 'unsupported' ||
+                request['op'] != 'upload',
+            'enabled': request['enabled'] ?? true,
+            'acceptedEventIds': recovered
+                ? events.map((e) => e['eventId']).toList()
+                : failure == 'unknown-ack'
+                ? ['00000000-0000-4000-8000-000000000999']
+                : [],
+            'rejectedEventIds': ['00000000-0000-4000-8000-000000000998'],
+          };
+          return Future.value(jsonEncode({'ok': true, 'data': data}));
+        };
+        diagnostics.record(stage: 'runtime', action: 'snapshot', outcome: 'ok');
+        await diagnostics.flush();
+        expect(uploads, 1);
+        expect((await diagnostics.status())['queuedEvents'], 1);
+        expect((await diagnostics.status())['lastError'], 'bridge_unavailable');
+        now = now.add(const Duration(seconds: 1));
+        await diagnostics.flush();
+        expect(uploads, 1);
+        diagnostics.didChangeAppLifecycleState(AppLifecycleState.resumed);
+        await diagnostics.flush();
+        expect(uploads, 1);
+        bridge.requests.clear();
+        await diagnostics.initialize(
+          directory: directory,
+          bridge: bridge,
+          useNative: false,
+        );
+        await diagnostics.flush();
+        expect(
+          bridge.requests.where((r) => r['op'] == 'configure'),
+          hasLength(1),
+        );
+        expect(uploads, 1);
+        recovered = true;
+        now = now.add(const Duration(seconds: 9));
+        await diagnostics.flush();
+        expect(uploads, 2);
+        expect((await diagnostics.status())['queuedEvents'], 0);
+        expect((await diagnostics.status())['lastError'], 'none');
+      },
+    );
+  }
+
+  test(
+    'bridge-backed priority ACK preserves the omitted retry reason',
+    () async {
+      final bridge = DiagnosticBridge();
+      final diagnostics = await install(bridge: bridge);
+      final batches = <List<dynamic>>[];
+      var phase = 0;
+      String? newlyBlocked;
+      bridge.response = (request) async {
+        final events = request['events'] as List? ?? [];
+        final uploading = request['op'] == 'upload';
+        if (uploading) {
+          batches.add(events);
+          if (phase == 2) newlyBlocked = events.first['eventId'] as String;
+        }
+        final data = <String, Object?>{
+          'supported': true,
+          'enabled': request['enabled'] ?? true,
+          if (uploading && phase == 0) 'reason': 'sink_unavailable',
+          if (uploading && phase == 2) 'reason': 'quota_exceeded',
+          if (uploading && phase == 3) 'reason': 'unknown-private-detail',
+          'acceptedEventIds': events
+              .where(
+                (e) =>
+                    phase == 1 ||
+                    phase == 4 ||
+                    (phase == 2 && e['eventId'] != newlyBlocked),
+              )
+              .map((e) => e['eventId'])
+              .toList(),
+        };
+        return jsonEncode({'ok': true, 'data': data});
+      };
+      diagnostics.record(stage: 'runtime', action: 'snapshot', outcome: 'ok');
+      await diagnostics.flush();
+      final frozen = Map<String, dynamic>.from(batches.single.single as Map);
+      final blocked = frozen['eventId'];
+      expect((await diagnostics.status())['queuedEvents'], 1);
+      expect((await diagnostics.status())['lastError'], 'sink_unavailable');
+
+      void recordPriorityBatch() {
+        for (var i = 0; i < 64; i++) {
+          diagnostics.record(
+            stage: 'terminal',
+            action: 'finish',
+            outcome: 'connected',
+          );
+        }
+      }
+
+      // The production bridge ACKs every submitted ID and omits a reason.
+      // The ordinary refused row is still retained, outside this batch.
+      recordPriorityBatch();
+      phase = 1;
+      now = now.add(const Duration(seconds: 10));
+      await diagnostics.flush();
+      expect(batches, hasLength(2));
+      expect(batches.last, hasLength(64));
+      expect(batches.last.any((e) => e['eventId'] == blocked), false);
+      expect((await diagnostics.status())['queuedEvents'], 1);
+      expect((await diagnostics.status())['lastError'], 'sink_unavailable');
+      now = now.add(const Duration(seconds: 19));
+      await diagnostics.flush();
+      expect(batches, hasLength(2));
+
+      // A newly unresolved submitted row must replace the saved reason,
+      // even while the older ordinary row remains omitted.
+      recordPriorityBatch();
+      phase = 2;
+      now = now.add(const Duration(seconds: 1));
+      await diagnostics.flush();
+      expect(batches, hasLength(3));
+      expect(batches.last, hasLength(64));
+      expect(batches.last.any((e) => e['eventId'] == blocked), false);
+      expect((await diagnostics.status())['queuedEvents'], 2);
+      expect((await diagnostics.status())['lastError'], 'quota_exceeded');
+
+      // Unrecognized current refusal text retains the bounded fallback.
+      phase = 3;
+      now = now.add(const Duration(seconds: 40));
+      await diagnostics.flush();
+      expect(batches, hasLength(4));
+      expect(batches.last.map((e) => e['eventId']).toSet(), {
+        blocked,
+        newlyBlocked,
+      });
+      expect(batches.last.singleWhere((e) => e['eventId'] == blocked), frozen);
+      expect((await diagnostics.status())['queuedEvents'], 2);
+      expect((await diagnostics.status())['lastError'], 'bridge_unavailable');
+
+      phase = 4;
+      now = now.add(const Duration(seconds: 80));
+      await diagnostics.flush();
+      expect(batches, hasLength(5));
+      expect((await diagnostics.status())['queuedEvents'], 0);
+      expect((await diagnostics.status())['lastError'], 'none');
+      diagnostics.record(stage: 'runtime', action: 'snapshot', outcome: 'ok');
+      await diagnostics.flush();
+      expect(batches, hasLength(6));
+      expect((await diagnostics.status())['lastError'], 'none');
+    },
+  );
+
+  test(
+    'retry cooldown survives an all-ACK priority batch that omits the refused row',
+    () async {
+      final batches = <List<Map<String, Object?>>>[];
+      var refusing = false;
+      String? blocked;
+      final diagnostics = await install(
+        upload: (events) async {
+          if (!refusing) {
+            return events.map((e) => e['eventId']! as String).toSet();
+          }
+          batches.add(events);
+          blocked ??= events.first['eventId']! as String;
+          return events
+              .where((e) => e['eventId'] != blocked)
+              .map((e) => e['eventId']! as String)
+              .toSet();
+        },
+      );
+      refusing = true;
+      diagnostics.record(stage: 'runtime', action: 'snapshot', outcome: 'ok');
+      await diagnostics.flush();
+      final frozen = batches.single.single;
+      for (var i = 0; i < 64; i++) {
+        diagnostics.record(
+          stage: 'terminal',
+          action: 'finish',
+          outcome: 'connected',
+        );
+      }
+      now = now.add(const Duration(seconds: 10));
+      await diagnostics.flush();
+      expect(batches, hasLength(2));
+      expect(batches.last, hasLength(64));
+      expect(batches.last.any((e) => e['eventId'] == blocked), false);
+      expect((await diagnostics.status())['queuedEvents'], 1);
+      expect((await diagnostics.status())['lastError'], isNot('none'));
+      now = now.add(const Duration(seconds: 19));
+      await diagnostics.flush();
+      expect(batches, hasLength(2));
+      now = now.add(const Duration(seconds: 1));
+      await diagnostics.flush();
+      expect(batches.last.single, frozen);
+    },
+  );
+
+  for (final privacy in ['clear', 'disable']) {
+    for (final completion in ['unsupported', 'exception']) {
+      test(
+        'retry cooldown ignores stale $completion after $privacy epoch change',
+        () async {
+          final bridge = DiagnosticBridge();
+          final diagnostics = await install(bridge: bridge);
+          final entered = Completer<void>();
+          final held = Completer<Map<String, Object?>>();
+          var uploads = 0;
+          bridge.response = (request) {
+            final events = request['events'] as List? ?? [];
+            if (request['op'] == 'upload') {
+              uploads++;
+              if (uploads == 1) {
+                entered.complete();
+                return held.future.then(
+                  (data) => jsonEncode({'ok': true, 'data': data}),
+                );
+              }
+            }
+            final data = <String, Object?>{
+              'supported': true,
+              'enabled': request['enabled'] ?? true,
+              'acceptedEventIds': events.map((e) => e['eventId']).toList(),
+            };
+            return Future.value(jsonEncode({'ok': true, 'data': data}));
+          };
+          diagnostics.record(
+            stage: 'runtime',
+            action: 'snapshot',
+            outcome: 'ok',
+          );
+          final pending = diagnostics.flush();
+          await entered.future;
+          final oldEpoch = bridge.requests.last['consentEpoch'] as int;
+          bridge.requests.clear();
+          if (privacy == 'clear') {
+            await diagnostics.clear();
+            expect(bridge.requests.any((r) => r['op'] == 'clear'), true);
+          } else {
+            await diagnostics.setEnabled(false);
+            expect(
+              bridge.requests.any(
+                (r) => r['op'] == 'configure' && r['enabled'] == false,
+              ),
+              true,
+            );
+          }
+          expect(
+            bridge.requests.every((r) => (r['consentEpoch'] as int) > oldEpoch),
+            true,
+          );
+          expect((await diagnostics.status())['queuedEvents'], 0);
+          if (privacy == 'disable') await diagnostics.setEnabled(true);
+          diagnostics.record(
+            stage: 'runtime',
+            action: 'snapshot',
+            outcome: 'ok',
+          );
+          if (completion == 'exception') {
+            held.completeError(StateError('private stale failure'));
+          } else {
+            held.complete({'supported': false});
+          }
+          await pending;
+          await diagnostics.flush();
+          expect(uploads, 2);
+          expect((await diagnostics.status())['queuedEvents'], 0);
+          expect((await diagnostics.status())['lastError'], 'none');
+        },
+      );
+    }
+  }
+
+  test(
+    'retry cooldown does not persist across cold start and retains exact pending IDs',
+    () async {
+      final bridge = DiagnosticBridge();
+      var diagnostics = await install(bridge: bridge);
+      final batches = <List<dynamic>>[];
+      var recovered = false;
+      bridge.response = (request) {
+        final events = request['events'] as List? ?? [];
+        if (request['op'] == 'upload') batches.add(events);
+        final data = <String, Object?>{
+          'supported': true,
+          'enabled': request['enabled'] ?? true,
+          'acceptedEventIds': recovered
+              ? events.map((e) => e['eventId']).toList()
+              : [],
+        };
+        return Future.value(jsonEncode({'ok': true, 'data': data}));
+      };
+      diagnostics.record(stage: 'runtime', action: 'snapshot', outcome: 'ok');
+      await diagnostics.flush();
+      final frozen = batches.single.single;
+      recovered = true;
+      diagnostics = await install(bridge: bridge, enabled: null);
+      expect(batches, hasLength(2));
+      expect(
+        batches.last.singleWhere((e) => e['eventId'] == frozen['eventId']),
+        frozen,
+      );
+      expect((await diagnostics.status())['queuedEvents'], 0);
+    },
+  );
+
+  test(
+    'retry cooldown is honored by the production periodic flush timer',
+    () async {
+      late void Function() tick;
+      var uploads = 0;
+      var refusing = false;
+      final diagnostics = await runZoned(
+        () => CallDiagnostics.installForTesting(
+          directory: directory,
+          useNative: true,
+          now: () => now,
+          persist: (_, _) async {},
+          native: (_, _) async => true,
+          upload: (events) async {
+            uploads++;
+            return refusing
+                ? <String>{}
+                : events.map((e) => e['eventId']! as String).toSet();
+          },
+        ),
+        zoneSpecification: ZoneSpecification(
+          createPeriodicTimer: (self, parent, zone, duration, callback) {
+            expect(duration, const Duration(seconds: 10));
+            // Capture the actual production callback; drive ticks and wall clock
+            // independently, without waiting ten seconds or invoking native code.
+            final timer = parent.createPeriodicTimer(
+              zone,
+              const Duration(days: 1),
+              callback,
+            );
+            tick = () => callback(timer);
+            return timer;
+          },
+        ),
+      );
+      refusing = true;
+      diagnostics.record(stage: 'runtime', action: 'snapshot', outcome: 'ok');
+      // Fail between ticks so the next ten-second tick precedes the deadline.
+      now = now.add(const Duration(seconds: 1));
+      await diagnostics.flush();
+      final attempts = uploads;
+      now = now.add(const Duration(seconds: 9));
+      tick();
+      await diagnostics.flush();
+      expect(uploads, attempts);
+      now = now.add(const Duration(seconds: 10));
+      tick();
+      await diagnostics.flush();
+      expect(uploads, attempts + 1);
+      // The second refusal doubles the cooldown; another tick stays suppressed.
+      now = now.add(const Duration(seconds: 10));
+      tick();
+      await diagnostics.flush();
+      expect(uploads, attempts + 1);
+      refusing = false;
+      now = now.add(const Duration(seconds: 10));
+      tick();
+      await diagnostics.flush();
+      expect(uploads, attempts + 2);
+      expect((await diagnostics.status())['queuedEvents'], 0);
+      expect((await diagnostics.status())['lastError'], 'none');
+    },
+  );
+
+  for (final privacy in ['clear', 'disable']) {
+    test(
+      'retry cooldown permits immediate $privacy and new consent uploads',
+      () async {
+        final bridge = DiagnosticBridge();
+        final diagnostics = await install(bridge: bridge);
+        var refusing = true;
+        bridge.response = (request) {
+          final events = request['events'] as List? ?? [];
+          final data = <String, Object?>{
+            'supported': true,
+            'enabled': request['enabled'] ?? true,
+            'acceptedEventIds': refusing
+                ? []
+                : events.map((e) => e['eventId']).toList(),
+          };
+          return Future.value(jsonEncode({'ok': true, 'data': data}));
+        };
+        diagnostics.record(stage: 'runtime', action: 'snapshot', outcome: 'ok');
+        await diagnostics.flush();
+        expect((await diagnostics.status())['queuedEvents'], 1);
+        now = now.add(const Duration(seconds: 1));
+        bridge.requests.clear();
+        if (privacy == 'clear') {
+          await diagnostics.clear();
+          expect(bridge.requests.any((r) => r['op'] == 'clear'), true);
+        } else {
+          await diagnostics.setEnabled(false);
+          expect(
+            bridge.requests.any(
+              (r) => r['op'] == 'configure' && r['enabled'] == false,
+            ),
+            true,
+          );
+        }
+        expect((await diagnostics.status())['queuedEvents'], 0);
+        refusing = false;
+        if (privacy == 'disable') await diagnostics.setEnabled(true);
+        diagnostics.record(stage: 'runtime', action: 'snapshot', outcome: 'ok');
+        await diagnostics.flush();
+        expect((await diagnostics.status())['queuedEvents'], 0);
+        expect((await diagnostics.status())['lastError'], 'none');
+      },
+    );
+  }
 
   test('new trace and event IDs retain the UUIDv4 wire contract', () async {
     final diagnostics = await install(

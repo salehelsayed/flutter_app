@@ -5,18 +5,18 @@ import 'dart:io';
 import 'package:crypto/crypto.dart';
 import 'package:uuid/uuid.dart';
 
-import '../bridge/bridge.dart';
-import '../services/inbox_store_outcome.dart';
-import '../services/p2p_service.dart';
-import '../../features/contacts/domain/repositories/contact_repository.dart';
-import '../../features/conversation/domain/models/message_payload.dart';
-import '../../features/identity/domain/repositories/identity_repository.dart';
-import '../../features/p2p/domain/models/send_message_result.dart';
-import '../../features/push/domain/received_wake_token_store.dart';
+import 'package:flutter_app/core/bridge/bridge.dart';
+import 'package:flutter_app/core/services/inbox_store_outcome.dart';
+import 'package:flutter_app/core/services/p2p_service.dart';
+import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
+import 'package:flutter_app/features/conversation/domain/models/message_payload.dart';
+import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
+import 'package:flutter_app/features/p2p/domain/models/send_message_result.dart';
+import 'package:flutter_app/features/push/domain/received_wake_token_store.dart';
 
-import 'android_notification_payload_e2e_protocol.dart';
+import 'package:flutter_app/core/debug/android_notification_payload_e2e_protocol.dart';
 
-export 'android_notification_payload_e2e_protocol.dart'
+export 'package:flutter_app/core/debug/android_notification_payload_e2e_protocol.dart'
     show
         notificationDualPathSenderSchema,
         notificationDualPathSenderAction,

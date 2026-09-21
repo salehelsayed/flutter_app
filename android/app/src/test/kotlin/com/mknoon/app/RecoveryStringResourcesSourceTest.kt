@@ -25,6 +25,14 @@ class RecoveryStringResourcesSourceTest {
             "call_notification_answer",
             "call_notification_decline",
             "call_notification_end",
+            "call_screen_connecting",
+            "call_screen_ended",
+            "call_screen_connected",
+            "call_screen_reconnecting",
+            "call_screen_mute",
+            "call_screen_unmute",
+            "call_screen_speaker",
+            "call_screen_duration",
         )
 
         listOf("values", "values-de", "values-ar").forEach { directory ->

@@ -5,6 +5,38 @@ import 'package:flutter_app/features/feed/presentation/widgets/swipe_to_quote_bu
 void main() {
   Widget wrap(Widget child) => MaterialApp(home: Scaffold(body: child));
 
+  testWidgets('UI25 slow right swipe accumulates small updates exactly once', (tester) async {
+    var quotes = 0;
+    await tester.pumpWidget(wrap(SwipeToQuoteBubble(
+      onQuoteTriggered: () => quotes++,
+      child: const SizedBox(width: 200, height: 60),
+    )));
+    final gesture = await tester.startGesture(tester.getCenter(find.byType(SwipeToQuoteBubble)));
+    for (var i = 0; i < 24; i++) {
+      await gesture.moveBy(const Offset(4, 0));
+      await tester.pump(const Duration(milliseconds: 16));
+    }
+    await gesture.up();
+    await tester.pumpAndSettle();
+    expect(quotes, 1);
+  });
+
+  testWidgets('UI25 cancelled quote swipe clears the translated bubble', (tester) async {
+    await tester.pumpWidget(wrap(SwipeToQuoteBubble(
+      onQuoteTriggered: () {},
+      child: const SizedBox(key: ValueKey('bubble'), width: 200, height: 60),
+    )));
+    final original = tester.getTopLeft(find.byKey(const ValueKey('bubble')));
+    final gesture = await tester.startGesture(tester.getCenter(find.byType(SwipeToQuoteBubble)));
+    await gesture.moveBy(const Offset(40, 0));
+    await gesture.moveBy(const Offset(20, 0));
+    await tester.pump();
+    expect(tester.getTopLeft(find.byKey(const ValueKey('bubble'))).dx, greaterThan(original.dx));
+    await gesture.cancel();
+    await tester.pumpAndSettle();
+    expect(tester.getTopLeft(find.byKey(const ValueKey('bubble'))), original);
+  });
+
   group('SwipeToQuoteBubble', () {
     testWidgets('renders child widget', (tester) async {
       await tester.pumpWidget(wrap(SwipeToQuoteBubble(

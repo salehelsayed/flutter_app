@@ -178,6 +178,7 @@ final class _Backing {
             'username': request.senderUsername,
             'blocked': false,
             'archived': false,
+            'authorizedTransportPeerIds': const <String>[],
             iosSenderProjectionDigestField: request.fixtureDigest,
           };
           return true;
@@ -187,6 +188,7 @@ final class _Backing {
             'username': request.senderUsername,
             'blocked': false,
             'archived': false,
+            'authorizedTransportPeerIds': const <String>[],
             iosSenderProjectionDigestField: request.fixtureDigest,
           };
           final current = projections[request.senderPeerId];

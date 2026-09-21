@@ -137,6 +137,7 @@ func handleCallDiagnosticRequest(s network.Stream, raw []byte, actor string, ser
 			}
 			fields, validationErr := validateCallDiagnosticEvent(event, false)
 			if validationErr != nil {
+				diagnosticRefusal("call", "upload", "invalid")
 				rejected = append(rejected, id.EventID)
 				callDiagnosticEvents.WithLabelValues("rejected").Inc()
 				continue
@@ -144,10 +145,14 @@ func handleCallDiagnosticRequest(s network.Stream, raw []byte, actor string, ser
 			trace, _ := fields["traceId"].(string)
 			if trace != "" {
 				store.metaMu.Lock()
-				exists := store.metadata[trace] != nil
-				authorized := store.authorizedMetadataLocked(actor, trace)
+				meta := store.metadata[trace]
+				a := diagnosticPrivateKey(actor)
+				foreign := meta != nil && meta.owner != a && !diagnosticContains(meta.participants, a)
 				store.metaMu.Unlock()
-				if exists && !authorized {
+				// Membership failure is terminal. Privacy cleanup can temporarily
+				// deny legitimate participants; the store preserves their retry.
+				if foreign {
+					diagnosticRefusal("call", "upload", "authority")
 					rejected = append(rejected, id.EventID)
 					callDiagnosticEvents.WithLabelValues("rejected").Inc()
 					continue
@@ -157,6 +162,9 @@ func handleCallDiagnosticRequest(s network.Stream, raw []byte, actor string, ser
 			case callDiagnosticAppendAccepted:
 				accepted = append(accepted, id.EventID)
 				callDiagnosticEvents.WithLabelValues("accepted").Inc()
+			case callDiagnosticAppendConflict:
+				rejected = append(rejected, id.EventID)
+				callDiagnosticEvents.WithLabelValues("rejected").Inc()
 			case callDiagnosticAppendDiscarded:
 				// A full retained trace cannot recover ordinary event capacity;
 				// let the client advance to its reserved media/terminal records.
@@ -251,12 +259,13 @@ func (s *callDiagnosticSpan) emit(stage, action, outcome, reason string, values 
 	if err != nil {
 		return
 	}
-	s.store.enqueue(func() {
-		switch s.store.appendEventResult(s.actor, raw, true, s.diagnostics.consentEpoch) {
+	store, actor, d := s.store, s.actor, s.diagnostics
+	store.enqueueSource("span", func() {
+		switch store.appendEventContext(actor, raw, true, &d, d.consentEpoch) {
 		case callDiagnosticAppendDiscarded:
-			s.store.drop("quota_exceeded")
-		case callDiagnosticAppendRetry:
-			s.store.drop("sink_unavailable")
+			store.drop("quota_exceeded")
+		case callDiagnosticAppendRetry, callDiagnosticAppendConflict:
+			store.drop("sink_unavailable")
 		}
 	})
 }
@@ -310,6 +319,7 @@ func (s *callDiagnosticSpan) result(request callControlWireRequest, response cal
 			change := s.store.lastAuthority(request.AccountPeerID)
 			if change.OperationID != "" && s.diagnostics.ParentOperationID == "" {
 				s.diagnostics.ParentOperationID = change.OperationID
+				s.diagnostics.origin = change
 			}
 		case callEndpointSetAction, callEndpointRevokeAction:
 			s.store.authorityChange(s.actor, request.AccountPeerID, &s.diagnostics, "endpoint")

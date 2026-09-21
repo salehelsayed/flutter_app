@@ -220,6 +220,9 @@ class _OrbitalAvatarState extends State<OrbitalAvatar>
             label: widget.semanticLabel,
             button: true,
             child: GestureDetector(
+              // Keep the slot's entrance animation, but retire an in-flight
+              // gesture when a refresh replaces the entity occupying it.
+              key: ValueKey(widget.peerId),
               behavior: HitTestBehavior.opaque,
               onTap: widget.onTap,
               child: avatar,

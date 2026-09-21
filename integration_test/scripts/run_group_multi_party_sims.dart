@@ -52,20 +52,25 @@ _AdapterResult _failed(int childExitCode) => _AdapterResult(<String, Object?>{
   'detail': 'Group multi-party smoke exited with code $childExitCode.',
 }, childExitCode == 0 ? 1 : childExitCode);
 
-_AdapterResult _passed(SimsArtifactEvidence artifactEvidence) =>
+_AdapterResult _passed(SimsArtifactEvidence artifactEvidence, int count) =>
     _AdapterResult(<String, Object?>{
       'status': 'PASS',
-      'assertionsAttempted': smokeGroupMultiPartyDeviceScenarioIds.length,
+      'assertionsAttempted': count,
       'artifactPresent': true,
       'printOnly': false,
       'exitCode': 0,
       'detail':
-          'Group multi-party release smoke passed '
-          '${smokeGroupMultiPartyDeviceScenarioIds.length} scenarios.',
+          'Group multi-party release passed $count scenarios.',
       'artifactEvidence': artifactEvidence.toJson(),
     }, 0);
 
-Future<_AdapterResult> _run(Map<String, String> environment) async {
+Future<_AdapterResult> _run(Map<String, String> environment, String scenario) async {
+  if (scenario != 'smoke' && scenario != 'all') {
+    return _blocked('environment', 'Expected --scenario smoke or all.');
+  }
+  final scenarioIds = scenario == 'all'
+      ? allGroupMultiPartyDeviceScenarioIds
+      : smokeGroupMultiPartyDeviceScenarioIds;
   final relayAddresses = environment['MKNOON_RELAY_ADDRESSES']?.trim();
   if (relayAddresses == null || relayAddresses.isEmpty) {
     return _blocked(
@@ -131,6 +136,8 @@ Future<_AdapterResult> _run(Map<String, String> environment) async {
     );
   }
 
+  final proofDirectory = _proofDirectory(environment)..createSync(recursive: true);
+  final sweepReport = File('${proofDirectory.path}/sweep-${DateTime.now().microsecondsSinceEpoch}-$pid.json');
   Process child;
   try {
     child = await Process.start(
@@ -139,7 +146,7 @@ Future<_AdapterResult> _run(Map<String, String> environment) async {
         'run',
         _runnerPath,
         '--scenario',
-        'smoke',
+        scenario,
         '-d',
         simulatorIds.join(','),
       ],
@@ -148,6 +155,7 @@ Future<_AdapterResult> _run(Map<String, String> environment) async {
         groupMultiPartySimsArtifactEnvironmentKey: runnerApp.path,
         // Retain the legacy cross-process reuse contract as a second guard.
         'GMP_SKIP_HARNESS_BUILD': '1',
+        'GMP_SWEEP_REPORT': sweepReport.path,
       },
     );
   } on ProcessException catch (error) {
@@ -165,20 +173,33 @@ Future<_AdapterResult> _run(Map<String, String> environment) async {
   await Future.wait<void>(<Future<void>>[stdoutDone, stderrDone]);
 
   if (childExitCode == 0) {
+    if (!sweepReport.existsSync()) {
+      return _blocked('missingArtifact', 'Missing per-scenario sweep report.');
+    }
+    final report = jsonDecode(sweepReport.readAsStringSync()) as Map<String, dynamic>;
+    final results = (report['scenarios'] as List<dynamic>?) ?? [];
+    final observed = results.map((r) => r['scenario']).toSet();
+    if (results.length != scenarioIds.length ||
+        observed.length != scenarioIds.length ||
+        !observed.containsAll(scenarioIds) ||
+        results.any((r) => r['passed'] != true)) {
+      return _blocked('missingArtifact', 'Incomplete or failed per-scenario sweep report.');
+    }
     final evidence = writeSimsArtifactEvidenceSync(
       directory: _proofDirectory(environment),
       capabilityId: _capabilityId,
       validatorIds: const <String>[_artifactValidatorId],
       payload: <String, Object?>{
         'status': 'passed',
-        'scenario': 'smoke',
-        'scenarioIds': smokeGroupMultiPartyDeviceScenarioIds,
+        'scenario': scenario,
+        'scenarioIds': scenarioIds,
+        'scenarioResults': results,
         'targetIds': simulatorIds,
         'runnerAppPath': runnerApp.resolveSymbolicLinksSync(),
         'childExitCode': childExitCode,
       },
     );
-    return _passed(evidence);
+    return _passed(evidence, scenarioIds.length);
   }
   if (childExitCode == 64) {
     return _blocked(
@@ -197,10 +218,12 @@ Directory _proofDirectory(Map<String, String> environment) {
   return Directory('build/sims/proofs/$_capabilityId').absolute;
 }
 
-Future<void> main() async {
+Future<void> main(List<String> args) async {
   late final _AdapterResult result;
   try {
-    result = await _run(Platform.environment);
+    final index = args.indexOf('--scenario');
+    final scenario = index < 0 ? (Platform.environment['SIMS_GROUP_MULTI_PARTY_SCENARIO'] ?? 'smoke') : args[index + 1];
+    result = await _run(Platform.environment, scenario);
   } catch (error, stackTrace) {
     stderr.writeln(stackTrace);
     result = _blocked(

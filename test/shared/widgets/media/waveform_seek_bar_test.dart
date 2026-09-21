@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_app/features/feed/presentation/widgets/swipe_to_quote_bubble.dart';
 import 'package:flutter_app/shared/widgets/media/waveform_seek_bar.dart';
 
 void main() {
@@ -22,6 +23,90 @@ void main() {
       ),
     );
   }
+
+  testWidgets('UI25 cancelled press must not seek before recognition', (tester) async {
+    final seeks = <double>[];
+    await tester.pumpWidget(buildApp(onSeek: seeks.add));
+    final gesture = await tester.startGesture(tester.getCenter(find.byType(WaveformSeekBar)));
+    await tester.pump(const Duration(milliseconds: 200));
+    await gesture.cancel();
+    await tester.pump();
+    expect(seeks, isEmpty);
+    await tester.tapAt(tester.getTopLeft(find.byType(WaveformSeekBar)) + const Offset(50, 20));
+    expect(seeks, [0.25]);
+  });
+
+  testWidgets('UI25 scrolling from a waveform does not seek', (tester) async {
+    final seeks = <double>[];
+    final scroll = ScrollController();
+    addTearDown(scroll.dispose);
+    await tester.pumpWidget(MaterialApp(home: Scaffold(body: ListView(
+      controller: scroll,
+      children: [SizedBox(height: 40, child: WaveformSeekBar(waveform: null, progress: 0, onSeek: seeks.add)),
+        const SizedBox(height: 2000)],
+    ))));
+    final gesture = await tester.startGesture(tester.getCenter(find.byType(WaveformSeekBar)));
+    await tester.pump(const Duration(milliseconds: 200));
+    await gesture.moveBy(const Offset(0, -30)); // Win the scroll arena.
+    await gesture.moveBy(const Offset(0, -120));
+    await gesture.up();
+    await tester.pumpAndSettle();
+    expect(scroll.offset, greaterThan(0));
+    expect(seeks, isEmpty);
+  });
+
+  testWidgets('UI25 nested waveform has exclusive seek reply and scroll outcomes', (
+    tester,
+  ) async {
+    final seeks = <double>[];
+    var replies = 0;
+    final scroll = ScrollController();
+    addTearDown(scroll.dispose);
+    await tester.pumpWidget(MaterialApp(home: Scaffold(body: ListView(
+      controller: scroll,
+      children: [
+        const SizedBox(height: 160),
+        SwipeToQuoteBubble(
+          onQuoteTriggered: () => replies++,
+          child: SizedBox(height: 40, child: WaveformSeekBar(
+            waveform: null, progress: 0, onSeek: seeks.add,
+          )),
+        ),
+        const SizedBox(height: 1600),
+      ],
+    ))));
+    final bar = find.byType(WaveformSeekBar);
+    await tester.tapAt(tester.getCenter(bar));
+    await tester.pumpAndSettle();
+    expect(seeks, [0.5]);
+    expect(replies, 0);
+    expect(scroll.offset, 0);
+
+    seeks.clear();
+    final reply = await tester.startGesture(tester.getCenter(bar));
+    await tester.pump(const Duration(milliseconds: 200));
+    await reply.moveBy(const Offset(30, 0));
+    for (var i = 0; i < 12; i++) {
+      await reply.moveBy(const Offset(4, 0));
+      await tester.pump(const Duration(milliseconds: 16));
+    }
+    await reply.up();
+    await tester.pumpAndSettle();
+    expect(seeks, isEmpty);
+    expect(replies, 1);
+    expect(scroll.offset, 0);
+
+    final vertical = await tester.startGesture(tester.getCenter(bar));
+    await tester.pump(const Duration(milliseconds: 200));
+    await vertical.moveBy(const Offset(0, -30));
+    await vertical.moveBy(const Offset(0, -80));
+    await vertical.up();
+    await tester.pumpAndSettle();
+    expect(seeks, isEmpty);
+    expect(replies, 1);
+    expect(scroll.offset, greaterThan(0));
+    expect(tester.takeException(), isNull);
+  });
 
   group('WaveformSeekBar', () {
     testWidgets('renders CustomPaint with waveform data', (tester) async {

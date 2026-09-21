@@ -1,4 +1,5 @@
 import 'dart:ui';
+import 'package:flutter_app/shared/widgets/action_semantics.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_app/core/theme/background_readable_colors.dart';
@@ -267,45 +268,55 @@ class _ComposeAreaState extends State<ComposeArea>
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
-        GestureDetector(
-          key: const ValueKey('voice-review-discard'),
-          onTap: widget.onReviewDiscard,
-          behavior: HitTestBehavior.opaque,
-          child: Container(
-            width: 36,
-            height: 36,
-            decoration: BoxDecoration(
-              color: const Color.fromRGBO(255, 255, 255, 0.08),
-              borderRadius: BorderRadius.circular(100),
-              border: Border.all(color: const Color.fromRGBO(255, 80, 80, 0.4)),
-            ),
-            child: const Center(
-              child: Icon(
-                Icons.delete_outline_rounded,
-                size: 20,
-                color: Color.fromRGBO(255, 120, 120, 0.9),
+        ActionSemantics(
+          label: AppLocalizations.of(context)!.voice_review_discard_action,
+          enabled: widget.onReviewDiscard != null,
+          child: GestureDetector(
+            key: const ValueKey('voice-review-discard'),
+            onTap: widget.onReviewDiscard,
+            behavior: HitTestBehavior.opaque,
+            child: Container(
+              width: 36,
+              height: 36,
+              decoration: BoxDecoration(
+                color: const Color.fromRGBO(255, 255, 255, 0.08),
+                borderRadius: BorderRadius.circular(100),
+                border: Border.all(
+                  color: const Color.fromRGBO(255, 80, 80, 0.4),
+                ),
+              ),
+              child: const Center(
+                child: Icon(
+                  Icons.delete_outline_rounded,
+                  size: 20,
+                  color: Color.fromRGBO(255, 120, 120, 0.9),
+                ),
               ),
             ),
           ),
         ),
         const SizedBox(width: 8),
-        GestureDetector(
-          key: const ValueKey('voice-review-send'),
-          onTap: widget.onReviewSend,
-          behavior: HitTestBehavior.opaque,
-          child: Container(
-            width: 36,
-            height: 36,
-            decoration: BoxDecoration(
-              color: readableColors.sendBg,
-              borderRadius: BorderRadius.circular(100),
-              border: Border.all(color: readableColors.micBorder),
-            ),
-            child: Center(
-              child: Icon(
-                Icons.arrow_upward_rounded,
-                size: 20,
-                color: readableColors.sendIcon,
+        ActionSemantics(
+          label: AppLocalizations.of(context)!.voice_review_send_action,
+          enabled: widget.onReviewSend != null,
+          child: GestureDetector(
+            key: const ValueKey('voice-review-send'),
+            onTap: widget.onReviewSend,
+            behavior: HitTestBehavior.opaque,
+            child: Container(
+              width: 36,
+              height: 36,
+              decoration: BoxDecoration(
+                color: readableColors.sendBg,
+                borderRadius: BorderRadius.circular(100),
+                border: Border.all(color: readableColors.micBorder),
+              ),
+              child: Center(
+                child: Icon(
+                  Icons.arrow_upward_rounded,
+                  size: 20,
+                  color: readableColors.sendIcon,
+                ),
               ),
             ),
           ),
@@ -452,78 +463,92 @@ class _ComposeAreaState extends State<ComposeArea>
                   // Attachment button
                   Padding(
                     padding: const EdgeInsets.only(bottom: 3),
-                    child: GestureDetector(
-                      onTap: widget.isProcessing || _isRecording
-                          ? null
-                          : widget.onAttach,
-                      behavior: HitTestBehavior.opaque,
-                      child: Container(
-                        key: const ValueKey('composer-attach-button'),
-                        // Match the VoiceRecordButton / send button (48x48) so
-                        // the "+" is on the same accessible tap-target baseline
-                        // as the other composer action buttons (204 BUG-2).
-                        width: 48,
-                        height: 48,
-                        decoration: BoxDecoration(
-                          color: widget.isProcessing
-                              ? (isLightSurface
-                                    ? readableColors.composerInputFill
-                                          .withValues(alpha: 0.55)
-                                    : const Color.fromRGBO(255, 255, 255, 0.04))
-                              : (isLightSurface
-                                    ? readableColors.composerInputFill
-                                    : const Color.fromRGBO(
-                                        255,
-                                        255,
-                                        255,
-                                        0.08,
-                                      )),
-                          borderRadius: BorderRadius.circular(100),
-                          border: Border.all(
+                    child: ActionSemantics(
+                      label: AppLocalizations.of(
+                        context,
+                      )!.action_add_attachment,
+                      enabled:
+                          !widget.isProcessing &&
+                          !_isRecording &&
+                          widget.onAttach != null,
+                      child: GestureDetector(
+                        onTap: widget.isProcessing || _isRecording
+                            ? null
+                            : widget.onAttach,
+                        behavior: HitTestBehavior.opaque,
+                        child: Container(
+                          key: const ValueKey('composer-attach-button'),
+                          // Match the VoiceRecordButton / send button (48x48) so
+                          // the "+" is on the same accessible tap-target baseline
+                          // as the other composer action buttons (204 BUG-2).
+                          width: 48,
+                          height: 48,
+                          decoration: BoxDecoration(
                             color: widget.isProcessing
                                 ? (isLightSurface
-                                      ? readableColors.inputBorder.withValues(
-                                          alpha: 0.18,
-                                        )
+                                      ? readableColors.composerInputFill
+                                            .withValues(alpha: 0.55)
                                       : const Color.fromRGBO(
                                           255,
                                           255,
                                           255,
-                                          0.06,
+                                          0.04,
                                         ))
                                 : (isLightSurface
-                                      ? readableColors.inputBorder
+                                      ? readableColors.composerInputFill
                                       : const Color.fromRGBO(
                                           255,
                                           255,
                                           255,
-                                          0.15,
+                                          0.08,
                                         )),
+                            borderRadius: BorderRadius.circular(100),
+                            border: Border.all(
+                              color: widget.isProcessing
+                                  ? (isLightSurface
+                                        ? readableColors.inputBorder.withValues(
+                                            alpha: 0.18,
+                                          )
+                                        : const Color.fromRGBO(
+                                            255,
+                                            255,
+                                            255,
+                                            0.06,
+                                          ))
+                                  : (isLightSurface
+                                        ? readableColors.inputBorder
+                                        : const Color.fromRGBO(
+                                            255,
+                                            255,
+                                            255,
+                                            0.15,
+                                          )),
+                            ),
                           ),
-                        ),
-                        child: Center(
-                          child: Icon(
-                            Icons.add_rounded,
-                            size: 20,
-                            color: widget.isProcessing
-                                ? (isLightSurface
-                                      ? readableColors.iconMuted.withValues(
-                                          alpha: 0.55,
-                                        )
-                                      : const Color.fromRGBO(
-                                          255,
-                                          255,
-                                          255,
-                                          0.15,
-                                        ))
-                                : (isLightSurface
-                                      ? readableColors.iconMuted
-                                      : const Color.fromRGBO(
-                                          255,
-                                          255,
-                                          255,
-                                          0.5,
-                                        )),
+                          child: Center(
+                            child: Icon(
+                              Icons.add_rounded,
+                              size: 20,
+                              color: widget.isProcessing
+                                  ? (isLightSurface
+                                        ? readableColors.iconMuted.withValues(
+                                            alpha: 0.55,
+                                          )
+                                        : const Color.fromRGBO(
+                                            255,
+                                            255,
+                                            255,
+                                            0.15,
+                                          ))
+                                  : (isLightSurface
+                                        ? readableColors.iconMuted
+                                        : const Color.fromRGBO(
+                                            255,
+                                            255,
+                                            255,
+                                            0.5,
+                                          )),
+                            ),
                           ),
                         ),
                       ),
@@ -652,6 +677,16 @@ class _ComposeAreaState extends State<ComposeArea>
                             onTapUp: widget.onRecordStop!,
                             onTapCancel: widget.onRecordCancel ?? () {},
                             isRecording: _isRecording,
+                            phase: switch (widget.recordingState) {
+                              VoiceRecordingState.arming =>
+                                VoiceRecordPhase.arming,
+                              VoiceRecordingState.stopping =>
+                                VoiceRecordPhase.stopping,
+                              _ =>
+                                _isRecording
+                                    ? VoiceRecordPhase.recording
+                                    : VoiceRecordPhase.idle,
+                            },
                           )
                         : AnimatedBuilder(
                             animation: _sendButtonController,
@@ -664,32 +699,42 @@ class _ComposeAreaState extends State<ComposeArea>
                                 ),
                               );
                             },
-                            child: GestureDetector(
-                              onTap:
+                            child: ActionSemantics(
+                              label: AppLocalizations.of(
+                                context,
+                              )!.action_send_message,
+                              enabled:
                                   !widget.isProcessing &&
-                                      !widget.isSending &&
-                                      !widget.hasInvalidAttachment &&
-                                      (_hasText || widget.hasAttachments)
-                                  ? _onSendPressed
-                                  : null,
-                              child: Container(
-                                // Match the VoiceRecordButton (48x48) so the
-                                // send affordance is the same size as the mic
-                                // and the slot doesn't resize when text is typed.
-                                width: 48,
-                                height: 48,
-                                decoration: BoxDecoration(
-                                  color: readableColors.sendBg,
-                                  borderRadius: BorderRadius.circular(100),
-                                  border: Border.all(
-                                    color: readableColors.micBorder,
+                                  !widget.isSending &&
+                                  !widget.hasInvalidAttachment &&
+                                  (_hasText || widget.hasAttachments),
+                              child: GestureDetector(
+                                onTap:
+                                    !widget.isProcessing &&
+                                        !widget.isSending &&
+                                        !widget.hasInvalidAttachment &&
+                                        (_hasText || widget.hasAttachments)
+                                    ? _onSendPressed
+                                    : null,
+                                child: Container(
+                                  // Match the VoiceRecordButton (48x48) so the
+                                  // send affordance is the same size as the mic
+                                  // and the slot doesn't resize when text is typed.
+                                  width: 48,
+                                  height: 48,
+                                  decoration: BoxDecoration(
+                                    color: readableColors.sendBg,
+                                    borderRadius: BorderRadius.circular(100),
+                                    border: Border.all(
+                                      color: readableColors.micBorder,
+                                    ),
                                   ),
-                                ),
-                                child: Center(
-                                  child: Icon(
-                                    Icons.arrow_upward_rounded,
-                                    size: 20,
-                                    color: readableColors.sendIcon,
+                                  child: Center(
+                                    child: Icon(
+                                      Icons.arrow_upward_rounded,
+                                      size: 20,
+                                      color: readableColors.sendIcon,
+                                    ),
                                   ),
                                 ),
                               ),

@@ -10,6 +10,11 @@ ios_simulator=""
 run_dir=""
 dry_run=false
 resume=false
+original_args=("$@")
+excluded_labels=()
+matched_exclusion_count=0
+exclusion_count=0
+selected_count=0
 
 usage() {
   cat <<'EOF'
@@ -18,6 +23,7 @@ Usage:
     --android-device <explicit-physical-android-id> \
     --ios-simulator <explicit-available-ios-simulator-id> \
     [--output <run-directory> | --resume <run-directory>] [--dry-run]
+    [--exclude-label <exact-route-label>]
 
 The runner executes the fixed 95-case full-regression inventory. It keeps
 per-case status files and logs, so --resume skips only cases already recorded
@@ -27,6 +33,12 @@ EOF
 
 while (($# > 0)); do
   case "$1" in
+    --exclude-label)
+      [[ -n "${2:-}" ]] || { printf 'Missing exclusion label\n' >&2; exit 2; }
+      excluded_labels+=("$2")
+      exclusion_count=$((exclusion_count + 1))
+      shift 2
+      ;;
     --android-device)
       android_device="${2:-}"
       shift 2
@@ -59,6 +71,12 @@ while (($# > 0)); do
       ;;
   esac
 done
+
+if [[ "$dry_run" != true && -n "${SIMS_PROTECTED_DEVICE_ASSIGNMENTS_JSON:-}" ]]; then
+  # The protected entrypoint decomposes the selected exact routes before any
+  # legacy global preflight, build, or target-control operation.
+  exec python3 scripts/legacy_target_contracts.py full "${original_args[@]}"
+fi
 
 if [[ "$dry_run" == true ]]; then
   android_device="${android_device:-ANDROID_DEVICE_ID}"
@@ -132,6 +150,14 @@ run_case() {
   local label="$1"
   shift
   case_number=$((case_number + 1))
+  local excluded
+  for excluded in "${excluded_labels[@]-}"; do
+    if [[ "$label" == "$excluded" ]]; then
+      matched_exclusion_count=$((matched_exclusion_count + 1))
+      return 0
+    fi
+  done
+  selected_count=$((selected_count + 1))
   local slug
   slug="$(slugify "$label")"
   local log_file="$run_dir/logs/$(printf '%03d' "$case_number")_${slug}.log"
@@ -427,14 +453,18 @@ if [[ "$case_number" -ne 95 ]]; then
   exit 1
 fi
 
+if [[ "$matched_exclusion_count" -ne "$exclusion_count" ]]; then
+  printf 'Unknown or duplicate route exclusion; inventory incomplete.\n' >&2
+  exit 2
+fi
 if [[ "$dry_run" == true ]]; then
-  printf 'DRY RUN COMPLETE: 95/95 routes planned.\n'
+  printf 'DRY RUN COMPLETE: %s/95 routes planned.\n' "$selected_count"
   exit 0
 fi
 
 rebuild_summary
 printf 'FULL REGRESSION: %s passed, %s failed. Summary: %s\n' \
   "$passed_count" "$failed_count" "$summary_file"
-if [[ "$failed_count" -ne 0 || "$passed_count" -ne 95 ]]; then
+if [[ "$failed_count" -ne 0 || "$passed_count" -ne "$selected_count" ]]; then
   exit 1
 fi

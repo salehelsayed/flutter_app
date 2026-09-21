@@ -175,6 +175,7 @@ class FriendPickerScreen extends StatelessWidget {
                         friend.peerId,
                       );
                       return _FriendPickerRow(
+                        key: ValueKey(friend.peerId),
                         friend: friend,
                         isSelected: isSelected,
                         isDisabled: isSending,
@@ -278,6 +279,7 @@ class _FriendPickerRow extends StatelessWidget {
   final Color onAccentColor;
 
   const _FriendPickerRow({
+    super.key,
     required this.friend,
     required this.isSelected,
     required this.isDisabled,

@@ -873,7 +873,7 @@ Future<bool> _retryFailedMessageCandidate({
     }
 
     if (msg.isDeleted) {
-      return _retryFailedDeletedTombstone(
+      return await _retryFailedDeletedTombstone(
         msg: msg,
         messageRepo: messageRepo,
         contactRepo: contactRepo,

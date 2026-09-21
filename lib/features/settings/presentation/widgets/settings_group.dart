@@ -122,17 +122,19 @@ class SettingsListRow extends StatelessWidget {
                       color: readableColors.textPrimary,
                     ),
                   ),
-                  if (subtitle != null)
+                  if (subtitle != null) ...[
+                    const SizedBox(height: 2),
                     Text(
                       subtitle!,
                       maxLines: 2,
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(
-                        fontSize: 11,
+                        fontSize: 12,
                         height: 1.3,
                         color: readableColors.textMuted,
                       ),
                     ),
+                  ],
                 ],
               ),
             ),

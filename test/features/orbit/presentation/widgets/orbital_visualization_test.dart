@@ -127,6 +127,86 @@ void main() {
       .whereType<AnimationController>()
       .toList();
 
+  testWidgets('UI25 replacing a seat during a press cannot open the new peer',
+      (tester) async {
+    final opened = <String>[];
+    final a = _makeFriend(1);
+    final b = _makeFriend(2);
+    Widget scene(List<OrbitFriend> friends) => wrapMq(
+      OrbitalVisualization(
+        userPeerId: 'me', items: _items(friends),
+        onFriendTap: (friend) => opened.add(friend.peerId),
+      ), disableAnimations: true,
+    );
+    await tester.pumpWidget(scene([a, b]));
+    final point = tester.getCenter(find.byKey(const ValueKey('orbit-node-0')));
+    final gesture = await tester.startGesture(point);
+    await tester.pumpWidget(scene([b, a]));
+    await gesture.up();
+    await tester.pump();
+    expect(opened, isEmpty, reason: 'A replaced target must cancel its in-flight tap');
+    await tester.tapAt(point);
+    expect(opened, [b.peerId], reason: 'A fresh tap opens the visible replacement once');
+  });
+
+  for (final count in [3, 13, 21]) {
+    testWidgets('UI25 Orbit center edge and halo sweep for $count nodes', (tester) async {
+      tester.view.reset();
+      tester.view.physicalSize = const Size(420, 900);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      final opened = <String>[];
+      await tester.pumpWidget(wrapMq(OrbitalVisualization(
+        userPeerId: 'me', items: _items([for (var i = 0; i < count; i++) _makeFriend(i)]),
+        overflowExpanded: count > 13, labelsVisible: true,
+        onFriendTap: (f) => opened.add(f.peerId),
+      ), disableAnimations: true));
+      for (var i = 0; i < count; i++) {
+        final node = find.byKey(ValueKey('orbit-node-$i'));
+        final rect = tester.getRect(node);
+        final avatar = tester.widget<OrbitalAvatar>(find.descendant(of: node, matching: find.byType(OrbitalAvatar)));
+        final edge = avatar.size / 2 - 1;
+        final offsets = <Offset>[
+          Offset.zero, Offset(edge, 0), Offset(-edge, 0), Offset(0, edge), Offset(0, -edge),
+          Offset(edge * .7, edge * .7), Offset(-edge * .7, -edge * .7),
+          Offset(rect.width / 2 - 1, 0), Offset(0, -rect.height / 2 + 1),
+        ];
+        for (final offset in offsets) {
+          opened.clear();
+          await tester.tapAt(rect.center + offset);
+          expect(opened, [_makeFriend(i).peerId], reason: 'count=$count node=$i offset=$offset');
+        }
+      }
+      opened.clear();
+      await tester.tapAt(const Offset(410, 890));
+      expect(opened, isEmpty);
+      await tester.pump(const Duration(seconds: 2));
+    });
+  }
+
+  testWidgets('UI25 animated Orbit taps and pointer cancellation retain exact entity', (tester) async {
+    final opened = <String>[];
+    await tester.pumpWidget(wrap(OrbitalVisualization(
+      userPeerId: 'me', items: _items([_makeFriend(1, unreadCount: 2)]),
+      onFriendTap: (f) => opened.add(f.peerId),
+    )));
+    await tester.pump(); // Deliver the zero-delay entrance start.
+    await tester.pump(const Duration(milliseconds: 1)); // Establish the first ticker frame.
+    for (final elapsed in [80, 160, 400]) {
+      await tester.pump(Duration(milliseconds: elapsed));
+      final detector = find.descendant(of: find.byType(OrbitalAvatar), matching: find.byType(GestureDetector));
+      final point = tester.getCenter(detector);
+      opened.clear();
+      await tester.tapAt(point);
+      expect(opened, [_makeFriend(1).peerId], reason: 'phase step=$elapsed point=$point');
+      final gesture = await tester.startGesture(point);
+      await tester.pump(const Duration(milliseconds: 30));
+      await gesture.cancel();
+      expect(opened, [_makeFriend(1).peerId]);
+    }
+    await tester.pumpWidget(const SizedBox());
+  });
+
   group('TC-202 repaint isolation', () {
     testWidgets(
         'TC-202-01 every node subtree is isolated by a RepaintBoundary inside its dim layer',

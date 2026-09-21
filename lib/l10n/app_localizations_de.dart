@@ -1321,7 +1321,7 @@ class AppLocalizationsDe extends AppLocalizations {
 
   @override
   String get settings_media_save_fail =>
-      'Speichern fehlgeschlagen. Versuch es erneut.';
+      'Speichern fehlgeschlagen. Vorherige Einstellungen wiederhergestellt. Erneut versuchen.';
 
   @override
   String get settings_media_storage_usage => 'Speichernutzung';
@@ -3787,7 +3787,8 @@ class AppLocalizationsDe extends AppLocalizations {
       'Beim Einrichten der Benachrichtigungen ist ein vorübergehendes Problem aufgetreten.';
 
   @override
-  String get push_registration_health_retry => 'Erneut versuchen';
+  String get push_registration_health_retry =>
+      'Benachrichtigungen erneut einrichten';
 
   @override
   String get push_registration_health_open_notification_settings =>
@@ -4089,4 +4090,81 @@ class AppLocalizationsDe extends AppLocalizations {
   @override
   String get settings_call_privacy_save_failed =>
       'Deine Auswahl konnte nicht gespeichert werden. Bitte versuche es erneut.';
+
+  @override
+  String get voice_record_action => 'Sprachnachricht aufnehmen';
+
+  @override
+  String get voice_record_hint => 'Tippen, um die Aufnahme zu starten';
+
+  @override
+  String get voice_cancel_start_action => 'Aufnahmestart abbrechen';
+
+  @override
+  String get voice_cancel_start_hint =>
+      'Tippen, um den Aufnahmestart abzubrechen';
+
+  @override
+  String get voice_stop_send_action =>
+      'Aufnahme beenden und Sprachnachricht senden';
+
+  @override
+  String get voice_stop_send_hint =>
+      'Tippen, um die Aufnahme zu beenden und die Sprachnachricht zu senden';
+
+  @override
+  String get voice_finishing_label => 'Sprachnachricht wird fertiggestellt';
+
+  @override
+  String get voice_review_send_action => 'Sprachnachricht senden';
+
+  @override
+  String get voice_review_discard_action => 'Aufnahme verwerfen';
+
+  @override
+  String get action_back => 'Zurück';
+
+  @override
+  String get action_contact_profile => 'Kontaktprofil anzeigen';
+
+  @override
+  String get action_conversation_options => 'Unterhaltungsoptionen';
+
+  @override
+  String get action_add_attachment => 'Anhang hinzufügen';
+
+  @override
+  String get action_send_message => 'Nachricht senden';
+
+  @override
+  String get action_group_information => 'Gruppeninformationen';
+
+  @override
+  String get action_start_voice_call => 'Sprachanruf starten';
+
+  @override
+  String get action_starting_voice_call => 'Sprachanruf wird gestartet';
+
+  @override
+  String get voice_call_device_unavailable =>
+      'Sprachanrufe sind auf diesem Gerät nicht verfügbar';
+
+  @override
+  String get orbit_create_group_action => 'Gruppe erstellen';
+
+  @override
+  String get orbit_close_create_menu_action => 'Erstellungsmenü schließen';
+
+  @override
+  String get voice_call_unavailable =>
+      'Sprachanrufe sind derzeit nicht verfügbar';
+
+  @override
+  String get push_registration_health_retrying => 'Erneuter Versuch…';
+
+  @override
+  String get orbit_loading_contacts => 'Kontakte werden geladen…';
+
+  @override
+  String get media_loading => 'Medien werden geladen…';
 }

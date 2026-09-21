@@ -14,6 +14,7 @@ import 'package:flutter_app/features/orbit/domain/models/orbit_item.dart';
 import 'package:flutter_app/features/orbit/domain/models/orbit_view_mode.dart';
 import 'package:flutter_app/features/orbit/presentation/screens/orbit_screen.dart';
 import 'package:flutter_app/features/orbit/presentation/widgets/orbit_close_button.dart';
+import 'package:flutter_app/features/orbit/presentation/widgets/group_row.dart';
 import 'package:flutter_app/features/orbit/presentation/widgets/orbit_search_dock.dart';
 import 'package:flutter_app/features/orbit/presentation/widgets/orbit_search_trigger.dart';
 import 'package:flutter_app/features/orbit/presentation/widgets/orbital_visualization.dart';
@@ -216,6 +217,46 @@ void main() {
   }
 
   group('OrbitScreen loading placeholders', () {
+    testWidgets(
+      'UI25 05.2 loading status exits without moving list or chrome',
+      (tester) async {
+        setPhoneSurface(tester);
+        await tester.pumpWidget(
+          buildOrbitScreen(showLoadingPlaceholders: true),
+        );
+        await tester.pump(const Duration(milliseconds: 300));
+        expect(find.text('Loading contacts…'), findsOneWidget);
+        final skeleton = tester.getRect(
+          find.byKey(const ValueKey('orbit-loading-row-0')),
+        );
+        final close = tester.getRect(find.byType(OrbitCloseButton));
+        final label = tester.getRect(find.text('Loading contacts…'));
+        expect(label.bottom, lessThan(skeleton.top));
+        expect(
+          tester.widget<Text>(find.text('Loading contacts…')).style!.fontSize,
+          12,
+        );
+        await tester.pumpWidget(
+          buildOrbitScreen(
+            groups: [makeGroup(id: 'loaded', name: 'Loaded group')],
+          ),
+        );
+        await tester.pump(const Duration(milliseconds: 600));
+        // The zero-delay entrance starts on the preceding frame.
+        await tester.pump(const Duration(milliseconds: 400));
+        final row = find.byType(GroupRow);
+        expect(tester.getRect(row).top, closeTo(skeleton.top, 0.01));
+        expect(tester.getRect(find.byType(OrbitCloseButton)), close);
+        expect(find.text('Loading contacts…'), findsNothing);
+        await tester.pumpWidget(
+          buildOrbitScreen(filterTab: 'intros', showLoadingPlaceholders: true),
+        );
+        await tester.pump();
+        expect(find.text('Loading contacts…'), findsNothing);
+        expect(tester.takeException(), isNull);
+      },
+    );
+
     testWidgets(
       'renders loading placeholders while all tab is still hydrating',
       (tester) async {

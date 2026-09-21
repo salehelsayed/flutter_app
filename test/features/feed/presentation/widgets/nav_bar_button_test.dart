@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/nav_bar_button.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/nav_bar_theme.dart';
@@ -36,6 +37,27 @@ void main() {
         onTap: onTap ?? () {},
         badgeCount: badgeCount,
       );
+
+  testWidgets('UI25 badge overlap activates its navigation button once', (tester) async {
+    var taps = 0;
+    await tester.pumpWidget(wrap(makeButton(badgeCount: 7, onTap: () => taps++)));
+    final badge = tester.getRect(find.text('7'));
+    final target = tester.getRect(find.byType(InkWell));
+    final point = badge.intersect(target).center;
+    expect(badge.contains(point) && target.contains(point), isTrue);
+    await tester.tapAt(point);
+    expect(taps, 1);
+  });
+
+  testWidgets('UI25 badged navigation preserves keyboard activation', (tester) async {
+    var taps = 0;
+    await tester.pumpWidget(wrap(makeButton(badgeCount: 7, onTap: () => taps++)));
+    await tester.sendKeyEvent(LogicalKeyboardKey.tab);
+    await tester.pump();
+    await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+    await tester.pump();
+    expect(taps, 1);
+  });
 
   group('NavBarButton – dimensions', () {
     testWidgets('button width is NavBarTheme.buttonWidth (70)', (tester) async {

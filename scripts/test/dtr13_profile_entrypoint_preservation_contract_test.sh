@@ -57,6 +57,24 @@ expected_profiles = [
         "declaredException": False,
     },
     {
+        "id": "android.e2e.production_call_local",
+        "platform": "android",
+        "artifactKind": "universal-debug-apk",
+        "buildRequired": True,
+        "compileDefines": {
+            "E2E_TEST_MODE": "true",
+            "VOICE_CALL_CAPABILITY_V1": "true",
+            "VOICE_CALL_OUTGOING_ENABLED": "true",
+            "VOICE_CALL_INCOMING_ENABLED": "true",
+            "VOICE_CALL_TURN_ENABLED": "true",
+            "VOICE_CALL_ANDROID_NATIVE_ENABLED": "true",
+            "VOICE_CALL_ALWAYS_RELAY_ENABLED": "true",
+            "VOICE_CALL_FORCE_RELAY_ENABLED": "true",
+            "ANDROID_PRODUCTION_AUDIO_CALL_E2E_ENABLED": "true"
+        },
+        "declaredException": False
+    },
+    {
         "id": "android.e2e.direct_media_custody",
         "platform": "android",
         "artifactKind": "universal-debug-apk",
@@ -76,6 +94,8 @@ expected_profiles = [
             "E2E_TEST_MODE": "true",
             "SIMS_ANDROID_DISPOSABLE_PACKAGE_ID":
                 "com.mknoon.sims.groupmedia269",
+            "MKNOON_ENABLE_DIRECT_LINKED_DEVICES": "true",
+            "MKNOON_ENABLE_MULTI_DEVICE_SYNC": "true",
         },
         "declaredException": False,
     },
@@ -90,6 +110,19 @@ expected_profiles = [
             "MKNOON_EMIT_WAKE_TOKEN": "true",
         },
         "declaredException": False,
+    },
+    {
+        "id": "android.production_fcm.fixed_wake",
+        "platform": "android",
+        "artifactKind": "provider-configured-debug-apk",
+        "buildRequired": True,
+        "compileDefines": {
+            "E2E_TEST_MODE": "true",
+            "PRODUCTION_FCM": "true",
+            "MKNOON_EMIT_WAKE_TOKEN": "true",
+            "MKNOON_ENABLE_WAKE_OUTCOME_COORDINATOR": "true"
+        },
+        "declaredException": False
     },
     {
         "id": "android.e2e.wake_token",
@@ -133,21 +166,23 @@ expected_profiles = [
     },
 ]
 assert actual_profiles == expected_profiles, (
-    "DTR-13 must preserve the exact ordered eleven-row Sims build-profile table"
+    "DTR-13 must preserve the exact ordered thirteen-row Sims build-profile table"
 )
 
 orchestrator = read("tool/sims/build_orchestrator.dart")
-entrypoint_method = orchestrator[
-    orchestrator.index("String _entrypointFor(BuildProfileSpec profile)"):
-    orchestrator.index(
-        "Map<String, String> _effectiveCompileDefines",
-        orchestrator.index("String _entrypointFor(BuildProfileSpec profile)"),
-    )
-]
+delegation_start = orchestrator.index("String _entrypointFor(BuildProfileSpec profile)")
+delegation_end = orchestrator.index("Map<String, String> _effectiveCompileDefines", delegation_start)
+assert "".join(orchestrator[delegation_start:delegation_end].split()) == "".join(
+    "String _entrypointFor(BuildProfileSpec profile) => _defaultSimsBuildEntrypoint(profile);".split()
+), "the central builder must use the preserved default entrypoint mapping"
+entrypoint_start = orchestrator.index("String _defaultSimsBuildEntrypoint(")
+entrypoint_end = orchestrator.index(";", entrypoint_start) + 1
+entrypoint_method = orchestrator[entrypoint_start:entrypoint_end]
 expected_entrypoint_method = """
-String _entrypointFor(BuildProfileSpec profile) => switch (profile.id) {
+String _defaultSimsBuildEntrypoint(BuildProfileSpec profile) => switch (profile.id) {
   'android.e2e.standard' => 'integration_test/sims_dispatcher.dart',
   'android.e2e.main' => 'lib/main.dart',
+  'android.e2e.production_call_local' => 'lib/main.dart',
   'android.e2e.direct_media_custody' => 'lib/main.dart',
   _androidGroupMedia269ProfileId => 'lib/main.dart',
   'ios.simulator.e2e' =>
@@ -164,7 +199,7 @@ for fragment in (
     "'android.e2e.direct_media_custody' => 'lib/main.dart'",
     "_androidGroupMedia269ProfileId => 'lib/main.dart'",
     "'ios.simulator.e2e' =>\n"
-    "      'integration_test/group_multi_party_device_real_harness.dart'",
+    "        'integration_test/group_multi_party_device_real_harness.dart'",
     "_ => 'lib/main.dart'",
     "environment['SIMS_BUILD_ENTRYPOINT'] ?? _entrypointFor(profile)",
     "defines['SIMS_BUILD_PROFILE_ID'] = profile.id",
@@ -389,9 +424,10 @@ assert "--dart-define=E2E_TEST_MODE" not in pixel
 app_store = read("scripts/build_ios_appstore_ipa.sh")
 require(
     app_store,
-    'flutter build ipa --release --export-options-plist="$EXPORT_PLIST" "$@"',
+    'set -- --release --export-options-plist="$EXPORT_PLIST" --dart-define-from-file="$ROOT_DIR/tool/build/voice_call_release_defines.json" "$@"',
     "scripts/build_ios_appstore_ipa.sh",
 )
+require(app_store, 'flutter build ipa "$@"', "scripts/build_ios_appstore_ipa.sh")
 assert "--target" not in app_store and "lib/main.dart" not in app_store
 require(read(".metadata"), "- 'lib/main.dart'", ".metadata")
 

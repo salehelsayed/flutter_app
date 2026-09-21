@@ -1,4 +1,5 @@
 import 'dart:ui' as ui;
+import 'package:flutter_app/l10n/app_localizations.dart';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_app/core/theme/feed_tokens.dart';
@@ -170,6 +171,7 @@ class _FeedComposerState extends State<FeedComposer> {
               ),
               IconButton(
                 key: const ValueKey('feed-composer-send'),
+                tooltip: AppLocalizations.of(context)!.action_send_message,
                 onPressed: _hasText ? _onSendPressed : null,
                 icon: Icon(
                   Icons.arrow_upward_rounded,

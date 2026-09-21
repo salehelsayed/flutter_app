@@ -32,11 +32,214 @@ class AppDiagnosticsTests(unittest.TestCase):
         e.update(changes)
         return e
 
-    def record(self, events, owner=None, **changes):
+    def record(self, observations, owner=None, **changes):
         self.count += 1
-        data = {'ownerDigest':owner or self.owner,'consentEpoch':1,'createdAtMs':self.now,'events':[{'receivedAtMs':self.now,'event':e} for e in events if e['stage'] not in MODULE.FINAL],'finals':{str(i):{'receivedAtMs':self.now,'event':e} for i,e in enumerate(events) if e['stage'] in MODULE.FINAL},'dropped':0}
+        data = {'ownerDigest':owner or self.owner,'consentEpoch':1,'createdAtMs':self.now,'events':[{'receivedAtMs':self.now,'event':e} for e in observations if e['stage'] not in MODULE.FINAL],'finals':{str(i):{'receivedAtMs':self.now,'event':e} for i,e in enumerate(observations) if e['stage'] in MODULE.FINAL},'dropped':0}
         data.update(changes)
-        (self.directory/(format(self.count,'064x')+'.json')).write_text(json.dumps(data))
+        path = self.directory/(format(self.count,'064x')+'.json')
+        path.write_text(json.dumps(data))
+        return path
+
+    def test_go_final_only_null_events_retains_valid_final(self):
+        final = self.event(stage='finish', outcome='success')
+        self.record([final], events=None)
+
+        rows, health = MODULE.read_records(self.directory, self.now)
+
+        self.assertEqual([row['event'] for row in rows], [final], health)
+        self.assertEqual(health.get('invalidRecords', 0), 0)
+
+    def test_final_only_representations_preserve_report_and_streaming_observations(self):
+        for stage, outcome, reason in [('finish', 'success', 'none'),
+                                       ('crash', 'failed', 'os_crash'),
+                                       ('hang', 'failed', 'os_hang')]:
+            final = self.event(stage=stage, outcome=outcome, reason=reason)
+            path = self.record([final])
+            record = json.loads(path.read_text())
+            for representation in ['missing', 'null', 'empty']:
+                with self.subTest(stage=stage, events=representation):
+                    record.pop('events', None)
+                    if representation != 'missing':
+                        record['events'] = None if representation == 'null' else []
+                    path.write_text(json.dumps(record))
+                    rows, health = MODULE.read_records(self.directory, self.now)
+                    consumed = []
+                    returned, streamed_health = MODULE.read_records(
+                        self.directory, self.now, consume=consumed.append)
+                    self.assertEqual([row['event'] for row in rows], [final])
+                    self.assertEqual(consumed, rows)
+                    self.assertEqual(returned, [])
+                    self.assertEqual(streamed_health, health)
+                    self.assertEqual(health['retainedOwnerCount'], 1)
+                    self.assertEqual(health.get('invalidRecords', 0), 0)
+                    report = MODULE.report(self.directory, run=final['runId'], now_ms=self.now)
+                    self.assertEqual(report['eventReports'], 1)
+                    attempt, = report['attempts']
+                    self.assertTrue(attempt['finalObserved'])
+                    self.assertFalse(attempt['startObserved'])
+                    self.assertEqual(attempt['completeness'], 'missing_start')
+                    self.assertIsNone(attempt['durationMs'])
+                    self.assertEqual(attempt['outcome'], outcome)
+                    self.assertEqual(report['timeline'][0]['stage'], stage)
+            path.unlink()
+
+    def test_non_list_events_and_malformed_record_fields_reject_valid_finals(self):
+        final = self.event(stage='finish', outcome='success')
+        path = self.record([final], events=None)
+        record = json.loads(path.read_text())
+        invalid = [('events', value) for value in [False, 0, '', {}, True, 1, 'bad', {'row': []}]]
+        invalid += [('finals', value) for value in [None, [], False, 0, '', 'bad']]
+        invalid += [('dropped', value) for value in [None, False, -1, 1.5, '0', MODULE.SCHEMA['limits']['integerMaximum']+1]]
+        invalid += [('ownerDigest', 'invalid'), ('privateField', 'SYNTHETIC_PRIVATE')]
+        for field, value in invalid:
+            with self.subTest(field=field, value=value):
+                path.write_text(json.dumps({**record, field: value}))
+                consumed, samples = [], {}
+                rows, health = MODULE.read_records(self.directory, self.now, samples, consumed.append)
+                self.assertEqual(rows, [])
+                self.assertEqual(consumed, [])
+                self.assertEqual(samples, {})
+                self.assertEqual(health['invalidRecords'], 1)
+                self.assertEqual(health.get('droppedEvents', 0), 0)
+                self.assertEqual(health['retainedOwnerCount'], 0)
+
+    def test_null_events_still_validate_each_final_and_preserve_drop_accounting(self):
+        final = self.event(stage='finish', outcome='success')
+        row = {'receivedAtMs': self.now, 'event': final}
+        invalid_rows = [None, [], {}, dict(row, receivedAtMs=False),
+                        dict(row, receivedAtMs=-1), dict(row, extra='SYNTHETIC_PRIVATE'),
+                        dict(row, event=None), dict(row, event={}),
+                        dict(row, event=dict(final, reason='SYNTHETIC_PRIVATE')),
+                        dict(row, event=dict(final, source='relay')),
+                        dict(row, event=dict(final, values={'privatePath': 'SYNTHETIC_PRIVATE'})),
+                        dict(row, event=dict(final, values={'count': True}))]
+        path = self.record([final], events=None, dropped=3, discardLedgerSaturated=True)
+        record = json.loads(path.read_text())
+        for location in ['finals', 'events']:
+            for bad in invalid_rows:
+                with self.subTest(location=location, row=bad):
+                    candidate = dict(record)
+                    if location == 'finals':
+                        candidate['finals'] = {**record['finals'], 'bad': bad}
+                    else:
+                        candidate['events'] = [bad]
+                    path.write_text(json.dumps(candidate))
+                    samples = {}
+                    rows, health = MODULE.read_records(self.directory, self.now, samples)
+                    self.assertEqual([r['event'] for r in rows], [final])
+                    self.assertEqual(health.get('invalidRecords', 0), 0)
+                    self.assertEqual(health['invalidEvents'], 1)
+                    self.assertEqual(health['droppedEvents'], 3)
+                    self.assertEqual(health['lossCountLowerBound'], 1)
+                    self.assertEqual(list(samples.values()), [{'count': 3, 'lowerBound': True, 'layer': 'server'}])
+                    report = MODULE.report(self.directory, run=final['runId'], now_ms=self.now)
+                    self.assertEqual(report['eventReports'], 1)
+                    self.assertTrue(report['evidenceIncomplete'])
+                    raw = json.dumps(report) + MODULE.dashboard(report)
+                    for private in [self.owner, 'ownerDigest', '_owner', 'SYNTHETIC_PRIVATE', *samples]:
+                        self.assertNotIn(private, raw)
+
+    def test_null_events_preserve_consent_and_retention_filters(self):
+        path = self.record([self.event(stage='finish', outcome='success')], events=None, dropped=3)
+        record = json.loads(path.read_text())
+        allowed = dict(self.consent[self.owner])
+        for changes in [{'enabled': False}, {'erasePending': True}, {'consentEpoch': 2}]:
+            with self.subTest(consent=changes):
+                self.consent[self.owner] = {**allowed, **changes}
+                self.write_consent()
+                samples, consumed = {}, []
+                _, health = MODULE.read_records(self.directory, self.now, samples, consumed.append)
+                self.assertEqual(consumed, [])
+                self.assertEqual(samples, {})
+                self.assertEqual(health['unavailableConsentRecords'], 1)
+                self.assertEqual(health.get('droppedEvents', 0), 0)
+        self.consent = {}
+        self.write_consent()
+        rows, health = MODULE.read_records(self.directory, self.now)
+        self.assertEqual(rows, [])
+        self.assertEqual(health['unavailableConsentRecords'], 1)
+        (self.directory/'consent.json').unlink()
+        rows, health = MODULE.read_records(self.directory, self.now)
+        self.assertEqual(rows, [])
+        self.assertEqual(health['collectorState'], 'no_consent_file')
+        self.consent[self.owner] = allowed
+        self.write_consent()
+        boundary = self.now - MODULE.SCHEMA['limits']['serverRetentionDays']*86400000
+        for created, accepted in [(boundary, True), (boundary-1, False), (None, False), (False, False)]:
+            with self.subTest(createdAtMs=created):
+                path.write_text(json.dumps({**record, 'createdAtMs': created}))
+                samples = {}
+                rows, health = MODULE.read_records(self.directory, self.now, samples)
+                self.assertEqual(len(rows), int(accepted))
+                self.assertEqual(len(samples), int(accepted))
+                self.assertEqual(health.get('expiredRecords', 0), int(not accepted))
+                self.assertEqual(health.get('droppedEvents', 0), 3 if accepted else 0)
+
+    def test_event_count_bounds_still_apply_with_valid_finals(self):
+        final = self.event(stage='finish', outcome='success')
+        path = self.record([final], events=None)
+        record = json.loads(path.read_text())
+        final_row = next(iter(record['finals'].values()))
+        for count in [0, 32, 33]:
+            with self.subTest(final_count=count):
+                path.write_text(json.dumps({**record, 'finals': {str(i): final_row for i in range(count)}}))
+                rows, health = MODULE.read_records(self.directory, self.now)
+                self.assertEqual(len(rows), count if count <= 32 else 0)
+                self.assertEqual(health.get('invalidRecords', 0), int(count > 32))
+        ordinary = self.event()
+        for key in ['attemptId', 'traceId']:
+            ordinary.pop(key)
+        row = {'receivedAtMs': self.now, 'event': ordinary}
+        bound = MODULE.SCHEMA['limits']['serverTraceEvents']
+        for count in [bound, bound+1]:
+            with self.subTest(ordinary_count=count):
+                path.write_text(json.dumps({**record, 'events': [row]*count}, separators=(',', ':')))
+                self.assertLessEqual(path.stat().st_size, MODULE.SCHEMA['limits']['serverRecordBytes'])
+                rows, health = MODULE.read_records(self.directory, self.now)
+                self.assertEqual(len(rows), count+1 if count == bound else 0)
+                self.assertEqual(health.get('invalidRecords', 0), int(count > bound))
+
+    def test_null_events_preserve_file_bounds_and_strict_json(self):
+        path = self.record([self.event(stage='finish', outcome='success')], events=None)
+        raw = path.read_text()
+        maximum = MODULE.SCHEMA['limits']['serverRecordBytes']
+        for candidate, accepted in [(raw + ' '*(maximum-len(raw)), True),
+                                    (raw + ' '*(maximum-len(raw)+1), False),
+                                    (raw[:-1] + ', "events": null}', False),
+                                    (raw.replace('"dropped": 0', '"dropped": NaN'), False)]:
+            with self.subTest(length=len(candidate), accepted=accepted):
+                path.write_text(candidate)
+                rows, health = MODULE.read_records(self.directory, self.now)
+                self.assertEqual(len(rows), int(accepted))
+                self.assertEqual(health.get('invalidRecords', 0), int(not accepted))
+        path.unlink()
+        target = self.directory/'synthetic-record.txt'
+        target.write_text(raw)
+        path.symlink_to(target)
+        rows, health = MODULE.read_records(self.directory, self.now)
+        self.assertEqual(rows, [])
+        self.assertEqual(health['invalidRecords'], 1)
+
+    def test_null_final_report_uses_receipt_window_and_keeps_detail_limits(self):
+        run = str(uuid.uuid4())
+        for offset in [-3600001, -3600000, 0, 1]:
+            final = self.event(runId=run, stage='finish', outcome='failed', reason='hash_mismatch')
+            self.record([], events=None, dropped=2, finals={
+                'private_media:flutter': {'receivedAtMs': self.now+offset, 'event': final}})
+        samples = {}
+        report = MODULE.report(self.directory, hours=1, limit=1, run=run,
+                               now_ms=self.now, _loss_samples=samples)
+        self.assertEqual(report['eventReports'], 2)
+        self.assertEqual(report['attemptsObserved'], 2)
+        self.assertEqual(len(report['attempts']), 1)
+        self.assertEqual(report['attemptsTruncated'], 1)
+        self.assertEqual(len(report['timeline']), 1)
+        self.assertEqual(report['timelineTruncated'], 1)
+        self.assertEqual(report['timeline'][0]['receivedAtMs'], self.now)
+        self.assertEqual(report['errors'][0]['baselineEventCount'], 1)
+        self.assertFalse(report['errors'][0]['newInRetainedBaseline'])
+        self.assertEqual(report['health']['droppedEvents'], 8)
+        self.assertEqual(len(samples), 4)
 
     def test_schema_matches_canonical_and_rejects_free_text(self):
         canonical = pathlib.Path(__file__).resolve().parents[1]/'tool/app_diagnostics/schema_v1.json'

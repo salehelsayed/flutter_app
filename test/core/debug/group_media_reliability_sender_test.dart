@@ -36,7 +36,7 @@ import 'package:flutter_app/features/conversation/domain/models/media_attachment
 import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/config/direct_linked_devices_flag.dart';
-import 'package:flutter_app/core/debug/group_media_reliability_e2e_main_actions.dart';
+import 'package:flutter_app/debug/group_media_reliability_e2e_main_actions.dart';
 import 'package:flutter_app/core/media/audio_recorder_service.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/core/services/inbox_store_outcome.dart';

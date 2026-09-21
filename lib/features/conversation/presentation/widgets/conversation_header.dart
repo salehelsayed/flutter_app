@@ -1,4 +1,5 @@
 import 'dart:ui';
+import 'package:flutter_app/shared/widgets/action_semantics.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
@@ -36,8 +37,7 @@ class ConversationHeader extends StatelessWidget {
     this.showCallAction = false,
     this.callActionEnabled = false,
     this.callActionInFlight = false,
-    this.callUnavailableMessage =
-        'Voice calling is unavailable for this device',
+    this.callUnavailableMessage = '',
   });
 
   /// Stable route-level accessibility marker consumed by the iOS notification
@@ -78,17 +78,21 @@ class ConversationHeader extends StatelessWidget {
             child: Row(
               children: [
                 // Back button
-                GestureDetector(
-                  onTap: onBack,
-                  behavior: HitTestBehavior.opaque,
-                  child: SizedBox(
-                    width: 44,
-                    height: 44,
-                    child: Center(
-                      child: Icon(
-                        Icons.chevron_left,
-                        size: 24,
-                        color: readableColors.iconSecondary,
+                ActionSemantics(
+                  label: AppLocalizations.of(context)!.action_back,
+                  enabled: true,
+                  child: GestureDetector(
+                    onTap: onBack,
+                    behavior: HitTestBehavior.opaque,
+                    child: SizedBox(
+                      width: 44,
+                      height: 44,
+                      child: Center(
+                        child: Icon(
+                          Icons.chevron_left,
+                          size: 24,
+                          color: readableColors.iconSecondary,
+                        ),
                       ),
                     ),
                   ),
@@ -96,45 +100,48 @@ class ConversationHeader extends StatelessWidget {
                 const SizedBox(width: 6),
                 // Avatar + name (tappable → contact profile)
                 Expanded(
-                  child: GestureDetector(
-                    onTap: onAvatarTap,
-                    behavior: HitTestBehavior.opaque,
-                    child: Row(
-                      children: [
-                        UserAvatar(peerId: contactPeerId, size: 36),
-                        const SizedBox(width: 14),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Text(
-                                contactUsername,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: TextStyle(
-                                  fontSize: 16,
-                                  fontWeight: FontWeight.w600,
-                                  color: readableColors.textPrimary,
+                  child: _profileAction(
+                    context,
+                    GestureDetector(
+                      onTap: onAvatarTap,
+                      behavior: HitTestBehavior.opaque,
+                      child: Row(
+                        children: [
+                          UserAvatar(peerId: contactPeerId, size: 36),
+                          const SizedBox(width: 14),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Text(
+                                  contactUsername,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                    fontSize: 16,
+                                    fontWeight: FontWeight.w600,
+                                    color: readableColors.textPrimary,
+                                  ),
                                 ),
-                              ),
-                              const SizedBox(height: 1),
-                              Text(
-                                AppLocalizations.of(
-                                  context,
-                                )!.connected_date(connectionDate),
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: TextStyle(
-                                  fontSize: 12,
-                                  fontWeight: FontWeight.w400,
-                                  color: readableColors.textMuted,
+                                const SizedBox(height: 1),
+                                Text(
+                                  AppLocalizations.of(
+                                    context,
+                                  )!.connected_date(connectionDate),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w400,
+                                    color: readableColors.textMuted,
+                                  ),
                                 ),
-                              ),
-                            ],
+                              ],
+                            ),
                           ),
-                        ),
-                      ],
+                        ],
+                      ),
                     ),
                   ),
                 ),
@@ -147,17 +154,23 @@ class ConversationHeader extends StatelessWidget {
                     onRetry: onCallRetry,
                   ),
                 // Overflow button
-                GestureDetector(
-                  onTap: onOverflow,
-                  behavior: HitTestBehavior.opaque,
-                  child: SizedBox(
-                    width: 44,
-                    height: 44,
-                    child: Center(
-                      child: Icon(
-                        Icons.more_vert,
-                        size: 20,
-                        color: readableColors.iconMuted,
+                ActionSemantics(
+                  label: AppLocalizations.of(
+                    context,
+                  )!.action_conversation_options,
+                  enabled: onOverflow != null,
+                  child: GestureDetector(
+                    onTap: onOverflow,
+                    behavior: HitTestBehavior.opaque,
+                    child: SizedBox(
+                      width: 44,
+                      height: 44,
+                      child: Center(
+                        child: Icon(
+                          Icons.more_vert,
+                          size: 20,
+                          color: readableColors.iconMuted,
+                        ),
                       ),
                     ),
                   ),
@@ -169,6 +182,15 @@ class ConversationHeader extends StatelessWidget {
       ),
     );
   }
+
+  Widget _profileAction(BuildContext context, Widget child) =>
+      onAvatarTap == null
+      ? child
+      : ActionSemantics(
+          label: AppLocalizations.of(context)!.action_contact_profile,
+          enabled: true,
+          child: child,
+        );
 }
 
 class _ConversationCallAction extends StatelessWidget {
@@ -186,10 +208,10 @@ class _ConversationCallAction extends StatelessWidget {
   final VoidCallback? onCall;
   final VoidCallback? onRetry;
 
-  String get _truthfulUnavailableMessage {
+  String _truthfulUnavailableMessage(BuildContext context) {
     final message = unavailableMessage.trim();
     return message.isEmpty
-        ? 'Voice calling is unavailable for this device'
+        ? AppLocalizations.of(context)!.voice_call_device_unavailable
         : message;
   }
 
@@ -198,15 +220,17 @@ class _ConversationCallAction extends StatelessWidget {
     final colors = context.backgroundReadableColors;
     final canRetry = !inFlight && onRetry != null;
     final tooltip = inFlight
-        ? 'Starting voice call'
+        ? AppLocalizations.of(context)!.action_starting_voice_call
         : enabled
-        ? 'Start voice call'
-        : _truthfulUnavailableMessage;
+        ? AppLocalizations.of(context)!.action_start_voice_call
+        : _truthfulUnavailableMessage(context);
 
     return Semantics(
       button: true,
       enabled: enabled || canRetry,
-      label: enabled ? 'Start voice call' : tooltip,
+      label: enabled
+          ? AppLocalizations.of(context)!.action_start_voice_call
+          : tooltip,
       onTap: enabled
           ? onCall
           : canRetry
@@ -238,6 +262,8 @@ class _ConversationCallAction extends StatelessWidget {
     if (messenger == null) return;
     messenger
       ..hideCurrentSnackBar()
-      ..showSnackBar(SnackBar(content: Text(_truthfulUnavailableMessage)));
+      ..showSnackBar(
+        SnackBar(content: Text(_truthfulUnavailableMessage(context))),
+      );
   }
 }

@@ -39,6 +39,25 @@ Future<void> pumpFrames(WidgetTester tester, {int count = 10}) async {
 }
 
 void main() {
+
+  testWidgets('UI25 refreshed picker cannot select a replacement contact on release', (tester) async {
+    final selected = <String>[];
+    Widget scene(List<ContactModel> contacts) => MaterialApp(
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
+      supportedLocales: AppLocalizations.supportedLocales,
+      home: CreateGroupPickerScreen(contacts: contacts, onToggle: (c) => selected.add(c.peerId), selectedPeerIds: const {}, onStartGroup: (_) {}, onBack: () {},),
+    );
+    await tester.pumpWidget(scene([contactAlice, contactBob]));
+    final point = tester.getCenter(find.text('Alice'));
+    final gesture = await tester.startGesture(point);
+    await tester.pumpWidget(scene([contactBob, contactAlice]));
+    await gesture.up();
+    await tester.pump();
+    expect(selected, isEmpty);
+    await tester.tap(find.text('Bob'));
+    expect(selected, [contactBob.peerId]);
+  });
+
   group('CreateGroupPickerScreen', () {
     late Set<String> selectedPeerIds;
     ContactModel? lastToggled;

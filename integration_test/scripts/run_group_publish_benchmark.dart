@@ -5,6 +5,8 @@ import 'dart:convert';
 import 'dart:io';
 
 import '../_support/signal_files.dart';
+import 'benchmark_completion.dart';
+import 'benchmark_boundary.dart';
 
 const _defaultDevice = '38FECA55-03C1-4907-BD9D-8E64BF8E3469';
 const _testpeerBin = 'go-mknoon/bin/testpeer';
@@ -16,8 +18,9 @@ void _log(String tag, String msg) {
   stderr.writeln('[$ts] [$tag] $msg');
 }
 
-void _pipeOutput(Stream<List<int>> stream, String tag, IOSink sink) {
-  stream.transform(utf8.decoder).transform(const LineSplitter()).listen((line) {
+Future<void> _pipeOutput(Stream<List<int>> stream, String tag, IOSink sink, [BenchmarkCompletion? completion]) {
+  return stream.transform(utf8.decoder).transform(const LineSplitter()).listen((line) {
+    completion?.observe(line);
     _log(tag, line);
     sink.writeln(line);
     if (line.contains('[BENCHMARK]') ||
@@ -27,7 +30,7 @@ void _pipeOutput(Stream<List<int>> stream, String tag, IOSink sink) {
         line.contains('[WARNING]')) {
       stdout.writeln(line);
     }
-  });
+  }).asFuture<void>();
 }
 
 int _percentile(List<int> sortedValues, int p) {
@@ -116,8 +119,8 @@ class TestPeer {
     mlKemPublicKey = mlKem['publicKey'] as String;
   }
 
-  Future<void> startNode() async {
-    await commandOk('start');
+  Future<void> startNode(BenchmarkBoundary boundary) async {
+    await commandOk('start', boundary.startParams);
     await commandOk('wait_relay', {'timeoutSec': 30});
     await commandOk('wait_circuit', {'timeoutSec': 30});
   }
@@ -163,6 +166,7 @@ Future<String> _parseDevice(List<String> args) async {
 
 Future<void> main(List<String> args) async {
   final deviceId = await _parseDevice(args);
+  final boundary = BenchmarkBoundary(deviceId, hostFiles: true);
   final runId = DateTime.now().millisecondsSinceEpoch.toString();
   final sharedDir = await Directory.systemTemp.createTemp(
     'benchmark_group_publish_',
@@ -196,14 +200,16 @@ Future<void> main(List<String> args) async {
 
     await peer.start();
     await peer.generateIdentity();
-    await peer.startNode();
+    await peer.startNode(boundary);
     await peer.writeFixture(cliFixturePath);
 
     final args = <String>[
       'test',
+      '--machine',
       '-d',
       deviceId,
       '--dart-define=BENCHMARK=$_benchmarkKey',
+      ...boundary.flutterArgs,
       '--dart-define=CLI_PEER_FIXTURE=$cliFixturePath',
       '--dart-define=BENCHMARK_SHARED_DIR=${sharedDir.path}',
       '--dart-define=BENCHMARK_RUN_ID=$runId',
@@ -211,8 +217,9 @@ Future<void> main(List<String> args) async {
     ];
     _log('ORCH', 'Launching harness: flutter ${args.join(' ')}');
     harness = await Process.start('flutter', args);
-    _pipeOutput(harness.stdout, 'HARNESS', logFile);
-    _pipeOutput(harness.stderr, 'HARNESS-ERR', logFile);
+    final completion = BenchmarkCompletion(expectedTestName: 'benchmark $_benchmarkKey');
+    final outputDone = _pipeOutput(harness.stdout, 'HARNESS', logFile, completion);
+    final errorDone = _pipeOutput(harness.stderr, 'HARNESS-ERR', logFile);
 
     final joinFixture = await signals.waitForJson(
       'join_fixture.json',
@@ -227,6 +234,8 @@ Future<void> main(List<String> args) async {
     signals.writeSignal('cli_joined');
 
     final exitCode = await harness.exitCode;
+    await Future.wait([outputDone, errorDone]);
+    completion.requireCompleted();
     if (exitCode != 0) {
       throw StateError(
         'Group publish harness failed with exit code $exitCode '
@@ -278,4 +287,5 @@ Future<void> main(List<String> args) async {
     await logFile.flush();
     await logFile.close();
   }
+  print('FULL_BENCHMARK_COMPLETED run_group_publish_benchmark');
 }

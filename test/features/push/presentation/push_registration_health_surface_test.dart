@@ -1,4 +1,8 @@
 import 'dart:io';
+import 'dart:async';
+import 'package:flutter_app/features/push/application/push_registration_coordinator.dart';
+import 'package:flutter_app/features/push/application/register_push_token_use_case.dart';
+import 'package:flutter_app/features/push/infrastructure/push_registration_health_store.dart';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_app/features/push/application/push_registration_health_notifier.dart';
@@ -28,6 +32,135 @@ void main() {
       ),
     );
   }
+
+  PushRegistrationHealthRecord failedRecord() =>
+      PushRegistrationHealthRecord.retrying(
+        reason: PushRegistrationHealthReason.registrationFailed,
+        consecutiveFailures: 3,
+        firstFailureAt: DateTime.utc(2026, 8, 1),
+        lastAttemptAt: DateTime.utc(2026, 8, 1, 1),
+      );
+
+  testWidgets(
+    'UI25 05.1 retry follows real coordinator settlement and rejects rapid activation',
+    (tester) async {
+      final notifier = PushRegistrationHealthNotifier()
+        ..publish(failedRecord());
+      final registration = Completer<RegisterPushTokenResult>();
+      var registrations = 0;
+      final coordinator = PushRegistrationCoordinator(
+        requestPermission: () async => true,
+        registerPushToken: () {
+          registrations++;
+          return registrations == 1
+              ? registration.future
+              : Future.value(RegisterPushTokenResult.success);
+        },
+        tokenRefreshStream: const Stream.empty(),
+        healthNotifier: notifier,
+        healthStore: _MemoryHealthStore(failedRecord()),
+      );
+
+      addTearDown(coordinator.dispose);
+      addTearDown(notifier.dispose);
+      await tester.pumpWidget(
+        wrap(
+          locale: const Locale('en'),
+          notifier: notifier,
+          onRetry: () =>
+              unawaited(notifier.retryRegistration(coordinator.retryNow)),
+        ),
+      );
+      final action = tester
+          .widget<OutlinedButton>(find.byType(OutlinedButton))
+          .onPressed!;
+      action();
+      action();
+      await tester.pump();
+      expect(registrations, 1);
+      expect(find.text('Trying again…'), findsOneWidget);
+      expect(
+        tester.widget<OutlinedButton>(find.byType(OutlinedButton)).onPressed,
+        isNull,
+      );
+      expect(notifier.value.retryInProgress, isTrue);
+      registration.complete(RegisterPushTokenResult.failed);
+      await tester.pump();
+      expect(notifier.value.retryInProgress, isFalse);
+      expect(find.text('Retry notification setup'), findsOneWidget);
+      expect(
+        tester.widget<OutlinedButton>(find.byType(OutlinedButton)).onPressed,
+        isNotNull,
+      );
+      await notifier.retryRegistration(coordinator.retryNow);
+      expect(registrations, 2);
+      expect(notifier.value.phase, PushRegistrationHealthPhase.healthy);
+      await tester.pump();
+      expect(find.byType(OutlinedButton), findsNothing);
+    },
+  );
+
+  for (final entry in {
+    'en': ('Retry notification setup', 'Trying again…'),
+    'de': ('Benachrichtigungen erneut einrichten', 'Erneuter Versuch…'),
+    'ar': ('إعادة محاولة إعداد الإشعارات', 'جارٍ إعادة المحاولة…'),
+  }.entries) {
+    testWidgets('UI25 05.1 localized pending action ${entry.key}', (
+      tester,
+    ) async {
+      tester.view.physicalSize = const Size(320, 900);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final notifier = PushRegistrationHealthNotifier()
+        ..publish(failedRecord());
+      final pending = Completer<void>();
+      await tester.pumpWidget(
+        wrap(
+          locale: Locale(entry.key),
+          notifier: notifier,
+          onRetry: () =>
+              unawaited(notifier.retryRegistration(() => pending.future)),
+        ),
+      );
+      expect(find.text(entry.value.$1), findsOneWidget);
+      await tester.tap(find.text(entry.value.$1));
+      await tester.pump();
+      expect(find.text(entry.value.$2), findsOneWidget);
+      pending.complete();
+      await tester.pump();
+      expect(find.text(entry.value.$1), findsOneWidget);
+      await tester.pumpWidget(const SizedBox.shrink());
+      notifier.dispose();
+      expect(tester.takeException(), isNull);
+    });
+  }
+
+  test('UI25 05.1 retry releases on error and fences clear/disposal', () async {
+    final notifier = PushRegistrationHealthNotifier()..publish(failedRecord());
+    final first = Completer<void>();
+    final old = notifier.retryRegistration(() => first.future);
+    expect(
+      identical(old, notifier.retryRegistration(() async => fail('duplicate'))),
+      isTrue,
+    );
+    final failure = expectLater(old, throwsStateError);
+    first.completeError(StateError('synthetic'));
+    await failure;
+    expect(notifier.value.retryInProgress, isFalse);
+    final stale = Completer<void>();
+    final staleFuture = notifier.retryRegistration(() => stale.future);
+    notifier.clear();
+    notifier.publish(failedRecord());
+    final current = Completer<void>();
+    final currentFuture = notifier.retryRegistration(() => current.future);
+    stale.complete();
+    await staleFuture;
+    expect(notifier.value.retryInProgress, isTrue);
+    notifier.dispose();
+    current.complete();
+    await currentFuture;
+  });
 
   testWidgets('healthy state is hidden and unhealthy state clears live', (
     tester,
@@ -129,7 +262,8 @@ void main() {
       ),
     );
 
-    expect(find.text('Retry'), findsOneWidget);
+    expect(find.text('Retry notification setup'), findsOneWidget);
+    expect(find.byType(OutlinedButton), findsOneWidget);
     expect(find.textContaining('SocketException'), findsNothing);
     await tester.tap(
       find.byKey(const ValueKey('push-registration-health-action')),
@@ -269,19 +403,24 @@ void main() {
         notifier.publish(warning);
         await tester.pumpAndSettle();
         expect(find.text('Notifications need attention'), findsOneWidget);
-        expect(find.text('Retry'), findsOneWidget);
+        expect(find.text('Retry notification setup'), findsOneWidget);
         // Active tree membership matters: widget semantics can retain detached
         // nodes that the Navigator has blocked from accessibility traversal.
         expect(
           find.semantics.byLabel(RegExp('Notifications need attention')),
           findsOneWidget,
         );
-        expect(find.semantics.byLabel('Retry'), findsOneWidget);
+        expect(
+          find.semantics.byLabel('Retry notification setup'),
+          findsOneWidget,
+        );
         expect(
           find.semantics.byLabel('Increment pushed route'),
           findsOneWidget,
         );
-        tester.semantics.tap(find.semantics.byLabel('Retry'));
+        tester.semantics.tap(
+          find.semantics.byLabel('Retry notification setup'),
+        );
         await tester.pump();
         expect(retries, 1);
         expect(navigatorKey.currentState, same(navigator));
@@ -295,12 +434,18 @@ void main() {
           ),
         );
         await tester.pumpAndSettle();
-        expect(find.semantics.byLabel('Retry'), findsNothing);
+        expect(
+          find.semantics.byLabel('Retry notification setup'),
+          findsNothing,
+        );
         tester.semantics.tap(find.semantics.byLabel('Increment pushed route'));
         await tester.pump();
         notifier.publish(warning);
         await tester.pumpAndSettle();
-        expect(find.semantics.byLabel('Retry'), findsOneWidget);
+        expect(
+          find.semantics.byLabel('Retry notification setup'),
+          findsOneWidget,
+        );
         expect(pushedKey.currentState, same(pushedState));
         expect(pushedState.count, 2);
         navigator.pop();
@@ -309,7 +454,10 @@ void main() {
         expect(homeKey.currentState, same(homeState));
         expect(homeState.count, 1);
         expect(navigator.canPop(), isFalse);
-        expect(find.semantics.byLabel('Retry'), findsOneWidget);
+        expect(
+          find.semantics.byLabel('Retry notification setup'),
+          findsOneWidget,
+        );
         expect(find.semantics.byLabel('Increment home route'), findsOneWidget);
       } finally {
         semantics.dispose();
@@ -381,4 +529,20 @@ class _PreservedHealthRouteState extends State<_PreservedHealthRoute> {
       ],
     ),
   );
+}
+
+final class _MemoryHealthStore implements PushRegistrationHealthStorage {
+  _MemoryHealthStore(this.record);
+  PushRegistrationHealthRecord? record;
+  @override
+  Future<PushRegistrationHealthRecord?> read() async => record;
+  @override
+  Future<void> write(PushRegistrationHealthRecord record) async {
+    this.record = record;
+  }
+
+  @override
+  Future<void> clear() async {
+    record = null;
+  }
 }

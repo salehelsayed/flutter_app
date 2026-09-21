@@ -19,6 +19,7 @@ import '../test/shared/fakes/in_memory_message_repository.dart';
 
 import '_support/cli_peer_fixture.dart';
 import 'benchmark_helpers.dart';
+import 'scripts/routing_stage_handshake.dart';
 
 /// Helper: send a message and return the CHAT_MSG_SEND_TIMING event details.
 Future<Map<String, dynamic>?> _sendAndCaptureTiming(
@@ -121,6 +122,7 @@ Future<void> runRoutingPathsBenchmark(WidgetTester tester) async {
     }
 
     await node.dispose();
+    print('BENCHMARK_STAGE_COMPLETED R-Sim-1');
   })();
 
   await (() async {
@@ -165,6 +167,7 @@ Future<void> runRoutingPathsBenchmark(WidgetTester tester) async {
     }
 
     await node.dispose();
+    print('BENCHMARK_STAGE_COMPLETED R-Sim-2');
   })();
 
   await (() async {
@@ -186,16 +189,7 @@ Future<void> runRoutingPathsBenchmark(WidgetTester tester) async {
     await node.startAndWaitOnline();
     print('[SETUP] Flutter node online');
 
-    // Check for unregistered signal from orchestrator
-    final unregisteredSignal = File(
-      '${Directory.systemTemp.path}/routing_sim_cli_unregistered',
-    );
-    if (!unregisteredSignal.existsSync()) {
-      print('[SKIP] CLI peer not unregistered — '
-          'needs orchestrator to signal unregister');
-      await node.dispose();
-      return;
-    }
+    await routingStageRequest('R-Sim-3');
 
     final messageRepo = InMemoryMessageRepository();
 
@@ -203,6 +197,7 @@ Future<void> runRoutingPathsBenchmark(WidgetTester tester) async {
     final d = await _sendAndCaptureTiming(
       node, messageRepo, targetPeerId, 'Relay probe msg',
     );
+    expect(d, isNotNull, reason: 'R-Sim-3 must observe its actual send timing event');
 
     if (d != null) {
       _logSendDetails('RELAY_PROBE', d);
@@ -212,6 +207,8 @@ Future<void> runRoutingPathsBenchmark(WidgetTester tester) async {
     }
 
     await node.dispose();
+    await routingStageRequest('R-Sim-3-restore');
+    print('BENCHMARK_STAGE_COMPLETED R-Sim-3');
   })();
 
   await (() async {
@@ -242,6 +239,7 @@ Future<void> runRoutingPathsBenchmark(WidgetTester tester) async {
     }
 
     await node.dispose();
+    print('BENCHMARK_STAGE_COMPLETED R-Sim-4');
   })();
 
   await (() async {
@@ -288,6 +286,7 @@ Future<void> runRoutingPathsBenchmark(WidgetTester tester) async {
     print('[PHASE] Wall-clock: ${sw.elapsedMilliseconds}ms');
 
     await node.dispose();
+    print('BENCHMARK_STAGE_COMPLETED R-Sim-5');
   })();
 
   await (() async {
@@ -324,6 +323,7 @@ Future<void> runRoutingPathsBenchmark(WidgetTester tester) async {
     print('[PHASE] Wall-clock: ${sw.elapsedMilliseconds}ms');
 
     await node.dispose();
+    print('BENCHMARK_STAGE_COMPLETED R-Sim-6');
   })();
 
   await (() async {
@@ -374,11 +374,8 @@ Future<void> runRoutingPathsBenchmark(WidgetTester tester) async {
     }
 
     // Phase 3: Send to offline peer (inbox fallback)
-    // Check for cli_stopped signal from orchestrator
-    final cliStoppedSignal = File(
-      '${Directory.systemTemp.path}/routing_sim_cli_stopped',
-    );
-    if (cliStoppedSignal.existsSync()) {
+    await routingStageRequest('R-Sim-7-stop');
+    {
       print('[PHASE] CLI stopped — 1 offline send...');
       d = await _sendAndCaptureTiming(
         node, messageRepo, targetPeerId, 'Workload msg 7 (offline)',
@@ -392,10 +389,8 @@ Future<void> runRoutingPathsBenchmark(WidgetTester tester) async {
     }
 
     // Phase 4: Send after CLI restart (reconnect)
-    final cliRestartedSignal = File(
-      '${Directory.systemTemp.path}/routing_sim_cli_restarted',
-    );
-    if (cliRestartedSignal.existsSync()) {
+    await routingStageRequest('R-Sim-7-restart');
+    {
       print('[PHASE] CLI restarted — 1 reconnect send...');
       d = await _sendAndCaptureTiming(
         node, messageRepo, targetPeerId, 'Workload msg 8 (reconnect)',
@@ -471,6 +466,7 @@ Future<void> runRoutingPathsBenchmark(WidgetTester tester) async {
     print('[BENCHMARK] sim_routing_timeline:\n$timeline');
 
     await node.dispose();
+    print('BENCHMARK_STAGE_COMPLETED R-Sim-7');
   })();
 
   await (() async {
@@ -554,5 +550,6 @@ Future<void> runRoutingPathsBenchmark(WidgetTester tester) async {
     }
 
     await node.dispose();
+    print('BENCHMARK_STAGE_COMPLETED R-Sim-8');
   })();
 }

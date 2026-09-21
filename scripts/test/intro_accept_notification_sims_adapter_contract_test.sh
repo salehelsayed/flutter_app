@@ -37,7 +37,7 @@ start = source.index('Future<void> _launchAll()')
 end = source.index('Future<void> _collectIdentities()', start)
 launch = source[start:end]
 assert "'am'" in launch and "'start'" in launch and "'-W'" in launch
-assert "'-n'" in launch and "'$_appPackage/.MainActivity'" in launch
+assert "'-n'" in launch and "'$_appPackage/com.mknoon.app.MainActivity'" in launch
 assert 'runAndroidActivityLaunchWithSingleProcessRecovery(' in launch
 assert 'propagateTimeout: true' in launch
 assert 'on IntroCommandTimedOut catch (error)' in launch
@@ -71,7 +71,9 @@ start = source.index('bool isAndroidActivityStartProvisionallyAccepted(')
 end = source.index('final class IntroCampaignDeadline', start)
 provisional_acceptance = source[start:end]
 assert 'RegExp.escape(packageName)' in provisional_acceptance
-assert r"r'\.MainActivity \}[ \t]*\r?\n?$'" in provisional_acceptance
+assert "packageName == 'com.mknoon.app'" in provisional_acceptance
+assert r"r'com\.mknoon\.app\.MainActivity'" in provisional_acceptance
+assert r"r' \}[ \t]*\r?\n?$'" in provisional_acceptance
 
 start = source.index('Future<void> _installPreparedArtifactIfPresent(')
 end = source.index('// ---- Phase 1:', start)

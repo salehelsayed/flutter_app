@@ -113,14 +113,16 @@ const List<String> orbitNavigationSemanticLabels = <String>[
   return null;
 }
 
-/// Returns the exact semantics-node center for Orbit's create-group FAB.
+/// Returns the exact identifier-node center for Orbit's create-group FAB.
+/// Flutter Semantics.identifier is exposed as Android resource-id, independently
+/// of the localized spoken content description.
 ///
 /// Generic top-right clickability is deliberately insufficient: other Orbit
 /// actions occupy the same quadrant and may be mounted before the FAB.
 (int, int)? findOrbitCreateGroupFabCenter(String xml) {
   for (final node in RegExp(r'<node\b[^>]*>').allMatches(xml)) {
     final raw = node.group(0)!;
-    if (_fixtureXmlAttribute(raw, 'content-desc') !=
+    if (_fixtureXmlAttribute(raw, 'resource-id') !=
         orbitCreateGroupFabSemanticId) {
       continue;
     }
@@ -4285,10 +4287,12 @@ class _Plan257Capture {
         copied = await _copyIosAppFileFromContainerWithAfc(name, direct);
       }
       if (!copied) return null;
-      if (direct.existsSync()) return direct.readAsString();
+      if (direct.existsSync()) return await direct.readAsString();
       final files = directory.listSync(recursive: true).whereType<File>();
       for (final file in files) {
-        if (file.uri.pathSegments.last == name) return file.readAsString();
+        if (file.uri.pathSegments.last == name) {
+          return await file.readAsString();
+        }
       }
       return null;
     } finally {

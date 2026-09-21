@@ -3,7 +3,7 @@ import 'dart:convert';
 
 import 'package:crypto/crypto.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:flutter_app/core/debug/notification_dual_path_e2e_sender.dart';
+import 'package:flutter_app/debug/notification_dual_path_e2e_sender.dart';
 import 'package:flutter_app/core/services/inbox_store_outcome.dart';
 import 'package:flutter_app/features/p2p/domain/models/send_message_result.dart';
 

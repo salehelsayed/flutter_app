@@ -150,6 +150,10 @@ final class AppDiagnostics with WidgetsBindingObserver {
   String _runId = '';
   String _build = 'unknown';
   String _lastError = 'none';
+  // Session-only retry state; retained IDs bound this index to the local archive.
+  // Cold starts retry retained rows without changing the persisted v1 schema.
+  final _retrying = <String>{};
+  String _retryError = 'none';
   int _sequence = 0;
   int _epoch = 0;
   int _dropped = 0;
@@ -377,12 +381,12 @@ final class AppDiagnostics with WidgetsBindingObserver {
     if (bridge != null) _bridge = bridge;
     if (networkAllowed != null) _networkAllowed = networkAllowed;
     _lastConfigure = 0;
-    _retryAt = 0;
     unawaited(flush());
   }
 
   static Future<AppDiagnostics> installForTesting({
     Directory? directory,
+    bool useNative = false,
     bool? enabled = true,
     DateTime Function()? now,
     AppDiagnosticUpload? upload,
@@ -403,7 +407,7 @@ final class AppDiagnostics with WidgetsBindingObserver {
           directory ??
           await Directory.systemTemp.createTemp('app-diagnostics-'),
       enabledOverride: enabled,
-      useNative: false,
+      useNative: useNative,
       bridge: bridge,
       networkAllowed: networkAllowed,
     );
@@ -667,6 +671,8 @@ final class AppDiagnostics with WidgetsBindingObserver {
   }
 
   void _clearMemory() {
+    _retrying.clear();
+    _resetUploadBackoff();
     _archiveWriter?.clearEvents();
     _eventsById.clear();
     _groups.clear();
@@ -753,13 +759,14 @@ final class AppDiagnostics with WidgetsBindingObserver {
   }
 
   Future<void> _flush() async {
+    final epoch = _epoch;
     try {
       await _syncNative();
-      final epoch = _epoch;
+      if (epoch != _epoch) return;
       if (enabled) await _drainNative(epoch);
       _prune();
       await _persist();
-      if (epoch != _epoch || !_storageHealthy || _nowMs < _retryAt) return;
+      if (epoch != _epoch || !_storageHealthy) return;
       if (_testUpload == null) {
         if (_bridge?.isInitialized != true) return;
         if (_consentPending ||
@@ -767,12 +774,12 @@ final class AppDiagnostics with WidgetsBindingObserver {
             _lastConfigure == 0 ||
             _nowMs - _lastConfigure >= 300000) {
           if (!await _syncConsent(epoch)) {
-            _backoff('bridge_unavailable');
+            if (epoch == _epoch) _lastError = 'bridge_unavailable';
             return;
           }
         }
       }
-      if (!enabled || epoch != _epoch) return;
+      if (!enabled || epoch != _epoch || _nowMs < _retryAt) return;
       if (_nowMs - _lastHealth >= 300000) {
         _lastHealth = _nowMs;
         if (_storageSuccesses > 0) {
@@ -810,12 +817,20 @@ final class AppDiagnostics with WidgetsBindingObserver {
           .map(_legacyRelayProjection)
           .toList();
       if (batch.isEmpty) return;
+      // Only explicit ACKs/rejections or existing local eviction resolve an ID.
+      _retrying.addAll(batch.map((e) => e['eventId']! as String));
+      final deferredRetryReason = _retryError == 'none'
+          ? 'bridge_unavailable'
+          : _retryError;
+      var retryReason = deferredRetryReason;
       final Set<String> accepted;
       final rejected = <String>{};
       if (_testUpload != null) {
         accepted = await _testUpload!(batch);
       } else {
         final result = await _request('upload', {'events': batch}, epoch);
+        if (!enabled || epoch != _epoch) return;
+        retryReason = _uploadRetryReason(result?['reason']);
         // A bounded server may acknowledge part of a batch while reporting
         // quota/backpressure for the remainder. Those explicit ACKs still
         // apply; only unacknowledged events should retry.
@@ -835,6 +850,7 @@ final class AppDiagnostics with WidgetsBindingObserver {
       for (final event in batch) {
         final id = event['eventId'] as String;
         if (accepted.contains(id) || rejected.contains(id)) {
+          _retrying.remove(id);
           // An in-flight upload may finish after retention evicted its row.
           // Keep the acknowledgment index a subset of the retained archive.
           if (!_eventsById.containsKey(id)) {
@@ -849,12 +865,15 @@ final class AppDiagnostics with WidgetsBindingObserver {
           }
         }
       }
-      if (acknowledged == 0) {
-        _backoff('bridge_unavailable');
+      if (acknowledged > 0) _lastUpload = _nowMs;
+      if (_retrying.isNotEmpty) {
+        // A successful batch cannot replace the reason for omitted retry IDs.
+        final submittedUnresolved = batch.any(
+          (event) => _retrying.contains(event['eventId']),
+        );
+        _backoff(submittedUnresolved ? retryReason : deferredRetryReason);
       } else {
-        _lastUpload = _nowMs;
-        _failures = 0;
-        _retryAt = 0;
+        _resetUploadBackoff();
         _lastError = 'none';
       }
       // A quota/backpressure response with no ACK changes no archive state.
@@ -862,7 +881,7 @@ final class AppDiagnostics with WidgetsBindingObserver {
       // retained evidence. New observations still persist through dirty state.
       await _persist(force: acknowledged > 0);
     } catch (_) {
-      _backoff('bridge_unavailable');
+      if (enabled && epoch == _epoch) _backoff('bridge_unavailable');
     }
   }
 
@@ -952,7 +971,23 @@ final class AppDiagnostics with WidgetsBindingObserver {
     }
   }
 
+  void _resetUploadBackoff() {
+    _failures = 0;
+    _retryAt = 0;
+    if (_lastError == _retryError) _lastError = 'none';
+    _retryError = 'none';
+  }
+
+  // Older relays omit a reason or collapse quota into sink_unavailable.
+  // Unknown response text must not enter status or imply quota exhaustion.
+  static String _uploadRetryReason(Object? reason) => switch (reason) {
+    'quota_exceeded' => 'quota_exceeded',
+    'sink_unavailable' => 'sink_unavailable',
+    _ => 'bridge_unavailable',
+  };
+
   void _backoff(String reason) {
+    _retryError = reason;
     _lastError = reason;
     _failures = min(_failures + 1, 6);
     _retryAt = _nowMs + min(300000, 10000 * (1 << (_failures - 1)));
@@ -1077,6 +1112,7 @@ final class AppDiagnostics with WidgetsBindingObserver {
   void _removeEvent(Map<String, Object?> event, {bool countDropped = false}) {
     final id = event['eventId'] as String;
     if (_eventsById.remove(id) == null) return;
+    _retrying.remove(id);
     _archiveWriter?.removeEvent(id);
     final size = _eventSizes.remove(id) ?? 0;
     _retainedBytes -= size;
@@ -1331,7 +1367,6 @@ final class AppDiagnostics with WidgetsBindingObserver {
     _notificationLockSnapshotTimer = null;
     _recordNotificationFileLockSnapshot();
     if (state == AppLifecycleState.resumed) {
-      _retryAt = 0;
       unawaited(flush());
     } else {
       unawaited(_persist());

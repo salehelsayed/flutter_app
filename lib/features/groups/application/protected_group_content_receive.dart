@@ -463,7 +463,7 @@ Future<ProtectedGroupContentApplyOutcome> handleProtectedGroupContentReplay({
             publish: publishReaction,
           );
         }
-        return _terminalizeVerified(
+        return await _terminalizeVerified(
           verified: verified,
           reason: 'protected_content_payload_type_invalid',
           envelope: message.content,

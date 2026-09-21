@@ -1,3 +1,4 @@
+import 'dart:ui' as ui;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -69,6 +70,73 @@ void main() {
       ),
     );
   }
+
+  testWidgets('A02 recording phases name the actual action once', (
+    tester,
+  ) async {
+    final handle = tester.ensureSemantics();
+    var starts = 0;
+    var stops = 0;
+    var sends = 0;
+    var discards = 0;
+    for (final entry in {
+      VoiceRecordingState.idle: 'Record voice message',
+      VoiceRecordingState.arming: 'Cancel recording start',
+      VoiceRecordingState.recording: 'Stop and send voice message',
+      VoiceRecordingState.stopping: 'Finishing voice message',
+      VoiceRecordingState.reviewing: 'Send voice message',
+    }.entries) {
+      await tester.pumpWidget(
+        MaterialApp(
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
+          home: Scaffold(
+            body: ComposeArea(
+              onSend: (_) {},
+              recordingState: entry.key,
+              onRecordStart: () => starts++,
+              onRecordStop: () => stops++,
+              onRecordCancel: () {},
+              onReviewSend: () => sends++,
+              onReviewDiscard: () => discards++,
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+      final finder = find.bySemanticsLabel(entry.value);
+      expect(finder, findsOneWidget);
+      expect(find.text(entry.value), findsNothing);
+      final node = tester.getSemantics(finder);
+      expect(node.getSemanticsData().flagsCollection.isButton, isTrue);
+      final actionable = entry.key != VoiceRecordingState.stopping;
+      expect(
+        node.getSemanticsData().flagsCollection.isEnabled == ui.Tristate.isTrue,
+        actionable,
+      );
+      expect(
+        node.getSemanticsData().hasAction(ui.SemanticsAction.tap),
+        actionable,
+      );
+      if (actionable) {
+        tester.binding.renderViews.single.owner!.semanticsOwner!.performAction(
+          node.id,
+          ui.SemanticsAction.tap,
+        );
+      }
+      if (entry.key == VoiceRecordingState.reviewing) {
+        final discard = tester.getSemantics(
+          find.bySemanticsLabel('Discard recording'),
+        );
+        tester.binding.renderViews.single.owner!.semanticsOwner!.performAction(
+          discard.id,
+          ui.SemanticsAction.tap,
+        );
+      }
+    }
+    handle.dispose();
+    expect([starts, stops, sends, discards], [1, 2, 1, 1]);
+  });
 
   group('ComposeArea', () {
     testWidgets('shows placeholder text', (tester) async {

@@ -363,6 +363,7 @@ class GroupConversationScreen extends StatelessWidget {
         child: Row(
           children: [
             IconButton(
+              tooltip: AppLocalizations.of(context)!.action_back,
               icon: const Icon(Icons.arrow_back_ios_new, size: 20),
               color: readableColors.iconPrimary,
               onPressed: onBack,
@@ -406,6 +407,7 @@ class GroupConversationScreen extends StatelessWidget {
             ),
             if (onInfo != null)
               IconButton(
+                tooltip: AppLocalizations.of(context)!.action_group_information,
                 icon: Icon(
                   Icons.info_outline,
                   color: readableColors.iconSecondary,

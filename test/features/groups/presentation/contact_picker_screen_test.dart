@@ -42,6 +42,25 @@ final contactCharlie = ContactModel(
 );
 
 void main() {
+
+  testWidgets('UI25 refreshed picker cannot select a replacement contact on release', (tester) async {
+    final selected = <String>[];
+    Widget scene(List<ContactModel> contacts) => MaterialApp(
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
+      supportedLocales: AppLocalizations.supportedLocales,
+      home: ContactPickerScreen(contacts: contacts, onToggle: (c) => selected.add(c.peerId), onBack: () {},),
+    );
+    await tester.pumpWidget(scene([contactAlice, contactBob]));
+    final point = tester.getCenter(find.text('Alice'));
+    final gesture = await tester.startGesture(point);
+    await tester.pumpWidget(scene([contactBob, contactAlice]));
+    await gesture.up();
+    await tester.pump();
+    expect(selected, isEmpty);
+    await tester.tap(find.text('Bob'));
+    expect(selected, [contactBob.peerId]);
+  });
+
   // --- Phase 1: ContactPickerRow Widget ---
 
   group('ContactPickerRow', () {

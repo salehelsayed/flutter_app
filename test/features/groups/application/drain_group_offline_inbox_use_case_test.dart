@@ -1251,7 +1251,7 @@ class _ConcurrencyTrackingCursorInboxBridge extends _CursorInboxBridge {
       maxActiveRetrieves = max(maxActiveRetrieves, activeRetrieves);
       try {
         await Future<void>.delayed(delay);
-        return super.send(message);
+        return await super.send(message);
       } finally {
         activeRetrieves--;
       }

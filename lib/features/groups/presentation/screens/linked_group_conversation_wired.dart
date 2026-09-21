@@ -398,7 +398,7 @@ final class LinkedGroupMediaVoiceActionOwner {
     try {
       final picked = await _mediaPicker.pickMultipleMedia();
       if (picked.isEmpty) return false;
-      return _sendSources(
+      return await _sendSources(
         groupId,
         picked
             .take(10)
@@ -485,7 +485,7 @@ final class LinkedGroupMediaVoiceActionOwner {
       final waveform = List<double>.unmodifiable(_waveform);
       await _clearVoiceCapture();
       if (recording == null) return false;
-      return _sendSources(groupId, <_LinkedGroupMediaInput>[
+      return await _sendSources(groupId, <_LinkedGroupMediaInput>[
         _LinkedGroupMediaInput(
           path: recording.filePath,
           declaredMime: recording.mime,

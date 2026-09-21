@@ -1,0 +1,4470 @@
+{
+  "full": {
+    "flutter version": {
+      "roles": [],
+      "commands": [
+        [
+          "flutter",
+          "--version"
+        ]
+      ],
+      "environment": {},
+      "config": [],
+      "sources": {},
+      "audit": "SDK metadata/dependency operation; no device owner.",
+      "owns": []
+    },
+    "dart version": {
+      "roles": [],
+      "commands": [
+        [
+          "dart",
+          "--version"
+        ]
+      ],
+      "environment": {},
+      "config": [],
+      "sources": {},
+      "audit": "SDK metadata/dependency operation; no device owner.",
+      "owns": []
+    },
+    "flutter pub get": {
+      "roles": [],
+      "commands": [
+        [
+          "flutter",
+          "pub",
+          "get"
+        ]
+      ],
+      "environment": {},
+      "config": [],
+      "sources": {},
+      "audit": "SDK metadata/dependency operation; no device owner.",
+      "owns": []
+    },
+    "flutter analyze baseline gate": {
+      "roles": [],
+      "commands": [
+        [
+          "bash",
+          "scripts/check_flutter_analyze_baseline.sh"
+        ]
+      ],
+      "environment": {},
+      "config": [],
+      "sources": {
+        "scripts/check_flutter_analyze_baseline.sh": "b0d5e0e878e730dc345f15a8f1020560a142757b08b48550f3c6dc4ea701ca0f"
+      },
+      "audit": "Static analyzer host process.",
+      "owns": [
+        "scripts/check_flutter_analyze_baseline.sh"
+      ]
+    },
+    "gate completeness-check": {
+      "roles": [],
+      "commands": [
+        [
+          "bash",
+          "scripts/run_test_gates.sh",
+          "completeness-check"
+        ]
+      ],
+      "environment": {},
+      "config": [],
+      "sources": {
+        "scripts/run_test_gates.sh": "3e259a527028c3a32a3cf0877287761a651174126a17ab1e025a73ac1c5168ad"
+      },
+      "audit": "Static path classification; no target execution.",
+      "owns": [
+        "integration_test/account_migration_group_media_durability_simulator_test.dart",
+        "integration_test/account_migration_local_transfer_timeout_simulator_test.dart",
+        "integration_test/account_migration_scale_benchmark_test.dart",
+        "integration_test/background_reconnect_test.dart",
+        "integration_test/bidi_text_smoke_test.dart",
+        "integration_test/call_control_signaling_e2e_test.dart",
+        "integration_test/cold_start_message_render_simulator_test.dart",
+        "integration_test/cold_start_sendable_no_user_action_test.dart",
+        "integration_test/conversation_bridge_test.dart",
+        "integration_test/foreground_group_push_drain_test.dart",
+        "integration_test/group_reaction_notification_sqlcipher_probe_test.dart",
+        "integration_test/group_real_crypto_onboarding_test.dart",
+        "integration_test/group_recovery_cli_e2e_test.dart",
+        "integration_test/group_recovery_e2e_test.dart",
+        "integration_test/loading_states_smoke_test.dart",
+        "integration_test/media_message_journey_e2e_test.dart",
+        "integration_test/media_notification_playback_continuity_test.dart",
+        "integration_test/media_stable_id_smoke_test.dart",
+        "integration_test/migration_database_sqlcipher_capability_test.dart",
+        "integration_test/notification_open_ui_smoke_test.dart",
+        "integration_test/posts_phase1_fake_test.dart",
+        "integration_test/posts_phase2_fake_test.dart",
+        "integration_test/posts_phase3_fake_test.dart",
+        "integration_test/posts_phase4_fake_test.dart",
+        "integration_test/posts_phase5_fake_test.dart",
+        "integration_test/settings_background_choice_smoke_test.dart",
+        "integration_test/smoke_test.dart",
+        "integration_test/soak_e2e_test.dart",
+        "integration_test/transport_e2e_test.dart",
+        "integration_test/voice_message_e2e_test.dart",
+        "integration_test/warm_peer_lan_aware_smoke_test.dart",
+        "integration_test/wifi_relay_fallback_smoke_test.dart",
+        "integration_test/wifi_transport_test.dart",
+        "scripts/run_test_gates.sh"
+      ]
+    },
+    "gate all": {
+      "roles": [
+        "android-physical"
+      ],
+      "commands": [
+        [
+          "bash",
+          "scripts/run_test_gates.sh",
+          "all"
+        ]
+      ],
+      "environment": {
+        "FLUTTER_DEVICE_ID": "{device:android-physical}"
+      },
+      "config": [
+        "relay_addresses"
+      ],
+      "sources": {
+        "scripts/run_test_gates.sh": "3e259a527028c3a32a3cf0877287761a651174126a17ab1e025a73ac1c5168ad",
+        "scripts/test/go_binding_staleness_contract_test.sh": "c3ad58ce2f006ed1bdebb931dcffed3eaea38af3f6f874b992ac74db1e29ee5b",
+        "scripts/test/relay_ack_custody_rollout_contract_test.sh": "432ea8ce27838167fbcf3bb2b3859bda4cea37ac321511fd5338b205bd52c431",
+        "scripts/test/relay_go_toolchain_contract_test.sh": "23b662f10a3306267dc6954e36a1111a2634893d5b49f0856886f66c4e69a9ea",
+        "scripts/test/relay_media_custody_contract_test.sh": "96476128fbce1731c40d7dd349670d2d086b291b6bbe5df2197807d516921361"
+      },
+      "audit": "run_gate_command sends each integration file to FLUTTER_DEVICE_ID; Go/host leaves have no device.",
+      "owns": [
+        "integration_test/account_migration_group_media_durability_simulator_test.dart",
+        "integration_test/account_migration_local_transfer_timeout_simulator_test.dart",
+        "integration_test/account_migration_scale_benchmark_test.dart",
+        "integration_test/background_reconnect_test.dart",
+        "integration_test/bidi_text_smoke_test.dart",
+        "integration_test/call_control_signaling_e2e_test.dart",
+        "integration_test/cold_start_message_render_simulator_test.dart",
+        "integration_test/cold_start_sendable_no_user_action_test.dart",
+        "integration_test/conversation_bridge_test.dart",
+        "integration_test/foreground_group_push_drain_test.dart",
+        "integration_test/group_reaction_notification_sqlcipher_probe_test.dart",
+        "integration_test/group_real_crypto_onboarding_test.dart",
+        "integration_test/group_recovery_cli_e2e_test.dart",
+        "integration_test/group_recovery_e2e_test.dart",
+        "integration_test/loading_states_smoke_test.dart",
+        "integration_test/media_message_journey_e2e_test.dart",
+        "integration_test/media_notification_playback_continuity_test.dart",
+        "integration_test/media_stable_id_smoke_test.dart",
+        "integration_test/migration_database_sqlcipher_capability_test.dart",
+        "integration_test/notification_open_ui_smoke_test.dart",
+        "integration_test/posts_phase1_fake_test.dart",
+        "integration_test/posts_phase2_fake_test.dart",
+        "integration_test/posts_phase3_fake_test.dart",
+        "integration_test/posts_phase4_fake_test.dart",
+        "integration_test/posts_phase5_fake_test.dart",
+        "integration_test/settings_background_choice_smoke_test.dart",
+        "integration_test/smoke_test.dart",
+        "integration_test/soak_e2e_test.dart",
+        "integration_test/transport_e2e_test.dart",
+        "integration_test/voice_message_e2e_test.dart",
+        "integration_test/warm_peer_lan_aware_smoke_test.dart",
+        "integration_test/wifi_relay_fallback_smoke_test.dart",
+        "integration_test/wifi_transport_test.dart",
+        "scripts/run_test_gates.sh",
+        "scripts/test/go_binding_staleness_contract_test.sh",
+        "scripts/test/relay_ack_custody_rollout_contract_test.sh",
+        "scripts/test/relay_go_toolchain_contract_test.sh",
+        "scripts/test/relay_media_custody_contract_test.sh"
+      ]
+    },
+    "gate benchmark-sim": {
+      "roles": [
+        "android-physical",
+        "ios-simulator-a"
+      ],
+      "commands": [
+        [
+          "dart",
+          "run",
+          "integration_test/scripts/run_benchmark_suite.dart",
+          "-d",
+          "{device:android-physical}",
+          "--scenarios",
+          "A,B,BR,C,D,E,F,G,I,J,K,L,M,N,R",
+          "--fixture-dir",
+          "{output}/benchmarks/android-physical"
+        ],
+        [
+          "dart",
+          "run",
+          "integration_test/scripts/run_benchmark_suite.dart",
+          "-d",
+          "{device:ios-simulator-a}",
+          "--scenarios",
+          "GP,H",
+          "--fixture-dir",
+          "{output}/benchmarks/ios-simulator-a"
+        ]
+      ],
+      "environment": {},
+      "config": [
+        "relay_addresses"
+      ],
+      "sources": {
+        "integration_test/scripts/run_benchmark_suite.dart": "0248861a69ebd8e4bad3a48cb060b131488b260286caa86f6101d0ce3d1ad5c1",
+        "integration_test/scripts/routing_stage_handshake.dart": "adc826efda58daaf357b8afe2e8d5093d5241ff453386431c4329a0bb8dbae86",
+        "integration_test/scripts/run_group_publish_benchmark.dart": "de16a0342dd6d24f2ff8b6ca536cd28fe3ed82865376358f1535ce9ff0df676d",
+        "integration_test/scripts/run_timeout_accuracy_benchmark.dart": "9bf56a89f88c149444500f353e6024d5f633cdb9c65abb9dca92e72eacfcb86b",
+        "integration_test/scripts/benchmark_boundary.dart": "13cd0ba8db5666123fc956e2b6b9a44a64112fad7f7d151c5679dfc4d7f54e35",
+        "integration_test/scripts/benchmark_completion.dart": "feb190730d163b21d3fd8de0c03ceea69463407102ef02dbcc490213cd686105",
+        "integration_test/benchmark_group_publish_harness.dart": "8ce9f42cda34c2a52fdd5f141f30706e90a64dd3d59ee5402f5727e9b4251ac7",
+        "integration_test/benchmark_timeout_accuracy_harness.dart": "79a06446e62866d4e67950edf88ab1cab5d34174f7f0c8d5220fd6fab5dc2ecd",
+        "integration_test/_support/cli_peer_fixture.dart": "8b9ec9175075065a4a31245c9b6c538289bca64ec34b626e26913c856c75c10a",
+        "integration_test/_support/signal_files.dart": "7cc241ae5694a8f5f1b51582b4a2a878e0df91e4d907126c4e62d1ed9b6bac97",
+        "scripts/legacy_target_contracts.py": "eb66325711353435b2e5a25217c3de75931906de1adf019e46fb1d455ad8a69a"
+      },
+      "audit": "Exact disjoint 17-scenario union: Android retains A,B,BR,C,D,E,F,G,I,J,K,L,M,N,R including the pinned routing channel; GP,H use the documented iOS simulator host-file protocol. Both leased/preflighted partitions require exact target/selection receipts and continue after independent assertion failure.",
+      "owns": [
+        "integration_test/scripts/run_benchmark_suite.dart"
+      ],
+      "command_completion_markers": [
+        "FULL_BENCHMARK_SELECTION {device:android-physical} A,B,BR,C,D,E,F,G,I,J,K,L,M,N,R",
+        "FULL_BENCHMARK_SELECTION {device:ios-simulator-a} GP,H"
+      ],
+      "independent_commands": true
+    },
+    "integration_test account_migration_group_media_durability_simulator_test.dart": {
+      "roles": [
+        "android-physical"
+      ],
+      "commands": [
+        [
+          "flutter",
+          "test",
+          "--no-pub",
+          "-d",
+          "{device:android-physical}",
+          "--reporter",
+          "expanded",
+          "--dart-define=MKNOON_RELAY_ADDRESSES={config:relay_addresses}",
+          "integration_test/account_migration_group_media_durability_simulator_test.dart"
+        ]
+      ],
+      "environment": {},
+      "config": [
+        "relay_addresses"
+      ],
+      "sources": {
+        "integration_test/account_migration_group_media_durability_simulator_test.dart": "6c69f3ea9cf6a9749960f6910832ffcd7feb8d555233f0abd3bf15c8fcabb6c6"
+      },
+      "audit": "Exact original selected dispatch, with an explicit -d/--device target; no fallback selector.",
+      "owns": [
+        "integration_test/account_migration_group_media_durability_simulator_test.dart",
+        "integration_test/integration_test.dart"
+      ]
+    },
+    "integration_test account_migration_local_transfer_timeout_simulator_test.dart": {
+      "roles": [
+        "android-physical"
+      ],
+      "commands": [
+        [
+          "flutter",
+          "test",
+          "--no-pub",
+          "-d",
+          "{device:android-physical}",
+          "--reporter",
+          "expanded",
+          "--dart-define=MKNOON_RELAY_ADDRESSES={config:relay_addresses}",
+          "integration_test/account_migration_local_transfer_timeout_simulator_test.dart"
+        ]
+      ],
+      "environment": {},
+      "config": [
+        "relay_addresses"
+      ],
+      "sources": {
+        "integration_test/account_migration_local_transfer_timeout_simulator_test.dart": "31781c270e5d074538e16b010c3d3576e19124cd116904d835b195113d0104a9"
+      },
+      "audit": "Exact original selected dispatch, with an explicit -d/--device target; no fallback selector.",
+      "owns": [
+        "integration_test/account_migration_local_transfer_timeout_simulator_test.dart",
+        "integration_test/integration_test.dart"
+      ]
+    },
+    "integration_test account_migration_scale_benchmark_test.dart": {
+      "roles": [
+        "android-physical"
+      ],
+      "commands": [
+        [
+          "flutter",
+          "test",
+          "--no-pub",
+          "-d",
+          "{device:android-physical}",
+          "--reporter",
+          "expanded",
+          "--dart-define=MKNOON_RELAY_ADDRESSES={config:relay_addresses}",
+          "integration_test/account_migration_scale_benchmark_test.dart"
+        ]
+      ],
+      "environment": {},
+      "config": [
+        "relay_addresses"
+      ],
+      "sources": {
+        "integration_test/account_migration_scale_benchmark_test.dart": "2d0f90e7d8904c9289e664dddd3d7172ca20277b884216a3c4924691c945ab47"
+      },
+      "audit": "Exact original selected dispatch, with an explicit -d/--device target; no fallback selector.",
+      "owns": [
+        "integration_test/account_migration_scale_benchmark_test.dart",
+        "integration_test/integration_test.dart"
+      ]
+    },
+    "integration_test android_notification_recovery_completion_proof_test.dart": {
+      "roles": [
+        "android-physical",
+        "android-emulator"
+      ],
+      "commands": [
+        [
+          "dart",
+          "tool/sims/sims.dart",
+          "major",
+          "--only",
+          "notifications.android_recovery_completion",
+          "--format",
+          "text"
+        ]
+      ],
+      "environment": {},
+      "config": [
+        "relay_addresses"
+      ],
+      "sources": {},
+      "audit": "Typed SIMS binding rechecks exact protected IDs before all preparation.",
+      "owns": [],
+      "completion_marker": "PASS\tnotifications.android_recovery_completion\t"
+    },
+    "integration_test announcement_private_media_platform_proof_test.dart": {
+      "roles": [
+        "android-physical"
+      ],
+      "commands": [
+        [
+          "flutter",
+          "test",
+          "--no-pub",
+          "-d",
+          "{device:android-physical}",
+          "--reporter",
+          "expanded",
+          "--dart-define=MKNOON_RELAY_ADDRESSES={config:relay_addresses}",
+          "integration_test/announcement_private_media_platform_proof_test.dart"
+        ]
+      ],
+      "environment": {},
+      "config": [
+        "relay_addresses"
+      ],
+      "sources": {
+        "integration_test/announcement_private_media_platform_proof_test.dart": "965acc02cff2b7345787cff94807ac6332fbe7b6658ff3f5899baa3a03d669c2"
+      },
+      "audit": "Exact original selected dispatch, with an explicit -d/--device target; no fallback selector.",
+      "owns": [
+        "integration_test/announcement_private_media_platform_proof_test.dart",
+        "integration_test/integration_test.dart"
+      ]
+    },
+    "integration_test app_group_path_simulator_test.dart": {
+      "roles": [
+        "ios-simulator-a"
+      ],
+      "commands": [
+        [
+          "flutter",
+          "test",
+          "--no-pub",
+          "-d",
+          "{device:ios-simulator-a}",
+          "--reporter",
+          "expanded",
+          "--dart-define=MKNOON_RELAY_ADDRESSES={config:relay_addresses}",
+          "integration_test/app_group_path_simulator_test.dart"
+        ]
+      ],
+      "environment": {},
+      "config": [
+        "relay_addresses"
+      ],
+      "sources": {
+        "integration_test/app_group_path_simulator_test.dart": "145d1d3cfbf599c9d47146569bea270b57c42ebcc0f4247ca1ef1f2b0b02e98d"
+      },
+      "audit": "Exact original selected dispatch, with an explicit -d/--device target; no fallback selector.",
+      "owns": [
+        "integration_test/app_group_path_simulator_test.dart",
+        "integration_test/integration_test.dart"
+      ]
+    },
+    "integration_test background_reconnect_test.dart": {
+      "roles": [
+        "android-physical"
+      ],
+      "commands": [
+        [
+          "flutter",
+          "test",
+          "--no-pub",
+          "-d",
+          "{device:android-physical}",
+          "--reporter",
+          "expanded",
+          "--dart-define=MKNOON_RELAY_ADDRESSES={config:relay_addresses}",
+          "integration_test/background_reconnect_test.dart"
+        ]
+      ],
+      "environment": {},
+      "config": [
+        "relay_addresses"
+      ],
+      "sources": {
+        "integration_test/background_reconnect_test.dart": "8673a3b793a5ca4039809b3ec8ba3630d5083b3142b9b667775eead340d4ab53"
+      },
+      "audit": "Exact original selected dispatch, with an explicit -d/--device target; no fallback selector.",
+      "owns": [
+        "integration_test/background_reconnect_test.dart",
+        "integration_test/integration_test.dart"
+      ]
+    },
+    "integration_test bidi_text_smoke_test.dart": {
+      "roles": [
+        "android-physical"
+      ],
+      "commands": [
+        [
+          "flutter",
+          "test",
+          "--no-pub",
+          "-d",
+          "{device:android-physical}",
+          "--reporter",
+          "expanded",
+          "--dart-define=MKNOON_RELAY_ADDRESSES={config:relay_addresses}",
+          "integration_test/bidi_text_smoke_test.dart"
+        ]
+      ],
+      "environment": {},
+      "config": [
+        "relay_addresses"
+      ],
+      "sources": {
+        "integration_test/bidi_text_smoke_test.dart": "c0c51858e3c6c0d8c4799ac3afa49a47f40a7b2e30a1a5785b1fcdbc2fa09669"
+      },
+      "audit": "Exact original selected dispatch, with an explicit -d/--device target; no fallback selector.",
+      "owns": [
+        "integration_test/bidi_text_smoke_test.dart",
+        "integration_test/integration_test.dart"
+      ]
+    },
+    "integration_test cold_start_message_render_simulator_test.dart": {
+      "roles": [
+        "android-physical"
+      ],
+      "commands": [
+        [
+          "flutter",
+          "test",
+          "--no-pub",
+          "-d",
+          "{device:android-physical}",
+          "--reporter",
+          "expanded",
+          "--dart-define=MKNOON_RELAY_ADDRESSES={config:relay_addresses}",
+          "integration_test/cold_start_message_render_simulator_test.dart"
+        ]
+      ],
+      "environment": {},
+      "config": [
+        "relay_addresses"
+      ],
+      "sources": {
+        "integration_test/cold_start_message_render_simulator_test.dart": "c61565954cf2f30270bb15bac5e9842aebeb0ec475bae1f33748e2dbbe4b4612"
+      },
+      "audit": "Exact original selected dispatch, with an explicit -d/--device target; no fallback selector.",
+      "owns": [
+        "integration_test/cold_start_message_render_simulator_test.dart",
+        "integration_test/integration_test.dart"
+      ]
+    },
+    "integration_test cold_start_sendable_no_user_action_test.dart": {
+      "roles": [
+        "android-physical"
+      ],
+      "commands": [
+        [
+          "flutter",
+          "test",
+          "--no-pub",
+          "-d",
+          "{device:android-physical}",
+          "--reporter",
+          "expanded",
+          "--dart-define=MKNOON_RELAY_ADDRESSES={config:relay_addresses}",
+          "integration_test/cold_start_sendable_no_user_action_test.dart"
+        ]
+      ],
+      "environment": {},
+      "config": [
+        "relay_addresses"
+      ],
+      "sources": {
+        "integration_test/cold_start_sendable_no_user_action_test.dart": "5ef441b8a002f215fdffee29acf0aeb6bb2ccfab97452451064848e34805f29f"
+      },
+      "audit": "Exact original selected dispatch, with an explicit -d/--device target; no fallback selector.",
+      "owns": [
+        "integration_test/cold_start_sendable_no_user_action_test.dart",
+        "integration_test/integration_test.dart"
+      ]
+    },
+    "integration_test conversation_bridge_test.dart": {
+      "roles": [
+        "android-physical"
+      ],
+      "commands": [
+        [
+          "flutter",
+          "test",
+          "--no-pub",
+          "-d",
+          "{device:android-physical}",
+          "--reporter",
+          "expanded",
+          "--dart-define=MKNOON_RELAY_ADDRESSES={config:relay_addresses}",
+          "integration_test/conversation_bridge_test.dart"
+        ]
+      ],
+      "environment": {},
+      "config": [
+        "relay_addresses"
+      ],
+      "sources": {
+        "integration_test/conversation_bridge_test.dart": "9291c864810e5950fd13e21f82b0a2aec56e8c6ee07ac021be4b4fcf370981d3"
+      },
+      "audit": "Exact original selected dispatch, with an explicit -d/--device target; no fallback selector.",
+      "owns": [
+        "integration_test/conversation_bridge_test.dart",
+        "integration_test/integration_test.dart"
+      ]
+    },
+    "integration_test conversation_swipe_back_proof_test.dart": {
+      "roles": [
+        "ios-simulator-a"
+      ],
+      "commands": [
+        [
+          "flutter",
+          "test",
+          "--no-pub",
+          "-d",
+          "{device:ios-simulator-a}",
+          "--reporter",
+          "expanded",
+          "--dart-define=MKNOON_RELAY_ADDRESSES={config:relay_addresses}",
+          "integration_test/conversation_swipe_back_proof_test.dart"
+        ]
+      ],
+      "environment": {},
+      "config": [
+        "relay_addresses"
+      ],
+      "sources": {
+        "integration_test/conversation_swipe_back_proof_test.dart": "644dce9e530aa24afbdd7a9c606076055f7d20c79c3f009ff8df57a9923a5ada"
+      },
+      "audit": "Exact original selected dispatch, with an explicit -d/--device target; no fallback selector.",
+      "owns": [
+        "integration_test/conversation_swipe_back_proof_test.dart",
+        "integration_test/group_conversation_polish_proof_test.dart",
+        "integration_test/integration_test.dart"
+      ]
+    },
+    "integration_test db_raw_key_migration_proof_test.dart": {
+      "roles": [
+        "android-physical"
+      ],
+      "commands": [
+        [
+          "flutter",
+          "test",
+          "--no-pub",
+          "-d",
+          "{device:android-physical}",
+          "--reporter",
+          "expanded",
+          "--dart-define=MKNOON_RELAY_ADDRESSES={config:relay_addresses}",
+          "integration_test/db_raw_key_migration_proof_test.dart"
+        ]
+      ],
+      "environment": {},
+      "config": [
+        "relay_addresses"
+      ],
+      "sources": {
+        "integration_test/db_raw_key_migration_proof_test.dart": "9dc3ad9d3813f27d8225cb7e2a7533f82d7ab2a7884e1c4aadd5f70cf4a67015"
+      },
+      "audit": "Exact original selected dispatch, with an explicit -d/--device target; no fallback selector.",
+      "owns": [
+        "integration_test/db_raw_key_migration_proof_test.dart",
+        "integration_test/integration_test.dart"
+      ]
+    },
+    "integration_test direct_forwarded_marker_sqlcipher_proof_test.dart": {
+      "roles": [
+        "android-physical"
+      ],
+      "commands": [
+        [
+          "flutter",
+          "test",
+          "--no-pub",
+          "-d",
+          "{device:android-physical}",
+          "--reporter",
+          "expanded",
+          "--dart-define=MKNOON_RELAY_ADDRESSES={config:relay_addresses}",
+          "integration_test/direct_forwarded_marker_sqlcipher_proof_test.dart"
+        ]
+      ],
+      "environment": {},
+      "config": [
+        "relay_addresses"
+      ],
+      "sources": {
+        "integration_test/direct_forwarded_marker_sqlcipher_proof_test.dart": "0d8e40c8bd2600d8b60eef8aa6f2a67977bbafea95ff242dc2254b9d7ecad7e8"
+      },
+      "audit": "Exact original selected dispatch, with an explicit -d/--device target; no fallback selector.",
+      "owns": [
+        "integration_test/direct_forwarded_marker_sqlcipher_proof_test.dart",
+        "integration_test/integration_test.dart"
+      ]
+    },
+    "integration_test direct_inbox_custody_outbox_sqlcipher_proof_test.dart": {
+      "roles": [
+        "android-physical"
+      ],
+      "commands": [
+        [
+          "flutter",
+          "test",
+          "--no-pub",
+          "-d",
+          "{device:android-physical}",
+          "--reporter",
+          "expanded",
+          "--dart-define=MKNOON_RELAY_ADDRESSES={config:relay_addresses}",
+          "integration_test/direct_inbox_custody_outbox_sqlcipher_proof_test.dart"
+        ]
+      ],
+      "environment": {},
+      "config": [
+        "relay_addresses"
+      ],
+      "sources": {
+        "integration_test/direct_inbox_custody_outbox_sqlcipher_proof_test.dart": "86ea8d616b2edb03dd008f9edfb9d01fd3cc4a82f43d2e247e54c1478ab61fd3"
+      },
+      "audit": "Exact original selected dispatch, with an explicit -d/--device target; no fallback selector.",
+      "owns": [
+        "integration_test/direct_inbox_custody_outbox_sqlcipher_proof_test.dart",
+        "integration_test/integration_test.dart"
+      ]
+    },
+    "integration_test direct_notification_durability_sqlcipher_proof_test.dart": {
+      "roles": [
+        "android-physical"
+      ],
+      "commands": [
+        [
+          "flutter",
+          "test",
+          "--no-pub",
+          "-d",
+          "{device:android-physical}",
+          "--reporter",
+          "expanded",
+          "--dart-define=MKNOON_RELAY_ADDRESSES={config:relay_addresses}",
+          "integration_test/direct_notification_durability_sqlcipher_proof_test.dart"
+        ]
+      ],
+      "environment": {},
+      "config": [
+        "relay_addresses"
+      ],
+      "sources": {
+        "integration_test/direct_notification_durability_sqlcipher_proof_test.dart": "e2d02897da9f8b840b1f939461c85851ae6b271bf9a1541d486ef2b5a367cb8a"
+      },
+      "audit": "Exact original selected dispatch, with an explicit -d/--device target; no fallback selector.",
+      "owns": [
+        "integration_test/direct_notification_durability_sqlcipher_proof_test.dart",
+        "integration_test/integration_test.dart"
+      ]
+    },
+    "integration_test direct_private_media_lifecycle_sqlcipher_proof_test.dart": {
+      "roles": [
+        "android-physical"
+      ],
+      "commands": [
+        [
+          "flutter",
+          "test",
+          "--no-pub",
+          "-d",
+          "{device:android-physical}",
+          "--reporter",
+          "expanded",
+          "--dart-define=MKNOON_RELAY_ADDRESSES={config:relay_addresses}",
+          "integration_test/direct_private_media_lifecycle_sqlcipher_proof_test.dart"
+        ]
+      ],
+      "environment": {},
+      "config": [
+        "relay_addresses"
+      ],
+      "sources": {
+        "integration_test/direct_private_media_lifecycle_sqlcipher_proof_test.dart": "fb275c766236b0070d38701cbb667ad0b29bcec78a688d654b2db8bc7eb6b9b6"
+      },
+      "audit": "Exact original selected dispatch, with an explicit -d/--device target; no fallback selector.",
+      "owns": [
+        "integration_test/direct_private_media_lifecycle_sqlcipher_proof_test.dart",
+        "integration_test/integration_test.dart"
+      ]
+    },
+    "integration_test direct_private_media_platform_protection_proof_test.dart": {
+      "roles": [
+        "android-physical"
+      ],
+      "commands": [
+        [
+          "flutter",
+          "test",
+          "--no-pub",
+          "-d",
+          "{device:android-physical}",
+          "--reporter",
+          "expanded",
+          "--dart-define=MKNOON_RELAY_ADDRESSES={config:relay_addresses}",
+          "integration_test/direct_private_media_platform_protection_proof_test.dart"
+        ]
+      ],
+      "environment": {},
+      "config": [
+        "relay_addresses"
+      ],
+      "sources": {
+        "integration_test/direct_private_media_platform_protection_proof_test.dart": "543aa1b6e842f3bb411065ee9dbd73fe58a4dbdaa143daa1a04ca742c92c493d"
+      },
+      "audit": "Exact original selected dispatch, with an explicit -d/--device target; no fallback selector.",
+      "owns": [
+        "integration_test/direct_private_media_platform_protection_proof_test.dart",
+        "integration_test/integration_test.dart"
+      ]
+    },
+    "integration_test direct_reaction_inbox_custody_outbox_sqlcipher_proof_test.dart": {
+      "roles": [
+        "android-physical"
+      ],
+      "commands": [
+        [
+          "flutter",
+          "test",
+          "--no-pub",
+          "-d",
+          "{device:android-physical}",
+          "--reporter",
+          "expanded",
+          "--dart-define=MKNOON_RELAY_ADDRESSES={config:relay_addresses}",
+          "integration_test/direct_reaction_inbox_custody_outbox_sqlcipher_proof_test.dart"
+        ]
+      ],
+      "environment": {},
+      "config": [
+        "relay_addresses"
+      ],
+      "sources": {
+        "integration_test/direct_reaction_inbox_custody_outbox_sqlcipher_proof_test.dart": "f44fa58bd9d1fc4a7f5ce2a1a86af38d4226e78a7aa7e72e6127bfe06c6a2e55"
+      },
+      "audit": "Exact original selected dispatch, with an explicit -d/--device target; no fallback selector.",
+      "owns": [
+        "integration_test/direct_reaction_inbox_custody_outbox_sqlcipher_proof_test.dart",
+        "integration_test/integration_test.dart"
+      ]
+    },
+    "integration_test feed_performance_test.dart": {
+      "roles": [
+        "android-physical"
+      ],
+      "commands": [
+        [
+          "flutter",
+          "test",
+          "--no-pub",
+          "-d",
+          "{device:android-physical}",
+          "--reporter",
+          "expanded",
+          "--dart-define=MKNOON_RELAY_ADDRESSES={config:relay_addresses}",
+          "integration_test/feed_performance_test.dart"
+        ]
+      ],
+      "environment": {},
+      "config": [
+        "relay_addresses"
+      ],
+      "sources": {
+        "integration_test/feed_performance_test.dart": "3309899e85659379c4342dfbf962d953af1b871fd582c138e1423986a7b4cc1e"
+      },
+      "audit": "Exact original selected dispatch, with an explicit -d/--device target; no fallback selector.",
+      "owns": [
+        "integration_test/feed_performance_test.dart"
+      ]
+    },
+    "integration_test foreground_group_push_drain_test.dart": {
+      "roles": [
+        "android-physical"
+      ],
+      "commands": [
+        [
+          "flutter",
+          "test",
+          "--no-pub",
+          "-d",
+          "{device:android-physical}",
+          "--reporter",
+          "expanded",
+          "--dart-define=MKNOON_RELAY_ADDRESSES={config:relay_addresses}",
+          "integration_test/foreground_group_push_drain_test.dart"
+        ]
+      ],
+      "environment": {},
+      "config": [
+        "relay_addresses"
+      ],
+      "sources": {
+        "integration_test/foreground_group_push_drain_test.dart": "43f150eee695747c658cc284e7455a436e0f6de7d09f47a488930d28c4a11065"
+      },
+      "audit": "Exact original selected dispatch, with an explicit -d/--device target; no fallback selector.",
+      "owns": [
+        "integration_test/foreground_group_push_drain_test.dart",
+        "integration_test/integration_test.dart"
+      ]
+    },
+    "integration_test group_admin_metadata_convergence_simulator_test.dart": {
+      "roles": [
+        "android-physical"
+      ],
+      "commands": [
+        [
+          "flutter",
+          "test",
+          "--no-pub",
+          "-d",
+          "{device:android-physical}",
+          "--reporter",
+          "expanded",
+          "--dart-define=MKNOON_RELAY_ADDRESSES={config:relay_addresses}",
+          "--dart-define=GROUP_SIM_SCENARIO=ADMIN_METADATA",
+          "integration_test/group_lifecycle_simulator_harness.dart"
+        ]
+      ],
+      "environment": {},
+      "config": [
+        "relay_addresses"
+      ],
+      "sources": {
+        "integration_test/group_admin_metadata_convergence_simulator_test.dart": "35f24980e4f95c3678ed567271db946a1ba6bd67912625014cf6962d0079353d",
+        "integration_test/group_lifecycle_simulator_harness.dart": "04e3b3deda1b39a1871d18b800af2175413ff655ad022c410a7b5cd170e42617"
+      },
+      "audit": "Exact original selected dispatch, with an explicit -d/--device target; no fallback selector.",
+      "owns": [
+        "integration_test/group_admin_metadata_convergence_simulator_test.dart",
+        "integration_test/group_lifecycle_simulator_harness.dart",
+        "integration_test/integration_test.dart"
+      ]
+    },
+    "integration_test group_conversation_polish_proof_test.dart": {
+      "roles": [
+        "android-physical"
+      ],
+      "commands": [
+        [
+          "flutter",
+          "test",
+          "--no-pub",
+          "-d",
+          "{device:android-physical}",
+          "--reporter",
+          "expanded",
+          "--dart-define=MKNOON_RELAY_ADDRESSES={config:relay_addresses}",
+          "integration_test/group_conversation_polish_proof_test.dart"
+        ]
+      ],
+      "environment": {},
+      "config": [
+        "relay_addresses"
+      ],
+      "sources": {
+        "integration_test/group_conversation_polish_proof_test.dart": "07d97681a718697f52944337b14155761c23602f3efcc06bddfa315ad3d6b7dc"
+      },
+      "audit": "Exact original selected dispatch, with an explicit -d/--device target; no fallback selector.",
+      "owns": [
+        "integration_test/group_conversation_polish_proof_test.dart",
+        "integration_test/integration_test.dart"
+      ]
+    },
+    "integration_test group_delete_preserves_friends_simulator_test.dart": {
+      "roles": [
+        "android-physical"
+      ],
+      "commands": [
+        [
+          "flutter",
+          "test",
+          "--no-pub",
+          "-d",
+          "{device:android-physical}",
+          "--reporter",
+          "expanded",
+          "--dart-define=MKNOON_RELAY_ADDRESSES={config:relay_addresses}",
+          "--dart-define=GROUP_SIM_SCENARIO=DELETE_PRESERVES_FRIENDS",
+          "integration_test/group_lifecycle_simulator_harness.dart"
+        ]
+      ],
+      "environment": {},
+      "config": [
+        "relay_addresses"
+      ],
+      "sources": {
+        "integration_test/group_delete_preserves_friends_simulator_test.dart": "46b6db94821790465289016d95e4055ab6b745023cc50f0df851c8771f5ad34e",
+        "integration_test/group_lifecycle_simulator_harness.dart": "04e3b3deda1b39a1871d18b800af2175413ff655ad022c410a7b5cd170e42617"
+      },
+      "audit": "Exact original selected dispatch, with an explicit -d/--device target; no fallback selector.",
+      "owns": [
+        "integration_test/group_delete_preserves_friends_simulator_test.dart",
+        "integration_test/group_lifecycle_simulator_harness.dart",
+        "integration_test/integration_test.dart"
+      ]
+    },
+    "integration_test group_exit_intents_sqlcipher_proof_test.dart": {
+      "roles": [
+        "android-physical"
+      ],
+      "commands": [
+        [
+          "flutter",
+          "test",
+          "--no-pub",
+          "-d",
+          "{device:android-physical}",
+          "--reporter",
+          "expanded",
+          "--dart-define=MKNOON_RELAY_ADDRESSES={config:relay_addresses}",
+          "integration_test/group_exit_intents_sqlcipher_proof_test.dart"
+        ]
+      ],
+      "environment": {},
+      "config": [
+        "relay_addresses"
+      ],
+      "sources": {
+        "integration_test/group_exit_intents_sqlcipher_proof_test.dart": "b475b232e2db3920c12392148c029b3594ed07dc3a695224f48c1ef27b16bf70"
+      },
+      "audit": "Exact original selected dispatch, with an explicit -d/--device target; no fallback selector.",
+      "owns": [
+        "integration_test/group_exit_intents_sqlcipher_proof_test.dart",
+        "integration_test/integration_test.dart"
+      ]
+    },
+    "integration_test group_exit_release_diagnostics_sqlcipher_proof_test.dart": {
+      "roles": [
+        "android-physical"
+      ],
+      "commands": [
+        [
+          "flutter",
+          "drive",
+          "--no-pub",
+          "--profile",
+          "-d",
+          "{device:android-physical}",
+          "--driver=test_driver/integration_test.dart",
+          "--target=integration_test/group_exit_release_diagnostics_sqlcipher_proof_test.dart",
+          "--dart-define=MKNOON_RELAY_ADDRESSES={config:relay_addresses}"
+        ]
+      ],
+      "environment": {},
+      "config": [
+        "relay_addresses"
+      ],
+      "sources": {
+        "integration_test/group_exit_release_diagnostics_sqlcipher_proof_test.dart": "5e45df0bcab53be6518e70798705ae965f955d5947d7927588dd3af514040c38"
+      },
+      "audit": "Exact original selected dispatch, with an explicit -d/--device target; no fallback selector.",
+      "owns": [
+        "integration_test/group_exit_release_diagnostics_sqlcipher_proof_test.dart",
+        "integration_test/integration_test.dart"
+      ]
+    },
+    "integration_test group_forwarded_marker_db_proof_test.dart": {
+      "roles": [
+        "android-physical"
+      ],
+      "commands": [
+        [
+          "flutter",
+          "test",
+          "--no-pub",
+          "-d",
+          "{device:android-physical}",
+          "--reporter",
+          "expanded",
+          "--dart-define=MKNOON_RELAY_ADDRESSES={config:relay_addresses}",
+          "integration_test/group_forwarded_marker_db_proof_test.dart"
+        ]
+      ],
+      "environment": {},
+      "config": [
+        "relay_addresses"
+      ],
+      "sources": {
+        "integration_test/group_forwarded_marker_db_proof_test.dart": "b26a2d6efaae2382585677ebe1643c41a646ef9cdf46ab949d2148adbfce9cb9"
+      },
+      "audit": "Exact original selected dispatch, with an explicit -d/--device target; no fallback selector.",
+      "owns": [
+        "integration_test/group_forwarded_marker_db_proof_test.dart",
+        "integration_test/integration_test.dart"
+      ]
+    },
+    "integration_test group_invite_accept_spinner_simulator_test.dart": {
+      "roles": [
+        "android-physical"
+      ],
+      "commands": [
+        [
+          "flutter",
+          "test",
+          "--no-pub",
+          "-d",
+          "{device:android-physical}",
+          "--reporter",
+          "expanded",
+          "--dart-define=MKNOON_RELAY_ADDRESSES={config:relay_addresses}",
+          "--dart-define=GROUP_SIM_SCENARIO=INVITE_ACCEPT_SPINNER",
+          "integration_test/group_lifecycle_simulator_harness.dart"
+        ]
+      ],
+      "environment": {},
+      "config": [
+        "relay_addresses"
+      ],
+      "sources": {
+        "integration_test/group_invite_accept_spinner_simulator_test.dart": "b65826573ab2f9453bb7fd045b4bce6f52145feaef587522be1b5ebbfbbdcbc8",
+        "integration_test/group_lifecycle_simulator_harness.dart": "04e3b3deda1b39a1871d18b800af2175413ff655ad022c410a7b5cd170e42617"
+      },
+      "audit": "Exact original selected dispatch, with an explicit -d/--device target; no fallback selector.",
+      "owns": [
+        "integration_test/group_invite_accept_spinner_simulator_test.dart",
+        "integration_test/group_lifecycle_simulator_harness.dart",
+        "integration_test/integration_test.dart"
+      ]
+    },
+    "integration_test group_invite_reliability_proof_test.dart": {
+      "roles": [
+        "android-physical"
+      ],
+      "commands": [
+        [
+          "flutter",
+          "test",
+          "--no-pub",
+          "-d",
+          "{device:android-physical}",
+          "--reporter",
+          "expanded",
+          "--dart-define=MKNOON_RELAY_ADDRESSES={config:relay_addresses}",
+          "integration_test/group_invite_reliability_proof_test.dart"
+        ]
+      ],
+      "environment": {},
+      "config": [
+        "relay_addresses"
+      ],
+      "sources": {
+        "integration_test/group_invite_reliability_proof_test.dart": "53148c4403f52b16345349d8b19ccf169d7ac6932ea9e39e3d7e83bb2688705c"
+      },
+      "audit": "Exact original selected dispatch, with an explicit -d/--device target; no fallback selector.",
+      "owns": [
+        "integration_test/group_invite_reliability_proof_test.dart",
+        "integration_test/integration_test.dart"
+      ]
+    },
+    "integration_test group_media_deletion_journal_sqlcipher_proof_test.dart": {
+      "roles": [
+        "android-physical"
+      ],
+      "commands": [
+        [
+          "flutter",
+          "test",
+          "--no-pub",
+          "-d",
+          "{device:android-physical}",
+          "--reporter",
+          "expanded",
+          "--dart-define=MKNOON_RELAY_ADDRESSES={config:relay_addresses}",
+          "integration_test/group_media_deletion_journal_sqlcipher_proof_test.dart"
+        ]
+      ],
+      "environment": {},
+      "config": [
+        "relay_addresses"
+      ],
+      "sources": {
+        "integration_test/group_media_deletion_journal_sqlcipher_proof_test.dart": "ffacf6fe3556036a9a9572498c67ff308f838a2fa46cf2638fa26882e84f60d2"
+      },
+      "audit": "Exact original selected dispatch, with an explicit -d/--device target; no fallback selector.",
+      "owns": [
+        "integration_test/group_media_deletion_journal_sqlcipher_proof_test.dart",
+        "integration_test/integration_test.dart"
+      ]
+    },
+    "integration_test group_message_retry_backoff_db_proof_test.dart": {
+      "roles": [
+        "android-physical"
+      ],
+      "commands": [
+        [
+          "flutter",
+          "test",
+          "--no-pub",
+          "-d",
+          "{device:android-physical}",
+          "--reporter",
+          "expanded",
+          "--dart-define=MKNOON_RELAY_ADDRESSES={config:relay_addresses}",
+          "integration_test/group_message_retry_backoff_db_proof_test.dart"
+        ]
+      ],
+      "environment": {},
+      "config": [
+        "relay_addresses"
+      ],
+      "sources": {
+        "integration_test/group_message_retry_backoff_db_proof_test.dart": "7f5fe12c9ce49f893bffce65b2059bc365284ffcfc1031686aff8974bbe1920e"
+      },
+      "audit": "Exact original selected dispatch, with an explicit -d/--device target; no fallback selector.",
+      "owns": [
+        "integration_test/group_message_retry_backoff_db_proof_test.dart",
+        "integration_test/integration_test.dart"
+      ]
+    },
+    "integration_test group_mute_notification_db_proof_test.dart": {
+      "roles": [
+        "android-physical"
+      ],
+      "commands": [
+        [
+          "flutter",
+          "test",
+          "--no-pub",
+          "-d",
+          "{device:android-physical}",
+          "--reporter",
+          "expanded",
+          "--dart-define=MKNOON_RELAY_ADDRESSES={config:relay_addresses}",
+          "integration_test/group_mute_notification_db_proof_test.dart"
+        ]
+      ],
+      "environment": {},
+      "config": [
+        "relay_addresses"
+      ],
+      "sources": {
+        "integration_test/group_mute_notification_db_proof_test.dart": "d0b177b008718d6966a223d8d523013dc3193d6af7e8cd9c757f75c5f4ef69cc"
+      },
+      "audit": "Exact original selected dispatch, with an explicit -d/--device target; no fallback selector.",
+      "owns": [
+        "integration_test/group_mute_notification_db_proof_test.dart",
+        "integration_test/integration_test.dart"
+      ]
+    },
+    "integration_test group_muted_notification_proof_test.dart": {
+      "roles": [
+        "android-physical",
+        "android-emulator"
+      ],
+      "commands": [
+        [
+          "dart",
+          "tool/sims/sims.dart",
+          "major",
+          "--only",
+          "groups.muted_notification_campaign",
+          "--format",
+          "text"
+        ]
+      ],
+      "environment": {},
+      "config": [
+        "relay_addresses"
+      ],
+      "sources": {},
+      "audit": "Typed SIMS binding rechecks exact protected IDs before all preparation.",
+      "owns": [],
+      "completion_marker": "PASS\tgroups.muted_notification_campaign\t"
+    },
+    "integration_test group_new_member_media_simulator_proof_test.dart": {
+      "roles": [
+        "android-physical"
+      ],
+      "commands": [
+        [
+          "flutter",
+          "test",
+          "--no-pub",
+          "-d",
+          "{device:android-physical}",
+          "--reporter",
+          "expanded",
+          "--dart-define=MKNOON_RELAY_ADDRESSES={config:relay_addresses}",
+          "--dart-define=GROUP_SIM_SCENARIO=NEW_MEMBER_MEDIA",
+          "integration_test/group_lifecycle_simulator_harness.dart"
+        ]
+      ],
+      "environment": {},
+      "config": [
+        "relay_addresses"
+      ],
+      "sources": {
+        "integration_test/group_lifecycle_simulator_harness.dart": "04e3b3deda1b39a1871d18b800af2175413ff655ad022c410a7b5cd170e42617",
+        "integration_test/group_new_member_media_simulator_proof_test.dart": "7aa0dfda232dc3d1c006973cd6b9cfc93e91fc738cf76a6f20e6e8a9e27c6c54"
+      },
+      "audit": "Exact original selected dispatch, with an explicit -d/--device target; no fallback selector.",
+      "owns": [
+        "integration_test/group_lifecycle_simulator_harness.dart",
+        "integration_test/group_new_member_media_simulator_proof_test.dart",
+        "integration_test/integration_test.dart"
+      ]
+    },
+    "integration_test group_notification_display_outbox_sqlcipher_proof_test.dart": {
+      "roles": [
+        "android-physical"
+      ],
+      "commands": [
+        [
+          "flutter",
+          "test",
+          "--no-pub",
+          "-d",
+          "{device:android-physical}",
+          "--reporter",
+          "expanded",
+          "--dart-define=MKNOON_RELAY_ADDRESSES={config:relay_addresses}",
+          "integration_test/group_notification_display_outbox_sqlcipher_proof_test.dart"
+        ]
+      ],
+      "environment": {},
+      "config": [
+        "relay_addresses"
+      ],
+      "sources": {
+        "integration_test/group_notification_display_outbox_sqlcipher_proof_test.dart": "a719fad863646b227d0c1e1f5e3503184b2167e8d2d256462ab68282d5d1b852"
+      },
+      "audit": "Exact original selected dispatch, with an explicit -d/--device target; no fallback selector.",
+      "owns": [
+        "integration_test/group_notification_display_outbox_sqlcipher_proof_test.dart",
+        "integration_test/integration_test.dart"
+      ]
+    },
+    "integration_test group_notification_projection_android_proof_test.dart": {
+      "roles": [
+        "android-physical",
+        "android-emulator"
+      ],
+      "commands": [
+        [
+          "dart",
+          "tool/sims/sims.dart",
+          "major",
+          "--only",
+          "groups.notification_projection_durability",
+          "--format",
+          "text"
+        ]
+      ],
+      "environment": {},
+      "config": [
+        "relay_addresses"
+      ],
+      "sources": {},
+      "audit": "Typed SIMS binding rechecks exact protected IDs before all preparation.",
+      "owns": [],
+      "completion_marker": "PASS\tgroups.notification_projection_durability\t"
+    },
+    "integration_test group_private_media_lifecycle_db_proof_test.dart": {
+      "roles": [
+        "android-physical"
+      ],
+      "commands": [
+        [
+          "flutter",
+          "test",
+          "--no-pub",
+          "-d",
+          "{device:android-physical}",
+          "--reporter",
+          "expanded",
+          "--dart-define=MKNOON_RELAY_ADDRESSES={config:relay_addresses}",
+          "integration_test/group_private_media_lifecycle_db_proof_test.dart"
+        ]
+      ],
+      "environment": {},
+      "config": [
+        "relay_addresses"
+      ],
+      "sources": {
+        "integration_test/group_private_media_lifecycle_db_proof_test.dart": "e9dfbee51ddf609a04f18f165c2bf856b3d8b8767d6452767d49fc3db1fac6cd"
+      },
+      "audit": "Exact original selected dispatch, with an explicit -d/--device target; no fallback selector.",
+      "owns": [
+        "integration_test/group_private_media_lifecycle_db_proof_test.dart",
+        "integration_test/integration_test.dart"
+      ]
+    },
+    "integration_test group_private_media_platform_proof_test.dart": {
+      "roles": [
+        "android-physical"
+      ],
+      "commands": [
+        [
+          "flutter",
+          "test",
+          "--no-pub",
+          "-d",
+          "{device:android-physical}",
+          "--reporter",
+          "expanded",
+          "--dart-define=MKNOON_RELAY_ADDRESSES={config:relay_addresses}",
+          "integration_test/group_private_media_platform_proof_test.dart"
+        ]
+      ],
+      "environment": {},
+      "config": [
+        "relay_addresses"
+      ],
+      "sources": {
+        "integration_test/group_private_media_platform_proof_test.dart": "7be29ba3207bd2da054044825df577ea8718624f32677a3eea5646fb2c5a39d8"
+      },
+      "audit": "Exact original selected dispatch, with an explicit -d/--device target; no fallback selector.",
+      "owns": [
+        "integration_test/group_private_media_platform_proof_test.dart",
+        "integration_test/integration_test.dart"
+      ]
+    },
+    "integration_test group_reaction_reliability_db_proof_test.dart": {
+      "roles": [
+        "android-physical"
+      ],
+      "commands": [
+        [
+          "flutter",
+          "test",
+          "--no-pub",
+          "-d",
+          "{device:android-physical}",
+          "--reporter",
+          "expanded",
+          "--dart-define=MKNOON_RELAY_ADDRESSES={config:relay_addresses}",
+          "integration_test/group_reaction_reliability_db_proof_test.dart"
+        ]
+      ],
+      "environment": {},
+      "config": [
+        "relay_addresses"
+      ],
+      "sources": {
+        "integration_test/group_reaction_reliability_db_proof_test.dart": "23c6c38c858274b5800e476a3a0e6d18217e32689098319f97ee549e627cff9d"
+      },
+      "audit": "Exact original selected dispatch, with an explicit -d/--device target; no fallback selector.",
+      "owns": [
+        "integration_test/group_reaction_reliability_db_proof_test.dart",
+        "integration_test/integration_test.dart"
+      ]
+    },
+    "integration_test group_real_crypto_onboarding_test.dart": {
+      "roles": [
+        "android-physical"
+      ],
+      "commands": [
+        [
+          "flutter",
+          "test",
+          "--no-pub",
+          "-d",
+          "{device:android-physical}",
+          "--reporter",
+          "expanded",
+          "--dart-define=MKNOON_RELAY_ADDRESSES={config:relay_addresses}",
+          "integration_test/group_real_crypto_onboarding_test.dart"
+        ]
+      ],
+      "environment": {},
+      "config": [
+        "relay_addresses"
+      ],
+      "sources": {
+        "integration_test/group_real_crypto_onboarding_test.dart": "031451d7a01fbed29824f99ba438216328d00e7b39c5b14cf4604ee948e78d88"
+      },
+      "audit": "Exact original selected dispatch, with an explicit -d/--device target; no fallback selector.",
+      "owns": [
+        "integration_test/group_real_crypto_onboarding_test.dart",
+        "integration_test/integration_test.dart"
+      ]
+    },
+    "integration_test group_recovery_cli_e2e_test.dart": {
+      "roles": [
+        "android-physical"
+      ],
+      "commands": [
+        [
+          "flutter",
+          "test",
+          "--no-pub",
+          "-d",
+          "{device:android-physical}",
+          "--reporter",
+          "expanded",
+          "--dart-define=MKNOON_RELAY_ADDRESSES={config:relay_addresses}",
+          "integration_test/group_recovery_cli_e2e_test.dart"
+        ]
+      ],
+      "environment": {},
+      "config": [
+        "relay_addresses"
+      ],
+      "sources": {
+        "integration_test/group_recovery_cli_e2e_test.dart": "f0fd464ae48612814be13fec65c3ffc6c7f3855b23afa795df352f0dd1f5398e"
+      },
+      "audit": "Exact original selected dispatch, with an explicit -d/--device target; no fallback selector.",
+      "owns": [
+        "integration_test/group_recovery_cli_e2e_test.dart",
+        "integration_test/integration_test.dart"
+      ]
+    },
+    "integration_test group_recovery_e2e_test.dart": {
+      "roles": [
+        "android-physical"
+      ],
+      "commands": [
+        [
+          "flutter",
+          "test",
+          "--no-pub",
+          "-d",
+          "{device:android-physical}",
+          "--reporter",
+          "expanded",
+          "--dart-define=MKNOON_RELAY_ADDRESSES={config:relay_addresses}",
+          "integration_test/group_recovery_e2e_test.dart"
+        ]
+      ],
+      "environment": {},
+      "config": [
+        "relay_addresses"
+      ],
+      "sources": {
+        "integration_test/group_recovery_e2e_test.dart": "446bde9e71c73674f7e202ad37b081175786eee5709cff8af2292ec87d17d198"
+      },
+      "audit": "Exact original selected dispatch, with an explicit -d/--device target; no fallback selector.",
+      "owns": [
+        "integration_test/group_recovery_e2e_test.dart",
+        "integration_test/integration_test.dart"
+      ]
+    },
+    "integration_test group_recovery_gate_serialization_proof_test.dart": {
+      "roles": [
+        "android-physical"
+      ],
+      "commands": [
+        [
+          "flutter",
+          "test",
+          "--no-pub",
+          "-d",
+          "{device:android-physical}",
+          "--reporter",
+          "expanded",
+          "--dart-define=MKNOON_RELAY_ADDRESSES={config:relay_addresses}",
+          "integration_test/group_recovery_gate_serialization_proof_test.dart"
+        ]
+      ],
+      "environment": {},
+      "config": [
+        "relay_addresses"
+      ],
+      "sources": {
+        "integration_test/group_recovery_gate_serialization_proof_test.dart": "f7f7f790151d3105a87068740db6eec1e5779350041862cad02e064f78c4d7af"
+      },
+      "audit": "Exact original selected dispatch, with an explicit -d/--device target; no fallback selector.",
+      "owns": [
+        "integration_test/group_recovery_gate_serialization_proof_test.dart",
+        "integration_test/integration_test.dart"
+      ]
+    },
+    "integration_test group_rejoin_state_db_proof_test.dart": {
+      "roles": [
+        "android-physical"
+      ],
+      "commands": [
+        [
+          "flutter",
+          "test",
+          "--no-pub",
+          "-d",
+          "{device:android-physical}",
+          "--reporter",
+          "expanded",
+          "--dart-define=MKNOON_RELAY_ADDRESSES={config:relay_addresses}",
+          "integration_test/group_rejoin_state_db_proof_test.dart"
+        ]
+      ],
+      "environment": {},
+      "config": [
+        "relay_addresses"
+      ],
+      "sources": {
+        "integration_test/group_rejoin_state_db_proof_test.dart": "9622ae1224fdbe75cd03842ebe1b1b367aaf66a9ee2be5b934ec6c2b087b7dfb"
+      },
+      "audit": "Exact original selected dispatch, with an explicit -d/--device target; no fallback selector.",
+      "owns": [
+        "integration_test/group_rejoin_state_db_proof_test.dart",
+        "integration_test/integration_test.dart"
+      ]
+    },
+    "integration_test group_removal_rotation_keyless_converge_proof_test.dart": {
+      "roles": [
+        "android-physical"
+      ],
+      "commands": [
+        [
+          "flutter",
+          "test",
+          "--no-pub",
+          "-d",
+          "{device:android-physical}",
+          "--reporter",
+          "expanded",
+          "--dart-define=MKNOON_RELAY_ADDRESSES={config:relay_addresses}",
+          "integration_test/group_removal_rotation_keyless_converge_proof_test.dart"
+        ]
+      ],
+      "environment": {},
+      "config": [
+        "relay_addresses"
+      ],
+      "sources": {
+        "integration_test/group_removal_rotation_keyless_converge_proof_test.dart": "585799655c1ee014b8f17e7e148e4fe113407aa66893656164be43b578804d03"
+      },
+      "audit": "Exact original selected dispatch, with an explicit -d/--device target; no fallback selector.",
+      "owns": [
+        "integration_test/group_removal_rotation_keyless_converge_proof_test.dart",
+        "integration_test/integration_test.dart"
+      ]
+    },
+    "integration_test group_removal_rotation_keyless_proof_test.dart": {
+      "roles": [
+        "android-physical"
+      ],
+      "commands": [
+        [
+          "flutter",
+          "test",
+          "--no-pub",
+          "-d",
+          "{device:android-physical}",
+          "--reporter",
+          "expanded",
+          "--dart-define=MKNOON_RELAY_ADDRESSES={config:relay_addresses}",
+          "integration_test/group_removal_rotation_keyless_proof_test.dart"
+        ]
+      ],
+      "environment": {},
+      "config": [
+        "relay_addresses"
+      ],
+      "sources": {
+        "integration_test/group_removal_rotation_keyless_proof_test.dart": "f0f80b28dec9b2c4e94be7fc0fdab7bb8638c96fbba10254557b6d38fcf1ac6e"
+      },
+      "audit": "Exact original selected dispatch, with an explicit -d/--device target; no fallback selector.",
+      "owns": [
+        "integration_test/group_removal_rotation_keyless_proof_test.dart",
+        "integration_test/integration_test.dart"
+      ]
+    },
+    "integration_test group_self_removed_marker_sqlcipher_proof_test.dart": {
+      "roles": [
+        "android-physical"
+      ],
+      "commands": [
+        [
+          "flutter",
+          "test",
+          "--no-pub",
+          "-d",
+          "{device:android-physical}",
+          "--reporter",
+          "expanded",
+          "--dart-define=MKNOON_RELAY_ADDRESSES={config:relay_addresses}",
+          "integration_test/group_self_removed_marker_sqlcipher_proof_test.dart"
+        ]
+      ],
+      "environment": {},
+      "config": [
+        "relay_addresses"
+      ],
+      "sources": {
+        "integration_test/group_self_removed_marker_sqlcipher_proof_test.dart": "5e8b639805cc9241ef30f9ca8e87f286cfd9a93b8c090299183aa87f177753ee"
+      },
+      "audit": "Exact original selected dispatch, with an explicit -d/--device target; no fallback selector.",
+      "owns": [
+        "integration_test/group_self_removed_marker_sqlcipher_proof_test.dart",
+        "integration_test/integration_test.dart"
+      ]
+    },
+    "integration_test group_terminal_send_failed_proof_test.dart": {
+      "roles": [
+        "ios-simulator-a"
+      ],
+      "commands": [
+        [
+          "flutter",
+          "test",
+          "--no-pub",
+          "-d",
+          "{device:ios-simulator-a}",
+          "--reporter",
+          "expanded",
+          "--dart-define=MKNOON_RELAY_ADDRESSES={config:relay_addresses}",
+          "integration_test/group_terminal_send_failed_proof_test.dart"
+        ]
+      ],
+      "environment": {},
+      "config": [
+        "relay_addresses"
+      ],
+      "sources": {
+        "integration_test/group_terminal_send_failed_proof_test.dart": "d7706c806777103682aad15285e1b62c49062d4f121a87af67153270b0af5e19"
+      },
+      "audit": "Exact original selected dispatch, with an explicit -d/--device target; no fallback selector.",
+      "owns": [
+        "integration_test/group_terminal_send_failed_proof_test.dart",
+        "integration_test/integration_test.dart"
+      ]
+    },
+    "integration_test identity_progress_performance_test.dart": {
+      "roles": [
+        "android-physical"
+      ],
+      "commands": [
+        [
+          "flutter",
+          "test",
+          "--no-pub",
+          "-d",
+          "{device:android-physical}",
+          "--reporter",
+          "expanded",
+          "--dart-define=MKNOON_RELAY_ADDRESSES={config:relay_addresses}",
+          "--dart-define=PERF_TARGET=IDENTITY_PROGRESS",
+          "integration_test/performance_harness.dart"
+        ]
+      ],
+      "environment": {},
+      "config": [
+        "relay_addresses"
+      ],
+      "sources": {
+        "integration_test/identity_progress_performance_test.dart": "c2047e3b0e2807c713274852747f418d49b6d542de8f29564959915bb92f25dd",
+        "integration_test/performance_harness.dart": "559ff8c1cb88c48def99584a9091380ac1f20b5f216d8e122f873d11603cebee"
+      },
+      "audit": "Exact original selected dispatch, with an explicit -d/--device target; no fallback selector.",
+      "owns": [
+        "integration_test/identity_progress_performance_test.dart",
+        "integration_test/integration_test.dart",
+        "integration_test/performance_harness.dart"
+      ]
+    },
+    "integration_test loading_states_smoke_test.dart": {
+      "roles": [
+        "android-physical"
+      ],
+      "commands": [
+        [
+          "flutter",
+          "test",
+          "--no-pub",
+          "-d",
+          "{device:android-physical}",
+          "--reporter",
+          "expanded",
+          "--dart-define=MKNOON_RELAY_ADDRESSES={config:relay_addresses}",
+          "integration_test/loading_states_smoke_test.dart"
+        ]
+      ],
+      "environment": {},
+      "config": [
+        "relay_addresses"
+      ],
+      "sources": {
+        "integration_test/loading_states_smoke_test.dart": "ef70b0899999067984064414d6477cd6693e6282dfda05f9959b3a10e436a03d"
+      },
+      "audit": "Exact original selected dispatch, with an explicit -d/--device target; no fallback selector.",
+      "owns": [
+        "integration_test/integration_test.dart",
+        "integration_test/loading_states_smoke_test.dart"
+      ]
+    },
+    "integration_test media_library_state_sqlcipher_proof_test.dart": {
+      "roles": [
+        "android-physical"
+      ],
+      "commands": [
+        [
+          "flutter",
+          "test",
+          "--no-pub",
+          "-d",
+          "{device:android-physical}",
+          "--reporter",
+          "expanded",
+          "--dart-define=MKNOON_RELAY_ADDRESSES={config:relay_addresses}",
+          "integration_test/media_library_state_sqlcipher_proof_test.dart"
+        ]
+      ],
+      "environment": {},
+      "config": [
+        "relay_addresses"
+      ],
+      "sources": {
+        "integration_test/media_library_state_sqlcipher_proof_test.dart": "61aba9c3867d018b570ef8c8c3fe96087541369db731f10961ef4205d360f2e3"
+      },
+      "audit": "Exact original selected dispatch, with an explicit -d/--device target; no fallback selector.",
+      "owns": [
+        "integration_test/integration_test.dart",
+        "integration_test/media_library_state_sqlcipher_proof_test.dart"
+      ]
+    },
+    "integration_test media_message_journey_e2e_test.dart": {
+      "roles": [
+        "android-physical"
+      ],
+      "commands": [
+        [
+          "flutter",
+          "test",
+          "--no-pub",
+          "-d",
+          "{device:android-physical}",
+          "--reporter",
+          "expanded",
+          "--dart-define=MKNOON_RELAY_ADDRESSES={config:relay_addresses}",
+          "integration_test/media_message_journey_e2e_test.dart"
+        ]
+      ],
+      "environment": {},
+      "config": [
+        "relay_addresses"
+      ],
+      "sources": {
+        "integration_test/media_message_journey_e2e_test.dart": "53b59d06fe732c379074fb6f32db99cc2be69160968592f31157d7a53122d07f"
+      },
+      "audit": "Exact original selected dispatch, with an explicit -d/--device target; no fallback selector.",
+      "owns": [
+        "integration_test/integration_test.dart",
+        "integration_test/media_message_journey_e2e_test.dart"
+      ]
+    },
+    "integration_test media_notification_playback_continuity_test.dart": {
+      "roles": [
+        "android-physical"
+      ],
+      "commands": [
+        [
+          "bash",
+          "scripts/run_media_notification_playback_continuity_proof.sh",
+          "--device",
+          "{device:android-physical}",
+          "--output",
+          "{output}/playback"
+        ]
+      ],
+      "environment": {},
+      "config": [
+        "relay_addresses"
+      ],
+      "sources": {
+        "integration_test/media_notification_playback_continuity_test.dart": "b680f78f44d4be741ca4800b6d3b1d13f9cc44033870c3a85fc6d6f856ca0403",
+        "scripts/run_media_notification_playback_continuity_proof.sh": "d37ecbdcfa76dcd25a5fd4923136827162b84073340bb90416b9db6d03d3ed49"
+      },
+      "audit": "Exact original selected dispatch, with an explicit -d/--device target; no fallback selector.",
+      "owns": [
+        "integration_test/integration_test.dart",
+        "integration_test/media_notification_playback_continuity_test.dart",
+        "scripts/run_media_notification_playback_continuity_proof.sh"
+      ]
+    },
+    "integration_test media_stable_id_smoke_test.dart": {
+      "roles": [
+        "android-physical"
+      ],
+      "commands": [
+        [
+          "flutter",
+          "test",
+          "--no-pub",
+          "-d",
+          "{device:android-physical}",
+          "--reporter",
+          "expanded",
+          "--dart-define=MKNOON_RELAY_ADDRESSES={config:relay_addresses}",
+          "integration_test/media_stable_id_smoke_test.dart"
+        ]
+      ],
+      "environment": {},
+      "config": [
+        "relay_addresses"
+      ],
+      "sources": {
+        "integration_test/media_stable_id_smoke_test.dart": "d22935f4d909a2f13699048b8caa6cea0d9f2e7cc1082786a5ac4e37cc1b8103"
+      },
+      "audit": "Exact original selected dispatch, with an explicit -d/--device target; no fallback selector.",
+      "owns": [
+        "integration_test/integration_test.dart",
+        "integration_test/media_stable_id_smoke_test.dart"
+      ]
+    },
+    "integration_test migration_database_sqlcipher_capability_test.dart": {
+      "roles": [
+        "android-physical"
+      ],
+      "commands": [
+        [
+          "flutter",
+          "test",
+          "--no-pub",
+          "-d",
+          "{device:android-physical}",
+          "--reporter",
+          "expanded",
+          "--dart-define=MKNOON_RELAY_ADDRESSES={config:relay_addresses}",
+          "integration_test/migration_database_sqlcipher_capability_test.dart"
+        ]
+      ],
+      "environment": {},
+      "config": [
+        "relay_addresses"
+      ],
+      "sources": {
+        "integration_test/migration_database_sqlcipher_capability_test.dart": "9c7b7982c72c7712ad61c1124d7d0078e2366a4b0e8a12683aad9cb2f8a0a0a8"
+      },
+      "audit": "Exact original selected dispatch, with an explicit -d/--device target; no fallback selector.",
+      "owns": [
+        "integration_test/integration_test.dart",
+        "integration_test/migration_database_sqlcipher_capability_test.dart"
+      ]
+    },
+    "integration_test notification_open_ui_smoke_test.dart": {
+      "roles": [
+        "android-physical"
+      ],
+      "commands": [
+        [
+          "flutter",
+          "test",
+          "--no-pub",
+          "-d",
+          "{device:android-physical}",
+          "--reporter",
+          "expanded",
+          "--dart-define=MKNOON_RELAY_ADDRESSES={config:relay_addresses}",
+          "integration_test/notification_open_ui_smoke_test.dart"
+        ]
+      ],
+      "environment": {},
+      "config": [
+        "relay_addresses"
+      ],
+      "sources": {
+        "integration_test/notification_open_ui_smoke_test.dart": "68de57e4f8f7c253d0f1f804953a0dc5fe58b4684ab0c0803804fb6e4f1cae4d"
+      },
+      "audit": "Exact original selected dispatch, with an explicit -d/--device target; no fallback selector.",
+      "owns": [
+        "integration_test/integration_test.dart",
+        "integration_test/notification_open_ui_smoke_test.dart"
+      ]
+    },
+    "integration_test outgoing_transport_settlement_sqlcipher_proof_test.dart": {
+      "roles": [
+        "android-physical"
+      ],
+      "commands": [
+        [
+          "flutter",
+          "test",
+          "--no-pub",
+          "-d",
+          "{device:android-physical}",
+          "--reporter",
+          "expanded",
+          "--dart-define=MKNOON_RELAY_ADDRESSES={config:relay_addresses}",
+          "integration_test/outgoing_transport_settlement_sqlcipher_proof_test.dart"
+        ]
+      ],
+      "environment": {},
+      "config": [
+        "relay_addresses"
+      ],
+      "sources": {
+        "integration_test/outgoing_transport_settlement_sqlcipher_proof_test.dart": "efce8cdf5d51541259d3aaf213d3ad96652f5822229b4c1e37c47067f796d0c3"
+      },
+      "audit": "Exact original selected dispatch, with an explicit -d/--device target; no fallback selector.",
+      "owns": [
+        "integration_test/integration_test.dart",
+        "integration_test/outgoing_transport_settlement_sqlcipher_proof_test.dart"
+      ]
+    },
+    "integration_test posts_phase1_fake_test.dart": {
+      "roles": [
+        "android-physical"
+      ],
+      "commands": [
+        [
+          "flutter",
+          "test",
+          "--no-pub",
+          "-d",
+          "{device:android-physical}",
+          "--reporter",
+          "expanded",
+          "--dart-define=MKNOON_RELAY_ADDRESSES={config:relay_addresses}",
+          "integration_test/posts_phase1_fake_test.dart"
+        ]
+      ],
+      "environment": {},
+      "config": [
+        "relay_addresses"
+      ],
+      "sources": {
+        "integration_test/posts_phase1_fake_test.dart": "d175d43c488efe13b18879b00e698a4eea32815e1cfcd9a082b29d896669a21b"
+      },
+      "audit": "Exact original selected dispatch, with an explicit -d/--device target; no fallback selector.",
+      "owns": [
+        "integration_test/posts_phase1_fake_test.dart"
+      ]
+    },
+    "integration_test posts_phase2_fake_test.dart": {
+      "roles": [
+        "android-physical"
+      ],
+      "commands": [
+        [
+          "flutter",
+          "test",
+          "--no-pub",
+          "-d",
+          "{device:android-physical}",
+          "--reporter",
+          "expanded",
+          "--dart-define=MKNOON_RELAY_ADDRESSES={config:relay_addresses}",
+          "integration_test/posts_phase2_fake_test.dart"
+        ]
+      ],
+      "environment": {},
+      "config": [
+        "relay_addresses"
+      ],
+      "sources": {
+        "integration_test/posts_phase2_fake_test.dart": "ec3c5834e225be232ad8c00787306a86201ac3a95807fff7c97e6e8fa9dc3195"
+      },
+      "audit": "Exact original selected dispatch, with an explicit -d/--device target; no fallback selector.",
+      "owns": [
+        "integration_test/posts_phase2_fake_test.dart"
+      ]
+    },
+    "integration_test posts_phase3_fake_test.dart": {
+      "roles": [
+        "android-physical"
+      ],
+      "commands": [
+        [
+          "flutter",
+          "test",
+          "--no-pub",
+          "-d",
+          "{device:android-physical}",
+          "--reporter",
+          "expanded",
+          "--dart-define=MKNOON_RELAY_ADDRESSES={config:relay_addresses}",
+          "integration_test/posts_phase3_fake_test.dart"
+        ]
+      ],
+      "environment": {},
+      "config": [
+        "relay_addresses"
+      ],
+      "sources": {
+        "integration_test/posts_phase3_fake_test.dart": "1e7cb177e38b7a966b9e94635a29c762426db0e8abed23a228010ba1ea0db24b"
+      },
+      "audit": "Exact original selected dispatch, with an explicit -d/--device target; no fallback selector.",
+      "owns": [
+        "integration_test/posts_phase3_fake_test.dart"
+      ]
+    },
+    "integration_test posts_phase4_fake_test.dart": {
+      "roles": [
+        "android-physical"
+      ],
+      "commands": [
+        [
+          "flutter",
+          "test",
+          "--no-pub",
+          "-d",
+          "{device:android-physical}",
+          "--reporter",
+          "expanded",
+          "--dart-define=MKNOON_RELAY_ADDRESSES={config:relay_addresses}",
+          "integration_test/posts_phase4_fake_test.dart"
+        ]
+      ],
+      "environment": {},
+      "config": [
+        "relay_addresses"
+      ],
+      "sources": {
+        "integration_test/posts_phase4_fake_test.dart": "3b5540760b9903ffed0f4b2cab7731ffca3779913f9a8d71c29163bed32045e2"
+      },
+      "audit": "Exact original selected dispatch, with an explicit -d/--device target; no fallback selector.",
+      "owns": [
+        "integration_test/posts_phase4_fake_test.dart"
+      ]
+    },
+    "integration_test posts_phase5_fake_test.dart": {
+      "roles": [
+        "android-physical"
+      ],
+      "commands": [
+        [
+          "flutter",
+          "test",
+          "--no-pub",
+          "-d",
+          "{device:android-physical}",
+          "--reporter",
+          "expanded",
+          "--dart-define=MKNOON_RELAY_ADDRESSES={config:relay_addresses}",
+          "integration_test/posts_phase5_fake_test.dart"
+        ]
+      ],
+      "environment": {},
+      "config": [
+        "relay_addresses"
+      ],
+      "sources": {
+        "integration_test/posts_phase5_fake_test.dart": "cdec176c286c2c7fb2227afe340f27f4deafed0e41368516d1670c9aefa4d40a"
+      },
+      "audit": "Exact original selected dispatch, with an explicit -d/--device target; no fallback selector.",
+      "owns": [
+        "integration_test/posts_phase5_fake_test.dart"
+      ]
+    },
+    "integration_test protected_photo_thumbnail_secure_window_proof_test.dart": {
+      "roles": [
+        "android-physical"
+      ],
+      "commands": [
+        [
+          "flutter",
+          "test",
+          "--no-pub",
+          "-d",
+          "{device:android-physical}",
+          "--reporter",
+          "expanded",
+          "--dart-define=MKNOON_RELAY_ADDRESSES={config:relay_addresses}",
+          "integration_test/protected_photo_thumbnail_secure_window_proof_test.dart"
+        ]
+      ],
+      "environment": {},
+      "config": [
+        "relay_addresses"
+      ],
+      "sources": {
+        "integration_test/protected_photo_thumbnail_secure_window_proof_test.dart": "94bf802bf2c2c92ae7608472104a55427b4a46ba908d0ed31acf7121d3b27b81"
+      },
+      "audit": "Exact original selected dispatch, with an explicit -d/--device target; no fallback selector.",
+      "owns": [
+        "integration_test/integration_test.dart",
+        "integration_test/protected_photo_thumbnail_secure_window_proof_test.dart"
+      ]
+    },
+    "integration_test received_media_native_egress_proof_test.dart": {
+      "roles": [
+        "android-physical"
+      ],
+      "commands": [
+        [
+          "flutter",
+          "test",
+          "--no-pub",
+          "-d",
+          "{device:android-physical}",
+          "--reporter",
+          "expanded",
+          "--dart-define=MKNOON_RELAY_ADDRESSES={config:relay_addresses}",
+          "integration_test/received_media_native_egress_proof_test.dart"
+        ]
+      ],
+      "environment": {},
+      "config": [
+        "relay_addresses"
+      ],
+      "sources": {
+        "integration_test/received_media_native_egress_proof_test.dart": "61079c67376bd8e1630de0aee6abbe3842e8bf25991ba046690b7add2e09f977"
+      },
+      "audit": "Exact original selected dispatch, with an explicit -d/--device target; no fallback selector.",
+      "owns": [
+        "integration_test/integration_test.dart",
+        "integration_test/received_media_native_egress_proof_test.dart"
+      ]
+    },
+    "integration_test received_video_picture_in_picture_proof_test.dart": {
+      "roles": [
+        "android-physical"
+      ],
+      "commands": [
+        [
+          "bash",
+          "scripts/run_received_video_picture_in_picture_proof.sh",
+          "--platform",
+          "android",
+          "--scenario",
+          "return",
+          "--device",
+          "{device:android-physical}",
+          "--output",
+          "{output}/pip-return"
+        ],
+        [
+          "bash",
+          "scripts/run_received_video_picture_in_picture_proof.sh",
+          "--platform",
+          "android",
+          "--scenario",
+          "close",
+          "--device",
+          "{device:android-physical}",
+          "--output",
+          "{output}/pip-close"
+        ],
+        [
+          "bash",
+          "scripts/run_received_video_picture_in_picture_proof.sh",
+          "--platform",
+          "android",
+          "--scenario",
+          "process-recreation",
+          "--device",
+          "{device:android-physical}",
+          "--output",
+          "{output}/pip-process-recreation"
+        ],
+        [
+          "bash",
+          "scripts/run_received_video_picture_in_picture_proof.sh",
+          "--platform",
+          "android",
+          "--scenario",
+          "completion",
+          "--device",
+          "{device:android-physical}",
+          "--output",
+          "{output}/pip-completion"
+        ],
+        [
+          "bash",
+          "scripts/run_received_video_picture_in_picture_proof.sh",
+          "--platform",
+          "android",
+          "--scenario",
+          "engine-detach",
+          "--device",
+          "{device:android-physical}",
+          "--output",
+          "{output}/pip-engine-detach"
+        ],
+        [
+          "bash",
+          "scripts/run_received_video_picture_in_picture_proof.sh",
+          "--platform",
+          "android",
+          "--scenario",
+          "interruption",
+          "--device",
+          "{device:android-physical}",
+          "--output",
+          "{output}/pip-interruption"
+        ]
+      ],
+      "environment": {},
+      "config": [
+        "relay_addresses"
+      ],
+      "sources": {
+        "integration_test/received_video_picture_in_picture_proof_test.dart": "36e4b3413687a255db087134bfc5ad74da91cf5b6abcd970086086b1d6baf536",
+        "scripts/run_received_video_picture_in_picture_proof.sh": "2d47285bc6654ae78a34de23a1a5bc93c1789e38b4252ab0adc2751a9318cab9"
+      },
+      "audit": "Exact original selected dispatch, with an explicit -d/--device target; no fallback selector.",
+      "owns": [
+        "integration_test/integration_test.dart",
+        "integration_test/received_video_picture_in_picture_proof_test.dart",
+        "scripts/run_received_video_picture_in_picture_proof.sh"
+      ]
+    },
+    "integration_test sender_media_unavailable_fallback_proof_test.dart": {
+      "roles": [
+        "android-physical"
+      ],
+      "commands": [
+        [
+          "flutter",
+          "test",
+          "--no-pub",
+          "-d",
+          "{device:android-physical}",
+          "--reporter",
+          "expanded",
+          "--dart-define=MKNOON_RELAY_ADDRESSES={config:relay_addresses}",
+          "integration_test/sender_media_unavailable_fallback_proof_test.dart"
+        ]
+      ],
+      "environment": {},
+      "config": [
+        "relay_addresses"
+      ],
+      "sources": {
+        "integration_test/sender_media_unavailable_fallback_proof_test.dart": "9f6f1c8324d2edb968ff38fdefbe3a1b1eedc67f6f855feecea14706b985d681"
+      },
+      "audit": "Exact original selected dispatch, with an explicit -d/--device target; no fallback selector.",
+      "owns": [
+        "integration_test/integration_test.dart",
+        "integration_test/sender_media_unavailable_fallback_proof_test.dart"
+      ]
+    },
+    "integration_test settings_background_choice_smoke_test.dart": {
+      "roles": [
+        "android-physical"
+      ],
+      "commands": [
+        [
+          "flutter",
+          "test",
+          "--no-pub",
+          "-d",
+          "{device:android-physical}",
+          "--reporter",
+          "expanded",
+          "--dart-define=MKNOON_RELAY_ADDRESSES={config:relay_addresses}",
+          "integration_test/settings_background_choice_smoke_test.dart"
+        ]
+      ],
+      "environment": {},
+      "config": [
+        "relay_addresses"
+      ],
+      "sources": {
+        "integration_test/settings_background_choice_smoke_test.dart": "d5b977cab1629b81f87e677f9c76f4a6d65d0c9983f4e88fcabadbd412845cd3"
+      },
+      "audit": "Exact original selected dispatch, with an explicit -d/--device target; no fallback selector.",
+      "owns": [
+        "integration_test/integration_test.dart",
+        "integration_test/settings_background_choice_smoke_test.dart"
+      ]
+    },
+    "integration_test smoke_test.dart": {
+      "roles": [
+        "android-physical"
+      ],
+      "commands": [
+        [
+          "flutter",
+          "test",
+          "--no-pub",
+          "-d",
+          "{device:android-physical}",
+          "--reporter",
+          "expanded",
+          "--dart-define=MKNOON_RELAY_ADDRESSES={config:relay_addresses}",
+          "integration_test/smoke_test.dart"
+        ]
+      ],
+      "environment": {},
+      "config": [
+        "relay_addresses"
+      ],
+      "sources": {
+        "integration_test/smoke_test.dart": "28bc43a14e83707470c42fbaab49011054cf01016bf54be9bdd23a6fc50c0e0e"
+      },
+      "audit": "Exact original selected dispatch, with an explicit -d/--device target; no fallback selector.",
+      "owns": [
+        "integration_test/integration_test.dart",
+        "integration_test/smoke_test.dart"
+      ]
+    },
+    "integration_test soak_e2e_test.dart": {
+      "roles": [
+        "android-physical"
+      ],
+      "commands": [
+        [
+          "flutter",
+          "test",
+          "--no-pub",
+          "-d",
+          "{device:android-physical}",
+          "--reporter",
+          "expanded",
+          "--dart-define=MKNOON_RELAY_ADDRESSES={config:relay_addresses}",
+          "integration_test/soak_e2e_test.dart"
+        ]
+      ],
+      "environment": {},
+      "config": [
+        "relay_addresses"
+      ],
+      "sources": {
+        "integration_test/soak_e2e_test.dart": "6dac06a3040d9dec5184d03356983b97751e75d8af1e1a95969ee66eb03153a2"
+      },
+      "audit": "Exact original selected dispatch, with an explicit -d/--device target; no fallback selector.",
+      "owns": [
+        "integration_test/integration_test.dart",
+        "integration_test/soak_e2e_test.dart"
+      ]
+    },
+    "integration_test transport_e2e_test.dart": {
+      "roles": [
+        "android-physical"
+      ],
+      "commands": [
+        [
+          "flutter",
+          "test",
+          "--no-pub",
+          "-d",
+          "{device:android-physical}",
+          "--reporter",
+          "expanded",
+          "--dart-define=MKNOON_RELAY_ADDRESSES={config:relay_addresses}",
+          "integration_test/transport_e2e_test.dart"
+        ]
+      ],
+      "environment": {},
+      "config": [
+        "relay_addresses"
+      ],
+      "sources": {
+        "integration_test/transport_e2e_test.dart": "fc79c3f565402e38834265123491f803b3bd89861d89289ed6b9d58cbefb22e1"
+      },
+      "audit": "Exact original selected dispatch, with an explicit -d/--device target; no fallback selector.",
+      "owns": [
+        "integration_test/integration_test.dart",
+        "integration_test/transport_e2e_test.dart"
+      ]
+    },
+    "integration_test warm_peer_lan_aware_smoke_test.dart": {
+      "roles": [
+        "android-physical"
+      ],
+      "commands": [
+        [
+          "flutter",
+          "test",
+          "--no-pub",
+          "-d",
+          "{device:android-physical}",
+          "--reporter",
+          "expanded",
+          "--dart-define=MKNOON_RELAY_ADDRESSES={config:relay_addresses}",
+          "integration_test/warm_peer_lan_aware_smoke_test.dart"
+        ]
+      ],
+      "environment": {},
+      "config": [
+        "relay_addresses"
+      ],
+      "sources": {
+        "integration_test/warm_peer_lan_aware_smoke_test.dart": "cbeef0757e0e2a90b7e09b9df028f18774a5b68c05fbd8da6d3c1c3859d26f0d"
+      },
+      "audit": "Exact original selected dispatch, with an explicit -d/--device target; no fallback selector.",
+      "owns": [
+        "integration_test/warm_peer_lan_aware_smoke_test.dart"
+      ]
+    },
+    "integration_test wifi_relay_fallback_smoke_test.dart": {
+      "roles": [
+        "android-physical"
+      ],
+      "commands": [
+        [
+          "flutter",
+          "test",
+          "--no-pub",
+          "-d",
+          "{device:android-physical}",
+          "--reporter",
+          "expanded",
+          "--dart-define=MKNOON_RELAY_ADDRESSES={config:relay_addresses}",
+          "integration_test/wifi_relay_fallback_smoke_test.dart"
+        ]
+      ],
+      "environment": {},
+      "config": [
+        "relay_addresses"
+      ],
+      "sources": {
+        "integration_test/wifi_relay_fallback_smoke_test.dart": "57c9635ed9fc6aabb1d31612b12baf43f7c93a407efa0f319b6d6d5517611b80"
+      },
+      "audit": "Exact original selected dispatch, with an explicit -d/--device target; no fallback selector.",
+      "owns": [
+        "integration_test/integration_test.dart",
+        "integration_test/wifi_relay_fallback_smoke_test.dart"
+      ]
+    },
+    "integration_test wifi_transport_test.dart": {
+      "roles": [
+        "android-physical"
+      ],
+      "commands": [
+        [
+          "flutter",
+          "test",
+          "--no-pub",
+          "-d",
+          "{device:android-physical}",
+          "--reporter",
+          "expanded",
+          "--dart-define=MKNOON_RELAY_ADDRESSES={config:relay_addresses}",
+          "integration_test/wifi_transport_test.dart"
+        ]
+      ],
+      "environment": {},
+      "config": [
+        "relay_addresses"
+      ],
+      "sources": {
+        "integration_test/wifi_transport_test.dart": "844da3a634035e3d56d2ff219a522fbc9c7fcc9094c6e91c0a791165f7d56d62"
+      },
+      "audit": "Exact original selected dispatch, with an explicit -d/--device target; no fallback selector.",
+      "owns": [
+        "integration_test/integration_test.dart",
+        "integration_test/wifi_transport_test.dart"
+      ]
+    }
+  },
+  "reliability": {
+    "integration_test/account_migration_group_media_durability_simulator_test.dart": {
+      "roles": [
+        "android-physical"
+      ],
+      "commands": [
+        [
+          "flutter",
+          "test",
+          "--no-pub",
+          "-d",
+          "{device:android-physical}",
+          "--reporter",
+          "expanded",
+          "--dart-define=MKNOON_RELAY_ADDRESSES={config:relay_addresses}",
+          "integration_test/account_migration_group_media_durability_simulator_test.dart"
+        ]
+      ],
+      "environment": {},
+      "config": [
+        "relay_addresses"
+      ],
+      "sources": {
+        "integration_test/account_migration_group_media_durability_simulator_test.dart": "6c69f3ea9cf6a9749960f6910832ffcd7feb8d555233f0abd3bf15c8fcabb6c6"
+      },
+      "audit": "Audited exact leaf parser and all target-control calls; explicit role injection precedes any preparation. Shared-directory peers use iOS simulators; Android-capable pair transports use USB plus emulator.",
+      "owns": [
+        "integration_test/account_migration_group_media_durability_simulator_test.dart",
+        "integration_test/integration_test.dart"
+      ]
+    },
+    "integration_test/account_migration_local_transfer_timeout_simulator_test.dart": {
+      "roles": [
+        "android-physical"
+      ],
+      "commands": [
+        [
+          "flutter",
+          "test",
+          "--no-pub",
+          "-d",
+          "{device:android-physical}",
+          "--reporter",
+          "expanded",
+          "--dart-define=MKNOON_RELAY_ADDRESSES={config:relay_addresses}",
+          "integration_test/account_migration_local_transfer_timeout_simulator_test.dart"
+        ]
+      ],
+      "environment": {},
+      "config": [
+        "relay_addresses"
+      ],
+      "sources": {
+        "integration_test/account_migration_local_transfer_timeout_simulator_test.dart": "31781c270e5d074538e16b010c3d3576e19124cd116904d835b195113d0104a9"
+      },
+      "audit": "Audited exact leaf parser and all target-control calls; explicit role injection precedes any preparation. Shared-directory peers use iOS simulators; Android-capable pair transports use USB plus emulator.",
+      "owns": [
+        "integration_test/account_migration_local_transfer_timeout_simulator_test.dart",
+        "integration_test/integration_test.dart"
+      ]
+    },
+    "integration_test/account_migration_scale_benchmark_test.dart": {
+      "roles": [
+        "android-physical"
+      ],
+      "commands": [
+        [
+          "flutter",
+          "test",
+          "--no-pub",
+          "-d",
+          "{device:android-physical}",
+          "--reporter",
+          "expanded",
+          "--dart-define=MKNOON_RELAY_ADDRESSES={config:relay_addresses}",
+          "integration_test/account_migration_scale_benchmark_test.dart"
+        ]
+      ],
+      "environment": {},
+      "config": [
+        "relay_addresses"
+      ],
+      "sources": {
+        "integration_test/account_migration_scale_benchmark_test.dart": "2d0f90e7d8904c9289e664dddd3d7172ca20277b884216a3c4924691c945ab47"
+      },
+      "audit": "Audited exact leaf parser and all target-control calls; explicit role injection precedes any preparation. Shared-directory peers use iOS simulators; Android-capable pair transports use USB plus emulator.",
+      "owns": [
+        "integration_test/account_migration_scale_benchmark_test.dart",
+        "integration_test/integration_test.dart"
+      ]
+    },
+    "integration_test/app_group_path_simulator_test.dart": {
+      "roles": [
+        "ios-simulator-a"
+      ],
+      "commands": [
+        [
+          "flutter",
+          "test",
+          "--no-pub",
+          "-d",
+          "{device:ios-simulator-a}",
+          "--reporter",
+          "expanded",
+          "--dart-define=MKNOON_RELAY_ADDRESSES={config:relay_addresses}",
+          "integration_test/app_group_path_simulator_test.dart"
+        ]
+      ],
+      "environment": {},
+      "config": [
+        "relay_addresses"
+      ],
+      "sources": {
+        "integration_test/app_group_path_simulator_test.dart": "145d1d3cfbf599c9d47146569bea270b57c42ebcc0f4247ca1ef1f2b0b02e98d"
+      },
+      "audit": "Audited exact leaf parser and all target-control calls; explicit role injection precedes any preparation. Shared-directory peers use iOS simulators; Android-capable pair transports use USB plus emulator.",
+      "owns": [
+        "integration_test/app_group_path_simulator_test.dart",
+        "integration_test/integration_test.dart"
+      ]
+    },
+    "integration_test/audio_peer_connection_proof_test.dart": {
+      "roles": [
+        "android-physical"
+      ],
+      "commands": [
+        [
+          "flutter",
+          "test",
+          "--no-pub",
+          "-d",
+          "{device:android-physical}",
+          "--reporter",
+          "expanded",
+          "--dart-define=MKNOON_RELAY_ADDRESSES={config:relay_addresses}",
+          "integration_test/audio_peer_connection_proof_test.dart"
+        ]
+      ],
+      "environment": {},
+      "config": [
+        "relay_addresses"
+      ],
+      "sources": {
+        "integration_test/audio_peer_connection_proof_test.dart": "94c980ea47f58e6053a9f2117366270b72a3bd5cdd12a88fc86a4f0a46c09180"
+      },
+      "audit": "Audited exact leaf parser and all target-control calls; explicit role injection precedes any preparation. Shared-directory peers use iOS simulators; Android-capable pair transports use USB plus emulator.",
+      "owns": [
+        "integration_test/audio_peer_connection_proof_test.dart",
+        "integration_test/integration_test.dart"
+      ]
+    },
+    "integration_test/background_reconnect_test.dart": {
+      "roles": [
+        "android-physical"
+      ],
+      "commands": [
+        [
+          "flutter",
+          "test",
+          "--no-pub",
+          "-d",
+          "{device:android-physical}",
+          "--reporter",
+          "expanded",
+          "--dart-define=MKNOON_RELAY_ADDRESSES={config:relay_addresses}",
+          "integration_test/background_reconnect_test.dart"
+        ]
+      ],
+      "environment": {},
+      "config": [
+        "relay_addresses"
+      ],
+      "sources": {
+        "integration_test/background_reconnect_test.dart": "8673a3b793a5ca4039809b3ec8ba3630d5083b3142b9b667775eead340d4ab53"
+      },
+      "audit": "Audited exact leaf parser and all target-control calls; explicit role injection precedes any preparation. Shared-directory peers use iOS simulators; Android-capable pair transports use USB plus emulator.",
+      "owns": [
+        "integration_test/background_reconnect_test.dart",
+        "integration_test/integration_test.dart"
+      ]
+    },
+    "integration_test/call_control_signaling_e2e_test.dart": {
+      "roles": [
+        "android-physical"
+      ],
+      "commands": [
+        [
+          "flutter",
+          "test",
+          "--no-pub",
+          "-d",
+          "{device:android-physical}",
+          "--reporter",
+          "expanded",
+          "--dart-define=MKNOON_RELAY_ADDRESSES={config:relay_addresses}",
+          "integration_test/call_control_signaling_e2e_test.dart"
+        ]
+      ],
+      "environment": {},
+      "config": [
+        "relay_addresses"
+      ],
+      "sources": {
+        "integration_test/call_control_signaling_e2e_test.dart": "92717ee61f11b78d9758918870512a19e2c97001486ba81ef8810f572f14c815"
+      },
+      "audit": "Audited exact leaf parser and all target-control calls; explicit role injection precedes any preparation. Shared-directory peers use iOS simulators; Android-capable pair transports use USB plus emulator.",
+      "owns": [
+        "integration_test/call_control_signaling_e2e_test.dart",
+        "integration_test/integration_test.dart"
+      ]
+    },
+    "integration_test/cold_start_message_render_simulator_test.dart": {
+      "roles": [
+        "android-physical"
+      ],
+      "commands": [
+        [
+          "flutter",
+          "test",
+          "--no-pub",
+          "-d",
+          "{device:android-physical}",
+          "--reporter",
+          "expanded",
+          "--dart-define=MKNOON_RELAY_ADDRESSES={config:relay_addresses}",
+          "integration_test/cold_start_message_render_simulator_test.dart"
+        ]
+      ],
+      "environment": {},
+      "config": [
+        "relay_addresses"
+      ],
+      "sources": {
+        "integration_test/cold_start_message_render_simulator_test.dart": "c61565954cf2f30270bb15bac5e9842aebeb0ec475bae1f33748e2dbbe4b4612"
+      },
+      "audit": "Audited exact leaf parser and all target-control calls; explicit role injection precedes any preparation. Shared-directory peers use iOS simulators; Android-capable pair transports use USB plus emulator.",
+      "owns": [
+        "integration_test/cold_start_message_render_simulator_test.dart",
+        "integration_test/integration_test.dart"
+      ]
+    },
+    "integration_test/cold_start_sendable_no_user_action_test.dart": {
+      "roles": [
+        "android-physical"
+      ],
+      "commands": [
+        [
+          "flutter",
+          "test",
+          "--no-pub",
+          "-d",
+          "{device:android-physical}",
+          "--reporter",
+          "expanded",
+          "--dart-define=MKNOON_RELAY_ADDRESSES={config:relay_addresses}",
+          "integration_test/cold_start_sendable_no_user_action_test.dart"
+        ]
+      ],
+      "environment": {},
+      "config": [
+        "relay_addresses"
+      ],
+      "sources": {
+        "integration_test/cold_start_sendable_no_user_action_test.dart": "5ef441b8a002f215fdffee29acf0aeb6bb2ccfab97452451064848e34805f29f"
+      },
+      "audit": "Audited exact leaf parser and all target-control calls; explicit role injection precedes any preparation. Shared-directory peers use iOS simulators; Android-capable pair transports use USB plus emulator.",
+      "owns": [
+        "integration_test/cold_start_sendable_no_user_action_test.dart",
+        "integration_test/integration_test.dart"
+      ]
+    },
+    "integration_test/conversation_bridge_test.dart": {
+      "roles": [
+        "android-physical"
+      ],
+      "commands": [
+        [
+          "flutter",
+          "test",
+          "--no-pub",
+          "-d",
+          "{device:android-physical}",
+          "--reporter",
+          "expanded",
+          "--dart-define=MKNOON_RELAY_ADDRESSES={config:relay_addresses}",
+          "integration_test/conversation_bridge_test.dart"
+        ]
+      ],
+      "environment": {},
+      "config": [
+        "relay_addresses"
+      ],
+      "sources": {
+        "integration_test/conversation_bridge_test.dart": "9291c864810e5950fd13e21f82b0a2aec56e8c6ee07ac021be4b4fcf370981d3"
+      },
+      "audit": "Audited exact leaf parser and all target-control calls; explicit role injection precedes any preparation. Shared-directory peers use iOS simulators; Android-capable pair transports use USB plus emulator.",
+      "owns": [
+        "integration_test/conversation_bridge_test.dart",
+        "integration_test/integration_test.dart"
+      ]
+    },
+    "integration_test/conversation_swipe_back_proof_test.dart": {
+      "roles": [
+        "android-physical"
+      ],
+      "commands": [
+        [
+          "flutter",
+          "test",
+          "--no-pub",
+          "-d",
+          "{device:android-physical}",
+          "--reporter",
+          "expanded",
+          "--dart-define=MKNOON_RELAY_ADDRESSES={config:relay_addresses}",
+          "integration_test/conversation_swipe_back_proof_test.dart"
+        ]
+      ],
+      "environment": {},
+      "config": [
+        "relay_addresses"
+      ],
+      "sources": {
+        "integration_test/conversation_swipe_back_proof_test.dart": "644dce9e530aa24afbdd7a9c606076055f7d20c79c3f009ff8df57a9923a5ada"
+      },
+      "audit": "Audited exact leaf parser and all target-control calls; explicit role injection precedes any preparation. Shared-directory peers use iOS simulators; Android-capable pair transports use USB plus emulator.",
+      "owns": [
+        "integration_test/conversation_swipe_back_proof_test.dart",
+        "integration_test/group_conversation_polish_proof_test.dart",
+        "integration_test/integration_test.dart"
+      ]
+    },
+    "integration_test/db_raw_key_migration_proof_test.dart": {
+      "roles": [
+        "android-physical"
+      ],
+      "commands": [
+        [
+          "flutter",
+          "test",
+          "--no-pub",
+          "-d",
+          "{device:android-physical}",
+          "--reporter",
+          "expanded",
+          "--dart-define=MKNOON_RELAY_ADDRESSES={config:relay_addresses}",
+          "integration_test/db_raw_key_migration_proof_test.dart"
+        ]
+      ],
+      "environment": {},
+      "config": [
+        "relay_addresses"
+      ],
+      "sources": {
+        "integration_test/db_raw_key_migration_proof_test.dart": "9dc3ad9d3813f27d8225cb7e2a7533f82d7ab2a7884e1c4aadd5f70cf4a67015"
+      },
+      "audit": "Audited exact leaf parser and all target-control calls; explicit role injection precedes any preparation. Shared-directory peers use iOS simulators; Android-capable pair transports use USB plus emulator.",
+      "owns": [
+        "integration_test/db_raw_key_migration_proof_test.dart",
+        "integration_test/integration_test.dart"
+      ]
+    },
+    "integration_test/direct_inbox_custody_outbox_sqlcipher_proof_test.dart": {
+      "roles": [
+        "android-physical"
+      ],
+      "commands": [
+        [
+          "flutter",
+          "test",
+          "--no-pub",
+          "-d",
+          "{device:android-physical}",
+          "--reporter",
+          "expanded",
+          "--dart-define=MKNOON_RELAY_ADDRESSES={config:relay_addresses}",
+          "integration_test/direct_inbox_custody_outbox_sqlcipher_proof_test.dart"
+        ]
+      ],
+      "environment": {},
+      "config": [
+        "relay_addresses"
+      ],
+      "sources": {
+        "integration_test/direct_inbox_custody_outbox_sqlcipher_proof_test.dart": "86ea8d616b2edb03dd008f9edfb9d01fd3cc4a82f43d2e247e54c1478ab61fd3"
+      },
+      "audit": "Audited exact leaf parser and all target-control calls; explicit role injection precedes any preparation. Shared-directory peers use iOS simulators; Android-capable pair transports use USB plus emulator.",
+      "owns": [
+        "integration_test/direct_inbox_custody_outbox_sqlcipher_proof_test.dart",
+        "integration_test/integration_test.dart"
+      ]
+    },
+    "integration_test/direct_notification_durability_sqlcipher_proof_test.dart": {
+      "roles": [
+        "android-physical"
+      ],
+      "commands": [
+        [
+          "flutter",
+          "test",
+          "--no-pub",
+          "-d",
+          "{device:android-physical}",
+          "--reporter",
+          "expanded",
+          "--dart-define=MKNOON_RELAY_ADDRESSES={config:relay_addresses}",
+          "integration_test/direct_notification_durability_sqlcipher_proof_test.dart"
+        ]
+      ],
+      "environment": {},
+      "config": [
+        "relay_addresses"
+      ],
+      "sources": {
+        "integration_test/direct_notification_durability_sqlcipher_proof_test.dart": "e2d02897da9f8b840b1f939461c85851ae6b271bf9a1541d486ef2b5a367cb8a"
+      },
+      "audit": "Audited exact leaf parser and all target-control calls; explicit role injection precedes any preparation. Shared-directory peers use iOS simulators; Android-capable pair transports use USB plus emulator.",
+      "owns": [
+        "integration_test/direct_notification_durability_sqlcipher_proof_test.dart",
+        "integration_test/integration_test.dart"
+      ]
+    },
+    "integration_test/direct_private_media_lifecycle_sqlcipher_proof_test.dart": {
+      "roles": [
+        "android-physical"
+      ],
+      "commands": [
+        [
+          "flutter",
+          "test",
+          "--no-pub",
+          "-d",
+          "{device:android-physical}",
+          "--reporter",
+          "expanded",
+          "--dart-define=MKNOON_RELAY_ADDRESSES={config:relay_addresses}",
+          "integration_test/direct_private_media_lifecycle_sqlcipher_proof_test.dart"
+        ]
+      ],
+      "environment": {},
+      "config": [
+        "relay_addresses"
+      ],
+      "sources": {
+        "integration_test/direct_private_media_lifecycle_sqlcipher_proof_test.dart": "fb275c766236b0070d38701cbb667ad0b29bcec78a688d654b2db8bc7eb6b9b6"
+      },
+      "audit": "Audited exact leaf parser and all target-control calls; explicit role injection precedes any preparation. Shared-directory peers use iOS simulators; Android-capable pair transports use USB plus emulator.",
+      "owns": [
+        "integration_test/direct_private_media_lifecycle_sqlcipher_proof_test.dart",
+        "integration_test/integration_test.dart"
+      ]
+    },
+    "integration_test/direct_private_media_platform_protection_proof_test.dart": {
+      "roles": [
+        "android-physical"
+      ],
+      "commands": [
+        [
+          "flutter",
+          "test",
+          "--no-pub",
+          "-d",
+          "{device:android-physical}",
+          "--reporter",
+          "expanded",
+          "--dart-define=MKNOON_RELAY_ADDRESSES={config:relay_addresses}",
+          "integration_test/direct_private_media_platform_protection_proof_test.dart"
+        ]
+      ],
+      "environment": {},
+      "config": [
+        "relay_addresses"
+      ],
+      "sources": {
+        "integration_test/direct_private_media_platform_protection_proof_test.dart": "543aa1b6e842f3bb411065ee9dbd73fe58a4dbdaa143daa1a04ca742c92c493d"
+      },
+      "audit": "Audited exact leaf parser and all target-control calls; explicit role injection precedes any preparation. Shared-directory peers use iOS simulators; Android-capable pair transports use USB plus emulator.",
+      "owns": [
+        "integration_test/direct_private_media_platform_protection_proof_test.dart",
+        "integration_test/integration_test.dart"
+      ]
+    },
+    "integration_test/direct_reaction_inbox_custody_outbox_sqlcipher_proof_test.dart": {
+      "roles": [
+        "android-physical"
+      ],
+      "commands": [
+        [
+          "flutter",
+          "test",
+          "--no-pub",
+          "-d",
+          "{device:android-physical}",
+          "--reporter",
+          "expanded",
+          "--dart-define=MKNOON_RELAY_ADDRESSES={config:relay_addresses}",
+          "integration_test/direct_reaction_inbox_custody_outbox_sqlcipher_proof_test.dart"
+        ]
+      ],
+      "environment": {},
+      "config": [
+        "relay_addresses"
+      ],
+      "sources": {
+        "integration_test/direct_reaction_inbox_custody_outbox_sqlcipher_proof_test.dart": "f44fa58bd9d1fc4a7f5ce2a1a86af38d4226e78a7aa7e72e6127bfe06c6a2e55"
+      },
+      "audit": "Audited exact leaf parser and all target-control calls; explicit role injection precedes any preparation. Shared-directory peers use iOS simulators; Android-capable pair transports use USB plus emulator.",
+      "owns": [
+        "integration_test/direct_reaction_inbox_custody_outbox_sqlcipher_proof_test.dart",
+        "integration_test/integration_test.dart"
+      ]
+    },
+    "integration_test/foreground_group_push_drain_test.dart": {
+      "roles": [
+        "android-physical"
+      ],
+      "commands": [
+        [
+          "flutter",
+          "test",
+          "--no-pub",
+          "-d",
+          "{device:android-physical}",
+          "--reporter",
+          "expanded",
+          "--dart-define=MKNOON_RELAY_ADDRESSES={config:relay_addresses}",
+          "integration_test/foreground_group_push_drain_test.dart"
+        ]
+      ],
+      "environment": {},
+      "config": [
+        "relay_addresses"
+      ],
+      "sources": {
+        "integration_test/foreground_group_push_drain_test.dart": "43f150eee695747c658cc284e7455a436e0f6de7d09f47a488930d28c4a11065"
+      },
+      "audit": "Audited exact leaf parser and all target-control calls; explicit role injection precedes any preparation. Shared-directory peers use iOS simulators; Android-capable pair transports use USB plus emulator.",
+      "owns": [
+        "integration_test/foreground_group_push_drain_test.dart",
+        "integration_test/integration_test.dart"
+      ]
+    },
+    "integration_test/group_exit_intents_sqlcipher_proof_test.dart": {
+      "roles": [
+        "android-physical"
+      ],
+      "commands": [
+        [
+          "flutter",
+          "test",
+          "--no-pub",
+          "-d",
+          "{device:android-physical}",
+          "--reporter",
+          "expanded",
+          "--dart-define=MKNOON_RELAY_ADDRESSES={config:relay_addresses}",
+          "integration_test/group_exit_intents_sqlcipher_proof_test.dart"
+        ]
+      ],
+      "environment": {},
+      "config": [
+        "relay_addresses"
+      ],
+      "sources": {
+        "integration_test/group_exit_intents_sqlcipher_proof_test.dart": "b475b232e2db3920c12392148c029b3594ed07dc3a695224f48c1ef27b16bf70"
+      },
+      "audit": "Audited exact leaf parser and all target-control calls; explicit role injection precedes any preparation. Shared-directory peers use iOS simulators; Android-capable pair transports use USB plus emulator.",
+      "owns": [
+        "integration_test/group_exit_intents_sqlcipher_proof_test.dart",
+        "integration_test/integration_test.dart"
+      ]
+    },
+    "integration_test/group_exit_release_diagnostics_sqlcipher_proof_test.dart": {
+      "roles": [
+        "android-physical"
+      ],
+      "commands": [
+        [
+          "flutter",
+          "test",
+          "--no-pub",
+          "-d",
+          "{device:android-physical}",
+          "--reporter",
+          "expanded",
+          "--dart-define=MKNOON_RELAY_ADDRESSES={config:relay_addresses}",
+          "integration_test/group_exit_release_diagnostics_sqlcipher_proof_test.dart"
+        ]
+      ],
+      "environment": {},
+      "config": [
+        "relay_addresses"
+      ],
+      "sources": {
+        "integration_test/group_exit_release_diagnostics_sqlcipher_proof_test.dart": "5e45df0bcab53be6518e70798705ae965f955d5947d7927588dd3af514040c38"
+      },
+      "audit": "Audited exact leaf parser and all target-control calls; explicit role injection precedes any preparation. Shared-directory peers use iOS simulators; Android-capable pair transports use USB plus emulator.",
+      "owns": [
+        "integration_test/group_exit_release_diagnostics_sqlcipher_proof_test.dart",
+        "integration_test/integration_test.dart"
+      ]
+    },
+    "integration_test/group_forwarded_marker_db_proof_test.dart": {
+      "roles": [
+        "android-physical"
+      ],
+      "commands": [
+        [
+          "flutter",
+          "test",
+          "--no-pub",
+          "-d",
+          "{device:android-physical}",
+          "--reporter",
+          "expanded",
+          "--dart-define=MKNOON_RELAY_ADDRESSES={config:relay_addresses}",
+          "integration_test/group_forwarded_marker_db_proof_test.dart"
+        ]
+      ],
+      "environment": {},
+      "config": [
+        "relay_addresses"
+      ],
+      "sources": {
+        "integration_test/group_forwarded_marker_db_proof_test.dart": "b26a2d6efaae2382585677ebe1643c41a646ef9cdf46ab949d2148adbfce9cb9"
+      },
+      "audit": "Audited exact leaf parser and all target-control calls; explicit role injection precedes any preparation. Shared-directory peers use iOS simulators; Android-capable pair transports use USB plus emulator.",
+      "owns": [
+        "integration_test/group_forwarded_marker_db_proof_test.dart",
+        "integration_test/integration_test.dart"
+      ]
+    },
+    "integration_test/group_invite_reliability_proof_test.dart": {
+      "roles": [
+        "android-physical"
+      ],
+      "commands": [
+        [
+          "flutter",
+          "test",
+          "--no-pub",
+          "-d",
+          "{device:android-physical}",
+          "--reporter",
+          "expanded",
+          "--dart-define=MKNOON_RELAY_ADDRESSES={config:relay_addresses}",
+          "integration_test/group_invite_reliability_proof_test.dart"
+        ]
+      ],
+      "environment": {},
+      "config": [
+        "relay_addresses"
+      ],
+      "sources": {
+        "integration_test/group_invite_reliability_proof_test.dart": "53148c4403f52b16345349d8b19ccf169d7ac6932ea9e39e3d7e83bb2688705c"
+      },
+      "audit": "Audited exact leaf parser and all target-control calls; explicit role injection precedes any preparation. Shared-directory peers use iOS simulators; Android-capable pair transports use USB plus emulator.",
+      "owns": [
+        "integration_test/group_invite_reliability_proof_test.dart",
+        "integration_test/integration_test.dart"
+      ]
+    },
+    "integration_test/group_lifecycle_simulator_harness.dart:GROUP_SIM_SCENARIO=ADMIN_METADATA": {
+      "roles": [
+        "android-physical"
+      ],
+      "commands": [
+        [
+          "flutter",
+          "test",
+          "--no-pub",
+          "-d",
+          "{device:android-physical}",
+          "--reporter",
+          "expanded",
+          "--dart-define=MKNOON_RELAY_ADDRESSES={config:relay_addresses}",
+          "--dart-define=GROUP_SIM_SCENARIO=GROUP_SIM_SCENARIO=ADMIN_METADATA",
+          "integration_test/group_lifecycle_simulator_harness.dart"
+        ]
+      ],
+      "environment": {},
+      "config": [
+        "relay_addresses"
+      ],
+      "sources": {
+        "integration_test/group_lifecycle_simulator_harness.dart": "04e3b3deda1b39a1871d18b800af2175413ff655ad022c410a7b5cd170e42617"
+      },
+      "audit": "Audited exact leaf parser and all target-control calls; explicit role injection precedes any preparation. Shared-directory peers use iOS simulators; Android-capable pair transports use USB plus emulator.",
+      "owns": [
+        "integration_test/group_lifecycle_simulator_harness.dart",
+        "integration_test/integration_test.dart"
+      ]
+    },
+    "integration_test/group_lifecycle_simulator_harness.dart:GROUP_SIM_SCENARIO=DELETE_PRESERVES_FRIENDS": {
+      "roles": [
+        "android-physical"
+      ],
+      "commands": [
+        [
+          "flutter",
+          "test",
+          "--no-pub",
+          "-d",
+          "{device:android-physical}",
+          "--reporter",
+          "expanded",
+          "--dart-define=MKNOON_RELAY_ADDRESSES={config:relay_addresses}",
+          "--dart-define=GROUP_SIM_SCENARIO=GROUP_SIM_SCENARIO=DELETE_PRESERVES_FRIENDS",
+          "integration_test/group_lifecycle_simulator_harness.dart"
+        ]
+      ],
+      "environment": {},
+      "config": [
+        "relay_addresses"
+      ],
+      "sources": {
+        "integration_test/group_lifecycle_simulator_harness.dart": "04e3b3deda1b39a1871d18b800af2175413ff655ad022c410a7b5cd170e42617"
+      },
+      "audit": "Audited exact leaf parser and all target-control calls; explicit role injection precedes any preparation. Shared-directory peers use iOS simulators; Android-capable pair transports use USB plus emulator.",
+      "owns": [
+        "integration_test/group_lifecycle_simulator_harness.dart",
+        "integration_test/integration_test.dart"
+      ]
+    },
+    "integration_test/group_lifecycle_simulator_harness.dart:GROUP_SIM_SCENARIO=INVITE_ACCEPT_SPINNER": {
+      "roles": [
+        "android-physical"
+      ],
+      "commands": [
+        [
+          "flutter",
+          "test",
+          "--no-pub",
+          "-d",
+          "{device:android-physical}",
+          "--reporter",
+          "expanded",
+          "--dart-define=MKNOON_RELAY_ADDRESSES={config:relay_addresses}",
+          "--dart-define=GROUP_SIM_SCENARIO=GROUP_SIM_SCENARIO=INVITE_ACCEPT_SPINNER",
+          "integration_test/group_lifecycle_simulator_harness.dart"
+        ]
+      ],
+      "environment": {},
+      "config": [
+        "relay_addresses"
+      ],
+      "sources": {
+        "integration_test/group_lifecycle_simulator_harness.dart": "04e3b3deda1b39a1871d18b800af2175413ff655ad022c410a7b5cd170e42617"
+      },
+      "audit": "Audited exact leaf parser and all target-control calls; explicit role injection precedes any preparation. Shared-directory peers use iOS simulators; Android-capable pair transports use USB plus emulator.",
+      "owns": [
+        "integration_test/group_lifecycle_simulator_harness.dart",
+        "integration_test/integration_test.dart"
+      ]
+    },
+    "integration_test/group_lifecycle_simulator_harness.dart:GROUP_SIM_SCENARIO=NEW_MEMBER_MEDIA": {
+      "roles": [
+        "android-physical"
+      ],
+      "commands": [
+        [
+          "flutter",
+          "test",
+          "--no-pub",
+          "-d",
+          "{device:android-physical}",
+          "--reporter",
+          "expanded",
+          "--dart-define=MKNOON_RELAY_ADDRESSES={config:relay_addresses}",
+          "--dart-define=GROUP_SIM_SCENARIO=GROUP_SIM_SCENARIO=NEW_MEMBER_MEDIA",
+          "integration_test/group_lifecycle_simulator_harness.dart"
+        ]
+      ],
+      "environment": {},
+      "config": [
+        "relay_addresses"
+      ],
+      "sources": {
+        "integration_test/group_lifecycle_simulator_harness.dart": "04e3b3deda1b39a1871d18b800af2175413ff655ad022c410a7b5cd170e42617"
+      },
+      "audit": "Audited exact leaf parser and all target-control calls; explicit role injection precedes any preparation. Shared-directory peers use iOS simulators; Android-capable pair transports use USB plus emulator.",
+      "owns": [
+        "integration_test/group_lifecycle_simulator_harness.dart",
+        "integration_test/integration_test.dart"
+      ]
+    },
+    "integration_test/group_message_retry_backoff_db_proof_test.dart": {
+      "roles": [
+        "android-physical"
+      ],
+      "commands": [
+        [
+          "flutter",
+          "test",
+          "--no-pub",
+          "-d",
+          "{device:android-physical}",
+          "--reporter",
+          "expanded",
+          "--dart-define=MKNOON_RELAY_ADDRESSES={config:relay_addresses}",
+          "integration_test/group_message_retry_backoff_db_proof_test.dart"
+        ]
+      ],
+      "environment": {},
+      "config": [
+        "relay_addresses"
+      ],
+      "sources": {
+        "integration_test/group_message_retry_backoff_db_proof_test.dart": "7f5fe12c9ce49f893bffce65b2059bc365284ffcfc1031686aff8974bbe1920e"
+      },
+      "audit": "Audited exact leaf parser and all target-control calls; explicit role injection precedes any preparation. Shared-directory peers use iOS simulators; Android-capable pair transports use USB plus emulator.",
+      "owns": [
+        "integration_test/group_message_retry_backoff_db_proof_test.dart",
+        "integration_test/integration_test.dart"
+      ]
+    },
+    "integration_test/group_mute_notification_db_proof_test.dart": {
+      "roles": [
+        "android-physical"
+      ],
+      "commands": [
+        [
+          "flutter",
+          "test",
+          "--no-pub",
+          "-d",
+          "{device:android-physical}",
+          "--reporter",
+          "expanded",
+          "--dart-define=MKNOON_RELAY_ADDRESSES={config:relay_addresses}",
+          "integration_test/group_mute_notification_db_proof_test.dart"
+        ]
+      ],
+      "environment": {},
+      "config": [
+        "relay_addresses"
+      ],
+      "sources": {
+        "integration_test/group_mute_notification_db_proof_test.dart": "d0b177b008718d6966a223d8d523013dc3193d6af7e8cd9c757f75c5f4ef69cc"
+      },
+      "audit": "Audited exact leaf parser and all target-control calls; explicit role injection precedes any preparation. Shared-directory peers use iOS simulators; Android-capable pair transports use USB plus emulator.",
+      "owns": [
+        "integration_test/group_mute_notification_db_proof_test.dart",
+        "integration_test/integration_test.dart"
+      ]
+    },
+    "integration_test/group_notification_display_outbox_sqlcipher_proof_test.dart": {
+      "roles": [
+        "android-physical"
+      ],
+      "commands": [
+        [
+          "flutter",
+          "test",
+          "--no-pub",
+          "-d",
+          "{device:android-physical}",
+          "--reporter",
+          "expanded",
+          "--dart-define=MKNOON_RELAY_ADDRESSES={config:relay_addresses}",
+          "integration_test/group_notification_display_outbox_sqlcipher_proof_test.dart"
+        ]
+      ],
+      "environment": {},
+      "config": [
+        "relay_addresses"
+      ],
+      "sources": {
+        "integration_test/group_notification_display_outbox_sqlcipher_proof_test.dart": "a719fad863646b227d0c1e1f5e3503184b2167e8d2d256462ab68282d5d1b852"
+      },
+      "audit": "Audited exact leaf parser and all target-control calls; explicit role injection precedes any preparation. Shared-directory peers use iOS simulators; Android-capable pair transports use USB plus emulator.",
+      "owns": [
+        "integration_test/group_notification_display_outbox_sqlcipher_proof_test.dart",
+        "integration_test/integration_test.dart"
+      ]
+    },
+    "integration_test/group_private_media_lifecycle_db_proof_test.dart": {
+      "roles": [
+        "android-physical"
+      ],
+      "commands": [
+        [
+          "flutter",
+          "test",
+          "--no-pub",
+          "-d",
+          "{device:android-physical}",
+          "--reporter",
+          "expanded",
+          "--dart-define=MKNOON_RELAY_ADDRESSES={config:relay_addresses}",
+          "integration_test/group_private_media_lifecycle_db_proof_test.dart"
+        ]
+      ],
+      "environment": {},
+      "config": [
+        "relay_addresses"
+      ],
+      "sources": {
+        "integration_test/group_private_media_lifecycle_db_proof_test.dart": "e9dfbee51ddf609a04f18f165c2bf856b3d8b8767d6452767d49fc3db1fac6cd"
+      },
+      "audit": "Audited exact leaf parser and all target-control calls; explicit role injection precedes any preparation. Shared-directory peers use iOS simulators; Android-capable pair transports use USB plus emulator.",
+      "owns": [
+        "integration_test/group_private_media_lifecycle_db_proof_test.dart",
+        "integration_test/integration_test.dart"
+      ]
+    },
+    "integration_test/group_reaction_reliability_db_proof_test.dart": {
+      "roles": [
+        "android-physical"
+      ],
+      "commands": [
+        [
+          "flutter",
+          "test",
+          "--no-pub",
+          "-d",
+          "{device:android-physical}",
+          "--reporter",
+          "expanded",
+          "--dart-define=MKNOON_RELAY_ADDRESSES={config:relay_addresses}",
+          "integration_test/group_reaction_reliability_db_proof_test.dart"
+        ]
+      ],
+      "environment": {},
+      "config": [
+        "relay_addresses"
+      ],
+      "sources": {
+        "integration_test/group_reaction_reliability_db_proof_test.dart": "23c6c38c858274b5800e476a3a0e6d18217e32689098319f97ee549e627cff9d"
+      },
+      "audit": "Audited exact leaf parser and all target-control calls; explicit role injection precedes any preparation. Shared-directory peers use iOS simulators; Android-capable pair transports use USB plus emulator.",
+      "owns": [
+        "integration_test/group_reaction_reliability_db_proof_test.dart",
+        "integration_test/integration_test.dart"
+      ]
+    },
+    "integration_test/group_real_crypto_onboarding_test.dart": {
+      "roles": [
+        "android-physical"
+      ],
+      "commands": [
+        [
+          "flutter",
+          "test",
+          "--no-pub",
+          "-d",
+          "{device:android-physical}",
+          "--reporter",
+          "expanded",
+          "--dart-define=MKNOON_RELAY_ADDRESSES={config:relay_addresses}",
+          "integration_test/group_real_crypto_onboarding_test.dart"
+        ]
+      ],
+      "environment": {},
+      "config": [
+        "relay_addresses"
+      ],
+      "sources": {
+        "integration_test/group_real_crypto_onboarding_test.dart": "031451d7a01fbed29824f99ba438216328d00e7b39c5b14cf4604ee948e78d88"
+      },
+      "audit": "Audited exact leaf parser and all target-control calls; explicit role injection precedes any preparation. Shared-directory peers use iOS simulators; Android-capable pair transports use USB plus emulator.",
+      "owns": [
+        "integration_test/group_real_crypto_onboarding_test.dart",
+        "integration_test/integration_test.dart"
+      ]
+    },
+    "integration_test/group_recovery_e2e_test.dart": {
+      "roles": [
+        "android-physical"
+      ],
+      "commands": [
+        [
+          "flutter",
+          "test",
+          "--no-pub",
+          "-d",
+          "{device:android-physical}",
+          "--reporter",
+          "expanded",
+          "--dart-define=MKNOON_RELAY_ADDRESSES={config:relay_addresses}",
+          "integration_test/group_recovery_e2e_test.dart"
+        ]
+      ],
+      "environment": {},
+      "config": [
+        "relay_addresses"
+      ],
+      "sources": {
+        "integration_test/group_recovery_e2e_test.dart": "446bde9e71c73674f7e202ad37b081175786eee5709cff8af2292ec87d17d198"
+      },
+      "audit": "Audited exact leaf parser and all target-control calls; explicit role injection precedes any preparation. Shared-directory peers use iOS simulators; Android-capable pair transports use USB plus emulator.",
+      "owns": [
+        "integration_test/group_recovery_e2e_test.dart",
+        "integration_test/integration_test.dart"
+      ]
+    },
+    "integration_test/group_recovery_gate_serialization_proof_test.dart": {
+      "roles": [
+        "android-physical"
+      ],
+      "commands": [
+        [
+          "flutter",
+          "test",
+          "--no-pub",
+          "-d",
+          "{device:android-physical}",
+          "--reporter",
+          "expanded",
+          "--dart-define=MKNOON_RELAY_ADDRESSES={config:relay_addresses}",
+          "integration_test/group_recovery_gate_serialization_proof_test.dart"
+        ]
+      ],
+      "environment": {},
+      "config": [
+        "relay_addresses"
+      ],
+      "sources": {
+        "integration_test/group_recovery_gate_serialization_proof_test.dart": "f7f7f790151d3105a87068740db6eec1e5779350041862cad02e064f78c4d7af"
+      },
+      "audit": "Audited exact leaf parser and all target-control calls; explicit role injection precedes any preparation. Shared-directory peers use iOS simulators; Android-capable pair transports use USB plus emulator.",
+      "owns": [
+        "integration_test/group_recovery_gate_serialization_proof_test.dart",
+        "integration_test/integration_test.dart"
+      ]
+    },
+    "integration_test/group_rejoin_state_db_proof_test.dart": {
+      "roles": [
+        "android-physical"
+      ],
+      "commands": [
+        [
+          "flutter",
+          "test",
+          "--no-pub",
+          "-d",
+          "{device:android-physical}",
+          "--reporter",
+          "expanded",
+          "--dart-define=MKNOON_RELAY_ADDRESSES={config:relay_addresses}",
+          "integration_test/group_rejoin_state_db_proof_test.dart"
+        ]
+      ],
+      "environment": {},
+      "config": [
+        "relay_addresses"
+      ],
+      "sources": {
+        "integration_test/group_rejoin_state_db_proof_test.dart": "9622ae1224fdbe75cd03842ebe1b1b367aaf66a9ee2be5b934ec6c2b087b7dfb"
+      },
+      "audit": "Audited exact leaf parser and all target-control calls; explicit role injection precedes any preparation. Shared-directory peers use iOS simulators; Android-capable pair transports use USB plus emulator.",
+      "owns": [
+        "integration_test/group_rejoin_state_db_proof_test.dart",
+        "integration_test/integration_test.dart"
+      ]
+    },
+    "integration_test/group_removal_rotation_keyless_converge_proof_test.dart": {
+      "roles": [
+        "android-physical"
+      ],
+      "commands": [
+        [
+          "flutter",
+          "test",
+          "--no-pub",
+          "-d",
+          "{device:android-physical}",
+          "--reporter",
+          "expanded",
+          "--dart-define=MKNOON_RELAY_ADDRESSES={config:relay_addresses}",
+          "integration_test/group_removal_rotation_keyless_converge_proof_test.dart"
+        ]
+      ],
+      "environment": {},
+      "config": [
+        "relay_addresses"
+      ],
+      "sources": {
+        "integration_test/group_removal_rotation_keyless_converge_proof_test.dart": "585799655c1ee014b8f17e7e148e4fe113407aa66893656164be43b578804d03"
+      },
+      "audit": "Audited exact leaf parser and all target-control calls; explicit role injection precedes any preparation. Shared-directory peers use iOS simulators; Android-capable pair transports use USB plus emulator.",
+      "owns": [
+        "integration_test/group_removal_rotation_keyless_converge_proof_test.dart",
+        "integration_test/integration_test.dart"
+      ]
+    },
+    "integration_test/group_removal_rotation_keyless_proof_test.dart": {
+      "roles": [
+        "android-physical"
+      ],
+      "commands": [
+        [
+          "flutter",
+          "test",
+          "--no-pub",
+          "-d",
+          "{device:android-physical}",
+          "--reporter",
+          "expanded",
+          "--dart-define=MKNOON_RELAY_ADDRESSES={config:relay_addresses}",
+          "integration_test/group_removal_rotation_keyless_proof_test.dart"
+        ]
+      ],
+      "environment": {},
+      "config": [
+        "relay_addresses"
+      ],
+      "sources": {
+        "integration_test/group_removal_rotation_keyless_proof_test.dart": "f0f80b28dec9b2c4e94be7fc0fdab7bb8638c96fbba10254557b6d38fcf1ac6e"
+      },
+      "audit": "Audited exact leaf parser and all target-control calls; explicit role injection precedes any preparation. Shared-directory peers use iOS simulators; Android-capable pair transports use USB plus emulator.",
+      "owns": [
+        "integration_test/group_removal_rotation_keyless_proof_test.dart",
+        "integration_test/integration_test.dart"
+      ]
+    },
+    "integration_test/group_self_removed_marker_sqlcipher_proof_test.dart": {
+      "roles": [
+        "android-physical"
+      ],
+      "commands": [
+        [
+          "flutter",
+          "test",
+          "--no-pub",
+          "-d",
+          "{device:android-physical}",
+          "--reporter",
+          "expanded",
+          "--dart-define=MKNOON_RELAY_ADDRESSES={config:relay_addresses}",
+          "integration_test/group_self_removed_marker_sqlcipher_proof_test.dart"
+        ]
+      ],
+      "environment": {},
+      "config": [
+        "relay_addresses"
+      ],
+      "sources": {
+        "integration_test/group_self_removed_marker_sqlcipher_proof_test.dart": "5e8b639805cc9241ef30f9ca8e87f286cfd9a93b8c090299183aa87f177753ee"
+      },
+      "audit": "Audited exact leaf parser and all target-control calls; explicit role injection precedes any preparation. Shared-directory peers use iOS simulators; Android-capable pair transports use USB plus emulator.",
+      "owns": [
+        "integration_test/group_self_removed_marker_sqlcipher_proof_test.dart",
+        "integration_test/integration_test.dart"
+      ]
+    },
+    "integration_test/migration_database_sqlcipher_capability_test.dart": {
+      "roles": [
+        "android-physical"
+      ],
+      "commands": [
+        [
+          "flutter",
+          "test",
+          "--no-pub",
+          "-d",
+          "{device:android-physical}",
+          "--reporter",
+          "expanded",
+          "--dart-define=MKNOON_RELAY_ADDRESSES={config:relay_addresses}",
+          "integration_test/migration_database_sqlcipher_capability_test.dart"
+        ]
+      ],
+      "environment": {},
+      "config": [
+        "relay_addresses"
+      ],
+      "sources": {
+        "integration_test/migration_database_sqlcipher_capability_test.dart": "9c7b7982c72c7712ad61c1124d7d0078e2366a4b0e8a12683aad9cb2f8a0a0a8"
+      },
+      "audit": "Audited exact leaf parser and all target-control calls; explicit role injection precedes any preparation. Shared-directory peers use iOS simulators; Android-capable pair transports use USB plus emulator.",
+      "owns": [
+        "integration_test/integration_test.dart",
+        "integration_test/migration_database_sqlcipher_capability_test.dart"
+      ]
+    },
+    "integration_test/outgoing_transport_settlement_sqlcipher_proof_test.dart": {
+      "roles": [
+        "android-physical"
+      ],
+      "commands": [
+        [
+          "flutter",
+          "test",
+          "--no-pub",
+          "-d",
+          "{device:android-physical}",
+          "--reporter",
+          "expanded",
+          "--dart-define=MKNOON_RELAY_ADDRESSES={config:relay_addresses}",
+          "integration_test/outgoing_transport_settlement_sqlcipher_proof_test.dart"
+        ]
+      ],
+      "environment": {},
+      "config": [
+        "relay_addresses"
+      ],
+      "sources": {
+        "integration_test/outgoing_transport_settlement_sqlcipher_proof_test.dart": "efce8cdf5d51541259d3aaf213d3ad96652f5822229b4c1e37c47067f796d0c3"
+      },
+      "audit": "Audited exact leaf parser and all target-control calls; explicit role injection precedes any preparation. Shared-directory peers use iOS simulators; Android-capable pair transports use USB plus emulator.",
+      "owns": [
+        "integration_test/integration_test.dart",
+        "integration_test/outgoing_transport_settlement_sqlcipher_proof_test.dart"
+      ]
+    },
+    "integration_test/protected_photo_thumbnail_secure_window_proof_test.dart": {
+      "roles": [
+        "android-physical"
+      ],
+      "commands": [
+        [
+          "flutter",
+          "test",
+          "--no-pub",
+          "-d",
+          "{device:android-physical}",
+          "--reporter",
+          "expanded",
+          "--dart-define=MKNOON_RELAY_ADDRESSES={config:relay_addresses}",
+          "integration_test/protected_photo_thumbnail_secure_window_proof_test.dart"
+        ]
+      ],
+      "environment": {},
+      "config": [
+        "relay_addresses"
+      ],
+      "sources": {
+        "integration_test/protected_photo_thumbnail_secure_window_proof_test.dart": "94bf802bf2c2c92ae7608472104a55427b4a46ba908d0ed31acf7121d3b27b81"
+      },
+      "audit": "Audited exact leaf parser and all target-control calls; explicit role injection precedes any preparation. Shared-directory peers use iOS simulators; Android-capable pair transports use USB plus emulator.",
+      "owns": [
+        "integration_test/integration_test.dart",
+        "integration_test/protected_photo_thumbnail_secure_window_proof_test.dart"
+      ]
+    },
+    "integration_test/scripts/run_b1b_sibling_device_convergence.dart": {
+      "roles": [
+        "android-physical",
+        "android-emulator"
+      ],
+      "commands": [
+        [
+          "dart",
+          "run",
+          "integration_test/scripts/run_b1b_sibling_device_convergence.dart",
+          "-d",
+          "{device:android-physical},{device:android-emulator}"
+        ]
+      ],
+      "environment": {},
+      "config": [
+        "relay_addresses"
+      ],
+      "sources": {
+        "integration_test/scripts/run_b1b_sibling_device_convergence.dart": "628d7c6d3f05b2489bfd64d2fa54620fd01c4f7e72194bdb4b99fb4db5c77a4b",
+        "integration_test/_support/android_app_file_broker.dart": "b55b229a527ecb01d7c0907427b4566b568cc3ccfae5137c2a765b52aa6a6450",
+        "integration_test/_support/invite_reliability_runner_contract.dart": "9d71f752c9ef88e886be96e23e107b2e2ac806329bbe12687906a7ed68ece26c"
+      },
+      "audit": "Audited exact leaf parser and all target-control calls; explicit role injection precedes any preparation. Shared-directory peers use iOS simulators; Android-capable pair transports use USB plus emulator.",
+      "owns": [
+        "integration_test/scripts/run_b1b_sibling_device_convergence.dart"
+      ]
+    },
+    "integration_test/scripts/run_direct_private_media_device_local_journey.dart": {
+      "roles": [
+        "android-physical",
+        "android-emulator"
+      ],
+      "commands": [
+        [
+          "dart",
+          "run",
+          "integration_test/scripts/run_direct_private_media_device_local_journey.dart",
+          "--sender",
+          "{device:android-physical}",
+          "--recipient",
+          "{device:android-emulator}",
+          "--artifact-dir",
+          "{output}/journey"
+        ]
+      ],
+      "environment": {},
+      "config": [
+        "relay_addresses"
+      ],
+      "sources": {
+        "integration_test/scripts/run_direct_private_media_device_local_journey.dart": "124a54b970ed5da511f26e499bead35a0bce987f5687adbecf9c01e5dabd77c0"
+      },
+      "audit": "Audited exact leaf parser and all target-control calls; explicit role injection precedes any preparation. Shared-directory peers use iOS simulators; Android-capable pair transports use USB plus emulator.",
+      "owns": [
+        "integration_test/scripts/run_direct_private_media_device_local_journey.dart"
+      ]
+    },
+    "integration_test/scripts/run_foreground_group_push_simulator_smoke.dart": {
+      "roles": [
+        "ios-simulator-a",
+        "ios-simulator-b"
+      ],
+      "commands": [
+        [
+          "dart",
+          "run",
+          "integration_test/scripts/run_foreground_group_push_simulator_smoke.dart",
+          "-d",
+          "{device:ios-simulator-a},{device:ios-simulator-b}"
+        ]
+      ],
+      "environment": {},
+      "config": [
+        "relay_addresses"
+      ],
+      "sources": {
+        "integration_test/scripts/run_foreground_group_push_simulator_smoke.dart": "c9448e8adbb86dd208aa252528a9b97007763b03de7e592d4b9a486234702bd2"
+      },
+      "audit": "Audited exact leaf parser and all target-control calls; explicit role injection precedes any preparation. Shared-directory peers use iOS simulators; Android-capable pair transports use USB plus emulator.",
+      "owns": [
+        "integration_test/scripts/run_foreground_group_push_simulator_smoke.dart"
+      ]
+    },
+    "integration_test/scripts/run_group_invite_status_matrix_sim.dart": {
+      "roles": [
+        "ios-simulator-a",
+        "ios-simulator-b",
+        "ios-simulator-c",
+        "ios-simulator-d"
+      ],
+      "commands": [
+        [
+          "dart",
+          "run",
+          "integration_test/scripts/run_group_invite_status_matrix_sim.dart",
+          "-d",
+          "{device:ios-simulator-a},{device:ios-simulator-b},{device:ios-simulator-c},{device:ios-simulator-d}"
+        ]
+      ],
+      "environment": {},
+      "config": [
+        "relay_addresses"
+      ],
+      "sources": {
+        "integration_test/scripts/run_group_invite_status_matrix_sim.dart": "587ac1a471184b716d999c59ce39a4a5437552bb06155ace076b706d4cdec859"
+      },
+      "audit": "Audited exact leaf parser and all target-control calls; explicit role injection precedes any preparation. Shared-directory peers use iOS simulators; Android-capable pair transports use USB plus emulator.",
+      "owns": [
+        "integration_test/scripts/run_group_invite_status_matrix_sim.dart"
+      ]
+    },
+    "integration_test/scripts/run_group_multi_device_real.dart": {
+      "roles": [
+        "ios-simulator-a",
+        "ios-simulator-b"
+      ],
+      "commands": [
+        [
+          "dart",
+          "run",
+          "integration_test/scripts/run_group_multi_device_real.dart",
+          "-d",
+          "{device:ios-simulator-a},{device:ios-simulator-b}"
+        ]
+      ],
+      "environment": {},
+      "config": [
+        "relay_addresses"
+      ],
+      "sources": {
+        "integration_test/scripts/run_group_multi_device_real.dart": "b291cf831d90816b25b5f6bac97bda3f22c8ca27cf276e3d01b565404d6728b9"
+      },
+      "audit": "Audited exact leaf parser and all target-control calls; explicit role injection precedes any preparation. Shared-directory peers use iOS simulators; Android-capable pair transports use USB plus emulator.",
+      "owns": [
+        "integration_test/scripts/run_group_multi_device_real.dart"
+      ]
+    },
+    "integration_test/scripts/run_group_recovery_e2e.dart": {
+      "roles": [
+        "android-physical"
+      ],
+      "commands": [
+        [
+          "dart",
+          "run",
+          "integration_test/scripts/run_group_recovery_e2e.dart",
+          "-d",
+          "{device:android-physical}"
+        ]
+      ],
+      "environment": {},
+      "config": [
+        "relay_addresses"
+      ],
+      "sources": {
+        "integration_test/scripts/run_group_recovery_e2e.dart": "bdeb09ca89de0965534e674ada7eff3811a92e2a086a07b580bf70d4978311b0"
+      },
+      "audit": "Audited exact leaf parser and all target-control calls; explicit role injection precedes any preparation. Shared-directory peers use iOS simulators; Android-capable pair transports use USB plus emulator.",
+      "owns": [
+        "integration_test/group_recovery_cli_e2e_test.dart",
+        "integration_test/scripts/run_group_recovery_e2e.dart"
+      ]
+    },
+    "integration_test/scripts/run_invite_reliability_multi_device.dart:invite_reliability": {
+      "roles": [
+        "android-physical",
+        "android-emulator"
+      ],
+      "commands": [
+        [
+          "dart",
+          "run",
+          "integration_test/scripts/run_invite_reliability_multi_device.dart",
+          "-d",
+          "{device:android-physical},{device:android-emulator}",
+          "--scenario",
+          "invite_reliability"
+        ]
+      ],
+      "environment": {},
+      "config": [
+        "relay_addresses"
+      ],
+      "sources": {
+        "integration_test/scripts/run_invite_reliability_multi_device.dart": "dbd030d1eda0fc2f0c36006719c511dbfc0d5c33bc49c76958ca3022efdb8eb2",
+        "integration_test/_support/invite_reliability_runner_contract.dart": "9d71f752c9ef88e886be96e23e107b2e2ac806329bbe12687906a7ed68ece26c",
+        "integration_test/scripts/run_direct_media_blob_custody_sims.dart": "a1f27b5251a34aacca53613a5cd834d7962f3f263c62f27f0f6e323ea12ae320"
+      },
+      "audit": "Audited exact leaf parser and all target-control calls; explicit role injection precedes any preparation. Shared-directory peers use iOS simulators; Android-capable pair transports use USB plus emulator.",
+      "owns": [
+        "integration_test/scripts/run_invite_reliability_multi_device.dart"
+      ]
+    },
+    "integration_test/scripts/run_invite_reliability_multi_device.dart:invite_send_latency": {
+      "roles": [
+        "android-physical",
+        "android-emulator"
+      ],
+      "commands": [
+        [
+          "dart",
+          "run",
+          "integration_test/scripts/run_invite_reliability_multi_device.dart",
+          "-d",
+          "{device:android-physical},{device:android-emulator}",
+          "--scenario",
+          "invite_send_latency",
+          "--mode",
+          "closure"
+        ]
+      ],
+      "environment": {},
+      "config": [
+        "relay_addresses"
+      ],
+      "sources": {
+        "integration_test/scripts/run_invite_reliability_multi_device.dart": "dbd030d1eda0fc2f0c36006719c511dbfc0d5c33bc49c76958ca3022efdb8eb2",
+        "integration_test/_support/invite_reliability_runner_contract.dart": "9d71f752c9ef88e886be96e23e107b2e2ac806329bbe12687906a7ed68ece26c",
+        "integration_test/scripts/run_direct_media_blob_custody_sims.dart": "a1f27b5251a34aacca53613a5cd834d7962f3f263c62f27f0f6e323ea12ae320"
+      },
+      "audit": "Audited exact leaf parser and all target-control calls; explicit role injection precedes any preparation. Shared-directory peers use iOS simulators; Android-capable pair transports use USB plus emulator.",
+      "owns": [
+        "integration_test/scripts/run_invite_reliability_multi_device.dart"
+      ]
+    },
+    "integration_test/scripts/run_invite_reliability_multi_device.dart:direct_linked_device_addressing": {
+      "roles": [
+        "android-physical",
+        "android-emulator"
+      ],
+      "commands": [
+        [
+          "dart",
+          "run",
+          "integration_test/scripts/run_invite_reliability_multi_device.dart",
+          "-d",
+          "{device:android-physical},{device:android-emulator}",
+          "--scenario",
+          "direct_linked_device_addressing"
+        ]
+      ],
+      "environment": {},
+      "config": [
+        "relay_addresses"
+      ],
+      "sources": {
+        "integration_test/scripts/run_invite_reliability_multi_device.dart": "dbd030d1eda0fc2f0c36006719c511dbfc0d5c33bc49c76958ca3022efdb8eb2",
+        "integration_test/_support/invite_reliability_runner_contract.dart": "9d71f752c9ef88e886be96e23e107b2e2ac806329bbe12687906a7ed68ece26c",
+        "integration_test/scripts/run_direct_media_blob_custody_sims.dart": "a1f27b5251a34aacca53613a5cd834d7962f3f263c62f27f0f6e323ea12ae320"
+      },
+      "audit": "Audited exact leaf parser and all target-control calls; explicit role injection precedes any preparation. Shared-directory peers use iOS simulators; Android-capable pair transports use USB plus emulator.",
+      "owns": [
+        "integration_test/scripts/run_invite_reliability_multi_device.dart"
+      ]
+    },
+    "integration_test/scripts/run_invite_reliability_multi_device.dart:direct_linked_device_event_blob_fanout": {
+      "roles": [
+        "android-physical",
+        "android-emulator"
+      ],
+      "commands": [
+        [
+          "dart",
+          "run",
+          "integration_test/scripts/run_invite_reliability_multi_device.dart",
+          "-d",
+          "{device:android-physical},{device:android-emulator}",
+          "--scenario",
+          "direct_linked_device_event_blob_fanout"
+        ]
+      ],
+      "environment": {},
+      "config": [
+        "relay_addresses"
+      ],
+      "sources": {
+        "integration_test/scripts/run_invite_reliability_multi_device.dart": "dbd030d1eda0fc2f0c36006719c511dbfc0d5c33bc49c76958ca3022efdb8eb2",
+        "integration_test/_support/invite_reliability_runner_contract.dart": "9d71f752c9ef88e886be96e23e107b2e2ac806329bbe12687906a7ed68ece26c",
+        "integration_test/scripts/run_direct_media_blob_custody_sims.dart": "a1f27b5251a34aacca53613a5cd834d7962f3f263c62f27f0f6e323ea12ae320"
+      },
+      "audit": "Audited exact leaf parser and all target-control calls; explicit role injection precedes any preparation. Shared-directory peers use iOS simulators; Android-capable pair transports use USB plus emulator.",
+      "owns": [
+        "integration_test/scripts/run_invite_reliability_multi_device.dart"
+      ]
+    },
+    "integration_test/scripts/run_media_message_journey_e2e.dart": {
+      "roles": [
+        "ios-simulator-a"
+      ],
+      "commands": [
+        [
+          "dart",
+          "run",
+          "integration_test/scripts/run_media_message_journey_e2e.dart",
+          "-d",
+          "{device:ios-simulator-a}"
+        ]
+      ],
+      "environment": {},
+      "config": [
+        "relay_addresses"
+      ],
+      "sources": {
+        "integration_test/scripts/run_media_message_journey_e2e.dart": "e86a2a0e02f260f120b9a0343a075e2817ff6fc4f675d0c53077f1dd245ef137"
+      },
+      "audit": "Audited exact leaf parser and all target-control calls; explicit role injection precedes any preparation. Shared-directory peers use iOS simulators; Android-capable pair transports use USB plus emulator.",
+      "owns": [
+        "integration_test/media_message_journey_e2e_test.dart",
+        "integration_test/scripts/run_media_message_journey_e2e.dart"
+      ]
+    },
+    "integration_test/scripts/run_media_stable_id_smoke.dart": {
+      "roles": [
+        "android-emulator"
+      ],
+      "commands": [
+        [
+          "dart",
+          "run",
+          "integration_test/scripts/run_media_stable_id_smoke.dart",
+          "-d",
+          "{device:android-emulator}",
+          "--platform",
+          "android"
+        ]
+      ],
+      "environment": {},
+      "config": [
+        "relay_addresses"
+      ],
+      "sources": {
+        "integration_test/scripts/run_media_stable_id_smoke.dart": "d596dcd128a025981daa5530d6fbd5738886d01ca4400efbf70c19ca74e218d7"
+      },
+      "audit": "Audited exact leaf parser and all target-control calls; explicit role injection precedes any preparation. Shared-directory peers use iOS simulators; Android-capable pair transports use USB plus emulator.",
+      "owns": [
+        "integration_test/media_stable_id_smoke_test.dart",
+        "integration_test/scripts/run_media_stable_id_smoke.dart"
+      ]
+    },
+    "integration_test/scripts/run_notification_open_during_other_chat.dart": {
+      "roles": [
+        "ios-simulator-a",
+        "ios-simulator-b"
+      ],
+      "commands": [
+        [
+          "dart",
+          "run",
+          "integration_test/scripts/run_notification_open_during_other_chat.dart",
+          "-d",
+          "{device:ios-simulator-a},{device:ios-simulator-b}"
+        ]
+      ],
+      "environment": {},
+      "config": [
+        "relay_addresses"
+      ],
+      "sources": {
+        "integration_test/scripts/run_notification_open_during_other_chat.dart": "89adce3e3159c3a9c577775b2f6fc688c64d80ff6cbdd78cbe3faa6b57ff3bc0"
+      },
+      "audit": "Audited exact leaf parser and all target-control calls; explicit role injection precedes any preparation. Shared-directory peers use iOS simulators; Android-capable pair transports use USB plus emulator.",
+      "owns": [
+        "integration_test/scripts/run_notification_open_during_other_chat.dart"
+      ]
+    },
+    "integration_test/scripts/run_notification_open_ui_smoke.dart": {
+      "roles": [
+        "ios-simulator-a"
+      ],
+      "commands": [
+        [
+          "dart",
+          "run",
+          "integration_test/scripts/run_notification_open_ui_smoke.dart",
+          "-d",
+          "{device:ios-simulator-a}"
+        ]
+      ],
+      "environment": {},
+      "config": [
+        "relay_addresses"
+      ],
+      "sources": {
+        "integration_test/scripts/run_notification_open_ui_smoke.dart": "5bcb06b5803cd76f1caec4bb96d1abaebd6dc664aefcc53d5be888dfcc5de3ee"
+      },
+      "audit": "Audited exact leaf parser and all target-control calls; explicit role injection precedes any preparation. Shared-directory peers use iOS simulators; Android-capable pair transports use USB plus emulator.",
+      "owns": [
+        "integration_test/notification_open_ui_smoke_test.dart",
+        "integration_test/scripts/run_notification_open_ui_smoke.dart"
+      ]
+    },
+    "integration_test/scripts/run_notification_sound_smoke.dart": {
+      "roles": [
+        "android-physical",
+        "android-emulator"
+      ],
+      "commands": [
+        [
+          "dart",
+          "run",
+          "integration_test/scripts/run_notification_sound_smoke.dart",
+          "-d",
+          "{device:android-physical},{device:android-emulator}",
+          "--non-interactive"
+        ]
+      ],
+      "environment": {},
+      "config": [
+        "relay_addresses"
+      ],
+      "sources": {
+        "integration_test/scripts/run_notification_sound_smoke.dart": "284ac5924707ad63408b9be3332ca346e1703f0fb8a55d56694d0c555f68980c",
+        "integration_test/support/android_app_state_guard.dart": "4851c33e56045346a1fad3cc7c70bf95b4b93dfbe0606b873e717c6efb9de076"
+      },
+      "audit": "Audited exact leaf parser and all target-control calls; explicit role injection precedes any preparation. Shared-directory peers use iOS simulators; Android-capable pair transports use USB plus emulator.",
+      "owns": [
+        "integration_test/scripts/run_notification_sound_smoke.dart"
+      ]
+    },
+    "integration_test/scripts/run_routing_smoke_e2e.dart": {
+      "roles": [
+        "ios-simulator-a",
+        "ios-simulator-b"
+      ],
+      "commands": [
+        [
+          "dart",
+          "run",
+          "integration_test/scripts/run_routing_smoke_e2e.dart",
+          "-d",
+          "{device:ios-simulator-a},{device:ios-simulator-b}"
+        ]
+      ],
+      "environment": {},
+      "config": [
+        "relay_addresses"
+      ],
+      "sources": {
+        "integration_test/scripts/run_routing_smoke_e2e.dart": "b7fa423001e1200e2ac5430cc7c0c42131bd6d96c85a2b2410d05c4fe3a9f153"
+      },
+      "audit": "Audited exact leaf parser and all target-control calls; explicit role injection precedes any preparation. Shared-directory peers use iOS simulators; Android-capable pair transports use USB plus emulator.",
+      "owns": [
+        "integration_test/scripts/run_routing_smoke_e2e.dart"
+      ]
+    },
+    "integration_test/scripts/run_soak_e2e.dart": {
+      "roles": [
+        "ios-simulator-a"
+      ],
+      "commands": [
+        [
+          "dart",
+          "run",
+          "integration_test/scripts/run_soak_e2e.dart",
+          "-d",
+          "{device:ios-simulator-a}"
+        ]
+      ],
+      "environment": {},
+      "config": [
+        "relay_addresses"
+      ],
+      "sources": {
+        "integration_test/scripts/run_soak_e2e.dart": "39f1b72ce5c3e3ade5425d3786dc61e62e49a93661662dd80e5efe5427ce9947"
+      },
+      "audit": "Audited exact leaf parser and all target-control calls; explicit role injection precedes any preparation. Shared-directory peers use iOS simulators; Android-capable pair transports use USB plus emulator.",
+      "owns": [
+        "integration_test/scripts/run_soak_e2e.dart",
+        "integration_test/soak_e2e_test.dart"
+      ]
+    },
+    "integration_test/scripts/run_transport_e2e.dart": {
+      "roles": [
+        "android-physical"
+      ],
+      "commands": [
+        [
+          "dart",
+          "run",
+          "integration_test/scripts/run_transport_e2e.dart",
+          "-d",
+          "{device:android-physical}",
+          "--platform",
+          "android"
+        ]
+      ],
+      "environment": {},
+      "config": [
+        "relay_addresses"
+      ],
+      "sources": {
+        "integration_test/scripts/run_transport_e2e.dart": "7b76295435ce5216990af7c7f648c88707694a7fde7dadd444803ec269488a41"
+      },
+      "audit": "Audited exact leaf parser and all target-control calls; explicit role injection precedes any preparation. Shared-directory peers use iOS simulators; Android-capable pair transports use USB plus emulator.",
+      "owns": [
+        "integration_test/scripts/run_transport_e2e.dart",
+        "integration_test/transport_e2e_test.dart"
+      ]
+    },
+    "integration_test/scripts/run_wifi_relay_fallback_smoke.dart": {
+      "roles": [
+        "android-physical"
+      ],
+      "commands": [
+        [
+          "dart",
+          "run",
+          "integration_test/scripts/run_wifi_relay_fallback_smoke.dart",
+          "-d",
+          "{device:android-physical}",
+          "--platform",
+          "android"
+        ]
+      ],
+      "environment": {},
+      "config": [
+        "relay_addresses"
+      ],
+      "sources": {
+        "integration_test/scripts/run_wifi_relay_fallback_smoke.dart": "a4fe38b34f3a0dc0fbac0be697f26f21cd69e61031dd27a137a81523e4b4439b"
+      },
+      "audit": "Audited exact leaf parser and all target-control calls; explicit role injection precedes any preparation. Shared-directory peers use iOS simulators; Android-capable pair transports use USB plus emulator.",
+      "owns": [
+        "integration_test/scripts/run_wifi_relay_fallback_smoke.dart",
+        "integration_test/wifi_relay_fallback_smoke_test.dart"
+      ]
+    },
+    "integration_test/sender_media_unavailable_fallback_proof_test.dart": {
+      "roles": [
+        "android-physical"
+      ],
+      "commands": [
+        [
+          "flutter",
+          "test",
+          "--no-pub",
+          "-d",
+          "{device:android-physical}",
+          "--reporter",
+          "expanded",
+          "--dart-define=MKNOON_RELAY_ADDRESSES={config:relay_addresses}",
+          "integration_test/sender_media_unavailable_fallback_proof_test.dart"
+        ]
+      ],
+      "environment": {},
+      "config": [
+        "relay_addresses"
+      ],
+      "sources": {
+        "integration_test/sender_media_unavailable_fallback_proof_test.dart": "9f6f1c8324d2edb968ff38fdefbe3a1b1eedc67f6f855feecea14706b985d681"
+      },
+      "audit": "Audited exact leaf parser and all target-control calls; explicit role injection precedes any preparation. Shared-directory peers use iOS simulators; Android-capable pair transports use USB plus emulator.",
+      "owns": [
+        "integration_test/integration_test.dart",
+        "integration_test/sender_media_unavailable_fallback_proof_test.dart"
+      ]
+    },
+    "integration_test/warm_peer_lan_aware_smoke_test.dart": {
+      "roles": [
+        "android-physical"
+      ],
+      "commands": [
+        [
+          "flutter",
+          "test",
+          "--no-pub",
+          "-d",
+          "{device:android-physical}",
+          "--reporter",
+          "expanded",
+          "--dart-define=MKNOON_RELAY_ADDRESSES={config:relay_addresses}",
+          "integration_test/warm_peer_lan_aware_smoke_test.dart"
+        ]
+      ],
+      "environment": {},
+      "config": [
+        "relay_addresses"
+      ],
+      "sources": {
+        "integration_test/warm_peer_lan_aware_smoke_test.dart": "cbeef0757e0e2a90b7e09b9df028f18774a5b68c05fbd8da6d3c1c3859d26f0d"
+      },
+      "audit": "Audited exact leaf parser and all target-control calls; explicit role injection precedes any preparation. Shared-directory peers use iOS simulators; Android-capable pair transports use USB plus emulator.",
+      "owns": [
+        "integration_test/warm_peer_lan_aware_smoke_test.dart"
+      ]
+    },
+    "integration_test/wifi_transport_test.dart": {
+      "roles": [
+        "android-physical"
+      ],
+      "commands": [
+        [
+          "flutter",
+          "test",
+          "--no-pub",
+          "-d",
+          "{device:android-physical}",
+          "--reporter",
+          "expanded",
+          "--dart-define=MKNOON_RELAY_ADDRESSES={config:relay_addresses}",
+          "integration_test/wifi_transport_test.dart"
+        ]
+      ],
+      "environment": {},
+      "config": [
+        "relay_addresses"
+      ],
+      "sources": {
+        "integration_test/wifi_transport_test.dart": "844da3a634035e3d56d2ff219a522fbc9c7fcc9094c6e91c0a791165f7d56d62"
+      },
+      "audit": "Audited exact leaf parser and all target-control calls; explicit role injection precedes any preparation. Shared-directory peers use iOS simulators; Android-capable pair transports use USB plus emulator.",
+      "owns": [
+        "integration_test/integration_test.dart",
+        "integration_test/wifi_transport_test.dart"
+      ]
+    },
+    "scripts/run_app_visibility_android_e2e.sh": {
+      "roles": [
+        "android-physical"
+      ],
+      "commands": [
+        [
+          "bash",
+          "scripts/run_app_visibility_android_e2e.sh",
+          "--build-only",
+          "--artifact-dir",
+          "{output}/build"
+        ],
+        [
+          "bash",
+          "scripts/run_app_visibility_android_e2e.sh",
+          "--device-id",
+          "{device:android-physical}",
+          "--artifact-dir",
+          "{output}/build",
+          "--result-dir",
+          "{output}/result",
+          "--scenario",
+          "app_visibility_lifecycle"
+        ]
+      ],
+      "environment": {},
+      "config": [
+        "relay_addresses"
+      ],
+      "sources": {
+        "scripts/run_app_visibility_android_e2e.sh": "c8dc2b7a80c937da373c5ab193e5e4d4201106dc24157c358bfed06da54d3db5"
+      },
+      "audit": "Audited exact leaf parser and all target-control calls; explicit role injection precedes any preparation. Shared-directory peers use iOS simulators; Android-capable pair transports use USB plus emulator.",
+      "owns": [
+        "scripts/run_app_visibility_android_e2e.sh"
+      ]
+    },
+    "scripts/run_ios_notification_tap_ui_smoke.sh": {
+      "roles": [
+        "ios-simulator-a",
+        "ios-simulator-b"
+      ],
+      "commands": [
+        [
+          "bash",
+          "scripts/run_ios_notification_tap_ui_smoke.sh",
+          "--devices",
+          "{device:ios-simulator-a},{device:ios-simulator-b}"
+        ]
+      ],
+      "environment": {},
+      "config": [
+        "relay_addresses"
+      ],
+      "sources": {
+        "scripts/push_fixture_to_simulator.sh": "7bfec06efaff5d7903f94539aa8954a93b56a9b6e846526eaa7971ec5698814f",
+        "scripts/run_ios_notification_tap_ui_smoke.sh": "2517442daac197f385322879bc4cdd197beb0730a3e2f71dcdda10b5282ec5c1"
+      },
+      "audit": "Audited exact leaf parser and all target-control calls; explicit role injection precedes any preparation. Shared-directory peers use iOS simulators; Android-capable pair transports use USB plus emulator.",
+      "owns": [
+        "scripts/push_fixture_to_simulator.sh",
+        "scripts/run_ios_notification_tap_ui_smoke.sh"
+      ]
+    },
+    "scripts/smoke_test_push_decrypt_simulator.sh": {
+      "roles": [
+        "ios-simulator-a",
+        "ios-simulator-b",
+        "android-emulator"
+      ],
+      "commands": [
+        [
+          "bash",
+          "scripts/smoke_test_push_decrypt_simulator.sh"
+        ]
+      ],
+      "environment": {
+        "SIMULATOR_DEVICE": "{device:ios-simulator-a}",
+        "IOS_SECONDARY_SIMULATOR_DEVICE": "{device:ios-simulator-b}",
+        "ANDROID_SERIAL": "{device:android-emulator}"
+      },
+      "config": [
+        "relay_addresses"
+      ],
+      "sources": {
+        "scripts/push_fixture_to_android_emulator.sh": "6ac732ea7a5531bee3c1dc7d3181a0c7109ba8e1d7b2301b1ff7e23f8ca32cdd",
+        "scripts/push_fixture_to_simulator.sh": "7bfec06efaff5d7903f94539aa8954a93b56a9b6e846526eaa7971ec5698814f",
+        "scripts/smoke_test_push_decrypt_simulator.sh": "fb1c67ef9eaf96659a3b7d4347f5a3ee6f30c21822fbc10719482a64cd602c69"
+      },
+      "audit": "Audited exact leaf parser and all target-control calls; explicit role injection precedes any preparation. Shared-directory peers use iOS simulators; Android-capable pair transports use USB plus emulator.",
+      "owns": [
+        "scripts/push_fixture_to_android_emulator.sh",
+        "scripts/push_fixture_to_simulator.sh",
+        "scripts/smoke_test_push_decrypt_simulator.sh"
+      ]
+    },
+    "smoke_test_friends.sh": {
+      "roles": [
+        "ios-simulator-a",
+        "ios-simulator-b",
+        "ios-simulator-c",
+        "ios-simulator-d"
+      ],
+      "commands": [
+        [
+          "bash",
+          "smoke_test_friends.sh"
+        ]
+      ],
+      "environment": {
+        "DEVICE_A": "{device:ios-simulator-a}",
+        "DEVICE_B": "{device:ios-simulator-b}",
+        "DEVICE_C": "{device:ios-simulator-c}",
+        "DEVICE_D": "{device:ios-simulator-d}",
+        "INTRO_E2E_SCENARIO": "all"
+      },
+      "config": [
+        "relay_addresses",
+        "ios_disposable_simulator_ids"
+      ],
+      "sources": {
+        "reset_simulators.sh": "68f6934eeb09db65a4f2e7df42e7510a1eca75018e73c83373d0c7e8115ed914",
+        "smoke_test_friends.sh": "ccbcf7361de4cf279d67cb777b3d39315df7df24fb07a0caa95239b49269c69c"
+      },
+      "audit": "Audited exact leaf parser and all target-control calls; explicit role injection precedes any preparation. Shared-directory peers use iOS simulators; Android-capable pair transports use USB plus emulator.",
+      "owns": [
+        "reset_simulators.sh",
+        "smoke_test_friends.sh"
+      ],
+      "disposable_simulators": true
+    }
+  }
+}

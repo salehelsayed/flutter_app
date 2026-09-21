@@ -1,6 +1,7 @@
 import 'dart:math' as math;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart' show ScrollCacheExtent;
 import 'package:flutter_app/core/secure_storage/secure_key_store.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/features/p2p/presentation/widgets/connection_status_indicator.dart';
@@ -964,7 +965,13 @@ class _OrbitScreenView extends StatelessWidget {
           ExpandableFab(
             anchor: ExpandableFabAnchor.topRight,
             fabSize: 40,
-            fabSemanticLabel: 'orbit_create_group_fab',
+            fabSemanticIdentifier: 'orbit_create_group_fab',
+            fabSemanticLabel: AppLocalizations.of(
+              context,
+            )!.orbit_create_group_action,
+            openFabSemanticLabel: AppLocalizations.of(
+              context,
+            )!.orbit_close_create_menu_action,
             safeAreaPadding: MediaQuery.of(context).padding,
             quietOutlined: visualTreatment != OrbitVisualTreatment.current,
             refinedNeutral:
@@ -1055,39 +1062,67 @@ class _OrbitScreenView extends StatelessWidget {
             builder: (context, projection, child) {
               onListBuild?.call();
               return CustomScrollView(
+                scrollCacheExtent: const ScrollCacheExtent.pixels(600),
                 controller: scrollController,
                 physics: const BouncingScrollPhysics(),
-                cacheExtent: 600,
                 slivers: [
                   SliverToBoxAdapter(
-                    child: Padding(
-                      // The first sliver clears the top chrome strip (the
-                      // top-left toggle at safeTop+8) VERTICALLY — top padding
-                      // 56 (209: the QR pair retired to Settings; the toggle
-                      // still occupies the strip, so the clearance stays).
-                      padding: const EdgeInsets.fromLTRB(16, 56, 16, 0),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          // 203 B5: the title-only FriendsListHeader was
-                          // removed with its 'Close Friends' string — the
-                          // filter toggle is the list's first content.
-                          if (!projection.searchActive) ...[
-                            const SizedBox(height: 8),
-                            FriendsFilterToggle(
-                              activeFilter: projection.filterTab,
-                              activeCount: projection.activeCount,
-                              archivedCount: projection.archivedCount,
-                              introsCount: projection.reviewCount,
-                              onFilterChanged: onFilterChanged,
+                    child: Stack(
+                      children: [
+                        Padding(
+                          // The first sliver clears the top chrome strip (the
+                          // top-left toggle at safeTop+8) VERTICALLY — top padding
+                          // 56 (209: the QR pair retired to Settings; the toggle
+                          // still occupies the strip, so the clearance stays).
+                          padding: const EdgeInsets.fromLTRB(16, 56, 16, 0),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              // 203 B5: the title-only FriendsListHeader was
+                              // removed with its 'Close Friends' string — the
+                              // filter toggle is the list's first content.
+                              if (!projection.searchActive) ...[
+                                const SizedBox(height: 8),
+                                FriendsFilterToggle(
+                                  activeFilter: projection.filterTab,
+                                  activeCount: projection.activeCount,
+                                  archivedCount: projection.archivedCount,
+                                  introsCount: projection.reviewCount,
+                                  onFilterChanged: onFilterChanged,
+                                ),
+                              ],
+                              const SizedBox(height: 8),
+                              if (projection.reviewCount > 0 &&
+                                  projection.filterTab != 'intros')
+                                _buildIntroBanner(context, projection),
+                            ],
+                          ),
+                        ),
+                        if (_showsLoadingContacts(projection))
+                          Positioned(
+                            top: 8,
+                            // Keep clear of the physical-left view toggle.
+                            left: 68,
+                            right: 16,
+                            height: 40,
+                            child: Align(
+                              alignment: AlignmentDirectional.centerStart,
+                              child: Text(
+                                AppLocalizations.of(
+                                  context,
+                                )!.orbit_loading_contacts,
+                                maxLines: 2,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  color: context
+                                      .backgroundReadableColors
+                                      .textMuted,
+                                ),
+                              ),
                             ),
-                          ],
-                          const SizedBox(height: 8),
-                          if (projection.reviewCount > 0 &&
-                              projection.filterTab != 'intros')
-                            _buildIntroBanner(context, projection),
-                        ],
-                      ),
+                          ),
+                      ],
                     ),
                   ),
                   _buildContentSliver(context, projection),
@@ -1181,6 +1216,13 @@ class _OrbitScreenView extends StatelessWidget {
     return l10n.orbit_intro_banner_intros;
   }
 
+  // The status occupies the already-reserved top strip, so neither the
+  // skeleton geometry nor the loaded list position changes at settlement.
+  bool _showsLoadingContacts(OrbitViewProjection projection) =>
+      projection.filterTab != 'intros' &&
+      projection.showLoadingPlaceholders &&
+      projection.mergedItems.isEmpty;
+
   Widget _buildContentSliver(
     BuildContext context,
     OrbitViewProjection projection,
@@ -1191,9 +1233,7 @@ class _OrbitScreenView extends StatelessWidget {
       }
     }
 
-    if (projection.filterTab != 'intros' &&
-        projection.showLoadingPlaceholders &&
-        projection.mergedItems.isEmpty) {
+    if (_showsLoadingContacts(projection)) {
       return _buildLoadingSliver();
     }
 

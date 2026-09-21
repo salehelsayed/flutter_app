@@ -520,7 +520,7 @@ class ChatMessageListener {
                 : senderPeerId,
           },
         );
-        return finish(
+        return await finish(
           const ChatMessageProcessOutcome(
             state: ChatMessageProcessState.blockedSender,
           ),
@@ -589,7 +589,7 @@ class ChatMessageListener {
       }
 
       if (result == HandleChatMessageResult.missingMlKemSecret) {
-        return finish(
+        return await finish(
           ChatMessageProcessOutcome(
             state: ChatMessageProcessState.missingMlKemSecret,
             updatedContact: updatedContact,
@@ -607,7 +607,7 @@ class ChatMessageListener {
                 : senderPeerId,
           },
         );
-        return finish(
+        return await finish(
           ChatMessageProcessOutcome(
             state: ChatMessageProcessState.decryptionFailed,
             updatedContact: updatedContact,
@@ -625,7 +625,7 @@ class ChatMessageListener {
                 : senderPeerId,
           },
         );
-        return finish(
+        return await finish(
           ChatMessageProcessOutcome(
             state: ChatMessageProcessState.decryptionDeferred,
             updatedContact: updatedContact,
@@ -634,7 +634,7 @@ class ChatMessageListener {
       }
 
       if (result == HandleChatMessageResult.unknownSender) {
-        return finish(
+        return await finish(
           ChatMessageProcessOutcome(
             state: ChatMessageProcessState.unknownSender,
             updatedContact: updatedContact,
@@ -644,7 +644,7 @@ class ChatMessageListener {
 
       if (result == HandleChatMessageResult.duplicate) {
         _retryNotificationDisplaysAfterCommit();
-        return finish(
+        return await finish(
           ChatMessageProcessOutcome(
             state: ChatMessageProcessState.duplicate,
             updatedContact: updatedContact,
@@ -660,7 +660,7 @@ class ChatMessageListener {
       if (result == HandleChatMessageResult.durablySuperseded) {
         // Deliberately NOT `retryNotificationDisplays`: this terminal replay
         // must produce zero display effects.
-        return finish(
+        return await finish(
           ChatMessageProcessOutcome(
             state: ChatMessageProcessState.durablySuperseded,
             updatedContact: updatedContact,
@@ -669,7 +669,7 @@ class ChatMessageListener {
       }
 
       if (result == HandleChatMessageResult.ignoredEdit) {
-        return finish(
+        return await finish(
           ChatMessageProcessOutcome(
             state: ChatMessageProcessState.ignoredEdit,
             updatedContact: updatedContact,
@@ -679,7 +679,7 @@ class ChatMessageListener {
 
       if (result == HandleChatMessageResult.linkedModalityRefused) {
         // 361: terminal — zero publication, zero display retry.
-        return finish(
+        return await finish(
           ChatMessageProcessOutcome(
             state: ChatMessageProcessState.linkedModalityRefused,
             updatedContact: updatedContact,
@@ -688,7 +688,7 @@ class ChatMessageListener {
       }
 
       if (result == HandleChatMessageResult.editMissingOriginal) {
-        return finish(
+        return await finish(
           ChatMessageProcessOutcome(
             state: ChatMessageProcessState.editMissingOriginal,
             updatedContact: updatedContact,
@@ -697,7 +697,7 @@ class ChatMessageListener {
       }
 
       if (result == HandleChatMessageResult.notChatMessage) {
-        return finish(
+        return await finish(
           ChatMessageProcessOutcome(
             state: ChatMessageProcessState.notChatMessage,
             updatedContact: updatedContact,
@@ -727,7 +727,7 @@ class ChatMessageListener {
           // The handler already promoted marker-first custody. Retire it from
           // current policy immediately instead of waiting for a future resume.
           _retryNotificationDisplaysAfterCommit();
-          return finish(
+          return await finish(
             ChatMessageProcessOutcome(
               state: ChatMessageProcessState.stored,
               conversationMessage: conversationMessage,
@@ -821,7 +821,7 @@ class ChatMessageListener {
           _autoDownloadMedia(conversationMessage);
         }
 
-        return finish(
+        return await finish(
           ChatMessageProcessOutcome(
             state: ChatMessageProcessState.stored,
             conversationMessage: conversationMessage,
@@ -830,7 +830,7 @@ class ChatMessageListener {
         );
       }
 
-      return finish(
+      return await finish(
         ChatMessageProcessOutcome(
           state: ChatMessageProcessState.error,
           updatedContact: updatedContact,

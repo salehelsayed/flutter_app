@@ -2269,7 +2269,7 @@ abstract class AppLocalizations {
   /// No description provided for @settings_media_save_fail.
   ///
   /// In en, this message translates to:
-  /// **'Couldn\'t save. Try again.'**
+  /// **'Couldn\'t save. Previous settings restored. Try again.'**
   String get settings_media_save_fail;
 
   /// No description provided for @settings_media_storage_usage.
@@ -6167,7 +6167,7 @@ abstract class AppLocalizations {
   /// No description provided for @push_registration_health_retry.
   ///
   /// In en, this message translates to:
-  /// **'Retry'**
+  /// **'Retry notification setup'**
   String get push_registration_health_retry;
 
   /// No description provided for @push_registration_health_open_notification_settings.
@@ -6655,6 +6655,150 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Could not save your choice. Please try again.'**
   String get settings_call_privacy_save_failed;
+
+  /// No description provided for @voice_record_action.
+  ///
+  /// In en, this message translates to:
+  /// **'Record voice message'**
+  String get voice_record_action;
+
+  /// No description provided for @voice_record_hint.
+  ///
+  /// In en, this message translates to:
+  /// **'Tap to start recording'**
+  String get voice_record_hint;
+
+  /// No description provided for @voice_cancel_start_action.
+  ///
+  /// In en, this message translates to:
+  /// **'Cancel recording start'**
+  String get voice_cancel_start_action;
+
+  /// No description provided for @voice_cancel_start_hint.
+  ///
+  /// In en, this message translates to:
+  /// **'Tap to cancel starting the recording'**
+  String get voice_cancel_start_hint;
+
+  /// No description provided for @voice_stop_send_action.
+  ///
+  /// In en, this message translates to:
+  /// **'Stop and send voice message'**
+  String get voice_stop_send_action;
+
+  /// No description provided for @voice_stop_send_hint.
+  ///
+  /// In en, this message translates to:
+  /// **'Tap to stop recording and send the voice message'**
+  String get voice_stop_send_hint;
+
+  /// No description provided for @voice_finishing_label.
+  ///
+  /// In en, this message translates to:
+  /// **'Finishing voice message'**
+  String get voice_finishing_label;
+
+  /// No description provided for @voice_review_send_action.
+  ///
+  /// In en, this message translates to:
+  /// **'Send voice message'**
+  String get voice_review_send_action;
+
+  /// No description provided for @voice_review_discard_action.
+  ///
+  /// In en, this message translates to:
+  /// **'Discard recording'**
+  String get voice_review_discard_action;
+
+  /// No description provided for @action_back.
+  ///
+  /// In en, this message translates to:
+  /// **'Back'**
+  String get action_back;
+
+  /// No description provided for @action_contact_profile.
+  ///
+  /// In en, this message translates to:
+  /// **'View contact profile'**
+  String get action_contact_profile;
+
+  /// No description provided for @action_conversation_options.
+  ///
+  /// In en, this message translates to:
+  /// **'Conversation options'**
+  String get action_conversation_options;
+
+  /// No description provided for @action_add_attachment.
+  ///
+  /// In en, this message translates to:
+  /// **'Add attachment'**
+  String get action_add_attachment;
+
+  /// No description provided for @action_send_message.
+  ///
+  /// In en, this message translates to:
+  /// **'Send message'**
+  String get action_send_message;
+
+  /// No description provided for @action_group_information.
+  ///
+  /// In en, this message translates to:
+  /// **'Group information'**
+  String get action_group_information;
+
+  /// No description provided for @action_start_voice_call.
+  ///
+  /// In en, this message translates to:
+  /// **'Start voice call'**
+  String get action_start_voice_call;
+
+  /// No description provided for @action_starting_voice_call.
+  ///
+  /// In en, this message translates to:
+  /// **'Starting voice call'**
+  String get action_starting_voice_call;
+
+  /// No description provided for @voice_call_device_unavailable.
+  ///
+  /// In en, this message translates to:
+  /// **'Voice calling is unavailable for this device'**
+  String get voice_call_device_unavailable;
+
+  /// No description provided for @orbit_create_group_action.
+  ///
+  /// In en, this message translates to:
+  /// **'Create group'**
+  String get orbit_create_group_action;
+
+  /// No description provided for @orbit_close_create_menu_action.
+  ///
+  /// In en, this message translates to:
+  /// **'Close create menu'**
+  String get orbit_close_create_menu_action;
+
+  /// No description provided for @voice_call_unavailable.
+  ///
+  /// In en, this message translates to:
+  /// **'Voice calling is unavailable right now'**
+  String get voice_call_unavailable;
+
+  /// No description provided for @push_registration_health_retrying.
+  ///
+  /// In en, this message translates to:
+  /// **'Trying again…'**
+  String get push_registration_health_retrying;
+
+  /// No description provided for @orbit_loading_contacts.
+  ///
+  /// In en, this message translates to:
+  /// **'Loading contacts…'**
+  String get orbit_loading_contacts;
+
+  /// No description provided for @media_loading.
+  ///
+  /// In en, this message translates to:
+  /// **'Loading media…'**
+  String get media_loading;
 }
 
 class _AppLocalizationsDelegate

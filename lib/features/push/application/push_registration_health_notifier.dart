@@ -12,18 +12,21 @@ final class PushRegistrationHealthViewModel {
     required this.reason,
     required this.warningVisible,
     required this.action,
+    this.retryInProgress = false,
   });
 
   const PushRegistrationHealthViewModel.neutral()
     : phase = null,
       reason = PushRegistrationHealthReason.none,
       warningVisible = false,
-      action = PushRegistrationHealthAction.none;
+      action = PushRegistrationHealthAction.none,
+      retryInProgress = false;
 
   final PushRegistrationHealthPhase? phase;
   final PushRegistrationHealthReason reason;
   final bool warningVisible;
   final PushRegistrationHealthAction action;
+  final bool retryInProgress;
 
   @override
   bool operator ==(Object other) {
@@ -32,11 +35,13 @@ final class PushRegistrationHealthViewModel {
             other.phase == phase &&
             other.reason == reason &&
             other.warningVisible == warningVisible &&
-            other.action == action;
+            other.action == action &&
+            other.retryInProgress == retryInProgress;
   }
 
   @override
-  int get hashCode => Object.hash(phase, reason, warningVisible, action);
+  int get hashCode =>
+      Object.hash(phase, reason, warningVisible, action, retryInProgress);
 }
 
 final class PushRegistrationHealthNotifier
@@ -61,6 +66,8 @@ final class PushRegistrationHealthNotifier
   final Duration warningAfter;
   PushRegistrationHealthRecord? _record;
   Timer? _thresholdTimer;
+  Completer<void>? _retry;
+  bool _disposed = false;
 
   PushRegistrationHealthRecord? get record => _record;
 
@@ -72,7 +79,39 @@ final class PushRegistrationHealthNotifier
     _scheduleThresholdIfNeeded();
   }
 
+  /// Owns the app-shell retry until the real coordinator future settles.
+  /// Repeated activations join the same operation, including before a rebuild.
+  Future<void> retryRegistration(Future<void> Function() operation) {
+    if (_disposed) return Future<void>.value();
+    final pending = _retry;
+    if (pending != null) return pending.future;
+    if (value.action != PushRegistrationHealthAction.retry) {
+      return Future<void>.value();
+    }
+    final retry = Completer<void>();
+    _retry = retry;
+    _publishCurrent();
+    Future<void>.sync(operation).then(
+      (_) {
+        _settleRetry(retry);
+        retry.complete();
+      },
+      onError: (Object error, StackTrace stack) {
+        _settleRetry(retry);
+        retry.completeError(error, stack);
+      },
+    );
+    return retry.future;
+  }
+
+  void _settleRetry(Completer<void> retry) {
+    if (_disposed || !identical(_retry, retry)) return;
+    _retry = null;
+    _publishCurrent();
+  }
+
   void clear() {
+    _retry = null;
     _record = null;
     _thresholdTimer?.cancel();
     _thresholdTimer = null;
@@ -100,6 +139,7 @@ final class PushRegistrationHealthNotifier
       reason: current.reason,
       warningVisible: visible,
       action: action,
+      retryInProgress: _retry != null,
     );
   }
 
@@ -127,6 +167,8 @@ final class PushRegistrationHealthNotifier
 
   @override
   void dispose() {
+    _disposed = true;
+    _retry = null;
     _thresholdTimer?.cancel();
     _thresholdTimer = null;
     super.dispose();

@@ -23,13 +23,10 @@ class SwipeToQuoteBubble extends StatefulWidget {
 class _SwipeToQuoteBubbleState extends State<SwipeToQuoteBubble>
     with SingleTickerProviderStateMixin {
   static const _triggerWidth = 72.0;
-  static const _directionThreshold = 8.0;
 
   late final AnimationController _controller;
   double _dragOffset = 0;
   bool _isDragging = false;
-  bool _directionLocked = false;
-  bool _isHorizontalDrag = false;
   bool _triggered = false;
 
   @override
@@ -54,8 +51,6 @@ class _SwipeToQuoteBubbleState extends State<SwipeToQuoteBubble>
 
   void _onDragStart(DragStartDetails details) {
     _isDragging = true;
-    _directionLocked = false;
-    _isHorizontalDrag = false;
     _triggered = false;
     _controller.stop();
   }
@@ -64,22 +59,8 @@ class _SwipeToQuoteBubbleState extends State<SwipeToQuoteBubble>
     if (!_isDragging) return;
 
     final dx = details.delta.dx;
-    final dy = details.delta.dy;
-
-    if (!_directionLocked) {
-      final totalDx =
-          details.localPosition.dx - (details.localPosition.dx - dx);
-      final totalDy =
-          details.localPosition.dy - (details.localPosition.dy - dy);
-      if (totalDx.abs() > _directionThreshold ||
-          totalDy.abs() > _directionThreshold) {
-        _directionLocked = true;
-        _isHorizontalDrag = dx.abs() >= dy.abs();
-      }
-      if (!_directionLocked) return;
-    }
-
-    if (!_isHorizontalDrag) return;
+    // The horizontal recognizer has already won against vertical scrolling.
+    // Accumulate every update: a second per-event threshold drops slow swipes.
 
     setState(() {
       _dragOffset += dx;

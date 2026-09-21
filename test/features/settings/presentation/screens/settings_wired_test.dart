@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -256,6 +257,19 @@ class _CountingP2PService extends _FakeP2PService {
   }) async {
     dialPeerCalls++;
     return super.dialPeer(peerId, addresses: addresses, timeoutMs: timeoutMs);
+  }
+}
+
+class _DeferredMediaWriteStore extends FakeSecureKeyStore {
+  Completer<void>? pending;
+  @override
+  Future<void> write(String key, String value) async {
+    if (key == MediaDownloadPreferences.storageKey) {
+      final operation = Completer<void>();
+      pending = operation;
+      await operation.future;
+    }
+    await super.write(key, value);
   }
 }
 
@@ -591,7 +605,9 @@ void main() {
     );
     await tester.pump();
     // Two taps within one frame budget (double-tap cadence).
-    await tester.tap(find.byKey(const ValueKey('settings-move-account-action')));
+    await tester.tap(
+      find.byKey(const ValueKey('settings-move-account-action')),
+    );
     await tester.tap(
       find.byKey(const ValueKey('settings-move-account-action')),
       warnIfMissed: false,
@@ -829,91 +845,93 @@ void main() {
     );
   });
 
-  testWidgets(
-    'save failure shows inline couldnt-save copy and no snackbar',
-    (tester) async {
-      final identityRepo = FakeIdentityRepository(makeIdentity());
-      final store = _FailingWriteSecureKeyStore();
-      final appShellController = AppShellController();
-      addTearDown(appShellController.dispose);
-      final events = <Map<String, dynamic>>[];
-      debugSetFlowEventSink(events.add);
-      addTearDown(() => debugSetFlowEventSink(null));
+  testWidgets('save failure shows inline couldnt-save copy and no snackbar', (
+    tester,
+  ) async {
+    final identityRepo = FakeIdentityRepository(makeIdentity());
+    final store = _FailingWriteSecureKeyStore();
+    final appShellController = AppShellController();
+    addTearDown(appShellController.dispose);
+    final events = <Map<String, dynamic>>[];
+    debugSetFlowEventSink(events.add);
+    addTearDown(() => debugSetFlowEventSink(null));
 
-      await pumpScreen(
-        tester,
-        identityRepo: identityRepo,
-        secureKeyStore: store,
-        appShellController: appShellController,
-      );
+    await pumpScreen(
+      tester,
+      identityRepo: identityRepo,
+      secureKeyStore: store,
+      appShellController: appShellController,
+    );
 
-      await openSheet(tester, 'settings-row-background');
-      await tester.tap(find.byKey(const ValueKey('background-choice-cosmic')));
-      await settleSheetClose(tester);
+    await openSheet(tester, 'settings-row-background');
+    await tester.tap(find.byKey(const ValueKey('background-choice-cosmic')));
+    await settleSheetClose(tester);
 
-      expect(await store.read('background_preference'), isNull);
-      expect(find.byType(CosmicBackground), findsNothing);
-      expect(
-        appShellController.backgroundPreference,
-        BackgroundPreference.defaultBackground,
-      );
-      expect(find.text("Couldn't save. Try again."), findsOneWidget);
-      expect(find.byType(SnackBar), findsNothing);
-      expect(
-        events,
-        contains(
-          isA<Map<String, dynamic>>()
-              .having(
-                (event) => event['event'],
-                'event',
-                'SETTINGS_FL_BACKGROUND_PREFERENCE_SAVE_ERROR',
-              )
-              .having(
-                (event) => event['details'],
-                'details',
-                allOf(
-                  containsPair('preference', 'cosmic'),
-                  containsPair('outcome', 'failure'),
-                ),
+    expect(await store.read('background_preference'), isNull);
+    expect(find.byType(CosmicBackground), findsNothing);
+    expect(
+      appShellController.backgroundPreference,
+      BackgroundPreference.defaultBackground,
+    );
+    expect(find.text("Couldn't save. Try again."), findsOneWidget);
+    expect(find.byType(SnackBar), findsNothing);
+    expect(
+      events,
+      contains(
+        isA<Map<String, dynamic>>()
+            .having(
+              (event) => event['event'],
+              'event',
+              'SETTINGS_FL_BACKGROUND_PREFERENCE_SAVE_ERROR',
+            )
+            .having(
+              (event) => event['details'],
+              'details',
+              allOf(
+                containsPair('preference', 'cosmic'),
+                containsPair('outcome', 'failure'),
               ),
-        ),
-      );
+            ),
+      ),
+    );
 
-      // The media-download matrix uses the same inline-only failure contract.
-      await tester.pumpWidget(const SizedBox.shrink());
-      await tester.pump();
-      await pumpScreen(
-        tester,
-        identityRepo: FakeIdentityRepository(makeIdentity()),
-        secureKeyStore: _FailingWriteSecureKeyStore(),
-      );
-      await openSheet(tester, 'settings-row-media-storage');
+    // The media-download matrix uses the same inline-only failure contract.
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump();
+    await pumpScreen(
+      tester,
+      identityRepo: FakeIdentityRepository(makeIdentity()),
+      secureKeyStore: _FailingWriteSecureKeyStore(),
+    );
+    await openSheet(tester, 'settings-row-media-storage');
 
-      final mediaChoice = find.byKey(
-        const ValueKey('media-download-oneToOne-image'),
-      );
-      await tester.ensureVisible(mediaChoice);
-      await tester.pump();
-      await tester.tap(
-        find.descendant(of: mediaChoice, matching: find.text('Off')),
-      );
-      await tester.pump(const Duration(milliseconds: 200));
+    final mediaChoice = find.byKey(
+      const ValueKey('media-download-oneToOne-image'),
+    );
+    await tester.ensureVisible(mediaChoice);
+    await tester.pump();
+    await tester.tap(
+      find.descendant(of: mediaChoice, matching: find.text('Off')),
+    );
+    await tester.pump(const Duration(milliseconds: 200));
 
-      expect(
-        tester
-            .widget<SegmentedButton<MediaDownloadNetworkChoice>>(mediaChoice)
-            .selected,
-        {MediaDownloadNetworkChoice.all},
-        reason: 'a failed write must roll the optimistic choice back',
-      );
-      expect(
-        find.byKey(const ValueKey('media-download-save-error')),
-        findsOneWidget,
-      );
-      expect(find.text("Couldn't save. Try again."), findsOneWidget);
-      expect(find.byType(SnackBar), findsNothing);
-    },
-  );
+    expect(
+      tester
+          .widget<SegmentedButton<MediaDownloadNetworkChoice>>(mediaChoice)
+          .selected,
+      {MediaDownloadNetworkChoice.all},
+      reason: 'a failed write must roll the optimistic choice back',
+    );
+    expect(
+      find.byKey(const ValueKey('media-download-save-error')),
+      findsOneWidget,
+    );
+    expect(
+      find.text("Couldn't save. Previous settings restored. Try again."),
+      findsOneWidget,
+    );
+    expect(find.byType(SnackBar), findsNothing);
+  });
 
   testWidgets('back button pops navigation', (tester) async {
     final identityRepo = FakeIdentityRepository(makeIdentity());
@@ -974,8 +992,9 @@ void main() {
 
   // ── 206: settings-side change-kind notifications (E6) ─────────────────────
 
-  testWidgets('TC-206-19a username save fires AppShellChangeKind.identity',
-      (tester) async {
+  testWidgets('TC-206-19a username save fires AppShellChangeKind.identity', (
+    tester,
+  ) async {
     final controller = AppShellController();
     addTearDown(controller.dispose);
     final kinds = <AppShellChangeKind>[];
@@ -998,43 +1017,44 @@ void main() {
   });
 
   testWidgets(
-      'TC-206-20a image+video quality saves fire AppShellChangeKind.mediaQuality',
-      (tester) async {
-    final controller = AppShellController();
-    addTearDown(controller.dispose);
-    final kinds = <AppShellChangeKind>[];
-    controller.addListener(() => kinds.add(controller.lastChangeKind));
+    'TC-206-20a image+video quality saves fire AppShellChangeKind.mediaQuality',
+    (tester) async {
+      final controller = AppShellController();
+      addTearDown(controller.dispose);
+      final kinds = <AppShellChangeKind>[];
+      controller.addListener(() => kinds.add(controller.lastChangeKind));
 
-    await pumpScreen(
-      tester,
-      identityRepo: FakeIdentityRepository(makeIdentity()),
-      appShellController: controller,
-    );
+      await pumpScreen(
+        tester,
+        identityRepo: FakeIdentityRepository(makeIdentity()),
+        appShellController: controller,
+      );
 
-    // 209: the segmented controls live inside the quality sub-sheets.
-    await openSheet(tester, 'settings-row-photo-quality');
-    await tester.tap(
-      find.descendant(
-        of: find.byType(ImageQualityToggle),
-        matching: find.text('Original'),
-      ),
-    );
-    await settleSheetClose(tester);
+      // 209: the segmented controls live inside the quality sub-sheets.
+      await openSheet(tester, 'settings-row-photo-quality');
+      await tester.tap(
+        find.descendant(
+          of: find.byType(ImageQualityToggle),
+          matching: find.text('Original'),
+        ),
+      );
+      await settleSheetClose(tester);
 
-    await openSheet(tester, 'settings-row-video-quality');
-    await tester.tap(
-      find.descendant(
-        of: find.byType(ImageQualityToggle),
-        matching: find.text('Original'),
-      ),
-    );
-    await settleSheetClose(tester);
+      await openSheet(tester, 'settings-row-video-quality');
+      await tester.tap(
+        find.descendant(
+          of: find.byType(ImageQualityToggle),
+          matching: find.text('Original'),
+        ),
+      );
+      await settleSheetClose(tester);
 
-    expect(
-      kinds.where((k) => k == AppShellChangeKind.mediaQuality).length,
-      2,
-    );
-  });
+      expect(
+        kinds.where((k) => k == AppShellChangeKind.mediaQuality).length,
+        2,
+      );
+    },
+  );
 
   // TC-206-18a — source-guard: the avatar-upload success branch fires the
   // identity change-kind (E6). Driving the full ImagePicker → upload →
@@ -1049,8 +1069,11 @@ void main() {
     ).readAsStringSync();
 
     final uploadIdx = src.indexOf('uploadProfilePicture(');
-    expect(uploadIdx, greaterThanOrEqualTo(0),
-        reason: 'the avatar upload call must exist');
+    expect(
+      uploadIdx,
+      greaterThanOrEqualTo(0),
+      reason: 'the avatar upload call must exist',
+    );
 
     final afterUpload = src.substring(uploadIdx);
     final successIdx = afterUpload.indexOf('if (success)');
@@ -1072,12 +1095,11 @@ void main() {
   Set<MediaDownloadNetworkChoice> selectedChoice(
     WidgetTester tester,
     String rowKey,
-  ) =>
-      tester
-          .widget<SegmentedButton<MediaDownloadNetworkChoice>>(
-            find.byKey(ValueKey(rowKey)),
-          )
-          .selected;
+  ) => tester
+      .widget<SegmentedButton<MediaDownloadNetworkChoice>>(
+        find.byKey(ValueKey(rowKey)),
+      )
+      .selected;
 
   Future<void> tapChoice(
     WidgetTester tester,
@@ -1094,6 +1116,55 @@ void main() {
     );
     await tester.pump(const Duration(milliseconds: 200));
   }
+
+  testWidgets(
+    'UI25 08.4 restoration copy appears only after a failed write settles',
+    (tester) async {
+      final store = _DeferredMediaWriteStore();
+      await pumpScreen(
+        tester,
+        identityRepo: FakeIdentityRepository(makeIdentity()),
+        secureKeyStore: store,
+      );
+      await openSheet(tester, 'settings-row-media-storage');
+      await tapChoice(tester, 'media-download-oneToOne-image', 'Off');
+      expect(store.pending, isNotNull);
+      expect(
+        find.byKey(const ValueKey('media-download-save-error')),
+        findsNothing,
+      );
+      store.pending!.completeError(StateError('synthetic save failure'));
+      await tester.pump(const Duration(milliseconds: 200));
+      expect(selectedChoice(tester, 'media-download-oneToOne-image'), {
+        MediaDownloadNetworkChoice.all,
+      });
+      expect(
+        find.text("Couldn't save. Previous settings restored. Try again."),
+        findsOneWidget,
+      );
+      await tapChoice(tester, 'media-download-oneToOne-image', 'Off');
+      store.pending!.complete();
+      await tester.pump(const Duration(milliseconds: 200));
+      expect(selectedChoice(tester, 'media-download-oneToOne-image'), {
+        MediaDownloadNetworkChoice.off,
+      });
+      expect(
+        find.byKey(const ValueKey('media-download-save-error')),
+        findsNothing,
+      );
+      final saved = MediaDownloadPreferences.fromStorageString(
+        await store.read(MediaDownloadPreferences.storageKey),
+      );
+      expect(
+        MediaDownloadMatrixControl.choiceFor(
+          saved,
+          MediaConversationKind.oneToOne,
+          'image',
+        ),
+        MediaDownloadNetworkChoice.off,
+      );
+    },
+  );
 
   testWidgets('media download settings persist and rollback failed saves', (
     tester,
@@ -1120,15 +1191,12 @@ void main() {
     );
     await openSheet(tester, 'settings-row-media-storage');
 
-    expect(
-      selectedChoice(tester, 'media-download-discussion-video'),
-      {MediaDownloadNetworkChoice.wifi},
-      reason: 'the saved matrix must be reconstructed after a fresh mount',
-    );
-    expect(
-      selectedChoice(tester, 'media-download-oneToOne-image'),
-      {MediaDownloadNetworkChoice.all},
-    );
+    expect(selectedChoice(tester, 'media-download-discussion-video'), {
+      MediaDownloadNetworkChoice.wifi,
+    }, reason: 'the saved matrix must be reconstructed after a fresh mount');
+    expect(selectedChoice(tester, 'media-download-oneToOne-image'), {
+      MediaDownloadNetworkChoice.all,
+    });
 
     // A new choice persists the FULL matrix.
     await tapChoice(tester, 'media-download-oneToOne-image', 'Off');
@@ -1160,10 +1228,9 @@ void main() {
       isFalse,
       reason: 'saving one cell must not erase the rest of the matrix',
     );
-    expect(
-      selectedChoice(tester, 'media-download-oneToOne-image'),
-      {MediaDownloadNetworkChoice.off},
-    );
+    expect(selectedChoice(tester, 'media-download-oneToOne-image'), {
+      MediaDownloadNetworkChoice.off,
+    });
 
     // A completely fresh settings mount reconstructs both choices (and the
     // untouched announcement lane default).
@@ -1175,18 +1242,15 @@ void main() {
       secureKeyStore: store,
     );
     await openSheet(tester, 'settings-row-media-storage');
-    expect(
-      selectedChoice(tester, 'media-download-oneToOne-image'),
-      {MediaDownloadNetworkChoice.off},
-    );
-    expect(
-      selectedChoice(tester, 'media-download-discussion-video'),
-      {MediaDownloadNetworkChoice.wifi},
-    );
-    expect(
-      selectedChoice(tester, 'media-download-announcement-file'),
-      {MediaDownloadNetworkChoice.all},
-    );
+    expect(selectedChoice(tester, 'media-download-oneToOne-image'), {
+      MediaDownloadNetworkChoice.off,
+    });
+    expect(selectedChoice(tester, 'media-download-discussion-video'), {
+      MediaDownloadNetworkChoice.wifi,
+    });
+    expect(selectedChoice(tester, 'media-download-announcement-file'), {
+      MediaDownloadNetworkChoice.all,
+    });
 
     // Rollback: a thrown write restores the prior value and surfaces a
     // visible error instead of a lying toggle.
@@ -1198,23 +1262,23 @@ void main() {
       secureKeyStore: _FailingWriteSecureKeyStore(),
     );
     await openSheet(tester, 'settings-row-media-storage');
-    expect(
-      selectedChoice(tester, 'media-download-oneToOne-image'),
-      {MediaDownloadNetworkChoice.all},
-    );
+    expect(selectedChoice(tester, 'media-download-oneToOne-image'), {
+      MediaDownloadNetworkChoice.all,
+    });
     await tapChoice(tester, 'media-download-oneToOne-image', 'Off');
     await tester.pump(const Duration(milliseconds: 200));
-    expect(
-      selectedChoice(tester, 'media-download-oneToOne-image'),
-      {MediaDownloadNetworkChoice.all},
-      reason: 'a failed write must roll the optimistic choice back',
-    );
+    expect(selectedChoice(tester, 'media-download-oneToOne-image'), {
+      MediaDownloadNetworkChoice.all,
+    }, reason: 'a failed write must roll the optimistic choice back');
     expect(
       find.byKey(const ValueKey('media-download-save-error')),
       findsOneWidget,
       reason: 'the failure must be visibly reported',
     );
-    expect(find.text("Couldn't save. Try again."), findsOneWidget);
+    expect(
+      find.text("Couldn't save. Previous settings restored. Try again."),
+      findsOneWidget,
+    );
     expect(find.byType(SnackBar), findsNothing);
   });
 }

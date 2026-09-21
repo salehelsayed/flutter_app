@@ -1068,7 +1068,12 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
   void _retryPushRegistration() {
     final coordinator = widget.pushRegistrationCoordinator;
     if (coordinator != null) {
-      unawaited(coordinator.retryNow());
+      final health = widget.pushRegistrationHealthNotifier;
+      unawaited(
+        health == null
+            ? coordinator.retryNow()
+            : health.retryRegistration(coordinator.retryNow),
+      );
     }
   }
 
@@ -3023,7 +3028,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
     required BackgroundManagedGroupNotificationComparand? comparand,
   }) async {
     try {
-      return resolveForegroundGroupNotificationReadAcknowledgement(
+      return await resolveForegroundGroupNotificationReadAcknowledgement(
         groupId: groupId,
         contentKind: contentKind,
         eventIdentity: eventIdentity,

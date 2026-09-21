@@ -15,6 +15,7 @@ Usage:
   ./scripts/check_reliability_simulation_discovery.sh --checks-tsv
 
 Options:
+  --classifications-tsv Emit static classifications only; do not expand or start Dart.
   --records-tsv   Emit classified candidates as category/kind/path/note TSV.
   --checks-tsv    Emit expanded checks/scenarios as category/path/id/note TSV.
 EOF
@@ -22,6 +23,10 @@ EOF
 
 while (($# > 0)); do
   case "$1" in
+    --classifications-tsv)
+      output_mode="classifications-tsv"
+      shift
+      ;;
     --records-tsv)
       output_mode="records-tsv"
       shift
@@ -154,6 +159,7 @@ classify_path() {
     lib/debug/group_strict_notification_e2e_action.dart|\
     lib/core/debug/android_notification_payload_e2e.dart|\
     lib/core/debug/android_notification_payload_e2e_protocol.dart|\
+    lib/debug/notification_dual_path_e2e_sender.dart|\
     lib/core/debug/private_media_outbox_e2e.dart|\
     lib/core/debug/private_media_outbox_e2e_conversation.dart|\
     lib/core/debug/private_media_outbox_e2e_protocol.dart|\
@@ -325,10 +331,13 @@ classify_path() {
     lib/core/debug/group_media_ios_disposable_profile.dart|\
     lib/core/debug/group_media_ios_disposable_reset.dart|\
     lib/core/debug/group_media_reliability_e2e.dart|\
-    lib/core/debug/group_media_reliability_e2e_main_actions.dart)
+    lib/debug/group_media_reliability_e2e_main_actions.dart)
       record "support" "$path" "support" "269 strict group-media app hooks, host controllers, artifact criteria, and prepared-runner contract"
       return
       ;;
+    integration_test/scripts/routing_stage_handshake.dart|\
+    integration_test/scripts/benchmark_completion.dart|\
+    integration_test/scripts/benchmark_boundary.dart|\
     integration_test/scripts/_android_app_package.dart|\
     integration_test/scripts/physical_device_capture_harness.dart|\
     integration_test/scripts/routing_smoke_group_criteria.dart|\
@@ -819,6 +828,8 @@ discover_candidates() {
       lib/core/debug/group_media_ios_disposable_profile.dart \
       lib/core/debug/group_media_ios_disposable_reset.dart \
       lib/debug/android_direct_media_blob_custody_e2e.dart \
+      lib/debug/group_media_reliability_e2e_main_actions.dart \
+      lib/debug/notification_dual_path_e2e_sender.dart \
       lib/debug/group_notification_projection_e2e_action.dart \
       lib/debug/group_strict_notification_e2e_action.dart; do
       [ ! -f "$path" ] || printf '%s\n' "$path"
@@ -1341,6 +1352,13 @@ while IFS= read -r path; do
 done < <(discover_candidates)
 
 record_archived_proof_requirements
+
+if [ "$output_mode" = "classifications-tsv" ]; then
+  unclassified_count="$(awk -F '\t' '$1 == "unclassified" { count++ } END { print count + 0 }' "$records_file")"
+  emit_failures_if_any "$unclassified_count" 0
+  cat "$records_file"
+  exit 0
+fi
 
 while IFS=$'\t' read -r category kind path note; do
   [ -n "$category" ] || continue

@@ -279,9 +279,11 @@ void main() {
     ]);
     expect(capability.buildProfileId, 'host.flutter_tester');
     expect(capability.dependencies, isEmpty);
-    expect(capability.resources, hasLength(1));
-    expect(capability.resources.single.name, 'host.cpu');
-    expect(capability.resources.single.access, ResourceAccess.read);
+    expect(capability.resources, hasLength(2));
+    expect(capability.resources.first.name, 'host.cpu');
+    expect(capability.resources.first.access, ResourceAccess.read);
+    expect(capability.resources.last.name, 'build:shared-native');
+    expect(capability.resources.last.access, ResourceAccess.exclusive);
     expect(capability.targetCapabilities, <String>[
       'host.flutter-tester',
       'host.bash',
@@ -314,9 +316,11 @@ void main() {
     ]);
     expect(capability.buildProfileId, 'host.flutter_tester');
     expect(capability.dependencies, isEmpty);
-    expect(capability.resources, hasLength(1));
-    expect(capability.resources.single.name, 'host.cpu');
-    expect(capability.resources.single.access, ResourceAccess.read);
+    expect(capability.resources, hasLength(2));
+    expect(capability.resources.first.name, 'host.cpu');
+    expect(capability.resources.first.access, ResourceAccess.read);
+    expect(capability.resources.last.name, 'build:shared-native');
+    expect(capability.resources.last.access, ResourceAccess.exclusive);
     expect(capability.targetCapabilities, <String>[
       'host.flutter-tester',
       'host.bash',
@@ -352,9 +356,11 @@ void main() {
       ]);
       expect(capability.buildProfileId, 'host.process');
       expect(capability.dependencies, isEmpty);
-      expect(capability.resources, hasLength(1));
-      expect(capability.resources.single.name, 'host.cpu');
-      expect(capability.resources.single.access, ResourceAccess.read);
+      expect(capability.resources, hasLength(2));
+      expect(capability.resources.first.name, 'host.cpu');
+      expect(capability.resources.first.access, ResourceAccess.read);
+      expect(capability.resources.last.name, 'build:shared-native');
+      expect(capability.resources.last.access, ResourceAccess.exclusive);
       expect(capability.targetCapabilities, <String>[
         'host.flutter-sdk',
         'host.bash',
@@ -752,6 +758,19 @@ void main() {
       expect(capability.declaredBuildException, isFalse);
     },
   );
+
+  test('iOS group-media proof consumes both attested mobile profiles', () {
+    final row = manifest.capabilityById('groups.media_send_reliability_ios')!;
+    expect(row.command.last, 'group_media_ios_receiver_background_recovery');
+    expect(row.buildProfileId, 'ios.device.group_media_269');
+    expect(row.dependencies, ['build.ios.device.group_media_269', 'build.android.e2e.group_media_269']);
+    expect(row.artifactValidator, 'validateGroupMediaIosBackgroundRecoveryArtifact');
+    expect(row.targetCapabilities, containsAll(['ios.physical', 'android.physical']));
+    for (final profile in ['ios.device.group_media_269','android.e2e.group_media_269']) {
+      expect(row.resources.any((r) => r.name == 'build:$profile' && r.access == ResourceAccess.read), isTrue);
+    }
+    expect(row.declaredBuildException, isFalse);
+  });
 
   test('Android notification campaign reuses the central production APK', () {
     final capability = manifest.capabilityById(

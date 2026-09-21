@@ -40,6 +40,9 @@ var callDiagnosticRules = func() callDiagnosticSchema {
 }()
 
 type callDiagnosticContext struct {
+	traceLifetime     *callDiagnosticMetadata
+	privacyGeneration uint64
+	origin            callDiagnosticAuthorityChange
 	consentEpoch      int64
 	TraceID           string `json:"traceId,omitempty"`
 	RequestID         string `json:"requestId,omitempty"`

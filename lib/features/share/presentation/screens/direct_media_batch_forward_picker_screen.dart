@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart' show ScrollCacheExtent;
 import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/conversation/application/build_direct_media_library_batch_forward.dart';
@@ -145,11 +146,11 @@ class DirectMediaBatchForwardPickerScreen extends StatelessWidget {
     return SizedBox(
       height: hasStatusRegion ? 160 : 176,
       child: ListView.builder(
+        scrollCacheExtent: const ScrollCacheExtent.pixels(40),
         key: const ValueKey('direct-batch-forward-source-list'),
         scrollDirection: Axis.horizontal,
         keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
         padding: const EdgeInsetsDirectional.fromSTEB(16, 0, 16, 8),
-        cacheExtent: 40,
         itemCount: items.length,
         itemBuilder: (context, index) => _buildSourceCard(context, index),
       ),
@@ -463,10 +464,10 @@ class DirectMediaBatchForwardPickerScreen extends StatelessWidget {
       );
     }
     return ListView.builder(
+      scrollCacheExtent: const ScrollCacheExtent.pixels(80),
       key: const ValueKey('direct-batch-forward-contacts-list'),
       padding: const EdgeInsetsDirectional.fromSTEB(16, 0, 16, 4),
       keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
-      cacheExtent: 80,
       itemCount: contacts.length,
       itemBuilder: (context, index) {
         final contact = contacts[index];

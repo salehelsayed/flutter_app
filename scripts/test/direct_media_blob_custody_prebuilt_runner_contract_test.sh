@@ -129,9 +129,10 @@ for fragment in \
   'newControlPlaneStores' \
   'backendKindRedis' \
   'NewMediaStore' \
-  'HandleRendezvousStream' \
-  'HandleInboxStream' \
-  'HandleMediaStream' \
+  'registerRelayProtocolHandlers(h, relayProtocolDependencies{' \
+  'Rendezvous:      stores.Rendezvous' \
+  'Inbox:           stores.Inbox' \
+  'Media:           media' \
   'ProbeURL' \
   'directMediaFixturePendingProtectedCount' \
   'mediaCustodyStatePending' \
@@ -160,7 +161,7 @@ printf 'args=%s ack=%s media=%s host=%s\n' "$*" \
   "${DIRECT_INBOX_ACK_CUSTODY_ADMISSION_ENABLED-}" \
   "${DIRECT_MEDIA_BLOB_CUSTODY_ADMISSION_ENABLED-}" \
   "${MKNOON_DIRECT_MEDIA_DEVICE_FIXTURE_HOST_IP-}" >>"${PLAN347_GO_LOG:?}"
-printf '%s\n' 'MKNOON_DIRECT_MEDIA_FIXTURE_READY={"schema":"mknoon.plan347.direct-media-fixture.v1","multiaddr":"/ip4/192.0.2.10/tcp/40123/p2p/12D3KooWFixture","probeUrl":"http://192.0.2.10:40124/cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc","fixtureIdentitySha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","backend":"redis","ephemeral":true,"ackCustodyAdmissionEnabled":true,"mediaCustodyAdmissionEnabled":true}'
+printf '%s\n' 'MKNOON_DIRECT_MEDIA_FIXTURE_READY={"schema":"mknoon.plan347.direct-media-fixture.v1","multiaddr":"/ip4/192.0.2.10/tcp/40123/p2p/12D3KooWFixture","probeUrl":"http://192.0.2.10:40124/cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc","fixtureIdentitySha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","backend":"redis","fixedWakeRecovery":false,"relayVersion":"contract-fixture","relayBinarySha256":"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd","ephemeral":true,"ackCustodyAdmissionEnabled":true,"mediaCustodyAdmissionEnabled":true}'
 while [ ! -f "${PLAN347_STOP_MARKER:?}" ]; do
   sleep 0.01
 done

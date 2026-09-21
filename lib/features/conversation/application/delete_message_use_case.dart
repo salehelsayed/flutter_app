@@ -957,7 +957,7 @@ Future<(SendChatMessageResult, ConversationMessage?)> deleteMessageForEveryone({
           timeoutMs: timeoutMs,
         );
         if (sendResult.sent) {
-          return _completeSuccessfulDeleteSend(
+          return await _completeSuccessfulDeleteSend(
             p2pService: p2pService,
             messageRepo: messageRepo,
             tombstone: pendingTombstone,

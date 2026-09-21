@@ -174,7 +174,7 @@ start = source.index('Future<void> _launch(String device)')
 end = source.index('Future<_Identity> _identity', start)
 launch = source[start:end]
 assert "'am'" in launch and "'start'" in launch and "'-W'" in launch
-assert "'-n'" in launch and "'$packageName/.MainActivity'" in launch
+assert "'-n'" in launch and "'$packageName/com.mknoon.app.MainActivity'" in launch
 assert 'result.exitCode != 0' in launch
 assert r"r'^Status:[ \t]+ok[ \t]*\r?$'" in launch
 assert 'monkey' not in launch

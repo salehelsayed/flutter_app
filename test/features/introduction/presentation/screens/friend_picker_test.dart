@@ -73,6 +73,20 @@ void main() {
     );
   }
 
+  testWidgets('UI25 introduction refresh cannot select the replacement friend', (tester) async {
+    final selected = <String>[];
+    await tester.pumpWidget(buildSubject(onToggleFriend: selected.add));
+    final gesture = await tester.startGesture(tester.getCenter(find.text('Alice')));
+    await tester.pumpWidget(buildSubject(
+      availableFriends: [friends[1], friends[0], friends[2]], onToggleFriend: selected.add,
+    ));
+    await gesture.up();
+    await tester.pump();
+    expect(selected, isEmpty);
+    await tester.tap(find.text('Bob'));
+    expect(selected, ['peer-B']);
+  });
+
   testWidgets('header shows "Introduce to [username]"', (tester) async {
     await tester.pumpWidget(buildSubject(recipientUsername: 'Eve'));
     expect(find.text('Introduce to Eve'), findsOneWidget);

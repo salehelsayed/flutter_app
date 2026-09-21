@@ -91,6 +91,14 @@ run_logged() {
   fi
 }
 
+# A native wrapper may only control the explicit target supplied by its owner.
+[[ -n "${MKNOON_NATIVE_IOS_SIMULATOR_ID:-}" ]] ||
+  fail "MKNOON_NATIVE_IOS_SIMULATOR_ID must pin the native XCTest target"
+if [[ -n "${SIMS_PROTECTED_DEVICE_ASSIGNMENTS_JSON+x}" ]]; then
+  python3 -c 'import json,os,sys; pins=json.loads(os.environ["SIMS_PROTECTED_DEVICE_ASSIGNMENTS_JSON"]); sys.exit(0 if os.environ["MKNOON_NATIVE_IOS_SIMULATOR_ID"] in pins.values() else 1)' ||
+    fail "native XCTest target is outside the protected assignments"
+fi
+
 for command_name in cmp cp date find flutter go jq plutil python3 rg sed sort tail tr uniq wc xcodebuild xcrun; do
   require_command "$command_name"
 done
@@ -412,11 +420,12 @@ jq -e '.devices | type == "object"' "$IOS_SIMULATORS_JSON" >/dev/null ||
   fail "iOS simulator inventory was not valid JSON"
 
 simulator_id="$(
-  jq -r '
+  jq -r --arg id "$MKNOON_NATIVE_IOS_SIMULATOR_ID" '
     [
       .devices | to_entries[] |
       select(.key | contains("iOS")) |
       .value[] |
+      select(.udid == $id) |
       select((.isAvailable // true) == true) |
       select(.name | startswith("iPhone")) |
       {name: .name, udid: .udid}
@@ -425,6 +434,7 @@ simulator_id="$(
     .[0].udid // empty
   ' "$IOS_SIMULATORS_JSON"
 )"
+[[ -n "$simulator_id" ]] || fail "pinned native XCTest simulator is unavailable; refusing fallback"
 
 readonly IOS_DISPOSITION="$RESULT_DIR/ios-xctest-disposition.txt"
 readonly RUNNER_BUILD_LOG="$RESULT_DIR/runner-simulator-build.log"

@@ -1086,10 +1086,10 @@ void main() {
         manifest['dependencyExceptions'] as List<dynamic>;
     expect(
       dependencyExceptions,
-      hasLength(169),
+      hasLength(153),
       reason:
           'DTR-16 must not add or rebaseline a dependency exception; '
-          'DTR-18 removed only its reviewed resume rows',
+          'DTR-18 resume and debug-composition relocations removed their reviewed rows',
     );
     expect(
       (manifest['placementExceptions'] as List<dynamic>),

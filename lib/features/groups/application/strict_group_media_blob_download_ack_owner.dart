@@ -562,7 +562,7 @@ final class StrictGroupMediaBlobDownloadAckOwner {
         custodyRelayPeerId: expected.custodyRelayPeerId,
       );
       if (_isExactGroupAckReceipt(result, expected)) {
-        return repository.deleteIncomingGroupMediaBlobAckPendingIfExact(
+        return await repository.deleteIncomingGroupMediaBlobAckPendingIfExact(
           expected,
         );
       }

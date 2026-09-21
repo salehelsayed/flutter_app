@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/core/media/group_media_integrity_policy.dart';
 import 'package:flutter_app/core/media/group_media_mime_policy.dart';
 import 'package:flutter_app/core/media/group_media_size_policy.dart';
@@ -219,7 +220,7 @@ class MediaGridCell extends StatelessWidget {
     }
 
     if ((isImage || isVideo) && !isDone) {
-      return _buildLoadingPlaceholder();
+      return _buildLoadingPlaceholder(context);
     }
 
     if ((isImage || isVideo) && isDone && hasPath) {
@@ -239,7 +240,7 @@ class MediaGridCell extends StatelessWidget {
         cacheWidth: 400,
         placeholder: isVideo
             ? Container(color: const Color.fromRGBO(0, 0, 0, 0.60))
-            : _buildLoadingPlaceholder(),
+            : _buildLoadingPlaceholder(context),
         error: Builder(builder: _buildUnavailablePlaceholder),
         videoThumbnailResolver: videoThumbnailResolver,
         renderedSemanticsLabel: renderedSemanticsLabel,
@@ -252,7 +253,7 @@ class MediaGridCell extends StatelessWidget {
     }
 
     // Pending or downloading
-    return _buildLoadingPlaceholder();
+    return _buildLoadingPlaceholder(context);
   }
 
   Widget _buildUploadPendingPlaceholder(BuildContext context) {
@@ -302,16 +303,35 @@ class MediaGridCell extends StatelessWidget {
     );
   }
 
-  Widget _buildLoadingPlaceholder() {
+  Widget _buildLoadingPlaceholder(BuildContext context) {
     return Container(
       color: const Color.fromRGBO(255, 255, 255, 0.03),
-      child: const Center(
-        child: SizedBox(
-          width: 20,
-          height: 20,
-          child: CircularProgressIndicator(
-            strokeWidth: 2,
-            color: Color(0xFF4ecdc4),
+      child: Center(
+        child: Padding(
+          padding: const EdgeInsets.all(8),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const SizedBox(
+                width: 20,
+                height: 20,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  color: Color(0xFF4ecdc4),
+                ),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                AppLocalizations.of(context)!.media_loading,
+                textAlign: TextAlign.center,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontSize: 12,
+                  color: context.backgroundReadableColors.textMuted,
+                ),
+              ),
+            ],
           ),
         ),
       ),
@@ -320,62 +340,107 @@ class MediaGridCell extends StatelessWidget {
 
   Widget _buildUnavailablePlaceholder(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
+    final readable = context.backgroundReadableColors;
+    final statusLabel =
+        GroupMediaIntegrityPolicy.isQuarantinedGroupMedia(attachment)
+        ? l10n.media_could_not_verify
+        : l10n.media_unavailable;
+    final statusStyle = TextStyle(
+      color: readable.textSecondary,
+      fontSize: 12,
+      fontWeight: FontWeight.w600,
+    );
+    final canRetry = _canRetryUnavailableMedia;
+    final status = Padding(
+      padding: const EdgeInsets.all(10),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(
+            Icons.broken_image_outlined,
+            size: 24,
+            color: readable.iconMuted,
+          ),
+          const SizedBox(height: 6),
+          Text(
+            statusLabel,
+            textAlign: TextAlign.center,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            style: statusStyle,
+          ),
+          if (canRetry) const SizedBox(height: 8),
+        ],
+      ),
+    );
     return Container(
       color: const Color.fromRGBO(255, 255, 255, 0.03),
       child: Center(
-        child: Padding(
-          padding: const EdgeInsets.all(10),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const Icon(
-                Icons.broken_image_outlined,
-                size: 24,
-                color: Color.fromRGBO(255, 255, 255, 0.34),
-              ),
-              const SizedBox(height: 6),
-              Text(
-                // Tamper (integrity_failed) gets an honest "couldn't verify"
-                // label, distinct from the generic unavailable/terminal copy.
-                GroupMediaIntegrityPolicy.isQuarantinedGroupMedia(attachment)
-                    ? l10n.media_could_not_verify
-                    : l10n.media_unavailable,
-                textAlign: TextAlign.center,
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  color: Color.fromRGBO(255, 255, 255, 0.66),
-                  fontSize: 12,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-              if (_canRetryUnavailableMedia) ...[
-                const SizedBox(height: 8),
-                Semantics(
-                  container: true,
-                  label: l10n.media_retry_unavailable,
-                  button: true,
-                  child: IconButton(
-                    key: ValueKey(
-                      'unavailable-media-retry-${attachment.messageId}-${attachment.id}',
+        child: canRetry
+            ? Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  // Reserve the action's natural height first. Omit the
+                  // supporting icon/status when they cannot fit in the tile;
+                  // the full action name still explains what can be retried.
+                  Flexible(
+                    child: LayoutBuilder(
+                      builder: (context, constraints) {
+                        final painter =
+                            TextPainter(
+                              text: TextSpan(
+                                text: statusLabel,
+                                style: DefaultTextStyle.of(
+                                  context,
+                                ).style.merge(statusStyle),
+                              ),
+                              textDirection: Directionality.of(context),
+                              textScaler: MediaQuery.textScalerOf(context),
+                              maxLines: 2,
+                              ellipsis: '…',
+                            )..layout(
+                              maxWidth: (constraints.maxWidth - 20).clamp(
+                                0,
+                                double.infinity,
+                              ),
+                            );
+                        final fits =
+                            painter.height + 20 + 24 + 6 + 8 <=
+                            constraints.maxHeight;
+                        painter.dispose();
+                        return fits ? status : const SizedBox.shrink();
+                      },
                     ),
-                    visualDensity: VisualDensity.compact,
-                    iconSize: 18,
-                    padding: EdgeInsets.zero,
-                    constraints: const BoxConstraints(
-                      minWidth: 32,
-                      minHeight: 32,
-                    ),
-                    color: const Color(0xFF4ecdc4),
-                    onPressed: onRetryUnavailableMedia,
-                    tooltip: l10n.media_retry_unavailable,
-                    icon: const Icon(Icons.refresh_rounded),
                   ),
-                ),
-              ],
-            ],
-          ),
-        ),
+                  Semantics(
+                    container: true,
+                    label: l10n.media_retry_unavailable,
+                    button: true,
+                    excludeSemantics: true,
+                    onTap: onRetryUnavailableMedia,
+                    child: TextButton(
+                      key: ValueKey(
+                        'unavailable-media-retry-${attachment.messageId}-${attachment.id}',
+                      ),
+                      style: TextButton.styleFrom(
+                        foregroundColor: const Color(0xFF4ecdc4),
+                        minimumSize: const Size(48, 48),
+                        padding: const EdgeInsets.symmetric(horizontal: 8),
+                        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                      ),
+                      onPressed: onRetryUnavailableMedia,
+                      child: Text(
+                        l10n.btn_retry,
+                        textAlign: TextAlign.center,
+                        // Keep the scaled glyph size, with compact leading
+                        // for a multiline action inside a fixed-size tile.
+                        style: const TextStyle(height: 1.2),
+                      ),
+                    ),
+                  ),
+                ],
+              )
+            : status,
       ),
     );
   }

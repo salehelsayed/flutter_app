@@ -6,6 +6,7 @@ assertions, and must receive exclusive UI ownership before they start.
 from contextlib import contextmanager
 import fcntl
 import hashlib
+import json
 import os
 from pathlib import Path
 import re
@@ -31,8 +32,10 @@ class PreflightBlocked(RuntimeError):
 
 
 def device_roles(check, config):
-    return check.get('device_roles', sorted(config.get('devices', {})) if check.get('sims_mode')
-                     else ['android_physical', 'android_emulator'])
+    required = check.get('device_roles', [] if check.get('sims_mode') else ['android_physical', 'android_emulator'])
+    # Nested SIMS routes can use more roles than the outer legacy wrapper.
+    extra = sorted(set(config.get('devices', {})) - set(required)) if check.get('kind') in ('sims', 'legacy') else []
+    return list(required) + extra
 
 
 def validate_metadata(check):
@@ -110,6 +113,33 @@ def run(check, root, config, launch, env):
     def result(checkpoint, remediation):
         return {'status': 'BLOCKED', 'checkpoint': checkpoint,
                 'remediation': remediation, 'observations': observations}
+
+    if check.get('sims_mode') and 'SIMS_PROTECTED_DEVICE_ASSIGNMENTS_JSON' not in env:
+        return result('device_binding_unprotected', 'Pass the leased target assignments to SIMS before running proofs.')
+
+    # New native/XCTest recipes must recheck their leased simulator before a
+    # wrapper can boot it. This observes availability, never automation idleness.
+    if check.get('kind') == 'full_adapter':
+        for role in device_roles(check, config):
+            if not role.startswith('ios_simulator'):
+                continue
+            target = config.get('devices', {}).get(role)
+            pins = json.loads(env.get('SIMS_PROTECTED_DEVICE_ASSIGNMENTS_JSON', '{}'))
+            if not target or target not in pins.values():
+                return result('device_binding_unprotected', 'Pin and lease the exact simulator before invoking its native wrapper.')
+            output, code, timeout, seconds = launch(['xcrun', 'simctl', 'list', 'devices', 'available', '-j'], root, 15, env)
+            try:
+                available = any(row.get('udid') == target and row.get('isAvailable', True)
+                                for rows in json.loads(output)['devices'].values() for row in rows)
+            except (ValueError, KeyError, TypeError):
+                available = False
+            ready = available and code == 0 and not timeout
+            observations.append(dict(probe='ios_simulator_availability', role=role,
+                                     state='ready' if ready else 'unavailable', exit_status=code,
+                                     timed_out=timeout, duration_seconds=seconds,
+                                     output_sha256=hashlib.sha256(output.encode()).hexdigest()))
+            if not ready:
+                return result('device_target_unavailable', 'Recheck the exact pinned simulator; do not substitute another target.')
 
     for role in device_roles(check, config):
         if not role.startswith('android'):

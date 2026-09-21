@@ -224,7 +224,7 @@ class GroupExitIntentCoordinator {
   Future<GroupExitIntentRequestResult> retry(String groupId) async {
     try {
       final existing = await intentRepository.forGroup(groupId);
-      if (existing == null) return requestLeave(groupId);
+      if (existing == null) return await requestLeave(groupId);
       final execution = await _executeProcessor(groupId, knownIntent: existing);
       if (execution.hasError) {
         return GroupExitIntentRequestResult.withDiagnosticFacts(

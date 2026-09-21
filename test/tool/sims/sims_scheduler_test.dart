@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 
@@ -58,6 +59,33 @@ Future<void> _waitUntil(
 }
 
 void main() {
+  test(
+    'registered Flutter and native commands share their build workspace',
+    () {
+      final manifest = SimsManifest.loadSync(
+        File('tool/sims/critical_features.json'),
+      );
+      final rows = {for (final row in manifest.capabilities) row.id: row};
+      for (final id in [
+        'native.android.unit',
+        'nested.background_push_crypto',
+        'native.ios.runner_tests',
+      ]) {
+        expect(
+          resourcesAreCompatible(rows['host.dart.all']!, rows[id]!),
+          isFalse,
+          reason: 'Concurrent $id must not race Flutter/native/AAR outputs',
+        );
+      }
+      expect(
+        resourcesAreCompatible(
+          rows['go.node.all']!,
+          rows['go.relay.integration']!,
+        ),
+        isTrue,
+      );
+    },
+  );
   test(
     'missing or unknown resource metadata is exclusive and invalid for major',
     () {

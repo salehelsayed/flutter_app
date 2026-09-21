@@ -29,7 +29,7 @@ class WaveformSeekBar extends StatelessWidget {
   Widget build(BuildContext context) {
     return GestureDetector(
       behavior: HitTestBehavior.opaque,
-      onTapDown: onSeek != null
+      onTapUp: onSeek != null
           ? (details) {
               final box = context.findRenderObject() as RenderBox;
               final localX = details.localPosition.dx;

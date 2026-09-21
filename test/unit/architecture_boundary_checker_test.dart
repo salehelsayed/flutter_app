@@ -102,7 +102,7 @@ part 'piece.dart';
   });
 
   test(
-    'canonical DTR-12 manifest pins 169 dependency and zero placement exceptions',
+    'canonical DTR-12 manifest pins 153 dependency and zero placement exceptions',
     () {
       final root = _findRepositoryRoot();
       final manifest = ArchitectureBoundaryManifest.loadSync(
@@ -120,17 +120,17 @@ part 'piece.dart';
         manifest: manifest,
       ).check();
 
-      expect(manifest.dependencyExceptions, hasLength(169));
+      expect(manifest.dependencyExceptions, hasLength(153));
       expect(manifest.placementExceptions, isEmpty);
       expect(
         manifest.dependencyExceptions.where(
           (entry) => entry.source.startsWith('lib/core/debug/'),
         ),
-        hasLength(96),
+        hasLength(80),
       );
       expect(result.trustworthy, isTrue, reason: _issues(result));
       expect(result.hasPolicyDrift, isFalse, reason: _issues(result));
-      expect(result.dependencyViolations, hasLength(169));
+      expect(result.dependencyViolations, hasLength(153));
       expect(result.placementViolations, isEmpty);
       expect(
         result.dependencyViolations.where(
@@ -138,7 +138,7 @@ part 'piece.dart';
               dependency.sourcePath.startsWith('lib/core/') &&
               dependency.literalUri.startsWith('package:'),
         ),
-        hasLength(141),
+        hasLength(125),
       );
       expect(
         result.dependencyViolations.where(

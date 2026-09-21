@@ -291,6 +291,7 @@ class _ContactPickerScreenState extends State<ContactPickerScreen> {
       itemBuilder: (context, index) {
         final contact = contacts[index];
         return ContactPickerRow(
+          key: ValueKey(contact.peerId),
           contact: contact,
           isSelected: widget.selectedPeerIds.contains(contact.peerId),
           onTap: () => widget.onToggle(contact),

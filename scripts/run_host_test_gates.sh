@@ -536,6 +536,16 @@ while (($# > 0)); do
   esac
 done
 
+# The existing top-level wrapper owns a single bounded worker budget. Keep
+# direct callers' --concurrency behavior when that budget is not supplied.
+if [ "$batch_flutter" -eq 1 ] && [ -n "${MKNOON_HOST_FLUTTER_WORKERS:-}" ]; then
+  if ! [[ "$MKNOON_HOST_FLUTTER_WORKERS" =~ ^([1-9]|[1-5][0-9]|6[0-4])$ ]]; then
+    printf 'Invalid MKNOON_HOST_FLUTTER_WORKERS: %s\n' "$MKNOON_HOST_FLUTTER_WORKERS" >&2
+    exit 2
+  fi
+  flutter_concurrency="$MKNOON_HOST_FLUTTER_WORKERS"
+fi
+
 if [ "$dart_only" -eq 1 ]; then
   case "$scope" in
     host-all|feature-host-all|core-host-all|performance-host|move-feature)

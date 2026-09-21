@@ -19,7 +19,7 @@ import 'package:flutter_app/core/debug/group_media_reliability_e2e.dart';
 import 'package:flutter_app/core/debug/group_media_ios_background_e2e.dart';
 import 'package:flutter_app/core/debug/keepalive_drop_e2e.dart';
 import 'package:flutter_app/core/debug/private_media_outbox_e2e.dart';
-import 'package:flutter_app/core/debug/notification_dual_path_e2e_sender.dart';
+import 'package:flutter_app/debug/notification_dual_path_e2e_sender.dart';
 import 'package:flutter_app/core/debug/group_reaction_notification_ios_setup_profile.dart';
 import 'package:flutter_app/core/debug/wake_token_directionality_e2e.dart';
 import 'package:flutter_app/core/secure_storage/secure_key_store.dart';

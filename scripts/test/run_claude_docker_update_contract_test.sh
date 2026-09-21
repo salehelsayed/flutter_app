@@ -19,7 +19,7 @@ docker_log="${tmp_dir}/docker.log"
 mkdir -p "${fake_bin}" "${tmp_dir}/claude-home/.android/debug.keystore" "${tmp_dir}/host-home/.android"
 printf 'host debug keystore\n' >"${tmp_dir}/host-home/.android/debug.keystore"
 
-grep -Fxq 'FROM node:22-bullseye' "${DOCKERFILE}" ||
+grep -Fxq 'FROM node:22-bookworm' "${DOCKERFILE}" ||
   fail 'Claude Code image must use Node 22 or newer'
 grep -Fxq 'FROM golang:1.25.0-bookworm AS go' "${DOCKERFILE}" ||
   fail 'Claude Code image must include a Go 1.25 toolchain stage for relay/FCM tests'
@@ -40,6 +40,9 @@ printf '%s\n' \
   '  printf "ARG\t%s\n" "$@"' \
   '  printf "END\n"' \
   '} >>"${FAKE_DOCKER_LOG:?}"' \
+  'if [ "${1:-} ${2:-}" = "image inspect" ]; then' \
+  '  exit "${FAKE_DOCKER_IMAGE_MISSING:-0}"' \
+  'fi' \
   'if [ "${1:-}" = "run" ]; then' \
   '  printf "2.1.209\n"' \
   'fi' \
@@ -75,7 +78,9 @@ fi
 
 : >"${docker_log}"
 run_runner --permission-mode acceptEdits --version >/dev/null
-grep -Fxq $'ARG\tbuild' "${docker_log}" || fail 'normal launch did not build the cached image'
+if grep -Fxq $'ARG\tbuild' "${docker_log}"; then
+  fail 'normal launch rebuilt an existing image and could undo an explicit update'
+fi
 if grep -Fxq $'ARG\t--pull' "${docker_log}" || grep -Fxq $'ARG\t--no-cache' "${docker_log}"; then
   fail 'normal launch unexpectedly bypassed the cheap cached build'
 fi
@@ -96,5 +101,14 @@ fi
 cmp -s "${tmp_dir}/host-home/.android/debug.keystore" \
   "${tmp_dir}/claude-home/.android/debug.keystore" ||
   fail 'normal launch did not sync the Android debug keystore into Claude home'
+
+: >"${docker_log}"
+FAKE_DOCKER_IMAGE_MISSING=1 run_runner --version >/dev/null
+grep -Fxq $'ARG\tbuild' "${docker_log}" || fail 'missing image was not built'
+grep -Fxq $'ARG\t--pull' "${docker_log}" || fail 'missing image build did not refresh its base'
+
+: >"${docker_log}"
+CLAUDE_DOCKER_REBUILD=1 run_runner --version >/dev/null
+grep -Fxq $'ARG\tbuild' "${docker_log}" || fail 'explicit rebuild was ignored'
 
 printf 'PASS: Claude Docker update contract\n'

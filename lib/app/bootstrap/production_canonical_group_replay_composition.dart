@@ -773,7 +773,11 @@ final class ProductionCanonicalProtectedGroupReplayComposition {
               deferPendingRepair: (request) => deferredKeyRepair = request,
             );
           } else if (strictMembershipReplay) {
-            return applySystemAuthorityReplay(control, replayData, authority);
+            return await applySystemAuthorityReplay(
+              control,
+              replayData,
+              authority,
+            );
           } else {
             await groupMessageListener
                 .handleAuthenticatedAuthorityReplayEnvelope(

@@ -47,6 +47,7 @@ printf '%s\n' \
   'set -euo pipefail' \
   'printf '\''%s\n'\'' "$*" >>"$SIMS_TEST_CHILD_LOG"' \
   'printf '\''artifact=%s\nskip=%s\n'\'' "${SIMS_ARTIFACT_IOS_SIMULATOR_E2E:-}" "${GMP_SKIP_HARNESS_BUILD:-}" >>"$SIMS_TEST_CHILD_ENV_LOG"' \
+  'python3 -c '\''import json,os; from pathlib import Path; import re; s=Path("integration_test/scripts/group_multi_party_device_criteria.dart").read_text(); ids=re.findall(r"[\x27]([^\x27]+)[\x27]",s.split("const smokeGroupMultiPartyDeviceScenarioIds = <String>[")[1].split("];")[0]); Path(os.environ["GMP_SWEEP_REPORT"]).write_text(json.dumps({"scenarios":[{"scenario":x,"passed":True} for x in ids]}))'\''' \
   'printf '\''child diagnostic\n'\''' \
   'exit "${SIMS_TEST_CHILD_EXIT:-0}"' \
   >"$SHIM_DIR/dart"

@@ -34,10 +34,20 @@ final class SimsDevicePlanBinding {
     final preflight = <String, SimsVerdict>{};
     final preparationById = <String, SimsLiveDeviceTarget>{};
     final rows = <CapabilitySpec>[];
-    final requiredTargetIds = _requiredTargetIdsForPlan(
+    final protectedJson = processEnvironment['SIMS_PROTECTED_DEVICE_ASSIGNMENTS_JSON'];
+    final protectedTargets = protectedJson == null
+        ? null
+        : Map<String, String>.from(jsonDecode(protectedJson) as Map);
+    final requiredTargetIds = Map<String, String>.of(_requiredTargetIdsForPlan(
       source.rows,
       processEnvironment,
-    );
+    ));
+    for (final row in source.rows) {
+      for (final lock in row.resources) {
+        final pin = protectedTargets?[lock.name.split(':').last];
+        if (pin != null) requiredTargetIds.putIfAbsent(lock.name, () => pin);
+      }
+    }
 
     for (final row in source.rows) {
       if (!row.automationReady) {
@@ -51,12 +61,39 @@ final class SimsDevicePlanBinding {
         rows.add(row.copyWith(dependencies: const <String>[]));
         continue;
       }
+      // This serialized adapter acquires and preflights each exact leaf target
+      // before builds/device control. It never discovers a fallback device.
+      if (row.targetCapabilities.contains('legacy.protected-target-contract') &&
+          (protectedTargets == null || processEnvironment['MKNOON_LEGACY_ISOLATED'] != '1')) {
+        preflight[row.id] = SimsVerdict.blocked(row.id,
+          blocker: SimsBlockerKind.environment,
+          detail: 'Protected legacy routes require pinned isolated fixture configuration.');
+        rows.add(row.copyWith(dependencies: const <String>[]));
+        continue;
+      }
       final iosNotificationRow =
           row.id == 'notifications.ios_payload_fast_path';
       final resolution = resolver.resolveLocks(
         row.resources,
         requiredTargetIds: requiredTargetIds,
       );
+      // Wrapper protection is a concrete runtime-ID boundary, not a build
+      // lease. Never boot an unleased target or let an opaque wrapper discover
+      // its own devices. Truly absent targets retain the resolver's policy N/A.
+      if (protectedTargets != null &&
+          (row.resources.any((lock) => lock.name == 'unknown') ||
+              resolution.status == SimsDeviceResolutionStatus.preparationRequired ||
+              resolution.assignments.entries.any((entry) =>
+                  protectedTargets[entry.key.split(':').last] != entry.value))) {
+        preflight[row.id] = SimsVerdict.blocked(
+          row.id,
+          blocker: SimsBlockerKind.environment,
+          detail: 'Device execution requires explicit leased runtime targets; '
+              'automatic preparation and opaque device selection are unprotected.',
+        );
+        rows.add(row.copyWith(dependencies: const <String>[]));
+        continue;
+      }
       final disposableAuthorizationIssue =
           row.targetCapabilities.contains('ios.simulators.disposable')
           ? _disposableSimulatorAuthorizationIssue(processEnvironment)

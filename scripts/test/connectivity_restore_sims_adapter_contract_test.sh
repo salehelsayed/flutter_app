@@ -35,10 +35,17 @@ source = open(sys.argv[1], encoding='utf-8').read()
 start = source.index('Future<void> _launch(String device)')
 end = source.index('Future<_Identity> _identity', start)
 launch = source[start:end]
+assert 'await launchConnectivityRestoreApp(' in launch
+start = source.index('Future<bool> launchConnectivityRestoreApp(')
+end = source.index('Future<void> main()', start)
+launch = source[start:end]
 assert "'am'" in launch and "'start'" in launch and "'-W'" in launch
-assert "'-n'" in launch and "'$packageName/.MainActivity'" in launch
+assert "'-n'" in launch and "'$packageName/com.mknoon.app.MainActivity'" in launch
 assert 'result.exitCode != 0' in launch
-assert r"r'^Status:[ \t]+ok[ \t]*\r?$'" in launch
+assert r"r'^Status:[ \t]+(?:ok|timeout)[ \t]*\r?$'" in launch
+assert 'RegExp.escape(component)' in launch
+assert "'pidof', packageName" in launch
+assert 'process.exitCode == 0' in launch
 assert 'monkey' not in launch
 PY
 

@@ -2,6 +2,7 @@ import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart' show ScrollCacheExtent;
 import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/core/theme/feed_tokens.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
@@ -66,6 +67,7 @@ class FeedScreen extends StatefulWidget {
   final VoidCallback? onClearFocus;
   final void Function(String threadId, String text)? onComposerSend;
   final void Function(String threadId, String text)? onComposerDraftChanged;
+
   /// The host retains this draft when the focused composer is unmounted.
   final String composerDraft;
 
@@ -500,10 +502,7 @@ class _FeedScreenState extends State<FeedScreen> {
   List<_FeedEntry> _buildFeedEntries(List<FeedItem> items) {
     if (items.isEmpty) {
       if (!widget.feedLoaded) return const [];
-      return const [
-        _FeedEntry.spacer(height: 12),
-        _FeedEntry.emptyState(),
-      ];
+      return const [_FeedEntry.spacer(height: 12), _FeedEntry.emptyState()];
     }
 
     final entries = <_FeedEntry>[const _FeedEntry.spacer(height: 16)];
@@ -776,10 +775,10 @@ class _FeedScrollableContentState extends State<_FeedScrollableContent> {
           );
 
     return CustomScrollView(
+      scrollCacheExtent: const ScrollCacheExtent.pixels(1200),
       key: const PageStorageKey<String>('feed-scroll'),
       controller: _scrollController,
       physics: const BouncingScrollPhysics(),
-      cacheExtent: 1200,
       slivers: [
         SliverPadding(
           // 134-P5 (TC-19b): clear the floating composer / nav bar so the last
@@ -804,11 +803,7 @@ class _FeedEntry {
   final FeedItem? item;
   final double? height;
 
-  const _FeedEntry._({
-    required this.type,
-    this.item,
-    this.height,
-  });
+  const _FeedEntry._({required this.type, this.item, this.height});
 
   const _FeedEntry.item(FeedItem item)
     : this._(type: _FeedEntryType.item, item: item);

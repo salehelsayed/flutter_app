@@ -18,10 +18,14 @@ library;
 import 'dart:convert';
 import 'dart:io';
 
+import 'benchmark_completion.dart';
+import 'benchmark_boundary.dart';
+import 'routing_stage_handshake.dart';
+
 const _testpeerBin = 'go-mknoon/bin/testpeer';
 
-// Single dispatched benchmark entrypoint (124 Phase 5): one app build, the
-// scenario is selected at runtime via `--dart-define=BENCHMARK=<key>`.
+// Each BENCHMARK dart-define is a distinct compile input. The shared entrypoint
+// does not make binaries compiled for different selectors interchangeable.
 const _benchmarkHarness = 'integration_test/benchmark_harness.dart';
 
 // BENCHMARK dispatch keys indexed by scenario letter.
@@ -70,6 +74,32 @@ void main(List<String> args) async {
         ..._scriptScenarios.keys,
       };
 
+  final failures = <String>[];
+  final supported = {..._singleNodeHarnesses.keys, ..._twoNodeHarnesses.keys, ..._scriptScenarios.keys};
+  if (requestedScenarios.isEmpty || requestedScenarios.difference(supported).isNotEmpty) {
+    throw ArgumentError('Unknown benchmark scenario');
+  }
+  final boundary = BenchmarkBoundary(deviceId,
+      hostFiles: requestedScenarios.any(_scriptScenarios.containsKey));
+  String? routingPlatform;
+  if (requestedScenarios.contains('R')) {
+    // Simulators/desktops share host loopback. Android uses a fresh, explicitly
+    // pinned adb reverse mapping; physical iOS has no supported channel here.
+    final inventory = await Process.run('flutter', ['devices', '--machine']);
+    final devices = inventory.exitCode == 0 ? jsonDecode(inventory.stdout as String) as List : [];
+    final targets = devices.where((d) => d['id'] == deviceId).toList();
+    if (targets.length == 1) {
+      final d = targets.single;
+      final platform = d['targetPlatform'] as String;
+      if (platform.startsWith('android')) { routingPlatform = 'android'; }
+      if (platform == 'darwin' || (platform == 'ios' && d['emulator'] == true)) { routingPlatform = 'loopback'; }
+    }
+    if (routingPlatform == null) {
+      failures.add('R: stage channel requires a discovered Android, iOS simulator or macOS target');
+      requestedScenarios.remove('R');
+    }
+  }
+
   print('');
   print('═' * 60);
   print('  mknoon Benchmark Suite');
@@ -95,8 +125,10 @@ void main(List<String> args) async {
     for (final scenario in singleNodeScenarios) {
       final benchmarkKey = _singleNodeHarnesses[scenario]!;
       print('\n▶ Scenario $scenario: BENCHMARK=$benchmarkKey');
-      final output = await _runFlutterTest(benchmarkKey, deviceId);
-      allBenchmarks.addAll(_extractBenchmarkLines(output));
+      try {
+        final output = await _runFlutterTest(benchmarkKey, deviceId, boundary);
+        allBenchmarks.addAll(_extractBenchmarkLines(output));
+      } catch (error) { failures.add('$scenario: $error'); }
     }
   }
 
@@ -148,11 +180,8 @@ void main(List<String> args) async {
         String cmd, [
         Map<String, dynamic>? params,
       ]) async {
-        peer.stdin.writeln(
-          jsonEncode({'cmd': cmd, 'params': ?params}),
-        );
-        await peer.stdin.flush();
-        final line = await peerLines
+        // Subscribe before writing: a fast local CLI reply must not be lost.
+        final response = peerLines
             .firstWhere((l) {
               try {
                 final json = jsonDecode(l) as Map<String, dynamic>;
@@ -162,7 +191,9 @@ void main(List<String> args) async {
               }
             })
             .timeout(const Duration(seconds: 60));
-        return jsonDecode(line) as Map<String, dynamic>;
+        peer.stdin.writeln(jsonEncode({'cmd': cmd, 'params': ?params}));
+        await peer.stdin.flush();
+        return jsonDecode(await response) as Map<String, dynamic>;
       }
 
       // Generate identity
@@ -181,19 +212,21 @@ void main(List<String> args) async {
       print('[PEER] ML-KEM keys generated');
 
       // Start node with autoConfirmDirectAck for ACK benchmark (scenario L)
-      final startResult = await peerCommand('start', {
+      final peerStart = <String, dynamic>{
         'autoRegister': true,
         'autoConfirmDirectAck': true,
-      });
+        ...boundary.startParams,
+      };
+      final startResult = await peerCommand('start', peerStart);
       if (startResult['ok'] != true) {
-        stderr.writeln('[PEER] start failed: $startResult');
+        throw StateError('[PEER] start failed: $startResult');
       }
 
       // Wait for relay + circuit (not a fixed sleep)
       print('[PEER] Waiting for relay...');
       final relayResult = await peerCommand('wait_relay', {'timeoutSec': 30});
       if (relayResult['ok'] != true) {
-        stderr.writeln('[PEER] wait_relay failed: $relayResult');
+        throw StateError('[PEER] wait_relay failed: $relayResult');
       }
       print('[PEER] Relay connected');
 
@@ -202,7 +235,7 @@ void main(List<String> args) async {
         'timeoutSec': 30,
       });
       if (circuitResult['ok'] != true) {
-        stderr.writeln('[PEER] wait_circuit failed: $circuitResult');
+        throw StateError('[PEER] wait_circuit failed: $circuitResult');
       }
       print('[PEER] Circuit address obtained — peer is discoverable');
 
@@ -221,13 +254,55 @@ void main(List<String> args) async {
       for (final scenario in twoNodeScenarios) {
         final benchmarkKey = _twoNodeHarnesses[scenario]!;
         print('\n▶ Scenario $scenario: BENCHMARK=$benchmarkKey');
-        final output = await _runFlutterTest(
-          benchmarkKey,
-          deviceId,
-          dartDefines: ['CLI_PEER_FIXTURE=$cliFixturePath'],
-        );
-        allBenchmarks.addAll(_extractBenchmarkLines(output));
+        RoutingStageHost? stages;
+        String? reversePort;
+        try {
+          if (scenario == 'R') {
+            stages = await RoutingStageHost.start(run: routingNonce(), target: deviceId,
+              peerCommand: (command) async {
+                final ack = await peerCommand(command, command == 'start' ? peerStart : null);
+                if (command == 'start' && ack['ok'] == true) {
+                  for (final readiness in ['wait_relay', 'wait_circuit']) {
+                    final ready = await peerCommand(readiness, {'timeoutSec': 20});
+                    if (ready['ok'] != true) throw StateError('Restarted peer is not ready');
+                  }
+                }
+                return ack;
+              });
+            if (routingPlatform == 'android') {
+              final reverse = await Process.run('adb', ['-s', deviceId, 'reverse', 'tcp:0', 'tcp:${stages.server.port}']);
+              final port = (reverse.stdout as String).trim();
+              if (reverse.exitCode != 0 || !RegExp(r'^[0-9]{1,5}$').hasMatch(port) ||
+                  int.parse(port) < 1 || int.parse(port) > 65535) {
+                throw StateError('Pinned Android stage forwarding failed');
+              }
+              reversePort = port;
+              stages.forwardedEndpoint = 'http://127.0.0.1:$port';
+            }
+          }
+          final output = await _runFlutterTest(
+            benchmarkKey,
+            deviceId,
+            boundary,
+            dartDefines: [
+              'CLI_PEER_FIXTURE_JSON=${File(cliFixturePath).readAsStringSync()}',
+              ...?stages?.defines,
+            ],
+          );
+          stages?.requireConsumed(output);
+          allBenchmarks.addAll(_extractBenchmarkLines(output));
+        } catch (error) {
+          failures.add('$scenario: $error');
+        } finally {
+          if (reversePort != null) {
+            final cleanup = await Process.run('adb', ['-s', deviceId, 'reverse', '--remove', 'tcp:$reversePort']);
+            if (cleanup.exitCode != 0) failures.add('R: owned Android forwarding cleanup failed');
+          }
+          await stages?.close();
+        }
       }
+    } catch (error) {
+      failures.add('peer setup: $error');
     } finally {
       // Clean up test peer
       testPeer?.kill();
@@ -249,8 +324,10 @@ void main(List<String> args) async {
     for (final scenario in scriptScenarios) {
       final script = _scriptScenarios[scenario]!;
       print('\n▶ Scenario $scenario: $script');
-      final output = await _runDartScript(script, ['-d', deviceId]);
-      allBenchmarks.addAll(_extractBenchmarkLines(output));
+      try {
+        final output = await _runDartScript(script, ['-d', deviceId]);
+        allBenchmarks.addAll(_extractBenchmarkLines(output));
+      } catch (error) { failures.add('$scenario: $error'); }
     }
   }
 
@@ -265,23 +342,34 @@ void main(List<String> args) async {
     print('  $line');
   }
   print('═' * 60);
+  if (failures.isNotEmpty) {
+    for (final failure in failures) { stderr.writeln('[FAIL] $failure'); }
+    exitCode = 1;
+    return;
+  }
+  print('FULL_BENCHMARK_COMPLETED peer-suite');
+  final completedSelection = requestedScenarios.toList()..sort();
+  print('FULL_BENCHMARK_SELECTION $deviceId ${completedSelection.join(',')}');
 }
 
 Future<String> _runFlutterTest(
   String benchmarkKey,
-  String deviceId, {
+  String deviceId,
+  BenchmarkBoundary boundary, {
   List<String> dartDefines = const [],
 }) async {
   final args = [
     'test',
+    '--machine',
     '-d',
     deviceId,
     '--dart-define=BENCHMARK=$benchmarkKey',
     for (final d in dartDefines) '--dart-define=$d',
+    ...boundary.flutterArgs,
     _benchmarkHarness,
   ];
 
-  print('  flutter ${args.join(' ')}');
+  print('  flutter test BENCHMARK=$benchmarkKey device=$deviceId');
 
   final result = await Process.run('flutter', args, stdoutEncoding: utf8);
   final output = result.stdout as String;
@@ -307,6 +395,10 @@ Future<String> _runFlutterTest(
     }
   }
 
+  if (result.exitCode != 0) throw StateError('Benchmark child failed: ${result.exitCode}');
+  final completion = BenchmarkCompletion(expectedTestName: 'benchmark $benchmarkKey');
+  output.split('\n').forEach(completion.observe);
+  completion.requireCompleted();
   return output;
 }
 
@@ -336,6 +428,10 @@ Future<String> _runDartScript(String scriptPath, List<String> args) async {
     }
   }
 
+  final receipt = 'FULL_BENCHMARK_COMPLETED ${File(scriptPath).uri.pathSegments.last.replaceAll('.dart', '')}';
+  if (result.exitCode != 0 || output.split('\n').where((line) => line == receipt).length != 1) {
+    throw StateError('Benchmark script did not complete its proof.');
+  }
   return output;
 }
 

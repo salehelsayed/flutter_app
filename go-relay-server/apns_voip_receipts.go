@@ -108,12 +108,14 @@ func (p *httpAPNSVoIPProvider) observeResponse(ctx context.Context, request apns
 		return
 	}
 	s := span.store
-	if s.apnsCapture.owner == "" || s.apnsCapture.owner != diagnosticPrivateKey(span.actor) ||
-		!received.Before(s.apnsCapture.until) || !diagnosticUUID.MatchString(span.diagnostics.TraceID) {
+	// Retain the admitted capability and receipt binding before the span can be
+	// reused. A current record with the same ID cannot revive an old operation.
+	actor, captured := span.actor, span.diagnostics
+	if s.apnsCapture.owner == "" || s.apnsCapture.owner != diagnosticPrivateKey(actor) ||
+		!received.Before(s.apnsCapture.until) || !diagnosticUUID.MatchString(captured.TraceID) {
 		return
 	}
-	r.TraceID, r.RequestID = span.diagnostics.TraceID, span.diagnostics.RequestID
-	actor, epoch := span.actor, span.diagnostics.consentEpoch
+	r.TraceID, r.RequestID = captured.TraceID, captured.RequestID
 	s.enqueue(func() {
 		// All disk work stays on the existing bounded worker, after HTTP response.
 		defer func() { _ = recover() }()
@@ -121,28 +123,32 @@ func (p *httpAPNSVoIPProvider) observeResponse(ctx context.Context, request apns
 		defer s.mu.Unlock()
 		consent := s.state.Consent[diagnosticPrivateKey(actor)]
 		rec := s.records[r.TraceID]
-		if !time.Now().Before(s.apnsCapture.until) || !consent.Enabled || consent.ConsentEpoch != epoch ||
+		if !time.Now().Before(s.apnsCapture.until) || !consent.Enabled || consent.ErasePending || consent.ConsentEpoch != captured.consentEpoch ||
 			rec == nil || rec.Owner != s.apnsCapture.owner || s.apnsCaptured >= apnsVoIPCaptureMaxResponses ||
-			len(rec.APNSResponsesPrivate) >= apnsVoIPCaptureMaxResponses {
+			len(rec.APNSResponsesPrivate) >= apnsVoIPCaptureMaxResponses ||
+			s.now().UnixMilli()-rec.CreatedAtMs > callDiagnosticRetention.Milliseconds() || !s.contextAuthorizedLocked(actor, &captured) {
 			return
 		}
-		old := rec.APNSResponsesPrivate
-		rec.APNSResponsesPrivate = append(append([]apnsVoIPResponseReceipt(nil), old...), r)
-		// Share the existing global/owner/record quotas; private receipts cannot
-		// consume unbounded space or silently displace causal stage events.
-		total, ownerBytes := 0, 0
-		for _, record := range s.records {
-			raw, _ := json.Marshal(record)
-			total += len(raw)
-			if record.Owner == rec.Owner {
-				ownerBytes += len(raw)
-			}
-		}
-		raw, _ := json.Marshal(rec)
-		if total > s.quota || ownerBytes > callDiagnosticOwnerBytes || len(raw) > callDiagnosticRecordBytes || s.persistLocked(r.TraceID) != nil {
-			rec.APNSResponsesPrivate = old
+		candidate := *rec
+		candidate.APNSResponsesPrivate = append(append([]apnsVoIPResponseReceipt(nil), rec.APNSResponsesPrivate...), r)
+		raw, err := json.Marshal(&candidate)
+		if err != nil || s.budgetReasonLocked(r.TraceID, &candidate, len(raw)) != "" {
 			return
 		}
+		// Use the indexed budgets, including binding reservations, and leave
+		// ordinary-observation headroom for terminal and first-media evidence.
+		delta := len(raw) - s.sizes[r.TraceID]
+		if s.usedBytes+delta > s.quota-callDiagnosticPriorityBytes ||
+			s.ownerSizes[rec.Owner]+delta > s.ownerQuota-callDiagnosticPriorityBytes {
+			return
+		}
+		// Roll back to committed memory, not disk bytes from an unsettled write.
+		// The shared transaction repairs any prior publication before writing.
+		if s.writeRecordLocked(r.TraceID, raw, mustDiagnosticJSON(rec)) != nil {
+			return
+		}
+		*rec = candidate
+		s.indexBytesLocked(r.TraceID, rec, len(raw))
 		s.apnsCaptured++
 	})
 }

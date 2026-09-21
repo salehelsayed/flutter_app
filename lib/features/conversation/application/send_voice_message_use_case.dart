@@ -275,7 +275,7 @@ Future<(SendVoiceMessageResult, ConversationMessage?)> sendVoiceMessage({
           );
           return (SendVoiceMessageResult.success, null);
         }
-        return sendCompletedVoiceProjection(
+        return await sendCompletedVoiceProjection(
           attachments: durableAttachments,
           uploadMs: 0,
           cleanupPreparedSource: false,

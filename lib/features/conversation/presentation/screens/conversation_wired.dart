@@ -6879,7 +6879,7 @@ class _ConversationWiredState extends State<ConversationWired>
         fromStatus: 'sending',
         toStatus: 'failed',
       );
-      return widget.messageRepo.getMessage(id);
+      return await widget.messageRepo.getMessage(id);
     } catch (e) {
       emitFlowEvent(
         layer: 'FL',

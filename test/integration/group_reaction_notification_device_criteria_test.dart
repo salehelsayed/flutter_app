@@ -4,7 +4,9 @@ import 'dart:io';
 
 import 'package:crypto/crypto.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter_app/features/groups/presentation/widgets/expandable_fab.dart';
+import 'dart:ui' as ui;
+import 'package:flutter_app/features/orbit/domain/models/orbit_view_mode.dart';
+import '../features/orbit/presentation/screens/orbit_screen_pump_harness.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import '../../integration_test/scripts/capture_group_reaction_notification_device.dart'
@@ -13,33 +15,85 @@ import '../../integration_test/scripts/group_reaction_notification_device_criter
 import '../../integration_test/scripts/reaction_notification_proof_support.dart';
 
 void main() {
-  testWidgets('Orbit create FAB exposes its exact automation semantics', (
-    tester,
-  ) async {
-    await tester.pumpWidget(
-      MaterialApp(
-        home: Scaffold(
-          body: Stack(
-            children: <Widget>[
-              ExpandableFab(
-                fabSemanticLabel: fixture_driver.orbitCreateGroupFabSemanticId,
-                items: <ExpandableFabItem>[
-                  ExpandableFabItem(
-                    label: 'New Group',
-                    icon: Icons.group_outlined,
-                    onTap: () {},
-                  ),
-                ],
-              ),
-            ],
+  for (final entry in {
+    'en': ['Create group', 'Close create menu'],
+    'de': ['Gruppe erstellen', 'Erstellungsmenü schließen'],
+    'ar': ['إنشاء مجموعة', 'إغلاق قائمة الإنشاء'],
+  }.entries) {
+    testWidgets(
+      'Orbit create FAB exposes localized label and stable identifier ${entry.key}',
+      (tester) async {
+        final handle = tester.ensureSemantics();
+        await tester.pumpWidget(
+          buildOrbitScreenHarness(
+            viewMode: OrbitViewMode.allChats,
+            locale: Locale(entry.key),
+          ),
+        );
+        await tester.pump();
+        final finder = find.bySemanticsIdentifier(
+          fixture_driver.orbitCreateGroupFabSemanticId,
+        );
+        expect(finder, findsOneWidget);
+        var node = tester.getSemantics(finder);
+        final id = node.id;
+        expect(node.label, entry.value[0]);
+        expect(node.getSemanticsData().flagsCollection.isButton, isTrue);
+        expect(find.text(entry.value[0]), findsNothing);
+        tester.binding.renderViews.single.owner!.semanticsOwner!.performAction(
+          node.id,
+          ui.SemanticsAction.tap,
+        );
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 200));
+        node = tester.getSemantics(finder);
+        expect(
+          node.id,
+          id,
+          reason: 'The focused action keeps its semantic identity',
+        );
+        expect(node.label, entry.value[1]);
+        expect(find.byIcon(Icons.close), findsWidgets);
+        tester.binding.renderViews.single.owner!.semanticsOwner!.performAction(
+          node.id,
+          ui.SemanticsAction.tap,
+        );
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 200));
+        expect(tester.getSemantics(finder).label, entry.value[0]);
+        handle.dispose();
+      },
+    );
+  }
+
+  test('Orbit locator uses resource id independently of spoken labels', () {
+    for (final label in [
+      'Create group',
+      'Gruppe erstellen',
+      'إنشاء مجموعة',
+      'Close create menu',
+    ]) {
+      expect(
+        fixture_driver.findOrbitCreateGroupFabCenter(
+          _uiNode(
+            resourceId: fixture_driver.orbitCreateGroupFabSemanticId,
+            contentDescription: label,
+            bounds: '[900,100][1000,200]',
+            clickable: true,
           ),
         ),
-      ),
-    );
-
+        (950, 150),
+      );
+    }
     expect(
-      find.bySemanticsLabel(fixture_driver.orbitCreateGroupFabSemanticId),
-      findsOneWidget,
+      fixture_driver.findOrbitCreateGroupFabCenter(
+        _uiNode(
+          contentDescription: fixture_driver.orbitCreateGroupFabSemanticId,
+          resourceId: 'unrelated',
+          clickable: true,
+        ),
+      ),
+      isNull,
     );
   });
 
@@ -50,7 +104,7 @@ void main() {
         _uiNode(clickable: true, bounds: '[900,100][1000,200]'),
         _uiNode(clickable: true, bounds: '[900,100][1000,200]'),
         _uiNode(
-          contentDescription: fixture_driver.orbitCreateGroupFabSemanticId,
+          resourceId: fixture_driver.orbitCreateGroupFabSemanticId,
           clickable: true,
           bounds: '[900,100][1000,200]',
         ),
@@ -132,7 +186,7 @@ void main() {
           bounds: '[800,1700][1000,1800]',
         ),
         _uiNode(
-          contentDescription: fixture_driver.orbitCreateGroupFabSemanticId,
+          resourceId: fixture_driver.orbitCreateGroupFabSemanticId,
           clickable: true,
           bounds: '[900,100][1000,200]',
         ),
@@ -179,7 +233,7 @@ void main() {
         bounds: '[800,1700][1000,1800]',
       ),
       _uiNode(
-        contentDescription: fixture_driver.orbitCreateGroupFabSemanticId,
+        resourceId: fixture_driver.orbitCreateGroupFabSemanticId,
         clickable: true,
         bounds: '[900,100][1000,200]',
       ),
@@ -215,7 +269,10 @@ void main() {
     final orbitSource = File(
       'lib/features/orbit/presentation/screens/orbit_screen.dart',
     ).readAsStringSync();
-    expect(orbitSource, contains("fabSemanticLabel: 'orbit_create_group_fab'"));
+    expect(
+      orbitSource,
+      contains("fabSemanticIdentifier: 'orbit_create_group_fab'"),
+    );
     expect(source, contains('findOrbitCreateGroupFabWithRecovery('));
     expect(source, contains('_reestablishOrbitWithoutForceStop'));
     expect(source, contains('findBlockingAction: findAndroidAnrWaitCenter'));
@@ -4448,12 +4505,13 @@ void _writeBuildReport(
 }
 
 String _uiNode({
+  String resourceId = '',
   String text = '',
   String contentDescription = '',
   bool clickable = false,
   String bounds = '[0,0][100,100]',
 }) =>
-    '<node text="$text" content-desc="$contentDescription" '
+    '<node resource-id="$resourceId" text="$text" content-desc="$contentDescription" '
     'clickable="$clickable" bounds="$bounds" />';
 
 Map<String, Object?> _validStagingManifest({

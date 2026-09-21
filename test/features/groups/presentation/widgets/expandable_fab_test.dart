@@ -1,3 +1,4 @@
+import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -13,22 +14,23 @@ void main() {
     });
 
     List<ExpandableFabItem> items() => [
-          ExpandableFabItem(
-            label: 'New Group',
-            icon: Icons.group_outlined,
-            onTap: () => tappedItems.add('group'),
-          ),
-          ExpandableFabItem(
-            label: 'New Announce',
-            icon: Icons.campaign_outlined,
-            onTap: () => tappedItems.add('announce'),
-          ),
-        ];
+      ExpandableFabItem(
+        label: 'New Group',
+        icon: Icons.group_outlined,
+        onTap: () => tappedItems.add('group'),
+      ),
+      ExpandableFabItem(
+        label: 'New Announce',
+        icon: Icons.campaign_outlined,
+        onTap: () => tappedItems.add('announce'),
+      ),
+    ];
 
     Widget buildWidget({
       ExpandableFabAnchor anchor = ExpandableFabAnchor.bottomRight,
       double fabSize = 56,
       EdgeInsets? safeAreaPadding,
+      bool named = false,
     }) {
       return MaterialApp(
         home: Scaffold(
@@ -37,6 +39,9 @@ void main() {
               const SizedBox.expand(),
               ExpandableFab(
                 items: items(),
+                fabSemanticLabel: named ? 'Create group' : null,
+                openFabSemanticLabel: named ? 'Close create menu' : null,
+                fabSemanticIdentifier: named ? 'fixture-fab' : null,
                 anchor: anchor,
                 fabSize: fabSize,
                 safeAreaPadding: safeAreaPadding,
@@ -44,6 +49,45 @@ void main() {
             ],
           ),
         ),
+      );
+    }
+
+    for (final anchor in ExpandableFabAnchor.values) {
+      testWidgets(
+        'A02 named FAB retains identity through selection and dismissal $anchor',
+        (tester) async {
+          final handle = tester.ensureSemantics();
+          await tester.pumpWidget(buildWidget(anchor: anchor, named: true));
+          final finder = find.bySemanticsIdentifier('fixture-fab');
+          final id = tester.getSemantics(finder).id;
+          void activate() => tester
+              .binding
+              .renderViews
+              .single
+              .owner!
+              .semanticsOwner!
+              .performAction(
+                tester.getSemantics(finder).id,
+                ui.SemanticsAction.tap,
+              );
+          activate();
+          await tester.pumpAndSettle();
+          expect(tester.getSemantics(finder).label, 'Close create menu');
+          expect(tester.getSemantics(finder).id, id);
+          await tester.tap(find.text('New Announce'));
+          await tester.pumpAndSettle();
+          expect(tappedItems, ['announce']);
+          expect(tester.getSemantics(finder).label, 'Create group');
+          expect(tester.getSemantics(finder).id, id);
+          activate();
+          await tester.pumpAndSettle();
+          await tester.tapAt(const Offset(10, 300));
+          await tester.pumpAndSettle();
+          expect(tappedItems, ['announce']);
+          expect(tester.getSemantics(finder).label, 'Create group');
+          expect(tester.getSemantics(finder).id, id);
+          handle.dispose();
+        },
       );
     }
 
@@ -132,30 +176,26 @@ void main() {
       await tester.pumpWidget(buildWidget());
 
       // No scrim when closed
-      expect(
-        find.byKey(const Key('expandable_fab_scrim')),
-        findsNothing,
-      );
+      expect(find.byKey(const Key('expandable_fab_scrim')), findsNothing);
 
       // Open
       await tester.tap(find.byIcon(Icons.add));
       await tester.pumpAndSettle();
 
       // Scrim visible when open
-      expect(
-        find.byKey(const Key('expandable_fab_scrim')),
-        findsOneWidget,
-      );
+      expect(find.byKey(const Key('expandable_fab_scrim')), findsOneWidget);
     });
 
     testWidgets('defaults to bottom-right positioning', (tester) async {
       await tester.pumpWidget(buildWidget());
 
       final positioned = tester.widget<Positioned>(
-        find.ancestor(
-          of: find.byType(GlowFab),
-          matching: find.byType(Positioned),
-        ).last,
+        find
+            .ancestor(
+              of: find.byType(GlowFab),
+              matching: find.byType(Positioned),
+            )
+            .last,
       );
 
       expect(positioned.bottom, 16);
@@ -163,17 +203,20 @@ void main() {
       expect(positioned.top, isNull);
     });
 
-    testWidgets('positions at top-right when anchor is topRight',
-        (tester) async {
+    testWidgets('positions at top-right when anchor is topRight', (
+      tester,
+    ) async {
       await tester.pumpWidget(
         buildWidget(anchor: ExpandableFabAnchor.topRight),
       );
 
       final positioned = tester.widget<Positioned>(
-        find.ancestor(
-          of: find.byType(GlowFab),
-          matching: find.byType(Positioned),
-        ).last,
+        find
+            .ancestor(
+              of: find.byType(GlowFab),
+              matching: find.byType(Positioned),
+            )
+            .last,
       );
 
       expect(positioned.top, isNotNull);
@@ -181,8 +224,9 @@ void main() {
       expect(positioned.bottom, isNull);
     });
 
-    testWidgets('menu items appear below FAB when anchor is topRight',
-        (tester) async {
+    testWidgets('menu items appear below FAB when anchor is topRight', (
+      tester,
+    ) async {
       await tester.pumpWidget(
         buildWidget(anchor: ExpandableFabAnchor.topRight),
       );

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/core/utils/text_direction_utils.dart';
 import 'package:flutter_app/features/feed/domain/utils/format_message_time.dart';
@@ -81,140 +82,212 @@ class GroupRow extends StatelessWidget {
           borderRadius: BorderRadius.circular(16),
           border: Border.all(color: readableColors.surfaceBorder),
         ),
-        child: Row(
-          children: [
-            // Group avatar placeholder
-            Container(
-              width: 48,
-              height: 48,
-              decoration: BoxDecoration(
-                color: readableColors.disabledSurface,
-                borderRadius: BorderRadius.circular(14),
-              ),
-              child: Center(
-                child: Text(
-                  _initials(group.name),
-                  style: TextStyle(
-                    fontSize: 16,
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            const titleStyle = TextStyle(
+              fontSize: 15,
+              fontWeight: FontWeight.w600,
+            );
+            const metaStyle = TextStyle(fontSize: 12);
+            double textWidth(String text, TextStyle style) {
+              final painter = TextPainter(
+                text: TextSpan(
+                  text: text,
+                  style: DefaultTextStyle.of(context).style.merge(style),
+                ),
+                textDirection: Directionality.of(context),
+                textScaler: MediaQuery.textScalerOf(context),
+              )..layout();
+              final width = painter.width;
+              painter.dispose();
+              return width;
+            }
+
+            // Retain the horizontal card when it can show a useful name prefix.
+            // Otherwise give name, badge and metadata separate bounded lines.
+            final prefix = group.name.characters.take(4).toString();
+            final nameWidth = textWidth(
+              prefix.length < group.name.length ? '$prefix…' : prefix,
+              titleStyle,
+            );
+            final badgeWidth =
+                textWidth(
+                  switch (group.type) {
+                    GroupType.chat => l10n.group_type_discussion,
+                    GroupType.announcement => l10n.group_type_announce,
+                    GroupType.qa => l10n.group_type_qa,
+                  },
+                  const TextStyle(
+                    fontSize: 9,
                     fontWeight: FontWeight.w600,
+                    letterSpacing: 0.3,
+                  ),
+                ) +
+                16;
+            final countWidth = group.unreadCount > 0
+                ? textWidth(
+                        group.unreadCount > 99 ? '99+' : '${group.unreadCount}',
+                        const TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ) +
+                      12
+                : 16.0;
+            final timeWidth = textWidth(relativeTime, metaStyle);
+            final metaWidth = timeWidth > countWidth ? timeWidth : countWidth;
+            final stacked =
+                constraints.maxWidth <
+                48 + 14 + nameWidth + badgeWidth + 10 + metaWidth;
+            final title = Text(
+              group.name,
+              maxLines: 1,
+              style: TextStyle(
+                fontSize: 15,
+                fontWeight: FontWeight.w600,
+                color: readableColors.textPrimary,
+              ),
+              overflow: TextOverflow.ellipsis,
+            );
+            final badge = GroupTypeBadge(type: group.type);
+            final time = Text(
+              relativeTime,
+              style: TextStyle(fontSize: 12, color: readableColors.textMuted),
+            );
+            final trailing = (group.unreadCount > 0)
+                ? UnreadCountBadge(count: group.unreadCount)
+                : Icon(
+                    Icons.chevron_right,
+                    size: 16,
                     color: readableColors.iconMuted,
+                  );
+
+            return Row(
+              children: [
+                Container(
+                  width: 48,
+                  height: 48,
+                  decoration: BoxDecoration(
+                    color: readableColors.disabledSurface,
+                    borderRadius: BorderRadius.circular(14),
+                  ),
+                  child: Center(
+                    child: Text(
+                      _initials(group.name),
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w600,
+                        color: readableColors.iconMuted,
+                      ),
+                    ),
                   ),
                 ),
-              ),
-            ),
-            const SizedBox(width: 14),
-
-            // Info column
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
+                const SizedBox(width: 14),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Flexible(
-                        child: Text(
-                          group.name,
-                          style: TextStyle(
-                            fontSize: 15,
-                            fontWeight: FontWeight.w600,
-                            color: readableColors.textPrimary,
-                          ),
-                          overflow: TextOverflow.ellipsis,
+                      if (stacked) ...[
+                        title,
+                        ...[const SizedBox(height: 4), badge],
+                      ] else
+                        Row(
+                          children: [
+                            Flexible(child: title),
+                            ...[const SizedBox(width: 6), badge],
+                          ],
                         ),
-                      ),
-                      const SizedBox(width: 6),
-                      GroupTypeBadge(type: group.type),
-                    ],
-                  ),
-                  const SizedBox(height: 2),
-                  if (joinStatusLabel != null)
-                    Text(
-                      joinStatusLabel,
-                      style: TextStyle(
-                        fontSize: 12,
-                        fontWeight: FontWeight.w600,
-                        color: readableColors.textMuted,
-                      ),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    )
-                  else if (hasStructuredPreview)
-                    Row(
-                      children: [
-                        Flexible(
-                          fit: FlexFit.loose,
-                          child: Text(
-                            senderDisplayName,
-                            style: TextStyle(
-                              fontSize: 12,
-                              color: readableColors.textMuted,
-                            ),
-                            textDirection: detectTextDirection(
-                              senderDisplayName,
-                            ),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        ),
+                      const SizedBox(height: 4),
+                      if (joinStatusLabel != null)
                         Text(
-                          ': ',
+                          joinStatusLabel,
+                          style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                            color: readableColors.textMuted,
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        )
+                      else if (hasStructuredPreview)
+                        Row(
+                          children: [
+                            Flexible(
+                              fit: FlexFit.loose,
+                              child: Text(
+                                senderDisplayName,
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  color: readableColors.textMuted,
+                                ),
+                                textDirection: detectTextDirection(
+                                  senderDisplayName,
+                                ),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                            Text(
+                              ': ',
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: readableColors.textMuted,
+                              ),
+                            ),
+                            Expanded(
+                              child: Text(
+                                previewText,
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  color: readableColors.textMuted,
+                                ),
+                                textDirection: detectTextDirection(previewText),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                          ],
+                        )
+                      else
+                        Text(
+                          l10n.group_no_messages,
                           style: TextStyle(
                             fontSize: 12,
                             color: readableColors.textMuted,
                           ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
                         ),
-                        Expanded(
-                          child: Text(
-                            previewText,
-                            style: TextStyle(
-                              fontSize: 12,
-                              color: readableColors.textMuted,
-                            ),
-                            textDirection: detectTextDirection(previewText),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                          ),
+                      if (stacked) ...[
+                        const SizedBox(height: 4),
+                        Row(
+                          children: [
+                            if (relativeTime.isNotEmpty)
+                              Expanded(child: time)
+                            else
+                              const Spacer(),
+                            const SizedBox(width: 10),
+                            trailing,
+                          ],
                         ),
                       ],
-                    )
-                  else
-                    Text(
-                      l10n.group_no_messages,
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: readableColors.textMuted,
-                      ),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
+                    ],
+                  ),
+                ),
+                if (!stacked) ...[
+                  const SizedBox(width: 10),
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.end,
+                    children: [
+                      if (relativeTime.isNotEmpty) time,
+                      const SizedBox(height: 4),
+                      trailing,
+                    ],
+                  ),
                 ],
-              ),
-            ),
-
-            // Meta column
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.end,
-              children: [
-                if (relativeTime.isNotEmpty)
-                  Text(
-                    relativeTime,
-                    style: TextStyle(
-                      fontSize: 12,
-                      color: readableColors.textMuted,
-                    ),
-                  ),
-                const SizedBox(height: 4),
-                if (group.unreadCount > 0)
-                  UnreadCountBadge(count: group.unreadCount)
-                else
-                  Icon(
-                    Icons.chevron_right,
-                    size: 16,
-                    color: readableColors.iconMuted,
-                  ),
               ],
-            ),
-          ],
+            );
+          },
         ),
       ),
     );

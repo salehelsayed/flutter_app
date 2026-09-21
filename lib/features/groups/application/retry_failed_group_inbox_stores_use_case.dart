@@ -1330,15 +1330,17 @@ Future<GroupReactionReplayOutboxEntry?> _rebuildGroupReactionReplayPayload({
   }
   try {
     final identity = await identityRepo.loadIdentity();
-    if (identity == null) return failSoft('identity_unavailable');
+    if (identity == null) return await failSoft('identity_unavailable');
     final member = await groupRepo.getMember(row.groupId, row.senderPeerId);
     final senderDevice = member?.firstActiveDeviceForSigningKey(
       identity.publicKey,
       allowLegacyFallback: true,
     );
-    if (senderDevice == null) return failSoft('sender_device_unavailable');
+    if (senderDevice == null) {
+      return await failSoft('sender_device_unavailable');
+    }
     final target = await msgRepo.getMessage(row.messageId);
-    if (target == null) return failSoft('target_message_unavailable');
+    if (target == null) return await failSoft('target_message_unavailable');
 
     final payload = GroupReactionPayload(
       id: row.action == GroupReactionPayload.actionAdd
@@ -1397,7 +1399,7 @@ Future<GroupReactionReplayOutboxEntry?> _rebuildGroupReactionReplayPayload({
       reactionId: row.reactionId,
       inboxRetryPayload: inboxRetryPayload,
     );
-    if (!attached) return failSoft('row_vanished_during_rebuild');
+    if (!attached) return await failSoft('row_vanished_during_rebuild');
     emitFlowEvent(
       layer: 'FL',
       event: 'GROUP_REACTION_REPLAY_REBUILT',

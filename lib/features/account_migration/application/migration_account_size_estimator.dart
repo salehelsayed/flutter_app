@@ -9,6 +9,7 @@ const migrationMediaRootDirectories = <String>[
   'post_media',
   'pending_uploads',
 ];
+
 /// Measured ceiling from the P0-7 Pixel benchmark on the protocol v2
 /// entry-streamed path (2026-06-11): 200/500/1000/2000/10000 MB all passed
 /// with a FLAT ~95-140 MB RSS delta — memory is size-independent (v1 OOM'd
@@ -57,7 +58,7 @@ class MigrationDartIoSizeScanIo implements MigrationSizeScanIo {
     try {
       final file = File(absolutePath);
       if (!await file.exists()) return null;
-      return file.length();
+      return await file.length();
     } on FileSystemException {
       return null;
     }

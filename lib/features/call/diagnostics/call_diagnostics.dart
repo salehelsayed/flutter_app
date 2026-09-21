@@ -175,6 +175,10 @@ final class CallDiagnostics with WidgetsBindingObserver {
   bool _observing = false;
   Future<void>? _writing;
   String _lastError = 'none';
+  // Session-only retry state; retained IDs bound this index to the local archive.
+  // Cold starts retry retained rows without changing the persisted v1 schema.
+  final _retrying = <String>{};
+  String _retryError = 'none';
 
   bool get enabled => _enabled.value && !_disposed;
   ValueListenable<bool> get enabledListenable => _enabled;
@@ -345,6 +349,7 @@ final class CallDiagnostics with WidgetsBindingObserver {
 
   static Future<CallDiagnostics> installForTesting({
     Directory? directory,
+    bool useNative = false,
     bool? enabled = true,
     DateTime Function()? now,
     CallDiagnosticUpload? upload,
@@ -364,7 +369,7 @@ final class CallDiagnostics with WidgetsBindingObserver {
       directory:
           directory ??
           await Directory.systemTemp.createTemp('call-diagnostics-'),
-      useNative: false,
+      useNative: useNative,
       enabledOverride: enabled,
       bridge: bridge,
       networkAllowed: networkAllowed,
@@ -726,6 +731,7 @@ final class CallDiagnostics with WidgetsBindingObserver {
     }
     _flushing = true;
     _flushDone = Completer<void>();
+    final epoch = _consentEpoch;
     try {
       if (_nativeConsentPending || _nativeClearPending) {
         await _syncNativeConsent();
@@ -734,24 +740,26 @@ final class CallDiagnostics with WidgetsBindingObserver {
         await _syncConsent();
         return;
       }
-      final epoch = _consentEpoch;
+      if (epoch != _consentEpoch) return;
       await _drainNative();
       _prune();
       await _persist();
-      if (!enabled || !_storageHealthy || _nowMs < _nextUploadAtMs) return;
+      if (!enabled || epoch != _consentEpoch || !_storageHealthy) return;
       if (_testUpload == null) {
         if (_bridge?.isInitialized != true) return;
         if (_consentPending ||
             _lastConfigureAtMs == 0 ||
             _nowMs - _lastConfigureAtMs > 5 * 60 * 1000) {
           if (!await _syncConsent()) {
-            _uploadFailed('legacy_peer');
+            if (epoch == _consentEpoch) _lastError = 'legacy_peer';
             return;
           }
           _lastConfigureAtMs = _nowMs;
         }
       }
-      if (!enabled || epoch != _consentEpoch) return;
+      if (!enabled || epoch != _consentEpoch || _nowMs < _nextUploadAtMs) {
+        return;
+      }
       final batch = _pendingUploadBatch()
           .map(
             (event) =>
@@ -759,6 +767,12 @@ final class CallDiagnostics with WidgetsBindingObserver {
           )
           .toList();
       if (batch.isEmpty) return;
+      // Only explicit ACKs/rejections or existing local eviction resolve an ID.
+      _retrying.addAll(batch.map((e) => e['eventId']! as String));
+      final deferredRetryReason = _retryError == 'none'
+          ? 'bridge_unavailable'
+          : _retryError;
+      var retryReason = deferredRetryReason;
       _uploading.addAll(batch.map((e) => e['eventId']! as String));
       final Set<String> accepted;
       var acknowledged = 0;
@@ -769,6 +783,7 @@ final class CallDiagnostics with WidgetsBindingObserver {
           'events': batch,
         }, expectedEpoch: epoch);
         if (!enabled || epoch != _consentEpoch) return;
+        retryReason = _uploadRetryReason(result?['reason']);
         if (result == null || result['supported'] != true) {
           _uploadFailed('bridge_unavailable');
           return;
@@ -782,6 +797,7 @@ final class CallDiagnostics with WidgetsBindingObserver {
             .toSet();
         for (final event in batch) {
           if (rejected.contains(event['eventId'])) {
+            _retrying.remove(event['eventId']);
             if (_addUploaded(event['eventId']! as String)) {
               acknowledged++;
               _dropped++;
@@ -792,6 +808,7 @@ final class CallDiagnostics with WidgetsBindingObserver {
       if (!enabled || epoch != _consentEpoch) return;
       for (final event in batch) {
         if (accepted.contains(event['eventId'])) {
+          _retrying.remove(event['eventId']);
           if (_addUploaded(event['eventId']! as String)) acknowledged++;
         }
       }
@@ -801,17 +818,20 @@ final class CallDiagnostics with WidgetsBindingObserver {
         final id = event['eventId']! as String;
         if (!_eventsById.containsKey(id)) _removeUploaded(id);
       }
-      if (acknowledged == 0) {
-        _uploadFailed('bridge_unavailable');
+      if (acknowledged > 0) _lastUploadAtMs = _nowMs;
+      if (_retrying.isNotEmpty) {
+        // A successful batch cannot replace the reason for omitted retry IDs.
+        final submittedUnresolved = batch.any(
+          (event) => _retrying.contains(event['eventId']),
+        );
+        _uploadFailed(submittedUnresolved ? retryReason : deferredRetryReason);
       } else {
-        _lastUploadAtMs = _nowMs;
-        _uploadFailures = 0;
-        _nextUploadAtMs = 0;
+        _resetUploadBackoff();
         _lastError = 'none';
       }
       await _persist(force: acknowledged > 0);
     } catch (_) {
-      _uploadFailed('sink_unavailable');
+      if (enabled && epoch == _consentEpoch) _uploadFailed('sink_unavailable');
     } finally {
       _uploading.clear();
       _flushing = false;
@@ -854,7 +874,6 @@ final class CallDiagnostics with WidgetsBindingObserver {
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
-      _nextUploadAtMs = 0;
       unawaited(flush());
     } else {
       unawaited(_persist());
@@ -1049,6 +1068,7 @@ final class CallDiagnostics with WidgetsBindingObserver {
   void _removeEvent(Map<String, Object?> event) {
     final id = event['eventId']! as String;
     if (_eventsById.remove(id) == null) return;
+    _retrying.remove(id);
     final bytes = _eventSizes.remove(id) ?? 0;
     final order = _eventOrder.remove(id);
     _retainedBytes -= bytes;
@@ -1179,6 +1199,8 @@ final class CallDiagnostics with WidgetsBindingObserver {
   }
 
   void _clearMemory() {
+    _retrying.clear();
+    _resetUploadBackoff();
     if (_ready) _archiveWriter?.clearEvents();
     _eventsById.clear();
     _groups.clear();
@@ -1217,7 +1239,23 @@ final class CallDiagnostics with WidgetsBindingObserver {
     _dirty = true;
   }
 
+  void _resetUploadBackoff() {
+    _uploadFailures = 0;
+    _nextUploadAtMs = 0;
+    if (_lastError == _retryError) _lastError = 'none';
+    _retryError = 'none';
+  }
+
+  // Older relays omit a reason or collapse quota into sink_unavailable.
+  // Unknown response text must not enter status or imply quota exhaustion.
+  static String _uploadRetryReason(Object? reason) => switch (reason) {
+    'quota_exceeded' => 'quota_exceeded',
+    'sink_unavailable' => 'sink_unavailable',
+    _ => 'bridge_unavailable',
+  };
+
   void _uploadFailed(String reason) {
+    _retryError = reason;
     _lastError = reason;
     _uploadFailures = min(_uploadFailures + 1, 6);
     _nextUploadAtMs = _nowMs + min(300000, 5000 * (1 << _uploadFailures));
@@ -1323,7 +1361,7 @@ final class CallDiagnostics with WidgetsBindingObserver {
     _nativeHealthy = !_nativeConsentPending && !_nativeClearPending;
     if (!_nativeHealthy) _lastError = 'native_persistence_failed';
     if (_nativeHealthy && _lastError == 'native_persistence_failed') {
-      _lastError = 'none';
+      _lastError = _retryError;
     }
     await _persist(force: true);
   }

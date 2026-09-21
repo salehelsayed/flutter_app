@@ -1049,7 +1049,7 @@ void main() {
     'P269 fixture publishes JPEG last and host settles sender before barrier observation',
     () {
       final fixtureSource = File(
-        'lib/core/debug/group_media_reliability_e2e_main_actions.dart',
+        'lib/debug/group_media_reliability_e2e_main_actions.dart',
       ).readAsStringSync();
       final specsStart = fixtureSource.indexOf(
         'final allSpecs = <({String kind, String mime, String? asset})>[',
