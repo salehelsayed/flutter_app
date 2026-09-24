@@ -4142,4 +4142,7 @@ class AppLocalizationsAr extends AppLocalizations {
 
   @override
   String get media_loading => 'جارٍ تحميل الوسائط…';
+
+  @override
+  String get media_voice_message_label => 'رسالة صوتية';
 }

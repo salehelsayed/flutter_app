@@ -404,10 +404,12 @@ void main() {
       expect(caller.activeSession, isNull);
       expect(native.cancelledHandles, <String>[handle]);
       expect(cleaned, hasLength(1));
-      expect(cleaned.single.endReason, CallEndReason.localHangup);
+      // The peer sent its own `local_hangup`; on this side that is the remote
+      // hanging up (beta 2026-09-24 perspective fix).
+      expect(cleaned.single.endReason, CallEndReason.remoteHangup);
       expect(context.read(callId), isNull);
       expect(caller.terminalCleanupAckReady(callId), isTrue);
-      expect(history.entries.single.terminalReason, CallEndReason.localHangup);
+      expect(history.entries.single.terminalReason, CallEndReason.remoteHangup);
 
       expect(
         await handler.handle(terminate),

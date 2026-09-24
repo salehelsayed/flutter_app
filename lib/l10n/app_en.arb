@@ -2056,5 +2056,9 @@
   "voice_call_unavailable": "Voice calling is unavailable right now",
   "push_registration_health_retrying": "Trying again…",
   "orbit_loading_contacts": "Loading contacts…",
-  "media_loading": "Loading media…"
+  "media_loading": "Loading media…",
+  "media_voice_message_label": "Voice message",
+  "@media_voice_message_label": {
+    "description": "Screen-reader label that tells the user a chat bubble holds a voice message."
+  }
 }

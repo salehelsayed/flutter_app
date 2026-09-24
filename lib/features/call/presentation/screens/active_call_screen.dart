@@ -132,52 +132,65 @@ class _ActiveCallScreenState extends State<ActiveCallScreen> {
   }) {
     final l10n = AppLocalizations.of(context)!;
     final status = _status(l10n);
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        UserAvatar(peerId: widget.contactPeerId, size: compact ? 88 : 112),
-        SizedBox(height: compact ? 12 : 24),
-        Text(
-          widget.contactUsername,
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-          textAlign: TextAlign.center,
-          style: TextStyle(
-            color: colors.textPrimary,
-            fontSize: compact ? 24 : 28,
-            fontWeight: FontWeight.w600,
-          ),
-        ),
-        SizedBox(height: compact ? 6 : 10),
-        Semantics(
-          container: true,
-          liveRegion: true,
-          label: status,
-          excludeSemantics: true,
-          child: Text(
-            status,
-            style: TextStyle(
-              color: widget.state == CallState.connected
-                  ? colors.connectedHeading
-                  : colors.textSecondary,
-              fontSize: 16,
-              fontWeight: FontWeight.w500,
+    // The overlay hosts this screen outside any route scope: explicit child
+    // nodes keep the name, the status and the duration separate elements.
+    return Semantics(
+      container: true,
+      explicitChildNodes: true,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          UserAvatar(peerId: widget.contactPeerId, size: compact ? 88 : 112),
+          SizedBox(height: compact ? 12 : 24),
+          Semantics(
+            container: true,
+            child: Text(
+              widget.contactUsername,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                color: colors.textPrimary,
+                fontSize: compact ? 24 : 28,
+                fontWeight: FontWeight.w600,
+              ),
             ),
           ),
-        ),
-        if (formattedDuration != null) ...[
-          SizedBox(height: compact ? 6 : 8),
-          Text(
-            formattedDuration,
-            semanticsLabel: l10n.call_duration(formattedDuration),
-            style: TextStyle(
-              color: colors.textPrimary,
-              fontSize: 18,
-              fontFeatures: const [FontFeature.tabularFigures()],
+          SizedBox(height: compact ? 6 : 10),
+          Semantics(
+            container: true,
+            identifier: 'call_status',
+            liveRegion: true,
+            label: status,
+            excludeSemantics: true,
+            child: Text(
+              status,
+              style: TextStyle(
+                color: widget.state == CallState.connected
+                    ? colors.connectedHeading
+                    : colors.textSecondary,
+                fontSize: 16,
+                fontWeight: FontWeight.w500,
+              ),
             ),
           ),
+          if (formattedDuration != null) ...[
+            SizedBox(height: compact ? 6 : 8),
+            Semantics(
+              container: true,
+              child: Text(
+                formattedDuration,
+                semanticsLabel: l10n.call_duration(formattedDuration),
+                style: TextStyle(
+                  color: colors.textPrimary,
+                  fontSize: 18,
+                  fontFeatures: const [FontFeature.tabularFigures()],
+                ),
+              ),
+            ),
+          ],
         ],
-      ],
+      ),
     );
   }
 

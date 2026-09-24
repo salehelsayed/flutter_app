@@ -4074,4 +4074,7 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get media_loading => 'Loading media…';
+
+  @override
+  String get media_voice_message_label => 'Voice message';
 }

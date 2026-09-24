@@ -39,63 +39,77 @@ class IncomingCallScreen extends StatelessWidget {
       child: SafeArea(
         child: Padding(
           padding: const EdgeInsets.fromLTRB(24, 48, 24, 32),
-          child: Column(
-            children: [
-              const Spacer(),
-              UserAvatar(peerId: contactPeerId, size: 112),
-              const SizedBox(height: 24),
-              Text(
-                contactUsername,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                textAlign: TextAlign.center,
-                style: TextStyle(
-                  color: colors.textPrimary,
-                  fontSize: 28,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-              const SizedBox(height: 10),
-              Semantics(
-                liveRegion: true,
-                label: status,
-                excludeSemantics: true,
-                child: Text(
-                  status,
-                  style: TextStyle(
-                    color: colors.textSecondary,
-                    fontSize: 16,
-                    fontWeight: FontWeight.w500,
+          // The overlay hosts this screen outside any route scope. Without
+          // explicit child nodes, the name, the status and the action
+          // captions merge into one accessibility element.
+          child: Semantics(
+            container: true,
+            explicitChildNodes: true,
+            child: Column(
+              children: [
+                const Spacer(),
+                UserAvatar(peerId: contactPeerId, size: 112),
+                const SizedBox(height: 24),
+                Semantics(
+                  container: true,
+                  child: Text(
+                    contactUsername,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      color: colors.textPrimary,
+                      fontSize: 28,
+                      fontWeight: FontWeight.w600,
+                    ),
                   ),
                 ),
-              ),
-              const Spacer(),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                children: [
-                  _IncomingAction(
-                    tooltip: _canRespond
-                        ? l10n.contact_request_decline
-                        : l10n.call_decline_unavailable,
-                    label: l10n.contact_request_decline,
-                    icon: Icons.call_end_rounded,
-                    backgroundColor: const Color(0xFFE5484D),
-                    enabled: _canRespond,
-                    onPressed: onDecline,
+                const SizedBox(height: 10),
+                Semantics(
+                  container: true,
+                  identifier: 'call_status',
+                  liveRegion: true,
+                  label: status,
+                  excludeSemantics: true,
+                  child: Text(
+                    status,
+                    style: TextStyle(
+                      color: colors.textSecondary,
+                      fontSize: 16,
+                      fontWeight: FontWeight.w500,
+                    ),
                   ),
-                  _IncomingAction(
-                    tooltip: _canRespond
-                        ? l10n.call_answer
-                        : l10n.call_answer_unavailable,
-                    label: l10n.call_answer,
-                    icon: Icons.call_rounded,
-                    backgroundColor: colors.accent,
-                    enabled: _canRespond,
-                    onPressed: onAnswer,
-                  ),
-                ],
-              ),
-            ],
+                ),
+                const Spacer(),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                  children: [
+                    _IncomingAction(
+                      identifier: 'call_decline',
+                      tooltip: _canRespond
+                          ? l10n.contact_request_decline
+                          : l10n.call_decline_unavailable,
+                      label: l10n.contact_request_decline,
+                      icon: Icons.call_end_rounded,
+                      backgroundColor: const Color(0xFFE5484D),
+                      enabled: _canRespond,
+                      onPressed: onDecline,
+                    ),
+                    _IncomingAction(
+                      identifier: 'call_answer',
+                      tooltip: _canRespond
+                          ? l10n.call_answer
+                          : l10n.call_answer_unavailable,
+                      label: l10n.call_answer,
+                      icon: Icons.call_rounded,
+                      backgroundColor: colors.accent,
+                      enabled: _canRespond,
+                      onPressed: onAnswer,
+                    ),
+                  ],
+                ),
+              ],
+            ),
           ),
         ),
       ),
@@ -105,6 +119,7 @@ class IncomingCallScreen extends StatelessWidget {
 
 class _IncomingAction extends StatelessWidget {
   const _IncomingAction({
+    required this.identifier,
     required this.tooltip,
     required this.label,
     required this.icon,
@@ -113,6 +128,7 @@ class _IncomingAction extends StatelessWidget {
     required this.onPressed,
   });
 
+  final String identifier;
   final String tooltip;
   final String label;
   final IconData icon;
@@ -123,31 +139,44 @@ class _IncomingAction extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colors = context.backgroundReadableColors;
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        IconButton(
-          tooltip: tooltip,
-          onPressed: enabled ? onPressed : null,
-          icon: Icon(icon),
-          color: Colors.white,
-          disabledColor: colors.disabledForeground,
-          iconSize: 30,
-          style: IconButton.styleFrom(
-            backgroundColor: enabled ? backgroundColor : colors.disabledSurface,
-            fixedSize: const Size.square(68),
+    // One accessibility element per action: the button and its caption.
+    return Semantics(
+      container: true,
+      identifier: identifier,
+      button: true,
+      enabled: enabled,
+      // Same announcement the IconButton alone had: its tooltip.
+      tooltip: tooltip,
+      onTap: enabled ? onPressed : null,
+      excludeSemantics: true,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          IconButton(
+            tooltip: tooltip,
+            onPressed: enabled ? onPressed : null,
+            icon: Icon(icon),
+            color: Colors.white,
+            disabledColor: colors.disabledForeground,
+            iconSize: 30,
+            style: IconButton.styleFrom(
+              backgroundColor: enabled
+                  ? backgroundColor
+                  : colors.disabledSurface,
+              fixedSize: const Size.square(68),
+            ),
           ),
-        ),
-        const SizedBox(height: 10),
-        Text(
-          label,
-          style: TextStyle(
-            color: enabled ? colors.textSecondary : colors.disabledForeground,
-            fontSize: 13,
-            fontWeight: FontWeight.w500,
+          const SizedBox(height: 10),
+          Text(
+            label,
+            style: TextStyle(
+              color: enabled ? colors.textSecondary : colors.disabledForeground,
+              fontSize: 13,
+              fontWeight: FontWeight.w500,
+            ),
           ),
-        ),
-      ],
+        ],
+      ),
     );
   }
 }

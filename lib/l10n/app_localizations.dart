@@ -6799,6 +6799,12 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Loading media…'**
   String get media_loading;
+
+  /// Screen-reader label that tells the user a chat bubble holds a voice message.
+  ///
+  /// In en, this message translates to:
+  /// **'Voice message'**
+  String get media_voice_message_label;
 }
 
 class _AppLocalizationsDelegate

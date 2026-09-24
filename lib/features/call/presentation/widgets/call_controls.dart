@@ -86,6 +86,7 @@ class CallControls extends StatelessWidget {
             mainAxisAlignment: MainAxisAlignment.spaceEvenly,
             children: [
               _Control(
+                identifier: 'call_mute',
                 tooltip: muteTooltip,
                 label: isMuted
                     ? l10n.media_viewer_unmute
@@ -106,6 +107,7 @@ class CallControls extends StatelessWidget {
                       ),
               ),
               _Control(
+                identifier: 'call_speaker',
                 tooltip: speakerTooltip,
                 label: l10n.call_speaker,
                 icon: isSpeakerOn
@@ -126,6 +128,7 @@ class CallControls extends StatelessWidget {
                       ),
               ),
               _Control(
+                identifier: 'call_end',
                 tooltip: l10n.call_end,
                 label: l10n.call_end_action,
                 icon: Icons.call_end_rounded,
@@ -178,6 +181,7 @@ class CallControls extends StatelessWidget {
 
 class _Control extends StatelessWidget {
   const _Control({
+    required this.identifier,
     required this.tooltip,
     required this.label,
     required this.icon,
@@ -187,6 +191,7 @@ class _Control extends StatelessWidget {
     this.semanticsEnabled = true,
   });
 
+  final String identifier;
   final String tooltip;
   final String label;
   final IconData icon;
@@ -199,6 +204,7 @@ class _Control extends StatelessWidget {
   Widget build(BuildContext context) {
     return Semantics(
       container: true,
+      identifier: identifier,
       button: true,
       enabled: semanticsEnabled,
       label: semanticsEnabled ? label : '$label. $tooltip',

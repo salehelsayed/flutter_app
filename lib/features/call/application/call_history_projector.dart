@@ -123,7 +123,12 @@ final class CallHistoryProjector {
       case CallEndReason.mediaFailed:
       case CallEndReason.reconnectFailed:
       case CallEndReason.policyRejected:
-        return CallHistoryStatus.failed;
+        // A call that connected happened, even if it ended by a failure. It
+        // keeps its talk time, like any other connected call. Only a call
+        // that never connected is a failed call.
+        return snapshot.connectedAt == null
+            ? CallHistoryStatus.failed
+            : CallHistoryStatus.completed;
     }
   }
 
