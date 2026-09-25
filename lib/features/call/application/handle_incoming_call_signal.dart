@@ -30,6 +30,70 @@ enum IncomingCallSignalOutcome {
   superseded,
 }
 
+/// Flow event recorded once for every incoming call signal that does not end
+/// [IncomingCallSignalOutcome.accepted]. Its details hold fixed codes only:
+/// never call ids, handles, peer ids, or envelope content.
+const String incomingCallSignalNotAcceptedEvent =
+    'CALL_INCOMING_SIGNAL_NOT_ACCEPTED';
+
+/// Closed reason codes for [incomingCallSignalNotAcceptedEvent]. Each names
+/// the gate that refused the signal. Admission gates add
+/// [IncomingCallPrePresentationAdmissionException.reasonCode] values such as
+/// `sender_unknown` or `envelope_excessiveClockSkew`.
+abstract final class IncomingCallSignalRefusal {
+  static const networkEffectsBlocked = 'network_effects_blocked';
+  static const expiredBeforeAuthentication = 'expired_before_authentication';
+  static const superseded = 'superseded';
+  static const expiredDuringPresentation = 'expired_during_presentation';
+  static const sessionChangedDuringPresentation =
+      'session_changed_during_presentation';
+  static const presentationFailed = 'presentation_failed';
+  static const systemUiRejected = 'system_ui_rejected';
+  static const handlerException = 'handler_exception';
+  static const laneSaturated = 'lane_saturated';
+  static const runtimeDisposed = 'runtime_disposed';
+
+  static String negotiationMaterial(
+    CallNegotiationMaterialStoreDecision decision,
+  ) => 'negotiation_material_${decision.name}';
+
+  static String coordinator(CallEventDecision decision) =>
+      'coordinator_${decision.name}';
+
+  static String validation(CallEventDecision decision) =>
+      'validation_${decision.name}';
+}
+
+/// Records one incoming call signal that was not accepted. [signal] is known
+/// only after authentication. Never throws.
+void emitIncomingCallSignalNotAccepted({
+  required CallRouteClass route,
+  required IncomingCallSignalOutcome outcome,
+  required String reason,
+  CallSignalType? signal,
+  CallReductionReason? reduction,
+}) {
+  try {
+    emitFlowEvent(
+      layer: 'FL',
+      event: incomingCallSignalNotAcceptedEvent,
+      details: <String, Object?>{
+        'route': switch (route) {
+          CallRouteClass.direct => 'direct',
+          CallRouteClass.circuitRelay => 'relay',
+          CallRouteClass.ephemeralMailbox => 'mailbox',
+        },
+        'signal': signal?.wireName ?? 'unknown',
+        'outcome': outcome.name,
+        'reason': reason,
+        if (reduction != null) 'reduction': reduction.name,
+      },
+    );
+  } catch (_) {
+    // Diagnostics never change call handling.
+  }
+}
+
 /// Proof produced only after the ordinary authenticated terminal handling
 /// path commits replay custody. It never authorizes presentation or media.
 final class AuthenticatedIncomingCallTerminal {
@@ -245,12 +309,36 @@ final class HandleIncomingCallSignal {
     IncomingCallSignalFrame frame, {
     void Function(AuthenticatedIncomingCallTerminal)? onCommittedTerminal,
   }) async {
+    // Every outcome other than accepted leaves one record naming its gate.
+    IncomingCallSignalOutcome refused(
+      IncomingCallSignalOutcome outcome,
+      String reason, {
+      CallSignalType? signal,
+      CallReductionReason? reduction,
+    }) {
+      emitIncomingCallSignalNotAccepted(
+        route: frame.route,
+        outcome: outcome,
+        reason: reason,
+        signal: signal,
+        reduction: reduction,
+      );
+      return outcome;
+    }
+
+    var networkEffectsAllowed = false;
     try {
-      if (!await callNetworkEffectsAreAllowed(_networkEffectsAllowed)) {
-        return IncomingCallSignalOutcome.deferred;
-      }
+      networkEffectsAllowed = await callNetworkEffectsAreAllowed(
+        _networkEffectsAllowed,
+      );
     } catch (_) {
-      return IncomingCallSignalOutcome.deferred;
+      networkEffectsAllowed = false;
+    }
+    if (!networkEffectsAllowed) {
+      return refused(
+        IncomingCallSignalOutcome.deferred,
+        IncomingCallSignalRefusal.networkEffectsBlocked,
+      );
     }
 
     final expectedExpiry = frame.expectedExpiresAtMs;
@@ -259,19 +347,33 @@ final class HandleIncomingCallSignal {
         expectedHandle != null &&
         _coordinator.clock().millisecondsSinceEpoch >= expectedExpiry) {
       await _expireSafely(expectedHandle);
-      return IncomingCallSignalOutcome.rejected;
+      return refused(
+        IncomingCallSignalOutcome.rejected,
+        IncomingCallSignalRefusal.expiredBeforeAuthentication,
+      );
     }
 
     AuthenticatedIncomingCallAdmission? admitted;
     CallNegotiationMaterial? stagedMaterial;
     CallSignal? capturedSignal;
+    CallSignalType? authenticatedEvent;
 
-    IncomingCallSignalOutcome settle(IncomingCallSignalOutcome outcome) {
+    IncomingCallSignalOutcome settle(
+      IncomingCallSignalOutcome outcome,
+      String reason, {
+      CallReductionReason? reduction,
+    }) {
       final signal = capturedSignal;
       if (signal != null && _shouldPurgeSignalingContext(signal, outcome)) {
         _purgeSignalingContextSafely(signal.callId);
       }
-      return outcome;
+      if (outcome == IncomingCallSignalOutcome.accepted) return outcome;
+      return refused(
+        outcome,
+        reason,
+        signal: authenticatedEvent,
+        reduction: reduction,
+      );
     }
 
     try {
@@ -284,6 +386,7 @@ final class HandleIncomingCallSignal {
         expectedRecipientDevicePeerId: frame.expectedRecipientDevicePeerId,
       );
       final signal = admitted.signal;
+      authenticatedEvent = signal.event;
       final diagnostics = CallDiagnostics.instance;
       final existingTrace = diagnostics.traceForCall(
         callId: signal.callId.value,
@@ -341,7 +444,10 @@ final class HandleIncomingCallSignal {
           details: const <String, Object?>{},
         );
         admitted.commitReplay();
-        return settle(IncomingCallSignalOutcome.superseded);
+        return settle(
+          IncomingCallSignalOutcome.superseded,
+          IncomingCallSignalRefusal.superseded,
+        );
       }
 
       _signalingContextObserver?.captureAuthenticated(
@@ -369,6 +475,7 @@ final class HandleIncomingCallSignal {
             storeDecision == CallNegotiationMaterialStoreDecision.duplicate
                 ? IncomingCallSignalOutcome.duplicate
                 : IncomingCallSignalOutcome.rejected,
+            IncomingCallSignalRefusal.negotiationMaterial(storeDecision),
           );
         }
       }
@@ -418,7 +525,11 @@ final class HandleIncomingCallSignal {
             ),
           );
         }
-        return settle(initialOutcome);
+        return settle(
+          initialOutcome,
+          IncomingCallSignalRefusal.coordinator(reduction.decision),
+          reduction: reduction.reason,
+        );
       }
       final resumableInvite = _canResumeIncomingInvite(
         _coordinator.activeSession,
@@ -431,7 +542,11 @@ final class HandleIncomingCallSignal {
           await _remoteCancelSafely(admitted.callHandle);
         }
         admitted.commitReplay();
-        return settle(initialOutcome);
+        return settle(
+          initialOutcome,
+          IncomingCallSignalRefusal.coordinator(reduction.decision),
+          reduction: reduction.reason,
+        );
       }
 
       final validated = await _coordinator.dispatch(
@@ -449,7 +564,11 @@ final class HandleIncomingCallSignal {
             _outcome(validated) != IncomingCallSignalOutcome.duplicate) {
           admitted.commitReplay();
           await _remoteCancelSafely(admitted.callHandle);
-          return settle(_outcome(validated));
+          return settle(
+            _outcome(validated),
+            IncomingCallSignalRefusal.validation(validated.decision),
+            reduction: validated.reason,
+          );
         }
       }
 
@@ -527,7 +646,12 @@ final class HandleIncomingCallSignal {
           );
         }
         admitted.commitReplay();
-        return settle(IncomingCallSignalOutcome.rejected);
+        return settle(
+          IncomingCallSignalOutcome.rejected,
+          expiredAfterPresentation
+              ? IncomingCallSignalRefusal.expiredDuringPresentation
+              : IncomingCallSignalRefusal.sessionChangedDuringPresentation,
+        );
       }
       if (!presented) {
         await _authenticationFailedSafely(admitted.callHandle);
@@ -546,7 +670,10 @@ final class HandleIncomingCallSignal {
           ),
         );
         admitted.commitReplay();
-        return settle(IncomingCallSignalOutcome.rejected);
+        return settle(
+          IncomingCallSignalOutcome.rejected,
+          IncomingCallSignalRefusal.presentationFailed,
+        );
       }
 
       if (!contactNameApplied && signal.event == CallSignalType.invite) {
@@ -570,10 +697,18 @@ final class HandleIncomingCallSignal {
         await _dismissSafely(presentation);
         await _remoteCancelSafely(admitted.callHandle);
         admitted.commitReplay();
-        return settle(IncomingCallSignalOutcome.rejected);
+        return settle(
+          IncomingCallSignalOutcome.rejected,
+          IncomingCallSignalRefusal.systemUiRejected,
+          reduction: shown.reason,
+        );
       }
       admitted.commitReplay();
-      return settle(_outcome(shown));
+      return settle(
+        _outcome(shown),
+        IncomingCallSignalRefusal.systemUiRejected,
+        reduction: shown.reason,
+      );
     } on IncomingCallPrePresentationAdmissionException catch (error) {
       final outcome = switch (error.code) {
         IncomingCallPrePresentationAdmissionFailureCode.duplicate =>
@@ -589,11 +724,14 @@ final class HandleIncomingCallSignal {
         await _revokeOpaqueContactSafely(frame.expectedCallHandle!);
         await _authenticationFailedSafely(frame.expectedCallHandle!);
       }
-      return settle(outcome);
+      return settle(outcome, error.reasonCode);
     } catch (_) {
       _settleNegotiationMaterialAfterFailure(stagedMaterial);
       admitted?.rollbackReplay();
-      return settle(IncomingCallSignalOutcome.deferred);
+      return settle(
+        IncomingCallSignalOutcome.deferred,
+        IncomingCallSignalRefusal.handlerException,
+      );
     }
   }
 

@@ -1,11 +1,13 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/call/application/call_cleanup_coordinator.dart';
 import 'package:flutter_app/features/call/application/call_coordinator.dart';
 import 'package:flutter_app/features/call/application/call_endpoint_resolver.dart';
 import 'package:flutter_app/features/call/application/call_history_projector.dart';
 import 'package:flutter_app/features/call/application/call_negotiation_material_store.dart';
+import 'package:flutter_app/features/call/application/call_network_gate.dart';
 import 'package:flutter_app/features/call/application/call_signaling_context_store.dart';
 import 'package:flutter_app/features/call/application/handle_incoming_call_signal.dart';
 import 'package:flutter_app/features/call/data/call_history_repository.dart';
@@ -140,7 +142,11 @@ final class _Effects implements CallEffectExecutor {
 }
 
 final class _Presenter implements IncomingCallPresenter {
-  _Presenter({this.succeeds = true, this.resultGate, this.throwOnPresent = false});
+  _Presenter({
+    this.succeeds = true,
+    this.resultGate,
+    this.throwOnPresent = false,
+  });
 
   final bool succeeds;
   final Completer<bool>? resultGate;
@@ -334,6 +340,7 @@ _build(
   ProvisionalNativeIncomingCallLifecycle? provisionalNativeLifecycle,
   AuthenticatedCallDisplayNameResolver? authenticatedDisplayNameResolver,
   Duration provisionalNativeTerminalTimeout = const Duration(seconds: 2),
+  CallNetworkEffectsAllowed? networkEffectsAllowed,
 }) async {
   final selectedCrypto = crypto ?? _Crypto();
   final selectedSignal = signal ?? _invite();
@@ -361,7 +368,7 @@ _build(
             mlKemSecretKey: 'recipient-mlkem-secret-key',
           ),
       incomingCallPresenter: presenter,
-      networkEffectsAllowed: () => true,
+      networkEffectsAllowed: networkEffectsAllowed ?? () => true,
       negotiationMaterialStore: negotiationMaterialStore,
       signalingContextObserver: signalingContextObserver,
       provisionalNativeLifecycle: provisionalNativeLifecycle,
@@ -1053,7 +1060,10 @@ void main() {
     expect(coordinator.lastSnapshot?.endReason, CallEndReason.signalingFailed);
     expect(effects.effects, contains(CallEffectType.sendTerminate));
     expect(effects.effects, isNot(contains(CallEffectType.sendRinging)));
-    expect(effects.effects, isNot(contains(CallEffectType.prepareAcceptedMedia)));
+    expect(
+      effects.effects,
+      isNot(contains(CallEffectType.prepareAcceptedMedia)),
+    );
   });
 
   test('native decline survives a late presentation refusal', () async {
@@ -1475,4 +1485,648 @@ void main() {
       isNull,
     );
   });
+  // Beta 2026-09-25 (run-20260925-221131, 22:19:25.470): a direct invite that
+  // arrived in time was routed and then left no trace, because every gate
+  // below returned without a flow event. Each non-accepted outcome now leaves
+  // exactly one identity-free CALL_INCOMING_SIGNAL_NOT_ACCEPTED record naming
+  // the gate that refused it.
+  group('CALL_INCOMING_SIGNAL_NOT_ACCEPTED', () {
+    IncomingCallSignalFrame direct(String envelope) => IncomingCallSignalFrame(
+      envelopeJson: envelope,
+      authenticatedTransportPeerId: 'sender-device',
+      route: CallRouteClass.direct,
+    );
+
+    IncomingCallSignalFrame mailbox(
+      String envelope, {
+      String? expectedCallHandle,
+      int? expectedExpiresAtMs,
+      String sender = 'sender-device',
+      bool terminalFollows = false,
+    }) => IncomingCallSignalFrame(
+      envelopeJson: envelope,
+      authenticatedTransportPeerId: sender,
+      route: CallRouteClass.ephemeralMailbox,
+      expectedCallHandle: expectedCallHandle,
+      expectedExpiresAtMs: expectedExpiresAtMs,
+      terminalFollows: terminalFollows,
+    );
+
+    Map<String, Object?> record({
+      required String route,
+      required String outcome,
+      required String reason,
+      String signal = 'unknown',
+      String? reduction,
+    }) => <String, Object?>{
+      'route': route,
+      'signal': signal,
+      'outcome': outcome,
+      'reason': reason,
+      'reduction': ?reduction,
+    };
+
+    test('network gate refusals are recorded', () async {
+      for (final gate in <CallNetworkEffectsAllowed>[
+        () => false,
+        () => throw StateError('migration authority unavailable'),
+      ]) {
+        final events = _captureNotAccepted();
+        final coordinator = _coordinator(_Effects());
+        addTearDown(coordinator.dispose);
+        final built = await _build(
+          coordinator,
+          _Presenter(),
+          networkEffectsAllowed: gate,
+        );
+
+        expect(
+          await built.handler.handle(direct(built.envelope)),
+          IncomingCallSignalOutcome.deferred,
+        );
+        expect(events, <Map<String, Object?>>[
+          record(
+            route: 'direct',
+            outcome: 'deferred',
+            reason: 'network_effects_blocked',
+          ),
+        ]);
+      }
+    });
+
+    test('an expired mailbox wake is recorded before authentication', () async {
+      final events = _captureNotAccepted();
+      final coordinator = _coordinator(_Effects());
+      addTearDown(coordinator.dispose);
+      final built = await _build(coordinator, _Presenter());
+
+      expect(
+        await built.handler.handle(
+          mailbox(
+            built.envelope,
+            expectedCallHandle: _callHandle,
+            expectedExpiresAtMs: _nowMs,
+          ),
+        ),
+        IncomingCallSignalOutcome.rejected,
+      );
+      expect(events, <Map<String, Object?>>[
+        record(
+          route: 'mailbox',
+          outcome: 'rejected',
+          reason: 'expired_before_authentication',
+        ),
+      ]);
+    });
+
+    test('sender and local authority gates are recorded', () async {
+      final cases =
+          <
+            ({
+              String reason,
+              String outcome,
+              CallTrustedRosterProvider roster,
+              CallLocalAuthorityProvider? local,
+              String sender,
+            })
+          >[
+            (
+              reason: 'roster_unavailable',
+              outcome: 'deferred',
+              roster: const _ThrowingRoster(),
+              local: null,
+              sender: 'sender-device',
+            ),
+            (
+              reason: 'sender_unknown',
+              outcome: 'rejected',
+              roster: const _Roster(),
+              local: null,
+              sender: 'unknown-device',
+            ),
+            (
+              reason: 'local_authority_unavailable',
+              outcome: 'deferred',
+              roster: const _Roster(),
+              local: () async => const CallLocalDeviceAuthority(
+                accountPeerId: '',
+                devicePeerId: '',
+                mlKemSecretKey: '',
+              ),
+              sender: 'sender-device',
+            ),
+            (
+              reason: 'local_authority_unavailable',
+              outcome: 'deferred',
+              roster: const _Roster(),
+              local: () async => throw StateError('identity store locked'),
+              sender: 'sender-device',
+            ),
+          ];
+      for (final value in cases) {
+        final events = _captureNotAccepted();
+        final coordinator = _coordinator(_Effects());
+        addTearDown(coordinator.dispose);
+        final built = await _build(
+          coordinator,
+          _Presenter(),
+          trustedRosterProvider: value.roster,
+          localAuthorityProvider: value.local,
+        );
+
+        await built.handler.handle(
+          mailbox(built.envelope, sender: value.sender),
+        );
+        expect(events, <Map<String, Object?>>[
+          record(
+            route: 'mailbox',
+            outcome: value.outcome,
+            reason: value.reason,
+          ),
+        ], reason: value.reason);
+      }
+    });
+
+    test('envelope refusals carry the envelope error code', () async {
+      // Stale: the invite already expired on this device's clock.
+      var clockMs = _nowMs;
+      final staleEvents = _captureNotAccepted();
+      final staleCoordinator = _coordinator(_Effects());
+      addTearDown(staleCoordinator.dispose);
+      final stale = await _build(
+        staleCoordinator,
+        _Presenter(),
+        nowMs: () => clockMs,
+      );
+      clockMs = _nowMs + 46_000;
+      expect(
+        await stale.handler.handle(direct(stale.envelope)),
+        IncomingCallSignalOutcome.rejected,
+      );
+      expect(staleEvents, <Map<String, Object?>>[
+        record(
+          route: 'direct',
+          outcome: 'rejected',
+          reason: 'envelope_expired',
+        ),
+      ]);
+
+      // Skewed: the caller's clock runs 31 s ahead of this device.
+      clockMs = _nowMs + 31_000;
+      final skewEvents = _captureNotAccepted();
+      final skewCoordinator = _coordinator(_Effects());
+      addTearDown(skewCoordinator.dispose);
+      final skewed = await _build(
+        skewCoordinator,
+        _Presenter(),
+        nowMs: () => clockMs,
+        signal: _invite(
+          createdAtMs: _nowMs + 31_000,
+          expiresAtMs: _nowMs + 31_000 + 45_000,
+        ),
+      );
+      clockMs = _nowMs;
+      expect(
+        await skewed.handler.handle(direct(skewed.envelope)),
+        IncomingCallSignalOutcome.rejected,
+      );
+      expect(skewEvents, <Map<String, Object?>>[
+        record(
+          route: 'direct',
+          outcome: 'rejected',
+          reason: 'envelope_excessiveClockSkew',
+        ),
+      ]);
+
+      // Replayed: the mailbox copy of a direct invite that already rang.
+      final replayEvents = _captureNotAccepted();
+      final replayCoordinator = _coordinator(_Effects());
+      addTearDown(replayCoordinator.dispose);
+      final replayed = await _build(replayCoordinator, _Presenter());
+      expect(
+        await replayed.handler.handle(direct(replayed.envelope)),
+        IncomingCallSignalOutcome.accepted,
+      );
+      expect(replayEvents, isEmpty, reason: 'an accepted signal is silent');
+      expect(
+        await replayed.handler.handle(mailbox(replayed.envelope)),
+        IncomingCallSignalOutcome.duplicate,
+      );
+      expect(replayEvents, <Map<String, Object?>>[
+        record(
+          route: 'mailbox',
+          outcome: 'duplicate',
+          reason: 'envelope_replay',
+        ),
+      ]);
+    });
+
+    test('a mailbox binding mismatch is recorded', () async {
+      final events = _captureNotAccepted();
+      final coordinator = _coordinator(_Effects());
+      addTearDown(coordinator.dispose);
+      final built = await _build(coordinator, _Presenter());
+
+      expect(
+        await built.handler.handle(
+          mailbox(
+            built.envelope,
+            expectedCallHandle: '44444444-4444-4444-8444-444444444444',
+          ),
+        ),
+        IncomingCallSignalOutcome.rejected,
+      );
+      expect(events, <Map<String, Object?>>[
+        record(
+          route: 'mailbox',
+          outcome: 'rejected',
+          reason: 'expectation_mismatch',
+        ),
+      ]);
+    });
+
+    test('a superseded invite is recorded', () async {
+      final events = _captureNotAccepted();
+      final coordinator = _coordinator(_Effects());
+      addTearDown(coordinator.dispose);
+      final built = await _build(coordinator, _Presenter());
+
+      expect(
+        await built.handler.handle(
+          mailbox(built.envelope, terminalFollows: true),
+        ),
+        IncomingCallSignalOutcome.superseded,
+      );
+      expect(events, <Map<String, Object?>>[
+        record(
+          route: 'mailbox',
+          signal: 'invite',
+          outcome: 'superseded',
+          reason: 'superseded',
+        ),
+      ]);
+    });
+
+    test('negotiation material refusals are recorded', () async {
+      final ice = _negotiationSignal(
+        event: CallSignalType.ice,
+        messageId: '77777777-7777-4777-8777-777777777777',
+        senderSequence: 2,
+        iceGeneration: 0,
+        payload: const <String, Object?>{
+          'candidate': 'secret-ice-candidate',
+          'media_id': 'audio',
+          'media_line_index': 0,
+        },
+      );
+      final otherCall = CallSignal.create(
+        callId: CallId.parse('88888888-8888-4888-8888-888888888888'),
+        messageId: '99999999-9999-4999-8999-999999999999',
+        event: CallSignalType.ice,
+        senderAccountPeerId: 'sender-account',
+        senderDevicePeerId: 'sender-device',
+        recipientAccountPeerId: 'recipient-account',
+        recipientDevicePeerId: 'recipient-device',
+        senderSequence: 2,
+        iceGeneration: 0,
+        createdAtMs: _nowMs,
+        expiresAtMs: _nowMs + 45_000,
+        payload: const <String, Object?>{
+          'candidate': 'other-ice-candidate',
+          'media_id': 'audio',
+          'media_line_index': 0,
+        },
+      );
+      for (final value
+          in <
+            (String, IncomingCallSignalOutcome, CallNegotiationMaterialStore)
+          >[
+            (
+              'negotiation_material_duplicate',
+              IncomingCallSignalOutcome.duplicate,
+              CallNegotiationMaterialStore()
+                ..store(CallNegotiationMaterial.fromSignal(ice)),
+            ),
+            (
+              'negotiation_material_capacityExceeded',
+              IncomingCallSignalOutcome.rejected,
+              CallNegotiationMaterialStore(maxCalls: 1)
+                ..store(CallNegotiationMaterial.fromSignal(otherCall)),
+            ),
+          ]) {
+        final events = _captureNotAccepted();
+        final coordinator = _coordinator(_Effects());
+        addTearDown(coordinator.dispose);
+        final built = await _build(
+          coordinator,
+          _Presenter(),
+          signal: ice,
+          negotiationMaterialStore: value.$3,
+        );
+
+        expect(await built.handler.handle(direct(built.envelope)), value.$2);
+        expect(events, <Map<String, Object?>>[
+          record(
+            route: 'direct',
+            signal: 'ice',
+            outcome: value.$2.name,
+            reason: value.$1,
+          ),
+        ]);
+      }
+    });
+
+    test(
+      'a coordinator refusal names the decision and reducer reason',
+      () async {
+        final events = _captureNotAccepted();
+        final coordinator = _coordinator(_Effects());
+        addTearDown(coordinator.dispose);
+        final built = await _build(
+          coordinator,
+          _Presenter(),
+          signal: _negotiationSignal(
+            event: CallSignalType.ice,
+            messageId: '77777777-7777-4777-8777-777777777777',
+            senderSequence: 2,
+            iceGeneration: 0,
+            payload: const <String, Object?>{
+              'candidate': 'secret-ice-candidate',
+              'media_id': 'audio',
+              'media_line_index': 0,
+            },
+          ),
+        );
+
+        // No call is active: the candidate has nothing to join.
+        expect(
+          await built.handler.handle(direct(built.envelope)),
+          IncomingCallSignalOutcome.rejected,
+        );
+        expect(events, <Map<String, Object?>>[
+          record(
+            route: 'direct',
+            signal: 'ice',
+            outcome: 'rejected',
+            reason: 'coordinator_rejected',
+            reduction: 'stateMismatch',
+          ),
+        ]);
+      },
+    );
+
+    test('a validation refusal after the invite is recorded', () async {
+      final events = _captureNotAccepted();
+      late final CallCoordinator coordinator;
+      // The invite's own validation effect ends the call before Dart marks
+      // it validated.
+      coordinator = _coordinator(
+        _Effects(
+          onExecute: (effect, snapshot) =>
+              effect.type == CallEffectType.validateIncomingInvite
+              ? CallEvent(
+                  type: CallEventType.remoteTerminate,
+                  eventId: 'terminate-during-validation',
+                  occurredAt: DateTime.fromMillisecondsSinceEpoch(
+                    _nowMs,
+                    isUtc: true,
+                  ),
+                  callId: _callId,
+                  contactPeerId: 'sender-account',
+                )
+              : null,
+        ),
+      );
+      addTearDown(coordinator.dispose);
+      final presenter = _Presenter();
+      final built = await _build(coordinator, presenter);
+
+      final outcome = await built.handler.handle(direct(built.envelope));
+      expect(outcome, isNot(IncomingCallSignalOutcome.accepted));
+      expect(presenter.calls, 0);
+      expect(events, hasLength(1));
+      expect(events.single['route'], 'direct');
+      expect(events.single['signal'], 'invite');
+      expect(events.single['outcome'], outcome.name);
+      expect(events.single['reason'], startsWith('validation_'));
+      expect(events.single['reduction'], isA<String>());
+    });
+
+    test('presentation gates are recorded', () async {
+      // The native surface refuses the call.
+      final refusedEvents = _captureNotAccepted();
+      final refusedCoordinator = _coordinator(_Effects());
+      addTearDown(refusedCoordinator.dispose);
+      final refused = await _build(
+        refusedCoordinator,
+        _Presenter(succeeds: false),
+      );
+      expect(
+        await refused.handler.handle(direct(refused.envelope)),
+        IncomingCallSignalOutcome.rejected,
+      );
+      expect(refusedEvents, <Map<String, Object?>>[
+        record(
+          route: 'direct',
+          signal: 'invite',
+          outcome: 'rejected',
+          reason: 'presentation_failed',
+        ),
+      ]);
+
+      // The native surface throws.
+      final threwEvents = _captureNotAccepted();
+      final threwCoordinator = _coordinator(_Effects());
+      addTearDown(threwCoordinator.dispose);
+      final threw = await _build(
+        threwCoordinator,
+        _Presenter(throwOnPresent: true),
+      );
+      expect(
+        await threw.handler.handle(direct(threw.envelope)),
+        IncomingCallSignalOutcome.rejected,
+      );
+      expect(threwEvents.single['reason'], 'presentation_failed');
+
+      // The invite expires while the native surface is still presenting.
+      var nowMs = _nowMs;
+      final expiredEvents = _captureNotAccepted();
+      final expiredCoordinator = _coordinator(_Effects(), nowMs: () => nowMs);
+      addTearDown(expiredCoordinator.dispose);
+      final expiredGate = Completer<bool>();
+      final expiredPresenter = _Presenter(resultGate: expiredGate);
+      final expired = await _build(
+        expiredCoordinator,
+        expiredPresenter,
+        nowMs: () => nowMs,
+      );
+      final expiring = expired.handler.handle(mailbox(expired.envelope));
+      await expiredPresenter.started.future;
+      nowMs += 45_000;
+      expiredGate.complete(true);
+      expect(await expiring, IncomingCallSignalOutcome.rejected);
+      expect(expiredEvents, <Map<String, Object?>>[
+        record(
+          route: 'mailbox',
+          signal: 'invite',
+          outcome: 'rejected',
+          reason: 'expired_during_presentation',
+        ),
+      ]);
+
+      // The user declines natively while the surface is still presenting.
+      final declinedEvents = _captureNotAccepted();
+      final declinedCoordinator = _coordinator(_Effects());
+      addTearDown(declinedCoordinator.dispose);
+      final declineGate = Completer<bool>();
+      final declinePresenter = _Presenter(resultGate: declineGate);
+      final declined = await _build(declinedCoordinator, declinePresenter);
+      final declining = declined.handler.handle(mailbox(declined.envelope));
+      await declinePresenter.started.future;
+      await declinedCoordinator.dispatch(
+        CallEvent(
+          type: CallEventType.nativeAction,
+          eventId: 'native-decline-during-presentation',
+          occurredAt: DateTime.fromMillisecondsSinceEpoch(_nowMs, isUtc: true),
+          callId: _callId,
+          nativeAction: CallNativeAction.decline,
+        ),
+      );
+      declineGate.complete(true);
+      expect(await declining, IncomingCallSignalOutcome.rejected);
+      expect(declinedEvents, <Map<String, Object?>>[
+        record(
+          route: 'mailbox',
+          signal: 'invite',
+          outcome: 'rejected',
+          reason: 'session_changed_during_presentation',
+        ),
+      ]);
+    });
+
+    test('a system UI refusal after presentation is recorded', () async {
+      final events = _captureNotAccepted();
+      final coordinator = _coordinator(_Effects());
+      addTearDown(coordinator.dispose);
+      final presenter = _Presenter();
+      final lifecycle = _ProvisionalLifecycle(
+        // The verified name lands only once the surface exists.
+        contactUpdateAccepted: () => presenter.calls > 0,
+        onCall: (call) {
+          if (call == 'updateAuthenticatedContact:$_callHandle:Sender') {
+            // The caller hangs up just after the surface appeared.
+            unawaited(
+              coordinator.dispatch(
+                CallEvent(
+                  type: CallEventType.remoteTerminate,
+                  eventId: 'terminate-after-presentation',
+                  occurredAt: DateTime.fromMillisecondsSinceEpoch(
+                    _nowMs,
+                    isUtc: true,
+                  ),
+                  callId: _callId,
+                  contactPeerId: 'sender-account',
+                ),
+              ),
+            );
+          }
+        },
+      );
+      final built = await _build(
+        coordinator,
+        presenter,
+        provisionalNativeLifecycle: lifecycle,
+        authenticatedDisplayNameResolver: (_) async => 'Sender',
+      );
+
+      expect(
+        await built.handler.handle(direct(built.envelope)),
+        IncomingCallSignalOutcome.rejected,
+      );
+      expect(presenter.calls, 1);
+      expect(events, hasLength(1));
+      expect(
+        events.single,
+        allOf(
+          containsPair('route', 'direct'),
+          containsPair('signal', 'invite'),
+          containsPair('outcome', 'rejected'),
+          containsPair('reason', 'system_ui_rejected'),
+        ),
+      );
+    });
+
+    test('a handler exception is recorded as deferred', () async {
+      final events = _captureNotAccepted();
+      final coordinator = _coordinator(_Effects(throwCount: 1));
+      addTearDown(coordinator.dispose);
+      final built = await _build(coordinator, _Presenter());
+
+      expect(
+        await built.handler.handle(mailbox(built.envelope)),
+        IncomingCallSignalOutcome.deferred,
+      );
+      expect(events, <Map<String, Object?>>[
+        record(
+          route: 'mailbox',
+          signal: 'invite',
+          outcome: 'deferred',
+          reason: 'handler_exception',
+        ),
+      ]);
+    });
+
+    test(
+      'records carry only fixed codes, never call or peer identity',
+      () async {
+        final events = _captureNotAccepted();
+        final coordinator = _coordinator(_Effects());
+        addTearDown(coordinator.dispose);
+        final built = await _build(coordinator, _Presenter(succeeds: false));
+        await built.handler.handle(direct(built.envelope));
+        await built.handler.handle(mailbox(built.envelope));
+        await built.handler.handle(
+          mailbox(built.envelope, sender: 'unknown-device'),
+        );
+
+        expect(events, hasLength(3));
+        for (final event in events) {
+          expect(
+            event.keys.toSet().difference(<String>{
+              'route',
+              'signal',
+              'outcome',
+              'reason',
+              'reduction',
+            }),
+            isEmpty,
+          );
+        }
+        final encoded = jsonEncode(events);
+        for (final secret in <String>[
+          _callHandle,
+          _callId.value,
+          '11111111-1111-4111-8111-111111111111',
+          'sender-account',
+          'sender-device',
+          'unknown-device',
+          'recipient-account',
+          'recipient-device',
+        ]) {
+          expect(encoded, isNot(contains(secret)));
+        }
+      },
+    );
+  });
+}
+
+List<Map<String, Object?>> _captureNotAccepted() {
+  final events = <Map<String, Object?>>[];
+  debugSetFlowEventSink((payload) {
+    if (payload['event'] == 'CALL_INCOMING_SIGNAL_NOT_ACCEPTED') {
+      events.add(Map<String, Object?>.from(payload['details'] as Map));
+    }
+  });
+  addTearDown(() => debugSetFlowEventSink(null));
+  return events;
 }

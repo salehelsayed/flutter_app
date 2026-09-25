@@ -116,7 +116,22 @@ final class CallSignalingRuntime {
     if (isStarted) return true;
     try {
       _directSubscription = _directCallSignalStream.listen(
-        (message) => unawaited(_enqueue(() => _handleDirect(message))),
+        (message) {
+          if (!_canEnqueue) {
+            // The bounded lane is full or closing, so this direct copy is
+            // dropped here. A mailbox copy, if any, keeps its own custody.
+            if (message.isIncoming) {
+              _recordDroppedDirect(
+                message,
+                _disposed
+                    ? IncomingCallSignalRefusal.runtimeDisposed
+                    : IncomingCallSignalRefusal.laneSaturated,
+              );
+            }
+            return;
+          }
+          unawaited(_enqueue(() => _handleDirect(message)));
+        },
         onError: (_, _) {
           // The shared router owns stream recovery. Call runtime diagnostics
           // are intentionally coarse and this lane waits for later events.
@@ -143,19 +158,40 @@ final class CallSignalingRuntime {
   }
 
   Future<void> _handleDirect(ChatMessage message) async {
-    if (_disposed ||
-        !message.isIncoming ||
-        !await _networkEffectsAreAllowed()) {
+    if (!message.isIncoming) return;
+    if (_disposed) {
+      _recordDroppedDirect(message, IncomingCallSignalRefusal.runtimeDisposed);
       return;
     }
-    await _handleIncoming(
-      IncomingCallSignalFrame(
-        envelopeJson: message.content,
-        authenticatedTransportPeerId: message.from,
-        route: _directRoute(message.transport),
-      ),
-    );
+    if (!await _networkEffectsAreAllowed()) {
+      _recordDroppedDirect(
+        message,
+        IncomingCallSignalRefusal.networkEffectsBlocked,
+      );
+      return;
+    }
+    try {
+      await _handleIncoming(
+        IncomingCallSignalFrame(
+          envelopeJson: message.content,
+          authenticatedTransportPeerId: message.from,
+          route: _directRoute(message.transport),
+        ),
+      );
+    } catch (_) {
+      _recordDroppedDirect(message, IncomingCallSignalRefusal.handlerException);
+    }
   }
+
+  bool get _canEnqueue =>
+      !_disposed && _pendingOperations < maxPendingOperations;
+
+  static void _recordDroppedDirect(ChatMessage message, String reason) =>
+      emitIncomingCallSignalNotAccepted(
+        route: _directRoute(message.transport),
+        outcome: IncomingCallSignalOutcome.deferred,
+        reason: reason,
+      );
 
   Future<void> _drainMailbox() async {
     for (
@@ -206,6 +242,11 @@ final class CallSignalingRuntime {
           }
         } catch (_) {
           // Transient application/authority failure retains mailbox custody.
+          emitIncomingCallSignalNotAccepted(
+            route: CallRouteClass.ephemeralMailbox,
+            outcome: IncomingCallSignalOutcome.deferred,
+            reason: IncomingCallSignalRefusal.handlerException,
+          );
           return;
         }
         if (outcome == IncomingCallSignalOutcome.deferred) {
