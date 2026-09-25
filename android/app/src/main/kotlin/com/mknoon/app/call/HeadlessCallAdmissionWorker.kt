@@ -389,6 +389,8 @@ internal class HeadlessCallAdmissionExecution(
     private val releaseAdmission: suspend (String, Boolean) -> Unit = { _, _ -> },
     private val diagnostic: (String?, HeadlessCallAdmissionDiagnostic) -> Unit = { _, _ -> },
     private val monotonicMs: () -> Long = { System.nanoTime() / 1_000_000L },
+    /** True while a foreground engine owns the canonical runtime lease. */
+    private val foregroundOwnsRuntime: () -> Boolean = { false },
 ) {
     private val lock = Any()
     private val stopRequested = AtomicBoolean(false)
@@ -475,6 +477,15 @@ internal class HeadlessCallAdmissionExecution(
             expiresAtMs = invocation.expiresAtMs,
             mode = invocation.mode,
         )
+        // A foreground owner holds the canonical runtime lease, so a headless
+        // engine could never acquire it. Building one anyway runs on the main
+        // thread, which also runs the foreground Dart isolate, and froze the
+        // foreground call path for about 50 s (beta 2026-09-25). The FCM
+        // service also signals that owner directly, and it admits the invite
+        // from its own mailbox drain. Finish like a deferred run.
+        if (runCatching(foregroundOwnsRuntime).getOrDefault(false)) {
+            return finish("pending", "busy")
+        }
         val runner = runCatching(runnerFactory).getOrNull()
             ?: return finish("failed", "native_lifecycle_failed")
         synchronized(lock) { activeRunner = runner }
@@ -638,6 +649,15 @@ internal class HeadlessCallAdmissionExecution(
         HeadlessCallAdmissionWorkOutcome.COMPLETED_WITHOUT_PRESENTATION
 }
 
+/**
+ * True while a foreground engine owns the canonical runtime lease, including
+ * while it drains. A RECOVERY owner or a released lease does not count.
+ */
+internal fun foregroundOwnsCanonicalRuntime(
+    snapshot: CanonicalRuntimeLeaseBroker.Snapshot,
+): Boolean = snapshot.state != CanonicalRuntimeLeaseBroker.State.RELEASED &&
+    snapshot.role == CanonicalRuntimeLeaseBroker.Role.FOREGROUND
+
 /** WorkManager production boundary; every terminal outcome is fail-closed. */
 internal class HeadlessCallAdmissionWorker(
     appContext: Context,
@@ -695,6 +715,9 @@ internal class HeadlessCallAdmissionWorker(
         HeadlessCallAdmissionExecution(
             runnerFactory = {
                 FlutterHeadlessCallAdmissionEngineRunner(applicationContext)
+            },
+            foregroundOwnsRuntime = {
+                foregroundOwnsCanonicalRuntime(ProcessCanonicalRuntimeLease.broker.snapshot())
             },
             isStopped = { isStopped },
             nowMs = System::currentTimeMillis,
