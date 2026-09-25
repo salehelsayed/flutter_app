@@ -47,7 +47,8 @@ final class ForegroundCallOverlay extends StatefulWidget {
   final VoidCallback? onAttached;
 
   /// Told whether a live call surface owns the screen, so the system Back
-  /// action cannot pop the hidden routes or finish the activity under it.
+  /// action sends the app to the background instead of popping the hidden
+  /// routes or finishing the activity under the call.
   final ForegroundCallBackGuard? backGuard;
 
   @override
@@ -346,10 +347,13 @@ class _ForegroundCallOverlayState extends State<ForegroundCallOverlay> {
           child: ExcludeFocus(
             excluding: surface != null,
             child: NotificationListener<NavigationNotification>(
-              // While a call owns Back, keep the navigator from telling the
-              // engine it can pop. Otherwise a predictive back swipe is
-              // routed to the hidden navigator and pops the route under the
-              // call. The last value is replayed when the call surface hides.
+              // While a call owns Back, the hidden navigator's answer must not
+              // reach the engine. At its root route it reports that it cannot
+              // pop, and on Android 13+ FlutterActivity then unregisters its
+              // back callback, so the system Back closes the task and ends
+              // the call (beta 2026-09-25). The call surface reports that the
+              // framework handles Back instead. The navigator's last value is
+              // replayed when the call surface hides.
               onNotification: (notification) {
                 _navigatorCanHandlePop = notification.canHandlePop;
                 return _publishedOwnsBack == true;
@@ -388,11 +392,13 @@ class _ForegroundCallOverlayState extends State<ForegroundCallOverlay> {
     if (!ownsBack && !wasOwned) return;
     // Bubbles to WidgetsApp, which forwards it to the engine as
     // SystemNavigator.setFrameworkHandlesBack. Posted after the frame, like
-    // the navigator's own notifications.
+    // the navigator's own notifications. While a call owns Back this keeps
+    // Flutter's Android back callback registered, so Back reaches
+    // ForegroundCallBackGuard.
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted || _publishedOwnsBack != ownsBack) return;
       NavigationNotification(
-        canHandlePop: !ownsBack && _navigatorCanHandlePop,
+        canHandlePop: ownsBack || _navigatorCanHandlePop,
       ).dispatch(context);
     });
   }

@@ -18,6 +18,12 @@ import 'package:flutter_test/flutter_test.dart';
 // connected call. The call surface is a Stack layer, not a route, so Back
 // popped the hidden conversation route and then SystemNavigator.pop finished
 // MainActivity. The engine detached and the call ended with appShutdown.
+//
+// Beta 2026-09-25 (F4, second round): the first fix told the engine that the
+// framework does not handle Back while a call shows. On Android 13+ that
+// unregisters Flutter's OnBackInvokedCallback, so the FIRST Back closed the
+// task (WindowManager `type = CLOSE` at 19:34:43.850) and teardown ended the
+// call. Back must stay with Flutter and send the app to the background.
 
 final _callId = CallId.parse('33333333-3333-4333-8333-333333333333');
 final _now = DateTime.utc(2026, 9, 24, 21, 15);
@@ -25,10 +31,15 @@ final _now = DateTime.utc(2026, 9, 24, 21, 15);
 void main() {
   late List<String> platformCalls;
   late List<Object?> frameworkHandlesBack;
+  late List<String> taskCalls;
+  late List<Object?> nativeBackOwner;
+  const callTaskChannel = MethodChannel('mknoon/call_task');
 
   setUp(() {
     platformCalls = <String>[];
     frameworkHandlesBack = <Object?>[];
+    taskCalls = <String>[];
+    nativeBackOwner = <Object?>[];
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(SystemChannels.platform, (call) async {
           platformCalls.add(call.method);
@@ -37,11 +48,22 @@ void main() {
           }
           return null;
         });
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(callTaskChannel, (call) async {
+          if (call.method == 'setCallOwnsBack') {
+            nativeBackOwner.add((call.arguments as Map)['owns']);
+          } else {
+            taskCalls.add(call.method);
+          }
+          return true;
+        });
   });
 
   tearDown(() {
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(SystemChannels.platform, null);
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(callTaskChannel, null);
   });
 
   Future<_Fixture> pumpApp(WidgetTester tester) async {
@@ -71,8 +93,22 @@ void main() {
     return handled;
   }
 
+  Future<Object?> backGesture(String method, [Object? arguments]) async {
+    final codec = SystemChannels.backGesture.codec;
+    final reply = Completer<ByteData?>();
+    await TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .handlePlatformMessage(
+          SystemChannels.backGesture.name,
+          codec.encodeMethodCall(MethodCall(method, arguments)),
+          reply.complete,
+        );
+    final data = await reply.future;
+    return data == null ? null : codec.decodeEnvelope(data);
+  }
+
   testWidgets(
-    'Back during a connected call keeps the retained route and the activity',
+    'Back during a connected call sends the app to the background and keeps '
+    'the retained route',
     (tester) async {
       final fixture = await pumpApp(tester);
       await pushConversation(tester, fixture);
@@ -83,7 +119,68 @@ void main() {
         expect(await pressBack(tester), isTrue);
       }
 
+      expect(taskCalls, <String>[
+        'moveToBackground',
+        'moveToBackground',
+        'moveToBackground',
+      ]);
       expect(fixture.navigatorKey.currentState!.canPop(), isTrue);
+      expect(platformCalls, isNot(contains('SystemNavigator.pop')));
+      expect(fixture.capability.actions, isEmpty);
+    },
+  );
+
+  testWidgets(
+    'a call surface hands Back to Android while it shows, so a predictive '
+    'swipe never reaches the hidden routes',
+    (tester) async {
+      final fixture = await pumpApp(tester);
+      await pushConversation(tester, fixture);
+      expect(nativeBackOwner, isEmpty);
+
+      // MainActivity then registers an overlay-priority back callback that
+      // moves the task to the back. Flutter's page routes never see the
+      // swipe, so the conversation route under the call stays.
+      fixture.capability.emit(_projection(state: CallState.connected));
+      await tester.pumpAndSettle();
+      expect(nativeBackOwner, <Object?>[true]);
+
+      fixture.capability.emit(_projection(state: CallState.reconnecting));
+      await tester.pumpAndSettle();
+      expect(nativeBackOwner, <Object?>[true]);
+
+      // The terminal notice is informational: Back returns to Flutter.
+      fixture.capability.emit(
+        _projection(
+          state: CallState.ended,
+          endReason: CallEndReason.remoteHangup,
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(nativeBackOwner, <Object?>[true, false]);
+      expect(taskCalls, isEmpty);
+    },
+  );
+
+  testWidgets(
+    'a predictive back swipe that still reaches Flutter during a call sends '
+    'the app to the background',
+    (tester) async {
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+      final fixture = await pumpApp(tester);
+      fixture.capability.emit(_projection(state: CallState.connected));
+      await tester.pumpAndSettle();
+
+      final started = await backGesture('startBackGesture', <String, Object?>{
+        'touchOffset': <double>[5, 300],
+        'progress': 0.0,
+        'swipeEdge': 0,
+      });
+      expect(started, isTrue);
+      await backGesture('commitBackGesture');
+      await tester.pumpAndSettle();
+
+      expect(taskCalls, <String>['moveToBackground']);
       expect(platformCalls, isNot(contains('SystemNavigator.pop')));
       expect(fixture.capability.actions, isEmpty);
     },
@@ -110,35 +207,45 @@ void main() {
       expect(await pressBack(tester), isTrue, reason: '$state');
     }
 
+    expect(taskCalls, List<String>.filled(3, 'moveToBackground'));
     expect(platformCalls, isNot(contains('SystemNavigator.pop')));
     expect(fixture.capability.actions, isEmpty);
   });
 
   testWidgets(
-    'a call surface stops the engine routing predictive back to the navigator',
+    'a call surface keeps the platform back callback registered, even at the '
+    'root route',
     (tester) async {
       tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
       final fixture = await pumpApp(tester);
-      await pushConversation(tester, fixture);
-      expect(frameworkHandlesBack.last, isTrue);
+      await tester.pumpAndSettle();
+      // At the root route the navigator cannot pop. Android then owns Back.
+      expect(frameworkHandlesBack.lastOrNull ?? false, isFalse);
 
+      // FlutterActivity unregisters its OnBackInvokedCallback whenever this
+      // is false, and the system Back then closes the task under the call.
       fixture.capability.emit(_projection(state: CallState.connected));
       await tester.pumpAndSettle();
-      expect(frameworkHandlesBack.last, isFalse);
+      expect(frameworkHandlesBack.last, isTrue);
 
-      // A route change under the call must not re-enable framework back.
+      // Route changes under the call must not give Back back to the system.
       unawaited(
         fixture.navigatorKey.currentState!.push(
           MaterialPageRoute<void>(builder: (_) => const Text('third route')),
         ),
       );
       await tester.pumpAndSettle();
-      expect(frameworkHandlesBack.last, isFalse);
-
-      fixture.capability.emit(null);
+      expect(frameworkHandlesBack.last, isTrue);
+      fixture.navigatorKey.currentState!.pop();
       await tester.pumpAndSettle();
       expect(frameworkHandlesBack.last, isTrue);
+
+      // The navigator's own answer returns once the call surface hides.
+      fixture.capability.emit(null);
+      await tester.pumpAndSettle();
+      expect(frameworkHandlesBack.last, isFalse);
       expect(platformCalls, isNot(contains('SystemNavigator.pop')));
+      expect(taskCalls, isEmpty);
     },
   );
 
@@ -164,6 +271,8 @@ void main() {
     await tester.pump();
     await pressBack(tester);
     expect(platformCalls, contains('SystemNavigator.pop'));
+    // Only the live call surface sends the app to the background.
+    expect(taskCalls, <String>['moveToBackground']);
   });
 }
 
