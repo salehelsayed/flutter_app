@@ -1286,13 +1286,17 @@ internal fun presentAuthenticatedCall(
         !capabilityEnabled ||
         observedNowMs < 0L ||
         expiresAtMs <= observedNowMs ||
-        expiresAtMs - observedNowMs > CallPayloadParser.MAX_FUTURE_SKEW_MS ||
+        expiresAtMs - observedNowMs > CallPayloadParser.MAX_AUTHENTICATED_EXPIRY_AHEAD_MS ||
         !handleGrammar.matches(callHandle)
     ) {
         return false
     }
     val nativeCallId = runCatching { UUID.fromString(callHandle) }.getOrNull()
         ?: return false
+    // A caller clock ahead of this device (beta 2026-09-25: 13.4 s) must not
+    // refuse the call. Ringing still ends within the local 45 s bound.
+    val nativeExpiresAtMs =
+        minOf(expiresAtMs, observedNowMs + CallPayloadParser.MAX_FUTURE_SKEW_MS)
     val generatedWakeHandle = runCatching(wakeHandle).getOrNull()
         ?.takeIf(CALL_RANDOM_ID::matches)
         ?: return false
@@ -1303,7 +1307,7 @@ internal fun presentAuthenticatedCall(
                 callHandle = callHandle,
                 wakeHandle = generatedWakeHandle,
                 receivedAtMs = observedNowMs,
-                expiresAtMs = expiresAtMs,
+                expiresAtMs = nativeExpiresAtMs,
             ),
         )
     ) {
@@ -1326,7 +1330,7 @@ internal fun terminalizeAuthenticatedCall(
         !capabilityEnabled ||
         observedNowMs < 0L ||
         expiresAtMs <= observedNowMs ||
-        expiresAtMs - observedNowMs > CallPayloadParser.MAX_FUTURE_SKEW_MS ||
+        expiresAtMs - observedNowMs > CallPayloadParser.MAX_AUTHENTICATED_EXPIRY_AHEAD_MS ||
         !handleGrammar.matches(callHandle)
     ) {
         return false

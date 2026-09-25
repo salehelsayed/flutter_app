@@ -36,6 +36,17 @@ internal class CallPayloadParser(
         const val MAX_PAYLOAD_BYTES = 256
         const val MAX_FUTURE_SKEW_MS = 45_000L
 
+        /**
+         * Dart-authenticated invitations carry the caller's expiry. Dart's
+         * envelope codec accepts a caller clock up to 30 s ahead of this
+         * device (`SecureCallEnvelopeCodec.maxFutureClockSkew`), so native
+         * accepts the 45 s lifetime plus that skew and then bounds ringing
+         * to [MAX_FUTURE_SKEW_MS] on the local clock.
+         */
+        const val MAX_AUTHENTICATED_CLOCK_SKEW_MS = 30_000L
+        const val MAX_AUTHENTICATED_EXPIRY_AHEAD_MS =
+            MAX_FUTURE_SKEW_MS + MAX_AUTHENTICATED_CLOCK_SKEW_MS
+
         private val EXPECTED_KEYS = setOf("v", "w", "c", "h", "e")
         private val STRICT_MILLISECONDS = Regex("^[1-9][0-9]{0,18}$")
     }

@@ -531,6 +531,68 @@ class MknoonCallAndroidRuntimeTest {
         }
     }
 
+    // Beta 2026-09-25 (run-20260925-210815): the Pixel emulator clock ran
+    // 13.4 s behind the calling iPhone. The iPhone invite (40 s lifetime)
+    // then expired 53.4 s after the Pixel's "now". Dart accepted it (its
+    // envelope codec allows a sender clock up to 30 s ahead), but native
+    // presentation refused anything more than 45 s ahead, so every incoming
+    // call failed with `presentation present rejected` and no Telecom call.
+    @Test
+    fun `authenticated presenter accepts a caller clock ahead within the Dart skew window`() {
+        val callHandle = "00000000-0000-4000-8000-000000000499"
+        val captured = mutableListOf<CallWakePayload>()
+        val observedNow = 1_000L
+        val callerAheadMs = 13_400L
+        val expiresAtMs = observedNow + callerAheadMs + 40_000L
+
+        assertTrue(
+            presentAuthenticatedCall(
+                callHandle = callHandle,
+                expiresAtMs = expiresAtMs,
+                observedNowMs = observedNow,
+                capabilityEnabled = true,
+                handleGrammar = Regex("^[0-9a-f-]{36}$"),
+                wakeHandle = { "00000000-0000-4000-8000-000000000498" },
+                present = { payload ->
+                    captured += payload
+                    MknoonCallPresentationResult.PRESENTED
+                },
+            ),
+        )
+        // Native ringing stays bounded by the local clock.
+        assertEquals(
+            observedNow + CallPayloadParser.MAX_FUTURE_SKEW_MS,
+            captured.single().expiresAtMs,
+        )
+
+        // Beyond the 45 s lifetime plus Dart's 30 s skew window stays refused.
+        assertFalse(
+            presentAuthenticatedCall(
+                callHandle = callHandle,
+                expiresAtMs = observedNow + 75_001L,
+                observedNowMs = observedNow,
+                capabilityEnabled = true,
+                handleGrammar = Regex("^[0-9a-f-]{36}$"),
+                wakeHandle = { "00000000-0000-4000-8000-000000000498" },
+                present = { error("must not present") },
+            ),
+        )
+
+        // A remote terminal for the same skewed call is still fenced.
+        val terminalized = mutableListOf<Long>()
+        assertTrue(
+            terminalizeAuthenticatedCall(
+                callHandle = callHandle,
+                expiresAtMs = expiresAtMs,
+                observedNowMs = observedNow,
+                capabilityEnabled = true,
+                handleGrammar = Regex("^[0-9a-f-]{36}$"),
+                terminalize = { _, expiry -> terminalized += expiry; true },
+            ),
+        )
+        assertEquals(listOf(expiresAtMs), terminalized)
+    }
+
     @Test
     fun `authenticated terminal result validates identity and persists one reorder fence`() {
         val callHandle = "00000000-0000-4000-8000-000000000499"
