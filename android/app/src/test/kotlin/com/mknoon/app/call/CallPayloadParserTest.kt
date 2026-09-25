@@ -157,21 +157,60 @@ class CallPayloadParserTest {
                 rejected(parser.parse(validEntries(expiry), hasNotification = false)).reason,
             )
         }
+        // The 45 s relay lifetime plus a caller clock up to 30 s ahead.
         assertEquals(
             CallPayloadRejectionReason.TOO_FAR_FUTURE,
             rejected(
                 parser.parse(
-                    validEntries(NOW_MS + CallPayloadParser.MAX_FUTURE_SKEW_MS + 1L),
+                    validEntries(NOW_MS + 75_001L),
                     hasNotification = false,
                 ),
             ).reason,
         )
         assertTrue(
             parser.parse(
-                validEntries(NOW_MS + CallPayloadParser.MAX_FUTURE_SKEW_MS),
+                validEntries(NOW_MS + 75_000L),
                 hasNotification = false,
             ) is CallPayloadParseResult.Accepted,
         )
+    }
+
+    /**
+     * Beta 2026-09-25 (run-20260925-221131 S10): the callee clock ran about
+     * 13 s behind the caller. `e` is the caller's invite expiry (caller now +
+     * 40 s), so the wake arrived 53 s ahead of this clock and was dropped as
+     * TOO_FAR_FUTURE (`push parse rejected`). A killed-app callee never rang.
+     */
+    @Test
+    fun `a callee clock behind the caller still admits the wake with the exact relay expiry`() {
+        val parser = CallPayloadParser(nowMs = { NOW_MS })
+        val lagging = NOW_MS + 13_000L + 40_000L
+
+        val payload = accepted(parser.parse(validEntries(lagging), hasNotification = false))
+
+        // Relay-row matching needs the exact caller value.
+        assertEquals(lagging, payload.expiresAtMs)
+        assertEquals(NOW_MS, payload.receivedAtMs)
+        assertEquals(
+            CallPayloadRejectionReason.TOO_FAR_FUTURE,
+            rejected(parser.parse(validEntries(NOW_MS + 76_000L), hasNotification = false)).reason,
+        )
+        assertEquals(
+            CallPayloadRejectionReason.STALE,
+            rejected(parser.parse(validEntries(NOW_MS), hasNotification = false)).reason,
+        )
+    }
+
+    @Test
+    fun `a stale wake is diagnosed as expired and every reason stays in the closed vocabulary`() {
+        assertEquals("expired", callWakeRejectionDiagnosticReason(CallPayloadRejectionReason.STALE))
+        for (reason in CallPayloadRejectionReason.entries) {
+            val diagnostic = callWakeRejectionDiagnosticReason(reason)
+            assertTrue(reason.name, MknoonCallDiagnosticSchema.reason.contains(diagnostic))
+            if (reason != CallPayloadRejectionReason.STALE) {
+                assertEquals(reason.name, "rejected_payload", diagnostic)
+            }
+        }
     }
 
     private fun validEntries(

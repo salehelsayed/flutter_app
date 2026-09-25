@@ -567,7 +567,7 @@ class HeadlessCallAdmissionWorkerTest {
             validInput(callId = "not-a-uuid"),
             validInput(wakeHandle = "not-a-wake"),
             validInput(expiresAtMs = NOW_MS),
-            validInput(expiresAtMs = NOW_MS + CallPayloadParser.MAX_FUTURE_SKEW_MS + 1L),
+            validInput(expiresAtMs = NOW_MS + 75_001L),
             Data.Builder()
                 .putAll(validInput())
                 .putBoolean("extra", true)
@@ -710,6 +710,51 @@ class HeadlessCallAdmissionWorkerTest {
         assertTrue(
             wiring.contains("foregroundOwnsCanonicalRuntime(ProcessCanonicalRuntimeLease.broker.snapshot())"),
         )
+    }
+
+    /**
+     * Beta 2026-09-25: with the callee clock about 13 s behind the caller, the
+     * wake's exact relay expiry lies 53 s ahead of this clock. The scheduler,
+     * the worker input and the decline reply must all accept it (up to the
+     * 45 s lifetime plus 30 s of caller clock lead) and keep the exact value.
+     */
+    @Test
+    fun `a callee clock behind the caller still schedules and runs admission with the exact expiry`() = runBlocking {
+        val lagging = NOW_MS + 13_000L + 40_000L
+        val enqueuer = RecordingHeadlessCallAdmissionEnqueuer()
+        val scheduler = HeadlessCallAdmissionWorkScheduler(
+            context = context,
+            enqueuer = enqueuer,
+            nowMs = { NOW_MS },
+        )
+
+        assertTrue(scheduler.enqueue(payload().copy(expiresAtMs = lagging)))
+        assertEquals(
+            lagging,
+            enqueuer.requests.single().request.workSpec.input
+                .getLong(HeadlessCallAdmissionWorkScheduler.INPUT_EXPIRES_AT_MS, -1L),
+        )
+        assertFalse(scheduler.enqueue(payload().copy(expiresAtMs = NOW_MS + 76_000L)))
+        assertTrue(scheduler.enqueueDeclineReply(declinedDescriptor().copy(expiresAtMs = lagging)))
+        assertFalse(
+            scheduler.enqueueDeclineReply(declinedDescriptor().copy(expiresAtMs = NOW_MS + 76_000L)),
+        )
+
+        val seen = mutableListOf<HeadlessCallAdmissionRunIdentity>()
+        var presentedExpiry = 0L
+        val result = execution(
+            runner = FakeHeadlessCallAdmissionRunner { identity ->
+                seen += identity
+                validCompletionObject(identity)
+            },
+            nowMs = { NOW_MS },
+            presentAuthenticated = { _, expiresAtMs -> presentedExpiry = expiresAtMs; true },
+        ).execute(validInput(expiresAtMs = lagging))
+
+        assertEquals(HeadlessCallAdmissionWorkOutcome.PRESENTED, result)
+        assertEquals(lagging, seen.single().expiresAtMs)
+        // Native presentation bounds ringing to local now + 45 s itself.
+        assertEquals(lagging, presentedExpiry)
     }
 
     @Test

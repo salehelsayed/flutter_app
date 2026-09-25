@@ -21,6 +21,15 @@ class MknoonCallAdmissionSettlementTest {
     private val owner = UUID.fromString("aa112233-4455-4677-8899-aabbccddeeff")
     private fun payload(id: UUID = call) = CallWakePayload(id, id.toString(), "a".repeat(32), now, now + 40_000)
 
+    /** Beta 2026-09-25: a callee clock 13 s behind the caller must still register the wake. */
+    @Test fun `a callee clock behind the caller still registers the admission with the exact expiry`() {
+        val store = MknoonCallAdmissionSettlementStore({ now })
+        val lagging = CallWakePayload(call, call.toString(), "a".repeat(32), now, now + 13_000 + 40_000)
+        assertEquals(now + 53_000, requireNotNull(store.register(lagging, owner)).expiresAtMs)
+        val tooFar = CallWakePayload(call, call.toString(), "a".repeat(32), now, now + 76_000)
+        assertNull(store.register(tooFar, UUID.randomUUID()))
+    }
+
     @Test fun `protected journal failure and every live cleanup owner refuse settlement`() {
         assertTrue(admissionSettlementHasNativeOwner { error("protected record unreadable") })
         for (live in listOf(false, true)) for (cleanup in listOf(false, true)) {

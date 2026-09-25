@@ -293,7 +293,7 @@ internal class HeadlessCallAdmissionWorkScheduler(
             !CANONICAL_CALL_HANDLE.matches(callId) ||
             !CALL_RANDOM_ID.matches(descriptor.wakeHandle) ||
             descriptor.expiresAtMs <= observedNow ||
-            descriptor.expiresAtMs - observedNow > CallPayloadParser.MAX_FUTURE_SKEW_MS
+            descriptor.expiresAtMs - observedNow > CallPayloadParser.MAX_CALLER_EXPIRY_AHEAD_MS
         ) {
             return false
         }
@@ -342,9 +342,9 @@ internal class HeadlessCallAdmissionWorkScheduler(
             payload.receivedAtMs >= 0L &&
             payload.expiresAtMs > payload.receivedAtMs &&
             payload.expiresAtMs - payload.receivedAtMs <=
-                CallPayloadParser.MAX_FUTURE_SKEW_MS &&
+                CallPayloadParser.MAX_CALLER_EXPIRY_AHEAD_MS &&
             payload.expiresAtMs > observedNow &&
-            payload.expiresAtMs - observedNow <= CallPayloadParser.MAX_FUTURE_SKEW_MS
+            payload.expiresAtMs - observedNow <= CallPayloadParser.MAX_CALLER_EXPIRY_AHEAD_MS
     }
 }
 
@@ -638,7 +638,7 @@ internal class HeadlessCallAdmissionExecution(
             runCatching { UUID.fromString(callId).toString() }.getOrNull() != callId ||
             !CALL_RANDOM_ID.matches(wakeHandle) ||
             expiresAtMs <= observedNow ||
-            expiresAtMs - observedNow > CallPayloadParser.MAX_FUTURE_SKEW_MS
+            expiresAtMs - observedNow > CallPayloadParser.MAX_CALLER_EXPIRY_AHEAD_MS
         ) {
             return null
         }

@@ -1286,7 +1286,7 @@ internal fun presentAuthenticatedCall(
         !capabilityEnabled ||
         observedNowMs < 0L ||
         expiresAtMs <= observedNowMs ||
-        expiresAtMs - observedNowMs > CallPayloadParser.MAX_AUTHENTICATED_EXPIRY_AHEAD_MS ||
+        expiresAtMs - observedNowMs > CallPayloadParser.MAX_CALLER_EXPIRY_AHEAD_MS ||
         !handleGrammar.matches(callHandle)
     ) {
         return false
@@ -1330,7 +1330,7 @@ internal fun terminalizeAuthenticatedCall(
         !capabilityEnabled ||
         observedNowMs < 0L ||
         expiresAtMs <= observedNowMs ||
-        expiresAtMs - observedNowMs > CallPayloadParser.MAX_AUTHENTICATED_EXPIRY_AHEAD_MS ||
+        expiresAtMs - observedNowMs > CallPayloadParser.MAX_CALLER_EXPIRY_AHEAD_MS ||
         !handleGrammar.matches(callHandle)
     ) {
         return false

@@ -43,6 +43,21 @@ class MknoonCallTerminalTombstonesTest {
         assertFalse(MknoonCallAdmissionEvent.TIMEOUT_APPLIED in runtime.events)
     }
 
+    /**
+     * A wake is now accepted while its expiry is up to 75 s ahead (45 s
+     * lifetime plus 30 s caller clock lead), and its admission may then hold
+     * for 30 s. A terminal recorded at the far edge must outlast both.
+     */
+    @Test
+    fun `terminal settlement outlasts a wake accepted at the far edge of the caller clock lead`() {
+        val terminalAt = 1_000L
+        val invitationExpiry = terminalAt + 75_000L
+        assertTrue(store.record(callId, invitationExpiry, terminalAt))
+        // Accepted just before its expiry, the wake's admission lasts 30 s more.
+        assertTrue(store.contains(callId, invitationExpiry - 1 + 30_000L))
+        assertFalse(store.contains(callId, terminalAt + 105_000L))
+    }
+
     @Test
     fun `long connected call terminated after invitation expiry retains exact settlement`() {
         assertTrue(store.record(callId, 45_000L, 120_000L))
