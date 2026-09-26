@@ -825,17 +825,20 @@ private class AndroidMknoonCallPlatform(
     override fun registerIncoming(
         nativeCallId: UUID,
         callback: MknoonCallRegistrationCallback,
-    ) = register(nativeCallId, PendingNativeCallDirection.INCOMING, callback)
+        timeoutMs: Long,
+    ) = register(nativeCallId, PendingNativeCallDirection.INCOMING, callback, timeoutMs)
 
     override fun registerOutgoing(
         nativeCallId: UUID,
         callback: MknoonCallRegistrationCallback,
-    ) = register(nativeCallId, PendingNativeCallDirection.OUTGOING, callback)
+        timeoutMs: Long,
+    ) = register(nativeCallId, PendingNativeCallDirection.OUTGOING, callback, timeoutMs)
 
     private fun register(
         nativeCallId: UUID,
         direction: PendingNativeCallDirection,
         callback: MknoonCallRegistrationCallback,
+        timeoutMs: Long,
     ) {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
             callback.onFailure()
@@ -947,7 +950,7 @@ private class AndroidMknoonCallPlatform(
         awaitAndDispatchTelecomRegistration(
             completion = completion,
             registration = registration,
-            timeoutMs = REGISTRATION_TIMEOUT_MS,
+            timeoutMs = timeoutMs,
             callback = callback,
         )
     }
@@ -995,6 +998,9 @@ private class AndroidMknoonCallPlatform(
 
     override fun end(nativeCallId: UUID) {
         val session = sessions[nativeCallId] ?: return
+        // Already disconnecting this exact session (a cleanup end racing the late
+        // registration end, B5): a second disconnect would fail and drop the marker.
+        if (locallyDisconnecting[nativeCallId] === session) return
         emitMknoonTelecomDisconnectDiagnostic(MknoonTelecomDisconnectSource.EXPLICIT_END)
         locallyDisconnecting[nativeCallId] = session
         val outcome = try {
@@ -1154,11 +1160,28 @@ private class AndroidMknoonCallPlatform(
     private fun CallEndpointCompat.routeName(): String = canonicalCallRoute(type)
 
     private companion object {
-        const val REGISTRATION_TIMEOUT_MS = 4_000L
         const val CONTROL_TIMEOUT_MS = 4_000L
     }
 
 }
+
+/** core-telecom 1.1.0-beta01 `CallsManager.addCall` waits this long for Telecom (`TimeoutCoroutine(5000)`). */
+internal const val CORE_TELECOM_ADD_CALL_TIMEOUT_MS = 5_000L
+
+/**
+ * How long a new presentation or outgoing registration waits for Telecom to
+ * register its call: past core-telecom's own limit so its result decides, plus
+ * slack for a loaded device (B5, beta 2026-09-25: Telecom needed more than 4 s).
+ * The controller runs this wait without its lock.
+ */
+internal const val MKNOON_TELECOM_REGISTRATION_TIMEOUT_MS = CORE_TELECOM_ADD_CALL_TIMEOUT_MS + 1_500L
+
+/**
+ * Re-registration of an already presented call after a process restart. That
+ * wait still holds the controller lock, possibly on the main thread, so it
+ * keeps the old, shorter bound.
+ */
+internal const val MKNOON_TELECOM_REREGISTRATION_TIMEOUT_MS = 4_000L
 
 internal fun coreTelecomDirection(direction: PendingNativeCallDirection): Int =
     when (direction) {

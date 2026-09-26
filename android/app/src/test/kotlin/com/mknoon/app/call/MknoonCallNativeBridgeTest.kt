@@ -47,6 +47,43 @@ class MknoonCallNativeBridgeTest {
         assertEquals(false, commit.value)
     }
 
+    // B5: Dart shows Answer before the native presentation; while that call's Telecom
+    // registration is in flight the answer waits for it, and that wait never runs on main.
+    @Test fun `answer during an in-flight Telecom registration waits off main and then applies`() {
+        val rig = LifecycleRig()
+        val hold = HeldTelecomRegistration()
+        rig.platform.onRegisterIncoming = hold::register
+        val work = mutableListOf<Runnable>()
+        val bridge = MknoonCallNativeBridge(controller = rig.controller, messenger = null,
+            registrationExecutor = java.util.concurrent.Executor { work += it })
+        val background = java.util.concurrent.Executors.newSingleThreadExecutor()
+        try {
+            val presenting = background.submit<MknoonCallPresentationResult> {
+                rig.controller.present(rig.payload)
+            }
+            assertTrue(hold.started.await(5, TimeUnit.SECONDS))
+
+            val answer = CapturingCallBridgeResult()
+            bridge.onMethodCall(
+                MethodCall("answer", mapOf("version" to 1, "callHandle" to rig.payload.callHandle)),
+                answer,
+            )
+            assertEquals(1, work.size)
+            assertEquals(null, answer.value)
+            assertEquals(0, rig.platform.answerCalls)
+
+            hold.finish(registered = true)
+            assertEquals(MknoonCallPresentationResult.PRESENTED, presenting.get(5, TimeUnit.SECONDS))
+            background.submit { work.single().run() }.get(5, TimeUnit.SECONDS)
+            org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper()).idle()
+            assertEquals(true, answer.value)
+            assertEquals(1, rig.platform.answerCalls)
+        } finally {
+            hold.finish(registered = false)
+            background.shutdownNow()
+        }
+    }
+
     @Test fun `admission settlement requires exact versioned token and current bridge ownership`() {
         val rig = LifecycleRig()
         val relay = MknoonCallEventRelay()

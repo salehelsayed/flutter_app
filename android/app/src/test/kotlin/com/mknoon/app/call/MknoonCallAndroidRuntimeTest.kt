@@ -437,6 +437,51 @@ class MknoonCallAndroidRuntimeTest {
         assertEquals(Thread.currentThread(), callbackThread.get())
     }
 
+    // B5 (beta 2026-09-25): on a loaded emulator Telecom needed more than 4 s to
+    // register an incoming call, so the 4 s wait abandoned a registration that
+    // core-telecom would still have completed inside its own 5 s addCall limit.
+    @Test
+    fun `Telecom registration wait outlasts core-telecom's own add-call limit`() {
+        assertTrue(MKNOON_TELECOM_REGISTRATION_TIMEOUT_MS > CORE_TELECOM_ADD_CALL_TIMEOUT_MS)
+    }
+
+    @Test
+    fun `a Telecom registration that completes after four and a half seconds is kept`() {
+        val winner = MknoonCallRegistrationWinner()
+        val registration = CountDownLatch(1)
+        var registered = false
+        var abandoned = false
+        val provider = Thread {
+            Thread.sleep(4_500L)
+            winner.claimReady()
+            registration.countDown()
+        }.apply { start() }
+
+        val outcome = awaitAndDispatchTelecomRegistration(
+            completion = winner,
+            registration = registration,
+            timeoutMs = MKNOON_TELECOM_REGISTRATION_TIMEOUT_MS,
+            callback = object : MknoonCallRegistrationCallback {
+                override fun onRegistered() {
+                    registered = true
+                }
+
+                override fun onFailure() {
+                    abandoned = true
+                }
+
+                override fun onRegistrationAbandoned() {
+                    abandoned = true
+                }
+            },
+        )
+
+        provider.join(1_000L)
+        assertEquals(MknoonCallRegistrationWinner.Outcome.READY, outcome)
+        assertTrue(registered)
+        assertFalse(abandoned)
+    }
+
     @Test
     fun `late Telecom scope release retries nonthrowing provider rejection`() = runBlocking {
         var attempts = 0

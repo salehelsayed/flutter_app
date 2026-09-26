@@ -232,7 +232,7 @@ internal class MknoonCallNativeBridge(
             "acknowledge" -> acknowledge(call.arguments, result)
             "markAdopted" -> withLegacyCallId(call.arguments, result, controller::markAdopted)
             "adopt" -> withDartCallHandle(call.arguments, result, controller::markAdopted)
-            "answer" -> withDartCallHandle(call.arguments, result, controller::answer)
+            "answer" -> answer(call.arguments, result)
             "activateAudio" -> withEitherCallIdentity(
                 call.arguments,
                 result,
@@ -610,6 +610,20 @@ internal class MknoonCallNativeBridge(
         if (map.keys != setOf("nativeCallId")) return badArguments(result)
         val nativeCallId = parseUuid(map["nativeCallId"]) ?: return badArguments(result)
         result.success(operation(nativeCallId))
+    }
+
+    /**
+     * B5: Dart shows Answer before the native presentation. While this call's
+     * Telecom registration is in flight the answer waits for it, never on main.
+     */
+    private fun answer(arguments: Any?, result: MethodChannel.Result) {
+        val map = dartIdentityMap(arguments) ?: return badArguments(result)
+        val nativeCallId = resolveCallHandle(map["callHandle"])
+            ?: return badArguments(result)
+        if (!controller.isRegistrationInFlight(nativeCallId)) {
+            return result.success(controller.answer(nativeCallId))
+        }
+        dispatchRegistration(result) { controller.answer(nativeCallId) }
     }
 
     private fun withDartCallHandle(

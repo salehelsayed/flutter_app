@@ -1,6 +1,7 @@
 package com.mknoon.app.call
 
 import java.util.UUID
+import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import org.junit.Assert.assertEquals
@@ -71,6 +72,326 @@ class MknoonCallLifecycleControllerTest {
         assertEquals(1, rig.platform.showIncomingCalls)
         assertEquals(1, rig.platform.startForegroundCalls)
         assertEquals(0, rig.platform.startMicrophoneCalls)
+    }
+
+    // B5 (beta 2026-09-25): core-telecom's addCall may wait up to 5 s for Telecom,
+    // longer on a loaded device. That wait must not hold the controller lock, which
+    // main-thread readers take and, on some Telecom versions, the registration needs.
+
+    @Test
+    fun `controller reads do not wait while incoming Telecom registration is in flight`() {
+        val rig = LifecycleRig()
+        val hold = HeldTelecomRegistration()
+        rig.platform.onRegisterIncoming = hold::register
+        val id = rig.payload.nativeCallId
+        val executor = Executors.newFixedThreadPool(2)
+        try {
+            val presenting = executor.submit<MknoonCallPresentationResult> {
+                rig.controller.present(rig.payload)
+            }
+            assertTrue(hold.started.await(5, TimeUnit.SECONDS))
+
+            val reads = executor.submit<Boolean> {
+                rig.controller.snapshot()
+                rig.controller.activeNativeCallId()
+                rig.controller.isCleanupPending(id)
+                rig.controller.presentation(id)
+                true
+            }
+            assertTrue(reads.get(1, TimeUnit.SECONDS))
+
+            hold.finish(registered = true)
+            assertEquals(
+                MknoonCallPresentationResult.PRESENTED,
+                presenting.get(5, TimeUnit.SECONDS),
+            )
+            assertEquals(1, rig.platform.showIncomingCalls)
+            assertEquals(1, rig.platform.startForegroundCalls)
+        } finally {
+            hold.finish(registered = false)
+            executor.shutdownNow()
+        }
+    }
+
+    @Test
+    fun `controller reads do not wait while outgoing Telecom registration is in flight`() {
+        val rig = LifecycleRig()
+        val hold = HeldTelecomRegistration()
+        rig.platform.onRegisterOutgoing = hold::register
+        val executor = Executors.newFixedThreadPool(2)
+        try {
+            val registering = executor.submit<MknoonCallPresentationResult> {
+                rig.controller.registerOutgoing(rig.payload)
+            }
+            assertTrue(hold.started.await(5, TimeUnit.SECONDS))
+
+            val reads = executor.submit<Boolean> {
+                rig.controller.snapshot()
+                rig.controller.activeNativeCallId()
+                true
+            }
+            assertTrue(reads.get(1, TimeUnit.SECONDS))
+
+            hold.finish(registered = true)
+            assertEquals(
+                MknoonCallPresentationResult.PRESENTED,
+                registering.get(5, TimeUnit.SECONDS),
+            )
+        } finally {
+            hold.finish(registered = false)
+            executor.shutdownNow()
+        }
+    }
+
+    @Test
+    fun `a call ended while its Telecom registration is in flight is never presented and the late registration is ended`() {
+        val rig = LifecycleRig()
+        val hold = HeldTelecomRegistration()
+        rig.platform.onRegisterIncoming = hold::register
+        val id = rig.payload.nativeCallId
+        val executor = Executors.newFixedThreadPool(2)
+        try {
+            val presenting = executor.submit<MknoonCallPresentationResult> {
+                rig.controller.present(rig.payload)
+            }
+            assertTrue(hold.started.await(5, TimeUnit.SECONDS))
+
+            val ended = executor.submit<Boolean> { rig.controller.endFromDart(id) }
+            assertTrue(ended.get(1, TimeUnit.SECONDS))
+
+            hold.finish(registered = true)
+            assertEquals(
+                MknoonCallPresentationResult.STALE,
+                presenting.get(5, TimeUnit.SECONDS),
+            )
+            assertFalse(rig.operations.contains("store.append:PRESENTED"))
+            assertEquals(0, rig.platform.showIncomingCalls)
+            assertEquals(0, rig.platform.startForegroundCalls)
+            assertTrue(
+                rig.operations.lastIndexOf("platform.end") >
+                    rig.operations.indexOf(HeldTelecomRegistration.RETURNED),
+            )
+        } finally {
+            hold.finish(registered = false)
+            executor.shutdownNow()
+        }
+    }
+
+    @Test
+    fun `an outgoing call ended while its Telecom registration is in flight is not registered and the late registration is ended`() {
+        val rig = LifecycleRig()
+        val hold = HeldTelecomRegistration()
+        rig.platform.onRegisterOutgoing = hold::register
+        val id = rig.payload.nativeCallId
+        val executor = Executors.newFixedThreadPool(2)
+        try {
+            val registering = executor.submit<MknoonCallPresentationResult> {
+                rig.controller.registerOutgoing(rig.payload)
+            }
+            assertTrue(hold.started.await(5, TimeUnit.SECONDS))
+
+            val ended = executor.submit<Boolean> { rig.controller.endFromDart(id) }
+            assertTrue(ended.get(1, TimeUnit.SECONDS))
+
+            hold.finish(registered = true)
+            assertEquals(
+                MknoonCallPresentationResult.STALE,
+                registering.get(5, TimeUnit.SECONDS),
+            )
+            assertFalse(rig.operations.contains("store.append:PRESENTED"))
+            assertTrue(
+                rig.operations.lastIndexOf("platform.end") >
+                    rig.operations.indexOf(HeldTelecomRegistration.RETURNED),
+            )
+        } finally {
+            hold.finish(registered = false)
+            executor.shutdownNow()
+        }
+    }
+
+    @Test
+    fun `an app answer during registration waits and is applied after the presentation`() {
+        // Dart shows Answer once the call is validated, before the native presentation.
+        val rig = LifecycleRig()
+        val hold = HeldTelecomRegistration()
+        rig.platform.onRegisterIncoming = hold::register
+        val id = rig.payload.nativeCallId
+        val executor = Executors.newFixedThreadPool(2)
+        try {
+            val presenting = executor.submit<MknoonCallPresentationResult> {
+                rig.controller.present(rig.payload)
+            }
+            assertTrue(hold.started.await(5, TimeUnit.SECONDS))
+            assertTrue(rig.controller.isRegistrationInFlight(id))
+
+            val answered = executor.submit<Boolean> { rig.controller.answer(id) }
+            Thread.sleep(200L)
+            assertFalse(answered.isDone)
+
+            hold.finish(registered = true)
+            assertEquals(
+                MknoonCallPresentationResult.PRESENTED,
+                presenting.get(5, TimeUnit.SECONDS),
+            )
+            assertTrue(answered.get(5, TimeUnit.SECONDS))
+            assertFalse(rig.controller.isRegistrationInFlight(id))
+            assertEquals(1, rig.platform.answerCalls)
+            assertTrue(
+                rig.operations.indexOf("store.append:PRESENTED") <
+                    rig.operations.indexOf("store.append:ANSWER_REQUESTED"),
+            )
+        } finally {
+            hold.finish(registered = false)
+            executor.shutdownNow()
+        }
+    }
+
+    @Test
+    fun `a caller display update sent during registration survives the presentation`() {
+        val rig = LifecycleRig()
+        val hold = HeldTelecomRegistration()
+        rig.platform.onRegisterIncoming = hold::register
+        val id = rig.payload.nativeCallId
+        val initial = MknoonIncomingCallDisplay("Initial contact", byteArrayOf(7), true)
+        val update = MknoonIncomingCallDisplay("Updated contact", byteArrayOf(9), true).toRingingMetadata()
+        val executor = Executors.newFixedThreadPool(2)
+        try {
+            val presenting = executor.submit<MknoonCallPresentationResult> {
+                rig.controller.present(rig.payload, initial)
+            }
+            assertTrue(hold.started.await(5, TimeUnit.SECONDS))
+            assertTrue(
+                executor.submit<Boolean> { rig.controller.updatePresentation(id, update) }
+                    .get(1, TimeUnit.SECONDS),
+            )
+
+            hold.finish(registered = true)
+            assertEquals(
+                MknoonCallPresentationResult.PRESENTED,
+                presenting.get(5, TimeUnit.SECONDS),
+            )
+            assertEquals("Updated contact", rig.controller.presentation(id)?.displayName)
+        } finally {
+            hold.finish(registered = false)
+            executor.shutdownNow()
+        }
+    }
+
+    @Test
+    fun `a late Telecom end that fails is kept as pending cleanup and retried`() {
+        val rig = LifecycleRig()
+        val hold = HeldTelecomRegistration()
+        rig.platform.onRegisterIncoming = hold::register
+        val id = rig.payload.nativeCallId
+        val executor = Executors.newFixedThreadPool(2)
+        try {
+            val presenting = executor.submit<MknoonCallPresentationResult> {
+                rig.controller.present(rig.payload)
+            }
+            assertTrue(hold.started.await(5, TimeUnit.SECONDS))
+            assertTrue(executor.submit<Boolean> { rig.controller.endFromDart(id) }.get(1, TimeUnit.SECONDS))
+            assertFalse(rig.controller.isCleanupPending(id))
+
+            // Telecom registers the ended call; ending that late registration fails once.
+            rig.platform.endFailuresRemaining = 1
+            hold.finish(registered = true)
+            assertEquals(
+                MknoonCallPresentationResult.STALE,
+                presenting.get(5, TimeUnit.SECONDS),
+            )
+            assertTrue(rig.controller.isCleanupPending(id))
+            assertTrue(rig.cleanupPending.contains(id))
+
+            assertTrue(rig.controller.retryCleanup(id))
+            assertFalse(rig.controller.isCleanupPending(id))
+            assertEquals(3, rig.platform.endCalls)
+        } finally {
+            hold.finish(registered = false)
+            executor.shutdownNow()
+        }
+    }
+
+    @Test
+    fun `a Telecom answer that arrives during registration is applied after the presentation`() {
+        val rig = LifecycleRig()
+        val hold = HeldTelecomRegistration()
+        rig.platform.onRegisterIncoming = hold::register
+        val id = rig.payload.nativeCallId
+        val executor = Executors.newFixedThreadPool(2)
+        try {
+            val presenting = executor.submit<MknoonCallPresentationResult> {
+                rig.controller.present(rig.payload)
+            }
+            assertTrue(hold.started.await(5, TimeUnit.SECONDS))
+
+            val answered = executor.submit<Boolean> { rig.controller.answerFromTelecom(id) }
+            Thread.sleep(200L)
+            assertFalse(answered.isDone)
+
+            hold.finish(registered = true)
+            assertEquals(
+                MknoonCallPresentationResult.PRESENTED,
+                presenting.get(5, TimeUnit.SECONDS),
+            )
+            assertTrue(answered.get(5, TimeUnit.SECONDS))
+            assertTrue(
+                rig.operations.indexOf("store.append:PRESENTED") <
+                    rig.operations.indexOf("store.append:ANSWER_REQUESTED"),
+            )
+        } finally {
+            hold.finish(registered = false)
+            executor.shutdownNow()
+        }
+    }
+
+    @Test
+    fun `a new presentation waits past core-telecom while restart re-registration keeps the short wait`() {
+        val rig = LifecycleRig()
+        assertEquals(MknoonCallPresentationResult.PRESENTED, rig.controller.present(rig.payload))
+        assertEquals(MKNOON_TELECOM_REGISTRATION_TIMEOUT_MS, rig.platform.lastRegistrationTimeoutMs)
+
+        val recreatedPlatform = LifecycleFakePlatform(rig.operations)
+        val recreated = MknoonCallLifecycleController(
+            store = rig.store,
+            platform = recreatedPlatform,
+            eventSink = LifecycleFakeEventSink(rig.operations),
+            capabilityEnabled = { true },
+            recordAudioPermissionGranted = { true },
+            nowMs = { NOW_MS },
+        )
+        assertTrue(recreated.reconcilePresented())
+        // Restart re-registration still waits under the controller lock, possibly on
+        // main: it must stay below Android's 5 s input-dispatch ANR limit.
+        assertEquals(
+            MKNOON_TELECOM_REREGISTRATION_TIMEOUT_MS,
+            recreatedPlatform.lastRegistrationTimeoutMs,
+        )
+        assertTrue(MKNOON_TELECOM_REREGISTRATION_TIMEOUT_MS < 5_000L)
+    }
+
+    @Test
+    fun `a failed Telecom registration still fails the call after the unlocked wait`() {
+        val rig = LifecycleRig()
+        val hold = HeldTelecomRegistration()
+        rig.platform.onRegisterIncoming = hold::register
+        val executor = Executors.newSingleThreadExecutor()
+        try {
+            val presenting = executor.submit<MknoonCallPresentationResult> {
+                rig.controller.present(rig.payload)
+            }
+            assertTrue(hold.started.await(5, TimeUnit.SECONDS))
+            hold.finish(registered = false)
+            assertEquals(
+                MknoonCallPresentationResult.PLATFORM_FAILED,
+                presenting.get(5, TimeUnit.SECONDS),
+            )
+            assertTrue(rig.operations.contains("store.append:NATIVE_FAILURE"))
+            assertEquals(0, rig.platform.showIncomingCalls)
+            assertNull(rig.controller.presentation(rig.payload.nativeCallId))
+        } finally {
+            hold.finish(registered = false)
+            executor.shutdownNow()
+        }
     }
 
     @Test
@@ -1739,6 +2060,31 @@ internal class LifecycleFakeStore(
     }
 }
 
+/** B5 tests: holds one fake Telecom registration open until [finish]. */
+internal class HeldTelecomRegistration {
+    val started = CountDownLatch(1)
+    private val release = CountDownLatch(1)
+
+    @Volatile
+    private var registered = false
+
+    fun register(callback: MknoonCallRegistrationCallback) {
+        started.countDown()
+        release.await(10, TimeUnit.SECONDS)
+        if (registered) callback.onRegistered() else callback.onRegistrationAbandoned()
+    }
+
+    fun finish(registered: Boolean) = synchronized(this) {
+        if (release.count == 0L) return@synchronized
+        this.registered = registered
+        release.countDown()
+    }
+
+    companion object {
+        const val RETURNED = "platform.registrationReturned"
+    }
+}
+
 internal data class LifecycleAcknowledgementCall(
     val nativeCallId: UUID,
     val highestConsumedSequence: Long,
@@ -1763,6 +2109,9 @@ internal class LifecycleFakePlatform(
     var stopEndpointUpdatesCalls = 0
     var startMicrophoneCalls = 0
     var stopIncomingRingerCalls = 0
+    var lastRegistrationTimeoutMs: Long? = null
+    var onRegisterIncoming: ((MknoonCallRegistrationCallback) -> Unit)? = null
+    var onRegisterOutgoing: ((MknoonCallRegistrationCallback) -> Unit)? = null
     var onAnswer: (() -> Unit)? = null
     var onRequestAudioFocus: (() -> Unit)? = null
     var onShowIncoming: ((UUID) -> Unit)? = null
@@ -1774,9 +2123,16 @@ internal class LifecycleFakePlatform(
     override fun registerIncoming(
         nativeCallId: UUID,
         callback: MknoonCallRegistrationCallback,
+        timeoutMs: Long,
     ) {
         registerCalls += 1
+        lastRegistrationTimeoutMs = timeoutMs
         operations += "platform.registerIncoming"
+        onRegisterIncoming?.let { hold ->
+            hold(callback)
+            operations += HeldTelecomRegistration.RETURNED
+            return
+        }
         if (registrationSucceeds) {
             callback.onRegistered()
         } else {
@@ -1787,9 +2143,16 @@ internal class LifecycleFakePlatform(
     override fun registerOutgoing(
         nativeCallId: UUID,
         callback: MknoonCallRegistrationCallback,
+        timeoutMs: Long,
     ) {
         registerOutgoingCalls += 1
+        lastRegistrationTimeoutMs = timeoutMs
         operations += "platform.registerOutgoing"
+        onRegisterOutgoing?.let { hold ->
+            hold(callback)
+            operations += HeldTelecomRegistration.RETURNED
+            return
+        }
         if (registrationSucceeds) {
             callback.onRegistered()
         } else {
