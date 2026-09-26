@@ -14,10 +14,28 @@ MATRIX_FIXTURE="$ROOT_DIR/test/features/push/fixtures/ios_notification_message_m
 
 device_csv=""
 skip_build=0
-scenario_retries="${IOS_NOTIFICATION_TAP_SMOKE_RETRIES:-1}"
+scenario_retries="${IOS_NOTIFICATION_TAP_SMOKE_RETRIES:-0}"
 scenario_filter=""
 selection_only=0
+native_selector=""
 started_pid=""
+fixture_command_paths=()
+fixture_command_owners=()
+
+cleanup_notification_fixture_commands() {
+  local index
+  for ((index=0; index<${#fixture_command_paths[@]}; index++)); do
+    node - "${fixture_command_paths[$index]}" "${fixture_command_owners[$index]}" <<'NODE'
+const fs = require('fs');
+const [file, owner] = process.argv.slice(2);
+if (fs.existsSync(file)) {
+  const command = JSON.parse(fs.readFileSync(file, 'utf8'));
+  if (command.notificationMatrixOwner === owner) fs.unlinkSync(file);
+}
+NODE
+  done
+}
+trap cleanup_notification_fixture_commands EXIT
 
 WARM_CASES=(
   direct_text direct_image
@@ -33,7 +51,7 @@ COLD_CASES=(
 usage() {
   cat <<'EOF'
 Usage:
-  scripts/run_ios_notification_tap_ui_smoke.sh [--devices <udid1>,<udid2>] [--bundle-id <bundle>] [--skip-build] [--retries <count>] [--scenario <warm|cold>:<case-id>] [--selection-only]
+  scripts/run_ios_notification_tap_ui_smoke.sh [--devices <udid1>,<udid2>] [--bundle-id <bundle>] [--skip-build] [--retries <count>] [--scenario <warm|cold>:<case-id>] [--selection-only] [--native-selector <method> --retries 0] [--result-root <dir>]
 
 Runs the simulator-bound iOS APNs notification tap smoke:
   - warm text/image coverage for 1:1, group, and announcement contexts
@@ -71,6 +89,14 @@ while (($# > 0)); do
       scenario_filter="${2:?missing --scenario value}"
       shift 2
       ;;
+    --native-selector)
+      native_selector="${2:?missing --native-selector value}"
+      shift 2
+      ;;
+    --result-root)
+      RESULT_ROOT="${2:?missing --result-root value}"
+      shift 2
+      ;;
     --selection-only)
       selection_only=1
       shift
@@ -102,6 +128,7 @@ refresh_flutter_xcode_config() {
     --config-only
     --no-pub
     --target lib/main.dart
+    --dart-define=E2E_TEST_MODE=true --dart-define=PRODUCTION_FCM=true
   )
 
   if [[ -n "${MKNOON_RELAY_ADDRESSES:-}" ]]; then
@@ -244,18 +271,45 @@ wait_for_pattern() {
   return 1
 }
 
+# `xcodebuild test` rebuilds before it runs the selected case. Under host load
+# that build alone can exceed the native readiness bound, so compilation gets
+# its own allowance and the readiness bound starts when the XCTest case starts.
+readonly XCTEST_CASE_START_BUDGET_SECONDS=1800
+
 wait_for_ready_signal() {
   local ready_file="$1"
   local log_file="$2"
   local watched_pid="$3"
   local timeout_seconds="$4"
+  # Match the event emitted by NotificationTapUITests, not a log predicate,
+  # exported build setting, empty file, or partially written marker.
+  local ready_pattern="(^|[[:space:]])${READY_MARKER} mode=(warm|cold) title_configured=(true|false)([[:space:]]|$)"
+  local case_start_pattern="^Test Case '-\[RunnerUITests\.[A-Za-z0-9_]+ [A-Za-z0-9_]+\]' started"
+  local start_line=0
+  if [[ -f "$log_file" ]]; then
+    start_line=$(wc -l <"$log_file" | tr -d ' ')
+  fi
+  local build_deadline=$((SECONDS + XCTEST_CASE_START_BUDGET_SECONDS))
+  while ((SECONDS < build_deadline)); do
+    if [[ -f "$ready_file" ]] && grep -Eq "$ready_pattern" "$ready_file"; then
+      return 0
+    fi
+    if [[ -f "$log_file" ]] &&
+      tail -n "+$((start_line + 1))" "$log_file" | grep -Eq "$case_start_pattern"; then
+      break
+    fi
+    if ! kill -0 "$watched_pid" >/dev/null 2>&1; then
+      break
+    fi
+    sleep 1
+  done
   local deadline=$((SECONDS + timeout_seconds))
 
   while ((SECONDS < deadline)); do
-    if [[ -f "$ready_file" ]]; then
+    if [[ -f "$ready_file" ]] && grep -Eq "$ready_pattern" "$ready_file"; then
       return 0
     fi
-    if [[ -f "$log_file" ]] && grep -Fq "$READY_MARKER" "$log_file"; then
+    if [[ -f "$log_file" ]] && grep -Eq "$ready_pattern" "$log_file"; then
       return 0
     fi
     if ! kill -0 "$watched_pid" >/dev/null 2>&1; then
@@ -445,6 +499,38 @@ install_app_on_device() {
   printf 'Installing %s on %s (%s)\n' "$APP_PATH" "$name" "$device"
   xcrun simctl install "$device" "$APP_PATH"
   write_auto_setup_config "$device" "TapSmoke"
+  prepare_notification_permission_fixture "$device"
+}
+
+prepare_notification_permission_fixture() {
+  local device="$1"
+  local log_file="$RESULT_ROOT/$device.permission-setup.log"
+  local ready_file="$RESULT_ROOT/$device.permission-setup.ready"
+  local result_bundle="$RESULT_ROOT/$device.permission-setup.xcresult"
+  local log_pid prepare_pid setup_status=0
+  : >"$log_file"
+  rm -f "$ready_file"
+  start_log_stream "$device" "$log_file"
+  log_pid="$started_pid"
+  run_xcode_ui_test "$device" \
+    "-only-testing:RunnerUITests/NotificationTapUITests/testPrepareWarmNotificationTap" \
+    "$log_file" "$result_bundle" "$ready_file" "Permission setup" "Permission setup" "direct_message"
+  prepare_pid="$started_pid"
+  if ! wait_for_ready_signal "$ready_file" "$log_file" "$prepare_pid" 120; then
+    printf 'Notification permission preparation did not become ready; see %s\n' "$log_file" >&2
+    setup_status=1
+    kill "$prepare_pid" >/dev/null 2>&1 || true
+  fi
+  wait "$prepare_pid" || setup_status=$?
+  if ((setup_status == 0)); then
+    launch_warm_app_for_host_push "$device" "$log_file" "$log_pid" || setup_status=$?
+  fi
+  # Authorization is an installation prerequisite for both warm and cold cases.
+  # End the setup launch so cold cases still receive their push while terminated.
+  xcrun simctl terminate "$device" "$BUNDLE_ID" >>"$log_file" 2>&1 || setup_status=1
+  kill "$log_pid" >/dev/null 2>&1 || true
+  wait "$log_pid" >/dev/null 2>&1 || true
+  return "$setup_status"
 }
 
 write_auto_setup_config() {
@@ -459,6 +545,23 @@ write_auto_setup_config() {
   fi
   mkdir -p "$container/Documents"
   printf '{"username":"%s"}\n' "$username" > "$container/Documents/auto_setup.json"
+}
+
+prepare_xcode_ui_tests() {
+  local device="$1"
+  # Initial compilation belongs to setup, before the bounded native readiness
+  # handshake. Per-case `test` still refreshes the bundled tap configuration.
+  (
+    cd "$ROOT_DIR/ios"
+    xcodebuild build-for-testing \
+      -workspace "$WORKSPACE" \
+      -scheme "$SCHEME" \
+      -configuration Debug \
+      -parallel-testing-enabled NO \
+      -destination "platform=iOS Simulator,id=$device" \
+      FLUTTER_TARGET=lib/main.dart \
+      ONLY_ACTIVE_ARCH=YES
+  ) >"$RESULT_ROOT/xctest-setup.log" 2>&1
 }
 
 run_xcode_ui_test() {
@@ -484,6 +587,7 @@ run_xcode_ui_test() {
     xcodebuild test \
       -workspace "$WORKSPACE" \
       -scheme "$SCHEME" \
+      -parallel-testing-enabled NO \
       -destination "platform=iOS Simulator,id=$device" \
       "$xctest_selector" \
       -resultBundlePath "$result_bundle" \
@@ -539,6 +643,24 @@ launch_warm_app_for_host_push() {
     return 1
   fi
 
+  # Only settings emitted by this host relaunch establish delivery readiness.
+  # A passing preparation XCTest alone does not prove OS authorization.
+  if ! node - "$log_file" "$start_line" <<'NODE'
+const fs = require('fs');
+const [file, startLine] = process.argv.slice(2);
+const settings = fs.readFileSync(file, 'utf8').split('\n')
+  .slice(Number(startLine)).filter(line => line.includes('[PUSH_DIAG] native_notification_settings '));
+const latest = settings.at(-1) ?? '';
+if (!latest.includes('authorization=UNAuthorizationStatus(rawValue: 2)') ||
+    !latest.includes('alert=UNNotificationSetting(rawValue: 2)')) {
+  console.error('Warm notification fixture lacks current authorized alert settings');
+  process.exit(1);
+}
+NODE
+  then
+    return 1
+  fi
+
   xcrun simctl launch "$device" com.apple.springboard >>"$log_file" 2>&1
   sleep 2
 }
@@ -573,6 +695,7 @@ assert_scenario_markers() {
   fi
 
   assert_log_not_contains "$log_file" "IOS_APNS_NOTIFICATION_OPEN_ERROR" || status=1
+  assert_log_not_contains "$log_file" "REMOTE_NOTIFICATION_ROUTE_ERROR" || status=1
   assert_log_not_contains "$log_file" "NOTIFICATION_TAP_NAV_ERROR" || status=1
   assert_log_not_contains "$log_file" "INITIAL_LOCAL_NOTIFICATION_ROUTE_ERROR" || status=1
   assert_log_not_contains "$log_file" "threadMatchesRoute=false" || status=1
@@ -583,6 +706,49 @@ assert_scenario_markers() {
     "$context" "$modality" "$route_category" "$mode" >>"$log_file"
 
   return "$status"
+}
+
+prepare_direct_notification_fixture() {
+  local device="$1" case_id="$2" context="$3"
+  [[ "$context" == direct ]] || return 0
+  local container command_file owner
+  container="$(xcrun simctl get_app_container "$device" "$BUNDLE_ID" data)"
+  command_file="$container/Documents/intro_e2e_config.json"
+  owner="$RESULT_ROOT/$device/$case_id"
+  # This stages the existing debug-only repository seeding command. It does
+  # not bypass routing or pretend a synthetic notification is real delivery.
+  # A running intro poller must not consume the command before cold startup.
+  if [[ -e "$command_file" ]]; then
+    printf 'Refusing to overwrite an existing intro fixture command.\n' >&2
+    return 1
+  fi
+  xcrun simctl terminate "$device" "$BUNDLE_ID" >/dev/null 2>&1 || true
+  node - "$MATRIX_FIXTURE" "$case_id" "$command_file" "$owner" <<'NODE'
+const fs = require('fs');
+const path = require('path');
+const [matrix, caseId, file, owner] = process.argv.slice(2);
+const selected = JSON.parse(fs.readFileSync(matrix, 'utf8')).cases.find(c => c.id === caseId);
+if (!selected || selected.context !== 'direct' || !selected.routeData.sender_id) {
+  throw new Error('Missing direct notification contact fixture');
+}
+// The matrix already uses synthetic route identities and ciphertext. Persist
+// its matching synthetic contact through the existing repository fixture seam.
+const qrPayload = JSON.stringify({
+  ns: selected.routeData.sender_id,
+  un: selected.plaintext.senderUsername,
+  pk: Buffer.alloc(32, 1).toString('base64'),
+  rv: 'notification-matrix-fixture',
+  sig: Buffer.alloc(64, 1).toString('base64'),
+});
+fs.mkdirSync(path.dirname(file), {recursive: true});
+fs.writeFileSync(file, JSON.stringify({
+  stepId: `notification-matrix-${caseId}`,
+  notificationMatrixOwner: owner,
+  add_contacts: [{qrPayload}],
+}), {flag: 'wx', mode: 0o600});
+NODE
+  fixture_command_paths+=("$command_file")
+  fixture_command_owners+=("$owner")
 }
 
 run_scenario_once() {
@@ -602,6 +768,7 @@ run_scenario_once() {
   local route_category
   IFS=$'\t' read -r expected_title expected_body context modality route_category \
     < <(matrix_case_fields "$case_id")
+  prepare_direct_notification_fixture "$device" "$case_id" "$context" || return 1
   local prepare_selector="-only-testing:RunnerUITests/NotificationTapUITests/testPrepareWarmNotificationTap"
   local tap_selector="-only-testing:RunnerUITests/NotificationTapUITests/testTapExistingNotification"
 
@@ -613,6 +780,30 @@ run_scenario_once() {
   start_log_stream "$device" "$log_file"
   log_pid="$started_pid"
 
+  local tap_pid
+  local tap_result_bundle="$RESULT_ROOT/$safe_label.tap.xcresult"
+  if [[ -n "$native_selector" && "$native_selector" != "testTapExistingNotification" ]]; then
+    if [[ "$mode" == "cold" ]]; then
+      xcrun simctl terminate "$device" "$BUNDLE_ID" >/dev/null 2>&1 || true
+    fi
+    tap_selector="-only-testing:RunnerUITests/NotificationTapUITests/$native_selector"
+    run_xcode_ui_test "$device" "$tap_selector" "$log_file" \
+      "$tap_result_bundle" "$ready_file" "$expected_title" "$expected_body" "$route_category"
+    tap_pid="$started_pid"
+    if ! wait_for_ready_signal "$ready_file" "$log_file" "$tap_pid" 120; then
+      printf 'Timed out waiting for native selector readiness; see %s\n' "$log_file" >&2
+      kill "$tap_pid" "$log_pid" >/dev/null 2>&1 || true
+      wait "$tap_pid" >/dev/null 2>&1 || true
+      wait "$log_pid" >/dev/null 2>&1 || true
+      return 1
+    fi
+    if ! push_fixture "$device" "$case_id" "$log_file" "$expected_title" "$expected_body"; then
+      kill "$tap_pid" "$log_pid" >/dev/null 2>&1 || true
+      wait "$tap_pid" >/dev/null 2>&1 || true
+      wait "$log_pid" >/dev/null 2>&1 || true
+      return 1
+    fi
+  else
   if [[ "$mode" == "cold" ]]; then
     xcrun simctl terminate "$device" "$BUNDLE_ID" >/dev/null 2>&1 || true
   else
@@ -661,8 +852,6 @@ run_scenario_once() {
     "$expected_title" \
     "$expected_body"
 
-  local tap_pid
-  local tap_result_bundle="$RESULT_ROOT/$safe_label.tap.xcresult"
   run_xcode_ui_test \
     "$device" \
     "$tap_selector" \
@@ -673,6 +862,7 @@ run_scenario_once() {
     "$expected_body" \
     "$route_category"
   tap_pid="$started_pid"
+  fi
 
   local tap_status=0
   wait "$tap_pid" || tap_status=$?
@@ -680,6 +870,11 @@ run_scenario_once() {
   kill "$log_pid" >/dev/null 2>&1 || true
   wait "$log_pid" >/dev/null 2>&1 || true
 
+  if [[ -n "$native_selector" ]]; then
+    # Forward actual native results; the full wrapper requires the exact method
+    # multiset and rejects failures, skips, missing methods, or extra methods.
+    grep -E "Test Case .* (passed|failed|skipped)" "$log_file" || true
+  fi
   if ((tap_status != 0)); then
     printf 'xcodebuild UI test failed for %s; see %s\n' "$label" "$log_file" >&2
     return "$tap_status"
@@ -745,13 +940,24 @@ main() {
     exit 1
   fi
   validate_scenario_filter
+  if [[ -n "$native_selector" ]]; then
+    if [[ "$scenario_retries" -ne 0 ]]; then
+      printf 'Native selector proofs require --retries 0.\n' >&2
+      exit 2
+    fi
+    case "$native_selector:$scenario_filter" in
+      testNotificationTap:warm:direct_text|testColdNotificationTap:cold:direct_video|testTapExistingNotification:cold:direct_video) ;;
+      *) printf 'Unsupported native selector/scenario pairing.\n' >&2; exit 2 ;;
+    esac
+  fi
   if [[ "$selection_only" -eq 1 ]]; then
     print_selected_scenarios
     exit 0
   fi
 
   if [[ "$skip_build" -eq 0 ]]; then
-    flutter build ios --simulator --debug
+    flutter build ios --simulator --debug --target lib/main.dart \
+      --dart-define=E2E_TEST_MODE=true --dart-define=PRODUCTION_FCM=true
   else
     refresh_flutter_xcode_config
   fi
@@ -775,6 +981,7 @@ main() {
     exit 1
   fi
 
+  prepare_xcode_ui_tests "${device_ids[0]}"
   install_app_on_device "${device_ids[0]}" "${device_names[0]}"
   if [[ -n "$scenario_filter" ]]; then
     local selected_mode="${scenario_filter%%:*}"

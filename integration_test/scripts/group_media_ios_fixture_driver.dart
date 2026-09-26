@@ -1213,8 +1213,27 @@ final class _Driver {
       '-n',
       component,
     ]);
-    if (result.exitCode != 0 || !'${result.stdout}'.contains('Status: ok')) {
+    final launchOutput = '${result.stdout}';
+    if (result.exitCode != 0 || launchOutput.contains('Error:')) {
       throw const _Failure('Android sender launch failed');
+    }
+    if (!launchOutput.contains('Status: ok')) {
+      // A fresh install can draw its first frame after am start's 10 s
+      // window. A timeout still counts as started only for the exact
+      // component with a live process; the endpoint result remains the proof.
+      final pid = await _run('adb', <String>[
+        '-s',
+        options.senderDevice,
+        'shell',
+        'pidof',
+        _packageName,
+      ]);
+      if (!launchOutput.contains('Status: timeout') ||
+          !launchOutput.contains(component) ||
+          pid.exitCode != 0 ||
+          '${pid.stdout}'.trim().isEmpty) {
+        throw const _Failure('Android sender launch failed');
+      }
     }
   }
 

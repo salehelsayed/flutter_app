@@ -1180,6 +1180,9 @@ final class GroupMediaIosBackgroundRecoveryController {
       );
       rethrow;
     }
+    File(
+      '${_runDirectory.path}/xcodebuild-test.log',
+    ).writeAsStringSync('${xctest.stdout}\n--- stderr ---\n${xctest.stderr}');
     if (xctest.exitCode != 0) {
       await _cancelAndSettleFixtures(
         cancel: fixtureCancel,
@@ -2573,6 +2576,8 @@ final class GroupMediaIosBackgroundRecoveryController {
     } finally {
       _fixtureDriverCustody.verifyUnchanged();
     }
+    // The fixture driver reports its failing stage as one JSON line on stderr.
+    File('${output.path}.stderr.log').writeAsStringSync(result.stderr);
     final fixtureAudit = _readAndroidFixtureCommandAudit(
       androidCommandAudit,
       action: action,

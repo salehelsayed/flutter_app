@@ -908,7 +908,10 @@ final class _AndroidNotificationCampaign {
       runId: runId,
       receiverPeerId: receiverIdentity.peerId,
     );
-    await _waitForProviderSend(sentAt);
+    // Arm the post-tap observer while the push has just woken the receiver;
+    // the relay-journal provider check below is evidence only and can run
+    // after arming. The cached-apps freezer can pause a backgrounded receiver
+    // during that long journal poll, and a frozen process never arms.
     final staged = await _waitForStagedEnvelope(sent: sent, notBefore: sentAt);
     final warmObservation = await _waitForNotificationObservation(marker);
     final warmAlertChannel = _requireAudibleChannel(
@@ -939,6 +942,7 @@ final class _AndroidNotificationCampaign {
       status: 'armed',
       timeout: const Duration(seconds: 30),
     );
+    await _waitForProviderSend(sentAt);
     if (armed['stagedEnvelopeObserved'] != true) {
       throw _Failure(
         'Warm FCM staging was not observed before the tap.',
@@ -1861,7 +1865,7 @@ final class _AndroidNotificationCampaign {
     // foreground FCM drain never reaches a notification decision.
     await _backgroundReceiver();
 
-    final send = await _sendSpacedMarker(marker, runId: runId);
+    final send = await _sendSpacedProviderMarker(marker, runId: runId);
     final attempt = await _requirePostAttempt(
       send.cursor,
       'G7 permission denied',
@@ -2910,6 +2914,15 @@ final class _AndroidNotificationCampaign {
       );
     }
     if (!terminalOnly && value['status'] == 'failed') {
+      _lastDualPathHostObservation?.senderFailure = <String, Object?>{
+        'errorCode': safeAndroidNotificationDualPathFailureCode(
+          value['errorCode'],
+        ),
+        if (value['cleanupErrorCode'] != null)
+          'cleanupErrorCode': safeAndroidNotificationDualPathFailureCode(
+            value['cleanupErrorCode'],
+          ),
+      };
       throw _Failure(
         'The exact dual-path sender action failed.',
         assertionsAttempted: _assertionsAttempted,
@@ -3199,8 +3212,16 @@ final class _AndroidNotificationCampaign {
     );
     final result = _object(jsonDecode(raw));
     if (result['status'] != 'complete' || result['success'] != true) {
+      // Only the error type is kept; the app's free-text message can carry
+      // identifiers and never enters the report.
+      final errorType =
+          result['errorType'] ??
+          RegExp(
+            r'^[A-Za-z_][A-Za-z0-9_]*',
+          ).firstMatch('${result['error'] ?? ''}')?.group(0);
       throw _Failure(
-        'Installed main-app step ${config['stepId']} failed.',
+        'Installed main-app step ${config['stepId']} failed'
+        '${errorType == null ? '' : ' ($errorType)'}.',
         assertionsAttempted: _assertionsAttempted,
       );
     }
@@ -4390,6 +4411,7 @@ final class _DualPathHostObservation {
   Map<String, Object?>? journalWindow;
   Map<String, Object?>? journalLastReadStarted;
   Map<String, Object?>? journalLastReadCompleted;
+  Map<String, Object?>? senderFailure;
 
   Map<String, Object?> _timestamp() => <String, Object?>{
     'hostMs': DateTime.now().millisecondsSinceEpoch,
@@ -4428,6 +4450,7 @@ final class _DualPathHostObservation {
     'journalPolls': journalPolls,
     'journalLastReadStarted': journalLastReadStarted,
     'journalLastReadCompleted': journalLastReadCompleted,
+    'senderFailure': senderFailure,
     'nominalMarkers': nominalMarkers,
     'releasedLive': releasedLive,
     'receiverWindow': receiverWindow,

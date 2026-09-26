@@ -128,8 +128,18 @@ void main() {
   test(
     'fixed clock and random source still fill distinct concurrent slots',
     () async {
+      final releasePublication = Completer<void>();
+      final allPublished = Completer<void>();
+      var publishedCount = 0;
       final journal = BackgroundStorageLivenessJournal(
         directoryResolver: () async => root,
+        atomicWriter:
+            ({required temporary, required target, required contents}) async {
+              await releasePublication.future;
+              await temporary.writeAsString(contents, flush: true);
+              await temporary.rename(target.path);
+              if (++publishedCount == 12) allPublished.complete();
+            },
         now: () => DateTime.fromMillisecondsSinceEpoch(0, isUtc: true),
         randomNonce: () => 0,
         buildMode: BackgroundStorageBuildMode.debug,
@@ -150,6 +160,13 @@ void main() {
         ),
       );
 
+      // The caller budget is not a publication join. Hold all real atomic
+      // writes past that unchanged budget, then observe their completion
+      // before checking the concurrent slot allocation.
+      expect(publishedCount, 0);
+      releasePublication.complete();
+      await allPublished.future;
+
       final files = root
           .listSync()
           .whereType<File>()
@@ -161,12 +178,16 @@ void main() {
   );
 
   test('overlapping writers cannot exceed the fixed 32 slots', () async {
+    // The 200 ms caller budget is not a publication join. Under host load the
+    // real writers and pruners outlive it, so wait for every publication
+    // before inspecting the slots or deleting the directory.
     final journals = List<BackgroundStorageLivenessJournal>.generate(
       4,
       (_) => BackgroundStorageLivenessJournal(
         directoryResolver: () async => root,
         now: () => DateTime.fromMillisecondsSinceEpoch(0, isUtc: true),
         randomNonce: () => 0,
+        maxCallerImpact: const Duration(minutes: 1),
       ),
     );
 
@@ -269,12 +290,17 @@ void main() {
         file.path: file.readAsStringSync(),
     };
 
+    final failedTemporary = Completer<File>();
+    final releaseFailure = Completer<void>();
     final failing = BackgroundStorageLivenessJournal(
       directoryResolver: () async => root,
       randomNonce: () => 0,
+      maxCallerImpact: const Duration(milliseconds: 20),
       atomicWriter:
           ({required temporary, required target, required contents}) async {
             await temporary.writeAsString(contents, flush: true);
+            failedTemporary.complete(temporary);
+            await releaseFailure.future;
             throw const FileSystemException('injected pre-rename failure');
           },
     );
@@ -287,6 +313,15 @@ void main() {
       phaseElapsed: Duration.zero,
       budget: const Duration(seconds: 2),
     );
+    final temporary = await failedTemporary.future;
+    expect(await temporary.exists(), isTrue);
+    releaseFailure.complete();
+    // The bounded caller already returned while the injected writer was
+    // suspended. Assert cleanup after the late failure is processed, under
+    // the test's existing timeout; recordTerminal is not an I/O join.
+    while (await temporary.exists()) {
+      await Future<void>.delayed(const Duration(milliseconds: 1));
+    }
 
     final after = <String, String>{
       for (final file
@@ -552,15 +587,26 @@ void main() {
     // 3. Discrimination on the persisted record. `preview_resolution` and
     //    `durable_effect_authority` are the only two phases the liveness enum
     //    does not name, so both still map to `local_state`.
+    const phases = <BackgroundStorageDeadlinePhaseName>[
+      BackgroundStorageDeadlinePhaseName.previewResolution,
+      BackgroundStorageDeadlinePhaseName.durableEffectAuthority,
+    ];
+    final publications = <String, Completer<void>>{
+      for (final phase in phases) phase.wireName: Completer<void>(),
+    };
     final journal = BackgroundStorageLivenessJournal(
       directoryResolver: () async => root,
       randomNonce: () => 0,
       buildMode: BackgroundStorageBuildMode.release,
+      atomicWriter:
+          ({required temporary, required target, required contents}) async {
+            await temporary.writeAsString(contents, flush: true);
+            await temporary.rename(target.path);
+            final record = jsonDecode(contents) as Map<String, dynamic>;
+            publications[record['phaseName']]!.complete();
+          },
     );
-    for (final phaseName in <BackgroundStorageDeadlinePhaseName>[
-      BackgroundStorageDeadlinePhaseName.previewResolution,
-      BackgroundStorageDeadlinePhaseName.durableEffectAuthority,
-    ]) {
+    for (final phaseName in phases) {
       await journal.recordTerminal(
         kind: BackgroundStorageMessageKind.directMessage,
         phase: BackgroundStorageLivenessPhase.localState,
@@ -570,6 +616,9 @@ void main() {
         phaseElapsed: const Duration(milliseconds: 2001),
         budget: const Duration(seconds: 2),
       );
+      // recordTerminal deliberately returns after its 200 ms caller budget;
+      // this persistence assertion needs the actual atomic publication.
+      await publications[phaseName.wireName]!.future;
     }
     final decoded = root
         .listSync(followLinks: false)

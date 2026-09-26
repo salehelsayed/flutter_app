@@ -141,6 +141,7 @@ final class _KeepaliveCampaign {
   final String packageName;
   final Directory proofDirectory;
   final Random _random = Random.secure();
+  final Map<String, String> _latestLogcat = <String, String>{};
 
   Future<AndroidKeepaliveDropCampaignResult> run() async {
     await _preflight();
@@ -314,6 +315,7 @@ final class _KeepaliveCampaign {
     );
     final warmTerminal = await _waitForWarmTerminal(
       physical,
+      targetPeerId: receiver.peerId,
       afterIndex: dropIndex,
       timeout: const Duration(seconds: 16),
     );
@@ -611,55 +613,53 @@ final class _KeepaliveCampaign {
     String? expectedSchema,
     required Duration timeout,
   }) async {
-    return _waitForValue<Map<String, Object?>>(
-      '$stepId/$expectedStatus on $device',
-      timeout,
-      () async {
-        final raw = await _readAppFile(device, _resultFile);
-        if (raw == null) return null;
-        try {
-          final result = _jsonObject(jsonDecode(raw));
-          if (result['stepId'] != stepId ||
-              (runId != null && result['runId'] != runId) ||
-              (nonce != null && result['nonce'] != nonce) ||
-              (expectedSchema != null && result['schema'] != expectedSchema)) {
-            return null;
-          }
-          if (result['status'] == 'failed' || result['success'] == false) {
-            // Keep the precise app proof boundary through package cleanup,
-            // without exporting exception text, payloads or the full stack.
-            final stack = result['stackTrace'];
-            final sourceFrame = stack is String
-                ? RegExp(
-                    r'package:flutter_app/core/debug/keepalive_drop_e2e\.dart:\d+:\d+',
-                  ).firstMatch(stack)?.group(0)
-                : null;
-            final error = result['error'];
-            final precondition = error is String
-                ? RegExp(
-                    r'^Bad state: keepalive send precondition failed: '
-                    r'latch=(?:true|false) connected=(?:true|false) '
-                    r'local=(?:true|false)$',
-                  ).firstMatch(error)?.group(0)
-                : null;
-            throw _CampaignFailure(
-              'Production app step $stepId failed '
-              '(${result['errorType'] ?? 'unknown'}'
-              '${sourceFrame == null ? '' : '; $sourceFrame'}'
-              '${precondition == null ? '' : '; $precondition'}).',
-            );
-          }
-          if (result['status'] != expectedStatus || result['success'] != true) {
-            return null;
-          }
-          return result;
-        } on _CampaignFailure {
-          rethrow;
-        } on Object {
+    return _waitForValue<
+      Map<String, Object?>
+    >('$stepId/$expectedStatus on $device', timeout, () async {
+      final raw = await _readAppFile(device, _resultFile);
+      if (raw == null) return null;
+      try {
+        final result = _jsonObject(jsonDecode(raw));
+        if (result['stepId'] != stepId ||
+            (runId != null && result['runId'] != runId) ||
+            (nonce != null && result['nonce'] != nonce) ||
+            (expectedSchema != null && result['schema'] != expectedSchema)) {
           return null;
         }
-      },
-    );
+        if (result['status'] == 'failed' || result['success'] == false) {
+          // Keep the precise app proof boundary through package cleanup,
+          // without exporting exception text, payloads or the full stack.
+          final stack = result['stackTrace'];
+          final sourceFrame = stack is String
+              ? RegExp(
+                  r'package:flutter_app/core/debug/keepalive_drop_e2e\.dart:\d+:\d+',
+                ).firstMatch(stack)?.group(0)
+              : null;
+          final error = result['error'];
+          final precondition = error is String
+              ? RegExp(
+                  r'^Bad state: keepalive send precondition failed: '
+                  r'latch=(?:true|false) connected=(?:true|false) '
+                  r'local=(?:true|false)$',
+                ).firstMatch(error)?.group(0)
+              : null;
+          throw _CampaignFailure(
+            'Production app step $stepId failed '
+            '(${result['errorType'] ?? 'unknown'}'
+            '${sourceFrame == null ? '' : '; $sourceFrame'}'
+            '${precondition == null ? '' : '; $precondition'}).',
+          );
+        }
+        if (result['status'] != expectedStatus || result['success'] != true) {
+          return null;
+        }
+        return result;
+      } on _CampaignFailure {
+        rethrow;
+      } on Object {
+        return null;
+      }
+    });
   }
 
   Future<void> _waitForTargetPing(
@@ -694,36 +694,77 @@ final class _KeepaliveCampaign {
 
   Future<String> _waitForWarmTerminal(
     String device, {
+    required String targetPeerId,
     required int afterIndex,
     required Duration timeout,
-  }) => _waitForValue<String>(
-    'terminal keepalive recovery warm',
-    timeout,
-    () async {
-      final events = await _flowEvents(device);
-      const directWarmTerminals = <String>{
-        'P2P_SERVICE_WARM_PEER_DIAL_SKIPPED',
-        'P2P_SERVICE_WARM_PEER_DEBOUNCED',
-        'P2P_SERVICE_WARM_PEER_SKIPPED',
-      };
-      const dialOutcomes = <String>{
-        'P2P_SERVICE_DIAL_PEER_SUCCESS',
-        'P2P_SERVICE_DIAL_PEER_ERROR',
-        'P2P_SERVICE_DIAL_PEER_EXCEPTION',
-      };
-      var recoveryDialStarted = false;
-      for (var index = afterIndex + 1; index < events.length; index += 1) {
-        final name = events[index].name;
-        if (directWarmTerminals.contains(name)) return name;
-        if (name == 'P2P_SERVICE_WARM_PEER_DIAL') {
-          recoveryDialStarted = true;
-          continue;
-        }
-        if (recoveryDialStarted && dialOutcomes.contains(name)) return name;
-      }
-      return null;
-    },
-  );
+  }) async {
+    final timer = Stopwatch()..start();
+    bool? targetConnected;
+    String? observedTerminal;
+    final observedCallbacks = <String>{};
+    try {
+      return await _waitForValue<String>(
+        'terminal keepalive recovery warm',
+        timeout,
+        () async {
+          final events = await _flowEvents(device);
+          final log = _latestLogcat[device] ?? '';
+          // Only the last 4000 lines are read per poll; a callback that has
+          // scrolled out stays the latest one until a newer callback appears.
+          targetConnected =
+              keepaliveTargetConnected(log, targetPeerId) ?? targetConnected;
+          for (final line in log.split('\n')) {
+            if (line.contains('[CONN] peer:') && line.contains(targetPeerId)) {
+              observedCallbacks.add(line.trim());
+            }
+          }
+          const directWarmTerminals = <String>{
+            'P2P_SERVICE_WARM_PEER_DIAL_SKIPPED',
+            'P2P_SERVICE_WARM_PEER_DEBOUNCED',
+            'P2P_SERVICE_WARM_PEER_SKIPPED',
+          };
+          const dialOutcomes = <String>{
+            'P2P_SERVICE_DIAL_PEER_SUCCESS',
+            'P2P_SERVICE_DIAL_PEER_ERROR',
+            'P2P_SERVICE_DIAL_PEER_EXCEPTION',
+          };
+          var recoveryDialStarted = false;
+          for (var index = afterIndex + 1; index < events.length; index += 1) {
+            final name = events[index].name;
+            if (directWarmTerminals.contains(name)) {
+              observedTerminal = name;
+              break;
+            }
+            if (name == 'P2P_SERVICE_WARM_PEER_DIAL') {
+              recoveryDialStarted = true;
+              continue;
+            }
+            if (recoveryDialStarted && dialOutcomes.contains(name)) {
+              observedTerminal = name;
+              break;
+            }
+          }
+          return targetConnected == false ? observedTerminal : null;
+        },
+      );
+    } finally {
+      timer.stop();
+      await proofDirectory.create(recursive: true);
+      final observation = File(
+        '${proofDirectory.path}/keepalive-warm-readiness.json',
+      );
+      await observation.writeAsString(
+        jsonEncode(<String, Object?>{
+          'targetConnectionCallbackObserved': targetConnected != null,
+          'targetConnected': targetConnected,
+          'warmTerminal': observedTerminal,
+          'elapsedMs': timer.elapsedMilliseconds,
+          'deadlineMs': timeout.inMilliseconds,
+          'observedTargetCallbacks': observedCallbacks.toList(),
+        }),
+      );
+    }
+  }
 
   Future<_NaturalDropObservation> _validateNaturalDropWindow(
     String device, {
@@ -778,6 +819,7 @@ final class _KeepaliveCampaign {
     if (result.exitCode != 0) {
       throw const _CampaignFailure('Android flow-event log could not be read.');
     }
+    _latestLogcat[device] = '${result.stdout}';
     final events = <_FlowEvent>[];
     for (final line in '${result.stdout}'.split('\n')) {
       final marker = line.indexOf('[FLOW] ');

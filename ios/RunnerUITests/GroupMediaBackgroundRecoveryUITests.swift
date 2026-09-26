@@ -60,7 +60,10 @@ final class GroupMediaBackgroundRecoveryUITests: XCTestCase {
     assertExactlyOneProofLabel(phaseAReady, in: app)
     emit("phase_a_ready")
     XCUIDevice.shared.press(.home)
-    XCTAssertTrue(waitForBackground(app, timeout: 15))
+    XCTAssertTrue(
+      waitForBackground(app, timeout: 15),
+      "App state after Home: \(app.state.rawValue)"
+    )
     emitNativeHome(processId: phaseAProcessId)
     emit("phase_a_home")
 
@@ -152,14 +155,22 @@ final class GroupMediaBackgroundRecoveryUITests: XCTestCase {
     _ app: XCUIApplication,
     timeout: TimeInterval
   ) -> Bool {
-    let expectation = XCTNSPredicateExpectation(
-      predicate: NSPredicate { _, _ in
-        app.state == .runningBackground
-          || app.state == .runningBackgroundSuspended
-      },
-      object: nil
-    )
-    return XCTWaiter.wait(for: [expectation], timeout: timeout) == .completed
+    // Same pattern as NotificationTapUITests (proven on the physical iPhone):
+    // wait for SpringBoard to own the foreground, then read app.state
+    // directly within the same budget.
+    let deadline = Date().addingTimeInterval(timeout)
+    let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
+    guard springboard.wait(for: .runningForeground, timeout: timeout) else {
+      return false
+    }
+    repeat {
+      let state = app.state
+      if state == .runningBackground || state == .runningBackgroundSuspended {
+        return true
+      }
+      RunLoop.current.run(until: Date().addingTimeInterval(0.5))
+    } while Date() < deadline
+    return false
   }
 
   private func assertExactlyOneProofLabel(

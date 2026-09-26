@@ -53,6 +53,57 @@ bool _hasExactStringKeys(Map<dynamic, dynamic> value, Set<String> expected) {
       expected.difference(actual).isEmpty;
 }
 
+/// Retain only a closed failure code, never arbitrary helper output or tokens.
+String receiverBootstrapFailureCode(
+  String output, {
+  required int exitCode,
+  required bool timedOut,
+}) {
+  if (timedOut) return 'helper_timeout';
+  if (exitCode == 0) return 'handoff_missing';
+  if (output.length > 65536) return 'unavailable';
+  const prefix = 'IOS_RECEIVER_BOOTSTRAP_RESULT_JSON=';
+  final records = const LineSplitter()
+      .convert(output)
+      .where((line) => line.startsWith(prefix))
+      .toList();
+  if (records.length != 1) return 'unavailable';
+  try {
+    final value = jsonDecode(records.single.substring(prefix.length));
+    if (value is! Map ||
+        !_hasExactStringKeys(value, const <String>{
+          'schema',
+          'status',
+          'containsSecrets',
+          'detail',
+        }) ||
+        value['schema'] != 'mknoon.sims.ios-receiver-bootstrap-result.v1' ||
+        value['containsSecrets'] != false ||
+        value['status'] != (exitCode == 78 ? 'BLOCKED' : 'FAIL')) {
+      return 'unavailable';
+    }
+    return const <String, String>{
+          'the bootstrap-enabled app is not launchable on the selected iPhone':
+              'app_not_launchable',
+          'the protected capture request could not be staged':
+              'request_not_staged',
+          'the installed app could not process the capture request':
+              'capture_not_launched',
+          'the app did not publish a nonce-bound receiver handoff in time':
+              'handoff_deadline',
+          'the private receiver handoff is unreadable': 'handoff_unreadable',
+          'the private receiver handoff is not protected JSON':
+              'handoff_unprotected',
+          'the private receiver handoff failed nonce/schema validation':
+              'handoff_binding',
+          'the app-container receiver handoff cleanup failed': 'cleanup_failed',
+        }[value['detail']] ??
+        'unavailable';
+  } on FormatException {
+    return 'unavailable';
+  }
+}
+
 bool _isExactIntegerOne(Object? value) => value is int && value == 1;
 
 bool isExactPrivateIosApnsPayload(
@@ -299,6 +350,7 @@ final class _IosPayloadDriver {
   bool _uiCleanupAttempted = false;
   bool _uiCleanupComplete = false;
   bool _providerSetupComplete = false;
+  Object? _primaryFailure;
   bool _providerCleanupAttempted = false;
   bool _providerCleanupComplete = false;
   bool _senderProjectionSeeded = false;
@@ -310,6 +362,7 @@ final class _IosPayloadDriver {
   bool _directInstallCleanupComplete = false;
   bool _applicationInstalled = false;
   int _assertionsAttempted = 0;
+  String? _receiverBootstrapFailureCode;
   final List<File> _uiLogs = <File>[];
   final List<File> _sensitiveIntermediates = <File>[];
   final List<Directory> _uiResultBundles = <Directory>[];
@@ -617,6 +670,9 @@ final class _IosPayloadDriver {
       }
       options.output.writeAsStringSync('${jsonEncode(receipt)}\n', flush: true);
       return _DriverResult.passed(_assertionsAttempted);
+    } catch (error) {
+      _primaryFailure ??= error;
+      rethrow;
     } finally {
       final diagnostic = File(
         '${options.captureDirectory.path}/direct-notification-diagnostic.redacted.json',
@@ -1025,6 +1081,9 @@ final class _IosPayloadDriver {
       }
       options.output.writeAsStringSync('${jsonEncode(receipt)}\n', flush: true);
       return _DriverResult.passed(_assertionsAttempted);
+    } catch (error) {
+      _primaryFailure ??= error;
+      rethrow;
     } finally {
       final diagnostic = File(
         '${options.captureDirectory.path}/direct-notification-diagnostic.redacted.json',
@@ -1341,6 +1400,9 @@ final class _IosPayloadDriver {
       }
       options.output.writeAsStringSync('${jsonEncode(receipt)}\n', flush: true);
       return _DriverResult.passed(_assertionsAttempted);
+    } catch (error) {
+      _primaryFailure ??= error;
+      rethrow;
     } finally {
       final diagnostic = File(
         '${options.captureDirectory.path}/direct-notification-diagnostic.redacted.json',
@@ -1530,15 +1592,24 @@ final class _IosPayloadDriver {
       },
       timeout: const Duration(minutes: 3),
     );
+    if (result.exitCode != 0 || !_regularFile(output)) {
+      _receiverBootstrapFailureCode = receiverBootstrapFailureCode(
+        result.stdout,
+        exitCode: result.exitCode,
+        timedOut: result.timedOut,
+      );
+    }
     if (result.exitCode == 78) {
-      throw const _DriverBlocked(
+      throw _DriverBlocked(
         'credentials',
-        'The installed app could not publish a protected APNs receiver handoff.',
+        'The installed app could not publish a protected APNs receiver handoff '
+            '($_receiverBootstrapFailureCode).',
       );
     }
     if (result.exitCode != 0 || !_regularFile(output)) {
       throw _DriverFailure(
-        'The private receiver bootstrap did not produce a protected handoff.',
+        'The private receiver bootstrap did not produce a protected handoff '
+        '($_receiverBootstrapFailureCode).',
         _assertionsAttempted,
       );
     }
@@ -1579,10 +1650,33 @@ final class _IosPayloadDriver {
         }.contains(handoff['notificationAuthorization']) ||
         handoff['notificationAlertSetting'] != 'enabled' ||
         handoff['notificationBadgeSetting'] != 'enabled') {
+      // Field names only: the handoff values are private.
+      final mismatched = <String>[
+        if (handoff.keys.toSet().difference(exactKeys).isNotEmpty ||
+            exactKeys.difference(handoff.keys.toSet()).isNotEmpty)
+          'keys',
+        if (handoff['schema'] != _receiverHandoffSchema) 'schema',
+        if (handoff['captureNonce'] != _receiverHandoffNonce) 'captureNonce',
+        if (handoff['receiverDeviceId'] != options.receiverDeviceId)
+          'receiverDeviceId',
+        if (handoff['peerDeviceId'] != options.peerDeviceId) 'peerDeviceId',
+        if (handoff['bundleId'] != _bundleId) 'bundleId',
+        if (handoff['apnsEnvironment'] != 'development') 'apnsEnvironment',
+        if (!const <String>{
+          'authorized',
+          'provisional',
+          'ephemeral',
+        }.contains(handoff['notificationAuthorization']))
+          'notificationAuthorization',
+        if (handoff['notificationAlertSetting'] != 'enabled')
+          'notificationAlertSetting',
+        if (handoff['notificationBadgeSetting'] != 'enabled')
+          'notificationBadgeSetting',
+      ];
       throw _DriverFailure(
         'The private receiver handoff is not bound to the exact receiver, '
         'peer, bundle, nonce, authorized alerts and badges, and development APNs '
-        'environment.',
+        'environment (mismatched: ${mismatched.join(', ')}).',
         _assertionsAttempted,
       );
     }
@@ -1949,6 +2043,39 @@ final class _IosPayloadDriver {
       );
     }
     _applicationInstalled = true;
+    await _stageReceiverAutoSetup();
+  }
+
+  /// Cleanup uninstalls the app, so every attempt installs it fresh with no
+  /// account. The production build creates one only through onboarding or
+  /// Documents/auto_setup.json; without it the node never starts and the
+  /// receiver bootstrap can never publish its handoff.
+  Future<void> _stageReceiverAutoSetup() async {
+    final local = File('${options.captureDirectory.path}/auto_setup.json')
+      ..writeAsStringSync('{"username":"SimsPayloadReceiver"}\n', flush: true);
+    final copy = await _runCommand('xcrun', <String>[
+      'devicectl',
+      'device',
+      'copy',
+      'to',
+      '--device',
+      options.receiverDeviceId,
+      '--source',
+      local.path,
+      '--destination',
+      'Documents/auto_setup.json',
+      '--domain-type',
+      'appDataContainer',
+      '--domain-identifier',
+      _bundleId,
+      '--quiet',
+    ], timeout: const Duration(minutes: 2));
+    if (copy.exitCode != 0) {
+      throw _deviceCommandFailure(
+        'The receiver auto-setup file could not be staged.',
+        copy,
+      );
+    }
   }
 
   Future<void> _startSyslog() async {
@@ -2707,9 +2834,20 @@ final class _IosPayloadDriver {
 
   void _throwFinalizationFailures(List<Object> failures) {
     if (failures.isEmpty) return;
+    // A throw from `finally` replaces the phase's original failure; keep its
+    // driver-authored detail so the report still names the first cause.
+    final primary = _primaryFailure;
+    final primaryDetail = switch (primary) {
+      null => '',
+      _DriverFailure(:final detail) => ' First failure: $detail',
+      _DriverBlocked(:final blocker, :final detail) =>
+        ' First failure: $blocker: $detail',
+      _ => ' First failure: ${primary.runtimeType}.',
+    };
     throw _DriverFailure(
       'Phase finalization retained ${failures.length} bounded diagnostic, '
-      'cleanup, or private-deletion failure(s) after all owners were attempted.',
+      'cleanup, or private-deletion failure(s) after all owners were attempted.'
+      '$primaryDetail',
       _assertionsAttempted,
     );
   }
@@ -3093,6 +3231,8 @@ final class _IosPayloadDriver {
       'senderProjectionSeeded': _senderProjectionSeeded,
       'senderProjectionCleaned': _senderProjectionCleaned,
       'uiCleanupComplete': _uiCleanupComplete,
+      if (_receiverBootstrapFailureCode != null)
+        'receiverBootstrapFailureCode': _receiverBootstrapFailureCode,
       if (counts != null) 'completeWindowCounts': counts.toJson(),
       'recordedAt': DateTime.now().toUtc().toIso8601String(),
     };

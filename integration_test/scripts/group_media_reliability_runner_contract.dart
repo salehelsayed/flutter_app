@@ -316,6 +316,12 @@ Future<GroupMediaReliabilityRunnerResult> runGroupMediaReliabilityRunner({
       'harness',
       'Group media artifact custody failed: ${error.message}',
     );
+  } on StateError catch (error) {
+    // Controller failures carry fixed, driver-authored stage details.
+    return GroupMediaReliabilityRunnerResult.failed(
+      'The group media scenario failed before a validated artifact existed: '
+      '${error.message}',
+    );
   } on Object {
     return GroupMediaReliabilityRunnerResult.failed(
       'The group media scenario failed before a validated artifact existed.',

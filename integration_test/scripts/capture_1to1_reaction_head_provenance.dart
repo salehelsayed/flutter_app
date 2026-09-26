@@ -7,6 +7,7 @@ import 'dart:math';
 
 import 'package:crypto/crypto.dart';
 
+import '../support/android_app_state_guard.dart';
 import '_android_app_package.dart';
 import 'android_notification_recovery_completion_criteria.dart'
     show parseAndroidCanonicalRecoveryJobIds;
@@ -260,7 +261,8 @@ Future<void> main(List<String> args) async {
   } on _CampaignFailure catch (failure, stackTrace) {
     campaign.writeFailure(failure, stackTrace);
     stderr.writeln(
-      'TC-00 CAPTURE FAILED [${failure.stage}]: ${failure.message}',
+      '${campaign._testCase} CAPTURE FAILED '
+      '[${failure.stage}]: ${failure.message}',
     );
     exit(failure.environmentBlocked ? 78 : 1);
   }
@@ -511,6 +513,7 @@ class _HeadProvenanceCampaign {
 
   Directory? _cleanWorktree;
   Directory? _stateBackupDirectory;
+  AndroidAppStateGuard? _firstWakeStateGuard;
   final Map<String, _InitialAndroidPackageState> _initialPackageStates =
       <String, _InitialAndroidPackageState>{};
   final List<_DirectTextRelaySendEvidence> _directTextRelaySends =
@@ -927,6 +930,16 @@ class _HeadProvenanceCampaign {
     } on _CampaignFailure catch (failure, stackTrace) {
       primaryFailure = failure;
       primaryStackTrace = stackTrace;
+    } on AndroidAppStateFailure catch (failure, stackTrace) {
+      primaryFailure = _CampaignFailure(_stage, failure.detail);
+      primaryStackTrace = stackTrace;
+    } on AndroidAppStateBlocked catch (failure, stackTrace) {
+      primaryFailure = _CampaignFailure(
+        _stage,
+        failure.detail,
+        environmentBlocked: true,
+      );
+      primaryStackTrace = stackTrace;
     } on Object catch (_, stackTrace) {
       primaryFailure = _CampaignFailure(_stage, 'Unexpected campaign failure.');
       primaryStackTrace = stackTrace;
@@ -943,6 +956,8 @@ class _HeadProvenanceCampaign {
       await _removeCleanWorktree();
     } on _CampaignFailure catch (failure) {
       cleanupFailure = failure;
+    } on AndroidAppStateFailure catch (failure) {
+      cleanupFailure = _CampaignFailure('restoration', failure.detail);
     } on Object {
       cleanupFailure = _CampaignFailure(
         'restoration',
@@ -1593,7 +1608,8 @@ class _HeadProvenanceCampaign {
     );
     await _deleteAppFile(owner.deviceId, 'intro_e2e_config.json');
     await _deleteAppFile(owner.deviceId, 'intro_e2e_result.json');
-    await _launch(owner.deviceId);
+    // The one-shot command is already consumed before its terminal receipt.
+    // Keep this ready peer alive for the next peer's authorization exchange.
   }
 
   Future<Map<String, dynamic>> _waitForIntroE2EStepCompletion({
@@ -1702,7 +1718,8 @@ class _HeadProvenanceCampaign {
     );
     await _deleteAppFile(owner.deviceId, 'intro_e2e_config.json');
     await _deleteAppFile(owner.deviceId, 'intro_e2e_result.json');
-    await _launch(owner.deviceId);
+    // A cold restart here makes the next exchange race receiver bootstrap.
+    // The completed one-shot command does not need another launch to retire.
   }
 
   Future<void> _openConversation(_Party owner, String contactUsername) async {
@@ -2192,12 +2209,7 @@ class _HeadProvenanceCampaign {
   /// metric probe still detects any route that was actually left behind.
   Future<void> _stopRecipientAfterRouteUnregister() async {
     await _adbShell(recipientId, ['input', 'keyevent', 'KEYCODE_HOME']);
-    await _adbShell(recipientId, [
-      'cmd',
-      'activity',
-      'stop-app',
-      appPackage,
-    ]);
+    await _adbShell(recipientId, ['cmd', 'activity', 'stop-app', appPackage]);
     await _waitForProcessAndActivityAbsent(recipientId);
   }
 
@@ -2422,7 +2434,12 @@ class _HeadProvenanceCampaign {
 
     // Clear the final exact card without tapping it, then authenticate removal
     // of the fresh recipient route while that identity is still active.
+    // The relaunched process registers its push route on startup; let that
+    // registration land first so it cannot re-create the route after the
+    // unregister below.
+    await _adb(recipientId, const <String>['logcat', '-c']);
     await _launch(recipientId);
+    await _waitForRecipientPushRegistrationAccepted();
     await _openConversation(recipient, sender.username);
     await _waitForZeroAppCards('transition B exact-chat retirement');
     final unregisterReceipt = await _runNotificationPayloadAction(
@@ -2636,26 +2653,46 @@ class _HeadProvenanceCampaign {
     var iteration = 0;
     final snapshots = <Map<String, Object?>>[];
     String runtimeLog = '';
+    Future<void> refreshRelayObservation() async {
+      relayJournal = await _relayJournalSince(windowStart);
+      relayMatched = classifyRelayCapture(
+        log: relayJournal,
+        senderPrefix: sender.peerPrefix,
+        recipientPrefix: recipient.peerPrefix,
+      ).relayMatchedEvent;
+      routeAfter = await _fixedRouteSnapshot('$stem-route-after');
+      final opaqueDelta = routeAfter.opaque - routeBefore.opaque;
+      final richDelta = routeAfter.rich - routeBefore.rich;
+      if (opaqueDelta > 1 || richDelta != 0) {
+        throw _CampaignFailure(
+          _stage,
+          '$stem selected-route counter escaped the exact opaque +1/rich +0 window.',
+        );
+      }
+    }
+
     final deadline = DateTime.now().add(const Duration(minutes: 2));
     while (DateTime.now().isBefore(deadline)) {
-      final senderLog = await _adb(senderId, const <String>[
-        'logcat',
-        '-d',
-        '-v',
-        'brief',
-      ]);
-      reactionId ??= extractReactionSuccessId(senderLog.stdout);
-      final recipientLog = await _adb(recipientId, const <String>[
-        'logcat',
-        '-d',
-        '-v',
-        'brief',
-      ]);
-      runtimeLog = recipientLog.stdout;
-      final dump = await _notificationDump(recipientId);
-      final summary = _notificationSnapshot(dump);
+      final observation = await captureAndroidFixedWakeObservation(
+        readSenderLog: () async => (await _adb(senderId, const <String>[
+          'logcat',
+          '-d',
+          '-v',
+          'brief',
+        ])).stdout,
+        readRecipientLog: () async => (await _adb(recipientId, const <String>[
+          'logcat',
+          '-d',
+          '-v',
+          'brief',
+        ])).stdout,
+        readNotificationDump: () => _notificationDump(recipientId),
+      );
+      reactionId ??= extractReactionSuccessId(observation.senderLog);
+      runtimeLog = observation.recipientLog;
+      final summary = _notificationSnapshot(observation.notificationDump);
       snapshots.add(<String, Object?>{
-        'capturedAt': DateTime.now().toUtc().toIso8601String(),
+        'capturedAt': observation.notificationCapturedAt.toIso8601String(),
         ...summary,
       });
       genericObserved =
@@ -2690,22 +2727,11 @@ class _HeadProvenanceCampaign {
         }
       }
 
-      if (iteration % 4 == 0) {
-        relayJournal = await _relayJournalSince(windowStart);
-        relayMatched = classifyRelayCapture(
-          log: relayJournal,
-          senderPrefix: sender.peerPrefix,
-          recipientPrefix: recipient.peerPrefix,
-        ).relayMatchedEvent;
-        routeAfter = await _fixedRouteSnapshot('$stem-route-after');
-        final opaqueDelta = routeAfter.opaque - routeBefore.opaque;
-        final richDelta = routeAfter.rich - routeBefore.rich;
-        if (opaqueDelta > 1 || richDelta != 0) {
-          throw _CampaignFailure(
-            _stage,
-            '$stem selected-route counter escaped the exact opaque +1/rich +0 window.',
-          );
-        }
+      // Warm recovery can retire the generic card within a second. Observe it
+      // before collecting slower relay diagnostics, which otherwise leave a
+      // gap covering its entire lifetime. All route assertions remain required.
+      if (genericObserved && iteration % 4 == 0) {
+        await refreshRelayObservation();
       }
 
       final ingressExact =
@@ -2760,6 +2786,8 @@ class _HeadProvenanceCampaign {
       iteration += 1;
       await Future<void>.delayed(const Duration(milliseconds: 250));
     }
+    // Retain actual relay diagnostics even when the card was never observed.
+    await refreshRelayObservation();
     final timeoutIngressExact =
         ingress != null &&
         ingress['triggerKind'] == 'FIXED_WAKE' &&
@@ -3071,6 +3099,24 @@ class _HeadProvenanceCampaign {
         }
       }
       await Future<void>.delayed(const Duration(milliseconds: 500));
+    }
+    // Keep the timeout evidence the success path would have written, plus the
+    // final JobScheduler state, so the missing condition stays diagnosable.
+    _writeRuntimeEvidence('$stem-timeout-runtime.jsonl', runtimeLog);
+    _writeJsonEvidence('$stem-timeout-notification-snapshots.json', {
+      'snapshots': snapshots,
+    });
+    if (requireHeadlessWorker) {
+      File(
+        '${artifactDir.path}/$stem-jobscheduler-resume.log',
+      ).writeAsStringSync(forceAudit.toString(), flush: true);
+      try {
+        File(
+          '${artifactDir.path}/$stem-timeout-jobscheduler.txt',
+        ).writeAsStringSync(await _jobschedulerDump(), flush: true);
+      } on Object {
+        // Diagnostic only; the timeout below stays the reported failure.
+      }
     }
     throw _CampaignFailure(
       _stage,
@@ -3696,12 +3742,28 @@ class _HeadProvenanceCampaign {
   }) async {
     _stage = 'unread_lifecycle';
     await _reopenRecipientAtOrbit();
-    await _waitForOrbitUnread(0);
+    final orbitCounts = <int>[await _waitForOrbitUnread(0)];
     await _requireCleanNotificationSlate();
 
     final markerBase = DateTime.now().toUtc().microsecondsSinceEpoch;
-    final firstMarker = 'TC256-unread-1-$markerBase';
-    final secondMarker = 'TC256-unread-2-$markerBase';
+    final firstMarker = 'TC256-$markerBase-unread-1';
+    final secondMarker = 'TC256-$markerBase-unread-2';
+    final sqlObservations = <Map<String, Object?>>[];
+    Future<void> observeSql(String phase, int expectedUnread) async {
+      // The centrally prepared production-FCM profile already enables the
+      // existing E2E file channel. Legacy normal-APK runs do not claim SQL.
+      if (!noChildBuilds) return;
+      sqlObservations.add(
+        await _observeDirectUnreadSql(
+          runId: '$markerBase',
+          phase: phase,
+          markers: <String>[firstMarker, secondMarker],
+          expectedUnread: expectedUnread,
+        ),
+      );
+    }
+
+    await observeSql('before', 0);
 
     if (publicRelayProof) await _terminateRecipient();
     await _sendUiMessageFromSender(
@@ -3711,13 +3773,15 @@ class _HeadProvenanceCampaign {
     final firstCapture = await _waitForSingleOrdinaryMessageCard(firstMarker);
     final firstCard = firstCapture.$1;
     if (publicRelayProof) await _reopenRecipientAtOrbit();
-    await _waitForOrbitUnread(1);
+    orbitCounts.add(await _waitForOrbitUnread(1));
+    await observeSql('first', 1);
     _writeSanitizedCardEvidence(
       'recipient_unread_first_notification.txt',
       firstCard,
     );
     await _dismissSingleNotification(firstCard.title);
-    await _waitForOrbitUnread(1);
+    orbitCounts.add(await _waitForOrbitUnread(1));
+    await observeSql('dismissed', 1);
 
     if (publicRelayProof) await _terminateRecipient();
     await _sendUiMessageFromSender(
@@ -3727,7 +3791,8 @@ class _HeadProvenanceCampaign {
     final secondCapture = await _waitForSingleOrdinaryMessageCard(secondMarker);
     final secondCard = secondCapture.$1;
     if (publicRelayProof) await _reopenRecipientAtOrbit();
-    await _waitForOrbitUnread(2);
+    orbitCounts.add(await _waitForOrbitUnread(2));
+    await observeSql('second', 2);
     _writeSanitizedCardEvidence(
       'recipient_unread_second_notification.txt',
       secondCard,
@@ -3760,14 +3825,62 @@ class _HeadProvenanceCampaign {
       secondMarker,
       const Duration(seconds: 45),
     );
+    Map<String, Object?>? readCommit;
+    if (noChildBuilds) {
+      readCommit = await _waitForValue<Map<String, Object?>>(
+        'repository read completion after the notification tap',
+        const Duration(seconds: 45),
+        () async {
+          final log = await _adb(recipientId, ['logcat', '-d', '-v', 'brief']);
+          return directUnreadReadCommitReceipt(log.stdout);
+        },
+      );
+      File(
+        '${artifactDir.path}/recipient_unread_read_commit.json',
+      ).writeAsStringSync(
+        const JsonEncoder.withIndent('  ').convert(readCommit),
+      );
+    }
     await _reopenRecipientAtOrbit();
-    await _waitForOrbitUnread(0);
+    orbitCounts.add(await _waitForOrbitUnread(0));
+    await observeSql('read', 0);
+
+    if (noChildBuilds) {
+      final initialCount = sqlObservations.first['messageCount'] as int;
+      const deltas = <int>[0, 1, 1, 2, 2];
+      final stableIds = <String, String>{};
+      for (var i = 0; i < sqlObservations.length; i++) {
+        final observation = sqlObservations[i];
+        if (observation['messageCount'] != initialCount + deltas[i]) {
+          throw _CampaignFailure(
+            _stage,
+            'Unexpected direct message row count.',
+          );
+        }
+        for (final row in (observation['messages'] as List).cast<Map>()) {
+          if (row['rows'] != 1) continue;
+          final marker = row['markerSha256'] as String;
+          final id = row['messageIdSha256'] as String;
+          if (stableIds.putIfAbsent(marker, () => id) != id) {
+            throw _CampaignFailure(_stage, 'Direct message identity changed.');
+          }
+        }
+      }
+    }
 
     return <String, Object?>{
       'status': 'passed',
       'initialUnreadAtZero': true,
       if (!publicRelayProof) 'reactionLeftUnreadAtZero': true,
-      'unreadCounts': const <int>[0, 1, 1, 2, 0],
+      'unreadCounts': orbitCounts,
+      if (noChildBuilds) ...<String, Object?>{
+        'sqlCipherReadAtEveryStep': sqlObservations.length == 5,
+        'sqlUnreadCounts': sqlObservations
+            .map((row) => row['unreadCount'])
+            .toList(),
+        'sqlObservations': sqlObservations,
+        'readCommit': readCommit,
+      },
       'dismissalPreservedUnread': true,
       'firstNotificationId': firstCard.id,
       'secondNotificationId': secondCard.id,
@@ -3795,6 +3908,125 @@ class _HeadProvenanceCampaign {
           '${artifactDir.path}/recipient_unread_first_notification.txt',
       'secondEvidencePath':
           '${artifactDir.path}/recipient_unread_second_notification.txt',
+    };
+  }
+
+  Future<Map<String, Object?>> _observeDirectUnreadSql({
+    required String runId,
+    required String phase,
+    required List<String> markers,
+    required int expectedUnread,
+  }) async {
+    final nonce =
+        'n-${DateTime.now().microsecondsSinceEpoch}-'
+        '${Random.secure().nextInt(0x7fffffff)}';
+    final stepId = 'direct-observe-$runId-$phase';
+    await _deleteAppFile(recipientId, 'intro_e2e_result.json');
+    await _writeAppFile(
+      recipientId,
+      'intro_e2e_config.json',
+      jsonEncode({
+        'schema': 'mknoon.direct-notification-state-request.v1',
+        'transport_action': 'direct_notification_state_observe',
+        'runId': runId,
+        'nonce': nonce,
+        'stepId': stepId,
+        'scenario': 'android_message_unread_lifecycle',
+        'phase': phase,
+        'contactPeerId': sender.peerId,
+        'markers': markers,
+      }),
+    );
+    // The existing Orbit boundary is already foregrounded. A relaunch or
+    // generic intro command here could drain traffic or commit read state.
+    final receipt = await _waitForValue<Map<String, Object?>>(
+      'passive direct SQL observation $phase',
+      const Duration(seconds: 45),
+      () async {
+        final raw = await _readAppFile(recipientId, 'intro_e2e_result.json');
+        if (raw == null) return null;
+        try {
+          final value = jsonDecode(raw);
+          if (value is! Map ||
+              value['schema'] != 'mknoon.direct-notification-state-result.v1') {
+            return null;
+          }
+          if (value['runId'] != runId ||
+              value['nonce'] != nonce ||
+              value['stepId'] != stepId ||
+              value['phase'] != phase) {
+            return null;
+          }
+          if (value['status'] == 'failed') {
+            throw _CampaignFailure(
+              _stage,
+              'Direct SQL observation failed at $phase.',
+            );
+          }
+          return Map<String, Object?>.from(value);
+        } on FormatException {
+          return null;
+        }
+      },
+    );
+    String digest(String value) =>
+        sha256.convert(utf8.encode(value)).toString();
+    final observed = receipt['messages'];
+    final expectedRows = phase == 'before'
+        ? <int>[0, 0]
+        : <String>{'first', 'dismissed'}.contains(phase)
+        ? <int>[1, 0]
+        : <int>[1, 1];
+    if (receipt['status'] != 'complete' ||
+        receipt['success'] != true ||
+        receipt['scenario'] != 'android_message_unread_lifecycle' ||
+        receipt['transport_action'] != 'direct_notification_state_observe' ||
+        receipt['contactPeerIdSha256'] != digest(sender.peerId) ||
+        receipt['unreadCount'] != expectedUnread ||
+        observed is! List ||
+        observed.length != markers.length) {
+      throw _CampaignFailure(
+        _stage,
+        'Direct SQL observation disagreed at $phase.',
+      );
+    }
+    final ids = <String>{};
+    for (var i = 0; i < markers.length; i++) {
+      final row = observed[i];
+      if (row is! Map ||
+          row['markerSha256'] != digest(markers[i]) ||
+          row['rows'] != expectedRows[i]) {
+        throw _CampaignFailure(
+          _stage,
+          'Direct SQL marker row mismatch at $phase.',
+        );
+      }
+      if (expectedRows[i] == 0) continue;
+      final id = row['messageIdSha256'];
+      if (row['incoming'] != true ||
+          row['hidden'] != false ||
+          row['read'] != (phase == 'read') ||
+          id is! String ||
+          !RegExp(r'^[0-9a-f]{64}$').hasMatch(id) ||
+          !ids.add(id)) {
+        throw _CampaignFailure(
+          _stage,
+          'Direct SQL read-state mismatch at $phase.',
+        );
+      }
+    }
+    await _deleteAppFile(recipientId, 'intro_e2e_config.json');
+    await _deleteAppFile(recipientId, 'intro_e2e_result.json');
+    final evidence = File(
+      '${artifactDir.path}/recipient_unread_sql_$phase.json',
+    );
+    evidence.writeAsStringSync(
+      const JsonEncoder.withIndent('  ').convert(receipt),
+    );
+    return <String, Object?>{
+      ...receipt,
+      'evidencePath': evidence.path,
+      'evidenceSha256': sha256.convert(evidence.readAsBytesSync()).toString(),
     };
   }
 
@@ -3954,13 +4186,14 @@ class _HeadProvenanceCampaign {
     }
   }
 
-  Future<void> _waitForOrbitUnread(int expected) async {
-    await _waitFor(
+  Future<int> _waitForOrbitUnread(int expected) async {
+    return _waitForValue<int>(
       'Orbit unread count $expected for ${sender.username}',
       const Duration(seconds: 60),
       () async {
         final xml = await _uiDump(recipientId);
-        return extractOrbitUnreadCount(xml, sender.username) == expected;
+        final observed = extractOrbitUnreadCount(xml, sender.username);
+        return observed == expected ? observed : null;
       },
     );
   }
@@ -4282,6 +4515,40 @@ class _HeadProvenanceCampaign {
 
   Future<void> _captureInitialDeviceState() async {
     _stage = 'initial_state_capture';
+    if (firstWakeProfileAot) {
+      for (final deviceId in <String>[senderId, recipientId]) {
+        await _requireProcessAndActivityAbsent(
+          deviceId,
+          environmentBlocked: true,
+        );
+        final cards = extractActiveNotificationCards(
+          await _notificationDump(deviceId),
+          packageName: appPackage,
+        );
+        if (cards.isNotEmpty) {
+          throw _CampaignFailure(
+            _stage,
+            'Initial app notification state on $deviceId is not empty.',
+            environmentBlocked: true,
+          );
+        }
+        _initialPackageStates[deviceId] = _InitialAndroidPackageState(
+          installed: (await _installedPackagePaths(deviceId)).isNotEmpty,
+        )..baselineNotificationSha256 = _notificationCardsSha256(cards);
+      }
+      // Reuse the shared guard's verified cache metadata/content restoration
+      // and durable recovery manifest instead of the legacy tar replay below.
+      final guard = await AndroidAppStateGuard.capture(
+        devices: <String>[senderId, recipientId],
+        packageName: appPackage,
+        backupLabel: 'first-wake-profile-aot',
+        maximumPrivateBackupBytes: 256 * 1024 * 1024,
+      );
+      _firstWakeStateGuard = guard;
+      _stateBackupDirectory = guard.backupDirectory;
+      _initialStateCaptureComplete = true;
+      return;
+    }
     final backup = await Directory.systemTemp.createTemp(
       'mknoon-direct-text-state-',
     );
@@ -4490,6 +4757,38 @@ class _HeadProvenanceCampaign {
   Future<void> _restoreExactInitialDeviceState() async {
     if (_exactRestorationComplete) return;
     _stage = 'restoration';
+    if (firstWakeProfileAot) {
+      final guard = _firstWakeStateGuard;
+      if (guard == null) {
+        // Capture owns recovery for its own partial failures. The campaign
+        // cannot have installed a candidate before capture completes.
+        if (_deviceMutationStarted) {
+          throw _CampaignFailure(_stage, 'Initial state guard is unavailable.');
+        }
+        return;
+      }
+      await guard.restoreAll();
+      for (final deviceId in <String>[senderId, recipientId]) {
+        await _requireProcessAndActivityAbsent(deviceId);
+        final cards = extractActiveNotificationCards(
+          await _notificationDump(deviceId),
+          packageName: appPackage,
+        );
+        final state = _initialPackageStates[deviceId]!;
+        if (_notificationCardsSha256(cards) !=
+            state.baselineNotificationSha256) {
+          throw _CampaignFailure(
+            _stage,
+            'Notification state was not restored exactly on $deviceId.',
+          );
+        }
+        state.packageStateRestored = true;
+        state.privateDataRestored = true;
+      }
+      await _cleanupGeneratedBuildArtifacts();
+      _exactRestorationComplete = true;
+      return;
+    }
     final failures = <String>[];
     for (final deviceId in <String>[senderId, recipientId]) {
       final state = _initialPackageStates[deviceId];
@@ -5223,7 +5522,16 @@ class _HeadProvenanceCampaign {
     final normalApk = _build?.normalApk;
     if (normalApk == null || !normalApk.existsSync()) return;
     for (final id in [senderId, recipientId]) {
+      // Retire the foreground task before replacing its package; otherwise
+      // System UI can enqueue a relaunch that outlives the post-install stop.
+      await _adbShell(id, ['am', 'force-stop', appPackage]);
+      await _waitForProcessAndActivityAbsent(id);
       await _installApk(id, normalApk, allowFail: true);
+      // Android can relaunch an updated foreground package during install.
+      // Finish this campaign with its fixture app idle so a later guarded
+      // campaign can capture a consistent private-data baseline.
+      await _adbShell(id, ['am', 'force-stop', appPackage]);
+      await _waitForProcessAndActivityAbsent(id);
     }
     if (!keepBuildArtifacts) {
       for (final apk in [_build!.e2eApk, _build!.normalApk]) {
@@ -5642,16 +5950,36 @@ class _HeadProvenanceCampaign {
     );
     final out = StringBuffer();
     final err = StringBuffer();
-    final outDone = process.stdout.transform(utf8.decoder).forEach((chunk) {
+    final outSubscription = process.stdout.transform(utf8.decoder).listen((
+      chunk,
+    ) {
       out.write(chunk);
       stdout.write(chunk);
     });
-    final errDone = process.stderr.transform(utf8.decoder).forEach((chunk) {
+    final errSubscription = process.stderr.transform(utf8.decoder).listen((
+      chunk,
+    ) {
       err.write(chunk);
       stderr.write(chunk);
     });
+    final outDone = outSubscription.asFuture<void>();
+    final errDone = errSubscription.asFuture<void>();
     final exitCode = await process.exitCode;
-    await Future.wait([outDone, errDone]);
+    // A finished command can leave descendants (flutter build ios forks) that
+    // inherited stdout/stderr and keep the pipes open indefinitely. The exit
+    // code is authoritative; drain the remaining output for a bounded time.
+    await Future.wait(<Future<void>>[outDone, errDone]).timeout(
+      const Duration(seconds: 30),
+      onTimeout: () async {
+        await outSubscription.cancel();
+        await errSubscription.cancel();
+        stdout.writeln(
+          'NOTE: $executable exited $exitCode; output pipes stayed open after '
+          'exit, stopped draining after 30 s.',
+        );
+        return const <void>[];
+      },
+    );
     if (exitCode != 0) {
       throw _CampaignFailure(
         _stage,

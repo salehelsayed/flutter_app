@@ -5,6 +5,10 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT_DIR"
 
+# The contract pins direct-caller --concurrency behavior. An outer check
+# wrapper exports its own worker budget, which the gate would apply instead.
+unset MKNOON_HOST_FLUTTER_WORKERS
+
 fail() {
   printf 'FAIL: %s\n' "$1" >&2
   exit 1

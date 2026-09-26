@@ -363,6 +363,60 @@ void main() {
     },
   );
 
+  test(
+    'recovery drain converges when only a foreground-deferred delivery receipt remains',
+    () async {
+      final bridge = _RecoveryBridge()
+        ..when('node:start', (_) => _nodeState(peerId: 'self-peer'))
+        ..when(
+          'inbox:retrieve_pending',
+          (_) => <String, dynamic>{
+            'ok': true,
+            'messages': <dynamic>[],
+            'hasMore': false,
+            'custodyContract': ackOrExpiryInboxCustodyContract,
+          },
+        );
+      final repo = InMemoryInboxStagingRepository()
+        ..seed(
+          InboxStagingEntry(
+            entryId: 'receipt',
+            ownerPeerId: 'self-peer',
+            senderPeerId: 'remote-peer',
+            messageType: 'delivery_receipt',
+            relayTimestamp: '2026-08-16T00:00:00.000Z',
+            envelope: jsonEncode(<String, dynamic>{
+              'type': 'delivery_receipt',
+              'messageId': 'sent-1',
+            }),
+            stagedAt: '2026-08-16T00:00:00.000Z',
+          ),
+        );
+      final service = P2PServiceImpl(
+        bridge: bridge,
+        inboxStagingRepository: repo,
+        recoveryOnly: true,
+      );
+      addTearDown(service.dispose);
+
+      expect(
+        await service.startRecoveryOnlyNode(privateKey, 'self-peer'),
+        isTrue,
+      );
+      final outcome = await service.drainOfflineInboxFully();
+
+      expect(outcome.isSuccessful, isTrue);
+      expect(outcome.hasMore, isFalse);
+      expect(outcome.failureReason, isNull);
+      // The receipt stays durable for the foreground runtime to apply.
+      expect(repo.entry('receipt')?.status, 'retryable');
+      expect(
+        repo.entry('receipt')?.rejectReasonCode,
+        'typed_handler_unavailable',
+      );
+    },
+  );
+
   test('recovery seal awaits admitted LAN staged replay', () async {
     final bridge = _RecoveryBridge()
       ..when('node:start', (_) => _nodeState(peerId: 'self-peer'));

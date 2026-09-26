@@ -1735,6 +1735,10 @@ type SendMessageResult struct {
 	WriteMs               int64
 	AckWaitMs             int64
 	ConnectionDiagnostics []ConnectionDiagnostic
+
+	// staleRelayCircuitClosed reports that the ACK wait failed on a relayed
+	// connection that then failed its responsiveness probe and was closed.
+	staleRelayCircuitClosed bool
 }
 
 func isAffirmativeAckFrame(reply []byte) bool {
@@ -1802,7 +1806,34 @@ func (n *Node) SendMessageWithTransport(peerIdStr string, message string, timeou
 
 // SendMessageWithNotificationPolicy preserves the exact encrypted frame and
 // negotiates a separate protocol when the receiver must omit a new alert.
-func (n *Node) SendMessageWithNotificationPolicy(peerIdStr string, message string, timeoutMs int, quietRecovery bool) (resultValue SendMessageResult, resultErr error) {
+// staleRelayProbeTimeout bounds the one responsiveness probe run after an ACK
+// read timeout on a relayed connection.
+const staleRelayProbeTimeout = 2 * time.Second
+
+func (n *Node) SendMessageWithNotificationPolicy(peerIdStr string, message string, timeoutMs int, quietRecovery bool) (SendMessageResult, error) {
+	started := time.Now()
+	result, err := n.sendMessageAttempt(peerIdStr, message, timeoutMs, quietRecovery, true)
+	if err != nil || result.Acked || !result.staleRelayCircuitClosed {
+		return result, err
+	}
+	timeout := SendTimeout
+	if timeoutMs > 0 {
+		timeout = time.Duration(timeoutMs) * time.Millisecond
+	}
+	remaining := timeout - time.Since(started)
+	if remaining <= CommittedAckReserve {
+		return result, err
+	}
+	// The written frame went into a relay circuit whose far end no longer
+	// answers, so it was never received. A receiver treats a repeated message
+	// id as a duplicate, which keeps this single resend idempotent.
+	log.Printf("[SEND] stale_relay_circuit_closed resending_once transport=%s ack_wait_ms=%d remaining_ms=%d", result.Transport, result.AckWaitMs, remaining.Milliseconds())
+	retry, retryErr := n.sendMessageAttempt(peerIdStr, message, int(remaining.Milliseconds()), quietRecovery, false)
+	retry.ConnectionDiagnostics = append(result.ConnectionDiagnostics, retry.ConnectionDiagnostics...)
+	return retry, retryErr
+}
+
+func (n *Node) sendMessageAttempt(peerIdStr string, message string, timeoutMs int, quietRecovery bool, allowStaleRelayRetry bool) (resultValue SendMessageResult, resultErr error) {
 	d := &connectionDiagnostics{}
 	defer func() { resultValue.ConnectionDiagnostics = d.records }()
 	n.mu.RLock()
@@ -1913,8 +1944,20 @@ func (n *Node) SendMessageWithNotificationPolicy(peerIdStr string, message strin
 	ackWaitMs := time.Since(ackStart).Milliseconds()
 	if err != nil {
 		// Message was written but ACK read failed
+		if conn := s.Conn(); conn != nil {
+			// Diagnostic only: identify a reused connection whose remote
+			// process may already be gone (relayed QUIC keeps it open).
+			log.Printf("[SEND] ack_read_failed transport=%s limited=%t conn_age_ms=%d conn_closed=%t ack_wait_ms=%d",
+				transport, conn.Stat().Limited,
+				time.Since(conn.Stat().Opened).Milliseconds(), conn.IsClosed(),
+				time.Since(ackStart).Milliseconds())
+		}
 		_ = s.Reset()
-		n.noteSendTimeout(commandCtx, h, s.Conn(), err)
+		if allowStaleRelayRetry && n.closeUnresponsiveRelayConn(commandCtx, h, s.Conn()) {
+			writtenResult.staleRelayCircuitClosed = true
+		} else {
+			n.noteSendTimeout(commandCtx, h, s.Conn(), err)
+		}
 		writtenResult.AckWaitMs = ackWaitMs
 		return writtenResult, nil
 	}

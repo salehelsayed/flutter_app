@@ -432,7 +432,7 @@
         "relay_addresses"
       ],
       "sources": {
-        "integration_test/background_reconnect_test.dart": "8673a3b793a5ca4039809b3ec8ba3630d5083b3142b9b667775eead340d4ab53"
+        "integration_test/background_reconnect_test.dart": "13a7fed413fe3695f4ac2040e7dfb5f63555ab793ba5d25832efed68a95862ab"
       },
       "audit": "Exact original selected dispatch, with an explicit -d/--device target; no fallback selector.",
       "owns": [
@@ -2655,7 +2655,7 @@
         "relay_addresses"
       ],
       "sources": {
-        "integration_test/background_reconnect_test.dart": "8673a3b793a5ca4039809b3ec8ba3630d5083b3142b9b667775eead340d4ab53"
+        "integration_test/background_reconnect_test.dart": "13a7fed413fe3695f4ac2040e7dfb5f63555ab793ba5d25832efed68a95862ab"
       },
       "audit": "Audited exact leaf parser and all target-control calls; explicit role injection precedes any preparation. Shared-directory peers use iOS simulators; Android-capable pair transports use USB plus emulator.",
       "owns": [
@@ -4391,7 +4391,7 @@
       ],
       "sources": {
         "scripts/push_fixture_to_simulator.sh": "7bfec06efaff5d7903f94539aa8954a93b56a9b6e846526eaa7971ec5698814f",
-        "scripts/run_ios_notification_tap_ui_smoke.sh": "2517442daac197f385322879bc4cdd197beb0730a3e2f71dcdda10b5282ec5c1"
+        "scripts/run_ios_notification_tap_ui_smoke.sh": "74d9f078f303b23e54c827d92f802c6f6d98a6620038a8e385223b508b7dd901"
       },
       "audit": "Audited exact leaf parser and all target-control calls; explicit role injection precedes any preparation. Shared-directory peers use iOS simulators; Android-capable pair transports use USB plus emulator.",
       "owns": [

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:crypto/crypto.dart';
@@ -319,7 +320,53 @@ Map<String, Object?> privateMediaOutboxE2EFailureReceipt({
   return <String, Object?>{
     ..._baseReceipt(request, status: 'failed', success: false),
     'errorType': error.runtimeType.toString(),
+    'failureCode': _privateMediaOutboxFailureCode(error),
   };
+}
+
+// Never serialize exception messages: only exact, fixed harness boundaries
+// can contribute a diagnostic code. Unknown errors retain their type alone.
+String _privateMediaOutboxFailureCode(Object error) {
+  const stateCodes = <String, String>{
+    'private-media outbox composer is not clean': 'composer_not_clean',
+    'private-media outbox conversation is already running': 'endpoint_busy',
+    'private-media outbox conversation is not mounted':
+        'conversation_not_mounted',
+    'private-media outbox conversation did not mount':
+        'conversation_not_mounted',
+    'private-media outbox contact binding rejected': 'contact_binding',
+    'private-media outbox route was disposed': 'route_disposed',
+    'private-media outbox lifecycle baseline is missing': 'lifecycle_baseline',
+    'private-media outbox initial issuance count rejected':
+        'initial_issuance_count',
+    'private-media outbox issued an offline resume attempt':
+        'offline_resume_attempt',
+    'private-media outbox correlated sender events are not exactly once':
+        'sender_event_order',
+  };
+  if (error is StateError) return stateCodes[error.message] ?? 'unknown';
+  const timeoutCodes = <String, String>{
+    'private-media outbox timed out waiting for host release':
+        'host_release_timeout',
+    'private-media outbox timed out waiting for exact incoming private media':
+        'incoming_media_timeout',
+    'private-media outbox timed out waiting for durable queued private media':
+        'queued_media_timeout',
+    'private-media outbox timed out waiting for queued state after offline resume':
+        'resumed_queue_timeout',
+    'private-media outbox timed out waiting for settled outgoing private media':
+        'outgoing_media_timeout',
+    'private-media outbox timed out waiting for $privateMediaOutboxConversationReadyCondition':
+        'conversation_ready_timeout',
+    'private-media outbox timed out waiting for $privateMediaOutboxOfflineLifecycleCondition':
+        'offline_lifecycle_timeout',
+    'private-media outbox timed out waiting for $privateMediaOutboxOfflineConnectivityCondition':
+        'offline_connectivity_timeout',
+  };
+  if (error is TimeoutException) {
+    return timeoutCodes[error.message] ?? 'unknown';
+  }
+  return 'unknown';
 }
 
 String privateMediaOutboxSafeHash(String value) =>

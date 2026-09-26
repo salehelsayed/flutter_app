@@ -45,6 +45,7 @@ import 'package:flutter_app/core/database/helpers/group_pending_key_repairs_db_h
 import 'package:flutter_app/core/database/helpers/group_reaction_replay_outbox_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/group_sync_receipts_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/groups_db_helpers.dart';
+import 'package:flutter_app/core/database/helpers/self_removed_group_shell_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/identity_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/media_attachments_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/media_library_db_helpers.dart';
@@ -142,6 +143,7 @@ import 'package:flutter_app/l10n/app_localizations.dart';
 import '_support/invite_reliability_runner_contract.dart';
 import '_support/group_multi_party_verdict_handshake.dart';
 import '_support/canonical_runtime_device_test_lease.dart';
+import '../test/shared/fakes/fake_app_visibility.dart';
 import '../test/shared/fakes/fake_notification_service.dart';
 import '../test/shared/fakes/in_memory_inbox_staging_repository.dart';
 import '../test/shared/fakes/in_memory_pending_group_invite_repository.dart';
@@ -1249,6 +1251,14 @@ Future<GroupMultiDeviceTestStack> setupGroupMultiDeviceStack({
   );
   final groupRepo = GroupRepositoryImpl(
     dbInsertGroup: (row) => dbInsertGroup(db, row),
+    dbAdvanceGroupMembershipWatermark:
+        ({required groupId, required eventAt, required eventId}) =>
+            dbAdvanceGroupMembershipWatermark(
+              db,
+              groupId: groupId,
+              eventAt: eventAt,
+              eventId: eventId,
+            ),
     dbLoadAllGroups: () => dbLoadAllGroups(db),
     dbLoadGroup: (id) => dbLoadGroup(db, id),
     dbUpdateGroup: (row) => dbUpdateGroup(db, row),
@@ -1373,6 +1383,174 @@ Future<GroupMultiDeviceTestStack> setupGroupMultiDeviceStack({
       final row = await dbLoadGroupExitIntentForGroup(db, groupId);
       return row?['state'] == 'cleanup_pending';
     },
+    selfRemovedShellAuthorityEnabled: true,
+    dbLoadSelfRemovedGroupShellAuthority:
+        ({required groupId, required selfPeerId}) =>
+            dbLoadSelfRemovedGroupShellAuthoritySnapshot(
+              db,
+              groupId: groupId,
+              selfPeerId: selfPeerId,
+            ),
+    dbCommitSelfRemovalAuthorityFn:
+        ({required expected, required removalAt, required removalEventId}) =>
+            dbCommitSelfRemovalAuthority(
+              db,
+              expected: expected,
+              removalAt: removalAt,
+              removalEventId: removalEventId,
+            ),
+    dbLoadRawSelfRemovedGroupKeyReferencesFn: ({required expected}) =>
+        dbLoadRawSelfRemovedGroupKeyReferences(db, expected: expected),
+    dbFinalizeSelfRemovedGroupKeyReferencesFn:
+        ({required expected, required expectedReferences}) =>
+            dbFinalizeSelfRemovedGroupKeyReferences(
+              db,
+              expected: expected,
+              expectedReferences: expectedReferences,
+            ),
+    dbLoadSelfRemovedGroupMediaParentsFn:
+        ({required expected, required limit}) =>
+            dbLoadSelfRemovedGroupMediaParents(
+              db,
+              expected: expected,
+              limit: limit,
+            ),
+    dbAppendSelfRemovedGroupFreshnessFloorFn: ({required expected}) =>
+        dbAppendSelfRemovedGroupFreshnessFloor(db, expected: expected),
+    dbLoadSelfRemovedGroupFreshnessFloorFn: (groupId) =>
+        dbLoadLatestSelfRemovedGroupFreshnessFloor(db, groupId),
+    dbPrepareSelfRemovedGroupAcceptedReentryFn:
+        ({
+          required groupRow,
+          required rosterRows,
+          required stagedKeyRow,
+          required selfPeerId,
+          required authorizationId,
+          required signedMembershipWatermark,
+          required signedIssuedAt,
+          required bindingNonce,
+        }) => dbPrepareSelfRemovedGroupAcceptedReentry(
+          db,
+          groupRow: groupRow,
+          rosterRows: rosterRows,
+          stagedKeyRow: stagedKeyRow,
+          selfPeerId: selfPeerId,
+          authorizationId: authorizationId,
+          signedMembershipWatermark: signedMembershipWatermark,
+          signedIssuedAt: signedIssuedAt,
+          bindingNonce: bindingNonce,
+        ),
+    dbStageSelfRemovedGroupAcceptedReentryKeyFn:
+        ({required preparation, required stagedKeyRow}) =>
+            dbStageSelfRemovedGroupAcceptedReentryKey(
+              db,
+              preparation: preparation,
+              stagedKeyRow: stagedKeyRow,
+            ),
+    dbCommitSelfRemovedGroupAcceptedReentryFn:
+        ({
+          required preparation,
+          required groupRow,
+          required rosterRows,
+          required stagedKeyRow,
+          required selfPeerId,
+          required authorizationId,
+          required signedMembershipWatermark,
+          required signedIssuedAt,
+          required bindingNonce,
+        }) => dbCommitSelfRemovedGroupAcceptedReentry(
+          db,
+          preparation: preparation,
+          groupRow: groupRow,
+          rosterRows: rosterRows,
+          stagedKeyRow: stagedKeyRow,
+          selfPeerId: selfPeerId,
+          authorizationId: authorizationId,
+          signedMembershipWatermark: signedMembershipWatermark,
+          signedIssuedAt: signedIssuedAt,
+          bindingNonce: bindingNonce,
+        ),
+    dbFinalizeSelfRemovedGroupAcceptedReentryStagingFn:
+        ({required preparation, required stagedKeyRow}) =>
+            dbFinalizeSelfRemovedGroupAcceptedReentryStaging(
+              db,
+              preparation: preparation,
+              stagedKeyRow: stagedKeyRow,
+            ),
+    dbFinalizeSelfRemovedGroupAcceptedRollbackKeyFn:
+        ({required groupId, required selfPeerId, required binding}) =>
+            dbFinalizeSelfRemovedGroupAcceptedRollbackKey(
+              db,
+              groupId: groupId,
+              selfPeerId: selfPeerId,
+              binding: binding,
+            ),
+    dbRollbackSelfRemovedGroupAcceptedReentryFn:
+        ({
+          required groupId,
+          required selfPeerId,
+          required authorizationId,
+          required qualification,
+        }) => dbRollbackSelfRemovedGroupAcceptedReentry(
+          db,
+          groupId: groupId,
+          selfPeerId: selfPeerId,
+          authorizationId: authorizationId,
+          qualification: qualification,
+        ),
+    dbQualifySelfRemovedGroupAcceptedRollbackFn:
+        ({required groupId, required selfPeerId, required authorizationId}) =>
+            dbQualifySelfRemovedGroupAcceptedRollback(
+              db,
+              groupId: groupId,
+              selfPeerId: selfPeerId,
+              authorizationId: authorizationId,
+            ),
+    dbPrepareFreshAcceptedMaterializationRollbackFn:
+        ({
+          required groupId,
+          required selfPeerId,
+          required keyGeneration,
+          required expectedMembershipAt,
+          required expectedMetadataAt,
+        }) => dbPrepareFreshAcceptedMaterializationRollback(
+          db,
+          groupId: groupId,
+          selfPeerId: selfPeerId,
+          keyGeneration: keyGeneration,
+          expectedMembershipAt: expectedMembershipAt,
+          expectedMetadataAt: expectedMetadataAt,
+        ),
+    dbCommitFreshAcceptedMaterializationRollbackFn: ({required preparation}) =>
+        dbCommitFreshAcceptedMaterializationRollback(
+          db,
+          preparation: preparation,
+        ),
+    dbAuthorizeSelfRemovedGroupAcceptedReentryRetryFn:
+        ({
+          required groupId,
+          required selfPeerId,
+          required authorizationId,
+          required signedMembershipWatermark,
+          required signedIssuedAt,
+          required keyGeneration,
+        }) => dbAuthorizeSelfRemovedGroupAcceptedReentryRetry(
+          db,
+          groupId: groupId,
+          selfPeerId: selfPeerId,
+          authorizationId: authorizationId,
+          signedMembershipWatermark: signedMembershipWatermark,
+          signedIssuedAt: signedIssuedAt,
+          keyGeneration: keyGeneration,
+        ),
+    dbPurgeSelfRemovedGroupShellFn:
+        ({required expected, required floor, required deletedAt}) =>
+            dbPurgeSelfRemovedGroupShell(
+              db,
+              expected: expected,
+              floor: floor,
+              deletedAt: deletedAt,
+            ),
   );
   final groupMediaKeyAccess = GroupMediaKeyAccess(
     secureKeyStore: secureKeyStore,
@@ -2409,6 +2587,7 @@ Future<GroupMultiDeviceTestStack> setupGroupMultiDeviceStack({
     groupReactionStreamController.add(Map<String, dynamic>.from(data));
   };
 
+  final groupConversationTracker = ActiveConversationTracker();
   final groupListener = GroupMessageListener(
     groupRepo: groupRepo,
     msgRepo: groupMsgRepo,
@@ -2416,7 +2595,11 @@ Future<GroupMultiDeviceTestStack> setupGroupMultiDeviceStack({
     getSelfPeerId: () async => updatedIdentity.peerId,
     mediaAttachmentRepo: mediaAttachmentRepo,
     notificationService: notificationService,
-    groupConversationTracker: ActiveConversationTracker(),
+    appVisibility: TrackerBackedAppVisibility(
+      tracker: groupConversationTracker,
+      lifecycle: () => AppLifecycleState.paused,
+    ),
+    groupConversationTracker: groupConversationTracker,
     getAppLifecycleState: () => AppLifecycleState.paused,
     reactionRepo: reactionRepo,
     groupDiagnosticEvents: groupDiagnosticEventStream,
@@ -3511,8 +3694,10 @@ Future<void> _pumpLatencyUntil(
   final deadline = DateTime.now().add(timeout);
   while (DateTime.now().isBefore(deadline)) {
     if (condition()) return;
-    await tester.pump(const Duration(milliseconds: 100));
-    await Future<void>.delayed(const Duration(milliseconds: 40));
+    // Settlement is a production post-frame callback measured in wall time.
+    // Coarse live-binding pumps would add their own delay to that measurement.
+    // Advance near the normal 60 Hz frame cadence without an extra polling gap.
+    await tester.pump(const Duration(milliseconds: 16));
   }
   throw TimeoutException('Timed out waiting for $reason');
 }
@@ -6996,11 +7181,9 @@ Future<void> _runDirectLinkedDeviceEventBlobFanoutAccountBSide() async {
       isNotEmpty,
       reason: 'durable inbox apply must emit delivery receipts',
     );
-    expect(
-      stack.deliveryReceiptTargets.toSet(),
-      <String>{linkedDocument.transportPeerId},
-      reason: 'receipts target only A physical transport, never A account',
-    );
+    expect(stack.deliveryReceiptTargets.toSet(), <String>{
+      linkedDocument.transportPeerId,
+    }, reason: 'receipts target only A physical transport, never A account');
 
     for (final id in <String>[eventMessageId, mediaMessageId]) {
       final outer = observedOuter[id]!;

@@ -82,6 +82,22 @@ const _plan398ExistingStateTraceClaimFileName =
 /// This is intentionally not localized: the host driver uses it as an exact
 /// automation identifier while the expanded actions retain localized labels.
 const String orbitCreateGroupFabSemanticId = 'orbit_create_group_fab';
+
+/// Freeze capture provenance before cleanup appends to the live journal.
+/// The live journal remains available for reviewing restoration commands.
+Future<File> snapshotGroupReactionCommandJournal(File liveJournal) async {
+  final bytes = await liveJournal.readAsBytes();
+  final reference = await writePlan398PrivateNoReplaceEvidence(
+    stableFile: File(
+      '${liveJournal.parent.path}${Platform.pathSeparator}'
+      'capture_command_journal.json',
+    ),
+    bytes: bytes,
+    maximumLengthBytes: bytes.length,
+  );
+  return reference.file;
+}
+
 const List<String> orbitNavigationSemanticLabels = <String>[
   'Orbit',
   'Kreis',
@@ -423,8 +439,18 @@ final class GroupFixtureTransientCleanup {
   Future<void> run() async {
     if (_completed) return;
     _completed = true;
+    Object? firstError;
+    StackTrace? firstStackTrace;
     for (final action in _actions) {
-      await action();
+      try {
+        await action();
+      } on Object catch (error, stackTrace) {
+        firstError ??= error;
+        firstStackTrace ??= stackTrace;
+      }
+    }
+    if (firstError != null) {
+      Error.throwWithStackTrace(firstError, firstStackTrace!);
     }
   }
 }
@@ -1055,6 +1081,7 @@ class _Plan257Capture {
       .toString();
   late final GroupFixtureTransientCleanup _transientCleanup =
       GroupFixtureTransientCleanup(<Future<void> Function()>[
+        _stopIosSystemLog,
         _deleteTransientFixtureFiles,
         _deletePlan397EphemeralMaterialization,
         _collapseAndroidStatusBars,
@@ -1161,6 +1188,7 @@ class _Plan257Capture {
   Future<void> cleanupTransientState() async {
     if (!traceOnlyExistingState) {
       await _transientCleanup.run();
+      await _flushCommandJournal();
       return;
     }
     Object? firstError;
@@ -2832,7 +2860,7 @@ class _Plan257Capture {
     stage = 'ios_android_sender_build';
     _androidBuilds = await _buildAndroidCandidate();
     await _installApk(senderId, _androidBuilds!.e2eApk);
-    await _clearAndroidPrivateEntries(senderId);
+    await _clearAndroidPrivateEntries(senderId, _androidBuilds!.e2eApk);
     await _prepareAndroidIdentity(sender);
     await _launchAndroid(senderId);
     await _collectAndroidIdentity(sender);
@@ -2849,11 +2877,6 @@ class _Plan257Capture {
       'auto_setup.json',
       jsonEncode(<String, Object?>{'username': recipient.username}),
     );
-    await _launchIosCandidate();
-    await _collectIosIdentity(recipient);
-    await _prepopulateContact(sender, recipient);
-    await _prepopulateIosContact(recipient, sender);
-
     final stamp = DateTime.now().toUtc().microsecondsSinceEpoch;
     _groupName = 'TC257Ann$stamp';
     _targetMarker = 'TC257Target$stamp';
@@ -2862,6 +2885,7 @@ class _Plan257Capture {
     final uiTest = File(_iosTapTest);
     final uiSource = uiTest.existsSync() ? await uiTest.readAsString() : '';
     for (final selector in <String>[
+      _iosLocalNetworkCampaignSelector,
       _iosFixtureCreateSelector,
       _iosFixtureAuthorSelector,
       _iosNotificationPrepareSelector,
@@ -2875,6 +2899,16 @@ class _Plan257Capture {
         );
       }
     }
+
+    // Reuse the signed setup launch and permission boundary before waiting for
+    // its identity export, just as the chat-group campaign does.
+    _iosXcuitestOutput += await _runIosUiSelector(
+      _iosLocalNetworkCampaignSelector,
+      tapConfig,
+    );
+    await _collectIosIdentity(recipient);
+    await _prepopulateContact(sender, recipient);
+    await _prepopulateIosContact(recipient, sender);
 
     _iosXcuitestOutput += await _runIosUiSelector(
       _iosFixtureCreateSelector,
@@ -2900,12 +2934,14 @@ class _Plan257Capture {
     _iosRegistrationLogCursor = _iosSystemLogStdout.length;
     final tokenWindow = DateTime.now().toUtc();
     await _launchIosCandidate();
-    await _waitForRelayTokenRegistration(tokenWindow);
 
     _iosXcuitestOutput += await _runIosUiSelector(
       _iosNotificationPrepareSelector,
       tapConfig,
     );
+    // The normal app may still be awaiting notification authorization. The
+    // existing preparation selector settles that prompt before registration.
+    await _waitForRelayTokenRegistration(tokenWindow);
 
     stage = 'ios_reaction_lifecycle';
     _captureWindowStart = DateTime.now().toUtc();
@@ -2973,7 +3009,11 @@ class _Plan257Capture {
     stage = 'plan397_android_sender_install';
     _androidBuilds = await _loadPreparedAndroidCandidate(androidApk);
     await _installApk(senderId, _androidBuilds!.normalApk);
-    await _clearAndroidPrivateEntries(senderId);
+    await _clearAndroidPrivateEntries(senderId, _androidBuilds!.normalApk);
+    // The normal build asks for notification permission on first launch; an
+    // unanswered OS dialog covers the fixture UI. Grant it like the Android
+    // role path does after install.
+    await _grantNotificationPermission(senderId);
     await _startDeviceLogStream(senderId);
     await _prepareAndroidIdentity(sender);
     await _launchAndroid(senderId);
@@ -3070,7 +3110,6 @@ class _Plan257Capture {
 
     _iosRegistrationLogCursor = _iosSystemLogStdout.length;
     await _launchIosCandidate();
-    await _waitForRelayTokenRegistration(DateTime.now().toUtc());
 
     final messageBody = '${sender.username}: $_firstMarker';
     final messageTapConfig = await _writeIosTapConfig(
@@ -3088,6 +3127,9 @@ class _Plan257Capture {
       _iosNotificationPrepareSelector,
       messageTapConfig,
     );
+    // Setup builds do not settle the normal app's notification permission.
+    // Reuse preparation's prompt handling before requiring relay registration.
+    await _waitForRelayTokenRegistration(DateTime.now().toUtc());
 
     stage = 'plan397_message_window';
     await _capturePlan397IosWindow(
@@ -3250,10 +3292,10 @@ class _Plan257Capture {
     final targetDigest = binding['targetMessageIdSha256']! as String;
     final expectedCollapseIdentifierSha256 =
         binding['expectedCollapseIdentifierSha256'] as String?;
-    if (phase == 'message' && expectedCollapseIdentifierSha256 == null) {
+    if (expectedCollapseIdentifierSha256 == null) {
       throw _CaptureFailure.capture(
         stage,
-        'chat_group_message_expected_collapse_hash_missing',
+        'chat_group_${phase}_expected_collapse_hash_missing',
       );
     }
     final nativeReceipt = await _observePlan397IosNotification(
@@ -3261,13 +3303,20 @@ class _Plan257Capture {
       groupDigest: groupDigest,
       eventDigest: eventDigest,
       targetDigest: targetDigest,
-      expectedCollapseIdentifierSha256:
-          expectedCollapseIdentifierSha256 ?? '0' * 64,
+      expectedCollapseIdentifierSha256: expectedCollapseIdentifierSha256,
     );
     final nse = await _waitForPlan397NseWindow(
       phase: phase,
       payloadKind: payloadKind,
       cursor: syslogCursor,
+      // _observePlan397IosNotification already validates the nonce, device,
+      // group/event hashes and exact useful-provider inventory. Public NSE
+      // logs intentionally omit kind; this receipt supplies that binding.
+      validatedNativePhase:
+          nativeReceipt['status'] == 'PASS' &&
+              nativeReceipt['resultCode'] == 'ok'
+          ? nativeReceipt['phase'] as String?
+          : null,
     );
 
     Map<String, Object?>? tap;
@@ -3294,8 +3343,7 @@ class _Plan257Capture {
             attempt: acceptedProviderAttempt,
             relayGroupMessageDispatchSource:
                 provider['relayGroupMessageDispatchSource'],
-            expectedCollapseIdentifierSha256:
-                expectedCollapseIdentifierSha256 ?? '',
+            expectedCollapseIdentifierSha256: expectedCollapseIdentifierSha256,
           );
       provider['providerSingleFirstAttempt'] =
           relayJournalProvesSingleFirstAttemptProviderAcceptance(relayJournal);
@@ -3495,6 +3543,8 @@ class _Plan257Capture {
         observed['reactionRows'] == 0;
     final reactionShape =
         phase == 'reaction' &&
+        expectedCollapseIdentifierSha256 is String &&
+        digest.hasMatch(expectedCollapseIdentifierSha256) &&
         reactionDigest is String &&
         digest.hasMatch(reactionDigest) &&
         reactionTargetDigest == targetDigest &&
@@ -3531,8 +3581,7 @@ class _Plan257Capture {
       'messageIdSha256': firstDigest,
       'targetMessageIdSha256': targetDigest,
       'eventIdSha256': phase == 'message' ? firstDigest : reactionDigest,
-      if (phase == 'message')
-        'expectedCollapseIdentifierSha256': expectedCollapseIdentifierSha256,
+      'expectedCollapseIdentifierSha256': expectedCollapseIdentifierSha256,
       'reactionIdSha256': phase == 'reaction' ? reactionDigest : null,
       'reactionTargetIdSha256': phase == 'reaction'
           ? reactionTargetDigest
@@ -3653,6 +3702,7 @@ class _Plan257Capture {
     required String phase,
     required String payloadKind,
     required int cursor,
+    required String? validatedNativePhase,
   }) {
     return _waitForValue<Map<String, Object?>>(
       'Plan 397 $phase NSE terminal evidence',
@@ -3662,16 +3712,13 @@ class _Plan257Capture {
         final boundedCursor = cursor.clamp(0, complete.length);
         final window = complete.substring(boundedCursor);
         final lines = window.split('\n');
-        final expectedNseKind = payloadKind == 'group_message'
-            ? 'group'
-            : 'group_reaction';
-        bool hasKind(String line) =>
-            line.contains('kind=$expectedNseKind') ||
-            line.contains('kind: $expectedNseKind') ||
-            line.contains('"kind":"$expectedNseKind"');
         final decryptOk = lines
             .where(
-              (line) => line.contains('PUSH_NSE_DECRYPT_OK') && hasKind(line),
+              (line) => groupReactionIosNseDecryptSucceeded(
+                line,
+                payloadKind: payloadKind,
+                validatedNativePhase: validatedNativePhase,
+              ),
             )
             .length;
         final didReceive = lines
@@ -3994,7 +4041,9 @@ class _Plan257Capture {
           entry.key: await _artifactFileReference(entry.value),
         'setupInstall': await _artifactFileReference(setupReceipt),
         'centralNormalInstall': await _artifactFileReference(centralReceipt),
-        'commandJournal': await _artifactFileReference(_commandJournalFile),
+        'commandJournal': await _artifactFileReference(
+          await snapshotGroupReactionCommandJournal(_commandJournalFile),
+        ),
       },
       'identities': <String, Object?>{
         'groupNameSha256': sha256.convert(utf8.encode(_groupName)).toString(),
@@ -4047,7 +4096,7 @@ class _Plan257Capture {
       '--profile',
       '--no-pub',
       '--dart-define=E2E_TEST_MODE=$e2eMode',
-      if (_isPlan397 && e2eMode)
+      if (e2eMode)
         '--dart-define=SIMS_BUILD_PROFILE_ID='
             '$groupReactionNotificationIosSetupBuildProfile',
       '--dart-define=MKNOON_RELAY_ADDRESSES=${_relayAddresses.join(',')}',
@@ -4134,18 +4183,33 @@ class _Plan257Capture {
   Future<void> _launchIosCandidate() async {
     await _mountIosDeveloperDiskImageForCoreDevice();
     if (!traceOnlyExistingState) {
-      await _run('xcrun', <String>[
-        'devicectl',
-        'device',
-        'process',
-        'launch',
-        '--device',
-        recipientId,
-        '--terminate-existing',
-        _iosCapture['bundleId']! as String,
-        '--timeout',
-        '60',
-      ], environmentFailure: true);
+      await _runStreaming(
+        'xcrun',
+        <String>[
+          'devicectl',
+          'device',
+          'process',
+          'launch',
+          '--device',
+          recipientId,
+          '--terminate-existing',
+          _iosCapture['bundleId']! as String,
+          '--timeout',
+          '60',
+        ],
+        environmentFailure: true,
+        environment:
+            stage == 'plan397_fixture_staging' || stage == 'ios_fixture_staging'
+            ? <String, String>{
+                'DEVICECTL_CHILD_MKNOON_397_AUTO_SETUP_USERNAME':
+                    recipient.username,
+                'DEVICECTL_CHILD_MKNOON_398_SETUP_READINESS_ATTEMPT':
+                    _plan398SetupReadinessAttempt,
+                'DEVICECTL_CHILD_MKNOON_398_SETUP_ENTRY_PROFILE_ID':
+                    groupReactionNotificationIosSetupBuildProfile,
+              }
+            : null,
+      );
       return;
     }
     if (_plan398IosLoggerProcessId == null ||
@@ -4876,6 +4940,9 @@ class _Plan257Capture {
               _iosCapture['workspace']! as String,
               '-scheme',
               _iosCapture['scheme']! as String,
+              '-configuration',
+              'Profile',
+              'ENABLE_TESTABILITY=YES',
               '-destination',
               'platform=iOS,id=$recipientId',
               '-only-testing:RunnerUITests/NotificationTapUITests/$selector',
@@ -4887,7 +4954,14 @@ class _Plan257Capture {
         arguments,
         allowFail: true,
         environmentFailure: true,
-        environment: environment,
+        environment: <String, String>{
+          ...environment,
+          // xcodebuild does not forward arbitrary host variables to XCTest.
+          // The central path already embeds these in its patched xctestrun.
+          if (!_isPlan397)
+            for (final entry in environment.entries)
+              'TEST_RUNNER_${entry.key}': entry.value,
+        },
       );
       if (output.exitCode == 0) {
         final retryMarker = attempt == 1
@@ -5318,7 +5392,7 @@ class _Plan257Capture {
     for (final id in <String>[senderId, recipientId]) {
       if (!statePreparedByParent) {
         await _installApk(id, builds.e2eApk);
-        await _clearAndroidPrivateEntries(id);
+        await _clearAndroidPrivateEntries(id, builds.e2eApk);
       } else {
         await _verifyParentPreparedAndroidRole(
           deviceId: id,
@@ -5384,7 +5458,11 @@ class _Plan257Capture {
     }
   }
 
-  Future<void> _clearAndroidPrivateEntries(String deviceId) async {
+  Future<void> _clearAndroidPrivateEntries(
+    String deviceId,
+    File installedArtifact,
+  ) async {
+    await _adbShell(deviceId, <String>['am', 'force-stop', appPackage]);
     final inventory = await _adb(deviceId, <String>[
       'shell',
       'run-as',
@@ -5427,6 +5505,10 @@ class _Plan257Capture {
         entry,
       ]);
     }
+    // Repair package-managed cache roots after the file reset using the same
+    // APK. Package-manager data clearing would destroy retained Keystore state.
+    await _installApk(deviceId, installedArtifact);
+    await _adbShell(deviceId, <String>['am', 'force-stop', appPackage]);
   }
 
   Future<void> _installApk(String deviceId, File apk) async {
@@ -8097,7 +8179,9 @@ class _Plan257Capture {
         'notificationCardTaps': 0,
         'childBuildCount': 0,
         'statePreparedByParent': statePreparedByParent,
-        'commandJournal': await _artifactFileReference(_commandJournalFile),
+        'commandJournal': await _artifactFileReference(
+          await snapshotGroupReactionCommandJournal(_commandJournalFile),
+        ),
       },
       'redaction': const <String, Object?>{
         'tokensPersisted': false,
@@ -9944,7 +10028,9 @@ class _Plan257Capture {
       'capture': <String, Object?>{
         'configuration': await _artifactFileReference(configurationFile),
         'candidateBuild': await _artifactFileReference(buildProvenanceFile),
-        'commandJournal': await _artifactFileReference(_commandJournalFile),
+        'commandJournal': await _artifactFileReference(
+          await snapshotGroupReactionCommandJournal(_commandJournalFile),
+        ),
       },
       'measurements': <String, Object?>{
         'appPackage': appPackage,
@@ -10091,7 +10177,9 @@ class _Plan257Capture {
       'capture': <String, Object?>{
         'configuration': await _artifactFileReference(configurationFile),
         'candidateBuild': await _artifactFileReference(buildProvenanceFile),
-        'commandJournal': await _artifactFileReference(_commandJournalFile),
+        'commandJournal': await _artifactFileReference(
+          await snapshotGroupReactionCommandJournal(_commandJournalFile),
+        ),
       },
       'measurements': <String, Object?>{
         'appPackage': _iosCapture['bundleId']! as String,
@@ -11264,16 +11352,36 @@ class _Plan257Capture {
     );
     final out = StringBuffer();
     final err = StringBuffer();
-    final outDone = process.stdout.transform(utf8.decoder).forEach((chunk) {
+    final outSubscription = process.stdout.transform(utf8.decoder).listen((
+      chunk,
+    ) {
       out.write(chunk);
       stdout.write(chunk);
     });
-    final errDone = process.stderr.transform(utf8.decoder).forEach((chunk) {
+    final errSubscription = process.stderr.transform(utf8.decoder).listen((
+      chunk,
+    ) {
       err.write(chunk);
       stderr.write(chunk);
     });
+    final outDone = outSubscription.asFuture<void>();
+    final errDone = errSubscription.asFuture<void>();
     final exitCode = await process.exitCode;
-    await Future.wait(<Future<void>>[outDone, errDone]);
+    // A finished command can leave descendants (flutter build ios forks) that
+    // inherited stdout/stderr and keep the pipes open indefinitely. The exit
+    // code is authoritative; drain the remaining output for a bounded time.
+    await Future.wait(<Future<void>>[outDone, errDone]).timeout(
+      const Duration(seconds: 30),
+      onTimeout: () async {
+        await outSubscription.cancel();
+        await errSubscription.cancel();
+        stdout.writeln(
+          'NOTE: $executable exited $exitCode; output pipes stayed open after '
+          'exit, stopped draining after 30 s.',
+        );
+        return const <void>[];
+      },
+    );
     _recordCommand(executable, args, exitCode);
     final output = _CommandOutput(
       exitCode: exitCode,

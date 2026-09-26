@@ -1963,15 +1963,23 @@ class _P2PInboxCoordinator {
     return outcome;
   }
 
+  /// A recovery-only runtime parks a plaintext delivery receipt for the
+  /// foreground runtime. No further headless pass can replay it and it never
+  /// notifies, so it must not keep headless recovery from converging.
+  bool _isForegroundDeferredReceipt(InboxStagingEntry entry) =>
+      _recoveryOnly &&
+      entry.messageType == 'delivery_receipt' &&
+      entry.rejectReasonCode == 'typed_handler_unavailable';
+
   Future<DirectInboxDrainOutcome> _verifyFullDrainOutcome(
     DirectInboxDrainOutcome outcome,
   ) async {
     if (!outcome.isSuccessful || outcome.hasMore) return outcome;
     try {
       final recoverable = await _inboxStagingRepository.getRecoverableEntries(
-        limit: 1,
+        limit: _recoveryOnly ? _maxRecoverableInboxReplayEntries : 1,
       );
-      if (recoverable.isEmpty) return outcome;
+      if (recoverable.every(_isForegroundDeferredReceipt)) return outcome;
       return const DirectInboxDrainOutcome(
         isSuccessful: false,
         hasMore: true,

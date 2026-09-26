@@ -201,3 +201,26 @@ func checkSendConnectionResponse(ctx context.Context, conn network.Conn) (respon
 	return observed.received > 0, observed.received == 0 && observed.written > 0 && !observed.writeFailed &&
 		(isSendTimeout(err) || errors.Is(ctx.Err(), context.DeadlineExceeded))
 }
+
+// closeUnresponsiveRelayConn probes a relayed (limited) connection once after an
+// ACK read timeout and closes it only if it is unresponsive. A relay keeps a
+// circuit to a killed peer process open until its idle timeout, so the next
+// send would otherwise reuse it. Direct connections are never closed here.
+func (n *Node) closeUnresponsiveRelayConn(ctx context.Context, h host.Host, conn network.Conn) bool {
+	if conn == nil || conn.IsClosed() || !conn.Stat().Limited || ctx.Err() != nil {
+		return false
+	}
+	probeCtx, cancel := context.WithTimeout(ctx, staleRelayProbeTimeout)
+	_, unresponsive := checkSendConnectionResponse(probeCtx, conn)
+	cancel()
+	if !unresponsive || ctx.Err() != nil {
+		return false
+	}
+	n.mu.RLock()
+	defer n.mu.RUnlock()
+	if n.host != h || n.ctx == nil || n.ctx.Err() != nil || conn.IsClosed() {
+		return false
+	}
+	_ = conn.Close()
+	return true
+}
