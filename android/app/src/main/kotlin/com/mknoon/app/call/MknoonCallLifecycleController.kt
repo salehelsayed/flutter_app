@@ -266,7 +266,11 @@ internal class MknoonCallLifecycleController(
                 emitIfAttached(presented)
                 MknoonCallPresentationResult.PRESENTED
             }
-            if (result == MknoonCallPresentationResult.PRESENTED) applyDeferredAnswer(inFlight)
+            if (result == MknoonCallPresentationResult.PRESENTED) {
+                applyDeferredAnswer(inFlight)
+            } else {
+                dropDeferredAnswer(inFlight)
+            }
             return result
         } finally {
             releaseRegistration(inFlight)
@@ -447,6 +451,7 @@ internal class MknoonCallLifecycleController(
                 ?: return@synchronized false
             inFlight.deferredAnswer = true
             if (!signalPlatform) inFlight.deferredAnswerSignalsPlatform = false
+            runCatching { answerDiagnostic(nativeCallId.toString(), "pending", "none") }
             true
         }
     }
@@ -459,6 +464,14 @@ internal class MknoonCallLifecycleController(
             signalPlatform = inFlight.deferredAnswerSignalsPlatform,
             duplicateIsSuccess = true,
         )
+    }
+
+    /** The registration failed or the call ended meanwhile: the deferred answer is not applied. */
+    private fun dropDeferredAnswer(inFlight: RegistrationInFlight) {
+        if (!inFlight.deferredAnswer) return
+        runCatching {
+            answerDiagnostic(inFlight.nativeCallId.toString(), "rejected", "native_answer_refused")
+        }
     }
 
     /**
@@ -503,6 +516,7 @@ internal class MknoonCallLifecycleController(
                     endPlatform = true,
                 )
             }
+            dropDeferredAnswer(inFlight)
             inFlight.settled.countDown()
             return false
         }
@@ -564,7 +578,7 @@ internal class MknoonCallLifecycleController(
                 }
                 true
             }
-            if (restored) applyDeferredAnswer(inFlight)
+            if (restored) applyDeferredAnswer(inFlight) else dropDeferredAnswer(inFlight)
             return restored
         } finally {
             releaseRegistration(inFlight)

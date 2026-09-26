@@ -468,6 +468,110 @@ class MknoonCallLifecycleControllerTest {
     }
 
     @Test
+    fun `a deferred main-thread answer is recorded and dropped when the registration fails`() {
+        val rig = LifecycleRig(isMainThread = { true })
+        val hold = HeldTelecomRegistration()
+        rig.platform.onRegisterIncoming = hold::register
+        val id = rig.payload.nativeCallId
+        val executor = Executors.newSingleThreadExecutor()
+        try {
+            val presenting = executor.submit<MknoonCallPresentationResult> {
+                rig.controller.present(rig.payload)
+            }
+            assertTrue(hold.started.await(5, TimeUnit.SECONDS))
+            assertTrue(rig.controller.answer(id))
+            assertEquals(listOf("pending" to "none"), rig.answerDiagnostics.toList())
+
+            hold.finish(registered = false)
+            assertEquals(
+                MknoonCallPresentationResult.PLATFORM_FAILED,
+                presenting.get(5, TimeUnit.SECONDS),
+            )
+            assertEquals(0, rig.platform.answerCalls)
+            assertFalse(rig.operations.contains("store.append:ANSWER_REQUESTED"))
+            assertEquals("rejected" to "native_answer_refused", rig.answerDiagnostics.last())
+        } finally {
+            hold.finish(registered = false)
+            executor.shutdownNow()
+        }
+    }
+
+    @Test
+    fun `a deferred main-thread answer is dropped when the call is declined meanwhile`() {
+        val rig = LifecycleRig(isMainThread = { true })
+        val hold = HeldTelecomRegistration()
+        rig.platform.onRegisterIncoming = hold::register
+        val id = rig.payload.nativeCallId
+        val executor = Executors.newSingleThreadExecutor()
+        try {
+            val presenting = executor.submit<MknoonCallPresentationResult> {
+                rig.controller.present(rig.payload)
+            }
+            assertTrue(hold.started.await(5, TimeUnit.SECONDS))
+            assertTrue(rig.controller.answer(id))
+            assertTrue(rig.controller.terminate(id, PendingNativeCallEventType.DECLINE_REQUESTED))
+
+            hold.finish(registered = true)
+            assertEquals(
+                MknoonCallPresentationResult.STALE,
+                presenting.get(5, TimeUnit.SECONDS),
+            )
+            assertEquals(0, rig.platform.answerCalls)
+            assertFalse(rig.operations.contains("store.append:ANSWER_REQUESTED"))
+            assertEquals("rejected" to "native_answer_refused", rig.answerDiagnostics.last())
+        } finally {
+            hold.finish(registered = false)
+            executor.shutdownNow()
+        }
+    }
+
+    @Test
+    fun `a main-thread answer while a restored call re-registers is applied once restored`() {
+        val rig = LifecycleRig()
+        val id = rig.payload.nativeCallId
+        assertEquals(MknoonCallPresentationResult.PRESENTED, rig.controller.present(rig.payload))
+        val recreatedPlatform = LifecycleFakePlatform(rig.operations)
+        val hold = HeldTelecomRegistration()
+        recreatedPlatform.onRegisterIncoming = hold::register
+        val recreated = recreatedOver(rig, recreatedPlatform, isMainThread = { true })
+        val executor = Executors.newSingleThreadExecutor()
+        try {
+            var restoring: java.util.concurrent.Future<*>? = null
+            assertTrue(recreated.reconcilePresented { work -> restoring = executor.submit(work) })
+            assertTrue(hold.started.await(5, TimeUnit.SECONDS))
+
+            // The old notification's Answer, tapped while the restored call re-registers.
+            assertTrue(recreated.answer(id))
+            assertEquals(0, recreatedPlatform.answerCalls)
+
+            hold.finish(registered = true)
+            requireNotNull(restoring).get(5, TimeUnit.SECONDS)
+            assertEquals(1, recreatedPlatform.answerCalls)
+            assertTrue(requireNotNull(rig.store.lastDescriptor).answerRequested)
+        } finally {
+            hold.finish(registered = false)
+            executor.shutdownNow()
+        }
+    }
+
+    @Test
+    fun `a restore that cannot be handed off fails the call instead of staying in flight`() {
+        val rig = LifecycleRig()
+        val id = rig.payload.nativeCallId
+        assertEquals(MknoonCallPresentationResult.PRESENTED, rig.controller.present(rig.payload))
+        val recreatedPlatform = LifecycleFakePlatform(rig.operations)
+        val recreated = recreatedOver(rig, recreatedPlatform)
+
+        assertFalse(recreated.reconcilePresented { error("no background thread") })
+        assertFalse(recreated.isRegistrationInFlight(id))
+        assertEquals(0, recreatedPlatform.registerCalls)
+        assertEquals(
+            PendingNativeCallEventType.NATIVE_FAILURE,
+            requireNotNull(rig.store.lastDescriptor).terminalEvent?.type,
+        )
+    }
+
+    @Test
     fun `a Telecom answer delivered on main during registration is applied when it settles`() {
         // Below Android 14 core-telecom's ConnectionService callbacks arrive on main.
         val rig = LifecycleRig(isMainThread = { true })
@@ -1988,6 +2092,7 @@ internal class LifecycleRig(
     val settled = mutableListOf<UUID>()
     val cleanupPending = mutableListOf<UUID>()
     val declineReplies = mutableListOf<PendingNativeCallDescriptor>()
+    val answerDiagnostics = java.util.Collections.synchronizedList(mutableListOf<Pair<String, String>>())
     var declineReplyAccepted = false
     var declineReplyAtOperation = -1
     var capabilityEnabled: Boolean = capabilityEnabled
@@ -2011,6 +2116,7 @@ internal class LifecycleRig(
         },
         diagnosticSink = diagnosticSink,
         journalDiagnostic = journalDiagnostic,
+        answerDiagnostic = { _, outcome, reason -> answerDiagnostics += outcome to reason },
         isMainThread = isMainThread,
     )
 }
