@@ -344,29 +344,157 @@ class MknoonCallLifecycleControllerTest {
         }
     }
 
-    @Test
-    fun `a new presentation waits past core-telecom while restart re-registration keeps the short wait`() {
-        val rig = LifecycleRig()
-        assertEquals(MknoonCallPresentationResult.PRESENTED, rig.controller.present(rig.payload))
-        assertEquals(MKNOON_TELECOM_REGISTRATION_TIMEOUT_MS, rig.platform.lastRegistrationTimeoutMs)
-
-        val recreatedPlatform = LifecycleFakePlatform(rig.operations)
-        val recreated = MknoonCallLifecycleController(
+    private fun recreatedOver(rig: LifecycleRig, platform: LifecycleFakePlatform, isMainThread: () -> Boolean = { false }) =
+        MknoonCallLifecycleController(
             store = rig.store,
-            platform = recreatedPlatform,
+            platform = platform,
             eventSink = LifecycleFakeEventSink(rig.operations),
             capabilityEnabled = { true },
             recordAudioPermissionGranted = { true },
             nowMs = { NOW_MS },
+            isMainThread = isMainThread,
         )
+
+    @Test
+    fun `new presentation and restart re-registration both wait past core-telecom`() {
+        val rig = LifecycleRig()
+        assertEquals(MknoonCallPresentationResult.PRESENTED, rig.controller.present(rig.payload))
+        assertEquals(MKNOON_TELECOM_REGISTRATION_TIMEOUT_MS, rig.platform.lastRegistrationTimeoutMs)
+
+        // B8: restart re-registration no longer holds the lock or runs on main, so it
+        // needs no shorter bound.
+        val recreatedPlatform = LifecycleFakePlatform(rig.operations)
+        val recreated = recreatedOver(rig, recreatedPlatform)
         assertTrue(recreated.reconcilePresented())
-        // Restart re-registration still waits under the controller lock, possibly on
-        // main: it must stay below Android's 5 s input-dispatch ANR limit.
-        assertEquals(
-            MKNOON_TELECOM_REREGISTRATION_TIMEOUT_MS,
-            recreatedPlatform.lastRegistrationTimeoutMs,
-        )
-        assertTrue(MKNOON_TELECOM_REREGISTRATION_TIMEOUT_MS < 5_000L)
+        assertEquals(MKNOON_TELECOM_REGISTRATION_TIMEOUT_MS, recreatedPlatform.lastRegistrationTimeoutMs)
+    }
+
+    // B8 (review of B5, 2026-09-26): the runtime is created on main and restored a
+    // presented call there, holding the controller lock for the whole Telecom wait.
+    // Below Android 14 Telecom needs main to finish that registration, so it could
+    // only time out and the restored call failed.
+
+    @Test
+    fun `restart re-registration runs without the controller lock on the thread it is handed`() {
+        val rig = LifecycleRig()
+        val id = rig.payload.nativeCallId
+        assertEquals(MknoonCallPresentationResult.PRESENTED, rig.controller.present(rig.payload))
+        val recreatedPlatform = LifecycleFakePlatform(rig.operations)
+        val hold = HeldTelecomRegistration()
+        recreatedPlatform.onRegisterIncoming = hold::register
+        val recreated = recreatedOver(rig, recreatedPlatform)
+        val executor = Executors.newSingleThreadExecutor()
+        try {
+            var restoring: java.util.concurrent.Future<*>? = null
+            assertTrue(recreated.reconcilePresented { work -> restoring = executor.submit(work) })
+            assertTrue(hold.started.await(5, TimeUnit.SECONDS))
+
+            // The caller (main, in the runtime constructor) has control back and the lock is free.
+            assertTrue(recreated.isRegistrationInFlight(id))
+            assertEquals(id, recreated.activeNativeCallId())
+            assertNotNull(recreated.snapshot())
+
+            hold.finish(registered = true)
+            requireNotNull(restoring).get(5, TimeUnit.SECONDS)
+            assertFalse(recreated.isRegistrationInFlight(id))
+            assertEquals(1, recreatedPlatform.startForegroundCalls)
+            assertFalse(recreated.hasTerminalLifecycle(id))
+        } finally {
+            hold.finish(registered = false)
+            executor.shutdownNow()
+        }
+    }
+
+    @Test
+    fun `a failed restart re-registration still fails the restored call`() {
+        val rig = LifecycleRig()
+        val id = rig.payload.nativeCallId
+        assertEquals(MknoonCallPresentationResult.PRESENTED, rig.controller.present(rig.payload))
+        val recreatedPlatform = LifecycleFakePlatform(rig.operations)
+        val hold = HeldTelecomRegistration()
+        recreatedPlatform.onRegisterIncoming = hold::register
+        val recreated = recreatedOver(rig, recreatedPlatform)
+        val executor = Executors.newSingleThreadExecutor()
+        try {
+            var restoring: java.util.concurrent.Future<*>? = null
+            assertTrue(recreated.reconcilePresented { work -> restoring = executor.submit(work) })
+            assertTrue(hold.started.await(5, TimeUnit.SECONDS))
+            hold.finish(registered = false)
+            requireNotNull(restoring).get(5, TimeUnit.SECONDS)
+            assertTrue(recreated.hasTerminalLifecycle(id))
+            assertEquals(
+                PendingNativeCallEventType.NATIVE_FAILURE,
+                requireNotNull(rig.store.lastDescriptor).terminalEvent?.type,
+            )
+            assertEquals(0, recreatedPlatform.startForegroundCalls)
+        } finally {
+            hold.finish(registered = false)
+            executor.shutdownNow()
+        }
+    }
+
+    @Test
+    fun `a main-thread answer during registration is applied when the registration settles`() {
+        // Notification action or lock-screen Answer: main must never wait for Telecom.
+        val rig = LifecycleRig(isMainThread = { true })
+        val hold = HeldTelecomRegistration()
+        rig.platform.onRegisterIncoming = hold::register
+        val id = rig.payload.nativeCallId
+        val executor = Executors.newSingleThreadExecutor()
+        try {
+            val presenting = executor.submit<MknoonCallPresentationResult> {
+                rig.controller.present(rig.payload)
+            }
+            assertTrue(hold.started.await(5, TimeUnit.SECONDS))
+
+            assertTrue(rig.controller.answer(id))
+            assertEquals(0, rig.platform.answerCalls)
+            assertFalse(rig.operations.contains("store.append:ANSWER_REQUESTED"))
+
+            hold.finish(registered = true)
+            assertEquals(
+                MknoonCallPresentationResult.PRESENTED,
+                presenting.get(5, TimeUnit.SECONDS),
+            )
+            assertEquals(1, rig.platform.answerCalls)
+            assertTrue(
+                rig.operations.indexOf("store.append:PRESENTED") <
+                    rig.operations.indexOf("store.append:ANSWER_REQUESTED"),
+            )
+        } finally {
+            hold.finish(registered = false)
+            executor.shutdownNow()
+        }
+    }
+
+    @Test
+    fun `a Telecom answer delivered on main during registration is applied when it settles`() {
+        // Below Android 14 core-telecom's ConnectionService callbacks arrive on main.
+        val rig = LifecycleRig(isMainThread = { true })
+        val hold = HeldTelecomRegistration()
+        rig.platform.onRegisterIncoming = hold::register
+        val id = rig.payload.nativeCallId
+        val executor = Executors.newSingleThreadExecutor()
+        try {
+            val presenting = executor.submit<MknoonCallPresentationResult> {
+                rig.controller.present(rig.payload)
+            }
+            assertTrue(hold.started.await(5, TimeUnit.SECONDS))
+
+            assertTrue(rig.controller.answerFromTelecom(id))
+            assertFalse(rig.operations.contains("store.append:ANSWER_REQUESTED"))
+
+            hold.finish(registered = true)
+            assertEquals(
+                MknoonCallPresentationResult.PRESENTED,
+                presenting.get(5, TimeUnit.SECONDS),
+            )
+            assertTrue(requireNotNull(rig.store.lastDescriptor).answerRequested)
+            assertEquals(0, rig.platform.answerCalls)
+        } finally {
+            hold.finish(registered = false)
+            executor.shutdownNow()
+        }
     }
 
     @Test
@@ -1848,6 +1976,7 @@ internal class LifecycleRig(
     capabilityEnabled: Boolean = true,
     recordAudioGranted: Boolean = true,
     journalDiagnostic: (String, PendingNativeCallEventType) -> Unit = { _, _ -> },
+    isMainThread: () -> Boolean = { false },
 ) {
     val operations = mutableListOf<String>()
     val store = LifecycleFakeStore(operations)
@@ -1882,6 +2011,7 @@ internal class LifecycleRig(
         },
         diagnosticSink = diagnosticSink,
         journalDiagnostic = journalDiagnostic,
+        isMainThread = isMainThread,
     )
 }
 

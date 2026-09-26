@@ -163,6 +163,8 @@ internal class MknoonCallLifecycleController(
     private val terminalAckTimeoutMs: Long = TERMINAL_ACK_TIMEOUT_MS,
     private val journalDiagnostic: (String, PendingNativeCallEventType) -> Unit = { _, _ -> },
     private val answerDiagnostic: (String, String, String) -> Unit = { _, _, _ -> },
+    /** True on Android's main thread; nothing in here may wait for Telecom there (B8). */
+    private val isMainThread: () -> Boolean = { false },
 ) : MknoonCallActionHandler {
     private val lock = Any()
     private var attached = false
@@ -193,6 +195,14 @@ internal class MknoonCallLifecycleController(
      */
     private class RegistrationInFlight(val nativeCallId: UUID) {
         val settled = CountDownLatch(1)
+
+        /** A main-thread Answer that arrived while registering; applied once presented (B8). */
+        @Volatile
+        var deferredAnswer = false
+
+        /** False once Telecom itself answered, so the deferred answer must not signal it again. */
+        @Volatile
+        var deferredAnswerSignalsPlatform = true
     }
 
     @Volatile
@@ -206,7 +216,7 @@ internal class MknoonCallLifecycleController(
         try {
             val registered =
                 registerWithPlatform(payload.nativeCallId, PendingNativeCallDirection.INCOMING)
-            return synchronized(lock) {
+            val result = synchronized(lock) {
                 settleRegistrationLocked(payload.nativeCallId, inFlight, registered)
                     ?.let { return@synchronized it }
 
@@ -256,6 +266,8 @@ internal class MknoonCallLifecycleController(
                 emitIfAttached(presented)
                 MknoonCallPresentationResult.PRESENTED
             }
+            if (result == MknoonCallPresentationResult.PRESENTED) applyDeferredAnswer(inFlight)
+            return result
         } finally {
             releaseRegistration(inFlight)
         }
@@ -423,8 +435,38 @@ internal class MknoonCallLifecycleController(
     fun isRegistrationInFlight(nativeCallId: UUID): Boolean =
         registrationInFlight?.nativeCallId == nativeCallId
 
-    /** Telecom callbacks for a call wait until the presentation that registered it is settled. */
-    private fun awaitRegistrationSettled(nativeCallId: UUID) {
+    /**
+     * B8: a main-thread Answer (notification action, lock-screen view, or a Telecom
+     * callback, which below Android 14 arrives on main) for a call still registering
+     * is recorded, not waited for, and applied when the registration settles.
+     */
+    private fun deferAnswerOnMain(nativeCallId: UUID, signalPlatform: Boolean): Boolean {
+        if (!safeBoolean(isMainThread)) return false
+        return synchronized(lock) {
+            val inFlight = registrationInFlight?.takeIf { it.nativeCallId == nativeCallId }
+                ?: return@synchronized false
+            inFlight.deferredAnswer = true
+            if (!signalPlatform) inFlight.deferredAnswerSignalsPlatform = false
+            true
+        }
+    }
+
+    /** Runs after a successful settle, outside [lock], before Telecom callbacks resume. */
+    private fun applyDeferredAnswer(inFlight: RegistrationInFlight) {
+        if (!inFlight.deferredAnswer) return
+        answerInternal(
+            inFlight.nativeCallId,
+            signalPlatform = inFlight.deferredAnswerSignalsPlatform,
+            duplicateIsSuccess = true,
+        )
+    }
+
+    /**
+     * Waits until the presentation that registered this call is settled. Never on
+     * main: some Telecom versions need main to finish the registration (B8).
+     */
+    internal fun awaitRegistrationSettled(nativeCallId: UUID) {
+        if (safeBoolean(isMainThread)) return
         val inFlight = registrationInFlight?.takeIf { it.nativeCallId == nativeCallId } ?: return
         try {
             inFlight.settled.await(REGISTRATION_SETTLE_TIMEOUT_MS, TimeUnit.MILLISECONDS)
@@ -437,64 +479,96 @@ internal class MknoonCallLifecycleController(
      * Re-registers one already-presented durable call after process recreation.
      * The original PRESENTED event and notification identity are retained; no
      * second presentation event or alert is produced.
+     *
+     * B8: the runtime is created on main and restores the call from its
+     * constructor. Below Android 14 Telecom needs main to finish a registration,
+     * so only the checks run here, under [lock]; the registration runs on the
+     * thread [dispatch] provides (the runtime passes a background one) without
+     * [lock], like [present]. Returns false when there is nothing to restore,
+     * otherwise true (with the default inline [dispatch]: whether it was restored).
      */
-    fun reconcilePresented(): Boolean = synchronized(lock) {
-        if (!safeBoolean(capabilityEnabled)) return@synchronized false
-        if (adoptedState != null || cleanupState != null) return@synchronized false
-        val descriptor = snapshotInternal() ?: return@synchronized false
+    fun reconcilePresented(dispatch: (Runnable) -> Unit = { it.run() }): Boolean {
+        val (descriptor, inFlight) = synchronized(lock) { admitRestoreLocked() } ?: return false
+        var restored = true
+        val handedOff = runCatching {
+            dispatch(Runnable { restored = completeRestore(descriptor, inFlight) })
+        }.isSuccess
+        if (!handedOff) {
+            // Never leave the call marked as registering: that would refuse every later call.
+            synchronized(lock) {
+                if (registrationInFlight === inFlight) registrationInFlight = null
+                terminateInternal(
+                    descriptor.nativeCallId,
+                    PendingNativeCallEventType.NATIVE_FAILURE,
+                    endPlatform = true,
+                )
+            }
+            inFlight.settled.countDown()
+            return false
+        }
+        return restored
+    }
+
+    private fun admitRestoreLocked(): Pair<PendingNativeCallDescriptor, RegistrationInFlight>? {
+        if (!safeBoolean(capabilityEnabled)) return null
+        if (adoptedState != null || cleanupState != null || registrationInFlight != null) return null
+        val descriptor = snapshotInternal() ?: return null
         if (
             descriptor.terminalEvent != null ||
             descriptor.events.none { it.type == PendingNativeCallEventType.PRESENTED }
         ) {
-            return@synchronized false
+            return null
         }
-        val observedNow = safeNow() ?: return@synchronized false
+        val observedNow = safeNow() ?: return null
         if (descriptor.expiresAtMs <= observedNow) {
             terminateInternal(
                 descriptor.nativeCallId,
                 PendingNativeCallEventType.EXPIRED,
                 endPlatform = false,
             )
-            return@synchronized false
+            return null
         }
-
         ownedCallId = descriptor.nativeCallId
         ownedExpiresAtMs = descriptor.expiresAtMs
-        // Process restart: this still waits under [lock], possibly on main, so it
-        // keeps the shorter bound (see MKNOON_TELECOM_REREGISTRATION_TIMEOUT_MS).
-        if (
-            !registerWithPlatform(
-                descriptor.nativeCallId,
-                descriptor.direction,
-                MKNOON_TELECOM_REREGISTRATION_TIMEOUT_MS,
-            )
-        ) {
-            terminateInternal(
-                descriptor.nativeCallId,
-                PendingNativeCallEventType.NATIVE_FAILURE,
-                endPlatform = true,
-            )
-            return@synchronized false
-        }
-
+        val inFlight = RegistrationInFlight(descriptor.nativeCallId)
+        registrationInFlight = inFlight
         resetVolatileState(descriptor)
-        val scheduled = runCatching {
-            onPresented(descriptor.nativeCallId, descriptor.expiresAtMs)
-        }.isSuccess
-        val presentationRestored = scheduled &&
-            (
-                descriptor.direction == PendingNativeCallDirection.OUTGOING ||
-                    runCatching { platform.startForeground(descriptor.nativeCallId) }.isSuccess
-            )
-        if (!presentationRestored) {
-            terminateInternal(
-                descriptor.nativeCallId,
-                PendingNativeCallEventType.NATIVE_FAILURE,
-                endPlatform = true,
-            )
-            return@synchronized false
+        return descriptor to inFlight
+    }
+
+    private fun completeRestore(
+        descriptor: PendingNativeCallDescriptor,
+        inFlight: RegistrationInFlight,
+    ): Boolean {
+        try {
+            val registered = registerWithPlatform(descriptor.nativeCallId, descriptor.direction)
+            val restored = synchronized(lock) {
+                if (settleRegistrationLocked(descriptor.nativeCallId, inFlight, registered) != null) {
+                    return@synchronized false
+                }
+                val scheduled = runCatching {
+                    onPresented(descriptor.nativeCallId, descriptor.expiresAtMs)
+                }.isSuccess
+                val presentationRestored = scheduled &&
+                    (
+                        descriptor.direction == PendingNativeCallDirection.OUTGOING ||
+                            runCatching { platform.startForeground(descriptor.nativeCallId) }.isSuccess
+                        )
+                if (!presentationRestored) {
+                    terminateInternal(
+                        descriptor.nativeCallId,
+                        PendingNativeCallEventType.NATIVE_FAILURE,
+                        endPlatform = true,
+                    )
+                    return@synchronized false
+                }
+                true
+            }
+            if (restored) applyDeferredAnswer(inFlight)
+            return restored
+        } finally {
+            releaseRegistration(inFlight)
         }
-        true
     }
 
     /** Restores durable adopted custody only long enough to record provider loss. */
@@ -547,9 +621,11 @@ internal class MknoonCallLifecycleController(
     }
 
     override fun answer(nativeCallId: UUID): Boolean {
-        // B5: Dart shows Answer before the native presentation. An answer that
-        // arrives while Telecom registers this call waits for it; the bridge runs
-        // it off main in that case.
+        // B5/B8: Dart shows Answer before the native presentation, and after a
+        // restart the old notification can be tapped while the call re-registers.
+        // Off main the answer waits for the registration (the bridge dispatches
+        // Dart's off main); on main it is applied when the registration settles.
+        if (deferAnswerOnMain(nativeCallId, signalPlatform = true)) return true
         awaitRegistrationSettled(nativeCallId)
         return answerInternal(
             nativeCallId,
@@ -559,6 +635,7 @@ internal class MknoonCallLifecycleController(
     }
 
     fun answerFromTelecom(nativeCallId: UUID): Boolean {
+        if (deferAnswerOnMain(nativeCallId, signalPlatform = false)) return true
         awaitRegistrationSettled(nativeCallId)
         return answerInternal(
             nativeCallId,

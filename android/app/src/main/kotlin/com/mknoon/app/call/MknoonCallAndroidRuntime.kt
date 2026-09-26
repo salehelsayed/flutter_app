@@ -237,6 +237,7 @@ internal class MknoonCallRuntime private constructor(context: Context) {
                 observeDebugLifecycle(handle, "answer", outcome)
                 diagnostics.record(handle, "answer", "accept", outcome, reason)
             },
+            isMainThread = { Looper.myLooper() == Looper.getMainLooper() },
         )
         reconcilePersistedDescriptor()
     }
@@ -527,7 +528,9 @@ internal class MknoonCallRuntime private constructor(context: Context) {
             return
         }
         if (descriptor.events.any { it.type == PendingNativeCallEventType.PRESENTED }) {
-            controller.reconcilePresented()
+            // B8: this constructor usually runs on main, and below Android 14 Telecom
+            // needs main to finish the re-registration, so it runs on a background thread.
+            controller.reconcilePresented { work -> runtimeScope.launch(Dispatchers.IO) { work.run() } }
             return
         }
         controller.terminate(descriptor.nativeCallId, PendingNativeCallEventType.NATIVE_FAILURE)
@@ -1169,19 +1172,12 @@ private class AndroidMknoonCallPlatform(
 internal const val CORE_TELECOM_ADD_CALL_TIMEOUT_MS = 5_000L
 
 /**
- * How long a new presentation or outgoing registration waits for Telecom to
- * register its call: past core-telecom's own limit so its result decides, plus
- * slack for a loaded device (B5, beta 2026-09-25: Telecom needed more than 4 s).
- * The controller runs this wait without its lock.
+ * How long a presentation, outgoing registration or restart re-registration waits
+ * for Telecom to register its call: past core-telecom's own limit so its result
+ * decides, plus slack for a loaded device (B5, beta 2026-09-25: Telecom needed
+ * more than 4 s). The controller runs this wait without its lock and never on main.
  */
 internal const val MKNOON_TELECOM_REGISTRATION_TIMEOUT_MS = CORE_TELECOM_ADD_CALL_TIMEOUT_MS + 1_500L
-
-/**
- * Re-registration of an already presented call after a process restart. That
- * wait still holds the controller lock, possibly on the main thread, so it
- * keeps the old, shorter bound.
- */
-internal const val MKNOON_TELECOM_REREGISTRATION_TIMEOUT_MS = 4_000L
 
 internal fun coreTelecomDirection(direction: PendingNativeCallDirection): Int =
     when (direction) {
