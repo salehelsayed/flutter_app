@@ -1917,5 +1917,6 @@
   "voice_call_unavailable": "المكالمات الصوتية غير متاحة حاليًا",
   "push_registration_health_retrying": "جارٍ إعادة المحاولة…",
   "orbit_loading_contacts": "جارٍ تحميل جهات الاتصال…",
-  "media_loading": "جارٍ تحميل الوسائط…"
+  "media_loading": "جارٍ تحميل الوسائط…",
+  "media_voice_message_label": "رسالة صوتية"
 }

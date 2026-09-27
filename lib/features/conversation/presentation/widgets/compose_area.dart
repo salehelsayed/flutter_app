@@ -464,6 +464,7 @@ class _ComposeAreaState extends State<ComposeArea>
                   Padding(
                     padding: const EdgeInsets.only(bottom: 3),
                     child: ActionSemantics(
+                      identifier: 'chat_attach',
                       label: AppLocalizations.of(
                         context,
                       )!.action_add_attachment,
@@ -619,47 +620,58 @@ class _ComposeAreaState extends State<ComposeArea>
                                     ]
                                   : null,
                             ),
-                            child: TextField(
-                              controller: _controller,
-                              focusNode: _focusNode,
-                              textDirection: _inputDirection,
-                              maxLines: null,
-                              maxLength: maxMessageLength,
-                              enabled: !_isRecording,
-                              style: TextStyle(
-                                fontSize: 15,
-                                color: isLightSurface
-                                    ? readableColors.textPrimary
-                                    : const Color.fromRGBO(255, 255, 255, 0.95),
-                                height: 1.5,
-                              ),
-                              decoration: InputDecoration(
-                                hintText: AppLocalizations.of(
-                                  context,
-                                )!.conversation_hint,
-                                hintStyle: TextStyle(
+                            // The container makes this the text field's own
+                            // node, so the automation id lands on it.
+                            child: Semantics(
+                              container: true,
+                              identifier: 'chat_composer',
+                              child: TextField(
+                                controller: _controller,
+                                focusNode: _focusNode,
+                                textDirection: _inputDirection,
+                                maxLines: null,
+                                maxLength: maxMessageLength,
+                                enabled: !_isRecording,
+                                style: TextStyle(
                                   fontSize: 15,
                                   color: isLightSurface
-                                      ? readableColors.composerHint
-                                      : (_hasFocus
-                                            ? const Color.fromRGBO(
-                                                255,
-                                                255,
-                                                255,
-                                                0.2,
-                                              )
-                                            : readableColors.composerHint),
+                                      ? readableColors.textPrimary
+                                      : const Color.fromRGBO(
+                                          255,
+                                          255,
+                                          255,
+                                          0.95,
+                                        ),
+                                  height: 1.5,
                                 ),
-                                border: InputBorder.none,
-                                // The rounded AnimatedContainer above paints the
-                                // fill; the light theme's filled
-                                // InputDecorationTheme would otherwise paint a
-                                // square fill rect on top of it.
-                                filled: false,
-                                counterText: '',
-                                contentPadding: const EdgeInsets.symmetric(
-                                  horizontal: 16,
-                                  vertical: 12,
+                                decoration: InputDecoration(
+                                  hintText: AppLocalizations.of(
+                                    context,
+                                  )!.conversation_hint,
+                                  hintStyle: TextStyle(
+                                    fontSize: 15,
+                                    color: isLightSurface
+                                        ? readableColors.composerHint
+                                        : (_hasFocus
+                                              ? const Color.fromRGBO(
+                                                  255,
+                                                  255,
+                                                  255,
+                                                  0.2,
+                                                )
+                                              : readableColors.composerHint),
+                                  ),
+                                  border: InputBorder.none,
+                                  // The rounded AnimatedContainer above paints the
+                                  // fill; the light theme's filled
+                                  // InputDecorationTheme would otherwise paint a
+                                  // square fill rect on top of it.
+                                  filled: false,
+                                  counterText: '',
+                                  contentPadding: const EdgeInsets.symmetric(
+                                    horizontal: 16,
+                                    vertical: 12,
+                                  ),
                                 ),
                               ),
                             ),
@@ -700,6 +712,7 @@ class _ComposeAreaState extends State<ComposeArea>
                               );
                             },
                             child: ActionSemantics(
+                              identifier: 'chat_send',
                               label: AppLocalizations.of(
                                 context,
                               )!.action_send_message,

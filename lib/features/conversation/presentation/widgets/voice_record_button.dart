@@ -126,6 +126,8 @@ class _VoiceRecordButtonState extends State<VoiceRecordButton> {
     final enabled = phase != VoiceRecordPhase.stopping;
 
     return Semantics(
+      container: true,
+      identifier: 'chat_record_voice',
       button: true,
       enabled: enabled,
       label: label,

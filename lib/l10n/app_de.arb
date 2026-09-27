@@ -1917,5 +1917,6 @@
   "voice_call_unavailable": "Sprachanrufe sind derzeit nicht verfügbar",
   "push_registration_health_retrying": "Erneuter Versuch…",
   "orbit_loading_contacts": "Kontakte werden geladen…",
-  "media_loading": "Medien werden geladen…"
+  "media_loading": "Medien werden geladen…",
+  "media_voice_message_label": "Sprachnachricht"
 }

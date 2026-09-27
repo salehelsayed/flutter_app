@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/call/application/call_cleanup_coordinator.dart';
 import 'package:flutter_app/features/call/application/call_coordinator.dart';
 import 'package:flutter_app/features/call/application/call_endpoint_resolver.dart';
@@ -1703,4 +1704,215 @@ void main() {
     expect(frames.single.terminalFollows, isFalse);
     expect(mailbox.acks, 1);
   });
+  // Beta 2026-09-25 (run-20260925-221131): a direct invite was routed and then
+  // left no trace. The runtime's own gates drop direct signals too, so each
+  // drop now leaves one identity-free CALL_INCOMING_SIGNAL_NOT_ACCEPTED record.
+  group('CALL_INCOMING_SIGNAL_NOT_ACCEPTED', () {
+    ChatMessage directSignal({String transport = 'direct'}) => ChatMessage(
+      from: 'sender-device',
+      to: 'recipient-device',
+      content: '{"type":"call_signal"}',
+      timestamp: '2026-08-30T00:00:00.000Z',
+      isIncoming: true,
+      transport: transport,
+    );
+
+    Map<String, Object?> dropped(String route, String reason) =>
+        <String, Object?>{
+          'route': route,
+          'signal': 'unknown',
+          'outcome': 'deferred',
+          'reason': reason,
+        };
+
+    test('a direct signal refused by the network gate is recorded', () async {
+      final events = _captureRuntimeNotAccepted();
+      final stream = StreamController<ChatMessage>.broadcast();
+      addTearDown(stream.close);
+      var allowed = true;
+      var handled = 0;
+      final runtime = CallSignalingRuntime(
+        directCallSignalStream: stream.stream,
+        mailboxClient: _Mailbox(),
+        handleIncoming: (_) async {
+          handled++;
+          return IncomingCallSignalOutcome.accepted;
+        },
+        coordinator: _coordinator(),
+        networkEffectsAllowed: () => allowed,
+      );
+      addTearDown(runtime.shutdown);
+      await runtime.start();
+
+      allowed = false;
+      stream.add(directSignal(transport: 'relay'));
+      stream.add(directSignal());
+      await Future<void>.delayed(Duration.zero);
+      await runtime.settle();
+
+      expect(handled, 0);
+      expect(events, <Map<String, Object?>>[
+        dropped('relay', 'network_effects_blocked'),
+        dropped('direct', 'network_effects_blocked'),
+      ]);
+    });
+
+    test(
+      'a throwing handler is recorded for direct and mailbox signals',
+      () async {
+        final events = _captureRuntimeNotAccepted();
+        final stream = StreamController<ChatMessage>.broadcast();
+        addTearDown(stream.close);
+        final mailbox = _Mailbox()
+          ..pages.add(
+            CallMailboxRetrieveResult(
+              events: <CallMailboxEvent>[
+                const CallMailboxEvent(
+                  callHandle: '33333333-3333-4333-8333-333333333333',
+                  messageId: '11111111-1111-4111-8111-111111111111',
+                  authenticatedSenderDevicePeerId: 'sender-device',
+                  recipientDevicePeerId: 'recipient-device',
+                  envelopeJson: '{"type":"call_signal"}',
+                  receiptAtMs: 1,
+                  expiresAtMs: 2,
+                ),
+              ],
+              receiptAtMs: 1,
+              expiresAtMs: 2,
+              hasMore: false,
+            ),
+          );
+        final runtime = CallSignalingRuntime(
+          directCallSignalStream: stream.stream,
+          mailboxClient: mailbox,
+          handleIncoming: (_) async =>
+              throw StateError('temporary authority failure'),
+          coordinator: _coordinator(),
+          networkEffectsAllowed: () => true,
+        );
+        addTearDown(runtime.shutdown);
+        await runtime.start();
+        stream.add(directSignal());
+        await Future<void>.delayed(Duration.zero);
+        await runtime.settle();
+
+        expect(mailbox.ackAttempts, 0, reason: 'mailbox custody is kept');
+        expect(events, <Map<String, Object?>>[
+          dropped('mailbox', 'handler_exception'),
+          dropped('direct', 'handler_exception'),
+        ]);
+      },
+    );
+
+    test('a saturated lane records every dropped direct signal', () async {
+      final events = _captureRuntimeNotAccepted();
+      final stream = StreamController<ChatMessage>.broadcast();
+      addTearDown(stream.close);
+      final release = Completer<void>();
+      var handled = 0;
+      final runtime = CallSignalingRuntime(
+        directCallSignalStream: stream.stream,
+        mailboxClient: _Mailbox(),
+        handleIncoming: (_) async {
+          handled++;
+          await release.future;
+          return IncomingCallSignalOutcome.accepted;
+        },
+        coordinator: _coordinator(),
+        networkEffectsAllowed: () => true,
+        maxPendingOperations: 2,
+      );
+      addTearDown(runtime.shutdown);
+      await runtime.start();
+
+      for (var index = 0; index < 5; index++) {
+        stream.add(directSignal());
+      }
+      await Future<void>.delayed(Duration.zero);
+      release.complete();
+      await runtime.settle();
+
+      expect(handled, 2);
+      expect(events, <Map<String, Object?>>[
+        for (var index = 0; index < 3; index++)
+          dropped('direct', 'lane_saturated'),
+      ]);
+    });
+
+    test('a direct signal queued behind shutdown is recorded', () async {
+      final events = _captureRuntimeNotAccepted();
+      final stream = StreamController<ChatMessage>.broadcast();
+      addTearDown(stream.close);
+      final release = Completer<void>();
+      var handled = 0;
+      final runtime = CallSignalingRuntime(
+        directCallSignalStream: stream.stream,
+        mailboxClient: _Mailbox(),
+        handleIncoming: (_) async {
+          handled++;
+          await release.future;
+          return IncomingCallSignalOutcome.accepted;
+        },
+        coordinator: _coordinator(),
+        networkEffectsAllowed: () => true,
+      );
+      await runtime.start();
+
+      stream.add(directSignal());
+      stream.add(directSignal());
+      await Future<void>.delayed(Duration.zero);
+      final stopping = runtime.shutdown();
+      await Future<void>.delayed(Duration.zero);
+      release.complete();
+      await stopping;
+
+      expect(handled, 1);
+      expect(events, <Map<String, Object?>>[
+        dropped('direct', 'runtime_disposed'),
+      ]);
+    });
+
+    test(
+      'an outgoing echo is not an incoming signal and is not recorded',
+      () async {
+        final events = _captureRuntimeNotAccepted();
+        final stream = StreamController<ChatMessage>.broadcast();
+        addTearDown(stream.close);
+        final runtime = CallSignalingRuntime(
+          directCallSignalStream: stream.stream,
+          mailboxClient: _Mailbox(),
+          handleIncoming: (_) async => IncomingCallSignalOutcome.accepted,
+          coordinator: _coordinator(),
+          networkEffectsAllowed: () => false,
+        );
+        addTearDown(runtime.shutdown);
+        await runtime.start();
+        stream.add(
+          const ChatMessage(
+            from: 'recipient-device',
+            to: 'sender-device',
+            content: '{"type":"call_signal"}',
+            timestamp: '2026-08-30T00:00:00.000Z',
+            isIncoming: false,
+            transport: 'direct',
+          ),
+        );
+        await Future<void>.delayed(Duration.zero);
+        await runtime.settle();
+
+        expect(events, isEmpty);
+      },
+    );
+  });
+}
+
+List<Map<String, Object?>> _captureRuntimeNotAccepted() {
+  final events = <Map<String, Object?>>[];
+  debugSetFlowEventSink((payload) {
+    if (payload['event'] == 'CALL_INCOMING_SIGNAL_NOT_ACCEPTED') {
+      events.add(Map<String, Object?>.from(payload['details'] as Map));
+    }
+  });
+  addTearDown(() => debugSetFlowEventSink(null));
+  return events;
 }

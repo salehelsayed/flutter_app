@@ -47,6 +47,82 @@ class MknoonCallNativeBridgeTest {
         assertEquals(false, commit.value)
     }
 
+    // B5/B8: Dart shows Answer before the native presentation, and after a restart it can
+    // attach while the restored call re-registers. Operations that need the Telecom call
+    // (answer, audio, route) wait for the registration, and that wait never runs on main.
+    @Test fun `answer during an in-flight Telecom registration waits off main until it settles`() {
+        val rig = LifecycleRig()
+        val hold = HeldTelecomRegistration()
+        rig.platform.onRegisterIncoming = hold::register
+        val work = mutableListOf<Runnable>()
+        val bridge = MknoonCallNativeBridge(controller = rig.controller, messenger = null,
+            registrationExecutor = java.util.concurrent.Executor { work += it })
+        val background = java.util.concurrent.Executors.newFixedThreadPool(2)
+        try {
+            val presenting = background.submit<MknoonCallPresentationResult> {
+                rig.controller.present(rig.payload)
+            }
+            assertTrue(hold.started.await(5, TimeUnit.SECONDS))
+
+            val answer = CapturingCallBridgeResult()
+            bridge.onMethodCall(
+                MethodCall("answer", mapOf("version" to 1, "callHandle" to rig.payload.callHandle)),
+                answer,
+            )
+            assertEquals(1, work.size)
+            val answering = background.submit { work.single().run() }
+            Thread.sleep(200L)
+            assertFalse(answering.isDone)
+            assertEquals(0, rig.platform.answerCalls)
+
+            hold.finish(registered = true)
+            assertEquals(MknoonCallPresentationResult.PRESENTED, presenting.get(5, TimeUnit.SECONDS))
+            answering.get(5, TimeUnit.SECONDS)
+            org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper()).idle()
+            assertEquals(true, answer.value)
+            assertEquals(1, rig.platform.answerCalls)
+            assertTrue(
+                rig.operations.indexOf("store.append:PRESENTED") <
+                    rig.operations.indexOf("store.append:ANSWER_REQUESTED"),
+            )
+        } finally {
+            hold.finish(registered = false)
+            background.shutdownNow()
+        }
+    }
+
+    @Test fun `Dart end during an in-flight registration runs at once and the call is never presented`() {
+        val rig = LifecycleRig()
+        val hold = HeldTelecomRegistration()
+        rig.platform.onRegisterIncoming = hold::register
+        val work = mutableListOf<Runnable>()
+        val bridge = MknoonCallNativeBridge(controller = rig.controller, messenger = null,
+            registrationExecutor = java.util.concurrent.Executor { work += it })
+        val background = java.util.concurrent.Executors.newSingleThreadExecutor()
+        try {
+            val presenting = background.submit<MknoonCallPresentationResult> {
+                rig.controller.present(rig.payload)
+            }
+            assertTrue(hold.started.await(5, TimeUnit.SECONDS))
+
+            val ended = CapturingCallBridgeResult()
+            bridge.onMethodCall(
+                MethodCall("end", mapOf("version" to 1, "callHandle" to rig.payload.callHandle)),
+                ended,
+            )
+            assertEquals(0, work.size)
+            assertEquals(true, ended.value)
+
+            hold.finish(registered = true)
+            assertEquals(MknoonCallPresentationResult.STALE, presenting.get(5, TimeUnit.SECONDS))
+            assertFalse(rig.operations.contains("store.append:PRESENTED"))
+            assertEquals(0, rig.platform.showIncomingCalls)
+        } finally {
+            hold.finish(registered = false)
+            background.shutdownNow()
+        }
+    }
+
     @Test fun `admission settlement requires exact versioned token and current bridge ownership`() {
         val rig = LifecycleRig()
         val relay = MknoonCallEventRelay()

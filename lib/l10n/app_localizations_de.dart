@@ -4167,4 +4167,7 @@ class AppLocalizationsDe extends AppLocalizations {
 
   @override
   String get media_loading => 'Medien werden geladen…';
+
+  @override
+  String get media_voice_message_label => 'Sprachnachricht';
 }

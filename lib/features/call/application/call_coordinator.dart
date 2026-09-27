@@ -98,6 +98,7 @@ final class CallCoordinator {
     this.effectTimeout = const Duration(seconds: 15),
     this.mediaPreparationTimeout = const Duration(seconds: 45),
     this.terminalEffectTimeout = const Duration(seconds: 5),
+    this.shutdownTerminalEffectTimeout = defaultShutdownTerminalEffectTimeout,
     this.terminalHistoryTimeout = const Duration(seconds: 5),
     this.onInternalFailure,
     this.onAppliedStateTransition,
@@ -107,6 +108,7 @@ final class CallCoordinator {
         effectTimeout <= Duration.zero ||
         mediaPreparationTimeout <= Duration.zero ||
         terminalEffectTimeout <= Duration.zero ||
+        shutdownTerminalEffectTimeout <= Duration.zero ||
         terminalHistoryTimeout <= Duration.zero) {
       throw ArgumentError('coordinator bounds must be positive');
     }
@@ -123,6 +125,20 @@ final class CallCoordinator {
   final Duration effectTimeout;
   final Duration mediaPreparationTimeout;
   final Duration terminalEffectTimeout;
+
+  /// How long [dispose] waits for terminal signals (terminate/reject) to reach
+  /// the peer before it returns. The call graph closes signaling right after
+  /// [dispose], so a send still resolving the peer endpoint is then dropped
+  /// and the peer only ends the call on media loss (beta 2026-09-25, F3).
+  /// The effective wait is never shorter than [terminalEffectTimeout]. It
+  /// stays inside the 2 s call-shutdown budget of
+  /// `CanonicalRuntimeShutdownSequence`.
+  final Duration shutdownTerminalEffectTimeout;
+
+  static const Duration defaultShutdownTerminalEffectTimeout = Duration(
+    milliseconds: 1500,
+  );
+
   final Duration terminalHistoryTimeout;
   final void Function(CallCoordinatorInternalFailure failure)?
   onInternalFailure;
@@ -147,6 +163,9 @@ final class CallCoordinator {
   bool _disposed = false;
   bool _disposing = false;
   Future<void>? _disposeInFlight;
+  Completer<void>? _shutdownDeadline;
+  Timer? _shutdownDeadlineTimer;
+  final Set<Future<void>> _inFlightTerminalDeliveries = <Future<void>>{};
   int _internalFailureCount = 0;
   _CallPreparationInterruption? _preparationInterruption;
 
@@ -490,10 +509,41 @@ final class CallCoordinator {
   Future<void> _executeTerminalDelivery(
     CallEffect effect,
     CallSessionSnapshot snapshot,
-  ) async => effectExecutor
-      .execute(effect, snapshot)
-      .timeout(terminalEffectTimeout)
-      .then<void>((_) {});
+  ) async {
+    final delivery = effectExecutor
+        .execute(effect, snapshot)
+        .then<void>((_) {});
+    _trackTerminalDelivery(delivery);
+    final shutdownDeadline = _shutdownDeadline;
+    if (shutdownDeadline == null) {
+      return delivery.timeout(terminalEffectTimeout);
+    }
+    // Engine teardown: the peer must hear this before signaling closes.
+    await Future.any<void>(<Future<void>>[
+      delivery,
+      shutdownDeadline.future.then<void>(
+        (_) => throw TimeoutException(
+          'terminal delivery exceeded the shutdown budget',
+          _shutdownTerminalBudget,
+        ),
+      ),
+    ]);
+  }
+
+  Duration get _shutdownTerminalBudget =>
+      shutdownTerminalEffectTimeout > terminalEffectTimeout
+      ? shutdownTerminalEffectTimeout
+      : terminalEffectTimeout;
+
+  /// Keeps a terminal send reachable after its dispatch budget ran out, so
+  /// [dispose] can still let it finish before signaling closes.
+  void _trackTerminalDelivery(Future<void> delivery) {
+    late final Future<void> tracked;
+    tracked = delivery
+        .then<void>((_) {}, onError: (Object _) {})
+        .whenComplete(() => _inFlightTerminalDeliveries.remove(tracked));
+    _inFlightTerminalDeliveries.add(tracked);
+  }
 
   Future<void> _executeEffect(
     CallEffect effect,
@@ -708,6 +758,11 @@ final class CallCoordinator {
     final inFlight = _disposeInFlight;
     if (inFlight != null) return inFlight;
     _disposing = true;
+    final deadline = Completer<void>();
+    _shutdownDeadline = deadline;
+    _shutdownDeadlineTimer = Timer(_shutdownTerminalBudget, () {
+      if (!deadline.isCompleted) deadline.complete();
+    });
     final attempt = _disposeAfterQueuedEvents();
     _disposeInFlight = attempt;
     return attempt;
@@ -769,10 +824,17 @@ final class CallCoordinator {
       });
       _tail = serialized;
       await serialized;
+      // A terminal send from an earlier end (for example a native end during
+      // teardown) may still be resolving the peer after its own budget.
+      await _awaitInFlightTerminalDeliveries();
     } catch (error, stackTrace) {
       shutdownError ??= error;
       shutdownStack ??= stackTrace;
     } finally {
+      _shutdownDeadlineTimer?.cancel();
+      _shutdownDeadlineTimer = null;
+      final deadline = _shutdownDeadline;
+      if (deadline != null && !deadline.isCompleted) deadline.complete();
       _cancelTimers();
       _disposed = true;
       _disposing = false;
@@ -781,5 +843,14 @@ final class CallCoordinator {
     if (shutdownError != null) {
       Error.throwWithStackTrace(shutdownError!, shutdownStack!);
     }
+  }
+
+  Future<void> _awaitInFlightTerminalDeliveries() async {
+    final deadline = _shutdownDeadline;
+    if (_inFlightTerminalDeliveries.isEmpty || deadline == null) return;
+    await Future.any<void>(<Future<void>>[
+      Future.wait<void>(_inFlightTerminalDeliveries.toList(growable: false)),
+      deadline.future,
+    ]);
   }
 }

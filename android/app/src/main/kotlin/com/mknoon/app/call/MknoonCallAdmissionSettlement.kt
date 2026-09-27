@@ -68,7 +68,7 @@ internal class MknoonCallAdmissionSettlementStore(
         prune(now)
         if (payload.receivedAtMs < 0L || payload.receivedAtMs > now ||
             payload.expiresAtMs <= payload.receivedAtMs ||
-            payload.expiresAtMs - payload.receivedAtMs > CallPayloadParser.MAX_FUTURE_SKEW_MS ||
+            payload.expiresAtMs - payload.receivedAtMs > CallPayloadParser.MAX_CALLER_EXPIRY_AHEAD_MS ||
             now - payload.receivedAtMs >= RETENTION_MS || !CALL_RANDOM_ID.matches(payload.wakeHandle)
         ) return null
         val token = MknoonCallAdmissionToken(payload.nativeCallId, ownerId, payload.expiresAtMs, payload.wakeHandle)

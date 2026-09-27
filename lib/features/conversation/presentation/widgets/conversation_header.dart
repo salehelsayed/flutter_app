@@ -226,6 +226,8 @@ class _ConversationCallAction extends StatelessWidget {
         : _truthfulUnavailableMessage(context);
 
     return Semantics(
+      container: true,
+      identifier: 'chat_call_button',
       button: true,
       enabled: enabled || canRetry,
       label: enabled

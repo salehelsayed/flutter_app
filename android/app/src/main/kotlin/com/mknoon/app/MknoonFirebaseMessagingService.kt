@@ -14,6 +14,7 @@ import com.mknoon.app.call.CallPayloadParser
 import com.mknoon.app.call.CallWakePayload
 import com.mknoon.app.call.HeadlessCallAdmissionWorkScheduler
 import com.mknoon.app.call.MknoonCallForegroundService
+import com.mknoon.app.call.callWakeRejectionDiagnosticReason
 import io.flutter.plugins.firebase.messaging.FlutterFirebaseMessagingService
 
 /** App-owned FlutterFire service that durably records deleted FCM batches. */
@@ -27,6 +28,9 @@ open class MknoonFirebaseMessagingService : FlutterFirebaseMessagingService() {
         internal const val RECOVERY_GENERATION_EXTRA =
             "com.mknoon.app.extra.DROPPED_PUSH_RECOVERY_GENERATION"
         private const val RECOVERY_PENDING_INTENT_REQUEST_CODE = 329
+
+        /** Debug-build logcat tag naming the exact call wake parse rejection. */
+        internal const val CALL_WAKE_DIAGNOSTIC_TAG = "MknoonCallWake"
 
         // NotificationCompat's silent-group convention: a grouped child with
         // summary-only alert behavior never sounds even on an audible channel.
@@ -109,8 +113,19 @@ open class MknoonFirebaseMessagingService : FlutterFirebaseMessagingService() {
                 // can consume and acknowledge its terminal mailbox row.
                 signalWarmCallWake()
             } else {
+                val rejection = (parsed as? CallPayloadParseResult.Rejected)?.reason
                 appDiagnostics.record("push", "parse", "rejected", "invalid_payload", traceId = appTrace)
-                diagnostics.record(stage = "push", action = "parse", outcome = "rejected", reason = "rejected_payload")
+                diagnostics.record(
+                    stage = "push", action = "parse", outcome = "rejected",
+                    reason = rejection?.let(::callWakeRejectionDiagnosticReason) ?: "rejected_payload",
+                )
+                if (BuildConfig.DEBUG && rejection != null) {
+                    // The shared diagnostic schema has no value per reason.
+                    android.util.Log.i(
+                        CALL_WAKE_DIAGNOSTIC_TAG,
+                        "CALL_ANDROID_WAKE_PARSE outcome=rejected reason=${rejection.name.lowercase()}",
+                    )
+                }
             }
             // `w=call` reserves this namespace even when the rest of the
             // payload is malformed. It must never enter ordinary FlutterFire

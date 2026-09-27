@@ -21,6 +21,17 @@ internal enum class CallPayloadRejectionReason {
     TOO_FAR_FUTURE,
 }
 
+/**
+ * The closed call-diagnostic reason for a rejected wake. A stale wake reads
+ * `expired`. The other reasons have no own value in the shared schema (the
+ * relay rejects unknown values), so they keep `rejected_payload`.
+ */
+internal fun callWakeRejectionDiagnosticReason(reason: CallPayloadRejectionReason): String =
+    when (reason) {
+        CallPayloadRejectionReason.STALE -> "expired"
+        else -> "rejected_payload"
+    }
+
 internal sealed interface CallPayloadParseResult {
     data class Accepted(val payload: CallWakePayload) : CallPayloadParseResult
 
@@ -35,6 +46,23 @@ internal class CallPayloadParser(
     companion object {
         const val MAX_PAYLOAD_BYTES = 256
         const val MAX_FUTURE_SKEW_MS = 45_000L
+
+        /**
+         * How far the caller's clock may run ahead of this device. Dart's
+         * envelope codec accepts the same lead
+         * (`SecureCallEnvelopeCodec.maxFutureClockSkew`).
+         */
+        const val MAX_CALLER_CLOCK_LEAD_MS = 30_000L
+
+        /**
+         * A wake's `e` is the caller's exact invite expiry, kept as is for
+         * relay-row matching. It may lie up to the 45 s lifetime plus the
+         * caller clock lead ahead of this clock (beta 2026-09-25: a callee
+         * 13 s behind got `e` 53 s ahead). Local ringing and admission stay
+         * bounded to [MAX_FUTURE_SKEW_MS] on the local clock.
+         */
+        const val MAX_CALLER_EXPIRY_AHEAD_MS =
+            MAX_FUTURE_SKEW_MS + MAX_CALLER_CLOCK_LEAD_MS
 
         private val EXPECTED_KEYS = setOf("v", "w", "c", "h", "e")
         private val STRICT_MILLISECONDS = Regex("^[1-9][0-9]{0,18}$")
@@ -88,7 +116,7 @@ internal class CallPayloadParser(
         if (expiresAtMs <= receivedAtMs) {
             return rejected(CallPayloadRejectionReason.STALE)
         }
-        if (expiresAtMs - receivedAtMs > MAX_FUTURE_SKEW_MS) {
+        if (expiresAtMs - receivedAtMs > MAX_CALLER_EXPIRY_AHEAD_MS) {
             return rejected(CallPayloadRejectionReason.TOO_FAR_FUTURE)
         }
 

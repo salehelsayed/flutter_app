@@ -84,36 +84,40 @@ class CallTimelineRow extends StatelessWidget {
     final readableColors = context.backgroundReadableColors;
     final text = callTimelineRowText(entry, l10n);
 
-    return Center(
-      child: Container(
-        margin: const EdgeInsets.symmetric(horizontal: 32, vertical: 8),
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-        decoration: BoxDecoration(
-          color: readableColors.surfaceSubtle,
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: readableColors.divider),
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(
-              _callTimelineIcon(entry),
-              size: 14,
-              color: readableColors.textMuted,
-            ),
-            const SizedBox(width: 8),
-            Flexible(
-              child: Text(
-                text,
-                style: TextStyle(
-                  fontSize: 12,
-                  fontWeight: FontWeight.w400,
-                  color: readableColors.textMuted,
-                ),
-                textAlign: TextAlign.center,
+    return Semantics(
+      container: true,
+      identifier: 'call_row_${entry.callId}',
+      child: Center(
+        child: Container(
+          margin: const EdgeInsets.symmetric(horizontal: 32, vertical: 8),
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+          decoration: BoxDecoration(
+            color: readableColors.surfaceSubtle,
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: readableColors.divider),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                _callTimelineIcon(entry),
+                size: 14,
+                color: readableColors.textMuted,
               ),
-            ),
-          ],
+              const SizedBox(width: 8),
+              Flexible(
+                child: Text(
+                  text,
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w400,
+                    color: readableColors.textMuted,
+                  ),
+                  textAlign: TextAlign.center,
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );

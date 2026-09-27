@@ -1,4 +1,5 @@
 import 'package:flutter/foundation.dart' show kDebugMode;
+import 'package:flutter/services.dart' show MissingPluginException;
 import 'package:flutter_app/features/call/application/locked_call_presentation.dart';
 import '../diagnostics/call_diagnostics.dart';
 import 'dart:async';
@@ -251,6 +252,9 @@ final class AndroidCallLifecycleAdapter
   final Map<int, _NativeEvent> _observedEvents = <int, _NativeEvent>{};
   final Map<String, int> _eventIds = <String, int>{};
   final Set<String> _endedHandles = <String>{};
+
+  /// The native method handler is gone (the activity was destroyed).
+  bool _nativeBridgeDetached = false;
   final Map<String, int> _retiredHighWatermarks = <String, int>{};
 
   StreamSubscription<Object?>? _nativeSubscription;
@@ -1058,15 +1062,38 @@ final class AndroidCallLifecycleAdapter
   Future<void> deactivateAudio() async {
     await start();
     if (_releaseRetainedTerminalAudio()) return;
+    if (_releaseAudioAfterNativeAuthorityLost()) return;
     final handle = _boundHandle;
     if (handle == null) return;
     if (_releaseEndedHandleAudio(handle)) return;
-    await _scheduleExactHandleAudioCommand(
-      method: 'deactivateAudio',
-      handle: handle,
-      bindingGeneration: _bindingGeneration,
-      ownsSessionAfterSuccess: false,
-    );
+    try {
+      await _scheduleExactHandleAudioCommand(
+        method: 'deactivateAudio',
+        handle: handle,
+        bindingGeneration: _bindingGeneration,
+        ownsSessionAfterSuccess: false,
+      );
+    } on AndroidCallLifecycleException {
+      // Close or invalidation can land while the command is queued.
+      if (_releaseAudioAfterNativeAuthorityLost()) return;
+      if (_nativeBridgeDetached) {
+        _ownsSession = false;
+        return;
+      }
+      rethrow;
+    }
+  }
+
+  /// Close sends native `detach` and invalidation sends native `failClosed`.
+  /// Both end the platform call (`endPlatform = true`), and Telecom releases
+  /// the call audio with it. No native session is left for Dart to release,
+  /// so a deactivate here is a successful no-op. Failing it instead left
+  /// terminal cleanup blocked on `call_media` until a force-stop.
+  bool _releaseAudioAfterNativeAuthorityLost() {
+    if (!_closed && !_invalid) return false;
+    _ownsSession = false;
+    _selectedRoute = CallAudioOutputRoute.systemDefault;
+    return true;
   }
 
   /// Native termination already releases platform audio and restores its
@@ -1205,7 +1232,10 @@ final class AndroidCallLifecycleAdapter
         completer.complete();
       } on AndroidCallLifecycleException catch (error, stackTrace) {
         completer.completeError(error, stackTrace);
-      } catch (_, stackTrace) {
+      } catch (error, stackTrace) {
+        // MainActivity.onDestroy disposes the native bridge (its controller
+        // detach ends the platform call) before Dart sees `detached`.
+        if (error is MissingPluginException) _nativeBridgeDetached = true;
         completer.completeError(
           const AndroidCallLifecycleException(
             AndroidCallLifecycleErrorCode.nativeFailure,

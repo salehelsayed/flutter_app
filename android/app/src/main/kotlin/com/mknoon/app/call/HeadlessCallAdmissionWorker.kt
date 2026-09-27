@@ -293,7 +293,7 @@ internal class HeadlessCallAdmissionWorkScheduler(
             !CANONICAL_CALL_HANDLE.matches(callId) ||
             !CALL_RANDOM_ID.matches(descriptor.wakeHandle) ||
             descriptor.expiresAtMs <= observedNow ||
-            descriptor.expiresAtMs - observedNow > CallPayloadParser.MAX_FUTURE_SKEW_MS
+            descriptor.expiresAtMs - observedNow > CallPayloadParser.MAX_CALLER_EXPIRY_AHEAD_MS
         ) {
             return false
         }
@@ -342,9 +342,9 @@ internal class HeadlessCallAdmissionWorkScheduler(
             payload.receivedAtMs >= 0L &&
             payload.expiresAtMs > payload.receivedAtMs &&
             payload.expiresAtMs - payload.receivedAtMs <=
-                CallPayloadParser.MAX_FUTURE_SKEW_MS &&
+                CallPayloadParser.MAX_CALLER_EXPIRY_AHEAD_MS &&
             payload.expiresAtMs > observedNow &&
-            payload.expiresAtMs - observedNow <= CallPayloadParser.MAX_FUTURE_SKEW_MS
+            payload.expiresAtMs - observedNow <= CallPayloadParser.MAX_CALLER_EXPIRY_AHEAD_MS
     }
 }
 
@@ -389,6 +389,8 @@ internal class HeadlessCallAdmissionExecution(
     private val releaseAdmission: suspend (String, Boolean) -> Unit = { _, _ -> },
     private val diagnostic: (String?, HeadlessCallAdmissionDiagnostic) -> Unit = { _, _ -> },
     private val monotonicMs: () -> Long = { System.nanoTime() / 1_000_000L },
+    /** True while a foreground engine owns the canonical runtime lease. */
+    private val foregroundOwnsRuntime: () -> Boolean = { false },
 ) {
     private val lock = Any()
     private val stopRequested = AtomicBoolean(false)
@@ -475,6 +477,15 @@ internal class HeadlessCallAdmissionExecution(
             expiresAtMs = invocation.expiresAtMs,
             mode = invocation.mode,
         )
+        // A foreground owner holds the canonical runtime lease, so a headless
+        // engine could never acquire it. Building one anyway runs on the main
+        // thread, which also runs the foreground Dart isolate, and froze the
+        // foreground call path for about 50 s (beta 2026-09-25). The FCM
+        // service also signals that owner directly, and it admits the invite
+        // from its own mailbox drain. Finish like a deferred run.
+        if (runCatching(foregroundOwnsRuntime).getOrDefault(false)) {
+            return finish("pending", "busy")
+        }
         val runner = runCatching(runnerFactory).getOrNull()
             ?: return finish("failed", "native_lifecycle_failed")
         synchronized(lock) { activeRunner = runner }
@@ -627,7 +638,7 @@ internal class HeadlessCallAdmissionExecution(
             runCatching { UUID.fromString(callId).toString() }.getOrNull() != callId ||
             !CALL_RANDOM_ID.matches(wakeHandle) ||
             expiresAtMs <= observedNow ||
-            expiresAtMs - observedNow > CallPayloadParser.MAX_FUTURE_SKEW_MS
+            expiresAtMs - observedNow > CallPayloadParser.MAX_CALLER_EXPIRY_AHEAD_MS
         ) {
             return null
         }
@@ -637,6 +648,15 @@ internal class HeadlessCallAdmissionExecution(
     private fun noPresentation() =
         HeadlessCallAdmissionWorkOutcome.COMPLETED_WITHOUT_PRESENTATION
 }
+
+/**
+ * True while a foreground engine owns the canonical runtime lease, including
+ * while it drains. A RECOVERY owner or a released lease does not count.
+ */
+internal fun foregroundOwnsCanonicalRuntime(
+    snapshot: CanonicalRuntimeLeaseBroker.Snapshot,
+): Boolean = snapshot.state != CanonicalRuntimeLeaseBroker.State.RELEASED &&
+    snapshot.role == CanonicalRuntimeLeaseBroker.Role.FOREGROUND
 
 /** WorkManager production boundary; every terminal outcome is fail-closed. */
 internal class HeadlessCallAdmissionWorker(
@@ -695,6 +715,9 @@ internal class HeadlessCallAdmissionWorker(
         HeadlessCallAdmissionExecution(
             runnerFactory = {
                 FlutterHeadlessCallAdmissionEngineRunner(applicationContext)
+            },
+            foregroundOwnsRuntime = {
+                foregroundOwnsCanonicalRuntime(ProcessCanonicalRuntimeLease.broker.snapshot())
             },
             isStopped = { isStopped },
             nowMs = System::currentTimeMillis,

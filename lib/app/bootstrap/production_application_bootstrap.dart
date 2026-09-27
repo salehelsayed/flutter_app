@@ -17,6 +17,7 @@ import 'package:flutter_app/core/services/share_intent_service.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:flutter_app/core/database/production_migration_registry.dart';
 import 'package:flutter_app/app/bootstrap/role_aware_deferred_runtime_start.dart';
+import 'package:flutter_app/app/bootstrap/canonical_runtime_shutdown_sequence.dart';
 import 'package:flutter_app/app/bootstrap/call_signaling_composition.dart';
 import 'package:flutter_app/app/bootstrap/call_wake_contact_key_backfill.dart';
 import 'package:flutter_app/app/bootstrap/production_call_signaling_graph.dart';
@@ -694,8 +695,16 @@ final class ProductionApplicationBootstrap
             },
             isDatabaseOpen: (database) => database.isOpen,
           );
+    // Engine teardown (native request or Dart `detached`) ends a live call
+    // first, so its terminate can still resolve the peer from SQLCipher and
+    // leave through Go before either is shut down.
+    final canonicalRuntimeShutdownSequence = CanonicalRuntimeShutdownSequence(
+      shutdownRuntime: () =>
+          canonicalWritableRuntimeSession?.shutdown() ??
+          Future<bool>.value(true),
+    );
     Future<bool> shutdownCanonicalRuntime() =>
-        canonicalWritableRuntimeSession?.shutdown() ?? Future<bool>.value(true);
+        canonicalRuntimeShutdownSequence.shutdown();
     if (canonicalWritableRuntimeSession != null) {
       const MethodChannel(
         'mknoon/canonical_runtime_shutdown',
@@ -6369,6 +6378,9 @@ final class ProductionApplicationBootstrap
           // Debug observation must never control production graph availability.
         }
       },
+    );
+    canonicalRuntimeShutdownSequence.bindCallShutdown(
+      callSignalingComposition.shutdown,
     );
     if (Platform.isAndroid) {
       // A warm foreground owner prevents the headless worker acquiring the

@@ -11,6 +11,7 @@ import '../domain/call_end_reason.dart';
 import '../domain/call_id.dart';
 import '../domain/call_session_snapshot.dart';
 import '../domain/call_state.dart';
+import 'foreground_call_back_guard.dart';
 import 'locked_call_projection.dart';
 import 'screens/active_call_screen.dart';
 import 'screens/incoming_call_screen.dart';
@@ -33,6 +34,7 @@ final class ForegroundCallOverlay extends StatefulWidget {
     required this.child,
     this.now,
     this.onAttached,
+    this.backGuard,
   });
 
   final ForegroundCallCapability? capability;
@@ -43,6 +45,11 @@ final class ForegroundCallOverlay extends StatefulWidget {
   /// The canonical projection subscription is installed. A hidden Android
   /// activity may attach this host without ever receiving a rendered frame.
   final VoidCallback? onAttached;
+
+  /// Told whether a live call surface owns the screen, so the system Back
+  /// action sends the app to the background instead of popping the hidden
+  /// routes or finishing the activity under the call.
+  final ForegroundCallBackGuard? backGuard;
 
   @override
   State<ForegroundCallOverlay> createState() => _ForegroundCallOverlayState();
@@ -66,6 +73,8 @@ class _ForegroundCallOverlayState extends State<ForegroundCallOverlay> {
   Timer? _terminalNoticeTimer;
   CallId? _terminalNoticeCallId;
   bool _terminalNoticeVisible = false;
+  bool _navigatorCanHandlePop = false;
+  bool? _publishedOwnsBack;
   final _lockedProjection = LockedCallProjection();
   bool _lockedLight = false;
   AppLocalizations? _lockedL10n;
@@ -104,6 +113,9 @@ class _ForegroundCallOverlayState extends State<ForegroundCallOverlay> {
   @override
   void didUpdateWidget(covariant ForegroundCallOverlay oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (!identical(oldWidget.backGuard, widget.backGuard)) {
+      oldWidget.backGuard?.surfaceOwnsBack = false;
+    }
     if (!identical(oldWidget.capability, widget.capability)) {
       _bindCapability(notify: false);
       return;
@@ -125,6 +137,7 @@ class _ForegroundCallOverlayState extends State<ForegroundCallOverlay> {
     unawaited(_subscription?.cancel());
     _terminalNoticeTimer?.cancel();
     _lockedProjection.dispose();
+    widget.backGuard?.surfaceOwnsBack = false;
     super.dispose();
   }
 
@@ -307,6 +320,16 @@ class _ForegroundCallOverlayState extends State<ForegroundCallOverlay> {
       };
     }
 
+    // A live call surface owns Back. The terminal notice is informational
+    // only and leaves Back to the navigator.
+    final backGuard = widget.backGuard;
+    final ownsBack =
+        backGuard != null &&
+        surface != null &&
+        surfaceKind != _ForegroundCallSurface.terminal;
+    backGuard?.surfaceOwnsBack = ownsBack;
+    _publishFrameworkHandlesBack(ownsBack);
+
     // A software keyboard reports itself as the bottom view inset; keep the
     // controls above it while it is still (dis)appearing.
     final keyboardInset = MediaQuery.viewInsetsOf(context).bottom;
@@ -321,7 +344,23 @@ class _ForegroundCallOverlayState extends State<ForegroundCallOverlay> {
           // backgrounds. A call owns the screen; freeze those animations until
           // it hides, while preserving navigation and non-animation state.
           enabled: surface == null,
-          child: ExcludeFocus(excluding: surface != null, child: widget.child),
+          child: ExcludeFocus(
+            excluding: surface != null,
+            child: NotificationListener<NavigationNotification>(
+              // While a call owns Back, the hidden navigator's answer must not
+              // reach the engine. At its root route it reports that it cannot
+              // pop, and on Android 13+ FlutterActivity then unregisters its
+              // back callback, so the system Back closes the task and ends
+              // the call (beta 2026-09-25). The call surface reports that the
+              // framework handles Back instead. The navigator's last value is
+              // replayed when the call surface hides.
+              onNotification: (notification) {
+                _navigatorCanHandlePop = notification.canHandlePop;
+                return _publishedOwnsBack == true;
+              },
+              child: widget.child,
+            ),
+          ),
         ),
         if (surface != null)
           Positioned.fill(
@@ -343,6 +382,25 @@ class _ForegroundCallOverlayState extends State<ForegroundCallOverlay> {
           ),
       ],
     );
+  }
+
+  void _publishFrameworkHandlesBack(bool ownsBack) {
+    if (widget.backGuard == null) return;
+    if (_publishedOwnsBack == ownsBack) return;
+    final wasOwned = _publishedOwnsBack == true;
+    _publishedOwnsBack = ownsBack;
+    if (!ownsBack && !wasOwned) return;
+    // Bubbles to WidgetsApp, which forwards it to the engine as
+    // SystemNavigator.setFrameworkHandlesBack. Posted after the frame, like
+    // the navigator's own notifications. While a call owns Back this keeps
+    // Flutter's Android back callback registered, so Back reaches
+    // ForegroundCallBackGuard.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || _publishedOwnsBack != ownsBack) return;
+      NavigationNotification(
+        canHandlePop: ownsBack || _navigatorCanHandlePop,
+      ).dispatch(context);
+    });
   }
 
   CallControls _buildControls(CallId callId, CallAudioControlState audio) {

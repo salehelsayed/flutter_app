@@ -506,76 +506,81 @@ class _AudioPlayerWidgetState extends State<AudioPlayerWidget>
 
     final hasWaveform = widget.attachment.waveform != null;
 
-    final player = Row(
-      children: [
-        // Play/pause button
-        GestureDetector(
-          onTap: _isAvailable ? _togglePlayPause : null,
-          child: Container(
-            width: 32,
-            height: 32,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              color: _isAvailable
-                  ? const Color.fromRGBO(78, 205, 196, 0.20)
-                  : const Color.fromRGBO(255, 255, 255, 0.06),
-            ),
-            child: Icon(
-              _isPlaying ? Icons.pause_rounded : Icons.play_arrow_rounded,
-              size: 14,
-              color: _isAvailable
-                  ? const Color(0xFF4ecdc4)
-                  : const Color.fromRGBO(255, 255, 255, 0.25),
+    // Screen readers otherwise hear only the duration and the time, with no
+    // hint that the bubble is a voice message.
+    final player = Semantics(
+      label: AppLocalizations.of(context)!.media_voice_message_label,
+      child: Row(
+        children: [
+          // Play/pause button
+          GestureDetector(
+            onTap: _isAvailable ? _togglePlayPause : null,
+            child: Container(
+              width: 32,
+              height: 32,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: _isAvailable
+                    ? const Color.fromRGBO(78, 205, 196, 0.20)
+                    : const Color.fromRGBO(255, 255, 255, 0.06),
+              ),
+              child: Icon(
+                _isPlaying ? Icons.pause_rounded : Icons.play_arrow_rounded,
+                size: 14,
+                color: _isAvailable
+                    ? const Color(0xFF4ecdc4)
+                    : const Color.fromRGBO(255, 255, 255, 0.25),
+              ),
             ),
           ),
-        ),
-        const SizedBox(width: 8),
-        // Progress: waveform bars or slider
-        Expanded(
-          child: SizedBox(
-            height: 28,
-            child: hasWaveform
-                ? WaveformSeekBar(
-                    waveform: widget.attachment.waveform,
-                    progress: progress.clamp(0.0, 1.0),
-                    onSeek: _isAvailable && _isLoaded ? _onSeek : null,
-                  )
-                : SliderTheme(
-                    data: SliderThemeData(
-                      trackHeight: 3,
-                      activeTrackColor: const Color(0xFF4ecdc4),
-                      inactiveTrackColor: const Color.fromRGBO(
-                        255,
-                        255,
-                        255,
-                        0.15,
+          const SizedBox(width: 8),
+          // Progress: waveform bars or slider
+          Expanded(
+            child: SizedBox(
+              height: 28,
+              child: hasWaveform
+                  ? WaveformSeekBar(
+                      waveform: widget.attachment.waveform,
+                      progress: progress.clamp(0.0, 1.0),
+                      onSeek: _isAvailable && _isLoaded ? _onSeek : null,
+                    )
+                  : SliderTheme(
+                      data: SliderThemeData(
+                        trackHeight: 3,
+                        activeTrackColor: const Color(0xFF4ecdc4),
+                        inactiveTrackColor: const Color.fromRGBO(
+                          255,
+                          255,
+                          255,
+                          0.15,
+                        ),
+                        thumbColor: const Color(0xFF4ecdc4),
+                        thumbShape: const RoundSliderThumbShape(
+                          enabledThumbRadius: 5,
+                        ),
+                        overlayShape: const RoundSliderOverlayShape(
+                          overlayRadius: 10,
+                        ),
                       ),
-                      thumbColor: const Color(0xFF4ecdc4),
-                      thumbShape: const RoundSliderThumbShape(
-                        enabledThumbRadius: 5,
-                      ),
-                      overlayShape: const RoundSliderOverlayShape(
-                        overlayRadius: 10,
+                      child: Slider(
+                        value: progress.clamp(0.0, 1.0),
+                        onChanged: _isAvailable && _isLoaded ? _onSeek : null,
                       ),
                     ),
-                    child: Slider(
-                      value: progress.clamp(0.0, 1.0),
-                      onChanged: _isAvailable && _isLoaded ? _onSeek : null,
-                    ),
-                  ),
+            ),
           ),
-        ),
-        const SizedBox(width: 8),
-        // Duration label
-        Text(
-          durationText,
-          style: const TextStyle(
-            fontSize: 11,
-            fontWeight: FontWeight.w400,
-            color: Color.fromRGBO(255, 255, 255, 0.25),
+          const SizedBox(width: 8),
+          // Duration label
+          Text(
+            durationText,
+            style: const TextStyle(
+              fontSize: 11,
+              fontWeight: FontWeight.w400,
+              color: Color.fromRGBO(255, 255, 255, 0.25),
+            ),
           ),
-        ),
-      ],
+        ],
+      ),
     );
     final label = widget.renderedSemanticsLabel;
     if (label == null || !_isLoaded) return player;

@@ -7,6 +7,7 @@ import androidx.work.ExistingWorkPolicy
 import androidx.work.NetworkType
 import androidx.work.OneTimeWorkRequest
 import androidx.work.OutOfQuotaPolicy
+import com.mknoon.app.CanonicalRuntimeLeaseBroker
 import com.mknoon.app.MknoonFirebaseMessagingService
 import java.io.File
 import java.util.UUID
@@ -566,7 +567,7 @@ class HeadlessCallAdmissionWorkerTest {
             validInput(callId = "not-a-uuid"),
             validInput(wakeHandle = "not-a-wake"),
             validInput(expiresAtMs = NOW_MS),
-            validInput(expiresAtMs = NOW_MS + CallPayloadParser.MAX_FUTURE_SKEW_MS + 1L),
+            validInput(expiresAtMs = NOW_MS + 75_001L),
             Data.Builder()
                 .putAll(validInput())
                 .putBoolean("extra", true)
@@ -583,6 +584,177 @@ class HeadlessCallAdmissionWorkerTest {
             execution.execute(validInput(), runAttemptCount = 1),
         )
         assertEquals(0, factories)
+    }
+
+    /**
+     * Beta 2026-09-25 (run-20260925-225444): an FCM call wake arrived while the
+     * app was open. This worker still built a second FlutterEngine on the main
+     * thread, which also runs the foreground Dart isolate. The main thread then
+     * logged nothing for 52 s, and the invite the foreground already held was
+     * routed only after the caller gave up. A foreground lease owner already
+     * gets the wake directly, and the headless engine could never acquire the
+     * lease it holds, so no engine may be built.
+     */
+    @Test
+    fun `a foreground owned runtime never constructs a headless engine`() = runBlocking {
+        var factories = 0
+        val events = mutableListOf<HeadlessCallAdmissionDiagnostic>()
+        val releases = mutableListOf<Pair<String, Boolean>>()
+        val execution = HeadlessCallAdmissionExecution(
+            runnerFactory = {
+                factories += 1
+                FakeHeadlessCallAdmissionRunner { validCompletionObject(it) }
+            },
+            isStopped = { false },
+            nowMs = { NOW_MS },
+            timeoutMillis = 1_000L,
+            nonceFactory = { "nonce-a" },
+            presentAuthenticated = { _, _, _ -> error("must not present") },
+            terminalizeAuthenticated = { _, _ -> error("must not terminalize") },
+            releaseAdmission = { callId, requireTerminal -> releases += callId to requireTerminal },
+            diagnostic = { _, event -> events += event },
+            foregroundOwnsRuntime = { true },
+        )
+
+        assertEquals(
+            HeadlessCallAdmissionWorkOutcome.COMPLETED_WITHOUT_PRESENTATION,
+            execution.execute(validInput()),
+        )
+
+        assertEquals("no engine while the foreground owns the runtime", 0, factories)
+        assertEquals(listOf("start", "finish"), events.map { it.action })
+        assertEquals("pending", events.last().outcome)
+        assertEquals("busy", events.last().reason)
+        // Exactly like a deferred run: the foreground owner may still be
+        // authenticating this invite, so the admission placeholder is kept
+        // unless the call already ended natively.
+        assertEquals(listOf(CALL_ID to true), releases)
+    }
+
+    @Test
+    fun `a foreground owned runtime skips the decline reply engine and keeps its settled release`() = runBlocking {
+        var factories = 0
+        val events = mutableListOf<HeadlessCallAdmissionDiagnostic>()
+        val releases = mutableListOf<Pair<String, Boolean>>()
+        HeadlessCallAdmissionExecution(
+            runnerFactory = {
+                factories += 1
+                FakeHeadlessCallAdmissionRunner { validCompletionObject(it) }
+            },
+            isStopped = { false },
+            nowMs = { NOW_MS },
+            timeoutMillis = 1_000L,
+            nonceFactory = { "nonce-a" },
+            presentAuthenticated = { _, _, _ -> error("must not present") },
+            terminalizeAuthenticated = { _, _ -> error("must not terminalize") },
+            releaseAdmission = { callId, requireTerminal -> releases += callId to requireTerminal },
+            diagnostic = { _, event -> events += event },
+            foregroundOwnsRuntime = { true },
+        ).execute(declineInput())
+
+        assertEquals(0, factories)
+        assertEquals("busy", events.last().reason)
+        assertEquals(listOf(CALL_ID to false), releases)
+    }
+
+    @Test
+    fun `a runtime the foreground does not own still runs the headless engine`() = runBlocking {
+        for (ownership in listOf<() -> Boolean>({ false }, { error("lease snapshot failed") })) {
+            var factories = 0
+            var presented = 0
+            val result = HeadlessCallAdmissionExecution(
+                runnerFactory = {
+                    factories += 1
+                    FakeHeadlessCallAdmissionRunner { validCompletionObject(it) }
+                },
+                isStopped = { false },
+                nowMs = { NOW_MS },
+                timeoutMillis = 1_000L,
+                nonceFactory = { "nonce-a" },
+                presentAuthenticated = { _, _, _ -> presented += 1; true },
+                terminalizeAuthenticated = { _, _ -> error("must not terminalize") },
+                foregroundOwnsRuntime = ownership,
+            ).execute(validInput())
+            assertEquals(1, factories)
+            assertEquals(1, presented)
+            assertEquals(HeadlessCallAdmissionWorkOutcome.PRESENTED, result)
+        }
+    }
+
+    @Test
+    fun `only a foreground lease owner counts as owning the runtime`() {
+        val broker = CanonicalRuntimeLeaseBroker()
+        assertFalse(foregroundOwnsCanonicalRuntime(broker.snapshot()))
+
+        val foreground = checkNotNull(
+            broker.acquire("foreground-1", "binding", CanonicalRuntimeLeaseBroker.Role.FOREGROUND),
+        )
+        assertTrue(foregroundOwnsCanonicalRuntime(broker.snapshot()))
+        assertTrue(broker.beginDrain(foreground))
+        assertTrue(foregroundOwnsCanonicalRuntime(broker.snapshot()))
+        assertTrue(broker.release(foreground, databaseClosed = true))
+        assertFalse(foregroundOwnsCanonicalRuntime(broker.snapshot()))
+
+        checkNotNull(
+            broker.acquire("headless-1", "binding", CanonicalRuntimeLeaseBroker.Role.RECOVERY),
+        )
+        assertFalse(foregroundOwnsCanonicalRuntime(broker.snapshot()))
+    }
+
+    @Test
+    fun `production worker reads the process lease before building an engine`() {
+        val source = sourceFile("HeadlessCallAdmissionWorker.kt").readText()
+        val worker = source.substringAfter("internal class HeadlessCallAdmissionWorker(")
+        val wiring = worker.substringAfter("foregroundOwnsRuntime = {", missingDelimiterValue = "")
+            .substringBefore("},")
+        assertTrue(
+            wiring.contains("foregroundOwnsCanonicalRuntime(ProcessCanonicalRuntimeLease.broker.snapshot())"),
+        )
+    }
+
+    /**
+     * Beta 2026-09-25: with the callee clock about 13 s behind the caller, the
+     * wake's exact relay expiry lies 53 s ahead of this clock. The scheduler,
+     * the worker input and the decline reply must all accept it (up to the
+     * 45 s lifetime plus 30 s of caller clock lead) and keep the exact value.
+     */
+    @Test
+    fun `a callee clock behind the caller still schedules and runs admission with the exact expiry`() = runBlocking {
+        val lagging = NOW_MS + 13_000L + 40_000L
+        val enqueuer = RecordingHeadlessCallAdmissionEnqueuer()
+        val scheduler = HeadlessCallAdmissionWorkScheduler(
+            context = context,
+            enqueuer = enqueuer,
+            nowMs = { NOW_MS },
+        )
+
+        assertTrue(scheduler.enqueue(payload().copy(expiresAtMs = lagging)))
+        assertEquals(
+            lagging,
+            enqueuer.requests.single().request.workSpec.input
+                .getLong(HeadlessCallAdmissionWorkScheduler.INPUT_EXPIRES_AT_MS, -1L),
+        )
+        assertFalse(scheduler.enqueue(payload().copy(expiresAtMs = NOW_MS + 76_000L)))
+        assertTrue(scheduler.enqueueDeclineReply(declinedDescriptor().copy(expiresAtMs = lagging)))
+        assertFalse(
+            scheduler.enqueueDeclineReply(declinedDescriptor().copy(expiresAtMs = NOW_MS + 76_000L)),
+        )
+
+        val seen = mutableListOf<HeadlessCallAdmissionRunIdentity>()
+        var presentedExpiry = 0L
+        val result = execution(
+            runner = FakeHeadlessCallAdmissionRunner { identity ->
+                seen += identity
+                validCompletionObject(identity)
+            },
+            nowMs = { NOW_MS },
+            presentAuthenticated = { _, expiresAtMs -> presentedExpiry = expiresAtMs; true },
+        ).execute(validInput(expiresAtMs = lagging))
+
+        assertEquals(HeadlessCallAdmissionWorkOutcome.PRESENTED, result)
+        assertEquals(lagging, seen.single().expiresAtMs)
+        // Native presentation bounds ringing to local now + 45 s itself.
+        assertEquals(lagging, presentedExpiry)
     }
 
     @Test

@@ -2,6 +2,7 @@ import 'dart:async';
 import 'package:flutter_app/app/bootstrap/call_signaling_composition.dart';
 import 'package:flutter_app/features/call/application/foreground_call_capability.dart';
 import 'package:flutter_app/features/call/application/outgoing_call_capability.dart';
+import 'package:flutter_app/features/call/presentation/foreground_call_back_guard.dart';
 import 'package:flutter_app/features/call/presentation/foreground_call_overlay.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_app/core/services/share_intent_model.dart';
@@ -747,6 +748,10 @@ class MyApp extends StatefulWidget {
 }
 
 class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
+  // Attached in initState, before MaterialApp registers its navigator
+  // observer, so a live call surface is asked about Back first.
+  final ForegroundCallBackGuard _foregroundCallBackGuard =
+      ForegroundCallBackGuard();
   late final AppVisibilityAuthority _appVisibilityAuthority;
   late final AppVisibilityRouteRegistry _appVisibilityRouteRegistry;
   // 362: the ONE linked-device authority bundle, threaded to every shell that
@@ -836,6 +841,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
   @override
   void initState() {
     super.initState();
+    _foregroundCallBackGuard.attach();
     assert(
       (widget.appVisibilityAuthority == null) ==
           (widget.appVisibilityRouteRegistry == null),
@@ -2271,6 +2277,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
     _appVisibilityRouteRegistry.dispose();
     _appVisibilityAuthority.dispose();
     WidgetsBinding.instance.removeObserver(this);
+    _foregroundCallBackGuard.detach();
     widget.disposePrivateMediaExpiryScheduler?.call();
 
     // Orderly teardown: retriers → listeners → router → service → bridge
@@ -3380,6 +3387,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
           final callSurface = ForegroundCallOverlay(
             capability: widget.foregroundCallCapability,
             onAttached: widget.onForegroundCallPresentationReady,
+            backGuard: _foregroundCallBackGuard,
             loadContactDisplayName: (peerId) async =>
                 (await widget.contactRepository.getContact(peerId))?.username,
             child: appChild,

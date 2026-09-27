@@ -448,6 +448,46 @@ void main() {
     expect(unsafe.leaseReleased, isFalse);
   });
 
+  // Beta 2026-09-25 (run-20260925-221131 S10): the callee clock ran about
+  // 13 s behind the caller, so the wake's exact relay expiry lay 53 s ahead
+  // of this clock. Native now admits up to the 45 s lifetime plus 30 s of
+  // caller clock lead; this runner must not refuse what native admitted.
+  test(
+    'a callee clock behind the caller is admitted within the caller clock lead',
+    () async {
+      final lagging = _Backend(
+        _Session(HeadlessCallAdmissionDisposition.admitted),
+      );
+      final admitted = await ProductionHeadlessCallAdmissionRunner(
+        backend: lagging,
+        nowMs: () => invocation.expiresAtMs - 53_000,
+      ).run(invocation: invocation, isStopRequested: () => false);
+      expect(lagging.acquireCalls, 1);
+      expect(admitted.disposition, HeadlessCallAdmissionDisposition.admitted);
+
+      final tooFar = _Backend(
+        _Session(HeadlessCallAdmissionDisposition.admitted),
+      );
+      final refused = await ProductionHeadlessCallAdmissionRunner(
+        backend: tooFar,
+        nowMs: () => invocation.expiresAtMs - 76_000,
+      ).run(invocation: invocation, isStopRequested: () => false);
+      expect(tooFar.acquireCalls, 0);
+      expect(refused.disposition, HeadlessCallAdmissionDisposition.deferred);
+      expect(refused.diagnosticCause, 'invalid_request');
+
+      final stale = _Backend(
+        _Session(HeadlessCallAdmissionDisposition.admitted),
+      );
+      final expired = await ProductionHeadlessCallAdmissionRunner(
+        backend: stale,
+        nowMs: () => invocation.expiresAtMs,
+      ).run(invocation: invocation, isStopRequested: () => false);
+      expect(stale.acquireCalls, 0);
+      expect(expired.diagnosticCause, 'expired');
+    },
+  );
+
   test('acquisition or evaluation failure uses emergency cleanup', () async {
     final backend = _Backend(
       _Session(

@@ -232,16 +232,18 @@ internal class MknoonCallNativeBridge(
             "acknowledge" -> acknowledge(call.arguments, result)
             "markAdopted" -> withLegacyCallId(call.arguments, result, controller::markAdopted)
             "adopt" -> withDartCallHandle(call.arguments, result, controller::markAdopted)
-            "answer" -> withDartCallHandle(call.arguments, result, controller::answer)
+            "answer" -> withDartCallHandle(call.arguments, result, controller::answer, awaitTelecom = true)
             "activateAudio" -> withEitherCallIdentity(
                 call.arguments,
                 result,
                 controller::activateAudio,
+                awaitTelecom = true,
             )
             "deactivateAudio" -> withDartCallHandle(
                 call.arguments,
                 result,
                 controller::deactivateAudio,
+                awaitTelecom = true,
             )
             "end" -> withEitherCallIdentity(call.arguments, result, controller::endFromDart)
             "requestRoute" -> requestRoute(call.arguments, result)
@@ -446,7 +448,7 @@ internal class MknoonCallNativeBridge(
         val nativeCallId = resolveCallHandle(map["callHandle"])
             ?: return badArguments(result)
         val route = map["route"] as? String ?: return badArguments(result)
-        result.success(controller.requestRoute(nativeCallId, route))
+        runForCall(nativeCallId, result, awaitTelecom = true) { controller.requestRoute(it, route) }
     }
 
     private fun readAudioState(arguments: Any?, result: MethodChannel.Result) {
@@ -605,41 +607,71 @@ internal class MknoonCallNativeBridge(
         arguments: Any?,
         result: MethodChannel.Result,
         operation: (UUID) -> Boolean,
+        awaitTelecom: Boolean = false,
     ) {
         val map = arguments as? Map<*, *> ?: return badArguments(result)
         if (map.keys != setOf("nativeCallId")) return badArguments(result)
         val nativeCallId = parseUuid(map["nativeCallId"]) ?: return badArguments(result)
-        result.success(operation(nativeCallId))
+        runForCall(nativeCallId, result, awaitTelecom, operation)
+    }
+
+    /**
+     * B5/B8: while this call's Telecom registration is in flight (a new
+     * presentation, or a call restored after a restart that Dart attached to
+     * early), an operation that needs the Telecom call ([awaitTelecom]: answer,
+     * audio, route) waits for the registration, off main. Everything else,
+     * including end, runs inline as before.
+     */
+    private fun runForCall(
+        nativeCallId: UUID,
+        result: MethodChannel.Result,
+        awaitTelecom: Boolean,
+        operation: (UUID) -> Boolean,
+    ) {
+        if (!awaitTelecom || !controller.isRegistrationInFlight(nativeCallId)) {
+            result.success(operation(nativeCallId))
+            return
+        }
+        // The diagnostic scope is per thread; carry it to the executor thread.
+        val diagnosticContext = MknoonCallDiagnosticScope.current()
+        dispatchRegistration(result) {
+            MknoonCallDiagnosticScope.withContext(diagnosticContext) {
+                controller.awaitRegistrationSettled(nativeCallId)
+                operation(nativeCallId)
+            }
+        }
     }
 
     private fun withDartCallHandle(
         arguments: Any?,
         result: MethodChannel.Result,
         operation: (UUID) -> Boolean,
+        awaitTelecom: Boolean = false,
     ) {
         val map = dartIdentityMap(arguments) ?: return badArguments(result)
         val nativeCallId = resolveCallHandle(map["callHandle"])
             ?: return badArguments(result)
-        result.success(operation(nativeCallId))
+        runForCall(nativeCallId, result, awaitTelecom, operation)
     }
 
     private fun withEitherCallIdentity(
         arguments: Any?,
         result: MethodChannel.Result,
         operation: (UUID) -> Boolean,
+        awaitTelecom: Boolean = false,
     ) {
         val map = arguments as? Map<*, *> ?: return badArguments(result)
         when (map.keys) {
             setOf("nativeCallId") -> {
                 val nativeCallId = parseUuid(map["nativeCallId"])
                     ?: return badArguments(result)
-                result.success(operation(nativeCallId))
+                runForCall(nativeCallId, result, awaitTelecom, operation)
             }
             setOf("version", "callHandle") -> {
                 if (!validVersion(map["version"])) return badArguments(result)
                 val nativeCallId = resolveCallHandle(map["callHandle"])
                     ?: return badArguments(result)
-                result.success(operation(nativeCallId))
+                runForCall(nativeCallId, result, awaitTelecom, operation)
             }
             else -> badArguments(result)
         }

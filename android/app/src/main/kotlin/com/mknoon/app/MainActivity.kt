@@ -6,8 +6,10 @@ import android.os.Handler
 import android.os.Looper
 import android.os.StatFs
 import android.util.Log
+import com.mknoon.app.call.MknoonCallBridgeTeardown
 import com.mknoon.app.call.MknoonCallNativeBridge
 import com.mknoon.app.call.MknoonCallRuntime
+import com.mknoon.app.call.MknoonCallTaskChannelHandler
 import com.mknoon.app.call.MknoonIncomingCallPresentation
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
@@ -36,6 +38,15 @@ class MainActivity : FlutterActivity() {
     private var pictureInPictureHandler: PictureInPictureHandler? = null
     private var droppedPushRecoveryBridge: DroppedPushRecoveryBridge? = null
     private var callNativeBridge: MknoonCallNativeBridge? = null
+    // F3 (beta 2026-09-25): the bridge's detach ends a live Telecom call
+    // without telling Dart. Keep it until Dart's runtime shutdown has ended
+    // the call and sent the terminate to the peer.
+    private val callBridgeTeardown = MknoonCallBridgeTeardown {
+        callNativeBridge?.dispose()
+        callNativeBridge = null
+    }
+    private var callTaskChannel: MethodChannel? = null
+    private var callTaskHandler: MknoonCallTaskChannelHandler? = null
     private var androidCallWakeBridge: AndroidCallWakeBridge? = null
     private var incomingCallPresentation: MknoonIncomingCallPresentation? = null
     private var canonicalRuntimeLeaseBridge: CanonicalRuntimeLeaseBridge? = null
@@ -140,6 +151,17 @@ class MainActivity : FlutterActivity() {
         callNativeBridge = MknoonCallRuntime.get(applicationContext).createBridge(
             flutterEngine.dartExecutor.binaryMessenger,
         )
+        // F4 (beta 2026-09-25): Back during a call sends the app to the
+        // background and the call keeps running.
+        val taskHandler = MknoonCallTaskChannelHandler(
+            moveTaskToBack = { moveTaskToBack(true) },
+            registerBack = MknoonCallTaskChannelHandler.overlayBackRegistrar(this),
+        )
+        callTaskHandler = taskHandler
+        callTaskChannel = MethodChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            MknoonCallTaskChannelHandler.CHANNEL,
+        ).also { channel -> channel.setMethodCallHandler(taskHandler) }
         canonicalRuntimeShutdownChannel = MethodChannel(
             flutterEngine.dartExecutor.binaryMessenger,
             CANONICAL_RUNTIME_SHUTDOWN_CHANNEL,
@@ -301,6 +323,7 @@ class MainActivity : FlutterActivity() {
     @Suppress("DEPRECATION")
     override fun onBackPressed() {
         if (incomingCallPresentation?.handleBack() == true) return
+        if (callTaskHandler?.handleBackPressed() == true) return
         super.onBackPressed()
     }
 
@@ -316,8 +339,10 @@ class MainActivity : FlutterActivity() {
         pictureInPictureHandler = null
         droppedPushRecoveryBridge?.dispose()
         droppedPushRecoveryBridge = null
-        callNativeBridge?.dispose()
-        callNativeBridge = null
+        callTaskHandler?.dispose()
+        callTaskHandler = null
+        callTaskChannel?.setMethodCallHandler(null)
+        callTaskChannel = null
         val destroyEngineWithHost = super.shouldDestroyEngineWithHost()
         privateMediaProtectionRegistry.detach(
             engineIdentity = flutterEngine,
@@ -334,6 +359,8 @@ class MainActivity : FlutterActivity() {
                 destroyRetainedEngine = false,
                 reason = "already_released",
             )
+            // No Dart runtime is left to end a call.
+            callBridgeTeardown.onRuntimeShutdownSettled()
             super.cleanUpFlutterEngine(flutterEngine)
             return
         }
@@ -342,6 +369,9 @@ class MainActivity : FlutterActivity() {
         // this synchronous hook returns. Retain it briefly so Dart can quiesce
         // Go, explicitly close SQLCipher, and acknowledge native lease release.
         retainEngineForCanonicalShutdown = true
+        // Dart's shutdown ends a live call first (terminate to the peer, then
+        // the native end), so the call bridge must outlive this request.
+        callBridgeTeardown.deferUntilRuntimeShutdown()
         requestCanonicalRuntimeShutdown(
             flutterEngine = flutterEngine,
             destroyRetainedEngine = destroyEngineWithHost,
@@ -366,6 +396,9 @@ class MainActivity : FlutterActivity() {
         fun settle(released: Boolean, reason: String) {
             if (settled) return
             settled = true
+            // Dart had its chance to end the call. The bridge detach now ends
+            // anything it could not.
+            callBridgeTeardown.onRuntimeShutdownSettled()
             if (released) {
                 finishCanonicalRuntimeEngineCleanup(
                     flutterEngine = flutterEngine,
@@ -508,8 +541,6 @@ class MainActivity : FlutterActivity() {
         androidCallWakeBridge = null
         incomingCallPresentation?.dispose()
         incomingCallPresentation = null
-        callNativeBridge?.dispose()
-        callNativeBridge = null
         pictureInPictureHandler?.dispose("host_destroyed")
         pictureInPictureHandler = null
         val engine = privateMediaProtectionEngine
@@ -524,7 +555,10 @@ class MainActivity : FlutterActivity() {
         }
         privateMediaProtectionHandler = null
         privateMediaProtectionEngine = null
+        // super.onDestroy runs cleanUpFlutterEngine, which may defer the call
+        // bridge until the Dart runtime shutdown settles.
         super.onDestroy()
+        callBridgeTeardown.onHostDestroyed()
     }
 
     override fun onRequestPermissionsResult(

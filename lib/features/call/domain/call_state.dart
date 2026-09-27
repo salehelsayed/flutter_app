@@ -181,7 +181,7 @@ final class CallReducer {
       return _terminal(
         snapshot,
         event,
-        event.endReason ?? CallEndReason.remoteHangup,
+        _receivedTerminateReason(event.endReason),
       );
     }
     if (event.type == CallEventType.remoteReject) {
@@ -262,7 +262,7 @@ final class CallReducer {
           return _terminal(
             snapshot,
             _asType(event, CallEventType.end),
-            event.endReason ?? CallEndReason.localHangup,
+            event.endReason ?? _nativeEndReason(snapshot),
           );
         case null:
           return _unchanged(
@@ -932,6 +932,38 @@ final class CallReducer {
       effects.length <= policy.effectQueueCapacity
       ? effects
       : effects.sublist(0, policy.effectQueueCapacity);
+
+  /// A terminate carries the SENDER's end reason. Read it from this side:
+  ///
+  /// - `local_hangup` (or no reason) means the peer hung up, so it becomes
+  ///   [CallEndReason.remoteHangup]. Before this, a caller who hung up from
+  ///   the system call UI made the ringing callee record "You declined".
+  /// - `remote_hangup` stays [CallEndReason.remoteHangup]: the call ended on
+  ///   the far side either way.
+  /// - Every other reason already means the same thing on both sides and is
+  ///   kept: `caller_cancelled`, `no_answer`, `expired`, `declined`, `busy`,
+  ///   `app_shutdown` (the peer's app stopped), and the failures
+  ///   (`permission_denied`, `unsupported`, `signaling_failed`,
+  ///   `media_failed`, `reconnect_failed`, `policy_rejected`), which history
+  ///   shows as a failed call before connect and a completed call after.
+  ///
+  /// The wire format does not change, so an older peer that still sends
+  /// `local_hangup` is read correctly.
+  static CallEndReason _receivedTerminateReason(CallEndReason? wireReason) =>
+      switch (wireReason) {
+        null || CallEndReason.localHangup => CallEndReason.remoteHangup,
+        final CallEndReason reason => reason,
+      };
+
+  /// The platform call UI ended the call without its own reason. A caller who
+  /// ends an unanswered call cancelled it, so the terminate carries
+  /// `caller_cancelled` (the same as the in-app Cancel) and an older callee
+  /// records a missed call. Everything else is a local hang-up.
+  static CallEndReason _nativeEndReason(CallSessionSnapshot snapshot) =>
+      snapshot.direction == CallDirection.outgoing &&
+          _isPreconnect(snapshot.state)
+      ? CallEndReason.callerCancelled
+      : CallEndReason.localHangup;
 
   static bool _isPreconnect(CallState state) => switch (state) {
     CallState.preparing ||

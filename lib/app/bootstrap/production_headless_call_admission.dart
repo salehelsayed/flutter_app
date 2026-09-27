@@ -470,7 +470,12 @@ final class ProductionHeadlessCallAdmissionRunner {
   }) : _backend = backend,
        _nowMs = nowMs ?? (() => DateTime.now().toUtc().millisecondsSinceEpoch);
 
-  static const int maximumFutureLifetimeMs = 45 * 1000;
+  /// The wake's exact expiry is the caller's (45 s lifetime) and may lead
+  /// this device's clock by up to 30 s, the same lead that native
+  /// `CallPayloadParser.MAX_CALLER_EXPIRY_AHEAD_MS` and
+  /// `SecureCallEnvelopeCodec.maxFutureClockSkew` accept (beta 2026-09-25:
+  /// a callee 13 s behind the caller got an expiry 53 s ahead).
+  static const int maximumFutureLifetimeMs = 75 * 1000;
 
   final ProductionHeadlessCallAdmissionBackend _backend;
   final int Function() _nowMs;

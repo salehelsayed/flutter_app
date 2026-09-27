@@ -225,6 +225,60 @@ class MknoonFirebaseMessagingServiceTest {
         assertEquals(1, receiver.delegated.size)
     }
 
+    /**
+     * Beta 2026-09-25 (run-20260925-221131 S10): `android push parse rejected
+     * rejected_payload` while the emulator clock ran about 13 s behind the
+     * caller. A killed-app callee then never rang.
+     */
+    @Test
+    @Config(sdk = [33])
+    fun `a call wake from a caller whose clock runs ahead is still dispatched with its exact expiry`() {
+        val service = classifierService(mutableListOf(), mutableListOf(), mutableListOf())
+        service.callNowMs = callNowMs
+        val base = mapOf(
+            "v" to "1",
+            "w" to "call",
+            "c" to "00112233445566778899aabbccddeeff",
+            "h" to "10112233445566778899aabbccddeeff",
+        )
+
+        service.onMessageReceived(dataMessage(base + ("e" to (callNowMs + 53_000L).toString())))
+        service.onMessageReceived(dataMessage(base + ("e" to (callNowMs + 76_000L).toString())))
+        service.onMessageReceived(dataMessage(base + ("e" to callNowMs.toString())))
+
+        assertEquals(listOf(callNowMs + 53_000L), service.callDispatches.map { it.expiresAtMs })
+        assertTrue(service.delegated.isEmpty())
+    }
+
+    @Test
+    @Config(sdk = [33])
+    fun `a rejected call wake names its exact parse reason in debug logcat`() {
+        val service = classifierService(mutableListOf(), mutableListOf(), mutableListOf())
+        service.callNowMs = callNowMs
+        val base = mapOf(
+            "v" to "1",
+            "w" to "call",
+            "c" to "00112233445566778899aabbccddeeff",
+            "h" to "10112233445566778899aabbccddeeff",
+        )
+        org.robolectric.shadows.ShadowLog.clear()
+
+        service.onMessageReceived(dataMessage(base + ("e" to (callNowMs + 76_000L).toString())))
+        service.onMessageReceived(dataMessage(base + ("e" to callNowMs.toString())))
+
+        val lines = org.robolectric.shadows.ShadowLog
+            .getLogsForTag(MknoonFirebaseMessagingService.CALL_WAKE_DIAGNOSTIC_TAG)
+            .map { it.msg }
+        assertEquals(
+            listOf(
+                "CALL_ANDROID_WAKE_PARSE outcome=rejected reason=too_far_future",
+                "CALL_ANDROID_WAKE_PARSE outcome=rejected reason=stale",
+            ),
+            lines,
+        )
+        assertTrue(service.callDispatches.isEmpty())
+    }
+
     @Test
     @Config(sdk = [33])
     fun `validated call wake reaches active foreground graph even while recovery lease is refused`() {

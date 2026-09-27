@@ -237,6 +237,7 @@ internal class MknoonCallRuntime private constructor(context: Context) {
                 observeDebugLifecycle(handle, "answer", outcome)
                 diagnostics.record(handle, "answer", "accept", outcome, reason)
             },
+            isMainThread = { Looper.myLooper() == Looper.getMainLooper() },
         )
         reconcilePersistedDescriptor()
     }
@@ -527,7 +528,9 @@ internal class MknoonCallRuntime private constructor(context: Context) {
             return
         }
         if (descriptor.events.any { it.type == PendingNativeCallEventType.PRESENTED }) {
-            controller.reconcilePresented()
+            // B8: this constructor usually runs on main, and below Android 14 Telecom
+            // needs main to finish the re-registration, so it runs on a background thread.
+            controller.reconcilePresented { work -> runtimeScope.launch(Dispatchers.IO) { work.run() } }
             return
         }
         controller.terminate(descriptor.nativeCallId, PendingNativeCallEventType.NATIVE_FAILURE)
@@ -825,17 +828,20 @@ private class AndroidMknoonCallPlatform(
     override fun registerIncoming(
         nativeCallId: UUID,
         callback: MknoonCallRegistrationCallback,
-    ) = register(nativeCallId, PendingNativeCallDirection.INCOMING, callback)
+        timeoutMs: Long,
+    ) = register(nativeCallId, PendingNativeCallDirection.INCOMING, callback, timeoutMs)
 
     override fun registerOutgoing(
         nativeCallId: UUID,
         callback: MknoonCallRegistrationCallback,
-    ) = register(nativeCallId, PendingNativeCallDirection.OUTGOING, callback)
+        timeoutMs: Long,
+    ) = register(nativeCallId, PendingNativeCallDirection.OUTGOING, callback, timeoutMs)
 
     private fun register(
         nativeCallId: UUID,
         direction: PendingNativeCallDirection,
         callback: MknoonCallRegistrationCallback,
+        timeoutMs: Long,
     ) {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
             callback.onFailure()
@@ -947,7 +953,7 @@ private class AndroidMknoonCallPlatform(
         awaitAndDispatchTelecomRegistration(
             completion = completion,
             registration = registration,
-            timeoutMs = REGISTRATION_TIMEOUT_MS,
+            timeoutMs = timeoutMs,
             callback = callback,
         )
     }
@@ -995,6 +1001,9 @@ private class AndroidMknoonCallPlatform(
 
     override fun end(nativeCallId: UUID) {
         val session = sessions[nativeCallId] ?: return
+        // Already disconnecting this exact session (a cleanup end racing the late
+        // registration end, B5): a second disconnect would fail and drop the marker.
+        if (locallyDisconnecting[nativeCallId] === session) return
         emitMknoonTelecomDisconnectDiagnostic(MknoonTelecomDisconnectSource.EXPLICIT_END)
         locallyDisconnecting[nativeCallId] = session
         val outcome = try {
@@ -1154,11 +1163,21 @@ private class AndroidMknoonCallPlatform(
     private fun CallEndpointCompat.routeName(): String = canonicalCallRoute(type)
 
     private companion object {
-        const val REGISTRATION_TIMEOUT_MS = 4_000L
         const val CONTROL_TIMEOUT_MS = 4_000L
     }
 
 }
+
+/** core-telecom 1.1.0-beta01 `CallsManager.addCall` waits this long for Telecom (`TimeoutCoroutine(5000)`). */
+internal const val CORE_TELECOM_ADD_CALL_TIMEOUT_MS = 5_000L
+
+/**
+ * How long a presentation, outgoing registration or restart re-registration waits
+ * for Telecom to register its call: past core-telecom's own limit so its result
+ * decides, plus slack for a loaded device (B5, beta 2026-09-25: Telecom needed
+ * more than 4 s). The controller runs this wait without its lock and never on main.
+ */
+internal const val MKNOON_TELECOM_REGISTRATION_TIMEOUT_MS = CORE_TELECOM_ADD_CALL_TIMEOUT_MS + 1_500L
 
 internal fun coreTelecomDirection(direction: PendingNativeCallDirection): Int =
     when (direction) {
@@ -1286,13 +1305,17 @@ internal fun presentAuthenticatedCall(
         !capabilityEnabled ||
         observedNowMs < 0L ||
         expiresAtMs <= observedNowMs ||
-        expiresAtMs - observedNowMs > CallPayloadParser.MAX_FUTURE_SKEW_MS ||
+        expiresAtMs - observedNowMs > CallPayloadParser.MAX_CALLER_EXPIRY_AHEAD_MS ||
         !handleGrammar.matches(callHandle)
     ) {
         return false
     }
     val nativeCallId = runCatching { UUID.fromString(callHandle) }.getOrNull()
         ?: return false
+    // A caller clock ahead of this device (beta 2026-09-25: 13.4 s) must not
+    // refuse the call. Ringing still ends within the local 45 s bound.
+    val nativeExpiresAtMs =
+        minOf(expiresAtMs, observedNowMs + CallPayloadParser.MAX_FUTURE_SKEW_MS)
     val generatedWakeHandle = runCatching(wakeHandle).getOrNull()
         ?.takeIf(CALL_RANDOM_ID::matches)
         ?: return false
@@ -1303,7 +1326,7 @@ internal fun presentAuthenticatedCall(
                 callHandle = callHandle,
                 wakeHandle = generatedWakeHandle,
                 receivedAtMs = observedNowMs,
-                expiresAtMs = expiresAtMs,
+                expiresAtMs = nativeExpiresAtMs,
             ),
         )
     ) {
@@ -1326,7 +1349,7 @@ internal fun terminalizeAuthenticatedCall(
         !capabilityEnabled ||
         observedNowMs < 0L ||
         expiresAtMs <= observedNowMs ||
-        expiresAtMs - observedNowMs > CallPayloadParser.MAX_FUTURE_SKEW_MS ||
+        expiresAtMs - observedNowMs > CallPayloadParser.MAX_CALLER_EXPIRY_AHEAD_MS ||
         !handleGrammar.matches(callHandle)
     ) {
         return false

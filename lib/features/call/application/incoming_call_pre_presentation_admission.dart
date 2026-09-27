@@ -29,13 +29,54 @@ enum IncomingCallPrePresentationAdmissionFailureCode {
   deferred,
 }
 
+/// The admission gate that refused a signal. Closed and identity-free, so it
+/// may name the gate in diagnostics.
+enum IncomingCallPrePresentationAdmissionGate {
+  rosterUnavailable('roster_unavailable'),
+  senderUnknown('sender_unknown'),
+  localAuthorityUnavailable('local_authority_unavailable'),
+  envelope('envelope'),
+  expectationMismatch('expectation_mismatch'),
+  mailboxBinding('mailbox_binding_mismatch'),
+  unexpectedSignal('unexpected_signal'),
+  authenticationFailed('authentication_failed');
+
+  const IncomingCallPrePresentationAdmissionGate(this.wireName);
+
+  final String wireName;
+}
+
 /// A detail-free failure classification suitable for both foreground and
 /// headless callers. Authenticated identities and wire values are never
 /// copied into the exception.
 final class IncomingCallPrePresentationAdmissionException implements Exception {
-  const IncomingCallPrePresentationAdmissionException(this.code);
+  const IncomingCallPrePresentationAdmissionException(
+    this.code, {
+    this.gate,
+    this.envelopeCode,
+  });
 
   final IncomingCallPrePresentationAdmissionFailureCode code;
+
+  /// The gate that refused the signal, when known.
+  final IncomingCallPrePresentationAdmissionGate? gate;
+
+  /// The secure-envelope refusal behind
+  /// [IncomingCallPrePresentationAdmissionGate.envelope].
+  final CallEnvelopeErrorCode? envelopeCode;
+
+  /// A fixed diagnostic code naming the refusing gate, for example
+  /// `sender_unknown` or `envelope_excessiveClockSkew`.
+  String get reasonCode {
+    final refusingGate = gate;
+    if (refusingGate == null) return 'admission_${code.name}';
+    final envelope = envelopeCode;
+    if (refusingGate == IncomingCallPrePresentationAdmissionGate.envelope &&
+        envelope != null) {
+      return 'envelope_${envelope.name}';
+    }
+    return refusingGate.wireName;
+  }
 
   @override
   String toString() => 'Incoming call admission failed: ${code.name}';
@@ -94,6 +135,7 @@ final class IncomingCallPrePresentationAdmission {
       admitted.commitReplay();
       throw const IncomingCallPrePresentationAdmissionException(
         IncomingCallPrePresentationAdmissionFailureCode.permanentReject,
+        gate: IncomingCallPrePresentationAdmissionGate.unexpectedSignal,
       );
     }
     return admitted;
@@ -115,6 +157,7 @@ final class IncomingCallPrePresentationAdmission {
         wakeExpiresAtMs != event.expiresAtMs) {
       throw const IncomingCallPrePresentationAdmissionException(
         IncomingCallPrePresentationAdmissionFailureCode.permanentReject,
+        gate: IncomingCallPrePresentationAdmissionGate.mailboxBinding,
       );
     }
     final admitted = await authenticateSignal(
@@ -135,6 +178,7 @@ final class IncomingCallPrePresentationAdmission {
     admitted.commitReplay();
     throw const IncomingCallPrePresentationAdmissionException(
       IncomingCallPrePresentationAdmissionFailureCode.permanentReject,
+      gate: IncomingCallPrePresentationAdmissionGate.unexpectedSignal,
     );
   }
 
@@ -157,11 +201,13 @@ final class IncomingCallPrePresentationAdmission {
     } catch (_) {
       throw const IncomingCallPrePresentationAdmissionException(
         IncomingCallPrePresentationAdmissionFailureCode.deferred,
+        gate: IncomingCallPrePresentationAdmissionGate.rosterUnavailable,
       );
     }
     if (sender == null || !sender.linked) {
       throw const IncomingCallPrePresentationAdmissionException(
         IncomingCallPrePresentationAdmissionFailureCode.permanentReject,
+        gate: IncomingCallPrePresentationAdmissionGate.senderUnknown,
       );
     }
 
@@ -171,6 +217,8 @@ final class IncomingCallPrePresentationAdmission {
     } catch (_) {
       throw const IncomingCallPrePresentationAdmissionException(
         IncomingCallPrePresentationAdmissionFailureCode.deferred,
+        gate:
+            IncomingCallPrePresentationAdmissionGate.localAuthorityUnavailable,
       );
     }
     if (local.accountPeerId.trim().isEmpty ||
@@ -178,6 +226,8 @@ final class IncomingCallPrePresentationAdmission {
         local.mlKemSecretKey.trim().isEmpty) {
       throw const IncomingCallPrePresentationAdmissionException(
         IncomingCallPrePresentationAdmissionFailureCode.deferred,
+        gate:
+            IncomingCallPrePresentationAdmissionGate.localAuthorityUnavailable,
       );
     }
 
@@ -207,24 +257,30 @@ final class IncomingCallPrePresentationAdmission {
         decoded.commitReplay();
         throw const IncomingCallPrePresentationAdmissionException(
           IncomingCallPrePresentationAdmissionFailureCode.permanentReject,
+          gate: IncomingCallPrePresentationAdmissionGate.expectationMismatch,
         );
       }
       return AuthenticatedIncomingCallAdmission._(decoded);
     } on IncomingCallPrePresentationAdmissionException {
       rethrow;
     } on CallEnvelopeException catch (error) {
-      throw IncomingCallPrePresentationAdmissionException(switch (error.code) {
-        CallEnvelopeErrorCode.replay ||
-        CallEnvelopeErrorCode.nonMonotonicSequence =>
-          IncomingCallPrePresentationAdmissionFailureCode.duplicate,
-        CallEnvelopeErrorCode.cryptoUnavailable =>
-          IncomingCallPrePresentationAdmissionFailureCode.deferred,
-        _ => IncomingCallPrePresentationAdmissionFailureCode.permanentReject,
-      });
+      throw IncomingCallPrePresentationAdmissionException(
+        switch (error.code) {
+          CallEnvelopeErrorCode.replay ||
+          CallEnvelopeErrorCode.nonMonotonicSequence =>
+            IncomingCallPrePresentationAdmissionFailureCode.duplicate,
+          CallEnvelopeErrorCode.cryptoUnavailable =>
+            IncomingCallPrePresentationAdmissionFailureCode.deferred,
+          _ => IncomingCallPrePresentationAdmissionFailureCode.permanentReject,
+        },
+        gate: IncomingCallPrePresentationAdmissionGate.envelope,
+        envelopeCode: error.code,
+      );
     } catch (_) {
       decoded?.rollbackReplay();
       throw const IncomingCallPrePresentationAdmissionException(
         IncomingCallPrePresentationAdmissionFailureCode.deferred,
+        gate: IncomingCallPrePresentationAdmissionGate.authenticationFailed,
       );
     }
   }

@@ -10,11 +10,12 @@ internal class MknoonCallTerminalTombstones(
     companion object {
         private const val PREFIX = "terminal_tombstone_"
         internal const val MAX_ENTRIES = 32
-        // A wake already in flight may remain valid for 45s and then hold its
-        // admission lease for 30s. Keep terminal authority through both bounds.
+        // A wake already in flight may remain valid while its expiry is up to
+        // 75 s ahead (45 s lifetime plus 30 s caller clock lead) and then hold
+        // its admission lease for 30 s. Keep terminal authority through both.
         // This retention never changes payload expiry or permits presentation.
         internal const val RETENTION_MS =
-            CallPayloadParser.MAX_FUTURE_SKEW_MS + MknoonCallForegroundService.ADMISSION_TIMEOUT_MS
+            CallPayloadParser.MAX_CALLER_EXPIRY_AHEAD_MS + MknoonCallForegroundService.ADMISSION_TIMEOUT_MS
     }
 
     private val lock = Any()

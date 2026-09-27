@@ -1518,7 +1518,13 @@ class _ConversationScreenState extends State<ConversationScreen>
                   runSeparation: 16,
                 ),
               ),
-              child: bubble,
+              // Stable automation id for the row. Only the list row carries
+              // it; the context-overlay copy of the card does not.
+              child: Semantics(
+                container: true,
+                identifier: 'message_${message.id}',
+                child: bubble,
+              ),
             );
         }
       },
