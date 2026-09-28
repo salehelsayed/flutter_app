@@ -420,27 +420,24 @@ final class _GroupMessageSystemTransitionProcessor {
               sysType: sysType,
               parsed: parsed,
             );
-        // B4 terminal-dissolve relaxation: group_dissolved is a TERMINAL
-        // transition — no subsequent transition's chain integrity depends on it
-        // — so for an authenticated admin dissolve we skip the pre-transition
-        // STATE hash equality check, which otherwise rejects with
-        // previous_transition_hash_mismatch whenever the receiver's local
-        // transition state diverged from the signer's (e.g. after a rejected
-        // upstream key_rotated/members_added). This is SAFE because, by the time
-        // we reach here, a group_dissolved has ALREADY passed the membership
-        // authorization gate (_requiresMembershipEventAuthorization +
-        // _isAuthorizedMembershipEventSender → admin-role), and the actor
-        // signature plus device/transport binding are still verified by
-        // verifyGroupTransitionAudit below (Option A). Only the chain STATE hash
-        // — meaningless for a terminal event — is relaxed. (The snapshot-backed
-        // relaxation machinery cannot help here: a dissolve carries no
-        // groupConfig, so it short-circuits to false.)
-        final relaxTerminalDissolvePreTransitionHash =
-            sysType == 'group_dissolved';
+        // Dissolution and removal of this receiver end its active membership.
+        // A missed upstream transition must not keep that local group writable
+        // merely because the sender's pre-state differs. Authorization, signed
+        // subject/device verification and the removal freshness/rejoin gates
+        // still apply. Other members' removals retain the state-hash check.
+        final removedPeerId = sysType == 'member_removed'
+            ? ((parsed['member'] as Map<String, dynamic>?)?['peerId']
+                  as String?)
+            : null;
+        final relaxTerminalPreTransitionHash =
+            sysType == 'group_dissolved' ||
+            (removedPeerId != null &&
+                removedPeerId.isNotEmpty &&
+                removedPeerId == await _getSelfPeerId?.call());
         final preTransitionStateHash =
             protectedAuthorityReplay != null ||
                 relaxSnapshotBackedPreTransitionHash ||
-                relaxTerminalDissolvePreTransitionHash
+                relaxTerminalPreTransitionHash
             ? null
             : await buildGroupTransitionStateHash(_groupRepo, groupId);
         verifiedOrdinaryPreTransitionStateHash = preTransitionStateHash;
@@ -1227,6 +1224,23 @@ final class _GroupMessageSystemTransitionProcessor {
       deviceId: _trimToNull(senderDeviceId),
       transportPeerId: _trimToNull(transportPeerId),
     );
+    final member = await _groupRepo.getMember(groupId, senderId);
+    // Legacy members have no device roster: Dart's account-key audit omits
+    // device/transport fields, while Go publication and inbox replay synthesize
+    // account-id aliases in the envelope. Those aliases are not a separate
+    // device binding. Accept the omitted audit fields only for this exact
+    // legacy representation; explicit bindings and rostered devices stay strict.
+    // The account identity, public key, subject and signature are still verified.
+    if (member != null &&
+        member.devices.isEmpty &&
+        _isLegacyAccountSystemTransport(
+          senderId: senderId,
+          senderDeviceId: senderDeviceId,
+          transportPeerId: transportPeerId,
+        ) &&
+        !_signedTransitionAuditActorBinding(parsed).hasBinding) {
+      return const _SignedTransitionAuditActorBinding();
+    }
     // Self-authored voluntary leave: a `member_removed` whose removed peer IS the
     // signer can only remove the signer and is authenticated by the signer's own
     // signing key (still verified in verifyGroupTransitionAudit). Over a relay the
@@ -1249,7 +1263,6 @@ final class _GroupMessageSystemTransitionProcessor {
       return defaultBinding;
     }
 
-    final member = await _groupRepo.getMember(groupId, senderId);
     if (member == null) {
       return defaultBinding;
     }

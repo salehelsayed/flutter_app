@@ -1018,6 +1018,31 @@ visible and cannot become an ordinary first-attempt PASS.
 
 ## Diagnostics and confirmed lessons
 
+- **Legacy group dissolve/removal audit identity:** when a member has no device
+  roster, `resolveGroupSenderDeviceBinding` returns no device binding, so its
+  account-signed transition omits device/transport fields. Go publication fills
+  both envelope fields with the account peer ID; legacy inbox delivery may
+  expose only that transport alias. Comparing these aliases to absent audit
+  fields reproduced R2-1's `device_mismatch` then `transport_mismatch` sequence
+  from `artifacts/beta-20260927/BETA_REPORT_R2.md`. This is a legacy identity
+  representation mismatch, not evidence that arbitrary relay identities may
+  replace a signed transport. The receiver accepts omitted bindings only with
+  an empty device roster and account-equivalent envelope identities; explicit
+  signed bindings, rostered/revoked devices, admin authorization and signatures
+  remain checked. A valid removal of the receiving member also ends its active
+  membership despite divergent pre-state, while rejoin/freshness checks and the
+  state-hash gate for removing other members remain intact. The focused
+  `group_terminal_transition_binding_test.dart` exercises live listener delivery,
+  inbox replay, one timeline/stream update, key cleanup, duplicate suppression
+  and rejection controls. Causal red/green logs are retained under
+  `.codex-test-logs/r2-group-transitions-{red,green}.log`; the existing `groups`
+  mapping discovers this suite in `affected-groups`. The scoped wrapper report
+  `.codex-test-logs/r2-group-transitions-checks/results.json` records 3,229 group,
+  88 notification and four small-group smoke tests passing with no skips,
+  including all 24 focused R2 cases. Its whole-worktree status remains incomplete
+  because unrelated selected checks were not run. These are host tests with fake
+  bridge crypto/storage, not a rebuilt two-device production-relay proof.
+
 - **iOS reconnect duration and suspended recovery:** correlate authenticated relay
   peers to consenting diagnostic owners before attributing endpoint reports.
   The September 16 incident peer matched iOS build `1.0.1+118`: one reconnect
