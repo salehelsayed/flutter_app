@@ -310,7 +310,7 @@ Source anchors below bind the assertions to the original bytes, including existi
 - Discovered owners/selectors: `89eac3be34dd0d9b9cb3bb6f` SELECTED; owner=full-sims; selector=``; variant=``
 - Direct importers: Entry point or externally selected source.
 - Assertion sites: [49](../../integration_test/group_lifecycle_simulator_harness.dart#L49)
-- Replacement evidence: DELETE_PRESERVES_FRIENDS → `production.group_delete_preserves_friends` ([record](#2026-09-30-wave-3-delete-preserves-friends-replacement)) and INVITE_ACCEPT_SPINNER → `production.group_invite_accept_spinner` ([record](#2026-09-30-wave-3-invite-accept-spinner-replacement)), and NEW_MEMBER_MEDIA → `production.group_new_member_media` ([record](#2026-09-30-wave-3-new-member-media-replacement)) passed on devices 2026-09-30. ADMIN_METADATA pending. Original dispatcher retained; retirement not approved.
+- Replacement evidence: DELETE_PRESERVES_FRIENDS → `production.group_delete_preserves_friends` ([record](#2026-09-30-wave-3-delete-preserves-friends-replacement)), INVITE_ACCEPT_SPINNER → `production.group_invite_accept_spinner` ([record](#2026-09-30-wave-3-invite-accept-spinner-replacement)) and NEW_MEMBER_MEDIA → `production.group_new_member_media` ([record](#2026-09-30-wave-3-new-member-media-replacement)) passed on devices 2026-09-30. ADMIN_METADATA pending. Original dispatcher retained; retirement not approved.
 
 ### `group_multi_device_real_harness.dart`
 
