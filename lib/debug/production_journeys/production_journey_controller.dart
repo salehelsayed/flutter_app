@@ -24,6 +24,7 @@ const productionGroupCatalogJourneys = {
   groupCatalogRemovedReactionJourney,
 };
 const groupInviteJourney = 'production.group_invite_reliability';
+const groupInviteMatrixJourney = 'production.group_invite_status_matrix';
 const privateMediaJourney = 'production.private_media_local';
 const performanceJourney = 'production.startup_resume_performance';
 typedef ProductionJourneyAction =
@@ -79,6 +80,7 @@ final class ProductionJourneyController {
           routingSmokeJourney,
           privateMediaJourney,
           groupInviteJourney,
+          groupInviteMatrixJourney,
           groupCatalogCreateJourney,
           groupCatalogReactionJourney,
           groupCatalogReactionToggleJourney,

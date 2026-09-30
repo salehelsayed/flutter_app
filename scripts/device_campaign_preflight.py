@@ -21,6 +21,7 @@ HOST_PROBES = {
     'production-group-reaction-toggle': ('integration_test/scripts/run_production_group_reaction_toggle.dart', 'production.group_catalog.private_reaction_toggle_convergence'),
     'production-group-create': ('integration_test/scripts/run_production_group_create.dart', 'production.group_catalog.private_abc_create'),
     'production-group-invites': ('integration_test/scripts/run_production_group_invite_reliability.dart', 'production.group_invite_reliability'),
+    'production-group-invite-matrix': ('integration_test/scripts/run_production_group_invite_status_matrix.dart', 'production.group_invite_status_matrix'),
     'production-startup-resume-performance': ('integration_test/scripts/run_production_startup_resume_performance.dart', 'production.startup_resume_performance'),
     'production-private-media': ('integration_test/scripts/run_production_private_media_local.dart', 'production.private_media_local'),
     'production-routing': ('integration_test/scripts/run_production_routing.dart', 'production.routing_smoke'),

@@ -299,7 +299,7 @@ Source anchors below bind the assertions to the original bytes, including existi
 - Discovered owners/selectors: `42613fd92ce4356ab904344a` EXCLUDED; owner=none; selector=``; variant=``; reason=group simulator harness
 - Direct importers: Entry point or externally selected source.
 - Assertion sites: [454](../../integration_test/group_invite_status_matrix_harness.dart#L454), [455](../../integration_test/group_invite_status_matrix_harness.dart#L455), [470](../../integration_test/group_invite_status_matrix_harness.dart#L470), [477](../../integration_test/group_invite_status_matrix_harness.dart#L477), [486](../../integration_test/group_invite_status_matrix_harness.dart#L486), [487](../../integration_test/group_invite_status_matrix_harness.dart#L487), [488](../../integration_test/group_invite_status_matrix_harness.dart#L488), [489](../../integration_test/group_invite_status_matrix_harness.dart#L489), [490](../../integration_test/group_invite_status_matrix_harness.dart#L490), [496](../../integration_test/group_invite_status_matrix_harness.dart#L496), [497](../../integration_test/group_invite_status_matrix_harness.dart#L497), [539](../../integration_test/group_invite_status_matrix_harness.dart#L539)
-- Replacement evidence: pending; original evidence and execution owner retained.
+- Replacement evidence: `production.group_invite_status_matrix` (check `production-group-invite-matrix`) passed on devices 2026-09-30; see [the matrix record](#2026-09-30-wave-3-invite-status-matrix-replacement). Original retained; retirement not approved.
 
 ### `group_lifecycle_simulator_harness.dart`
 
@@ -354,7 +354,7 @@ Source anchors below bind the assertions to the original bytes, including existi
 - Discovered owners/selectors: `9b905013f407ec592b9e00b5` EXCLUDED; owner=none; selector=``; variant=``; reason=group routing smoke harness
 - Direct importers: Entry point or externally selected source.
 - Assertion sites: No direct expect/assert/fail; delegated to child/protocol criteria.
-- Replacement evidence: pending; original evidence and execution owner retained.
+- Replacement evidence: G1–G8 are owned by the Wave 2 `production.routing_smoke` replacement (`tool/sims/production_routing_criteria.dart`, "19 direct checks and eight group checks" in [Routing replacement proof boundaries](#routing-replacement-proof-boundaries)); its 27-case integrated-main device pass is `wave2-continuation-003/main-routing-run-002/`. Original retained; retirement not approved.
 
 ### `inbox_replay_before_ack_custody_harness.dart`
 
@@ -1504,3 +1504,53 @@ group smoke, invite/status matrix and lifecycle replacements, the remaining
 multi-party catalog cases, the replacement-module regression guard and the
 wave-boundary `host-all` remain open. Original harnesses and selectors are
 unchanged; no route is retired.
+
+## 2026-09-30 Wave 3 invite-status matrix replacement
+
+The original `group_invite_status_matrix_harness.dart` is a display proof: it
+renders `GroupInfoWired` over in-memory fakes and seeded rows and records
+`relayLifecycleProof: false`. With the user's choice (seed the real app
+database), the replacement keeps that boundary but runs the production app:
+
+- `lib/debug/production_journeys/production_group_invite_matrix_controls.dart`
+  writes the original eight-member matrix through the production group,
+  message and invite-attempt repositories: Admin (the creator device's real
+  account), Accepted One (the member device's real account) and six run-owned
+  synthetic members `matrix-<run>-<slot>`, with the original attempt statuses,
+  `missing_secure_key` error, `member_joined` timeline evidence and minute
+  offsets (relative to one base time). Accepted Two keeps its stale `sent`
+  attempt; the later join evidence is what makes the production projection show
+  Joined. No invitation is sent and no service is constructed.
+- `integration_test/scripts/run_production_group_invite_status_matrix.dart`
+  seeds both devices, reopens them so Orbit lists the group, and drives
+  ordinary UI with Maestro: `production_group_open` then
+  `production_group_invite_matrix` (creator) and `production_group_info_self`
+  (member).
+- The creator flow asserts each member name is followed, after its role line,
+  by the expected label: Joined ×2, Invite sent, In their inbox, Resend needed,
+  Cannot send with the original secure-info explanation, and Invite unknown.
+  The member flow asserts `You`. The badge has no accessibility identifier, so
+  the flows match the merged Members node text, as the existing revoke flow does.
+- `tool/sims/production_group_invite_matrix_criteria.dart` (16 tests) requires
+  the exact seeded rows on both devices, the stale-attempt ordering, foreground
+  lifecycle, exact ordered flows, and rows unchanged through the UI check.
+
+Host: analysis clean; 92 focused tests passed; curated `workflow`,
+`production-journey-contracts`, `maestro-flow-contracts`, `runtime-roots`,
+`group-media-schema-contract`, `notification-payload-harness-contract` and
+`notifications` passed (`production-bootstrap-migration-20260930/matrix-host-20260930T155149Z/`).
+
+Device (USB Pixel 6 `21071FDF600CSC` creator, `emulator-5554` Pixel_7 member):
+`wave3-run-20260930T155613Z/` PASS, two cases, oracle `failures: []`, one
+build, 232.8 s; proof `build/sims/proofs/production.group_invite_status_matrix/attempt-PCoVbr/`;
+both Maestro flows `SUCCESS`; `cleanup.json` exact on both devices.
+
+Negative probe: the creator flow was temporarily changed to expect
+`In their inbox` for Sent Member. `wave3-run-20260930T160110Z/` FAILED at
+exactly that assertion (`attempt-3lGnow/`, earlier Joined assertions passed,
+cleanup exact); the flow file was restored byte-for-byte afterwards.
+
+Like the original, this does not prove relay delivery; invite delivery
+lifecycle stays with the invitation and catalog journeys. Group smoke needs no
+new module: G1–G8 are already covered by the Wave 2 routing replacement (row
+updated above).

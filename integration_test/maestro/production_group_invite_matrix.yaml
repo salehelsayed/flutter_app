@@ -1,0 +1,16 @@
+appId: ${APP_ID}
+name: production_group_invite_matrix
+---
+- tapOn: Group information
+- assertVisible: Group Info
+- assertVisible: '(?s)^(.*\n)?${GROUP_NAME}(\n.*)?$'
+- scrollUntilVisible:
+    element: '(?s)^Members\n.*\nUnknown Member\n.*$'
+    direction: DOWN
+- assertVisible: '(?s)^Members\n.*\nAccepted One\n[^\n]*\nJoined(\n.*)?$'
+- assertVisible: '(?s)^Members\n.*\nAccepted Two\n[^\n]*\nJoined(\n.*)?$'
+- assertVisible: '(?s)^Members\n.*\nSent Member\n[^\n]*\nInvite sent(\n.*)?$'
+- assertVisible: '(?s)^Members\n.*\nQueued Member\n[^\n]*\nIn their inbox(\n.*)?$'
+- assertVisible: '(?s)^Members\n.*\nResend Member\n[^\n]*\nResend needed(\n.*)?$'
+- assertVisible: '(?s)^Members\n.*\nCannot Member\n[^\n]*\nCannot send\nWe don.t have the secure info needed to invite this friend\. Ask them to open or reinstall the app, then try again\.(\n.*)?$'
+- assertVisible: '(?s)^Members\n.*\nUnknown Member\n[^\n]*\nInvite unknown(\n.*)?$'

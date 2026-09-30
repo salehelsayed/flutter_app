@@ -1,0 +1,7 @@
+appId: ${APP_ID}
+name: production_group_info_self
+---
+- tapOn: Group information
+- assertVisible: Group Info
+- assertVisible: '(?s)^(.*\n)?${GROUP_NAME}(\n.*)?$'
+- assertVisible: '(?s)^Members\n(.*\n)?You(\n.*)?$'

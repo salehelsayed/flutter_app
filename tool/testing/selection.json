@@ -1923,6 +1923,7 @@
         "test/integration/production_group_invite_criteria_test.dart",
         "test/integration/production_group_invite_activation_test.dart",
         "test/integration/production_group_invite_controls_test.dart",
+        "test/integration/production_group_invite_matrix_criteria_test.dart",
         "test/integration/production_performance_capture_test.dart",
         "test/integration/production_performance_controls_test.dart",
         "test/integration/production_performance_criteria_test.dart",
@@ -2237,6 +2238,40 @@
         "integration_test/maestro/production_reopen_seeded.yaml"
       ],
       "host_preflight": "production-group-invites"
+    },
+    "production-group-invite-matrix": {
+      "kind": "sims",
+      "capability": "production.group_invite_status_matrix",
+      "boundary": "Production Group Info invite-status projection over the original seeded matrix, reached through ordinary UI on creator and member devices",
+      "timeout_seconds": 2400,
+      "estimated_seconds": null,
+      "requirements": [
+        "dart",
+        "flutter",
+        "adb",
+        "maestro"
+      ],
+      "device_roles": [
+        "android_physical",
+        "android_emulator"
+      ],
+      "references": [
+        "tool/sims/critical_features.json"
+      ],
+      "investigate": [
+        "lib/debug/production_journeys"
+      ],
+      "limitations": "Display proof like the original (relayLifecycleProof false): invite states are seeded prerequisites, not produced by relay delivery. Invite delivery lifecycle remains owned by the invitation and catalog journeys.",
+      "disposable_android_package": "com.mknoon.sims.connectivity",
+      "ui_driver": "maestro",
+      "ui_driver_reason": "Maestro opens the seeded group and Group Info through ordinary navigation and asserts each member's rendered invite label. The original seeds its eight-member matrix; a narrow control writes the same rows through the production repositories because Resend needed, Cannot send and Invite unknown cannot be produced on demand by UI. Read-only snapshots prove the rows are exact and unchanged through the UI check. No service is constructed and no invitation is sent.",
+      "maestro_flows": [
+        "integration_test/maestro/production_group_open.yaml",
+        "integration_test/maestro/production_group_invite_matrix.yaml",
+        "integration_test/maestro/production_group_info_self.yaml",
+        "integration_test/maestro/production_reopen_seeded.yaml"
+      ],
+      "host_preflight": "production-group-invite-matrix"
     },
     "production-startup-resume-performance": {
       "kind": "sims",
@@ -3755,6 +3790,7 @@
         "test/integration/production_private_media_*",
         "test/integration/production_group_invite_*",
         "integration_test/scripts/run_production_group_invite_reliability.dart",
+        "integration_test/scripts/run_production_group_invite_status_matrix.dart",
         "integration_test/scripts/run_production_startup_resume_performance.dart",
         "test/integration/production_performance_*",
         "integration_test/scripts/run_production_group_create.dart",
@@ -3789,6 +3825,7 @@
         "production-routing",
         "production-private-media",
         "production-group-invites",
+        "production-group-invite-matrix",
         "production-startup-resume-performance",
         "production-group-create",
         "production-group-reaction",
@@ -7521,6 +7558,16 @@
           "integration_test/maestro/production_group_invite_revoke.yaml"
         ],
         "reason": "Additive production invitation reliability F/C/D preserves the original campaign and all catalog selectors."
+      },
+      {
+        "owner": "full-sims-major",
+        "capability": "production.group_invite_status_matrix",
+        "patterns": [
+          "integration_test/scripts/run_production_group_invite_status_matrix.dart",
+          "integration_test/maestro/production_group_invite_matrix.yaml",
+          "integration_test/maestro/production_group_info_self.yaml"
+        ],
+        "reason": "Additive production invite-status matrix display proof; the original seeded harness remains unchanged."
       },
       {
         "owner": "full-sims-major",

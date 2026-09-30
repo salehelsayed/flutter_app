@@ -3552,6 +3552,63 @@
       "artifactValidator": "sha256-provider-attestation",
       "active": true,
       "declaredBuildException": false
+    },
+    {
+      "id": "production.group_invite_status_matrix",
+      "owner": "reliability",
+      "proofBoundary": "production.group-invites.status-matrix-display",
+      "assertions": [
+        "UP-005-creator-matrix-labels",
+        "UP-005-accepted-members-joined",
+        "UP-005-pending-and-failed-not-joined",
+        "member-role-attach-self"
+      ],
+      "lane": "reliability",
+      "modes": [
+        "major",
+        "full"
+      ],
+      "families": [
+        "groups"
+      ],
+      "required": true,
+      "command": [
+        "dart",
+        "run",
+        "integration_test/scripts/run_production_group_invite_status_matrix.dart"
+      ],
+      "buildProfile": "android.e2e.main",
+      "dependencies": [
+        "build.android.e2e.main"
+      ],
+      "resources": [
+        {
+          "name": "build:android.e2e.main",
+          "access": "read"
+        },
+        {
+          "name": "device:android-physical",
+          "access": "exclusive"
+        },
+        {
+          "name": "device:android-emulator",
+          "access": "exclusive"
+        },
+        {
+          "name": "artifact:production-group-invite-matrix",
+          "access": "write"
+        }
+      ],
+      "targetCapabilities": [
+        "android.physical",
+        "android.emulator"
+      ],
+      "allowedNaReason": "target_unavailable_by_project_policy",
+      "artifactRequired": true,
+      "artifactValidator": "validateProductionGroupInviteMatrix",
+      "automationReady": true,
+      "active": true,
+      "declaredBuildException": false
     }
   ],
   "ownership": [
