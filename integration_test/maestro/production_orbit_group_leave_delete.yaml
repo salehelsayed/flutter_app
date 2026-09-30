@@ -1,0 +1,27 @@
+appId: ${APP_ID}
+name: production_orbit_group_leave_delete
+---
+- assertVisible:
+    id: orbit.view.inner_circle
+- assertVisible:
+    id: orbit.group.${GROUP_ID}
+- assertVisible:
+    id: orbit.contact.${ALICE_PEER_ID}
+- assertVisible:
+    id: orbit.contact.${CHARLIE_PEER_ID}
+- swipe:
+    from:
+      id: orbit.group.${GROUP_ID}
+    direction: LEFT
+    duration: 500
+- tapOn: Leave
+- assertVisible: Leave & Delete
+- tapOn: Leave & Delete
+- extendedWaitUntil:
+    notVisible:
+      id: orbit.group.${GROUP_ID}
+    timeout: 15000
+- assertVisible:
+    id: orbit.contact.${ALICE_PEER_ID}
+- assertVisible:
+    id: orbit.contact.${CHARLIE_PEER_ID}

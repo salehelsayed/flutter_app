@@ -310,7 +310,7 @@ Source anchors below bind the assertions to the original bytes, including existi
 - Discovered owners/selectors: `89eac3be34dd0d9b9cb3bb6f` SELECTED; owner=full-sims; selector=``; variant=``
 - Direct importers: Entry point or externally selected source.
 - Assertion sites: [49](../../integration_test/group_lifecycle_simulator_harness.dart#L49)
-- Replacement evidence: pending; original evidence and execution owner retained.
+- Replacement evidence: DELETE_PRESERVES_FRIENDS → `production.group_delete_preserves_friends` passed on devices 2026-09-30 ([record](#2026-09-30-wave-3-delete-preserves-friends-replacement)). ADMIN_METADATA, INVITE_ACCEPT_SPINNER and NEW_MEMBER_MEDIA pending. Original dispatcher retained; retirement not approved.
 
 ### `group_multi_device_real_harness.dart`
 
@@ -1554,3 +1554,42 @@ Like the original, this does not prove relay delivery; invite delivery
 lifecycle stays with the invitation and catalog journeys. Group smoke needs no
 new module: G1–G8 are already covered by the Wave 2 routing replacement (row
 updated above).
+
+## 2026-09-30 Wave 3 delete-preserves-friends replacement
+
+First production child of the lifecycle dispatcher (`GROUP_SIM_SCENARIO=DELETE_PRESERVES_FRIENDS`).
+The original drives `OrbitWired` over in-memory fakes: Bob has friends Alice
+and Charlie with two 1:1 messages each and a group with two messages; he swipes
+the group row, taps Leave and confirms; the group and its messages are purged,
+contacts and 1:1 message ids are intact, one leave broadcast is issued, and
+both 1:1 chats still render.
+
+The replacement `production.group_delete_preserves_friends` runs the same user
+story on three real accounts (USB Pixel 6 Alice/admin, `emulator-5554` Pixel_7
+Bob, `emulator-5556` Pixel_6a Charlie):
+
+- The group is a prerequisite prepared with the existing production fixture
+  controls (`prepare_group`, `import_group`, `mark_fixture_joined`), named
+  `Game Night <run>`. All four 1:1 messages and both group messages are real
+  Maestro UI sends.
+- Bob deletes through ordinary Orbit UI (`production_orbit_group_leave_delete`:
+  swipe left, Leave, Leave & Delete, row disappears, both friend rows remain)
+  and then opens each 1:1 chat and sees both messages
+  (`production_direct_assert_two`).
+- The read-only `delete_snapshot` control (`production_group_delete_controls.dart`)
+  proves on Bob: group and group messages purged; contacts and every 1:1
+  message id and text unchanged. The original's single leave broadcast is
+  proven on the receiving side instead: Alice's production roster drops Bob.
+- `tool/sims/production_group_delete_criteria.dart` (16 tests).
+
+Host: analysis clean; 89 focused tests; the seven curated host checks passed
+(`delete-host-20260930T161111Z/`).
+
+Device: `wave3-run-20260930T161509Z/` PASS, oracle `failures: []`, 617.8 s,
+one build; proof `build/sims/proofs/production.group_delete_preserves_friends/attempt-zNIYz1/`
+(23 Maestro flows); waits beforeDelete 220 ms, afterDelete 209 ms, adminAfter
+325 ms; cleanup exact on all three devices.
+
+Negative probe: the leave flow was run without the swipe and Leave taps. The
+run FAILED at `orbit.group.<id> is not visible` (`attempt-2r0Rdn/`, cleanup
+exact); the flow file was restored byte-for-byte.

@@ -1924,6 +1924,7 @@
         "test/integration/production_group_invite_activation_test.dart",
         "test/integration/production_group_invite_controls_test.dart",
         "test/integration/production_group_invite_matrix_criteria_test.dart",
+        "test/integration/production_group_delete_criteria_test.dart",
         "test/integration/production_performance_capture_test.dart",
         "test/integration/production_performance_controls_test.dart",
         "test/integration/production_performance_criteria_test.dart",
@@ -2238,6 +2239,44 @@
         "integration_test/maestro/production_reopen_seeded.yaml"
       ],
       "host_preflight": "production-group-invites"
+    },
+    "production-group-delete-preserves-friends": {
+      "kind": "sims",
+      "capability": "production.group_delete_preserves_friends",
+      "boundary": "Production Orbit swipe Leave & Delete removes only the group; both friends, both 1:1 threads and their rendering survive, and the admin roster drops the leaver",
+      "timeout_seconds": 2400,
+      "estimated_seconds": null,
+      "requirements": [
+        "dart",
+        "flutter",
+        "adb",
+        "maestro"
+      ],
+      "device_roles": [
+        "android_physical",
+        "android_emulator",
+        "android_emulator_second"
+      ],
+      "references": [
+        "tool/sims/critical_features.json"
+      ],
+      "investigate": [
+        "lib/debug/production_journeys"
+      ],
+      "limitations": "Group fixture is prepared through the production create/import controls; 1:1 and group messages are real UI sends. The original's leave-broadcast count is replaced by receiving-side admin roster convergence.",
+      "disposable_android_package": "com.mknoon.sims.connectivity",
+      "ui_driver": "maestro",
+      "ui_driver_reason": "Maestro drives the 1:1 and group sends, Bob's Orbit swipe Leave & Delete and the post-delete 1:1 rendering. Read-only production repository snapshots establish that only the group rows were purged, contacts and 1:1 message ids are unchanged, and the admin roster dropped Bob; UI alone cannot establish row identity or the remote roster.",
+      "maestro_flows": [
+        "integration_test/maestro/production_direct_open.yaml",
+        "integration_test/maestro/production_direct_send.yaml",
+        "integration_test/maestro/production_conversation_back.yaml",
+        "integration_test/maestro/production_group_send.yaml",
+        "integration_test/maestro/production_orbit_group_leave_delete.yaml",
+        "integration_test/maestro/production_direct_assert_two.yaml",
+        "integration_test/maestro/production_reopen_seeded.yaml"
+      ],
+      "host_preflight": "production-group-delete-preserves-friends"
     },
     "production-group-invite-matrix": {
       "kind": "sims",
@@ -3791,6 +3830,7 @@
         "test/integration/production_group_invite_*",
         "integration_test/scripts/run_production_group_invite_reliability.dart",
         "integration_test/scripts/run_production_group_invite_status_matrix.dart",
+        "integration_test/scripts/run_production_group_delete_preserves_friends.dart",
         "integration_test/scripts/run_production_startup_resume_performance.dart",
         "test/integration/production_performance_*",
         "integration_test/scripts/run_production_group_create.dart",
@@ -3826,6 +3866,7 @@
         "production-private-media",
         "production-group-invites",
         "production-group-invite-matrix",
+        "production-group-delete-preserves-friends",
         "production-startup-resume-performance",
         "production-group-create",
         "production-group-reaction",
@@ -7568,6 +7609,16 @@
           "integration_test/maestro/production_group_info_self.yaml"
         ],
         "reason": "Additive production invite-status matrix display proof; the original seeded harness remains unchanged."
+      },
+      {
+        "owner": "full-sims-major",
+        "capability": "production.group_delete_preserves_friends",
+        "patterns": [
+          "integration_test/scripts/run_production_group_delete_preserves_friends.dart",
+          "integration_test/maestro/production_orbit_group_leave_delete.yaml",
+          "integration_test/maestro/production_direct_assert_two.yaml"
+        ],
+        "reason": "Additive production DELETE_PRESERVES_FRIENDS lifecycle journey; the original simulator dispatcher remains unchanged."
       },
       {
         "owner": "full-sims-major",

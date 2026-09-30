@@ -25,6 +25,13 @@ const productionGroupCatalogJourneys = {
 };
 const groupInviteJourney = 'production.group_invite_reliability';
 const groupInviteMatrixJourney = 'production.group_invite_status_matrix';
+const groupDeletePreservesFriendsJourney =
+    'production.group_delete_preserves_friends';
+/// Journeys whose topology has a third Android peer, Charlie.
+const productionThreePeerJourneys = {
+  ...productionGroupCatalogJourneys,
+  groupDeletePreservesFriendsJourney,
+};
 const privateMediaJourney = 'production.private_media_local';
 const performanceJourney = 'production.startup_resume_performance';
 typedef ProductionJourneyAction =
@@ -81,13 +88,14 @@ final class ProductionJourneyController {
           privateMediaJourney,
           groupInviteJourney,
           groupInviteMatrixJourney,
+          groupDeletePreservesFriendsJourney,
           groupCatalogCreateJourney,
           groupCatalogReactionJourney,
           groupCatalogReactionToggleJourney,
           groupCatalogRemovedReactionJourney,
           performanceJourney,
         }.contains(invocation.scenarioId) ||
-        !(productionGroupCatalogJourneys.contains(invocation.scenarioId)
+        !(productionThreePeerJourneys.contains(invocation.scenarioId)
                 ? {'alice', 'bob', 'charlie'}
                 : {'alice', 'bob'})
             .contains(invocation.role) ||

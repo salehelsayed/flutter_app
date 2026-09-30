@@ -185,6 +185,7 @@ final class ProductionAndroidJourney {
       'production.group_catalog.private_reaction_roundtrip',
       'production.group_catalog.private_reaction_toggle_convergence',
       'production.group_catalog.private_removed_reaction_rejected',
+      'production.group_delete_preserves_friends',
     }.contains(scenario)) {
       final third = required('SIMS_ANDROID_EMULATOR_SECOND_DEVICE_ID');
       if (!RegExp(r'^emulator-[0-9]+$').hasMatch(third) || third == emulator) {

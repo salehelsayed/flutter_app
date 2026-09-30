@@ -27,6 +27,8 @@ String productionFixtureGroupName(
     ? 'Notification Sound ${type.name} ${controller.invocation.runId}'
     : controller.invocation.scenarioId == groupInviteJourney
     ? 'Invite Reliability ${controller.invocation.runId}'
+    : controller.invocation.scenarioId == groupDeletePreservesFriendsJourney
+    ? 'Game Night ${controller.invocation.runId}'
     : 'Foreground Push ${controller.invocation.runId}';
 
 /// Fixture setup and read-only observations bound to production instances.

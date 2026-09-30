@@ -3609,6 +3609,68 @@
       "automationReady": true,
       "active": true,
       "declaredBuildException": false
+    },
+    {
+      "id": "production.group_delete_preserves_friends",
+      "owner": "reliability",
+      "proofBoundary": "production.group-lifecycle.delete-preserves-friends",
+      "assertions": [
+        "DELETE_PRESERVES_FRIENDS-group-purged",
+        "DELETE_PRESERVES_FRIENDS-contacts-intact",
+        "DELETE_PRESERVES_FRIENDS-direct-threads-intact",
+        "DELETE_PRESERVES_FRIENDS-direct-threads-render",
+        "DELETE_PRESERVES_FRIENDS-admin-roster-drops-leaver"
+      ],
+      "lane": "reliability",
+      "modes": [
+        "major",
+        "full"
+      ],
+      "families": [
+        "groups"
+      ],
+      "required": true,
+      "command": [
+        "dart",
+        "run",
+        "integration_test/scripts/run_production_group_delete_preserves_friends.dart"
+      ],
+      "buildProfile": "android.e2e.main",
+      "dependencies": [
+        "build.android.e2e.main"
+      ],
+      "resources": [
+        {
+          "name": "build:android.e2e.main",
+          "access": "read"
+        },
+        {
+          "name": "device:android-physical",
+          "access": "exclusive"
+        },
+        {
+          "name": "device:android-emulator",
+          "access": "exclusive"
+        },
+        {
+          "name": "device:android-emulator-second",
+          "access": "exclusive"
+        },
+        {
+          "name": "artifact:production-group-delete-preserves-friends",
+          "access": "write"
+        }
+      ],
+      "targetCapabilities": [
+        "android.physical",
+        "android.emulator.count2"
+      ],
+      "allowedNaReason": "target_unavailable_by_project_policy",
+      "artifactRequired": true,
+      "artifactValidator": "validateProductionGroupDelete",
+      "automationReady": true,
+      "active": true,
+      "declaredBuildException": false
     }
   ],
   "ownership": [
