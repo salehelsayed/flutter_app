@@ -17,8 +17,11 @@ const groupCatalogReactionToggleJourney =
     'production.group_catalog.private_reaction_toggle_convergence';
 const groupCatalogRemovedReactionJourney =
     'production.group_catalog.private_removed_reaction_rejected';
+const groupCatalogOnlineRemoveJourney =
+    'production.group_catalog.private_online_remove';
 const productionGroupCatalogJourneys = {
   groupCatalogCreateJourney,
+  groupCatalogOnlineRemoveJourney,
   groupCatalogReactionJourney,
   groupCatalogReactionToggleJourney,
   groupCatalogRemovedReactionJourney,
@@ -98,6 +101,7 @@ final class ProductionJourneyController {
           groupCatalogReactionJourney,
           groupCatalogReactionToggleJourney,
           groupCatalogRemovedReactionJourney,
+          groupCatalogOnlineRemoveJourney,
           performanceJourney,
         }.contains(invocation.scenarioId) ||
         !(productionThreePeerJourneys.contains(invocation.scenarioId)

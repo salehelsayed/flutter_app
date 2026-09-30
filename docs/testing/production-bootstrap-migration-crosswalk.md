@@ -1670,3 +1670,53 @@ Negative probe: with the tap flow made a no-op, the run FAILED
 (`wave3-run-20260930T172442Z/`, `attempt-KC3dj1/`): the watcher recorded
 `playingObserved: false` and the viewer wait timed out; cleanup exact; the
 flow was restored byte-for-byte.
+
+## 2026-09-30 Wave 3 catalog private_online_remove
+
+User decision (2026-09-30): catalog cases that need exact protocol timing get
+narrow **debug-build-only** seams in production paths. The fourth device for
+four-peer cases is `emulator-5560` (AVD `Pixel_8`); `emulator-5558`
+(`Codex_API35`) is not used.
+
+First seam: `lib/features/groups/application/group_key_distribution_debug_gate.dart`.
+`rotateAndDistributeGroupKey` wraps its `sendP2PMessage` with the gate only
+when one is set; the getter returns null and the setter throws outside debug
+builds (`kDebugMode`), so release/profile builds never run a gate.
+`test/features/groups/application/group_key_distribution_debug_gate_test.dart`
+(3 tests) proves unchanged sends without a gate, gate-before-send ordering, and
+a held recipient; the existing 51 rotation tests still pass.
+
+`production.group_catalog.private_online_remove` (USB Pixel 6 Alice,
+`emulator-5554` Bob, `emulator-5556` Charlie) reproduces the original GM-004
+online-removal sequence with ML-005, KE-006, KE-007, ST-006 and PL-006:
+
+- UI: create, both accepts, Charlie's removal (`production_catalog_remove_charlie_start`,
+  then `..._verify` after the rotation), Bob's two text sends.
+- ST-006: the gate holds Alice's rotated-key send to Bob; Bob publishes at
+  epoch 1 during the hold and Alice receives it; then the gate is released.
+- Narrow production use-case calls with the original payloads: Alice's
+  post-removal PL-006 image (bytes read from the unchanged original harness)
+  via `uploadMedia` + `sendGroupMessage`, Bob's `downloadMedia`, Charlie's
+  rejected `sendGroupMessage` and `callP2PMediaDownload`.
+- `tool/sims/production_group_online_remove_criteria.dart` checks the
+  production intermediate stages, builds the original three role verdicts
+  from observations and runs the unchanged `evaluateGroupMultiPartyVerdicts`
+  (18 tests; the valid fixture passes the original oracle).
+
+Device: the first attempt `wave3-run-20260930T174236Z/` FAILED before the
+rotation: the app refused the removal with "Group recovery is in progress"
+because the runner removed while post-accept recovery was active; cleanup
+exact. The runner now waits for `groupRecoveryActive: false` on all peers.
+`wave3-run-20260930T175042Z/` PASS, oracle `failures: []`
+(`attempt-G7Iupu/`): rotation held at epoch 1 when Alice received Bob's
+ST-006 message; Alice and Bob epoch 2, Charlie 0; Alice's media at epoch 2
+with allowed peers exactly Alice and Bob; Bob's download done; Charlie's
+direct download denied (`not authorized`, 0 bytes), send `groupNotFound`,
+zero leaked messages, group retained; cleanup exact on all three devices.
+
+Negative probe (gate not armed) is still pending: three attempts
+(`T175756Z`, `T180759Z`, `T181641Z`) failed during device preparation, before
+any scenario step (one readiness timeout, then two `emulator-5556` install
+timeouts). A manual install of the 321 MB APK on `emulator-5556` then took
+2 m 3 s, just over the state guard's 2-minute host-command limit; this began
+after two more emulators were started. Cleanup was exact each time.

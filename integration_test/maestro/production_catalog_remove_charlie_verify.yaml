@@ -1,0 +1,9 @@
+appId: ${APP_ID}
+name: production_catalog_remove_charlie_verify
+---
+- assertVisible: '(?s)^.*\n2 members\n.*$'
+- assertNotVisible:
+    id: 'group-member-remove-${CHARLIE_PEER_ID}'
+- back
+- assertVisible:
+    id: chat_composer

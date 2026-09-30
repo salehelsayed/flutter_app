@@ -13,6 +13,7 @@ import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_pending_broadcast.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
+import 'package:flutter_app/features/groups/application/group_key_distribution_debug_gate.dart';
 
 String _diagnosticPrefix(String value) =>
     value.length > 8 ? value.substring(0, 8) : value;
@@ -230,6 +231,14 @@ Future<RotateGroupKeyOutcome> rotateAndDistributeGroupKey({
   Duration distributionRetryDelay = const Duration(milliseconds: 500),
   EnqueueDeferredGroupKeyDistribution? enqueueDeferredDistribution,
 }) async {
+  final debugGate = debugGroupKeyDistributionGate;
+  final directSend = sendP2PMessage;
+  if (debugGate != null && directSend != null) {
+    sendP2PMessage = (peerId, message) async {
+      await debugGate(groupId, peerId);
+      return directSend(peerId, message);
+    };
+  }
   emitFlowEvent(
     layer: 'FL',
     event: 'GROUP_ROTATE_KEY_BEGIN',
