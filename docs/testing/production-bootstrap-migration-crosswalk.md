@@ -1464,3 +1464,43 @@ which ran the production journey composition-guard, criteria, runtime and build
 contract tests. This rerun did not repeat the host gate, the negative-probe
 mutations or the original iOS simulator comparison route; the original harness
 remains retained and unchanged. Waves 3–5 remain paused.
+
+## 2026-09-30 Wave 3 device run — implemented group modules
+
+At the user's request all local changes were first committed on local branch
+`wave3-baseline-20260930` as `c4b38285fc54bc8a8ea60ecbaf620603a636953e`
+(local device-run output was added to `.gitignore`; nothing was pushed; `main`
+stays at `06d5ab5704cf0106e730f0dab17b0abfd645fe7c`).
+
+The five implemented Wave 3 campaigns then ran through
+`docker-ws/run_wave3_group_campaigns.sh`:
+`mknoon_checks.py run --mode change --base 06d5ab5704cf0106e730f0dab17b0abfd645fe7c --local --only production-group-invites,production-group-create,production-group-reaction,production-group-reaction-toggle,production-group-removed-reaction`
+with the ignored three-Android configuration
+`production-bootstrap-migration-20260930/wave3-device-config.json`: USB Pixel 6
+`21071FDF600CSC` (`android_physical`), `emulator-5554` AVD `Pixel_7`
+(`android_emulator`) and `emulator-5556` AVD `Pixel_6a`
+(`android_emulator_second`). A first attempt, `wave3-run-20260930T150250Z/`,
+stopped before any device step with `Unknown/unselected --only check` because
+`--base` was the new baseline commit and selected nothing; the wrapper now uses
+`main` as the base, as Waves 1 and 2 did.
+
+Receipts are under `production-bootstrap-migration-20260930/wave3-run-20260930T150355Z/`
+(source digest `a862fd37285d51aa69a5571f54472b994e8e3f1427bbb4421e50403c622c36ca`).
+
+| Check | Original catalog obligations | Proof | Result |
+|---|---|---|---|
+| `production-group-invites` | F decline acknowledgement, C exact invite revocation, D metadata convergence | `build/sims/proofs/production.group_invite_reliability/attempt-NWQVTX/` | PASS, 3 assertions, 232.6 s; cleanup exact on `21071FDF600CSC` + `emulator-5554`. |
+| `production-group-create` | ML-001 create/two pending invites/accept/readable joins/exact message; KE-001 initial epoch | `.../production.group_catalog.private_abc_create/attempt-6YZpQ2/` | PASS, 4 assertions, 313.6 s; cleanup exact on all three devices. |
+| `production-group-reaction` | PL-009 target send, reaction send outcome, two receiver streams, exact persisted reactions | `.../production.group_catalog.private_reaction_roundtrip/attempt-Sj0QVE/` | PASS, 5 assertions, 318.7 s; cleanup exact on all three. |
+| `production-group-reaction-toggle` | RT-001 target send, add/remove/re-add returns, two 500 ms intervals, two receiver removal streams, exact final SQL | `.../production.group_catalog.private_reaction_toggle_convergence/attempt-9eIMQq/` | PASS, 5 assertions, 297.7 s; cleanup exact on all three. |
+| `production-group-removed-reaction` | PL-010 target send, UI member removal, former-member rejection, five-second receiver absence, exact empty reaction rows | `.../production.group_catalog.private_removed_reaction_rejected/attempt-bg2xfQ/` | PASS, 5 assertions, 326.2 s; cleanup exact on all three. |
+
+Each campaign reached `sims_assertions_and_artifact_observed` with zero builds
+and one attested build-cache hit. Total wall time was 1,555.9 s. The wrapper's
+overall `BLOCKED` reflects only the deliberately omitted checks of this `--only`
+subset. This closes the pending device proof for PL-009 and RT-001 recorded in
+"Incremental multi-party reaction replacements". It does not close Wave 3: the
+group smoke, invite/status matrix and lifecycle replacements, the remaining
+multi-party catalog cases, the replacement-module regression guard and the
+wave-boundary `host-all` remain open. Original harnesses and selectors are
+unchanged; no route is retired.
