@@ -69,5 +69,6 @@ func featureFlagsStatusMap(flags FeatureFlags) map[string]bool {
 		"enableDeferredDirectAck":      flags.EnableDeferredDirectAck,
 		"enableLibp2pLANDial":          flags.EnableLibp2pLANDial,
 		"enableLibp2pLANMedia":         flags.EnableLibp2pLANMedia,
+		"debugAdvertiseRelayOnly":      flags.DebugAdvertiseRelayOnly,
 	}
 }

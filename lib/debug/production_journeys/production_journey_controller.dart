@@ -2,6 +2,8 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:flutter_app/core/bridge/debug_node_feature_flags.dart';
+
 import 'foreground_group_push_control.dart';
 import 'production_performance_capture.dart';
 import 'sims_runtime_protocol.dart';
@@ -19,9 +21,12 @@ const groupCatalogRemovedReactionJourney =
     'production.group_catalog.private_removed_reaction_rejected';
 const groupCatalogOnlineRemoveJourney =
     'production.group_catalog.private_online_remove';
+const groupCatalogRelayOnlyJourney =
+    'production.group_catalog.private_relay_only_delivery';
 const productionGroupCatalogJourneys = {
   groupCatalogCreateJourney,
   groupCatalogOnlineRemoveJourney,
+  groupCatalogRelayOnlyJourney,
   groupCatalogReactionJourney,
   groupCatalogReactionToggleJourney,
   groupCatalogRemovedReactionJourney,
@@ -55,6 +60,12 @@ final class ProductionJourneyController {
     if (invocation.scenarioId == performanceJourney) {
       performanceCapture = ProductionPerformanceCapture();
       bindDisposer(performanceCapture!.dispose);
+    }
+    // NW-002: Bob's node advertises only relay-circuit addresses. Set before
+    // node:start; debug builds only (the setter throws otherwise).
+    if (invocation.scenarioId == groupCatalogRelayOnlyJourney &&
+        invocation.role == 'bob') {
+      debugNodeFeatureFlagOverrides = const {'debugAdvertiseRelayOnly': true};
     }
   }
 
@@ -102,6 +113,7 @@ final class ProductionJourneyController {
           groupCatalogReactionToggleJourney,
           groupCatalogRemovedReactionJourney,
           groupCatalogOnlineRemoveJourney,
+          groupCatalogRelayOnlyJourney,
           performanceJourney,
         }.contains(invocation.scenarioId) ||
         !(productionThreePeerJourneys.contains(invocation.scenarioId)

@@ -4,6 +4,7 @@ import 'bridge.dart';
 import '../notifications/automatic_recovery_notification_policy.dart';
 import '../local_discovery/lan_address_classifier.dart';
 import '../utils/flow_event_emitter.dart';
+import 'debug_node_feature_flags.dart';
 
 /// Extra time given to the Dart bridge boundary beyond a native operation's
 /// own deadline. This margin detects a stalled MethodChannel/gomobile await
@@ -101,6 +102,8 @@ Map<String, bool> defaultResilienceFeatureFlags() {
       'MKNOON_ENABLE_LIBP2P_LAN_MEDIA',
       defaultValue: false,
     ),
+    // Debug-only journey preconditions; empty outside debug builds.
+    ...debugNodeFeatureFlagOverrides,
   };
 }
 

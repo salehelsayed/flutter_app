@@ -11,6 +11,7 @@ import 'production_journeys/production_group_delete_controls.dart';
 import 'production_journeys/production_group_accept_controls.dart';
 import 'production_journeys/production_group_media_controls.dart';
 import 'production_journeys/production_group_online_remove_controls.dart';
+import 'production_journeys/production_group_catalog_watch_controls.dart';
 import 'production_journeys/production_performance_controls.dart';
 import 'production_journeys/production_group_reaction_controls.dart';
 import 'production_journeys/production_group_reaction_toggle.dart';
@@ -989,6 +990,13 @@ final class DebugE2ECompositionRoot {
         mediaFileManager: dependencies.mediaFileManager,
         inviteDeliveryRepository:
             dependencies.groupInviteDeliveryAttemptRepository,
+      );
+      bindProductionGroupCatalogWatchControls(
+        controller: journey,
+        p2pService: dependencies.p2pService,
+        identityRepository: dependencies.identityRepository,
+        groupRepository: dependencies.groupRepository,
+        messageRepository: dependencies.groupMessageRepository,
       );
       bindProductionPrivateMediaControls(
         controller: journey,

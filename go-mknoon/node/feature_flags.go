@@ -61,6 +61,12 @@ type FeatureFlags struct {
 	// this flag solely controls whether the host is ALLOWED to open one via DCUtR.
 	EnableDcutrUpgrade bool `json:"enableDcutrUpgrade"`
 
+	// DebugAdvertiseRelayOnly makes this node advertise only relay-circuit
+	// addresses, so peers reach it relay-only with no direct dial (catalog
+	// NW-002). The Dart side sends it only from debug-build production
+	// journeys; it is never set in release or profile builds.
+	DebugAdvertiseRelayOnly bool `json:"debugAdvertiseRelayOnly"`
+
 	// EnableLibp2pLANMedia gates the FDC-15 1:1 media byte stream over a
 	// peer-authenticated libp2p LAN-direct conn (MediaLANProtocol). When OFF (the
 	// default) the node registers NO MediaLANProtocol handler and the Dart send
@@ -129,6 +135,8 @@ func MergeFeatureFlagsOverDefaults(present map[string]bool) FeatureFlags {
 			flags.EnableLibp2pLANDial = value
 		case "enableDcutrUpgrade":
 			flags.EnableDcutrUpgrade = value
+		case "debugAdvertiseRelayOnly":
+			flags.DebugAdvertiseRelayOnly = value
 		case "enableLibp2pLANMedia":
 			flags.EnableLibp2pLANMedia = value
 		}

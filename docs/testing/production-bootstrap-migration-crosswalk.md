@@ -1724,3 +1724,55 @@ After the user restored emulator conditions, `wave3-run-20260930T184015Z/`
 checks ("rotation held before Bob publishes, still at epoch 1; Alice received
 Bob during the held rotation"). Cleanup was exact each time; the runner was
 restored byte-for-byte.
+
+## 2026-09-30 Wave 3 catalog private_relay_only_delivery
+
+NW-002 needs Bob relay-only: at least one role must log a `group:discovery`
+route to Bob with `path=relay`, `attemptedDirect=false`, `directAddrCount=0`.
+
+Second debug-only seam, in Go and Dart:
+- `go-mknoon/node/feature_flags.go` `DebugAdvertiseRelayOnly`
+  (`debugAdvertiseRelayOnly`, default false, handled by
+  `MergeFeatureFlagsOverDefaults` and reported by `featureFlagsStatusMap`);
+  `node.go` then advertises only relay-circuit addresses (`relayOnlyAddresses`).
+  Go tests: `node/relay_only_addresses_test.go` plus the existing
+  every-field-mergeable guard, which caught the first missing merge case.
+- `lib/core/bridge/debug_node_feature_flags.dart`: a debug-only override map
+  (empty and unsettable outside debug builds) merged into
+  `defaultResilienceFeatureFlags()`; `ProductionJourneyController` sets it only
+  for Bob in this journey. `test/core/bridge/debug_node_feature_flags_test.dart`.
+
+`production.group_catalog.private_relay_only_delivery` (USB Pixel 6 Alice,
+`emulator-5554` Bob, `emulator-5556` Charlie): UI create, accepts, Alice's send
+and Bob's publish-back. `production_group_catalog_watch_controls.dart` captures
+the app's own sanitized `GROUP_DISCOVERY` and send flow events;
+`tool/sims/production_group_relay_only_criteria.dart` rebuilds the route
+diagnostics with a faithful copy of the original `_nw002*` helpers, adds a
+production check that only Bob's node advertises relay-only, and runs the
+unchanged original oracle (14 tests).
+
+Production precondition not in the original: the contact exchange already
+connects everyone over Bob's relay circuit, so group discovery never dials
+Bob. After the group settles, Alice and Charlie are restarted normally so their
+group rejoin runs discovery against the real members; Alice then sends through
+`production_group_send`.
+
+Attempts (all with exact cleanup), retained:
+- `wave3-run-20260930T185507Z/` FAIL, no seam: Bob advertised 2 direct
+  addresses; Alice reached him by `relay_fallback` after a direct attempt.
+- `T192504Z` FAIL: seam present but not yet reported by `featureFlagsStatusMap`.
+- `T193319Z` FAIL: Bob relay-only, but no discovery dial targeted him.
+- `T194127Z` **PASS**, oracle `failures: []` (`attempt-hoz3GV/`): Alice and
+  Charlie reached Bob with `relay`/`attemptedDirect=false`/`directAddrCount=0`;
+  every other pair used `relay_fallback` after direct attempts.
+- Negative probe `T194841Z` (`attempt-k7O0v7/`, seam off, controller restored
+  byte-for-byte): FAILED at "relay-only advertising only on Bob". On that run's
+  events the original NW-002 rule alone would have passed (right after a
+  restart a peer can briefly see Bob with no known direct addresses), so the
+  added advertising check is what makes the relay-only claim sound.
+
+Host: focused Dart tests (124) and Go tests pass; curated `workflow`,
+`production-journey-contracts`, `maestro-flow-contracts`, `runtime-roots` and
+`notifications` passed. `go-core` ran 1,909 tests with 0 failures and 2
+pre-existing skips and is classified BLOCKED by its own "skips remain
+incomplete" rule; neither skip is from this change.

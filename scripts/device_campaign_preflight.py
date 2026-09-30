@@ -25,6 +25,7 @@ HOST_PROBES = {
     'production-group-invite-accept-spinner': ('integration_test/scripts/run_production_group_invite_accept_spinner.dart', 'production.group_invite_accept_spinner'),
     'production-group-new-member-media': ('integration_test/scripts/run_production_group_new_member_media.dart', 'production.group_new_member_media'),
     'production-group-online-remove': ('integration_test/scripts/run_production_group_online_remove.dart', 'production.group_catalog.private_online_remove'),
+    'production-group-relay-only': ('integration_test/scripts/run_production_group_relay_only.dart', 'production.group_catalog.private_relay_only_delivery'),
     'production-group-invite-matrix': ('integration_test/scripts/run_production_group_invite_status_matrix.dart', 'production.group_invite_status_matrix'),
     'production-startup-resume-performance': ('integration_test/scripts/run_production_startup_resume_performance.dart', 'production.startup_resume_performance'),
     'production-private-media': ('integration_test/scripts/run_production_private_media_local.dart', 'production.private_media_local'),

@@ -232,6 +232,17 @@ func filterAddresses(addrs []ma.Multiaddr) []ma.Multiaddr {
 	return filtered
 }
 
+// relayOnlyAddresses keeps only relay-circuit addresses (DebugAdvertiseRelayOnly).
+func relayOnlyAddresses(addrs []ma.Multiaddr) []ma.Multiaddr {
+	filtered := make([]ma.Multiaddr, 0, len(addrs))
+	for _, a := range addrs {
+		if isCircuitAddr(a) {
+			filtered = append(filtered, a)
+		}
+	}
+	return filtered
+}
+
 // NewNode creates a new Node instance without an event callback.
 func NewNode() *Node {
 	return &Node{
@@ -409,7 +420,9 @@ func (n *Node) Start(cfg NodeConfig) (state *NodeState, err error) {
 		reachabilityOpt = libp2p.ForceReachabilityPublic()
 	}
 	advertisedAddrsFactory := filterAddresses
-	if hermeticLocalNetwork {
+	if flags.DebugAdvertiseRelayOnly {
+		advertisedAddrsFactory = relayOnlyAddresses
+	} else if hermeticLocalNetwork {
 		advertisedAddrsFactory = func(addrs []ma.Multiaddr) []ma.Multiaddr {
 			loopback := make([]ma.Multiaddr, 0, len(addrs))
 			for _, addr := range addrs {
