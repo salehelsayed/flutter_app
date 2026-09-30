@@ -1714,9 +1714,13 @@ with allowed peers exactly Alice and Bob; Bob's download done; Charlie's
 direct download denied (`not authorized`, 0 bytes), send `groupNotFound`,
 zero leaked messages, group retained; cleanup exact on all three devices.
 
-Negative probe (gate not armed) is still pending: three attempts
-(`T175756Z`, `T180759Z`, `T181641Z`) failed during device preparation, before
-any scenario step (one readiness timeout, then two `emulator-5556` install
-timeouts). A manual install of the 321 MB APK on `emulator-5556` then took
-2 m 3 s, just over the state guard's 2-minute host-command limit; this began
-after two more emulators were started. Cleanup was exact each time.
+Negative probe (gate not armed): three attempts (`T175756Z`, `T180759Z`,
+`T181641Z`) failed during device preparation, before any scenario step (one
+readiness timeout, then two `emulator-5556` install timeouts). A manual install
+of the 321 MB APK on `emulator-5556` then took 2 m 3 s, just over the state
+guard's 2-minute host-command limit, after two more emulators were started.
+After the user restored emulator conditions, `wave3-run-20260930T184015Z/`
+(`attempt-fCEE3n/`) ran the whole scenario unheld and FAILED at the ST-006
+checks ("rotation held before Bob publishes, still at epoch 1; Alice received
+Bob during the held rotation"). Cleanup was exact each time; the runner was
+restored byte-for-byte.
