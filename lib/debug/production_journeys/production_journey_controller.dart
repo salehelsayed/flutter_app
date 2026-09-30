@@ -27,6 +27,7 @@ const groupInviteJourney = 'production.group_invite_reliability';
 const groupInviteMatrixJourney = 'production.group_invite_status_matrix';
 const groupInviteAcceptSpinnerJourney =
     'production.group_invite_accept_spinner';
+const groupNewMemberMediaJourney = 'production.group_new_member_media';
 const groupDeletePreservesFriendsJourney =
     'production.group_delete_preserves_friends';
 /// Journeys whose topology has a third Android peer, Charlie.
@@ -92,6 +93,7 @@ final class ProductionJourneyController {
           groupInviteMatrixJourney,
           groupDeletePreservesFriendsJourney,
           groupInviteAcceptSpinnerJourney,
+          groupNewMemberMediaJourney,
           groupCatalogCreateJourney,
           groupCatalogReactionJourney,
           groupCatalogReactionToggleJourney,

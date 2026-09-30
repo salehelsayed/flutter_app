@@ -466,6 +466,10 @@ classify_path() {
       record "support" "$path" "support" "manifest-owned production group invite-accept-spinner lifecycle journey; original route retained"
       return
       ;;
+    integration_test/scripts/run_production_group_new_member_media.dart)
+      record "support" "$path" "support" "manifest-owned production group new-member-media lifecycle journey; original route retained"
+      return
+      ;;
     integration_test/scripts/run_production_group_reaction.dart)
       record "support" "$path" "support" "manifest-owned production group-reaction roundtrip journey; original route retained"
       return

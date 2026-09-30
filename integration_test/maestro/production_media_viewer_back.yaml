@@ -1,0 +1,6 @@
+appId: ${APP_ID}
+name: production_media_viewer_back
+---
+- back
+- assertVisible:
+    id: chat_composer

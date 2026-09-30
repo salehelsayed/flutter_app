@@ -9,6 +9,7 @@ import 'production_journeys/production_group_invite_controls.dart';
 import 'production_journeys/production_group_invite_matrix_controls.dart';
 import 'production_journeys/production_group_delete_controls.dart';
 import 'production_journeys/production_group_accept_controls.dart';
+import 'production_journeys/production_group_media_controls.dart';
 import 'production_journeys/production_performance_controls.dart';
 import 'production_journeys/production_group_reaction_controls.dart';
 import 'production_journeys/production_group_reaction_toggle.dart';
@@ -967,6 +968,14 @@ final class DebugE2ECompositionRoot {
         identityRepository: dependencies.identityRepository,
         groupRepository: dependencies.groupRepository,
         pendingInviteRepository: dependencies.pendingGroupInviteRepository,
+      );
+      bindProductionGroupMediaControls(
+        controller: journey,
+        identityRepository: dependencies.identityRepository,
+        groupRepository: dependencies.groupRepository,
+        groupMessageRepository: dependencies.groupMessageRepository,
+        mediaAttachmentRepository: dependencies.mediaAttachmentRepository,
+        mediaFileManager: dependencies.mediaFileManager,
       );
       bindProductionPrivateMediaControls(
         controller: journey,

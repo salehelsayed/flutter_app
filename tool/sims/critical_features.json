@@ -3729,6 +3729,63 @@
       "automationReady": true,
       "active": true,
       "declaredBuildException": false
+    },
+    {
+      "id": "production.group_new_member_media",
+      "owner": "reliability",
+      "proofBoundary": "production.group-lifecycle.new-member-media",
+      "assertions": [
+        "NEW_MEMBER_MEDIA-rows-visible",
+        "NEW_MEMBER_MEDIA-voice-plays",
+        "NEW_MEMBER_MEDIA-video-viewer-opens",
+        "NEW_MEMBER_MEDIA-reopen-repeats"
+      ],
+      "lane": "reliability",
+      "modes": [
+        "major",
+        "full"
+      ],
+      "families": [
+        "groups"
+      ],
+      "required": true,
+      "command": [
+        "dart",
+        "run",
+        "integration_test/scripts/run_production_group_new_member_media.dart"
+      ],
+      "buildProfile": "android.e2e.main",
+      "dependencies": [
+        "build.android.e2e.main"
+      ],
+      "resources": [
+        {
+          "name": "build:android.e2e.main",
+          "access": "read"
+        },
+        {
+          "name": "device:android-physical",
+          "access": "exclusive"
+        },
+        {
+          "name": "device:android-emulator",
+          "access": "exclusive"
+        },
+        {
+          "name": "artifact:production-group-new-member-media",
+          "access": "write"
+        }
+      ],
+      "targetCapabilities": [
+        "android.physical",
+        "android.emulator"
+      ],
+      "allowedNaReason": "target_unavailable_by_project_policy",
+      "artifactRequired": true,
+      "artifactValidator": "validateProductionGroupMedia",
+      "automationReady": true,
+      "active": true,
+      "declaredBuildException": false
     }
   ],
   "ownership": [

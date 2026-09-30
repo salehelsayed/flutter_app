@@ -1924,6 +1924,7 @@
         "test/integration/production_group_invite_activation_test.dart",
         "test/integration/production_group_invite_controls_test.dart",
         "test/integration/production_group_invite_matrix_criteria_test.dart",
+        "test/integration/production_group_media_criteria_test.dart",
         "test/integration/production_group_accept_criteria_test.dart",
         "test/integration/production_group_delete_criteria_test.dart",
         "test/integration/production_performance_capture_test.dart",
@@ -2311,6 +2312,40 @@
         "integration_test/maestro/production_reopen_seeded.yaml"
       ],
       "host_preflight": "production-group-invite-accept-spinner"
+    },
+    "production-group-new-member-media": {
+      "kind": "sims",
+      "capability": "production.group_new_member_media",
+      "boundary": "Production group conversation renders a new member's seeded video and voice rows, plays voice and opens the video viewer, initially and after reopen",
+      "timeout_seconds": 2400,
+      "estimated_seconds": null,
+      "requirements": [
+        "dart",
+        "flutter",
+        "adb",
+        "maestro"
+      ],
+      "device_roles": [
+        "android_physical",
+        "android_emulator"
+      ],
+      "references": [
+        "tool/sims/critical_features.json"
+      ],
+      "investigate": [
+        "lib/debug/production_journeys"
+      ],
+      "limitations": "Display proof like the original: media rows and the original fixture bytes are seeded prerequisites; media transfer is owned by the group media campaigns.",
+      "disposable_android_package": "com.mknoon.sims.connectivity",
+      "ui_driver": "maestro",
+      "ui_driver_reason": "Maestro opens the group, taps the voice play control and the video cell (tap points taken from the pinned device's uiautomator hierarchy because neither control has an accessibility identifier) and leaves the viewer. Read-only element-tree observations mirror the original's widget-type finders (thumbnails, players, playing state, VideoPlayer, load error), which UI tools cannot observe.",
+      "maestro_flows": [
+        "integration_test/maestro/production_group_open.yaml",
+        "integration_test/maestro/production_media_tap_point.yaml",
+        "integration_test/maestro/production_media_viewer_back.yaml",
+        "integration_test/maestro/production_reopen_seeded.yaml"
+      ],
+      "host_preflight": "production-group-new-member-media"
     },
     "production-group-invite-matrix": {
       "kind": "sims",
@@ -3866,6 +3901,7 @@
         "integration_test/scripts/run_production_group_invite_status_matrix.dart",
         "integration_test/scripts/run_production_group_delete_preserves_friends.dart",
         "integration_test/scripts/run_production_group_invite_accept_spinner.dart",
+        "integration_test/scripts/run_production_group_new_member_media.dart",
         "integration_test/scripts/run_production_startup_resume_performance.dart",
         "test/integration/production_performance_*",
         "integration_test/scripts/run_production_group_create.dart",
@@ -3903,6 +3939,7 @@
         "production-group-invite-matrix",
         "production-group-delete-preserves-friends",
         "production-group-invite-accept-spinner",
+        "production-group-new-member-media",
         "production-startup-resume-performance",
         "production-group-create",
         "production-group-reaction",
@@ -7645,6 +7682,16 @@
           "integration_test/maestro/production_group_info_self.yaml"
         ],
         "reason": "Additive production invite-status matrix display proof; the original seeded harness remains unchanged."
+      },
+      {
+        "owner": "full-sims-major",
+        "capability": "production.group_new_member_media",
+        "patterns": [
+          "integration_test/scripts/run_production_group_new_member_media.dart",
+          "integration_test/maestro/production_media_tap_point.yaml",
+          "integration_test/maestro/production_media_viewer_back.yaml"
+        ],
+        "reason": "Additive production NEW_MEMBER_MEDIA lifecycle journey; the original simulator dispatcher remains unchanged."
       },
       {
         "owner": "full-sims-major",

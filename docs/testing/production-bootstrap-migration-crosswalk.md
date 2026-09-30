@@ -310,7 +310,7 @@ Source anchors below bind the assertions to the original bytes, including existi
 - Discovered owners/selectors: `89eac3be34dd0d9b9cb3bb6f` SELECTED; owner=full-sims; selector=``; variant=``
 - Direct importers: Entry point or externally selected source.
 - Assertion sites: [49](../../integration_test/group_lifecycle_simulator_harness.dart#L49)
-- Replacement evidence: DELETE_PRESERVES_FRIENDS → `production.group_delete_preserves_friends` ([record](#2026-09-30-wave-3-delete-preserves-friends-replacement)) and INVITE_ACCEPT_SPINNER → `production.group_invite_accept_spinner` ([record](#2026-09-30-wave-3-invite-accept-spinner-replacement)) passed on devices 2026-09-30. ADMIN_METADATA and NEW_MEMBER_MEDIA pending. Original dispatcher retained; retirement not approved.
+- Replacement evidence: DELETE_PRESERVES_FRIENDS → `production.group_delete_preserves_friends` ([record](#2026-09-30-wave-3-delete-preserves-friends-replacement)) and INVITE_ACCEPT_SPINNER → `production.group_invite_accept_spinner` ([record](#2026-09-30-wave-3-invite-accept-spinner-replacement)), and NEW_MEMBER_MEDIA → `production.group_new_member_media` ([record](#2026-09-30-wave-3-new-member-media-replacement)) passed on devices 2026-09-30. ADMIN_METADATA pending. Original dispatcher retained; retirement not approved.
 
 ### `group_multi_device_real_harness.dart`
 
@@ -1623,3 +1623,50 @@ cleanup exact on both devices.
 Negative probe: the flow without the Accept tap FAILED at
 `id: chat_composer is visible` (`wave3-run-20260930T164704Z/`,
 `attempt-4BijSH/`, cleanup exact); the flow file was restored byte-for-byte.
+
+## 2026-09-30 Wave 3 new-member-media replacement
+
+Third production child of the lifecycle dispatcher
+(`GROUP_SIM_SCENARIO=NEW_MEMBER_MEDIA`, report 89). The original pumps
+`GroupConversationScreen` alone over two seeded messages (Alice's post-join
+text+video+voice, Bob's own video+voice) backed by tiny fixture files, then,
+initially and after re-pumping: both texts once, two `VideoThumbnailOverlay`,
+two `AudioPlayerWidget` showing `0:01`, the first voice enters its pause state
+on tap, and the first video opens a `VideoPlayer` without "Could not load video".
+
+`production.group_new_member_media` (USB Pixel 6 Alice identity, `emulator-5554`
+Pixel_7 Bob) keeps that display boundary on the production app:
+
+- `production_group_media_controls.dart` writes the same two messages and four
+  attachments through the production group message and media attachment
+  repositories, with files at the trusted `media/<groupId>/<attachmentId>`
+  paths and the video thumbnail sibling. The runner reads the fixture bytes,
+  key and nonce from the unchanged original file, so the bytes are identical.
+- Maestro opens the group; the voice play control and the video cell have no
+  accessibility identifiers, so the runner takes their tap points from the
+  pinned device's `uiautomator` hierarchy (inside the incoming bubble: the
+  square unlabeled control and the largest cell) and Maestro taps them
+  (`production_media_tap_point`), then leaves the viewer
+  (`production_media_viewer_back`). The reopen pass restarts the app.
+- Read-only element-tree observations mirror the original finders. Text uses
+  `find.text` rules (Text data or span, EditableText) and is scoped to the
+  open `GroupConversationWired`, because Orbit stays mounted underneath and
+  its row previews the latest message; the viewer is observed across the tree.
+  Playback is caught by an in-app watcher armed before the tap, since the clip
+  lasts one second.
+- `tool/sims/production_group_media_criteria.dart` (16 tests).
+
+Exploration and first failures (all with exact cleanup), retained:
+`wave3-run-20260930T170053Z/` (tap targets not yet known; saved hierarchy),
+`T170419Z/` and `T170840Z/` and `T171421Z/` (text counting did not yet match
+`find.text` and the conversation scope; every other assertion passed).
+
+Pass: `wave3-run-20260930T172006Z/` PASS, oracle `failures: []`; both passes
+show texts 1/1, thumbnails 2, players 2, durations 2, playback observed,
+VideoPlayer 1 and no load error; proof
+`build/sims/proofs/production.group_new_member_media/attempt-Q43Szc/`; cleanup exact.
+
+Negative probe: with the tap flow made a no-op, the run FAILED
+(`wave3-run-20260930T172442Z/`, `attempt-KC3dj1/`): the watcher recorded
+`playingObserved: false` and the viewer wait timed out; cleanup exact; the
+flow was restored byte-for-byte.
