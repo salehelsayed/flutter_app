@@ -1924,6 +1924,7 @@
         "test/integration/production_group_invite_activation_test.dart",
         "test/integration/production_group_invite_controls_test.dart",
         "test/integration/production_group_invite_matrix_criteria_test.dart",
+        "test/integration/production_group_accept_criteria_test.dart",
         "test/integration/production_group_delete_criteria_test.dart",
         "test/integration/production_performance_capture_test.dart",
         "test/integration/production_performance_controls_test.dart",
@@ -2277,6 +2278,39 @@
         "integration_test/maestro/production_reopen_seeded.yaml"
       ],
       "host_preflight": "production-group-delete-preserves-friends"
+    },
+    "production-group-invite-accept-spinner": {
+      "kind": "sims",
+      "capability": "production.group_invite_accept_spinner",
+      "boundary": "Production Intros Accept on a real invitation opens the joined group chat within 10 s, clears the pending invite, persists the group and mounts no SnackBar",
+      "timeout_seconds": 2400,
+      "estimated_seconds": null,
+      "requirements": [
+        "dart",
+        "flutter",
+        "adb",
+        "maestro"
+      ],
+      "device_roles": [
+        "android_physical",
+        "android_emulator"
+      ],
+      "references": [
+        "tool/sims/critical_features.json"
+      ],
+      "investigate": [
+        "lib/debug/production_journeys"
+      ],
+      "limitations": "The original's fake-bridge hang reproduction mode is not replicated; this proves the real accept path completes within the bound.",
+      "disposable_android_package": "com.mknoon.sims.connectivity",
+      "ui_driver": "maestro",
+      "ui_driver_reason": "Maestro drives Alice's ordinary group creation and Bob's Intros Accept, and enforces the original 10 s bound on the joined chat opening. Read-only snapshots establish the pending invite, the persisted group and the mounted SnackBar and GroupConversationWired widgets, which the original asserted by widget type and UI tools cannot observe.",
+      "maestro_flows": [
+        "integration_test/maestro/production_group_create.yaml",
+        "integration_test/maestro/production_group_invite_accept_spinner.yaml",
+        "integration_test/maestro/production_reopen_seeded.yaml"
+      ],
+      "host_preflight": "production-group-invite-accept-spinner"
     },
     "production-group-invite-matrix": {
       "kind": "sims",
@@ -3831,6 +3865,7 @@
         "integration_test/scripts/run_production_group_invite_reliability.dart",
         "integration_test/scripts/run_production_group_invite_status_matrix.dart",
         "integration_test/scripts/run_production_group_delete_preserves_friends.dart",
+        "integration_test/scripts/run_production_group_invite_accept_spinner.dart",
         "integration_test/scripts/run_production_startup_resume_performance.dart",
         "test/integration/production_performance_*",
         "integration_test/scripts/run_production_group_create.dart",
@@ -3867,6 +3902,7 @@
         "production-group-invites",
         "production-group-invite-matrix",
         "production-group-delete-preserves-friends",
+        "production-group-invite-accept-spinner",
         "production-startup-resume-performance",
         "production-group-create",
         "production-group-reaction",
@@ -7609,6 +7645,15 @@
           "integration_test/maestro/production_group_info_self.yaml"
         ],
         "reason": "Additive production invite-status matrix display proof; the original seeded harness remains unchanged."
+      },
+      {
+        "owner": "full-sims-major",
+        "capability": "production.group_invite_accept_spinner",
+        "patterns": [
+          "integration_test/scripts/run_production_group_invite_accept_spinner.dart",
+          "integration_test/maestro/production_group_invite_accept_spinner.yaml"
+        ],
+        "reason": "Additive production INVITE_ACCEPT_SPINNER lifecycle journey; the original simulator dispatcher remains unchanged."
       },
       {
         "owner": "full-sims-major",

@@ -1,0 +1,10 @@
+appId: ${APP_ID}
+name: production_group_invite_accept_spinner
+---
+- tapOn: '(?s)^Intros.*$'
+- assertVisible: '(?s)^${GROUP_NAME}\nInvited by .*'
+- tapOn: Accept
+- extendedWaitUntil:
+    visible:
+      id: chat_composer
+    timeout: 10000

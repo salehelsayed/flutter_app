@@ -3671,6 +3671,64 @@
       "automationReady": true,
       "active": true,
       "declaredBuildException": false
+    },
+    {
+      "id": "production.group_invite_accept_spinner",
+      "owner": "reliability",
+      "proofBoundary": "production.group-lifecycle.invite-accept-spinner",
+      "assertions": [
+        "INVITE_ACCEPT_SPINNER-card-visible",
+        "INVITE_ACCEPT_SPINNER-chat-opens-within-10s",
+        "INVITE_ACCEPT_SPINNER-pending-cleared",
+        "INVITE_ACCEPT_SPINNER-group-persisted",
+        "INVITE_ACCEPT_SPINNER-no-snackbar"
+      ],
+      "lane": "reliability",
+      "modes": [
+        "major",
+        "full"
+      ],
+      "families": [
+        "groups"
+      ],
+      "required": true,
+      "command": [
+        "dart",
+        "run",
+        "integration_test/scripts/run_production_group_invite_accept_spinner.dart"
+      ],
+      "buildProfile": "android.e2e.main",
+      "dependencies": [
+        "build.android.e2e.main"
+      ],
+      "resources": [
+        {
+          "name": "build:android.e2e.main",
+          "access": "read"
+        },
+        {
+          "name": "device:android-physical",
+          "access": "exclusive"
+        },
+        {
+          "name": "device:android-emulator",
+          "access": "exclusive"
+        },
+        {
+          "name": "artifact:production-group-invite-accept-spinner",
+          "access": "write"
+        }
+      ],
+      "targetCapabilities": [
+        "android.physical",
+        "android.emulator"
+      ],
+      "allowedNaReason": "target_unavailable_by_project_policy",
+      "artifactRequired": true,
+      "artifactValidator": "validateProductionGroupAccept",
+      "automationReady": true,
+      "active": true,
+      "declaredBuildException": false
     }
   ],
   "ownership": [

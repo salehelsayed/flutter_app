@@ -310,7 +310,7 @@ Source anchors below bind the assertions to the original bytes, including existi
 - Discovered owners/selectors: `89eac3be34dd0d9b9cb3bb6f` SELECTED; owner=full-sims; selector=``; variant=``
 - Direct importers: Entry point or externally selected source.
 - Assertion sites: [49](../../integration_test/group_lifecycle_simulator_harness.dart#L49)
-- Replacement evidence: DELETE_PRESERVES_FRIENDS → `production.group_delete_preserves_friends` passed on devices 2026-09-30 ([record](#2026-09-30-wave-3-delete-preserves-friends-replacement)). ADMIN_METADATA, INVITE_ACCEPT_SPINNER and NEW_MEMBER_MEDIA pending. Original dispatcher retained; retirement not approved.
+- Replacement evidence: DELETE_PRESERVES_FRIENDS → `production.group_delete_preserves_friends` ([record](#2026-09-30-wave-3-delete-preserves-friends-replacement)) and INVITE_ACCEPT_SPINNER → `production.group_invite_accept_spinner` ([record](#2026-09-30-wave-3-invite-accept-spinner-replacement)) passed on devices 2026-09-30. ADMIN_METADATA and NEW_MEMBER_MEDIA pending. Original dispatcher retained; retirement not approved.
 
 ### `group_multi_device_real_harness.dart`
 
@@ -1593,3 +1593,33 @@ one build; proof `build/sims/proofs/production.group_delete_preserves_friends/at
 Negative probe: the leave flow was run without the swipe and Leave taps. The
 run FAILED at `orbit.group.<id> is not visible` (`attempt-2r0Rdn/`, cleanup
 exact); the flow file was restored byte-for-byte.
+
+## 2026-09-30 Wave 3 invite-accept-spinner replacement
+
+Second production child of the lifecycle dispatcher
+(`GROUP_SIM_SCENARIO=INVITE_ACCEPT_SPINNER`). The original seeds a pending
+invite into `OrbitWired` over fakes, taps Accept and requires within 10 s: the
+card and spinner cleared, the group persisted, the pending invite removed, no
+SnackBar, and `GroupConversationWired` open.
+
+`production.group_invite_accept_spinner` (USB Pixel 6 Alice, `emulator-5554`
+Pixel_7 Bob): Alice creates `Writers Room <run>` through ordinary UI
+(`production_group_create`); Bob receives the real invitation, opens Intros,
+sees the card and taps Accept (`production_group_invite_accept_spinner`); the
+flow requires the joined chat within the original 10 s. The read-only
+`accept_snapshot` (`production_group_accept_controls.dart`) reports the
+run-owned pending invite, the persisted group and, like the original's widget
+finders, the mounted `SnackBar` and `GroupConversationWired` counts from the
+live element tree. `tool/sims/production_group_accept_criteria.dart` (14 tests).
+The original's fake-bridge hang reproduction mode is not replicated.
+
+Host: analysis clean; focused tests passed; the seven curated host checks
+passed. Device: `wave3-run-20260930T164240Z/` PASS, oracle `failures: []`;
+invite arrived in 981 ms; after Accept 0 SnackBars, 1 group conversation,
+pending cleared, group persisted with role member; proof
+`build/sims/proofs/production.group_invite_accept_spinner/attempt-JhRSSq/`;
+cleanup exact on both devices.
+
+Negative probe: the flow without the Accept tap FAILED at
+`id: chat_composer is visible` (`wave3-run-20260930T164704Z/`,
+`attempt-4BijSH/`, cleanup exact); the flow file was restored byte-for-byte.
