@@ -84,11 +84,12 @@ internal class AndroidMknoonCallPendingIntentFactory(
     }
 }
 
-/** Builds privacy-minimal call notifications for every supported Android API. */
+/** Builds call notifications from already authenticated, in-memory display data. */
 internal class MknoonCallNotificationFactory(
     context: Context,
     private val pendingIntents: MknoonCallPendingIntentFactory =
         AndroidMknoonCallPendingIntentFactory(context),
+    private val presentation: (UUID) -> MknoonLockedCallMetadata? = { null },
 ) {
     companion object {
         // Versioned because notification-channel sound is immutable after creation.
@@ -99,11 +100,18 @@ internal class MknoonCallNotificationFactory(
 
     private val applicationContext = context.applicationContext
 
+    private fun callerName(nativeCallId: UUID): String =
+        runCatching { presentation(nativeCallId)?.displayName?.trim() }
+            .getOrNull()
+            ?.takeIf { it.isNotEmpty() && it.length <= 128 }
+            ?: applicationContext.getString(R.string.call_notification_person)
+
     fun createIncoming(
         nativeCallId: UUID,
         fullScreenAllowed: Boolean = canPresentFullScreen(),
     ): Notification {
         ensureChannel()
+        val callerName = callerName(nativeCallId)
         val decline = pendingIntents.action(
             nativeCallId,
             MknoonCallActionReceiver.ACTION_DECLINE,
@@ -111,7 +119,7 @@ internal class MknoonCallNotificationFactory(
         val answer = pendingIntents.answerActivity(nativeCallId)
         val builder = builder()
             .setSmallIcon(R.mipmap.ic_launcher)
-            .setContentTitle(applicationContext.getString(R.string.call_notification_title))
+            .setContentTitle(callerName)
             .setContentText(applicationContext.getString(R.string.call_notification_incoming))
             .setCategory(Notification.CATEGORY_CALL)
             .setVisibility(Notification.VISIBILITY_PRIVATE)
@@ -120,7 +128,7 @@ internal class MknoonCallNotificationFactory(
             .setOnlyAlertOnce(true)
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            Api31.applyIncoming(builder, applicationContext, decline, answer)
+            Api31.applyIncoming(builder, callerName, decline, answer)
         } else {
             @Suppress("DEPRECATION")
             builder
@@ -160,10 +168,11 @@ internal class MknoonCallNotificationFactory(
 
     fun createOngoing(nativeCallId: UUID): Notification {
         ensureChannel()
+        val callerName = callerName(nativeCallId)
         val end = pendingIntents.action(nativeCallId, MknoonCallActionReceiver.ACTION_END)
         val builder = builder()
             .setSmallIcon(R.mipmap.ic_launcher)
-            .setContentTitle(applicationContext.getString(R.string.call_notification_title))
+            .setContentTitle(callerName)
             .setContentText(applicationContext.getString(R.string.call_notification_ongoing))
             .setCategory(Notification.CATEGORY_CALL)
             .setVisibility(Notification.VISIBILITY_PRIVATE)
@@ -174,7 +183,7 @@ internal class MknoonCallNotificationFactory(
             // unlock/relock. Never auto-launch an ongoing call over keyguard.
             .setContentIntent(pendingIntents.fullScreen(nativeCallId))
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            Api31.applyOngoing(builder, applicationContext, end)
+            Api31.applyOngoing(builder, callerName, end)
         } else {
             @Suppress("DEPRECATION")
             builder.addAction(
@@ -256,25 +265,25 @@ internal class MknoonCallNotificationFactory(
     private object Api31 {
         fun applyIncoming(
             builder: Notification.Builder,
-            context: Context,
+            callerName: String,
             decline: PendingIntent,
             answer: PendingIntent,
         ) {
             builder.setStyle(
-                Notification.CallStyle.forIncomingCall(person(context), decline, answer),
+                Notification.CallStyle.forIncomingCall(person(callerName), decline, answer),
             )
         }
 
         fun applyOngoing(
             builder: Notification.Builder,
-            context: Context,
+            callerName: String,
             end: PendingIntent,
         ) {
-            builder.setStyle(Notification.CallStyle.forOngoingCall(person(context), end))
+            builder.setStyle(Notification.CallStyle.forOngoingCall(person(callerName), end))
         }
 
-        private fun person(context: Context): Person = Person.Builder()
-            .setName(context.getString(R.string.call_notification_person))
+        private fun person(callerName: String): Person = Person.Builder()
+            .setName(callerName)
             .setImportant(true)
             .build()
     }

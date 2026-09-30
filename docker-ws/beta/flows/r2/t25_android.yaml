@@ -1,0 +1,14 @@
+appId: com.mknoon.app
+name: T25 Pixel answers, goes HOME for 15 s, reopens the app, finds the call
+---
+- runFlow: { file: answer_connected.yaml, env: { ATIMEOUT: 120000 } }
+- runFlow: { file: ../sleep.yaml, env: { MS: 5000 } }
+- pressKey: home
+- runFlow: { file: ../sleep.yaml, env: { MS: 15000 } }
+- takeScreenshot: t25_home_android
+- launchApp: { stopApp: false }
+- runFlow: { file: ../sleep.yaml, env: { MS: 4000 } }
+- takeScreenshot: t25_back_in_app
+- assertVisible: "End"
+- extendedWaitUntil: { notVisible: "End", timeout: 120000 }
+- takeScreenshot: t25_ended_android

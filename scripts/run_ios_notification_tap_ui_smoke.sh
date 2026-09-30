@@ -284,25 +284,29 @@ wait_for_ready_signal() {
   # Match the event emitted by NotificationTapUITests, not a log predicate,
   # exported build setting, empty file, or partially written marker.
   local ready_pattern="(^|[[:space:]])${READY_MARKER} mode=(warm|cold) title_configured=(true|false)([[:space:]]|$)"
-  local case_start_pattern="^Test Case '-\[RunnerUITests\.[A-Za-z0-9_]+ [A-Za-z0-9_]+\]' started"
-  local start_line=0
-  if [[ -f "$log_file" ]]; then
-    start_line=$(wc -l <"$log_file" | tr -d ' ')
+  # Only callers that just launched xcodebuild opt into its build allowance.
+  # Ordinary readiness probes retain the deadline supplied by their caller.
+  if [[ "${5:-0}" == 1 ]]; then
+    local case_start_pattern="^Test Case '-\[RunnerUITests\.[A-Za-z0-9_]+ [A-Za-z0-9_]+\]' started"
+    local start_line=0
+    if [[ -f "$log_file" ]]; then
+      start_line=$(wc -l <"$log_file" | tr -d ' ')
+    fi
+    local build_deadline=$((SECONDS + XCTEST_CASE_START_BUDGET_SECONDS))
+    while ((SECONDS < build_deadline)); do
+      if [[ -f "$ready_file" ]] && grep -Eq "$ready_pattern" "$ready_file"; then
+        return 0
+      fi
+      if [[ -f "$log_file" ]] &&
+        tail -n "+$((start_line + 1))" "$log_file" | grep -Eq "$case_start_pattern"; then
+        break
+      fi
+      if ! kill -0 "$watched_pid" >/dev/null 2>&1; then
+        break
+      fi
+      sleep 1
+    done
   fi
-  local build_deadline=$((SECONDS + XCTEST_CASE_START_BUDGET_SECONDS))
-  while ((SECONDS < build_deadline)); do
-    if [[ -f "$ready_file" ]] && grep -Eq "$ready_pattern" "$ready_file"; then
-      return 0
-    fi
-    if [[ -f "$log_file" ]] &&
-      tail -n "+$((start_line + 1))" "$log_file" | grep -Eq "$case_start_pattern"; then
-      break
-    fi
-    if ! kill -0 "$watched_pid" >/dev/null 2>&1; then
-      break
-    fi
-    sleep 1
-  done
   local deadline=$((SECONDS + timeout_seconds))
 
   while ((SECONDS < deadline)); do
@@ -516,7 +520,7 @@ prepare_notification_permission_fixture() {
     "-only-testing:RunnerUITests/NotificationTapUITests/testPrepareWarmNotificationTap" \
     "$log_file" "$result_bundle" "$ready_file" "Permission setup" "Permission setup" "direct_message"
   prepare_pid="$started_pid"
-  if ! wait_for_ready_signal "$ready_file" "$log_file" "$prepare_pid" 120; then
+  if ! wait_for_ready_signal "$ready_file" "$log_file" "$prepare_pid" 120 1; then
     printf 'Notification permission preparation did not become ready; see %s\n' "$log_file" >&2
     setup_status=1
     kill "$prepare_pid" >/dev/null 2>&1 || true
@@ -790,7 +794,7 @@ run_scenario_once() {
     run_xcode_ui_test "$device" "$tap_selector" "$log_file" \
       "$tap_result_bundle" "$ready_file" "$expected_title" "$expected_body" "$route_category"
     tap_pid="$started_pid"
-    if ! wait_for_ready_signal "$ready_file" "$log_file" "$tap_pid" 120; then
+    if ! wait_for_ready_signal "$ready_file" "$log_file" "$tap_pid" 120 1; then
       printf 'Timed out waiting for native selector readiness; see %s\n' "$log_file" >&2
       kill "$tap_pid" "$log_pid" >/dev/null 2>&1 || true
       wait "$tap_pid" >/dev/null 2>&1 || true
@@ -820,7 +824,7 @@ run_scenario_once() {
       "$route_category"
     prepare_pid="$started_pid"
 
-    if ! wait_for_ready_signal "$ready_file" "$log_file" "$prepare_pid" 120; then
+    if ! wait_for_ready_signal "$ready_file" "$log_file" "$prepare_pid" 120 1; then
       printf 'Timed out waiting for %s in %s or %s\n' "$READY_MARKER" "$log_file" "$ready_file" >&2
       kill "$prepare_pid" >/dev/null 2>&1 || true
       kill "$log_pid" >/dev/null 2>&1 || true

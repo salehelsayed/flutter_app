@@ -30,6 +30,28 @@ final class AppVisibilityInheritedConversationRoute<T>
 /// topology that Flutter's base [RouteObserver] does not deliver to RouteAware.
 /// It remains one NavigatorObserver and preserves ordinary RouteAware behavior.
 final class AppVisibilityRouteObserver extends RouteObserver<ModalRoute<void>> {
+  final Set<void Function(String, Route<dynamic>)> _navigationObservers = {};
+
+  /// Observe the existing navigator without replacing its route/visibility
+  /// owner. The returned release function removes only this subscription.
+  VoidCallback observeNavigation(
+    void Function(String operation, Route<dynamic> route) observer,
+  ) {
+    _navigationObservers.add(observer);
+    return () => _navigationObservers.remove(observer);
+  }
+
+  void _observeNavigation(String operation, Route<dynamic> route) {
+    if (_navigationObservers.isEmpty) return;
+    for (final observer in _navigationObservers.toList(growable: false)) {
+      try {
+        observer(operation, route);
+      } catch (_) {
+        // Diagnostics must not change navigation or visibility publication.
+      }
+    }
+  }
+
   final Map<ModalRoute<void>, _VisibilityRouteRegistration> _registrations =
       <ModalRoute<void>, _VisibilityRouteRegistration>{};
   final Set<ModalRoute<void>> _inheritedRoutes = <ModalRoute<void>>{};
@@ -75,6 +97,7 @@ final class AppVisibilityRouteObserver extends RouteObserver<ModalRoute<void>> {
     );
     super.didPush(route, previousRoute);
     _changeTop(modalRoute);
+    _observeNavigation('push', route);
   }
 
   @override
@@ -82,6 +105,7 @@ final class AppVisibilityRouteObserver extends RouteObserver<ModalRoute<void>> {
     super.didPop(route, previousRoute);
     if (identical(_topRoute, route)) _changeTop(_modalRoute(previousRoute));
     _removeInheritedRoute(_modalRoute(route));
+    _observeNavigation('pop', route);
   }
 
   @override
@@ -89,6 +113,7 @@ final class AppVisibilityRouteObserver extends RouteObserver<ModalRoute<void>> {
     super.didRemove(route, previousRoute);
     if (identical(_topRoute, route)) _changeTop(_modalRoute(previousRoute));
     _removeInheritedRoute(_modalRoute(route));
+    _observeNavigation('remove', route);
   }
 
   @override
@@ -99,6 +124,7 @@ final class AppVisibilityRouteObserver extends RouteObserver<ModalRoute<void>> {
     super.didReplace(newRoute: newRoute, oldRoute: oldRoute);
     if (identical(_topRoute, oldRoute)) _changeTop(newModalRoute);
     _removeInheritedRoute(oldModalRoute);
+    if (newRoute != null) _observeNavigation('replace', newRoute);
   }
 
   void _registerInheritedRoute({

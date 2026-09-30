@@ -232,6 +232,48 @@ void main() {
     );
   }
 
+  testWidgets('group chat retains message space with the landscape keyboard', (
+    tester,
+  ) async {
+    tester.view.devicePixelRatio = 2.625;
+    tester.view.physicalSize = const Size(2048, 924);
+    tester.view.viewInsets = const FakeViewPadding(bottom: 587);
+    tester.view.padding = const FakeViewPadding(top: 63);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetViewInsets);
+    addTearDown(tester.view.resetPadding);
+
+    await tester.pumpWidget(
+      buildTestWidget(
+        messages: testMessages,
+        initialLoadDone: true,
+        activeQuoteText: 'Earlier message',
+        onClearQuote: () {},
+      ),
+    );
+    await tester.pump();
+
+    expect(tester.takeException(), isNull);
+    expect(find.byKey(const ValueKey('group-header')), findsNothing);
+    expect(
+      tester.getSize(find.byKey(const ValueKey('group-messages'))).height,
+      greaterThan(40),
+    );
+    expect(find.byType(TextField), findsOneWidget);
+
+    tester.view.resetViewInsets();
+    await tester.pump();
+    await tester.enterText(find.byType(TextField), 'Unsent group draft');
+    tester.view.viewInsets = const FakeViewPadding(bottom: 587);
+    await tester.pump();
+    expect(
+      tester.widget<TextField>(find.byType(TextField)).controller!.text,
+      'Unsent group draft',
+    );
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('TC-365-04a linked group exposes only ordinary media and voice', (
     tester,
   ) async {

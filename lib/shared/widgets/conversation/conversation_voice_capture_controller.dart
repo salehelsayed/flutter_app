@@ -88,6 +88,8 @@ class ConversationVoiceCaptureOutcome {
 
 typedef ConversationVoiceAutoStopOutcome =
     void Function(ConversationVoiceCaptureOutcome outcome);
+typedef ConversationVoiceCallInterruptionOutcome =
+    void Function(ConversationVoiceCaptureOutcome outcome);
 
 /// Owns one recorder session's mechanics while leaving every lane decision to
 /// its caller.
@@ -102,14 +104,17 @@ class ConversationVoiceCaptureController extends ChangeNotifier {
     this.amplitudeWindowSize = 25,
     this.waveformSampleCount = 50,
     ConversationVoiceAutoStopOutcome? onAutoStopOutcome,
+    ConversationVoiceCallInterruptionOutcome? onCallInterruptionOutcome,
   }) : assert(amplitudeWindowSize > 0),
        assert(waveformSampleCount > 0),
-       _onAutoStopOutcome = onAutoStopOutcome;
+       _onAutoStopOutcome = onAutoStopOutcome,
+       _onCallInterruptionOutcome = onCallInterruptionOutcome;
 
   final int amplitudeWindowSize;
   final int waveformSampleCount;
 
   ConversationVoiceAutoStopOutcome? _onAutoStopOutcome;
+  ConversationVoiceCallInterruptionOutcome? _onCallInterruptionOutcome;
   ConversationVoiceCaptureViewState _state =
       ConversationVoiceCaptureViewState.idle;
   _VoiceCaptureSession? _activeSession;
@@ -141,9 +146,14 @@ class ConversationVoiceCaptureController extends ChangeNotifier {
       );
     }
 
+    late final _VoiceCaptureSession session;
     MicrophoneCaptureLease captureLease;
     try {
-      captureLease = microphoneCaptureLeasesFor(recorder).acquire();
+      captureLease = microphoneCaptureLeasesFor(recorder).acquire(
+        prepareForCall: _onCallInterruptionOutcome == null
+            ? null
+            : () => _interruptForCall(session),
+      );
     } on MicrophoneCaptureLeaseRefused {
       return ConversationVoiceCaptureStartResult(
         status: ConversationVoiceCaptureStartStatus.busy,
@@ -151,7 +161,7 @@ class ConversationVoiceCaptureController extends ChangeNotifier {
       );
     }
 
-    final session = _VoiceCaptureSession(
+    session = _VoiceCaptureSession(
       generation: _scopeGeneration,
       recorder: recorder,
       captureLease: captureLease,
@@ -340,6 +350,28 @@ class ConversationVoiceCaptureController extends ChangeNotifier {
     }
   }
 
+  Future<void> _interruptForCall(_VoiceCaptureSession session) =>
+      session.callInterruptionFuture ??= _interruptForCallOnce(session);
+
+  Future<void> _interruptForCallOnce(_VoiceCaptureSession session) async {
+    if (!_canContinueArming(session) || session.terminal) {
+      await session.captureReleased;
+      return;
+    }
+    if (_state.phase == ConversationVoiceCapturePhase.arming ||
+        session.startInFlight) {
+      _requestArmingAbort(session);
+      await session.captureReleased;
+      return;
+    }
+    final outcome = await stop();
+    if (outcome != null && isCurrentOutcome(outcome)) {
+      _onCallInterruptionOutcome?.call(outcome);
+      if (outcome.error != null) throw outcome.error!;
+    }
+    await session.captureReleased;
+  }
+
   /// Invalidates view/session generation before a host rebinds to another lane.
   ///
   /// An in-flight `start()` performs its own owner-checked cancellation after
@@ -377,6 +409,7 @@ class ConversationVoiceCaptureController extends ChangeNotifier {
     _disposed = true;
     _scopeGeneration += 1;
     _onAutoStopOutcome = null;
+    _onCallInterruptionOutcome = null;
     final session = _activeSession;
     _activeSession = null;
     if (session != null) {
@@ -550,6 +583,10 @@ class _VoiceCaptureSession {
   bool abortRequested = false;
   bool startInFlight = false;
   bool terminal = false;
+  Future<void>? callInterruptionFuture;
+  final Completer<void> _captureReleased = Completer<void>();
+
+  Future<void> get captureReleased => _captureReleased.future;
 
   MicrophoneCaptureLease? _captureLease;
 
@@ -557,5 +594,6 @@ class _VoiceCaptureSession {
     final lease = _captureLease;
     _captureLease = null;
     lease?.release();
+    if (!_captureReleased.isCompleted) _captureReleased.complete();
   }
 }

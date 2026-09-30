@@ -1,0 +1,8 @@
+appId: com.mknoon.app
+name: S02 Pixel reacts 👍 on B1, waits for the iPhone's ❤️ on B2
+---
+- runFlow: ensure_chat.yaml
+- runFlow: { file: react.yaml, env: { TARGET: "B1 hi from iPhone ${NONCE}", EMOJI: "👍" } }
+- extendedWaitUntil: { visible: ".*B1 hi from iPhone ${NONCE}.*👍.*", timeout: 15000 }
+- extendedWaitUntil: { visible: ".*B2 hi from Pixel ${NONCE}.*❤️.*", timeout: 90000 }
+- takeScreenshot: s02_got_heart_android

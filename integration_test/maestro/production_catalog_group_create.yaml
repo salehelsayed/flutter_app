@@ -1,0 +1,15 @@
+appId: ${APP_ID}
+name: production_catalog_group_create
+---
+- tapOn:
+    id: orbit_create_group_fab
+- tapOn: New Group
+- tapOn: '(?s)^Journeybob\n.*$'
+- tapOn: '(?s)^Journeycharlie\n.*$'
+- tapOn: 'Group name \(optional\)'
+- inputText: ${GROUP_NAME}
+- assertVisible: ${GROUP_NAME}
+- hideKeyboard
+- tapOn: Start group chat
+- assertVisible:
+    id: chat_composer

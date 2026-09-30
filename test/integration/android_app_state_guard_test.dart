@@ -10,6 +10,148 @@ import '../../integration_test/scripts/run_intro_accept_notification_android.dar
 import '../../integration_test/support/android_app_state_guard.dart';
 
 void main() {
+  for (final failure in ['timeout', 'nonzero', 'empty', 'malformed']) {
+    test(
+      'package lookup $failure cannot become an absent-app snapshot',
+      () async {
+        final adb = _FakeAdbState.installed(
+          apkBytes: <List<int>>[
+            <int>[1, 2, 3],
+          ],
+          permissions: const <String, bool>{},
+        );
+        if (failure == 'timeout') {
+          adb.packagePathException = const ProcessException(
+            'adb',
+            <String>[],
+            'private timeout diagnostic',
+            124,
+          );
+        } else {
+          adb.packagePathResult = ProcessResult(
+            1,
+            failure == 'nonzero' ? 1 : 0,
+            failure == 'malformed' ? 'package:relative.apk' : '',
+            '',
+          );
+        }
+        AndroidAppStateGuard? guard;
+        addTearDown(() async {
+          if (guard?.backupDirectory.existsSync() == true) {
+            await guard!.backupDirectory.delete(recursive: true);
+          }
+        });
+        await expectLater(
+          () async => guard = await AndroidAppStateGuard.capture(
+            devices: const <String>['physical-1'],
+            packageName: _packageName,
+            runner: adb,
+          ),
+          throwsA(isA<AndroidAppStateBlocked>()),
+        );
+        expect(adb.commands.join('\n'), isNot(contains('force-stop')));
+        expect(adb.commands.join('\n'), isNot(contains('uninstall')));
+        expect(adb.commands.join('\n'), isNot(contains(' pm clear ')));
+      },
+    );
+  }
+
+  test(
+    'foreground activity belongs to the exact application package',
+    () async {
+      final adb = _FakeAdbState.absent()
+        ..activityOutput =
+            'topResumedActivity=ActivityRecord{abc u0 '
+            '$_packageName.ui25proof/$_packageName.MainActivity t42}';
+      final guard = await AndroidAppStateGuard.capture(
+        devices: const <String>['physical-1'],
+        packageName: _packageName,
+        runner: adb,
+      );
+      addTearDown(() async {
+        if (guard.backupDirectory.existsSync()) {
+          await guard.backupDirectory.delete(recursive: true);
+        }
+      });
+      await guard.restoreAll();
+      expect(guard.restored, isTrue);
+      expect(adb.installed, isFalse);
+    },
+  );
+
+  test('absent-app snapshot cannot contain a running process', () async {
+    final adb = _FakeAdbState.absent()..running = true;
+    AndroidAppStateGuard? guard;
+    addTearDown(() async {
+      if (guard?.backupDirectory.existsSync() == true) {
+        await guard!.backupDirectory.delete(recursive: true);
+      }
+    });
+    await expectLater(
+      () async => guard = await AndroidAppStateGuard.capture(
+        devices: const <String>['physical-1'],
+        packageName: _packageName,
+        runner: adb,
+      ),
+      throwsA(isA<AndroidAppStateBlocked>()),
+    );
+    expect(adb.commands.join('\n'), isNot(contains('force-stop')));
+  });
+
+  test('successful package inventory can confirm a missing package', () async {
+    final adb = _FakeAdbState.absent()
+      ..packagePathResult = ProcessResult(1, 1, '', '');
+    final guard = await AndroidAppStateGuard.capture(
+      devices: const <String>['physical-1'],
+      packageName: _packageName,
+      runner: adb,
+    );
+    addTearDown(() async {
+      if (guard.backupDirectory.existsSync()) {
+        await guard.backupDirectory.delete(recursive: true);
+      }
+    });
+    await guard.restoreAll();
+    expect(guard.restored, isTrue);
+    expect(adb.installed, isFalse);
+    expect(adb.commands, contains(contains('pm list packages -3')));
+  });
+
+  test('recovery rejects an absent package with a running process', () async {
+    final adb = _FakeAdbState.absent();
+    final guard = await AndroidAppStateGuard.capture(
+      devices: const <String>['physical-1'],
+      packageName: _packageName,
+      runner: adb,
+    );
+    addTearDown(() async {
+      if (guard.backupDirectory.existsSync()) {
+        await guard.backupDirectory.delete(recursive: true);
+      }
+    });
+    final manifest = File(
+      '${guard.backupDirectory.path}/recovery-manifest.json',
+    );
+    final data = jsonDecode(manifest.readAsStringSync()) as Map;
+    ((data['devices'] as List).single as Map)['process'] = {
+      'running': true,
+      'foreground': true,
+    };
+    manifest.writeAsStringSync(jsonEncode(data));
+    File(
+      '${guard.backupDirectory.path}/recovery-manifest.sha256',
+    ).writeAsStringSync('${sha256.convert(manifest.readAsBytesSync())}\n');
+    final commandsBefore = adb.commands.length;
+    await expectLater(
+      AndroidAppStateGuard.loadRecovery(
+        backupDirectory: guard.backupDirectory,
+        runner: adb,
+      ),
+      throwsA(isA<AndroidAppStateFailure>()),
+    );
+    expect(adb.commands, hasLength(commandsBefore));
+  });
+
   test('system host runner concurrently drains both large pipes', () async {
     final root = await Directory.systemTemp.createTemp(
       'state-guard-runner-pipes-',
@@ -55,25 +197,12 @@ Future<void> main() async {
       if (root.existsSync()) await root.delete(recursive: true);
     });
     final childPidFile = File('${root.path}/child-pid');
-    final childScript = File('${root.path}/pipe_child.dart')
+    // Keep the inherited pipes open after the parent exits, without charging
+    // cold Dart compilation to the one-second process deadline under test.
+    final parentScript = File('${root.path}/pipe_parent.sh')
       ..writeAsStringSync(r'''
-import 'dart:async';
-
-Future<void> main() => Future<void>.delayed(const Duration(seconds: 30));
-''', flush: true);
-    final parentScript = File('${root.path}/pipe_parent.dart')
-      ..writeAsStringSync(r'''
-import 'dart:io';
-
-Future<void> main(List<String> arguments) async {
-  final child = await Process.start(
-    arguments[1],
-    <String>[arguments[2]],
-    mode: ProcessStartMode.inheritStdio,
-    runInShell: false,
-  );
-  File(arguments.first).writeAsStringSync('${child.pid}\n', flush: true);
-}
+/bin/sleep 30 &
+printf '%s\n' "$!" > "$1"
 ''', flush: true);
     final runner = SystemAndroidHostProcessRunner(
       commandTimeout: const Duration(seconds: 1),
@@ -83,11 +212,9 @@ Future<void> main(List<String> arguments) async {
     ProcessException? failure;
     int? childPid;
     try {
-      await runner.run(_fixtureDartExecutable(), <String>[
+      await runner.run('/bin/sh', <String>[
         parentScript.path,
         childPidFile.path,
-        _fixtureDartExecutable(),
-        childScript.path,
       ]);
     } on ProcessException catch (error) {
       failure = error;
@@ -112,20 +239,15 @@ Future<void> main(List<String> arguments) async {
       if (root.existsSync()) await root.delete(recursive: true);
     });
     final pidFile = File('${root.path}/pid');
-    final script = File('${root.path}/hang.dart')
+    // This deadline tests termination, not cold Dart compilation under a full
+    // host sweep. Use one shell process with no descendants or JIT startup.
+    final script = File('${root.path}/hang.sh')
       ..writeAsStringSync(r'''
-import 'dart:async';
-import 'dart:io';
-
-Future<void> main(List<String> arguments) async {
-  ProcessSignal.sigterm.watch().listen((_) {});
-  File(arguments.first).writeAsStringSync('$pid\n', flush: true);
-  stdout.write('private-timeout-stdout');
-  stderr.write('private-timeout-stderr');
-  await stdout.flush();
-  await stderr.flush();
-  await Completer<void>().future;
-}
+trap '' TERM
+printf '%s\n' "$$" > "$1"
+printf 'private-timeout-stdout'
+printf 'private-timeout-stderr' >&2
+while :; do :; done
 ''', flush: true);
     final runner = SystemAndroidHostProcessRunner(
       commandTimeout: const Duration(seconds: 1),
@@ -135,7 +257,7 @@ Future<void> main(List<String> arguments) async {
     late final ProcessException failure;
 
     try {
-      await runner.run(_fixtureDartExecutable(), <String>[
+      await runner.run('/bin/sh', <String>[
         script.path,
         pidFile.path,
         'private-timeout-argument',
@@ -2007,9 +2129,22 @@ Future<void> main(List<String> arguments) async {
         // These campaign entry points accept a disposable applicationId. Its
         // package selects the install; MainActivity retains its native class.
         expect(source, contains('resolveAndroidAppPackage()'));
+        var launchSource = source;
+        if (entry.key == 'run_connectivity_restore_media_outbox_sims.dart') {
+          expect(
+            source,
+            contains(
+              "import 'run_connectivity_restore_sims.dart' show launchConnectivityRestoreApp;",
+            ),
+          );
+          expect(source, contains('if (!await launchConnectivityRestoreApp('));
+          launchSource = File(
+            'integration_test/scripts/run_connectivity_restore_sims.dart',
+          ).readAsStringSync();
+        }
         expect(
           '$packageExpression/com.mknoon.app.MainActivity'
-              .allMatches(source)
+              .allMatches(launchSource)
               .length,
           launchCount,
         );
@@ -2573,6 +2708,9 @@ final class _FakeAdbState implements AndroidHostProcessRunner {
   bool running = false;
   bool foreground = false;
   bool failOriginalInstall = false;
+  ProcessResult? packagePathResult;
+  String? activityOutput;
+  ProcessException? packagePathException;
   final String preparedArtifactPackageName;
   final bool centralInstallLeavesExpectedBytes;
   final String? centralInstallExtraPackage;
@@ -2689,6 +2827,8 @@ final class _FakeAdbState implements AndroidHostProcessRunner {
       );
     }
     if (_starts(shell, <String>['pm', 'path', _packageName])) {
+      if (packagePathException != null) throw packagePathException!;
+      if (packagePathResult != null) return packagePathResult!;
       if (!installed) return _result(0, '', '');
       return _result(
         0,
@@ -2705,9 +2845,10 @@ final class _FakeAdbState implements AndroidHostProcessRunner {
     if (_starts(shell, const <String>['dumpsys', 'activity', 'activities'])) {
       return _result(
         0,
-        foreground
-            ? 'topResumedActivity=$_packageName/com.mknoon.app.MainActivity'
-            : '',
+        activityOutput ??
+            (foreground
+                ? 'topResumedActivity=$_packageName/com.mknoon.app.MainActivity'
+                : ''),
         '',
       );
     }

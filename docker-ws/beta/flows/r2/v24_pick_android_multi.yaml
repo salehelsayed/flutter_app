@@ -1,0 +1,13 @@
+appId: com.mknoon.app
+name: R2-4 attach FILE1 FILE2 FILE3 (Android picker) - no wait for Send message (processing can take minutes)
+---
+- runFlow: ../kb_hide.yaml
+- tapOn: "Add attachment"
+- tapOn: "Media Library"
+- extendedWaitUntil: { visible: "${FILE1}", timeout: 30000 }
+- longPressOn: "${FILE1}"
+- tapOn: "${FILE2}"
+- tapOn: "${FILE3}"
+- takeScreenshot: multi_selected_${DEV}
+- tapOn: "Select|SELECT|Done|DONE|Open|OPEN"
+- runFlow: { file: ../sleep.yaml, env: { MS: 5000 } }

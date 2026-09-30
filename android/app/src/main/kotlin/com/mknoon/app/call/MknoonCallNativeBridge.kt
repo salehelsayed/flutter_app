@@ -2,6 +2,7 @@ package com.mknoon.app.call
 
 import android.os.Handler
 import android.os.Looper
+import android.util.Log
 import io.flutter.plugin.common.BinaryMessenger
 import io.flutter.plugin.common.EventChannel
 import io.flutter.plugin.common.MethodCall
@@ -250,6 +251,7 @@ internal class MknoonCallNativeBridge(
             "readAudioState" -> readAudioState(call.arguments, result)
             "project" -> project(call.arguments, result)
             "updatePresentation" -> updatePresentation(call.arguments, result)
+            "updateAuthenticatedContactName" -> updateAuthenticatedContactName(call.arguments, result)
             "presentAuthenticated" -> presentAuthenticated(call.arguments, result)
             "registerOutgoingAuthenticated" ->
                 registerOutgoingAuthenticated(call.arguments, result)
@@ -470,7 +472,20 @@ internal class MknoonCallNativeBridge(
         val map = dartIdentityMap(arguments, MknoonLockedCallMetadata.fields) ?: return badArguments(result)
         val nativeCallId = resolveCallHandle(map["callHandle"]) ?: return badArguments(result)
         val metadata = MknoonLockedCallMetadata.parse(map) ?: return badArguments(result)
-        val update = { controller.updatePresentation(nativeCallId, metadata) }
+        val update = {
+            val (accepted, refreshed) = controller.updatePresentationAndRefreshIncoming(nativeCallId, metadata)
+            Log.d("MknoonCallNativeBridge", "updatePresentation accepted=$accepted state=${metadata.state} named=${metadata.displayName != "Unknown contact"} refreshed=$refreshed")
+            accepted
+        }
+        result.success(relay?.withCurrent(relayListener, relayGeneration, false, update)
+            ?: synchronized(localOwnershipLock) { if (locallyCurrent) update() else false })
+    }
+
+    private fun updateAuthenticatedContactName(arguments: Any?, result: MethodChannel.Result) {
+        val map = dartIdentityMap(arguments, setOf("displayName")) ?: return badArguments(result)
+        val nativeCallId = resolveCallHandle(map["callHandle"]) ?: return badArguments(result)
+        val displayName = map["displayName"] as? String ?: return badArguments(result)
+        val update = { controller.updateAuthenticatedContactName(nativeCallId, displayName).first }
         result.success(relay?.withCurrent(relayListener, relayGeneration, false, update)
             ?: synchronized(localOwnershipLock) { if (locallyCurrent) update() else false })
     }

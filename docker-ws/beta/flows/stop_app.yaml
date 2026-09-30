@@ -1,0 +1,4 @@
+appId: com.mknoon.app
+name: force-stop the app (receiver goes offline)
+---
+- stopApp

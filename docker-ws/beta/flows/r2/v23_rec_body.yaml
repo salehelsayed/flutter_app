@@ -1,0 +1,25 @@
+appId: com.mknoon.app
+name: R2-3 callee (chat already open) records, answers the incoming call, then sends the clip kept as a draft
+---
+- tapOn: "Record voice message.*"
+- runFlow: { file: ../sleep.yaml, env: { MS: 2000 } }
+- assertVisible: "Stop and send voice message.*"
+- takeScreenshot: v23_recording
+- runFlow: { file: answer_connected.yaml, env: { ATIMEOUT: 240000 } }
+- takeScreenshot: v23_in_call
+- extendedWaitUntil: { notVisible: "End", timeout: 120000 }
+- runFlow: { file: ../sleep.yaml, env: { MS: 4000 } }
+- runFlow:
+    when: { visible: "Dismiss call status" }
+    commands: [ { tapOn: "Dismiss call status" } ]
+# iOS: the terminal call notice ("Call ended.") shows a plain "Dismiss" button over the composer.
+- runFlow:
+    when: { visible: "Dismiss" }
+    commands: [ { tapOn: "Dismiss" } ]
+- runFlow: { file: ../sleep.yaml, env: { MS: 1500 } }
+- takeScreenshot: v23_after_call
+- assertVisible: "Send voice message.*"
+- assertVisible: "Discard recording.*"
+- tapOn: "Send voice message.*"
+- runFlow: { file: ../sleep.yaml, env: { MS: 8000 } }
+- takeScreenshot: v23_sent

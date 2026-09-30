@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter_app/core/database/helpers/group_event_log_db_helpers.dart';
@@ -202,6 +203,22 @@ Future<CreateGroupWithMembersResult> createGroupWithMembers({
   final creatorMlKemPublicKey = identity.mlKemPublicKey;
   if (creatorMlKemPublicKey == null || creatorMlKemPublicKey.trim().isEmpty) {
     throw ArgumentError('Creator ML-KEM public key must not be empty');
+  }
+
+  // Connection setup can overlap local group/member/key persistence. Warming
+  // is the existing best-effort, never-throws operation; it sends no invite and
+  // is not delivery evidence. The invite/persistence/navigation order below
+  // remains authoritative even when warming is slow or cannot connect.
+  for (final contact in uniqueContacts) {
+    if (contact.peerId.trim().isEmpty ||
+        contact.peerId == identity.peerId ||
+        (contact.mlKemPublicKey?.trim().isEmpty ?? true)) {
+      continue;
+    }
+    final transportPeerId =
+        selectedContactDeviceBindings[contact.peerId]?.transportPeerId ??
+        contact.peerId;
+    unawaited(p2pService.warmPeer(transportPeerId));
   }
 
   // 2. Create the group (saves group + self as admin + key)

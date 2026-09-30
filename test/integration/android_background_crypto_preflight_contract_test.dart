@@ -272,6 +272,29 @@ void main() {
         now: now,
       );
       expect(observation['tokenSha256'], isNot(priorHash));
+      // Token observations and their freshness read use the phone clock.
+      // A host clock behind the phone must not become the age authority.
+      expect(
+        () => parseBackgroundCryptoFcmTokenObservation(
+          bundle,
+          now: now.subtract(const Duration(milliseconds: 848)),
+        ),
+        throwsFormatException,
+      );
+      expect(
+        parseBackgroundCryptoFcmTokenObservation(
+          bundle,
+          now: now.add(const Duration(minutes: 2)),
+        )['tokenSha256'],
+        observation['tokenSha256'],
+      );
+      expect(
+        () => parseBackgroundCryptoFcmTokenObservation(
+          bundle,
+          now: now.add(const Duration(minutes: 2, microseconds: 1)),
+        ),
+        throwsFormatException,
+      );
       expect(
         backgroundCryptoFcmRefreshSubjectMatches(
           currentToken: 'stale-private-token',
@@ -1070,6 +1093,35 @@ mResumedActivity: ActivityRecord{abc u0 com.mknoon.app/.MainActivity t42}
       ),
       isTrue,
     );
+    for (final sibling in <String>[
+      'com.mknoon.app.ui25proof',
+      'com.mknoon.application',
+      'com.mknoon.app2',
+    ]) {
+      for (final record in <String>[
+        'mResumedActivity: ActivityRecord{abc u0 $sibling/com.mknoon.app.MainActivity t43}',
+        'mPausingActivity: ActivityRecord{abc u0 $sibling/com.mknoon.app.MainActivity t43}',
+        '* Hist #0: ActivityRecord{abc u0 $sibling/com.mknoon.app.MainActivity t43}\n'
+            '  app=ProcessRecord{def 1234:$sibling/u0a123}',
+      ]) {
+        expect(
+          androidActivityIsAttached(record, packageName: 'com.mknoon.app'),
+          isFalse,
+          reason: record,
+        );
+        expect(
+          androidProcessAndTaskAreAbsent(
+            pidExitCode: 1,
+            pidOutput: '',
+            pidStderr: '',
+            activityDump: '$detached\n$record',
+            packageName: 'com.mknoon.app',
+          ),
+          isTrue,
+          reason: record,
+        );
+      }
+    }
   });
 
   test(

@@ -208,7 +208,7 @@ void main() {
     'bounded relay evidence requires ordered store and provider success',
     () {
       final start = harness.indexOf('Future<void> _sendUiMessageFromSender(');
-      final end = harness.indexOf('Future<void> _waitForOrbitUnread', start);
+      final end = harness.indexOf('Future<int> _waitForOrbitUnread', start);
       expect(start, greaterThan(0));
       expect(end, greaterThan(start));
       final method = harness.substring(start, end);

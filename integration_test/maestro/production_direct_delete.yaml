@@ -1,0 +1,10 @@
+appId: ${APP_ID}
+name: production_direct_delete
+---
+- longPressOn: '(?s)^.*\n${MESSAGE_PATTERN}\n.*$'
+- tapOn:
+    id: message-context-delete-action
+- tapOn:
+    id: conversation-delete-for-everyone-action
+- assertVisible:
+    id: chat_composer

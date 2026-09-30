@@ -6,7 +6,47 @@ import 'call_authority_client.dart';
 typedef AndroidCallTokenReader = Future<String?> Function();
 typedef CallTokenPublicationAllowed = Future<bool> Function();
 
-/// Outcome wire names: `published`, `unchanged`, `no_token`, `deferred`,
+/// One bootstrap-owned FCM token reader shared by chat and call registration.
+/// A cached token can remain on the device after FCM has unregistered it. The
+/// first eligible registration deletes that token before either relay route is
+/// published; concurrent readers join the same replacement.
+final class AndroidFcmTokenReader {
+  AndroidFcmTokenReader({
+    required Future<String?> Function() getToken,
+    required Future<void> Function() deleteToken,
+    this.rotateOnFirstRead = true,
+  }) : _getToken = getToken,
+       _deleteToken = deleteToken;
+
+  final Future<String?> Function() _getToken;
+  final Future<void> Function() _deleteToken;
+  final bool rotateOnFirstRead;
+  Future<String?>? _firstRead;
+  bool _firstReadSettled = false;
+
+  Future<String?> read() {
+    final firstRead = _firstRead;
+    if (firstRead != null) {
+      return _firstReadSettled ? _getToken() : firstRead;
+    }
+    return _firstRead = _readFirst();
+  }
+
+  Future<String?> _readFirst() async {
+    try {
+      if (rotateOnFirstRead) await _deleteToken();
+      final token = await _getToken();
+      _firstReadSettled = true;
+      return token;
+    } catch (_) {
+      // A transient Firebase failure must leave the replacement retryable.
+      _firstRead = null;
+      rethrow;
+    }
+  }
+}
+
+/// Outcome wire names: `published`, `no_token`, `deferred`,
 /// `rejected`, `failed`.
 typedef AndroidCallTokenResultObserver = void Function(String outcome);
 
@@ -41,15 +81,14 @@ final class AndroidCallTokenCoordinator {
   final CallTokenPublicationAllowed _publicationAllowed;
   final AndroidCallTokenResultObserver? _onResult;
 
-  /// How long one publication stays valid on the relay. It is renewed once
-  /// half of it has elapsed, on the next start, resume or advertisement.
+  /// How long one publication stays valid on the relay. Every start, resume or
+  /// advertisement republishes it because a failed wake may revoke the record
+  /// without notifying this process.
   final Duration registrationTtl;
 
   Future<void>? _startFuture;
   StreamSubscription<String>? _refreshes;
   Future<void> _tail = Future<void>.value();
-  String? _publishedToken;
-  DateTime? _publishedAt;
   bool _closed = false;
 
   /// Completes once every publication issued so far has settled, including
@@ -83,9 +122,9 @@ final class AndroidCallTokenCoordinator {
     }
   }
 
-  /// Publishes the current token unless the same token was published less
-  /// than half a registration ago. Returns whether a valid token is on the
-  /// relay. Never throws: the endpoint advertisement must not depend on it.
+  /// Publishes the current token again even if it has not changed. A previous
+  /// success says nothing about whether the relay still has the record.
+  /// Never throws: the endpoint advertisement must not depend on it.
   Future<bool> ensurePublished() {
     if (_closed) return Future<bool>.value(false);
     _ensureListening();
@@ -134,13 +173,6 @@ final class AndroidCallTokenCoordinator {
   Future<bool> _publish(String token) async {
     if (_closed) return false;
     final now = _clock();
-    final publishedAt = _publishedAt;
-    if (_publishedToken == token &&
-        publishedAt != null &&
-        now.difference(publishedAt) < registrationTtl ~/ 2) {
-      _report('unchanged');
-      return true;
-    }
     try {
       final publication = await _authorityClient.publishToken(
         CallTokenRecord(
@@ -154,8 +186,6 @@ final class AndroidCallTokenCoordinator {
         _report('rejected');
         return false;
       }
-      _publishedToken = token;
-      _publishedAt = now;
       _report('published');
       return true;
     } catch (_) {

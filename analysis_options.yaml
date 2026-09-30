@@ -16,6 +16,9 @@ analyzer:
     # so analyzing the copies produces false missing-import failures after the
     # required native gate. Source files remain covered in their real location.
     - build/**
+    # Retained investigation/build artifacts contain historical source copies.
+    # Analyze the current source at its original paths, not archived overlays.
+    - artifacts/**
     # Swift Package Manager checkouts include upstream Dart examples whose
     # dependencies are outside this app's workspace.
     - SourcePackages/**

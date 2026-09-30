@@ -1,0 +1,10 @@
+appId: com.mknoon.app
+name: T31 Pixel calls the backgrounded iPhone, gives up after 60 s
+---
+- runFlow: ../ensure_chat.yaml
+- tapOn: "Start voice call"
+- runFlow: { file: ../sleep.yaml, env: { MS: 25000 } }
+- takeScreenshot: t31_caller_25s
+- runFlow: { file: ../sleep.yaml, env: { MS: 35000 } }
+- takeScreenshot: t31_caller_60s
+- runFlow: end_if_any.yaml

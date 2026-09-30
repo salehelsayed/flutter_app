@@ -1,0 +1,4258 @@
+diff --git a/android/app/src/main/kotlin/com/mknoon/app/MainActivity.kt b/android/app/src/main/kotlin/com/mknoon/app/MainActivity.kt
+index 386180370..8ce129a26 100644
+--- a/android/app/src/main/kotlin/com/mknoon/app/MainActivity.kt
++++ b/android/app/src/main/kotlin/com/mknoon/app/MainActivity.kt
+@@ -6,8 +6,10 @@ import android.os.Handler
+ import android.os.Looper
+ import android.os.StatFs
+ import android.util.Log
++import com.mknoon.app.call.MknoonCallBridgeTeardown
+ import com.mknoon.app.call.MknoonCallNativeBridge
+ import com.mknoon.app.call.MknoonCallRuntime
++import com.mknoon.app.call.MknoonCallTaskChannelHandler
+ import com.mknoon.app.call.MknoonIncomingCallPresentation
+ import io.flutter.embedding.android.FlutterActivity
+ import io.flutter.embedding.engine.FlutterEngine
+@@ -36,6 +38,15 @@ class MainActivity : FlutterActivity() {
+     private var pictureInPictureHandler: PictureInPictureHandler? = null
+     private var droppedPushRecoveryBridge: DroppedPushRecoveryBridge? = null
+     private var callNativeBridge: MknoonCallNativeBridge? = null
++    // F3 (beta 2026-09-25): the bridge's detach ends a live Telecom call
++    // without telling Dart. Keep it until Dart's runtime shutdown has ended
++    // the call and sent the terminate to the peer.
++    private val callBridgeTeardown = MknoonCallBridgeTeardown {
++        callNativeBridge?.dispose()
++        callNativeBridge = null
++    }
++    private var callTaskChannel: MethodChannel? = null
++    private var callTaskHandler: MknoonCallTaskChannelHandler? = null
+     private var androidCallWakeBridge: AndroidCallWakeBridge? = null
+     private var incomingCallPresentation: MknoonIncomingCallPresentation? = null
+     private var canonicalRuntimeLeaseBridge: CanonicalRuntimeLeaseBridge? = null
+@@ -140,6 +151,17 @@ class MainActivity : FlutterActivity() {
+         callNativeBridge = MknoonCallRuntime.get(applicationContext).createBridge(
+             flutterEngine.dartExecutor.binaryMessenger,
+         )
++        // F4 (beta 2026-09-25): Back during a call sends the app to the
++        // background and the call keeps running.
++        val taskHandler = MknoonCallTaskChannelHandler(
++            moveTaskToBack = { moveTaskToBack(true) },
++            registerBack = MknoonCallTaskChannelHandler.overlayBackRegistrar(this),
++        )
++        callTaskHandler = taskHandler
++        callTaskChannel = MethodChannel(
++            flutterEngine.dartExecutor.binaryMessenger,
++            MknoonCallTaskChannelHandler.CHANNEL,
++        ).also { channel -> channel.setMethodCallHandler(taskHandler) }
+         canonicalRuntimeShutdownChannel = MethodChannel(
+             flutterEngine.dartExecutor.binaryMessenger,
+             CANONICAL_RUNTIME_SHUTDOWN_CHANNEL,
+@@ -301,6 +323,7 @@ class MainActivity : FlutterActivity() {
+     @Suppress("DEPRECATION")
+     override fun onBackPressed() {
+         if (incomingCallPresentation?.handleBack() == true) return
++        if (callTaskHandler?.handleBackPressed() == true) return
+         super.onBackPressed()
+     }
+ 
+@@ -316,8 +339,10 @@ class MainActivity : FlutterActivity() {
+         pictureInPictureHandler = null
+         droppedPushRecoveryBridge?.dispose()
+         droppedPushRecoveryBridge = null
+-        callNativeBridge?.dispose()
+-        callNativeBridge = null
++        callTaskHandler?.dispose()
++        callTaskHandler = null
++        callTaskChannel?.setMethodCallHandler(null)
++        callTaskChannel = null
+         val destroyEngineWithHost = super.shouldDestroyEngineWithHost()
+         privateMediaProtectionRegistry.detach(
+             engineIdentity = flutterEngine,
+@@ -334,6 +359,8 @@ class MainActivity : FlutterActivity() {
+                 destroyRetainedEngine = false,
+                 reason = "already_released",
+             )
++            // No Dart runtime is left to end a call.
++            callBridgeTeardown.onRuntimeShutdownSettled()
+             super.cleanUpFlutterEngine(flutterEngine)
+             return
+         }
+@@ -342,6 +369,9 @@ class MainActivity : FlutterActivity() {
+         // this synchronous hook returns. Retain it briefly so Dart can quiesce
+         // Go, explicitly close SQLCipher, and acknowledge native lease release.
+         retainEngineForCanonicalShutdown = true
++        // Dart's shutdown ends a live call first (terminate to the peer, then
++        // the native end), so the call bridge must outlive this request.
++        callBridgeTeardown.deferUntilRuntimeShutdown()
+         requestCanonicalRuntimeShutdown(
+             flutterEngine = flutterEngine,
+             destroyRetainedEngine = destroyEngineWithHost,
+@@ -366,6 +396,9 @@ class MainActivity : FlutterActivity() {
+         fun settle(released: Boolean, reason: String) {
+             if (settled) return
+             settled = true
++            // Dart had its chance to end the call. The bridge detach now ends
++            // anything it could not.
++            callBridgeTeardown.onRuntimeShutdownSettled()
+             if (released) {
+                 finishCanonicalRuntimeEngineCleanup(
+                     flutterEngine = flutterEngine,
+@@ -508,8 +541,6 @@ class MainActivity : FlutterActivity() {
+         androidCallWakeBridge = null
+         incomingCallPresentation?.dispose()
+         incomingCallPresentation = null
+-        callNativeBridge?.dispose()
+-        callNativeBridge = null
+         pictureInPictureHandler?.dispose("host_destroyed")
+         pictureInPictureHandler = null
+         val engine = privateMediaProtectionEngine
+@@ -524,7 +555,10 @@ class MainActivity : FlutterActivity() {
+         }
+         privateMediaProtectionHandler = null
+         privateMediaProtectionEngine = null
++        // super.onDestroy runs cleanUpFlutterEngine, which may defer the call
++        // bridge until the Dart runtime shutdown settles.
+         super.onDestroy()
++        callBridgeTeardown.onHostDestroyed()
+     }
+ 
+     override fun onRequestPermissionsResult(
+diff --git a/android/app/src/main/kotlin/com/mknoon/app/call/CallPayloadParser.kt b/android/app/src/main/kotlin/com/mknoon/app/call/CallPayloadParser.kt
+index eee58356f..6c0224135 100644
+--- a/android/app/src/main/kotlin/com/mknoon/app/call/CallPayloadParser.kt
++++ b/android/app/src/main/kotlin/com/mknoon/app/call/CallPayloadParser.kt
+@@ -36,6 +36,17 @@ internal class CallPayloadParser(
+         const val MAX_PAYLOAD_BYTES = 256
+         const val MAX_FUTURE_SKEW_MS = 45_000L
+ 
++        /**
++         * Dart-authenticated invitations carry the caller's expiry. Dart's
++         * envelope codec accepts a caller clock up to 30 s ahead of this
++         * device (`SecureCallEnvelopeCodec.maxFutureClockSkew`), so native
++         * accepts the 45 s lifetime plus that skew and then bounds ringing
++         * to [MAX_FUTURE_SKEW_MS] on the local clock.
++         */
++        const val MAX_AUTHENTICATED_CLOCK_SKEW_MS = 30_000L
++        const val MAX_AUTHENTICATED_EXPIRY_AHEAD_MS =
++            MAX_FUTURE_SKEW_MS + MAX_AUTHENTICATED_CLOCK_SKEW_MS
++
+         private val EXPECTED_KEYS = setOf("v", "w", "c", "h", "e")
+         private val STRICT_MILLISECONDS = Regex("^[1-9][0-9]{0,18}$")
+     }
+diff --git a/android/app/src/main/kotlin/com/mknoon/app/call/MknoonCallAndroidRuntime.kt b/android/app/src/main/kotlin/com/mknoon/app/call/MknoonCallAndroidRuntime.kt
+index b0d129da8..140d79f5b 100644
+--- a/android/app/src/main/kotlin/com/mknoon/app/call/MknoonCallAndroidRuntime.kt
++++ b/android/app/src/main/kotlin/com/mknoon/app/call/MknoonCallAndroidRuntime.kt
+@@ -1286,13 +1286,17 @@ internal fun presentAuthenticatedCall(
+         !capabilityEnabled ||
+         observedNowMs < 0L ||
+         expiresAtMs <= observedNowMs ||
+-        expiresAtMs - observedNowMs > CallPayloadParser.MAX_FUTURE_SKEW_MS ||
++        expiresAtMs - observedNowMs > CallPayloadParser.MAX_AUTHENTICATED_EXPIRY_AHEAD_MS ||
+         !handleGrammar.matches(callHandle)
+     ) {
+         return false
+     }
+     val nativeCallId = runCatching { UUID.fromString(callHandle) }.getOrNull()
+         ?: return false
++    // A caller clock ahead of this device (beta 2026-09-25: 13.4 s) must not
++    // refuse the call. Ringing still ends within the local 45 s bound.
++    val nativeExpiresAtMs =
++        minOf(expiresAtMs, observedNowMs + CallPayloadParser.MAX_FUTURE_SKEW_MS)
+     val generatedWakeHandle = runCatching(wakeHandle).getOrNull()
+         ?.takeIf(CALL_RANDOM_ID::matches)
+         ?: return false
+@@ -1303,7 +1307,7 @@ internal fun presentAuthenticatedCall(
+                 callHandle = callHandle,
+                 wakeHandle = generatedWakeHandle,
+                 receivedAtMs = observedNowMs,
+-                expiresAtMs = expiresAtMs,
++                expiresAtMs = nativeExpiresAtMs,
+             ),
+         )
+     ) {
+@@ -1326,7 +1330,7 @@ internal fun terminalizeAuthenticatedCall(
+         !capabilityEnabled ||
+         observedNowMs < 0L ||
+         expiresAtMs <= observedNowMs ||
+-        expiresAtMs - observedNowMs > CallPayloadParser.MAX_FUTURE_SKEW_MS ||
++        expiresAtMs - observedNowMs > CallPayloadParser.MAX_AUTHENTICATED_EXPIRY_AHEAD_MS ||
+         !handleGrammar.matches(callHandle)
+     ) {
+         return false
+diff --git a/android/app/src/main/kotlin/com/mknoon/app/call/MknoonCallBridgeTeardown.kt b/android/app/src/main/kotlin/com/mknoon/app/call/MknoonCallBridgeTeardown.kt
+new file mode 100644
+index 000000000..3af0a5ac5
+--- /dev/null
++++ b/android/app/src/main/kotlin/com/mknoon/app/call/MknoonCallBridgeTeardown.kt
+@@ -0,0 +1,44 @@
++package com.mknoon.app.call
++
++/**
++ * Orders the call bridge teardown after the Dart runtime shutdown.
++ *
++ * Disposing [MknoonCallNativeBridge] detaches the lifecycle controller, and
++ * that detach ends a live Telecom call without telling Dart (its sink is
++ * already gone). MainActivity used to dispose the bridge first in onDestroy,
++ * then asked Dart to shut down. Dart then had no call left to end, so the peer
++ * never got a terminate (beta 2026-09-25, F3: `CALL_ANDROID_DISCONNECT
++ * source=explicit_end` at 19:34:45.378, engine cleanup at 19:34:45.397).
++ *
++ * Now, while a Dart shutdown is pending, the bridge stays. Dart ends the call
++ * through it (terminate to the peer, then native end). Once that shutdown
++ * settles, released or not, the bridge goes, and its detach ends any call Dart
++ * could not end.
++ */
++internal class MknoonCallBridgeTeardown(private val disposeBridge: () -> Unit) {
++    private var runtimeShutdownPending = false
++    private var disposed = false
++
++    /** The engine is kept for a Dart runtime shutdown. Keep the bridge too. */
++    fun deferUntilRuntimeShutdown() {
++        if (disposed) return
++        runtimeShutdownPending = true
++    }
++
++    /** The activity is gone. Without a pending Dart shutdown, release now. */
++    fun onHostDestroyed() {
++        if (!runtimeShutdownPending) dispose()
++    }
++
++    /** Dart's shutdown reply or its timeout arrived. */
++    fun onRuntimeShutdownSettled() {
++        runtimeShutdownPending = false
++        dispose()
++    }
++
++    private fun dispose() {
++        if (disposed) return
++        disposed = true
++        disposeBridge()
++    }
++}
+diff --git a/android/app/src/main/kotlin/com/mknoon/app/call/MknoonCallTaskChannelHandler.kt b/android/app/src/main/kotlin/com/mknoon/app/call/MknoonCallTaskChannelHandler.kt
+new file mode 100644
+index 000000000..b5dd5f324
+--- /dev/null
++++ b/android/app/src/main/kotlin/com/mknoon/app/call/MknoonCallTaskChannelHandler.kt
+@@ -0,0 +1,103 @@
++package com.mknoon.app.call
++
++import android.app.Activity
++import android.os.Build
++import androidx.annotation.RequiresApi
++import io.flutter.plugin.common.MethodCall
++import io.flutter.plugin.common.MethodChannel
++
++/**
++ * Keeps Back from ending a call while the Flutter call surface shows.
++ *
++ * Back during a call used to close the task, and the teardown ended the call
++ * (beta 2026-09-25, F4). While Dart reports that a call surface owns Back
++ * (`setCallOwnsBack`), an overlay-priority back callback moves the whole task
++ * to the back, like other calling apps, and the call keeps running in its
++ * foreground service. It runs before Flutter's own callback, so a predictive
++ * swipe never pops the routes hidden under the call. `moveToBackground` is
++ * the same action for a Back that still reaches Dart.
++ */
++internal class MknoonCallTaskChannelHandler(
++    private val registerBack: ((() -> Unit) -> (() -> Unit))? = null,
++    private val moveTaskToBack: () -> Boolean,
++) : MethodChannel.MethodCallHandler {
++    private var callOwnsBack = false
++    private var unregisterBack: (() -> Unit)? = null
++
++    override fun onMethodCall(call: MethodCall, result: MethodChannel.Result) {
++        when (call.method) {
++            MOVE_TO_BACKGROUND -> {
++                if (call.arguments != null) {
++                    result.error("bad_args", "moveToBackground takes no arguments", null)
++                    return
++                }
++                result.success(moveToBackground())
++            }
++            SET_CALL_OWNS_BACK -> {
++                val arguments = call.arguments as? Map<*, *>
++                val owns = arguments?.takeIf { it.keys == setOf("owns") }?.get("owns") as? Boolean
++                if (owns == null) {
++                    result.error("bad_args", "setCallOwnsBack takes {owns: bool}", null)
++                    return
++                }
++                setCallOwnsBack(owns)
++                result.success(true)
++            }
++            else -> result.notImplemented()
++        }
++    }
++
++    /** Back before Android 13 arrives through Activity.onBackPressed. */
++    fun handleBackPressed(): Boolean {
++        if (!callOwnsBack) return false
++        moveToBackground()
++        return true
++    }
++
++    fun dispose() {
++        setCallOwnsBack(false)
++    }
++
++    private fun setCallOwnsBack(owns: Boolean) {
++        if (owns == callOwnsBack) return
++        callOwnsBack = owns
++        if (owns) {
++            unregisterBack = runCatching {
++                registerBack?.invoke { moveToBackground() }
++            }.getOrNull()
++        } else {
++            val release = unregisterBack
++            unregisterBack = null
++            runCatching { release?.invoke() }
++        }
++    }
++
++    private fun moveToBackground(): Boolean =
++        runCatching { moveTaskToBack() }.getOrDefault(false)
++
++    companion object {
++        const val CHANNEL = "mknoon/call_task"
++        const val MOVE_TO_BACKGROUND = "moveToBackground"
++        const val SET_CALL_OWNS_BACK = "setCallOwnsBack"
++
++        /** Android 13+: Back and predictive swipes reach this before Flutter. */
++        fun overlayBackRegistrar(activity: Activity): ((() -> Unit) -> (() -> Unit))? =
++            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
++                { action -> Api33.registerBack(activity, action) }
++            } else {
++                null
++            }
++    }
++
++    @RequiresApi(Build.VERSION_CODES.TIRAMISU)
++    private object Api33 {
++        fun registerBack(activity: Activity, action: () -> Unit): () -> Unit {
++            val callback = android.window.OnBackInvokedCallback { action() }
++            activity.onBackInvokedDispatcher.registerOnBackInvokedCallback(
++                android.window.OnBackInvokedDispatcher.PRIORITY_OVERLAY,
++                callback,
++            )
++            return { activity.onBackInvokedDispatcher.unregisterOnBackInvokedCallback(callback) }
++        }
++    }
++}
+diff --git a/android/app/src/test/kotlin/com/mknoon/app/NativeRuntimeOwnershipSourceTest.kt b/android/app/src/test/kotlin/com/mknoon/app/NativeRuntimeOwnershipSourceTest.kt
+index d1dce6fde..f6664f2b8 100644
+--- a/android/app/src/test/kotlin/com/mknoon/app/NativeRuntimeOwnershipSourceTest.kt
++++ b/android/app/src/test/kotlin/com/mknoon/app/NativeRuntimeOwnershipSourceTest.kt
+@@ -61,16 +61,23 @@ class NativeRuntimeOwnershipSourceTest {
+         ).readText()
+         val construct = source.indexOf("ForegroundCanonicalRuntimeStartup<Database>(")
+         val closeCallback = source.indexOf("await database.close().timeout", construct)
+-        val shutdownStart = source.indexOf("Future<bool> shutdownCanonicalRuntime()")
+-        val delegate = source.indexOf("canonicalWritableRuntimeSession?.shutdown()", shutdownStart)
+-        val channel = source.indexOf("'mknoon/canonical_runtime_shutdown'", delegate)
++        // Since beta 2026-09-25 the shutdown runs through
++        // CanonicalRuntimeShutdownSequence, which ends a live call (and sends
++        // its terminate) before it delegates to the runtime session.
++        val sequence = source.indexOf("CanonicalRuntimeShutdownSequence(", closeCallback)
++        val delegate = source.indexOf("canonicalWritableRuntimeSession?.shutdown()", sequence)
++        val shutdownStart = source.indexOf("Future<bool> shutdownCanonicalRuntime()", delegate)
++        val viaSequence = source.indexOf("canonicalRuntimeShutdownSequence.shutdown()", shutdownStart)
++        val channel = source.indexOf("'mknoon/canonical_runtime_shutdown'", viaSequence)
+         val open = source.indexOf("await canonicalWritableRuntimeSession.open(", channel)
+ 
+         assertTrue(construct >= 0)
+         assertTrue(closeCallback > construct)
+-        assertTrue(shutdownStart > closeCallback)
+-        assertTrue(delegate > shutdownStart)
+-        assertTrue(channel > delegate)
++        assertTrue(sequence > closeCallback)
++        assertTrue(delegate > sequence)
++        assertTrue(shutdownStart > delegate)
++        assertTrue(viaSequence > shutdownStart)
++        assertTrue(channel > viaSequence)
+         assertTrue("shutdown handler must exist before acquisition/open", open > channel)
+         assertTrue(source.contains("isDatabaseOpen: (database) => database.isOpen"))
+         assertTrue(source.contains("'databaseClosed': canonicalWritableRuntimeSession.databaseClosed"))
+diff --git a/android/app/src/test/kotlin/com/mknoon/app/call/MknoonCallAndroidRuntimeTest.kt b/android/app/src/test/kotlin/com/mknoon/app/call/MknoonCallAndroidRuntimeTest.kt
+index 433adff27..dd2172859 100644
+--- a/android/app/src/test/kotlin/com/mknoon/app/call/MknoonCallAndroidRuntimeTest.kt
++++ b/android/app/src/test/kotlin/com/mknoon/app/call/MknoonCallAndroidRuntimeTest.kt
+@@ -531,6 +531,68 @@ class MknoonCallAndroidRuntimeTest {
+         }
+     }
+ 
++    // Beta 2026-09-25 (run-20260925-210815): the Pixel emulator clock ran
++    // 13.4 s behind the calling iPhone. The iPhone invite (40 s lifetime)
++    // then expired 53.4 s after the Pixel's "now". Dart accepted it (its
++    // envelope codec allows a sender clock up to 30 s ahead), but native
++    // presentation refused anything more than 45 s ahead, so every incoming
++    // call failed with `presentation present rejected` and no Telecom call.
++    @Test
++    fun `authenticated presenter accepts a caller clock ahead within the Dart skew window`() {
++        val callHandle = "00000000-0000-4000-8000-000000000499"
++        val captured = mutableListOf<CallWakePayload>()
++        val observedNow = 1_000L
++        val callerAheadMs = 13_400L
++        val expiresAtMs = observedNow + callerAheadMs + 40_000L
++
++        assertTrue(
++            presentAuthenticatedCall(
++                callHandle = callHandle,
++                expiresAtMs = expiresAtMs,
++                observedNowMs = observedNow,
++                capabilityEnabled = true,
++                handleGrammar = Regex("^[0-9a-f-]{36}$"),
++                wakeHandle = { "00000000-0000-4000-8000-000000000498" },
++                present = { payload ->
++                    captured += payload
++                    MknoonCallPresentationResult.PRESENTED
++                },
++            ),
++        )
++        // Native ringing stays bounded by the local clock.
++        assertEquals(
++            observedNow + CallPayloadParser.MAX_FUTURE_SKEW_MS,
++            captured.single().expiresAtMs,
++        )
++
++        // Beyond the 45 s lifetime plus Dart's 30 s skew window stays refused.
++        assertFalse(
++            presentAuthenticatedCall(
++                callHandle = callHandle,
++                expiresAtMs = observedNow + 75_001L,
++                observedNowMs = observedNow,
++                capabilityEnabled = true,
++                handleGrammar = Regex("^[0-9a-f-]{36}$"),
++                wakeHandle = { "00000000-0000-4000-8000-000000000498" },
++                present = { error("must not present") },
++            ),
++        )
++
++        // A remote terminal for the same skewed call is still fenced.
++        val terminalized = mutableListOf<Long>()
++        assertTrue(
++            terminalizeAuthenticatedCall(
++                callHandle = callHandle,
++                expiresAtMs = expiresAtMs,
++                observedNowMs = observedNow,
++                capabilityEnabled = true,
++                handleGrammar = Regex("^[0-9a-f-]{36}$"),
++                terminalize = { _, expiry -> terminalized += expiry; true },
++            ),
++        )
++        assertEquals(listOf(expiresAtMs), terminalized)
++    }
++
+     @Test
+     fun `authenticated terminal result validates identity and persists one reorder fence`() {
+         val callHandle = "00000000-0000-4000-8000-000000000499"
+diff --git a/android/app/src/test/kotlin/com/mknoon/app/call/MknoonCallBridgeTeardownTest.kt b/android/app/src/test/kotlin/com/mknoon/app/call/MknoonCallBridgeTeardownTest.kt
+new file mode 100644
+index 000000000..e4985b8bc
+--- /dev/null
++++ b/android/app/src/test/kotlin/com/mknoon/app/call/MknoonCallBridgeTeardownTest.kt
+@@ -0,0 +1,117 @@
++package com.mknoon.app.call
++
++import java.io.File
++import org.junit.Assert.assertEquals
++import org.junit.Assert.assertFalse
++import org.junit.Assert.assertNotNull
++import org.junit.Assert.assertNull
++import org.junit.Assert.assertTrue
++import org.junit.Test
++import org.junit.runner.RunWith
++import org.robolectric.RobolectricTestRunner
++import org.robolectric.annotation.Config
++
++/**
++ * Beta 2026-09-25 (F3): MainActivity.onDestroy disposed the call bridge before
++ * super.onDestroy. The bridge's controller detach ended the Telecom call at
++ * 19:34:45.378 (`CALL_ANDROID_DISCONNECT source=explicit_end`) with the Dart
++ * sink already detached, so Dart never saw that end. Only afterwards
++ * (19:34:45.397) did cleanUpFlutterEngine ask Dart to shut the runtime down.
++ * The bridge must stay until that Dart shutdown settles, so Dart ends the call
++ * itself and tells the peer.
++ */
++@RunWith(RobolectricTestRunner::class)
++@Config(sdk = [33])
++class MknoonCallBridgeTeardownTest {
++    @Test fun `a live call survives host destroy until the Dart runtime shutdown settles`() {
++        val rig = adoptedCallRig()
++        val bridge = MknoonCallNativeBridge(controller = rig.controller, messenger = null)
++        val teardown = MknoonCallBridgeTeardown(bridge::dispose)
++
++        // cleanUpFlutterEngine asks Dart to shut down, then onDestroy finishes.
++        teardown.deferUntilRuntimeShutdown()
++        teardown.onHostDestroyed()
++
++        assertFalse(rig.operations.contains("platform.end"))
++        assertNotNull(rig.controller.activeNativeCallId())
++
++        // Dart's shutdown settled (released or not): the bridge goes now and
++        // its detach ends any call Dart could not end.
++        teardown.onRuntimeShutdownSettled()
++        assertEquals(1, rig.operations.count { it == "platform.end" })
++        assertNull(rig.controller.activeNativeCallId())
++
++        teardown.onRuntimeShutdownSettled()
++        teardown.onHostDestroyed()
++        assertEquals(1, rig.operations.count { it == "platform.end" })
++    }
++
++    @Test fun `host destroy with no Dart runtime to shut down releases the bridge at once`() {
++        val rig = adoptedCallRig()
++        val bridge = MknoonCallNativeBridge(controller = rig.controller, messenger = null)
++        val teardown = MknoonCallBridgeTeardown(bridge::dispose)
++
++        teardown.onHostDestroyed()
++
++        assertEquals(1, rig.operations.count { it == "platform.end" })
++        assertNull(rig.controller.activeNativeCallId())
++        teardown.deferUntilRuntimeShutdown()
++        teardown.onRuntimeShutdownSettled()
++        assertEquals(1, rig.operations.count { it == "platform.end" })
++    }
++
++    @Test fun `MainActivity lets the Dart shutdown end the call before the bridge goes`() {
++        val source = mainActivitySource()
++        val onDestroy = functionBody(source, "override fun onDestroy()")
++        val cleanUp = functionBody(source, "override fun cleanUpFlutterEngine(")
++        val request = functionBody(source, "private fun requestCanonicalRuntimeShutdown(")
++
++        // Neither lifecycle hook may end the call before Dart shuts down.
++        assertFalse(onDestroy.contains("callNativeBridge?.dispose()"))
++        assertFalse(cleanUp.contains("callNativeBridge?.dispose()"))
++        assertTrue(cleanUp.contains("callBridgeTeardown.deferUntilRuntimeShutdown()"))
++        assertTrue(
++            cleanUp.indexOf("callBridgeTeardown.deferUntilRuntimeShutdown()") <
++                cleanUp.indexOf("requestCanonicalRuntimeShutdown("),
++        )
++        assertTrue(
++            onDestroy.indexOf("super.onDestroy()") <
++                onDestroy.indexOf("callBridgeTeardown.onHostDestroyed()"),
++        )
++        assertTrue(request.contains("callBridgeTeardown.onRuntimeShutdownSettled()"))
++    }
++
++    private fun adoptedCallRig(): LifecycleRig {
++        val rig = LifecycleRig()
++        assertEquals(MknoonCallPresentationResult.PRESENTED, rig.controller.present(rig.payload))
++        assertNotNull(rig.controller.attach())
++        assertTrue(rig.controller.markAdopted(rig.payload.nativeCallId))
++        rig.operations.clear()
++        return rig
++    }
++
++    private fun mainActivitySource(): String {
++        val relative = "src/main/kotlin/com/mknoon/app/MainActivity.kt"
++        val candidates = listOf(File(relative), File("app/$relative"), File("android/app/$relative"))
++        return candidates.first { it.exists() }.readText()
++    }
++
++    private fun functionBody(source: String, signature: String): String {
++        val start = source.indexOf(signature)
++        assertTrue("missing $signature", start >= 0)
++        var depth = 0
++        var index = source.indexOf('{', start)
++        val open = index
++        while (index < source.length) {
++            when (source[index]) {
++                '{' -> depth += 1
++                '}' -> {
++                    depth -= 1
++                    if (depth == 0) return source.substring(open, index + 1)
++                }
++            }
++            index += 1
++        }
++        error("unterminated $signature")
++    }
++}
+diff --git a/android/app/src/test/kotlin/com/mknoon/app/call/MknoonCallTaskChannelHandlerTest.kt b/android/app/src/test/kotlin/com/mknoon/app/call/MknoonCallTaskChannelHandlerTest.kt
+new file mode 100644
+index 000000000..eb1d2f64e
+--- /dev/null
++++ b/android/app/src/test/kotlin/com/mknoon/app/call/MknoonCallTaskChannelHandlerTest.kt
+@@ -0,0 +1,132 @@
++package com.mknoon.app.call
++
++import io.flutter.plugin.common.MethodCall
++import io.flutter.plugin.common.MethodChannel
++import org.junit.Assert.assertEquals
++import org.junit.Assert.assertFalse
++import org.junit.Assert.assertTrue
++import org.junit.Test
++
++/**
++ * Beta 2026-09-25 (F4): Back during a call must send the app to the
++ * background (like other calling apps) instead of closing the task.
++ */
++class MknoonCallTaskChannelHandlerTest {
++    @Test fun `moveToBackground moves the whole task to the back`() {
++        var moves = 0
++        val handler = MknoonCallTaskChannelHandler { moves += 1; true }
++        val result = TaskResult()
++
++        handler.onMethodCall(MethodCall("moveToBackground", null), result)
++
++        assertEquals(1, moves)
++        assertEquals(true, result.value)
++        assertEquals(null, result.errorCode)
++        assertEquals("mknoon/call_task", MknoonCallTaskChannelHandler.CHANNEL)
++    }
++
++    @Test fun `a refused or failing move reports false and never throws`() {
++        val refused = TaskResult()
++        MknoonCallTaskChannelHandler { false }
++            .onMethodCall(MethodCall("moveToBackground", null), refused)
++        assertEquals(false, refused.value)
++
++        val failing = TaskResult()
++        MknoonCallTaskChannelHandler { error("activity gone") }
++            .onMethodCall(MethodCall("moveToBackground", null), failing)
++        assertEquals(false, failing.value)
++    }
++
++    @Test fun `unexpected arguments or methods do not move the task`() {
++        var moves = 0
++        val handler = MknoonCallTaskChannelHandler { moves += 1; true }
++
++        val badArgs = TaskResult()
++        handler.onMethodCall(MethodCall("moveToBackground", mapOf("x" to 1)), badArgs)
++        assertEquals("bad_args", badArgs.errorCode)
++
++        val unknown = TaskResult()
++        handler.onMethodCall(MethodCall("finish", null), unknown)
++        assertTrue(unknown.notImplemented)
++
++        assertEquals(0, moves)
++        assertFalse(badArgs.notImplemented)
++    }
++
++    @Test fun `while a call owns Back an overlay back callback moves the task to the back`() {
++        var moves = 0
++        val registered = mutableListOf<() -> Unit>()
++        var unregistered = 0
++        val handler = MknoonCallTaskChannelHandler(
++            moveTaskToBack = { moves += 1; true },
++            registerBack = { action ->
++                registered += action
++                ({ unregistered += 1 })
++            },
++        )
++        fun owns(value: Any?) = TaskResult().also {
++            handler.onMethodCall(MethodCall("setCallOwnsBack", mapOf("owns" to value)), it)
++        }
++
++        assertEquals(true, owns(true).value)
++        assertEquals(true, owns(true).value)
++        assertEquals(1, registered.size)
++
++        // A predictive swipe or the Back key reaches the overlay callback
++        // before Flutter's own callback, so no hidden route is popped.
++        registered.single().invoke()
++        assertEquals(1, moves)
++
++        assertEquals(true, owns(false).value)
++        assertEquals(1, unregistered)
++        assertEquals(true, owns(false).value)
++        assertEquals(1, unregistered)
++
++        assertEquals("bad_args", owns("yes").errorCode)
++        val missing = TaskResult()
++        handler.onMethodCall(MethodCall("setCallOwnsBack", null), missing)
++        assertEquals("bad_args", missing.errorCode)
++    }
++
++    @Test fun `onBackPressed moves the task only while a call owns Back`() {
++        var moves = 0
++        val handler = MknoonCallTaskChannelHandler(moveTaskToBack = { moves += 1; true })
++
++        assertFalse(handler.handleBackPressed())
++        handler.onMethodCall(MethodCall("setCallOwnsBack", mapOf("owns" to true)), TaskResult())
++        assertTrue(handler.handleBackPressed())
++        assertEquals(1, moves)
++        handler.onMethodCall(MethodCall("setCallOwnsBack", mapOf("owns" to false)), TaskResult())
++        assertFalse(handler.handleBackPressed())
++        assertEquals(1, moves)
++    }
++
++    @Test fun `dispose releases the overlay back callback`() {
++        var unregistered = 0
++        val handler = MknoonCallTaskChannelHandler(
++            moveTaskToBack = { true },
++            registerBack = { { unregistered += 1 } },
++        )
++        handler.onMethodCall(MethodCall("setCallOwnsBack", mapOf("owns" to true)), TaskResult())
++
++        handler.dispose()
++        handler.dispose()
++
++        assertEquals(1, unregistered)
++        assertFalse(handler.handleBackPressed())
++    }
++
++    private class TaskResult : MethodChannel.Result {
++        var value: Any? = null
++        var errorCode: String? = null
++        var notImplemented = false
++
++        override fun success(result: Any?) { value = result }
++
++        override fun error(errorCode: String, errorMessage: String?, errorDetails: Any?) {
++            this.errorCode = errorCode
++        }
++
++        override fun notImplemented() { notImplemented = true }
++    }
++}
+diff --git a/lib/app/application_root.dart b/lib/app/application_root.dart
+index 0ffb7fbd6..d31d6d54a 100644
+--- a/lib/app/application_root.dart
++++ b/lib/app/application_root.dart
+@@ -2,6 +2,7 @@ import 'dart:async';
+ import 'package:flutter_app/app/bootstrap/call_signaling_composition.dart';
+ import 'package:flutter_app/features/call/application/foreground_call_capability.dart';
+ import 'package:flutter_app/features/call/application/outgoing_call_capability.dart';
++import 'package:flutter_app/features/call/presentation/foreground_call_back_guard.dart';
+ import 'package:flutter_app/features/call/presentation/foreground_call_overlay.dart';
+ import 'package:flutter/material.dart';
+ import 'package:flutter_app/core/services/share_intent_model.dart';
+@@ -747,6 +748,10 @@ class MyApp extends StatefulWidget {
+ }
+ 
+ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
++  // Attached in initState, before MaterialApp registers its navigator
++  // observer, so a live call surface is asked about Back first.
++  final ForegroundCallBackGuard _foregroundCallBackGuard =
++      ForegroundCallBackGuard();
+   late final AppVisibilityAuthority _appVisibilityAuthority;
+   late final AppVisibilityRouteRegistry _appVisibilityRouteRegistry;
+   // 362: the ONE linked-device authority bundle, threaded to every shell that
+@@ -836,6 +841,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
+   @override
+   void initState() {
+     super.initState();
++    _foregroundCallBackGuard.attach();
+     assert(
+       (widget.appVisibilityAuthority == null) ==
+           (widget.appVisibilityRouteRegistry == null),
+@@ -2271,6 +2277,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
+     _appVisibilityRouteRegistry.dispose();
+     _appVisibilityAuthority.dispose();
+     WidgetsBinding.instance.removeObserver(this);
++    _foregroundCallBackGuard.detach();
+     widget.disposePrivateMediaExpiryScheduler?.call();
+ 
+     // Orderly teardown: retriers → listeners → router → service → bridge
+@@ -3380,6 +3387,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
+           final callSurface = ForegroundCallOverlay(
+             capability: widget.foregroundCallCapability,
+             onAttached: widget.onForegroundCallPresentationReady,
++            backGuard: _foregroundCallBackGuard,
+             loadContactDisplayName: (peerId) async =>
+                 (await widget.contactRepository.getContact(peerId))?.username,
+             child: appChild,
+diff --git a/lib/app/bootstrap/canonical_runtime_shutdown_sequence.dart b/lib/app/bootstrap/canonical_runtime_shutdown_sequence.dart
+new file mode 100644
+index 000000000..184016d88
+--- /dev/null
++++ b/lib/app/bootstrap/canonical_runtime_shutdown_sequence.dart
+@@ -0,0 +1,47 @@
++import 'dart:async';
++
++/// Time a live call gets to end before the Android canonical runtime stops.
++///
++/// The native host waits 5 s in total for the Dart shutdown reply
++/// (`MainActivity.CANONICAL_RUNTIME_SHUTDOWN_TIMEOUT_MS`). The database close
++/// that follows keeps its own 2 s bound, so this budget leaves room for both.
++const Duration kCallShutdownBeforeRuntimeReleaseBudget = Duration(seconds: 2);
++
++/// Orders Android canonical-runtime shutdown after call signaling shutdown.
++///
++/// When MainActivity is destroyed, the native `mknoon/canonical_runtime_shutdown`
++/// request and the Dart `detached` lifecycle edge arrive together. Ending a
++/// live call sends a terminate to the peer. That send reads the peer endpoint
++/// from SQLCipher and leaves through the Go runtime. So the runtime must not
++/// quiesce Go or close the database until the call shutdown settles (or its
++/// budget runs out).
++final class CanonicalRuntimeShutdownSequence {
++  CanonicalRuntimeShutdownSequence({
++    required Future<bool> Function() shutdownRuntime,
++    this.callShutdownBudget = kCallShutdownBeforeRuntimeReleaseBudget,
++  }) : _shutdownRuntime = shutdownRuntime;
++
++  final Future<bool> Function() _shutdownRuntime;
++  final Duration callShutdownBudget;
++  Future<void> Function()? _shutdownCalls;
++
++  /// Binds the call signaling shutdown once the call graph exists. Before
++  /// that there is no call to end.
++  void bindCallShutdown(Future<void> Function() shutdownCalls) {
++    _shutdownCalls = shutdownCalls;
++  }
++
++  /// Returns whether the runtime released, exactly as the runtime reports it.
++  Future<bool> shutdown() async {
++    final shutdownCalls = _shutdownCalls;
++    if (shutdownCalls != null) {
++      try {
++        await Future<void>.sync(shutdownCalls).timeout(callShutdownBudget);
++      } catch (_) {
++        // A failed or slow call shutdown must not keep the runtime (and the
++        // retained engine) alive. The peer then ends the call on media loss.
++      }
++    }
++    return _shutdownRuntime();
++  }
++}
+diff --git a/lib/app/bootstrap/production_application_bootstrap.dart b/lib/app/bootstrap/production_application_bootstrap.dart
+index 19b6c3072..eef78d21b 100644
+--- a/lib/app/bootstrap/production_application_bootstrap.dart
++++ b/lib/app/bootstrap/production_application_bootstrap.dart
+@@ -17,6 +17,7 @@ import 'package:flutter_app/core/services/share_intent_service.dart';
+ import 'package:sqflite_common_ffi/sqflite_ffi.dart';
+ import 'package:flutter_app/core/database/production_migration_registry.dart';
+ import 'package:flutter_app/app/bootstrap/role_aware_deferred_runtime_start.dart';
++import 'package:flutter_app/app/bootstrap/canonical_runtime_shutdown_sequence.dart';
+ import 'package:flutter_app/app/bootstrap/call_signaling_composition.dart';
+ import 'package:flutter_app/app/bootstrap/call_wake_contact_key_backfill.dart';
+ import 'package:flutter_app/app/bootstrap/production_call_signaling_graph.dart';
+@@ -694,8 +695,16 @@ final class ProductionApplicationBootstrap
+             },
+             isDatabaseOpen: (database) => database.isOpen,
+           );
++    // Engine teardown (native request or Dart `detached`) ends a live call
++    // first, so its terminate can still resolve the peer from SQLCipher and
++    // leave through Go before either is shut down.
++    final canonicalRuntimeShutdownSequence = CanonicalRuntimeShutdownSequence(
++      shutdownRuntime: () =>
++          canonicalWritableRuntimeSession?.shutdown() ??
++          Future<bool>.value(true),
++    );
+     Future<bool> shutdownCanonicalRuntime() =>
+-        canonicalWritableRuntimeSession?.shutdown() ?? Future<bool>.value(true);
++        canonicalRuntimeShutdownSequence.shutdown();
+     if (canonicalWritableRuntimeSession != null) {
+       const MethodChannel(
+         'mknoon/canonical_runtime_shutdown',
+@@ -6370,6 +6379,9 @@ final class ProductionApplicationBootstrap
+         }
+       },
+     );
++    canonicalRuntimeShutdownSequence.bindCallShutdown(
++      callSignalingComposition.shutdown,
++    );
+     if (Platform.isAndroid) {
+       // A warm foreground owner prevents the headless worker acquiring the
+       // writable lease. Forward strict FCM call wakes to that existing owner.
+diff --git a/lib/features/call/application/call_coordinator.dart b/lib/features/call/application/call_coordinator.dart
+index 51b34ea8e..d1eac9f33 100644
+--- a/lib/features/call/application/call_coordinator.dart
++++ b/lib/features/call/application/call_coordinator.dart
+@@ -98,6 +98,7 @@ final class CallCoordinator {
+     this.effectTimeout = const Duration(seconds: 15),
+     this.mediaPreparationTimeout = const Duration(seconds: 45),
+     this.terminalEffectTimeout = const Duration(seconds: 5),
++    this.shutdownTerminalEffectTimeout = defaultShutdownTerminalEffectTimeout,
+     this.terminalHistoryTimeout = const Duration(seconds: 5),
+     this.onInternalFailure,
+     this.onAppliedStateTransition,
+@@ -107,6 +108,7 @@ final class CallCoordinator {
+         effectTimeout <= Duration.zero ||
+         mediaPreparationTimeout <= Duration.zero ||
+         terminalEffectTimeout <= Duration.zero ||
++        shutdownTerminalEffectTimeout <= Duration.zero ||
+         terminalHistoryTimeout <= Duration.zero) {
+       throw ArgumentError('coordinator bounds must be positive');
+     }
+@@ -123,6 +125,20 @@ final class CallCoordinator {
+   final Duration effectTimeout;
+   final Duration mediaPreparationTimeout;
+   final Duration terminalEffectTimeout;
++
++  /// How long [dispose] waits for terminal signals (terminate/reject) to reach
++  /// the peer before it returns. The call graph closes signaling right after
++  /// [dispose], so a send still resolving the peer endpoint is then dropped
++  /// and the peer only ends the call on media loss (beta 2026-09-25, F3).
++  /// The effective wait is never shorter than [terminalEffectTimeout]. It
++  /// stays inside the 2 s call-shutdown budget of
++  /// `CanonicalRuntimeShutdownSequence`.
++  final Duration shutdownTerminalEffectTimeout;
++
++  static const Duration defaultShutdownTerminalEffectTimeout = Duration(
++    milliseconds: 1500,
++  );
++
+   final Duration terminalHistoryTimeout;
+   final void Function(CallCoordinatorInternalFailure failure)?
+   onInternalFailure;
+@@ -147,6 +163,9 @@ final class CallCoordinator {
+   bool _disposed = false;
+   bool _disposing = false;
+   Future<void>? _disposeInFlight;
++  Completer<void>? _shutdownDeadline;
++  Timer? _shutdownDeadlineTimer;
++  final Set<Future<void>> _inFlightTerminalDeliveries = <Future<void>>{};
+   int _internalFailureCount = 0;
+   _CallPreparationInterruption? _preparationInterruption;
+ 
+@@ -490,10 +509,41 @@ final class CallCoordinator {
+   Future<void> _executeTerminalDelivery(
+     CallEffect effect,
+     CallSessionSnapshot snapshot,
+-  ) async => effectExecutor
+-      .execute(effect, snapshot)
+-      .timeout(terminalEffectTimeout)
+-      .then<void>((_) {});
++  ) async {
++    final delivery = effectExecutor
++        .execute(effect, snapshot)
++        .then<void>((_) {});
++    _trackTerminalDelivery(delivery);
++    final shutdownDeadline = _shutdownDeadline;
++    if (shutdownDeadline == null) {
++      return delivery.timeout(terminalEffectTimeout);
++    }
++    // Engine teardown: the peer must hear this before signaling closes.
++    await Future.any<void>(<Future<void>>[
++      delivery,
++      shutdownDeadline.future.then<void>(
++        (_) => throw TimeoutException(
++          'terminal delivery exceeded the shutdown budget',
++          _shutdownTerminalBudget,
++        ),
++      ),
++    ]);
++  }
++
++  Duration get _shutdownTerminalBudget =>
++      shutdownTerminalEffectTimeout > terminalEffectTimeout
++      ? shutdownTerminalEffectTimeout
++      : terminalEffectTimeout;
++
++  /// Keeps a terminal send reachable after its dispatch budget ran out, so
++  /// [dispose] can still let it finish before signaling closes.
++  void _trackTerminalDelivery(Future<void> delivery) {
++    late final Future<void> tracked;
++    tracked = delivery
++        .then<void>((_) {}, onError: (Object _) {})
++        .whenComplete(() => _inFlightTerminalDeliveries.remove(tracked));
++    _inFlightTerminalDeliveries.add(tracked);
++  }
+ 
+   Future<void> _executeEffect(
+     CallEffect effect,
+@@ -708,6 +758,11 @@ final class CallCoordinator {
+     final inFlight = _disposeInFlight;
+     if (inFlight != null) return inFlight;
+     _disposing = true;
++    final deadline = Completer<void>();
++    _shutdownDeadline = deadline;
++    _shutdownDeadlineTimer = Timer(_shutdownTerminalBudget, () {
++      if (!deadline.isCompleted) deadline.complete();
++    });
+     final attempt = _disposeAfterQueuedEvents();
+     _disposeInFlight = attempt;
+     return attempt;
+@@ -769,10 +824,17 @@ final class CallCoordinator {
+       });
+       _tail = serialized;
+       await serialized;
++      // A terminal send from an earlier end (for example a native end during
++      // teardown) may still be resolving the peer after its own budget.
++      await _awaitInFlightTerminalDeliveries();
+     } catch (error, stackTrace) {
+       shutdownError ??= error;
+       shutdownStack ??= stackTrace;
+     } finally {
++      _shutdownDeadlineTimer?.cancel();
++      _shutdownDeadlineTimer = null;
++      final deadline = _shutdownDeadline;
++      if (deadline != null && !deadline.isCompleted) deadline.complete();
+       _cancelTimers();
+       _disposed = true;
+       _disposing = false;
+@@ -782,4 +844,13 @@ final class CallCoordinator {
+       Error.throwWithStackTrace(shutdownError!, shutdownStack!);
+     }
+   }
++
++  Future<void> _awaitInFlightTerminalDeliveries() async {
++    final deadline = _shutdownDeadline;
++    if (_inFlightTerminalDeliveries.isEmpty || deadline == null) return;
++    await Future.any<void>(<Future<void>>[
++      Future.wait<void>(_inFlightTerminalDeliveries.toList(growable: false)),
++      deadline.future,
++    ]);
++  }
+ }
+diff --git a/lib/features/call/application/call_history_projector.dart b/lib/features/call/application/call_history_projector.dart
+index 028927af5..cf4e57342 100644
+--- a/lib/features/call/application/call_history_projector.dart
++++ b/lib/features/call/application/call_history_projector.dart
+@@ -123,7 +123,12 @@ final class CallHistoryProjector {
+       case CallEndReason.mediaFailed:
+       case CallEndReason.reconnectFailed:
+       case CallEndReason.policyRejected:
+-        return CallHistoryStatus.failed;
++        // A call that connected happened, even if it ended by a failure. It
++        // keeps its talk time, like any other connected call. Only a call
++        // that never connected is a failed call.
++        return snapshot.connectedAt == null
++            ? CallHistoryStatus.failed
++            : CallHistoryStatus.completed;
+     }
+   }
+ 
+diff --git a/lib/features/call/domain/call_state.dart b/lib/features/call/domain/call_state.dart
+index 658ff1c0e..db4478539 100644
+--- a/lib/features/call/domain/call_state.dart
++++ b/lib/features/call/domain/call_state.dart
+@@ -181,7 +181,7 @@ final class CallReducer {
+       return _terminal(
+         snapshot,
+         event,
+-        event.endReason ?? CallEndReason.remoteHangup,
++        _receivedTerminateReason(event.endReason),
+       );
+     }
+     if (event.type == CallEventType.remoteReject) {
+@@ -262,7 +262,7 @@ final class CallReducer {
+           return _terminal(
+             snapshot,
+             _asType(event, CallEventType.end),
+-            event.endReason ?? CallEndReason.localHangup,
++            event.endReason ?? _nativeEndReason(snapshot),
+           );
+         case null:
+           return _unchanged(
+@@ -933,6 +933,38 @@ final class CallReducer {
+       ? effects
+       : effects.sublist(0, policy.effectQueueCapacity);
+ 
++  /// A terminate carries the SENDER's end reason. Read it from this side:
++  ///
++  /// - `local_hangup` (or no reason) means the peer hung up, so it becomes
++  ///   [CallEndReason.remoteHangup]. Before this, a caller who hung up from
++  ///   the system call UI made the ringing callee record "You declined".
++  /// - `remote_hangup` stays [CallEndReason.remoteHangup]: the call ended on
++  ///   the far side either way.
++  /// - Every other reason already means the same thing on both sides and is
++  ///   kept: `caller_cancelled`, `no_answer`, `expired`, `declined`, `busy`,
++  ///   `app_shutdown` (the peer's app stopped), and the failures
++  ///   (`permission_denied`, `unsupported`, `signaling_failed`,
++  ///   `media_failed`, `reconnect_failed`, `policy_rejected`), which history
++  ///   shows as a failed call before connect and a completed call after.
++  ///
++  /// The wire format does not change, so an older peer that still sends
++  /// `local_hangup` is read correctly.
++  static CallEndReason _receivedTerminateReason(CallEndReason? wireReason) =>
++      switch (wireReason) {
++        null || CallEndReason.localHangup => CallEndReason.remoteHangup,
++        final CallEndReason reason => reason,
++      };
++
++  /// The platform call UI ended the call without its own reason. A caller who
++  /// ends an unanswered call cancelled it, so the terminate carries
++  /// `caller_cancelled` (the same as the in-app Cancel) and an older callee
++  /// records a missed call. Everything else is a local hang-up.
++  static CallEndReason _nativeEndReason(CallSessionSnapshot snapshot) =>
++      snapshot.direction == CallDirection.outgoing &&
++          _isPreconnect(snapshot.state)
++      ? CallEndReason.callerCancelled
++      : CallEndReason.localHangup;
++
+   static bool _isPreconnect(CallState state) => switch (state) {
+     CallState.preparing ||
+     CallState.inviting ||
+diff --git a/lib/features/call/infrastructure/android_call_lifecycle_adapter.dart b/lib/features/call/infrastructure/android_call_lifecycle_adapter.dart
+index 237a4dfe5..56f4cf264 100644
+--- a/lib/features/call/infrastructure/android_call_lifecycle_adapter.dart
++++ b/lib/features/call/infrastructure/android_call_lifecycle_adapter.dart
+@@ -1,4 +1,5 @@
+ import 'package:flutter/foundation.dart' show kDebugMode;
++import 'package:flutter/services.dart' show MissingPluginException;
+ import 'package:flutter_app/features/call/application/locked_call_presentation.dart';
+ import '../diagnostics/call_diagnostics.dart';
+ import 'dart:async';
+@@ -251,6 +252,9 @@ final class AndroidCallLifecycleAdapter
+   final Map<int, _NativeEvent> _observedEvents = <int, _NativeEvent>{};
+   final Map<String, int> _eventIds = <String, int>{};
+   final Set<String> _endedHandles = <String>{};
++
++  /// The native method handler is gone (the activity was destroyed).
++  bool _nativeBridgeDetached = false;
+   final Map<String, int> _retiredHighWatermarks = <String, int>{};
+ 
+   StreamSubscription<Object?>? _nativeSubscription;
+@@ -1058,15 +1062,38 @@ final class AndroidCallLifecycleAdapter
+   Future<void> deactivateAudio() async {
+     await start();
+     if (_releaseRetainedTerminalAudio()) return;
++    if (_releaseAudioAfterNativeAuthorityLost()) return;
+     final handle = _boundHandle;
+     if (handle == null) return;
+     if (_releaseEndedHandleAudio(handle)) return;
+-    await _scheduleExactHandleAudioCommand(
+-      method: 'deactivateAudio',
+-      handle: handle,
+-      bindingGeneration: _bindingGeneration,
+-      ownsSessionAfterSuccess: false,
+-    );
++    try {
++      await _scheduleExactHandleAudioCommand(
++        method: 'deactivateAudio',
++        handle: handle,
++        bindingGeneration: _bindingGeneration,
++        ownsSessionAfterSuccess: false,
++      );
++    } on AndroidCallLifecycleException {
++      // Close or invalidation can land while the command is queued.
++      if (_releaseAudioAfterNativeAuthorityLost()) return;
++      if (_nativeBridgeDetached) {
++        _ownsSession = false;
++        return;
++      }
++      rethrow;
++    }
++  }
++
++  /// Close sends native `detach` and invalidation sends native `failClosed`.
++  /// Both end the platform call (`endPlatform = true`), and Telecom releases
++  /// the call audio with it. No native session is left for Dart to release,
++  /// so a deactivate here is a successful no-op. Failing it instead left
++  /// terminal cleanup blocked on `call_media` until a force-stop.
++  bool _releaseAudioAfterNativeAuthorityLost() {
++    if (!_closed && !_invalid) return false;
++    _ownsSession = false;
++    _selectedRoute = CallAudioOutputRoute.systemDefault;
++    return true;
+   }
+ 
+   /// Native termination already releases platform audio and restores its
+@@ -1205,7 +1232,10 @@ final class AndroidCallLifecycleAdapter
+         completer.complete();
+       } on AndroidCallLifecycleException catch (error, stackTrace) {
+         completer.completeError(error, stackTrace);
+-      } catch (_, stackTrace) {
++      } catch (error, stackTrace) {
++        // MainActivity.onDestroy disposes the native bridge (its controller
++        // detach ends the platform call) before Dart sees `detached`.
++        if (error is MissingPluginException) _nativeBridgeDetached = true;
+         completer.completeError(
+           const AndroidCallLifecycleException(
+             AndroidCallLifecycleErrorCode.nativeFailure,
+diff --git a/lib/features/call/presentation/foreground_call_back_guard.dart b/lib/features/call/presentation/foreground_call_back_guard.dart
+new file mode 100644
+index 000000000..16d9fb56d
+--- /dev/null
++++ b/lib/features/call/presentation/foreground_call_back_guard.dart
+@@ -0,0 +1,123 @@
++import 'dart:async';
++
++import 'package:flutter/foundation.dart';
++import 'package:flutter/services.dart'
++    show
++        MethodChannel,
++        MissingPluginException,
++        PlatformException,
++        PredictiveBackEvent;
++import 'package:flutter/widgets.dart';
++
++/// Channel owned by Android `MainActivity` (`MknoonCallTaskChannelHandler`).
++const MethodChannel foregroundCallTaskChannel = MethodChannel(
++  'mknoon/call_task',
++);
++
++/// Sends the app to the background and keeps the call running.
++Future<void> moveAppToBackgroundForCall() =>
++    _invokeCallTask('moveToBackground');
++
++/// Tells Android whether a call surface owns Back. While it does, Android
++/// moves the task to the back on Back (key or predictive swipe) before
++/// Flutter's own back callback runs, so no hidden route is popped.
++Future<void> setAndroidCallOwnsBack(bool owns) =>
++    _invokeCallTask('setCallOwnsBack', <String, Object?>{'owns': owns});
++
++Future<void> _invokeCallTask(String method, [Object? arguments]) async {
++  if (kIsWeb || defaultTargetPlatform != TargetPlatform.android) return;
++  try {
++    await foregroundCallTaskChannel.invokeMethod<bool>(method, arguments);
++  } on MissingPluginException {
++    // No Android host (for example a headless engine). Back is still
++    // consumed by the guard.
++  } on PlatformException {
++    // The activity is going away. Back is still consumed by the guard.
++  }
++}
++
++/// Handles the system Back action while a foreground call surface owns the
++/// screen.
++///
++/// [ForegroundCallOverlay] is a Stack layer above the app navigator, not a
++/// route. Without this guard, Back pops the hidden routes under the call and,
++/// at the root route, `SystemNavigator.pop` finishes the Android activity. The
++/// activity teardown then ends the call with `appShutdown` (beta 2026-09-24).
++///
++/// While a call surface shows, Back sends the app to the background, like
++/// other calling apps, and the call keeps running (beta 2026-09-25). Android
++/// handles Back first while [surfaceOwnsBack] is true. This guard handles a
++/// Back that still reaches Flutter. The overlay also keeps Flutter's Android
++/// back callback registered, so the system never closes the task itself.
++///
++/// [WidgetsBinding.handlePopRoute] asks observers in registration order and
++/// the app's `WidgetsApp` registers its own navigator observer when it is
++/// first built. So [attach] must run before `MaterialApp` is built (for
++/// example in the `initState` of the widget that builds it).
++final class ForegroundCallBackGuard with WidgetsBindingObserver {
++  ForegroundCallBackGuard({
++    Future<void> Function()? moveAppToBackground,
++    Future<void> Function(bool owns)? publishCallOwnsBack,
++  }) : _moveAppToBackground = moveAppToBackground ?? moveAppToBackgroundForCall,
++       _publishCallOwnsBack = publishCallOwnsBack ?? setAndroidCallOwnsBack;
++
++  final Future<void> Function() _moveAppToBackground;
++  final Future<void> Function(bool owns) _publishCallOwnsBack;
++  bool _attached = false;
++  bool _gestureClaimed = false;
++  bool _surfaceOwnsBack = false;
++
++  /// Whether an incoming, outgoing, or active call surface is showing.
++  bool get surfaceOwnsBack => _surfaceOwnsBack;
++
++  set surfaceOwnsBack(bool owns) {
++    if (_surfaceOwnsBack == owns) return;
++    _surfaceOwnsBack = owns;
++    _run(() => _publishCallOwnsBack(owns));
++  }
++
++  void attach() {
++    if (_attached) return;
++    _attached = true;
++    WidgetsBinding.instance.addObserver(this);
++  }
++
++  void detach() {
++    if (!_attached) return;
++    _attached = false;
++    surfaceOwnsBack = false;
++    _gestureClaimed = false;
++    WidgetsBinding.instance.removeObserver(this);
++  }
++
++  @override
++  Future<bool> didPopRoute() {
++    if (!_surfaceOwnsBack) return SynchronousFuture<bool>(false);
++    _run(_moveAppToBackground);
++    return SynchronousFuture<bool>(true);
++  }
++
++  /// Claims a predictive back swipe that still reaches Flutter.
++  @override
++  bool handleStartBackGesture(PredictiveBackEvent backEvent) {
++    _gestureClaimed = _surfaceOwnsBack;
++    return _gestureClaimed;
++  }
++
++  /// A committed swipe is a Back press.
++  @override
++  void handleCommitBackGesture() {
++    if (!_gestureClaimed) return;
++    _gestureClaimed = false;
++    _run(_moveAppToBackground);
++  }
++
++  @override
++  void handleCancelBackGesture() {
++    _gestureClaimed = false;
++  }
++
++  static void _run(Future<void> Function() action) {
++    unawaited(Future<void>.sync(action).catchError((Object _) {}));
++  }
++}
+diff --git a/lib/features/call/presentation/foreground_call_overlay.dart b/lib/features/call/presentation/foreground_call_overlay.dart
+index e1e73cf8c..7d5256978 100644
+--- a/lib/features/call/presentation/foreground_call_overlay.dart
++++ b/lib/features/call/presentation/foreground_call_overlay.dart
+@@ -11,6 +11,7 @@ import '../domain/call_end_reason.dart';
+ import '../domain/call_id.dart';
+ import '../domain/call_session_snapshot.dart';
+ import '../domain/call_state.dart';
++import 'foreground_call_back_guard.dart';
+ import 'locked_call_projection.dart';
+ import 'screens/active_call_screen.dart';
+ import 'screens/incoming_call_screen.dart';
+@@ -33,6 +34,7 @@ final class ForegroundCallOverlay extends StatefulWidget {
+     required this.child,
+     this.now,
+     this.onAttached,
++    this.backGuard,
+   });
+ 
+   final ForegroundCallCapability? capability;
+@@ -44,6 +46,11 @@ final class ForegroundCallOverlay extends StatefulWidget {
+   /// activity may attach this host without ever receiving a rendered frame.
+   final VoidCallback? onAttached;
+ 
++  /// Told whether a live call surface owns the screen, so the system Back
++  /// action sends the app to the background instead of popping the hidden
++  /// routes or finishing the activity under the call.
++  final ForegroundCallBackGuard? backGuard;
++
+   @override
+   State<ForegroundCallOverlay> createState() => _ForegroundCallOverlayState();
+ }
+@@ -66,6 +73,8 @@ class _ForegroundCallOverlayState extends State<ForegroundCallOverlay> {
+   Timer? _terminalNoticeTimer;
+   CallId? _terminalNoticeCallId;
+   bool _terminalNoticeVisible = false;
++  bool _navigatorCanHandlePop = false;
++  bool? _publishedOwnsBack;
+   final _lockedProjection = LockedCallProjection();
+   bool _lockedLight = false;
+   AppLocalizations? _lockedL10n;
+@@ -104,6 +113,9 @@ class _ForegroundCallOverlayState extends State<ForegroundCallOverlay> {
+   @override
+   void didUpdateWidget(covariant ForegroundCallOverlay oldWidget) {
+     super.didUpdateWidget(oldWidget);
++    if (!identical(oldWidget.backGuard, widget.backGuard)) {
++      oldWidget.backGuard?.surfaceOwnsBack = false;
++    }
+     if (!identical(oldWidget.capability, widget.capability)) {
+       _bindCapability(notify: false);
+       return;
+@@ -125,6 +137,7 @@ class _ForegroundCallOverlayState extends State<ForegroundCallOverlay> {
+     unawaited(_subscription?.cancel());
+     _terminalNoticeTimer?.cancel();
+     _lockedProjection.dispose();
++    widget.backGuard?.surfaceOwnsBack = false;
+     super.dispose();
+   }
+ 
+@@ -307,6 +320,16 @@ class _ForegroundCallOverlayState extends State<ForegroundCallOverlay> {
+       };
+     }
+ 
++    // A live call surface owns Back. The terminal notice is informational
++    // only and leaves Back to the navigator.
++    final backGuard = widget.backGuard;
++    final ownsBack =
++        backGuard != null &&
++        surface != null &&
++        surfaceKind != _ForegroundCallSurface.terminal;
++    backGuard?.surfaceOwnsBack = ownsBack;
++    _publishFrameworkHandlesBack(ownsBack);
++
+     // A software keyboard reports itself as the bottom view inset; keep the
+     // controls above it while it is still (dis)appearing.
+     final keyboardInset = MediaQuery.viewInsetsOf(context).bottom;
+@@ -321,7 +344,23 @@ class _ForegroundCallOverlayState extends State<ForegroundCallOverlay> {
+           // backgrounds. A call owns the screen; freeze those animations until
+           // it hides, while preserving navigation and non-animation state.
+           enabled: surface == null,
+-          child: ExcludeFocus(excluding: surface != null, child: widget.child),
++          child: ExcludeFocus(
++            excluding: surface != null,
++            child: NotificationListener<NavigationNotification>(
++              // While a call owns Back, the hidden navigator's answer must not
++              // reach the engine. At its root route it reports that it cannot
++              // pop, and on Android 13+ FlutterActivity then unregisters its
++              // back callback, so the system Back closes the task and ends
++              // the call (beta 2026-09-25). The call surface reports that the
++              // framework handles Back instead. The navigator's last value is
++              // replayed when the call surface hides.
++              onNotification: (notification) {
++                _navigatorCanHandlePop = notification.canHandlePop;
++                return _publishedOwnsBack == true;
++              },
++              child: widget.child,
++            ),
++          ),
+         ),
+         if (surface != null)
+           Positioned.fill(
+@@ -345,6 +384,25 @@ class _ForegroundCallOverlayState extends State<ForegroundCallOverlay> {
+     );
+   }
+ 
++  void _publishFrameworkHandlesBack(bool ownsBack) {
++    if (widget.backGuard == null) return;
++    if (_publishedOwnsBack == ownsBack) return;
++    final wasOwned = _publishedOwnsBack == true;
++    _publishedOwnsBack = ownsBack;
++    if (!ownsBack && !wasOwned) return;
++    // Bubbles to WidgetsApp, which forwards it to the engine as
++    // SystemNavigator.setFrameworkHandlesBack. Posted after the frame, like
++    // the navigator's own notifications. While a call owns Back this keeps
++    // Flutter's Android back callback registered, so Back reaches
++    // ForegroundCallBackGuard.
++    WidgetsBinding.instance.addPostFrameCallback((_) {
++      if (!mounted || _publishedOwnsBack != ownsBack) return;
++      NavigationNotification(
++        canHandlePop: ownsBack || _navigatorCanHandlePop,
++      ).dispatch(context);
++    });
++  }
++
+   CallControls _buildControls(CallId callId, CallAudioControlState audio) {
+     final speakerOn = audio.selectedRoute == CallAudioOutputRoute.speaker;
+     final speakerAvailable =
+diff --git a/lib/features/call/presentation/screens/active_call_screen.dart b/lib/features/call/presentation/screens/active_call_screen.dart
+index 2b83b7858..3b2a54b9c 100644
+--- a/lib/features/call/presentation/screens/active_call_screen.dart
++++ b/lib/features/call/presentation/screens/active_call_screen.dart
+@@ -132,52 +132,65 @@ class _ActiveCallScreenState extends State<ActiveCallScreen> {
+   }) {
+     final l10n = AppLocalizations.of(context)!;
+     final status = _status(l10n);
+-    return Column(
+-      mainAxisSize: MainAxisSize.min,
+-      children: [
+-        UserAvatar(peerId: widget.contactPeerId, size: compact ? 88 : 112),
+-        SizedBox(height: compact ? 12 : 24),
+-        Text(
+-          widget.contactUsername,
+-          maxLines: 1,
+-          overflow: TextOverflow.ellipsis,
+-          textAlign: TextAlign.center,
+-          style: TextStyle(
+-            color: colors.textPrimary,
+-            fontSize: compact ? 24 : 28,
+-            fontWeight: FontWeight.w600,
+-          ),
+-        ),
+-        SizedBox(height: compact ? 6 : 10),
+-        Semantics(
+-          container: true,
+-          liveRegion: true,
+-          label: status,
+-          excludeSemantics: true,
+-          child: Text(
+-            status,
+-            style: TextStyle(
+-              color: widget.state == CallState.connected
+-                  ? colors.connectedHeading
+-                  : colors.textSecondary,
+-              fontSize: 16,
+-              fontWeight: FontWeight.w500,
++    // The overlay hosts this screen outside any route scope: explicit child
++    // nodes keep the name, the status and the duration separate elements.
++    return Semantics(
++      container: true,
++      explicitChildNodes: true,
++      child: Column(
++        mainAxisSize: MainAxisSize.min,
++        children: [
++          UserAvatar(peerId: widget.contactPeerId, size: compact ? 88 : 112),
++          SizedBox(height: compact ? 12 : 24),
++          Semantics(
++            container: true,
++            child: Text(
++              widget.contactUsername,
++              maxLines: 1,
++              overflow: TextOverflow.ellipsis,
++              textAlign: TextAlign.center,
++              style: TextStyle(
++                color: colors.textPrimary,
++                fontSize: compact ? 24 : 28,
++                fontWeight: FontWeight.w600,
++              ),
+             ),
+           ),
+-        ),
+-        if (formattedDuration != null) ...[
+-          SizedBox(height: compact ? 6 : 8),
+-          Text(
+-            formattedDuration,
+-            semanticsLabel: l10n.call_duration(formattedDuration),
+-            style: TextStyle(
+-              color: colors.textPrimary,
+-              fontSize: 18,
+-              fontFeatures: const [FontFeature.tabularFigures()],
++          SizedBox(height: compact ? 6 : 10),
++          Semantics(
++            container: true,
++            identifier: 'call_status',
++            liveRegion: true,
++            label: status,
++            excludeSemantics: true,
++            child: Text(
++              status,
++              style: TextStyle(
++                color: widget.state == CallState.connected
++                    ? colors.connectedHeading
++                    : colors.textSecondary,
++                fontSize: 16,
++                fontWeight: FontWeight.w500,
++              ),
+             ),
+           ),
++          if (formattedDuration != null) ...[
++            SizedBox(height: compact ? 6 : 8),
++            Semantics(
++              container: true,
++              child: Text(
++                formattedDuration,
++                semanticsLabel: l10n.call_duration(formattedDuration),
++                style: TextStyle(
++                  color: colors.textPrimary,
++                  fontSize: 18,
++                  fontFeatures: const [FontFeature.tabularFigures()],
++                ),
++              ),
++            ),
++          ],
+         ],
+-      ],
++      ),
+     );
+   }
+ 
+diff --git a/lib/features/call/presentation/screens/incoming_call_screen.dart b/lib/features/call/presentation/screens/incoming_call_screen.dart
+index d95c41069..0d769f862 100644
+--- a/lib/features/call/presentation/screens/incoming_call_screen.dart
++++ b/lib/features/call/presentation/screens/incoming_call_screen.dart
+@@ -39,63 +39,77 @@ class IncomingCallScreen extends StatelessWidget {
+       child: SafeArea(
+         child: Padding(
+           padding: const EdgeInsets.fromLTRB(24, 48, 24, 32),
+-          child: Column(
+-            children: [
+-              const Spacer(),
+-              UserAvatar(peerId: contactPeerId, size: 112),
+-              const SizedBox(height: 24),
+-              Text(
+-                contactUsername,
+-                maxLines: 1,
+-                overflow: TextOverflow.ellipsis,
+-                textAlign: TextAlign.center,
+-                style: TextStyle(
+-                  color: colors.textPrimary,
+-                  fontSize: 28,
+-                  fontWeight: FontWeight.w600,
+-                ),
+-              ),
+-              const SizedBox(height: 10),
+-              Semantics(
+-                liveRegion: true,
+-                label: status,
+-                excludeSemantics: true,
+-                child: Text(
+-                  status,
+-                  style: TextStyle(
+-                    color: colors.textSecondary,
+-                    fontSize: 16,
+-                    fontWeight: FontWeight.w500,
++          // The overlay hosts this screen outside any route scope. Without
++          // explicit child nodes, the name, the status and the action
++          // captions merge into one accessibility element.
++          child: Semantics(
++            container: true,
++            explicitChildNodes: true,
++            child: Column(
++              children: [
++                const Spacer(),
++                UserAvatar(peerId: contactPeerId, size: 112),
++                const SizedBox(height: 24),
++                Semantics(
++                  container: true,
++                  child: Text(
++                    contactUsername,
++                    maxLines: 1,
++                    overflow: TextOverflow.ellipsis,
++                    textAlign: TextAlign.center,
++                    style: TextStyle(
++                      color: colors.textPrimary,
++                      fontSize: 28,
++                      fontWeight: FontWeight.w600,
++                    ),
+                   ),
+                 ),
+-              ),
+-              const Spacer(),
+-              Row(
+-                mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+-                children: [
+-                  _IncomingAction(
+-                    tooltip: _canRespond
+-                        ? l10n.contact_request_decline
+-                        : l10n.call_decline_unavailable,
+-                    label: l10n.contact_request_decline,
+-                    icon: Icons.call_end_rounded,
+-                    backgroundColor: const Color(0xFFE5484D),
+-                    enabled: _canRespond,
+-                    onPressed: onDecline,
+-                  ),
+-                  _IncomingAction(
+-                    tooltip: _canRespond
+-                        ? l10n.call_answer
+-                        : l10n.call_answer_unavailable,
+-                    label: l10n.call_answer,
+-                    icon: Icons.call_rounded,
+-                    backgroundColor: colors.accent,
+-                    enabled: _canRespond,
+-                    onPressed: onAnswer,
++                const SizedBox(height: 10),
++                Semantics(
++                  container: true,
++                  identifier: 'call_status',
++                  liveRegion: true,
++                  label: status,
++                  excludeSemantics: true,
++                  child: Text(
++                    status,
++                    style: TextStyle(
++                      color: colors.textSecondary,
++                      fontSize: 16,
++                      fontWeight: FontWeight.w500,
++                    ),
+                   ),
+-                ],
+-              ),
+-            ],
++                ),
++                const Spacer(),
++                Row(
++                  mainAxisAlignment: MainAxisAlignment.spaceEvenly,
++                  children: [
++                    _IncomingAction(
++                      identifier: 'call_decline',
++                      tooltip: _canRespond
++                          ? l10n.contact_request_decline
++                          : l10n.call_decline_unavailable,
++                      label: l10n.contact_request_decline,
++                      icon: Icons.call_end_rounded,
++                      backgroundColor: const Color(0xFFE5484D),
++                      enabled: _canRespond,
++                      onPressed: onDecline,
++                    ),
++                    _IncomingAction(
++                      identifier: 'call_answer',
++                      tooltip: _canRespond
++                          ? l10n.call_answer
++                          : l10n.call_answer_unavailable,
++                      label: l10n.call_answer,
++                      icon: Icons.call_rounded,
++                      backgroundColor: colors.accent,
++                      enabled: _canRespond,
++                      onPressed: onAnswer,
++                    ),
++                  ],
++                ),
++              ],
++            ),
+           ),
+         ),
+       ),
+@@ -105,6 +119,7 @@ class IncomingCallScreen extends StatelessWidget {
+ 
+ class _IncomingAction extends StatelessWidget {
+   const _IncomingAction({
++    required this.identifier,
+     required this.tooltip,
+     required this.label,
+     required this.icon,
+@@ -113,6 +128,7 @@ class _IncomingAction extends StatelessWidget {
+     required this.onPressed,
+   });
+ 
++  final String identifier;
+   final String tooltip;
+   final String label;
+   final IconData icon;
+@@ -123,31 +139,44 @@ class _IncomingAction extends StatelessWidget {
+   @override
+   Widget build(BuildContext context) {
+     final colors = context.backgroundReadableColors;
+-    return Column(
+-      mainAxisSize: MainAxisSize.min,
+-      children: [
+-        IconButton(
+-          tooltip: tooltip,
+-          onPressed: enabled ? onPressed : null,
+-          icon: Icon(icon),
+-          color: Colors.white,
+-          disabledColor: colors.disabledForeground,
+-          iconSize: 30,
+-          style: IconButton.styleFrom(
+-            backgroundColor: enabled ? backgroundColor : colors.disabledSurface,
+-            fixedSize: const Size.square(68),
++    // One accessibility element per action: the button and its caption.
++    return Semantics(
++      container: true,
++      identifier: identifier,
++      button: true,
++      enabled: enabled,
++      // Same announcement the IconButton alone had: its tooltip.
++      tooltip: tooltip,
++      onTap: enabled ? onPressed : null,
++      excludeSemantics: true,
++      child: Column(
++        mainAxisSize: MainAxisSize.min,
++        children: [
++          IconButton(
++            tooltip: tooltip,
++            onPressed: enabled ? onPressed : null,
++            icon: Icon(icon),
++            color: Colors.white,
++            disabledColor: colors.disabledForeground,
++            iconSize: 30,
++            style: IconButton.styleFrom(
++              backgroundColor: enabled
++                  ? backgroundColor
++                  : colors.disabledSurface,
++              fixedSize: const Size.square(68),
++            ),
+           ),
+-        ),
+-        const SizedBox(height: 10),
+-        Text(
+-          label,
+-          style: TextStyle(
+-            color: enabled ? colors.textSecondary : colors.disabledForeground,
+-            fontSize: 13,
+-            fontWeight: FontWeight.w500,
++          const SizedBox(height: 10),
++          Text(
++            label,
++            style: TextStyle(
++              color: enabled ? colors.textSecondary : colors.disabledForeground,
++              fontSize: 13,
++              fontWeight: FontWeight.w500,
++            ),
+           ),
+-        ),
+-      ],
++        ],
++      ),
+     );
+   }
+ }
+diff --git a/lib/features/call/presentation/screens/outgoing_call_screen.dart b/lib/features/call/presentation/screens/outgoing_call_screen.dart
+index 176eb32ff..a1ee89e39 100644
+--- a/lib/features/call/presentation/screens/outgoing_call_screen.dart
++++ b/lib/features/call/presentation/screens/outgoing_call_screen.dart
+@@ -33,58 +33,86 @@ class OutgoingCallScreen extends StatelessWidget {
+       child: SafeArea(
+         child: Padding(
+           padding: const EdgeInsets.fromLTRB(24, 48, 24, 32),
+-          child: Column(
+-            children: [
+-              const Spacer(),
+-              UserAvatar(peerId: contactPeerId, size: 112),
+-              const SizedBox(height: 24),
+-              Text(
+-                contactUsername,
+-                maxLines: 1,
+-                overflow: TextOverflow.ellipsis,
+-                textAlign: TextAlign.center,
+-                style: TextStyle(
+-                  color: colors.textPrimary,
+-                  fontSize: 28,
+-                  fontWeight: FontWeight.w600,
+-                ),
+-              ),
+-              const SizedBox(height: 10),
+-              Semantics(
+-                liveRegion: true,
+-                label: status,
+-                excludeSemantics: true,
+-                child: Text(
+-                  status,
+-                  style: TextStyle(
+-                    color: colors.textSecondary,
+-                    fontSize: 16,
+-                    fontWeight: FontWeight.w500,
++          // The overlay hosts this screen outside any route scope. Without
++          // explicit child nodes, iOS read the name, the status and the
++          // Cancel caption as one element.
++          child: Semantics(
++            container: true,
++            explicitChildNodes: true,
++            child: Column(
++              children: [
++                const Spacer(),
++                UserAvatar(peerId: contactPeerId, size: 112),
++                const SizedBox(height: 24),
++                Semantics(
++                  container: true,
++                  child: Text(
++                    contactUsername,
++                    maxLines: 1,
++                    overflow: TextOverflow.ellipsis,
++                    textAlign: TextAlign.center,
++                    style: TextStyle(
++                      color: colors.textPrimary,
++                      fontSize: 28,
++                      fontWeight: FontWeight.w600,
++                    ),
+                   ),
+                 ),
+-              ),
+-              const Spacer(),
+-              IconButton(
+-                tooltip: l10n.call_cancel,
+-                onPressed: onCancel,
+-                icon: const Icon(Icons.call_end_rounded),
+-                color: Colors.white,
+-                iconSize: 30,
+-                style: IconButton.styleFrom(
+-                  backgroundColor: const Color(0xFFE5484D),
+-                  fixedSize: const Size.square(68),
++                const SizedBox(height: 10),
++                Semantics(
++                  container: true,
++                  identifier: 'call_status',
++                  liveRegion: true,
++                  label: status,
++                  excludeSemantics: true,
++                  child: Text(
++                    status,
++                    style: TextStyle(
++                      color: colors.textSecondary,
++                      fontSize: 16,
++                      fontWeight: FontWeight.w500,
++                    ),
++                  ),
+                 ),
+-              ),
+-              const SizedBox(height: 10),
+-              Text(
+-                l10n.btn_cancel,
+-                style: TextStyle(
+-                  color: colors.textSecondary,
+-                  fontSize: 13,
+-                  fontWeight: FontWeight.w500,
++                const Spacer(),
++                // One accessibility element for the button and its caption, so
++                // the caption is not read as a separate "Cancel" text.
++                Semantics(
++                  container: true,
++                  identifier: 'call_cancel',
++                  button: true,
++                  // Same announcement the IconButton alone had: its tooltip.
++                  tooltip: l10n.call_cancel,
++                  onTap: onCancel,
++                  excludeSemantics: true,
++                  child: Column(
++                    mainAxisSize: MainAxisSize.min,
++                    children: [
++                      IconButton(
++                        tooltip: l10n.call_cancel,
++                        onPressed: onCancel,
++                        icon: const Icon(Icons.call_end_rounded),
++                        color: Colors.white,
++                        iconSize: 30,
++                        style: IconButton.styleFrom(
++                          backgroundColor: const Color(0xFFE5484D),
++                          fixedSize: const Size.square(68),
++                        ),
++                      ),
++                      const SizedBox(height: 10),
++                      Text(
++                        l10n.btn_cancel,
++                        style: TextStyle(
++                          color: colors.textSecondary,
++                          fontSize: 13,
++                          fontWeight: FontWeight.w500,
++                        ),
++                      ),
++                    ],
++                  ),
+                 ),
+-              ),
+-            ],
++              ],
++            ),
+           ),
+         ),
+       ),
+diff --git a/lib/features/call/presentation/widgets/call_controls.dart b/lib/features/call/presentation/widgets/call_controls.dart
+index 4dce402db..8cf768512 100644
+--- a/lib/features/call/presentation/widgets/call_controls.dart
++++ b/lib/features/call/presentation/widgets/call_controls.dart
+@@ -86,6 +86,7 @@ class CallControls extends StatelessWidget {
+             mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+             children: [
+               _Control(
++                identifier: 'call_mute',
+                 tooltip: muteTooltip,
+                 label: isMuted
+                     ? l10n.media_viewer_unmute
+@@ -106,6 +107,7 @@ class CallControls extends StatelessWidget {
+                       ),
+               ),
+               _Control(
++                identifier: 'call_speaker',
+                 tooltip: speakerTooltip,
+                 label: l10n.call_speaker,
+                 icon: isSpeakerOn
+@@ -126,6 +128,7 @@ class CallControls extends StatelessWidget {
+                       ),
+               ),
+               _Control(
++                identifier: 'call_end',
+                 tooltip: l10n.call_end,
+                 label: l10n.call_end_action,
+                 icon: Icons.call_end_rounded,
+@@ -178,6 +181,7 @@ class CallControls extends StatelessWidget {
+ 
+ class _Control extends StatelessWidget {
+   const _Control({
++    required this.identifier,
+     required this.tooltip,
+     required this.label,
+     required this.icon,
+@@ -187,6 +191,7 @@ class _Control extends StatelessWidget {
+     this.semanticsEnabled = true,
+   });
+ 
++  final String identifier;
+   final String tooltip;
+   final String label;
+   final IconData icon;
+@@ -199,6 +204,7 @@ class _Control extends StatelessWidget {
+   Widget build(BuildContext context) {
+     return Semantics(
+       container: true,
++      identifier: identifier,
+       button: true,
+       enabled: semanticsEnabled,
+       label: semanticsEnabled ? label : '$label. $tooltip',
+diff --git a/lib/features/conversation/presentation/screens/conversation_screen.dart b/lib/features/conversation/presentation/screens/conversation_screen.dart
+index 5691a989e..f1beafd7e 100644
+--- a/lib/features/conversation/presentation/screens/conversation_screen.dart
++++ b/lib/features/conversation/presentation/screens/conversation_screen.dart
+@@ -1518,7 +1518,13 @@ class _ConversationScreenState extends State<ConversationScreen>
+                   runSeparation: 16,
+                 ),
+               ),
+-              child: bubble,
++              // Stable automation id for the row. Only the list row carries
++              // it; the context-overlay copy of the card does not.
++              child: Semantics(
++                container: true,
++                identifier: 'message_${message.id}',
++                child: bubble,
++              ),
+             );
+         }
+       },
+diff --git a/lib/features/conversation/presentation/widgets/call_timeline_row.dart b/lib/features/conversation/presentation/widgets/call_timeline_row.dart
+index 07b54ea07..a5ffec159 100644
+--- a/lib/features/conversation/presentation/widgets/call_timeline_row.dart
++++ b/lib/features/conversation/presentation/widgets/call_timeline_row.dart
+@@ -84,36 +84,40 @@ class CallTimelineRow extends StatelessWidget {
+     final readableColors = context.backgroundReadableColors;
+     final text = callTimelineRowText(entry, l10n);
+ 
+-    return Center(
+-      child: Container(
+-        margin: const EdgeInsets.symmetric(horizontal: 32, vertical: 8),
+-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+-        decoration: BoxDecoration(
+-          color: readableColors.surfaceSubtle,
+-          borderRadius: BorderRadius.circular(12),
+-          border: Border.all(color: readableColors.divider),
+-        ),
+-        child: Row(
+-          mainAxisSize: MainAxisSize.min,
+-          children: [
+-            Icon(
+-              _callTimelineIcon(entry),
+-              size: 14,
+-              color: readableColors.textMuted,
+-            ),
+-            const SizedBox(width: 8),
+-            Flexible(
+-              child: Text(
+-                text,
+-                style: TextStyle(
+-                  fontSize: 12,
+-                  fontWeight: FontWeight.w400,
+-                  color: readableColors.textMuted,
++    return Semantics(
++      container: true,
++      identifier: 'call_row_${entry.callId}',
++      child: Center(
++        child: Container(
++          margin: const EdgeInsets.symmetric(horizontal: 32, vertical: 8),
++          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
++          decoration: BoxDecoration(
++            color: readableColors.surfaceSubtle,
++            borderRadius: BorderRadius.circular(12),
++            border: Border.all(color: readableColors.divider),
++          ),
++          child: Row(
++            mainAxisSize: MainAxisSize.min,
++            children: [
++              Icon(
++                _callTimelineIcon(entry),
++                size: 14,
++                color: readableColors.textMuted,
++              ),
++              const SizedBox(width: 8),
++              Flexible(
++                child: Text(
++                  text,
++                  style: TextStyle(
++                    fontSize: 12,
++                    fontWeight: FontWeight.w400,
++                    color: readableColors.textMuted,
++                  ),
++                  textAlign: TextAlign.center,
+                 ),
+-                textAlign: TextAlign.center,
+               ),
+-            ),
+-          ],
++            ],
++          ),
+         ),
+       ),
+     );
+diff --git a/lib/features/conversation/presentation/widgets/compose_area.dart b/lib/features/conversation/presentation/widgets/compose_area.dart
+index 80b6248cc..86a7095fc 100644
+--- a/lib/features/conversation/presentation/widgets/compose_area.dart
++++ b/lib/features/conversation/presentation/widgets/compose_area.dart
+@@ -464,6 +464,7 @@ class _ComposeAreaState extends State<ComposeArea>
+                   Padding(
+                     padding: const EdgeInsets.only(bottom: 3),
+                     child: ActionSemantics(
++                      identifier: 'chat_attach',
+                       label: AppLocalizations.of(
+                         context,
+                       )!.action_add_attachment,
+@@ -619,47 +620,58 @@ class _ComposeAreaState extends State<ComposeArea>
+                                     ]
+                                   : null,
+                             ),
+-                            child: TextField(
+-                              controller: _controller,
+-                              focusNode: _focusNode,
+-                              textDirection: _inputDirection,
+-                              maxLines: null,
+-                              maxLength: maxMessageLength,
+-                              enabled: !_isRecording,
+-                              style: TextStyle(
+-                                fontSize: 15,
+-                                color: isLightSurface
+-                                    ? readableColors.textPrimary
+-                                    : const Color.fromRGBO(255, 255, 255, 0.95),
+-                                height: 1.5,
+-                              ),
+-                              decoration: InputDecoration(
+-                                hintText: AppLocalizations.of(
+-                                  context,
+-                                )!.conversation_hint,
+-                                hintStyle: TextStyle(
++                            // The container makes this the text field's own
++                            // node, so the automation id lands on it.
++                            child: Semantics(
++                              container: true,
++                              identifier: 'chat_composer',
++                              child: TextField(
++                                controller: _controller,
++                                focusNode: _focusNode,
++                                textDirection: _inputDirection,
++                                maxLines: null,
++                                maxLength: maxMessageLength,
++                                enabled: !_isRecording,
++                                style: TextStyle(
+                                   fontSize: 15,
+                                   color: isLightSurface
+-                                      ? readableColors.composerHint
+-                                      : (_hasFocus
+-                                            ? const Color.fromRGBO(
+-                                                255,
+-                                                255,
+-                                                255,
+-                                                0.2,
+-                                              )
+-                                            : readableColors.composerHint),
++                                      ? readableColors.textPrimary
++                                      : const Color.fromRGBO(
++                                          255,
++                                          255,
++                                          255,
++                                          0.95,
++                                        ),
++                                  height: 1.5,
+                                 ),
+-                                border: InputBorder.none,
+-                                // The rounded AnimatedContainer above paints the
+-                                // fill; the light theme's filled
+-                                // InputDecorationTheme would otherwise paint a
+-                                // square fill rect on top of it.
+-                                filled: false,
+-                                counterText: '',
+-                                contentPadding: const EdgeInsets.symmetric(
+-                                  horizontal: 16,
+-                                  vertical: 12,
++                                decoration: InputDecoration(
++                                  hintText: AppLocalizations.of(
++                                    context,
++                                  )!.conversation_hint,
++                                  hintStyle: TextStyle(
++                                    fontSize: 15,
++                                    color: isLightSurface
++                                        ? readableColors.composerHint
++                                        : (_hasFocus
++                                              ? const Color.fromRGBO(
++                                                  255,
++                                                  255,
++                                                  255,
++                                                  0.2,
++                                                )
++                                              : readableColors.composerHint),
++                                  ),
++                                  border: InputBorder.none,
++                                  // The rounded AnimatedContainer above paints the
++                                  // fill; the light theme's filled
++                                  // InputDecorationTheme would otherwise paint a
++                                  // square fill rect on top of it.
++                                  filled: false,
++                                  counterText: '',
++                                  contentPadding: const EdgeInsets.symmetric(
++                                    horizontal: 16,
++                                    vertical: 12,
++                                  ),
+                                 ),
+                               ),
+                             ),
+@@ -700,6 +712,7 @@ class _ComposeAreaState extends State<ComposeArea>
+                               );
+                             },
+                             child: ActionSemantics(
++                              identifier: 'chat_send',
+                               label: AppLocalizations.of(
+                                 context,
+                               )!.action_send_message,
+diff --git a/lib/features/conversation/presentation/widgets/conversation_header.dart b/lib/features/conversation/presentation/widgets/conversation_header.dart
+index fa3feab32..7eb32fef2 100644
+--- a/lib/features/conversation/presentation/widgets/conversation_header.dart
++++ b/lib/features/conversation/presentation/widgets/conversation_header.dart
+@@ -226,6 +226,8 @@ class _ConversationCallAction extends StatelessWidget {
+         : _truthfulUnavailableMessage(context);
+ 
+     return Semantics(
++      container: true,
++      identifier: 'chat_call_button',
+       button: true,
+       enabled: enabled || canRetry,
+       label: enabled
+diff --git a/lib/features/conversation/presentation/widgets/voice_record_button.dart b/lib/features/conversation/presentation/widgets/voice_record_button.dart
+index 493fdbb30..9c46cb18f 100644
+--- a/lib/features/conversation/presentation/widgets/voice_record_button.dart
++++ b/lib/features/conversation/presentation/widgets/voice_record_button.dart
+@@ -126,6 +126,8 @@ class _VoiceRecordButtonState extends State<VoiceRecordButton> {
+     final enabled = phase != VoiceRecordPhase.stopping;
+ 
+     return Semantics(
++      container: true,
++      identifier: 'chat_record_voice',
+       button: true,
+       enabled: enabled,
+       label: label,
+diff --git a/lib/l10n/app_ar.arb b/lib/l10n/app_ar.arb
+index ab5f21ce4..d796a3b15 100644
+--- a/lib/l10n/app_ar.arb
++++ b/lib/l10n/app_ar.arb
+@@ -1917,5 +1917,6 @@
+   "voice_call_unavailable": "المكالمات الصوتية غير متاحة حاليًا",
+   "push_registration_health_retrying": "جارٍ إعادة المحاولة…",
+   "orbit_loading_contacts": "جارٍ تحميل جهات الاتصال…",
+-  "media_loading": "جارٍ تحميل الوسائط…"
++  "media_loading": "جارٍ تحميل الوسائط…",
++  "media_voice_message_label": "رسالة صوتية"
+ }
+diff --git a/lib/l10n/app_de.arb b/lib/l10n/app_de.arb
+index ce4481758..5e572e1e8 100644
+--- a/lib/l10n/app_de.arb
++++ b/lib/l10n/app_de.arb
+@@ -1917,5 +1917,6 @@
+   "voice_call_unavailable": "Sprachanrufe sind derzeit nicht verfügbar",
+   "push_registration_health_retrying": "Erneuter Versuch…",
+   "orbit_loading_contacts": "Kontakte werden geladen…",
+-  "media_loading": "Medien werden geladen…"
++  "media_loading": "Medien werden geladen…",
++  "media_voice_message_label": "Sprachnachricht"
+ }
+diff --git a/lib/l10n/app_en.arb b/lib/l10n/app_en.arb
+index 1403e20c5..2753147ee 100644
+--- a/lib/l10n/app_en.arb
++++ b/lib/l10n/app_en.arb
+@@ -2056,5 +2056,9 @@
+   "voice_call_unavailable": "Voice calling is unavailable right now",
+   "push_registration_health_retrying": "Trying again…",
+   "orbit_loading_contacts": "Loading contacts…",
+-  "media_loading": "Loading media…"
++  "media_loading": "Loading media…",
++  "media_voice_message_label": "Voice message",
++  "@media_voice_message_label": {
++    "description": "Screen-reader label that tells the user a chat bubble holds a voice message."
++  }
+ }
+diff --git a/lib/l10n/app_localizations.dart b/lib/l10n/app_localizations.dart
+index 207c1a86f..0d3423264 100644
+--- a/lib/l10n/app_localizations.dart
++++ b/lib/l10n/app_localizations.dart
+@@ -6799,6 +6799,12 @@ abstract class AppLocalizations {
+   /// In en, this message translates to:
+   /// **'Loading media…'**
+   String get media_loading;
++
++  /// Screen-reader label that tells the user a chat bubble holds a voice message.
++  ///
++  /// In en, this message translates to:
++  /// **'Voice message'**
++  String get media_voice_message_label;
+ }
+ 
+ class _AppLocalizationsDelegate
+diff --git a/lib/l10n/app_localizations_ar.dart b/lib/l10n/app_localizations_ar.dart
+index d5c9a508e..be6031542 100644
+--- a/lib/l10n/app_localizations_ar.dart
++++ b/lib/l10n/app_localizations_ar.dart
+@@ -4142,4 +4142,7 @@ class AppLocalizationsAr extends AppLocalizations {
+ 
+   @override
+   String get media_loading => 'جارٍ تحميل الوسائط…';
++
++  @override
++  String get media_voice_message_label => 'رسالة صوتية';
+ }
+diff --git a/lib/l10n/app_localizations_de.dart b/lib/l10n/app_localizations_de.dart
+index 46a8a463d..1e5c029d0 100644
+--- a/lib/l10n/app_localizations_de.dart
++++ b/lib/l10n/app_localizations_de.dart
+@@ -4167,4 +4167,7 @@ class AppLocalizationsDe extends AppLocalizations {
+ 
+   @override
+   String get media_loading => 'Medien werden geladen…';
++
++  @override
++  String get media_voice_message_label => 'Sprachnachricht';
+ }
+diff --git a/lib/l10n/app_localizations_en.dart b/lib/l10n/app_localizations_en.dart
+index 88def044f..031677fa1 100644
+--- a/lib/l10n/app_localizations_en.dart
++++ b/lib/l10n/app_localizations_en.dart
+@@ -4074,4 +4074,7 @@ class AppLocalizationsEn extends AppLocalizations {
+ 
+   @override
+   String get media_loading => 'Loading media…';
++
++  @override
++  String get media_voice_message_label => 'Voice message';
+ }
+diff --git a/lib/shared/widgets/action_semantics.dart b/lib/shared/widgets/action_semantics.dart
+index a8a68642c..a70701250 100644
+--- a/lib/shared/widgets/action_semantics.dart
++++ b/lib/shared/widgets/action_semantics.dart
+@@ -7,14 +7,22 @@ class ActionSemantics extends StatelessWidget {
+     required this.label,
+     required this.enabled,
+     required this.child,
++    this.identifier,
+   });
+ 
+   final String label;
+   final bool enabled;
+   final Widget child;
+ 
++  /// Stable automation id (Android resource-id, iOS accessibilityIdentifier).
++  /// When set, the control is its own semantics node so the id cannot be
++  /// absorbed by an ancestor.
++  final String? identifier;
++
+   @override
+   Widget build(BuildContext context) => Semantics(
++    container: identifier != null,
++    identifier: identifier,
+     button: true,
+     enabled: enabled,
+     label: label,
+diff --git a/lib/shared/widgets/media/audio_player_widget.dart b/lib/shared/widgets/media/audio_player_widget.dart
+index f7622875d..41634a53d 100644
+--- a/lib/shared/widgets/media/audio_player_widget.dart
++++ b/lib/shared/widgets/media/audio_player_widget.dart
+@@ -506,76 +506,81 @@ class _AudioPlayerWidgetState extends State<AudioPlayerWidget>
+ 
+     final hasWaveform = widget.attachment.waveform != null;
+ 
+-    final player = Row(
+-      children: [
+-        // Play/pause button
+-        GestureDetector(
+-          onTap: _isAvailable ? _togglePlayPause : null,
+-          child: Container(
+-            width: 32,
+-            height: 32,
+-            decoration: BoxDecoration(
+-              shape: BoxShape.circle,
+-              color: _isAvailable
+-                  ? const Color.fromRGBO(78, 205, 196, 0.20)
+-                  : const Color.fromRGBO(255, 255, 255, 0.06),
+-            ),
+-            child: Icon(
+-              _isPlaying ? Icons.pause_rounded : Icons.play_arrow_rounded,
+-              size: 14,
+-              color: _isAvailable
+-                  ? const Color(0xFF4ecdc4)
+-                  : const Color.fromRGBO(255, 255, 255, 0.25),
++    // Screen readers otherwise hear only the duration and the time, with no
++    // hint that the bubble is a voice message.
++    final player = Semantics(
++      label: AppLocalizations.of(context)!.media_voice_message_label,
++      child: Row(
++        children: [
++          // Play/pause button
++          GestureDetector(
++            onTap: _isAvailable ? _togglePlayPause : null,
++            child: Container(
++              width: 32,
++              height: 32,
++              decoration: BoxDecoration(
++                shape: BoxShape.circle,
++                color: _isAvailable
++                    ? const Color.fromRGBO(78, 205, 196, 0.20)
++                    : const Color.fromRGBO(255, 255, 255, 0.06),
++              ),
++              child: Icon(
++                _isPlaying ? Icons.pause_rounded : Icons.play_arrow_rounded,
++                size: 14,
++                color: _isAvailable
++                    ? const Color(0xFF4ecdc4)
++                    : const Color.fromRGBO(255, 255, 255, 0.25),
++              ),
+             ),
+           ),
+-        ),
+-        const SizedBox(width: 8),
+-        // Progress: waveform bars or slider
+-        Expanded(
+-          child: SizedBox(
+-            height: 28,
+-            child: hasWaveform
+-                ? WaveformSeekBar(
+-                    waveform: widget.attachment.waveform,
+-                    progress: progress.clamp(0.0, 1.0),
+-                    onSeek: _isAvailable && _isLoaded ? _onSeek : null,
+-                  )
+-                : SliderTheme(
+-                    data: SliderThemeData(
+-                      trackHeight: 3,
+-                      activeTrackColor: const Color(0xFF4ecdc4),
+-                      inactiveTrackColor: const Color.fromRGBO(
+-                        255,
+-                        255,
+-                        255,
+-                        0.15,
+-                      ),
+-                      thumbColor: const Color(0xFF4ecdc4),
+-                      thumbShape: const RoundSliderThumbShape(
+-                        enabledThumbRadius: 5,
++          const SizedBox(width: 8),
++          // Progress: waveform bars or slider
++          Expanded(
++            child: SizedBox(
++              height: 28,
++              child: hasWaveform
++                  ? WaveformSeekBar(
++                      waveform: widget.attachment.waveform,
++                      progress: progress.clamp(0.0, 1.0),
++                      onSeek: _isAvailable && _isLoaded ? _onSeek : null,
++                    )
++                  : SliderTheme(
++                      data: SliderThemeData(
++                        trackHeight: 3,
++                        activeTrackColor: const Color(0xFF4ecdc4),
++                        inactiveTrackColor: const Color.fromRGBO(
++                          255,
++                          255,
++                          255,
++                          0.15,
++                        ),
++                        thumbColor: const Color(0xFF4ecdc4),
++                        thumbShape: const RoundSliderThumbShape(
++                          enabledThumbRadius: 5,
++                        ),
++                        overlayShape: const RoundSliderOverlayShape(
++                          overlayRadius: 10,
++                        ),
+                       ),
+-                      overlayShape: const RoundSliderOverlayShape(
+-                        overlayRadius: 10,
++                      child: Slider(
++                        value: progress.clamp(0.0, 1.0),
++                        onChanged: _isAvailable && _isLoaded ? _onSeek : null,
+                       ),
+                     ),
+-                    child: Slider(
+-                      value: progress.clamp(0.0, 1.0),
+-                      onChanged: _isAvailable && _isLoaded ? _onSeek : null,
+-                    ),
+-                  ),
++            ),
+           ),
+-        ),
+-        const SizedBox(width: 8),
+-        // Duration label
+-        Text(
+-          durationText,
+-          style: const TextStyle(
+-            fontSize: 11,
+-            fontWeight: FontWeight.w400,
+-            color: Color.fromRGBO(255, 255, 255, 0.25),
++          const SizedBox(width: 8),
++          // Duration label
++          Text(
++            durationText,
++            style: const TextStyle(
++              fontSize: 11,
++              fontWeight: FontWeight.w400,
++              color: Color.fromRGBO(255, 255, 255, 0.25),
++            ),
+           ),
+-        ),
+-      ],
++        ],
++      ),
+     );
+     final label = widget.renderedSemanticsLabel;
+     if (label == null || !_isLoaded) return player;
+diff --git a/test/core/bootstrap/canonical_runtime_shutdown_sequence_test.dart b/test/core/bootstrap/canonical_runtime_shutdown_sequence_test.dart
+new file mode 100644
+index 000000000..8ff9b895e
+--- /dev/null
++++ b/test/core/bootstrap/canonical_runtime_shutdown_sequence_test.dart
+@@ -0,0 +1,86 @@
++import 'dart:async';
++
++import 'package:fake_async/fake_async.dart';
++import 'package:flutter_app/app/bootstrap/canonical_runtime_shutdown_sequence.dart';
++import 'package:flutter_test/flutter_test.dart';
++
++// Beta 2026-09-24 (F3): the native engine-teardown shutdown request quiesced
++// Go and closed SQLCipher while the appShutdown terminate was still resolving
++// the peer endpoint. The send failed (`CALL_ENDPOINT_RESOLUTION_RESULT
++// stage=trusted_roster_load outcome=error`, then `CALL_CONTROL_SIGNAL_SEND_FAILED
++// type=terminate`), so the peer never saw the hang-up.
++
++void main() {
++  test('runtime shutdown waits for the call shutdown to settle', () async {
++    final log = <String>[];
++    final callShutdown = Completer<void>();
++    final sequence = CanonicalRuntimeShutdownSequence(
++      shutdownRuntime: () async {
++        log.add('runtime');
++        return true;
++      },
++    );
++    sequence.bindCallShutdown(() {
++      log.add('calls:start');
++      return callShutdown.future.then((_) => log.add('calls:done'));
++    });
++
++    final released = sequence.shutdown();
++    await Future<void>.delayed(Duration.zero);
++    expect(log, <String>['calls:start']);
++
++    callShutdown.complete();
++    expect(await released, isTrue);
++    expect(log, <String>['calls:start', 'calls:done', 'runtime']);
++  });
++
++  test('a hung call shutdown is bounded by the budget', () {
++    fakeAsync((async) {
++      final log = <String>[];
++      final sequence = CanonicalRuntimeShutdownSequence(
++        shutdownRuntime: () async {
++          log.add('runtime');
++          return true;
++        },
++        callShutdownBudget: const Duration(seconds: 2),
++      );
++      sequence.bindCallShutdown(() => Completer<void>().future);
++
++      bool? released;
++      sequence.shutdown().then((value) => released = value);
++      async.elapse(const Duration(milliseconds: 1999));
++      expect(log, isEmpty);
++      async.elapse(const Duration(milliseconds: 2));
++      async.flushMicrotasks();
++      expect(log, <String>['runtime']);
++      expect(released, isTrue);
++    });
++  });
++
++  test('a failed call shutdown still releases the runtime', () async {
++    var runtimeShutdowns = 0;
++    final sequence = CanonicalRuntimeShutdownSequence(
++      shutdownRuntime: () async {
++        runtimeShutdowns++;
++        return false;
++      },
++    );
++    sequence.bindCallShutdown(() async => throw StateError('send failed'));
++
++    expect(await sequence.shutdown(), isFalse);
++    expect(runtimeShutdowns, 1);
++  });
++
++  test('without a bound call graph the runtime shuts down directly', () async {
++    var runtimeShutdowns = 0;
++    final sequence = CanonicalRuntimeShutdownSequence(
++      shutdownRuntime: () async {
++        runtimeShutdowns++;
++        return true;
++      },
++    );
++
++    expect(await sequence.shutdown(), isTrue);
++    expect(runtimeShutdowns, 1);
++  });
++}
+diff --git a/test/features/call/application/call_coordinator_shutdown_terminate_test.dart b/test/features/call/application/call_coordinator_shutdown_terminate_test.dart
+new file mode 100644
+index 000000000..762708739
+--- /dev/null
++++ b/test/features/call/application/call_coordinator_shutdown_terminate_test.dart
+@@ -0,0 +1,234 @@
++import 'dart:async';
++
++import 'package:fake_async/fake_async.dart';
++import 'package:flutter_app/features/call/application/call_cleanup_coordinator.dart';
++import 'package:flutter_app/features/call/application/call_coordinator.dart';
++import 'package:flutter_app/features/call/application/call_history_projector.dart';
++import 'package:flutter_app/features/call/application/call_signaling_service.dart';
++import 'package:flutter_app/features/call/data/call_history_repository.dart';
++import 'package:flutter_app/features/call/domain/call_end_reason.dart';
++import 'package:flutter_app/features/call/domain/call_event.dart';
++import 'package:flutter_app/features/call/domain/call_id.dart';
++import 'package:flutter_app/features/call/domain/call_session_snapshot.dart';
++import 'package:flutter_app/features/call/domain/call_state.dart';
++import 'package:flutter_test/flutter_test.dart';
++
++// Beta 2026-09-25 (F3): the Android app was torn down during a connected
++// call. The peer (iPhone) never got a terminate: it saw mediaLost 6 s later
++// and ended with reconnectFailed after 21 s of dead air.
++//
++// Production bounds a terminal delivery to 500 ms
++// (production_call_signaling_graph.dart, `terminalEffectTimeout`). A
++// terminate re-resolves the peer endpoint and encodes the envelope before it
++// reaches the direct/mailbox legs, and on the device that took about 320 ms
++// on a quiet app. At teardown the 500 ms budget ran out, the graph then
++// closed CallSignalingService (`signalingService.close()` right after
++// `runtime.shutdown()`), and the still-running transmit hit its `_closed`
++// check and was dropped. These tests replay that order with the production
++// budget. `closed` mirrors CallSignalingService.close().
++
++final _callId = CallId.parse('66666666-6666-4666-8666-666666666666');
++final _now = DateTime.utc(2026, 9, 25, 17, 34, 40);
++
++/// Endpoint resolution plus envelope encoding under teardown load.
++const _slowPreLeg = Duration(milliseconds: 700);
++
++void main() {
++  test('engine teardown during a connected call delivers the appShutdown '
++      'terminate before call signaling closes', () {
++    fakeAsync((async) {
++      final transport = _TeardownTransport(preLegDelay: _slowPreLeg);
++      final coordinator = _productionCoordinator(transport);
++      _connect(async, coordinator);
++
++      // Engine detach: CallSignalingRuntime.shutdown -> coordinator.dispose,
++      // then ProductionCallSignalingGraph.shutdown closes the signaling
++      // service.
++      var shutdownSettled = false;
++      unawaited(
++        coordinator.dispose().catchError((Object _) {}).whenComplete(() {
++          transport.closed = true;
++          shutdownSettled = true;
++        }),
++      );
++      async.elapse(const Duration(seconds: 3));
++
++      expect(shutdownSettled, isTrue);
++      expect(transport.refused, isEmpty, reason: 'terminate was dropped');
++      expect(transport.delivered, hasLength(1));
++      expect(transport.delivered.single.endReason, CallEndReason.appShutdown);
++    });
++  });
++
++  test('a native call end during teardown, then engine detach, still '
++      'delivers the terminate before call signaling closes', () {
++    fakeAsync((async) {
++      final transport = _TeardownTransport(preLegDelay: _slowPreLeg);
++      final coordinator = _productionCoordinator(transport);
++      _connect(async, coordinator);
++
++      // Native Telecom end (providerRemoved/explicit end) reaches Dart as a
++      // native end action. Its terminal delivery outlives the 500 ms budget.
++      unawaited(
++        coordinator
++            .dispatch(
++              _event(
++                CallEventType.nativeAction,
++                nativeAction: CallNativeAction.end,
++                endReason: CallEndReason.mediaFailed,
++              ),
++            )
++            .then<void>((_) {}, onError: (Object _) {}),
++      );
++      async.elapse(const Duration(milliseconds: 600));
++      expect(coordinator.lastSnapshot?.state, CallState.ended);
++      expect(transport.delivered, isEmpty, reason: 'still resolving');
++
++      var shutdownSettled = false;
++      unawaited(
++        coordinator.dispose().catchError((Object _) {}).whenComplete(() {
++          transport.closed = true;
++          shutdownSettled = true;
++        }),
++      );
++      async.elapse(const Duration(seconds: 3));
++
++      expect(shutdownSettled, isTrue);
++      expect(transport.refused, isEmpty, reason: 'terminate was dropped');
++      expect(transport.delivered, hasLength(1));
++      expect(transport.delivered.single.endReason, CallEndReason.mediaFailed);
++    });
++  });
++
++  test('a terminate that never settles cannot hold engine teardown past the '
++      'call shutdown budget', () {
++    fakeAsync((async) {
++      final transport = _TeardownTransport(
++        preLegDelay: const Duration(seconds: 30),
++      );
++      final coordinator = _productionCoordinator(transport);
++      _connect(async, coordinator);
++
++      var shutdownSettled = false;
++      unawaited(
++        coordinator
++            .dispose()
++            .catchError((Object _) {})
++            .whenComplete(() => shutdownSettled = true),
++      );
++      // CanonicalRuntimeShutdownSequence gives call shutdown 2 s in total.
++      async.elapse(const Duration(milliseconds: 1999));
++
++      expect(shutdownSettled, isTrue);
++      expect(transport.delivered, isEmpty);
++    });
++  });
++}
++
++/// The coordinator bounds production uses in ProductionCallSignalingGraph.
++CallCoordinator _productionCoordinator(CallEffectExecutor executor) =>
++    CallCoordinator(
++      reducer: const CallReducer(),
++      cleanupCoordinator: CallCleanupCoordinator(const <CallCleanupStep>[]),
++      historyProjector: CallHistoryProjector(_MemoryHistoryRepository()),
++      effectExecutor: executor,
++      clock: () => _now,
++      idSource: () => _callId,
++      terminalEffectTimeout: const Duration(milliseconds: 500),
++      terminalHistoryTimeout: const Duration(milliseconds: 250),
++    );
++
++void _connect(FakeAsync async, CallCoordinator coordinator) {
++  for (final type in <CallEventType>[
++    CallEventType.remoteInvite,
++    CallEventType.incomingValidated,
++    CallEventType.systemUiPresented,
++    CallEventType.answer,
++    CallEventType.negotiationReady,
++    CallEventType.mediaConnected,
++  ]) {
++    var done = false;
++    unawaited(
++      coordinator
++          .dispatch(
++            _event(
++              type,
++              expiresAt: type == CallEventType.remoteInvite
++                  ? _now.add(const Duration(seconds: 45))
++                  : null,
++            ),
++          )
++          .whenComplete(() => done = true),
++    );
++    async.flushMicrotasks();
++    expect(done, isTrue, reason: type.name);
++  }
++  expect(coordinator.activeSession?.state, CallState.connected);
++}
++
++CallEvent _event(
++  CallEventType type, {
++  DateTime? expiresAt,
++  CallNativeAction? nativeAction,
++  CallEndReason? endReason,
++}) => CallEvent(
++  type: type,
++  eventId: 'teardown-${type.name}',
++  occurredAt: _now,
++  callId: _callId,
++  contactPeerId: 'remote-account',
++  localAccountPeerId: 'local-account',
++  localDeviceId: 'local-device',
++  remoteAccountPeerId: 'remote-account',
++  remoteDeviceId: 'remote-device',
++  expiresAt: expiresAt,
++  admission: IncomingCallAdmission.accepted,
++  nativeAction: nativeAction,
++  endReason: endReason,
++);
++
++/// Terminal sends shaped like CallSignalingService.transmit: the pre-leg work
++/// (endpoint resolution and envelope encoding) runs first, then the send is
++/// refused if the service was closed meanwhile.
++final class _TeardownTransport implements CallEffectExecutor {
++  _TeardownTransport({required this.preLegDelay});
++
++  final Duration preLegDelay;
++  bool closed = false;
++  final List<CallSessionSnapshot> delivered = <CallSessionSnapshot>[];
++  final List<CallSessionSnapshot> refused = <CallSessionSnapshot>[];
++
++  @override
++  Future<CallEvent?> execute(
++    CallEffect effect,
++    CallSessionSnapshot snapshot,
++  ) async {
++    if (effect.type != CallEffectType.sendTerminate) return null;
++    await Future<void>.delayed(preLegDelay);
++    if (closed) {
++      refused.add(snapshot);
++      throw const CallSignalingException(
++        CallSignalingErrorCode.migrationPaused,
++      );
++    }
++    delivered.add(snapshot);
++    return null;
++  }
++}
++
++final class _MemoryHistoryRepository implements CallHistoryRepository {
++  final Map<CallId, CallHistoryEntry> rows = <CallId, CallHistoryEntry>{};
++
++  @override
++  Future<CallHistoryEntry?> getByCallId(CallId callId) async => rows[callId];
++
++  @override
++  Future<List<CallHistoryEntry>> listForContact(
++    String contactAccountPeerId,
++  ) async => rows.values.toList();
++
++  @override
++  Future<void> upsertTerminal(CallHistoryEntry entry) async {
++    rows.putIfAbsent(entry.callId, () => entry);
++  }
++}
+diff --git a/test/features/call/application/call_history_connected_failure_test.dart b/test/features/call/application/call_history_connected_failure_test.dart
+new file mode 100644
+index 000000000..082fa71a5
+--- /dev/null
++++ b/test/features/call/application/call_history_connected_failure_test.dart
+@@ -0,0 +1,85 @@
++import 'package:flutter_app/features/call/application/call_history_projector.dart';
++import 'package:flutter_app/features/call/data/call_history_repository.dart';
++import 'package:flutter_app/features/call/domain/call_end_reason.dart';
++import 'package:flutter_app/features/call/domain/call_id.dart';
++import 'package:flutter_app/features/call/domain/call_session_snapshot.dart';
++import 'package:flutter_app/features/call/domain/call_state.dart';
++import 'package:flutter_test/flutter_test.dart';
++
++/// Beta 2026-09-24: a call that talked for ~3 minutes and then lost media
++/// showed "Call failed" with no duration. A call that connected is a call
++/// that happened; its row keeps its talk time whatever ended it.
++final class _Repository implements CallHistoryRepository {
++  final Map<CallId, CallHistoryEntry> rows = <CallId, CallHistoryEntry>{};
++
++  @override
++  Future<CallHistoryEntry?> getByCallId(CallId callId) async => rows[callId];
++
++  @override
++  Future<List<CallHistoryEntry>> listForContact(String peerId) async =>
++      rows.values.toList();
++
++  @override
++  Future<void> upsertTerminal(CallHistoryEntry entry) async {
++    rows.putIfAbsent(entry.callId, () => entry);
++  }
++}
++
++CallSessionSnapshot _ended({
++  required CallEndReason reason,
++  required DateTime? connectedAt,
++  CallDirection direction = CallDirection.outgoing,
++}) {
++  final startedAt = DateTime.utc(2026, 9, 24, 22, 57);
++  return CallSessionSnapshot.active(
++    callId: CallId.parse('33333333-3333-4333-8333-333333333333'),
++    contactPeerId: 'contact-a',
++    direction: direction,
++    state: CallState.ended,
++    callerAccountPeerId: direction == CallDirection.outgoing
++        ? 'local-account'
++        : 'contact-a',
++    callerDeviceId: direction == CallDirection.outgoing
++        ? 'local-device'
++        : 'contact-device',
++    startedAt: startedAt,
++    connectedAt: connectedAt,
++    endedAt: DateTime.utc(2026, 9, 24, 23, 0, 12),
++    endReason: reason,
++  );
++}
++
++void main() {
++  const failures = <CallEndReason>[
++    CallEndReason.mediaFailed,
++    CallEndReason.reconnectFailed,
++    CallEndReason.signalingFailed,
++    CallEndReason.permissionDenied,
++    CallEndReason.unsupported,
++    CallEndReason.policyRejected,
++  ];
++
++  for (final reason in failures) {
++    test('BETA-0924-10 a connected call ended by ${reason.wireName} is a '
++        'completed call with its duration', () async {
++      final connectedAt = DateTime.utc(2026, 9, 24, 22, 57, 7);
++      final entry = await CallHistoryProjector(
++        _Repository(),
++      ).projectTerminal(_ended(reason: reason, connectedAt: connectedAt));
++
++      expect(entry.status, CallHistoryStatus.completed);
++      expect(entry.terminalReason, reason);
++      expect(entry.duration, const Duration(minutes: 3, seconds: 5));
++    });
++
++    test('BETA-0924-11 a never-connected call ended by ${reason.wireName} '
++        'is still a failed call', () async {
++      final entry = await CallHistoryProjector(
++        _Repository(),
++      ).projectTerminal(_ended(reason: reason, connectedAt: null));
++
++      expect(entry.status, CallHistoryStatus.failed);
++      expect(entry.duration, isNull);
++    });
++  }
++}
+diff --git a/test/features/call/domain/call_end_reason_perspective_test.dart b/test/features/call/domain/call_end_reason_perspective_test.dart
+new file mode 100644
+index 000000000..9f36c1837
+--- /dev/null
++++ b/test/features/call/domain/call_end_reason_perspective_test.dart
+@@ -0,0 +1,194 @@
++import 'package:flutter_app/features/call/application/call_history_projector.dart';
++import 'package:flutter_app/features/call/data/call_history_repository.dart';
++import 'package:flutter_app/features/call/domain/call_end_reason.dart';
++import 'package:flutter_app/features/call/domain/call_event.dart';
++import 'package:flutter_app/features/call/domain/call_id.dart';
++import 'package:flutter_app/features/call/domain/call_session_snapshot.dart';
++import 'package:flutter_app/features/call/domain/call_state.dart';
++import 'package:flutter_test/flutter_test.dart';
++
++/// Beta 2026-09-24: a terminate carries the SENDER's end reason. The receiver
++/// must read it from its own side, or a caller's hang-up shows up on the
++/// callee as "You declined".
++final _callA = CallId.parse('22222222-2222-4222-8222-222222222222');
++final _t0 = DateTime.utc(2026, 9, 24, 23);
++
++CallEvent _event(
++  CallEventType type, {
++  String? eventId,
++  CallNativeAction? nativeAction,
++  CallEndReason? endReason,
++}) => CallEvent(
++  type: type,
++  eventId: eventId ?? '${type.name}-event',
++  occurredAt: _t0,
++  callId: _callA,
++  contactPeerId: 'contact-account-a',
++  localAccountPeerId: 'local-account',
++  localDeviceId: 'local-device',
++  remoteAccountPeerId: 'contact-account-a',
++  remoteDeviceId: 'contact-device-a',
++  admission: IncomingCallAdmission.accepted,
++  nativeAction: nativeAction,
++  endReason: endReason,
++);
++
++CallSessionSnapshot _reduce(List<CallEvent> events) {
++  const reducer = CallReducer();
++  var snapshot = CallSessionSnapshot.idle(now: _t0);
++  for (final event in events) {
++    snapshot = reducer.reduce(snapshot, event).snapshot;
++  }
++  return snapshot;
++}
++
++final _incomingRinging = <CallEvent>[
++  _event(CallEventType.remoteInvite),
++  _event(CallEventType.incomingValidated),
++  _event(CallEventType.systemUiPresented),
++];
++
++final _outgoingRinging = <CallEvent>[
++  _event(CallEventType.place),
++  _event(CallEventType.outgoingInviteReady),
++  _event(CallEventType.remoteRinging),
++];
++
++final class _Repository implements CallHistoryRepository {
++  final Map<CallId, CallHistoryEntry> rows = <CallId, CallHistoryEntry>{};
++
++  @override
++  Future<CallHistoryEntry?> getByCallId(CallId callId) async => rows[callId];
++
++  @override
++  Future<List<CallHistoryEntry>> listForContact(String peerId) async =>
++      rows.values.toList();
++
++  @override
++  Future<void> upsertTerminal(CallHistoryEntry entry) async {
++    rows.putIfAbsent(entry.callId, () => entry);
++  }
++}
++
++void main() {
++  group('remote terminate reads the reason from the receiver side', () {
++    test('BETA-0924-01 a ringing callee reads the caller local_hangup as a '
++        'remote hang-up and records a missed call', () async {
++      final ended = _reduce(<CallEvent>[
++        ..._incomingRinging,
++        _event(
++          CallEventType.remoteTerminate,
++          endReason: CallEndReason.localHangup,
++        ),
++      ]);
++
++      expect(ended.state, CallState.ended);
++      expect(ended.endReason, CallEndReason.remoteHangup);
++      final entry = await CallHistoryProjector(
++        _Repository(),
++      ).projectTerminal(ended);
++      expect(entry.status, CallHistoryStatus.missed);
++    });
++
++    test('BETA-0924-02 a connected peer reads local_hangup as a remote '
++        'hang-up and keeps the completed row', () async {
++      final ended = _reduce(<CallEvent>[
++        ..._outgoingRinging,
++        _event(CallEventType.remoteAccept),
++        _event(CallEventType.negotiationReady),
++        _event(CallEventType.mediaConnected),
++        _event(
++          CallEventType.remoteTerminate,
++          endReason: CallEndReason.localHangup,
++        ),
++      ]);
++
++      expect(ended.endReason, CallEndReason.remoteHangup);
++      final entry = await CallHistoryProjector(
++        _Repository(),
++      ).projectTerminal(ended);
++      expect(entry.status, CallHistoryStatus.completed);
++    });
++
++    for (final reason in <CallEndReason>[
++      CallEndReason.callerCancelled,
++      CallEndReason.noAnswer,
++      CallEndReason.expired,
++      CallEndReason.mediaFailed,
++    ]) {
++      test(
++        'BETA-0924-03 a shared-meaning reason ${reason.wireName} is kept',
++        () {
++          final ended = _reduce(<CallEvent>[
++            ..._incomingRinging,
++            _event(CallEventType.remoteTerminate, endReason: reason),
++          ]);
++          expect(ended.endReason, reason);
++        },
++      );
++    }
++
++    test(
++      'BETA-0924-04 a terminate without a reason stays a remote hang-up',
++      () {
++        final ended = _reduce(<CallEvent>[
++          ..._incomingRinging,
++          _event(CallEventType.remoteTerminate),
++        ]);
++        expect(ended.endReason, CallEndReason.remoteHangup);
++      },
++    );
++  });
++
++  group('caller native end before connect is a caller cancel', () {
++    test('BETA-0924-05 an outgoing ringing call ended from the system UI is '
++        'recorded and sent as caller_cancelled', () {
++      const reducer = CallReducer();
++      final ringing = _reduce(_outgoingRinging);
++
++      final reduction = reducer.reduce(
++        ringing,
++        _event(
++          CallEventType.nativeAction,
++          eventId: 'native-end',
++          nativeAction: CallNativeAction.end,
++        ),
++      );
++
++      expect(reduction.snapshot.endReason, CallEndReason.callerCancelled);
++      expect(
++        reduction.effects.map((effect) => effect.type),
++        contains(CallEffectType.sendTerminate),
++      );
++    });
++
++    test('BETA-0924-06 a connected outgoing call ended from the system UI '
++        'stays a local hang-up', () {
++      final ended = _reduce(<CallEvent>[
++        ..._outgoingRinging,
++        _event(CallEventType.remoteAccept),
++        _event(CallEventType.negotiationReady),
++        _event(CallEventType.mediaConnected),
++        _event(
++          CallEventType.nativeAction,
++          eventId: 'native-end',
++          nativeAction: CallNativeAction.end,
++        ),
++      ]);
++      expect(ended.endReason, CallEndReason.localHangup);
++    });
++
++    test('BETA-0924-07 a ringing callee ended from the system UI keeps '
++        'local_hangup (it declined)', () {
++      final ended = _reduce(<CallEvent>[
++        ..._incomingRinging,
++        _event(
++          CallEventType.nativeAction,
++          eventId: 'native-end',
++          nativeAction: CallNativeAction.end,
++        ),
++      ]);
++      expect(ended.endReason, CallEndReason.localHangup);
++    });
++  });
++}
+diff --git a/test/features/call/infrastructure/android_call_detached_audio_cleanup_test.dart b/test/features/call/infrastructure/android_call_detached_audio_cleanup_test.dart
+new file mode 100644
+index 000000000..c937d3239
+--- /dev/null
++++ b/test/features/call/infrastructure/android_call_detached_audio_cleanup_test.dart
+@@ -0,0 +1,273 @@
++import 'dart:async';
++
++import 'package:flutter/services.dart';
++import 'package:flutter_app/features/call/application/call_cleanup_coordinator.dart';
++import 'package:flutter_app/features/call/application/call_coordinator.dart';
++import 'package:flutter_app/features/call/application/call_history_projector.dart';
++import 'package:flutter_app/features/call/application/handle_incoming_call_signal.dart';
++import 'package:flutter_app/features/call/data/call_history_repository.dart';
++import 'package:flutter_app/features/call/domain/call_event.dart';
++import 'package:flutter_app/features/call/domain/call_id.dart';
++import 'package:flutter_app/features/call/domain/call_session_snapshot.dart';
++import 'package:flutter_app/features/call/domain/call_state.dart';
++import 'package:flutter_app/features/call/infrastructure/android_call_lifecycle_adapter.dart';
++import 'package:flutter_test/flutter_test.dart';
++
++// Beta 2026-09-24 (F4): an Android Back press finished MainActivity during a
++// connected call. MainActivity.onDestroy disposed the native call bridge first
++// (its controller detach ended the Telecom call and removed the method
++// handler), then Dart saw `detached` and ended the call with appShutdown.
++// Every later native audio command failed, so the audio controller reported
++// cleanupFailed and terminal cleanup stayed `blocked reason=callMedia`.
++
++const _nowMs = 2_000_000;
++const _expiresAtMs = _nowMs + 45_000;
++const _callHandle = '33333333-3333-4333-8333-333333333333';
++final _callId = CallId.parse('22222222-2222-4222-8222-222222222222');
++final _now = DateTime.fromMillisecondsSinceEpoch(_nowMs, isUtc: true);
++
++void main() {
++  test(
++    'appShutdown after the native bridge detached releases audio and cleanup '
++    'reaches ready',
++    () async {
++      late AndroidCallLifecycleAdapter adapter;
++      final native = _NativeHarness()..attachResult = _emptyBatch();
++      final deactivateResult = Completer<Object?>();
++      final cleanup = CallCleanupCoordinator(<CallCleanupStep>[
++        CallCleanupStep('call_media', (_) async {
++          await _until(() => native.callsOf('end').isNotEmpty);
++          try {
++            await adapter.deactivate();
++            if (!deactivateResult.isCompleted) deactivateResult.complete(null);
++          } catch (error) {
++            if (!deactivateResult.isCompleted) deactivateResult.complete(error);
++            rethrow;
++          }
++        }, requiredForTerminalAck: true),
++      ], stepTimeout: const Duration(seconds: 2));
++      final coordinator = _coordinator(cleanupCoordinator: cleanup);
++      adapter = _adapter(native, coordinator);
++
++      await adapter.start();
++      await _prepareIncoming(coordinator);
++      expect(await adapter.present(_presentation()), isTrue);
++      await adapter.activateAudio();
++      expect(adapter.ownsSession, isTrue);
++
++      // The activity is gone: every native method now has no handler.
++      native.detached = true;
++      await coordinator.dispatch(
++        CallEvent(
++          type: CallEventType.appShutdown,
++          eventId: 'app-shutdown-after-native-detach',
++          occurredAt: _now,
++          callId: _callId,
++          contactPeerId: 'remote-account',
++        ),
++      );
++
++      expect(await deactivateResult.future, isNull);
++      expect(adapter.ownsSession, isFalse);
++      await _until(() => coordinator.terminalCleanupAckReady(_callId));
++
++      await adapter.close();
++      await coordinator.dispose();
++      await native.events.close();
++    },
++  );
++
++  test('deactivate after the adapter closed is a released no-op', () async {
++    final native = _NativeHarness()..attachResult = _emptyBatch();
++    final coordinator = _coordinator();
++    final adapter = _adapter(native, coordinator);
++
++    await adapter.start();
++    await _prepareIncoming(coordinator);
++    expect(await adapter.present(_presentation()), isTrue);
++    await adapter.activateAudio();
++    await adapter.close();
++    final deactivateCallsBefore = native.callsOf('deactivateAudio').length;
++
++    await adapter.deactivate();
++
++    expect(adapter.ownsSession, isFalse);
++    expect(native.callsOf('deactivateAudio'), hasLength(deactivateCallsBefore));
++    await coordinator.dispose();
++    await native.events.close();
++  });
++
++  test('a live native refusal to deactivate still fails closed', () async {
++    final native = _NativeHarness()..attachResult = _emptyBatch();
++    final coordinator = _coordinator();
++    final adapter = _adapter(native, coordinator);
++
++    await adapter.start();
++    await _prepareIncoming(coordinator);
++    expect(await adapter.present(_presentation()), isTrue);
++    await adapter.activateAudio();
++
++    native.results['deactivateAudio'] = false;
++    await expectLater(
++      adapter.deactivate(),
++      throwsA(isA<AndroidCallLifecycleException>()),
++    );
++    expect(adapter.ownsSession, isTrue);
++
++    await adapter.close();
++    await coordinator.dispose();
++    await native.events.close();
++  });
++}
++
++AndroidCallLifecycleAdapter _adapter(
++  _NativeHarness native,
++  CallCoordinator coordinator,
++) {
++  final adapter = AndroidCallLifecycleAdapter(
++    invokeMethod: native.invoke,
++    nativeEvents: native.events.stream,
++    coordinator: coordinator,
++    resolveAuthenticatedHandle: (callId) =>
++        callId == _callId ? _callHandle : null,
++    clock: () => _now,
++  );
++  adapter.bindNativeMuteApplier((_, _) async => true);
++  return adapter;
++}
++
++IncomingCallPresentation _presentation() => IncomingCallPresentation(
++  callId: _callId,
++  callerAccountPeerId: 'remote-account',
++  expiresAt: DateTime.fromMillisecondsSinceEpoch(_expiresAtMs, isUtc: true),
++);
++
++Map<String, Object?> _emptyBatch() => <String, Object?>{
++  'version': 1,
++  'descriptor': null,
++  'events': <Object?>[],
++  'nativeCallId': null,
++  'highestSequence': 0,
++};
++
++Future<void> _prepareIncoming(CallCoordinator coordinator) async {
++  await coordinator.dispatch(
++    CallEvent(
++      type: CallEventType.remoteInvite,
++      eventId: 'remote-invite-first',
++      occurredAt: _now,
++      callId: _callId,
++      contactPeerId: 'remote-account',
++      localAccountPeerId: 'local-account',
++      localDeviceId: 'local-device',
++      remoteAccountPeerId: 'remote-account',
++      remoteDeviceId: 'remote-device',
++      expiresAt: DateTime.fromMillisecondsSinceEpoch(_expiresAtMs, isUtc: true),
++      transportRoute: CallRouteClass.direct,
++    ),
++  );
++  await coordinator.dispatch(
++    CallEvent(
++      type: CallEventType.incomingValidated,
++      eventId: 'incoming-validated-first',
++      occurredAt: _now,
++      callId: _callId,
++      contactPeerId: 'remote-account',
++    ),
++  );
++}
++
++CallCoordinator _coordinator({CallCleanupCoordinator? cleanupCoordinator}) =>
++    CallCoordinator(
++      reducer: const CallReducer(),
++      cleanupCoordinator:
++          cleanupCoordinator ??
++          CallCleanupCoordinator(const <CallCleanupStep>[]),
++      historyProjector: CallHistoryProjector(_History(), clock: () => _now),
++      effectExecutor: _Effects(),
++      clock: () => _now,
++      idSource: () => _callId,
++      terminalEffectTimeout: const Duration(seconds: 5),
++      terminalHistoryTimeout: const Duration(seconds: 5),
++    );
++
++Future<void> _until(bool Function() predicate) async {
++  for (var attempt = 0; attempt < 200 && !predicate(); attempt++) {
++    await Future<void>.delayed(Duration.zero);
++  }
++  expect(predicate(), isTrue);
++}
++
++final class _NativeInvocation {
++  const _NativeInvocation(this.method, this.arguments);
++
++  final String method;
++  final Map<String, Object?> arguments;
++}
++
++final class _NativeHarness {
++  final StreamController<Object?> events = StreamController<Object?>.broadcast(
++    sync: true,
++  );
++  final List<_NativeInvocation> calls = <_NativeInvocation>[];
++  final Map<String, Object?> results = <String, Object?>{};
++  Object? attachResult;
++
++  /// Mirrors MknoonCallNativeBridge.dispose: the method handler is removed,
++  /// so the platform channel answers every call with MissingPluginException.
++  bool detached = false;
++
++  Future<Object?> invoke(String method, Map<String, Object?> arguments) async {
++    calls.add(_NativeInvocation(method, Map<String, Object?>.of(arguments)));
++    if (detached) {
++      throw MissingPluginException('No implementation found for $method');
++    }
++    if (results.containsKey(method)) return results[method];
++    switch (method) {
++      case 'attach':
++        return attachResult;
++      case 'presentAuthenticated':
++      case 'registerOutgoingAuthenticated':
++      case 'adopt':
++      case 'setCapabilityEnabled':
++      case 'acknowledge':
++      case 'activateAudio':
++      case 'deactivateAudio':
++      case 'requestRoute':
++      case 'end':
++      case 'failClosed':
++      case 'detach':
++        return true;
++      default:
++        return null;
++    }
++  }
++
++  List<_NativeInvocation> callsOf(String method) =>
++      calls.where((call) => call.method == method).toList(growable: false);
++}
++
++final class _Effects implements CallEffectExecutor {
++  @override
++  Future<CallEvent?> execute(
++    CallEffect effect,
++    CallSessionSnapshot snapshot,
++  ) async => null;
++}
++
++final class _History implements CallHistoryRepository {
++  final Map<CallId, CallHistoryEntry> entries = <CallId, CallHistoryEntry>{};
++
++  @override
++  Future<CallHistoryEntry?> getByCallId(CallId callId) async => entries[callId];
++
++  @override
++  Future<List<CallHistoryEntry>> listForContact(
++    String contactAccountPeerId,
++  ) async => const <CallHistoryEntry>[];
++
++  @override
++  Future<void> upsertTerminal(CallHistoryEntry entry) async {
++    entries.putIfAbsent(entry.callId, () => entry);
++  }
++}
+diff --git a/test/features/call/integration/call_direct_mailbox_convergence_test.dart b/test/features/call/integration/call_direct_mailbox_convergence_test.dart
+index dda546517..4ff774a32 100644
+--- a/test/features/call/integration/call_direct_mailbox_convergence_test.dart
++++ b/test/features/call/integration/call_direct_mailbox_convergence_test.dart
+@@ -404,10 +404,12 @@ void main() {
+       expect(caller.activeSession, isNull);
+       expect(native.cancelledHandles, <String>[handle]);
+       expect(cleaned, hasLength(1));
+-      expect(cleaned.single.endReason, CallEndReason.localHangup);
++      // The peer sent its own `local_hangup`; on this side that is the remote
++      // hanging up (beta 2026-09-24 perspective fix).
++      expect(cleaned.single.endReason, CallEndReason.remoteHangup);
+       expect(context.read(callId), isNull);
+       expect(caller.terminalCleanupAckReady(callId), isTrue);
+-      expect(history.entries.single.terminalReason, CallEndReason.localHangup);
++      expect(history.entries.single.terminalReason, CallEndReason.remoteHangup);
+ 
+       expect(
+         await handler.handle(terminate),
+diff --git a/test/features/call/presentation/call_screen_semantics_nodes_test.dart b/test/features/call/presentation/call_screen_semantics_nodes_test.dart
+new file mode 100644
+index 000000000..04bce7ba7
+--- /dev/null
++++ b/test/features/call/presentation/call_screen_semantics_nodes_test.dart
+@@ -0,0 +1,206 @@
++import 'package:flutter/material.dart';
++import 'package:flutter/semantics.dart';
++import 'package:flutter_app/core/theme/background_readable_colors.dart';
++import 'package:flutter_app/features/call/domain/call_engine.dart';
++import 'package:flutter_app/features/call/domain/call_state.dart';
++import 'package:flutter_app/features/call/presentation/screens/active_call_screen.dart';
++import 'package:flutter_app/features/call/presentation/screens/incoming_call_screen.dart';
++import 'package:flutter_app/features/call/presentation/screens/outgoing_call_screen.dart';
++import 'package:flutter_app/features/call/presentation/widgets/call_controls.dart';
++import 'package:flutter_app/l10n/app_localizations.dart';
++import 'package:flutter_test/flutter_test.dart';
++
++/// Beta 2026-09-24: iOS read the whole outgoing call screen as one element,
++/// "Beta Pixel\nRinging\nCancel". The name, the status and each control must
++/// be separate accessibility elements, and each control carries a stable
++/// identifier for UI automation.
++void main() {
++  Widget wrap(Widget child) => MaterialApp(
++    locale: const Locale('en'),
++    localizationsDelegates: AppLocalizations.localizationsDelegates,
++    supportedLocales: AppLocalizations.supportedLocales,
++    home: Theme(
++      data: ThemeData(
++        extensions: const <ThemeExtension<dynamic>>[
++          BackgroundReadableColors.dark,
++        ],
++      ),
++      // The foreground call overlay hosts these screens in a Stack above the
++      // app, outside any route's explicit-child-nodes scope. A plain container
++      // ancestor reproduces that host: without explicit boundaries, plain
++      // texts merge into it, which is what iOS showed on device.
++      child: Scaffold(body: Semantics(container: true, child: child)),
++    ),
++  );
++
++  CallControls controls({
++    VoidCallback? onMute,
++    VoidCallback? onSpeaker,
++    VoidCallback? onEnd,
++  }) => CallControls(
++    isMuted: false,
++    isMuteAvailable: true,
++    isSpeakerOn: false,
++    isSpeakerAvailable: true,
++    selectedRoute: CallAudioOutputRoute.systemDefault,
++    audioStatusMessage: null,
++    muteUnavailableMessage: 'Microphone unavailable',
++    speakerUnavailableMessage: 'Speaker unavailable',
++    onMute: onMute ?? () {},
++    onSpeaker: onSpeaker ?? () {},
++    onEnd: onEnd ?? () {},
++  );
++
++  SemanticsData nodeWithIdentifier(WidgetTester tester, String identifier) {
++    final finder = find.bySemanticsIdentifier(identifier);
++    expect(finder, findsOneWidget, reason: 'missing identifier $identifier');
++    final node = tester.getSemantics(finder);
++    expect(node.identifier, identifier);
++    return node.getSemanticsData();
++  }
++
++  void expectTappableButton(
++    WidgetTester tester,
++    String identifier,
++    String label, {
++    bool announcedAsTooltip = false,
++  }) {
++    final data = nodeWithIdentifier(tester, identifier);
++    // The call screen buttons keep the announcement their IconButton had
++    // (its tooltip); the in-call controls announce a label.
++    expect(announcedAsTooltip ? data.tooltip : data.label, label);
++    expect(data.flagsCollection.isButton, isTrue);
++    expect(data.hasAction(SemanticsAction.tap), isTrue);
++  }
++
++  void expectNoMergedNode(String name, String status) {
++    expect(
++      find.semantics.byPredicate(
++        (node) => node.label.contains(name) && node.label.contains(status),
++      ),
++      findsNothing,
++      reason: 'name and status must be separate accessibility elements',
++    );
++  }
++
++  testWidgets('BETA-0924-40 outgoing screen splits name, status and cancel', (
++    tester,
++  ) async {
++    final semantics = tester.ensureSemantics();
++    try {
++      var cancelled = 0;
++      await tester.pumpWidget(
++        wrap(
++          OutgoingCallScreen(
++            contactPeerId: 'alice-peer',
++            contactUsername: 'Beta Pixel',
++            state: CallState.ringing,
++            onCancel: () => cancelled += 1,
++          ),
++        ),
++      );
++
++      expectNoMergedNode('Beta Pixel', 'Ringing');
++      expect(
++        find.semantics.byPredicate(
++          (node) =>
++              node.label.contains('Ringing') && node.label.contains('Cancel'),
++        ),
++        findsNothing,
++      );
++      expect(find.semantics.byLabel('Beta Pixel'), findsOne);
++      expect(nodeWithIdentifier(tester, 'call_status').label, 'Ringing');
++      expectTappableButton(
++        tester,
++        'call_cancel',
++        'Cancel call',
++        announcedAsTooltip: true,
++      );
++
++      tester.semantics.performAction(
++        find.semantics.byPredicate((node) => node.identifier == 'call_cancel'),
++        SemanticsAction.tap,
++      );
++      await tester.pump();
++      expect(cancelled, 1);
++    } finally {
++      semantics.dispose();
++    }
++  });
++
++  testWidgets('BETA-0924-41 incoming screen splits name, status, answer and '
++      'decline', (tester) async {
++    final semantics = tester.ensureSemantics();
++    try {
++      var answered = 0;
++      var declined = 0;
++      await tester.pumpWidget(
++        wrap(
++          IncomingCallScreen(
++            contactPeerId: 'alice-peer',
++            contactUsername: 'Beta iPhone',
++            state: CallState.ringing,
++            onAnswer: () => answered += 1,
++            onDecline: () => declined += 1,
++          ),
++        ),
++      );
++
++      expectNoMergedNode('Beta iPhone', 'Incoming call');
++      expect(find.semantics.byLabel('Beta iPhone'), findsOne);
++      expect(nodeWithIdentifier(tester, 'call_status').label, 'Incoming call');
++      expectTappableButton(
++        tester,
++        'call_answer',
++        'Answer',
++        announcedAsTooltip: true,
++      );
++      expectTappableButton(
++        tester,
++        'call_decline',
++        'Decline',
++        announcedAsTooltip: true,
++      );
++
++      for (final id in const <String>['call_answer', 'call_decline']) {
++        tester.semantics.performAction(
++          find.semantics.byPredicate((node) => node.identifier == id),
++          SemanticsAction.tap,
++        );
++        await tester.pump();
++      }
++      expect((answered, declined), (1, 1));
++    } finally {
++      semantics.dispose();
++    }
++  });
++
++  testWidgets('BETA-0924-42 active screen exposes status and control '
++      'identifiers', (tester) async {
++    final semantics = tester.ensureSemantics();
++    try {
++      final now = DateTime.utc(2026, 9, 24, 23);
++      await tester.pumpWidget(
++        wrap(
++          ActiveCallScreen(
++            contactPeerId: 'alice-peer',
++            contactUsername: 'Beta iPhone',
++            state: CallState.connected,
++            connectedAt: now.subtract(const Duration(seconds: 65)),
++            now: () => now,
++            controls: controls(),
++          ),
++        ),
++      );
++
++      expectNoMergedNode('Beta iPhone', 'Connected');
++      expect(find.semantics.byLabel('Beta iPhone'), findsOne);
++      expect(nodeWithIdentifier(tester, 'call_status').label, 'Connected');
++      expectTappableButton(tester, 'call_mute', 'Mute');
++      expectTappableButton(tester, 'call_speaker', 'Speaker');
++      expectTappableButton(tester, 'call_end', 'End');
++    } finally {
++      semantics.dispose();
++    }
++  });
++}
+diff --git a/test/features/call/presentation/foreground_call_back_button_test.dart b/test/features/call/presentation/foreground_call_back_button_test.dart
+new file mode 100644
+index 000000000..1e1e8680f
+--- /dev/null
++++ b/test/features/call/presentation/foreground_call_back_button_test.dart
+@@ -0,0 +1,410 @@
++import 'dart:async';
++
++import 'package:flutter/material.dart';
++import 'package:flutter/services.dart';
++import 'package:flutter_app/core/theme/background_readable_colors.dart';
++import 'package:flutter_app/features/call/application/call_audio_controller.dart';
++import 'package:flutter_app/features/call/application/foreground_call_capability.dart';
++import 'package:flutter_app/features/call/domain/call_end_reason.dart';
++import 'package:flutter_app/features/call/domain/call_id.dart';
++import 'package:flutter_app/features/call/domain/call_session_snapshot.dart';
++import 'package:flutter_app/features/call/domain/call_state.dart';
++import 'package:flutter_app/features/call/presentation/foreground_call_back_guard.dart';
++import 'package:flutter_app/features/call/presentation/foreground_call_overlay.dart';
++import 'package:flutter_app/l10n/app_localizations.dart';
++import 'package:flutter_test/flutter_test.dart';
++
++// Beta 2026-09-24 (F4): Back pressed three times on the Pixel during a
++// connected call. The call surface is a Stack layer, not a route, so Back
++// popped the hidden conversation route and then SystemNavigator.pop finished
++// MainActivity. The engine detached and the call ended with appShutdown.
++//
++// Beta 2026-09-25 (F4, second round): the first fix told the engine that the
++// framework does not handle Back while a call shows. On Android 13+ that
++// unregisters Flutter's OnBackInvokedCallback, so the FIRST Back closed the
++// task (WindowManager `type = CLOSE` at 19:34:43.850) and teardown ended the
++// call. Back must stay with Flutter and send the app to the background.
++
++final _callId = CallId.parse('33333333-3333-4333-8333-333333333333');
++final _now = DateTime.utc(2026, 9, 24, 21, 15);
++
++void main() {
++  late List<String> platformCalls;
++  late List<Object?> frameworkHandlesBack;
++  late List<String> taskCalls;
++  late List<Object?> nativeBackOwner;
++  const callTaskChannel = MethodChannel('mknoon/call_task');
++
++  setUp(() {
++    platformCalls = <String>[];
++    frameworkHandlesBack = <Object?>[];
++    taskCalls = <String>[];
++    nativeBackOwner = <Object?>[];
++    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
++        .setMockMethodCallHandler(SystemChannels.platform, (call) async {
++          platformCalls.add(call.method);
++          if (call.method == 'SystemNavigator.setFrameworkHandlesBack') {
++            frameworkHandlesBack.add(call.arguments);
++          }
++          return null;
++        });
++    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
++        .setMockMethodCallHandler(callTaskChannel, (call) async {
++          if (call.method == 'setCallOwnsBack') {
++            nativeBackOwner.add((call.arguments as Map)['owns']);
++          } else {
++            taskCalls.add(call.method);
++          }
++          return true;
++        });
++  });
++
++  tearDown(() {
++    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
++        .setMockMethodCallHandler(SystemChannels.platform, null);
++    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
++        .setMockMethodCallHandler(callTaskChannel, null);
++  });
++
++  Future<_Fixture> pumpApp(WidgetTester tester) async {
++    final capability = _Capability();
++    addTearDown(capability.dispose);
++    final navigatorKey = GlobalKey<NavigatorState>();
++    await tester.pumpWidget(
++      _GuardedApp(capability: capability, navigatorKey: navigatorKey),
++    );
++    return _Fixture(capability, navigatorKey);
++  }
++
++  Future<void> pushConversation(WidgetTester tester, _Fixture fixture) async {
++    unawaited(
++      fixture.navigatorKey.currentState!.push(
++        MaterialPageRoute<void>(
++          builder: (_) => const Scaffold(body: Text('conversation route')),
++        ),
++      ),
++    );
++    await tester.pumpAndSettle();
++  }
++
++  Future<bool> pressBack(WidgetTester tester) async {
++    final handled = await tester.binding.handlePopRoute();
++    await tester.pumpAndSettle();
++    return handled;
++  }
++
++  Future<Object?> backGesture(String method, [Object? arguments]) async {
++    final codec = SystemChannels.backGesture.codec;
++    final reply = Completer<ByteData?>();
++    await TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
++        .handlePlatformMessage(
++          SystemChannels.backGesture.name,
++          codec.encodeMethodCall(MethodCall(method, arguments)),
++          reply.complete,
++        );
++    final data = await reply.future;
++    return data == null ? null : codec.decodeEnvelope(data);
++  }
++
++  testWidgets(
++    'Back during a connected call sends the app to the background and keeps '
++    'the retained route',
++    (tester) async {
++      final fixture = await pumpApp(tester);
++      await pushConversation(tester, fixture);
++      fixture.capability.emit(_projection(state: CallState.connected));
++      await tester.pump();
++
++      for (var press = 0; press < 3; press++) {
++        expect(await pressBack(tester), isTrue);
++      }
++
++      expect(taskCalls, <String>[
++        'moveToBackground',
++        'moveToBackground',
++        'moveToBackground',
++      ]);
++      expect(fixture.navigatorKey.currentState!.canPop(), isTrue);
++      expect(platformCalls, isNot(contains('SystemNavigator.pop')));
++      expect(fixture.capability.actions, isEmpty);
++    },
++  );
++
++  testWidgets(
++    'a call surface hands Back to Android while it shows, so a predictive '
++    'swipe never reaches the hidden routes',
++    (tester) async {
++      final fixture = await pumpApp(tester);
++      await pushConversation(tester, fixture);
++      expect(nativeBackOwner, isEmpty);
++
++      // MainActivity then registers an overlay-priority back callback that
++      // moves the task to the back. Flutter's page routes never see the
++      // swipe, so the conversation route under the call stays.
++      fixture.capability.emit(_projection(state: CallState.connected));
++      await tester.pumpAndSettle();
++      expect(nativeBackOwner, <Object?>[true]);
++
++      fixture.capability.emit(_projection(state: CallState.reconnecting));
++      await tester.pumpAndSettle();
++      expect(nativeBackOwner, <Object?>[true]);
++
++      // The terminal notice is informational: Back returns to Flutter.
++      fixture.capability.emit(
++        _projection(
++          state: CallState.ended,
++          endReason: CallEndReason.remoteHangup,
++        ),
++      );
++      await tester.pumpAndSettle();
++      expect(nativeBackOwner, <Object?>[true, false]);
++      expect(taskCalls, isEmpty);
++    },
++  );
++
++  testWidgets(
++    'a predictive back swipe that still reaches Flutter during a call sends '
++    'the app to the background',
++    (tester) async {
++      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
++      final fixture = await pumpApp(tester);
++      fixture.capability.emit(_projection(state: CallState.connected));
++      await tester.pumpAndSettle();
++
++      final started = await backGesture('startBackGesture', <String, Object?>{
++        'touchOffset': <double>[5, 300],
++        'progress': 0.0,
++        'swipeEdge': 0,
++      });
++      expect(started, isTrue);
++      await backGesture('commitBackGesture');
++      await tester.pumpAndSettle();
++
++      expect(taskCalls, <String>['moveToBackground']);
++      expect(platformCalls, isNot(contains('SystemNavigator.pop')));
++      expect(fixture.capability.actions, isEmpty);
++    },
++  );
++
++  testWidgets('Back at the root route during a call never exits the app', (
++    tester,
++  ) async {
++    final fixture = await pumpApp(tester);
++    for (final state in <CallState>[
++      CallState.ringing,
++      CallState.connected,
++      CallState.reconnecting,
++    ]) {
++      fixture.capability.emit(
++        _projection(
++          state: state,
++          direction: state == CallState.ringing
++              ? CallDirection.incoming
++              : CallDirection.outgoing,
++        ),
++      );
++      await tester.pump();
++      expect(await pressBack(tester), isTrue, reason: '$state');
++    }
++
++    expect(taskCalls, List<String>.filled(3, 'moveToBackground'));
++    expect(platformCalls, isNot(contains('SystemNavigator.pop')));
++    expect(fixture.capability.actions, isEmpty);
++  });
++
++  testWidgets(
++    'a call surface keeps the platform back callback registered, even at the '
++    'root route',
++    (tester) async {
++      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
++      final fixture = await pumpApp(tester);
++      await tester.pumpAndSettle();
++      // At the root route the navigator cannot pop. Android then owns Back.
++      expect(frameworkHandlesBack.lastOrNull ?? false, isFalse);
++
++      // FlutterActivity unregisters its OnBackInvokedCallback whenever this
++      // is false, and the system Back then closes the task under the call.
++      fixture.capability.emit(_projection(state: CallState.connected));
++      await tester.pumpAndSettle();
++      expect(frameworkHandlesBack.last, isTrue);
++
++      // Route changes under the call must not give Back back to the system.
++      unawaited(
++        fixture.navigatorKey.currentState!.push(
++          MaterialPageRoute<void>(builder: (_) => const Text('third route')),
++        ),
++      );
++      await tester.pumpAndSettle();
++      expect(frameworkHandlesBack.last, isTrue);
++      fixture.navigatorKey.currentState!.pop();
++      await tester.pumpAndSettle();
++      expect(frameworkHandlesBack.last, isTrue);
++
++      // The navigator's own answer returns once the call surface hides.
++      fixture.capability.emit(null);
++      await tester.pumpAndSettle();
++      expect(frameworkHandlesBack.last, isFalse);
++      expect(platformCalls, isNot(contains('SystemNavigator.pop')));
++      expect(taskCalls, isEmpty);
++    },
++  );
++
++  testWidgets('Back works normally once the call surface is gone', (
++    tester,
++  ) async {
++    final fixture = await pumpApp(tester);
++    await pushConversation(tester, fixture);
++    fixture.capability.emit(_projection(state: CallState.connected));
++    await tester.pump();
++    expect(await pressBack(tester), isTrue);
++    expect(fixture.navigatorKey.currentState!.canPop(), isTrue);
++
++    // Ended call: the terminal notice is informational and must not trap Back.
++    fixture.capability.emit(
++      _projection(state: CallState.ended, endReason: CallEndReason.localHangup),
++    );
++    await tester.pump();
++    expect(await pressBack(tester), isTrue);
++    expect(fixture.navigatorKey.currentState!.canPop(), isFalse);
++
++    fixture.capability.emit(null);
++    await tester.pump();
++    await pressBack(tester);
++    expect(platformCalls, contains('SystemNavigator.pop'));
++    // Only the live call surface sends the app to the background.
++    expect(taskCalls, <String>['moveToBackground']);
++  });
++}
++
++final class _Fixture {
++  _Fixture(this.capability, this.navigatorKey);
++
++  final _Capability capability;
++  final GlobalKey<NavigatorState> navigatorKey;
++}
++
++/// Mirrors production: the guard attaches in the initState of the widget that
++/// builds MaterialApp, and the overlay sits in MaterialApp.builder.
++class _GuardedApp extends StatefulWidget {
++  const _GuardedApp({required this.capability, required this.navigatorKey});
++
++  final _Capability capability;
++  final GlobalKey<NavigatorState> navigatorKey;
++
++  @override
++  State<_GuardedApp> createState() => _GuardedAppState();
++}
++
++class _GuardedAppState extends State<_GuardedApp> {
++  final _guard = ForegroundCallBackGuard();
++
++  @override
++  void initState() {
++    super.initState();
++    _guard.attach();
++  }
++
++  @override
++  void dispose() {
++    _guard.detach();
++    super.dispose();
++  }
++
++  @override
++  Widget build(BuildContext context) => MaterialApp(
++    navigatorKey: widget.navigatorKey,
++    locale: const Locale('en'),
++    localizationsDelegates: AppLocalizations.localizationsDelegates,
++    supportedLocales: AppLocalizations.supportedLocales,
++    theme: ThemeData(
++      extensions: const <ThemeExtension<dynamic>>[
++        BackgroundReadableColors.dark,
++      ],
++    ),
++    builder: (context, child) => ForegroundCallOverlay(
++      capability: widget.capability,
++      backGuard: _guard,
++      loadContactDisplayName: (_) async => 'Local contact',
++      now: () => _now,
++      child: child ?? const SizedBox.shrink(),
++    ),
++    home: const Scaffold(body: Text('home route')),
++  );
++}
++
++ForegroundCallProjection _projection({
++  required CallState state,
++  CallDirection direction = CallDirection.outgoing,
++  CallEndReason? endReason,
++}) => ForegroundCallProjection(
++  session: CallSessionSnapshot.active(
++    callId: _callId,
++    contactPeerId: 'remote-peer',
++    direction: direction,
++    state: state,
++    callerAccountPeerId: direction == CallDirection.incoming
++        ? 'remote-peer'
++        : 'local-peer',
++    callerDeviceId: direction == CallDirection.incoming
++        ? 'remote-device'
++        : 'local-device',
++    startedAt: _now.subtract(const Duration(minutes: 1)),
++    ringingAt: state.index >= CallState.ringing.index ? _now : null,
++    acceptedAt: state.index >= CallState.accepted.index ? _now : null,
++    connectedAt: state == CallState.connected || state == CallState.reconnecting
++        ? _now.subtract(const Duration(seconds: 30))
++        : null,
++    endedAt: state == CallState.ended ? _now : null,
++    endReason: state == CallState.ended ? endReason : null,
++    incomingValidated: direction == CallDirection.incoming,
++  ),
++  audio: CallAudioControlState.idle,
++);
++
++final class _Capability implements ForegroundCallCapability {
++  final StreamController<ForegroundCallProjection?> _changes =
++      StreamController<ForegroundCallProjection?>.broadcast(sync: true);
++  final List<String> actions = <String>[];
++  ForegroundCallProjection? _current;
++
++  @override
++  ForegroundCallProjection? get current => _current;
++
++  @override
++  Stream<ForegroundCallProjection?> get changes => _changes.stream;
++
++  void emit(ForegroundCallProjection? projection) {
++    _current = projection;
++    _changes.add(projection);
++  }
++
++  Future<void> dispose() => _changes.close();
++
++  Future<ForegroundCallActionResult> _record(String name) async {
++    actions.add(name);
++    return ForegroundCallActionResult.applied;
++  }
++
++  @override
++  Future<ForegroundCallActionResult> answer(CallId callId) => _record('answer');
++
++  @override
++  Future<ForegroundCallActionResult> cancel(CallId callId) => _record('cancel');
++
++  @override
++  Future<ForegroundCallActionResult> decline(CallId callId) =>
++      _record('decline');
++
++  @override
++  Future<ForegroundCallActionResult> end(CallId callId) => _record('end');
++
++  @override
++  Future<ForegroundCallActionResult> setMuted(CallId callId, bool muted) =>
++      _record('setMuted');
++
++  @override
++  Future<ForegroundCallActionResult> setSpeakerEnabled(
++    CallId callId,
++    bool enabled,
++  ) => _record('setSpeakerEnabled');
++}
+diff --git a/test/features/conversation/presentation/widgets/chat_automation_identifiers_test.dart b/test/features/conversation/presentation/widgets/chat_automation_identifiers_test.dart
+new file mode 100644
+index 000000000..8ea13bcb9
+--- /dev/null
++++ b/test/features/conversation/presentation/widgets/chat_automation_identifiers_test.dart
+@@ -0,0 +1,204 @@
++import 'package:flutter/material.dart';
++import 'package:flutter/semantics.dart';
++import 'package:flutter_app/core/theme/background_readable_colors.dart';
++import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
++import 'package:flutter_app/features/conversation/domain/models/conversation_timeline_entry.dart';
++import 'package:flutter_app/features/conversation/presentation/screens/conversation_screen.dart';
++import 'package:flutter_app/features/conversation/presentation/widgets/call_timeline_row.dart';
++import 'package:flutter_app/features/conversation/presentation/widgets/compose_area.dart';
++import 'package:flutter_app/features/conversation/presentation/widgets/conversation_header.dart';
++import 'package:flutter_app/l10n/app_localizations.dart';
++import 'package:flutter_test/flutter_test.dart';
++
++/// Beta 2026-09-24: stable accessibility identifiers (Android resource-id,
++/// iOS accessibilityIdentifier) for UI automation of the chat surface. The
++/// identifiers are added next to the existing labels and never replace them.
++void main() {
++  const contactPeerId = '12D3KooWTestPeerId1234567890';
++  const ownPeerId = '12D3KooWMyPeerId1234567890';
++
++  Widget app(Widget body) => MaterialApp(
++    locale: const Locale('en'),
++    localizationsDelegates: AppLocalizations.localizationsDelegates,
++    supportedLocales: AppLocalizations.supportedLocales,
++    home: Theme(
++      data: ThemeData(
++        extensions: const <ThemeExtension<dynamic>>[
++          BackgroundReadableColors.dark,
++        ],
++      ),
++      child: Scaffold(body: body),
++    ),
++  );
++
++  SemanticsData nodeWithIdentifier(WidgetTester tester, String identifier) {
++    final finder = find.bySemanticsIdentifier(identifier);
++    expect(finder, findsOneWidget, reason: 'missing identifier $identifier');
++    final node = tester.getSemantics(finder);
++    expect(node.identifier, identifier);
++    return node.getSemanticsData();
++  }
++
++  testWidgets('BETA-0924-50 header call button carries chat_call_button and '
++      'keeps its label', (tester) async {
++    final semantics = tester.ensureSemantics();
++    try {
++      await tester.pumpWidget(
++        app(
++          ConversationHeader(
++            contactPeerId: contactPeerId,
++            contactUsername: 'Alice',
++            connectionDate: 'February 9, 2026',
++            onBack: () {},
++            onCall: () {},
++            showCallAction: true,
++            callActionEnabled: true,
++          ),
++        ),
++      );
++
++      final data = nodeWithIdentifier(tester, 'chat_call_button');
++      expect(data.label, 'Start voice call');
++      expect(data.flagsCollection.isButton, isTrue);
++      expect(data.hasAction(SemanticsAction.tap), isTrue);
++    } finally {
++      semantics.dispose();
++    }
++  });
++
++  testWidgets('BETA-0924-51 composer exposes chat_composer, chat_attach, '
++      'chat_record_voice, then chat_send once text is typed', (tester) async {
++    final semantics = tester.ensureSemantics();
++    try {
++      await tester.pumpWidget(
++        app(
++          Align(
++            alignment: Alignment.bottomCenter,
++            child: ComposeArea(
++              onSend: (_) {},
++              onAttach: () {},
++              onRecordStart: () {},
++              onRecordStop: () {},
++            ),
++          ),
++        ),
++      );
++      await tester.pump();
++
++      final composer = nodeWithIdentifier(tester, 'chat_composer');
++      expect(composer.flagsCollection.isTextField, isTrue);
++      expect(nodeWithIdentifier(tester, 'chat_attach').label, 'Add attachment');
++      expect(
++        nodeWithIdentifier(tester, 'chat_record_voice').label,
++        'Record voice message',
++      );
++      expect(find.bySemanticsIdentifier('chat_send'), findsNothing);
++
++      await tester.enterText(find.byType(TextField), 'hello');
++      await tester.pumpAndSettle();
++
++      expect(nodeWithIdentifier(tester, 'chat_send').label, 'Send message');
++      expect(find.bySemanticsIdentifier('chat_record_voice'), findsNothing);
++    } finally {
++      semantics.dispose();
++    }
++  });
++
++  testWidgets('BETA-0924-52 a call row carries call_row_<callId>', (
++    tester,
++  ) async {
++    final semantics = tester.ensureSemantics();
++    try {
++      await tester.pumpWidget(
++        app(
++          CallTimelineRow(
++            entry: ConversationCallTimelineEntry(
++              callId: 'a2f0a1d6-0000-4000-8000-000000000052',
++              contactPeerId: contactPeerId,
++              direction: ConversationCallDirection.incoming,
++              status: ConversationCallStatus.missed,
++              startedAt: DateTime.utc(2026, 9, 24, 23),
++              endedAt: DateTime.utc(2026, 9, 24, 23, 0, 20),
++            ),
++          ),
++        ),
++      );
++
++      final data = nodeWithIdentifier(
++        tester,
++        'call_row_a2f0a1d6-0000-4000-8000-000000000052',
++      );
++      expect(data.label, contains('Missed voice call'));
++    } finally {
++      semantics.dispose();
++    }
++  });
++
++  testWidgets('BETA-0924-53 each message row carries message_<messageId>', (
++    tester,
++  ) async {
++    final semantics = tester.ensureSemantics();
++    try {
++      ConversationMessage message(String id, String timestamp) =>
++          ConversationMessage(
++            id: id,
++            contactPeerId: contactPeerId,
++            senderPeerId: ownPeerId,
++            text: 'Hello $id',
++            timestamp: timestamp,
++            status: 'delivered',
++            isIncoming: false,
++            createdAt: timestamp,
++          );
++
++      await tester.pumpWidget(
++        MaterialApp(
++          locale: const Locale('en'),
++          localizationsDelegates: AppLocalizations.localizationsDelegates,
++          supportedLocales: AppLocalizations.supportedLocales,
++          home: Scaffold(
++            body: ConversationScreen(
++              contactPeerId: contactPeerId,
++              contactUsername: 'Alice',
++              connectionDate: 'February 9, 2026',
++              ownPeerId: ownPeerId,
++              messages: [
++                message('m1', '2026-09-24T22:59:00.000Z'),
++                message('m2', '2026-09-24T23:01:00.000Z'),
++              ],
++              onSend: (_) {},
++              onBack: () {},
++              initialLoadDone: true,
++            ),
++          ),
++        ),
++      );
++      for (var i = 0; i < 5; i++) {
++        await tester.pump(const Duration(milliseconds: 16));
++      }
++
++      for (final id in const <String>['m1', 'm2']) {
++        nodeWithIdentifier(tester, 'message_$id');
++        final textNode = tester.getSemantics(
++          find.bySemanticsLabel(RegExp('Hello $id')),
++        );
++        expect(
++          textNode.identifier == 'message_$id' ||
++              _hasAncestorWithIdentifier(textNode, 'message_$id'),
++          isTrue,
++          reason: 'the message content must sit inside its row identifier',
++        );
++        expect(find.bySemanticsLabel(RegExp('Hello $id')), findsOneWidget);
++      }
++    } finally {
++      semantics.dispose();
++    }
++  });
++}
++
++bool _hasAncestorWithIdentifier(SemanticsNode node, String identifier) {
++  for (var parent = node.parent; parent != null; parent = parent.parent) {
++    if (parent.identifier == identifier) return true;
++  }
++  return false;
++}
+diff --git a/test/shared/widgets/media/voice_message_semantics_test.dart b/test/shared/widgets/media/voice_message_semantics_test.dart
+new file mode 100644
+index 000000000..26d7a52b7
+--- /dev/null
++++ b/test/shared/widgets/media/voice_message_semantics_test.dart
+@@ -0,0 +1,66 @@
++// ignore_for_file: depend_on_referenced_packages
++
++import 'package:flutter/material.dart';
++import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
++import 'package:flutter_app/l10n/app_localizations.dart';
++import 'package:flutter_app/shared/widgets/media/audio_player_widget.dart';
++import 'package:flutter_test/flutter_test.dart';
++import 'package:just_audio_platform_interface/just_audio_platform_interface.dart';
++
++import '../../fakes/fake_just_audio.dart';
++
++/// Beta 2026-09-24: a received voice note read as
++/// "Beta iPhone\n0:11\n11:05 PM\nReceived via direct connection". Nothing told
++/// a screen-reader user it was a voice message.
++void main() {
++  late JustAudioPlatform originalPlatform;
++
++  setUp(() {
++    originalPlatform = JustAudioPlatform.instance;
++    JustAudioPlatform.instance = FakeJustAudioPlatform();
++  });
++
++  tearDown(() {
++    JustAudioPlatform.instance = originalPlatform;
++  });
++
++  const voiceNote = MediaAttachment(
++    id: 'att-voice-0924',
++    messageId: 'msg-voice-0924',
++    mime: 'audio/mp4',
++    size: 10000,
++    mediaType: 'audio',
++    durationMs: 11000,
++    downloadStatus: 'done',
++    createdAt: '2026-09-24T23:05:00.000Z',
++  );
++
++  Widget app(Locale locale) => MaterialApp(
++    locale: locale,
++    localizationsDelegates: AppLocalizations.localizationsDelegates,
++    supportedLocales: AppLocalizations.supportedLocales,
++    home: const Scaffold(body: AudioPlayerWidget(attachment: voiceNote)),
++  );
++
++  for (final entry in const <String, String>{
++    'en': 'Voice message',
++    'de': 'Sprachnachricht',
++    'ar': 'رسالة صوتية',
++  }.entries) {
++    testWidgets('BETA-0924-30 the voice player announces "${entry.value}" '
++        '(${entry.key})', (tester) async {
++      final semantics = tester.ensureSemantics();
++      try {
++        await tester.pumpWidget(app(Locale(entry.key)));
++        await tester.pump();
++
++        expect(
++          find.bySemanticsLabel(RegExp(RegExp.escape(entry.value))),
++          findsOneWidget,
++        );
++      } finally {
++        semantics.dispose();
++      }
++    });
++  }
++}

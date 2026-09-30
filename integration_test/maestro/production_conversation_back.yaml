@@ -1,0 +1,8 @@
+appId: ${APP_ID}
+name: production_conversation_back
+---
+- assertVisible:
+    id: chat_composer
+- back
+- assertVisible:
+    id: orbit.view.inner_circle

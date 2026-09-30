@@ -1,0 +1,19 @@
+appId: com.mknoon.app
+name: T14 Pixel - where does the archived chat show the new message; then unarchive
+---
+- runFlow: { file: ../sleep.yaml, env: { MS: 45000 } }
+- takeScreenshot: t14_all_after_msg
+- tapOn: "Archived.*"
+- runFlow: { file: ../sleep.yaml, env: { MS: 2500 } }
+- takeScreenshot: t14_archived_after_msg
+- runFlow:
+    when: { visible: "${PEER}\\n.*" }
+    commands:
+      - swipe: { from: { text: "${PEER}\\n.*" }, direction: LEFT, duration: 500 }
+      - tapOn: "Unarchive"
+      - runFlow: { file: ../sleep.yaml, env: { MS: 2500 } }
+- tapOn: "All.*"
+- extendedWaitUntil: { visible: "${PEER}\\n.*", timeout: 30000 }
+- takeScreenshot: t14_unarchived
+- tapOn: "${PEER}\\n.*"
+- extendedWaitUntil: { visible: ".*T14 while archived ${NONCE}.*", timeout: 120000 }

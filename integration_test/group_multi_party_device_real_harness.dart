@@ -49567,20 +49567,20 @@ Future<void> runGroupMultiPartyDeviceRealHarness({
 }) async {
   IntegrationTestWidgetsFlutterBinding.ensureInitialized();
   initializeSqliteForCurrentPlatform();
-  await _initializeRuntimeConfig(
-    requireAndroidRuntimeConfig: requireAndroidRuntimeConfig,
-  );
+  // Register the test synchronously: platform configuration can yield long
+  // enough for the integration binding to start running registered tests.
+  setUpAll(() async {
+    await _initializeRuntimeConfig(
+      requireAndroidRuntimeConfig: requireAndroidRuntimeConfig,
+    );
+  });
 
-  testWidgets(
-    'group multi-party device proof scenario=$_scenario role=$_role run=$_runId',
-    (tester) async {
-      tester.platformDispatcher.semanticsEnabledTestValue = false;
-      addTearDown(tester.platformDispatcher.clearSemanticsEnabledTestValue);
-      Directory(_sharedDir).createSync(recursive: true);
-      await _runScenarioRole();
-    },
-    semanticsEnabled: false,
-  );
+  testWidgets('group multi-party device proof', (tester) async {
+    tester.platformDispatcher.semanticsEnabledTestValue = false;
+    addTearDown(tester.platformDispatcher.clearSemanticsEnabledTestValue);
+    Directory(_sharedDir).createSync(recursive: true);
+    await _runScenarioRole();
+  }, semanticsEnabled: false);
 }
 
 Future<void> main() {

@@ -1,0 +1,7 @@
+appId: com.mknoon.app
+name: wait SECS milliseconds (no-op wait)
+---
+- extendedWaitUntil:
+    visible: "zz_never_visible_zz"
+    timeout: ${MS}
+    optional: true

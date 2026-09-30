@@ -1,0 +1,13 @@
+appId: com.mknoon.app
+name: go to the home chat list (list view, All filter)
+---
+- runFlow: ../ensure_chat.yaml
+- tapOn: "Back"
+- extendedWaitUntil: { visible: "Show all chats|Show inner circle", timeout: 20000 }
+- runFlow:
+    when: { visible: "Show all chats" }
+    commands: [ { tapOn: "Show all chats" } ]
+- extendedWaitUntil: { visible: "Show inner circle", timeout: 15000 }
+- runFlow:
+    when: { visible: "All.*" }
+    commands: [ { tapOn: "All.*" } ]

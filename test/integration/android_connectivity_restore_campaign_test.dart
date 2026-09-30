@@ -13,6 +13,57 @@ void main() {
     const component = '$package/com.mknoon.app.MainActivity';
 
     for (final status in <String>['ok', 'timeout']) {
+      test(
+        '$status accepts the equivalent production component abbreviation',
+        () async {
+          final commands = <List<String>>[];
+          expect(
+            await launchConnectivityRestoreApp(
+              packageName: 'com.mknoon.app',
+              runAdb: (arguments) async {
+                commands.add(arguments);
+                return arguments.contains('start')
+                    ? ProcessResult(
+                        1,
+                        0,
+                        'Starting: Intent { cmp=com.mknoon.app/.MainActivity }\n'
+                            'Status: $status\nActivity: com.mknoon.app/.MainActivity\n',
+                        '',
+                      )
+                    : ProcessResult(2, 0, '12345\n', '');
+              },
+            ),
+            isTrue,
+          );
+          expect(commands.last, <String>['shell', 'pidof', 'com.mknoon.app']);
+        },
+      );
+    }
+
+    test(
+      'an abbreviated activity in another package is not equivalent',
+      () async {
+        var calls = 0;
+        expect(
+          await launchConnectivityRestoreApp(
+            packageName: package,
+            runAdb: (_) async {
+              calls += 1;
+              return ProcessResult(
+                1,
+                0,
+                'Status: ok\nActivity: $package/.MainActivity\n',
+                '',
+              );
+            },
+          ),
+          isFalse,
+        );
+        expect(calls, 1);
+      },
+    );
+
+    for (final status in <String>['ok', 'timeout']) {
       test('$status requires the launched application process', () async {
         final commands = <List<String>>[];
         final result = await launchConnectivityRestoreApp(

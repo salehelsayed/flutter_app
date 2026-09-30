@@ -1,0 +1,8 @@
+appId: com.mknoon.app
+name: open Group Info from an open group chat (no-op when Group Info is already open)
+---
+- runFlow: ../kb_hide.yaml
+- runFlow:
+    when: { notVisible: "Group Info" }
+    commands: [ { tapOn: "Group information" } ]
+- extendedWaitUntil: { visible: "Group Info", timeout: 15000 }

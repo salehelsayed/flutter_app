@@ -8,6 +8,30 @@ import 'package:flutter_test/flutter_test.dart';
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
+  test('layout overflows emit a fixed debug log marker', () {
+    final previousFlutter = FlutterError.onError;
+    final previousDebugPrint = debugPrint;
+    final lines = <String?>[];
+    FlutterError.onError = (_) {};
+    debugPrint = (message, {wrapWidth}) => lines.add(message);
+    addTearDown(() {
+      FlutterError.onError = previousFlutter;
+      debugPrint = previousDebugPrint;
+    });
+
+    installAppDiagnosticErrorHandlers();
+    FlutterError.onError!(
+      FlutterErrorDetails(
+        exception: FlutterError(
+          'A RenderFlex overflowed by 21 pixels on the bottom. SECRET',
+        ),
+      ),
+    );
+
+    expect(lines, ['RenderFlex overflowed (Mknoon layout)']);
+    expect(lines.single, isNot(contains('SECRET')));
+  });
+
   test(
     'framework and engine observers preserve previous error policy and redact evidence',
     () async {

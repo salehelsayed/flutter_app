@@ -1,4 +1,5 @@
 #!/usr/bin/env dart
+
 //
 // Two-device relay orchestrator for the Review-08 invite-reliability scenario
 // (slices C revoke, F decline-ack, D config-pull). Launches the SAME
@@ -24,6 +25,7 @@ import 'dart:io';
 import 'package:crypto/crypto.dart';
 
 import '../_support/invite_reliability_runner_contract.dart';
+import '../support/android_app_state_guard.dart';
 import '_android_app_package.dart';
 import 'run_direct_media_blob_custody_sims.dart' as plan347_fixture;
 
@@ -84,7 +86,14 @@ Future<Process> _startRole({
       '--target=$_harnessPath',
       '--publish-port',
       '--no-pub',
-    ] else ...<String>['test', '--no-pub', _harnessPath],
+    ] else ...<String>[
+      'test',
+      '--no-pub',
+      // The broker still needs the completed role's app-private signals.
+      // Flutter's default uninstall can erase them before the final pull.
+      '--no-uninstall',
+      _harnessPath,
+    ],
     '--dart-define=E2E_SHARED_DIR=$targetSharedDir',
     '--dart-define=MD004_ROLE=$role',
     '--dart-define=MD004_RUN_ID=$runId',
@@ -1018,6 +1027,38 @@ final class _AndroidSignalBroker {
   }
 }
 
+// Retain each role until its final signals have reached the host, then let the
+// existing state guard remove only installations this run created. An app that
+// was present before the run is never selected for this cleanup.
+Future<AndroidAppStateGuard?> _captureInitiallyAbsentAndroidInstalls(
+  List<String> deviceIds,
+) async {
+  final package = resolveAndroidAppPackage();
+  final absent = <String>[];
+  for (final deviceId in deviceIds) {
+    final result = await Process.run('adb', <String>[
+      '-s',
+      deviceId,
+      'shell',
+      'pm',
+      'list',
+      'packages',
+      package,
+    ]);
+    if (result.exitCode != 0) {
+      throw StateError('Cannot establish initial Android package presence.');
+    }
+    final packages = '${result.stdout}'.split('\n').map((line) => line.trim());
+    if (!packages.contains('package:$package')) absent.add(deviceId);
+  }
+  if (absent.isEmpty) return null;
+  return AndroidAppStateGuard.capture(
+    devices: absent,
+    packageName: package,
+    backupLabel: 'invite-created-install',
+  );
+}
+
 Future<void> main(List<String> args) async {
   late final InviteReliabilityRunnerArguments options;
   try {
@@ -1045,8 +1086,12 @@ Future<void> main(List<String> args) async {
     await _preflightLatencyTargets(devices);
   }
   plan347_fixture.DirectMediaBlobCustodyFixtureLease? directFanoutFixture;
+  AndroidAppStateGuard? createdInstallationsGuard;
   try {
     final androidPair = await _usesAndroidSignalTransport(devices);
+    createdInstallationsGuard = androidPair
+        ? await _captureInitiallyAbsentAndroidInstalls(devices)
+        : null;
     if (isDirectFanoutScenario) {
       final environment = Platform.environment;
       final hostIp = await plan347_fixture
@@ -1198,10 +1243,6 @@ Future<void> main(List<String> args) async {
         );
         _log('ORCH', 'Validated TC-362 host summary: ${summaryFile.path}');
       }
-      _log(
-        'ORCH',
-        'invite-reliability two-device proof completed successfully',
-      );
     } finally {
       try {
         primary?.kill();
@@ -1216,7 +1257,18 @@ Future<void> main(List<String> args) async {
       await primaryLog.close();
       await siblingLog.close();
     }
+  } catch (error) {
+    // Retain the original failure even if subsequent restoration also fails.
+    _log('FAIL', 'invite-reliability campaign failed: $error');
+    rethrow;
   } finally {
-    await directFanoutFixture?.stop();
+    // Host validation and role failures must not leak installations that were
+    // absent before this run. Pre-existing applications are never in this guard.
+    try {
+      await createdInstallationsGuard?.restoreAll();
+    } finally {
+      await directFanoutFixture?.stop();
+    }
   }
+  _log('ORCH', 'invite-reliability two-device proof completed successfully');
 }

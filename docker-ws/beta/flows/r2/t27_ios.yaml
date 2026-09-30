@@ -1,0 +1,48 @@
+appId: com.mknoon.app
+name: T27 iPhone calls and cancels four times fast, then calls and talks
+---
+- runFlow: ../ensure_chat.yaml
+- tapOn: "Start voice call"
+- extendedWaitUntil: { visible: "Cancel call", timeout: 30000 }
+- runFlow: { file: ../sleep.yaml, env: { MS: 2500 } }
+- tapOn: "Cancel call"
+- runFlow: { file: ../sleep.yaml, env: { MS: 2000 } }
+- runFlow:
+    when: { visible: "Dismiss call status" }
+    commands: [ { tapOn: "Dismiss call status" } ]
+- extendedWaitUntil: { visible: "Start voice call", timeout: 30000 }
+- tapOn: "Start voice call"
+- extendedWaitUntil: { visible: "Cancel call", timeout: 30000 }
+- runFlow: { file: ../sleep.yaml, env: { MS: 2500 } }
+- tapOn: "Cancel call"
+- runFlow: { file: ../sleep.yaml, env: { MS: 2000 } }
+- runFlow:
+    when: { visible: "Dismiss call status" }
+    commands: [ { tapOn: "Dismiss call status" } ]
+- extendedWaitUntil: { visible: "Start voice call", timeout: 30000 }
+- tapOn: "Start voice call"
+- extendedWaitUntil: { visible: "Cancel call", timeout: 30000 }
+- runFlow: { file: ../sleep.yaml, env: { MS: 2500 } }
+- tapOn: "Cancel call"
+- runFlow: { file: ../sleep.yaml, env: { MS: 2000 } }
+- runFlow:
+    when: { visible: "Dismiss call status" }
+    commands: [ { tapOn: "Dismiss call status" } ]
+- extendedWaitUntil: { visible: "Start voice call", timeout: 30000 }
+- tapOn: "Start voice call"
+- extendedWaitUntil: { visible: "Cancel call", timeout: 30000 }
+- runFlow: { file: ../sleep.yaml, env: { MS: 2500 } }
+- tapOn: "Cancel call"
+- runFlow: { file: ../sleep.yaml, env: { MS: 2000 } }
+- runFlow:
+    when: { visible: "Dismiss call status" }
+    commands: [ { tapOn: "Dismiss call status" } ]
+- extendedWaitUntil: { visible: "Start voice call", timeout: 30000 }
+- takeScreenshot: t27_after_cancels
+- runFlow: { file: ../send_text.yaml, env: { MSG: "T27 go ${NONCE}" } }
+- runFlow: ../kb_hide.yaml
+- runFlow: { file: ../sleep.yaml, env: { MS: 5000 } }
+- tapOn: "Start voice call"
+- extendedWaitUntil: { visible: "(.*\\n)?Connected(\\n.*)?", timeout: 90000 }
+- runFlow: { file: ../sleep.yaml, env: { MS: 10000 } }
+- runFlow: ../end_call.yaml

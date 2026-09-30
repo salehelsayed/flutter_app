@@ -1,0 +1,7 @@
+appId: com.mknoon.app
+name: T28 iPhone calls the recording Pixel, talks 20 s, ends
+---
+- runFlow: { file: ../sleep.yaml, env: { MS: 8000 } }
+- runFlow: call_connected.yaml
+- runFlow: { file: ../sleep.yaml, env: { MS: 20000 } }
+- runFlow: ../end_call.yaml

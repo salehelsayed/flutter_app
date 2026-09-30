@@ -1,0 +1,16 @@
+appId: com.mknoon.app
+name: R2-6 Pixel (app in background) - ringing notification, answer from it, then the ongoing notification
+---
+- extendedWaitUntil: { visible: "Answer|ANSWER", timeout: 150000 }
+- runFlow: { file: ../sleep.yaml, env: { MS: 2500 } }
+- takeScreenshot: v26_ringing
+- tapOn: "Answer|ANSWER"
+- extendedWaitUntil: { visible: "(.*\\n)?Connected(\\n.*)?", timeout: 60000 }
+- takeScreenshot: v26_connected
+- pressKey: Home
+- runFlow: { file: ../sleep.yaml, env: { MS: 2500 } }
+- swipe: { start: "50%,1%", end: "50%,70%" }
+- runFlow: { file: ../sleep.yaml, env: { MS: 2500 } }
+- takeScreenshot: v26_ongoing_shade
+- pressKey: Back
+- runFlow: { file: ../sleep.yaml, env: { MS: 30000 } }

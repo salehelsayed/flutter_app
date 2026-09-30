@@ -1,0 +1,6 @@
+appId: com.mknoon.app
+name: T21 iPhone sees the re-added Pixel's message
+---
+- runFlow: { file: open_group.yaml, env: { GROUP: "R2 (Group|Renamed|By Pixel) ${NONCE}", GTIMEOUT: 30000 } }
+- extendedWaitUntil: { visible: ".*T21 back ${NONCE}.*", timeout: 300000 }
+- takeScreenshot: t21_back_ios

@@ -1,4 +1,5 @@
 #!/usr/bin/env dart
+
 // WiFi-Relay Fallback Smoke Test Orchestrator
 //
 // Coordinates between a Go CLI test peer and a Flutter integration test
@@ -809,7 +810,6 @@ Future<bool> _runOnce({
         '--publish-port',
       ] else ...[
         'test',
-        '--no-dds',
         'integration_test/wifi_relay_fallback_smoke_test.dart',
       ],
       '--dart-define=CLI_PEER_FIXTURE=${paths.cliFixture}',
@@ -840,7 +840,10 @@ Future<bool> _runOnce({
       orchResults = await scenariosFuture.timeout(
         const Duration(seconds: 10),
         onTimeout: () {
-          _log('ORCH', 'Scenarios timed out (ok -- Flutter test finished)');
+          _log(
+            'ORCH',
+            'Scenarios timed out before all host assertions completed',
+          );
           return <_OrchestratorResult>[];
         },
       );
@@ -893,10 +896,17 @@ Future<bool> _runOnce({
       await _cleanupAppWriteDir(_androidDeviceId!, appWriteDir);
     }
 
-    final combinedExitCode = (flutterExitCode != 0 || orchFailed > 0) ? 1 : 0;
+    final complete = orchResults.map((r) => r.name).join(',') == 'S1,S2,S3,S4';
+    if (!complete) {
+      _log('ORCH', 'FAIL: expected exactly S1,S2,S3,S4 host scenario results');
+    }
+    final orchestratorFailed = orchFailed > 0 || !complete;
+    final combinedExitCode = (flutterExitCode != 0 || orchestratorFailed)
+        ? 1
+        : 0;
     _log(
       'ORCH',
-      'Done. Flutter=$flutterExitCode Orch=${orchFailed > 0 ? 1 : 0} '
+      'Done. Flutter=$flutterExitCode Orch=${orchestratorFailed ? 1 : 0} '
           'Combined=$combinedExitCode',
     );
     return combinedExitCode == 0;

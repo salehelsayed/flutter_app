@@ -72,6 +72,21 @@ const _expectedSendChatMessageCallers =
           kind: _SendChatMessageCallerKind.generatedIdFresh,
         ),
       ],
+      'lib/debug/production_journeys/production_routing_journey_controls.dart': [
+        _ExpectedSendChatMessageCaller(
+          kind: _SendChatMessageCallerKind.preassignedIdFresh,
+          freshIntent: 'true',
+        ),
+      ],
+      'lib/debug/production_journeys/production_sound_journey_controls.dart': [
+        _ExpectedSendChatMessageCaller(
+          kind: _SendChatMessageCallerKind.preassignedIdFresh,
+          freshIntent: 'true',
+        ),
+        _ExpectedSendChatMessageCaller(
+          kind: _SendChatMessageCallerKind.generatedIdFresh,
+        ),
+      ],
       'lib/features/conversation/application/'
           'retry_failed_messages_use_case.dart': [
         _ExpectedSendChatMessageCaller(

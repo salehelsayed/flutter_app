@@ -1,0 +1,6 @@
+appId: ${APP_ID}
+name: production_group_invite_resend
+---
+- tapOn: Group information
+- tapOn: Resend
+- assertVisible: Revoke

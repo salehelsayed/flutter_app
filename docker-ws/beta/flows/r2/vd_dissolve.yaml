@@ -1,0 +1,13 @@
+appId: com.mknoon.app
+name: R2-1 validation - the admin dissolves GROUP
+---
+- runFlow: { file: open_group.yaml, env: { GROUP: "${GROUP}", GTIMEOUT: 60000 } }
+- runFlow: group_info.yaml
+- scrollUntilVisible: { element: "Dissolve Group", direction: DOWN, timeout: 10000 }
+- tapOn: "Dissolve Group"
+- runFlow: { file: ../sleep.yaml, env: { MS: 1500 } }
+- takeScreenshot: vd_dissolve_dialog_${DEV}
+- tapOn: "Dissolve"
+- runFlow: { file: ../sleep.yaml, env: { MS: 5000 } }
+- takeScreenshot: vd_dissolved_admin_${DEV}
+- assertVisible: ".*[Dd]issolved.*"

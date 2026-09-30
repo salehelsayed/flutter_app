@@ -1,0 +1,13 @@
+appId: com.mknoon.app
+name: S05d iPhone calls, cancels while ringing
+---
+- runFlow: ensure_chat.yaml
+- tapOn: "Start voice call"
+- extendedWaitUntil: { visible: "(.*\\n)?Ringing(\\n.*)?", timeout: 60000 }
+- runFlow: { file: sleep.yaml, env: { MS: 8000 } }
+- takeScreenshot: s05d_ringing_ios
+- tapOn: "Cancel call"
+- runFlow: { file: sleep.yaml, env: { MS: 3000 } }
+- runFlow: ensure_chat.yaml
+- extendedWaitUntil: { visible: ".*Cancelled.*", timeout: 60000 }
+- takeScreenshot: s05d_row_ios

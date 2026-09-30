@@ -1,0 +1,12 @@
+appId: com.mknoon.app
+name: T28 Pixel is recording a voice note when the call comes in
+---
+- runFlow: ../ensure_chat.yaml
+- tapOn: "Record voice message.*"
+- runFlow: { file: ../sleep.yaml, env: { MS: 2000 } }
+- takeScreenshot: t28_recording
+- runFlow: { file: answer_connected.yaml, env: { ATIMEOUT: 150000 } }
+- takeScreenshot: t28_in_call
+- extendedWaitUntil: { notVisible: "End", timeout: 120000 }
+- runFlow: { file: ../sleep.yaml, env: { MS: 4000 } }
+- takeScreenshot: t28_after_call

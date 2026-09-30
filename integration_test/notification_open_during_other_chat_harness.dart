@@ -505,6 +505,13 @@ void _runAlice() {
       final custodyDb = DirectInboxCustodyDbBindings(stack.db);
       final messageRepo = MessageRepositoryImpl(
         dbInsertMessage: (row) => dbInsertMessage(stack.db, row),
+        dbApplyIncomingOrdinaryTextMutation:
+            ({required incomingRow, required kind}) =>
+                dbApplyIncomingOrdinaryTextMutation(
+                  stack.db,
+                  incomingRow: incomingRow,
+                  kind: kind,
+                ),
         dbLoadMessagesForContact: (p) => dbLoadMessagesForContact(stack.db, p),
         dbLoadLatestMessageForContact: (p) =>
             dbLoadLatestMessageForContact(stack.db, p),
@@ -559,6 +566,8 @@ void _runAlice() {
         dbStageOutgoingDirectTextInboxCustody: custodyDb.stage,
         dbLoadDirectInboxCustodyOutbox: custodyDb.load,
         dbLoadDirectInboxCustodyOutboxForMessage: custodyDb.loadForMessage,
+        dbLoadDirectInboxCustodyOutboxOwnerForMessageId:
+            custodyDb.loadOwnerForMessageId,
         dbRecordDirectInboxCustodyFailureIfExact:
             custodyDb.recordFailureIfExact,
         dbCompleteAcceptedDirectInboxCustodyIfExact:
@@ -1147,6 +1156,13 @@ void _runBob() {
       final custodyDb = DirectInboxCustodyDbBindings(stack.db);
       final messageRepo = MessageRepositoryImpl(
         dbInsertMessage: (row) => dbInsertMessage(stack.db, row),
+        dbApplyIncomingOrdinaryTextMutation:
+            ({required incomingRow, required kind}) =>
+                dbApplyIncomingOrdinaryTextMutation(
+                  stack.db,
+                  incomingRow: incomingRow,
+                  kind: kind,
+                ),
         dbLoadMessagesForContact: (p) => dbLoadMessagesForContact(stack.db, p),
         dbLoadLatestMessageForContact: (p) =>
             dbLoadLatestMessageForContact(stack.db, p),
@@ -1201,6 +1217,8 @@ void _runBob() {
         dbStageOutgoingDirectTextInboxCustody: custodyDb.stage,
         dbLoadDirectInboxCustodyOutbox: custodyDb.load,
         dbLoadDirectInboxCustodyOutboxForMessage: custodyDb.loadForMessage,
+        dbLoadDirectInboxCustodyOutboxOwnerForMessageId:
+            custodyDb.loadOwnerForMessageId,
         dbRecordDirectInboxCustodyFailureIfExact:
             custodyDb.recordFailureIfExact,
         dbCompleteAcceptedDirectInboxCustodyIfExact:

@@ -1,0 +1,6 @@
+appId: com.mknoon.app
+name: type MSG in the composer and send it (no wait for the echo)
+---
+- tapOn: { id: "chat_composer" }
+- inputText: "${MSG}"
+- tapOn: "Send message"

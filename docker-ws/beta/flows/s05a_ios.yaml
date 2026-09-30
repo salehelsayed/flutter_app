@@ -1,0 +1,17 @@
+appId: com.mknoon.app
+name: S05a iPhone calls the Pixel, talks 15s, hangs up
+---
+- runFlow: ensure_chat.yaml
+- tapOn: "Start voice call"
+- runFlow: { file: sleep.yaml, env: { MS: 2500 } }
+- takeScreenshot: s05a_calling_ios
+- extendedWaitUntil: { visible: "(.*\\n)?Connected(\\n.*)?", timeout: 90000 }
+- takeScreenshot: s05a_connected_ios
+- runFlow: { file: sleep.yaml, env: { MS: 15000 } }
+- assertVisible: "(.*\\n)?Connected(\\n.*)?"
+- runFlow: end_call.yaml
+- runFlow: { file: sleep.yaml, env: { MS: 3000 } }
+- takeScreenshot: s05a_after_end_ios
+- runFlow: ensure_chat.yaml
+- extendedWaitUntil: { visible: ".*Voice call.*", timeout: 60000 }
+- takeScreenshot: s05a_row_ios

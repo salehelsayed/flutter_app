@@ -563,6 +563,8 @@
   },
   "media_compress": "ضغط",
   "media_too_large_after_compress": "ما زالت الوسائط كبيرة جدًا حتى بعد الضغط.",
+  "media_video_processing_stalled": "توقفت معالجة الفيديو. حاول مرة أخرى.",
+  "media_video_processing_unavailable": "معالجة الفيديو غير متاحة. أعد تشغيل مكنون لإضافة الفيديوهات.",
   "media_gif_too_large": "لا يمكن إضافة ملفات GIF أكبر من 25 م.ب.",
   "media_too_large_chip": "كبير جدًا",
   "media_gif_too_large_chip": "‏GIF كبير جدًا",

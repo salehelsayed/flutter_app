@@ -57,7 +57,7 @@ if [[ -n "${SIMS_PROTECTED_DEVICE_ASSIGNMENTS_JSON+x}" ]]; then
     fail "native XCTest target is outside the protected assignments"
 fi
 
-for command_name in ditto find jq plutil python3 rg xcodebuild xcrun; do
+for command_name in ditto find flutter jq plutil python3 rg xcodebuild xcrun; do
   require_command "$command_name"
 done
 [[ -x "$GRADLEW" ]] || fail "Gradle wrapper is not executable: $GRADLEW"
@@ -182,6 +182,16 @@ run_logged \
     "${PROOF_FLAGS[@]}"
 rg -Fq 'BUILD SUCCESSFUL' "$ANDROID_COMPILE_LOG" ||
   fail "the flagged Android compile invocation did not report BUILD SUCCESSFUL"
+
+# Flutter integration tests leave a temporary listener in Generated.xcconfig.
+# Refresh through Flutter before native builds, after any Gradle Flutter work.
+(
+  cd "$REPO_ROOT"
+  run_logged "Flutter native-test Xcode configuration" \
+    "$RESULT_DIR/flutter-xcode-config.log" \
+    flutter build ios --simulator --debug --config-only --no-pub \
+      --target lib/main.dart
+)
 
 runner_derived="$(mktemp -d "$RESULT_DIR/runner-derived.XXXXXX")"
 nse_derived="$(mktemp -d "$RESULT_DIR/nse-derived.XXXXXX")"

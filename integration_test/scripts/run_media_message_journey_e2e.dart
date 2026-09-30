@@ -99,6 +99,8 @@ Future<int> _runJourneyForDevice(_DeviceTarget device) async {
   );
   final process = await Process.start('flutter', [
     'test',
+    '--no-pub',
+    '--dart-define=GIF_MANUAL_ACCEPTANCE=true',
     'integration_test/media_message_journey_e2e_test.dart',
     '-d',
     device.id,

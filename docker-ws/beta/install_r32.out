@@ -1,0 +1,24 @@
+[09:24:28] sync start
+[09:25:16] synced: synced_at=2026-09-30T07:24:32Z source=/Volumes/CrucialX9/flutter_app source_head=06d5ab5704cf0106e730f0dab17b0abfd645fe7c source_head_short=06d5ab570 source_dirty_files=530 note=working tree copy, not a commit; .git deliberately not copied 
+[09:25:16] R2-8 fix markers and R2-9 headless admission timing markers present
+[09:25:21] android build 1.0.0-06d5ab570.d530.t260930092516
+[09:28:50] ANDROID OK go_new_symbol=2 sha256=44fa092227efe939
+[09:28:50] apk has updateAuthenticatedContactName: 2
+[09:32:09] kotlin call tests exit=0 BUILD SUCCESSFUL in 3m 17s 
+[09:32:09]   MknoonCallNativeBridgeTest: tests="29" skipped="0" failures="0" errors="0" Sep 30 09:32:08 2026
+[09:32:09]   MknoonCallLifecycleControllerTest: tests="62" skipped="0" failures="0" errors="0" Sep 30 09:32:08 2026
+[09:32:09]   MknoonCallNotificationFactoryTest: tests="15" skipped="0" failures="0" errors="0" Sep 30 09:32:08 2026
+[09:32:09] dart call tests
+[09:32:31] dart call tests exit=0 00:04 +344: All tests passed!
+[09:32:31] ios go bindings
+[09:32:37] ios build (in-app call UI)
+[09:38:16] IOS OK go_marker=4 go_new_symbol=6
+[09:38:16] 1.0.0-06d5ab570.d530.t260930092516
+[09:38:16] R32 BUILD DONE
+build name: 1.0.0-06d5ab570.d530.t260930092516
+saved 1.0.0-06d5ab570.r28.name2609292240 from /data/app/~~-3PQKDdk3SRar9q3khjArw==/com.mknoon.app-Nc7ZeB2BwXBx4veu7AnrRQ==/base.apk: 279520735 bytes, device 279520735 bytes
+ios installed: 260930092516 (want 260930092516)
+android push: 279537119/279537119 bytes in 0 s
+android pm install: Success in 1 s
+android installed: 1.0.0-06d5ab570.d530.t260930092516 MATCH
+INSTALL DONE

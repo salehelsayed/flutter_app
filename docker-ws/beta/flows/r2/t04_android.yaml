@@ -1,0 +1,18 @@
+appId: com.mknoon.app
+name: T04 Pixel opens the Protected view photo and holds it open for the screenshot check
+---
+- runFlow: ../ensure_chat.yaml
+- extendedWaitUntil: { visible: ".*T04 marker ${NONCE}.*", timeout: 300000 }
+- takeScreenshot: t04_received
+- tapOn: { text: "Open photo.*|Open private media.*|View photo.*|.*Protected.*", index: -1 }
+- runFlow: { file: ../sleep.yaml, env: { MS: 4000 } }
+- takeScreenshot: t04_viewing
+- runFlow:
+    when: { visible: "More actions" }
+    commands:
+      - tapOn: "More actions"
+      - runFlow: { file: ../sleep.yaml, env: { MS: 1500 } }
+      - takeScreenshot: t04_menu
+- assertNotVisible: "Save image"
+- runFlow: { file: ../sleep.yaml, env: { MS: 12000 } }
+- runFlow: leave_viewer.yaml

@@ -1,0 +1,13 @@
+appId: com.mknoon.app
+name: attach FILE1 FILE2 FILE3 (Android file picker, multi-select) to the open chat composer
+---
+- runFlow: ../kb_hide.yaml
+- tapOn: "Add attachment"
+- tapOn: "Media Library"
+- extendedWaitUntil: { visible: "${FILE1}", timeout: 30000 }
+- longPressOn: "${FILE1}"
+- tapOn: "${FILE2}"
+- tapOn: "${FILE3}"
+- takeScreenshot: multi_selected_${DEV}
+- tapOn: "Select|SELECT|Done|DONE|Open|OPEN"
+- extendedWaitUntil: { visible: "Send message", timeout: 300000 }

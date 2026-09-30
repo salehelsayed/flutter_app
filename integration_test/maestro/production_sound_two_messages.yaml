@@ -1,0 +1,18 @@
+appId: ${APP_ID}
+name: production_sound_two_messages
+---
+- assertVisible:
+    id: chat_composer
+- tapOn:
+    id: chat_composer
+- inputText: ${FIRST_MESSAGE}
+- tapOn:
+    id: chat_send
+- assertVisible: '(?s)^.*\n${FIRST_MESSAGE_PATTERN}\n.*$'
+- tapOn:
+    id: chat_composer
+- inputText: ${SECOND_MESSAGE}
+- tapOn:
+    id: chat_send
+- assertVisible: '(?s)^.*\n${SECOND_MESSAGE_PATTERN}\n.*$'
+- hideKeyboard

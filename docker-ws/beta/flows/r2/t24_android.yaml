@@ -1,0 +1,15 @@
+appId: com.mknoon.app
+name: T24 Pixel answers; mute, unmute, speaker on, speaker off; waits for the hang-up
+---
+- runFlow: { file: answer_connected.yaml, env: { ATIMEOUT: 120000 } }
+- runFlow: { file: ../sleep.yaml, env: { MS: 6000 } }
+- tapOn: "Mute"
+- runFlow: { file: ../sleep.yaml, env: { MS: 3000 } }
+- takeScreenshot: t24_muted_android
+- tapOn: "Unmute|Mute"
+- tapOn: "Speaker"
+- runFlow: { file: ../sleep.yaml, env: { MS: 3000 } }
+- takeScreenshot: t24_speaker_android
+- tapOn: "Turn speaker off|Speaker"
+- extendedWaitUntil: { notVisible: "End", timeout: 120000 }
+- takeScreenshot: t24_ended_android

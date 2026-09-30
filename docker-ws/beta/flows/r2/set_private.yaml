@@ -1,0 +1,6 @@
+appId: com.mknoon.app
+name: choose the private media MODE for the pending photo
+---
+- tapOn: "Keep in chat\\..*"
+- tapOn: "${MODE}\\n.*"
+- tapOn: "Use .*"

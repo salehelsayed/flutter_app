@@ -1,0 +1,8 @@
+appId: com.mknoon.app
+name: T33 Pixel opens the chat from the notification shade
+---
+- takeScreenshot: t33_shade
+- tapOn: ".*T33 wake.*|${PEER}"
+- extendedWaitUntil: { visible: ".*Write something.*", timeout: 90000 }
+- extendedWaitUntil: { visible: ".*T33 wake 2 ${NONCE}.*", timeout: 120000 }
+- takeScreenshot: t33_opened

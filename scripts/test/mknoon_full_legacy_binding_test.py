@@ -5,9 +5,12 @@ blanket-block assertions are superseded by positive execution plus invalid-pin,
 unknown-route, changed-owner, first-failure and exact-child refusal controls.
 """
 import contextlib
+import base64
+import hashlib
 import io
 import json
 import os
+import re
 import shutil
 from pathlib import Path
 import subprocess
@@ -21,6 +24,7 @@ from unittest import mock
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import legacy_target_contracts as legacy
 import mknoon_checks as checks
+import migration_sqlcipher_portability as portability
 
 ROOT = Path(__file__).resolve().parents[2]
 DART = Path(os.environ.get('MKNOON_REVIEW_DART') or shutil.which('dart') or '/unavailable/dart').resolve()
@@ -39,6 +43,23 @@ IDLE = ('ACTIVITY MANAGER RUNNING PROCESSES (dumpsys activity processes)\n'
 
 
 class LegacyBindingTest(unittest.TestCase):
+    def test_full_wifi_smoke_binds_the_required_cli_peer_without_retries(self):
+        contract = legacy.contracts()['full']['integration_test wifi_relay_fallback_smoke_test.dart']
+        with tempfile.TemporaryDirectory() as tmp:
+            commands, _ = legacy.bind(contract, PINS,
+                {'relay_addresses':'/fixture/isolated-relay'}, Path(tmp))
+        self.assertEqual(commands, [['dart', 'run',
+            'integration_test/scripts/run_wifi_relay_fallback_smoke.dart',
+            '-d', PINS['android-physical'], '--platform', 'android', '--retry', '0']])
+        self.assertIn('integration_test/wifi_relay_fallback_smoke_test.dart', contract['sources'])
+
+    def test_notification_matrix_binding_disables_automatic_retries(self):
+        contract = legacy.contracts()['reliability']['scripts/run_ios_notification_tap_ui_smoke.sh']
+        with tempfile.TemporaryDirectory() as tmp:
+            commands, _ = legacy.bind(contract, PINS,
+                {'relay_addresses':'/fixture/isolated-relay'}, Path(tmp))
+        self.assertEqual(commands[0][-2:], ['--retries', '0'])
+
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory(prefix='legacy-contract-')
         self.addCleanup(self.tmp.cleanup)
@@ -74,6 +95,50 @@ class LegacyBindingTest(unittest.TestCase):
         with contextlib.redirect_stdout(io.StringIO()):
             result=legacy.execute('full',['unknown route'],self.tmp/'unknown',env=self.env,matrix=MATRIX,launch=launcher)
         self.assertEqual(result['status'],'BLOCKED');launcher.assert_not_called()
+
+    def test_ios_gesture_and_rendering_proofs_keep_ios_targets_and_exact_ownership(self):
+        for kind, label in [
+            ('reliability', 'integration_test/conversation_swipe_back_proof_test.dart'),
+            ('full', 'integration_test conversation_swipe_back_proof_test.dart'),
+            ('full', 'integration_test group_conversation_polish_proof_test.dart'),
+        ]:
+            with self.subTest(kind=kind, label=label):
+                contract = legacy.contracts()[kind][label]
+                self.assertEqual(contract['roles'], ['ios-simulator-a'])
+                commands, _ = legacy.bind(contract, PINS,
+                    {'relay_addresses': '/fixture/isolated-relay'}, self.tmp)
+                self.assertEqual(commands[0][commands[0].index('-d') + 1], PINS['ios-simulator-a'])
+                self.assertEqual(contract['owns'], [commands[0][-1]])
+
+    def test_pb266_reliability_reuses_existing_non_debug_profile_proof(self):
+        catalog=legacy.contracts()
+        filename='group_exit_release_diagnostics_sqlcipher_proof_test.dart'
+        full=catalog['full']['integration_test '+filename]
+        reliability=catalog['reliability']['integration_test/'+filename]
+        commands, _=legacy.bind(reliability,PINS,
+            {'relay_addresses':'/fixture/isolated-relay'},self.tmp)
+        self.assertEqual(reliability['commands'],full['commands'])
+        self.assertTrue('--profile' in commands[0] or '--release' in commands[0])
+        self.assertEqual(commands[0][commands[0].index('-d')+1],PINS['android-physical'])
+
+    def test_group_lifecycle_routes_pass_values_accepted_by_the_real_dispatcher(self):
+        path = 'integration_test/group_lifecycle_simulator_harness.dart'
+        accepted = set(re.findall(r"case '([^']+)':", (ROOT/path).read_text()))
+        labels = [label for label in legacy.selected_routes('reliability', ['all'])
+                  if label.startswith(path + ':')]
+        observed = set()
+        for label in labels:
+            with self.subTest(label=label):
+                commands, _ = legacy.bind(legacy.contracts()['reliability'][label], PINS,
+                    {'relay_addresses': '/fixture/isolated-relay'}, self.tmp)
+                values = [arg.removeprefix('--dart-define=GROUP_SIM_SCENARIO=')
+                          for arg in commands[0]
+                          if arg.startswith('--dart-define=GROUP_SIM_SCENARIO=')]
+                self.assertEqual(len(values), 1)
+                self.assertIn(values[0], accepted)
+                self.assertEqual(label, path + ':GROUP_SIM_SCENARIO=' + values[0])
+                observed.add(values[0])
+        self.assertEqual(observed, accepted)
 
     def test_host_route_executes_when_separate_device_leg_is_unavailable(self):
         def launch(argv,cwd,timeout,env):
@@ -116,6 +181,34 @@ class LegacyBindingTest(unittest.TestCase):
         (out/'logs/001.log').write_text('changed after receipt')
         self.assertEqual(checks.inspect_legacy(out,0,False,expected)['status'],'BLOCKED')
 
+    def test_zero_exit_skips_hold_later_devices_and_remain_blocked_in_receipts(self):
+        labels = ['integration_test posts_phase1_fake_test.dart',
+                  'integration_test conversation_swipe_back_proof_test.dart', 'dart version']
+        for index, output in enumerate(['00:01 +2 ~1: All tests passed!\n',
+                                        'Ran 4 tests\nOK (skipped=1)\n',
+                                        'No tests ran.\n']):
+            out = self.tmp / f'skipped-{index}'
+            launched = []
+            def launch(argv, cwd, timeout, env):
+                if 'dumpsys' in argv: return IDLE, 0, False, 0
+                launched.append(argv)
+                return (output if argv[0] == 'flutter' else 'host completed'), 0, False, 0
+            with contextlib.redirect_stdout(io.StringIO()):
+                result = legacy.execute('full', labels, out, env=self.env, matrix=MATRIX, launch=launch)
+            self.assertEqual([r['status'] for r in result['route_results']], ['BLOCKED','NOT RUN','PASS'])
+            self.assertTrue(result['cleanup_review_required'])
+            self.assertEqual(len(launched), 2)
+            # Older receipts must not hide the skipped child when another route
+            # already failed and the aggregate returns early for that failure.
+            rows = json.loads((out/'routes.json').read_text())
+            rows[0].update(status='PASS', checkpoint='protected_legacy_route_completed')
+            rows[1].update(status='FAIL', checkpoint='legacy_child_failed')
+            (out/'routes.json').write_text(json.dumps(rows))
+            (out/'summary.tsv').write_text(''.join(f"{r['status']}\t{r['id']}\n" for r in rows))
+            expected = [dict(label=x) for x in labels]
+            self.assertEqual(checks.inspect_legacy(out,1,False,expected)['status'], 'FAIL')
+            self.assertEqual(checks.legacy_receipt_details(out,{},expected)[0]['status'], 'BLOCKED')
+
     def test_cancellation_stops_owned_descendant_before_releasing_the_run(self):
         tools=self.tmp/'cancel-bin';tools.mkdir()
         child=tools/'dart'
@@ -149,7 +242,7 @@ class LegacyBindingTest(unittest.TestCase):
         stub=bin_dir/'stub'
         stub.write_text('#!'+sys.executable+'\n'+TOOL_FIXTURE.replace('@ROOT@',str(ROOT)).replace('@DART@',repr(str(DART))))
         stub.chmod(0o755)
-        for name in ['flutter','dart','adb','xcrun','bash']:(bin_dir/name).symlink_to(stub)
+        for name in ['flutter','dart','adb','xcrun','bash','python3']:(bin_dir/name).symlink_to(stub)
         env={**self.env,'PATH':str(bin_dir)+':'+os.environ['PATH'],
              'CLOSURE_FIXTURE_LOG':str(self.tmp/'commands.jsonl'),
              'MKNOON_LEGACY_INHERITED_LEASES_JSON':json.dumps(list(PINS.values()))}
@@ -181,6 +274,8 @@ import json,os,sys,subprocess
 sys.path.insert(0,'@ROOT@/scripts')
 import device_campaign_preflight as p
 name=os.path.basename(sys.argv[0]);args=sys.argv[1:]
+if name=='python3' and (not args or args[0]!='scripts/migration_sqlcipher_portability.py'):
+    os.execv(sys.executable,[sys.executable,*args])
 if name=='bash' and ('--dry-run' in args or '--selection-only' in args or any(a.startswith('--list') for a in args) or '--records-tsv' in args or any('check_reliability_simulation_discovery' in a for a in args)):
     os.execv('/bin/bash',['/bin/bash',*args])
 if name=='dart' and ('--list-scenarios' in args or '--list' in args):
@@ -204,9 +299,136 @@ if name=='dart' and 'tool/sims/sims.dart' in args and '--only' in args:
     print('PASS\t'+args[args.index('--only')+1]+'\thost orchestration fixture')
 if name=='dart' and 'integration_test/scripts/run_benchmark_suite.dart' in args:
     print('FULL_BENCHMARK_SELECTION '+args[args.index('-d')+1]+' '+args[args.index('--scenarios')+1])
+if name=='python3' and 'scripts/migration_sqlcipher_portability.py' in args:
+    print('SQLCIPHER_PORTABILITY_COMPLETED android_to_ios')
 print('Host contract fixture subprocess executed; no product test or measurement')
 '''
 
+
+
+class PortabilityTransferTest(unittest.TestCase):
+    def test_existing_native_tests_receive_exact_transferred_bytes_and_skip_or_corruption_blocks(self):
+        for mode in ['pass', 'skip', 'corrupt', 'verify-failure']:
+            with self.subTest(mode=mode), tempfile.TemporaryDirectory() as temporary:
+                output = Path(temporary)/'proof'
+                calls = []
+                snapshot = b'exact encrypted fixture bytes'
+                meta = dict(platform='android', checksum_sha256=hashlib.sha256(snapshot).hexdigest())
+                def launch(argv, root, timeout, env):
+                    calls.append(argv)
+                    if argv[0] == 'adb':
+                        self.assertEqual(argv[1:3], ['-s', PINS['android-physical']])
+                        if 'base64' in argv:
+                            data = json.dumps(meta).encode() if argv[-1].endswith('portability.json') else (b'corrupt' if mode == 'corrupt' else snapshot)
+                            return base64.b64encode(data).decode(), 0, False, .1
+                        return '', 0, False, .1
+                    target = argv[argv.index('-d')+1]
+                    define = next(a.split('=', 2)[2] for a in argv if a.startswith('--dart-define='))
+                    if target == PINS['android-physical']:
+                        self.assertIn('--no-uninstall', argv)
+                        marker = 'PORTABILITY_EXPORT_WRITTEN dir='+define
+                    else:
+                        self.assertNotIn('--no-uninstall', argv)
+                        self.assertEqual(target, PINS['ios-simulator-a'])
+                        self.assertEqual((Path(define)/'snapshot.db').read_bytes(), snapshot)
+                        self.assertEqual(json.loads((Path(define)/'portability.json').read_text()), meta)
+                        marker = 'PORTABILITY_VERIFY_OK source=android target=ios'
+                    failed = mode == 'verify-failure' and target == PINS['ios-simulator-a']
+                    events = [dict(type='suite', suite=dict(id=0, path=portability.TEST))]
+                    for index in range(3):
+                        events += [dict(type='testStart', test=dict(id=index, suiteID=0, name='native case '+str(index))),
+                                   dict(type='testDone', testID=index, result='error' if failed else 'success', skipped=mode=='skip' and index==1)]
+                    events += [dict(type='print', message=marker), dict(type='done', success=not failed)]
+                    return '\n'.join(json.dumps(x) for x in events), int(failed), False, .1
+                env = {legacy.PIN: json.dumps(PINS)}
+                with contextlib.redirect_stdout(io.StringIO()):
+                    if mode == 'pass':
+                        receipts = portability.run(PINS['android-physical'], PINS['ios-simulator-a'], output, env=env, launch=launch)
+                        self.assertEqual(receipts[-1]['test_result']['counts'], dict(passed=3,failed=0,skipped=0))
+                    else:
+                        with self.assertRaises(RuntimeError):
+                            portability.run(PINS['android-physical'], PINS['ios-simulator-a'], output, env=env, launch=launch)
+                native = [c for c in calls if c[0]=='flutter']
+                self.assertEqual(len(native), 1 if mode in ('skip','corrupt') else 2)
+                self.assertTrue(any('rmdir' in c for c in calls))
+
+    def test_missing_or_mismatched_pin_cannot_launch(self):
+        launch = mock.Mock()
+        with self.assertRaises(ValueError):
+            portability.run('unknown', PINS['ios-simulator-a'], '/unused', env={legacy.PIN:json.dumps(PINS)}, launch=launch)
+        launch.assert_not_called()
+
+
+FOREGROUND_PREPARATION_FIXTURE = r'''
+import json,os,sys,time
+from pathlib import Path
+args=sys.argv[1:]
+defines=dict(a.removeprefix('--dart-define=').split('=',1) for a in args if a.startswith('--dart-define='))
+role=defines['SMOKE_ROLE']; phase=args[0]
+capture=Path(os.environ['PREPARATION_CAPTURE'])
+with capture.open('a') as f:f.write(json.dumps(dict(phase=phase,role=role,args=args))+'\n')
+if phase=='build':
+ assert args[:2]==['build','ios'] and '--simulator' in args and '--debug' in args
+ if os.environ['PREPARATION_MODE']=='fail-bob' and role=='bob':sys.exit(3)
+ app=Path('build/ios/iphonesimulator/Runner.app');app.mkdir(parents=True,exist_ok=True)
+ (app/'role.json').write_text(json.dumps(defines))
+ sys.exit(0)
+if phase=='drive':
+ calls=[json.loads(x) for x in capture.read_text().splitlines()]
+ assert [x['role'] for x in calls if x['phase']=='build']==['alice','bob']
+ artifact=Path(next(x.split('=',1)[1] for x in args if x.startswith('--use-application-binary=')))
+ assert json.loads((artifact/'role.json').read_text())==defines, 'wrong or overwritten role artifact'
+else:
+ assert phase=='test' and not any(x.startswith('--use-application-binary') for x in args)
+directory=Path(defines['E2E_SHARED_DIR']);prefix='fgpush_'+defines['SMOKE_RUN_ID']+'_'
+def signal(name):return directory/(prefix+name)
+def wait(name):
+ deadline=time.monotonic()+10
+ while not signal(name).exists():
+  if time.monotonic()>deadline:raise AssertionError('missing host fixture signal '+name)
+  time.sleep(.01)
+if role=='alice':signal('alice_ready').write_text('ok')
+else:
+ signal('bob_group_joined').write_text('ok')
+ for case in ['s1','s2','s3']:
+  wait(case+'_go');signal(case+'_bob_verdict').write_text(json.dumps(dict(programmaticPass=True)))
+wait('all_done');signal(role+'_done').write_text('ok')
+'''
+
+
+class ForegroundGroupPreparationTest(unittest.TestCase):
+    def run_fixture(self, mode):
+        with tempfile.TemporaryDirectory(prefix='foreground-build-order-') as temporary:
+            root=Path(temporary);(root/'bin').mkdir();(root/'tmp').mkdir()
+            flutter=root/'bin/flutter';flutter.write_text('#!'+sys.executable+'\n'+FOREGROUND_PREPARATION_FIXTURE);flutter.chmod(0o755)
+            capture=root/'commands.jsonl'
+            devices=('fixture-usb,fixture-emulator' if mode=='android' else
+                     '00000000-0000-0000-0000-000000000001,00000000-0000-0000-0000-000000000002')
+            run=subprocess.run([str(DART),str(ROOT/'integration_test/scripts/run_foreground_group_push_simulator_smoke.dart'),'-d',devices],
+                cwd=root,env={**os.environ,'PATH':str(root/'bin')+':'+os.environ['PATH'],
+                              'TMPDIR':str(root/'tmp'),'PREPARATION_CAPTURE':str(capture),
+                              'PREPARATION_MODE':mode,'MKNOON_RELAY_ADDRESSES':'fixture-relay'},
+                capture_output=True,text=True,timeout=25)
+            calls=[json.loads(x) for x in capture.read_text().splitlines()]
+            return run,calls
+
+    def test_ios_prepares_both_exact_role_binaries_before_any_peer_starts(self):
+        run,calls=self.run_fixture('pass')
+        self.assertEqual(run.returncode,0,run.stdout+run.stderr)
+        self.assertEqual([(x['phase'],x['role']) for x in calls],
+                         [('build','alice'),('build','bob'),('drive','alice'),('drive','bob')])
+        self.assertIn('Foreground group push simulator smoke PASSED',run.stderr)
+        for row in calls:self.assertIn('--dart-define=MKNOON_RELAY_ADDRESSES=fixture-relay',row['args'])
+
+    def test_failed_second_build_starts_neither_peer(self):
+        run,calls=self.run_fixture('fail-bob')
+        self.assertNotEqual(run.returncode,0)
+        self.assertEqual([(x['phase'],x['role']) for x in calls],[('build','alice'),('build','bob')])
+
+    def test_android_keeps_existing_direct_test_launches(self):
+        run,calls=self.run_fixture('android')
+        self.assertEqual(run.returncode,0,run.stdout+run.stderr)
+        self.assertEqual([(x['phase'],x['role']) for x in calls],[('test','alice'),('test','bob')])
 
 
 class BenchmarkSuiteHandshakeTest(unittest.TestCase):
@@ -320,14 +542,110 @@ class FullLegacyCLITest(RepositoryFixture):
         for name, response in [('flutter','[]'),('adb','List of devices attached'),('xcrun','{"devices":{}}')]:
             stub=self.write('bin/'+name,'#!'+sys.executable+'\nimport sys\nprint(\"{}\" if \"--version\" in sys.argv else '+repr(response)+')\n');stub.chmod(0o755)
         out=self.root/'.codex-test-logs/full-cli'
-        run=subprocess.run([sys.executable,str(self.root/'scripts/mknoon_checks.py'),'full',
+        # The fixture executes the actual CLI, but owns no native build or
+        # device. Use the real lease implementation in a fixture-private
+        # directory so host contracts can coexist with live campaigns.
+        lease_directory=self.root/'.codex-test-logs/fixture-leases'
+        bootstrap=self.write('invoke_checks_fixture.py',
+            'import functools,runpy,sys\n'
+            f'sys.path.insert(0,{str(self.root/"scripts")!r})\n'
+            'import device_campaign_preflight as preflight\n'
+            f'preflight.device_leases=functools.partial(preflight.device_leases,directory={str(lease_directory)!r})\n'
+            f'runpy.run_path({str(self.root/"scripts/mknoon_checks.py")!r},run_name="__main__")\n')
+        run=subprocess.run([sys.executable,str(bootstrap),'full',
             '--base',self.base,'--local','--device-config',str(config),'--output',str(out)],
             cwd=self.root,env={**os.environ,'PATH':str(self.root/'bin')+':'+os.environ['PATH']},
             capture_output=True,text=True,timeout=30)
         self.assertTrue((out/'results.json').exists(),run.stdout+run.stderr)
         report=json.loads((out/'results.json').read_text())
         self.assertEqual(run.returncode,0,run.stdout+run.stderr+json.dumps(report['results']))
+        lease_name=hashlib.sha256(b'mknoon.shared-native-build').hexdigest()+'.lock'
+        self.assertTrue((lease_directory/lease_name).is_file(), 'synthetic CLI must use its own real lease directory')
         row=report['results'][0]
         self.assertEqual(row['attempts'][0]['route_results'],[dict(id='dart version',status='PASS',checkpoint='protected_legacy_route_completed')])
+
+
+
+GROUP_MULTI_PREPARATION_FIXTURE = r'''
+import json,os,sys,time
+from pathlib import Path
+args=sys.argv[1:]
+defines=dict(a.removeprefix('--dart-define=').split('=',1) for a in args if a.startswith('--dart-define='))
+role=defines['MD004_ROLE'];phase=args[0]
+capture=Path(os.environ['PREPARATION_CAPTURE'])
+with capture.open('a') as f:f.write(json.dumps(dict(phase=phase,role=role,args=args))+'\n')
+if phase=='build':
+ assert args[:2]==['build','ios'] and '--simulator' in args and '--debug' in args
+ if os.environ['PREPARATION_MODE']=='fail-'+role:sys.exit(3)
+ peer_capture=Path(os.environ['CLOSURE_COMMANDS'])
+ assert not peer_capture.exists() or not peer_capture.read_text(), 'timed peer started during preparation'
+ app=Path('build/ios/iphonesimulator/Runner.app');app.mkdir(parents=True,exist_ok=True)
+ (app/'role.json').write_text(json.dumps(defines));sys.exit(0)
+if phase=='drive':
+ calls=[json.loads(x) for x in capture.read_text().splitlines()]
+ assert [x['role'] for x in calls if x['phase']=='build']==['primary','sibling']
+ artifact=Path(next(x.split('=',1)[1] for x in args if x.startswith('--use-application-binary=')))
+ assert json.loads((artifact/'role.json').read_text())==defines,'wrong or overwritten role artifact'
+else:
+ assert phase=='test' and not any(x.startswith('--use-application-binary') for x in args)
+assert Path(defines['CLI_PEER_FIXTURE']).is_file()
+directory=Path(defines['E2E_SHARED_DIR']);prefix='md004_'+defines['MD004_RUN_ID']+'_'
+def signal(name):return directory/(prefix+name)
+if role=='primary':
+ signal('cli_group_join_fixture.json').write_text(json.dumps({'groupId':'fixture-group','keyEpoch':1,'groupKey':'fixture-key','groupConfig':{'members':[{'peerId':'fixture-peer-identity-00000000000000'},{'peerId':'fixture-primary'},{'peerId':'fixture-sibling'}]}}))
+ signal('cli_publish_ready').write_text('ok')
+ deadline=time.monotonic()+10
+ while not signal('cli_message_published').exists():
+  if time.monotonic()>deadline:raise AssertionError('missing CLI publication')
+  time.sleep(.01)
+else:signal('sibling_complete').write_text('ok')
+'''
+
+
+class GroupMultiDevicePreparationTest(unittest.TestCase):
+    def run_fixture(self, mode):
+        with tempfile.TemporaryDirectory(prefix='group-multi-build-order-') as temporary:
+            root=Path(temporary)
+            for rel in ['bin','tmp','go-mknoon/bin']:(root/rel).mkdir(parents=True)
+            for rel,source in [('bin/flutter',GROUP_MULTI_PREPARATION_FIXTURE),('go-mknoon/bin/testpeer',PEER_FIXTURE)]:
+                script=root/rel;script.write_text('#!'+sys.executable+'\n'+source);script.chmod(0o755)
+            make=root/'bin/make';make.write_text('#!/bin/sh\nexit 0\n');make.chmod(0o755)
+            capture=root/'commands.jsonl';peer_capture=root/'peer-commands.jsonl'
+            devices=('fixture-usb,fixture-emulator' if mode=='android' else
+                     '00000000-0000-0000-0000-000000000001,00000000-0000-0000-0000-000000000002')
+            run=subprocess.run([str(DART),str(ROOT/'integration_test/scripts/run_group_multi_device_real.dart'),'-d',devices],
+                cwd=root,env={**os.environ,'PATH':str(root/'bin')+':'+os.environ['PATH'],
+                              'TMPDIR':str(root/'tmp'),'PREPARATION_CAPTURE':str(capture),
+                              'PREPARATION_MODE':mode,'MKNOON_RELAY_ADDRESSES':'fixture-relay',
+                              'CLOSURE_COMMANDS':str(peer_capture),'CLOSURE_MODE':'pass'},
+                capture_output=True,text=True,timeout=25)
+            calls=[json.loads(x) for x in capture.read_text().splitlines()] if capture.exists() else []
+            peer_calls=[json.loads(x) for x in peer_capture.read_text().splitlines()] if peer_capture.exists() else []
+            return run,calls,peer_calls
+
+    def test_ios_prepares_exact_roles_before_launch_and_cli_fixture_deadline(self):
+        run,calls,peer_calls=self.run_fixture('pass')
+        self.assertEqual(run.returncode,0,run.stdout+run.stderr)
+        self.assertEqual([(x['phase'],x['role']) for x in calls],
+                         [('build','primary'),('build','sibling'),('drive','primary'),('drive','sibling')])
+        self.assertIn('MD-004 proof completed successfully',run.stderr)
+        self.assertIn('group_inbox_store',peer_calls)
+        for row in calls:self.assertIn('--dart-define=MKNOON_RELAY_ADDRESSES=fixture-relay',row['args'])
+
+    def test_either_build_failure_starts_no_app_or_protocol_peer(self):
+        for role in ['primary','sibling']:
+            with self.subTest(role=role):
+                run,calls,peer_calls=self.run_fixture('fail-'+role)
+                self.assertNotEqual(run.returncode,0)
+                self.assertTrue(calls)
+                self.assertTrue(all(x['phase']=='build' for x in calls))
+                self.assertEqual(peer_calls,[])
+
+    def test_android_keeps_existing_direct_test_launches(self):
+        run,calls,peer_calls=self.run_fixture('android')
+        self.assertEqual(run.returncode,0,run.stdout+run.stderr)
+        self.assertEqual([(x['phase'],x['role']) for x in calls],[('test','primary'),('test','sibling')])
+        self.assertIn('group_inbox_store',peer_calls)
+
 
 if __name__=='__main__':unittest.main()

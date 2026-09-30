@@ -1,0 +1,51 @@
+FLOW t09r_text ios FAIL rc=1
+FLOW t09r_text android FAIL rc=1
+FLOW t10_burst android PASS rc=0
+FLOW t10_burst ios FAIL rc=1
+FLOW t13_delete_for_me android PASS rc=0
+FLOW t13_delete_for_me ios PASS rc=0
+FLOW t12_seed android PASS rc=0
+FLOW t12_seed ios PASS rc=0
+FLOW t12_mutate ios PASS rc=0
+FLOW t12_check android PASS rc=0
+FLOW b2_after_restart android PASS rc=0
+FLOW t01_photo ios FAIL rc=1
+FLOW t01_photo android FAIL rc=1
+FLOW t03_view_once ios FAIL rc=1
+FLOW t03_view_once android PASS rc=0
+FLOW t04_protected ios PASS rc=0
+FLOW t04_protected android PASS rc=0
+FLOW t05_photo_ios ios PASS rc=0
+FLOW t05_photo_ios android PASS rc=0
+/Volumes/CrucialX9/flutter_app/docker-ws/beta/run_round2_rerun.sh: line 79: 64653 Terminated: 15          ( for i in $(seq 1 40);
+do
+    f=$($ADB shell dumpsys window windows 2>/dev/null | grep -E "mCurrentFocus|SECURE" | tr -d '\r' | tr '\n' ' ' | cut -c1-300); $ADB exec-out screencap -p > "$RUN/extra/t04_screencap_$i.png" 2> /dev/null; echo "[$(date '+%H:%M:%S')] $i size=$(stat -f %z "$RUN/extra/t04_screencap_$i.png") $f" >> "$RUN/extra/t04_secure_samples.txt"; sleep 6;
+done )
+FLOW t02_album android PASS rc=0
+FLOW t02_album ios PASS rc=0
+FLOW t16_create ios PASS rc=0
+FLOW t16_create android PASS rc=0
+FLOW t16_rename ios FAIL rc=1
+FLOW t16_check android FAIL rc=1
+FLOW t17_group_react_reply ios FAIL rc=1
+FLOW t17_group_react_reply android FAIL rc=1
+FLOW t21_ginfo ios PASS rc=0
+FLOW t21_remove ios PASS rc=0
+FLOW t21_removed android FAIL rc=1
+FLOW t21_readd ios FAIL rc=1
+FLOW t21_back android FAIL rc=1
+FLOW t21_back ios FAIL rc=1
+FLOW t22_leave android FAIL rc=1
+FLOW t22_check ios PASS rc=0
+FLOW ready_t27 android PASS rc=0
+FLOW ready_t27 ios PASS rc=0
+FLOW t27_redial android PASS rc=0
+FLOW t27_redial ios PASS rc=0
+FLOW ready_t32b android PASS rc=0
+FLOW ready_t32b ios PASS rc=0
+FLOW t32b_connect android PASS rc=0
+FLOW t32b_connect ios PASS rc=0
+FLOW t32b_end ios PASS rc=0
+FLOW t35b_iphone_ar android PASS rc=0
+FLOW t35b_iphone_ar ios PASS rc=0
+/Volumes/CrucialX9/flutter_app/docker-ws/beta/run_round2_rerun.sh: line 171: 32656 Terminated: 15          nohup perl -e 'use POSIX qw(setsid); setsid(); exec @ARGV' "$ANDROID_HOME/platform-tools/adb" -s "$SERIAL" logcat -T 1 -v threadtime > "$RUN/android_logcat_live.txt" 2>&1 < /dev/null

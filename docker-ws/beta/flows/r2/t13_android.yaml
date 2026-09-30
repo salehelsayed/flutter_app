@@ -1,0 +1,7 @@
+appId: com.mknoon.app
+name: T13 Pixel keeps the message the iPhone deleted for itself
+---
+- runFlow: ../ensure_chat.yaml
+- extendedWaitUntil: { visible: ".*T13 done ${NONCE}.*", timeout: 240000 }
+- assertVisible: ".*T13 keep-on-pixel ${NONCE}.*"
+- takeScreenshot: t13_android

@@ -1,4 +1,5 @@
 #!/usr/bin/env dart
+
 // Foreground Group Push Simulator Smoke — Two-Simulator Orchestrator
 //
 // This script approximates the Report 71 real-device checklist on two iOS
@@ -15,6 +16,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import '../_support/signal_files.dart';
+import '../_support/prepared_ios_harness.dart';
 
 const _harness =
     'integration_test/foreground_group_push_simulator_harness.dart';
@@ -42,6 +44,26 @@ late Directory _sharedDir;
 late String _runId;
 late SignalDir _signals;
 
+List<String> _harnessDefines(String role, String dbName) => <String>[
+  '--dart-define=E2E_SHARED_DIR=${_sharedDir.path}',
+  '--dart-define=SMOKE_ROLE=$role',
+  '--dart-define=SMOKE_RUN_ID=$_runId',
+  '--dart-define=E2E_DB_NAME=$dbName',
+  ..._relayDartDefines(),
+];
+
+Future<String> _prepareIosHarness({
+  required String role,
+  required String dbName,
+  required IOSink log,
+}) => prepareIosSimulatorHarness(
+  harness: _harness,
+  role: role,
+  dartDefines: _harnessDefines(role, dbName),
+  sharedDirectory: _sharedDir,
+  log: log,
+);
+
 void _pipeOutput(Stream<List<int>> stream, String tag, IOSink sink) {
   stream.transform(utf8.decoder).transform(const LineSplitter()).listen((line) {
     _log(tag, line);
@@ -56,6 +78,7 @@ Future<Process> _launchHarness({
   required String role,
   required String deviceId,
   required String dbName,
+  String? applicationBinary,
 }) async {
   final args = <String>[
     if (_isIosDeviceId(deviceId)) ...[
@@ -64,16 +87,14 @@ Future<Process> _launchHarness({
       '--target=$harness',
       '--publish-port',
       '--no-pub',
+      if (applicationBinary != null)
+        '--use-application-binary=$applicationBinary',
     ] else ...[
       'test',
       '--no-pub',
       harness,
     ],
-    '--dart-define=E2E_SHARED_DIR=${_sharedDir.path}',
-    '--dart-define=SMOKE_ROLE=$role',
-    '--dart-define=SMOKE_RUN_ID=$_runId',
-    '--dart-define=E2E_DB_NAME=$dbName',
-    ..._relayDartDefines(),
+    ..._harnessDefines(role, dbName),
     '-d',
     deviceId,
   ];
@@ -155,11 +176,24 @@ Future<void> main(List<String> args) async {
   final failures = <String>[];
 
   try {
+    final aliceDbName = 'fgpush_${_runId}_alice.db';
+    final bobDbName = 'fgpush_${_runId}_bob.db';
+    final aliceBinary = _isIosDeviceId(aliceDevice)
+        ? await _prepareIosHarness(
+            role: 'alice',
+            dbName: aliceDbName,
+            log: aliceLog,
+          )
+        : null;
+    final bobBinary = _isIosDeviceId(bobDevice)
+        ? await _prepareIosHarness(role: 'bob', dbName: bobDbName, log: bobLog)
+        : null;
     alice = await _launchHarness(
       harness: _harness,
       role: 'alice',
       deviceId: aliceDevice,
-      dbName: 'fgpush_${_runId}_alice.db',
+      dbName: aliceDbName,
+      applicationBinary: aliceBinary,
     );
     _pipeOutput(alice.stdout, 'ALICE', aliceLog);
     _pipeOutput(alice.stderr, 'ALICE-ERR', aliceLog);
@@ -174,7 +208,8 @@ Future<void> main(List<String> args) async {
       harness: _harness,
       role: 'bob',
       deviceId: bobDevice,
-      dbName: 'fgpush_${_runId}_bob.db',
+      dbName: bobDbName,
+      applicationBinary: bobBinary,
     );
     _pipeOutput(bob.stdout, 'BOB', bobLog);
     _pipeOutput(bob.stderr, 'BOB-ERR', bobLog);

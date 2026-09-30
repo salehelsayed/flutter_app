@@ -1,0 +1,13 @@
+appId: com.mknoon.app
+name: R2-4b Pixel sends one VIDEO with caption after processing
+---
+- runFlow: ../ensure_chat.yaml
+- runFlow: { file: v25_pick_android_one.yaml, env: { FILE: "${VIDEO}" } }
+- takeScreenshot: v25_pending
+- extendedWaitUntil: { notVisible: "(?s)Processing.*", timeout: 420000 }
+- runFlow: { file: ../sleep.yaml, env: { MS: 2000 } }
+- takeScreenshot: v25_processed
+- runFlow: { file: caption_send.yaml, env: { MSG: "R25 video ${NONCE}" } }
+- runFlow: ../kb_hide.yaml
+- runFlow: { file: ../sleep.yaml, env: { MS: 8000 } }
+- takeScreenshot: v25_sent

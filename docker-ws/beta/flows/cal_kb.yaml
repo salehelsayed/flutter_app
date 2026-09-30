@@ -1,0 +1,14 @@
+appId: com.mknoon.app
+name: UX check - can the iOS keyboard be dismissed in the chat?
+---
+- runFlow: ensure_chat.yaml
+- tapOn: ".*Write something.*"
+- runFlow: { file: sleep.yaml, env: { MS: 1500 } }
+- takeScreenshot: kb_1_open
+- tapOn: { point: "50%,35%" }
+- runFlow: { file: sleep.yaml, env: { MS: 1000 } }
+- takeScreenshot: kb_2_after_tap_list
+- swipe: { start: "50%,30%", end: "50%,55%", duration: 500 }
+- runFlow: { file: sleep.yaml, env: { MS: 1000 } }
+- takeScreenshot: kb_3_after_drag_list
+- assertNotVisible: { id: "inputView" }

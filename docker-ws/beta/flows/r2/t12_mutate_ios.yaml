@@ -1,0 +1,18 @@
+appId: com.mknoon.app
+name: T12 iPhone (Pixel app stopped) deletes m1 for everyone, reacts to m2, edits m3 (only the last sent message is editable)
+---
+- runFlow: ../ensure_chat.yaml
+- longPressOn: ".*T12 m1 ${NONCE}.*"
+- tapOn: "Delete"
+- tapOn: "Delete for Everyone"
+- extendedWaitUntil: { notVisible: ".*T12 m1 ${NONCE}.*", timeout: 15000 }
+- runFlow: { file: ../react.yaml, env: { TARGET: "T12 m2 ${NONCE}", EMOJI: "👍" } }
+- longPressOn: ".*T12 m3 ${NONCE}.*"
+- tapOn: "Edit"
+- eraseText: 40
+- inputText: "T12 m3 edited ${NONCE}"
+- tapOn: "Send message"
+- extendedWaitUntil: { visible: ".*T12 m3 edited ${NONCE}.*", timeout: 15000 }
+- runFlow: ../kb_hide.yaml
+- runFlow: { file: ../sleep.yaml, env: { MS: 3000 } }
+- takeScreenshot: t12_mutated_ios

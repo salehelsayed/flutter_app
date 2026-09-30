@@ -29,6 +29,15 @@ class RepositoryFixture(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory(prefix='mknoon-checks-test-')
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
+        # These repositories run synthetic tasks only. Keep the real locking
+        # behavior, but do not contend with live device campaigns on this host.
+        real_leases = checks.device_preflight.device_leases
+        def fixture_leases(targets, directory=None):
+            return real_leases(targets, directory=(directory if directory is not None
+                               else self.root / '.codex-test-logs/fixture-leases'))
+        lease_patch = mock.patch.object(checks.device_preflight, 'device_leases', fixture_leases)
+        lease_patch.start()
+        self.addCleanup(lease_patch.stop)
         self.git('init', '-q')
         self.git('config', 'user.name', 'Isolated Test Fixture')
         self.git('config', 'user.email', 'fixture@example.invalid')
@@ -47,7 +56,7 @@ class RepositoryFixture(unittest.TestCase):
         self.rules = {
             'schema_version': 1,
             'checks': {
-                'fast': {'kind': 'python', 'paths': ['fixture_test.py'], 'boundary': 'workflow fixture', 'timeout_seconds': 10},
+                'fast': {'kind': 'python', 'paths': ['fixture_test.py'], 'boundary': 'workflow fixture', 'timeout_seconds': 10, 'resources': ['isolated:workflow-fixture']},
                 'chat': {'kind': 'flutter', 'paths': ['test/chat_test.dart'], 'boundary': 'chat fixture', 'timeout_seconds': 10},
                 'groups': {'kind': 'flutter', 'paths': ['test/groups_test.dart'], 'boundary': 'group fixture', 'timeout_seconds': 10},
                 'bridge': {'kind': 'flutter', 'paths': ['test/bridge_test.dart'], 'boundary': 'bridge fixture', 'timeout_seconds': 10},
@@ -190,6 +199,20 @@ class SelectionTest(RepositoryFixture):
         after = checks.source_identity(self.root, checks.source_files(self.root), self.rules)
         self.assertNotEqual(before['source_sha256'], after['source_sha256'])
         self.assertNotEqual(before['bundle_and_config_sha256']['assets/core.js'], after['bundle_and_config_sha256']['assets/core.js'])
+
+    def test_workspace_access_metadata_does_not_hide_native_plist_changes(self):
+        repository_rules = json.loads((Path(__file__).resolve().parents[2] /
+                                       'tool/testing/selection.json').read_text())
+        self.rules['evidence_exclusions'] = repository_rules['evidence_exclusions']
+        self.write('info.plist', '<key>LastAccessedDate</key><date>earlier</date>')
+        self.write('ios/Runner/Info.plist', '<key>CFBundleVersion</key><string>1</string>')
+        before = checks.source_identity(self.root, checks.source_files(self.root), self.rules)
+        self.write('info.plist', '<key>LastAccessedDate</key><date>later</date>')
+        accessed = checks.source_identity(self.root, checks.source_files(self.root), self.rules)
+        self.assertEqual(before['source_sha256'], accessed['source_sha256'])
+        self.write('ios/Runner/Info.plist', '<key>CFBundleVersion</key><string>2</string>')
+        changed = checks.source_identity(self.root, checks.source_files(self.root), self.rules)
+        self.assertNotEqual(accessed['source_sha256'], changed['source_sha256'])
 
 
 class ParserTest(unittest.TestCase):
@@ -500,6 +523,20 @@ class ExternalReportRegressionTest(unittest.TestCase):
                 target.write_text(output)
                 self.assertEqual(checks.inspect_legacy(self.root, 0, False)['status'], 'BLOCKED')
 
+    def test_legacy_skip_parser_distinguishes_progress_counts_from_estimates(self):
+        for output in ('[07:40:50.820] [ORCH] Scenario E1: Sending ~100KB message...\n',
+                       'transfer completed in ~12 ms\nAll tests passed!\n',
+                       '100 tests passed\n', '00:01 +4 ~0: All tests passed!\n'):
+            with self.subTest(output=output):
+                self.assertIsNone(checks.legacy_log_incomplete_checkpoint(output))
+        for output in ('00:01 +4 ~1: All tests passed!\n',
+                       '[ALICE] flutter: 01:02:03 +4 -1 ~2: scenario\n',
+                       '00:01 ~1: scenario\n',
+                       '00:01 \x1b[32m+4\x1b[0m \x1b[33m~1\x1b[0m: All tests passed!\n'):
+            with self.subTest(output=output):
+                self.assertEqual(checks.legacy_log_incomplete_checkpoint(output),
+                                 'legacy_skipped_tests')
+
 
 class EvidenceAndExecutionTest(RepositoryFixture):
     def test_sdk_different_from_resolved_flutter_package_is_a_blocked_prerequisite(self):
@@ -574,6 +611,18 @@ class EvidenceAndExecutionTest(RepositoryFixture):
             'mobilesdk_app_id': 'fixture-app', 'android_client_info': {'package_name': 'com.mknoon.sims.notifications'}}}]}))
         self.assertEqual(checks.prerequisites(check, self.root, config, {}), [])
 
+    def test_fcm_campaign_checks_explicit_production_package_binding(self):
+        check = {'kind': 'sims', 'requires_firebase_android_client': True,
+                 'environment': {'ANDROID_APP_PACKAGE': 'com.mknoon.app'}, 'device_roles': []}
+        config = {'isolated_test_environment': True, 'fixture_reference': 'authorized guarded app'}
+        path = 'android/app/google-services.json'
+        self.write(path, json.dumps({'project_info': {'project_id': 'isolated-fixture'},
+            'client': [{'client_info': {'mobilesdk_app_id': 'fixture-app',
+            'android_client_info': {'package_name': 'com.mknoon.app'}}}]}))
+        self.assertEqual(checks.prerequisites(check, self.root, config, {}), [])
+        check['environment']['ANDROID_APP_PACKAGE'] = 'com.mknoon.unregistered'
+        self.assertTrue(checks.prerequisites(check, self.root, config, {}))
+
     def test_package_binding_does_not_invent_android_roles_for_ios(self):
         env = checks.sims_environment({'devices': {'ios_physical': 'i'}}, self.root / 'report.json',
                                      {'kind': 'sims', 'capability': 'notifications.ios_payload_fast_path'})
@@ -628,8 +677,50 @@ class EvidenceAndExecutionTest(RepositoryFixture):
             code = checks.execute_plan(args, self.root, self.rules, plan, files, {}, {}, directory, time.monotonic())
         return code, json.loads((directory / 'results.json').read_text())
 
+    def test_cancelled_run_audits_toolchains_without_cancelling_version_probes(self):
+        self.write('lib/shared.dart', 'changed for isolated cancellation fixture\n')
+        args = self.args(only='chat')
+        directory = self.root / '.codex-test-logs/cancelled-audit'
+        directory.mkdir(parents=True)
+        def probe(root):
+            out, code, timeout, _ = checks.launch(
+                [sys.executable, '-c', 'import time; time.sleep(.05); print("fixture-toolchain")'],
+                root, 5)
+            return {'fixture': out.strip(), 'available': code == 0 and not timeout}
+        with mock.patch.object(checks, 'toolchain_identity', side_effect=probe):
+            plan, files = checks.make_plan(args, self.root, self.rules)
+        cancelled = False
+        def cancel_after_omitted_check(*values, **kwargs):
+            nonlocal cancelled
+            if not cancelled and values[:1] == ('NOT RUN',):
+                cancelled = True
+                handler = signal.getsignal(signal.SIGTERM)
+                self.assertTrue(callable(handler))
+                handler(signal.SIGTERM, None)
+        real_launch = checks.launch
+        def isolated_launch(command, *values):
+            self.assertEqual(command[0], sys.executable)
+            return real_launch(command, *values)
+        try:
+            with contextlib.redirect_stdout(io.StringIO()), \
+                    mock.patch.object(checks, 'print', side_effect=cancel_after_omitted_check, create=True), \
+                    mock.patch.object(checks, 'launch', side_effect=isolated_launch), \
+                    mock.patch.object(checks, 'toolchain_identity', side_effect=probe):
+                code = checks.execute_plan(args, self.root, self.rules, plan, files, {}, {}, directory, time.monotonic())
+            report = json.loads((directory / 'results.json').read_text())
+            self.assertTrue(cancelled)
+            self.assertNotEqual(code, 0)
+            self.assertIn('Run cancelled; unfinished obligations retained', report['gaps'])
+            self.assertNotIn('Toolchain or resolved package configuration changed during execution', report['gaps'])
+        finally:
+            checks._LAUNCH_CONTEXT.__dict__.clear()
+
     def test_real_unittest_process_reports_automated_pass_but_missing_manual_blocks_release(self):
-        code, report = self.execute_fixture(mode='release')
+        # Only a Python child in a temporary repository runs here. It must not
+        # contend with an actual Flutter/native build in another check.
+        with mock.patch.object(checks.device_preflight, 'device_leases',
+                               side_effect=AssertionError('Python fixture requested a native/device lease')):
+            code, report = self.execute_fixture(mode='release')
         self.assertNotEqual(code, 0)
         self.assertEqual(report['automated_status'], 'PASS')
         self.assertEqual(report['status'], 'BLOCKED')
@@ -653,6 +744,22 @@ class EvidenceAndExecutionTest(RepositoryFixture):
         self.assertNotEqual(code, 0)
         self.assertEqual(len(launched), 2, 'only fake device execution and report verification run')
 
+    def test_completed_host_skips_remain_blocked_but_allow_independent_device(self):
+        code, report, launched = self.execute_device_subset(host_status='SKIPS')
+        rows = {row['id']: row for row in report['results']}
+        self.assertEqual(rows['fast']['status'], 'BLOCKED')
+        self.assertEqual(rows['fast']['attempts'][0]['counts'], dict(passed=1, failed=0, skipped=1))
+        self.assertEqual(rows['device']['status'], 'PASS')
+        self.assertEqual(report['status'], 'BLOCKED')
+        self.assertNotEqual(code, 0)
+        self.assertEqual(len([cmd for cmd in launched if cmd[0] == 'dart']), 2)
+
+    def test_skipped_host_explicit_dependency_still_blocks_device(self):
+        _, report, launched = self.execute_device_subset(host_status='SKIPS', host_dependency=True)
+        rows = {row['id']: row for row in report['results']}
+        self.assertEqual(rows['device']['checkpoint'], 'dependency_failed')
+        self.assertFalse(any(cmd[0] == 'dart' for cmd in launched))
+
     def test_selected_host_failure_or_unavailable_prerequisite_still_blocks_device(self):
         for status in ('FAIL', 'BLOCKED'):
             with self.subTest(status=status):
@@ -663,13 +770,15 @@ class EvidenceAndExecutionTest(RepositoryFixture):
                 self.assertEqual(rows['device']['checkpoint'], 'host_prerequisite_failed')
                 self.assertFalse(any(command[0] == 'dart' for command in launched))
 
-    def execute_device_subset(self, host_status=None, preflight_status=None, device_failure=False, retry=False, second_device=False):
+    def execute_device_subset(self, host_status=None, preflight_status=None, device_failure=False, retry=False, second_device=False, verification_failure=False, host_dependency=False):
         self.write('tool/sims/critical_features.json', json.dumps({'capabilities': [{'id': 'fixture.device'}]}))
         self.rules['checks']['device'] = {'kind': 'sims', 'capability': 'fixture.device',
                                           'boundary': 'fake device scheduler boundary', 'timeout_seconds': 10,
                                           'device_roles': ['android_physical'],
                                           'disposable_android_package': 'com.mknoon.sims.fixture',
                                           'ui_driver': 'existing_campaign', 'ui_driver_reason': 'Isolated scheduler fixture'}
+        if host_dependency:
+            self.rules['checks']['device']['dependencies'] = ['fast']
         device_checks = ['device']
         if second_device:
             self.rules['checks']['device-next'] = copy.deepcopy(self.rules['checks']['device'])
@@ -678,6 +787,8 @@ class EvidenceAndExecutionTest(RepositoryFixture):
                                     'checks': device_checks, 'why': 'isolated scheduling sentinel'})
         self.write('lib/shared.dart', 'candidate requiring the fake device boundary\n')
         args = self.args(only=','.join((['fast'] if host_status else []) + device_checks), rerun_failed=retry)
+        if host_status == 'SKIPS':
+            self.write('fixture_test.py', 'import unittest\nclass Fixture(unittest.TestCase):\n    def test_pass(self): pass\n    @unittest.skip("external fixture absent")\n    def test_external(self): pass\n')
         if host_status == 'FAIL':
             self.write('fixture_test.py', 'import unittest\nclass Fixture(unittest.TestCase):\n    def test_fixture(self):\n        self.fail("intentional host gate failure")\n')
         directory = self.root / '.codex-test-logs' / ('device-subset-' + str(time.monotonic_ns()))
@@ -700,6 +811,8 @@ class EvidenceAndExecutionTest(RepositoryFixture):
                 if device_failure:
                     verdict.update(status='FAIL', exitCode=1)
                 Path(env['SIMS_REPORT_PATH']).write_text(json.dumps({'verdicts': [verdict], 'validationErrors': []}))
+            elif verification_failure:
+                return '', 1, False, .001
             return '', 0, False, .001
         with contextlib.redirect_stdout(io.StringIO()), \
                 mock.patch.object(checks, 'launch', side_effect=launch), \
@@ -726,7 +839,19 @@ class EvidenceAndExecutionTest(RepositoryFixture):
         self.assertTrue(rows['device']['attempts'][0]['cleanup_review_required'])
         self.assertEqual(rows['device-next']['status'], 'NOT RUN')
         self.assertEqual(rows['device-next']['checkpoint'], 'device_cleanup_review_required')
-        self.assertEqual(len(launched), 1)
+        self.assertEqual(len(launched), 2, 'failed reports still need independent integrity verification')
+        self.assertTrue(rows['device']['attempts'][0]['report_verification_observed'])
+
+    def test_report_verification_failure_never_hides_an_observed_test_failure(self):
+        for failed in (False, True):
+            with self.subTest(test_failed=failed):
+                _, report, launched = self.execute_device_subset(
+                    device_failure=failed, verification_failure=True)
+                row = next(r for r in report['results'] if r['id'] == 'device')
+                self.assertEqual(row['status'], 'FAIL' if failed else 'BLOCKED')
+                self.assertTrue(row['attempts'][0]['report_verification_failed'])
+                self.assertFalse(row['attempts'][0].get('report_verification_observed'))
+                self.assertEqual(len(launched), 2)
 
     def test_source_modified_during_passing_execution_invalidates_evidence(self):
         self.write('fixture_test.py', 'import unittest\nfrom pathlib import Path\nclass Fixture(unittest.TestCase):\n    def test_mutates_candidate(self):\n        Path("lib/shared.dart").write_text("changed during run")\n        self.assertTrue(True)\n')

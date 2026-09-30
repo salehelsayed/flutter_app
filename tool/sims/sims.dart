@@ -32,6 +32,7 @@ final class SimsCliOptions {
     required this.fixAsYouGo,
     required this.resume,
     required this.prepareBuilds,
+    this.excludedIds = const <String>[],
   });
 
   factory SimsCliOptions.parse(List<String> arguments) {
@@ -44,6 +45,7 @@ final class SimsCliOptions {
     var fixAsYouGo = false;
     var resume = false;
     var prepareBuilds = false;
+    final excludedIds = <String>[];
     String? onlyId;
     String? family;
     String? lane;
@@ -73,6 +75,8 @@ final class SimsCliOptions {
           format = _parseFormat(_nextValue(arguments, ++index, '--format'));
         case '--only':
           onlyId = _nextValue(arguments, ++index, '--only');
+        case '--exclude':
+          excludedIds.add(_nextValue(arguments, ++index, '--exclude'));
         case '--family':
           family = _nextValue(arguments, ++index, '--family');
         case '--lane':
@@ -84,6 +88,10 @@ final class SimsCliOptions {
             format = _parseFormat(argument.substring('--format='.length));
           } else if (argument.startsWith('--only=')) {
             onlyId = _nonempty(argument.substring('--only='.length), '--only');
+          } else if (argument.startsWith('--exclude=')) {
+            excludedIds.add(
+              _nonempty(argument.substring('--exclude='.length), '--exclude'),
+            );
           } else if (argument.startsWith('--family=')) {
             family = _nonempty(
               argument.substring('--family='.length),
@@ -103,9 +111,13 @@ final class SimsCliOptions {
         '--continue-on-failure.',
       );
     }
-    if (resume && (onlyId != null || family != null || lane != null)) {
+    if (resume &&
+        (onlyId != null ||
+            family != null ||
+            lane != null ||
+            excludedIds.isNotEmpty)) {
       throw const FormatException(
-        '--resume cannot be combined with --only, --family, or --lane.',
+        '--resume cannot be combined with --only, --family, --lane, or --exclude.',
       );
     }
 
@@ -121,6 +133,7 @@ final class SimsCliOptions {
       fixAsYouGo: fixAsYouGo,
       resume: resume,
       prepareBuilds: prepareBuilds,
+      excludedIds: List<String>.unmodifiable(excludedIds),
     );
   }
 
@@ -129,6 +142,7 @@ final class SimsCliOptions {
   final SimsOutputFormat format;
   final bool simultaneous;
   final String? onlyId;
+  final List<String> excludedIds;
   final String? family;
   final String? lane;
   final bool continueOnFailure;
@@ -143,6 +157,7 @@ void _validateCheckpointWorkflowOptions(SimsCliOptions options) {
           options.family != null ||
           options.lane != null ||
           options.onlyId != null ||
+          options.excludedIds.isNotEmpty ||
           options.prepareBuilds)) {
     throw const FormatException(
       '--fix-as-you-go is restricted to the canonical unfiltered major plan.',
@@ -183,6 +198,7 @@ Future<void> main(List<String> arguments) async {
       family: options.family,
       lane: options.lane,
       onlyId: options.onlyId,
+      excludedIds: options.excludedIds,
       simultaneous: options.simultaneous,
     );
     if (options.listOnly && !options.prepareBuilds) {
@@ -350,6 +366,8 @@ Future<void> main(List<String> arguments) async {
           deviceBinding?.environmentByCapabilityId ??
           const <String, Map<String, String>>{},
       preparedArtifacts: buildPreparation.artifacts,
+      preparedInputDigests: buildPreparation.inputDigests,
+      preparedArtifactDigests: buildPreparation.report.artifactDigests,
       buildFailures: buildPreparation.failures,
       preflightVerdicts:
           deviceBinding?.preflightVerdicts ?? const <String, SimsVerdict>{},
@@ -618,6 +636,7 @@ SimsPlan _copyPlan(
   manifestDigest: source.manifestDigest,
   family: source.family,
   onlyId: source.onlyId,
+  excludedIds: source.excludedIds,
   lane: source.lane,
   rows: List<CapabilitySpec>.unmodifiable(rows),
 );
@@ -901,6 +920,7 @@ SimsPlan _buildOnlyPlan(SimsPlan plan) {
     manifestDigest: plan.manifestDigest,
     family: plan.family,
     onlyId: plan.onlyId,
+    excludedIds: plan.excludedIds,
     lane: plan.lane,
     rows: rows,
   );
@@ -1135,7 +1155,7 @@ const _usage =
     'Usage: dart tool/sims/sims.dart '
     '[major|full|smoke] [--list] [--format text|json|tsv] '
     '[--simultaneous] [--continue-on-failure] [--prepare-builds] '
-    '[--fix-as-you-go|--resume] [--only id] [--family name] [--lane name]\n'
+    '[--fix-as-you-go|--resume] [--only id] [--exclude id] [--family name] [--lane name]\n'
     '       dart tool/sims/sims.dart verify-plan <plan.json>\n'
     '       dart tool/sims/sims.dart verify-schedule-equivalence '
     '<serial.json> <simultaneous.json>\n'

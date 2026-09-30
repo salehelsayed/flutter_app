@@ -1,0 +1,7 @@
+appId: com.mknoon.app
+name: place a call from the open chat and wait for Connected
+---
+- runFlow: ../ensure_chat.yaml
+- extendedWaitUntil: { visible: "Start voice call", timeout: 90000 }
+- tapOn: "Start voice call"
+- extendedWaitUntil: { visible: "(.*\\n)?Connected(\\n.*)?", timeout: 90000 }

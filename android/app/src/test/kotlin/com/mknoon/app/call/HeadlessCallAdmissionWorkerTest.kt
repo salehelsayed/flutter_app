@@ -956,8 +956,12 @@ class HeadlessCallAdmissionWorkerTest {
     }
 
     @Test
-    fun `decline reply input runs the engine in decline mode and never presents`() =
+    fun `reply modes run the engine without presenting again`() =
         runBlocking {
+            for (mode in listOf(
+                HeadlessCallAdmissionMode.DECLINE_REPLY,
+                HeadlessCallAdmissionMode.RINGING_REPLY,
+            )) {
             for (
                 disposition in listOf(
                     HeadlessCallAdmissionDisposition.ADMITTED,
@@ -999,9 +1003,9 @@ class HeadlessCallAdmissionWorkerTest {
 
                 assertEquals(
                     HeadlessCallAdmissionWorkOutcome.COMPLETED_WITHOUT_PRESENTATION,
-                    execution.execute(declineInput()),
+                    execution.execute(declineInput(mode = mode.wireName)),
                 )
-                assertEquals(HeadlessCallAdmissionMode.DECLINE_REPLY, observedMode)
+                assertEquals(mode, observedMode)
                 assertEquals(1, runner.runCalls)
                 assertEquals(1, runner.finishCalls)
                 assertEquals(0, presentations)
@@ -1015,6 +1019,7 @@ class HeadlessCallAdmissionWorkerTest {
                     listOf("dart.complete", "engine.finish", "native.releaseAdmission"),
                     operations,
                 )
+            }
             }
         }
 

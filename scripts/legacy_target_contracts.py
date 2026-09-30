@@ -222,7 +222,7 @@ def execute(kind, labels, output, *, root=ROOT, env=None, matrix=None, launch=No
                     if code or timed_out:
                         command_status = 'BLOCKED' if timed_out or code == 78 or ('BLOCKED' in part and not re.search(r'^FAIL[\t ]', part, re.M)) else 'FAIL'
                         checkpoint = 'legacy_child_failed'
-                    elif re.search(r'\[SKIP\]|\[BLOCKED\]|No tests ran|No tests were found|--- SKIP:|"skipped"\s*:\s*true', part):
+                    elif checks.legacy_log_incomplete_checkpoint(part):
                         command_status, checkpoint = 'BLOCKED', 'legacy_child_incomplete'
                     markers = contract.get('command_completion_markers')
                     if markers:

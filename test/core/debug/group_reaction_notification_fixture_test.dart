@@ -312,6 +312,32 @@ void main() {
     },
   );
 
+  test(
+    'cleanup preserves the first failure and still closes owned streams',
+    () async {
+      final calls = <String>[];
+      final firstFailure = StateError('fixture removal failed');
+      final cleanup =
+          fixture_driver.GroupFixtureTransientCleanup(<Future<void> Function()>[
+            () async {
+              calls.add('fixture');
+              throw firstFailure;
+            },
+            () async {
+              calls.add('ios-log');
+              throw StateError('logger exit failed');
+            },
+            () async => calls.add('android-log'),
+          ]);
+
+      await expectLater(cleanup.run(), throwsA(same(firstFailure)));
+      await cleanup.run();
+
+      expect(calls, ['fixture', 'ios-log', 'android-log']);
+      expect(cleanup.completed, isTrue);
+    },
+  );
+
   test('outer campaign retains authoritative app-state cleanup in finally', () {
     final source = File(
       'integration_test/scripts/run_group_reaction_notification_sims.dart',

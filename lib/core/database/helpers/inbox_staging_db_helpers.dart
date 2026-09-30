@@ -125,6 +125,28 @@ Future<List<Map<String, Object?>>> dbLoadRecoverableInboxStagingEntries(
   }
 }
 
+/// Whether any recoverable row exists other than the given parked kind.
+/// `IS NOT` keeps rows whose reject reason is NULL.
+Future<bool> dbHasRecoverableInboxStagingEntryExcluding(
+  Database db, {
+  required String messageType,
+  required String rejectReasonCode,
+}) async {
+  final rows = await db.rawQuery(
+    'SELECT 1 FROM inbox_staging_entries '
+    'WHERE status IN (?, ?) '
+    'AND (message_type IS NOT ? OR reject_reason_code IS NOT ?) '
+    'LIMIT 1',
+    <Object?>[
+      _recoverableInboxStagingStatuses[0],
+      _recoverableInboxStagingStatuses[1],
+      messageType,
+      rejectReasonCode,
+    ],
+  );
+  return rows.isNotEmpty;
+}
+
 Future<Map<String, Object?>?> dbLoadInboxStagingEntry(
   Database db,
   String entryId,

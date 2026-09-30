@@ -1,0 +1,10 @@
+appId: com.mknoon.app
+name: iPhone calls and waits until connected, then waits HOLD ms on the call screen
+---
+- runFlow: ensure_chat.yaml
+- extendedWaitUntil: { visible: "Start voice call", timeout: 90000 }
+- tapOn: "Start voice call"
+- extendedWaitUntil: { visible: "(.*\\n)?Connected(\\n.*)?", timeout: 90000 }
+- takeScreenshot: connected_${TAG}_ios
+- runFlow: { file: sleep.yaml, env: { MS: "${HOLD}" } }
+- takeScreenshot: after_hold_${TAG}_ios

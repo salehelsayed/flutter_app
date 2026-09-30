@@ -1,0 +1,11 @@
+appId: com.mknoon.app
+name: T21 iPhone adds the Pixel back
+---
+- runFlow: group_info.yaml
+- tapOn: "Add Member"
+- runFlow: { file: ../sleep.yaml, env: { MS: 2000 } }
+- tapOn: ".*${PEER}.*"
+- takeScreenshot: t21_add_picker
+- tapOn: "Add Members.*|Add.*|Invite.*|Done"
+- runFlow: { file: ../sleep.yaml, env: { MS: 4000 } }
+- takeScreenshot: t21_readded_ios

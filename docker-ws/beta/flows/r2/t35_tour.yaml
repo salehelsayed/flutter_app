@@ -1,0 +1,16 @@
+appId: com.mknoon.app
+name: T35 Arabic + large text tour - home, chat, send, outgoing call screen
+---
+- runFlow: { file: ../sleep.yaml, env: { MS: 12000 } }
+- takeScreenshot: t35_home_${DEV}
+- tapOn: ".*${PEER}.*"
+- extendedWaitUntil: { visible: { id: "chat_composer" }, timeout: 30000 }
+- takeScreenshot: t35_chat_${DEV}
+- tapOn: { id: "chat_composer" }
+- inputText: "T35 rtl ${DEV} ${NONCE}"
+- tapOn: { id: "chat_send" }
+- runFlow: { file: ../sleep.yaml, env: { MS: 4000 } }
+- takeScreenshot: t35_sent_${DEV}
+- tapOn: { id: "chat_call_button" }
+- runFlow: { file: ../sleep.yaml, env: { MS: 8000 } }
+- takeScreenshot: t35_calling_${DEV}

@@ -81,34 +81,7 @@ final class NotificationTapUITests: XCTestCase {
     let bundleId = ProcessInfo.processInfo.environment["MKNOON_APNS_TAP_APP_BUNDLE_ID"] ?? "com.mknoon.app"
     let app = XCUIApplication(bundleIdentifier: bundleId)
     let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
-    let autoSetupUsername = ProcessInfo.processInfo.environment["MKNOON_397_AUTO_SETUP_USERNAME"]?
-      .trimmingCharacters(in: .whitespacesAndNewlines)
-    guard let autoSetupUsername, !autoSetupUsername.isEmpty else {
-      XCTFail("Missing Plan 397 auto-setup username")
-      return
-    }
-    let setupReadinessAttempt = ProcessInfo.processInfo.environment[
-      "MKNOON_398_SETUP_READINESS_ATTEMPT"
-    ]?.trimmingCharacters(in: .whitespacesAndNewlines)
-    guard let setupReadinessAttempt,
-          (16...160).contains(setupReadinessAttempt.count),
-          setupReadinessAttempt.range(
-            of: "^[A-Za-z0-9._:-]+$",
-            options: .regularExpression
-          ) != nil else {
-      XCTFail("Missing Plan 398 setup-readiness attempt")
-      return
-    }
-    let setupEntryProfileId = ProcessInfo.processInfo.environment[
-      "MKNOON_398_SETUP_ENTRY_PROFILE_ID"
-    ]?.trimmingCharacters(in: .whitespacesAndNewlines)
-    guard setupEntryProfileId == "ios.device.group_reaction_notification_397" else {
-      XCTFail("Missing Plan 398 setup-entry profile")
-      return
-    }
-    app.launchEnvironment["MKNOON_397_AUTO_SETUP_USERNAME"] = autoSetupUsername
-    app.launchEnvironment["MKNOON_398_SETUP_READINESS_ATTEMPT"] = setupReadinessAttempt
-    app.launchEnvironment["MKNOON_398_SETUP_ENTRY_PROFILE_ID"] = setupEntryProfileId
+    guard configurePlan398SetupLaunchEnvironment(for: app) else { return }
 
     app.terminate()
     app.launch()
@@ -142,6 +115,40 @@ final class NotificationTapUITests: XCTestCase {
       fputs("\(marker)\n", stdout)
       fflush(stdout)
     }
+  }
+
+  /// Every setup-process restart must preserve the native/Dart entry binding.
+  private func configurePlan398SetupLaunchEnvironment(for app: XCUIApplication) -> Bool {
+    let autoSetupUsername = ProcessInfo.processInfo.environment["MKNOON_397_AUTO_SETUP_USERNAME"]?
+      .trimmingCharacters(in: .whitespacesAndNewlines)
+    guard let autoSetupUsername, !autoSetupUsername.isEmpty else {
+      XCTFail("Missing Plan 397 auto-setup username")
+      return false
+    }
+    let setupReadinessAttempt = ProcessInfo.processInfo.environment[
+      "MKNOON_398_SETUP_READINESS_ATTEMPT"
+    ]?.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard let setupReadinessAttempt,
+          (16...160).contains(setupReadinessAttempt.count),
+          setupReadinessAttempt.range(
+            of: "^[A-Za-z0-9._:-]+$",
+            options: .regularExpression
+          ) != nil else {
+      XCTFail("Missing Plan 398 setup-readiness attempt")
+      return false
+    }
+    let setupEntryProfileId = ProcessInfo.processInfo.environment[
+      "MKNOON_398_SETUP_ENTRY_PROFILE_ID"
+    ]?.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard setupEntryProfileId == "ios.device.group_reaction_notification_397" else {
+      XCTFail("Missing Plan 398 setup-entry profile")
+      return false
+    }
+    app.launchEnvironment["MKNOON_397_AUTO_SETUP_USERNAME"] = autoSetupUsername
+    app.launchEnvironment["MKNOON_398_SETUP_READINESS_ATTEMPT"] = setupReadinessAttempt
+    app.launchEnvironment["MKNOON_398_SETUP_ENTRY_PROFILE_ID"] = setupEntryProfileId
+
+    return true
   }
 
   /// Pure decoder coverage for the system-owned Control Center switch. This
@@ -440,6 +447,7 @@ final class NotificationTapUITests: XCTestCase {
     }
 
     let app = XCUIApplication(bundleIdentifier: bundleId)
+    guard configurePlan398SetupLaunchEnvironment(for: app) else { return }
     app.terminate()
     app.launch()
     XCTAssertTrue(app.wait(for: .runningForeground, timeout: 30))
@@ -497,6 +505,7 @@ final class NotificationTapUITests: XCTestCase {
     }
 
     let app = XCUIApplication(bundleIdentifier: bundleId)
+    guard configurePlan398SetupLaunchEnvironment(for: app) else { return }
     app.terminate()
     app.launch()
     XCTAssertTrue(app.wait(for: .runningForeground, timeout: 30))
@@ -546,6 +555,7 @@ final class NotificationTapUITests: XCTestCase {
 
     let app = XCUIApplication(bundleIdentifier: bundleId)
     let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
+    guard configurePlan398SetupLaunchEnvironment(for: app) else { return }
     app.terminate()
     app.launch()
     XCTAssertTrue(app.wait(for: .runningForeground, timeout: 30))
@@ -608,6 +618,7 @@ final class NotificationTapUITests: XCTestCase {
 
     let app = XCUIApplication(bundleIdentifier: bundleId)
     let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
+    guard configurePlan398SetupLaunchEnvironment(for: app) else { return }
     app.terminate()
     app.launch()
     XCTAssertTrue(app.wait(for: .runningForeground, timeout: 30))
@@ -774,6 +785,8 @@ final class NotificationTapUITests: XCTestCase {
 
     let app = XCUIApplication(bundleIdentifier: bundleId)
     app.terminate()
+    XCTAssertEqual(app.state, .notRunning, "Announcement reaction tap requires a stopped app")
+    NSLog("MKNOON_257_COLD_NOTIFICATION_STATE app_not_running=true")
     try observeAnnouncementReactionNotification(
       expectedGroupName: expectedGroupName,
       expectedActorName: expectedActorName,
@@ -903,10 +916,22 @@ final class NotificationTapUITests: XCTestCase {
     var matches: [XCUIElement] = []
     for index in 0..<min(candidates.count, limit) {
       let card = candidates.element(boundBy: index)
-      if card.exists
-        && notificationCard(card, containsExactText: title)
-        && notificationCard(card, containsExactText: body)
-      {
+      guard card.exists else { continue }
+      let snapshot: XCUIElementSnapshot
+      do {
+        snapshot = try card.snapshot()
+      } catch {
+        XCTFail("Could not snapshot notification card at index \(index): \(error)")
+        return []
+      }
+      // A descendant query's firstMatch can escape an index-bound card on
+      // SpringBoard. Inspect one resolved tree so both texts belong to this card.
+      let titleMatched = notificationCard(snapshot, containsExactText: title)
+      let bodyMatched = notificationCard(snapshot, containsExactText: body)
+      NSLog("MKNOON_397_CARD_CANDIDATE index=%d type=%lu frame=%@ title_matched=%@ body_matched=%@",
+        index, snapshot.elementType.rawValue, String(describing: snapshot.frame),
+        String(titleMatched), String(bodyMatched))
+      if titleMatched && bodyMatched {
         matches.append(card)
       }
     }
@@ -914,7 +939,7 @@ final class NotificationTapUITests: XCTestCase {
   }
 
   private func notificationCard(
-    _ card: XCUIElement,
+    _ card: XCUIElementSnapshot,
     containsExactText text: String
   ) -> Bool {
     if card.label.compare(text, options: [.caseInsensitive]) == .orderedSame
@@ -923,12 +948,7 @@ final class NotificationTapUITests: XCTestCase {
     {
       return true
     }
-    let predicate = NSPredicate(
-      format: "label ==[c] %@ OR value ==[c] %@",
-      text,
-      text
-    )
-    return card.descendants(matching: .any).matching(predicate).firstMatch.exists
+    return card.children.contains { notificationCard($0, containsExactText: text) }
   }
 
   private func tapSameContainerNotificationCard(

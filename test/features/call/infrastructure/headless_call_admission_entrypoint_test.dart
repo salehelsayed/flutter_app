@@ -138,6 +138,16 @@ void main() {
     expect(decline.expiresAtMs, expiresAtMs);
     expect(decline.identityPayload(), admission.identityPayload());
 
+    final ringing = HeadlessCallAdmissionInvocation.parse(const <String>[
+      nonce,
+      callId,
+      wakeHandle,
+      '$expiresAtMs',
+      'ringing_reply',
+    ]);
+    expect(ringing.mode, HeadlessCallAdmissionMode.ringingReply);
+    expect(ringing.identityPayload(), admission.identityPayload());
+
     for (final invalid in <List<String>>[
       const <String>[nonce, callId, wakeHandle, '$expiresAtMs', 'admission'],
       const <String>[nonce, callId, wakeHandle, '$expiresAtMs', ''],

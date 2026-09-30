@@ -1,0 +1,9 @@
+appId: com.mknoon.app
+name: T30 Pixel (app in background) answers from the call notification
+---
+- extendedWaitUntil: { visible: "Answer|ANSWER", timeout: 120000 }
+- takeScreenshot: t30_notification
+- tapOn: "Answer|ANSWER"
+- extendedWaitUntil: { visible: "(.*\\n)?Connected(\\n.*)?", timeout: 60000 }
+- takeScreenshot: t30_connected
+- extendedWaitUntil: { notVisible: "End", timeout: 120000 }

@@ -111,8 +111,8 @@ class BonsoirDiscoveryService implements LocalDiscoveryService {
   String? _ownPeerId;
 
   // B1.2: peers with a resolve currently in flight, so we never issue a second
-  // overlapping `service.resolve(...)` for the same peer — each extra native
-  // resolve is another use-after-free window.
+  // overlapping `service.resolve(...)` for the same peer and keep native
+  // resolver work bounded.
   // Cleared on the resolved or lost event for that peer.
   final _resolvingPeerIds = <String>{};
   // B1.3/B1.4: set once teardown begins so no new resolves are issued while or
@@ -350,7 +350,7 @@ class BonsoirDiscoveryService implements LocalDiscoveryService {
         if (foundPeerId != null) _resolvable[foundPeerId] = service;
         // B1.1: never resolve our OWN advertised service. (The own-peer skip
         // used to happen only on the resolved event, AFTER the resolve had
-        // already been issued — wasted resolve + extra UAF window, doubled when
+        // already been issued — wasted DNS-SD work, doubled when
         // two iOS devices both advertise `_mknoon._tcp`.)
         if (foundPeerId == null || foundPeerId == _ownPeerId) break;
         // Bonsoir requires explicit resolution after a service is found.

@@ -1,10 +1,12 @@
 import 'package:flutter_app/features/call/application/call_endpoint_resolver.dart';
 import 'package:flutter_app/features/call/application/call_signaling_service.dart';
 import 'package:flutter_app/features/call/application/headless_call_decline_reply.dart';
+import 'package:flutter_app/features/call/application/headless_call_ringing_reply.dart';
 import 'package:flutter_app/features/call/domain/call_id.dart';
 import 'package:flutter_app/features/call/domain/call_signal.dart';
 import 'package:flutter_app/features/call/infrastructure/call_authority_client.dart';
 import 'package:flutter_app/features/call/infrastructure/p2p_call_transport.dart';
+import 'package:flutter_app/features/call/infrastructure/secure_call_envelope_codec.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 const _callId = '22222222-2222-4222-8222-222222222222';
@@ -126,13 +128,84 @@ void main() {
       expect(signal.senderDevicePeerId, 'local-device');
       expect(signal.recipientAccountPeerId, 'caller-account');
       expect(signal.recipientDevicePeerId, 'caller-device');
-      expect(signal.senderSequence, 1);
+      expect(signal.senderSequence, 2);
       expect(signal.iceGeneration, 3);
       expect(signal.createdAtMs, _now);
       expect(signal.expiresAtMs, _now + 40_000);
       expect(signal.payload, const <String, Object?>{'reason': 'declined'});
     },
   );
+
+  test('caller admits headless ringing followed by headless decline', () async {
+    final ringing = HeadlessCallRingingReplyTransmitter(
+      transmit:
+          ({
+            required signal,
+            required callHandle,
+            required endpoint,
+            required senderSigningPrivateKey,
+          }) async {
+            transmitted.add((
+              signal: signal,
+              callHandle: callHandle,
+              endpoint: endpoint,
+              signingKey: senderSigningPrivateKey,
+            ));
+            return result();
+          },
+      resolveEndpoint: (_) async => _endpoint(),
+      isNativeRinging: (_, _) async => true,
+      localAccountPeerId: 'local-account',
+      localDevicePeerId: 'local-device',
+      loadSigningPrivateKey: () async => 'local-signing-key',
+      nowMs: () => _now,
+      messageIdSource: () => '66666666-6666-4666-8666-666666666666',
+    );
+
+    expect(
+      await ringing.sendRingingFor(_invite(), callHandle: _mailboxHandle),
+      isTrue,
+    );
+    expect(
+      await transmitter.sendDeclineFor(_invite(), callHandle: _mailboxHandle),
+      isTrue,
+    );
+    final sentRinging = transmitted[0].signal;
+    final sentDecline = transmitted[1].signal;
+    expect(sentRinging.event, CallSignalType.ringing);
+    expect(sentDecline.event, CallSignalType.reject);
+
+    // The caller's real replay store rejected this second reply when both
+    // independent headless runs signed sequence 1.
+    final replayStore = InMemoryBoundedCallReplayProtectionStore();
+    replayStore
+        .reserve(
+          signal: sentRinging,
+          envelopeDigest: 'ringing',
+          nowMs: _now,
+          tombstoneTtl: const Duration(minutes: 1),
+        )
+        .commit();
+    replayStore
+        .reserve(
+          signal: sentDecline,
+          envelopeDigest: 'decline',
+          nowMs: _now,
+          tombstoneTtl: const Duration(minutes: 1),
+        )
+        .commit();
+
+    // If the ringing run loses its race or never reaches custody, a terminal
+    // reply can still be the first signal the caller sees.
+    InMemoryBoundedCallReplayProtectionStore()
+        .reserve(
+          signal: sentDecline,
+          envelopeDigest: 'decline-only',
+          nowMs: _now,
+          tombstoneTtl: const Duration(minutes: 1),
+        )
+        .commit();
+  });
 
   test('a mailbox-only custody also counts as delivered', () async {
     result = () => const CallSignalTransportResult(

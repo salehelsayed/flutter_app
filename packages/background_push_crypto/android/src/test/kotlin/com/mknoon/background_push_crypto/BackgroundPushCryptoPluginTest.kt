@@ -13,8 +13,10 @@ import org.mockito.Mockito.mock
 import org.mockito.Mockito.verify
 import org.mockito.Mockito.`when`
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
 
 @RunWith(RobolectricTestRunner::class)
+@Config(sdk = [34])
 class BackgroundPushCryptoPluginTest {
     @Test
     fun `registers on headless engine without replacing main callback`() {

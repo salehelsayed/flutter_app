@@ -149,6 +149,9 @@ func TestV2EnvelopeMatchesFlutter(t *testing.T) {
 	if parsed["version"] != "2" {
 		t.Errorf("version=%v, want 2", parsed["version"])
 	}
+	if parsed["id"] != msgID {
+		t.Errorf("outer id=%v, want authenticated message id %s", parsed["id"], msgID)
+	}
 	if parsed["senderPeerId"] != "12D3KooWSenderPeerId" {
 		t.Errorf("senderPeerId=%v", parsed["senderPeerId"])
 	}

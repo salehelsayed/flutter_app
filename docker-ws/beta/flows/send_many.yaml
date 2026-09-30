@@ -1,0 +1,10 @@
+appId: com.mknoon.app
+name: send OFF1..OFF3 while the friend's app is stopped
+---
+- runFlow: ensure_chat.yaml
+- runFlow: { file: send_text.yaml, env: { MSG: "${P}1 offline msg ${NONCE}" } }
+- runFlow: { file: send_text.yaml, env: { MSG: "${P}2 offline msg ${NONCE}" } }
+- runFlow: { file: send_text.yaml, env: { MSG: "${P}3 offline msg ${NONCE}" } }
+- runFlow: kb_hide.yaml
+- runFlow: { file: sleep.yaml, env: { MS: 8000 } }
+- takeScreenshot: offline_sent_${DEV}

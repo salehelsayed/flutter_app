@@ -5,6 +5,7 @@ import 'package:flutter/rendering.dart';
 import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/features/call/application/call_audio_controller.dart';
 import 'package:flutter_app/features/call/application/foreground_call_capability.dart';
+import 'package:flutter_app/features/call/application/locked_call_presentation.dart';
 import 'package:flutter_app/features/call/domain/call_end_reason.dart';
 import 'package:flutter_app/features/call/domain/call_engine.dart';
 import 'package:flutter_app/features/call/domain/call_id.dart';
@@ -100,6 +101,38 @@ void main() {
   );
 
   group('ForegroundCallOverlay projection', () {
+    testWidgets('unresolved UI fallback never becomes native caller metadata', (
+      tester,
+    ) async {
+      final capability = _FakeLockedForegroundCallCapability();
+      final resolvedName = Completer<String?>();
+      addTearDown(capability.dispose);
+      await tester.pumpWidget(
+        harness(
+          capability: capability,
+          loadContactDisplayName: (_) => resolvedName.future,
+        ),
+      );
+      capability.emit(
+        _projection(
+          now: now,
+          callId: _incomingId,
+          peerId: 'incoming-peer',
+          direction: CallDirection.incoming,
+          state: CallState.ringing,
+          incomingValidated: true,
+        ),
+      );
+      await tester.pump();
+      expect(find.text(fallbackName), findsOneWidget);
+      expect(capability.locked, isEmpty);
+
+      resolvedName.complete('Beta iPhone');
+      await tester.pump();
+      await tester.pump();
+      expect(capability.locked.first.displayName, 'Beta iPhone');
+    });
+
     testWidgets('maps only the canonical foreground call states', (
       tester,
     ) async {
@@ -1281,7 +1314,7 @@ CallAudioControlState _audio({
   failure: failure,
 );
 
-final class _FakeForegroundCallCapability implements ForegroundCallCapability {
+class _FakeForegroundCallCapability implements ForegroundCallCapability {
   final StreamController<ForegroundCallProjection?> _changes =
       StreamController<ForegroundCallProjection?>.broadcast(sync: true);
   final List<_RecordedAction> actions = <_RecordedAction>[];
@@ -1339,6 +1372,20 @@ final class _FakeForegroundCallCapability implements ForegroundCallCapability {
   ) async {
     actions.add(_RecordedAction('setSpeakerEnabled', callId, value: enabled));
     return nextSpeakerResult;
+  }
+}
+
+final class _FakeLockedForegroundCallCapability
+    extends _FakeForegroundCallCapability
+    implements LockedCallPresentationPort {
+  final locked = <LockedCallPresentation>[];
+
+  @override
+  Future<void> updateLockedPresentation(
+    CallId callId,
+    LockedCallPresentation presentation,
+  ) async {
+    locked.add(presentation);
   }
 }
 

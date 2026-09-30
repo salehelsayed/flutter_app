@@ -1,0 +1,6 @@
+appId: com.mknoon.app
+name: T35 the other phone declines the call from the Arabic phone
+---
+- extendedWaitUntil: { visible: "Decline", timeout: 120000 }
+- runFlow: { file: ../sleep.yaml, env: { MS: 3000 } }
+- tapOn: "Decline"

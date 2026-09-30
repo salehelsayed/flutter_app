@@ -321,29 +321,32 @@ void main() {
       expect(validation.detail, contains('empty wake nomination'));
     });
 
-    test('rejects a self-reaction that posted a card on either device', () async {
-      final happy = happyMutedReactionCaptureInput();
-      for (final counts in const <(int, int, int, int)>[
-        (1, 2, 0, 0),
-        (1, 1, 0, 1),
-      ]) {
-        final validation = await validate(
-          happy.copyWith(
-            selfReactionAudience: GroupMutedSelfReactionAudienceInput(
-              targetMarker: happy.selfReactionAudience!.targetMarker,
-              recipientCardCountBefore: counts.$1,
-              recipientCardCountAfter: counts.$2,
-              senderCardCountBefore: counts.$3,
-              senderCardCountAfter: counts.$4,
-              relayMetrics: selfReactionRelayMetricsFixture(),
+    test(
+      'rejects a self-reaction that posted a card on either device',
+      () async {
+        final happy = happyMutedReactionCaptureInput();
+        for (final counts in const <(int, int, int, int)>[
+          (1, 2, 0, 0),
+          (1, 1, 0, 1),
+        ]) {
+          final validation = await validate(
+            happy.copyWith(
+              selfReactionAudience: GroupMutedSelfReactionAudienceInput(
+                targetMarker: happy.selfReactionAudience!.targetMarker,
+                recipientCardCountBefore: counts.$1,
+                recipientCardCountAfter: counts.$2,
+                senderCardCountBefore: counts.$3,
+                senderCardCountAfter: counts.$4,
+                relayMetrics: selfReactionRelayMetricsFixture(),
+              ),
             ),
-          ),
-        );
+          );
 
-        expect(validation.ok, isFalse, reason: '$counts');
-        expect(validation.detail, contains('changed the card count'));
-      }
-    });
+          expect(validation.ok, isFalse, reason: '$counts');
+          expect(validation.detail, contains('changed the card count'));
+        }
+      },
+    );
 
     test('rejects a self-reaction target the reactor did not author', () async {
       final happy = happyMutedReactionCaptureInput();
@@ -409,20 +412,23 @@ void main() {
       expect(validation.detail, contains('baseline/final pair'));
     });
 
-    test('rejects a live-lane artifact carrying self-reaction evidence', () async {
-      final validation = await validate(
-        happyMutedMessageCaptureInput().copyWith(
-          selfReactionAudience:
-              happyMutedReactionCaptureInput().selfReactionAudience,
-        ),
-      );
+    test(
+      'rejects a live-lane artifact carrying self-reaction evidence',
+      () async {
+        final validation = await validate(
+          happyMutedMessageCaptureInput().copyWith(
+            selfReactionAudience:
+                happyMutedReactionCaptureInput().selfReactionAudience,
+          ),
+        );
 
-      expect(validation.ok, isFalse);
-      expect(
-        validation.detail,
-        contains('must be absent on the live suppression lane'),
-      );
-    });
+        expect(validation.ok, isFalse);
+        expect(
+          validation.detail,
+          contains('must be absent on the live suppression lane'),
+        );
+      },
+    );
 
     test('rejects a missing pre-mute control card', () async {
       final happy = happyMutedMessageCaptureInput();
@@ -1106,6 +1112,25 @@ void main() {
           '</hierarchy>';
 
       expect(findGroupMuteSwitchCenter(labelled), (960, 948));
+    });
+
+    test('uses the accessible group information button from the device tree', () {
+      // The retained 2026-09-24 failure tree exposes the tooltip as content-desc.
+      // Keep the real button class, clickability, and bounds; omit chat content.
+      for (final label in <String>[
+        'Group information',
+        'Gruppeninformationen',
+        'معلومات المجموعة',
+      ]) {
+        final xml =
+            '<hierarchy>'
+            '<node text="" class="android.widget.Button" content-desc="Back" '
+            'clickable="true" bounds="[11,149][137,275]" />'
+            '<node text="" class="android.widget.Button" content-desc="$label" '
+            'clickable="true" bounds="[933,149][1059,275]" />'
+            '</hierarchy>';
+        expect(findGroupInfoEntryCenter(xml), (996, 212), reason: label);
+      }
     });
 
     test('picks the rightmost header button as the info control', () {

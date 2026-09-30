@@ -106,7 +106,9 @@ const _expectedGroupApiFingerprint = '3ffab64f';
 // before the call owner rejects it. The wired widget regression proves that
 // this unavailable tap neither probes the endpoint nor places a call.
 const _expectedDirectHandoffFingerprint = 'cfa5d939';
-const _expectedGroupHandoffFingerprint = '74b2fe80';
+// R2-3: the group handoff adds review send/discard callbacks for a voice note
+// stopped by call Answer. The callbacks delegate to the wired capture owner.
+const _expectedGroupHandoffFingerprint = '060099cf';
 
 String _compact(String source) => source.replaceAll(RegExp(r'\s+'), ' ').trim();
 

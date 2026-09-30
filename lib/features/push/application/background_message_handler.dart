@@ -1607,6 +1607,16 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
         return true;
       } on DurableNotificationPublicationNotAuthorizedException {
         return false;
+      } catch (error) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'PUSH_BACKGROUND_DURABLE_PUBLICATION_FAILED',
+          details: {
+            'messageId': message.messageId,
+            'errorType': error.runtimeType.toString(),
+          },
+        );
+        rethrow;
       }
     }
 
@@ -1730,6 +1740,16 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
     if (durableEffectResult != null &&
         durableEffectResult.disposition !=
             DurableLocalNotificationEffectDisposition.osPosted) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'PUSH_BACKGROUND_DURABLE_EFFECT_NOT_POSTED',
+        details: {
+          'messageId': message.messageId,
+          'disposition': durableEffectResult.disposition.name,
+          'nativeEntryAttempted':
+              durableEffectResult.currentNativeEntryAttempted,
+        },
+      );
       if (durableEffectResult.currentNativeEntryAttempted &&
           !durableEffectResult.currentNativeEntryWasSilentRepair) {
         // The platform callback may have been accepted. The ledger retains
@@ -2398,7 +2418,12 @@ validateBackgroundDirectNotificationAfterShowInDatabase(
           (expectedEntry.eventKind !=
                   DirectNotificationDisplayOutboxKind.reaction ||
               expectedEntry.eventId != eventIdentity ||
-              expectedEntry.peerId != peerId)) {
+              expectedEntry.peerId != peerId ||
+              expectedEntry.actorPeerId != peerId ||
+              !expectedEntry.isReady ||
+              _trimToNull(expectedEntry.reactionId) == null ||
+              expectedEntry.reactionAction != 'add' ||
+              expectedEntry.reactionTombstone != false)) {
         return BackgroundDirectNotificationPostShowDecision.unknown;
       }
       final terminal =
@@ -2407,10 +2432,15 @@ validateBackgroundDirectNotificationAfterShowInDatabase(
             peerId: peerId,
             terminalEventId: eventIdentity,
           );
-      if (terminal == null) {
+      // Transaction B writes the terminal only after the native effect has
+      // completed. The first durable attempt therefore validates its exact
+      // READY tuple against the current message/reaction rows. A caller
+      // without READY authority still needs the established terminal.
+      if (terminal == null && expectedEntry == null) {
         return BackgroundDirectNotificationPostShowDecision.unknown;
       }
       if (expectedEntry != null &&
+          terminal != null &&
           (_trimToNull(terminal['peer_id']) != expectedEntry.peerId ||
               _trimToNull(terminal['message_id']) != expectedEntry.messageId ||
               _trimToNull(terminal['actor_peer_id']) !=
@@ -2421,12 +2451,14 @@ validateBackgroundDirectNotificationAfterShowInDatabase(
                   expectedEntry.eventId)) {
         return BackgroundDirectNotificationPostShowDecision.unknown;
       }
-      if (terminal['notification_acknowledged_at'] != null &&
+      if (terminal?['notification_acknowledged_at'] != null &&
           expectedEntry == null) {
         return BackgroundDirectNotificationPostShowDecision.read;
       }
-      final messageId = terminal['message_id'] as String;
-      final actorPeerId = terminal['actor_peer_id'] as String;
+      final messageId =
+          expectedEntry?.messageId ?? (terminal!['message_id'] as String);
+      final actorPeerId =
+          expectedEntry?.actorPeerId ?? (terminal!['actor_peer_id'] as String);
       final target = await dbLoadMessage(db, messageId);
       final reaction = await dbLoadActiveOrTombstonedReactionForSender(
         db,
@@ -2450,7 +2482,9 @@ validateBackgroundDirectNotificationAfterShowInDatabase(
             target?['private_media_state'],
           ) ||
           _trimToNull(reaction?['id']) !=
-              _trimToNull(terminal['reaction_id']) ||
+              _trimToNull(
+                expectedEntry?.reactionId ?? terminal?['reaction_id'],
+              ) ||
           reaction?['removed_at'] != null ||
           (expectedEntry != null &&
               _trimToNull(reaction?['timestamp']) !=
@@ -2459,7 +2493,7 @@ validateBackgroundDirectNotificationAfterShowInDatabase(
         return BackgroundDirectNotificationPostShowDecision.retire;
       }
       if (acknowledgement != null ||
-          terminal['notification_acknowledged_at'] != null) {
+          terminal?['notification_acknowledged_at'] != null) {
         return BackgroundDirectNotificationPostShowDecision.read;
       }
       return BackgroundDirectNotificationPostShowDecision.keep;
@@ -2735,6 +2769,25 @@ Future<DurableLocalNotificationCanonicalDisposition>
 _readFinalBackgroundCanonicalDisposition(
   _BackgroundSqlEffectAuthority authority,
 ) async {
+  // Tie every deferral to its ledger row, so a stuck row can be told apart
+  // from a passing race.
+  final entryMessageId =
+      authority.directEntry?.messageId ?? authority.groupEntry?.messageId;
+  final entryEventId =
+      authority.directEntry?.eventId ?? authority.groupEntry?.eventId;
+  DurableLocalNotificationCanonicalDisposition defer(String reason) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'PUSH_BACKGROUND_DURABLE_CANONICAL_DEFERRED',
+      details: {
+        'reason': reason,
+        'messageId': ?entryMessageId,
+        'eventId': ?entryEventId,
+      },
+    );
+    return DurableLocalNotificationCanonicalDisposition.retryableUnknown;
+  }
+
   Database? db;
   try {
     final group = authority.groupEntry;
@@ -2744,7 +2797,7 @@ _readFinalBackgroundCanonicalDisposition(
         : await _backgroundGroupNotificationPostShowValidator(groupComparand);
     final key = await FlutterSecureKeyStore().read(_backgroundDbEncryptionKey);
     if (_trimToNull(key) == null) {
-      return DurableLocalNotificationCanonicalDisposition.retryableUnknown;
+      return defer('database_key_unavailable');
     }
     final dbPath = await getDatabasesPath();
     db = await openBackgroundIdentityDbReadTolerant(
@@ -2779,7 +2832,7 @@ _readFinalBackgroundCanonicalDisposition(
         eventId: direct.eventId,
       );
       if (row == null) {
-        return DurableLocalNotificationCanonicalDisposition.retryableUnknown;
+        return defer('direct_authority_absent');
       }
       final current = DirectNotificationDisplayOutboxEntry.fromMap(row);
       final sameIdentity = _sameDirectDisplayAuthorityIdentity(direct, current);
@@ -2791,7 +2844,10 @@ _readFinalBackgroundCanonicalDisposition(
             expected: direct,
             current: current,
           )) {
-        return DurableLocalNotificationCanonicalDisposition.retryableUnknown;
+        return defer('direct_authority_changed');
+      }
+      if (decision == BackgroundDirectNotificationPostShowDecision.unknown) {
+        return defer('direct_canonical_unknown');
       }
       return switch (decision) {
         BackgroundDirectNotificationPostShowDecision.keep =>
@@ -2846,7 +2902,17 @@ _readFinalBackgroundCanonicalDisposition(
       BackgroundGroupNotificationPostShowDecision.unknown =>
         DurableLocalNotificationCanonicalDisposition.retryableUnknown,
     };
-  } catch (_) {
+  } catch (error) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'PUSH_BACKGROUND_DURABLE_CANONICAL_DEFERRED',
+      details: {
+        'reason': 'canonical_read_failed',
+        'errorType': error.runtimeType.toString(),
+        'messageId': ?entryMessageId,
+        'eventId': ?entryEventId,
+      },
+    );
     return DurableLocalNotificationCanonicalDisposition.retryableUnknown;
   } finally {
     await db?.close();

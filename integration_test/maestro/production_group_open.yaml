@@ -1,0 +1,9 @@
+appId: ${APP_ID}
+name: production_group_open
+---
+- assertVisible:
+    id: orbit.view.inner_circle
+- tapOn:
+    id: orbit.group.${GROUP_ID}
+- assertVisible:
+    id: chat_composer

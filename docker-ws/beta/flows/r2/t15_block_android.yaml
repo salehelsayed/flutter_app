@@ -1,0 +1,11 @@
+appId: com.mknoon.app
+name: T15 Pixel blocks the iPhone
+---
+- runFlow: ../ensure_chat.yaml
+- tapOn: "Conversation options"
+- tapOn: "Block ${PEER}"
+- runFlow: { file: ../sleep.yaml, env: { MS: 1500 } }
+- takeScreenshot: t15_block_dialog
+- tapOn: "Block"
+- runFlow: { file: ../sleep.yaml, env: { MS: 3000 } }
+- takeScreenshot: t15_blocked

@@ -54,6 +54,17 @@ abstract interface class InboxStagingPrerequisiteWaitingRepository {
   });
 }
 
+/// Optional existence probe for recoverable work other than one parked kind.
+/// A recovery-only runtime parks foreground-only rows (for example plaintext
+/// delivery receipts) as retryable; they can outnumber any page size, so a
+/// capped page of recoverable rows cannot prove nothing else is waiting.
+abstract interface class InboxStagingRecoverableWorkProbeRepository {
+  Future<bool> hasRecoverableEntryExcluding({
+    required String messageType,
+    required String rejectReasonCode,
+  });
+}
+
 /// Terminal protected replay awaiting the relay's exact ACK. The local bytes
 /// stay durable but are excluded from ordinary replay/attempt accounting.
 abstract interface class InboxStagingProtectedAckPendingRepository {

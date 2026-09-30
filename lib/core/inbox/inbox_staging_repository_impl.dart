@@ -6,7 +6,8 @@ class InboxStagingRepositoryImpl
     implements
         InboxStagingRepository,
         InboxStagingPrerequisiteWaitingRepository,
-        InboxStagingProtectedAckPendingRepository {
+        InboxStagingProtectedAckPendingRepository,
+        InboxStagingRecoverableWorkProbeRepository {
   final Future<int> Function(Map<String, Object?> row)
   dbInsertInboxStagingEntry;
   final Future<List<Map<String, Object?>>> Function({
@@ -51,6 +52,15 @@ class InboxStagingRepositoryImpl
   /// over-counts).
   final Future<int> Function()? dbCountNeedsAttentionInboxStagingEntries;
 
+  /// Optional so existing construction sites keep compiling; when absent,
+  /// [hasRecoverableEntryExcluding] falls back to a page scan that reports
+  /// work whenever the page is full (it can over-report, never under-report).
+  final Future<bool> Function({
+    required String messageType,
+    required String rejectReasonCode,
+  })?
+  dbHasRecoverableInboxStagingEntryExcluding;
+
   InboxStagingRepositoryImpl({
     required this.dbInsertInboxStagingEntry,
     required this.dbLoadRecoverableInboxStagingEntries,
@@ -63,6 +73,7 @@ class InboxStagingRepositoryImpl
     required this.dbMarkInboxStagingEntryQuarantined,
     required this.dbCountQuarantinedInboxStagingEntries,
     this.dbCountNeedsAttentionInboxStagingEntries,
+    this.dbHasRecoverableInboxStagingEntryExcluding,
   });
 
   @override
@@ -110,6 +121,28 @@ class InboxStagingRepositoryImpl
       entryIds: entryIds,
     );
     return rows.map(InboxStagingEntry.fromMap).toList();
+  }
+
+  @override
+  Future<bool> hasRecoverableEntryExcluding({
+    required String messageType,
+    required String rejectReasonCode,
+  }) async {
+    final probe = dbHasRecoverableInboxStagingEntryExcluding;
+    if (probe != null) {
+      return probe(
+        messageType: messageType,
+        rejectReasonCode: rejectReasonCode,
+      );
+    }
+    const page = 500;
+    final entries = await getRecoverableEntries(limit: page);
+    return entries.length >= page ||
+        entries.any(
+          (entry) =>
+              entry.messageType != messageType ||
+              entry.rejectReasonCode != rejectReasonCode,
+        );
   }
 
   @override

@@ -23,18 +23,23 @@ void main() {
   const rollback =
       bool.hasEnvironment('MKNOON_EMIT_WAKE_TOKEN') &&
       !bool.fromEnvironment('MKNOON_EMIT_WAKE_TOKEN');
-  test('ordinary builds resolve the recipient-issued wake token', () async {
-    expect(shouldEmitWakeToken(), isTrue);
-    final store = _SeededWakeTokenStore({'peerB': 'tok-B'});
-    final resolver = buildWakeTokenResolver(store);
-    expect(await resolver('peerB'), 'tok-B');
-    expect(await resolver('missing-peer'), isNull);
-  }, skip: rollback);
-  test('explicit emission rollback does not distribute tokens', () async {
-    expect(shouldEmitWakeToken(), isFalse);
-    final resolver = buildWakeTokenResolver(
-      _SeededWakeTokenStore({'peerB': 'tok-B'}),
-    );
-    expect(await resolver('peerB'), isNull);
-  }, skip: !rollback);
+  // The manifest runs both builds. Register the assertion applicable to each
+  // compile-time configuration, rather than declaring an unexecutable test.
+  if (rollback) {
+    test('explicit emission rollback does not distribute tokens', () async {
+      expect(shouldEmitWakeToken(), isFalse);
+      final resolver = buildWakeTokenResolver(
+        _SeededWakeTokenStore({'peerB': 'tok-B'}),
+      );
+      expect(await resolver('peerB'), isNull);
+    });
+  } else {
+    test('ordinary builds resolve the recipient-issued wake token', () async {
+      expect(shouldEmitWakeToken(), isTrue);
+      final store = _SeededWakeTokenStore({'peerB': 'tok-B'});
+      final resolver = buildWakeTokenResolver(store);
+      expect(await resolver('peerB'), 'tok-B');
+      expect(await resolver('missing-peer'), isNull);
+    });
+  }
 }

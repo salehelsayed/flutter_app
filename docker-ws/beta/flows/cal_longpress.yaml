@@ -1,0 +1,4 @@
+appId: com.mknoon.app
+---
+- runFlow: kb_hide.yaml
+- longPressOn: ".*${TARGET}.*"

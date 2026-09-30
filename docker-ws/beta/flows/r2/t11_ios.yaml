@@ -1,0 +1,8 @@
+appId: com.mknoon.app
+name: T11 iPhone waits for the Pixel's three offline messages
+---
+- runFlow: ../ensure_chat.yaml
+- extendedWaitUntil: { visible: ".*T11 o1 ${NONCE}.*", timeout: 300000 }
+- extendedWaitUntil: { visible: ".*T11 o2 ${NONCE}.*", timeout: 120000 }
+- extendedWaitUntil: { visible: ".*T11 o3 ${NONCE}.*", timeout: 120000 }
+- takeScreenshot: t11_received

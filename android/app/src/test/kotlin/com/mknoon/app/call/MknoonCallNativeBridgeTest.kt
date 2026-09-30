@@ -1082,15 +1082,48 @@ class MknoonCallNativeBridgeTest {
         }
         assertEquals(true, update(old, args).value)
         assertEquals("Trusted", rig.controller.presentation(rig.payload.nativeCallId)?.displayName)
+        assertEquals(listOf(rig.payload.nativeCallId to "ringing"), rig.platform.projectCalls)
         val current = MknoonCallNativeBridge(rig.controller, null, relay)
         assertEquals(false, update(old, args + ("displayName" to "Stale")).value)
         assertEquals("Trusted", rig.controller.presentation(rig.payload.nativeCallId)?.displayName)
+        assertEquals(1, rig.platform.projectCalls.size)
         assertEquals(null, update(current, args + ("state" to "payload-controlled")).value)
         assertEquals(null, update(current, args + ("avatarPng" to ByteArray(512 * 1024 + 1))).value)
         assertEquals(null, update(current, args + ("callHandle" to "unknown")).value)
         rig.controller.terminate(rig.payload.nativeCallId, PendingNativeCallEventType.DECLINE_REQUESTED)
         assertEquals(null, rig.controller.presentation(rig.payload.nativeCallId))
         assertEquals(false, update(current, args).value)
+    }
+
+    @Test
+    fun `late caller name refreshes adopted ringing notification without reviving an ended call`() {
+        val rig = LifecycleRig()
+        val id = rig.payload.nativeCallId
+        assertEquals(MknoonCallPresentationResult.PRESENTED, rig.controller.present(rig.payload))
+        val bridge = MknoonCallNativeBridge(rig.controller, messenger = null)
+        assertBridgeSuccess(bridge, "adopt", mapOf("version" to 1, "callHandle" to rig.payload.callHandle), true)
+        val sequence = requireNotNull(rig.controller.snapshot()).highestSequence
+        assertBridgeSuccess(bridge, "acknowledge", acknowledgementArguments(rig, sequence, "ADOPTED"), true)
+        assertTrue(requireNotNull(rig.controller.snapshot()).events.none {
+            it.type == PendingNativeCallEventType.PRESENTED
+        })
+
+        val args = mapOf("version" to 1, "callHandle" to rig.payload.callHandle,
+            "displayName" to "Beta iPhone", "avatarPng" to null, "state" to "ringing", "connectedAtMs" to null,
+            "light" to false, "muted" to false, "muteAvailable" to false, "speakerOn" to false,
+            "speakerAvailable" to false, "routeLabel" to "")
+        assertBridgeSuccess(bridge, "updatePresentation", args, true)
+        assertEquals(listOf(id to "ringing"), rig.platform.projectCalls)
+        assertBridgeSuccess(bridge, "updatePresentation", args, true)
+        assertEquals(1, rig.platform.projectCalls.size)
+
+        assertTrue(rig.controller.answer(id))
+        assertBridgeSuccess(bridge, "updatePresentation", args + ("displayName" to "Renamed contact"), true)
+        assertEquals(id to "accepted", rig.platform.projectCalls.last())
+        assertTrue(rig.controller.terminate(id, PendingNativeCallEventType.DECLINE_REQUESTED))
+        val projectsBeforeStale = rig.platform.projectCalls.toList()
+        assertBridgeSuccess(bridge, "updatePresentation", args + ("displayName" to "Stale contact"), false)
+        assertEquals(projectsBeforeStale, rig.platform.projectCalls)
     }
 
     private fun acknowledgementArguments(

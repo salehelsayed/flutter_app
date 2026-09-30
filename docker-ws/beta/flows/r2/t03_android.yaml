@@ -1,0 +1,14 @@
+appId: com.mknoon.app
+name: T03 Pixel sends a View once photo
+---
+- runFlow: ../ensure_chat.yaml
+- runFlow: { file: pick_android.yaml, env: { FILE: "r2_photo_4.png" } }
+- runFlow: { file: set_private.yaml, env: { MODE: "View once" } }
+- takeScreenshot: t03_pending_view_once
+- runFlow: { file: caption_send.yaml, env: { MSG: "" } }
+- runFlow: { file: ../sleep.yaml, env: { MS: 15000 } }
+- takeScreenshot: t03_sent
+- runFlow: { file: ../send_text.yaml, env: { MSG: "T03 marker ${NONCE}" } }
+- extendedWaitUntil: { visible: ".*T03 opened ${NONCE}.*", timeout: 300000 }
+- runFlow: { file: ../sleep.yaml, env: { MS: 5000 } }
+- takeScreenshot: t03_sender_after_open

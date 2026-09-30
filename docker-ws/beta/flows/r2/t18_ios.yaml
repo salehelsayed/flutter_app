@@ -1,0 +1,20 @@
+appId: com.mknoon.app
+name: T18 iPhone receives the group photo and voice note, forwards the photo to the Pixel 1:1 chat
+---
+- runFlow: { file: open_group.yaml, env: { GROUP: "R2 (Group|Renamed|By Pixel) ${NONCE}", GTIMEOUT: 30000 } }
+- extendedWaitUntil: { visible: ".*T18 group photo ${NONCE}.*", timeout: 300000 }
+- extendedWaitUntil: { visible: ".*Voice message.*", timeout: 180000 }
+- runFlow: { file: ../sleep.yaml, env: { MS: 8000 } }
+- takeScreenshot: t18_received
+- tapOn: ".*T18 group photo ${NONCE}.*"
+- runFlow: { file: ../sleep.yaml, env: { MS: 3000 } }
+- tapOn: "Forward"
+- runFlow: { file: ../sleep.yaml, env: { MS: 2500 } }
+- takeScreenshot: t18_forward_picker
+- tapOn: ".*${PEER}.*"
+- runFlow: { file: ../sleep.yaml, env: { MS: 1000 } }
+- takeScreenshot: t18_forward_selected
+- tapOn: "Send.*|Forward.*"
+- runFlow: { file: ../sleep.yaml, env: { MS: 5000 } }
+- takeScreenshot: t18_forward_done
+- runFlow: leave_viewer.yaml

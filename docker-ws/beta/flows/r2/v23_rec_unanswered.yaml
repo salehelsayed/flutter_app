@@ -1,0 +1,24 @@
+appId: com.mknoon.app
+name: R2-3 callee records; the caller gives up before an answer; the recording must go on; then stop and send
+---
+- runFlow: ../ensure_chat.yaml
+- tapOn: "Record voice message.*"
+- runFlow: { file: ../sleep.yaml, env: { MS: 2000 } }
+- assertVisible: "Stop and send voice message.*"
+- extendedWaitUntil: { visible: "Answer", timeout: 240000 }
+- takeScreenshot: v23_ringing
+- extendedWaitUntil: { notVisible: "Answer", timeout: 120000 }
+- runFlow: { file: ../sleep.yaml, env: { MS: 4000 } }
+- runFlow:
+    when: { visible: "Dismiss call status" }
+    commands: [ { tapOn: "Dismiss call status" } ]
+# iOS: the terminal call notice ("Call ended.") shows a plain "Dismiss" button over the composer.
+- runFlow:
+    when: { visible: "Dismiss" }
+    commands: [ { tapOn: "Dismiss" } ]
+- runFlow: { file: ../sleep.yaml, env: { MS: 1500 } }
+- takeScreenshot: v23_after_ring
+- assertVisible: "Stop and send voice message.*"
+- tapOn: "Stop and send voice message.*"
+- runFlow: { file: ../sleep.yaml, env: { MS: 8000 } }
+- takeScreenshot: v23_sent

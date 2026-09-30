@@ -1,0 +1,9 @@
+appId: ${APP_ID}
+name: production_all_chats
+---
+- assertVisible:
+    id: orbit.view.all_chats
+- tapOn:
+    id: orbit.view.all_chats
+- assertVisible:
+    id: orbit.view.inner_circle

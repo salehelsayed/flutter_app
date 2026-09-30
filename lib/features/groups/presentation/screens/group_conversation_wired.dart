@@ -34,6 +34,7 @@ import 'package:flutter_app/core/media/received_media_egress.dart';
 import 'package:flutter_app/core/media/received_media_egress_service.dart';
 import 'package:flutter_app/core/media/upload_retry_projection.dart';
 import 'package:flutter_app/core/widgets/quiet_confirm.dart';
+import 'package:flutter_app/core/widgets/video_processing_notice.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/services/share_intent_model.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
@@ -648,6 +649,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
 
   // Voice recording state
   late final ConversationVoiceCaptureController _voiceCaptureController;
+  ConversationVoiceCaptureOutcome? _pendingCallInterruptedRecording;
   late final ConversationUploadActivityController<ConversationComposerSnapshot>
   _uploadActivityController;
   int _sendLaneBindingGeneration = 0;
@@ -887,6 +889,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
     _reactionProjectionController.addListener(_onControllerInvalidated);
     _voiceCaptureController = ConversationVoiceCaptureController(
       onAutoStopOutcome: _onVoiceCaptureAutoStopOutcome,
+      onCallInterruptionOutcome: _onVoiceCaptureCallInterruptionOutcome,
     );
     _voiceCaptureController.addListener(_onVoiceCaptureStateChanged);
     _uploadActivityController.bindProgressStream(mediaUploadProgressStream);
@@ -1163,6 +1166,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
 
   void _resetForGroupChange(GroupConversationWired oldWidget) {
     _sendLaneBindingGeneration++;
+    _discardCallInterruptedReviewFile();
     _uploadActivityController.detachView();
     _reactionBindingGeneration++;
     unawaited(_voiceCaptureController.invalidateSessionScope());
@@ -1219,6 +1223,9 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
     _updateComposerState(
       pendingAttachments: const <PendingComposerMedia>[],
       isUploading: false,
+      recordingState: VoiceRecordingState.idle,
+      recordingDuration: Duration.zero,
+      amplitudeValues: const [],
     );
     if (mounted) {
       setState(() {});
@@ -1331,13 +1338,21 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
 
     final compressedCandidates = <PendingComposerMedia>[];
     for (final candidate in candidateAttachments) {
-      compressedCandidates.add(
-        await _preparePendingMedia(
-          candidate.file.path,
-          imageQualityPreference: ImageQualityPreference.compressed,
-          videoQualityPreference: ImageQualityPreference.compressed,
-        ),
-      );
+      try {
+        compressedCandidates.add(
+          await _preparePendingMedia(
+            candidate.file.path,
+            imageQualityPreference: ImageQualityPreference.compressed,
+            videoQualityPreference: ImageQualityPreference.compressed,
+          ),
+        );
+      } on VideoProcessingTimeoutException {
+        _showVideoProcessingTimeout(candidate.file.path);
+        return null;
+      } on VideoProcessingUnavailableException {
+        _showVideoProcessingUnavailable();
+        return null;
+      }
     }
 
     final compressedBudgetBytes = totalPendingComposerBudgetBytes([
@@ -1625,6 +1640,65 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
         behavior: SnackBarBehavior.floating,
       ),
     );
+  }
+
+  void _showVideoProcessingTimeout(String path) {
+    if (!mounted) return;
+    if (widget.imageProcessor?.canProcessVideo == false) {
+      _showVideoProcessingUnavailable();
+      return;
+    }
+    final l10n = AppLocalizations.of(context)!;
+    showVideoProcessingNotice(
+      context,
+      message: l10n.media_video_processing_stalled,
+      retryLabel: l10n.btn_retry,
+      onRetry: () => unawaited(_retryVideoAttachment(path)),
+    );
+  }
+
+  void _showVideoProcessingUnavailable() {
+    if (!mounted) return;
+    showVideoProcessingNotice(
+      context,
+      message: AppLocalizations.of(context)!.media_video_processing_unavailable,
+    );
+  }
+
+  void _showVideoProcessingFailed() {
+    if (!mounted) return;
+    showVideoProcessingNotice(
+      context,
+      message: AppLocalizations.of(context)!.media_unavailable,
+    );
+  }
+
+  Future<void> _retryVideoAttachment(String path) async {
+    if (!mounted ||
+        _composerController.pendingAttachments.length >= _maxAttachments) {
+      return;
+    }
+    try {
+      final result = await _preparePendingMedia(path);
+      if (mounted) await _attemptAddPendingMedia([result]);
+    } on VideoProcessingTimeoutException {
+      _showVideoProcessingTimeout(path);
+    } on VideoProcessingUnavailableException {
+      _showVideoProcessingUnavailable();
+    } catch (e) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'GROUP_CONV_FL_RETRY_VIDEO_ERROR',
+        details: {'error': e.toString()},
+      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(AppLocalizations.of(context)!.media_unavailable),
+          ),
+        );
+      }
+    }
   }
 
   Future<PendingComposerMedia> _preparePendingMedia(
@@ -4702,6 +4776,12 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
               ownsProcessingLifecycle: !useBatchProcessing,
             );
             media.add(result);
+          } on VideoProcessingTimeoutException {
+            _showVideoProcessingTimeout(xf.path);
+          } on VideoProcessingUnavailableException {
+            _showVideoProcessingUnavailable();
+          } on VideoProcessingFailedException {
+            _showVideoProcessingFailed();
           } on _RejectedPendingGroupMediaException {
             continue;
           }
@@ -4724,6 +4804,12 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
         event: 'GROUP_CONV_FL_PICK_GALLERY_ERROR',
         details: {'error': e.toString()},
       );
+      if (mounted) {
+        showVideoProcessingNotice(
+          context,
+          message: AppLocalizations.of(context)!.media_unavailable,
+        );
+      }
     }
   }
 
@@ -4747,15 +4833,23 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
   }
 
   Future<void> _pickVideoFromCamera() async {
+    String? pickedPath;
     try {
       final picked = await _mediaPicker.pickVideo(source: ImageSource.camera);
       if (picked == null || !mounted) return;
+      pickedPath = picked.path;
       if (_composerController.pendingAttachments.length >= _maxAttachments) {
         return;
       }
       final result = await _preparePendingMedia(picked.path);
       if (!mounted) return;
       await _attemptAddPendingMedia([result]);
+    } on VideoProcessingTimeoutException {
+      if (pickedPath != null) _showVideoProcessingTimeout(pickedPath);
+    } on VideoProcessingUnavailableException {
+      _showVideoProcessingUnavailable();
+    } on VideoProcessingFailedException {
+      _showVideoProcessingFailed();
     } catch (e) {
       emitFlowEvent(
         layer: 'FL',
@@ -5081,18 +5175,20 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
   }
 
   Future<void> _onRecordStop() async {
+    final pendingOutcome = _pendingCallInterruptedRecording;
     if (!_canWrite) return;
     final mediaAttachmentRepo = widget.mediaAttachmentRepo;
     final mediaFileManager = widget.mediaFileManager;
     if (mediaAttachmentRepo == null ||
         mediaFileManager == null ||
-        !_voiceCaptureController.state.isActive) {
+        (pendingOutcome == null && !_voiceCaptureController.state.isActive)) {
       return;
     }
     final voiceLane = _ownPeerId == null ? null : _captureSendLane();
 
-    if (_voiceCaptureController.state.phase ==
-        ConversationVoiceCapturePhase.arming) {
+    if (pendingOutcome == null &&
+        _voiceCaptureController.state.phase ==
+            ConversationVoiceCapturePhase.arming) {
       await _voiceCaptureController.stop();
       return;
     }
@@ -5103,7 +5199,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
 
     try {
       final quotedMessageId = _activeQuoteMessageId;
-      final outcome = await _voiceCaptureController.stop();
+      final outcome = pendingOutcome ?? await _voiceCaptureController.stop();
       if (outcome == null ||
           !_voiceCaptureController.isCurrentOutcome(outcome)) {
         return;
@@ -5123,6 +5219,14 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
           voiceLane == null ||
           !_isCurrentVoiceSendLane(voiceLane, outcome)) {
         return;
+      }
+      if (pendingOutcome != null) {
+        _pendingCallInterruptedRecording = null;
+        _updateComposerState(
+          recordingState: VoiceRecordingState.idle,
+          recordingDuration: Duration.zero,
+          amplitudeValues: const [],
+        );
       }
 
       final voiceContinuation =
@@ -5787,6 +5891,62 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
       event: 'GROUP_CONV_FL_RECORD_AUTO_STOPPED',
       details: {'tooShort': outcome.recording == null},
     );
+  }
+
+  void _onVoiceCaptureCallInterruptionOutcome(
+    ConversationVoiceCaptureOutcome outcome,
+  ) {
+    if (!mounted || !_voiceCaptureController.isCurrentOutcome(outcome)) return;
+    if (outcome.error != null) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'GROUP_CONV_FL_RECORD_CALL_INTERRUPTION_ERROR',
+        details: {'error': outcome.error.toString()},
+      );
+      return;
+    }
+    final recording = outcome.recording;
+    if (recording == null) return;
+    _pendingCallInterruptedRecording = outcome;
+    _updateComposerState(
+      recordingState: VoiceRecordingState.reviewing,
+      recordingDuration: Duration(milliseconds: recording.durationMs),
+      amplitudeValues: const [],
+    );
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'GROUP_CONV_FL_RECORD_CALL_INTERRUPTED',
+      details: {'durationMs': recording.durationMs},
+    );
+  }
+
+  Future<void> _onCallInterruptedReviewSend() async {
+    final outcome = _pendingCallInterruptedRecording;
+    if (outcome == null) return;
+    await _onRecordStop();
+  }
+
+  Future<void> _onCallInterruptedReviewDiscard() async {
+    final outcome = _pendingCallInterruptedRecording;
+    if (outcome == null) return;
+    _discardCallInterruptedReviewFile();
+    _updateComposerState(
+      recordingState: VoiceRecordingState.idle,
+      recordingDuration: Duration.zero,
+      amplitudeValues: const [],
+    );
+  }
+
+  void _discardCallInterruptedReviewFile() {
+    final outcome = _pendingCallInterruptedRecording;
+    _pendingCallInterruptedRecording = null;
+    if (outcome == null) return;
+    try {
+      final file = File(outcome.recording!.filePath);
+      if (file.existsSync()) file.deleteSync();
+    } on FileSystemException {
+      // The recorder's temporary file may already have been removed.
+    }
   }
 
   /// Cancels an in-flight recording when the user loses write access or the
@@ -7924,6 +8084,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
     _uploadActivityController.dispose();
     _reactionProjectionController.dispose();
     _voiceCaptureController.dispose();
+    _discardCallInterruptedReviewFile();
     _composerController.dispose();
     super.dispose();
   }
@@ -8026,6 +8187,10 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
             onRecordCancel: _canWrite && _supportsDurableGroupMediaUploads
                 ? _onRecordCancel
                 : null,
+            onReviewSend: _canWrite && _supportsDurableGroupMediaUploads
+                ? _onCallInterruptedReviewSend
+                : null,
+            onReviewDiscard: _onCallInterruptedReviewDiscard,
             recordingState: _composerController.value.recordingState,
             onMediaTap: _onMediaTap,
             onOpenPrivateMedia: _privateMediaViewerController == null

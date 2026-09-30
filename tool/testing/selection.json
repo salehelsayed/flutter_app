@@ -344,6 +344,9 @@
         "test/features/call/infrastructure/call_stats_sampler_test.dart",
         "test/core/bridge/p2p_bridge_client_turn_credentials_test.dart",
         "test/core/bootstrap/call_signaling_composition_test.dart",
+        "test/core/bootstrap/production_headless_call_admission_test.dart",
+        "test/features/call/application/headless_call_ringing_reply_test.dart",
+        "test/features/call/application/headless_call_decline_reply_test.dart",
         "test/integration/android_foreground_webrtc_audio_readiness_diagnostic_test.dart",
         "test/features/settings/application/call_privacy_preference_use_cases_test.dart",
         "test/features/settings/presentation/widgets/call_privacy_settings_control_test.dart",
@@ -621,6 +624,7 @@
         "scripts/test/testing_inventory_test.py",
         "scripts/test/mknoon_ci_checks_test.py",
         "scripts/test/device_campaign_preflight_test.py",
+        "scripts/test/provider_delivery_preflight_test.py",
         "scripts/test/mknoon_full_checks_test.py",
         "scripts/test/full_suite_adapters_test.py",
         "scripts/test/mknoon_full_review_regression_test.py",
@@ -1540,6 +1544,7 @@
       ],
       "references": [
         "scripts/test/run_call_native_unit_tests.sh",
+        "android/app/src/test/kotlin/com/mknoon/app/call/MknoonCallNotificationFactoryTest.kt",
         "android/app/src/testDebug/kotlin/com/mknoon/app/call/DebugCallAudioSignalTest.kt",
         "android/app/src/test/kotlin/com/mknoon/app/call/MknoonIncomingCallPresentationTest.kt",
         "android/app/src/test/kotlin/com/mknoon/app/MainActivityOnNewIntentTest.kt",
@@ -1656,7 +1661,8 @@
         "test/features/conversation/presentation/widgets/conversation_header_test.dart",
         "test/features/groups/presentation/widgets/expandable_fab_test.dart",
         "test/features/groups/presentation/widgets/expandable_fab_tone_test.dart",
-        "test/integration/group_reaction_notification_device_criteria_test.dart"
+        "test/integration/group_reaction_notification_device_criteria_test.dart",
+        "test/features/conversation/presentation/widgets/message_context_overlay_test.dart"
       ],
       "boundary": "Localized recording phases and bounded existing actions retain a single semantic activation, availability and gesture contracts; Orbit spoken labels are separate from its stable automation identifier",
       "limitations": "Host widget semantics and locator parsing only; native identifier exposure, screen-reader focus and installed rendering require separate device evidence",
@@ -1700,6 +1706,7 @@
       "kind": "flutter",
       "paths": [
         "test/unit/architecture_boundary_checker_test.dart",
+        "test/unit/architecture_boundary_checker_git_path_test.dart",
         "test/unit/dtr18_layering_relocation_contract_test.dart",
         "test/unit/dtr18_placement_closure_contract_test.dart",
         "test/core/debug/debug_e2e_composition_root_test.dart",
@@ -1888,6 +1895,523 @@
       "ui_driver": "existing_campaign",
       "ui_driver_reason": "Existing campaign proves exact encrypted media identity, durable queueing, offline resume and network-restored retry events without post-restore UI actions; Appium cannot establish its internal causal order.",
       "host_preflight": "one-to-one-runner"
+    },
+    "production-journey-contracts": {
+      "kind": "flutter",
+      "paths": [
+        "test/integration/production_journey_runtime_test.dart",
+        "test/integration/production_group_recovery_hold_test.dart",
+        "test/integration/production_journey_criteria_test.dart",
+        "test/integration/production_journey_composition_guard_test.dart",
+        "test/tool/sims/production_journey_build_contract_test.dart",
+        "test/integration/production_android_artifact_test.dart",
+        "test/integration/production_android_journey_guard_test.dart",
+        "test/integration/production_provider_probe_control_test.dart",
+        "test/integration/production_provider_secret_receipt_test.dart",
+        "test/integration/production_provider_delivery_test.dart",
+        "test/integration/production_notification_open_criteria_test.dart",
+        "test/core/notifications/production_navigation_observation_test.dart",
+        "test/core/notifications/app_visibility_route_binding_test.dart",
+        "test/integration/production_notification_open_activation_test.dart",
+        "test/core/notifications/production_notification_content_observation_test.dart",
+        "test/core/notifications/flutter_notification_service_test.dart",
+        "test/integration/production_notification_sound_criteria_test.dart",
+        "test/integration/production_notification_sound_descriptor_test.dart",
+        "test/integration/production_routing_criteria_test.dart",
+        "test/integration/production_private_media_criteria_test.dart",
+        "test/integration/production_journey_flow_identity_test.dart",
+        "test/integration/production_group_invite_criteria_test.dart",
+        "test/integration/production_group_invite_activation_test.dart",
+        "test/integration/production_group_invite_controls_test.dart",
+        "test/integration/production_performance_capture_test.dart",
+        "test/integration/production_performance_controls_test.dart",
+        "test/integration/production_performance_criteria_test.dart",
+        "test/integration/production_performance_activation_test.dart",
+        "test/integration/production_group_create_criteria_test.dart",
+        "test/tool/sims/production_group_catalog_test.dart",
+        "test/integration/production_group_catalog_activation_test.dart",
+        "test/integration/production_group_catalog_controls_test.dart",
+        "test/integration/production_group_reaction_capture_test.dart",
+        "test/integration/production_group_reaction_controls_test.dart",
+        "test/integration/production_group_reaction_criteria_test.dart",
+        "test/features/conversation/presentation/widgets/reaction_picker_automation_identifier_test.dart",
+        "test/integration/production_group_reaction_toggle_criteria_test.dart",
+        "test/integration/production_group_reaction_toggle_controls_test.dart",
+        "test/integration/production_group_reaction_toggle_execution_test.dart",
+        "test/integration/production_group_removed_reaction_criteria_test.dart",
+        "test/integration/production_group_removed_reaction_controls_test.dart",
+        "test/features/groups/presentation/widgets/group_member_remove_accessibility_test.dart"
+      ],
+      "boundary": "Production journey activation, exact observations and native notification behavior, invocation identity, readiness, replay refusal and foreground drain fault isolation",
+      "limitations": "Host controls only; actual production startup, UI, notification boundary and two-peer behavior require the additive pilot",
+      "timeout_seconds": 900,
+      "estimated_seconds": null,
+      "requirements": [
+        "flutter"
+      ],
+      "investigate": [
+        "lib/debug/production_journeys"
+      ],
+      "inspected": true
+    },
+    "maestro-flow-contracts": {
+      "kind": "python",
+      "paths": [
+        "scripts/test/maestro_flow_runner_test.py",
+        "scripts/test/maestro_migration_metadata_test.py"
+      ],
+      "boundary": "Exact per-flow Maestro receipts reject missing, duplicate, skipped and failed results",
+      "limitations": "Parser tests do not execute UI",
+      "timeout_seconds": 120,
+      "estimated_seconds": null,
+      "requirements": [
+        "python3"
+      ],
+      "investigate": [
+        "scripts/maestro_flow_runner.py"
+      ],
+      "inspected": true
+    },
+    "production-foreground-group-push": {
+      "kind": "sims",
+      "capability": "production.foreground_group_push",
+      "boundary": "Production-created foreground listener, notification publication and missing-group eligibility",
+      "timeout_seconds": 7200,
+      "estimated_seconds": null,
+      "requirements": [
+        "dart",
+        "flutter",
+        "adb",
+        "maestro"
+      ],
+      "device_roles": [
+        "android_physical",
+        "android_emulator"
+      ],
+      "references": [
+        "tool/sims/critical_features.json"
+      ],
+      "investigate": [
+        "lib/debug/production_journeys"
+      ],
+      "limitations": "Injected foreground push proves application-side behavior, not provider delivery or OS presentation. Original iOS simulator route retained.",
+      "disposable_android_package": "com.mknoon.sims.connectivity",
+      "ui_driver": "maestro",
+      "ui_driver_reason": "Maestro drives fixture reopening and ordinary send/navigation. The narrow campaign injects the exact foreground push/drain fault and observes production repository row counts, fallback outcome and native notification requests that UI alone cannot establish.",
+      "maestro_flows": [
+        "integration_test/maestro/production_group_send.yaml",
+        "integration_test/maestro/production_reopen_seeded.yaml"
+      ],
+      "host_preflight": "production-foreground-group-push"
+    },
+    "production-notification-open": {
+      "kind": "sims",
+      "capability": "production.notification_open",
+      "boundary": "Production warm, cold-start and same-peer native notification routing with exact stored rows, route stack and unread state",
+      "timeout_seconds": 7200,
+      "estimated_seconds": null,
+      "requirements": [
+        "dart",
+        "flutter",
+        "adb",
+        "maestro",
+        "node"
+      ],
+      "device_roles": [
+        "android_physical",
+        "android_emulator"
+      ],
+      "references": [
+        "tool/sims/critical_features.json"
+      ],
+      "investigate": [
+        "lib/debug/production_journeys"
+      ],
+      "limitations": "Android local-notification OS taps and production startup; does not certify provider delivery or iOS parity",
+      "disposable_android_package": "com.mknoon.sims.connectivity",
+      "ui_driver": "maestro",
+      "ui_driver_reason": "Maestro drives all ordinary UI and native notification taps. Narrow production observers establish exact route counts, already-active guard, unread state and database row identity; verified owned-UID process death preserves the native card for cold-tap startup, which force-stop cannot establish. Existing state guard verifies restoration.",
+      "maestro_flows": [
+        "integration_test/maestro/production_direct_open.yaml",
+        "integration_test/maestro/production_direct_send.yaml",
+        "integration_test/maestro/production_background.yaml",
+        "integration_test/maestro/production_notification_tap.yaml",
+        "integration_test/maestro/production_reopen_seeded.yaml"
+      ],
+      "host_preflight": "production-notification-open",
+      "provider_android_package": "com.mknoon.app",
+      "provider_android_role": "android_emulator",
+      "provider_android_profile": "android.production_fcm.journey",
+      "provider_delivery_required": true
+    },
+    "go-send-wrapper": {
+      "kind": "command",
+      "command": [
+        "python3",
+        "scripts/run_original_go_send_wrapper.py"
+      ],
+      "paths": [
+        "docker-ws/alltests_go_test.sh"
+      ],
+      "success_marker": "ORIGINAL_GO_SEND_WRAPPER_PASS",
+      "boundary": "The retained original Go Send wrapper executes in the candidate and propagates Go failures",
+      "limitations": "One exact wrapper completion; full Go module owners retain individual test receipts and skip accounting",
+      "timeout_seconds": 1300,
+      "requirements": [
+        "python3",
+        "bash",
+        "go"
+      ],
+      "resources": [
+        "unknown"
+      ],
+      "investigate": [
+        "docker-ws/alltests_go_test.sh",
+        "scripts/run_original_go_send_wrapper.py"
+      ]
+    },
+    "go-send-wrapper-contracts": {
+      "kind": "python",
+      "paths": [
+        "scripts/test/original_go_send_wrapper_adapter_test.py"
+      ],
+      "boundary": "Original wrapper completion rejects hidden failures, empty catalogs and stale or wrong package receipts",
+      "timeout_seconds": 60,
+      "requirements": [
+        "python3"
+      ],
+      "resources": [
+        "isolated:go-send-wrapper-parser"
+      ]
+    },
+    "production-notification-sound": {
+      "kind": "sims",
+      "capability": "production.notification_sound",
+      "boundary": "Production S1\u2013S16 sound request, real visibility, encrypted media projection and native OS disposition with S15 control",
+      "timeout_seconds": 7200,
+      "estimated_seconds": null,
+      "requirements": [
+        "dart",
+        "flutter",
+        "adb",
+        "maestro",
+        "node"
+      ],
+      "device_roles": [
+        "android_physical",
+        "android_emulator"
+      ],
+      "references": [
+        "tool/sims/critical_features.json"
+      ],
+      "investigate": [
+        "lib/debug/production_journeys"
+      ],
+      "limitations": "Automated programmatic and Android OS/channel evidence; speaker audibility requires separate human evidence",
+      "disposable_android_package": "com.mknoon.sims.connectivity",
+      "ui_driver": "maestro",
+      "ui_driver_reason": "Maestro drives ordinary text sends, real conversation navigation and lifecycle. Narrow production-owned descriptor send actions preserve the original nine fixed encrypted media projection fixtures. S16 alone uses the retained harness's production sendChatMessage use case after Home: the measured 28-second UI send startup outlasted the live bridge and changed committed transport to inbox. Appium can drive a tap, but the UI action cannot establish committed bridge transport and a new session after Home adds timing delay; the bounded production action preserves the original connected seam. Read-only observers require committed direct or relay transport, exact notification copy, upstream silence and same-ID timing. A bounded read-only dumpsys probe captures the first audible OS card before an observed same-ID silent reconciliation update; Appium and the original CLI cannot sample that subsecond native interval. The unchanged original pure OS disposition CLI validates that capture and the later OS state is retained separately. This does not substitute a media transfer or audible speaker proof.",
+      "maestro_flows": [
+        "integration_test/maestro/production_direct_open.yaml",
+        "integration_test/maestro/production_group_open.yaml",
+        "integration_test/maestro/production_group_open_readonly.yaml",
+        "integration_test/maestro/production_direct_send.yaml",
+        "integration_test/maestro/production_conversation_back.yaml",
+        "integration_test/maestro/production_conversation_back_readonly.yaml",
+        "integration_test/maestro/production_sound_two_messages.yaml",
+        "integration_test/maestro/production_background.yaml",
+        "integration_test/maestro/production_reopen_seeded.yaml"
+      ],
+      "host_preflight": "production-notification-sound",
+      "provider_android_package": "com.mknoon.app",
+      "provider_android_role": "android_emulator",
+      "provider_android_profile": "android.production_fcm.journey",
+      "provider_delivery_required": true
+    },
+    "production-routing": {
+      "kind": "sims",
+      "capability": "production.routing_smoke",
+      "boundary": "Production-composed 19 direct and eight group routing cases, retaining original receipt predicates and informational scopes",
+      "timeout_seconds": 7200,
+      "estimated_seconds": null,
+      "requirements": [
+        "dart",
+        "flutter",
+        "adb",
+        "maestro"
+      ],
+      "device_roles": [
+        "android_physical",
+        "android_emulator"
+      ],
+      "references": [
+        "tool/sims/critical_features.json"
+      ],
+      "investigate": [
+        "lib/debug/production_journeys"
+      ],
+      "limitations": "Android production source build; S12 upload timing, S14 LAN observation and G6 join-settle timing remain informational, as in the original harness",
+      "disposable_android_package": "com.mknoon.sims.connectivity",
+      "ui_driver": "maestro",
+      "ui_driver_reason": "Maestro drives ordinary messages, delete-for-everyone, navigation and real OS lifecycle. Fixed production-owned controls preserve original 10KiB voice, 1MiB/5MiB bridge upload, ten sequential rapid sends, pre-registration core start and key rotation cases that UI pacing or absent controls cannot reproduce. Read-only production repository and scoped flow observations bind all 27 preserved pure predicates; no replacement application graph is constructed.",
+      "maestro_flows": [
+        "integration_test/maestro/production_direct_open.yaml",
+        "integration_test/maestro/production_group_open.yaml",
+        "integration_test/maestro/production_direct_send.yaml",
+        "integration_test/maestro/production_direct_send_batch5.yaml",
+        "integration_test/maestro/production_conversation_back.yaml",
+        "integration_test/maestro/production_direct_delete.yaml",
+        "integration_test/maestro/production_background.yaml",
+        "integration_test/maestro/production_resume.yaml",
+        "integration_test/maestro/production_all_chats.yaml",
+        "integration_test/maestro/production_reopen_seeded.yaml"
+      ],
+      "host_preflight": "production-routing"
+    },
+    "production-private-media": {
+      "kind": "sims",
+      "capability": "production.private_media_local",
+      "boundary": "Production conversation private projection, exact recipient canonical and sender pending-open SQL lifecycles, owned-file cleanup, cold consumed refusal and native viewer protection ownership",
+      "timeout_seconds": 2400,
+      "estimated_seconds": null,
+      "requirements": [
+        "dart",
+        "flutter",
+        "adb",
+        "maestro"
+      ],
+      "device_roles": [
+        "android_physical",
+        "android_emulator"
+      ],
+      "references": [
+        "tool/sims/critical_features.json"
+      ],
+      "investigate": [
+        "lib/debug/production_journeys"
+      ],
+      "limitations": "Local application boundary alongside retained encryption, policy, expiry, download and native privacy proofs; no remote or account-wide revocation claim",
+      "disposable_android_package": "com.mknoon.sims.connectivity",
+      "ui_driver": "maestro",
+      "ui_driver_reason": "Maestro drives production conversation navigation, private open/close and outer delete. Narrow fixed local fixtures and read-only SQL, file and widget observations preserve intermediate committed states, pending-file ownership, placeholder privacy and cleanup that UI automation cannot establish. Production owns all application services. Read-only exact-package native window flags bind plan-301 protected thumbnail pixels to FLAG_SECURE; view-once, terminal and missing-byte fallbacks remain no-pixel. Recipient bytes use the canonical incoming media root; sender viewer native window observations require protection absent before open, present during viewing and released after closure.",
+      "maestro_flows": [
+        "integration_test/maestro/production_direct_open.yaml",
+        "integration_test/maestro/production_private_open.yaml",
+        "integration_test/maestro/production_private_close.yaml",
+        "integration_test/maestro/production_private_refuse_reopen.yaml",
+        "integration_test/maestro/production_private_terminal_delete.yaml",
+        "integration_test/maestro/production_reopen_seeded.yaml"
+      ],
+      "host_preflight": "production-private-media"
+    },
+    "production-group-invites": {
+      "kind": "sims",
+      "capability": "production.group_invite_reliability",
+      "boundary": "Production UI create/decline/revoke and original protocol resend and exact F/C/D persisted invitation, revocation and metadata convergence",
+      "timeout_seconds": 2400,
+      "estimated_seconds": null,
+      "requirements": [
+        "dart",
+        "flutter",
+        "adb",
+        "maestro"
+      ],
+      "device_roles": [
+        "android_physical",
+        "android_emulator"
+      ],
+      "references": [
+        "tool/sims/critical_features.json"
+      ],
+      "investigate": [
+        "lib/debug/production_journeys"
+      ],
+      "limitations": "Incremental invitation module; linked devices, invite latency and complete multi-party catalog remain independent obligations; actual UI validation pending",
+      "disposable_android_package": "com.mknoon.sims.connectivity",
+      "ui_driver": "maestro",
+      "ui_driver_reason": "Maestro drives ordinary group and invitation UI. Read-only exact-run production repository observations establish invite identities, delivery status, tombstones and metadata convergence. Narrow explicit inbox drains and the original stale-membership/config-request protocol prerequisite cannot be established by UI alone. No alternate graph or synthesized receive outcome. Fixed fresh metadata is a prerequisite for the original resync proof and emits no broadcast; an ordinary metadata edit could satisfy convergence before the config request. Appium MCP established that declined rows expose no Resend action. A one-shot control retains the original resendGroupInvite protocol call, fenced to the exact run-owned declined attempt and existing production services.",
+      "maestro_flows": [
+        "integration_test/maestro/production_group_create.yaml",
+        "integration_test/maestro/production_group_invite_decline.yaml",
+        "integration_test/maestro/production_group_invite_revoke.yaml",
+        "integration_test/maestro/production_reopen_seeded.yaml"
+      ],
+      "host_preflight": "production-group-invites"
+    },
+    "production-startup-resume-performance": {
+      "kind": "sims",
+      "capability": "production.startup_resume_performance",
+      "boundary": "Production-owned node cold/hot startup and real OS healthy/degraded/extended resume, preserving B/M/BR timing thresholds",
+      "timeout_seconds": 2400,
+      "estimated_seconds": null,
+      "requirements": [
+        "dart",
+        "flutter",
+        "adb",
+        "maestro"
+      ],
+      "device_roles": [
+        "android_physical"
+      ],
+      "references": [
+        "tool/sims/critical_features.json"
+      ],
+      "investigate": [
+        "lib/debug/production_journeys"
+      ],
+      "limitations": "Measures original dotted-relay node readiness intervals on one physical Android target in the separately attested DISABLE_LOCAL_DISCOVERY production variant. Does not claim LAN startup, OS-to-frame launch time or other benchmark families.",
+      "disposable_android_package": "com.mknoon.sims.connectivity",
+      "ui_driver": "maestro",
+      "ui_driver_reason": "Existing Maestro launch/Home/resume flows drive real OS lifecycle. Early bounded production flow observations preserve native/node timing, original thresholds, true readiness and distinct cold identities. Original hot-node-start and exact connected-relay-disconnect operations are narrow protocol controls; Appium cannot establish internal timing windows or recovered-outage metrics. No alternate node/service graph.",
+      "maestro_flows": [
+        "integration_test/maestro/production_reopen_seeded.yaml",
+        "integration_test/maestro/production_background.yaml",
+        "integration_test/maestro/production_resume.yaml",
+        "integration_test/maestro/production_healthy_resume.yaml"
+      ],
+      "host_preflight": "production-startup-resume-performance"
+    },
+    "production-group-create": {
+      "kind": "sims",
+      "capability": "production.group_catalog.private_abc_create",
+      "boundary": "Production UI ML-001 three-role create, pending invitation, supported accept, readable joins and exact initial message with unchanged original terminal criteria",
+      "timeout_seconds": 2400,
+      "estimated_seconds": null,
+      "requirements": [
+        "dart",
+        "flutter",
+        "adb",
+        "maestro"
+      ],
+      "device_roles": [
+        "android_physical",
+        "android_emulator",
+        "android_emulator_second"
+      ],
+      "references": [
+        "tool/sims/critical_features.json"
+      ],
+      "investigate": [
+        "lib/debug/production_journeys"
+      ],
+      "limitations": "First catalog module only; all other original catalog cases remain selected by their original owner. Device proof pending.",
+      "disposable_android_package": "com.mknoon.sims.connectivity",
+      "ui_driver": "maestro",
+      "ui_driver_reason": "Maestro drives creation, invitation acceptance and message sending. Appium cannot establish exact persisted invitation identity, consumed tombstones, group configuration hash, key epoch or duplicate row counts; narrow read-only observations use the existing production repositories. The unchanged original multi-party oracle validates terminal receipts.",
+      "maestro_flows": [
+        "integration_test/maestro/production_catalog_group_create.yaml",
+        "integration_test/maestro/production_catalog_invite_accept.yaml",
+        "integration_test/maestro/production_catalog_group_send.yaml",
+        "integration_test/maestro/production_reopen_seeded.yaml"
+      ],
+      "host_preflight": "production-group-create"
+    },
+    "production-group-reaction": {
+      "kind": "sims",
+      "capability": "production.group_catalog.private_reaction_roundtrip",
+      "boundary": "Production UI PL-009 target send and Bob reaction, independent Alice/Charlie receiver streams and exact SQL rows with unchanged original terminal criteria",
+      "timeout_seconds": 2400,
+      "estimated_seconds": null,
+      "requirements": [
+        "dart",
+        "flutter",
+        "adb",
+        "maestro"
+      ],
+      "device_roles": [
+        "android_physical",
+        "android_emulator",
+        "android_emulator_second"
+      ],
+      "references": [
+        "tool/sims/critical_features.json"
+      ],
+      "investigate": [
+        "lib/debug/production_journeys"
+      ],
+      "limitations": "PL-009 only; remaining catalog cases retain their original owners. Actual device proof pending.",
+      "disposable_android_package": "com.mknoon.sims.connectivity",
+      "ui_driver": "maestro",
+      "ui_driver_reason": "Maestro drives ordinary group creation, supported invitation acceptance, target send and reaction selection. Appium cannot establish actual publish return outcomes, independently delivered group reaction stream events, exact SQL target/reaction identity or duplicate row counts; bounded read-only observers bind those to the production-owned use case and repositories. The unchanged PL-009 terminal oracle remains mandatory.",
+      "maestro_flows": [
+        "integration_test/maestro/production_catalog_group_create.yaml",
+        "integration_test/maestro/production_catalog_invite_accept.yaml",
+        "integration_test/maestro/production_catalog_group_send.yaml",
+        "integration_test/maestro/production_reopen_seeded.yaml",
+        "integration_test/maestro/production_catalog_react.yaml"
+      ],
+      "host_preflight": "production-group-reaction"
+    },
+    "production-group-reaction-toggle": {
+      "kind": "sims",
+      "capability": "production.group_catalog.private_reaction_toggle_convergence",
+      "boundary": "Production-composed RT-001 actual add/remove/re-add returns spaced by the original 500 ms delays, independent receiver removal streams and exact SQL convergence under the unchanged original oracle",
+      "timeout_seconds": 2400,
+      "estimated_seconds": null,
+      "requirements": [
+        "dart",
+        "flutter",
+        "adb",
+        "maestro"
+      ],
+      "device_roles": [
+        "android_physical",
+        "android_emulator",
+        "android_emulator_second"
+      ],
+      "references": [
+        "tool/sims/critical_features.json"
+      ],
+      "investigate": [
+        "lib/debug/production_journeys"
+      ],
+      "limitations": "RT-001 only; original catalog ownership remains intact. Actual device proof pending.",
+      "disposable_android_package": "com.mknoon.sims.connectivity",
+      "ui_driver": "maestro",
+      "ui_driver_reason": "Maestro drives ordinary group creation, invitation acceptance and target send. Appium cannot preserve the original 500 ms interval measured from an asynchronous domain return through picker navigation, or prove independent receiver stream removals and exact SQL convergence. A once-only Bob operation calls the same production send/remove use cases with existing owners on the armed UI-created target; original RT-001 oracle and timing remain mandatory.",
+      "maestro_flows": [
+        "integration_test/maestro/production_catalog_group_create.yaml",
+        "integration_test/maestro/production_catalog_invite_accept.yaml",
+        "integration_test/maestro/production_catalog_group_send.yaml",
+        "integration_test/maestro/production_reopen_seeded.yaml"
+      ],
+      "host_preflight": "production-group-reaction-toggle"
+    },
+    "production-group-removed-reaction": {
+      "kind": "sims",
+      "capability": "production.group_catalog.private_removed_reaction_rejected",
+      "boundary": "Production-composed PL-010 UI member removal, actual rejected former-member reaction attempt, exact local/remote absence and original five-second observation under unchanged oracle",
+      "timeout_seconds": 2400,
+      "estimated_seconds": null,
+      "requirements": [
+        "dart",
+        "flutter",
+        "adb",
+        "maestro"
+      ],
+      "device_roles": [
+        "android_physical",
+        "android_emulator",
+        "android_emulator_second"
+      ],
+      "references": [
+        "tool/sims/critical_features.json"
+      ],
+      "investigate": [
+        "lib/debug/production_journeys"
+      ],
+      "limitations": "PL-010 only; original catalog ownership remains intact. Actual device proof pending.",
+      "disposable_android_package": "com.mknoon.sims.connectivity",
+      "ui_driver": "maestro",
+      "ui_driver_reason": "Maestro drives ordinary creation, invitation acceptance, target send and Alice removal. The removed-member UI offers no authorized reaction action, so a once-only Charlie attempt invokes the existing production use case on the retained, armed target after observed exclusion. Actual rejection and exact SQL/stream absence preserve the unchanged PL-010 oracle and five-second window.",
+      "maestro_flows": [
+        "integration_test/maestro/production_catalog_group_create.yaml",
+        "integration_test/maestro/production_catalog_invite_accept.yaml",
+        "integration_test/maestro/production_catalog_group_send.yaml",
+        "integration_test/maestro/production_reopen_seeded.yaml",
+        "integration_test/maestro/production_catalog_remove_charlie.yaml"
+      ],
+      "host_preflight": "production-group-removed-reaction"
     }
   },
   "areas": [
@@ -2058,9 +2582,11 @@
       "id": "media",
       "patterns": [
         "lib/core/media/*",
+        "lib/core/widgets/video_processing_notice.dart",
         "lib/shared/widgets/media/*",
         "lib/features/share/*",
         "test/core/media/*",
+        "test/core/widgets/video_processing_notice_test.dart",
         "test/shared/widgets/media/*",
         "test/features/share/*"
       ],
@@ -2185,6 +2711,7 @@
         "scripts/test/mknoon_ci_checks_test.py",
         "scripts/device_campaign_preflight.py",
         "scripts/test/device_campaign_preflight_test.py",
+        "scripts/test/provider_delivery_preflight_test.py",
         "scripts/test/mknoon_full_checks_test.py",
         "scripts/full_suite_adapters.py",
         "scripts/test/full_suite_adapters_test.py",
@@ -2436,6 +2963,7 @@
         "scripts/test/mknoon_ci_checks_test.py",
         "scripts/test/testing_inventory_test.py",
         "scripts/test/device_campaign_preflight_test.py",
+        "scripts/test/provider_delivery_preflight_test.py",
         "scripts/test/mknoon_full_checks_test.py",
         "scripts/test/mknoon_full_review_regression_test.py",
         "scripts/test/mknoon_full_composition_test.py",
@@ -3200,6 +3728,100 @@
         "device-notifications-ios"
       ],
       "why": "Physical iOS payload driver changes must preserve exact receipt binding, failure diagnostics, cleanup and native APNs/NSE assertions; safe host diagnostics cannot certify delivery."
+    },
+    {
+      "id": "production-bootstrap-migration",
+      "patterns": [
+        "lib/debug/production_journeys/*",
+        "scripts/maestro_flow_runner.py",
+        "scripts/test/maestro_flow_runner_test.py",
+        "test/integration/production_journey_*",
+        "integration_test/maestro/*",
+        "integration_test/scripts/run_production_foreground_group_push.dart",
+        "scripts/test/maestro_migration_metadata_test.py",
+        "integration_test/scripts/run_production_notification_open.dart",
+        "integration_test/support/production_*journey*.dart",
+        "test/integration/production_notification_*",
+        "test/core/notifications/production_navigation_observation_test.dart",
+        "test/integration/production_group_recovery_hold_test.dart",
+        "tool/sims/production_*_criteria.dart",
+        "test/core/notifications/production_notification_content_observation_test.dart",
+        "lib/core/notifications/notification_request_observation.dart",
+        "lib/core/notifications/flutter_notification_service.dart",
+        "integration_test/scripts/run_production_notification_sound.dart",
+        "integration_test/scripts/run_production_routing.dart",
+        "test/integration/production_routing_*",
+        "integration_test/scripts/run_production_private_media_local.dart",
+        "test/integration/production_private_media_*",
+        "test/integration/production_group_invite_*",
+        "integration_test/scripts/run_production_group_invite_reliability.dart",
+        "integration_test/scripts/run_production_startup_resume_performance.dart",
+        "test/integration/production_performance_*",
+        "integration_test/scripts/run_production_group_create.dart",
+        "tool/sims/production_group_catalog.dart",
+        "test/integration/production_group_create_*",
+        "test/integration/production_group_catalog_*",
+        "test/integration/production_group_reaction_*",
+        "test/tool/sims/production_group_catalog_test.dart",
+        "integration_test/scripts/run_production_group_reaction.dart",
+        "test/features/conversation/presentation/widgets/reaction_picker_automation_identifier_test.dart",
+        "lib/features/conversation/presentation/widgets/reaction_bar.dart",
+        "integration_test/scripts/run_production_group_reaction_toggle.dart",
+        "test/integration/production_group_removed_reaction_*",
+        "integration_test/scripts/run_production_group_removed_reaction.dart",
+        "lib/features/groups/presentation/widgets/group_member_row.dart",
+        "test/features/groups/presentation/widgets/group_member_remove_accessibility_test.dart",
+        "integration_test/support/production_android_artifact.dart",
+        "integration_test/support/production_provider_delivery.dart",
+        "scripts/test/provider_delivery_preflight_test.py",
+        "test/integration/production_android_*",
+        "test/integration/production_provider_*",
+        "test/tool/sims/production_provider_*"
+      ],
+      "checks": [
+        "production-journey-contracts",
+        "maestro-flow-contracts",
+        "bootstrap",
+        "production-foreground-group-push",
+        "production-notification-open",
+        "notifications",
+        "production-notification-sound",
+        "production-routing",
+        "production-private-media",
+        "production-group-invites",
+        "production-startup-resume-performance",
+        "production-group-create",
+        "production-group-reaction",
+        "production-group-reaction-toggle",
+        "production-group-removed-reaction"
+      ],
+      "why": "Additive application journeys must retain production-created service ownership and exact invocation/flow receipts; original tests and selectors remain retained."
+    },
+    {
+      "id": "retained-go-send-wrapper",
+      "patterns": [
+        "docker-ws/alltests_go_test.sh",
+        "scripts/run_original_go_send_wrapper.py",
+        "scripts/test/original_go_send_wrapper_adapter_test.py"
+      ],
+      "checks": [
+        "go-send-wrapper",
+        "go-send-wrapper-contracts",
+        "workflow"
+      ],
+      "why": "The original wrapper must test this candidate and propagate its Go exit; no original selection is replaced."
+    },
+    {
+      "id": "production-shared-xctest",
+      "patterns": [
+        "integration_test/support/production_shared_xctest.dart",
+        "test/tool/sims/production_shared_xctest_test.dart"
+      ],
+      "checks": [
+        "sims-plan-contract",
+        "production-audio-harness-contract"
+      ],
+      "why": "Shared prepared XCTest consumers must reject incompatible source/configuration/artifact identities, incomplete exact method receipts and fixture reuse; original fresh-build routes remain retained."
     }
   ],
   "documentation_only": [
@@ -3538,6 +4160,7 @@
         "scripts/test/testing_inventory_test.py",
         "scripts/test/mknoon_ci_checks_test.py",
         "scripts/test/device_campaign_preflight_test.py",
+        "scripts/test/provider_delivery_preflight_test.py",
         "scripts/test/mknoon_full_checks_test.py",
         "scripts/test/full_suite_adapters_test.py",
         "scripts/test/mknoon_full_review_regression_test.py",
@@ -3567,6 +4190,7 @@
         "scripts/test/testing_inventory_test.py",
         "scripts/test/mknoon_ci_checks_test.py",
         "scripts/test/device_campaign_preflight_test.py",
+        "scripts/test/provider_delivery_preflight_test.py",
         "scripts/test/mknoon_full_checks_test.py",
         "scripts/test/full_suite_adapters_test.py",
         "scripts/test/mknoon_full_review_regression_test.py",
@@ -5879,6 +6503,33 @@
       "resources": [
         "unknown"
       ]
+    },
+    {
+      "id": "full.go-send-wrapper",
+      "kind": "command",
+      "command": [
+        "python3",
+        "scripts/run_original_go_send_wrapper.py"
+      ],
+      "paths": [
+        "docker-ws/alltests_go_test.sh"
+      ],
+      "success_marker": "ORIGINAL_GO_SEND_WRAPPER_PASS",
+      "boundary": "The retained original Go Send wrapper executes in the candidate and propagates Go failures",
+      "limitations": "One exact wrapper completion; full Go module owners retain individual test receipts and skip accounting",
+      "timeout_seconds": 1300,
+      "requirements": [
+        "python3",
+        "bash",
+        "go"
+      ],
+      "resources": [
+        "unknown"
+      ],
+      "investigate": [
+        "docker-ws/alltests_go_test.sh",
+        "scripts/run_original_go_send_wrapper.py"
+      ]
     }
   ],
   "full_inventory": {
@@ -6795,6 +7446,126 @@
           "integration_test/performance_harness.dart"
         ],
         "reason": "FEED delegates to the same registerFeedPerf entrypoint as this direct legacy route; other selectors retain their separate owners."
+      },
+      {
+        "owner": "full-sims-major",
+        "capability": "production.foreground_group_push",
+        "patterns": [
+          "integration_test/scripts/run_production_foreground_group_push.dart",
+          "integration_test/maestro/production_group_send.yaml",
+          "integration_test/maestro/production_reopen_seeded.yaml"
+        ],
+        "reason": "Additive production pilot validates exact S1/S2 Maestro flow receipts and independent S1/S2/S3 production observations; original routes are preserved."
+      },
+      {
+        "owner": "full-sims-major",
+        "capability": "production.notification_open",
+        "patterns": [
+          "integration_test/scripts/run_production_notification_open.dart",
+          "integration_test/maestro/production_direct_open.yaml",
+          "integration_test/maestro/production_direct_send.yaml",
+          "integration_test/maestro/production_background.yaml",
+          "integration_test/maestro/production_notification_tap.yaml"
+        ],
+        "reason": "Additive production startup and native notification-tap journey preserves warm, cold and same-peer assertions; original route remains selected unchanged."
+      },
+      {
+        "owner": "full.go-send-wrapper",
+        "patterns": [
+          "docker-ws/alltests_go_test.sh"
+        ],
+        "reason": "Retained original wrapper has an exact candidate-bound completion owner; all Go module suites remain independently selected."
+      },
+      {
+        "owner": "full-sims-major",
+        "capability": "production.notification_sound",
+        "patterns": [
+          "integration_test/scripts/run_production_notification_sound.dart",
+          "integration_test/maestro/production_group_open.yaml",
+          "integration_test/maestro/production_conversation_back.yaml",
+          "integration_test/maestro/production_sound_two_messages.yaml"
+        ],
+        "reason": "Additive production-composed sound cases preserve all original cases, intermediate tone evidence, group control and original native disposition assertions; original campaign remains intact."
+      },
+      {
+        "owner": "full-sims-major",
+        "capability": "production.routing_smoke",
+        "patterns": [
+          "integration_test/scripts/run_production_routing.dart",
+          "integration_test/maestro/production_direct_delete.yaml",
+          "integration_test/maestro/production_resume.yaml",
+          "integration_test/maestro/production_all_chats.yaml"
+        ],
+        "reason": "Additive production-composed routing preserves all 27 original cases and their per-role/intermediate receipt requirements; original harness and selectors remain intact."
+      },
+      {
+        "owner": "full-sims-major",
+        "capability": "production.private_media_local",
+        "patterns": [
+          "integration_test/scripts/run_production_private_media_local.dart",
+          "integration_test/maestro/production_private_open.yaml",
+          "integration_test/maestro/production_private_close.yaml",
+          "integration_test/maestro/production_private_refuse_reopen.yaml",
+          "integration_test/maestro/production_private_terminal_delete.yaml"
+        ],
+        "reason": "Additive production application private-media projection and sender lifecycle; original isolated crypto/policy/device harness remains unchanged."
+      },
+      {
+        "owner": "full-sims-major",
+        "capability": "production.group_invite_reliability",
+        "patterns": [
+          "integration_test/scripts/run_production_group_invite_reliability.dart",
+          "integration_test/maestro/production_group_create.yaml",
+          "integration_test/maestro/production_group_invite_decline.yaml",
+          "integration_test/maestro/production_group_invite_resend.yaml",
+          "integration_test/maestro/production_group_invite_revoke.yaml"
+        ],
+        "reason": "Additive production invitation reliability F/C/D preserves the original campaign and all catalog selectors."
+      },
+      {
+        "owner": "full-sims-major",
+        "capability": "production.startup_resume_performance",
+        "patterns": [
+          "integration_test/scripts/run_production_startup_resume_performance.dart"
+        ],
+        "reason": "Additive production B/M/BR timing and OS lifecycle measurement; original benchmark dispatches and thresholds remain intact."
+      },
+      {
+        "owner": "full-sims-major",
+        "capability": "production.group_catalog.private_abc_create",
+        "patterns": [
+          "integration_test/scripts/run_production_group_create.dart",
+          "integration_test/maestro/production_catalog_group_create.yaml",
+          "integration_test/maestro/production_catalog_invite_accept.yaml",
+          "integration_test/maestro/production_catalog_group_send.yaml"
+        ],
+        "reason": "Additive ML-001 application proof preserves original catalog selections and original terminal oracle; all other cases retain their original owners."
+      },
+      {
+        "owner": "full-sims-major",
+        "capability": "production.group_catalog.private_reaction_roundtrip",
+        "patterns": [
+          "integration_test/scripts/run_production_group_reaction.dart",
+          "integration_test/maestro/production_catalog_react.yaml"
+        ],
+        "reason": "Additive PL-009 production application proof; original multi-party selectors and terminal oracle remain unchanged."
+      },
+      {
+        "owner": "full-sims-major",
+        "capability": "production.group_catalog.private_reaction_toggle_convergence",
+        "patterns": [
+          "integration_test/scripts/run_production_group_reaction_toggle.dart"
+        ],
+        "reason": "Additive RT-001 production protocol timing proof; original multi-party selectors, intervals and terminal oracle remain unchanged."
+      },
+      {
+        "owner": "full-sims-major",
+        "capability": "production.group_catalog.private_removed_reaction_rejected",
+        "patterns": [
+          "integration_test/scripts/run_production_group_removed_reaction.dart",
+          "integration_test/maestro/production_catalog_remove_charlie.yaml"
+        ],
+        "reason": "Additive PL-010 production rejection proof; original multi-party selectors, absence window and terminal oracle remain unchanged."
       }
     ],
     "catalogs": [

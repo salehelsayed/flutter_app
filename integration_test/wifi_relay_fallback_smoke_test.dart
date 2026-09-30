@@ -11,8 +11,7 @@
 // Launch with orchestrator:
 //   dart run integration_test/scripts/run_wifi_relay_fallback_smoke.dart -p ios
 //
-// Or standalone (self-contained, S1/S2 only):
-//   flutter test integration_test/wifi_relay_fallback_smoke_test.dart -d <device-id>
+// All four scenarios require the orchestrator's CLI peer fixture.
 
 @Tags(['smoke'])
 library;
@@ -144,6 +143,13 @@ Future<_SmokeTestStack> _setupStack() async {
   final custodyDb = DirectInboxCustodyDbBindings(db);
   final messageRepo = MessageRepositoryImpl(
     dbInsertMessage: (row) => dbInsertMessage(db, row),
+    dbApplyIncomingOrdinaryTextMutation:
+        ({required incomingRow, required kind}) =>
+            dbApplyIncomingOrdinaryTextMutation(
+              db,
+              incomingRow: incomingRow,
+              kind: kind,
+            ),
     dbLoadMessagesForContact: (contactPeerId) =>
         dbLoadMessagesForContact(db, contactPeerId),
     dbLoadLatestMessageForContact: (contactPeerId) =>
@@ -203,6 +209,8 @@ Future<_SmokeTestStack> _setupStack() async {
     dbStageOutgoingDirectTextInboxCustody: custodyDb.stage,
     dbLoadDirectInboxCustodyOutbox: custodyDb.load,
     dbLoadDirectInboxCustodyOutboxForMessage: custodyDb.loadForMessage,
+    dbLoadDirectInboxCustodyOutboxOwnerForMessageId:
+        custodyDb.loadOwnerForMessageId,
     dbRecordDirectInboxCustodyFailureIfExact: custodyDb.recordFailureIfExact,
     dbCompleteAcceptedDirectInboxCustodyIfExact:
         custodyDb.completeAcceptedIfExact,
@@ -476,13 +484,10 @@ void main() {
     final stack = await _setupStack();
 
     final hasCli = stack.cliPeerId != null;
-    if (!hasCli) {
-      print('[SMOKE] No CLI peer -- only self-contained scenarios available');
-    }
-
     final results = <_ScenarioResult>[];
 
     try {
+      expect(hasCli, isTrue, reason: 'S1-S4 require the CLI peer orchestrator');
       // ================================================================
       // S1: Baseline live chat -- receive a message from the CLI peer.
       // ================================================================
@@ -785,6 +790,8 @@ void main() {
       print('  $passed/${results.length} passed, $failed failed');
       print('========================================\n');
 
+      // Empty or partial execution is not a successful smoke test.
+      expect(results.map((r) => r.name).toList(), ['S1', 'S2', 'S3', 'S4']);
       // Hard-fail if any scenario failed.
       final failedScenarios = results.where((r) => !r.passed).toList();
       expect(

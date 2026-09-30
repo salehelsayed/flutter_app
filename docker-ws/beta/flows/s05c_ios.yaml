@@ -1,0 +1,14 @@
+appId: com.mknoon.app
+name: S05c iPhone answers the Pixel's second call (right after a decline)
+---
+- runFlow:
+    when: { visible: "Dismiss" }
+    commands: [ { tapOn: "Dismiss" } ]
+- extendedWaitUntil: { visible: "Answer", timeout: 90000 }
+- tapOn: "Answer"
+- extendedWaitUntil: { visible: "(.*\\n)?Connected(\\n.*)?", timeout: 60000 }
+- takeScreenshot: s05c_connected_ios
+- extendedWaitUntil: { notVisible: "(.*\\n)?Connected(\\n.*)?", timeout: 90000 }
+- runFlow: { file: sleep.yaml, env: { MS: 3000 } }
+- takeScreenshot: s05c_after_end_ios
+- runFlow: ensure_chat.yaml

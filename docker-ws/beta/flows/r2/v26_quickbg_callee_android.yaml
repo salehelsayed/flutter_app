@@ -1,0 +1,21 @@
+appId: com.mknoon.app
+name: R2-6 Pixel goes to the background just before the call - ringing notification, answer from it, ongoing
+---
+- runFlow: ../ensure_chat.yaml
+- pressKey: Home
+- extendedWaitUntil: { visible: "Answer|ANSWER", timeout: 150000 }
+- runFlow: { file: ../sleep.yaml, env: { MS: 2500 } }
+- takeScreenshot: v26_bg_ringing
+- swipe: { start: "50%,1%", end: "50%,70%" }
+- runFlow: { file: ../sleep.yaml, env: { MS: 2000 } }
+- takeScreenshot: v26_bg_ringing_shade
+- tapOn: "Answer|ANSWER"
+- extendedWaitUntil: { visible: "(.*\\n)?Connected(\\n.*)?", timeout: 60000 }
+- takeScreenshot: v26_bg_connected
+- pressKey: Home
+- runFlow: { file: ../sleep.yaml, env: { MS: 2000 } }
+- swipe: { start: "50%,1%", end: "50%,70%" }
+- runFlow: { file: ../sleep.yaml, env: { MS: 2000 } }
+- takeScreenshot: v26_bg_ongoing_shade
+- pressKey: Back
+- runFlow: { file: ../sleep.yaml, env: { MS: 25000 } }

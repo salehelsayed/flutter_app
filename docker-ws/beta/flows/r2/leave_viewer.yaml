@@ -1,0 +1,21 @@
+appId: com.mknoon.app
+name: close a media viewer / menu / info sheet until the chat composer is back
+---
+- runFlow:
+    when: { visible: "Dismiss menu" }
+    commands: [ { tapOn: "Dismiss menu" } ]
+- runFlow:
+    when: { visible: "Scrim" }
+    commands: [ { tapOn: "Scrim" } ]
+- repeat:
+    times: 3
+    while: { notVisible: ".*Write something.*" }
+    commands:
+      # iOS: the viewer's back arrow (top left) has no accessibility label; tap its position
+      - runFlow:
+          when: { platform: iOS }
+          commands: [ { tapOn: { point: "7%,10%" } } ]
+      - runFlow:
+          when: { platform: Android }
+          commands: [ { runFlow: ../go_back.yaml } ]
+      - runFlow: { file: ../sleep.yaml, env: { MS: 1500 } }

@@ -1,0 +1,6 @@
+appId: com.mknoon.app
+name: T15 iPhone sends after the unblock
+---
+- runFlow: ../ensure_chat.yaml
+- runFlow: { file: ../send_text.yaml, env: { MSG: "T15 after unblock ${NONCE}" } }
+- runFlow: ../kb_hide.yaml

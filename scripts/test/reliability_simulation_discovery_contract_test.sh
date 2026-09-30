@@ -5,6 +5,10 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT_DIR"
 
+# This fixture tests legacy CLI argument validation with no device owner.
+# A live parent campaign's protected routing is a separate boundary.
+unset SIMS_PROTECTED_DEVICE_ASSIGNMENTS_JSON
+
 fail() {
   printf 'FAIL: %s\n' "$1" >&2
   exit 1

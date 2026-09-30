@@ -1,0 +1,3 @@
+#!/bin/bash
+# Run a docker-ws python helper on the Mac: alltests_py.sh <script.py> args...
+cd /Volumes/CrucialX9/flutter_app/docker-ws && exec python3 "$@"

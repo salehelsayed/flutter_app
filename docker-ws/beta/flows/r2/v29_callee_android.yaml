@@ -1,0 +1,9 @@
+appId: com.mknoon.app
+name: R2-8 Pixel app in the background or its process killed - the call rings through the push, answer from the notification
+---
+- extendedWaitUntil: { visible: "Answer|ANSWER", timeout: 240000 }
+- takeScreenshot: v29_ringing
+- tapOn: "Answer|ANSWER"
+- extendedWaitUntil: { visible: "(.*\\n)?Connected(\\n.*)?", timeout: 60000 }
+- takeScreenshot: v29_connected
+- extendedWaitUntil: { notVisible: "End", timeout: 120000 }

@@ -1,0 +1,13 @@
+appId: ${APP_ID}
+name: production_private_terminal_delete
+---
+- longPressOn:
+    id: conversation.private.${MESSAGE_ID}
+- assertVisible:
+    id: message-context-delete-action
+- tapOn:
+    id: message-context-delete-action
+- tapOn:
+    id: conversation-delete-for-me-action
+- assertVisible:
+    id: chat_composer

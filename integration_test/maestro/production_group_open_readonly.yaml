@@ -1,0 +1,8 @@
+appId: ${APP_ID}
+name: production_group_open_readonly
+---
+- assertVisible:
+    id: orbit.view.inner_circle
+- tapOn:
+    id: orbit.group.${GROUP_ID}
+- assertVisible: Only admins can send messages in this group

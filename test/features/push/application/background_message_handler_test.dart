@@ -383,6 +383,59 @@ void main() {
         BackgroundDirectNotificationPostShowDecision.keep,
       );
 
+      final terminal = (await db.query(
+        'direct_notification_reaction_terminal_events',
+      )).single;
+      await db.delete('direct_notification_reaction_terminal_events');
+      expect(
+        await validateBackgroundDirectNotificationAfterShowInDatabase(
+          db,
+          peerId: 'peer-final-facts',
+          metadata: reactionMetadata,
+        ),
+        BackgroundDirectNotificationPostShowDecision.unknown,
+        reason: 'without READY authority the terminal record remains required',
+      );
+      expect(
+        await validateReaction(),
+        BackgroundDirectNotificationPostShowDecision.keep,
+        reason:
+            'the first READY reaction may publish before transaction-B writes '
+            'its completion record',
+      );
+      for (final invalid in <DirectNotificationDisplayOutboxEntry>[
+        reactionEntry.copyWith(
+          readiness: DirectNotificationDisplayOutboxReadiness.notReady,
+        ),
+        reactionEntry.copyWith(reactionId: null),
+        reactionEntry.copyWith(reactionAction: 'remove'),
+        reactionEntry.copyWith(reactionTombstone: true),
+        reactionEntry.copyWith(actorPeerId: 'another-actor'),
+      ]) {
+        expect(
+          await validateBackgroundDirectNotificationAfterShowInDatabase(
+            db,
+            peerId: 'peer-final-facts',
+            metadata: reactionMetadata,
+            expectedEntry: invalid,
+          ),
+          BackgroundDirectNotificationPostShowDecision.unknown,
+          reason: 'a missing terminal does not relax READY tuple authority',
+        );
+      }
+      await db.update('message_reactions', const <String, Object?>{
+        'removed_at': '2026-08-16T12:00:02.000Z',
+      });
+      expect(
+        await validateReaction(),
+        BackgroundDirectNotificationPostShowDecision.retire,
+        reason: 'a removed reaction cannot publish its first notification',
+      );
+      await db.update('message_reactions', const <String, Object?>{
+        'removed_at': null,
+      });
+      await db.insert('direct_notification_reaction_terminal_events', terminal);
+
       await db.update(
         'messages',
         const <String, Object?>{'sender_peer_id': 'peer-mutated'},

@@ -12,6 +12,7 @@ import 'package:flutter_app/core/debug/android_notification_payload_e2e.dart';
 import 'package:flutter_app/core/debug/android_voice_message_e2e.dart';
 import 'package:flutter_app/core/debug/connectivity_restore_e2e_contract.dart';
 import 'package:flutter_app/core/debug/e2e_test_mode.dart';
+import 'package:flutter_app/core/debug/direct_notification_state_probe.dart';
 import 'package:flutter_app/core/debug/group_reaction_e2e_probe.dart';
 import 'package:flutter_app/core/debug/group_notification_projection_e2e.dart';
 import 'package:flutter_app/core/debug/group_strict_notification_e2e.dart';
@@ -1281,6 +1282,30 @@ void startIntroE2EPoller({
         return;
       }
 
+      if (config['transport_action'] == directNotificationStateProbeAction) {
+        // Passive direct SQL observation is debug/E2E only. Consume before
+        // publishing so this completion cannot erase the next host command.
+        await _deleteConfigIfPresent();
+        if (!kDebugMode || !kE2ETestMode) return;
+        try {
+          final result = await runDirectNotificationStateProbe(
+            database: groupReactionProbeDatabase,
+            config: config.cast<String, Object?>(),
+          );
+          await _writeIntroE2EResult(Map<String, dynamic>.from(result));
+        } catch (error) {
+          await _writeIntroE2EResult(<String, dynamic>{
+            'schema': directNotificationStateProbeResultSchema,
+            for (final key in ['runId', 'nonce', 'stepId', 'phase'])
+              key: config[key],
+            'status': 'failed',
+            'success': false,
+            'errorType': error.runtimeType.toString(),
+          });
+        }
+        return;
+      }
+
       // This action must execute before runIntroE2EActions: the generic path
       // performs a health check and an inbox drain, which would invalidate a
       // proof that Android's network-change callback caused the drain.
@@ -2366,7 +2391,7 @@ Future<Map<String, dynamic>?> _waitForExpectedChatMessages({
       final messages = await messageRepo.getMessagesForContact(contactPeerId);
       ConversationMessage? match;
       for (final message in messages) {
-        if (_messageMatchesExpectation(message, expectation)) {
+        if (matchesIntroE2EMessageExpectation(message, expectation)) {
           match = message;
           break;
         }
@@ -2398,11 +2423,17 @@ Future<Map<String, dynamic>?> _waitForExpectedChatMessages({
   );
 }
 
-bool _messageMatchesExpectation(
+@visibleForTesting
+bool matchesIntroE2EMessageExpectation(
   ConversationMessage message,
   Map<String, dynamic> expectation,
 ) {
-  if (message.transport == 'system' || message.isDeleted || message.isHidden) {
+  if (message.isDeleted || message.isHidden) return false;
+  final expectedTransport = expectation['transport'];
+  if (expectedTransport is String && expectedTransport.isNotEmpty) {
+    if (message.transport != expectedTransport) return false;
+  } else if (message.transport == 'system') {
+    // Existing ordinary-chat expectations must never match system copy.
     return false;
   }
   if (message.text != expectation['text']) {

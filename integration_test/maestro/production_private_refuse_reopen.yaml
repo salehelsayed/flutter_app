@@ -1,0 +1,9 @@
+appId: ${APP_ID}
+name: production_private_refuse_reopen
+---
+- tapOn:
+    id: conversation.private.${MESSAGE_ID}
+- assertVisible:
+    id: chat_composer
+- assertNotVisible:
+    id: conversation.private.viewer

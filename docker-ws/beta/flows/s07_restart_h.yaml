@@ -1,0 +1,10 @@
+appId: com.mknoon.app
+name: S07 cold restart keeps history (HIST must still show); send one message after restart
+---
+- stopApp
+- launchApp: { stopApp: false }
+- runFlow: open_chat.yaml
+- extendedWaitUntil: { visible: ".*${HIST}.*", timeout: 30000 }
+- runFlow: { file: send_text.yaml, env: { MSG: "R1 after restart from ${DEV} ${NONCE}" } }
+- extendedWaitUntil: { visible: ".*R1 after restart from ${OTHER} ${NONCE}.*", timeout: 120000 }
+- takeScreenshot: s07_${DEV}

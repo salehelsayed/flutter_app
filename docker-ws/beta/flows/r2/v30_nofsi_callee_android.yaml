@@ -1,0 +1,10 @@
+appId: com.mknoon.app
+name: R2-8 locked Pixel without full-screen access - answer from the lock-screen notification if one is shown
+---
+- extendedWaitUntil: { visible: "Answer|ANSWER", timeout: 120000 }
+- takeScreenshot: v30_nofsi_answer_visible
+- tapOn: "Answer|ANSWER"
+- runFlow: { file: ../sleep.yaml, env: { MS: 3000 } }
+- takeScreenshot: v30_nofsi_after_answer
+- extendedWaitUntil: { visible: "(.*\\n)?Connected(\\n.*)?", timeout: 30000, optional: true }
+- takeScreenshot: v30_nofsi_end_state

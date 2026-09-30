@@ -1,0 +1,3 @@
+FLOW D1c_send android PASS rc=0
+FLOW D1c_rx ios FAIL rc=1
+/Volumes/CrucialX9/flutter_app/docker-ws/beta/run_r24_validate.sh: line 79: 48558 Terminated: 15          nohup perl -e 'use POSIX qw(setsid); setsid(); exec @ARGV' "$ANDROID_HOME/platform-tools/adb" -s "$SERIAL" logcat -T 1 -v threadtime > "$RUN/android_logcat_live.txt" 2>&1 < /dev/null

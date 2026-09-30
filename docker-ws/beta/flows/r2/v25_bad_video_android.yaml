@@ -1,0 +1,14 @@
+appId: com.mknoon.app
+name: R2-4b Pixel picks a photo + a broken video - expect "Media unavailable", photo kept, video not attached
+---
+- runFlow: ../ensure_chat.yaml
+- runFlow: { file: v25_pick_android_two.yaml, env: { FILE1: "r2_photo_4.png", FILE2: "r25_bad_video.mp4" } }
+- extendedWaitUntil: { visible: "Media unavailable.*", timeout: 90000, optional: true }
+- takeScreenshot: v25_bad_notice
+- extendedWaitUntil: { notVisible: "(?s)Processing.*", timeout: 120000 }
+- runFlow: { file: ../sleep.yaml, env: { MS: 12000 } }
+- takeScreenshot: v25_bad_after_12s
+- runFlow: { file: caption_send.yaml, env: { MSG: "R25 badvideo ${NONCE}" } }
+- runFlow: ../kb_hide.yaml
+- runFlow: { file: ../sleep.yaml, env: { MS: 8000 } }
+- takeScreenshot: v25_bad_sent

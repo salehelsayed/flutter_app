@@ -1,0 +1,16 @@
+test/core/bootstrap
+test/core/debug/android_production_audio_call_e2e_test.dart
+test/core/l10n/app_localizations_signal_test.dart
+test/core/media/ios_picture_in_picture_fail_closed_contract_test.dart
+test/core/notifications/account_migration_receiver_display_custody_test.dart
+test/core/notifications/app_visibility_route_binding_test.dart
+test/core/notifications/ios_apns_notification_open_bridge_test.dart
+test/core/notifications/ios_notification_recovery_wiring_test.dart
+test/core/permissions/mic_permission_prompt_test.dart
+test/core/widgets/undo_bar_test.dart
+test/debug/debug_call_evidence_observer_test.dart
+test/features/account_migration/presentation/account_migration_blocked_screen_test.dart
+test/features/account_migration/presentation/account_migration_journey_screen_test.dart
+test/features/call
+test/features/conversation
+test/shared/widgets/media/voice_message_semantics_test.dart

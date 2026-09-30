@@ -1,0 +1,9 @@
+appId: com.mknoon.app
+name: R2-4b attach one FILE (Android picker) - no wait for Send message (processing can take a while)
+---
+- runFlow: ../kb_hide.yaml
+- tapOn: "Add attachment"
+- tapOn: "Media Library"
+- extendedWaitUntil: { visible: "${FILE}", timeout: 30000 }
+- tapOn: "${FILE}"
+- runFlow: { file: ../sleep.yaml, env: { MS: 4000 } }

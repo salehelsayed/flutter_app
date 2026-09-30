@@ -27,6 +27,7 @@ import 'package:flutter_app/core/database/helpers/direct_media_blob_custody_db_h
     show kDirectMediaBlobCustodyTable;
 import 'package:flutter_app/core/device/upload_wake_lock.dart';
 import 'package:flutter_app/core/media/image_processor.dart';
+import 'package:flutter_app/core/media/audio_recorder_service.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/core/media/group_media_integrity_policy.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
@@ -50,6 +51,7 @@ import 'package:flutter_app/core/utils/text_sanitizer.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
 import 'package:flutter_app/features/call/application/outgoing_call_capability.dart';
+import 'package:flutter_app/features/call/infrastructure/call_media_conflict_adapter.dart';
 import 'package:flutter_app/core/media/received_media_egress.dart';
 import 'package:flutter_app/core/media/received_media_egress_service.dart';
 import 'package:flutter_app/features/conversation/application/chat_message_listener.dart';
@@ -3517,6 +3519,7 @@ void main() {
 
       await pumpScreen(
         tester,
+        directMediaBlobCustodyClientEnabled: true,
         identityRepo: FakeIdentityRepository(makeIdentity()),
         messageRepo: messages,
         chatListener: ChatMessageListener(
@@ -3646,13 +3649,11 @@ void main() {
     testWidgets(
       'TC-347-02e complete strict manifest publishes before first network',
       runStrictComposerScenario,
-      skip: !kDirectMediaBlobCustodyClientEnabled,
     );
 
     testWidgets(
       'TC-347-08 prepared ordinary composer selects strict blob coordinator',
       runStrictComposerScenario,
-      skip: !kDirectMediaBlobCustodyClientEnabled,
     );
 
     Future<void> runFanoutRoutedComposerScenario(
@@ -4683,6 +4684,7 @@ void main() {
 
         await pumpScreen(
           tester,
+          directMediaBlobCustodyClientEnabled: true,
           identityRepo: FakeIdentityRepository(makeIdentity()),
           messageRepo: messageRepo,
           chatListener: ChatMessageListener(
@@ -4805,7 +4807,6 @@ void main() {
         await tester.pumpWidget(const SizedBox.shrink());
         await tester.pump();
       },
-      skip: !kDirectMediaBlobCustodyClientEnabled,
     );
 
     testWidgets(
@@ -10574,6 +10575,175 @@ void main() {
       await tester.pump();
     });
 
+    testWidgets('stalled gallery video keeps prepared photo and can retry', (
+      tester,
+    ) async {
+      tester.view.physicalSize = const Size(800, 1600);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final tempDir = Directory.systemTemp.createTempSync(
+        'conv_stalled_video_',
+      );
+      addTearDown(() => tempDir.deleteSync(recursive: true));
+      final photo = File('${tempDir.path}/photo.jpg')
+        ..writeAsBytesSync(_tinyPngBytes);
+      final video = File('${tempDir.path}/video.mp4')
+        ..writeAsBytesSync(_tinyPngBytes);
+      final processed = File('${tempDir.path}/processed.mp4')
+        ..writeAsBytesSync(_tinyPngBytes);
+      final mediaPicker = FakeMediaPicker()
+        ..multipleMediaResult = [XFile(photo.path), XFile(video.path)];
+      var attempts = 0;
+      var cancels = 0;
+      final processor = ImageProcessor(
+        compressFile:
+            ({
+              required path,
+              required quality,
+              required keepExif,
+              minWidth = 1920,
+              minHeight = 1080,
+            }) async => XFile(path),
+        compressVideo: ({required path, required compress, onProgress}) {
+          attempts++;
+          if (attempts == 1) return Completer<VideoProcessResult?>().future;
+          if (attempts == 3) {
+            return Future.error(const VideoProcessingUnavailableException());
+          }
+          return Future.value(VideoProcessResult(path: processed.path));
+        },
+        cancelVideoCompression: () async => cancels++,
+        videoStallTimeout: const Duration(milliseconds: 50),
+      );
+      await pumpScreen(
+        tester,
+        identityRepo: FakeIdentityRepository(makeIdentity()),
+        messageRepo: FakeMessageRepository(),
+        chatListener: ChatMessageListener(
+          chatMessageStream: const Stream.empty(),
+          messageRepo: FakeMessageRepository(),
+          contactRepo: FakeContactRepository(),
+        ),
+        sendFn: _instantSuccessSendFn,
+        imageProcessor: processor,
+        mediaPicker: mediaPicker,
+      );
+      await tester.tap(find.byIcon(Icons.add_rounded));
+      await tester.pump(const Duration(milliseconds: 500));
+      tester
+          .widget<ListTile>(find.widgetWithText(ListTile, 'Media Library'))
+          .onTap!();
+      await tester.pump(const Duration(milliseconds: 100));
+      await tester.pump();
+
+      expect(cancels, 1);
+      expect(find.text('Processing'), findsNothing);
+      expect(
+        tester
+            .widget<AttachmentPreviewStrip>(find.byType(AttachmentPreviewStrip))
+            .attachments,
+        hasLength(1),
+      );
+      expect(find.text('Video processing stopped. Try again.'), findsOneWidget);
+      final notice = tester.widget<SnackBar>(find.byType(SnackBar));
+      final retry = tester.widget<SnackBarAction>(find.byType(SnackBarAction));
+      expect(notice.persist, isFalse);
+      expect(notice.duration, const Duration(seconds: 8));
+      expect(notice.behavior, SnackBarBehavior.floating);
+      expect(
+        notice.margin!.resolve(TextDirection.ltr).bottom,
+        greaterThanOrEqualTo(80),
+      );
+      expect(retry.textColor, isNotNull);
+      expect(retry.textColor, isNot(notice.backgroundColor));
+      tester.widget<SnackBarAction>(find.byType(SnackBarAction)).onPressed();
+      await tester.pump();
+      await tester.pump();
+      expect(attempts, 2);
+      expect(
+        tester
+            .widget<AttachmentPreviewStrip>(find.byType(AttachmentPreviewStrip))
+            .attachments,
+        hasLength(2),
+      );
+      await tester.tap(find.byIcon(Icons.add_rounded));
+      await tester.pump(const Duration(milliseconds: 500));
+      tester
+          .widget<ListTile>(find.widgetWithText(ListTile, 'Media Library'))
+          .onTap!();
+      await tester.pump(const Duration(milliseconds: 100));
+      await tester.pump();
+      expect(attempts, 3);
+      await tester.pump(const Duration(milliseconds: 300));
+      await tester.pump();
+      expect(
+        find.text(
+          'Video processing is unavailable. Restart MKnoon to add videos.',
+        ),
+        findsOneWidget,
+      );
+      expect(find.byType(SnackBarAction), findsNothing);
+    });
+
+    testWidgets('failed transcode keeps photo without attaching raw video', (
+      tester,
+    ) async {
+      tester.view.physicalSize = const Size(800, 1600);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final tempDir = Directory.systemTemp.createTempSync('conv_failed_video_');
+      addTearDown(() => tempDir.deleteSync(recursive: true));
+      final photo = File('${tempDir.path}/photo.jpg')
+        ..writeAsBytesSync(_tinyPngBytes);
+      final video = File('${tempDir.path}/video.mp4')
+        ..writeAsBytesSync(_tinyPngBytes);
+      final mediaPicker = FakeMediaPicker()
+        ..multipleMediaResult = [XFile(photo.path), XFile(video.path)];
+      final processor = ImageProcessor(
+        compressFile:
+            ({
+              required path,
+              required quality,
+              required keepExif,
+              minWidth = 1920,
+              minHeight = 1080,
+            }) async => XFile(path),
+        compressVideo: ({required path, required compress, onProgress}) async =>
+            null,
+      );
+      await pumpScreen(
+        tester,
+        identityRepo: FakeIdentityRepository(makeIdentity()),
+        messageRepo: FakeMessageRepository(),
+        chatListener: ChatMessageListener(
+          chatMessageStream: const Stream.empty(),
+          messageRepo: FakeMessageRepository(),
+          contactRepo: FakeContactRepository(),
+        ),
+        sendFn: _instantSuccessSendFn,
+        imageProcessor: processor,
+        mediaPicker: mediaPicker,
+      );
+      await tester.tap(find.byIcon(Icons.add_rounded));
+      await tester.pump(const Duration(milliseconds: 500));
+      tester
+          .widget<ListTile>(find.widgetWithText(ListTile, 'Media Library'))
+          .onTap!();
+      await tester.pump();
+      await tester.pump();
+
+      expect(find.text('Processing'), findsNothing);
+      expect(
+        tester
+            .widget<AttachmentPreviewStrip>(find.byType(AttachmentPreviewStrip))
+            .attachments,
+        hasLength(1),
+      );
+      expect(find.text('Media unavailable'), findsOneWidget);
+    });
+
     testWidgets(
       'recording ticks update composer without rebuilding header or message list',
       (tester) async {
@@ -12623,6 +12793,49 @@ void main() {
           find.byKey(const ValueKey('voice-review-discard')),
           findsOneWidget,
         );
+      });
+
+      testWidgets('answer stops recording and leaves an unsent review draft', (
+        tester,
+      ) async {
+        await pumpScreen(
+          tester,
+          identityRepo: FakeIdentityRepository(makeIdentity()),
+          messageRepo: messageRepo,
+          chatListener: ChatMessageListener(
+            chatMessageStream: const Stream.empty(),
+            messageRepo: messageRepo,
+            contactRepo: FakeContactRepository(),
+          ),
+          sendFn: _instantSuccessSendFn,
+          bridge: FakeBridge(),
+          p2pService: FakeP2PService(localPeer: true, localMediaResult: true),
+          audioRecorderService: recorder,
+          sendVoiceMessageFn: reviewSendVoiceFn,
+        );
+        final screen = tester.widget<ConversationScreen>(
+          find.byType(ConversationScreen),
+        );
+        await (screen.onRecordStart! as Future<void> Function())();
+        await tester.pump();
+
+        final conflicts = CallMediaConflictAdapter(
+          microphoneCaptureLeases: microphoneCaptureLeasesFor(recorder),
+        );
+        final callLease = await conflicts.acquireForCall();
+        await tester.pump();
+
+        expect(recorder.stopCallCount, 1);
+        expect(recorder.isRecording, isFalse);
+        expect(sendVoiceCalls, 0);
+        expect(messageRepo.store.values.where((m) => !m.isIncoming), isEmpty);
+        expect(voiceFile.existsSync(), isTrue);
+        expect(find.byKey(const ValueKey('voice-review-send')), findsOneWidget);
+        expect(
+          find.byKey(const ValueKey('voice-review-discard')),
+          findsOneWidget,
+        );
+        await callLease.release();
       });
 
       testWidgets('review send delivers the held recording', (tester) async {

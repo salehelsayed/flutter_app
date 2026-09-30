@@ -62,6 +62,7 @@ internal enum class HeadlessCallAdmissionDisposition {
 internal enum class HeadlessCallAdmissionMode(val wireName: String) {
     ADMISSION("admission"),
     DECLINE_REPLY("decline_reply"),
+    RINGING_REPLY("ringing_reply"),
     ;
 
     companion object {
@@ -464,7 +465,7 @@ internal class HeadlessCallAdmissionExecution(
             ?: return finish("failed", "native_lifecycle_failed")
         val invocation = parseInput(inputData, observedNow)
             ?: return finish("rejected", "invalid_request")
-        if (invocation.mode == HeadlessCallAdmissionMode.DECLINE_REPLY) onSettled()
+        if (invocation.mode != HeadlessCallAdmissionMode.ADMISSION) onSettled()
         diagnosticHandle = invocation.callId
         observe("start", "started", values = mapOf("attemptCount" to runAttemptCount))
         val nonce = runCatching(nonceFactory).getOrNull()
@@ -530,9 +531,10 @@ internal class HeadlessCallAdmissionExecution(
                 if (activeRunner === runner) activeRunner = null
             }
         }
-        if (identity.mode == HeadlessCallAdmissionMode.DECLINE_REPLY) {
-            // The reply run never presents or terminalizes: the native call
-            // already ended when the user declined it.
+        if (identity.mode != HeadlessCallAdmissionMode.ADMISSION) {
+            // Reply runs never present or terminalize. A decline reply follows
+            // the ended native call; a ringing reply follows presentation and
+            // checks the live descriptor before sending.
             return finish("completed", "none", completionValues)
         }
         val authenticated = completion?.takeIf {
@@ -764,7 +766,31 @@ internal class HeadlessCallAdmissionWorker(
         Futures.immediateFuture(createForegroundInfo(applicationContext))
 
     override fun doWork(): Result = runBlocking {
-        execution.execute(inputData, runAttemptCount)
+        val outcome = execution.execute(inputData, runAttemptCount)
+        if (outcome == HeadlessCallAdmissionWorkOutcome.PRESENTED && !isStopped) {
+            // The admission engine has released its database and Go runtime.
+            // Now that the native call really rings, a separate short engine
+            // can send an authenticated reply before the full app boots.
+            val reply = Data.Builder()
+                .putString(
+                    HeadlessCallAdmissionWorkScheduler.INPUT_CALL_ID,
+                    inputData.getString(HeadlessCallAdmissionWorkScheduler.INPUT_CALL_ID),
+                )
+                .putString(
+                    HeadlessCallAdmissionWorkScheduler.INPUT_WAKE_HANDLE,
+                    inputData.getString(HeadlessCallAdmissionWorkScheduler.INPUT_WAKE_HANDLE),
+                )
+                .putLong(
+                    HeadlessCallAdmissionWorkScheduler.INPUT_EXPIRES_AT_MS,
+                    inputData.getLong(HeadlessCallAdmissionWorkScheduler.INPUT_EXPIRES_AT_MS, 0L),
+                )
+                .putString(
+                    HeadlessCallAdmissionWorkScheduler.INPUT_MODE,
+                    HeadlessCallAdmissionMode.RINGING_REPLY.wireName,
+                )
+                .build()
+            execution.execute(reply, 0)
+        }
         Result.success()
     }
 
@@ -870,6 +896,21 @@ private class FlutterHeadlessCallAdmissionEngineRunner(
         ).also { channel ->
             val completionGate = HeadlessCallAdmissionCompletionGate(identity)
             channel.setMethodCallHandler { call, result ->
+                if (call.method == "isRinging") {
+                    val values = call.arguments as? Map<*, *>
+                    val exact = identity.mode == HeadlessCallAdmissionMode.RINGING_REPLY &&
+                        values?.keys == setOf("nonce", "callId", "wakeHandle", "expiresAtMs") &&
+                        values["nonce"] == identity.nonce &&
+                        values["callId"] == identity.callId &&
+                        values["wakeHandle"] == identity.wakeHandle &&
+                        (values["expiresAtMs"] as? Number)?.toLong() == identity.expiresAtMs &&
+                        !stopRequested.get()
+                    result.success(
+                        exact && MknoonCallRuntime.get(applicationContext)
+                            .isRingingAuthenticated(identity.callId, identity.expiresAtMs),
+                    )
+                    return@setMethodCallHandler
+                }
                 val parsed = completionGate.accept(call.method, call.arguments)
                 if (parsed == null) {
                     result.error(
@@ -897,7 +938,7 @@ private class FlutterHeadlessCallAdmissionEngineRunner(
                 add(identity.callId)
                 add(identity.wakeHandle)
                 add(identity.expiresAtMs.toString())
-                if (identity.mode == HeadlessCallAdmissionMode.DECLINE_REPLY) {
+                if (identity.mode != HeadlessCallAdmissionMode.ADMISSION) {
                     add(identity.mode.wireName)
                 }
             },

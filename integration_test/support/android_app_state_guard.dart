@@ -735,9 +735,16 @@ final class AndroidAppStateGuard {
             );
           }
         }
+        final process = await _captureProcessState(device);
+        if (paths.isEmpty && (process.running || process.foreground)) {
+          throw const AndroidAppStateBlocked(
+            'Android package and process inventories disagree. No app mutation '
+            'was attempted.',
+          );
+        }
         preliminaries[device] = _PreliminarySnapshot(
           packagePaths: paths,
-          process: await _captureProcessState(device),
+          process: process,
           runtimePermissions: paths.isEmpty
               ? const <String, bool>{}
               : await _runtimePermissionSnapshot(device),
@@ -1552,21 +1559,47 @@ final class AndroidAppStateGuard {
               line.contains('ResumedActivity') ||
               line.contains('topResumedActivity'),
         )
-        .any((line) => line.contains(packageName));
+        .any(
+          (line) => RegExp(
+            r'(?:^|[\s={])' + RegExp.escape(packageName) + r'/[^\s}]+',
+          ).hasMatch(line),
+        );
   }
 
   Future<List<String>> _installedPackagePaths(String device) async {
-    final output = await _shellText(device, <String>[
+    final result = await _adb(device, <String>[
+      'shell',
       'pm',
       'path',
       packageName,
     ], allowFailure: true);
-    return output
+    final output = '${result.stdout}'.trim();
+    if (result.exitCode != 0 || output.isEmpty) {
+      // pm path may return nonzero for a genuinely absent package. Require a
+      // successful independent inventory before allowing an absent snapshot;
+      // failed or empty lookups must never authorize clearing an installed app.
+      if ((await _installedThirdPartyPackages(device)).contains(packageName)) {
+        throw const AndroidAppStateBlocked(
+          'Installed Android package paths were unavailable. No absent-app '
+          'snapshot can be captured.',
+        );
+      }
+      return const <String>[];
+    }
+    final lines = output
         .split('\n')
         .map((line) => line.trim())
-        .where((line) => line.startsWith('package:'))
+        .where((line) => line.isNotEmpty)
+        .toList(growable: false);
+    if (lines.any((line) => !line.startsWith('package:/')) ||
+        lines.toSet().length != lines.length) {
+      throw const AndroidAppStateBlocked(
+        'Android package paths were malformed. No absent-app snapshot can be '
+        'captured.',
+      );
+    }
+    return lines
         .map((line) => line.substring('package:'.length))
-        .where((path) => path.startsWith('/') && !path.contains('\n'))
         .toList(growable: false);
   }
 
@@ -1956,9 +1989,14 @@ final class AndroidAppStateGuard {
                 timeout: commandTimeout,
               )
             : await _runner.run('adb', command);
-      } on ProcessException {
-        if (allowFailure) return ProcessResult(0, 127, '', '');
-        throw const AndroidAppStateBlocked('ADB could not start.');
+      } on ProcessException catch (error) {
+        // allowFailure permits an observed command exit, not an unknown device
+        // state after a host timeout or failure to start/drain the process.
+        throw AndroidAppStateBlocked(
+          error.errorCode == 124
+              ? 'ADB state-guard command timed out.'
+              : 'ADB state-guard command could not complete.',
+        );
       }
       if (result.exitCode != 0 &&
           (retryAnyNonzero || _isTransientAdbTransportFailure(result)) &&

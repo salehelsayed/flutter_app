@@ -371,7 +371,7 @@ start_host_bridge() {
   python3 "${HOST_BRIDGE_SCRIPT}" serve \
     --bind "${CLAUDE_DOCKER_HOST_BRIDGE_BIND:-127.0.0.1}" \
     --port "${HOST_BRIDGE_PORT}" \
-    --token "${HOST_BRIDGE_TOKEN}" \
+    --token="${HOST_BRIDGE_TOKEN}" \
     --repo-root "${REPO_ROOT}" \
     --container-repo-root /workspace \
     >"${bridge_log}" 2>&1 &

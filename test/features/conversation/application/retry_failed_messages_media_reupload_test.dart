@@ -3,7 +3,6 @@ import 'dart:convert';
 
 import 'package:crypto/crypto.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:flutter_app/core/config/direct_media_blob_custody_client_flag.dart';
 import 'package:flutter_app/core/constants/retry_constants.dart';
 import 'package:flutter_app/core/database/direct_media_blob_custody.dart';
 import 'package:flutter_app/core/media/direct_media_blob_artifact_store.dart';
@@ -891,7 +890,6 @@ void main() {
           DirectMediaBlobCustodyState.outgoingPrepared,
         );
       },
-      skip: !kDirectMediaBlobCustodyClientEnabled,
     );
 
     test(
@@ -1035,7 +1033,6 @@ void main() {
           expect(retained.privateMediaClockHighWaterMs, isNull);
         }
       },
-      skip: !kDirectMediaBlobCustodyClientEnabled,
     );
 
     test(

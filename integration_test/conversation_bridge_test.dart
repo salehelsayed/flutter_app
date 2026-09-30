@@ -92,6 +92,13 @@ void main() {
     final custodyDb = DirectInboxCustodyDbBindings(db);
     final messageRepo = MessageRepositoryImpl(
       dbInsertMessage: (row) => dbInsertMessage(db, row),
+      dbApplyIncomingOrdinaryTextMutation:
+          ({required incomingRow, required kind}) =>
+              dbApplyIncomingOrdinaryTextMutation(
+                db,
+                incomingRow: incomingRow,
+                kind: kind,
+              ),
       dbLoadMessagesForContact: (contactPeerId) =>
           dbLoadMessagesForContact(db, contactPeerId),
       dbLoadLatestMessageForContact: (contactPeerId) =>

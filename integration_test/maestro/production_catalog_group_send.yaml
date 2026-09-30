@@ -1,0 +1,13 @@
+appId: ${APP_ID}
+name: production_catalog_group_send
+---
+- assertVisible:
+    id: chat_composer
+- tapOn:
+    id: chat_composer
+- inputText: ${MESSAGE}
+- assertVisible: ${MESSAGE}
+- tapOn:
+    id: chat_send
+- assertVisible: '(?s)^.*\n${MESSAGE_PATTERN}\n.*$'
+- hideKeyboard

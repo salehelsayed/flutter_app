@@ -1,0 +1,11 @@
+appId: ${APP_ID}
+name: production_reopen_seeded
+---
+- stopApp
+- launchApp
+- assertVisible:
+    id: orbit.view.all_chats
+- tapOn:
+    id: orbit.view.all_chats
+- assertVisible:
+    id: orbit.view.inner_circle

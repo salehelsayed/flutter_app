@@ -133,7 +133,7 @@ void main() {
   testWidgets(
     'real SQLCipher v105 to v106 preserves custody and terminal facts across reopen/export',
     (_) async {
-      expect(currentIdentityDatabaseVersion, 117);
+      expect(currentIdentityDatabaseVersion, 119);
 
       final temp = await Directory.systemTemp.createTemp(
         'group_notification_display_outbox_sqlcipher_',
@@ -190,7 +190,7 @@ void main() {
           onUpgrade: runProductionOnUpgrade,
           onDowngrade: sqlcipher.onDatabaseVersionChangeError,
         );
-        expect(await _userVersion(db), 117);
+        expect(await _userVersion(db), 119);
         expect(await db.query('group_reaction_replay_outbox'), hasLength(1));
         await _expectFinalV106Artifacts(db);
         for (final groupId in const <String>[
@@ -642,7 +642,7 @@ void main() {
               sourceAppVersion: 'plan-330-device-proof',
               sourceBuildNumber: '1',
             );
-        expect(transfer.manifest.databaseVersion, 116);
+        expect(transfer.manifest.databaseVersion, 119);
         expect(transfer.manifest.compatibility().isAccepted, isTrue);
         expect(
           transfer.manifest.schemaInventory.hasColumn(
@@ -831,7 +831,7 @@ void main() {
           onDowngrade: sqlcipher.onDatabaseVersionChangeError,
         );
         try {
-          expect(await _userVersion(fresh), 117);
+          expect(await _userVersion(fresh), 119);
           await _expectFinalV106Artifacts(fresh);
           expect(
             await fresh.query('group_notification_display_outbox'),

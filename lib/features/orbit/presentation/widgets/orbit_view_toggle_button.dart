@@ -37,13 +37,17 @@ class OrbitViewToggleButton extends StatelessWidget {
     // destination is the all-chats LIST, a dot-in-dashed-ring glyph when the
     // destination is the inner CIRCLE (closest stock glyphs to IC.list /
     // IC.orbit).
-    final icon =
-        isInnerCircle ? Icons.format_list_bulleted : Icons.motion_photos_on;
+    final icon = isInnerCircle
+        ? Icons.format_list_bulleted
+        : Icons.motion_photos_on;
 
     return Positioned(
       top: MediaQuery.of(context).padding.top + 8,
       left: 16,
       child: Semantics(
+        identifier: isInnerCircle
+            ? 'orbit.view.all_chats'
+            : 'orbit.view.inner_circle',
         button: true,
         label: semanticsLabel,
         child: GestureDetector(

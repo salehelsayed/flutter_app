@@ -11,6 +11,54 @@ import 'package:flutter_test/flutter_test.dart';
 void main() {
   final start = DateTime.utc(2026, 9, 5, 12);
 
+  test('chat and call readers join one stale-token replacement', () async {
+    final replacement = Completer<void>();
+    var deletes = 0;
+    var reads = 0;
+    final reader = AndroidFcmTokenReader(
+      deleteToken: () async {
+        deletes++;
+        await replacement.future;
+      },
+      getToken: () async {
+        reads++;
+        return 'fresh-token';
+      },
+    );
+
+    final callRead = reader.read();
+    final chatRead = reader.read();
+    expect(deletes, 1);
+    expect(reads, 0, reason: 'neither route may publish the stale token');
+    replacement.complete();
+    expect(await callRead, 'fresh-token');
+    expect(await chatRead, 'fresh-token');
+    expect(await reader.read(), 'fresh-token');
+    expect(deletes, 1);
+    expect(reads, 2);
+  });
+
+  test('a failed token replacement is retried before publication', () async {
+    var deletes = 0;
+    var reads = 0;
+    final reader = AndroidFcmTokenReader(
+      deleteToken: () async {
+        deletes++;
+        if (deletes == 1) throw StateError('Firebase unavailable');
+      },
+      getToken: () async {
+        reads++;
+        return 'fresh-token';
+      },
+    );
+
+    await expectLater(reader.read(), throwsStateError);
+    expect(reads, 0);
+    expect(await reader.read(), 'fresh-token');
+    expect(deletes, 2);
+    expect(reads, 1);
+  });
+
   test('publishes the FCM token as the relay standard call token', () async {
     final authority = _Authority();
     final outcomes = <String>[];
@@ -54,7 +102,7 @@ void main() {
   });
 
   test(
-    'the same token is republished only once half its registration elapsed',
+    'the same token is republished when the relay may have revoked it',
     () async {
       final authority = _Authority();
       final outcomes = <String>[];
@@ -67,13 +115,16 @@ void main() {
       );
 
       expect(await coordinator.ensurePublished(), isTrue);
+      expect(authority.currentToken?.token, 'fcm-token-1');
+      authority.currentToken = null; // A failed wake evicted it on the relay.
       expect(await coordinator.ensurePublished(), isTrue);
-      expect(authority.publications, hasLength(1));
-      expect(outcomes, ['published', 'unchanged']);
+      expect(authority.currentToken?.token, 'fcm-token-1');
+      expect(authority.publications, hasLength(2));
+      expect(outcomes, ['published', 'published']);
 
       now = start.add(const Duration(days: 16));
       expect(await coordinator.ensurePublished(), isTrue);
-      expect(authority.publications, hasLength(2));
+      expect(authority.publications, hasLength(3));
       expect(
         authority.publications.last.expiresAtMs,
         now.add(const Duration(days: 30)).millisecondsSinceEpoch,
@@ -178,6 +229,7 @@ void main() {
       await coordinator.settled;
       expect(authority.publications.map((record) => record.token), [
         'fcm-token-1',
+        'fcm-token-1',
         'fcm-token-2',
       ]);
     },
@@ -230,6 +282,7 @@ AndroidCallTokenCoordinator _coordinator(
 
 final class _Authority implements CallAuthorityClient {
   final List<CallTokenRecord> publications = <CallTokenRecord>[];
+  CallTokenRecord? currentToken;
   final List<CallTokenKind> revocations = <CallTokenKind>[];
   final List<Object> failures = <Object>[];
   bool acceptNext = true;
@@ -240,6 +293,7 @@ final class _Authority implements CallAuthorityClient {
     publications.add(record);
     final accepted = acceptNext;
     acceptNext = true;
+    if (accepted) currentToken = record;
     return CallTokenPublication(accepted: accepted);
   }
 

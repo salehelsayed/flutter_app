@@ -1,0 +1,7 @@
+appId: com.mknoon.app
+name: T29 iPhone calls, holds HOLD ms, then ends if still connected
+---
+- runFlow: call_connected.yaml
+- extendedWaitUntil: { visible: "zz_never_visible_zz", timeout: 110000, optional: true }
+- takeScreenshot: t29_after_hold_ios
+- runFlow: end_if_any.yaml

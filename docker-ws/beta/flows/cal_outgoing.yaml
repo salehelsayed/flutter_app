@@ -1,0 +1,5 @@
+appId: com.mknoon.app
+---
+- runFlow: ensure_chat.yaml
+- tapOn: "Start voice call"
+- runFlow: { file: sleep.yaml, env: { MS: 20000 } }

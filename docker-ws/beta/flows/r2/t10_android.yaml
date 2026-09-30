@@ -1,0 +1,31 @@
+appId: com.mknoon.app
+name: T10 android sends 8 messages fast while the friend does the same; then checks the friend's 8
+---
+- runFlow: ../ensure_chat.yaml
+- tapOn: { id: "chat_composer" }
+- inputText: "T10 a01 ${NONCE}"
+- tapOn: "Send message"
+- inputText: "T10 a02 ${NONCE}"
+- tapOn: "Send message"
+- inputText: "T10 a03 ${NONCE}"
+- tapOn: "Send message"
+- inputText: "T10 a04 ${NONCE}"
+- tapOn: "Send message"
+- inputText: "T10 a05 ${NONCE}"
+- tapOn: "Send message"
+- inputText: "T10 a06 ${NONCE}"
+- tapOn: "Send message"
+- inputText: "T10 a07 ${NONCE}"
+- tapOn: "Send message"
+- inputText: "T10 a08 ${NONCE}"
+- tapOn: "Send message"
+- runFlow: ../kb_hide.yaml
+- scrollUntilVisible: { element: ".*T10 i01 ${NONCE}.*", direction: UP, timeout: 180000, speed: 10, visibilityPercentage: 50 }
+- scrollUntilVisible: { element: ".*T10 i02 ${NONCE}.*", direction: UP, timeout: 180000, speed: 10, visibilityPercentage: 50 }
+- scrollUntilVisible: { element: ".*T10 i03 ${NONCE}.*", direction: UP, timeout: 180000, speed: 10, visibilityPercentage: 50 }
+- scrollUntilVisible: { element: ".*T10 i04 ${NONCE}.*", direction: UP, timeout: 180000, speed: 10, visibilityPercentage: 50 }
+- scrollUntilVisible: { element: ".*T10 i05 ${NONCE}.*", direction: UP, timeout: 180000, speed: 10, visibilityPercentage: 50 }
+- scrollUntilVisible: { element: ".*T10 i06 ${NONCE}.*", direction: UP, timeout: 180000, speed: 10, visibilityPercentage: 50 }
+- scrollUntilVisible: { element: ".*T10 i07 ${NONCE}.*", direction: UP, timeout: 180000, speed: 10, visibilityPercentage: 50 }
+- scrollUntilVisible: { element: ".*T10 i08 ${NONCE}.*", direction: UP, timeout: 180000, speed: 10, visibilityPercentage: 50 }
+- takeScreenshot: t10_all_android

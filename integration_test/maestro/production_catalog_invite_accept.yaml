@@ -1,0 +1,8 @@
+appId: ${APP_ID}
+name: production_catalog_invite_accept
+---
+- tapOn: '(?s)^Intros.*$'
+- assertVisible: '(?s)^${GROUP_NAME}\nInvited by .*'
+- tapOn: Accept
+- assertVisible:
+    id: chat_composer

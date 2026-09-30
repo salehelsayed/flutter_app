@@ -672,6 +672,17 @@ class _Campaign {
       );
     }
     try {
+      // The observation is stamped by the phone. Comparing it to the host
+      // clock rejects fresh tokens whenever the phone is slightly ahead.
+      final clock = await _adbShell([
+        'date',
+        '-u',
+        '+%Y-%m-%dT%H:%M:%S.%NZ',
+      ], suppressVerbose: true);
+      final deviceNow = DateTime.tryParse(clock.stdout.trim());
+      if (deviceNow == null || !deviceNow.isUtc) {
+        throw const FormatException('Android UTC clock is unavailable');
+      }
       final parsedObservation = parseBackgroundCryptoFcmTokenObservation(
         request,
         expectedGenerationId: _fcmRefreshGenerationId,
@@ -679,7 +690,7 @@ class _Campaign {
             ? priorProviderSubjectTokenSha256
             : null,
         requireForcedRefresh: refreshUnregisteredToken,
-        now: DateTime.now().toUtc(),
+        now: deviceNow,
       );
       if (refreshUnregisteredToken) {
         final issuedAt = _fcmRefreshIssuedAt;

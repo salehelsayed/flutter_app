@@ -1,0 +1,16 @@
+appId: com.mknoon.app
+name: T34 landscape chat, send, home list; back to portrait
+---
+- runFlow: ../ensure_chat.yaml
+- setOrientation: LANDSCAPE_LEFT
+- runFlow: { file: ../sleep.yaml, env: { MS: 3000 } }
+- takeScreenshot: t34_chat_landscape_${DEV}
+- runFlow: { file: ../send_text.yaml, env: { MSG: "T34 landscape ${DEV} ${NONCE}" } }
+- runFlow: ../kb_hide.yaml
+- takeScreenshot: t34_sent_landscape_${DEV}
+- tapOn: "Back"
+- runFlow: { file: ../sleep.yaml, env: { MS: 3000 } }
+- takeScreenshot: t34_home_landscape_${DEV}
+- setOrientation: PORTRAIT
+- runFlow: { file: ../sleep.yaml, env: { MS: 2000 } }
+- runFlow: ../ensure_chat.yaml

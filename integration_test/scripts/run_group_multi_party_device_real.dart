@@ -330,6 +330,7 @@ HarnessLaunchSpec buildHarnessLaunchSpec({
       '--publish-port',
       '--no-pub',
       '--no-build',
+      '--use-application-binary=${resolveGroupMultiPartyIosRunnerAppPath()}',
     ] else ...<String>['test', '--no-pub', harnessPath],
     ..._stableDartDefines(relayAddresses),
     '-d',

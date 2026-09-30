@@ -1,0 +1,20 @@
+appId: com.mknoon.app
+name: R2-4 iPhone sends the 7 s video; waits for processing to end (or the stall notice), then sends
+---
+- runFlow: ../ensure_chat.yaml
+- runFlow: { file: v24_pick_ios.yaml, env: { ITEM: "Video.*", IDX: 0, PX: "16%,25%" } }
+- takeScreenshot: v24_pending
+- extendedWaitUntil: { notVisible: "Processing.*", timeout: 420000 }
+- takeScreenshot: v24_processed
+- runFlow:
+    when: { visible: "Video processing stopped.*" }
+    commands:
+      - takeScreenshot: v24_stall_notice
+      - tapOn: "Retry"
+      - runFlow: { file: ../sleep.yaml, env: { MS: 3000 } }
+      - extendedWaitUntil: { notVisible: "Processing.*", timeout: 420000 }
+      - takeScreenshot: v24_after_retry
+- runFlow: { file: caption_send.yaml, env: { MSG: "R24 ivideo ${NONCE}" } }
+- extendedWaitUntil: { visible: ".*R24 ivideo ${NONCE}.*", timeout: 120000 }
+- runFlow: { file: ../sleep.yaml, env: { MS: 15000 } }
+- takeScreenshot: v24_sent

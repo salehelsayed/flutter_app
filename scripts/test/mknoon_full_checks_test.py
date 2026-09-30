@@ -196,7 +196,8 @@ class Test(unittest.TestCase):
             deadline=time.monotonic()+10
             while not (self.root/'.codex-test-logs/started').exists() and time.monotonic()<deadline:
                 time.sleep(.02)
-            os.kill(os.getpid(), signal.SIGTERM)
+            if (self.root/'.codex-test-logs/started').exists():
+                os.kill(os.getpid(), signal.SIGTERM)
         thread=threading.Thread(target=cancel)
         thread.start()
         code, report = self.run_full(tasks, 2)

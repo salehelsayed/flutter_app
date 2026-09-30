@@ -11,6 +11,166 @@ import '../../../tool/sims/planner.dart';
 import '../../../tool/sims/verdict.dart';
 
 void main() {
+  group('explicit device reservations', () {
+    final pins = <String, String>{
+      'android-physical': 'usb',
+      'android-emulator': 'emulator-5554',
+    };
+    CapabilitySpec consumer({bool pairOnly = false}) => _consumer().copyWith(
+      resources: <ResourceLock>[
+        for (final role in <String>[
+          'android-physical',
+          'android-emulator',
+          if (!pairOnly) 'android-emulator-second',
+        ])
+          ResourceLock(name: 'device:$role', access: ResourceAccess.exclusive),
+      ],
+    );
+    SimsLiveDeviceInventory inventory({
+      bool failedDiscovery = false,
+      bool stopped = false,
+    }) => _inventory(
+      <SimsLiveDeviceTarget>[
+        _androidTarget('usb', SimsLiveDeviceKind.physical),
+        _androidTarget('emulator-5554', SimsLiveDeviceKind.emulator),
+        SimsLiveDeviceTarget(
+          name: 'reserved AVD',
+          platform: SimsLiveDevicePlatform.android,
+          kind: SimsLiveDeviceKind.emulator,
+          availability: stopped
+              ? SimsLiveDeviceAvailability.launchable
+              : SimsLiveDeviceAvailability.connected,
+          runtimeId: stopped ? null : 'emulator-5556',
+          launchId: 'Reserved_AVD',
+          sources: const <SimsDeviceDiscoverySource>{
+            SimsDeviceDiscoverySource.adb,
+            SimsDeviceDiscoverySource.flutterEmulators,
+          },
+        ),
+      ],
+      flutterStatus: failedDiscovery
+          ? SimsDiscoveryStatus.failed
+          : SimsDiscoveryStatus.success,
+    );
+    Map<String, String> environment([
+      Object? reservations = const <String>['emulator-5556'],
+    ]) => <String, String>{
+      'SIMS_PROTECTED_DEVICE_ASSIGNMENTS_JSON': jsonEncode(pins),
+      'SIMS_RESERVED_DEVICE_IDS_JSON': jsonEncode(reservations),
+    };
+
+    test(
+      'reserved third peer is policy N/A while raw discovery stays intact',
+      () {
+        final raw = inventory();
+        final binding = SimsDevicePlanBinding.bind(
+          _plan(<CapabilitySpec>[consumer()]),
+          raw,
+          processEnvironment: environment(),
+        );
+        expect(
+          binding.preflightVerdicts['android.fixture']!.status,
+          SimsVerdictStatus.notApplicable,
+        );
+        expect(binding.assignments, isEmpty);
+        expect(binding.preparationTargets, isEmpty);
+        expect(raw.targets, hasLength(3));
+        expect(binding.inventoryDigest, simsLiveDeviceInventoryDigest(raw));
+        final missingPin = SimsDevicePlanBinding.bind(
+          _plan(<CapabilitySpec>[consumer()]),
+          raw,
+          processEnvironment: environment(<String>[]),
+        );
+        expect(
+          missingPin.preflightVerdicts['android.fixture']!.status,
+          SimsVerdictStatus.blocked,
+        );
+      },
+    );
+
+    test('the permitted Android pair remains executable', () {
+      final binding = SimsDevicePlanBinding.bind(
+        _plan(<CapabilitySpec>[consumer(pairOnly: true)]),
+        inventory(),
+        processEnvironment: environment(),
+      );
+      expect(binding.preflightVerdicts, isEmpty);
+      expect(binding.assignments.values.toSet(), <String>{
+        'usb',
+        'emulator-5554',
+      });
+      expect(
+        binding.environment['SIMS_RESERVED_DEVICE_IDS_JSON'],
+        '["emulator-5556"]',
+      );
+    });
+
+    test('reservation cannot hide failed discovery', () {
+      final binding = SimsDevicePlanBinding.bind(
+        _plan(<CapabilitySpec>[consumer()]),
+        inventory(failedDiscovery: true),
+        processEnvironment: environment(),
+      );
+      expect(
+        binding.preflightVerdicts['android.fixture']!.status,
+        SimsVerdictStatus.blocked,
+      );
+    });
+
+    test('a reserved launchable AVD is never prepared', () {
+      final binding = SimsDevicePlanBinding.bind(
+        _plan(<CapabilitySpec>[consumer()]),
+        inventory(stopped: true),
+        processEnvironment: environment(<String>['Reserved_AVD']),
+      );
+      expect(
+        binding.preflightVerdicts['android.fixture']!.status,
+        SimsVerdictStatus.notApplicable,
+      );
+      expect(binding.preparationTargets, isEmpty);
+    });
+
+    test('reserved runtime or launch alias cannot also be pinned', () {
+      for (final reserved in <String>['emulator-5556', 'Reserved_AVD']) {
+        expect(
+          () => SimsDevicePlanBinding.bind(
+            _plan(<CapabilitySpec>[consumer()]),
+            inventory(),
+            processEnvironment: <String, String>{
+              ...environment(<String>[reserved]),
+              'SIMS_PROTECTED_DEVICE_ASSIGNMENTS_JSON': jsonEncode(
+                <String, String>{
+                  ...pins,
+                  'android-emulator-second': 'emulator-5556',
+                },
+              ),
+            },
+          ),
+          throwsFormatException,
+        );
+      }
+    });
+
+    test('malformed and duplicate reservations fail closed', () {
+      for (final invalid in <Object?>[
+        'emulator-5556',
+        <String, String>{},
+        <Object?>[null],
+        <String>['bad id'],
+        <String>['emu', 'emu'],
+      ]) {
+        expect(
+          () => SimsDevicePlanBinding.bind(
+            _plan(<CapabilitySpec>[consumer()]),
+            inventory(),
+            processEnvironment: environment(invalid),
+          ),
+          throwsFormatException,
+        );
+      }
+    });
+  });
+
   test(
     'inventory digest ignores discovery detail but retains source status',
     () {

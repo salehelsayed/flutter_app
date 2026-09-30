@@ -307,6 +307,17 @@ void main() {
       );
       expect(reactionResult['phase'], 'reaction');
       expect(reactionObservation['phase'], 'reaction');
+      final reactionCollapseIdentifier =
+          'reaction:${sha256.convert(utf8.encode('raw-plan397-reaction-id')).toString().substring(0, 48)}';
+      expect(
+        reactionObservation['expectedCollapseIdentifierSha256'],
+        sha256.convert(utf8.encode(reactionCollapseIdentifier)).toString(),
+        reason: 'The reaction phase must bind its real provider collapse ID',
+      );
+      expect(
+        jsonEncode(reactionObservation),
+        isNot(contains(reactionCollapseIdentifier)),
+      );
       expect(
         reactionObservation['reactionIdSha256'],
         matches(RegExp(r'^[0-9a-f]{64}$')),

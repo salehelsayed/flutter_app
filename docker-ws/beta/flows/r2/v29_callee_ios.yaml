@@ -1,0 +1,10 @@
+appId: com.mknoon.app
+name: R2-8 V5 iPhone (app in the foreground) answers the Pixel's call
+---
+- launchApp: { stopApp: false }
+- extendedWaitUntil: { visible: "Answer", timeout: 150000 }
+- takeScreenshot: v29_ios_ringing
+- tapOn: "Answer"
+- extendedWaitUntil: { visible: "(.*\\n)?Connected(\\n.*)?", timeout: 60000 }
+- takeScreenshot: v29_ios_connected
+- extendedWaitUntil: { notVisible: "End", timeout: 120000 }

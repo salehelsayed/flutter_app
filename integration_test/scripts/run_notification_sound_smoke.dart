@@ -835,21 +835,26 @@ Future<void> _syncAndroidSignalFiles(List<String> deviceIds) async {
   while (!_stopSignalSync) {
     final filesByDevice = <String, Set<String>>{};
     for (final deviceId in deviceIds) {
+      if (_stopSignalSync) return;
       final files = await _listDeviceSignalFiles(deviceId);
       filesByDevice[deviceId] = files;
       for (final name in files) {
+        if (_stopSignalSync) return;
         await _pullDeviceSignal(deviceId, name);
       }
     }
 
+    if (_stopSignalSync) return;
     final hostSignals = _sharedDir
         .listSync()
         .whereType<File>()
         .where((file) => file.uri.pathSegments.last.startsWith(prefix))
         .toList(growable: false);
     for (final deviceId in deviceIds) {
+      if (_stopSignalSync) return;
       final deviceFiles = filesByDevice[deviceId] ?? <String>{};
       for (final signal in hostSignals) {
+        if (_stopSignalSync) return;
         final name = signal.uri.pathSegments.last;
         if (!deviceFiles.contains(name)) {
           if (await _pushHostSignal(deviceId, signal)) {
@@ -858,6 +863,7 @@ Future<void> _syncAndroidSignalFiles(List<String> deviceIds) async {
         }
       }
     }
+    if (_stopSignalSync) return;
     await Future<void>.delayed(const Duration(milliseconds: 500));
   }
 }

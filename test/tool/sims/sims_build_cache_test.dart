@@ -492,6 +492,26 @@ void main() {
     },
   );
 
+  test('suite digest ignores generated Python caches but tracks source', () {
+    final root = Directory.systemTemp.createTempSync('sims-python-cache-');
+    addTearDown(() => root.deleteSync(recursive: true));
+    _write(root, 'scripts/probe.py', 'print("first")');
+    String digest() => IOOverrides.runZoned(
+      () => computeSimsSourceClosureDigest(environment: const {}),
+      getCurrentDirectory: () => root,
+    );
+    final before = digest();
+    _write(root, 'scripts/__pycache__/probe.cpython-314.pyc', 'cache one');
+    expect(digest(), before);
+    _write(root, 'scripts/__pycache__/probe.cpython-314.pyc', 'cache two');
+    expect(digest(), before);
+    _write(root, 'scripts/probe.py', 'print("second")');
+    expect(digest(), isNot(before));
+    final afterSource = digest();
+    _write(root, 'test/fixtures/compiled_fixture.pyc', 'intentional fixture');
+    expect(digest(), isNot(afterSource));
+  });
+
   test('build and whole-suite source closures are intentionally separated', () {
     expect(
       simsBuildSourceRoots,

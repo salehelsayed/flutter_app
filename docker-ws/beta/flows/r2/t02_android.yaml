@@ -1,0 +1,10 @@
+appId: com.mknoon.app
+name: T02 Pixel sends two photos and a video in one message
+---
+- runFlow: ../ensure_chat.yaml
+- runFlow: { file: pick_android_multi.yaml, env: { FILE1: "r2_photo_2.png", FILE2: "r2_photo_3.png", FILE3: "r2_video_1.mp4" } }
+- takeScreenshot: t02_pending
+- runFlow: { file: caption_send.yaml, env: { MSG: "T02 album ${NONCE}" } }
+- extendedWaitUntil: { visible: ".*T02 album ${NONCE}.*", timeout: 120000 }
+- runFlow: { file: ../sleep.yaml, env: { MS: 20000 } }
+- takeScreenshot: t02_sent

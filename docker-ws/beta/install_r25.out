@@ -1,0 +1,20 @@
+[18:50:49] sync start
+[18:51:36] synced: synced_at=2026-09-28T16:51:01Z source=/Volumes/CrucialX9/flutter_app source_head=06d5ab5704cf0106e730f0dab17b0abfd645fe7c source_head_short=06d5ab570 source_dirty_files=496 note=working tree copy, not a commit; .git deliberately not copied 
+[18:51:36] fix markers present (B, B5, B8, R2-1, R2-2, R2-3, R2-4, R2-4 follow-up, R2-6)
+[18:51:38] android build 1.0.0-06d5ab570.d496.t260928185136
+[18:53:33] ANDROID OK go_new_symbol=2
+[18:53:33] apk has MonotonicTimeInterpolator: 9
+[18:53:41] transcoder resolved: com.otaliastudios:transcoder:0.11.2 
+[18:55:56] kotlin call tests exit=0 BUILD SUCCESSFUL in 2m 14s 
+[18:56:03] video_compress unit tests exit=0 BUILD SUCCESSFUL in 6s 
+[18:56:03] ios go bindings
+[18:56:14] ios build (in-app call UI)
+[19:02:54] IOS OK go_marker=4 go_new_symbol=6
+[19:02:54] 1.0.0-06d5ab570.d496.t260928185136
+[19:02:54] R25 BUILD DONE
+build name: 1.0.0-06d5ab570.d496.t260928185136
+ios installed: 260928185136 (want 260928185136)
+android push: 279512291/279512291 bytes in 1 s
+android pm install: Success in 1 s
+android installed: 1.0.0-06d5ab570.d496.t260928185136 MATCH
+INSTALL DONE

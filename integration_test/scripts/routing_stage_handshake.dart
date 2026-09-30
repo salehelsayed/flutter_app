@@ -78,7 +78,7 @@ class RoutingStageHost {
           throw StateError('duplicate or out-of-order request');
         }
         _busy = true;
-        _requested.add(stage as String);
+        _requested.add(stage);
         try {
           final command = {
             'R-Sim-3': 'unregister',
@@ -178,8 +178,9 @@ Future<void> routingStageRequest(
     request.write(jsonEncode(binding));
     final response = await request.close();
     final text = await utf8.decoder.bind(response).join();
-    if (response.statusCode != HttpStatus.ok)
+    if (response.statusCode != HttpStatus.ok) {
       throw StateError('Stage request rejected');
+    }
     final ack = jsonDecode(text) as Map<String, dynamic>;
     if (ack['ok'] != true ||
         binding.entries.any((e) => ack[e.key] != e.value)) {

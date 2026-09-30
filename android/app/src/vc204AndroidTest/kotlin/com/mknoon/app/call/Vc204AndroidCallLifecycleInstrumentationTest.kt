@@ -450,8 +450,8 @@ class Vc204AndroidCallLifecycleInstrumentationTest {
             runtime.controller.endFromDart(payload.nativeCallId),
         )
         repeat(REPEATED_CLEANUP_ATTEMPTS) {
-            assertFalse(
-                "repeated outgoing Dart cleanup is a no-op",
+            assertTrue(
+                "repeated outgoing Dart cleanup confirms completed retained cleanup",
                 runtime.controller.endFromDart(payload.nativeCallId),
             )
             assertFalse(
@@ -610,8 +610,8 @@ class Vc204AndroidCallLifecycleInstrumentationTest {
                 runtime.controller.endFromDart(payload.nativeCallId),
             )
             callEnded = true
-            assertFalse(
-                "same adopted call cannot end twice",
+            assertTrue(
+                "same adopted call confirms completed retained cleanup",
                 runtime.controller.endFromDart(payload.nativeCallId),
             )
             acknowledgeTerminal(payload.nativeCallId)
@@ -683,7 +683,13 @@ class Vc204AndroidCallLifecycleInstrumentationTest {
         assertNotNull("new process can replay the terminal journal", runtime.controller.attach())
         assertFalse("new process has no adopted audio", runtime.controller.audioState().active)
         assertFalse("answer cannot resurrect acknowledged ownership", runtime.controller.answer(callId))
-        assertFalse("end cannot resurrect acknowledged ownership", runtime.controller.endFromDart(callId))
+        assertTrue("Dart end confirms retained provider-loss cleanup", runtime.controller.endFromDart(callId))
+        assertEquals(
+            "Dart cleanup confirmation preserves the terminal journal",
+            descriptor,
+            requireDescriptor("provider-loss terminal after Dart cleanup confirmation"),
+        )
+        assertFalse("Dart cleanup confirmation cannot revive audio", runtime.controller.audioState().active)
         assertTrue(
             "terminal journal is acknowledged exactly",
             runtime.controller.acknowledge(
@@ -693,6 +699,7 @@ class Vc204AndroidCallLifecycleInstrumentationTest {
             ),
         )
         assertNull("terminal acknowledgement hides the durable receipt", runtime.controller.snapshot())
+        assertFalse("terminal acknowledgement retires Dart cleanup authority", runtime.controller.endFromDart(callId))
     }
 
     @Test
@@ -718,8 +725,8 @@ class Vc204AndroidCallLifecycleInstrumentationTest {
                     PendingNativeCallEventType.REMOTE_CANCELLED,
                 ),
             )
-            assertFalse(
-                "repeated Dart cleanup is a no-op",
+            assertTrue(
+                "repeated Dart cleanup confirms completed retained cleanup",
                 runtime.controller.endFromDart(payload.nativeCallId),
             )
             assertFalse(

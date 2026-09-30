@@ -1252,6 +1252,14 @@ class AppLocalizationsAr extends AppLocalizations {
       'ما زالت الوسائط كبيرة جدًا حتى بعد الضغط.';
 
   @override
+  String get media_video_processing_stalled =>
+      'توقفت معالجة الفيديو. حاول مرة أخرى.';
+
+  @override
+  String get media_video_processing_unavailable =>
+      'معالجة الفيديو غير متاحة. أعد تشغيل مكنون لإضافة الفيديوهات.';
+
+  @override
   String get media_gif_too_large => 'لا يمكن إضافة ملفات GIF أكبر من 25 م.ب.';
 
   @override

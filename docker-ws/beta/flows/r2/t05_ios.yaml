@@ -1,0 +1,9 @@
+appId: com.mknoon.app
+name: T05 iPhone sends a normal photo with a caption
+---
+- runFlow: ../ensure_chat.yaml
+- runFlow: { file: pick_ios.yaml, env: { ITEM: "Photo, September 27.*", IDX: 1, PX: "84%,25%" } }
+- runFlow: { file: caption_send.yaml, env: { MSG: "T05 photo from iPhone ${NONCE}" } }
+- extendedWaitUntil: { visible: ".*T05 photo from iPhone ${NONCE}.*", timeout: 60000 }
+- runFlow: { file: ../sleep.yaml, env: { MS: 10000 } }
+- takeScreenshot: t05_sent

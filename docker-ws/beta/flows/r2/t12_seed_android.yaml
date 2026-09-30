@@ -1,0 +1,6 @@
+appId: com.mknoon.app
+name: T12 Pixel receives m1..m3 before its app is stopped
+---
+- runFlow: ../ensure_chat.yaml
+- extendedWaitUntil: { visible: ".*T12 m3 ${NONCE}.*", timeout: 240000 }
+- takeScreenshot: t12_seeded

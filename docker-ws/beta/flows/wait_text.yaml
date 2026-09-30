@@ -1,0 +1,7 @@
+appId: com.mknoon.app
+name: wait until text WAIT appears (from the friend)
+---
+- extendedWaitUntil:
+    visible: ".*${WAIT}.*"
+    timeout: ${TIMEOUT}
+- takeScreenshot: got_${DEV}

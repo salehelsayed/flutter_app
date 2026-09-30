@@ -115,6 +115,77 @@ void main() {
     });
   });
 
+  group('dbHasRecoverableInboxStagingEntryExcluding', () {
+    Future<bool> probe() => dbHasRecoverableInboxStagingEntryExcluding(
+      db,
+      messageType: 'delivery_receipt',
+      rejectReasonCode: 'typed_handler_unavailable',
+    );
+
+    test('is false when only parked receipts are recoverable', () async {
+      for (var i = 0; i < 3; i++) {
+        await dbInsertInboxStagingEntry(
+          db,
+          makeRow(
+            entryId: 'receipt-$i',
+            messageType: 'delivery_receipt',
+            status: 'retryable',
+            rejectReasonCode: 'typed_handler_unavailable',
+          ),
+        );
+      }
+      expect(await probe(), isFalse);
+    });
+
+    test('is true for a pending entry behind the parked receipts', () async {
+      await dbInsertInboxStagingEntry(
+        db,
+        makeRow(
+          entryId: 'receipt',
+          messageType: 'delivery_receipt',
+          status: 'retryable',
+          rejectReasonCode: 'typed_handler_unavailable',
+        ),
+      );
+      await dbInsertInboxStagingEntry(
+        db,
+        makeRow(
+          entryId: 'chat',
+          relayTimestamp: '2026-04-01T00:00:09.000Z',
+        ),
+      );
+      expect(await probe(), isTrue);
+    });
+
+    test('counts NULL message types and other reject reasons as work', () async {
+      await dbInsertInboxStagingEntry(
+        db,
+        makeRow(entryId: 'untyped', messageType: null),
+      );
+      expect(await probe(), isTrue);
+
+      await db.delete('inbox_staging_entries');
+      await dbInsertInboxStagingEntry(
+        db,
+        makeRow(
+          entryId: 'receipt-other-reason',
+          messageType: 'delivery_receipt',
+          status: 'retryable',
+          rejectReasonCode: 'transient_failure',
+        ),
+      );
+      expect(await probe(), isTrue);
+    });
+
+    test('ignores rows that are not recoverable', () async {
+      await dbInsertInboxStagingEntry(
+        db,
+        makeRow(entryId: 'done', status: 'rejected'),
+      );
+      expect(await probe(), isFalse);
+    });
+  });
+
   group('retry and reject markers', () {
     test('marks a row retryable with exact reason metadata', () async {
       await dbInsertInboxStagingEntry(db, makeRow());

@@ -1599,20 +1599,23 @@ print(json.dumps(_without_sources(data, {'lib/changed.dart'})))
         self.assertEqual([node["id"] for node in result["nodes"]], ["keep"])
         self.assertEqual(result["edges"], [])
 
-    def test_fast_path_skill_is_compact_and_uses_context_tool(self):
-        skill = ROOT / ".agents" / "skills" / "graphify" / "SKILL.md"
+    def test_claude_fast_path_skill_is_compact_and_uses_context_tool(self):
+        skill = ROOT / ".claude" / "skills" / "graphify" / "SKILL.md"
         text = skill.read_text()
         self.assertLess(len(text), 10_000)
         self.assertIn("tdd_context.py query", text)
-        self.assertIn("code-index question", text)
-        self.assertIn("not implementation truth", text)
+        self.assertIn("focused question with exact anchors", text)
+        self.assertIn("Verify load-bearing conclusions in", text)
+        self.assertIn("current source", text)
         self.assertNotIn("close_agent", text)
+        self.assertFalse((ROOT / ".agents" / "skills" / "graphify").exists())
 
-    def test_root_agents_requires_answer_oriented_anchored_queries(self):
+    def test_root_agents_uses_source_navigation_and_document_memory(self):
         text = (ROOT / "AGENTS.md").read_text()
-        self.assertIn("code-index question", text)
-        self.assertIn("Never ask Graphify to decide whether", text)
-        self.assertIn("Missing graph nodes", text)
+        self.assertIn("Use targeted `rg`, file discovery, source reading, and test inspection", text)
+        self.assertIn("codex-memory/memory.py query", text)
+        self.assertIn("Current source establishes code behavior and relationships", text)
+        self.assertNotIn("code-index question", text)
 
     def test_tdd_skills_share_compact_profiles(self):
         home = Path.home() / ".codex" / "skills"
@@ -1626,19 +1629,11 @@ print(json.dumps(_without_sources(data, {'lib/changed.dart'})))
         self.assertIn("--profile review --budget 800", review)
         self.assertIn("tdd_context.py affected", execution)
 
-    def test_local_hook_configuration_separates_codex_advisory_and_claude_enforcement(self):
+    def test_local_hooks_retain_claude_graphify_without_retired_codex_hooks(self):
         codex = json.loads((ROOT / ".codex" / "hooks.json").read_text())
-        self.assertIn("non-blocking", codex["description"].lower())
         pre_entries = codex["hooks"]["PreToolUse"]
-        self.assertEqual(len(pre_entries), 2)
-        graphify_entry = next(
-            entry
-            for entry in pre_entries
-            if any(
-                "codex_graphify_reminder.py" in hook["command"]
-                for hook in entry["hooks"]
-            )
-        )
+        self.assertEqual(len(pre_entries), 1)
+        self.assertNotIn("codex_graphify_reminder.py", json.dumps(codex))
         memory_entry = next(
             entry
             for entry in pre_entries
@@ -1647,7 +1642,6 @@ print(json.dumps(_without_sources(data, {'lib/changed.dart'})))
                 for hook in entry["hooks"]
             )
         )
-        self.assertEqual(graphify_entry["matcher"], ".*")
         self.assertNotEqual(memory_entry["matcher"], ".*")
         self.assertIn("read", memory_entry["matcher"].lower())
 

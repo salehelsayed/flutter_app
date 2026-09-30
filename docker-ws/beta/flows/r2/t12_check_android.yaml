@@ -1,0 +1,8 @@
+appId: com.mknoon.app
+name: T12 Pixel (relaunched) must show the deletion, the reaction and the edit
+---
+- runFlow: ../ensure_chat.yaml
+- extendedWaitUntil: { visible: ".*T12 m3 edited ${NONCE}.*", timeout: 300000 }
+- extendedWaitUntil: { notVisible: ".*T12 m1 ${NONCE}.*", timeout: 120000 }
+- takeScreenshot: t12_after_relaunch
+- assertVisible: ".*T12 m2 ${NONCE}.*👍.*"

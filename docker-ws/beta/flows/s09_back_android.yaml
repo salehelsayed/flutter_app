@@ -1,0 +1,21 @@
+appId: com.mknoon.app
+name: S09 (F4) Pixel answers, presses Back 3x during the call; call must continue (app may go to background)
+---
+- extendedWaitUntil: { visible: "Answer", timeout: 90000 }
+- tapOn: "Answer"
+- extendedWaitUntil: { visible: "(.*\\n)?Connected(\\n.*)?", timeout: 60000 }
+- pressKey: back
+- runFlow: { file: sleep.yaml, env: { MS: 2000 } }
+- takeScreenshot: s09_after_back1_android
+- pressKey: back
+- runFlow: { file: sleep.yaml, env: { MS: 2000 } }
+- pressKey: back
+- runFlow: { file: sleep.yaml, env: { MS: 3000 } }
+- takeScreenshot: s09_after_back3_android
+- launchApp: { stopApp: false }
+- runFlow: { file: sleep.yaml, env: { MS: 3000 } }
+- takeScreenshot: s09_reopened_android
+- assertVisible: "(.*\\n)?Connected(\\n.*)?"
+- extendedWaitUntil: { notVisible: "(.*\\n)?Connected(\\n.*)?", timeout: 90000 }
+- runFlow: { file: sleep.yaml, env: { MS: 3000 } }
+- runFlow: ensure_chat.yaml

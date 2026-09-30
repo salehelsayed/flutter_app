@@ -214,16 +214,16 @@
       ],
       "sources": {
         "integration_test/scripts/run_benchmark_suite.dart": "0248861a69ebd8e4bad3a48cb060b131488b260286caa86f6101d0ce3d1ad5c1",
-        "integration_test/scripts/routing_stage_handshake.dart": "adc826efda58daaf357b8afe2e8d5093d5241ff453386431c4329a0bb8dbae86",
-        "integration_test/scripts/run_group_publish_benchmark.dart": "de16a0342dd6d24f2ff8b6ca536cd28fe3ed82865376358f1535ce9ff0df676d",
-        "integration_test/scripts/run_timeout_accuracy_benchmark.dart": "9bf56a89f88c149444500f353e6024d5f633cdb9c65abb9dca92e72eacfcb86b",
-        "integration_test/scripts/benchmark_boundary.dart": "13cd0ba8db5666123fc956e2b6b9a44a64112fad7f7d151c5679dfc4d7f54e35",
-        "integration_test/scripts/benchmark_completion.dart": "feb190730d163b21d3fd8de0c03ceea69463407102ef02dbcc490213cd686105",
+        "integration_test/scripts/routing_stage_handshake.dart": "915c558ac6db2d6bc877f854d25a57fff85984f86984aeb68365514ccf401798",
+        "integration_test/scripts/run_group_publish_benchmark.dart": "bf75a74e5d915e0c5e791d4bab74b777186cc760ce03ae471b2ae59c9c980a2b",
+        "integration_test/scripts/run_timeout_accuracy_benchmark.dart": "663c2939f4af33d6fff1507fea4d9520ed5aaefba66b109e0d58bd0dee0c0f13",
+        "integration_test/scripts/benchmark_boundary.dart": "cb2b22738afb3c1e09e7a8ab3105af5736c3f40cc542ffcd3dcdefe7c64f99bb",
+        "integration_test/scripts/benchmark_completion.dart": "4edfb7d8536723590f7f119239d4dca3d2b64cfc9deb12e9a8881e77220a51b6",
         "integration_test/benchmark_group_publish_harness.dart": "8ce9f42cda34c2a52fdd5f141f30706e90a64dd3d59ee5402f5727e9b4251ac7",
         "integration_test/benchmark_timeout_accuracy_harness.dart": "79a06446e62866d4e67950edf88ab1cab5d34174f7f0c8d5220fd6fab5dc2ecd",
         "integration_test/_support/cli_peer_fixture.dart": "8b9ec9175075065a4a31245c9b6c538289bca64ec34b626e26913c856c75c10a",
         "integration_test/_support/signal_files.dart": "7cc241ae5694a8f5f1b51582b4a2a878e0df91e4d907126c4e62d1ed9b6bac97",
-        "scripts/legacy_target_contracts.py": "eb66325711353435b2e5a25217c3de75931906de1adf019e46fb1d455ad8a69a"
+        "scripts/legacy_target_contracts.py": "f81a167ca3825af395446ed06ce930ccd7ab63b14d4b6cdb78f5949dd0136b6a"
       },
       "audit": "Exact disjoint 17-scenario union: Android retains A,B,BR,C,D,E,F,G,I,J,K,L,M,N,R including the pinned routing channel; GP,H use the documented iOS simulator host-file protocol. Both leased/preflighted partitions require exact target/selection receipts and continue after independent assertion failure.",
       "owns": [
@@ -552,7 +552,7 @@
         "relay_addresses"
       ],
       "sources": {
-        "integration_test/conversation_bridge_test.dart": "9291c864810e5950fd13e21f82b0a2aec56e8c6ee07ac021be4b4fcf370981d3"
+        "integration_test/conversation_bridge_test.dart": "dd40786145508df6b7fc473b5256dbbaa9a1dfb490b6a6058f924ccf712c21a9"
       },
       "audit": "Exact original selected dispatch, with an explicit -d/--device target; no fallback selector.",
       "owns": [
@@ -584,11 +584,9 @@
       "sources": {
         "integration_test/conversation_swipe_back_proof_test.dart": "644dce9e530aa24afbdd7a9c606076055f7d20c79c3f009ff8df57a9923a5ada"
       },
-      "audit": "Exact original selected dispatch, with an explicit -d/--device target; no fallback selector.",
+      "audit": "Source requires real iOS gesture or rendering behavior; pin the available iOS simulator. Comment references and external package imports are not executed test ownership.",
       "owns": [
-        "integration_test/conversation_swipe_back_proof_test.dart",
-        "integration_test/group_conversation_polish_proof_test.dart",
-        "integration_test/integration_test.dart"
+        "integration_test/conversation_swipe_back_proof_test.dart"
       ]
     },
     "integration_test db_raw_key_migration_proof_test.dart": {
@@ -673,7 +671,7 @@
         "relay_addresses"
       ],
       "sources": {
-        "integration_test/direct_inbox_custody_outbox_sqlcipher_proof_test.dart": "86ea8d616b2edb03dd008f9edfb9d01fd3cc4a82f43d2e247e54c1478ab61fd3"
+        "integration_test/direct_inbox_custody_outbox_sqlcipher_proof_test.dart": "a0cb2dc77873e88b88a87fa0e06636e39c561c2dcc1699c5faf69e69ae1aa009"
       },
       "audit": "Exact original selected dispatch, with an explicit -d/--device target; no fallback selector.",
       "owns": [
@@ -703,7 +701,7 @@
         "relay_addresses"
       ],
       "sources": {
-        "integration_test/direct_notification_durability_sqlcipher_proof_test.dart": "e2d02897da9f8b840b1f939461c85851ae6b271bf9a1541d486ef2b5a367cb8a"
+        "integration_test/direct_notification_durability_sqlcipher_proof_test.dart": "78891c1dd2282c5ffa982cae3bfe7b2705f11791c88e5c9ddbd1f7eaa956843a"
       },
       "audit": "Exact original selected dispatch, with an explicit -d/--device target; no fallback selector.",
       "owns": [
@@ -793,7 +791,7 @@
         "relay_addresses"
       ],
       "sources": {
-        "integration_test/direct_reaction_inbox_custody_outbox_sqlcipher_proof_test.dart": "f44fa58bd9d1fc4a7f5ce2a1a86af38d4226e78a7aa7e72e6127bfe06c6a2e55"
+        "integration_test/direct_reaction_inbox_custody_outbox_sqlcipher_proof_test.dart": "745d5b71c9c19d25578c5c16bd6c06e8d0ac820b05268edcf23ec9121ee1a16a"
       },
       "audit": "Exact original selected dispatch, with an explicit -d/--device target; no fallback selector.",
       "owns": [
@@ -895,7 +893,7 @@
     },
     "integration_test group_conversation_polish_proof_test.dart": {
       "roles": [
-        "android-physical"
+        "ios-simulator-a"
       ],
       "commands": [
         [
@@ -903,7 +901,7 @@
           "test",
           "--no-pub",
           "-d",
-          "{device:android-physical}",
+          "{device:ios-simulator-a}",
           "--reporter",
           "expanded",
           "--dart-define=MKNOON_RELAY_ADDRESSES={config:relay_addresses}",
@@ -917,10 +915,9 @@
       "sources": {
         "integration_test/group_conversation_polish_proof_test.dart": "07d97681a718697f52944337b14155761c23602f3efcc06bddfa315ad3d6b7dc"
       },
-      "audit": "Exact original selected dispatch, with an explicit -d/--device target; no fallback selector.",
+      "audit": "Source requires real iOS gesture or rendering behavior; pin the available iOS simulator. Comment references and external package imports are not executed test ownership.",
       "owns": [
-        "integration_test/group_conversation_polish_proof_test.dart",
-        "integration_test/integration_test.dart"
+        "integration_test/group_conversation_polish_proof_test.dart"
       ]
     },
     "integration_test group_delete_preserves_friends_simulator_test.dart": {
@@ -978,7 +975,7 @@
         "relay_addresses"
       ],
       "sources": {
-        "integration_test/group_exit_intents_sqlcipher_proof_test.dart": "b475b232e2db3920c12392148c029b3594ed07dc3a695224f48c1ef27b16bf70"
+        "integration_test/group_exit_intents_sqlcipher_proof_test.dart": "b4d5573c0e49f86797bca14625ab9c227d2aeb9feb77111bdf4413815ce44b12"
       },
       "audit": "Exact original selected dispatch, with an explicit -d/--device target; no fallback selector.",
       "owns": [
@@ -1008,7 +1005,7 @@
         "relay_addresses"
       ],
       "sources": {
-        "integration_test/group_exit_release_diagnostics_sqlcipher_proof_test.dart": "5e45df0bcab53be6518e70798705ae965f955d5947d7927588dd3af514040c38"
+        "integration_test/group_exit_release_diagnostics_sqlcipher_proof_test.dart": "0e6e10092ac0146928534a050d64994640804b4c3d2553931cd565506dcd1919"
       },
       "audit": "Exact original selected dispatch, with an explicit -d/--device target; no fallback selector.",
       "owns": [
@@ -1279,7 +1276,7 @@
         "relay_addresses"
       ],
       "sources": {
-        "integration_test/group_notification_display_outbox_sqlcipher_proof_test.dart": "a719fad863646b227d0c1e1f5e3503184b2167e8d2d256462ab68282d5d1b852"
+        "integration_test/group_notification_display_outbox_sqlcipher_proof_test.dart": "ff28b32d4f429aa6ef8085b6576d7cd0539b68c955f44dbfa1e17b4157187b19"
       },
       "audit": "Exact original selected dispatch, with an explicit -d/--device target; no fallback selector.",
       "owns": [
@@ -1438,15 +1435,11 @@
       ],
       "commands": [
         [
-          "flutter",
-          "test",
-          "--no-pub",
+          "dart",
+          "run",
+          "integration_test/scripts/run_group_recovery_e2e.dart",
           "-d",
-          "{device:android-physical}",
-          "--reporter",
-          "expanded",
-          "--dart-define=MKNOON_RELAY_ADDRESSES={config:relay_addresses}",
-          "integration_test/group_recovery_cli_e2e_test.dart"
+          "{device:android-physical}"
         ]
       ],
       "environment": {},
@@ -1454,9 +1447,10 @@
         "relay_addresses"
       ],
       "sources": {
-        "integration_test/group_recovery_cli_e2e_test.dart": "f0fd464ae48612814be13fec65c3ffc6c7f3855b23afa795df352f0dd1f5398e"
+        "integration_test/scripts/run_group_recovery_e2e.dart": "bdeb09ca89de0965534e674ada7eff3811a92e2a086a07b580bf70d4978311b0",
+        "integration_test/group_recovery_cli_e2e_test.dart": "aaa3f8fff97a0cd92c1aa8e7056ef79d1060bad528edc02c9bba993e4203e37e"
       },
-      "audit": "Exact original selected dispatch, with an explicit -d/--device target; no fallback selector.",
+      "audit": "Reuse the existing pinned CLI-peer campaign: it builds/starts the real protocol peer, supplies the run-bound fixture and requires live plus offline group delivery before completion. Standalone invocation without that fixture returns without exercising the scenario.",
       "owns": [
         "integration_test/group_recovery_cli_e2e_test.dart",
         "integration_test/integration_test.dart"
@@ -1634,7 +1628,7 @@
         "relay_addresses"
       ],
       "sources": {
-        "integration_test/group_self_removed_marker_sqlcipher_proof_test.dart": "5e8b639805cc9241ef30f9ca8e87f286cfd9a93b8c090299183aa87f177753ee"
+        "integration_test/group_self_removed_marker_sqlcipher_proof_test.dart": "ed87331c60975dda9cb636852f65920bac219ad18aed27dd9d85d13c6b537594"
       },
       "audit": "Exact original selected dispatch, with an explicit -d/--device target; no fallback selector.",
       "owns": [
@@ -1774,6 +1768,7 @@
           "flutter",
           "test",
           "--no-pub",
+          "--dart-define=GIF_MANUAL_ACCEPTANCE=true",
           "-d",
           "{device:android-physical}",
           "--reporter",
@@ -1856,19 +1851,19 @@
     },
     "integration_test migration_database_sqlcipher_capability_test.dart": {
       "roles": [
-        "android-physical"
+        "android-physical",
+        "ios-simulator-a"
       ],
       "commands": [
         [
-          "flutter",
-          "test",
-          "--no-pub",
-          "-d",
+          "python3",
+          "scripts/migration_sqlcipher_portability.py",
+          "--android",
           "{device:android-physical}",
-          "--reporter",
-          "expanded",
-          "--dart-define=MKNOON_RELAY_ADDRESSES={config:relay_addresses}",
-          "integration_test/migration_database_sqlcipher_capability_test.dart"
+          "--ios",
+          "{device:ios-simulator-a}",
+          "--output",
+          "{output}"
         ]
       ],
       "environment": {},
@@ -1876,13 +1871,15 @@
         "relay_addresses"
       ],
       "sources": {
-        "integration_test/migration_database_sqlcipher_capability_test.dart": "9c7b7982c72c7712ad61c1124d7d0078e2366a4b0e8a12683aad9cb2f8a0a0a8"
+        "integration_test/migration_database_sqlcipher_capability_test.dart": "9c7b7982c72c7712ad61c1124d7d0078e2366a4b0e8a12683aad9cb2f8a0a0a8",
+        "scripts/migration_sqlcipher_portability.py": "59e551a4f00872ce40bdd4ee378abf41c08cfba43c6d347481021eb6eabb0531"
       },
-      "audit": "Exact original selected dispatch, with an explicit -d/--device target; no fallback selector.",
+      "audit": "Existing native test exports on pinned USB Android, adapter transfers only its exact fixture, existing native test verifies on pinned available iOS simulator. SQLCipher checksum/schema/row assertions require native plugins; Appium cannot establish them.",
       "owns": [
         "integration_test/integration_test.dart",
         "integration_test/migration_database_sqlcipher_capability_test.dart"
-      ]
+      ],
+      "completion_marker": "SQLCIPHER_PORTABILITY_COMPLETED android_to_ios"
     },
     "integration_test notification_open_ui_smoke_test.dart": {
       "roles": [
@@ -2324,7 +2321,7 @@
         "relay_addresses"
       ],
       "sources": {
-        "integration_test/smoke_test.dart": "28bc43a14e83707470c42fbaab49011054cf01016bf54be9bdd23a6fc50c0e0e"
+        "integration_test/smoke_test.dart": "ea3a134aa8b4e6048ef8c38885ac7d3fc1668b5f976f4896054e8cd1cba2657a"
       },
       "audit": "Exact original selected dispatch, with an explicit -d/--device target; no fallback selector.",
       "owns": [
@@ -2354,7 +2351,7 @@
         "relay_addresses"
       ],
       "sources": {
-        "integration_test/soak_e2e_test.dart": "6dac06a3040d9dec5184d03356983b97751e75d8af1e1a95969ee66eb03153a2"
+        "integration_test/soak_e2e_test.dart": "8e0f900ff4a5db8c1fb3ce47a3fefc7ea64895bb14e921c192fcfdb714270c7e"
       },
       "audit": "Exact original selected dispatch, with an explicit -d/--device target; no fallback selector.",
       "owns": [
@@ -2384,7 +2381,7 @@
         "relay_addresses"
       ],
       "sources": {
-        "integration_test/transport_e2e_test.dart": "fc79c3f565402e38834265123491f803b3bd89861d89289ed6b9d58cbefb22e1"
+        "integration_test/transport_e2e_test.dart": "bc033ec31a0c7b5aaaa0e38bced3868b25df65220b095284c87af5408670276a"
       },
       "audit": "Exact original selected dispatch, with an explicit -d/--device target; no fallback selector.",
       "owns": [
@@ -2427,15 +2424,15 @@
       ],
       "commands": [
         [
-          "flutter",
-          "test",
-          "--no-pub",
+          "dart",
+          "run",
+          "integration_test/scripts/run_wifi_relay_fallback_smoke.dart",
           "-d",
           "{device:android-physical}",
-          "--reporter",
-          "expanded",
-          "--dart-define=MKNOON_RELAY_ADDRESSES={config:relay_addresses}",
-          "integration_test/wifi_relay_fallback_smoke_test.dart"
+          "--platform",
+          "android",
+          "--retry",
+          "0"
         ]
       ],
       "environment": {},
@@ -2443,12 +2440,14 @@
         "relay_addresses"
       ],
       "sources": {
-        "integration_test/wifi_relay_fallback_smoke_test.dart": "57c9635ed9fc6aabb1d31612b12baf43f7c93a407efa0f319b6d6d5517611b80"
+        "integration_test/scripts/run_wifi_relay_fallback_smoke.dart": "6706533051d24379ac9593ff3d15a65dca637831672752eccf7d660fb69cc9b4",
+        "integration_test/wifi_relay_fallback_smoke_test.dart": "62224727229b981e2bf39002921914f249a6fbb52888f0a6b228d57e962a4670"
       },
-      "audit": "Exact original selected dispatch, with an explicit -d/--device target; no fallback selector.",
+      "audit": "All S1-S4 device scenarios require the existing CLI orchestrator, which also verifies four host results. Pin the physical Android and prohibit automatic campaign retries.",
       "owns": [
         "integration_test/integration_test.dart",
-        "integration_test/wifi_relay_fallback_smoke_test.dart"
+        "integration_test/wifi_relay_fallback_smoke_test.dart",
+        "integration_test/scripts/run_wifi_relay_fallback_smoke.dart"
       ]
     },
     "integration_test wifi_transport_test.dart": {
@@ -2775,7 +2774,7 @@
         "relay_addresses"
       ],
       "sources": {
-        "integration_test/conversation_bridge_test.dart": "9291c864810e5950fd13e21f82b0a2aec56e8c6ee07ac021be4b4fcf370981d3"
+        "integration_test/conversation_bridge_test.dart": "dd40786145508df6b7fc473b5256dbbaa9a1dfb490b6a6058f924ccf712c21a9"
       },
       "audit": "Audited exact leaf parser and all target-control calls; explicit role injection precedes any preparation. Shared-directory peers use iOS simulators; Android-capable pair transports use USB plus emulator.",
       "owns": [
@@ -2785,7 +2784,7 @@
     },
     "integration_test/conversation_swipe_back_proof_test.dart": {
       "roles": [
-        "android-physical"
+        "ios-simulator-a"
       ],
       "commands": [
         [
@@ -2793,7 +2792,7 @@
           "test",
           "--no-pub",
           "-d",
-          "{device:android-physical}",
+          "{device:ios-simulator-a}",
           "--reporter",
           "expanded",
           "--dart-define=MKNOON_RELAY_ADDRESSES={config:relay_addresses}",
@@ -2807,11 +2806,9 @@
       "sources": {
         "integration_test/conversation_swipe_back_proof_test.dart": "644dce9e530aa24afbdd7a9c606076055f7d20c79c3f009ff8df57a9923a5ada"
       },
-      "audit": "Audited exact leaf parser and all target-control calls; explicit role injection precedes any preparation. Shared-directory peers use iOS simulators; Android-capable pair transports use USB plus emulator.",
+      "audit": "Source requires real iOS gesture or rendering behavior; pin the available iOS simulator. Comment references and external package imports are not executed test ownership.",
       "owns": [
-        "integration_test/conversation_swipe_back_proof_test.dart",
-        "integration_test/group_conversation_polish_proof_test.dart",
-        "integration_test/integration_test.dart"
+        "integration_test/conversation_swipe_back_proof_test.dart"
       ]
     },
     "integration_test/db_raw_key_migration_proof_test.dart": {
@@ -2866,7 +2863,7 @@
         "relay_addresses"
       ],
       "sources": {
-        "integration_test/direct_inbox_custody_outbox_sqlcipher_proof_test.dart": "86ea8d616b2edb03dd008f9edfb9d01fd3cc4a82f43d2e247e54c1478ab61fd3"
+        "integration_test/direct_inbox_custody_outbox_sqlcipher_proof_test.dart": "a0cb2dc77873e88b88a87fa0e06636e39c561c2dcc1699c5faf69e69ae1aa009"
       },
       "audit": "Audited exact leaf parser and all target-control calls; explicit role injection precedes any preparation. Shared-directory peers use iOS simulators; Android-capable pair transports use USB plus emulator.",
       "owns": [
@@ -2896,7 +2893,7 @@
         "relay_addresses"
       ],
       "sources": {
-        "integration_test/direct_notification_durability_sqlcipher_proof_test.dart": "e2d02897da9f8b840b1f939461c85851ae6b271bf9a1541d486ef2b5a367cb8a"
+        "integration_test/direct_notification_durability_sqlcipher_proof_test.dart": "78891c1dd2282c5ffa982cae3bfe7b2705f11791c88e5c9ddbd1f7eaa956843a"
       },
       "audit": "Audited exact leaf parser and all target-control calls; explicit role injection precedes any preparation. Shared-directory peers use iOS simulators; Android-capable pair transports use USB plus emulator.",
       "owns": [
@@ -2986,7 +2983,7 @@
         "relay_addresses"
       ],
       "sources": {
-        "integration_test/direct_reaction_inbox_custody_outbox_sqlcipher_proof_test.dart": "f44fa58bd9d1fc4a7f5ce2a1a86af38d4226e78a7aa7e72e6127bfe06c6a2e55"
+        "integration_test/direct_reaction_inbox_custody_outbox_sqlcipher_proof_test.dart": "745d5b71c9c19d25578c5c16bd6c06e8d0ac820b05268edcf23ec9121ee1a16a"
       },
       "audit": "Audited exact leaf parser and all target-control calls; explicit role injection precedes any preparation. Shared-directory peers use iOS simulators; Android-capable pair transports use USB plus emulator.",
       "owns": [
@@ -3046,7 +3043,7 @@
         "relay_addresses"
       ],
       "sources": {
-        "integration_test/group_exit_intents_sqlcipher_proof_test.dart": "b475b232e2db3920c12392148c029b3594ed07dc3a695224f48c1ef27b16bf70"
+        "integration_test/group_exit_intents_sqlcipher_proof_test.dart": "b4d5573c0e49f86797bca14625ab9c227d2aeb9feb77111bdf4413815ce44b12"
       },
       "audit": "Audited exact leaf parser and all target-control calls; explicit role injection precedes any preparation. Shared-directory peers use iOS simulators; Android-capable pair transports use USB plus emulator.",
       "owns": [
@@ -3061,14 +3058,14 @@
       "commands": [
         [
           "flutter",
-          "test",
+          "drive",
           "--no-pub",
+          "--profile",
           "-d",
           "{device:android-physical}",
-          "--reporter",
-          "expanded",
-          "--dart-define=MKNOON_RELAY_ADDRESSES={config:relay_addresses}",
-          "integration_test/group_exit_release_diagnostics_sqlcipher_proof_test.dart"
+          "--driver=test_driver/integration_test.dart",
+          "--target=integration_test/group_exit_release_diagnostics_sqlcipher_proof_test.dart",
+          "--dart-define=MKNOON_RELAY_ADDRESSES={config:relay_addresses}"
         ]
       ],
       "environment": {},
@@ -3076,9 +3073,9 @@
         "relay_addresses"
       ],
       "sources": {
-        "integration_test/group_exit_release_diagnostics_sqlcipher_proof_test.dart": "5e45df0bcab53be6518e70798705ae965f955d5947d7927588dd3af514040c38"
+        "integration_test/group_exit_release_diagnostics_sqlcipher_proof_test.dart": "0e6e10092ac0146928534a050d64994640804b4c3d2553931cd565506dcd1919"
       },
-      "audit": "Audited exact leaf parser and all target-control calls; explicit role injection precedes any preparation. Shared-directory peers use iOS simulators; Android-capable pair transports use USB plus emulator.",
+      "audit": "PB266 rejects debug mode; reuse its existing full-regression profile-drive recipe on the pinned physical Android. The separate full.native.pb266-release adapter owns true release instrumentation.",
       "owns": [
         "integration_test/group_exit_release_diagnostics_sqlcipher_proof_test.dart",
         "integration_test/integration_test.dart"
@@ -3158,7 +3155,7 @@
           "--reporter",
           "expanded",
           "--dart-define=MKNOON_RELAY_ADDRESSES={config:relay_addresses}",
-          "--dart-define=GROUP_SIM_SCENARIO=GROUP_SIM_SCENARIO=ADMIN_METADATA",
+          "--dart-define=GROUP_SIM_SCENARIO=ADMIN_METADATA",
           "integration_test/group_lifecycle_simulator_harness.dart"
         ]
       ],
@@ -3189,7 +3186,7 @@
           "--reporter",
           "expanded",
           "--dart-define=MKNOON_RELAY_ADDRESSES={config:relay_addresses}",
-          "--dart-define=GROUP_SIM_SCENARIO=GROUP_SIM_SCENARIO=DELETE_PRESERVES_FRIENDS",
+          "--dart-define=GROUP_SIM_SCENARIO=DELETE_PRESERVES_FRIENDS",
           "integration_test/group_lifecycle_simulator_harness.dart"
         ]
       ],
@@ -3220,7 +3217,7 @@
           "--reporter",
           "expanded",
           "--dart-define=MKNOON_RELAY_ADDRESSES={config:relay_addresses}",
-          "--dart-define=GROUP_SIM_SCENARIO=GROUP_SIM_SCENARIO=INVITE_ACCEPT_SPINNER",
+          "--dart-define=GROUP_SIM_SCENARIO=INVITE_ACCEPT_SPINNER",
           "integration_test/group_lifecycle_simulator_harness.dart"
         ]
       ],
@@ -3251,7 +3248,7 @@
           "--reporter",
           "expanded",
           "--dart-define=MKNOON_RELAY_ADDRESSES={config:relay_addresses}",
-          "--dart-define=GROUP_SIM_SCENARIO=GROUP_SIM_SCENARIO=NEW_MEMBER_MEDIA",
+          "--dart-define=GROUP_SIM_SCENARIO=NEW_MEMBER_MEDIA",
           "integration_test/group_lifecycle_simulator_harness.dart"
         ]
       ],
@@ -3350,7 +3347,7 @@
         "relay_addresses"
       ],
       "sources": {
-        "integration_test/group_notification_display_outbox_sqlcipher_proof_test.dart": "a719fad863646b227d0c1e1f5e3503184b2167e8d2d256462ab68282d5d1b852"
+        "integration_test/group_notification_display_outbox_sqlcipher_proof_test.dart": "ff28b32d4f429aa6ef8085b6576d7cd0539b68c955f44dbfa1e17b4157187b19"
       },
       "audit": "Audited exact leaf parser and all target-control calls; explicit role injection precedes any preparation. Shared-directory peers use iOS simulators; Android-capable pair transports use USB plus emulator.",
       "owns": [
@@ -3620,7 +3617,7 @@
         "relay_addresses"
       ],
       "sources": {
-        "integration_test/group_self_removed_marker_sqlcipher_proof_test.dart": "5e8b639805cc9241ef30f9ca8e87f286cfd9a93b8c090299183aa87f177753ee"
+        "integration_test/group_self_removed_marker_sqlcipher_proof_test.dart": "ed87331c60975dda9cb636852f65920bac219ad18aed27dd9d85d13c6b537594"
       },
       "audit": "Audited exact leaf parser and all target-control calls; explicit role injection precedes any preparation. Shared-directory peers use iOS simulators; Android-capable pair transports use USB plus emulator.",
       "owns": [
@@ -3630,19 +3627,19 @@
     },
     "integration_test/migration_database_sqlcipher_capability_test.dart": {
       "roles": [
-        "android-physical"
+        "android-physical",
+        "ios-simulator-a"
       ],
       "commands": [
         [
-          "flutter",
-          "test",
-          "--no-pub",
-          "-d",
+          "python3",
+          "scripts/migration_sqlcipher_portability.py",
+          "--android",
           "{device:android-physical}",
-          "--reporter",
-          "expanded",
-          "--dart-define=MKNOON_RELAY_ADDRESSES={config:relay_addresses}",
-          "integration_test/migration_database_sqlcipher_capability_test.dart"
+          "--ios",
+          "{device:ios-simulator-a}",
+          "--output",
+          "{output}"
         ]
       ],
       "environment": {},
@@ -3650,13 +3647,15 @@
         "relay_addresses"
       ],
       "sources": {
-        "integration_test/migration_database_sqlcipher_capability_test.dart": "9c7b7982c72c7712ad61c1124d7d0078e2366a4b0e8a12683aad9cb2f8a0a0a8"
+        "integration_test/migration_database_sqlcipher_capability_test.dart": "9c7b7982c72c7712ad61c1124d7d0078e2366a4b0e8a12683aad9cb2f8a0a0a8",
+        "scripts/migration_sqlcipher_portability.py": "59e551a4f00872ce40bdd4ee378abf41c08cfba43c6d347481021eb6eabb0531"
       },
-      "audit": "Audited exact leaf parser and all target-control calls; explicit role injection precedes any preparation. Shared-directory peers use iOS simulators; Android-capable pair transports use USB plus emulator.",
+      "audit": "Existing native test exports on pinned USB Android, adapter transfers only its exact fixture, existing native test verifies on pinned available iOS simulator. SQLCipher checksum/schema/row assertions require native plugins; Appium cannot establish them.",
       "owns": [
         "integration_test/integration_test.dart",
         "integration_test/migration_database_sqlcipher_capability_test.dart"
-      ]
+      ],
+      "completion_marker": "SQLCIPHER_PORTABILITY_COMPLETED android_to_ios"
     },
     "integration_test/outgoing_transport_settlement_sqlcipher_proof_test.dart": {
       "roles": [
@@ -3769,7 +3768,8 @@
         "relay_addresses"
       ],
       "sources": {
-        "integration_test/scripts/run_direct_private_media_device_local_journey.dart": "124a54b970ed5da511f26e499bead35a0bce987f5687adbecf9c01e5dabd77c0"
+        "integration_test/scripts/run_direct_private_media_device_local_journey.dart": "124a54b970ed5da511f26e499bead35a0bce987f5687adbecf9c01e5dabd77c0",
+        "integration_test/direct_private_media_device_local_journey_harness.dart": "e93e271ec469dff7dcb78f97de7c75cf577ccf6df1e583af2bfe2c78dcb3887e"
       },
       "audit": "Audited exact leaf parser and all target-control calls; explicit role injection precedes any preparation. Shared-directory peers use iOS simulators; Android-capable pair transports use USB plus emulator.",
       "owns": [
@@ -3795,7 +3795,8 @@
         "relay_addresses"
       ],
       "sources": {
-        "integration_test/scripts/run_foreground_group_push_simulator_smoke.dart": "c9448e8adbb86dd208aa252528a9b97007763b03de7e592d4b9a486234702bd2"
+        "integration_test/scripts/run_foreground_group_push_simulator_smoke.dart": "415d64af3385950e8fdf4b5039c191d0004d0fe4438dc2279ad65cf1ed4382bc",
+        "integration_test/_support/prepared_ios_harness.dart": "14e023e7be36401f94f26b681846f4177bef999e9993d714fc44f85643af3892"
       },
       "audit": "Audited exact leaf parser and all target-control calls; explicit role injection precedes any preparation. Shared-directory peers use iOS simulators; Android-capable pair transports use USB plus emulator.",
       "owns": [
@@ -3849,7 +3850,8 @@
         "relay_addresses"
       ],
       "sources": {
-        "integration_test/scripts/run_group_multi_device_real.dart": "b291cf831d90816b25b5f6bac97bda3f22c8ca27cf276e3d01b565404d6728b9"
+        "integration_test/scripts/run_group_multi_device_real.dart": "f782eda0ad2e056e3f6a02df7876f4487ffa964ccfccc94bd7ea0011172004e6",
+        "integration_test/_support/prepared_ios_harness.dart": "14e023e7be36401f94f26b681846f4177bef999e9993d714fc44f85643af3892"
       },
       "audit": "Audited exact leaf parser and all target-control calls; explicit role injection precedes any preparation. Shared-directory peers use iOS simulators; Android-capable pair transports use USB plus emulator.",
       "owns": [
@@ -3874,7 +3876,8 @@
         "relay_addresses"
       ],
       "sources": {
-        "integration_test/scripts/run_group_recovery_e2e.dart": "bdeb09ca89de0965534e674ada7eff3811a92e2a086a07b580bf70d4978311b0"
+        "integration_test/scripts/run_group_recovery_e2e.dart": "bdeb09ca89de0965534e674ada7eff3811a92e2a086a07b580bf70d4978311b0",
+        "integration_test/group_recovery_cli_e2e_test.dart": "aaa3f8fff97a0cd92c1aa8e7056ef79d1060bad528edc02c9bba993e4203e37e"
       },
       "audit": "Audited exact leaf parser and all target-control calls; explicit role injection precedes any preparation. Shared-directory peers use iOS simulators; Android-capable pair transports use USB plus emulator.",
       "owns": [
@@ -3903,9 +3906,10 @@
         "relay_addresses"
       ],
       "sources": {
-        "integration_test/scripts/run_invite_reliability_multi_device.dart": "dbd030d1eda0fc2f0c36006719c511dbfc0d5c33bc49c76958ca3022efdb8eb2",
+        "integration_test/scripts/run_invite_reliability_multi_device.dart": "a44ce8c309965df4c7add87c34409f19f58522b88cb8e6143fb42466702d9897",
         "integration_test/_support/invite_reliability_runner_contract.dart": "9d71f752c9ef88e886be96e23e107b2e2ac806329bbe12687906a7ed68ece26c",
-        "integration_test/scripts/run_direct_media_blob_custody_sims.dart": "a1f27b5251a34aacca53613a5cd834d7962f3f263c62f27f0f6e323ea12ae320"
+        "integration_test/scripts/run_direct_media_blob_custody_sims.dart": "a1f27b5251a34aacca53613a5cd834d7962f3f263c62f27f0f6e323ea12ae320",
+        "integration_test/support/android_app_state_guard.dart": "9f58efa2c3316e2339499c3154f481845f0222e7e710fa003afb35653361e8f7"
       },
       "audit": "Audited exact leaf parser and all target-control calls; explicit role injection precedes any preparation. Shared-directory peers use iOS simulators; Android-capable pair transports use USB plus emulator.",
       "owns": [
@@ -3935,9 +3939,10 @@
         "relay_addresses"
       ],
       "sources": {
-        "integration_test/scripts/run_invite_reliability_multi_device.dart": "dbd030d1eda0fc2f0c36006719c511dbfc0d5c33bc49c76958ca3022efdb8eb2",
+        "integration_test/scripts/run_invite_reliability_multi_device.dart": "a44ce8c309965df4c7add87c34409f19f58522b88cb8e6143fb42466702d9897",
         "integration_test/_support/invite_reliability_runner_contract.dart": "9d71f752c9ef88e886be96e23e107b2e2ac806329bbe12687906a7ed68ece26c",
-        "integration_test/scripts/run_direct_media_blob_custody_sims.dart": "a1f27b5251a34aacca53613a5cd834d7962f3f263c62f27f0f6e323ea12ae320"
+        "integration_test/scripts/run_direct_media_blob_custody_sims.dart": "a1f27b5251a34aacca53613a5cd834d7962f3f263c62f27f0f6e323ea12ae320",
+        "integration_test/support/android_app_state_guard.dart": "9f58efa2c3316e2339499c3154f481845f0222e7e710fa003afb35653361e8f7"
       },
       "audit": "Audited exact leaf parser and all target-control calls; explicit role injection precedes any preparation. Shared-directory peers use iOS simulators; Android-capable pair transports use USB plus emulator.",
       "owns": [
@@ -3965,9 +3970,10 @@
         "relay_addresses"
       ],
       "sources": {
-        "integration_test/scripts/run_invite_reliability_multi_device.dart": "dbd030d1eda0fc2f0c36006719c511dbfc0d5c33bc49c76958ca3022efdb8eb2",
+        "integration_test/scripts/run_invite_reliability_multi_device.dart": "a44ce8c309965df4c7add87c34409f19f58522b88cb8e6143fb42466702d9897",
         "integration_test/_support/invite_reliability_runner_contract.dart": "9d71f752c9ef88e886be96e23e107b2e2ac806329bbe12687906a7ed68ece26c",
-        "integration_test/scripts/run_direct_media_blob_custody_sims.dart": "a1f27b5251a34aacca53613a5cd834d7962f3f263c62f27f0f6e323ea12ae320"
+        "integration_test/scripts/run_direct_media_blob_custody_sims.dart": "a1f27b5251a34aacca53613a5cd834d7962f3f263c62f27f0f6e323ea12ae320",
+        "integration_test/support/android_app_state_guard.dart": "9f58efa2c3316e2339499c3154f481845f0222e7e710fa003afb35653361e8f7"
       },
       "audit": "Audited exact leaf parser and all target-control calls; explicit role injection precedes any preparation. Shared-directory peers use iOS simulators; Android-capable pair transports use USB plus emulator.",
       "owns": [
@@ -3995,9 +4001,10 @@
         "relay_addresses"
       ],
       "sources": {
-        "integration_test/scripts/run_invite_reliability_multi_device.dart": "dbd030d1eda0fc2f0c36006719c511dbfc0d5c33bc49c76958ca3022efdb8eb2",
+        "integration_test/scripts/run_invite_reliability_multi_device.dart": "a44ce8c309965df4c7add87c34409f19f58522b88cb8e6143fb42466702d9897",
         "integration_test/_support/invite_reliability_runner_contract.dart": "9d71f752c9ef88e886be96e23e107b2e2ac806329bbe12687906a7ed68ece26c",
-        "integration_test/scripts/run_direct_media_blob_custody_sims.dart": "a1f27b5251a34aacca53613a5cd834d7962f3f263c62f27f0f6e323ea12ae320"
+        "integration_test/scripts/run_direct_media_blob_custody_sims.dart": "a1f27b5251a34aacca53613a5cd834d7962f3f263c62f27f0f6e323ea12ae320",
+        "integration_test/support/android_app_state_guard.dart": "9f58efa2c3316e2339499c3154f481845f0222e7e710fa003afb35653361e8f7"
       },
       "audit": "Audited exact leaf parser and all target-control calls; explicit role injection precedes any preparation. Shared-directory peers use iOS simulators; Android-capable pair transports use USB plus emulator.",
       "owns": [
@@ -4022,7 +4029,8 @@
         "relay_addresses"
       ],
       "sources": {
-        "integration_test/scripts/run_media_message_journey_e2e.dart": "e86a2a0e02f260f120b9a0343a075e2817ff6fc4f675d0c53077f1dd245ef137"
+        "integration_test/scripts/run_media_message_journey_e2e.dart": "61f1941ece3323b96358f67d221e1d07e42e46ee9c4484dfcad204243b5e85da",
+        "integration_test/media_message_journey_e2e_test.dart": "53b59d06fe732c379074fb6f32db99cc2be69160968592f31157d7a53122d07f"
       },
       "audit": "Audited exact leaf parser and all target-control calls; explicit role injection precedes any preparation. Shared-directory peers use iOS simulators; Android-capable pair transports use USB plus emulator.",
       "owns": [
@@ -4077,7 +4085,8 @@
         "relay_addresses"
       ],
       "sources": {
-        "integration_test/scripts/run_notification_open_during_other_chat.dart": "89adce3e3159c3a9c577775b2f6fc688c64d80ff6cbdd78cbe3faa6b57ff3bc0"
+        "integration_test/scripts/run_notification_open_during_other_chat.dart": "89adce3e3159c3a9c577775b2f6fc688c64d80ff6cbdd78cbe3faa6b57ff3bc0",
+        "integration_test/notification_open_during_other_chat_harness.dart": "85893e51a1919de594ace0a12730be7f543f4246979aa3f94b6d31397988d887"
       },
       "audit": "Audited exact leaf parser and all target-control calls; explicit role injection precedes any preparation. Shared-directory peers use iOS simulators; Android-capable pair transports use USB plus emulator.",
       "owns": [
@@ -4130,8 +4139,8 @@
         "relay_addresses"
       ],
       "sources": {
-        "integration_test/scripts/run_notification_sound_smoke.dart": "284ac5924707ad63408b9be3332ca346e1703f0fb8a55d56694d0c555f68980c",
-        "integration_test/support/android_app_state_guard.dart": "4851c33e56045346a1fad3cc7c70bf95b4b93dfbe0606b873e717c6efb9de076"
+        "integration_test/scripts/run_notification_sound_smoke.dart": "6635b75522774e65f6cc25a76b20afd4d7ea2b62af2b4a94b8f1f03caad6dd56",
+        "integration_test/support/android_app_state_guard.dart": "9f58efa2c3316e2339499c3154f481845f0222e7e710fa003afb35653361e8f7"
       },
       "audit": "Audited exact leaf parser and all target-control calls; explicit role injection precedes any preparation. Shared-directory peers use iOS simulators; Android-capable pair transports use USB plus emulator.",
       "owns": [
@@ -4157,7 +4166,9 @@
         "relay_addresses"
       ],
       "sources": {
-        "integration_test/scripts/run_routing_smoke_e2e.dart": "b7fa423001e1200e2ac5430cc7c0c42131bd6d96c85a2b2410d05c4fe3a9f153"
+        "integration_test/scripts/run_routing_smoke_e2e.dart": "03ab8d84c04ff7e5f32c5f690b2ca3c559d84869136859ddf00c238d8b777c43",
+        "integration_test/routing_smoke_harness.dart": "6ed5dd8d340be9fa5f76afad87d7f2588a0ba0728f4ea2bbe785b5e6fdd091b8",
+        "integration_test/scripts/routing_smoke_group_criteria.dart": "16d8108231855fb8f7f0c402bd61a32f29f8ad3262c947daee3ea962c443a92c"
       },
       "audit": "Audited exact leaf parser and all target-control calls; explicit role injection precedes any preparation. Shared-directory peers use iOS simulators; Android-capable pair transports use USB plus emulator.",
       "owns": [
@@ -4182,7 +4193,9 @@
         "relay_addresses"
       ],
       "sources": {
-        "integration_test/scripts/run_soak_e2e.dart": "39f1b72ce5c3e3ade5425d3786dc61e62e49a93661662dd80e5efe5427ce9947"
+        "integration_test/scripts/run_soak_e2e.dart": "b1c19eac569fa2c7c99143dc25f3cc569646c5c62ddac1b1a41acc4d4349ef22",
+        "integration_test/soak_e2e_test.dart": "8e0f900ff4a5db8c1fb3ce47a3fefc7ea64895bb14e921c192fcfdb714270c7e",
+        "integration_test/_support/prepared_ios_harness.dart": "14e023e7be36401f94f26b681846f4177bef999e9993d714fc44f85643af3892"
       },
       "audit": "Audited exact leaf parser and all target-control calls; explicit role injection precedes any preparation. Shared-directory peers use iOS simulators; Android-capable pair transports use USB plus emulator.",
       "owns": [
@@ -4210,7 +4223,9 @@
         "relay_addresses"
       ],
       "sources": {
-        "integration_test/scripts/run_transport_e2e.dart": "7b76295435ce5216990af7c7f648c88707694a7fde7dadd444803ec269488a41"
+        "integration_test/scripts/run_transport_e2e.dart": "fd271fdc673571a4a3d31633e29f0408f595618ec81bddbbceb4efb892f73070",
+        "integration_test/transport_e2e_test.dart": "bc033ec31a0c7b5aaaa0e38bced3868b25df65220b095284c87af5408670276a",
+        "go-mknoon/cmd/testpeer/envelope.go": "0a56b0cbee76731081d27cc477873615b3e441a3008ef1e91e248a2c4f979a25"
       },
       "audit": "Audited exact leaf parser and all target-control calls; explicit role injection precedes any preparation. Shared-directory peers use iOS simulators; Android-capable pair transports use USB plus emulator.",
       "owns": [
@@ -4230,7 +4245,9 @@
           "-d",
           "{device:android-physical}",
           "--platform",
-          "android"
+          "android",
+          "--retry",
+          "0"
         ]
       ],
       "environment": {},
@@ -4238,7 +4255,8 @@
         "relay_addresses"
       ],
       "sources": {
-        "integration_test/scripts/run_wifi_relay_fallback_smoke.dart": "a4fe38b34f3a0dc0fbac0be697f26f21cd69e61031dd27a137a81523e4b4439b"
+        "integration_test/scripts/run_wifi_relay_fallback_smoke.dart": "6706533051d24379ac9593ff3d15a65dca637831672752eccf7d660fb69cc9b4",
+        "integration_test/wifi_relay_fallback_smoke_test.dart": "62224727229b981e2bf39002921914f249a6fbb52888f0a6b228d57e962a4670"
       },
       "audit": "Audited exact leaf parser and all target-control calls; explicit role injection precedes any preparation. Shared-directory peers use iOS simulators; Android-capable pair transports use USB plus emulator.",
       "owns": [
@@ -4382,7 +4400,9 @@
           "bash",
           "scripts/run_ios_notification_tap_ui_smoke.sh",
           "--devices",
-          "{device:ios-simulator-a},{device:ios-simulator-b}"
+          "{device:ios-simulator-a},{device:ios-simulator-b}",
+          "--retries",
+          "0"
         ]
       ],
       "environment": {},
@@ -4391,7 +4411,7 @@
       ],
       "sources": {
         "scripts/push_fixture_to_simulator.sh": "7bfec06efaff5d7903f94539aa8954a93b56a9b6e846526eaa7971ec5698814f",
-        "scripts/run_ios_notification_tap_ui_smoke.sh": "74d9f078f303b23e54c827d92f802c6f6d98a6620038a8e385223b508b7dd901"
+        "scripts/run_ios_notification_tap_ui_smoke.sh": "6b3279bb2e6223d33cc0e03625c31d7af9f74bcda67bc5a618d408d8bfd1f0a9"
       },
       "audit": "Audited exact leaf parser and all target-control calls; explicit role injection precedes any preparation. Shared-directory peers use iOS simulators; Android-capable pair transports use USB plus emulator.",
       "owns": [
@@ -4456,8 +4476,8 @@
         "ios_disposable_simulator_ids"
       ],
       "sources": {
-        "reset_simulators.sh": "68f6934eeb09db65a4f2e7df42e7510a1eca75018e73c83373d0c7e8115ed914",
-        "smoke_test_friends.sh": "ccbcf7361de4cf279d67cb777b3d39315df7df24fb07a0caa95239b49269c69c"
+        "reset_simulators.sh": "79c768765b32ff9da9b0089244fedbd13735f72ec54dc2b0209126f2485a0657",
+        "smoke_test_friends.sh": "a172e167d1f11748987266b737b83819a48f718be3e4ac4b13221ff93a1e0dd9"
       },
       "audit": "Audited exact leaf parser and all target-control calls; explicit role injection precedes any preparation. Shared-directory peers use iOS simulators; Android-capable pair transports use USB plus emulator.",
       "owns": [

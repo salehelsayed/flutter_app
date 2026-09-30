@@ -4,6 +4,7 @@ import android.app.Application
 import android.app.Notification
 import android.app.NotificationManager
 import android.app.PendingIntent
+import android.app.Person
 import android.content.Context
 import android.content.Intent
 import com.mknoon.app.MainActivity
@@ -39,6 +40,38 @@ class MknoonCallNotificationFactoryTest {
             context = context,
             pendingIntents = pendingIntents,
         )
+    }
+
+    @Test
+    @Config(sdk = [28, 33, 34])
+    fun `authenticated caller name appears in incoming and ongoing notifications`() {
+        val callId = UUID.fromString(CALL_ID)
+        val namedFactory = MknoonCallNotificationFactory(
+            context = context,
+            pendingIntents = pendingIntents,
+            presentation = { id ->
+                if (id == callId) MknoonIncomingCallDisplay("Beta iPhone", null, false).toRingingMetadata()
+                else null
+            },
+        )
+
+        for (notification in listOf(
+            namedFactory.createIncoming(callId, fullScreenAllowed = false),
+            namedFactory.createOngoing(callId),
+        )) {
+            assertEquals("Beta iPhone", notification.extras.getCharSequence(Notification.EXTRA_TITLE))
+            if (android.os.Build.VERSION.SDK_INT >= 31) {
+                @Suppress("DEPRECATION")
+                val person = notification.extras.getParcelable<Person>(Notification.EXTRA_CALL_PERSON)
+                assertEquals("Beta iPhone", person?.name?.toString())
+            }
+        }
+
+        val unknown = namedFactory.createIncoming(
+            UUID.fromString("ffffffff-ffff-4fff-8fff-ffffffffffff"),
+            fullScreenAllowed = false,
+        )
+        assertEquals("MKnoon caller", unknown.extras.getCharSequence(Notification.EXTRA_TITLE))
     }
 
     @Test

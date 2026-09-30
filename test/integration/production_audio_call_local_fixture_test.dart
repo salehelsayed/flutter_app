@@ -17,7 +17,19 @@ const _coturnDigest =
 const _turnAuthoritySha =
     '8bc3322ed74bd971a9b544be19bec83e88ae4e80ca10ea786164e573f73bc729';
 
-void main() {
+Future<void> main() async {
+  final realFixtureEnabled =
+      Platform.environment['PLAN399_RUN_REAL_FIXTURE'] == '1' &&
+      Platform.environment['PLAN399_FIXTURE_HOST_IP'] != null;
+  // Compilation is fixture preparation, not part of the 30-second audio
+  // scenario. Build this candidate's exact test tools before registering cases.
+  final preparedTools = realFixtureEnabled
+      ? await _prepareRealFixtureTools()
+      : null;
+  if (preparedTools != null) {
+    tearDownAll(() => preparedTools.delete(recursive: true));
+  }
+
   test('fixture host resolver accepts only an explicit private IPv4', () async {
     await expectLater(
       resolveProductionAudioCallLocalFixtureHostIp(const <String, String>{
@@ -205,12 +217,14 @@ void main() {
     () async {
       final hostIp = Platform.environment['PLAN399_FIXTURE_HOST_IP']!;
       final lease = await ProductionAudioCallLocalFixtureLease.start(
-        goExecutable: 'go',
+        goExecutable: '${preparedTools!.path}/go',
         hostIp: hostIp,
         environment: Platform.environment,
       );
       try {
-        final result = await lease.runAudioOracle();
+        final result = await lease.runAudioOracle(
+          goExecutable: '${preparedTools.path}/go',
+        );
         expect(result.aToB.passed, isTrue);
         expect(result.bToA.passed, isTrue);
         expect(result.peerARoute.passed, isTrue);
@@ -219,11 +233,96 @@ void main() {
         await lease.stop();
       }
     },
-    skip:
-        Platform.environment['PLAN399_RUN_REAL_FIXTURE'] != '1' ||
-        Platform.environment['PLAN399_FIXTURE_HOST_IP'] == null,
+    skip: !realFixtureEnabled,
   );
 }
+
+Future<Directory> _prepareRealFixtureTools() async {
+  final directory = await Directory.systemTemp.createTemp(
+    'plan399-test-tools-',
+  );
+  final root = Directory.current.absolute.path;
+  const fixtureCase =
+      'TestProductionAudioCallDeviceFixture_ProductionRelayTurnCredentialsCoturnAndTeardown';
+  const oracleCase = 'TestKnownOpusBothDirectionsOverRestAuthenticatedCoturn';
+  final builds =
+      <({String module, String binary, String test, String timeout})>[
+        (
+          module: 'go-relay-server',
+          binary: 'relay.test',
+          test: fixtureCase,
+          timeout: '45m',
+        ),
+        (
+          module: 'tool/call_audio_oracle',
+          binary: 'oracle.test',
+          test: oracleCase,
+          timeout: '10m',
+        ),
+      ];
+  try {
+    await Future.wait(
+      builds.map((build) async {
+        final stopwatch = Stopwatch()..start();
+        final result = await Process.run(
+          'go',
+          <String>[
+            'test',
+            '-c',
+            '-tags=integration',
+            '-o',
+            '${directory.path}/${build.binary}',
+            '.',
+          ],
+          workingDirectory: '$root/${build.module}',
+          environment: <String, String>{
+            ...Platform.environment,
+            'GOTOOLCHAIN': 'go1.25.0',
+          },
+        );
+        if (result.exitCode != 0) {
+          throw StateError(
+            '${build.binary} preparation exited ${result.exitCode}: '
+            '${result.stderr}',
+          );
+        }
+        stdout.writeln(
+          'Prepared ${build.binary} in ${stopwatch.elapsedMilliseconds}ms; '
+          'no scenario executed.',
+        );
+      }),
+    );
+    // The adapter's original exact Go command remains checked. This shim only
+    // replaces compilation with the freshly built matching executable; it
+    // preserves selection, one execution, verbosity, and the Go time limit.
+    final shim = StringBuffer('#!/bin/sh\nset -eu\ncase "\$PWD:\$*" in\n');
+    for (final build in builds) {
+      final selector = build.module == 'go-relay-server' ? '.' : './...';
+      final original =
+          '$root/${build.module}:test -tags=integration $selector '
+          '-run ^${build.test}\$ -count=1 -v -timeout=${build.timeout}';
+      shim.writeln('  ${_shellQuote(original)})');
+      shim.writeln(
+        '    exec ${_shellQuote('${directory.path}/${build.binary}')} '
+        '${_shellQuote('-test.run=^${build.test}\$')} '
+        '-test.count=1 -test.v=true -test.timeout=${build.timeout} ;;',
+      );
+    }
+    shim.writeln(
+      '  *) echo "Unexpected fixture command" >&2; exit 64 ;;\nesac',
+    );
+    final executable = File('${directory.path}/go');
+    await executable.writeAsString(shim.toString());
+    final chmod = await Process.run('chmod', <String>['700', executable.path]);
+    if (chmod.exitCode != 0) throw StateError('Fixture tool chmod failed');
+    return directory;
+  } on Object {
+    await directory.delete(recursive: true);
+    rethrow;
+  }
+}
+
+String _shellQuote(String value) => "'${value.replaceAll("'", "'\\''")}'";
 
 Map<String, Object?> _readiness(String root) => <String, Object?>{
   'schema': 'mknoon.plan399.production-audio-call-fixture.v1',

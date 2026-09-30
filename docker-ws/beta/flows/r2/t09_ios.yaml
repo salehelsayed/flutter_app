@@ -1,0 +1,11 @@
+appId: com.mknoon.app
+name: T09 iPhone sends Arabic, emoji and a URL; waits for the Pixel's long text
+---
+- runFlow: ../ensure_chat.yaml
+- runFlow: { file: ../send_text.yaml, env: { MSG: "T09 arabic مرحبا بالعالم ${NONCE}" } }
+- runFlow: { file: ../send_text.yaml, env: { MSG: "T09 emoji 😀🎉👍🏽❤️ ${NONCE}" } }
+- runFlow: { file: send.yaml, env: { MSG: "T09 url https://example.com/r2?q=${NONCE}&x=1 ${NONCE}" } }
+- extendedWaitUntil: { visible: ".*T09 url https://example.com/r2.q=${NONCE}.x=1 ${NONCE}.*", timeout: 15000 }
+- runFlow: ../kb_hide.yaml
+- extendedWaitUntil: { visible: ".*T09 long ${NONCE}.*", timeout: 240000 }
+- takeScreenshot: t09_got_long

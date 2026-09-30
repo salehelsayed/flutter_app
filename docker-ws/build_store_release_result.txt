@@ -1,4 +1,4 @@
-PROVENANCE version=1.0.1+119 name=1.0.1 build=119 sha=f1761aa17 branch=feat/ipv6-happy-eyeballs dirty_files=211 date=2026-09-11 12:50:25
-WARNING dirty tree (211 files) — store artifacts will not match any commit exactly
-PLAY OK build/app/outputs/bundle/release/app-release.aab (203 MB) versionName=1.0.1 versionCode=119
-IOS OK build/ios/ipa/mknoon.ipa (59 MB) version=1.0.1 build=119 bridge-linked (go-runtime=yes, stripped-symbol-names=0)
+PROVENANCE version=1.0.1+120 name=1.0.1 build=120 sha=fbe1ae45f branch=main dirty_files=349 date=2026-09-27 17:21:16
+WARNING dirty tree (349 files) — store artifacts will not match any commit exactly
+PLAY OK build/app/outputs/bundle/release/app-release.aab (200 MB) versionName=1.0.1 versionCode=120
+IOS OK build/ios/ipa/mknoon.ipa (59 MB) version=1.0.1 build=120 bridge-linked (go-runtime=yes, stripped-symbol-names=0)

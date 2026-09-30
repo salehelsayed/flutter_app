@@ -70,6 +70,8 @@ def _family(path: str) -> str | None:
     p = PurePosixPath(path)
     parts = p.parts
     name = p.name
+    if path.startswith('integration_test/maestro/') and p.suffix in {'.yaml', '.yml'}:
+        return 'maestro_flow'
     if name.endswith("_test.dart"):
         if "integration_test" in parts or "test_driver" in parts:
             return "flutter_device"
@@ -578,14 +580,7 @@ def reconcile(root: Path, rules: dict, selected: list[dict], files: list[str], w
         byid = {c['id']: c for c in manifest['capabilities']}
         for check in selected:
             if check['kind'] != 'sims': continue
-            rows = [c for c in byid.values() if c.get('active', True) and check.get('sims_mode','major') in c.get('modes', [])]
-            if check.get('capability') != '*':
-                wanted = {check.get('capability')}
-                while True:
-                    deps = {d for i in wanted for d in byid[i].get('dependencies', [])}
-                    if deps <= wanted: break
-                    wanted |= deps
-                rows = [c for c in rows if c['id'] in wanted]
+            rows = sims_rows_for_check(byid, check)
             check['selected_paths'] = sorted(c['id'] for c in rows)
             check['expanded_capabilities'] = rows
             for c in rows:
@@ -611,12 +606,67 @@ def reconcile(root: Path, rules: dict, selected: list[dict], files: list[str], w
                 runner_expansions=listings)
 
 
+def sims_rows_for_check(byid, check):
+    mode = check.get('sims_mode', 'major')
+    active = {key: row for key, row in byid.items()
+              if row.get('active', True) and mode in row.get('modes', [])}
+    excluded = set(check.get('excluded_capabilities', []))
+    if excluded - active.keys():
+        raise ValueError('Unknown or inactive excluded SIMS capabilities')
+    wanted = set(active) - excluded if check.get('capability') == '*' else {check.get('capability')}
+    if wanted - active.keys() or wanted & excluded:
+        raise ValueError('Invalid selected SIMS capability')
+    while True:
+        deps = {dep for key in wanted for dep in active[key].get('dependencies', [])}
+        if deps & excluded or deps - active.keys():
+            raise ValueError('Selected SIMS capability requires an excluded or inactive dependency')
+        if deps <= wanted:
+            break
+        wanted |= deps
+    return [row for key, row in active.items() if key in wanted]
+
+
+def validate_sims_partitions(root, commands):
+    path = root / 'tool/sims/critical_features.json'
+    if not path.exists():
+        return []
+    byid = {row['id']: row for row in json.loads(path.read_text())['capabilities']}
+    coverage, errors = {}, []
+    for owner, check in commands.items():
+        if check.get('kind') != 'sims':
+            continue
+        try:
+            coverage[owner] = {row['id'] for row in sims_rows_for_check(byid, check)}
+        except ValueError as error:
+            errors.append(str(error) + ': ' + owner)
+        args = check.get('command', [])
+        flags = [args[i+1] for i, arg in enumerate(args[:-1]) if arg == '--exclude']
+        flags += [arg.split('=', 1)[1] for arg in args if arg.startswith('--exclude=')]
+        if set(flags) != set(check.get('excluded_capabilities', [])) or (args and args[-1] == '--exclude'):
+            errors.append('SIMS exclusion command/metadata mismatch: ' + owner)
+    for owner, check in commands.items():
+        for capability in check.get('excluded_capabilities', []):
+            alternatives = set().union(*(ids for other, ids in coverage.items() if other != owner))
+            if capability not in alternatives:
+                errors.append('Excluded SIMS capability has no alternate full owner: ' + capability)
+    return errors
+
+
 def validate_policy(root, rules, files):
     policy = rules.get('full_inventory')
     if policy is None: return []
     errors = []
     owners = {c['id'] for c in rules.get('full_commands', [])}
     commands = {c['id']: c for c in rules.get('full_commands', [])}
+    errors.extend(validate_sims_partitions(root, commands))
+    for check in commands.values():
+        if 'native_xctest_receipts' not in check:
+            continue
+        from sims_native_xctest_receipts import validate_specs
+        declared = check['native_xctest_receipts']
+        errors.extend(validate_specs(declared))
+        if declared and check.get('kind') != 'sims':
+            errors.append('Native SIMS receipt declarations require a SIMS owner')
     receipt_specs = policy.get('mappings', []) + policy.get('listings', []) + [
         binding for catalog in policy.get('catalogs', []) for binding in catalog.get('bindings', [])] + policy.get('obligations', []) + policy.get('gate_aliases', [])
     for spec in receipt_specs:
@@ -627,6 +677,18 @@ def validate_policy(root, rules, files):
             errors.append('Composite legacy ownership requires an exact route: ' + spec['owner'])
         if any(k in spec and (not isinstance(spec[k], str) or not spec[k]) for k in ('capability', 'route')):
             errors.append('Invalid child receipt identity')
+        route = spec.get('route', '')
+        if isinstance(route, str) and route.startswith('xctest:') and owner.get('kind') == 'full_adapter':
+            selectors = {name for step in owner.get('steps', [])
+                         for name in step.get('native_xctest_counts', {})}
+            if route.removeprefix('xctest:') not in selectors:
+                errors.append('Native XCTest binding lacks a declared campaign receipt: ' + route)
+        elif isinstance(route, str) and route.startswith('xctest:') and owner.get('kind') == 'sims':
+            declared = owner.get('native_xctest_receipts', {})
+            native = declared.get(spec.get('capability'), {}) if isinstance(declared, dict) else {}
+            selectors = native.get('counts', {}) if isinstance(native, dict) else {}
+            if not isinstance(selectors, dict) or route.removeprefix('xctest:') not in selectors:
+                errors.append('Native XCTest binding lacks a declared SIMS method receipt: ' + route)
     families = {'flutter_host', 'python_unittest', 'javascript_node', 'go'}
     for item in policy.get('automatic', []):
         if item.get('family') not in families or not item.get('patterns'):

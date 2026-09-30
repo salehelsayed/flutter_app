@@ -1,0 +1,3 @@
+#!/bin/bash
+# Read-only: last lines of worktree sims capability logs. Usage: <cap id>...
+for c in "$@"; do echo "== $c"; tail -n "${N:-4}" "/Volumes/CrucialX9/.mknoon-all-tests-y227gs8x-worktree/build/sims/logs/$c.log" 2>&1 | cut -c1-240; done

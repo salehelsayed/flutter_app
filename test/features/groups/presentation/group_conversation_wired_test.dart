@@ -18,6 +18,7 @@ import 'package:flutter_app/core/media/upload_retry_projection.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 
 import 'package:flutter_app/core/media/image_processor.dart';
+import 'package:flutter_app/core/media/audio_recorder_service.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/core/media/media_upload_in_flight_tracker.dart';
 import 'package:flutter_app/core/permissions/mic_permission_gateway.dart';
@@ -29,6 +30,7 @@ import 'package:flutter_app/core/notifications/app_visibility_route_binding.dart
 import 'package:flutter_app/core/notifications/app_visibility_snapshot.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
+import 'package:flutter_app/features/call/infrastructure/call_media_conflict_adapter.dart';
 import 'package:flutter_app/features/conversation/application/chat_message_listener.dart';
 import 'package:flutter_app/features/conversation/application/upload_media_use_case.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
@@ -10003,6 +10005,58 @@ void main() {
       },
     );
 
+    testWidgets('answer holds a group voice note for review', (tester) async {
+      final group = makeChatGroup();
+      await groupRepo.saveGroup(group);
+      final voiceFile = File(
+        '${Directory.systemTemp.path}/group_call_review_'
+        '${DateTime.now().microsecondsSinceEpoch}.m4a',
+      )..writeAsBytesSync(List<int>.filled(2048, 7));
+      addTearDown(() {
+        if (voiceFile.existsSync()) voiceFile.deleteSync();
+      });
+      final recorder = FakeAudioRecorderService()
+        ..fakeDurationMs = 3000
+        ..fakeSizeBytes = 2048
+        ..fakeOutputPath = voiceFile.path;
+
+      await tester.pumpWidget(
+        buildWidget(
+          group: group,
+          mediaRepo: mediaAttachmentRepo,
+          mediaFileManager: FakeMediaFileManager(),
+          audioRecorderService: recorder,
+        ),
+      );
+      await pumpFrames(tester, count: 20);
+      final screen = tester.widget<GroupConversationScreen>(
+        find.byType(GroupConversationScreen),
+      );
+      await (screen.onRecordStart! as Future<void> Function())();
+      await tester.pump();
+
+      final callLease = await CallMediaConflictAdapter(
+        microphoneCaptureLeases: microphoneCaptureLeasesFor(recorder),
+      ).acquireForCall();
+      await tester.pump();
+
+      expect(recorder.stopCallCount, 1);
+      expect(recorder.isRecording, isFalse);
+      expect(voiceFile.existsSync(), isTrue);
+      expect(find.byKey(const ValueKey('voice-review-send')), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('voice-review-discard')),
+        findsOneWidget,
+      );
+      final reviewScreen = tester.widget<GroupConversationScreen>(
+        find.byType(GroupConversationScreen),
+      );
+      await (reviewScreen.onReviewDiscard! as Future<void> Function())();
+      await tester.pump();
+      expect(voiceFile.existsSync(), isFalse);
+      await callLease.release();
+    });
+
     testWidgets('info button navigates to group info', (tester) async {
       final group = makeChatGroup();
       await groupRepo.saveGroup(group);
@@ -13363,6 +13417,133 @@ void main() {
 
       result.complete(VideoProcessResult(path: processedVideo.path));
       await tester.pump();
+    });
+
+    testWidgets('stalled gallery video keeps prepared photo and can retry', (
+      tester,
+    ) async {
+      final group = makeChatGroup();
+      await groupRepo.saveGroup(group);
+      tester.view.physicalSize = const Size(800, 1600);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final tempDir = Directory.systemTemp.createTempSync(
+        'group_stalled_video_',
+      );
+      addTearDown(() => tempDir.deleteSync(recursive: true));
+      final photo = File('${tempDir.path}/photo.jpg')
+        ..writeAsBytesSync(_tinyPngBytes);
+      final video = File('${tempDir.path}/video.mp4')
+        ..writeAsBytesSync(_tinyPngBytes);
+      final processed = File('${tempDir.path}/processed.mp4')
+        ..writeAsBytesSync(_tinyPngBytes);
+      final mediaPicker = FakeMediaPicker()
+        ..multipleMediaResult = [XFile(photo.path), XFile(video.path)];
+      var attempts = 0;
+      var cancels = 0;
+      final processor = ImageProcessor(
+        compressFile:
+            ({
+              required path,
+              required quality,
+              required keepExif,
+              minWidth = 1920,
+              minHeight = 1080,
+            }) async => XFile(path),
+        compressVideo: ({required path, required compress, onProgress}) {
+          attempts++;
+          if (attempts == 1) return Completer<VideoProcessResult?>().future;
+          if (attempts == 3) {
+            return Future.error(const VideoProcessingUnavailableException());
+          }
+          if (attempts == 4) return Future.value(null);
+          return Future.value(VideoProcessResult(path: processed.path));
+        },
+        cancelVideoCompression: () async => cancels++,
+        videoStallTimeout: const Duration(milliseconds: 50),
+      );
+      await tester.pumpWidget(
+        buildWidget(
+          group: group,
+          mediaRepo: mediaAttachmentRepo,
+          imageProcessor: processor,
+          mediaPicker: mediaPicker,
+        ),
+      );
+      await pumpFrames(tester, count: 20);
+      await tester.tap(find.byIcon(Icons.add_rounded));
+      await tester.pump(const Duration(milliseconds: 500));
+      tester
+          .widget<ListTile>(find.widgetWithText(ListTile, 'Media Library'))
+          .onTap!();
+      await tester.pump(const Duration(milliseconds: 100));
+      await tester.pump();
+
+      expect(cancels, 1);
+      expect(find.text('Processing'), findsNothing);
+      expect(
+        tester
+            .widget<AttachmentPreviewStrip>(find.byType(AttachmentPreviewStrip))
+            .attachments,
+        hasLength(1),
+      );
+      expect(find.text('Video processing stopped. Try again.'), findsOneWidget);
+      final notice = tester.widget<SnackBar>(find.byType(SnackBar));
+      final retry = tester.widget<SnackBarAction>(find.byType(SnackBarAction));
+      expect(notice.persist, isFalse);
+      expect(notice.duration, const Duration(seconds: 8));
+      expect(notice.behavior, SnackBarBehavior.floating);
+      expect(
+        notice.margin!.resolve(TextDirection.ltr).bottom,
+        greaterThanOrEqualTo(80),
+      );
+      expect(retry.textColor, isNotNull);
+      expect(retry.textColor, isNot(notice.backgroundColor));
+      tester.widget<SnackBarAction>(find.byType(SnackBarAction)).onPressed();
+      await tester.pump();
+      await tester.pump();
+      expect(attempts, 2);
+      expect(
+        tester
+            .widget<AttachmentPreviewStrip>(find.byType(AttachmentPreviewStrip))
+            .attachments,
+        hasLength(2),
+      );
+      await tester.tap(find.byIcon(Icons.add_rounded));
+      await tester.pump(const Duration(milliseconds: 500));
+      tester
+          .widget<ListTile>(find.widgetWithText(ListTile, 'Media Library'))
+          .onTap!();
+      await tester.pump(const Duration(milliseconds: 100));
+      await tester.pump();
+      expect(attempts, 3);
+      await tester.pump(const Duration(milliseconds: 300));
+      await tester.pump();
+      expect(
+        find.text(
+          'Video processing is unavailable. Restart MKnoon to add videos.',
+        ),
+        findsOneWidget,
+      );
+      expect(find.byType(SnackBarAction), findsNothing);
+      await tester.tap(find.byIcon(Icons.add_rounded));
+      await tester.pump(const Duration(milliseconds: 500));
+      tester
+          .widget<ListTile>(find.widgetWithText(ListTile, 'Media Library'))
+          .onTap!();
+      await tester.pump();
+      await tester.pump();
+      expect(attempts, 4);
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(find.text('Media unavailable'), findsOneWidget);
+      expect(
+        tester
+            .widget<AttachmentPreviewStrip>(find.byType(AttachmentPreviewStrip))
+            .attachments
+            .where((attachment) => attachment.path == video.path),
+        isEmpty,
+      );
     });
 
     testWidgets(

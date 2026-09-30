@@ -1,0 +1,7 @@
+appId: com.mknoon.app
+name: T15 Pixel unblocks from the chat list, then checks the blocked-time message did not arrive
+---
+- runFlow: t15_unblock_list_android.yaml
+- runFlow: ../ensure_chat.yaml
+- takeScreenshot: t15_android_after_unblock
+- assertNotVisible: ".*T15 while blocked ${NONCE}.*"

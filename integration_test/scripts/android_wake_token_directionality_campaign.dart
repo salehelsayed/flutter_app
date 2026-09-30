@@ -14,6 +14,15 @@ import '_android_app_package.dart';
 const int androidWakeTokenDirectionalityAssertionCount = 2;
 const String androidWakeTokenArtifactValidatorId = 'validateWakeTokenArtifact';
 
+/// Stop the command poller before publishing its next one-use command.
+Future<void> stageAndroidWakeCommand({
+  required Future<void> Function() stop,
+  required Future<void> Function() stage,
+}) async {
+  await stop();
+  await stage();
+}
+
 /// Typed result consumed by the universal Sims runner.
 final class AndroidWakeTokenDirectionalityCampaignResult {
   const AndroidWakeTokenDirectionalityCampaignResult._({
@@ -494,6 +503,7 @@ final class _AndroidWakeTokenHost {
       device: party.deviceId,
       artifact: artifact,
     );
+    await _stop(party);
     await _writeAppFile(
       party,
       'auto_setup.json',
@@ -577,8 +587,13 @@ final class _AndroidWakeTokenHost {
     required String runId,
     required String nonce,
   }) async {
-    await _deleteAppFile(party, 'intro_e2e_result.json');
-    await _writeAppFile(party, 'intro_e2e_config.json', jsonEncode(config));
+    await stageAndroidWakeCommand(
+      stop: () => _stop(party),
+      stage: () async {
+        await _deleteAppFile(party, 'intro_e2e_result.json');
+        await _writeAppFile(party, 'intro_e2e_config.json', jsonEncode(config));
+      },
+    );
     await _launch(party);
     final deadline = DateTime.now().add(const Duration(minutes: 3));
     while (DateTime.now().isBefore(deadline)) {
@@ -633,11 +648,16 @@ final class _AndroidWakeTokenHost {
     required String stepId,
     required Map<String, Object?> values,
   }) async {
-    await _deleteAppFile(party, 'intro_e2e_result.json');
-    await _writeAppFile(
-      party,
-      'intro_e2e_config.json',
-      jsonEncode(<String, Object?>{'stepId': stepId, ...values}),
+    await stageAndroidWakeCommand(
+      stop: () => _stop(party),
+      stage: () async {
+        await _deleteAppFile(party, 'intro_e2e_result.json');
+        await _writeAppFile(
+          party,
+          'intro_e2e_config.json',
+          jsonEncode(<String, Object?>{'stepId': stepId, ...values}),
+        );
+      },
     );
   }
 
@@ -668,12 +688,15 @@ final class _AndroidWakeTokenHost {
     throw TimeoutException('Generic step $stepId timed out.');
   }
 
-  Future<void> _launch(_WakeParty party) async {
+  Future<void> _stop(_WakeParty party) async {
     await _adbShell(party.deviceId, <String>[
       'am',
       'force-stop',
       packageName,
     ], mutate: true);
+  }
+
+  Future<void> _launch(_WakeParty party) async {
     await _adbShell(party.deviceId, <String>[
       'am',
       'start',

@@ -211,22 +211,58 @@ printf 'SIMS_RESULT_JSON={"status":"PASS","assertionsAttempted":1,"artifactPrese
     expect(execution.stdoutText, isNot(contains('inherited-contamination')));
   });
 
-  test('declared companion build needs both dependency and read resource', () async {
-    for (final includeDependency in [false, true]) {
-      final row = _processRow(declaredBuildException: true).copyWith(
-        dependencies: includeDependency ? ['build.android.e2e.group_media_269'] : [],
-        resources: const [ResourceLock(name: 'build:android.e2e.group_media_269', access: ResourceAccess.read)],
-        command: const ['bash', '-c', r"""printf 'companion=%s\n' "${SIMS_ARTIFACT_ANDROID_E2E_GROUP_MEDIA_269-unset}"
-printf 'SIMS_RESULT_JSON={"status":"PASS","assertionsAttempted":1,"artifactPresent":false,"printOnly":false}\n'"""],
-      );
-      final result = await SimsProcessExecutor(
-        logDirectory: Directory('${temporaryDirectory.path}/companion-$includeDependency'),
-        environment: Platform.environment,
-        preparedArtifacts: const {'android.e2e.group_media_269':'attested-companion.apk'},
-      ).execute(row);
-      expect(result.stdoutText, contains(includeDependency ? 'companion=attested-companion.apk' : 'companion=unset'));
-    }
-  });
+  test(
+    'declared companion build needs both dependency and read resource',
+    () async {
+      final companion = File(
+        '${temporaryDirectory.path}/attested-companion.apk',
+      )..writeAsStringSync('companion');
+      final companionDigest = sha256
+          .convert(companion.readAsBytesSync())
+          .toString();
+      for (final includeDependency in [false, true]) {
+        final row = _processRow(declaredBuildException: true).copyWith(
+          dependencies: includeDependency
+              ? ['build.android.e2e.group_media_269']
+              : [],
+          resources: const [
+            ResourceLock(
+              name: 'build:android.e2e.group_media_269',
+              access: ResourceAccess.read,
+            ),
+          ],
+          command: const [
+            'bash',
+            '-c',
+            r"""printf 'companion=%s\n' "${SIMS_ARTIFACT_ANDROID_E2E_GROUP_MEDIA_269-unset}"
+printf 'SIMS_RESULT_JSON={"status":"PASS","assertionsAttempted":1,"artifactPresent":false,"printOnly":false}\n'""",
+          ],
+        );
+        final result = await SimsProcessExecutor(
+          logDirectory: Directory(
+            '${temporaryDirectory.path}/companion-$includeDependency',
+          ),
+          environment: Platform.environment,
+          preparedArtifacts: {'android.e2e.group_media_269': companion.path},
+          preparedInputDigests: const {
+            'android.e2e.group_media_269': _zeroDigest,
+          },
+          preparedArtifactDigests: {
+            'android.e2e.group_media_269': companionDigest,
+          },
+        ).execute(row);
+        expect(result.verdict.status, SimsVerdictStatus.pass);
+        expect(
+          result.stdoutText,
+          contains(
+            includeDependency
+                ? 'companion=${companion.path}'
+                : 'companion=unset',
+          ),
+        );
+      }
+    },
+  );
 
   test('undeclared child flutter build overrides a forged PASS', () async {
     final bin = Directory('${temporaryDirectory.path}/bin')..createSync();

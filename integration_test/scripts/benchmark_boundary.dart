@@ -57,8 +57,9 @@ class BenchmarkBoundary {
     final port = int.parse(match[4]!);
     if (port < 1 ||
         port > 65535 ||
-        (match[3] == 'udp') != (match[5] == '/quic-v1'))
+        (match[3] == 'udp') != (match[5] == '/quic-v1')) {
       return false;
+    }
     final host = match[2]!;
     if (match[1]!.startsWith('dns')) {
       if (host.length > 253 ||
@@ -68,16 +69,18 @@ class BenchmarkBoundary {
                 (label) => !RegExp(
                   r'^[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?$',
                 ).hasMatch(label),
-              ))
+              )) {
         return false;
+      }
     } else {
       final address = InternetAddress.tryParse(host);
       if (address == null ||
           address.type !=
               (match[1] == 'ip4'
                   ? InternetAddressType.IPv4
-                  : InternetAddressType.IPv6))
+                  : InternetAddressType.IPv6)) {
         return false;
+      }
     }
     final id = match[6]!;
     if (id.length != 46 && id.length != 52) return false;

@@ -68,6 +68,7 @@ class _ForegroundCallOverlayState extends State<ForegroundCallOverlay> {
   CallId? _nameCallId;
   String? _namePeerId;
   String _contactDisplayName = _unknownContactName;
+  bool _nameLoaded = false;
   int _capabilityGeneration = 0;
   int _nameGeneration = 0;
   Timer? _terminalNoticeTimer;
@@ -94,7 +95,7 @@ class _ForegroundCallOverlayState extends State<ForegroundCallOverlay> {
       _lockedProjection.update(
         capability: widget.capability,
         projection: _projection,
-        displayName: _contactDisplayName,
+        displayName: _nameLoaded ? _contactDisplayName : null,
         light: _lockedLight,
         l10n: l10n,
       ),
@@ -208,6 +209,7 @@ class _ForegroundCallOverlayState extends State<ForegroundCallOverlay> {
         _nameCallId = null;
         _namePeerId = null;
         _contactDisplayName = _unknownContactName;
+        _nameLoaded = false;
         return;
       }
 
@@ -219,6 +221,7 @@ class _ForegroundCallOverlayState extends State<ForegroundCallOverlay> {
       _nameCallId = callId;
       _namePeerId = peerId;
       _contactDisplayName = _unknownContactName;
+      _nameLoaded = false;
       lookupCallId = callId;
       lookupPeerId = peerId;
       lookupGeneration = ++_nameGeneration;
@@ -267,6 +270,7 @@ class _ForegroundCallOverlayState extends State<ForegroundCallOverlay> {
 
     final normalizedName = loadedName?.trim();
     setState(() {
+      _nameLoaded = normalizedName != null && normalizedName.isNotEmpty;
       _contactDisplayName = normalizedName == null || normalizedName.isEmpty
           ? _unknownContactName
           : normalizedName;

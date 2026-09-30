@@ -1,0 +1,8 @@
+appId: com.mknoon.app
+name: R1 Pixel answers the call that was restored after the app process was killed
+---
+- extendedWaitUntil: { visible: "Answer", timeout: 60000 }
+- takeScreenshot: r1_restored_incoming_android
+- tapOn: "Answer"
+- extendedWaitUntil: { visible: "(.*\\n)?Connected(\\n.*)?", timeout: 60000 }
+- takeScreenshot: r1_connected_android

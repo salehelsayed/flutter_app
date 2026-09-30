@@ -77,11 +77,14 @@ Future<void> main() async {
 probe=Path(defines['BENCHMARK_SHARED_DIR'])/'actual_harness_helpers.dart'
 probe.write_text("import 'dart:async';\nimport 'dart:convert';\nimport 'dart:io';\n"+
  ("import '"+(root/'integration_test/_support/cli_peer_fixture.dart').as_uri()+"';\n" if gp else '')+helpers+main)
+name='benchmark WRONG' if os.environ.get('BOUNDARY_MODE')=='wrong-child' else 'benchmark '+key
+print(json.dumps(dict(type='testStart',test=dict(id=1,name=name))),flush=True)
+if os.environ.get('BOUNDARY_MODE')=='wrong-child':sys.exit(0)
 run=subprocess.run([os.environ['BOUNDARY_DART'],*['-D'+k+'='+v for k,v in defines.items()],str(probe)],capture_output=True,text=True,timeout=10)
 if run.returncode:print(run.stdout+run.stderr,file=sys.stderr);sys.exit(run.returncode)
 with open(os.environ['BOUNDARY_CAPTURE'],'a') as f:f.write(json.dumps({'tool':'host-protocol','key':key,'completed':True})+'\n')
 name='benchmark WRONG' if os.environ.get('BOUNDARY_MODE')=='wrong-child' else 'benchmark '+key
-events=[dict(type='testStart',test=dict(id=1,name=name)),dict(type='testDone',testID=1,result='success',skipped=False),dict(type='done',success=True)]
+events=[dict(type='testDone',testID=1,result='success',skipped=False),dict(type='done',success=True)]
 if os.environ.get('BOUNDARY_MODE')=='skip':events.insert(1,dict(type='print',testID=1,message='[SKIP] synthetic missing fixture'))
 for event in events:print(json.dumps(event),flush=True)
 '''

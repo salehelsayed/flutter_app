@@ -1,0 +1,7 @@
+appId: com.mknoon.app
+name: T33 iPhone sends two messages to the killed Pixel app
+---
+- runFlow: ../ensure_chat.yaml
+- runFlow: { file: ../send_text.yaml, env: { MSG: "T33 wake 1 ${NONCE}" } }
+- runFlow: { file: ../send_text.yaml, env: { MSG: "T33 wake 2 ${NONCE}" } }
+- runFlow: ../kb_hide.yaml

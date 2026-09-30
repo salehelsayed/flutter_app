@@ -134,6 +134,7 @@ require(analyzer_row.get("dependencies") == [],
         "analyzer dependencies must remain empty")
 require(analyzer_row.get("resources") == [
     {"name": "host.cpu", "access": "read"},
+    {"name": "build:shared-native", "access": "exclusive"},
 ], "analyzer resource contract drifted")
 require(analyzer_row.get("targetCapabilities") == [
     "host.flutter-sdk", "host.bash", "host.git",
@@ -178,6 +179,7 @@ require(runtime_row.get("dependencies") == [],
         "runtime-root dependencies must remain empty")
 require(runtime_row.get("resources") == [
     {"name": "host.cpu", "access": "read"},
+    {"name": "build:shared-native", "access": "exclusive"},
 ], "runtime-root resource contract drifted")
 require(runtime_row.get("targetCapabilities") == [
     "host.flutter-tester", "host.bash", "host.git",
@@ -224,6 +226,7 @@ require(architecture_row.get("dependencies") == [],
         "architecture-boundary dependencies must remain empty")
 require(architecture_row.get("resources") == [
     {"name": "host.cpu", "access": "read"},
+    {"name": "build:shared-native", "access": "exclusive"},
 ], "architecture-boundary resource contract drifted")
 require(architecture_row.get("targetCapabilities") == [
     "host.flutter-tester", "host.bash", "host.git",

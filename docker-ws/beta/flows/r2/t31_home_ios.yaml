@@ -1,0 +1,5 @@
+appId: com.mknoon.app
+name: T31 iPhone goes to the home screen
+---
+- runFlow: ../ensure_chat.yaml
+- pressKey: home

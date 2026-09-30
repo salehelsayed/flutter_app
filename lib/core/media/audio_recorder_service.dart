@@ -1,6 +1,7 @@
 import 'package:flutter_app/features/conversation/domain/models/audio_recording.dart';
 
 typedef IsMicrophoneCaptureActive = bool Function();
+typedef PrepareMicrophoneCaptureForCall = Future<void> Function();
 
 /// A synchronous, exclusive token for one microphone-capture operation.
 ///
@@ -30,18 +31,34 @@ final class MicrophoneCaptureLeaseCoordinator {
 
   final IsMicrophoneCaptureActive _isCaptureActive;
   Object? _owner;
+  PrepareMicrophoneCaptureForCall? _prepareOwnerForCall;
 
-  MicrophoneCaptureLease acquire() {
+  MicrophoneCaptureLease acquire({
+    PrepareMicrophoneCaptureForCall? prepareForCall,
+  }) {
     if (_owner != null || _isCaptureActive()) {
       throw const MicrophoneCaptureLeaseRefused();
     }
     final token = Object();
     _owner = token;
+    _prepareOwnerForCall = prepareForCall;
     return _ExclusiveMicrophoneCaptureLease(this, token);
   }
 
+  /// Gives the current capture owner a chance to finish before call audio
+  /// acquires the microphone. Owners without a handoff remain exclusive.
+  Future<void> prepareForCall() async {
+    final prepare = _prepareOwnerForCall;
+    if (_owner != null && prepare != null) await prepare();
+    if (_owner != null || _isCaptureActive()) {
+      throw const MicrophoneCaptureLeaseRefused();
+    }
+  }
+
   void _release(Object token) {
-    if (identical(_owner, token)) _owner = null;
+    if (!identical(_owner, token)) return;
+    _owner = null;
+    _prepareOwnerForCall = null;
   }
 }
 

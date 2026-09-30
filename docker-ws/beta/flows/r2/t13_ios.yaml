@@ -1,0 +1,20 @@
+appId: com.mknoon.app
+name: T13 iPhone sends two messages, deletes one for itself only, copies the other
+---
+- runFlow: ../ensure_chat.yaml
+- runFlow: { file: ../send_text.yaml, env: { MSG: "T13 keep-on-pixel ${NONCE}" } }
+- runFlow: { file: ../send_text.yaml, env: { MSG: "T13 copy-me ${NONCE}" } }
+- runFlow: ../kb_hide.yaml
+- runFlow: { file: ../sleep.yaml, env: { MS: 8000 } }
+- longPressOn: ".*T13 keep-on-pixel ${NONCE}.*"
+- tapOn: "Delete"
+- tapOn: "Delete for Me"
+- extendedWaitUntil: { notVisible: ".*T13 keep-on-pixel ${NONCE}.*", timeout: 15000 }
+- longPressOn: ".*T13 copy-me ${NONCE}.*"
+- tapOn: "Copy"
+- extendedWaitUntil: { visible: ".*copied.*", timeout: 5000, optional: true }
+- takeScreenshot: t13_copied
+- runFlow:
+    when: { visible: "Dismiss" }
+    commands: [ { tapOn: { point: "50%,11%" } } ]
+- runFlow: { file: ../send_text.yaml, env: { MSG: "T13 done ${NONCE}" } }

@@ -1,9 +1,9 @@
-# Vendored `bonsoir_darwin` 5.1.3 — off-main DNS-SD broadcast patch
+# Vendored `bonsoir_darwin` 5.1.3 — DNS-SD lifecycle patches
 
 This directory is a **vendored fork** of the pub.dev package `bonsoir_darwin`
 version **5.1.3** (sha256 `2d25c70f0d09260be1c2ab583b80dd89cbbfd59997579dadf789c5af00c7b2e4`,
 the version pinned transitively by `bonsoir ^5.1.0` → `bonsoir 5.1.11`). It carries
-**one surgical native patch** so the patch is durable and reviewable. Everything
+**two surgical native patches** so the fixes are durable and reviewable. Everything
 else is byte-identical to upstream.
 
 Plan of record: `Test-Flight-Improv/175-bonsoir-broadcast-off-main-thread-tdd-plan.md`.
@@ -54,7 +54,7 @@ that fix to the **discovery resolve** path
 (`Classes/Discovery/BonsoirServiceDiscovery.swift`), never to this **broadcast**
 leg. This fork applies the same, proven pattern to the broadcast leg.
 
-## The patch (the ONLY behavioral change)
+## Broadcast patch
 
 File: `darwin/Classes/Broadcast/BonsoirServiceBroadcast.swift`
 
@@ -63,8 +63,7 @@ File: `darwin/Classes/Broadcast/BonsoirServiceBroadcast.swift`
    `DispatchSource.makeReadSource(fileDescriptor: DNSServiceRefSockFD(sdRef),
    queue: DispatchQueue.global(qos: .userInitiated))`. The read source's
    event handler calls `DNSServiceProcessResult` on that background queue, so the
-   calling (main) thread is never blocked. This mirrors
-   `BonsoirServiceDiscovery.resolveService` exactly.
+   calling (main) thread is never blocked.
 2. **`sdRef` is freed race-free.** The read source's **cancel handler** calls
    `DNSServiceRefDeallocate(sdRef)`. libdispatch guarantees the cancel handler
    runs *after* the last event-handler invocation has returned, exactly once → no
@@ -76,7 +75,7 @@ File: `darwin/Classes/Broadcast/BonsoirServiceBroadcast.swift`
 3. **`registerCallback` hops to main.** Because the C callback now fires on the
    background drain queue, and `FlutterEventSink` is main-thread-only, the
    `onSuccess`/`onError` work is wrapped in `DispatchQueue.main.async` — again
-   mirroring `BonsoirServiceDiscovery.resolveCallback`. The C `name` pointer is
+   as in the discovery callback. The C `name` pointer is
    copied to a Swift `String` *before* the async hop (it is only valid for the
    callback's duration).
 4. **Test seam.** `static var processResult` defaults to the real
@@ -89,6 +88,26 @@ The Dart side is **unchanged**: `bonsoir_discovery_service.dart`'s
 `bonsoir_platform_interface .../actions/action.dart` `start()`), which now returns
 immediately. The `broadcastStarted` event still arrives async over the separate
 event channel; nothing awaits it before the `start()` Future completes.
+
+## Discovery resolve patch (R2-2, 2026-09-28)
+
+The round-2 beta report (`artifacts/beta-20260927/BETA_REPORT_R2.md`) records four
+iPhone crashes in the resolve path. Upstream's read source moved
+`DNSServiceProcessResult` off-main, but the resolve callback freed its DNS-SD
+handle on main while the read handler could still be using it. The callback
+also mutated a `BonsoirService` off-main while Flutter events serialized that
+same object on main.
+
+`darwin/Classes/Discovery/BonsoirServiceDiscovery.swift` now retains each read
+source with its handle. Resolution completion and discovery disposal cancel the
+source; only its cancel handler deallocates the handle, on the same serial queue
+as `DNSServiceProcessResult`, after an active handler has returned. Resolve
+callbacks copy DNS-SD strings before dispatching to main, where they update the
+service, emit its event and cancel the source. Late callbacks after disposal are
+ignored. Failure before a source exists still deallocates directly.
+
+The pod compiled for the iOS simulator after this change. A long-running LAN
+discovery device run is still needed to establish the crash is gone in practice.
 
 ## How it is wired (do not break)
 
@@ -116,7 +135,9 @@ grep -c "DispatchSourceRead" \
 ## Differences from pristine upstream 5.1.3
 
 - `darwin/Classes/Broadcast/BonsoirServiceBroadcast.swift` — the off-main patch
-  above (the only functional change).
+  above.
+- `darwin/Classes/Discovery/BonsoirServiceDiscovery.swift` — the R2-2 handle
+  lifecycle and main-thread service update patch.
 - `pubspec.yaml` — removed the upstream monorepo-relative
   `dependency_overrides: bonsoir_platform_interface {path: ../bonsoir_platform_interface/}`.
   That path does not exist in this vendored layout, and pub honors
@@ -134,10 +155,9 @@ grep -c "DispatchSourceRead" \
   override always wins). If you ever remove the override, the patch silently
   reverts to the pub.dev copy and the watchdog freeze returns — keep the override.
 - **Re-applying on a deliberate upgrade.** To move to a newer `bonsoir_darwin`:
-  re-vendor that version here, re-apply the four changes above to its
-  `BonsoirServiceBroadcast.swift` (diff against this file), and confirm upstream
-  has not already moved the broadcast drain off-main (check its CHANGELOG /
-  `start()` — if it has, drop this fork and the override).
+  re-vendor that version here, compare both patched Swift files with upstream,
+  and retain whichever fixes upstream has not incorporated. Remove the override
+  only after both lifecycle fixes are present upstream.
 - **macOS parity.** `sharedDarwinSource: true` means the same Swift serves macOS;
   the patch covers macOS automatically once `macos/` pods are reinstalled. The
   app's primary target is iOS.

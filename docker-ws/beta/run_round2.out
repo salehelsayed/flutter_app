@@ -1,0 +1,10 @@
+FLOW t33_prep android PASS rc=0
+FLOW t33_send ios PASS rc=0
+FLOW t33_open android PASS rc=0
+FLOW t34_landscape android FAIL rc=1
+FLOW t34_landscape ios FAIL rc=1
+FLOW t35a_pixel_ar android PASS rc=0
+FLOW t35a_pixel_ar ios FAIL rc=1
+FLOW t35b_iphone_ar ios FAIL rc=1
+FLOW t35b_iphone_ar android FAIL rc=1
+/Volumes/CrucialX9/flutter_app/docker-ws/beta/run_round2.sh: line 292: 18402 Terminated: 15          nohup perl -e 'use POSIX qw(setsid); setsid(); exec @ARGV' "$ANDROID_HOME/platform-tools/adb" -s "$SERIAL" logcat -T 1 -v threadtime > "$RUN/android_logcat_live.txt" 2>&1 < /dev/null

@@ -1541,7 +1541,7 @@ void _runBob() {
 
     chatConversationTracker.clear();
 
-    for (final scenario in _mediaNotificationScenarios) {
+    for (final (index, scenario) in _mediaNotificationScenarios.indexed) {
       final signal = scenario.signal;
       final expectedAttachment = _mediaAttachmentForScenario(
         scenario,
@@ -1608,7 +1608,15 @@ void _runBob() {
         '${signal}_verdict_ack',
         timeout: const Duration(seconds: 300),
       );
-      await notificationService.clearDeliveredNotifications();
+      // S5..S13 assert primary-channel continuity when the next media item
+      // is tone-debounced. Preserve the actual card within each conversation;
+      // clearing it would turn that update into a first silent publication.
+      // Clear only between lanes (or before S14) so the OS count stays exact.
+      final nextIndex = index + 1;
+      if (nextIndex == _mediaNotificationScenarios.length ||
+          _mediaNotificationScenarios[nextIndex].lane != scenario.lane) {
+        await notificationService.clearDeliveredNotifications();
+      }
     }
 
     // ════════════════════════════════════════════════════════════════

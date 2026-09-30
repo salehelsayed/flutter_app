@@ -1,0 +1,9 @@
+appId: com.mknoon.app
+name: R2-10 locked Pixel - the call opens the full-screen incoming screen over the lock screen, decline there
+---
+- extendedWaitUntil: { visible: "Decline|DECLINE", timeout: 240000 }
+- runFlow: { file: ../sleep.yaml, env: { MS: 1500 } }
+- takeScreenshot: v33_locked_ringing
+- tapOn: "Decline|DECLINE"
+- runFlow: { file: ../sleep.yaml, env: { MS: 3000 } }
+- takeScreenshot: v33_locked_after_decline

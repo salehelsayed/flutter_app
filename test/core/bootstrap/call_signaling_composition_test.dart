@@ -12,6 +12,7 @@ import 'package:fake_async/fake_async.dart';
 import 'package:flutter_app/app/bootstrap/call_signaling_composition.dart';
 import 'package:flutter_app/app/bootstrap/production_call_signaling_graph.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
+import 'package:flutter_app/core/media/audio_recorder_service.dart';
 import 'package:flutter_app/core/database/migrations/117_call_history.dart';
 import 'package:flutter_app/core/database/migrations/112_direct_linked_device_addressing.dart';
 import 'package:flutter_app/core/permissions/mic_permission_gateway.dart';
@@ -339,6 +340,13 @@ final class _P2P implements P2PService {
   NodeState state;
   final StreamController<ChatMessage> messages =
       StreamController<ChatMessage>.broadcast();
+  final StreamController<NodeState> states =
+      StreamController<NodeState>.broadcast();
+
+  void updateState(NodeState next) {
+    state = next;
+    states.add(next);
+  }
 
   @override
   NodeState get currentState => state;
@@ -347,7 +355,7 @@ final class _P2P implements P2PService {
   Stream<ChatMessage> get messageStream => messages.stream;
 
   @override
-  Stream<NodeState> get stateStream => const Stream<NodeState>.empty();
+  Stream<NodeState> get stateStream => states.stream;
 
   @override
   Future<SendMessageResult> sendMessageWithReply(
@@ -1500,6 +1508,51 @@ void main() {
       expect(graph.coordinator.activeSession?.state, CallState.accepted);
     },
   );
+
+  test('production Answer waits for voice capture before accepting', () async {
+    final stopGate = Completer<void>();
+    var handoffs = 0;
+    final captures = MicrophoneCaptureLeaseCoordinator(
+      isCaptureActive: () => false,
+    );
+    late final MicrophoneCaptureLease recordingLease;
+    recordingLease = captures.acquire(
+      prepareForCall: () async {
+        handoffs++;
+        await stopGate.future;
+        recordingLease.release();
+      },
+    );
+    final fixture = await _createProductionSpeakerRouteFixture(
+      microphoneCaptureLeases: captures,
+    );
+    final graph = fixture.graph;
+    addTearDown(() async {
+      await graph.shutdown();
+      await graph.coordinator.dispose();
+    });
+    for (final type in <CallEventType>[
+      CallEventType.incomingValidated,
+      CallEventType.systemUiPresented,
+    ]) {
+      await graph.coordinator.dispatch(
+        CallEvent(
+          type: type,
+          eventId: 'capture-answer-${type.name}',
+          occurredAt: graph.coordinator.clock(),
+          callId: _callA,
+        ),
+      );
+    }
+
+    final answering = graph.answer(_callA);
+    await Future<void>.delayed(Duration.zero);
+    expect(handoffs, 1);
+    expect(graph.coordinator.activeSession?.state, CallState.ringing);
+    stopGate.complete();
+    expect(await answering, ForegroundCallActionResult.applied);
+    expect(graph.coordinator.activeSession?.state, CallState.accepted);
+  });
 
   setUpAll(sqfliteFfiInit);
 
@@ -3643,6 +3696,7 @@ void main() {
       final bridge = _Bridge();
       final p2p = _P2P(state: const NodeState(peerId: '', isStarted: false));
       addTearDown(p2p.messages.close);
+      addTearDown(p2p.states.close);
       final router = IncomingMessageRouter(p2pService: p2p)..start();
       addTearDown(router.dispose);
       final identity = IdentityModel(
@@ -3665,6 +3719,7 @@ void main() {
         p2pService: p2p,
         messageRouter: router,
         loadIdentity: () async => identity,
+        callTransportStartupWait: const Duration(seconds: 2),
         networkEffectsAllowed: () => true,
         isVoiceNoteRecording: () => false,
         issuedCallWakeHandleStore: callWakeStores.issued,
@@ -3697,12 +3752,17 @@ void main() {
       );
       addTearDown(composition.shutdown);
 
-      await composition.start();
+      final starting = composition.start();
+      await Future<void>.delayed(Duration.zero);
 
       expect(composition.isStarted, isFalse);
       expect(bridge.commands, isEmpty);
 
-      p2p.state = const NodeState(peerId: 'local-account', isStarted: true);
+      p2p.updateState(
+        const NodeState(peerId: 'local-account', isStarted: true),
+      );
+      await starting;
+      expect(composition.isStarted, isTrue);
       await composition.onResume();
 
       expect(composition.isStarted, isTrue);
@@ -3819,10 +3879,10 @@ void main() {
       );
       expect(
         bridge.commands.where((command) => command == 'call_token_set_v1'),
-        hasLength(1),
-        reason: 'start publishes once; the advertisement finds it unchanged',
+        hasLength(greaterThanOrEqualTo(2)),
+        reason: 'advertisements restore tokens revoked after a failed wake',
       );
-      final publication = bridge.requests.singleWhere(
+      final publication = bridge.requests.firstWhere(
         (request) => request['cmd'] == 'call_token_set_v1',
       );
       expect(publication['payload'], <String, Object?>{
@@ -3834,8 +3894,8 @@ void main() {
       expect(tokenOutcomes.first, 'published');
       expect(
         tokenOutcomes.skip(1),
-        everyElement('unchanged'),
-        reason: 'every later advertisement finds the token already published',
+        everyElement('published'),
+        reason: 'every later advertisement renews the token on the relay',
       );
 
       await composition.shutdown();
@@ -5824,6 +5884,7 @@ Future<_ProductionSpeakerRouteFixture> _createProductionSpeakerRouteFixture({
   ],
   CallAudioOutputRoute initialRoute = CallAudioOutputRoute.speaker,
   NativeCallLifecycleAdapter Function(CallCoordinator)? nativeLifecycleFactory,
+  MicrophoneCaptureLeaseCoordinator? microphoneCaptureLeases,
 }) async {
   const nowMs = 2_000_000;
   final now = DateTime.fromMillisecondsSinceEpoch(nowMs, isUtc: true);
@@ -5932,6 +5993,7 @@ Future<_ProductionSpeakerRouteFixture> _createProductionSpeakerRouteFixture({
         ? nativeLifecycle
         : null,
     mediaOwner: mediaOwner,
+    microphoneCaptureLeases: microphoneCaptureLeases,
     networkEffectsAllowed: () => true,
     nowMs: () => nowMs,
   );

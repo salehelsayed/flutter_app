@@ -1,0 +1,8 @@
+RUN=/Volumes/CrucialX9/flutter_app/artifacts/beta-20260925/run-20260925-225444
+Success
+android: versionName=1.0.0-237e88dd5.d252.fix-0cf14ffdb.t260925220714
+ios(rel): 260925205436  expected 260925205436
+ios(nock): 260925205436  expected 260925205436
+FLOW ready_s09 ios PASS rc=0
+FLOW ready_s09 android PASS rc=0
+FLOW s09_back ios FAIL rc=1

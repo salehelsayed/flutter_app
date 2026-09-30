@@ -4,6 +4,7 @@ import 'package:flutter_app/features/call/application/call_cleanup_coordinator.d
 import 'package:flutter_app/features/call/application/call_coordinator.dart';
 import 'package:flutter_app/features/call/application/call_history_projector.dart';
 import 'package:flutter_app/features/call/application/handle_incoming_call_signal.dart';
+import 'package:flutter_app/features/call/application/locked_call_presentation.dart';
 import 'package:flutter_app/features/call/data/call_history_repository.dart';
 import 'package:flutter_app/features/call/domain/call_engine.dart';
 import 'package:flutter_app/features/call/domain/call_end_reason.dart';
@@ -289,6 +290,89 @@ void main() {
       await native.events.close();
     },
   );
+
+  test(
+    'early ringing name is replayed after native presentation binds',
+    () async {
+      final native = _NativeHarness()..attachResult = _emptyBatch();
+      native.results['updatePresentation'] = true;
+      final coordinator = _coordinator();
+      final adapter = AndroidCallLifecycleAdapter(
+        invokeMethod: native.invoke,
+        nativeEvents: native.events.stream,
+        coordinator: coordinator,
+        resolveAuthenticatedHandle: (id) => id == _callId ? _callHandle : null,
+        clock: () => _now,
+      );
+      addTearDown(() async {
+        await adapter.close();
+        await coordinator.dispose();
+        await native.events.close();
+      });
+      LockedCallPresentation named(String name) => LockedCallPresentation(
+        displayName: name,
+        avatarPng: null,
+        state: 'ringing',
+        connectedAtMs: null,
+        light: false,
+        muted: false,
+        muteAvailable: false,
+        speakerOn: false,
+        speakerAvailable: false,
+        routeLabel: '',
+      );
+
+      await adapter.start();
+      await adapter.updateLockedPresentation(_callId, named('Unknown contact'));
+      await adapter.updateLockedPresentation(_callId, named('Beta iPhone'));
+      expect(native.callsOf('updatePresentation'), isEmpty);
+
+      expect(await adapter.present(_presentation()), isTrue);
+      final updates = native.callsOf('updatePresentation');
+      expect(updates, hasLength(1));
+      expect(updates.single.arguments['displayName'], 'Beta iPhone');
+      expect(updates.single.arguments['callHandle'], _callHandle);
+      expect(
+        native.calls.indexOf(updates.single),
+        greaterThan(
+          native.calls.indexOf(native.callsOf('presentAuthenticated').single),
+        ),
+      );
+    },
+  );
+
+  test('authenticated contact name is sent only for the bound call', () async {
+    final native = _NativeHarness()..attachResult = _emptyBatch();
+    native.results['updateAuthenticatedContactName'] = true;
+    final coordinator = _coordinator();
+    final adapter = _adapter(native, coordinator, <CallId, String>{
+      _callId: _callHandle,
+    });
+    addTearDown(() async {
+      await adapter.close();
+      await coordinator.dispose();
+      await native.events.close();
+    });
+
+    expect(
+      await adapter.updateAuthenticatedContactName(_callId, 'Alice'),
+      isFalse,
+    );
+    expect(await adapter.present(_presentation()), isTrue);
+    expect(
+      await adapter.updateAuthenticatedContactName(_callId, 'Alice'),
+      isTrue,
+    );
+    expect(
+      native.callsOf('updateAuthenticatedContactName').single.arguments,
+      <String, Object?>{
+        'version': 1,
+        'callHandle': _callHandle,
+        'displayName': 'Alice',
+      },
+    );
+    expect(await adapter.updateAuthenticatedContactName(_callId, ' '), isFalse);
+  });
 
   test('does not attach when native capability enable is not true', () async {
     final native = _NativeHarness()

@@ -1,0 +1,8 @@
+appId: com.mknoon.app
+name: T09 re-check - iPhone shows the Pixel's long text and its own three
+---
+- runFlow: ../ensure_chat.yaml
+- scrollUntilVisible: { element: ".*T09 long ${NONCE}.*", direction: UP, timeout: 60000 }
+- takeScreenshot: t09_recheck_long
+- scrollUntilVisible: { element: ".*T09 url https://example.com/r2.*${NONCE}.*", direction: DOWN, timeout: 30000 }
+- takeScreenshot: t09_recheck_url

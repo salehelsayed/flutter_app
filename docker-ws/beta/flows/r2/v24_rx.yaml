@@ -1,0 +1,7 @@
+appId: com.mknoon.app
+name: R2-4 receiver waits for the message with caption TEXT, then screenshots it
+---
+- runFlow: ../ensure_chat.yaml
+- extendedWaitUntil: { visible: ".*${TEXT}.*", timeout: 300000 }
+- runFlow: { file: ../sleep.yaml, env: { MS: 20000 } }
+- takeScreenshot: v24_received

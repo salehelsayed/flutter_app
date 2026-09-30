@@ -439,6 +439,16 @@ simulator_id="$(
 readonly IOS_DISPOSITION="$RESULT_DIR/ios-xctest-disposition.txt"
 readonly RUNNER_BUILD_LOG="$RESULT_DIR/runner-simulator-build.log"
 
+# Flutter integration tests leave a temporary listener in Generated.xcconfig.
+# Use the existing Flutter config-only path before native XCTest builds.
+(
+  cd "$REPO_ROOT"
+  run_logged "Flutter native-test Xcode configuration" \
+    "$RESULT_DIR/flutter-xcode-config.log" \
+    flutter build ios --simulator --debug --config-only --no-pub \
+      --target lib/main.dart
+)
+
 only_testing_args=()
 for test_identifier in "${XCODE_TESTS[@]}"; do
   only_testing_args+=("-only-testing:$test_identifier")
@@ -551,6 +561,8 @@ run_expected_swift_mutation() {
     fail "mutation $label did not alter the Swift source"
 
   set +e
+  # These exact assertion failures are intentional. Retain the xcresult and
+  # semantic failure log without spending ten minutes on each OS sysdiagnose.
   xcodebuild \
       -derivedDataPath "$mutation_derived" \
       -workspace "$IOS_WORKSPACE" \
@@ -558,6 +570,7 @@ run_expected_swift_mutation() {
       -configuration Debug \
       -destination "platform=iOS Simulator,id=$simulator_id" \
       -parallel-testing-enabled NO \
+      -collect-test-diagnostics never \
       -resultBundlePath "$result_bundle" \
       "-only-testing:$TC37305" \
       CODE_SIGNING_ALLOWED=NO \

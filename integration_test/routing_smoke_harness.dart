@@ -23,15 +23,18 @@ import 'package:sqflite_sqlcipher/sqflite.dart' as sqlcipher;
 import 'package:flutter_app/core/bridge/go_bridge_client.dart';
 import 'package:flutter_app/core/bridge/p2p_bridge_client.dart';
 import 'package:flutter_app/core/database/helpers/contacts_db_helpers.dart';
+import 'package:flutter_app/core/database/helpers/direct_reaction_inbox_custody_outbox_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/media_attachments_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/media_library_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/messages_db_helpers.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/core/services/p2p_service_impl.dart';
+import 'package:flutter_app/core/services/incoming_message_router.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/contacts/data/repositories/contact_repository_impl.dart';
 import 'package:flutter_app/features/conversation/application/chat_message_listener.dart';
+import 'package:flutter_app/features/conversation/application/message_deletion_listener.dart';
 import 'package:flutter_app/core/lifecycle/handle_app_paused.dart';
 import 'package:flutter_app/app/lifecycle/handle_app_resumed.dart';
 import 'package:flutter_app/features/conversation/application/delete_message_use_case.dart';
@@ -258,6 +261,13 @@ void _runAlice() {
     final custodyDb = DirectInboxCustodyDbBindings(db);
     final messageRepo = MessageRepositoryImpl(
       dbInsertMessage: (row) => dbInsertMessage(db, row),
+      dbApplyIncomingOrdinaryTextMutation:
+          ({required incomingRow, required kind}) =>
+              dbApplyIncomingOrdinaryTextMutation(
+                db,
+                incomingRow: incomingRow,
+                kind: kind,
+              ),
       dbLoadMessagesForContact: (p) => dbLoadMessagesForContact(db, p),
       dbLoadLatestMessageForContact: (p) =>
           dbLoadLatestMessageForContact(db, p),
@@ -308,9 +318,78 @@ void _runAlice() {
                 stagedRow: stagedRow,
                 kind: kind,
               ),
+      dbStageOutgoingDirectTextMutationInboxCustody:
+          ({
+            required expectedRow,
+            required stagedRow,
+            required kind,
+            required recipientPeerId,
+            required eventId,
+            required wireEnvelope,
+          }) => dbStageOutgoingDirectTextMutationInboxCustody(
+            db,
+            expectedRow: expectedRow,
+            stagedRow: stagedRow,
+            kind: kind,
+            recipientPeerId: recipientPeerId,
+            eventId: eventId,
+            wireEnvelope: wireEnvelope,
+          ),
+      dbLoadDirectTextMutationInboxCustodyForEvent:
+          ({required recipientPeerId, required eventId}) =>
+              dbLoadDirectReactionInboxCustodyOutboxForEvent(
+                db,
+                recipientPeerId: recipientPeerId,
+                eventId: eventId,
+              ),
+      dbRecordDirectTextMutationInboxCustodyFailureIfExact:
+          ({
+            required recipientPeerId,
+            required eventId,
+            required expectedWireEnvelope,
+            required errorCode,
+            required attemptedAt,
+          }) => dbRecordDirectReactionInboxCustodyFailureIfExact(
+            db,
+            recipientPeerId: recipientPeerId,
+            eventId: eventId,
+            expectedWireEnvelope: expectedWireEnvelope,
+            errorCode: errorCode,
+            attemptedAt: attemptedAt,
+          ),
+      dbCompleteAcceptedDirectTextMutationInboxCustodyIfExact:
+          ({
+            required recipientPeerId,
+            required eventId,
+            required expectedWireEnvelope,
+            required relayExpiresAt,
+          }) => dbCompleteAcceptedDirectMutationInboxCustodyIfExact(
+            db,
+            recipientPeerId: recipientPeerId,
+            eventId: eventId,
+            expectedWireEnvelope: expectedWireEnvelope,
+            relayExpiresAt: relayExpiresAt,
+          ),
+      dbApplyIncomingDirectMessageDeletion:
+          ({
+            required messageId,
+            required senderPeerId,
+            required deletedAt,
+            required transport,
+            required createdAt,
+          }) => dbApplyIncomingDirectMessageDeletion(
+            db,
+            messageId: messageId,
+            senderPeerId: senderPeerId,
+            deletedAt: deletedAt,
+            transport: transport,
+            createdAt: createdAt,
+          ),
       dbStageOutgoingDirectTextInboxCustody: custodyDb.stage,
       dbLoadDirectInboxCustodyOutbox: custodyDb.load,
       dbLoadDirectInboxCustodyOutboxForMessage: custodyDb.loadForMessage,
+      dbLoadDirectInboxCustodyOutboxOwnerForMessageId:
+          custodyDb.loadOwnerForMessageId,
       dbRecordDirectInboxCustodyFailureIfExact: custodyDb.recordFailureIfExact,
       dbCompleteAcceptedDirectInboxCustodyIfExact:
           custodyDb.completeAcceptedIfExact,
@@ -399,6 +478,29 @@ void _runAlice() {
     mediaAttachmentRepo = MediaAttachmentRepositoryImpl(
       dbSaveMediaAttachmentPreservingLocalState: (row) =>
           dbSaveMediaAttachmentPreservingLocalState(db, row),
+      dbCanApplyGenericMediaAttachmentSave: (row) =>
+          dbCanApplyGenericMediaAttachmentSave(db, row),
+      dbStageOutgoingDirectMediaInboxCustody:
+          ({
+            required expectedRow,
+            required stagedRow,
+            required attachmentRows,
+            required kind,
+            required recipientPeerId,
+            required wireEnvelope,
+            wireMediaBlobManifestHash,
+            wireMediaBlobExpiresAtMs,
+          }) => dbStageOutgoingDirectMediaInboxCustody(
+            db,
+            expectedRow: expectedRow,
+            stagedRow: stagedRow,
+            attachmentRows: attachmentRows,
+            kind: kind,
+            recipientPeerId: recipientPeerId,
+            wireEnvelope: wireEnvelope,
+            wireMediaBlobManifestHash: wireMediaBlobManifestHash,
+            wireMediaBlobExpiresAtMs: wireMediaBlobExpiresAtMs,
+          ),
       dbStageOutgoingOrdinaryAttemptWithMedia:
           ({
             required expectedRow,
@@ -505,19 +607,30 @@ void _runAlice() {
       bridge: bridge,
       inboxStagingRepository: InMemoryInboxStagingRepository(),
     );
-    final started = await p2pService.startNode(ownPrivateKey, ownPeerId);
-    if (!started) throw StateError('P2P node failed to start');
-    await waitForOnline(p2pService, timeout: const Duration(seconds: 60));
-
-    // Wire ChatMessageListener (Alice also receives in S5/S8)
-    var chatListener = ChatMessageListener(
-      chatMessageStream: p2pService.messageStream,
+    final messageRouter = IncomingMessageRouter(p2pService: p2pService);
+    // Subscribe before automatic startup inbox replay, and retain the listener
+    // across node restarts so no broadcast delivery can fall between listeners.
+    final chatListener = ChatMessageListener(
+      chatMessageStream: messageRouter.chatMessageStream,
       messageRepo: messageRepo,
       contactRepo: contactRepo,
       bridge: bridge,
       getOwnMlKemSecretKey: () async => ownMlKemSk,
     );
     chatListener.start();
+    final deletionListener = MessageDeletionListener(
+      deletionStream: messageRouter.messageDeletionStream,
+      messageRepo: messageRepo,
+      contactRepo: contactRepo,
+      bridge: bridge,
+      getOwnMlKemSecretKey: () async => ownMlKemSk,
+    );
+    deletionListener.start();
+    messageRouter.start();
+    final started = await p2pService.startNode(ownPrivateKey, ownPeerId);
+    if (!started) throw StateError('P2P node failed to start');
+    await waitForOnline(p2pService, timeout: const Duration(seconds: 60));
+
 
     // ── Identity exchange ──
     // Write identity first, then signal ready so orchestrator can launch Bob.
@@ -1031,7 +1144,6 @@ void _runAlice() {
     await _signals.waitForSignal('x1_go');
     print('\n--- X1: Both-sides restart ---');
     // Stop node
-    chatListener.dispose();
     await p2pService.stopNode();
     _signals.writeSignal('x1_alice_stopped');
 
@@ -1041,14 +1153,6 @@ void _runAlice() {
     final x1Started = await p2pService.startNode(ownPrivateKey, ownPeerId);
     if (!x1Started) throw StateError('X1: restart failed');
     await waitForOnline(p2pService, timeout: const Duration(seconds: 60));
-    chatListener = ChatMessageListener(
-      chatMessageStream: p2pService.messageStream,
-      messageRepo: messageRepo,
-      contactRepo: contactRepo,
-      bridge: bridge,
-      getOwnMlKemSecretKey: () async => ownMlKemSk,
-    );
-    chatListener.start();
     x1Sw.stop();
     _signals.writeJson('x1_alice_restarted', {
       'restartMs': x1Sw.elapsedMilliseconds,
@@ -1106,6 +1210,8 @@ void _runAlice() {
 
     // Teardown
     chatListener.dispose();
+    deletionListener.dispose();
+    messageRouter.dispose();
     await p2pService.stopNode();
     p2pService.dispose();
     bridge.dispose();
@@ -1150,6 +1256,13 @@ void _runBob() {
     final custodyDb = DirectInboxCustodyDbBindings(db);
     final messageRepo = MessageRepositoryImpl(
       dbInsertMessage: (row) => dbInsertMessage(db, row),
+      dbApplyIncomingOrdinaryTextMutation:
+          ({required incomingRow, required kind}) =>
+              dbApplyIncomingOrdinaryTextMutation(
+                db,
+                incomingRow: incomingRow,
+                kind: kind,
+              ),
       dbLoadMessagesForContact: (p) => dbLoadMessagesForContact(db, p),
       dbLoadLatestMessageForContact: (p) =>
           dbLoadLatestMessageForContact(db, p),
@@ -1200,9 +1313,78 @@ void _runBob() {
                 stagedRow: stagedRow,
                 kind: kind,
               ),
+      dbStageOutgoingDirectTextMutationInboxCustody:
+          ({
+            required expectedRow,
+            required stagedRow,
+            required kind,
+            required recipientPeerId,
+            required eventId,
+            required wireEnvelope,
+          }) => dbStageOutgoingDirectTextMutationInboxCustody(
+            db,
+            expectedRow: expectedRow,
+            stagedRow: stagedRow,
+            kind: kind,
+            recipientPeerId: recipientPeerId,
+            eventId: eventId,
+            wireEnvelope: wireEnvelope,
+          ),
+      dbLoadDirectTextMutationInboxCustodyForEvent:
+          ({required recipientPeerId, required eventId}) =>
+              dbLoadDirectReactionInboxCustodyOutboxForEvent(
+                db,
+                recipientPeerId: recipientPeerId,
+                eventId: eventId,
+              ),
+      dbRecordDirectTextMutationInboxCustodyFailureIfExact:
+          ({
+            required recipientPeerId,
+            required eventId,
+            required expectedWireEnvelope,
+            required errorCode,
+            required attemptedAt,
+          }) => dbRecordDirectReactionInboxCustodyFailureIfExact(
+            db,
+            recipientPeerId: recipientPeerId,
+            eventId: eventId,
+            expectedWireEnvelope: expectedWireEnvelope,
+            errorCode: errorCode,
+            attemptedAt: attemptedAt,
+          ),
+      dbCompleteAcceptedDirectTextMutationInboxCustodyIfExact:
+          ({
+            required recipientPeerId,
+            required eventId,
+            required expectedWireEnvelope,
+            required relayExpiresAt,
+          }) => dbCompleteAcceptedDirectMutationInboxCustodyIfExact(
+            db,
+            recipientPeerId: recipientPeerId,
+            eventId: eventId,
+            expectedWireEnvelope: expectedWireEnvelope,
+            relayExpiresAt: relayExpiresAt,
+          ),
+      dbApplyIncomingDirectMessageDeletion:
+          ({
+            required messageId,
+            required senderPeerId,
+            required deletedAt,
+            required transport,
+            required createdAt,
+          }) => dbApplyIncomingDirectMessageDeletion(
+            db,
+            messageId: messageId,
+            senderPeerId: senderPeerId,
+            deletedAt: deletedAt,
+            transport: transport,
+            createdAt: createdAt,
+          ),
       dbStageOutgoingDirectTextInboxCustody: custodyDb.stage,
       dbLoadDirectInboxCustodyOutbox: custodyDb.load,
       dbLoadDirectInboxCustodyOutboxForMessage: custodyDb.loadForMessage,
+      dbLoadDirectInboxCustodyOutboxOwnerForMessageId:
+          custodyDb.loadOwnerForMessageId,
       dbRecordDirectInboxCustodyFailureIfExact: custodyDb.recordFailureIfExact,
       dbCompleteAcceptedDirectInboxCustodyIfExact:
           custodyDb.completeAcceptedIfExact,
@@ -1315,19 +1497,30 @@ void _runBob() {
       bridge: bridge,
       inboxStagingRepository: InMemoryInboxStagingRepository(),
     );
-    var started = await p2pService.startNode(ownPrivateKey, ownPeerId);
-    if (!started) throw StateError('P2P node failed to start');
-    await waitForOnline(p2pService, timeout: const Duration(seconds: 60));
-
-    // Wire ChatMessageListener
-    var chatListener = ChatMessageListener(
-      chatMessageStream: p2pService.messageStream,
+    final messageRouter = IncomingMessageRouter(p2pService: p2pService);
+    // Subscribe before automatic startup inbox replay, and retain the listener
+    // across node restarts so no broadcast delivery can fall between listeners.
+    final chatListener = ChatMessageListener(
+      chatMessageStream: messageRouter.chatMessageStream,
       messageRepo: messageRepo,
       contactRepo: contactRepo,
       bridge: bridge,
       getOwnMlKemSecretKey: () async => ownMlKemSk,
     );
     chatListener.start();
+    final deletionListener = MessageDeletionListener(
+      deletionStream: messageRouter.messageDeletionStream,
+      messageRepo: messageRepo,
+      contactRepo: contactRepo,
+      bridge: bridge,
+      getOwnMlKemSecretKey: () async => ownMlKemSk,
+    );
+    deletionListener.start();
+    messageRouter.start();
+    var started = await p2pService.startNode(ownPrivateKey, ownPeerId);
+    if (!started) throw StateError('P2P node failed to start');
+    await waitForOnline(p2pService, timeout: const Duration(seconds: 60));
+
 
     // ── Identity exchange ──
     _signals.writeJson('bob_identity.json', {
@@ -1373,6 +1566,7 @@ void _runBob() {
             sw.stop();
             return {
               'e2eMs': sw.elapsedMilliseconds,
+              'messageId': m.id,
               'text': m.text,
               'status': m.status,
               'transport': m.transport,
@@ -1443,7 +1637,6 @@ void _runBob() {
     // ════════════════════════════════════════════════════════════════
     print('\n--- S3: Going offline ---');
     await _signals.waitForSignal('s3_bob_stop');
-    chatListener.dispose();
     await p2pService.stopNode();
     _signals.writeSignal('s3_bob_stopped');
     print('[BOB] S3: Node stopped');
@@ -1455,15 +1648,7 @@ void _runBob() {
     if (!started) throw StateError('S3: restart failed');
     await waitForOnline(p2pService, timeout: const Duration(seconds: 60));
 
-    // Re-wire listener and drain inbox
-    chatListener = ChatMessageListener(
-      chatMessageStream: p2pService.messageStream,
-      messageRepo: messageRepo,
-      contactRepo: contactRepo,
-      bridge: bridge,
-      getOwnMlKemSecretKey: () async => ownMlKemSk,
-    );
-    chatListener.start();
+    // Drain the inbox through the listeners retained across node restart.
     // Give relay time to establish before draining inbox
     await Future<void>.delayed(const Duration(seconds: 3));
     final s3Events = await _captureFlowEvents(() async {
@@ -1542,7 +1727,6 @@ void _runBob() {
     // ════════════════════════════════════════════════════════════════
     print('\n--- S6: Stale kill ---');
     await _signals.waitForSignal('s6_bob_kill');
-    chatListener.dispose();
     await p2pService.stopNode();
     _signals.writeSignal('s6_bob_killed');
     print('[BOB] S6: Killed');
@@ -1551,14 +1735,6 @@ void _runBob() {
     started = await p2pService.startNode(ownPrivateKey, ownPeerId);
     if (!started) throw StateError('S6: restart failed');
     await waitForOnline(p2pService, timeout: const Duration(seconds: 60));
-    chatListener = ChatMessageListener(
-      chatMessageStream: p2pService.messageStream,
-      messageRepo: messageRepo,
-      contactRepo: contactRepo,
-      bridge: bridge,
-      getOwnMlKemSecretKey: () async => ownMlKemSk,
-    );
-    chatListener.start();
     _signals.writeSignal('s6_bob_restarted');
 
     final s6 = await waitForMessage('S6:');
@@ -1590,7 +1766,6 @@ void _runBob() {
 
     // Phase 3 [OFFLINE]
     await _signals.waitForSignal('s8_bob_stop');
-    chatListener.dispose();
     await p2pService.stopNode();
     _signals.writeSignal('s8_bob_stopped');
     print('[BOB] S8: stopped for offline phase');
@@ -1600,20 +1775,11 @@ void _runBob() {
     started = await p2pService.startNode(ownPrivateKey, ownPeerId);
     if (!started) throw StateError('S8: restart failed');
     await waitForOnline(p2pService, timeout: const Duration(seconds: 60));
-    chatListener = ChatMessageListener(
-      chatMessageStream: p2pService.messageStream,
-      messageRepo: messageRepo,
-      contactRepo: contactRepo,
-      bridge: bridge,
-      getOwnMlKemSecretKey: () async => ownMlKemSk,
-    );
-    chatListener.start();
     await Future<void>.delayed(const Duration(seconds: 3));
     await p2pService.warmBackground();
     _signals.writeSignal('s8_bob_restarted');
 
-    // Inbox drain can lag or remain pending even when restart itself succeeded.
-    // Don't block the rest of the lifecycle behind this best-effort receive.
+    // Retain the original receive bound; the host requires this receipt.
     final msg5 = await waitForMessage(
       'S8: msg5',
       timeout: const Duration(seconds: 15),
@@ -1655,7 +1821,6 @@ void _runBob() {
     // ════════════════════════════════════════════════════════════════
     print('\n--- S9: Batch inbox drain ---');
     await _signals.waitForSignal('s9_bob_stop');
-    chatListener.dispose();
     await p2pService.stopNode();
     _signals.writeSignal('s9_bob_stopped');
     print('[BOB] S9: stopped');
@@ -1664,14 +1829,6 @@ void _runBob() {
     started = await p2pService.startNode(ownPrivateKey, ownPeerId);
     if (!started) throw StateError('S9: restart failed');
     await waitForOnline(p2pService, timeout: const Duration(seconds: 60));
-    chatListener = ChatMessageListener(
-      chatMessageStream: p2pService.messageStream,
-      messageRepo: messageRepo,
-      contactRepo: contactRepo,
-      bridge: bridge,
-      getOwnMlKemSecretKey: () async => ownMlKemSk,
-    );
-    chatListener.start();
     await Future<void>.delayed(const Duration(seconds: 3));
     final s9Events = await _captureFlowEvents(() async {
       await p2pService.warmBackground();
@@ -1690,7 +1847,7 @@ void _runBob() {
       }
     }
 
-    // Try to receive messages from inbox drain (15s each — best effort)
+    // Receive the batch within the original per-message bound.
     final s9Received = <Map<String, dynamic>>[];
     for (var i = 1; i <= 5; i++) {
       final m = await waitForMessage(
@@ -1716,8 +1873,20 @@ void _runBob() {
     );
     print('[BOB] S10: received msg: ${s10Msg != null}');
     _signals.writeSignal('s10_bob_received_msg');
-    // The delete tombstone will arrive as a new message — wait for message count to change
-    // or for the message to be marked deleted. For now, just signal received.
+    final deleteDeadline = DateTime.now().add(const Duration(seconds: 30));
+    var deleted = false;
+    while (s10Msg != null && DateTime.now().isBefore(deleteDeadline)) {
+      final row = await messageRepo.getMessage(s10Msg['messageId'] as String);
+      if (row?.isDeleted == true) {
+        deleted = true;
+        break;
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 250));
+    }
+    _signals.writeJson('s10_bob_deleted', {
+      'received': s10Msg != null,
+      'deleted': deleted,
+    });
 
     // ════════════════════════════════════════════════════════════════
     //  S13: ACK under load — Bob receives 10 rapid messages
@@ -1764,7 +1933,6 @@ void _runBob() {
     await _signals.waitForSignal('s15_go');
     // Stop and restart to create a window where Bob is on relay but
     // not yet registered on rendezvous
-    chatListener.dispose();
     await p2pService.stopNode();
     started = await p2pService.startNode(ownPrivateKey, ownPeerId);
     if (!started) throw StateError('S15: restart failed');
@@ -1772,14 +1940,6 @@ void _runBob() {
     _signals.writeSignal('s15_bob_unregistered');
     // Now wait for online (rendezvous registers in background)
     await waitForOnline(p2pService, timeout: const Duration(seconds: 60));
-    chatListener = ChatMessageListener(
-      chatMessageStream: p2pService.messageStream,
-      messageRepo: messageRepo,
-      contactRepo: contactRepo,
-      bridge: bridge,
-      getOwnMlKemSecretKey: () async => ownMlKemSk,
-    );
-    chatListener.start();
     // Receive the message delivered during the rendezvous-registration gap.
     final s15Msg = await waitForMessage(
       'S15:',
@@ -1793,7 +1953,6 @@ void _runBob() {
     // ════════════════════════════════════════════════════════════════
     print('\n--- X1: Both-sides restart ---');
     await _signals.waitForSignal('x1_go');
-    chatListener.dispose();
     await p2pService.stopNode();
     _signals.writeSignal('x1_bob_stopped');
 
@@ -1802,14 +1961,6 @@ void _runBob() {
     started = await p2pService.startNode(ownPrivateKey, ownPeerId);
     if (!started) throw StateError('X1: restart failed');
     await waitForOnline(p2pService, timeout: const Duration(seconds: 60));
-    chatListener = ChatMessageListener(
-      chatMessageStream: p2pService.messageStream,
-      messageRepo: messageRepo,
-      contactRepo: contactRepo,
-      bridge: bridge,
-      getOwnMlKemSecretKey: () async => ownMlKemSk,
-    );
-    chatListener.start();
     x1Sw.stop();
     _signals.writeJson('x1_bob_restarted', {
       'restartMs': x1Sw.elapsedMilliseconds,
@@ -1864,6 +2015,8 @@ void _runBob() {
     print('\n[BOB] All scenarios complete');
 
     chatListener.dispose();
+    deletionListener.dispose();
+    messageRouter.dispose();
     await p2pService.stopNode();
     p2pService.dispose();
     bridge.dispose();

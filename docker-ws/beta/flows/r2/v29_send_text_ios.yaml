@@ -1,0 +1,6 @@
+appId: com.mknoon.app
+name: R2-8 chat push check - the iPhone sends one text to the Pixel (MSG)
+---
+- launchApp: { stopApp: false }
+- runFlow: ../ensure_chat.yaml
+- runFlow: { file: ../send_text.yaml, env: { MSG: "${MSG}" } }

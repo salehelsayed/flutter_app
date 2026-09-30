@@ -1,0 +1,11 @@
+appId: com.mknoon.app
+name: S04 Pixel waits for the iPhone's voice note, then sends its own
+---
+- runFlow: ensure_chat.yaml
+- extendedWaitUntil: { visible: "${IOS_VOICE_RX}", timeout: 120000 }
+- takeScreenshot: s04_got_voice_android
+- tapOn: "Record voice message.*"
+- runFlow: { file: sleep.yaml, env: { MS: 4000 } }
+- tapOn: "Stop and send voice message.*"
+- runFlow: { file: sleep.yaml, env: { MS: 5000 } }
+- takeScreenshot: s04_sent_android

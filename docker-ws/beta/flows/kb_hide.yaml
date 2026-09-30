@@ -1,0 +1,9 @@
+appId: com.mknoon.app
+name: dismiss the keyboard only if one is showing
+---
+- runFlow:
+    when: { visible: "Continue" }
+    commands: [ { tapOn: "Continue" } ]
+- runFlow:
+    when: { visible: { id: ".*keyboard_holder" } }
+    commands: [ hideKeyboard ]

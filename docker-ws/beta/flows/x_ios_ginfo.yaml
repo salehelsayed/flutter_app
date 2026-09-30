@@ -1,0 +1,20 @@
+appId: com.mknoon.app
+name: explore - iPhone - cancel picker, open Beta Group v26 info, tap the Pixel member
+---
+- tapOn: { text: "Cancel", optional: true }
+- runFlow: { file: sleep.yaml, env: { MS: 1500 } }
+- runFlow: ensure_chat.yaml
+- tapOn: "Back"
+- runFlow: { file: sleep.yaml, env: { MS: 2000 } }
+- runFlow:
+    when: { visible: "Show all chats" }
+    commands: [ { tapOn: "Show all chats" } ]
+- tapOn: ".*Beta Group v26.*"
+- runFlow: { file: sleep.yaml, env: { MS: 2500 } }
+- tapOn: "Group information"
+- runFlow: { file: sleep.yaml, env: { MS: 2500 } }
+- takeScreenshot: x_ios_ginfo
+- scrollUntilVisible: { element: ".*Beta Pixel.*", direction: DOWN, timeout: 10000 }
+- tapOn: ".*Beta Pixel.*"
+- runFlow: { file: sleep.yaml, env: { MS: 2500 } }
+- takeScreenshot: x_ios_member

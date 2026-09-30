@@ -1,4 +1,3 @@
-
 import 'package:flutter/foundation.dart';
 
 import 'app_diagnostics.dart';
@@ -14,6 +13,13 @@ void installAppDiagnosticErrorHandlers() {
       details.stack,
       reason: 'flutter_error',
     );
+    // The framework's debug overflow paint can be visible on screen without
+    // an error line in Android logcat. Emit only a fixed marker; exception text
+    // may contain message content or local paths.
+    if (kDebugMode &&
+        details.exceptionAsString().contains('A RenderFlex overflowed by')) {
+      debugPrint('RenderFlex overflowed (Mknoon layout)');
+    }
     if (previousFlutter != null) {
       previousFlutter(details);
     } else {

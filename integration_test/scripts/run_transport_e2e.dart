@@ -1,4 +1,5 @@
 #!/usr/bin/env dart
+
 // E2E Transport Test Orchestrator
 //
 // Coordinates between a Go CLI test peer and a Flutter integration test
@@ -260,14 +261,14 @@ Future<void> _cleanupAppWriteDir(String deviceId, String appWriteDir) async {
 // Orchestrator result tracker
 // ---------------------------------------------------------------------------
 
-class _OrchestratorResult {
+class TransportScenarioResult {
   final String name;
   final bool passed;
   final String detail;
-  _OrchestratorResult(this.name, this.passed, this.detail);
+  TransportScenarioResult(this.name, this.passed, this.detail);
 }
 
-class _IncomingProof {
+class TransportIncomingProof {
   final String from;
   final String to;
   final String content;
@@ -276,7 +277,7 @@ class _IncomingProof {
   final String payloadText;
   final List<dynamic> payloadMedia;
 
-  const _IncomingProof({
+  const TransportIncomingProof({
     required this.from,
     required this.to,
     required this.content,
@@ -296,7 +297,7 @@ class TestPeer {
   final _responses = StreamController<Map<String, dynamic>>.broadcast();
   final _events = StreamController<Map<String, dynamic>>.broadcast();
   final _pending = <Completer<Map<String, dynamic>>>[];
-  final _incomingProof = <_IncomingProof>[];
+  final _incomingProof = <TransportIncomingProof>[];
   StreamSubscription? _stdoutSub;
   StreamSubscription? _stderrSub;
 
@@ -407,7 +408,7 @@ class TestPeer {
       return;
     }
     _incomingProof.add(
-      _IncomingProof(
+      TransportIncomingProof(
         from: from,
         to: to,
         content: content,
@@ -460,8 +461,8 @@ class TestPeer {
     }
   }
 
-  List<_IncomingProof> _incomingProofSnapshot() =>
-      List<_IncomingProof>.from(_incomingProof);
+  List<TransportIncomingProof> _incomingProofSnapshot() =>
+      List<TransportIncomingProof>.from(_incomingProof);
 
   /// Sends a command and asserts ok:true.
   Future<Map<String, dynamic>> commandOk(
@@ -577,11 +578,11 @@ class TestPeer {
   }
 }
 
-List<_IncomingProof> _matchingIncomingProof(
-  Iterable<_IncomingProof> evidence, {
+List<TransportIncomingProof> _matchingIncomingProof(
+  Iterable<TransportIncomingProof> evidence, {
   required String fromPeerId,
   required bool Function(String content) contentMatches,
-  bool Function(_IncomingProof proof)? proofMatches,
+  bool Function(TransportIncomingProof proof)? proofMatches,
 }) {
   return evidence.where((proof) {
     if (proof.from != fromPeerId) {
@@ -594,7 +595,7 @@ List<_IncomingProof> _matchingIncomingProof(
   }).toList();
 }
 
-String _proofSources(List<_IncomingProof> proof) {
+String _proofSources(List<TransportIncomingProof> proof) {
   final sources = proof.map((item) => item.source).toSet().toList()..sort();
   return sources.join(',');
 }
@@ -650,7 +651,7 @@ bool _messageReferencesAttachment(
 }
 
 bool _proofReferencesAttachment(
-  _IncomingProof proof, {
+  TransportIncomingProof proof, {
   required String blobId,
   required String mime,
   required String mediaType,
@@ -675,12 +676,12 @@ bool _proofReferencesAttachment(
 
 /// Runs the coordinated test scenarios after Flutter test starts.
 /// Returns a list of orchestrator-side results for each scenario.
-Future<List<_OrchestratorResult>> _runScenarios(
+Future<List<TransportScenarioResult>> _runScenarios(
   TestPeer peer,
   _RunPaths paths,
   Future<int> flutterExitCodeFuture,
 ) async {
-  final results = <_OrchestratorResult>[];
+  final results = <TransportScenarioResult>[];
 
   _log('ORCH', 'Waiting for Flutter peer fixture...');
 
@@ -717,7 +718,7 @@ Future<List<_OrchestratorResult>> _runScenarios(
               '(exitCode=$flutterExitCode)'
         : 'Flutter peer fixture not found after 360s';
     _log('ORCH', 'ERROR: $detail');
-    results.add(_OrchestratorResult('SETUP', false, detail));
+    results.add(TransportScenarioResult('SETUP', false, detail));
     return results;
   }
 
@@ -731,10 +732,12 @@ Future<List<_OrchestratorResult>> _runScenarios(
   try {
     final status = await peer.commandOk('status');
     final isStarted = status['isStarted'] == true;
-    results.add(_OrchestratorResult('G1', isStarted, 'isStarted=$isStarted'));
+    results.add(
+      TransportScenarioResult('G1', isStarted, 'isStarted=$isStarted'),
+    );
     _log('ORCH', 'G1: isStarted=$isStarted');
   } catch (e) {
-    results.add(_OrchestratorResult('G1', false, 'error: $e'));
+    results.add(TransportScenarioResult('G1', false, 'error: $e'));
     _log('ORCH', 'G1: failed: $e');
   }
 
@@ -798,10 +801,10 @@ Future<List<_OrchestratorResult>> _runScenarios(
       'peerId': flutterPeerId,
       'text': 'A2: Hello from CLI peer',
     });
-    results.add(_OrchestratorResult('A2', true, 'sent v1'));
+    results.add(TransportScenarioResult('A2', true, 'sent v1'));
     _log('ORCH', 'A2: sent');
   } catch (e) {
-    results.add(_OrchestratorResult('A2', false, 'send failed: $e'));
+    results.add(TransportScenarioResult('A2', false, 'send failed: $e'));
     _log('ORCH', 'A2: send failed: $e');
   }
 
@@ -814,10 +817,10 @@ Future<List<_OrchestratorResult>> _runScenarios(
       'peerId': flutterPeerId,
       'text': 'A3: Reply from CLI peer',
     });
-    results.add(_OrchestratorResult('A3', true, 'sent reply'));
+    results.add(TransportScenarioResult('A3', true, 'sent reply'));
     _log('ORCH', 'A3: sent');
   } catch (e) {
-    results.add(_OrchestratorResult('A3', false, 'send failed: $e'));
+    results.add(TransportScenarioResult('A3', false, 'send failed: $e'));
     _log('ORCH', 'A3: send failed: $e');
   }
 
@@ -832,10 +835,10 @@ Future<List<_OrchestratorResult>> _runScenarios(
         'text': 'A5: Encrypted hello from CLI peer',
         'recipientMlKemPublicKey': flutterMlKemPK,
       });
-      results.add(_OrchestratorResult('A5', true, 'sent v2 encrypted'));
+      results.add(TransportScenarioResult('A5', true, 'sent v2 encrypted'));
       _log('ORCH', 'A5: sent');
     } catch (e) {
-      results.add(_OrchestratorResult('A5', false, 'send failed: $e'));
+      results.add(TransportScenarioResult('A5', false, 'send failed: $e'));
       _log('ORCH', 'A5: send failed: $e');
     }
   }
@@ -849,10 +852,10 @@ Future<List<_OrchestratorResult>> _runScenarios(
       'peerId': flutterPeerId,
       'text': 'B2: Inbox message from CLI peer',
     });
-    results.add(_OrchestratorResult('B2', true, 'stored in inbox'));
+    results.add(TransportScenarioResult('B2', true, 'stored in inbox'));
     _log('ORCH', 'B2: stored');
   } catch (e) {
-    results.add(_OrchestratorResult('B2', false, 'store failed: $e'));
+    results.add(TransportScenarioResult('B2', false, 'store failed: $e'));
     _log('ORCH', 'B2: store failed: $e');
   }
 
@@ -870,7 +873,7 @@ Future<List<_OrchestratorResult>> _runScenarios(
       _log('ORCH', 'B3: store $i failed: $e');
     }
   }
-  results.add(_OrchestratorResult('B3', b3Count == 5, 'stored $b3Count/5'));
+  results.add(TransportScenarioResult('B3', b3Count == 5, 'stored $b3Count/5'));
   _log('ORCH', 'B3: stored $b3Count messages');
 
   // --- Scenario B5: Store inbox message with unknown sender ---
@@ -894,11 +897,11 @@ Future<List<_OrchestratorResult>> _runScenarios(
       'envelope': envelope,
     });
     results.add(
-      _OrchestratorResult('B5', true, 'stored unknown-sender envelope'),
+      TransportScenarioResult('B5', true, 'stored unknown-sender envelope'),
     );
     _log('ORCH', 'B5: stored');
   } catch (e) {
-    results.add(_OrchestratorResult('B5', false, 'store failed: $e'));
+    results.add(TransportScenarioResult('B5', false, 'store failed: $e'));
     _log('ORCH', 'B5: store failed: $e');
   }
 
@@ -923,7 +926,9 @@ Future<List<_OrchestratorResult>> _runScenarios(
       await Future.delayed(const Duration(milliseconds: 500));
     }
   }
-  results.add(_OrchestratorResult('B6', b6Count == 60, 'stored $b6Count/60'));
+  results.add(
+    TransportScenarioResult('B6', b6Count == 60, 'stored $b6Count/60'),
+  );
   _log('ORCH', 'B6: stored $b6Count messages');
 
   // --- Scenario G2: Store v2 encrypted in inbox ---
@@ -935,10 +940,10 @@ Future<List<_OrchestratorResult>> _runScenarios(
         'text': 'G2: Encrypted inbox from CLI peer',
         'recipientMlKemPublicKey': flutterMlKemPK,
       });
-      results.add(_OrchestratorResult('G2', true, 'stored v2 in inbox'));
+      results.add(TransportScenarioResult('G2', true, 'stored v2 in inbox'));
       _log('ORCH', 'G2: stored');
     } catch (e) {
-      results.add(_OrchestratorResult('G2', false, 'store failed: $e'));
+      results.add(TransportScenarioResult('G2', false, 'store failed: $e'));
       _log('ORCH', 'G2: store failed: $e');
     }
   }
@@ -956,10 +961,10 @@ Future<List<_OrchestratorResult>> _runScenarios(
       'peerId': flutterPeerId,
       'text': 'D3: Duplicate text for dedup test',
     });
-    results.add(_OrchestratorResult('D3', true, 'sent 2 messages'));
+    results.add(TransportScenarioResult('D3', true, 'sent 2 messages'));
     _log('ORCH', 'D3: sent 2 messages');
   } catch (e) {
-    results.add(_OrchestratorResult('D3', false, 'send failed: $e'));
+    results.add(TransportScenarioResult('D3', false, 'send failed: $e'));
     _log('ORCH', 'D3: send failed: $e');
   }
 
@@ -985,9 +990,9 @@ Future<List<_OrchestratorResult>> _runScenarios(
       'messageId': d4MsgId,
     });
     _log('ORCH', 'D4: stored duplicate in inbox');
-    results.add(_OrchestratorResult('D4', true, 'sent via relay + inbox'));
+    results.add(TransportScenarioResult('D4', true, 'sent via relay + inbox'));
   } catch (e) {
-    results.add(_OrchestratorResult('D4', false, 'send failed: $e'));
+    results.add(TransportScenarioResult('D4', false, 'send failed: $e'));
     _log('ORCH', 'D4: failed: $e');
   }
 
@@ -1002,11 +1007,11 @@ Future<List<_OrchestratorResult>> _runScenarios(
       'text': largeText,
     });
     results.add(
-      _OrchestratorResult('E1', true, 'sent ${largeText.length} bytes'),
+      TransportScenarioResult('E1', true, 'sent ${largeText.length} bytes'),
     );
     _log('ORCH', 'E1: sent ${largeText.length} bytes');
   } catch (e) {
-    results.add(_OrchestratorResult('E1', false, 'send failed: $e'));
+    results.add(TransportScenarioResult('E1', false, 'send failed: $e'));
     _log('ORCH', 'E1: send failed: $e');
   }
 
@@ -1020,10 +1025,12 @@ Future<List<_OrchestratorResult>> _runScenarios(
       'text': 'E3: This is a quote reply',
       'quotedMessageId': 'fake-quoted-msg-id-12345',
     });
-    results.add(_OrchestratorResult('E3', true, 'sent with quotedMessageId'));
+    results.add(
+      TransportScenarioResult('E3', true, 'sent with quotedMessageId'),
+    );
     _log('ORCH', 'E3: sent');
   } catch (e) {
-    results.add(_OrchestratorResult('E3', false, 'send failed: $e'));
+    results.add(TransportScenarioResult('E3', false, 'send failed: $e'));
     _log('ORCH', 'E3: send failed: $e');
   }
 
@@ -1043,7 +1050,7 @@ Future<List<_OrchestratorResult>> _runScenarios(
       _log('ORCH', 'E4: send $i failed: $e');
     }
   }
-  results.add(_OrchestratorResult('E4', e4Count == 10, 'sent $e4Count/10'));
+  results.add(TransportScenarioResult('E4', e4Count == 10, 'sent $e4Count/10'));
   _log('ORCH', 'E4: sent $e4Count rapid messages');
 
   await Future.delayed(const Duration(seconds: 1));
@@ -1055,12 +1062,12 @@ Future<List<_OrchestratorResult>> _runScenarios(
       'peerId': flutterPeerId,
       'raw': '{this is not valid json!!!',
     });
-    results.add(_OrchestratorResult('E6', true, 'sent garbage'));
+    results.add(TransportScenarioResult('E6', true, 'sent garbage'));
     _log('ORCH', 'E6: sent garbage');
   } catch (e) {
     // send_raw may fail if the peer rejects it — that's also acceptable.
     results.add(
-      _OrchestratorResult('E6', true, 'send errored (acceptable): $e'),
+      TransportScenarioResult('E6', true, 'send errored (acceptable): $e'),
     );
     _log('ORCH', 'E6: send failed (expected): $e');
   }
@@ -1105,10 +1112,10 @@ Future<List<_OrchestratorResult>> _runScenarios(
     _log('ORCH', 'E7b: stored plausible-but-wrong crypto envelope');
 
     results.add(
-      _OrchestratorResult('E7', true, 'stored 2 tampered v2 envelopes'),
+      TransportScenarioResult('E7', true, 'stored 2 tampered v2 envelopes'),
     );
   } catch (e) {
-    results.add(_OrchestratorResult('E7', false, 'store failed: $e'));
+    results.add(TransportScenarioResult('E7', false, 'store failed: $e'));
     _log('ORCH', 'E7: store failed: $e');
   }
 
@@ -1119,10 +1126,10 @@ Future<List<_OrchestratorResult>> _runScenarios(
       'peerId': flutterPeerId,
       'text': 'A7: Discovered via rendezvous',
     });
-    results.add(_OrchestratorResult('A7', true, 'sent via rendezvous'));
+    results.add(TransportScenarioResult('A7', true, 'sent via rendezvous'));
     _log('ORCH', 'A7: sent');
   } catch (e) {
-    results.add(_OrchestratorResult('A7', false, 'send failed: $e'));
+    results.add(TransportScenarioResult('A7', false, 'send failed: $e'));
     _log('ORCH', 'A7: send failed: $e');
   }
 
@@ -1145,7 +1152,7 @@ Future<List<_OrchestratorResult>> _runScenarios(
       _log('ORCH', 'E5: send failed: $e');
     }
   }
-  results.add(_OrchestratorResult('E5', e5Count == 4, 'sent $e5Count/4'));
+  results.add(TransportScenarioResult('E5', e5Count == 4, 'sent $e5Count/4'));
   _log('ORCH', 'E5: sent $e5Count unicode messages');
 
   await Future.delayed(const Duration(seconds: 1));
@@ -1177,9 +1184,11 @@ Future<List<_OrchestratorResult>> _runScenarios(
       'raw': d1Envelope,
     });
     _log('ORCH', 'D1: second send done');
-    results.add(_OrchestratorResult('D1', true, 'sent same-ID message twice'));
+    results.add(
+      TransportScenarioResult('D1', true, 'sent same-ID message twice'),
+    );
   } catch (e) {
-    results.add(_OrchestratorResult('D1', false, 'send failed: $e'));
+    results.add(TransportScenarioResult('D1', false, 'send failed: $e'));
     _log('ORCH', 'D1: send failed: $e');
   }
 
@@ -1192,10 +1201,10 @@ Future<List<_OrchestratorResult>> _runScenarios(
       'peerId': flutterPeerId,
       'text': 'C3-pre: Before network change',
     });
-    results.add(_OrchestratorResult('C3-pre', true, 'sent'));
+    results.add(TransportScenarioResult('C3-pre', true, 'sent'));
     _log('ORCH', 'C3-pre: sent');
   } catch (e) {
-    results.add(_OrchestratorResult('C3-pre', false, 'send failed: $e'));
+    results.add(TransportScenarioResult('C3-pre', false, 'send failed: $e'));
     _log('ORCH', 'C3-pre: send failed: $e');
   }
 
@@ -1226,7 +1235,7 @@ Future<List<_OrchestratorResult>> _runScenarios(
     if (!c1SentFound) {
       _log('ORCH', 'C1: Flutter never sent signal — skipping retrieval');
       results.add(
-        _OrchestratorResult(
+        TransportScenarioResult(
           'C1',
           false,
           'Flutter signal not received after 60s',
@@ -1254,7 +1263,7 @@ Future<List<_OrchestratorResult>> _runScenarios(
       }
 
       results.add(
-        _OrchestratorResult(
+        TransportScenarioResult(
           'C1',
           c1Found,
           c1Found ? 'C1 message found in inbox' : 'C1 not in inbox',
@@ -1263,7 +1272,7 @@ Future<List<_OrchestratorResult>> _runScenarios(
       _log('ORCH', 'C1: ${c1Found ? 'PASS' : 'FAIL'}');
     }
   } catch (e) {
-    results.add(_OrchestratorResult('C1', false, 'error: $e'));
+    results.add(TransportScenarioResult('C1', false, 'error: $e'));
     _log('ORCH', 'C1: failed: $e');
   } finally {
     // Clean up signal files.
@@ -1312,14 +1321,14 @@ Future<List<_OrchestratorResult>> _runScenarios(
     });
     _log('ORCH', 'A8: sent second message after second reconnect');
     results.add(
-      _OrchestratorResult(
+      TransportScenarioResult(
         'A8',
         true,
         'both reconnect cycles + sends succeeded',
       ),
     );
   } catch (e) {
-    results.add(_OrchestratorResult('A8', false, 'error: $e'));
+    results.add(TransportScenarioResult('A8', false, 'error: $e'));
     _log('ORCH', 'A8: failed: $e');
   }
 
@@ -1336,10 +1345,10 @@ Future<List<_OrchestratorResult>> _runScenarios(
       'peerId': flutterPeerId,
       'text': 'C3-post: After network change',
     });
-    results.add(_OrchestratorResult('C3-post', true, 'sent post-recovery'));
+    results.add(TransportScenarioResult('C3-post', true, 'sent post-recovery'));
     _log('ORCH', 'C3-post: sent');
   } catch (e) {
-    results.add(_OrchestratorResult('C3-post', false, 'error: $e'));
+    results.add(TransportScenarioResult('C3-post', false, 'error: $e'));
     _log('ORCH', 'C3-post: failed: $e');
   }
 
@@ -1356,7 +1365,7 @@ Future<List<_OrchestratorResult>> _runScenarios(
     );
     if (b8Signal == null) {
       results.add(
-        _OrchestratorResult('B8', false, 'Flutter signal not received'),
+        TransportScenarioResult('B8', false, 'Flutter signal not received'),
       );
       _log('ORCH', 'B8: SKIP — Flutter signal not found');
     } else {
@@ -1386,7 +1395,7 @@ Future<List<_OrchestratorResult>> _runScenarios(
       }
 
       results.add(
-        _OrchestratorResult(
+        TransportScenarioResult(
           'B8',
           foundV2,
           foundV2
@@ -1396,7 +1405,7 @@ Future<List<_OrchestratorResult>> _runScenarios(
       );
     }
   } catch (e) {
-    results.add(_OrchestratorResult('B8', false, 'error: $e'));
+    results.add(TransportScenarioResult('B8', false, 'error: $e'));
     _log('ORCH', 'B8: failed: $e');
   } finally {
     _deleteIfExists(paths.cliB8Stopped);
@@ -1430,7 +1439,7 @@ Future<List<_OrchestratorResult>> _runScenarios(
 
     if (e8BlobIdVal.isEmpty) {
       results.add(
-        _OrchestratorResult('E8', false, 'blob ID signal not received'),
+        TransportScenarioResult('E8', false, 'blob ID signal not received'),
       );
       _log('ORCH', 'E8: SKIP — no blob ID');
     } else {
@@ -1499,7 +1508,7 @@ Future<List<_OrchestratorResult>> _runScenarios(
                     mediaType: 'image',
                   ),
             )
-          : const <_IncomingProof>[];
+          : const <TransportIncomingProof>[];
       final payloadText = e8Message == null
           ? (retainedE8Proof.isEmpty ? '' : retainedE8Proof.first.payloadText)
           : _messagePayloadText(e8Message);
@@ -1544,7 +1553,7 @@ Future<List<_OrchestratorResult>> _runScenarios(
 
       final pass = messageSeen && attachmentReferenced && (dlSize as num) > 0;
       results.add(
-        _OrchestratorResult(
+        TransportScenarioResult(
           'E8',
           pass,
           'messageSeen=$messageSeen attachmentReferenced=$attachmentReferenced '
@@ -1553,7 +1562,7 @@ Future<List<_OrchestratorResult>> _runScenarios(
       );
     }
   } catch (e) {
-    results.add(_OrchestratorResult('E8', false, 'error: $e'));
+    results.add(TransportScenarioResult('E8', false, 'error: $e'));
     _log('ORCH', 'E8: failed: $e');
   } finally {
     _deleteIfExists(paths.e8BlobId);
@@ -1569,7 +1578,11 @@ Future<List<_OrchestratorResult>> _runScenarios(
     );
     if (g6Signal == null) {
       results.add(
-        _OrchestratorResult('G6', false, 'Flutter upload signal not received'),
+        TransportScenarioResult(
+          'G6',
+          false,
+          'Flutter upload signal not received',
+        ),
       );
       _log('ORCH', 'G6: SKIP — no upload signal');
     } else {
@@ -1595,7 +1608,7 @@ Future<List<_OrchestratorResult>> _runScenarios(
 
       final pass = (dlSize as num) > 0;
       results.add(
-        _OrchestratorResult(
+        TransportScenarioResult(
           'G6',
           pass,
           'downloaded Flutter profile size=$dlSize, uploaded CLI profile',
@@ -1603,7 +1616,7 @@ Future<List<_OrchestratorResult>> _runScenarios(
       );
     }
   } catch (e) {
-    results.add(_OrchestratorResult('G6', false, 'error: $e'));
+    results.add(TransportScenarioResult('G6', false, 'error: $e'));
     _log('ORCH', 'G6: failed: $e');
   } finally {
     _deleteIfExists(paths.g6FlutterUploaded);
@@ -1623,11 +1636,11 @@ Future<List<_OrchestratorResult>> _runScenarios(
 
 /// Verifies that the CLI peer's message collector received messages sent by
 /// the Flutter test where a durable receiver-side proof surface exists.
-List<_OrchestratorResult> _verifyCliReceivedMessages(
-  List<_IncomingProof> evidence,
+List<TransportScenarioResult> verifyCliReceivedMessages(
+  List<TransportIncomingProof> evidence,
   String flutterPeerId,
 ) {
-  final results = <_OrchestratorResult>[];
+  final results = <TransportScenarioResult>[];
   final retainedCount = evidence
       .where((proof) => proof.from == flutterPeerId)
       .length;
@@ -1636,13 +1649,29 @@ List<_OrchestratorResult> _verifyCliReceivedMessages(
     'CLI retained $retainedCount Flutter-originated message proofs',
   );
 
-  bool isLiveProof(_IncomingProof proof) =>
+  bool isLiveProof(TransportIncomingProof proof) =>
       proof.source.startsWith('event') || proof.source.startsWith('collector');
 
-  // A1 is a fail-closed plaintext fallback assertion. The expected receiver
-  // proof is absence of a wire message, which the Flutter-side test already
-  // checks by asserting encryptionRequired and no persisted message.
-  _log('VERIFY', 'RECV-A1: SKIP — A1 is a no-send fail-closed assertion');
+  // A1 must leave no receiver evidence, complementing the sender's
+  // encryptionRequired/no-persistence assertion. Call only after both the
+  // collector and final inbox reads succeed.
+  final a1Proof = _matchingIncomingProof(
+    evidence,
+    fromPeerId: flutterPeerId,
+    contentMatches: (_) => true,
+    proofMatches: (proof) =>
+        proof.payloadText.startsWith('A1:') || proof.content.contains('"A1:'),
+  );
+  results.add(
+    TransportScenarioResult(
+      'RECV-A1',
+      a1Proof.isEmpty,
+      a1Proof.isEmpty
+          ? 'no plaintext-fallback message in collector or inbox'
+          : 'unexpected fallback message reached the receiver',
+    ),
+  );
+  _log('VERIFY', 'RECV-A1: ${a1Proof.isEmpty ? 'PASS' : 'FAIL'}');
 
   // A4: Flutter sent v2 encrypted over the live path. Ignore inbox-only v2
   // traffic such as B8 when checking this residual.
@@ -1653,11 +1682,12 @@ List<_OrchestratorResult> _verifyCliReceivedMessages(
         (content.contains('"version":"2"') ||
             content.contains('"version": "2"')) &&
         content.contains(flutterPeerId),
-    proofMatches: isLiveProof,
+    proofMatches: (proof) =>
+        isLiveProof(proof) && proof.payloadText.startsWith('A4:'),
   );
   final hasA4 = a4Proof.isNotEmpty;
   results.add(
-    _OrchestratorResult(
+    TransportScenarioResult(
       'RECV-A4',
       hasA4,
       hasA4
@@ -1670,33 +1700,28 @@ List<_OrchestratorResult> _verifyCliReceivedMessages(
   final a6Proof = _matchingIncomingProof(
     evidence,
     fromPeerId: flutterPeerId,
-    contentMatches: (content) => content.contains('"A6:'),
+    contentMatches: (_) => true,
+    proofMatches: (proof) => proof.payloadText.startsWith('A6:'),
   );
-  if (a6Proof.isNotEmpty) {
-    results.add(
-      _OrchestratorResult(
-        'RECV-A6',
-        true,
-        'receiver proof retained via ${_proofSources(a6Proof)}',
-      ),
-    );
-    _log('VERIFY', 'RECV-A6: PASS');
-  } else {
-    _log(
-      'VERIFY',
-      'RECV-A6: SKIP — no durable receiver-side proof retained; '
-          'Flutter-side A6 remains sender-side delivered-contract only',
-    );
-  }
+  results.add(
+    TransportScenarioResult(
+      'RECV-A6',
+      a6Proof.isNotEmpty,
+      a6Proof.isNotEmpty
+          ? 'decrypted receiver proof retained via ${_proofSources(a6Proof)}'
+          : 'no decrypted A6 receiver proof in collector or inbox',
+    ),
+  );
+  _log('VERIFY', 'RECV-A6: ${a6Proof.isNotEmpty ? 'PASS' : 'FAIL'}');
 
   return results;
 }
 
-Future<List<_OrchestratorResult>> _runPhase4OnlyScenario(
+Future<List<TransportScenarioResult>> _runPhase4OnlyScenario(
   TestPeer peer,
   _RunPaths paths,
 ) async {
-  final results = <_OrchestratorResult>[];
+  final results = <TransportScenarioResult>[];
 
   final flutterPeerId = await _waitForFlutterPeerId(
     paths,
@@ -1704,7 +1729,7 @@ Future<List<_OrchestratorResult>> _runPhase4OnlyScenario(
   );
   if (flutterPeerId == null) {
     return [
-      _OrchestratorResult(
+      TransportScenarioResult(
         'P4-FIXTURE',
         false,
         'Flutter fixture missing or unreadable',
@@ -1722,7 +1747,7 @@ Future<List<_OrchestratorResult>> _runPhase4OnlyScenario(
   );
   if (ready == null) {
     return [
-      _OrchestratorResult(
+      TransportScenarioResult(
         'P4-READY',
         false,
         'Flutter never confirmed initial discoverability',
@@ -1746,7 +1771,7 @@ Future<List<_OrchestratorResult>> _runPhase4OnlyScenario(
   );
   if (phase4ResultJson == null) {
     return [
-      _OrchestratorResult(
+      TransportScenarioResult(
         'P4-RESULT',
         false,
         'Flutter never wrote the Phase 4 result payload',
@@ -1766,7 +1791,7 @@ Future<List<_OrchestratorResult>> _runPhase4OnlyScenario(
       messageTransport != 'inbox';
 
   results.add(
-    _OrchestratorResult(
+    TransportScenarioResult(
       'P4-SYMPTOM',
       initialDiscoverable && discoverMissAfterUnregister && livePathRecovered,
       'initialDiscoverable=$initialDiscoverable '
@@ -1782,7 +1807,7 @@ Future<List<_OrchestratorResult>> _runPhase4OnlyScenario(
       'timeoutSec': 30,
     });
     results.add(
-      _OrchestratorResult(
+      TransportScenarioResult(
         'P4-RECV',
         true,
         'CLI received Flutter message without requiring restart',
@@ -1790,7 +1815,7 @@ Future<List<_OrchestratorResult>> _runPhase4OnlyScenario(
     );
   } catch (e) {
     results.add(
-      _OrchestratorResult(
+      TransportScenarioResult(
         'P4-RECV',
         false,
         'CLI did not receive the recovered live send: $e',
@@ -2004,18 +2029,18 @@ void main(List<String> args) async {
     _log('ORCH', 'Flutter test exited with code $flutterExitCode');
 
     // Wait for scenarios to finish (with timeout).
-    List<_OrchestratorResult> orchResults;
+    List<TransportScenarioResult> orchResults;
     try {
       orchResults = await scenariosFuture.timeout(
         const Duration(seconds: 10),
         onTimeout: () {
           _log('ORCH', 'Scenarios timed out (ok — Flutter test finished)');
-          return <_OrchestratorResult>[];
+          return <TransportScenarioResult>[];
         },
       );
     } catch (e) {
       _log('ORCH', 'Scenarios errored: $e');
-      orchResults = [_OrchestratorResult('SCENARIOS', false, 'error: $e')];
+      orchResults = [TransportScenarioResult('SCENARIOS', false, 'error: $e')];
     }
 
     if (!phase4Only) {
@@ -2026,20 +2051,16 @@ void main(List<String> args) async {
       );
       await Future.delayed(const Duration(seconds: 5));
 
+      var collectorReadCompleted = false;
+      var inboxReadCompleted = false;
       try {
         final msgs = await peer.commandOk('get_messages');
         peer.retainCollectorMessages(msgs, source: 'collector:post-verify');
-        final verifyResults = _verifyCliReceivedMessages(
-          peer._incomingProofSnapshot(),
-          peer.lastFlutterPeerId ??
-              await _readFlutterPeerId(paths) ??
-              'unknown',
-        );
-        orchResults.addAll(verifyResults);
+        collectorReadCompleted = true;
       } catch (e) {
         _log('ORCH', 'Post-Flutter verification failed: $e');
         orchResults.add(
-          _OrchestratorResult('VERIFY', false, 'get_messages failed: $e'),
+          TransportScenarioResult('VERIFY', false, 'get_messages failed: $e'),
         );
       }
 
@@ -2048,9 +2069,10 @@ void main(List<String> args) async {
       try {
         final inboxResult = await peer.commandOk('inbox_retrieve');
         peer.retainInboxMessages(inboxResult, source: 'inbox:g3');
+        inboxReadCompleted = true;
         final inboxCount = inboxResult['count'] ?? 0;
         orchResults.add(
-          _OrchestratorResult(
+          TransportScenarioResult(
             'G3',
             true,
             'inbox_retrieve returned $inboxCount',
@@ -2058,8 +2080,21 @@ void main(List<String> args) async {
         );
         _log('ORCH', 'G3: inbox_retrieve count=$inboxCount');
       } catch (e) {
-        orchResults.add(_OrchestratorResult('G3', false, 'error: $e'));
+        orchResults.add(TransportScenarioResult('G3', false, 'error: $e'));
         _log('ORCH', 'G3: failed: $e');
+      }
+
+      // The final inbox read is part of receiver evidence: encrypted A6 can
+      // legitimately have been delivered through custody rather than live.
+      if (collectorReadCompleted && inboxReadCompleted) {
+        orchResults.addAll(
+          verifyCliReceivedMessages(
+            peer._incomingProofSnapshot(),
+            peer.lastFlutterPeerId ??
+                await _readFlutterPeerId(paths) ??
+                'unknown',
+          ),
+        );
       }
 
       // G4: Exercise clear_messages + verify get_messages returns 0.
@@ -2070,11 +2105,11 @@ void main(List<String> args) async {
         final afterCount = afterClear['count'] ?? -1;
         final pass = afterCount == 0;
         orchResults.add(
-          _OrchestratorResult('G4', pass, 'count after clear=$afterCount'),
+          TransportScenarioResult('G4', pass, 'count after clear=$afterCount'),
         );
         _log('ORCH', 'G4: count after clear=$afterCount');
       } catch (e) {
-        orchResults.add(_OrchestratorResult('G4', false, 'error: $e'));
+        orchResults.add(TransportScenarioResult('G4', false, 'error: $e'));
         _log('ORCH', 'G4: failed: $e');
       }
 
@@ -2090,7 +2125,7 @@ void main(List<String> args) async {
           final restoredPeerId = restored['peerId'] as String?;
           final pass = restoredPeerId == originalPeerId;
           orchResults.add(
-            _OrchestratorResult(
+            TransportScenarioResult(
               'G5',
               pass,
               pass ? 'peerId matches' : 'mismatch: $restoredPeerId',
@@ -2098,11 +2133,13 @@ void main(List<String> args) async {
           );
           _log('ORCH', 'G5: ${pass ? 'PASS' : 'FAIL'}');
         } catch (e) {
-          orchResults.add(_OrchestratorResult('G5', false, 'error: $e'));
+          orchResults.add(TransportScenarioResult('G5', false, 'error: $e'));
           _log('ORCH', 'G5: failed: $e');
         }
       } else {
-        orchResults.add(_OrchestratorResult('G5', false, 'no mnemonic saved'));
+        orchResults.add(
+          TransportScenarioResult('G5', false, 'no mnemonic saved'),
+        );
         _log('ORCH', 'G5: SKIP — no mnemonic');
       }
     }

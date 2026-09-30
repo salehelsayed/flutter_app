@@ -770,89 +770,118 @@ class _ConversationScreenState extends State<ConversationScreen>
     return AmbientBackground(
       preference: widget.backgroundPreference,
       isChatSurface: true,
-      child: Column(
-        children: [
-          // Header
-          ConversationHeader(
-            contactPeerId: widget.contactPeerId,
-            contactUsername: widget.contactUsername,
-            connectionDate: widget.connectionDate,
-            onBack: widget.onBack,
-            onOverflow: widget.onOverflow,
-            onAvatarTap: widget.onAvatarTap,
-            onCall: widget.onCall,
-            onCallRetry: widget.onCallRetry,
-            showCallAction: widget.showCallAction,
-            callActionEnabled: widget.callActionEnabled,
-            callActionInFlight:
-                widget.callActionInFlight ||
-                (!widget.callActionEnabled && widget.onCall != null),
-            callUnavailableMessage: widget.callUnavailableMessage.isEmpty
-                ? AppLocalizations.of(context)!.voice_call_unavailable
-                : widget.callUnavailableMessage,
-          ),
-          // Intro banner above messages (when messages exist)
-          AnimatedSwitcher(
-            duration: const Duration(milliseconds: 300),
-            child:
-                widget.showIntroBanner &&
-                    widget.messages.isNotEmpty &&
-                    widget.onMakeIntroductions != null
-                ? Padding(
-                    key: const ValueKey('intro-banner'),
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 16,
-                      vertical: 8,
-                    ),
-                    child: IntroBanner(
-                      contactUsername:
-                          widget.bannerContactUsername ??
-                          widget.contactUsername,
-                      onMakeIntroductions: widget.onMakeIntroductions!,
-                      onMaybeLater: widget.onMaybeLater ?? () {},
-                    ),
-                  )
-                : const SizedBox.shrink(key: ValueKey('no-banner')),
-          ),
-          if (widget.p2pService != null)
-            OfflineMessageBanner(p2pService: widget.p2pService!),
-          if (widget.uploadProgress != null)
-            UploadProgressBanner(
-              state: widget.uploadProgress!,
-              onCancel: widget.onCancelUpload,
-            ),
-          // 172 (INV-2): kept-but-undisplayed staged entries are surfaced, not
-          // silently invisible. Outside the ListView so it never shifts scroll.
-          if (widget.undeliveredCount > 0)
-            UndeliveredMessagesBanner(
-              count: widget.undeliveredCount,
-              onRetry: widget.onRetryUndelivered,
-            ),
-          // 145: "catching up…" affordance shown while the relay drain is in
-          // flight. Outside the message ListView so it never shifts the scroll
-          // position; distinct from the older-pagination spinner.
-          if (widget.isSyncingNewMessages) const _ConversationSyncingBanner(),
-          // Show loaded history directly. Crossfading the entire list here
-          // overlaps the route slide and keeps the loading shell painting.
-          Expanded(
-            child: widget.messages.isEmpty && _visibleCallEntries.isEmpty
-                ? _buildEmptyOrLoadingState()
-                : _buildMessageList(),
-          ),
-          if (widget.composerStateListenable == null)
-            _buildComposerSection(_legacyComposerState)
-          else
-            ValueListenableBuilder<ConversationComposerViewState>(
-              valueListenable: widget.composerStateListenable!,
-              builder: (context, composerState, child) =>
-                  _buildComposerSection(composerState),
-            ),
-        ],
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          // Scaffold has already consumed the keyboard inset before this
+          // LayoutBuilder, so the remaining height is the reliable signal.
+          final compactForKeyboard = constraints.maxHeight < 260;
+          final content = Column(
+            children: [
+              // Header
+              if (!compactForKeyboard)
+                ConversationHeader(
+                  contactPeerId: widget.contactPeerId,
+                  contactUsername: widget.contactUsername,
+                  connectionDate: widget.connectionDate,
+                  onBack: widget.onBack,
+                  onOverflow: widget.onOverflow,
+                  onAvatarTap: widget.onAvatarTap,
+                  onCall: widget.onCall,
+                  onCallRetry: widget.onCallRetry,
+                  showCallAction: widget.showCallAction,
+                  callActionEnabled: widget.callActionEnabled,
+                  callActionInFlight:
+                      widget.callActionInFlight ||
+                      (!widget.callActionEnabled && widget.onCall != null),
+                  callUnavailableMessage: widget.callUnavailableMessage.isEmpty
+                      ? AppLocalizations.of(context)!.voice_call_unavailable
+                      : widget.callUnavailableMessage,
+                ),
+              // Intro banner above messages (when messages exist)
+              if (!compactForKeyboard)
+                AnimatedSwitcher(
+                  duration: const Duration(milliseconds: 300),
+                  child:
+                      widget.showIntroBanner &&
+                          widget.messages.isNotEmpty &&
+                          widget.onMakeIntroductions != null
+                      ? Padding(
+                          key: const ValueKey('intro-banner'),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 16,
+                            vertical: 8,
+                          ),
+                          child: IntroBanner(
+                            contactUsername:
+                                widget.bannerContactUsername ??
+                                widget.contactUsername,
+                            onMakeIntroductions: widget.onMakeIntroductions!,
+                            onMaybeLater: widget.onMaybeLater ?? () {},
+                          ),
+                        )
+                      : const SizedBox.shrink(key: ValueKey('no-banner')),
+                ),
+              if (!compactForKeyboard && widget.p2pService != null)
+                OfflineMessageBanner(p2pService: widget.p2pService!),
+              if (!compactForKeyboard && widget.uploadProgress != null)
+                UploadProgressBanner(
+                  state: widget.uploadProgress!,
+                  onCancel: widget.onCancelUpload,
+                ),
+              // 172 (INV-2): kept-but-undisplayed staged entries are surfaced, not
+              // silently invisible. Outside the ListView so it never shifts scroll.
+              if (!compactForKeyboard && widget.undeliveredCount > 0)
+                UndeliveredMessagesBanner(
+                  count: widget.undeliveredCount,
+                  onRetry: widget.onRetryUndelivered,
+                ),
+              // 145: "catching up…" affordance shown while the relay drain is in
+              // flight. Outside the message ListView so it never shifts the scroll
+              // position; distinct from the older-pagination spinner.
+              if (!compactForKeyboard && widget.isSyncingNewMessages)
+                const _ConversationSyncingBanner(),
+              // Show loaded history directly. Crossfading the entire list here
+              // overlaps the route slide and keeps the loading shell painting.
+              Expanded(
+                child: widget.messages.isEmpty && _visibleCallEntries.isEmpty
+                    ? _buildEmptyOrLoadingState()
+                    : _buildMessageList(),
+              ),
+              if (widget.composerStateListenable == null)
+                _buildComposerSection(
+                  _legacyComposerState,
+                  compact: compactForKeyboard,
+                )
+              else
+                ValueListenableBuilder<ConversationComposerViewState>(
+                  valueListenable: widget.composerStateListenable!,
+                  builder: (context, composerState, child) =>
+                      _buildComposerSection(
+                        composerState,
+                        compact: compactForKeyboard,
+                      ),
+                ),
+            ],
+          );
+          // The short landscape IME viewport cannot fit the normal header and
+          // composer together. Keep the system status inset and give history the
+          // remaining space; the header returns when the keyboard closes.
+          return SafeArea(
+            top: compactForKeyboard,
+            bottom: false,
+            left: false,
+            right: false,
+            child: content,
+          );
+        },
       ),
     );
   }
 
-  Widget _buildComposerSection(ConversationComposerViewState composerState) {
+  Widget _buildComposerSection(
+    ConversationComposerViewState composerState, {
+    bool compact = false,
+  }) {
     if (widget.isBlocked) {
       return BlockedBanner(onUnblock: widget.onUnblock);
     }
@@ -860,8 +889,9 @@ class _ConversationScreenState extends State<ConversationScreen>
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
-        if (composerState.pendingAttachments.isNotEmpty ||
-            composerState.isProcessing)
+        if (!compact &&
+            (composerState.pendingAttachments.isNotEmpty ||
+                composerState.isProcessing))
           AttachmentPreviewStrip(
             attachments: composerState.pendingAttachments,
             isUploading: composerState.isUploading,
@@ -874,12 +904,13 @@ class _ConversationScreenState extends State<ConversationScreen>
             hasTotalSizeOverflow: composerState.hasTotalSizeOverflow,
             onRemove: widget.onRemoveAttachment,
           ),
-        if (widget.isEditingMessage && widget.onCancelEdit != null)
+        if (!compact && widget.isEditingMessage && widget.onCancelEdit != null)
           _EditModeBanner(
             key: ConversationScreen.editModeBannerKey,
             onCancel: widget.onCancelEdit!,
           ),
         ComposeArea(
+          compact: compact,
           onSend: widget.onSend,
           onAttach: widget.onAttach,
           hasAttachments: composerState.pendingAttachments.isNotEmpty,
@@ -1369,9 +1400,13 @@ class _ConversationScreenState extends State<ConversationScreen>
                 );
               }
 
-              privateContentSlotFactory = () => Container(
-                key: ValueKey('private-media-slot-${message.id}'),
-                child: buildPrivatePlaceholder(),
+              privateContentSlotFactory = () => Semantics(
+                identifier: 'conversation.private.${message.id}',
+                container: true,
+                child: Container(
+                  key: ValueKey('private-media-slot-${message.id}'),
+                  child: buildPrivatePlaceholder(),
+                ),
               );
             }
 

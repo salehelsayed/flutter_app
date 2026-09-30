@@ -43,7 +43,7 @@ assert "'am'" in launch and "'start'" in launch and "'-W'" in launch
 assert "'-n'" in launch and "'$packageName/com.mknoon.app.MainActivity'" in launch
 assert 'result.exitCode != 0' in launch
 assert r"r'^Status:[ \t]+(?:ok|timeout)[ \t]*\r?$'" in launch
-assert 'RegExp.escape(component)' in launch
+assert 'reportedComponents.map(RegExp.escape)' in launch
 assert "'pidof', packageName" in launch
 assert 'process.exitCode == 0' in launch
 assert 'monkey' not in launch

@@ -1,0 +1,7 @@
+appId: ${APP_ID}
+name: production_conversation_back_readonly
+---
+- assertVisible: Only admins can send messages in this group
+- back
+- assertVisible:
+    id: orbit.view.inner_circle

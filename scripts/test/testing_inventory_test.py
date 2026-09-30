@@ -32,6 +32,33 @@ class InventoryTest(unittest.TestCase):
         target.write_text(content)
         return target
 
+    def test_fixture_partition_preserves_every_capability_and_rejects_missing_owner(self):
+        rows = [
+            dict(id='host', modes=['major']),
+            dict(id='build.fixture', modes=['major']),
+            dict(id='device.fixture', modes=['major'], dependencies=['build.fixture']),
+        ]
+        self.file('tool/sims/critical_features.json', json.dumps({'capabilities': rows}))
+        excluded = ['build.fixture', 'device.fixture']
+        commands = {
+            'main': dict(kind='sims', capability='*', excluded_capabilities=excluded,
+                         command=['dart', 'sims', '--exclude', excluded[0], '--exclude', excluded[1]]),
+            'fixture': dict(kind='sims', capability='device.fixture', command=['dart', 'existing-adapter']),
+        }
+        self.assertEqual(inventory.validate_sims_partitions(self.root, commands), [])
+        byid = {row['id']: row for row in rows}
+        selected = {owner: {r['id'] for r in inventory.sims_rows_for_check(byid, check)}
+                    for owner, check in commands.items()}
+        self.assertEqual(selected['main'], {'host'})
+        self.assertEqual(selected['fixture'], set(excluded))
+        self.assertEqual(set.union(*selected.values()), set(byid))
+        self.assertTrue(inventory.validate_sims_partitions(self.root, {'main': commands['main']}))
+        drift = {**commands, 'main': {**commands['main'], 'command': ['dart', 'sims']}}
+        self.assertTrue(inventory.validate_sims_partitions(self.root, drift))
+        for exclusions in [['unknown'], ['build.fixture']]:
+            with self.assertRaises(ValueError):
+                inventory.sims_rows_for_check(byid, dict(kind='sims', capability='*', excluded_capabilities=exclusions))
+
     def test_cross_family_inventory_separates_support_vendor_and_unknown_cases(self):
         paths = {
             "test/app_test.dart": "flutter_host",

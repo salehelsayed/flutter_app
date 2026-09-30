@@ -71,6 +71,7 @@ int _verifyPlan(List<String> arguments) {
         family: plan.family,
         lane: plan.lane,
         onlyId: plan.onlyId,
+        excludedIds: plan.excludedIds,
         simultaneous: plan.simultaneous,
       );
       if (!_sameJson(decoded, canonical.toJson())) {
@@ -154,6 +155,7 @@ List<String> validateSimsReportPlanAgainstManifest(
       family: audit.plan.family,
       lane: audit.plan.lane,
       onlyId: audit.plan.onlyId,
+      excludedIds: audit.plan.excludedIds,
       simultaneous: audit.plan.simultaneous,
     );
   } on Object catch (error) {
@@ -412,6 +414,7 @@ List<String> _planEquivalenceErrors(SimsPlan serial, SimsPlan simultaneous) {
       serial.manifestDigest != simultaneous.manifestDigest ||
       serial.family != simultaneous.family ||
       serial.onlyId != simultaneous.onlyId ||
+      !_sameSet(serial.excludedIds.toSet(), simultaneous.excludedIds.toSet()) ||
       serial.lane != simultaneous.lane) {
     errors.add('plan selection metadata differs');
   }

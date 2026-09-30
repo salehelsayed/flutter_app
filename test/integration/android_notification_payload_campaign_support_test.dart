@@ -1096,6 +1096,26 @@ void main() {
     );
   });
 
+  test('dual-path failure diagnostics retain only fixed sender codes', () {
+    for (final code in [
+      'live_not_acked',
+      'authority_changed',
+      'deadline',
+      'operation_failed',
+      'control_cleanup_failed',
+    ]) {
+      expect(safeAndroidNotificationDualPathFailureCode(code), code);
+    }
+    for (final value in <Object?>[
+      null,
+      {'secret': 'message'},
+      'live_not_acked: private message',
+      'private_message',
+    ]) {
+      expect(safeAndroidNotificationDualPathFailureCode(value), 'unavailable');
+    }
+  });
+
   test('installed action failure diagnostics allowlist error type only', () {
     expect(safeAndroidNotificationActionErrorType('StateError'), 'StateError');
     expect(

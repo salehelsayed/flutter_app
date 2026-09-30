@@ -267,6 +267,7 @@ final class AndroidCallLifecycleAdapter
   _NativeDescriptor? _descriptor;
   CallId? _boundCallId;
   String? _boundHandle;
+  (CallId, LockedCallPresentation)? _pendingLockedPresentation;
   int _bindingGeneration = 0;
   int _highestObservedSequence = 0;
   int _acknowledgedSequence = 0;
@@ -959,6 +960,7 @@ final class AndroidCallLifecycleAdapter
           _adoptionAcknowledgementPending = false;
           await _reconcileBoundEvents();
         }
+        await _flushLockedPresentation(presentation.callId);
         return true;
       }
     }
@@ -974,6 +976,7 @@ final class AndroidCallLifecycleAdapter
           'expiresAtMs': presentation.expiresAt.millisecondsSinceEpoch,
         });
     if (!presented) _adoptionAcknowledgementPending = false;
+    if (presented) await _flushLockedPresentation(presentation.callId);
     return presented;
   }
 
@@ -1645,6 +1648,9 @@ final class AndroidCallLifecycleAdapter
   }
 
   void _resetPerCallState() {
+    if (_pendingLockedPresentation?.$1 == _boundCallId) {
+      _pendingLockedPresentation = null;
+    }
     _bindingGeneration++;
     _descriptor = null;
     _boundCallId = null;
@@ -1803,14 +1809,67 @@ final class AndroidCallLifecycleAdapter
     CallId callId,
     LockedCallPresentation presentation,
   ) async {
-    if (_closed || _invalid || _boundCallId != callId) return;
-    final handle = _boundHandle;
-    if (handle == null) return;
-    await _invokeBoolean('updatePresentation', <String, Object?>{
-      'version': protocolVersion,
-      'callHandle': handle,
-      ...presentation.toMap(),
+    if (_closed || _invalid) return;
+    _pendingLockedPresentation = (callId, presentation);
+    await _schedule<void>(() => _flushLockedPresentation(callId));
+  }
+
+  /// Applies only a locally resolved name to an authenticated incoming call.
+  /// Native keeps the existing audio and state projection intact.
+  Future<bool> updateAuthenticatedContactName(
+    CallId callId,
+    String displayName,
+  ) async {
+    if (displayName.trim() != displayName ||
+        displayName.isEmpty ||
+        displayName.length > 128) {
+      return false;
+    }
+    return _schedule<bool>(() async {
+      if (_closed || _invalid || _boundCallId != callId) return false;
+      final handle = _boundHandle;
+      if (handle == null) return false;
+      try {
+        return await _invokeBoolean(
+          'updateAuthenticatedContactName',
+          <String, Object?>{
+            'version': protocolVersion,
+            'callHandle': handle,
+            'displayName': displayName,
+          },
+        );
+      } catch (_) {
+        return false;
+      }
     });
+  }
+
+  Future<void> _flushLockedPresentation(CallId callId) async {
+    final pending = _pendingLockedPresentation;
+    final handle = _boundHandle;
+    if (_closed ||
+        _invalid ||
+        pending == null ||
+        pending.$1 != callId ||
+        _boundCallId != callId ||
+        handle == null) {
+      return;
+    }
+    try {
+      final accepted = await _invokeBoolean(
+        'updatePresentation',
+        <String, Object?>{
+          'version': protocolVersion,
+          'callHandle': handle,
+          ...pending.$2.toMap(),
+        },
+      );
+      if (accepted && identical(_pendingLockedPresentation?.$2, pending.$2)) {
+        _pendingLockedPresentation = null;
+      }
+    } catch (_) {
+      // Display-only metadata must not affect call admission or ownership.
+    }
   }
 
   bool _bind(CallId callId, String handle) {
@@ -1969,6 +2028,7 @@ final class AndroidCallLifecycleAdapter
     final existing = _invalidationFuture;
     if (existing != null) return existing;
     _invalid = true;
+    _pendingLockedPresentation = null;
     _bindingGeneration++;
     if (!_invalidations.isClosed) _invalidations.add(null);
     return _invalidationFuture = _invalidateOnce();
@@ -2026,6 +2086,7 @@ final class AndroidCallLifecycleAdapter
   Future<void> _closeOnce() async {
     if (_closed) return;
     _closed = true;
+    _pendingLockedPresentation = null;
     _bindingGeneration++;
     _ownsSession = false;
     if (!_invalidations.isClosed) unawaited(_invalidations.close());

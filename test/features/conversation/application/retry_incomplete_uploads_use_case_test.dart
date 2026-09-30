@@ -12,7 +12,6 @@ import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/core/media/private_media_policy.dart';
 import 'package:flutter_app/features/conversation/application/prepared_direct_media_blob_custody_coordinator.dart';
 import 'package:flutter_app/core/media/outgoing_direct_private_mutation_coordinator.dart';
-import 'package:flutter_app/core/config/direct_media_blob_custody_client_flag.dart';
 import 'package:flutter_app/core/database/direct_event_fanout_contract.dart';
 import 'package:flutter_app/core/database/helpers/direct_inbox_custody_outbox_db_helpers.dart'
     show computeDirectEventFanoutIncarnation;
@@ -2656,7 +2655,6 @@ void main() {
           reason: 'absent v111 must not enter the strict upload owner',
         );
       },
-      skip: !kDirectMediaBlobCustodyClientEnabled,
     );
 
     test('TC-358-02b disappearing strict restart reopens exact v111 without '
@@ -2796,7 +2794,7 @@ void main() {
       expect(retained.encryptionNonce, 'tc358-02b-nonce');
       expect(repo.row.contentHash, contentHash);
       expect(strictUploadCalls, lessThanOrEqualTo(1));
-    }, skip: !kDirectMediaBlobCustodyClientEnabled);
+    });
 
     test(
       'TC-366-01a voice and four-share survivors reopen without source or roster',
@@ -3254,7 +3252,7 @@ void main() {
       expect(durable.single.contentHash, contentHash);
       expect(durable.single.encryptionNonce, 'tc354-03a-nonce');
       expect(durable.single.localPath, pendingPath);
-    }, skip: !kDirectMediaBlobCustodyClientEnabled);
+    });
 
     test(
       'TC-366-01b incomplete private fanout reopens byte-identically without roster',

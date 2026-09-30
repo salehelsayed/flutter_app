@@ -6,6 +6,48 @@ import '../../integration_test/support/sims_runtime_protocol.dart';
 import '../../tool/sims/device_criteria.dart';
 
 void main() {
+  test('connection readiness follows the latest exact target callback', () {
+    const disconnected = '[CONN] peer:disconnected → target-peer';
+    const connected = '[CONN] peer:connected → target-peer (connected)';
+    expect(keepaliveTargetConnected('', 'target-peer'), isNull);
+    expect(keepaliveTargetConnected(disconnected, ''), isNull);
+    expect(keepaliveTargetConnected(connected, 'target-peer'), isTrue);
+    expect(keepaliveTargetConnected(disconnected, 'target-peer'), isFalse);
+    expect(
+      keepaliveTargetConnected('$connected\n$disconnected', 'target-peer'),
+      isFalse,
+    );
+    expect(
+      keepaliveTargetConnected('$disconnected\n$connected', 'target-peer'),
+      isTrue,
+    );
+    expect(
+      keepaliveTargetConnected(
+        '$connected\n[CONN] peer:disconnected → target-peer-other\n'
+            '[CONN] peer:disconnected → target\n'
+            '[CONN] peer:disconnected → other-peer\n'
+            '[FLOW] KEEPALIVE_PEER_DROP target-peer',
+        'target-peer',
+      ),
+      isTrue,
+    );
+    expect(
+      keepaliveTargetConnected(
+        'flutter: $disconnected\r\n'
+            '[CONN] peer:disconnected → target-peer malformed',
+        'target-peer',
+      ),
+      isFalse,
+    );
+    expect(
+      keepaliveTargetConnected(
+        '[CONN] peer:disconnected → target-peer malformed',
+        'target-peer',
+      ),
+      isNull,
+    );
+  });
+
   const messageId = 'a1b2c3d4-1111-2222-3333-444455556666';
   final invocation = SimsRuntimeInvocation(
     schema: simsRuntimeConfigSchema,

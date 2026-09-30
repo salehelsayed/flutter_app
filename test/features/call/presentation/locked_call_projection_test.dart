@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 import 'dart:typed_data';
 import 'dart:ui' as ui;
@@ -240,6 +241,48 @@ void main() {
   }
 
   test(
+    'ringing caller name reaches native before avatar rendering finishes',
+    () async {
+      final avatar = Completer<Uint8List?>();
+      final projection = LockedCallProjection(
+        avatarRenderer: (_, _) => avatar.future,
+      );
+      final capability = _Capability();
+      final l10n = await AppLocalizations.delegate.load(const Locale('en'));
+      final callId = CallId.parse('11111111-1111-4111-8111-111111111111');
+      final update = projection.update(
+        capability: capability,
+        projection: ForegroundCallProjection(
+          session: CallSessionSnapshot.active(
+            callId: callId,
+            contactPeerId: 'authenticated-peer',
+            direction: CallDirection.incoming,
+            state: CallState.incomingValidating,
+            callerAccountPeerId: 'authenticated-peer',
+            callerDeviceId: 'remote-device',
+            startedAt: DateTime.utc(2026),
+            incomingValidated: true,
+          ),
+          audio: CallAudioControlState.idle,
+        ),
+        displayName: 'Beta iPhone',
+        light: true,
+        l10n: l10n,
+      );
+      await Future<void>.delayed(Duration.zero);
+      expect(capability.values, hasLength(1));
+      expect(capability.values.single.$2.displayName, 'Beta iPhone');
+      expect(capability.values.single.$2.state, 'preparing');
+      expect(capability.values.single.$2.avatarPng, isNull);
+      avatar.complete(Uint8List.fromList([1, 2, 3]));
+      await update;
+      expect(capability.values, hasLength(2));
+      expect(capability.values.last.$2.avatarPng, [1, 2, 3]);
+      projection.dispose();
+    },
+  );
+
+  test(
     'avatar generation publishes only the latest authenticated call without a rendered frame',
     () async {
       final projection = LockedCallProjection();
@@ -270,9 +313,8 @@ void main() {
         update(first, 'Previous caller'),
         update(second, 'Current caller'),
       ]);
-      expect(capability.values, hasLength(1));
-      expect(capability.values.single.$1, second);
-      final data = capability.values.single.$2;
+      expect(capability.values.last.$1, second);
+      final data = capability.values.last.$2;
       expect(data.displayName, 'Current caller');
       expect(data.avatarPng, isNotEmpty);
       expect(data.avatarPng!.take(8), [137, 80, 78, 71, 13, 10, 26, 10]);

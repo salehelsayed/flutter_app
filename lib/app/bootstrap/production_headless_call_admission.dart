@@ -29,6 +29,7 @@ import 'package:flutter_app/features/call/domain/call_end_reason.dart';
 import 'package:flutter_app/features/call/application/call_endpoint_resolver.dart';
 import 'package:flutter_app/features/call/application/call_signaling_service.dart';
 import 'package:flutter_app/features/call/application/headless_call_decline_reply.dart';
+import 'package:flutter_app/features/call/application/headless_call_ringing_reply.dart';
 import 'package:flutter_app/features/call/application/incoming_call_pre_presentation_admission.dart';
 import 'package:flutter_app/features/call/domain/call_signal.dart';
 import 'package:flutter_app/features/call/infrastructure/bridge_call_direct_transport.dart';
@@ -46,6 +47,40 @@ import 'package:flutter_app/features/identity/application/linked_installation_au
 import 'package:flutter_app/features/identity/data/repositories/identity_repository_impl.dart';
 import 'package:sqflite_sqlcipher/sqflite.dart';
 import 'package:path_provider/path_provider.dart';
+
+// Fixed-shape, debug-only timing markers for cold Android call admission.
+// Never include call handles, peer IDs, account bindings, or exception text.
+Future<T> _traceHeadlessAdmissionStep<T>(
+  String step,
+  Future<T> Function() action,
+) async {
+  final timer = Stopwatch()..start();
+  void record(String phase) {
+    try {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'CALL_HEADLESS_ADMISSION_STEP',
+        details: <String, Object?>{
+          'step': step,
+          'phase': phase,
+          'elapsedMs': timer.elapsedMilliseconds,
+        },
+      );
+    } catch (_) {
+      // Diagnostics cannot change admission or cleanup behavior.
+    }
+  }
+
+  record('begin');
+  try {
+    final result = await action();
+    record('end');
+    return result;
+  } catch (_) {
+    record('error');
+    rethrow;
+  }
+}
 
 final class HeadlessAuthenticatedMailboxEvent {
   const HeadlessAuthenticatedMailboxEvent({
@@ -80,6 +115,9 @@ typedef AuthenticateHeadlessMailboxEvent =
 typedef HeadlessDeclineReplySender =
     Future<bool> Function(CallSignal invite, String callHandle);
 
+typedef HeadlessRingingReplySender =
+    Future<bool> Function(CallSignal invite, String callHandle);
+
 /// 406: writes the local terminal call-history row for a call that ended with
 /// no coordinator to project it.
 ///
@@ -108,6 +146,7 @@ final class MailboxProductionHeadlessCallAdmissionSession
     required AuthenticateHeadlessMailboxEvent authenticateEvent,
     required Future<HeadlessCallAdmissionCleanup> Function() closeResources,
     HeadlessDeclineReplySender? declineReplySender,
+    HeadlessRingingReplySender? ringingReplySender,
     HeadlessCallHistoryRecorder? historyRecorder,
     Future<HeadlessIncomingCallDisplay?> Function(CallSignal invite)?
     resolveDisplay,
@@ -116,6 +155,7 @@ final class MailboxProductionHeadlessCallAdmissionSession
        _authenticateEvent = authenticateEvent,
        _closeResources = closeResources,
        _declineReplySender = declineReplySender,
+       _ringingReplySender = ringingReplySender,
        _historyRecorder = historyRecorder,
        _resolveDisplay = resolveDisplay,
        _displayTimeout = displayTimeout;
@@ -123,6 +163,7 @@ final class MailboxProductionHeadlessCallAdmissionSession
   final CallMailboxClient _mailboxClient;
   final AuthenticateHeadlessMailboxEvent _authenticateEvent;
   final HeadlessDeclineReplySender? _declineReplySender;
+  final HeadlessRingingReplySender? _ringingReplySender;
   final HeadlessCallHistoryRecorder? _historyRecorder;
   final Future<HeadlessCallAdmissionCleanup> Function() _closeResources;
   final Future<HeadlessIncomingCallDisplay?> Function(CallSignal invite)?
@@ -144,16 +185,81 @@ final class MailboxProductionHeadlessCallAdmissionSession
   ) => _evaluation ??= switch (invocation.mode) {
     HeadlessCallAdmissionMode.admission => _evaluateOnce(invocation),
     HeadlessCallAdmissionMode.declineReply => _declineReplyOnce(invocation),
+    HeadlessCallAdmissionMode.ringingReply => _ringingReplyOnce(invocation),
   };
+
+  /// A second, short headless run begins only after native presentation was
+  /// committed. It reauthenticates the still-unacked invite and checks that
+  /// the exact native call is still ringing before sending the caller's reply.
+  /// Foreground adoption retains custody of the invite and its own sequence.
+  Future<HeadlessCallAdmissionDisposition> _ringingReplyOnce(
+    HeadlessCallAdmissionInvocation invocation,
+  ) async {
+    CallMailboxRetrieveResult page;
+    try {
+      page = await _mailboxClient.retrieve(
+        callHandle: invocation.callId,
+        limit: BridgeCallMailboxClient.maxRetrieveEvents,
+      );
+    } catch (_) {
+      return HeadlessCallAdmissionDisposition.deferred;
+    }
+    if (page.hasMore || page.events.isEmpty) {
+      return HeadlessCallAdmissionDisposition.deferred;
+    }
+    final reservations = <HeadlessAuthenticatedMailboxEvent>[];
+    CallSignal? invite;
+    var terminal = false;
+    try {
+      for (final event in page.events) {
+        final authenticated = await _authenticateEvent(
+          invocation: HeadlessCallAdmissionInvocation(
+            nonce: invocation.nonce,
+            callId: invocation.callId,
+            wakeHandle: invocation.wakeHandle,
+            expiresAtMs: event.expiresAtMs,
+            mode: invocation.mode,
+          ),
+          event: event,
+        );
+        reservations.add(authenticated);
+        if (authenticated.event == CallSignalType.reject ||
+            authenticated.event == CallSignalType.terminate) {
+          terminal = true;
+        } else if (authenticated.event == CallSignalType.invite) {
+          if (invite != null) return HeadlessCallAdmissionDisposition.deferred;
+          invite = authenticated.signal;
+        } else {
+          return HeadlessCallAdmissionDisposition.deferred;
+        }
+      }
+      final sender = _ringingReplySender;
+      if (terminal || invite == null || sender == null) {
+        return HeadlessCallAdmissionDisposition.deferred;
+      }
+      return await sender(invite, invocation.callId)
+          ? HeadlessCallAdmissionDisposition.terminal
+          : HeadlessCallAdmissionDisposition.deferred;
+    } catch (_) {
+      return HeadlessCallAdmissionDisposition.deferred;
+    } finally {
+      for (final reservation in reservations.reversed) {
+        reservation.rollbackReplay();
+      }
+    }
+  }
 
   Future<HeadlessCallAdmissionDisposition> _evaluateOnce(
     HeadlessCallAdmissionInvocation invocation,
   ) async {
     late final CallMailboxRetrieveResult page;
     try {
-      page = await _mailboxClient.retrieve(
-        callHandle: invocation.callId,
-        limit: BridgeCallMailboxClient.maxRetrieveEvents,
+      page = await _traceHeadlessAdmissionStep(
+        'mailbox_retrieve',
+        () => _mailboxClient.retrieve(
+          callHandle: invocation.callId,
+          limit: BridgeCallMailboxClient.maxRetrieveEvents,
+        ),
       );
     } catch (_) {
       _diagnosticCause = 'transport_failed';
@@ -309,9 +415,12 @@ final class MailboxProductionHeadlessCallAdmissionSession
   ) async {
     late final CallMailboxRetrieveResult page;
     try {
-      page = await _mailboxClient.retrieve(
-        callHandle: invocation.callId,
-        limit: BridgeCallMailboxClient.maxRetrieveEvents,
+      page = await _traceHeadlessAdmissionStep(
+        'mailbox_retrieve',
+        () => _mailboxClient.retrieve(
+          callHandle: invocation.callId,
+          limit: BridgeCallMailboxClient.maxRetrieveEvents,
+        ),
       );
     } catch (_) {
       _emitDeclineReplyResult('retrieve_failed');
@@ -520,12 +629,15 @@ final class ProductionHeadlessCallAdmissionRunner {
           ? session as HeadlessCallAdmissionDiagnosticSource
           : null;
       failureCause = 'adoption_failed';
-      final disposition = await session.evaluate(invocation);
+      final disposition = await _traceHeadlessAdmissionStep(
+        'evaluate',
+        () => session.evaluate(invocation),
+      );
       final display = session is HeadlessCallAdmissionDisplaySource
           ? (session as HeadlessCallAdmissionDisplaySource).display
           : null;
       failureCause = 'cleanup_failed';
-      final cleanup = await session.close();
+      final cleanup = await _traceHeadlessAdmissionStep('close', session.close);
       if (!cleanup.databaseClosed || !cleanup.leaseReleased) {
         return _deferred(cleanup);
       }
@@ -647,38 +759,53 @@ final class AndroidProductionHeadlessCallAdmissionBackend
       _diagnosticCause = 'busy';
       return null;
     }
-    final binding = await _bindingCoordinator.readCurrentAccountBinding();
+    final binding = await _traceHeadlessAdmissionStep(
+      'binding',
+      _bindingCoordinator.readCurrentAccountBinding,
+    );
     if (binding == null) {
       // In stage=admission this describes missing local account binding,
       // before any remote caller or envelope authority has been examined.
       _diagnosticCause = 'authority_invalid';
       return null;
     }
-    final database = await _writableSession.acquireThenOpen<Database>(
-      binding: binding,
-      openDatabase: () =>
-          _openExistingDatabase(onOpened: (opened) => _database = opened),
-      closeAfterOpenFailure: _closeCurrentDatabase,
-      closeDatabaseOnRuntimeAttachFailure: (opened) async {
-        if (opened.isOpen) await opened.close();
-        return !opened.isOpen;
-      },
+    final database = await _traceHeadlessAdmissionStep(
+      'lease_and_database',
+      () => _writableSession.acquireThenOpen<Database>(
+        binding: binding,
+        openDatabase: () =>
+            _openExistingDatabase(onOpened: (opened) => _database = opened),
+        closeAfterOpenFailure: _closeCurrentDatabase,
+        closeDatabaseOnRuntimeAttachFailure: (opened) async {
+          if (opened.isOpen) await opened.close();
+          return !opened.isOpen;
+        },
+      ),
     );
     _database = database;
 
-    final identity = await loadPassiveIdentitySnapshot(
-      dbLoadIdentityRow: () => dbLoadIdentityRow(database),
-      secureKeyStore: _secureKeyStore,
+    final identity = await _traceHeadlessAdmissionStep(
+      'identity',
+      () => loadPassiveIdentitySnapshot(
+        dbLoadIdentityRow: () => dbLoadIdentityRow(database),
+        secureKeyStore: _secureKeyStore,
+      ),
     );
     if (identity == null ||
-        identity.mlKemSecretKey?.trim().isNotEmpty != true ||
-        await _bindingCoordinator.deriveExistingAccountBinding(
-              identity.peerId,
-            ) !=
-            binding) {
+        identity.mlKemSecretKey?.trim().isNotEmpty != true) {
       throw StateError('headless call authority is unavailable');
     }
-    final migration = await _migrationAuthority.loadAuthority();
+    final verifiedBinding = await _traceHeadlessAdmissionStep(
+      'binding_verify',
+      () => _bindingCoordinator.deriveExistingAccountBinding(identity.peerId),
+    );
+    if (verifiedBinding != binding) {
+      throw StateError('headless call authority is unavailable');
+    }
+    final migration = await _traceHeadlessAdmissionStep(
+      'migration_authority',
+      _migrationAuthority.loadAuthority,
+    );
     if (migration != null &&
         (migration.isFailClosed ||
             !migration.allowsNormalStartup ||
@@ -687,8 +814,9 @@ final class AndroidProductionHeadlessCallAdmissionBackend
                 migration.accountPeerId != identity.peerId))) {
       throw StateError('headless call migration authority refused');
     }
-    final linked = await _linkedAuthority.load(
-      expectedAccountPeerId: identity.peerId,
+    final linked = await _traceHeadlessAdmissionStep(
+      'linked_authority',
+      () => _linkedAuthority.load(expectedAccountPeerId: identity.peerId),
     );
     final physicalPeerId = selectNotificationCompletedOutcomePhysicalPeerId(
       accountPeerId: identity.peerId,
@@ -704,14 +832,17 @@ final class AndroidProductionHeadlessCallAdmissionBackend
 
     final bridge = GoBridgeClient();
     _bridge = bridge;
-    await bridge.initialize();
-    final started = await callP2PNodeStart(
-      bridge,
-      privateKeyHex: base64ToHex(physicalPrivateKey),
-      relayAddresses: defaultRelayAddresses(),
-      autoRegister: true,
-      namespace: 'mknoon:chat:$physicalPeerId',
-      featureFlags: defaultResilienceFeatureFlags(),
+    await _traceHeadlessAdmissionStep('go_initialize', bridge.initialize);
+    final started = await _traceHeadlessAdmissionStep(
+      'node_start',
+      () => callP2PNodeStart(
+        bridge,
+        privateKeyHex: base64ToHex(physicalPrivateKey),
+        relayAddresses: defaultRelayAddresses(),
+        autoRegister: true,
+        namespace: 'mknoon:chat:$physicalPeerId',
+        featureFlags: defaultResilienceFeatureFlags(),
+      ),
     );
     if (started['ok'] != true || started['peerId'] != physicalPeerId) {
       throw StateError('headless call transport did not start');
@@ -806,6 +937,31 @@ final class AndroidProductionHeadlessCallAdmissionBackend
       loadSigningPrivateKey: () async => identity.privateKey,
       nowMs: nowMs,
     );
+    final ringingReply = HeadlessCallRingingReplyTransmitter(
+      transmit: signalingService.transmit,
+      resolveEndpoint: (contactAccountPeerId) => resolveProductionCallEndpoint(
+        contactAccountPeerId: contactAccountPeerId,
+        resolver: resolver,
+        rosterProvider: roster,
+        authorityClient: authority,
+        receivedCallWakeHandleStore: receivedWakeHandles,
+      ),
+      isNativeRinging: (callHandle, expiresAtMs) async {
+        if (invocation.mode != HeadlessCallAdmissionMode.ringingReply ||
+            invocation.callId != callHandle ||
+            invocation.expiresAtMs != expiresAtMs) {
+          return false;
+        }
+        return await const MethodChannel(
+              'mknoon/headless_call_admission',
+            ).invokeMethod<bool>('isRinging', invocation.identityPayload()) ??
+            false;
+      },
+      localAccountPeerId: identity.peerId,
+      localDevicePeerId: physicalPeerId,
+      loadSigningPrivateKey: () async => identity.privateKey,
+      nowMs: nowMs,
+    );
     final admission = IncomingCallPrePresentationAdmission(
       codec: codec,
       trustedRosterProvider: roster,
@@ -831,6 +987,8 @@ final class AndroidProductionHeadlessCallAdmissionBackend
       },
       declineReplySender: (invite, callHandle) =>
           declineReply.sendDeclineFor(invite, callHandle: callHandle),
+      ringingReplySender: (invite, callHandle) =>
+          ringingReply.sendRingingFor(invite, callHandle: callHandle),
       historyRecorder: recordTerminalCallHistory,
       resolveDisplay: (invite) async {
         // These are local reads under the same authenticated DB owner. Start
@@ -880,26 +1038,31 @@ final class AndroidProductionHeadlessCallAdmissionBackend
   Future<Database> _openExistingDatabase({
     required void Function(Database database) onOpened,
   }) async {
-    final database = await openEncryptedDatabase(
-      secureKeyStore: _secureKeyStore,
-      dbName: 'identity.db',
-      version: currentIdentityDatabaseVersion,
-      onCreate: runProductionOnCreate,
-      onUpgrade: runProductionOnUpgrade,
-      requireExisting: true,
-      onOpened: onOpened,
+    final database = await _traceHeadlessAdmissionStep(
+      'database_open',
+      () => openEncryptedDatabase(
+        secureKeyStore: _secureKeyStore,
+        dbName: 'identity.db',
+        version: currentIdentityDatabaseVersion,
+        onCreate: runProductionOnCreate,
+        onUpgrade: runProductionOnUpgrade,
+        requireExisting: true,
+        onOpened: onOpened,
+      ),
     );
-    await repairDirectNotificationDurabilityDeleteTriggers(database);
-    await repairLegacyPushMessageTransports(database);
-    await migrateSecretsToSecureStorage(
-      db: database,
-      secureKeyStore: _secureKeyStore,
-    );
-    await runSecretNullChecksMigration(database);
-    await scrubLegacyGroupSecretsToSecureStorage(
-      db: database,
-      secureKeyStore: _secureKeyStore,
-    );
+    await _traceHeadlessAdmissionStep('database_prepare', () async {
+      await repairDirectNotificationDurabilityDeleteTriggers(database);
+      await repairLegacyPushMessageTransports(database);
+      await migrateSecretsToSecureStorage(
+        db: database,
+        secureKeyStore: _secureKeyStore,
+      );
+      await runSecretNullChecksMigration(database);
+      await scrubLegacyGroupSecretsToSecureStorage(
+        db: database,
+        secureKeyStore: _secureKeyStore,
+      );
+    });
     return database;
   }
 
@@ -990,7 +1153,10 @@ final class _DiagnosticAdmissionLeaseGateway
   Future<CanonicalRuntimeLeaseSnapshot> acquire(String binding) async {
     final CanonicalRuntimeLeaseSnapshot snapshot;
     try {
-      snapshot = await _delegate.acquire(binding);
+      snapshot = await _traceHeadlessAdmissionStep(
+        'lease_acquire',
+        () => _delegate.acquire(binding),
+      );
     } catch (error) {
       // An existing foreground canonical owner is expected contention, not a
       // missing/broken method channel. Never record native exception details.
@@ -1008,7 +1174,8 @@ final class _DiagnosticAdmissionLeaseGateway
   }
 
   @override
-  Future<bool> attachRuntime() => _delegate.attachRuntime();
+  Future<bool> attachRuntime() =>
+      _traceHeadlessAdmissionStep('lease_attach', _delegate.attachRuntime);
   @override
   Future<CanonicalRuntimeLeaseSnapshot> rebind(String binding) =>
       _delegate.rebind(binding);
@@ -1034,9 +1201,12 @@ _productionHeadlessCallAdmissionRunner = ProductionHeadlessCallAdmissionRunner(
 Future<HeadlessCallAdmissionRunReport> runProductionHeadlessCallAdmission({
   required HeadlessCallAdmissionInvocation invocation,
   required bool Function() isStopRequested,
-}) => _productionHeadlessCallAdmissionRunner.run(
-  invocation: invocation,
-  isStopRequested: isStopRequested,
+}) => _traceHeadlessAdmissionStep(
+  'admission_run',
+  () => _productionHeadlessCallAdmissionRunner.run(
+    invocation: invocation,
+    isStopRequested: isStopRequested,
+  ),
 );
 
 Future<HeadlessCallAdmissionCleanup> cleanupProductionHeadlessCallAdmission() =>

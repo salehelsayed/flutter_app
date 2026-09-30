@@ -1,0 +1,6 @@
+appId: com.mknoon.app
+name: S08b iPhone (in the group chat) waits for the Pixel's G2
+---
+- runFlow: kb_hide.yaml
+- extendedWaitUntil: { visible: ".*G2 hello group from Pixel ${NONCE}.*", timeout: 240000 }
+- takeScreenshot: s08b_got_g2_ios

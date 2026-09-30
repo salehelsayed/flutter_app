@@ -49,8 +49,28 @@ printf '%s\n' \
   >"${fake_bin}/docker"
 chmod +x "${fake_bin}/docker"
 
+# token_urlsafe may legitimately start with a hyphen. Exercise that parser
+# boundary on every wrapper launch without changing production randomness.
+contract_python_bin="$(command -v python3)"
+cat >"${fake_bin}/python3" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+if [ "${1:-}" = "-" ]; then
+  stdin_script="$(cat)"
+  if [[ "${stdin_script}" == *'secrets.token_urlsafe'* ]]; then
+    printf '%s\n' '-fixture-bridge-token'
+  else
+    printf '%s\n' "${stdin_script}" | "${CONTRACT_PYTHON_BIN:?}" "$@"
+  fi
+else
+  exec "${CONTRACT_PYTHON_BIN:?}" "$@"
+fi
+SH
+chmod +x "${fake_bin}/python3"
+
 run_runner() {
   PATH="${fake_bin}:${PATH}" \
+    CONTRACT_PYTHON_BIN="${contract_python_bin}" \
     FAKE_DOCKER_LOG="${docker_log}" \
     HOME="${tmp_dir}/host-home" \
     CLAUDE_DOCKER_HOME="${tmp_dir}/claude-home" \

@@ -1,0 +1,8 @@
+appId: com.mknoon.app
+name: T16 Pixel sees the new group name and description
+---
+- runFlow: { file: open_group.yaml, env: { GROUP: "R2 (Group|Renamed|By Pixel) ${NONCE}", GTIMEOUT: 240000 } }
+- runFlow: group_info.yaml
+- extendedWaitUntil: { visible: ".*desc ${NONCE}.*", timeout: 120000 }
+- takeScreenshot: t16_renamed_android
+- runFlow: ../go_back.yaml

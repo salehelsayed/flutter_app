@@ -5,7 +5,6 @@ import 'package:flutter_app/core/database/helpers/media_attachments_db_helpers.d
 import 'dart:io';
 import 'package:crypto/crypto.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
-import 'package:flutter_app/core/config/direct_media_blob_custody_client_flag.dart';
 import 'package:flutter_app/core/database/outgoing_transport_mutation.dart';
 import 'package:flutter_app/core/database/direct_media_blob_custody.dart';
 import 'package:flutter_app/core/media/direct_media_blob_artifact_store.dart';
@@ -1115,6 +1114,7 @@ void main() {
                 ];
 
           final (firstResult, _) = await sendVoiceMessage(
+            directMediaBlobCustodyClientEnabled: true,
             p2pService: FakeP2PService(),
             messageRepo: firstMessages,
             targetPeerId: preparedParent.contactPeerId,
@@ -1160,6 +1160,7 @@ void main() {
           )..saved.add(restartedAttachment);
 
           await sendVoiceMessage(
+            directMediaBlobCustodyClientEnabled: true,
             p2pService: FakeP2PService(
               currentState: const NodeState(
                 isStarted: false,
@@ -1217,7 +1218,6 @@ void main() {
                 'crypto generation that may already be committed at the relay',
           );
         },
-        skip: !kDirectMediaBlobCustodyClientEnabled,
       );
 
       test(
@@ -1500,6 +1500,7 @@ void main() {
           }
 
           await sendVoiceMessage(
+            directMediaBlobCustodyClientEnabled: true,
             p2pService: FakeP2PService(
               currentState: const NodeState(
                 isStarted: false,
@@ -1537,7 +1538,6 @@ void main() {
           expect(media.saved.single.encryptionKeyBase64, isNotNull);
           expect(media.saved.single.encryptionNonce, isNotNull);
         },
-        skip: !kDirectMediaBlobCustodyClientEnabled,
       );
 
       test(

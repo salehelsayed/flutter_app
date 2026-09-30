@@ -1,0 +1,9 @@
+appId: com.mknoon.app
+name: add caption MSG to the pending media and send
+---
+- runFlow:
+    when: { true: "${MSG != ''}" }
+    commands:
+      - tapOn: { id: "chat_composer" }
+      - inputText: "${MSG}"
+- tapOn: "Send message"

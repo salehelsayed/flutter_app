@@ -1,4 +1,5 @@
 #!/usr/bin/env dart
+
 // Soak E2E Orchestrator
 //
 // Coordinates a long-running soak test between a Go CLI test peer and
@@ -25,6 +26,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
 
+import '../_support/prepared_ios_harness.dart';
 import '../_support/signal_files.dart';
 
 // ---------------------------------------------------------------------------
@@ -230,10 +232,7 @@ String? _readSignal(String name) => _sig.read(name);
 /// Mirrors the inline `_waitForSignal`: returns the signal's content, or `null`
 /// on timeout (the orchestrator branches on `== null` for graceful cleanup, so
 /// the canonical loud throw is caught and converted back to `null` here).
-Future<String?> _waitForSignal(
-  String name, {
-  required Duration timeout,
-}) async {
+Future<String?> _waitForSignal(String name, {required Duration timeout}) async {
   try {
     await _sig.waitForSignal(name, timeout: timeout);
     return _sig.read(name);
@@ -393,6 +392,36 @@ Future<void> main(List<String> args) async {
     exit(1);
   }
 
+  // Compile the simulator app before either peer's readiness deadline starts.
+  // Physical iOS and Android retain their existing launch paths.
+  final useFlutterDrive =
+      platform == 'ios' && (deviceId == null || _isIosDeviceId(deviceId));
+  final dartDefines = <String>[
+    ..._relayDartDefines(),
+    '--dart-define=E2E_SIGNAL_DIR=${_signalDir.path}',
+  ];
+  String? applicationBinary;
+  if (useFlutterDrive &&
+      deviceId != null &&
+      RegExp(
+        r'^[0-9A-Fa-f]{8}(?:-[0-9A-Fa-f]{4}){3}-[0-9A-Fa-f]{12}$',
+      ).hasMatch(deviceId)) {
+    final preparationLog = File(
+      '${_signalDir.path}/preparation.log',
+    ).openWrite();
+    try {
+      applicationBinary = await prepareIosSimulatorHarness(
+        role: 'soak',
+        harness: 'integration_test/soak_e2e_test.dart',
+        dartDefines: dartDefines,
+        sharedDirectory: _signalDir,
+        log: preparationLog,
+      );
+    } finally {
+      await preparationLog.close();
+    }
+  }
+
   // 3. Start test peer
   final peer = TestPeer();
   await peer.start();
@@ -413,21 +442,20 @@ Future<void> main(List<String> args) async {
 
   // 5. Launch Flutter integration test
   _log('SOAK', 'Launching Flutter soak test...');
-  final useFlutterDrive =
-      platform == 'ios' && (deviceId == null || _isIosDeviceId(deviceId));
   final flutterArgs = [
     if (useFlutterDrive) ...[
       'drive',
       '--driver=test_driver/integration_test.dart',
       '--target=integration_test/soak_e2e_test.dart',
       '--publish-port',
+      if (applicationBinary != null)
+        '--use-application-binary=$applicationBinary',
     ] else ...[
       'test',
       '--no-dds',
       'integration_test/soak_e2e_test.dart',
     ],
-    ..._relayDartDefines(),
-    '--dart-define=E2E_SIGNAL_DIR=${_signalDir.path}',
+    ...dartDefines,
     if (deviceId != null) ...['-d', deviceId],
   ];
   final flutterProcess = await Process.start(

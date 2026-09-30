@@ -1452,17 +1452,17 @@ bool _isFeatureDomainPath(String path) {
 }
 
 String _normalizeGitPath(String rawPath) {
-  if (!_isSafeExactPath(rawPath)) {
+  if (!_isSafeGitPath(rawPath)) {
     throw FormatException('Unsafe Git path: $rawPath');
   }
   return rawPath;
 }
 
-bool _isSafeExactPath(String path) {
+// `git ls-files -z` returns exact filenames, so glob punctuation is literal.
+// Keep the relative-path checks here; user-authored URI and manifest paths use
+// `_isSafeExactPath` and continue to reject glob syntax.
+bool _isSafeGitPath(String path) {
   if (path.isEmpty ||
-      path.contains('*') ||
-      path.contains('?') ||
-      path.contains('[') ||
       path.contains('\\') ||
       path.contains('\u0000') ||
       p.posix.isAbsolute(path)) {
@@ -1473,6 +1473,17 @@ bool _isSafeExactPath(String path) {
       normalized != '.' &&
       normalized != '..' &&
       !normalized.startsWith('../');
+}
+
+bool _isSafeExactPath(String path) {
+  if (path.isEmpty ||
+      path.contains('*') ||
+      path.contains('?') ||
+      path.contains('[') ||
+      !_isSafeGitPath(path)) {
+    return false;
+  }
+  return true;
 }
 
 String _requiredExactPath(Map<String, Object?> json, String key) {

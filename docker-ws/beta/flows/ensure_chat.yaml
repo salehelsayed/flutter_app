@@ -1,0 +1,54 @@
+appId: com.mknoon.app
+name: make sure the 1:1 chat with the friend is open
+---
+- runFlow:
+    when: { visible: "Dismiss call status" }
+    commands: [ { tapOn: "Dismiss call status" } ]
+# Round 2: a left-over delete sheet or message menu. The menu's full-screen "Dismiss"
+# layer must not be tapped in its centre (that can hit a menu item such as Delete).
+- runFlow:
+    when: { visible: "Who would you like to delete this message for.*" }
+    commands: [ { tapOn: "Cancel" } ]
+- runFlow:
+    when: { visible: "Dismiss" }
+    commands: [ { tapOn: { point: "50%,11%" } } ]
+- repeat:
+    times: 3
+    while: { notVisible: ".*Write something.*|Open chat with ${PEER}.*|Show all chats|Show inner circle|Cancel call|End call|End|Answer|Decline|Mute" }
+    commands: [ { runFlow: go_back.yaml } ]
+- runFlow:
+    when: { visible: "Show inner circle" }
+    commands: [ { tapOn: "Show inner circle" } ]
+- runFlow:
+    when: { visible: "Open chat with ${PEER}.*" }
+    commands: [ { tapOn: "Open chat with ${PEER}.*" } ]
+- runFlow:
+    when: { notVisible: "Answer|Decline|Cancel call|End call|End|Mute" }
+    commands:
+      - runFlow:
+          when: { notVisible: ".*Write something.*" }
+          commands:
+            # iOS: a system sheet the driver cannot see into (Photos picker) can be left
+            # open by a failed flow; only a restart closes it.
+            - runFlow:
+                when: { platform: iOS }
+                commands: [ { launchApp: { stopApp: true } } ]
+            - runFlow:
+                when: { platform: Android }
+                commands: [ { launchApp: { stopApp: false } } ]
+            - runFlow: open_chat.yaml
+# Round 2 (2026-09-27): a group chat also shows "Write something". Make sure the open
+# chat is the 1:1 chat with PEER (its header id), else go home and open it.
+- runFlow:
+    when: { notVisible: "Answer|Decline|Cancel call|End call|End|Mute" }
+    commands:
+      - runFlow:
+          when: { notVisible: { id: "mknoon.conversation.${PEER}" } }
+          commands:
+            - runFlow: kb_hide.yaml
+            - repeat:
+                times: 4
+                while: { notVisible: "Open chat with ${PEER}.*|Show all chats|Show inner circle" }
+                commands: [ { runFlow: go_back.yaml } ]
+            - runFlow: open_chat.yaml
+- runFlow: kb_hide.yaml

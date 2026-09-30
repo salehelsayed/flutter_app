@@ -109,6 +109,26 @@ class CampaignPreflightTest(unittest.TestCase):
                 self.assertEqual(len(commands), 3)
                 self.assertNotIn('private-canary', json.dumps(receipt))
 
+    def test_dart_hook_prefix_preserves_exact_scenario_listing(self):
+        marker = 'tc_a6_replay_before_ack_custody\n'
+        for count in (1, 2):
+            with self.subTest(count=count):
+                receipt, _ = self.run_fixture([(IDLE, 0, False, .01)] * 2 + [
+                    ('Running build hooks...' * count + marker, 0, False, .02)])
+                self.assertEqual(receipt['status'], 'PASS')
+
+    def test_hook_progress_never_promotes_failed_or_nonexact_listing(self):
+        marker = 'tc_a6_replay_before_ack_custody'
+        prefixed = 'Running build hooks...' * 2 + marker + '\n'
+        for output, code, timeout in [(prefixed, 1, False), (prefixed, 0, True),
+                                      ('Running build hooks...', 0, False),
+                                      ('unrelated ' + marker + '\n', 0, False),
+                                      (prefixed.rstrip() + ' suffix\n', 0, False)]:
+            with self.subTest(output=output, code=code, timeout=timeout):
+                receipt, _ = self.run_fixture([(IDLE, 0, False, .01)] * 2 + [
+                    (output, code, timeout, .02)])
+                self.assertEqual(receipt['checkpoint'], 'device_runner_dependencies_unready')
+
     def test_ios_only_check_never_invents_an_android_probe(self):
         receipt, commands = self.run_fixture([], device_roles=['ios_physical'], host_preflight=None)
         self.assertEqual(receipt['status'], 'PASS')

@@ -146,6 +146,39 @@
         "SIMS_IOS_DISPOSABLE_BUNDLE_ID": "com.mknoon.sims.groupmedia269"
       },
       "declaredException": false
+    },
+    {
+      "id": "ios.simulator.app",
+      "platform": "ios",
+      "artifactKind": "simulator-runner-app",
+      "buildRequired": true,
+      "compileDefines": {
+        "E2E_TEST_MODE": "true"
+      },
+      "declaredException": false
+    },
+    {
+      "id": "android.e2e.performance_relay",
+      "platform": "android",
+      "artifactKind": "universal-debug-apk",
+      "buildRequired": true,
+      "compileDefines": {
+        "E2E_TEST_MODE": "true",
+        "DISABLE_LOCAL_DISCOVERY": "true"
+      },
+      "declaredException": false
+    },
+    {
+      "id": "android.production_fcm.journey",
+      "platform": "android",
+      "artifactKind": "provider-configured-debug-apk",
+      "buildRequired": true,
+      "compileDefines": {
+        "E2E_TEST_MODE": "true",
+        "PRODUCTION_FCM": "true",
+        "MKNOON_EMIT_WAKE_TOKEN": "true"
+      },
+      "declaredException": false
     }
   ],
   "capabilities": [
@@ -2741,6 +2774,782 @@
       "artifactRequired": true,
       "artifactValidator": "validateGroupMediaIosBackgroundRecoveryArtifact",
       "automationReady": true,
+      "active": true,
+      "declaredBuildException": false
+    },
+    {
+      "id": "production.foreground_group_push",
+      "owner": "groups",
+      "proofBoundary": "production.foreground.group_push.recovery-deduplication-eligibility",
+      "assertions": [
+        "S1.missed_live_exact_recovery_one_notification_payload",
+        "S2.live_then_push_one_row_one_notification_payload",
+        "S3.one_failed_drain_ineligible_fallback_suppressed"
+      ],
+      "lane": "reliability",
+      "modes": [
+        "major",
+        "full"
+      ],
+      "families": [
+        "groups",
+        "notifications"
+      ],
+      "required": true,
+      "command": [
+        "dart",
+        "run",
+        "integration_test/scripts/run_production_foreground_group_push.dart"
+      ],
+      "buildProfile": "android.e2e.main",
+      "dependencies": [
+        "build.android.e2e.main"
+      ],
+      "resources": [
+        {
+          "name": "build:android.e2e.main",
+          "access": "read"
+        },
+        {
+          "name": "device:android-physical",
+          "access": "exclusive"
+        },
+        {
+          "name": "device:android-emulator",
+          "access": "exclusive"
+        },
+        {
+          "name": "artifact:production-foreground-group-push",
+          "access": "write"
+        }
+      ],
+      "targetCapabilities": [
+        "android.physical",
+        "android.emulator"
+      ],
+      "allowedNaReason": "target_unavailable_by_project_policy",
+      "artifactRequired": true,
+      "artifactValidator": "validateProductionForegroundPush",
+      "automationReady": true,
+      "active": true,
+      "declaredBuildException": false
+    },
+    {
+      "id": "production.notification_open",
+      "owner": "notifications",
+      "proofBoundary": "production.notification.open.warm-cold-same-peer",
+      "assertions": [
+        "warm.other_chat_exact_target_and_unread",
+        "cold.native_tap_fresh_production_startup",
+        "same_peer.no_duplicate_route_and_production_guard"
+      ],
+      "lane": "reliability",
+      "modes": [
+        "major",
+        "full"
+      ],
+      "families": [
+        "notifications",
+        "1to1"
+      ],
+      "required": true,
+      "command": [
+        "dart",
+        "run",
+        "integration_test/scripts/run_production_notification_open.dart"
+      ],
+      "buildProfile": "android.e2e.main",
+      "dependencies": [
+        "build.android.e2e.main",
+        "build.android.production_fcm.journey"
+      ],
+      "resources": [
+        {
+          "name": "build:android.e2e.main",
+          "access": "read"
+        },
+        {
+          "name": "device:android-physical",
+          "access": "exclusive"
+        },
+        {
+          "name": "device:android-emulator",
+          "access": "exclusive"
+        },
+        {
+          "name": "artifact:production-notification-open",
+          "access": "write"
+        },
+        {
+          "name": "build:android.production_fcm.journey",
+          "access": "read"
+        }
+      ],
+      "targetCapabilities": [
+        "android.physical",
+        "android.emulator"
+      ],
+      "allowedNaReason": "target_unavailable_by_project_policy",
+      "artifactRequired": true,
+      "artifactValidator": "validateProductionNotificationOpen",
+      "automationReady": true,
+      "active": true,
+      "declaredBuildException": false
+    },
+    {
+      "id": "production.notification_sound",
+      "owner": "notifications",
+      "proofBoundary": "production.notification.sound.S1-S16-and-control",
+      "assertions": [
+        "S1",
+        "S2",
+        "S3",
+        "S4",
+        "S5",
+        "S6",
+        "S7",
+        "S8",
+        "S9",
+        "S10",
+        "S11",
+        "S12",
+        "S13",
+        "S14",
+        "S15",
+        "S16",
+        "S15_control"
+      ],
+      "lane": "reliability",
+      "modes": [
+        "major",
+        "full"
+      ],
+      "families": [
+        "notifications",
+        "1to1",
+        "groups"
+      ],
+      "required": true,
+      "command": [
+        "dart",
+        "run",
+        "integration_test/scripts/run_production_notification_sound.dart"
+      ],
+      "buildProfile": "android.e2e.main",
+      "dependencies": [
+        "build.android.e2e.main",
+        "build.android.production_fcm.journey"
+      ],
+      "resources": [
+        {
+          "name": "build:android.e2e.main",
+          "access": "read"
+        },
+        {
+          "name": "device:android-physical",
+          "access": "exclusive"
+        },
+        {
+          "name": "device:android-emulator",
+          "access": "exclusive"
+        },
+        {
+          "name": "artifact:production-notification-sound",
+          "access": "write"
+        },
+        {
+          "name": "build:android.production_fcm.journey",
+          "access": "read"
+        }
+      ],
+      "targetCapabilities": [
+        "android.physical",
+        "android.emulator"
+      ],
+      "allowedNaReason": "target_unavailable_by_project_policy",
+      "artifactRequired": true,
+      "artifactValidator": "validateProductionNotificationSound",
+      "automationReady": true,
+      "active": true,
+      "declaredBuildException": false
+    },
+    {
+      "id": "production.routing_smoke",
+      "owner": "reliability",
+      "proofBoundary": "production.routing.direct-and-group.27-cases",
+      "assertions": [
+        "S1",
+        "S1-CONV",
+        "S2",
+        "S3",
+        "S4",
+        "S5",
+        "S6",
+        "S7",
+        "S8",
+        "S9",
+        "S10",
+        "S13",
+        "S11",
+        "S12",
+        "S14",
+        "S15",
+        "X1",
+        "X2",
+        "X3",
+        "G1",
+        "G2",
+        "G3",
+        "G4",
+        "G5",
+        "G6",
+        "G7",
+        "G8"
+      ],
+      "lane": "reliability",
+      "modes": [
+        "major",
+        "full"
+      ],
+      "families": [
+        "1to1",
+        "groups"
+      ],
+      "required": true,
+      "command": [
+        "dart",
+        "run",
+        "integration_test/scripts/run_production_routing.dart"
+      ],
+      "buildProfile": "android.e2e.main",
+      "dependencies": [
+        "build.android.e2e.main"
+      ],
+      "resources": [
+        {
+          "name": "build:android.e2e.main",
+          "access": "read"
+        },
+        {
+          "name": "device:android-physical",
+          "access": "exclusive"
+        },
+        {
+          "name": "device:android-emulator",
+          "access": "exclusive"
+        },
+        {
+          "name": "artifact:production-routing",
+          "access": "write"
+        }
+      ],
+      "targetCapabilities": [
+        "android.physical",
+        "android.emulator"
+      ],
+      "allowedNaReason": "target_unavailable_by_project_policy",
+      "artifactRequired": true,
+      "artifactValidator": "validateProductionRouting",
+      "automationReady": true,
+      "active": true,
+      "declaredBuildException": false
+    },
+    {
+      "id": "production.private_media_local",
+      "owner": "reliability",
+      "proofBoundary": "production.private-media.local-ui-and-sql",
+      "assertions": [
+        "private-projection",
+        "recipient-canonical-sql-lifecycle",
+        "sender-pending-sql-lifecycle",
+        "cold-consumed-refusal"
+      ],
+      "lane": "reliability",
+      "modes": [
+        "major",
+        "full"
+      ],
+      "families": [
+        "1to1"
+      ],
+      "required": true,
+      "command": [
+        "dart",
+        "run",
+        "integration_test/scripts/run_production_private_media_local.dart"
+      ],
+      "buildProfile": "android.e2e.main",
+      "dependencies": [
+        "build.android.e2e.main"
+      ],
+      "resources": [
+        {
+          "name": "build:android.e2e.main",
+          "access": "read"
+        },
+        {
+          "name": "device:android-physical",
+          "access": "exclusive"
+        },
+        {
+          "name": "device:android-emulator",
+          "access": "exclusive"
+        },
+        {
+          "name": "artifact:production-private-media",
+          "access": "write"
+        }
+      ],
+      "targetCapabilities": [
+        "android.physical",
+        "android.emulator"
+      ],
+      "allowedNaReason": "target_unavailable_by_project_policy",
+      "artifactRequired": true,
+      "artifactValidator": "validateProductionPrivateMedia",
+      "automationReady": true,
+      "active": true,
+      "declaredBuildException": false
+    },
+    {
+      "id": "production.group_invite_reliability",
+      "owner": "reliability",
+      "proofBoundary": "production.group-invites.ui-and-protocol",
+      "assertions": [
+        "F-decline-ack",
+        "C-exact-invite-revocation",
+        "D-metadata-convergence"
+      ],
+      "lane": "reliability",
+      "modes": [
+        "major",
+        "full"
+      ],
+      "families": [
+        "groups"
+      ],
+      "required": true,
+      "command": [
+        "dart",
+        "run",
+        "integration_test/scripts/run_production_group_invite_reliability.dart"
+      ],
+      "buildProfile": "android.e2e.main",
+      "dependencies": [
+        "build.android.e2e.main"
+      ],
+      "resources": [
+        {
+          "name": "build:android.e2e.main",
+          "access": "read"
+        },
+        {
+          "name": "device:android-physical",
+          "access": "exclusive"
+        },
+        {
+          "name": "device:android-emulator",
+          "access": "exclusive"
+        },
+        {
+          "name": "artifact:production-group-invites",
+          "access": "write"
+        }
+      ],
+      "targetCapabilities": [
+        "android.physical",
+        "android.emulator"
+      ],
+      "allowedNaReason": "target_unavailable_by_project_policy",
+      "artifactRequired": true,
+      "artifactValidator": "validateProductionGroupInvite",
+      "automationReady": true,
+      "active": true,
+      "declaredBuildException": false
+    },
+    {
+      "id": "production.startup_resume_performance",
+      "owner": "reliability",
+      "proofBoundary": "production.node-startup-and-os-resume",
+      "assertions": [
+        "cold-initial",
+        "cold-distribution-1",
+        "cold-distribution-2",
+        "cold-distribution-3",
+        "cold-distribution-4",
+        "cold-distribution-5",
+        "hot-core",
+        "hot-node",
+        "healthy-resume",
+        "degraded-resume",
+        "extended-resume",
+        "foreground-recovery"
+      ],
+      "lane": "reliability",
+      "modes": [
+        "major",
+        "full"
+      ],
+      "families": [
+        "performance"
+      ],
+      "required": true,
+      "command": [
+        "dart",
+        "run",
+        "integration_test/scripts/run_production_startup_resume_performance.dart"
+      ],
+      "buildProfile": "android.e2e.performance_relay",
+      "dependencies": [
+        "build.android.e2e.performance_relay"
+      ],
+      "resources": [
+        {
+          "name": "build:android.e2e.performance_relay",
+          "access": "read"
+        },
+        {
+          "name": "device:android-physical",
+          "access": "exclusive"
+        },
+        {
+          "name": "artifact:production-startup-resume-performance",
+          "access": "write"
+        },
+        {
+          "name": "performance.global",
+          "access": "exclusive"
+        }
+      ],
+      "targetCapabilities": [
+        "android.physical"
+      ],
+      "allowedNaReason": "target_unavailable_by_project_policy",
+      "artifactRequired": true,
+      "artifactValidator": "validateProductionPerformance",
+      "automationReady": true,
+      "active": true,
+      "declaredBuildException": false
+    },
+    {
+      "id": "build.android.e2e.performance_relay",
+      "owner": "sims-build-cache",
+      "proofBoundary": "build.android.e2e.performance_relay.attested",
+      "assertions": [
+        "build.input_and_artifact_hash_attested"
+      ],
+      "lane": "reliability",
+      "modes": [
+        "major",
+        "full"
+      ],
+      "families": [
+        "performance"
+      ],
+      "required": true,
+      "command": [
+        "@prepare-build",
+        "android.e2e.performance_relay"
+      ],
+      "buildProfile": "android.e2e.performance_relay",
+      "dependencies": [],
+      "resources": [
+        {
+          "name": "build:android.e2e.performance_relay",
+          "access": "write"
+        }
+      ],
+      "targetCapabilities": [
+        "host.android-sdk"
+      ],
+      "allowedNaReason": "target_unavailable_by_project_policy",
+      "artifactRequired": true,
+      "artifactValidator": "sha256-attestation",
+      "active": true,
+      "declaredBuildException": false
+    },
+    {
+      "id": "production.group_catalog.private_abc_create",
+      "owner": "reliability",
+      "proofBoundary": "production.group-catalog.create-invite-join",
+      "assertions": [
+        "ML-001-production-create",
+        "ML-001-two-pending-invites",
+        "ML-001-supported-accept",
+        "ML-001-readable-joins",
+        "ML-001-exact-message",
+        "KE-001-initial-epoch"
+      ],
+      "lane": "reliability",
+      "modes": [
+        "major",
+        "full"
+      ],
+      "families": [
+        "groups"
+      ],
+      "required": true,
+      "command": [
+        "dart",
+        "run",
+        "integration_test/scripts/run_production_group_create.dart"
+      ],
+      "buildProfile": "android.e2e.main",
+      "dependencies": [
+        "build.android.e2e.main"
+      ],
+      "resources": [
+        {
+          "name": "build:android.e2e.main",
+          "access": "read"
+        },
+        {
+          "name": "device:android-physical",
+          "access": "exclusive"
+        },
+        {
+          "name": "device:android-emulator",
+          "access": "exclusive"
+        },
+        {
+          "name": "device:android-emulator-second",
+          "access": "exclusive"
+        },
+        {
+          "name": "artifact:production-group-create",
+          "access": "write"
+        }
+      ],
+      "targetCapabilities": [
+        "android.physical",
+        "android.emulator.count2"
+      ],
+      "allowedNaReason": "target_unavailable_by_project_policy",
+      "artifactRequired": true,
+      "artifactValidator": "validateProductionGroupCreate",
+      "automationReady": true,
+      "active": true,
+      "declaredBuildException": false
+    },
+    {
+      "id": "production.group_catalog.private_reaction_roundtrip",
+      "owner": "reliability",
+      "proofBoundary": "production.group-catalog.reaction-roundtrip",
+      "assertions": [
+        "PL-009-production-target-send",
+        "PL-009-production-reaction-send-outcome",
+        "PL-009-two-receiver-streams",
+        "PL-009-exact-persisted-reactions"
+      ],
+      "lane": "reliability",
+      "modes": [
+        "major",
+        "full"
+      ],
+      "families": [
+        "groups"
+      ],
+      "required": true,
+      "command": [
+        "dart",
+        "run",
+        "integration_test/scripts/run_production_group_reaction.dart"
+      ],
+      "buildProfile": "android.e2e.main",
+      "dependencies": [
+        "build.android.e2e.main"
+      ],
+      "resources": [
+        {
+          "name": "build:android.e2e.main",
+          "access": "read"
+        },
+        {
+          "name": "device:android-physical",
+          "access": "exclusive"
+        },
+        {
+          "name": "device:android-emulator",
+          "access": "exclusive"
+        },
+        {
+          "name": "device:android-emulator-second",
+          "access": "exclusive"
+        },
+        {
+          "name": "artifact:production-group-reaction",
+          "access": "write"
+        }
+      ],
+      "targetCapabilities": [
+        "android.physical",
+        "android.emulator.count2"
+      ],
+      "allowedNaReason": "target_unavailable_by_project_policy",
+      "artifactRequired": true,
+      "artifactValidator": "validateProductionGroupReaction",
+      "automationReady": true,
+      "active": true,
+      "declaredBuildException": false
+    },
+    {
+      "id": "production.group_catalog.private_reaction_toggle_convergence",
+      "owner": "reliability",
+      "proofBoundary": "production.group-catalog.reaction-toggle-convergence",
+      "assertions": [
+        "RT-001-production-target-send",
+        "RT-001-actual-add-remove-readd-returns",
+        "RT-001-two-500ms-return-intervals",
+        "RT-001-two-receiver-removal-streams",
+        "RT-001-exact-final-SQL-convergence"
+      ],
+      "lane": "reliability",
+      "modes": [
+        "major",
+        "full"
+      ],
+      "families": [
+        "groups"
+      ],
+      "required": true,
+      "command": [
+        "dart",
+        "run",
+        "integration_test/scripts/run_production_group_reaction_toggle.dart"
+      ],
+      "buildProfile": "android.e2e.main",
+      "dependencies": [
+        "build.android.e2e.main"
+      ],
+      "resources": [
+        {
+          "name": "build:android.e2e.main",
+          "access": "read"
+        },
+        {
+          "name": "device:android-physical",
+          "access": "exclusive"
+        },
+        {
+          "name": "device:android-emulator",
+          "access": "exclusive"
+        },
+        {
+          "name": "device:android-emulator-second",
+          "access": "exclusive"
+        },
+        {
+          "name": "artifact:production-group-reaction-toggle",
+          "access": "write"
+        }
+      ],
+      "targetCapabilities": [
+        "android.physical",
+        "android.emulator.count2"
+      ],
+      "allowedNaReason": "target_unavailable_by_project_policy",
+      "artifactRequired": true,
+      "artifactValidator": "validateProductionGroupReactionToggle",
+      "automationReady": true,
+      "active": true,
+      "declaredBuildException": false
+    },
+    {
+      "id": "production.group_catalog.private_removed_reaction_rejected",
+      "owner": "reliability",
+      "proofBoundary": "production.group-catalog.removed-reaction-rejected",
+      "assertions": [
+        "PL-010-production-target-send",
+        "PL-010-UI-member-removal",
+        "PL-010-actual-former-member-rejection",
+        "PL-010-five-second-receiver-absence",
+        "PL-010-exact-empty-reaction-rows"
+      ],
+      "lane": "reliability",
+      "modes": [
+        "major",
+        "full"
+      ],
+      "families": [
+        "groups"
+      ],
+      "required": true,
+      "command": [
+        "dart",
+        "run",
+        "integration_test/scripts/run_production_group_removed_reaction.dart"
+      ],
+      "buildProfile": "android.e2e.main",
+      "dependencies": [
+        "build.android.e2e.main"
+      ],
+      "resources": [
+        {
+          "name": "build:android.e2e.main",
+          "access": "read"
+        },
+        {
+          "name": "device:android-physical",
+          "access": "exclusive"
+        },
+        {
+          "name": "device:android-emulator",
+          "access": "exclusive"
+        },
+        {
+          "name": "device:android-emulator-second",
+          "access": "exclusive"
+        },
+        {
+          "name": "artifact:production-group-removed-reaction",
+          "access": "write"
+        }
+      ],
+      "targetCapabilities": [
+        "android.physical",
+        "android.emulator.count2"
+      ],
+      "allowedNaReason": "target_unavailable_by_project_policy",
+      "artifactRequired": true,
+      "artifactValidator": "validateProductionGroupRemovedReaction",
+      "automationReady": true,
+      "active": true,
+      "declaredBuildException": false
+    },
+    {
+      "id": "build.android.production_fcm.journey",
+      "owner": "sims-build-cache",
+      "proofBoundary": "build.android.production-fcm-journey.attested",
+      "assertions": [
+        "build.provider_profile_attested"
+      ],
+      "lane": "reliability",
+      "modes": [
+        "major",
+        "full"
+      ],
+      "families": [
+        "notifications"
+      ],
+      "required": true,
+      "command": [
+        "@prepare-build",
+        "android.production_fcm.journey"
+      ],
+      "buildProfile": "android.production_fcm.journey",
+      "dependencies": [],
+      "resources": [
+        {
+          "name": "build:android.production_fcm.journey",
+          "access": "write"
+        }
+      ],
+      "targetCapabilities": [
+        "host.android-sdk"
+      ],
+      "allowedNaReason": "target_unavailable_by_project_policy",
+      "artifactRequired": true,
+      "artifactValidator": "sha256-provider-attestation",
       "active": true,
       "declaredBuildException": false
     }

@@ -1,0 +1,19 @@
+appId: com.mknoon.app
+name: T16 iPhone (admin) renames the group and adds a description
+---
+- runFlow: { file: open_group.yaml, env: { GROUP: "R2 Group ${NONCE}", GTIMEOUT: 30000 } }
+- runFlow: group_info.yaml
+- tapOn: "Edit Details"
+- extendedWaitUntil: { visible: ".*Group Name.*", timeout: 15000 }
+- takeScreenshot: t16_edit_sheet
+- tapOn: { below: "Group Name" }
+- eraseText: 40
+- inputText: "R2 Renamed ${NONCE}"
+- runFlow: ../kb_hide.yaml
+- tapOn: { below: "Description" }
+- inputText: "desc ${NONCE}"
+- runFlow: ../kb_hide.yaml
+- scrollUntilVisible: { element: "Save", direction: DOWN, timeout: 10000 }
+- tapOn: "Save"
+- extendedWaitUntil: { visible: ".*R2 Renamed ${NONCE}.*", timeout: 30000 }
+- takeScreenshot: t16_renamed_ios

@@ -32,6 +32,44 @@ def rules():
 
 
 class OwnershipCompositionTest(RepositoryFixture):
+    def test_full_workflow_preserves_canonical_suite_and_aggregate_budget(self):
+        actual = rules()
+        canonical = actual['checks']['workflow']
+        full = next(row for row in actual['full_commands']
+                    if row['id'] == 'full-workflow')
+        self.assertEqual(full['paths'], canonical['paths'])
+        self.assertEqual(full['command'],
+                         ['python3', '-m', 'unittest', '-v', *canonical['paths']])
+        self.assertEqual(full['timeout_seconds'], canonical['timeout_seconds'])
+
+    def test_full_fixture_adapters_cover_partition_without_unsupported_parallel_flag(self):
+        actual = rules()
+        commands = {row['id']: row for row in actual['full_commands']}
+        self.assertEqual(inventory.validate_sims_partitions(PROJECT, commands), [])
+        manifest = json.loads((PROJECT / 'tool/sims/critical_features.json').read_text())
+        byid = {row['id']: row for row in manifest['capabilities']}
+        expected = {key for key, row in byid.items() if row.get('active', True) and 'major' in row['modes']}
+        selected = set().union(*(set(row['id'] for row in inventory.sims_rows_for_check(byid, check))
+                               for check in commands.values()
+                               if check['kind'] == 'sims' and check.get('sims_mode', 'major') == 'major'))
+        self.assertEqual(selected, expected)
+        adapters = [row for row in commands.values() if row.get('adapter')]
+        self.assertEqual({row['capability'] for row in adapters}, {
+            'android.direct_media_blob_custody', 'android.production_1to1_audio_call',
+            'notifications.android_recovery_completion'})
+        for row in adapters:
+            self.assertEqual(row['command'], ['dart', 'run', row['adapter'], '--mode', 'major', '--scenario', row['capability']])
+        recovery = commands['full-notification-recovery']
+        self.assertTrue(recovery['requires_firebase_android_client'])
+        self.assertNotIn('disposable_android_package', recovery)
+        for key in ('ANDROID_APP_PACKAGE', 'SIMS_APP_ID', 'ORG_GRADLE_PROJECT_androidApplicationId'):
+            self.assertEqual(recovery['environment'][key], 'com.mknoon.app')
+        self.rules['full_commands'] = adapters
+        args = self.args()
+        args.sims_jobs = 2
+        plan, _ = checks.make_full_plan(args, self.root, self.rules, capture_toolchains=False)
+        self.assertTrue(all('--simultaneous' not in row['command'] for row in plan['selected']))
+
     def test_audited_batch_listing_keeps_canonical_host_owner(self):
         listing = copy.deepcopy(rules()['full_inventory']['listings'][0])
         self.write('scripts/run_host_test_gates.sh', '# fixture listing only\n')
@@ -139,6 +177,18 @@ class NativeBoundaryTest(RepositoryFixture):
         env = checks.sims_environment(dict(devices=ids), self.root / 'report')
         self.assertEqual(set(json.loads(env.get('SIMS_PROTECTED_DEVICE_ASSIGNMENTS_JSON', '{}')).values()), set(ids.values()))
         self.assertEqual(env.get('SIMS_ANDROID_EMULATOR_SECOND_DEVICE_ID'), 'emu2')
+
+    def test_reservations_are_explicit_validated_and_clear_ambient_values(self):
+        config = dict(devices=dict(android_physical='usb', android_emulator='emulator-5554'),
+                      reserved_device_ids=['emulator-5556'])
+        env = checks.sims_environment(config, self.root / 'report')
+        self.assertEqual(json.loads(env['SIMS_RESERVED_DEVICE_IDS_JSON']), ['emulator-5556'])
+        self.assertNotIn('emulator-5556', json.loads(env['SIMS_PROTECTED_DEVICE_ASSIGNMENTS_JSON']).values())
+        self.assertEqual(env['SIMS_ANDROID_EMULATOR_SECOND_DEVICE_ID'], '')
+        self.assertEqual(checks.sims_environment({}, self.root / 'report')['SIMS_RESERVED_DEVICE_IDS_JSON'], '[]')
+        for invalid in ['emulator-5556', {}, [None], ['bad id'], ['emu', 'emu'], ['usb']]:
+            with self.subTest(invalid=invalid), self.assertRaises(checks.InvalidPlan):
+                checks.sims_environment({**config, 'reserved_device_ids': invalid}, self.root / 'report')
 
     def test_disposable_group_authorization_cannot_forward_an_unleased_target(self):
         config = dict(devices=dict(ios_simulator_a='simA'),

@@ -1,0 +1,7 @@
+appId: com.mknoon.app
+name: long-press TARGET and react EMOJI
+---
+- runFlow: kb_hide.yaml
+- scrollUntilVisible: { element: ".*${TARGET}.*", direction: UP, timeout: 15000 }
+- longPressOn: ".*${TARGET}.*"
+- tapOn: "${EMOJI}"

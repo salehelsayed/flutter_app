@@ -1,0 +1,16 @@
+appId: com.mknoon.app
+name: end / cancel / decline whatever call UI is showing, then dismiss the status
+---
+- runFlow:
+    when: { visible: "End" }
+    commands: [ { tapOn: "End" } ]
+- runFlow:
+    when: { visible: "Cancel call" }
+    commands: [ { tapOn: "Cancel call" } ]
+- runFlow:
+    when: { visible: "Decline" }
+    commands: [ { tapOn: "Decline" } ]
+- runFlow: { file: ../sleep.yaml, env: { MS: 3000 } }
+- runFlow:
+    when: { visible: "Dismiss call status" }
+    commands: [ { tapOn: "Dismiss call status" } ]

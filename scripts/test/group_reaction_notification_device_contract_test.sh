@@ -739,9 +739,16 @@ if not (
         'prompt while settling an identified Notifications blocker'
     )
 
-campaign_permission = function_body(
+campaign_permission_body = function_body(
     'func testSettleLocalNetworkPermissionForCampaign()'
 )
+setup_launch_environment = function_body(
+    'private func configurePlan398SetupLaunchEnvironment('
+)
+if not (0 <= campaign_permission_body.find('guard configurePlan398SetupLaunchEnvironment(for: app)')
+        < campaign_permission_body.find('app.launch()')):
+    fail('campaign permission launch omits its validated setup environment')
+campaign_permission = setup_launch_environment + campaign_permission_body
 if 'resetAuthorizationStatus' in campaign_permission:
     fail('campaign permission readiness must not reset an already-settled decision')
 campaign_environment_read = campaign_permission.find(
@@ -801,8 +808,9 @@ for signature, first_action in (
     launched = body.find('app.launch()')
     permission = body.find('allowLocalNetworkPromptIfPresent(')
     action = body.find(first_action)
-    if not (0 <= launched < permission < action):
-        fail(signature + ' does not settle Local Network permission before UI input')
+    configured = body.find('guard configurePlan398SetupLaunchEnvironment(for: app)')
+    if not (0 <= configured < launched < permission < action):
+        fail(signature + ' must bind its setup relaunch and settle permission before UI input')
 
 for signature in (
     'private func prepareWarmNotificationTap()',
@@ -922,6 +930,20 @@ if entry_profile_entry not in materializer:
     fail('patched xctestrun omits the Plan 398 setup-entry profile')
 if entry_profile_entry not in selector_runner:
     fail('xcodebuild environment omits the Plan 398 setup-entry profile')
+
+host_launch = function_body('Future<void> _launchIosCandidate() async')
+if not re.search(
+    r"stage == 'plan397_fixture_staging'\s*\|\|\s*stage == 'ios_fixture_staging'",
+    host_launch,
+):
+    fail('host setup relaunch environment is not restricted to fixture staging')
+for key in (
+    'DEVICECTL_CHILD_MKNOON_397_AUTO_SETUP_USERNAME',
+    'DEVICECTL_CHILD_MKNOON_398_SETUP_READINESS_ATTEMPT',
+    'DEVICECTL_CHILD_MKNOON_398_SETUP_ENTRY_PROFILE_ID',
+):
+    if key not in host_launch:
+        fail('host setup relaunch drops ' + key)
 
 identity_collector = function_body(
     'Future<void> _collectIosIdentity(_Party party) async'

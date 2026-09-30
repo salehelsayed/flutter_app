@@ -1480,7 +1480,7 @@ bool hasAttachedAndroidActivity(String dumpsysActivities, String packageName) {
   final package = RegExp.escape(packageName);
   return RegExp(
     '(?:ActivityRecord\\{|mResumedActivity|topResumedActivity|mFocusedApp)'
-    '[^\\n]*$package(?:/|\\b)',
+    '[^\\n]*$package(?=/|[\\s}]|\$)',
   ).hasMatch(activeSection);
 }
 
@@ -1506,7 +1506,7 @@ bool hasResumedAndroidActivity(String dumpsysActivities, String packageName) {
   final package = RegExp.escape(packageName);
   return RegExp(
     '(?:mResumedActivity|topResumedActivity|mFocusedApp)'
-    '[^\\n]*$package(?:/|\\b)',
+    '[^\\n]*$package(?=/|[\\s}]|\$)',
   ).hasMatch(activeSection);
 }
 
@@ -4413,6 +4413,37 @@ class Plan256ArtifactValidation {
   bool get isValid => errors.isEmpty;
 }
 
+/// Projects a positive read completion from the log window cleared immediately
+/// before the existing notification tap. SQL observations bind the affected
+/// rows separately; this receipt never contains contact or message identifiers.
+Map<String, Object?>? directUnreadReadCommitReceipt(String logcat) {
+  for (final line in logcat.split('\n')) {
+    final start = line.indexOf('[FLOW] ');
+    if (start < 0) continue;
+    try {
+      final value = jsonDecode(line.substring(start + '[FLOW] '.length));
+      if (value is! Map ||
+          value['event'] != 'MARK_CONVERSATION_READ_SUCCESS' ||
+          value['layer'] != 'UC' ||
+          value['details'] is! Map) {
+        continue;
+      }
+      final count = (value['details'] as Map)['markedCount'];
+      final time = value['ts'];
+      final parsedTime = time is String ? DateTime.tryParse(time) : null;
+      if (count is! int || count != 2 || parsedTime?.isUtc != true) continue;
+      return <String, Object?>{
+        'event': value['event'],
+        'markedCount': count,
+        'observedAt': parsedTime!.toIso8601String(),
+      };
+    } on FormatException {
+      // Partial logcat records are not evidence.
+    }
+  }
+  return null;
+}
+
 Plan256ArtifactValidation validatePlan256ArtifactContract({
   required String scenario,
   required Map<String, dynamic> artifact,
@@ -6046,15 +6077,18 @@ bool androidPackageStoppedForUser(
 }
 
 bool androidActivityIsAttached(String dumpsys, {required String packageName}) {
+  final targetActivity = RegExp(
+    'ActivityRecord\\{[^\\n}]*\\s${RegExp.escape(packageName)}/',
+  );
   var targetRecord = false;
   for (final line in dumpsys.split('\n')) {
     if ((line.contains('mResumedActivity') ||
             line.contains('mPausingActivity')) &&
-        line.contains(packageName)) {
+        targetActivity.hasMatch(line)) {
       return true;
     }
     if (line.contains('ActivityRecord{')) {
-      targetRecord = line.contains(packageName);
+      targetRecord = targetActivity.hasMatch(line);
       continue;
     }
     if (!targetRecord) continue;
@@ -7003,8 +7037,8 @@ class AndroidDurableDirectReactionShow {
 
   final bool? silent;
 
-  /// Every `PUSH_BACKGROUND_DURABLE_EFFECT_DEFERRED` reason in the window, in
-  /// order. `exact_sql_authority_unavailable` means the exact SQL row the
+  /// Every durable-authority or final-canonical deferral reason in the window,
+  /// in order. `exact_sql_authority_unavailable` means the exact SQL row the
   /// durable arm needs did not exist when the push was handled.
   final List<String> deferralReasons;
 
@@ -7084,7 +7118,8 @@ AndroidDurableDirectReactionShow androidDurableDirectReactionShow(
     }
     if (decoded is! Map) continue;
     final details = decoded['details'];
-    if (decoded['event'] == 'PUSH_BACKGROUND_DURABLE_EFFECT_DEFERRED') {
+    if (decoded['event'] == 'PUSH_BACKGROUND_DURABLE_EFFECT_DEFERRED' ||
+        decoded['event'] == 'PUSH_BACKGROUND_DURABLE_CANONICAL_DEFERRED') {
       if (details is Map) deferralReasons.add('${details['reason']}');
       continue;
     }
@@ -7217,6 +7252,39 @@ List<ActiveNotificationCard> extractActiveNotificationCards(
 
 /// Returns only content-bearing app notification records.
 ///
+/// Capture the transient OS card while the independent device logs are read.
+/// Waiting for either log first can miss a card retired by fast warm recovery.
+Future<
+  ({
+    String senderLog,
+    String recipientLog,
+    String notificationDump,
+    DateTime notificationCapturedAt,
+  })
+>
+captureAndroidFixedWakeObservation({
+  required Future<String> Function() readSenderLog,
+  required Future<String> Function() readRecipientLog,
+  required Future<String> Function() readNotificationDump,
+}) async {
+  DateTime? notificationCapturedAt;
+  final notification = Future<String>.sync(readNotificationDump).then((dump) {
+    notificationCapturedAt = DateTime.now().toUtc();
+    return dump;
+  });
+  final values = await Future.wait<String>([
+    Future<String>.sync(readSenderLog),
+    Future<String>.sync(readRecipientLog),
+    notification,
+  ]);
+  return (
+    senderLog: values[0],
+    recipientLog: values[1],
+    notificationDump: values[2],
+    notificationCapturedAt: notificationCapturedAt!,
+  );
+}
+
 /// Android may synthesize an aggregate summary when multiple app notifications
 /// are active. Its numeric id varies across Android implementations, so the
 /// system tag/flags/empty-copy contract identifies it. That OS-owned record is

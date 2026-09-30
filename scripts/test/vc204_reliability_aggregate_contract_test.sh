@@ -5,6 +5,9 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT_DIR"
 
+# The staged repository owns fake argv-only devices, not a live SIMS lease.
+unset SIMS_PROTECTED_DEVICE_ASSIGNMENTS_JSON
+
 fail() {
   printf 'FAIL: %s\n' "$1" >&2
   exit 1

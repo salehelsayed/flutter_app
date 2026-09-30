@@ -3132,6 +3132,7 @@ func (is *InboxStore) launchStoredDirectPushAfterPreflight(
 		if producer == wakeOutcomeProducerGroupMessage {
 			metadata, recognized, eligible := extractGroupContentPushMetadata(entry.Message)
 			if recognized && eligible {
+				groupContentWakeCounter.WithLabelValues("attempted").Inc()
 				go is.push.sendGroupContentNotificationForRoute(context.Background(), toPeerID, route, metadata, entry.Message)
 			}
 		} else if producer == wakeOutcomeProducerDirectReaction {
@@ -3171,6 +3172,9 @@ func (is *InboxStore) launchDirectPushForWakeAdmission(
 		return
 	}
 	if len(admission.androidRichMaterial) > 0 {
+		if admission.producer == wakeOutcomeProducerGroupMessage {
+			groupContentWakeCounter.WithLabelValues("attempted").Inc()
+		}
 		is.push.launchAndroidRichCapacityFallback(toPeerID, admission.androidRichMaterial)
 		return
 	}
@@ -3193,8 +3197,13 @@ func (is *InboxStore) launchDirectPushForWakeAdmission(
 	)
 }
 
+// Count the strict logical wake at admission, not on each durable provider retry.
+// Group-topic admissions use their own store and never enter this method.
 func (is *InboxStore) launchAndroidRichWakeAdmission(admission wakeOutcomeAdmission) {
 	if backend, ok := is.backend.(*redisInboxBackend); ok && is.push != nil {
+		if admission.producer == wakeOutcomeProducerGroupMessage {
+			groupContentWakeCounter.WithLabelValues("attempted").Inc()
+		}
 		is.push.launchAndroidRichAdmission(backend.wakeOutcomes, admission)
 	}
 }

@@ -1,0 +1,17 @@
+appId: com.mknoon.app
+name: T01 Pixel sends a photo with a caption; later deletes it for everyone
+---
+- runFlow: ../ensure_chat.yaml
+- runFlow: { file: pick_android.yaml, env: { FILE: "r2_photo_1.png" } }
+- takeScreenshot: t01_pending
+- runFlow: { file: caption_send.yaml, env: { MSG: "T01 photo ${NONCE}" } }
+- extendedWaitUntil: { visible: ".*T01 photo ${NONCE}.*", timeout: 30000 }
+- takeScreenshot: t01_sent
+# wait for the iPhone's "saved" ack text, then delete the photo for everyone
+- extendedWaitUntil: { visible: ".*T01 ack ${NONCE}.*", timeout: 300000 }
+- longPressOn: ".*T01 photo ${NONCE}.*"
+- tapOn: "Delete"
+- takeScreenshot: t01_delete_prompt
+- tapOn: "Delete for Everyone|Delete"
+- extendedWaitUntil: { notVisible: ".*T01 photo ${NONCE}.*", timeout: 30000 }
+- takeScreenshot: t01_deleted

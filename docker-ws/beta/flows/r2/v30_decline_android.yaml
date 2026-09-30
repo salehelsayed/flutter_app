@@ -1,0 +1,9 @@
+appId: com.mknoon.app
+name: R2-8 decline - the Pixel (app in the background or its process killed) declines from the call notification
+---
+- extendedWaitUntil: { visible: "Decline|DECLINE", timeout: 240000 }
+- takeScreenshot: v30_ringing
+- tapOn: "Decline|DECLINE"
+- runFlow: { file: ../sleep.yaml, env: { MS: 4000 } }
+- takeScreenshot: v30_after_decline
+- assertNotVisible: "Answer|ANSWER"

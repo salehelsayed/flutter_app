@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 import 'dart:typed_data';
 import 'package:flutter_image_compress/flutter_image_compress.dart';
@@ -10,23 +11,49 @@ import 'package:flutter_app/features/settings/domain/models/image_quality_prefer
 ///
 /// Matches the shape of [FlutterImageCompress.compressAndGetFile] so it can
 /// be swapped with a fake in tests.
-typedef CompressFileFn = Future<XFile?> Function({
-  required String path,
-  required int quality,
-  required bool keepExif,
-  int minWidth,
-  int minHeight,
-});
+typedef CompressFileFn =
+    Future<XFile?> Function({
+      required String path,
+      required int quality,
+      required bool keepExif,
+      int minWidth,
+      int minHeight,
+    });
 
 /// Function signature for video compression.
 ///
 /// Injectable so it can be swapped with a fake in tests.
 /// [onProgress] emits 0.0–100.0 during compression.
-typedef CompressVideoFn = Future<VideoProcessResult?> Function({
-  required String path,
-  required bool compress,
-  void Function(double progress)? onProgress,
-});
+typedef CompressVideoFn =
+    Future<VideoProcessResult?> Function({
+      required String path,
+      required bool compress,
+      void Function(double progress)? onProgress,
+    });
+
+typedef CancelVideoCompressionFn = Future<void> Function();
+
+class VideoProcessingTimeoutException implements Exception {
+  const VideoProcessingTimeoutException();
+
+  @override
+  String toString() => 'Video processing stopped after progress stalled';
+}
+
+class VideoProcessingUnavailableException implements Exception {
+  const VideoProcessingUnavailableException();
+
+  @override
+  String toString() =>
+      'Video processing is unavailable until the native job ends';
+}
+
+class VideoProcessingFailedException implements Exception {
+  const VideoProcessingFailedException();
+
+  @override
+  String toString() => 'Video processing failed';
+}
 
 /// Wire key for the protected-photo inline thumbnail rides inside the
 /// already-E2E-encrypted direct-lane attachment JSON (plan 301). Producers and
@@ -48,14 +75,33 @@ const kProtectedPhotoInlineThumbnailJpegQuality = 60;
 ///
 /// Injectable [CompressFileFn] and [CompressVideoFn] allow faking in tests.
 class ImageProcessor {
+  // video_compress uses one native worker and one process-wide Dart busy flag.
+  // A timed-out MethodChannel call can remain blocked in eglSwapBuffers. Do not
+  // submit another job until that exact native call has actually settled.
+  static Future<VideoProcessResult?>? _unsettledDefaultVideoCompression;
+
+  bool get canProcessVideo =>
+      _compressVideo != null || _unsettledDefaultVideoCompression == null;
+
   final CompressFileFn _compressFile;
-  final CompressVideoFn _compressVideo;
+  final CompressVideoFn? _compressVideo;
+  final CancelVideoCompressionFn _cancelVideoCompression;
+  final Duration videoStallTimeout;
+  final Duration videoMaxDuration;
+  final Duration videoCancelTimeout;
+  void Function()? _cancelActiveVideoProgress;
 
   ImageProcessor({
     CompressFileFn? compressFile,
     CompressVideoFn? compressVideo,
-  })  : _compressFile = compressFile ?? _defaultCompress,
-        _compressVideo = compressVideo ?? _defaultVideoCompress;
+    CancelVideoCompressionFn? cancelVideoCompression,
+    this.videoStallTimeout = const Duration(minutes: 5),
+    this.videoMaxDuration = const Duration(hours: 1),
+    this.videoCancelTimeout = const Duration(seconds: 5),
+  }) : _compressFile = compressFile ?? _defaultCompress,
+       _compressVideo = compressVideo,
+       _cancelVideoCompression =
+           cancelVideoCompression ?? _cancelDefaultVideoCompression;
 
   /// Process image for sending: strip EXIF, apply quality.
   ///
@@ -67,8 +113,9 @@ class ImageProcessor {
   }) async {
     if (!isProcessableImage(inputPath)) return inputPath;
 
-    final compressionQuality =
-        quality == ImageQualityPreference.original ? 100 : 85;
+    final compressionQuality = quality == ImageQualityPreference.original
+        ? 100
+        : 85;
 
     final result = await _compressFile(
       path: inputPath,
@@ -116,14 +163,119 @@ class ImageProcessor {
     if (!isProcessableVideo(inputPath)) {
       return VideoProcessResult(path: inputPath);
     }
+    if (_compressVideo == null && _unsettledDefaultVideoCompression != null) {
+      throw const VideoProcessingUnavailableException();
+    }
 
-    final result = await _compressVideo(
-      path: inputPath,
-      compress: quality == ImageQualityPreference.compressed,
-      onProgress: onProgress,
-    );
+    Timer? stallTimer;
+    Timer? absoluteTimer;
+    final stalled = Completer<VideoProcessResult?>();
+    var active = true;
+    var highestProgress = -1.0;
 
-    return result ?? VideoProcessResult(path: inputPath);
+    void armWatchdog() {
+      stallTimer?.cancel();
+      stallTimer = Timer(videoStallTimeout, () {
+        if (active && !stalled.isCompleted) {
+          stalled.completeError(const VideoProcessingTimeoutException());
+        }
+      });
+    }
+
+    armWatchdog();
+    absoluteTimer = Timer(videoMaxDuration, () {
+      if (active && !stalled.isCompleted) {
+        stalled.completeError(const VideoProcessingTimeoutException());
+      }
+    });
+    late final Future<VideoProcessResult?> operation;
+    try {
+      operation = (_compressVideo ?? _defaultVideoCompress)(
+        path: inputPath,
+        compress: quality == ImageQualityPreference.compressed,
+        onProgress: (progress) {
+          if (!active) return;
+          if (progress.isFinite && progress > highestProgress) {
+            highestProgress = progress;
+            armWatchdog();
+          }
+          onProgress?.call(progress);
+        },
+      );
+      final result = await Future.any([operation, stalled.future]);
+      if (result == null) throw const VideoProcessingFailedException();
+      return result;
+    } on VideoProcessingTimeoutException {
+      if (_compressVideo == null) {
+        _unsettledDefaultVideoCompression = operation;
+        operation.then<void>(
+          (_) {
+            if (identical(_unsettledDefaultVideoCompression, operation)) {
+              _unsettledDefaultVideoCompression = null;
+            }
+          },
+          onError: (Object _, StackTrace _) {
+            if (identical(_unsettledDefaultVideoCompression, operation)) {
+              _unsettledDefaultVideoCompression = null;
+            }
+          },
+        );
+      }
+      // Stop listening before cancelling: the native call may still emit a late
+      // progress event, or even fail to complete its MethodChannel future.
+      _cancelActiveVideoProgress?.call();
+      _cancelActiveVideoProgress = null;
+      try {
+        await _cancelVideoCompression().timeout(videoCancelTimeout);
+      } catch (_) {
+        // The composer must recover even if the platform cancellation stalls.
+      }
+      rethrow;
+    } finally {
+      active = false;
+      stallTimer?.cancel();
+      absoluteTimer.cancel();
+    }
+  }
+
+  Future<VideoProcessResult?> _defaultVideoCompress({
+    required String path,
+    required bool compress,
+    void Function(double progress)? onProgress,
+  }) async {
+    final subscription = VideoCompress.compressProgress$.subscribe((progress) {
+      onProgress?.call(progress);
+    });
+    var progressSubscriptionClosed = false;
+    void closeProgressSubscription() {
+      if (progressSubscriptionClosed) return;
+      progressSubscriptionClosed = true;
+      subscription.unsubscribe();
+    }
+
+    _cancelActiveVideoProgress = closeProgressSubscription;
+    try {
+      final info = await VideoCompress.compressVideo(
+        path,
+        quality: compress
+            ? VideoQuality.MediumQuality
+            : VideoQuality.HighestQuality,
+        deleteOrigin: false,
+        includeAudio: true,
+      );
+      if (info?.path == null) return null;
+      return VideoProcessResult(
+        path: info!.path!,
+        width: info.width?.toInt(),
+        height: info.height?.toInt(),
+        durationMs: info.duration?.toInt(),
+      );
+    } finally {
+      closeProgressSubscription();
+      if (identical(_cancelActiveVideoProgress, closeProgressSubscription)) {
+        _cancelActiveVideoProgress = null;
+      }
+    }
   }
 
   /// Generates the bounded protected-photo inline thumbnail (plan 301).
@@ -244,38 +396,5 @@ Future<XFile?> _defaultCompress({
   );
 }
 
-/// Default video compression using video_compress.
-///
-/// Re-encoding inherently strips ALL metadata (GPS, camera model, timestamps).
-Future<VideoProcessResult?> _defaultVideoCompress({
-  required String path,
-  required bool compress,
-  void Function(double progress)? onProgress,
-}) async {
-  Subscription? subscription;
-  if (onProgress != null) {
-    subscription = VideoCompress.compressProgress$.subscribe((progress) {
-      onProgress(progress);
-    });
-  }
-
-  try {
-    final info = await VideoCompress.compressVideo(
-      path,
-      quality: compress
-          ? VideoQuality.MediumQuality
-          : VideoQuality.HighestQuality,
-      deleteOrigin: false,
-      includeAudio: true,
-    );
-    if (info?.path == null) return null;
-    return VideoProcessResult(
-      path: info!.path!,
-      width: info.width?.toInt(),
-      height: info.height?.toInt(),
-      durationMs: info.duration?.toInt(),
-    );
-  } finally {
-    subscription?.unsubscribe();
-  }
-}
+Future<void> _cancelDefaultVideoCompression() =>
+    VideoCompress.cancelCompression();

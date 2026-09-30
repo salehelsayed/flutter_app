@@ -1,0 +1,7 @@
+appId: com.mknoon.app
+name: T25 iPhone calls and holds 60 s, then ends
+---
+- runFlow: call_connected.yaml
+- runFlow: { file: ../sleep.yaml, env: { MS: 60000 } }
+- takeScreenshot: t25_before_end_ios
+- runFlow: ../end_call.yaml

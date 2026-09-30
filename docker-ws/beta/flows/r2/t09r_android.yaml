@@ -1,0 +1,12 @@
+appId: com.mknoon.app
+name: T09 rerun - Pixel sends a 270-character text; waits for the iPhone's four
+---
+- runFlow: ../ensure_chat.yaml
+- runFlow: { file: send.yaml, env: { MSG: "T09 mid ${NONCE} The quick brown fox jumps over the lazy dog while the relay keeps every message in order The quick brown fox jumps over the lazy dog while the relay keeps every message in order The quick brown fox jumps over the lazy dog while the relay keeps every message in order" } }
+- runFlow: ../kb_hide.yaml
+- extendedWaitUntil: { visible: ".*T09 arabic.*${NONCE}.*", timeout: 300000 }
+- takeScreenshot: t09r_arabic
+- extendedWaitUntil: { visible: ".*T09 emoji.*${NONCE}.*", timeout: 120000 }
+- extendedWaitUntil: { visible: ".*T09 url https://example.com/r2.*${NONCE}.*", timeout: 120000 }
+- extendedWaitUntil: { visible: ".*T09 long ${NONCE}.*", timeout: 120000 }
+- takeScreenshot: t09r_android

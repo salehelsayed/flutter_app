@@ -2149,6 +2149,152 @@ void main() {
   );
 
   test(
+    'stalled shared video is skipped without sending its raw source',
+    () async {
+      final identityRepository = FakeIdentityRepository()
+        ..seed(_makeIdentity());
+      final tempDir = await Directory.systemTemp.createTemp(
+        'share_stalled_video_',
+      );
+      addTearDown(() async => tempDir.delete(recursive: true));
+      final video = File('${tempDir.path}/video.mp4')
+        ..writeAsBytesSync([1, 2, 3]);
+      final photo = File('${tempDir.path}/photo.jpg')
+        ..writeAsBytesSync([1, 2, 3]);
+      List<PendingComposerMedia>? deliveredMedia;
+      final coordinator = DefaultShareBatchDeliveryCoordinator(
+        identityRepository: identityRepository,
+        contactRepository: InMemoryContactRepository(),
+        messageRepository: InMemoryMessageRepository(),
+        mediaAttachmentRepository: InMemoryMediaAttachmentRepository(),
+        groupRepository: InMemoryGroupRepository(),
+        groupMessageRepository: InMemoryGroupMessageRepository(),
+        bridge: FakeBridge(),
+        p2pService: FakeP2PService(),
+        mediaFileManager: FakeMediaFileManager(),
+        imageProcessor: ImageProcessor(
+          compressFile:
+              ({
+                required path,
+                required quality,
+                required keepExif,
+                minWidth = 1920,
+                minHeight = 1080,
+              }) async => null,
+          compressVideo: ({required path, required compress, onProgress}) =>
+              Completer<VideoProcessResult?>().future,
+          cancelVideoCompression: () async {},
+          videoStallTimeout: const Duration(milliseconds: 30),
+        ),
+        sendToContactFn:
+            ({
+              required identity,
+              required shareIntent,
+              required contact,
+              required processedMedia,
+              required uploadHooks,
+            }) async {
+              deliveredMedia = processedMedia;
+              return ShareBatchTargetResult(
+                target: ShareTargetSelection.contact(contact),
+                status: ShareBatchTargetStatus.sent,
+                detail: 'Sent.',
+              );
+            },
+      );
+
+      final result = await coordinator.deliver(
+        shareIntent: ShareIntent(
+          type: ShareIntentType.files,
+          filePaths: [video.path, photo.path],
+        ),
+        targets: [
+          ShareTargetSelection.contact(_makeContact('peer-alice', 'Alice')),
+        ],
+      );
+
+      expect(result.skippedOversizedGifCount, 1);
+      expect(
+        result.skippedOversizedGifReason,
+        contains('could not be processed'),
+      );
+      expect(deliveredMedia, hasLength(1));
+      expect(deliveredMedia!.single.file.path, photo.path);
+    },
+  );
+
+  for (final videoError in <Exception>[
+    const VideoProcessingUnavailableException(),
+    const VideoProcessingFailedException(),
+  ]) {
+    test('$videoError never shares the raw video', () async {
+      final identityRepository = FakeIdentityRepository()
+        ..seed(_makeIdentity());
+      final tempDir = await Directory.systemTemp.createTemp(
+        'share_unavailable_video_',
+      );
+      addTearDown(() async => tempDir.delete(recursive: true));
+      final video = File('${tempDir.path}/video.mp4')
+        ..writeAsBytesSync([1, 2, 3]);
+      final photo = File('${tempDir.path}/photo.jpg')
+        ..writeAsBytesSync([1, 2, 3]);
+      List<PendingComposerMedia>? deliveredMedia;
+      final coordinator = DefaultShareBatchDeliveryCoordinator(
+        identityRepository: identityRepository,
+        contactRepository: InMemoryContactRepository(),
+        messageRepository: InMemoryMessageRepository(),
+        mediaAttachmentRepository: InMemoryMediaAttachmentRepository(),
+        groupRepository: InMemoryGroupRepository(),
+        groupMessageRepository: InMemoryGroupMessageRepository(),
+        bridge: FakeBridge(),
+        p2pService: FakeP2PService(),
+        mediaFileManager: FakeMediaFileManager(),
+        imageProcessor: ImageProcessor(
+          compressFile:
+              ({
+                required path,
+                required quality,
+                required keepExif,
+                minWidth = 1920,
+                minHeight = 1080,
+              }) async => null,
+          compressVideo: ({required path, required compress, onProgress}) =>
+              Future.error(videoError),
+        ),
+        sendToContactFn:
+            ({
+              required identity,
+              required shareIntent,
+              required contact,
+              required processedMedia,
+              required uploadHooks,
+            }) async {
+              deliveredMedia = processedMedia;
+              return ShareBatchTargetResult(
+                target: ShareTargetSelection.contact(contact),
+                status: ShareBatchTargetStatus.sent,
+                detail: 'Sent.',
+              );
+            },
+      );
+
+      final result = await coordinator.deliver(
+        shareIntent: ShareIntent(
+          type: ShareIntentType.files,
+          filePaths: [video.path, photo.path],
+        ),
+        targets: [
+          ShareTargetSelection.contact(_makeContact('peer-alice', 'Alice')),
+        ],
+      );
+
+      expect(result.skippedOversizedGifCount, 1);
+      expect(deliveredMedia, hasLength(1));
+      expect(deliveredMedia!.single.file.path, photo.path);
+    });
+  }
+
+  test(
     'text-only group share wraps publish in a background task and stays sent on durable success',
     () async {
       final identityRepository = FakeIdentityRepository()

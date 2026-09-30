@@ -1,0 +1,8 @@
+appId: com.mknoon.app
+name: T20 Pixel (relaunched) gets the three group messages once
+---
+- runFlow: { file: open_group.yaml, env: { GROUP: "R2 (Group|Renamed|By Pixel) ${NONCE}", GTIMEOUT: 60000 } }
+- extendedWaitUntil: { visible: ".*T20 g1 ${NONCE}.*", timeout: 300000 }
+- extendedWaitUntil: { visible: ".*T20 g2 ${NONCE}.*", timeout: 120000 }
+- extendedWaitUntil: { visible: ".*T20 g3 ${NONCE}.*", timeout: 120000 }
+- takeScreenshot: t20_received

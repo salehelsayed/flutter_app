@@ -11,10 +11,16 @@ import 'package:flutter_app/l10n/app_localizations.dart';
 import '../application/foreground_call_capability.dart';
 import '../application/locked_call_presentation.dart';
 import '../domain/call_engine.dart';
+import '../domain/call_state.dart';
 
 /// Generates the same contact avatar without a frame callback. A cold locked
 /// activity must be able to publish identity even while Flutter is covered.
 final class LockedCallProjection {
+  LockedCallProjection({
+    Future<Uint8List?> Function(String peerId, bool light)? avatarRenderer,
+  }) : _avatarRenderer = avatarRenderer ?? renderAvatar;
+
+  final Future<Uint8List?> Function(String peerId, bool light) _avatarRenderer;
   int _generation = 0;
   String? _avatarPeer;
   bool? _avatarLight;
@@ -26,29 +32,30 @@ final class LockedCallProjection {
   Future<void> update({
     required ForegroundCallCapability? capability,
     required ForegroundCallProjection? projection,
-    required String displayName,
+    required String? displayName,
     required bool light,
     required AppLocalizations l10n,
   }) async {
     final generation = ++_generation;
     if (capability is! LockedCallPresentationPort) return;
+    final presentationPort = capability as LockedCallPresentationPort;
     final session = projection?.session;
     final callId = session?.callId;
     final peerId = session?.contactPeerId;
     if (session == null ||
         callId == null ||
         peerId == null ||
-        session.isTerminal) {
+        session.isTerminal ||
+        displayName == null ||
+        displayName.isEmpty) {
       return;
     }
     if (_avatarPeer != peerId || _avatarLight != light) {
       _avatar = null;
       _avatarPeer = peerId;
       _avatarLight = light;
-      _avatarLoading = renderAvatar(peerId, light);
+      _avatarLoading = _avatarRenderer(peerId, light);
     }
-    _avatar = await _avatarLoading;
-    if (generation != _generation) return;
     final audio = projection!.audio;
     final route = switch (audio.selectedRoute) {
       CallAudioOutputRoute.systemDefault =>
@@ -58,29 +65,42 @@ final class LockedCallProjection {
       CallAudioOutputRoute.wiredHeadset => l10n.call_audio_route_wired_headset,
       CallAudioOutputRoute.bluetooth => l10n.call_audio_route_bluetooth,
     };
-    try {
-      await (capability as LockedCallPresentationPort).updateLockedPresentation(
-        callId,
-        LockedCallPresentation(
-          displayName: displayName.length > 128
-              ? displayName.substring(0, 128)
-              : displayName,
-          avatarPng: _avatar,
-          state: session.state.name,
-          connectedAtMs: session.connectedAt?.millisecondsSinceEpoch,
-          light: light,
-          muted: audio.muted,
-          muteAvailable: audio.active,
-          speakerOn: audio.selectedRoute == CallAudioOutputRoute.speaker,
-          speakerAvailable:
-              audio.active &&
-              audio.supportedRoutes.contains(CallAudioOutputRoute.speaker),
-          routeLabel: l10n.call_audio_output(route),
-        ),
-      );
-    } catch (_) {
-      /* A display update must not affect call authority. */
+    Future<void> publish(Uint8List? avatar) async {
+      if (generation != _generation) return;
+      try {
+        await presentationPort.updateLockedPresentation(
+          callId,
+          LockedCallPresentation(
+            displayName: displayName.length > 128
+                ? displayName.substring(0, 128)
+                : displayName,
+            avatarPng: avatar,
+            state: session.state == CallState.incomingValidating
+                ? 'preparing'
+                : session.state.name,
+            connectedAtMs: session.connectedAt?.millisecondsSinceEpoch,
+            light: light,
+            muted: audio.muted,
+            muteAvailable: audio.active,
+            speakerOn: audio.selectedRoute == CallAudioOutputRoute.speaker,
+            speakerAvailable:
+                audio.active &&
+                audio.supportedRoutes.contains(CallAudioOutputRoute.speaker),
+            routeLabel: l10n.call_audio_output(route),
+          ),
+        );
+      } catch (_) {
+        /* A display update must not affect call authority. */
+      }
     }
+
+    // The ringing notification needs the contact name before avatar rendering
+    // completes. Image decoding can be delayed behind a covered Flutter view.
+    await publish(_avatar);
+    final avatar = await _avatarLoading;
+    if (generation != _generation || avatar == null) return;
+    _avatar = avatar;
+    await publish(avatar);
   }
 
   /// Shared foreground/headless raster path; it never awaits a Flutter frame.

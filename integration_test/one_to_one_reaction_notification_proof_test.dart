@@ -391,6 +391,12 @@ void main() {
     final restoration = _object(artifact, 'restoration');
     expect(restoration['hostBackupDeleted'], isTrue);
     expect(restoration['passWrittenAfterRestoration'], isTrue);
+    expect(restoration.keys.toSet(), <String>{
+      app['senderDevice'] as String,
+      app['recipientDevice'] as String,
+      'hostBackupDeleted',
+      'passWrittenAfterRestoration',
+    });
     for (final entry in restoration.entries.where(
       (entry) =>
           entry.key != 'hostBackupDeleted' &&

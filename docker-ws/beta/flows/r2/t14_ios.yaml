@@ -1,0 +1,6 @@
+appId: com.mknoon.app
+name: T14 iPhone sends a message to the archived chat
+---
+- runFlow: ../ensure_chat.yaml
+- runFlow: { file: ../send_text.yaml, env: { MSG: "T14 while archived ${NONCE}" } }
+- runFlow: ../kb_hide.yaml

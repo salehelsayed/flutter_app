@@ -1,0 +1,9 @@
+appId: com.mknoon.app
+name: open group GROUP from the home list
+---
+- runFlow: home_list.yaml
+- extendedWaitUntil:
+    visible: ".*${GROUP}.*"
+    timeout: ${GTIMEOUT}
+- tapOn: ".*${GROUP}.*"
+- extendedWaitUntil: { visible: "Group information", timeout: 20000 }

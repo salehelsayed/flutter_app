@@ -1,0 +1,5 @@
+flutter test exit: 0
+00:18 +553: /Volumes/CrucialX9/flutter_app/test/features/groups/application/group_message_listener_test.dart: G-A member-key-arrival deferred-distribution drain trigger member_role_updated (username/role only, no key change) does NOT fire the drain
+[FLOW] {"ts":"2026-09-28T03:23:34.842649Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"GROUP_MESSAGE_LISTENER_STOP","details":{}}
+00:18 +554: All tests passed!
+R2FIX DART TESTS DONE

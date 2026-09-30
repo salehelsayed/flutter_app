@@ -157,6 +157,8 @@ com.mknoon.app.MknoonFirebaseMessagingServiceTest|recovery card uses Arabic reso
 com.mknoon.app.MknoonFirebaseMessagingServiceTest|recovery copy follows locale and refreshes existing channel
 com.mknoon.app.MknoonFirebaseMessagingServiceTest|unsupported locale falls back to complete default recovery resources
 com.mknoon.app.MknoonFirebaseMessagingServiceTest|quietRecoverySchedulesDurablyWithoutCardOrFlutterFireDuplication
+com.mknoon.app.MknoonFirebaseMessagingServiceTest|a call wake from a caller whose clock runs ahead is still dispatched with its exact expiry
+com.mknoon.app.MknoonFirebaseMessagingServiceTest|a rejected call wake names its exact parse reason in debug logcat
 com.mknoon.app.MknoonFirebaseMessagingServiceTest|validated call wake reaches active foreground graph even while recovery lease is refused
 com.mknoon.app.NativeRuntimeOwnershipSourceTest|GoBridge uses process host and deterministic detach instead of per engine initialize
 com.mknoon.app.NativeRuntimeOwnershipSourceTest|MainActivity retains the engine for Dart DB close acknowledgement
@@ -169,9 +171,9 @@ com.mknoon.app.ProductionHeadlessCanonicalRecovery374Test|TC-374-08 default off 
 com.mknoon.app.ProductionHeadlessCanonicalRecovery374Test|TC-374-08 shared deleted batch seam commits resnapshots and schedules before caller work
 """
 expected = [line for line in expected_text.strip().splitlines() if line]
-if len(expected) != 73 or len(set(expected)) != 73:
+if len(expected) != 75 or len(set(expected)) != 75:
     raise SystemExit(
-        "the frozen Plan 374/375/393 JUnit manifest must contain 73 unique methods"
+        "the frozen Plan 374/375/393 JUnit manifest must contain 75 unique methods"
     )
 
 xml_files = [result_dir / f"TEST-{name}.xml" for name in selected_classes]
@@ -218,8 +220,8 @@ for row in sorted(observed):
     print(row)
 PY
 
-[[ "$(wc -l <"$OBSERVED_MANIFEST" | tr -d '[:space:]')" -eq 73 ]] ||
-  fail "the parsed JUnit method manifest did not contain exactly 73 methods"
+[[ "$(wc -l <"$OBSERVED_MANIFEST" | tr -d '[:space:]')" -eq 75 ]] ||
+  fail "the parsed JUnit method manifest did not contain exactly 75 methods"
 [[ "$(rg -c '\|TC-374-(05|08) ' "$OBSERVED_MANIFEST")" -eq 7 ]] ||
   fail "the seven planned native TC-374 methods were not observed exactly once"
 [[ "$(rg -c '\|(testTC375|TC-375-)' "$OBSERVED_MANIFEST")" -eq 5 ]] ||
@@ -355,5 +357,5 @@ readonly BRIDGE_SOURCE="$REPO_ROOT/android/app/src/main/kotlin/com/mknoon/app/Dr
 [[ "$(rg -F -c '"headlessAcknowledgeRecovery" ->' "$BRIDGE_SOURCE")" -eq 1 ]] ||
   fail "native bridge must expose one headless acknowledgement method"
 
-printf 'PASS: Plan 374/375/393 Android native suite selected 9 classes / 73 methods; artifacts: %s\n' \
+printf 'PASS: Plan 374/375/393 Android native suite selected 9 classes / 75 methods; artifacts: %s\n' \
   "$RESULT_DIR"

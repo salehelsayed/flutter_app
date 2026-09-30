@@ -1,0 +1,8 @@
+appId: com.mknoon.app
+name: end the active call (exact "End"), retry once if still connected
+---
+- tapOn: "End"
+- runFlow: { file: sleep.yaml, env: { MS: 2500 } }
+- runFlow:
+    when: { visible: "End" }
+    commands: [ { tapOn: "End" } ]

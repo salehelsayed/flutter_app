@@ -129,9 +129,12 @@ Future<ApplyGroupConfigResponseResult> applyOnJoinGroupConfigResponse({
     return ApplyGroupConfigResponseResult.notMember;
   }
 
-  // Strictly-newer watermark (mirrors inviteMetadataIsCurrent inverted).
-  final localWatermark = localGroup.lastMetadataEventAt?.toUtc();
-  if (localWatermark != null && !responseMetadataAt.isAfter(localWatermark)) {
+  // The sender uses creation time when no metadata edit has occurred. Apply
+  // the same initial floor locally: an echo of an unchanged initial config
+  // must not invent a metadata event and change the authenticated state hash.
+  final localWatermark =
+      (localGroup.lastMetadataEventAt ?? localGroup.createdAt).toUtc();
+  if (!responseMetadataAt.isAfter(localWatermark)) {
     emitFlowEvent(
       layer: 'FL',
       event: 'ONJOIN_CONFIG_RESYNC_APPLY_NOT_NEWER',

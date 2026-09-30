@@ -1,0 +1,31 @@
+appId: com.mknoon.app
+name: T01 iPhone receives the photo, opens it, saves it, reads Info, acks; then sees it deleted
+---
+- runFlow: ../ensure_chat.yaml
+- extendedWaitUntil: { visible: ".*T01 photo ${NONCE}.*", timeout: 240000 }
+- takeScreenshot: t01_received
+- tapOn: ".*T01 photo ${NONCE}.*"
+- runFlow: { file: ../sleep.yaml, env: { MS: 3000 } }
+- takeScreenshot: t01_viewer
+- tapOn: "More actions"
+- tapOn: "Save image"
+- runFlow:
+    when: { visible: "Allow Full Access|Allow Access to All Photos|Allow|OK" }
+    commands: [ { tapOn: "Allow Full Access|Allow Access to All Photos|Allow|OK" } ]
+- runFlow:
+    when: { visible: "Save to Photos" }
+    commands: [ { tapOn: "Save to Photos" } ]
+- runFlow: { file: ../sleep.yaml, env: { MS: 2500 } }
+- takeScreenshot: t01_after_save
+- runFlow:
+    when: { visible: "More actions" }
+    commands:
+      - tapOn: "More actions"
+      - tapOn: "Info"
+      - runFlow: { file: ../sleep.yaml, env: { MS: 2000 } }
+      - takeScreenshot: t01_info
+- runFlow: leave_viewer.yaml
+- runFlow: { file: ../send_text.yaml, env: { MSG: "T01 ack ${NONCE}" } }
+- runFlow: ../kb_hide.yaml
+- extendedWaitUntil: { notVisible: ".*T01 photo ${NONCE}.*", timeout: 240000 }
+- takeScreenshot: t01_deleted_on_ios

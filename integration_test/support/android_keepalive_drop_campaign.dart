@@ -5,6 +5,23 @@ import 'sims_runtime_protocol.dart';
 
 const String keepaliveArtifactValidatorId = 'validateKeepaliveDropArtifact';
 
+/// The most recent production connection callback for this exact peer.
+/// A keepalive drop or a cached dial result alone does not remove a connection.
+bool? keepaliveTargetConnected(String log, String targetPeerId) {
+  if (targetPeerId.isEmpty) return null;
+  final callback = RegExp(
+    r'\[CONN\] peer:(connected|disconnected) → (\S+)(?: \([^\r\n]*\))?\s*$',
+  );
+  bool? connected;
+  for (final line in log.split('\n')) {
+    final match = callback.firstMatch(line);
+    if (match != null && match.group(2) == targetPeerId) {
+      connected = match.group(1) == 'connected';
+    }
+  }
+  return connected;
+}
+
 String? validateKeepaliveCampaignInvocation(SimsRuntimeInvocation invocation) {
   if (invocation.schema != simsRuntimeConfigSchema ||
       invocation.profileId != keepaliveDropProfileId ||

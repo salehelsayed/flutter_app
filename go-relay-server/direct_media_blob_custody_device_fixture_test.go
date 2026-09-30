@@ -149,6 +149,7 @@ func TestDirectMediaBlobCustodyDeviceFixtureContract(t *testing.T) {
 		_ = os.RemoveAll(root)
 		t.Fatalf("start fixture: %v", err)
 	}
+	t.Cleanup(func() { _ = fixture.Close() })
 
 	if fixture.ready.Backend != backendKindRedis || !fixture.ready.Ephemeral {
 		t.Fatalf("fixture backend attestation = %#v", fixture.ready)
@@ -186,6 +187,13 @@ func TestDirectMediaBlobCustodyDeviceFixtureContract(t *testing.T) {
 		_ = os.RemoveAll(plan393Root)
 		t.Fatalf("write Plan 393 fixture credential: %v", err)
 	}
+	// These counters belong to the process, so earlier tests may have already
+	// selected routes. Exercise that case instead of assuming a fresh process.
+	selectedPushRouteCounter.WithLabelValues("rich").Inc()
+	wantSelectedRoutes := map[string]int{
+		"opaque": int(testutil.ToFloat64(selectedPushRouteCounter.WithLabelValues("opaque"))),
+		"rich":   int(testutil.ToFloat64(selectedPushRouteCounter.WithLabelValues("rich"))),
+	}
 	plan393Fixture, err := startDirectMediaDeviceFixture(
 		plan393Root,
 		"127.0.0.1",
@@ -198,6 +206,7 @@ func TestDirectMediaBlobCustodyDeviceFixtureContract(t *testing.T) {
 		_ = os.RemoveAll(plan393Root)
 		t.Fatalf("start Plan 393 fixture: %v", err)
 	}
+	t.Cleanup(func() { _ = plan393Fixture.Close() })
 	if !plan393Fixture.ready.FixedWakeRecovery ||
 		plan393Fixture.ready.PushTokenState != string(pushTokenStateEncrypted) ||
 		!plan393Fixture.ready.WakeOutcomeAdmissionEnabled ||
@@ -207,7 +216,7 @@ func TestDirectMediaBlobCustodyDeviceFixtureContract(t *testing.T) {
 		len(plan393Fixture.ready.RelayBinarySHA256) != sha256.Size*2 {
 		t.Fatalf("Plan 393 fixture attestation = %#v", plan393Fixture.ready)
 	}
-	assertPlan393RelayFixtureSnapshot(t, plan393Fixture)
+	assertPlan393RelayFixtureSnapshot(t, plan393Fixture, wantSelectedRoutes)
 	if err := plan393Fixture.Close(); err != nil {
 		t.Fatalf("Plan 393 fixture teardown: %v", err)
 	}
@@ -841,7 +850,7 @@ func assertDirectMediaFixtureProbe(t *testing.T, rawURL, attachmentID string, wa
 	}
 }
 
-func assertPlan393RelayFixtureSnapshot(t *testing.T, fixture *directMediaDeviceFixture) {
+func assertPlan393RelayFixtureSnapshot(t *testing.T, fixture *directMediaDeviceFixture, wantSelectedRoutes map[string]int) {
 	t.Helper()
 	client := &http.Client{Timeout: 5 * time.Second}
 	request, err := http.NewRequest(
@@ -880,7 +889,9 @@ func assertPlan393RelayFixtureSnapshot(t *testing.T, fixture *directMediaDeviceF
 		!payload.WakeOutcomeAdmissionEnabled ||
 		!payload.WakeOutcomeCoordinatorStarted ||
 		!payload.DirectReactionPushEnabled || !payload.RealFCMConfigured ||
-		payload.SelectedRoutes["opaque"] != 0 || payload.SelectedRoutes["rich"] != 0 {
+		len(payload.SelectedRoutes) != len(wantSelectedRoutes) ||
+		payload.SelectedRoutes["opaque"] != wantSelectedRoutes["opaque"] ||
+		payload.SelectedRoutes["rich"] != wantSelectedRoutes["rich"] {
 		t.Fatalf("Plan 393 relay snapshot = status %d payload %#v", response.StatusCode, payload)
 	}
 }

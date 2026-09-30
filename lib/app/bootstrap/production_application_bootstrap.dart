@@ -36,6 +36,7 @@ import 'package:flutter_app/features/call/application/voice_call_feature_flags.d
 import 'package:flutter_app/features/call/infrastructure/ios_call_wake_channel.dart';
 import 'package:flutter_app/features/call/infrastructure/android_call_wake_channel.dart';
 import 'package:flutter_app/features/call/infrastructure/android_call_lifecycle_adapter.dart';
+import 'package:flutter_app/features/call/infrastructure/android_call_token_coordinator.dart';
 import 'package:flutter_app/features/call/infrastructure/call_authority_client.dart';
 import 'package:flutter_app/features/call/infrastructure/issued_call_wake_handle_store_impl.dart';
 import 'package:flutter_app/features/call/infrastructure/ios_call_lifecycle_adapter.dart';
@@ -2084,6 +2085,13 @@ final class ProductionApplicationBootstrap
             limit: limit,
             entryIds: entryIds,
           ),
+      dbHasRecoverableInboxStagingEntryExcluding:
+          ({required messageType, required rejectReasonCode}) =>
+              dbHasRecoverableInboxStagingEntryExcluding(
+                db,
+                messageType: messageType,
+                rejectReasonCode: rejectReasonCode,
+              ),
       dbLoadInboxStagingEntry: (entryId) =>
           dbLoadInboxStagingEntry(db, entryId),
       dbDeleteInboxStagingEntry: (entryId) =>
@@ -4421,6 +4429,10 @@ final class ProductionApplicationBootstrap
           )
         : null;
     final notificationService = FlutterNotificationService(
+      requestObserver: debugE2EComposition
+          ?.productionJourney
+          ?.foregroundPush
+          .observeNotification,
       requestApplePermissions: !kE2ETestMode,
       notificationIdRegistryResolver: durableNotificationIdRegistry == null
           ? null
@@ -6272,6 +6284,17 @@ final class ProductionApplicationBootstrap
             }
           },
         );
+    // A previously registered FCM token can remain cached locally after FCM
+    // reports UNREGISTERED to the relay. Share one first-read replacement so
+    // chat and call registration can never publish different generations.
+    // Attested fixed-token campaigns retain their exact proof token.
+    final androidFcmTokenReader = Platform.isAndroid
+        ? AndroidFcmTokenReader(
+            getToken: () => FirebaseMessaging.instance.getToken(),
+            deleteToken: () => FirebaseMessaging.instance.deleteToken(),
+            rotateOnFirstRead: pushRelayRegistrationProof == null,
+          )
+        : null;
     callSignalingComposition = createProductionCallSignalingComposition(
       secureKeyStore: secureKeyStore,
       iceServers: productionVoiceCallStunServers(),
@@ -6281,6 +6304,7 @@ final class ProductionApplicationBootstrap
       },
       featureFlags: voiceCallFeatureFlags,
       platform: callEndpointPlatform,
+      androidCallTokenReader: androidFcmTokenReader?.read,
       database: db,
       bridge: bridge,
       p2pService: p2pService,
@@ -6292,6 +6316,7 @@ final class ProductionApplicationBootstrap
       microphoneCaptureLeases: microphoneCaptureLeasesFor(audioRecorderService),
       awaitForegroundPresentationReadiness: () =>
           foregroundCallPresentationReady.future,
+      callTransportStartupWait: const Duration(seconds: 8),
       issuedCallWakeHandleStore: issuedCallWakeHandleStore,
       receivedCallWakeHandleStore: receivedCallWakeHandleStore,
       ensureReceivedCallWakeHandle:
@@ -6545,6 +6570,7 @@ final class ProductionApplicationBootstrap
               return push_registration.registerPushToken(
                 p2pService: p2pService,
                 pushTokenStore: pushTokenStore,
+                getTokenFn: androidFcmTokenReader?.read,
                 // The DB identity row is the logical account peer for both
                 // roles; a linked physical transport peer is a relay route,
                 // never migration/account authority.
@@ -10260,6 +10286,10 @@ final class ProductionApplicationBootstrap
         debugE2EOverlayBuilder: debugE2EOverlayBuilder,
         debugE2EStartP2PNodeOverride: debugE2EStartP2PNodeOverride,
         debugE2EAfterRuntimeReady: debugE2EAfterRuntimeReady,
+        debugForegroundGroupPush:
+            debugE2EComposition?.productionJourney?.foregroundPush,
+        debugProductionJourneyRuntimeReady:
+            debugE2EComposition?.productionJourney?.markRuntimeReady,
         reactionRepository: reactionRepository,
         isDesktop: isDesktop,
         notificationService: notificationService,

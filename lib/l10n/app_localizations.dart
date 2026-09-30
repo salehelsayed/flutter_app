@@ -2152,6 +2152,18 @@ abstract class AppLocalizations {
   /// **'The media is too large even after compression.'**
   String get media_too_large_after_compress;
 
+  /// No description provided for @media_video_processing_stalled.
+  ///
+  /// In en, this message translates to:
+  /// **'Video processing stopped. Try again.'**
+  String get media_video_processing_stalled;
+
+  /// No description provided for @media_video_processing_unavailable.
+  ///
+  /// In en, this message translates to:
+  /// **'Video processing is unavailable. Restart MKnoon to add videos.'**
+  String get media_video_processing_unavailable;
+
   /// No description provided for @media_gif_too_large.
   ///
   /// In en, this message translates to:

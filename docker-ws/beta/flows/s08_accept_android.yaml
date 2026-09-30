@@ -1,0 +1,27 @@
+appId: com.mknoon.app
+name: S08 Pixel accepts the iPhone's group invite from Intros, reads G1, replies G2
+---
+- runFlow: ensure_chat.yaml
+- tapOn: "Back"
+# Home opens either as the orbit ("Show all chats") or already as the chat list
+# ("Show inner circle"); the pending card is only on the chat list.
+- extendedWaitUntil: { visible: "Show all chats|Show inner circle", timeout: 20000 }
+- runFlow:
+    when: { visible: "Show all chats" }
+    commands: [ { tapOn: "Show all chats" } ]
+- extendedWaitUntil: { visible: "[0-9]+ items? pending.*", timeout: 240000 }
+- takeScreenshot: s08_pending_android
+- tapOn: "[0-9]+ items? pending.*"
+- runFlow: { file: sleep.yaml, env: { MS: 2500 } }
+- takeScreenshot: s08_intros_android
+- tapOn: "Accept"
+- runFlow: { file: sleep.yaml, env: { MS: 4000 } }
+- takeScreenshot: s08_after_accept_android
+- runFlow:
+    when: { visible: "All.*" }
+    commands: [ { tapOn: "All.*" } ]
+- extendedWaitUntil: { visible: ".*Beta Group ${NONCE}.*", timeout: 60000 }
+- tapOn: ".*Beta Group ${NONCE}.*"
+- extendedWaitUntil: { visible: ".*G1 hello group from iPhone ${NONCE}.*", timeout: 120000 }
+- runFlow: { file: send_text.yaml, env: { MSG: "G2 hello group from Pixel ${NONCE}" } }
+- takeScreenshot: s08_sent_g2_android

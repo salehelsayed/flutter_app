@@ -1,0 +1,9 @@
+test/features/call/presentation/locked_call_projection_test.dart
+test/features/call/infrastructure/android_call_lifecycle_adapter_test.dart
+test/features/call/presentation/foreground_call_overlay_test.dart
+test/core/media/image_processor_test.dart
+test/core/widgets/video_processing_notice_test.dart
+test/core/media/pending_composer_media_test.dart
+test/features/share/application/share_batch_delivery_coordinator_test.dart
+test/features/conversation/presentation/screens/conversation_wired_test.dart
+test/features/groups/presentation/group_conversation_wired_test.dart

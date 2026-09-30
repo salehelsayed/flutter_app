@@ -1,0 +1,8 @@
+appId: com.mknoon.app
+name: wait for an incoming call, answer, wait for Connected
+---
+- extendedWaitUntil:
+    visible: "Answer"
+    timeout: ${ATIMEOUT}
+- tapOn: "Answer"
+- extendedWaitUntil: { visible: "(.*\\n)?Connected(\\n.*)?", timeout: 60000 }

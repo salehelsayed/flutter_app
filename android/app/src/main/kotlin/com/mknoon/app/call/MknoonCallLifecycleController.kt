@@ -1260,6 +1260,54 @@ internal class MknoonCallLifecycleController(
         true
     }
 
+    /** Refreshes the existing incoming notification when its authenticated name changes. */
+    fun updatePresentationAndRefreshIncoming(
+        nativeCallId: UUID,
+        metadata: MknoonLockedCallMetadata,
+    ): Pair<Boolean, Boolean> = synchronized(lock) {
+        val previousName = lockedMetadata?.takeIf { it.first == nativeCallId }?.second?.displayName
+        if (!updatePresentation(nativeCallId, metadata)) return@synchronized false to false
+        if (metadata.state == "ending" || previousName == metadata.displayName) {
+            return@synchronized true to false
+        }
+
+        val pending = snapshotInternal()?.takeIf {
+            it.nativeCallId == nativeCallId &&
+                it.direction == PendingNativeCallDirection.INCOMING &&
+                it.terminalEvent == null &&
+                it.events.any { event -> event.type == PendingNativeCallEventType.PRESENTED }
+        }
+        val adopted = adoptedState?.takeIf {
+            it.nativeCallId == nativeCallId &&
+                it.direction == PendingNativeCallDirection.INCOMING &&
+                it.durablyAdopted && !it.terminal
+        }
+        if (pending == null && adopted == null) return@synchronized true to false
+
+        val answered = answerRequestedCallId == nativeCallId ||
+            pending?.answerRequested == true || adopted?.answerRequested == true
+        val state = if (answered) "accepted" else "ringing"
+        true to runCatching { platform.project(nativeCallId, state) }.getOrDefault(false)
+    }
+
+    /** Name from a verified local contact, after the native incoming descriptor exists. */
+    fun updateAuthenticatedContactName(nativeCallId: UUID, displayName: String): Pair<Boolean, Boolean> = synchronized(lock) {
+        if (displayName.isBlank() || displayName.trim() != displayName || displayName.length > 128 || cleanupState != null) {
+            return@synchronized false to false
+        }
+        val pending = snapshotInternal()?.takeIf {
+            it.nativeCallId == nativeCallId && it.direction == PendingNativeCallDirection.INCOMING && it.terminalEvent == null
+        }
+        val adopted = adoptedState?.takeIf {
+            it.nativeCallId == nativeCallId && it.direction == PendingNativeCallDirection.INCOMING && !it.terminal
+        }
+        if (pending == null && adopted == null) return@synchronized false to false
+        val current = lockedMetadata?.takeIf { it.first == nativeCallId }?.second
+        val metadata = (current ?: MknoonIncomingCallDisplay(displayName, null, true).toRingingMetadata())
+            .copy(displayName = displayName)
+        updatePresentationAndRefreshIncoming(nativeCallId, metadata)
+    }
+
     fun presentation(nativeCallId: UUID): MknoonLockedCallMetadata? = synchronized(lock) {
         if (cleanupState != null || !hasActiveLifecycle(nativeCallId)) return@synchronized null
         lockedMetadata?.takeIf { it.first == nativeCallId }?.second

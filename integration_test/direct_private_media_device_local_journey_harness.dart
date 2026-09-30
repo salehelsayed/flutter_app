@@ -4,6 +4,7 @@ import 'dart:io';
 
 import 'package:crypto/crypto.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_app/core/database/app_database_version.dart';
 import 'package:flutter_app/core/database/helpers/media_attachments_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/messages_db_helpers.dart';
 import 'package:flutter_app/core/database/production_migration_registry.dart';
@@ -26,6 +27,7 @@ import 'package:flutter_app/features/conversation/domain/repositories/media_atta
 import 'package:flutter_app/features/conversation/presentation/screens/direct_private_media_viewer.dart';
 import 'package:flutter_app/features/conversation/presentation/screens/conversation_screen.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/letter_card.dart';
+import 'package:flutter_app/features/conversation/presentation/widgets/message_context_overlay.dart';
 import 'package:flutter_app/features/push/application/show_notification_use_case.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/shared/widgets/media/media_grid.dart';
@@ -83,9 +85,11 @@ void main() {
       reason: 'P234_ROLE must be sender or recipient',
     );
 
+    _tracePhase('production_conversation_start');
     final productionConversation = await _runProductionConversationProof(
       tester,
     );
+    _tracePhase('production_conversation_complete');
     final artifact = _role == 'sender'
         ? await _runSenderProof(tester, productionConversation)
         : await _runRecipientProof(productionConversation);
@@ -96,6 +100,12 @@ void main() {
     print('$_artifactMarker$encoded');
     await tester.pump();
   });
+}
+
+void _tracePhase(String phase) {
+  // Only static phase names are emitted; no fixture payload or path is logged.
+  // ignore: avoid_print
+  print('P234_PHASE=$phase');
 }
 
 Future<Map<String, Object?>> _runProductionConversationProof(
@@ -232,6 +242,7 @@ Future<Map<String, Object?>> _runProductionConversationProof(
       ),
     ];
 
+    final deletedMessages = <String>[];
     Future<void> pumpConversation(List<ConversationMessage> messages) async {
       await tester.pumpWidget(
         MaterialApp(
@@ -251,7 +262,7 @@ Future<Map<String, Object?>> _runProductionConversationProof(
               hasMoreOlderMessages: false,
               onReactionSelected: (_, _) {},
               onQuoteReply: (_) {},
-              onDeleteMessage: (_) {},
+              onDeleteMessage: deletedMessages.add,
               onOpenPrivateMedia: (_) async {},
               onLoadPrivateParentDecision: (messageId) async {
                 final attachment = attachmentById[messageId];
@@ -399,10 +410,34 @@ Future<Map<String, Object?>> _runProductionConversationProof(
     expect(incomingRetiredButton, findsNothing);
     final incomingActionVisible =
         incomingTileSize.width > 0 && incomingTileSize.height > 0;
-    final terminalActionVisibleAfterRepump = visibleAction(
-      _productionTerminalFixtureId,
-      'private-action-deleteForMe',
+    final terminalSummary = find.descendant(
+      of: scopedSlot(_productionTerminalFixtureId),
+      matching: find.byKey(
+        const ValueKey('private-terminal-view-once-consumed-summary'),
+      ),
     );
+    expect(terminalSummary, findsOneWidget);
+    expect(
+      visibleAction(_productionTerminalFixtureId, 'private-action-deleteForMe'),
+      isFalse,
+    );
+    _tracePhase('terminal_long_press_start');
+    await tester.longPress(terminalSummary);
+    _tracePhase('terminal_long_press_complete');
+    await tester.pump(const Duration(milliseconds: 500));
+    final terminalDelete = find.byKey(MessageContextOverlay.deleteActionKey);
+    expect(terminalDelete, findsOneWidget);
+    final terminalDeleteSize = tester.getSize(terminalDelete);
+    final terminalActionVisibleAfterRepump =
+        terminalDeleteSize.width > 0 && terminalDeleteSize.height > 0;
+    _tracePhase('terminal_delete_tap_start');
+    await tester.tap(terminalDelete);
+    _tracePhase('terminal_delete_tap_complete');
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 500));
+    expect(deletedMessages, <String>[_productionTerminalFixtureId]);
+    expect(find.byKey(MessageContextOverlay.overlayKey), findsNothing);
+    _tracePhase('terminal_delete_asserted');
 
     expect(productionConversationMounted, isTrue);
     expect(productionLetterCardCount, 3);
@@ -428,12 +463,15 @@ Future<Map<String, Object?>> _runProductionConversationProof(
       'terminalActionVisibleAfterRepump': terminalActionVisibleAfterRepump,
     };
   } finally {
+    _tracePhase('production_cleanup_start');
     if (database != null && database.isOpen) {
       await database.close();
     }
+    _tracePhase('production_database_closed');
     if (await tempRoot.exists()) {
       await tempRoot.delete(recursive: true);
     }
+    _tracePhase('production_cleanup_complete');
   }
 }
 
@@ -499,6 +537,7 @@ Future<Map<String, Object?>> _runSenderProof(
 Future<Map<String, Object?>> _runSenderPendingOpenProof(
   WidgetTester tester,
 ) async {
+  _tracePhase('sender_pending_start');
   final tempRoot = await Directory.systemTemp.createTemp(
     'p262-sender-pending-open-',
   );
@@ -506,13 +545,16 @@ Future<Map<String, Object?>> _runSenderPendingOpenProof(
   final mediaFileManager = MediaFileManager();
   final proofSequence = <String>[];
   final sqlStateSequence = <String>[];
-  final protectionEvents = StreamController<Object?>();
+  // Match the native broadcast event channel, including cleanup when setup
+  // fails before the protection coordinator subscribes.
+  final protectionEvents = StreamController<Object?>.broadcast();
   sqlcipher.Database? database;
   DirectPrivateMediaViewerController? controller;
   String? pendingStoredPath;
   String? pendingAbsolutePath;
   var openTapCount = 0;
   try {
+    _tracePhase('sender_pending_fixture_start');
     final source = File(p.join(tempRoot.path, 'fixture.png'));
     await source.writeAsBytes(
       base64Decode(
@@ -556,7 +598,9 @@ Future<Map<String, Object?>> _runSenderPendingOpenProof(
       isIncoming: false,
       createdAt: '2026-07-20T10:00:00.000Z',
       transport: 'direct',
-      privateMediaPolicy: const PrivateMediaPolicy.protected(),
+      // Only view-once retains the sender one-shot lease (plan 302).
+      // Protected reopen retention already has real-database regression tests.
+      privateMediaPolicy: const PrivateMediaPolicy.viewOnce(),
       privateMediaState: PrivateMediaLifecycleState.available,
     );
     final attachment = MediaAttachment(
@@ -571,12 +615,16 @@ Future<Map<String, Object?>> _runSenderPendingOpenProof(
       ownerLane: MediaOwnerLane.direct,
     );
 
+    _tracePhase('sender_pending_database_start');
     database = await _openProofDatabase(databasePath);
+    _tracePhase('sender_pending_database_opened');
     await dbInsertMessage(database, parent.toMap());
+    _tracePhase('sender_pending_parent_inserted');
     // Fixture-only raw SQL seed: the production guarded helper is
     // intentionally incoming-only. The exact row is asserted before the
     // in-memory repository mirror is populated.
     await dbInsertMediaAttachment(database, attachment.toMap());
+    _tracePhase('sender_pending_attachment_inserted');
 
     final exactParent = await database.query(
       'messages',
@@ -584,7 +632,7 @@ Future<Map<String, Object?>> _runSenderPendingOpenProof(
       where:
           'id = ? AND is_incoming = 0 '
           'AND private_media_policy_version = 1 '
-          "AND private_media_mode = 'protected' "
+          "AND private_media_mode = 'view_once' "
           "AND private_media_state = 'available'",
       whereArgs: const <Object?>[_pendingOpenFixtureId],
     );
@@ -613,7 +661,7 @@ Future<Map<String, Object?>> _runSenderPendingOpenProof(
         where:
             'id = ? AND is_incoming = 0 '
             'AND private_media_policy_version = 1 '
-            "AND private_media_mode = 'protected'",
+            "AND private_media_mode = 'view_once'",
         whereArgs: const <Object?>[_pendingOpenFixtureId],
         limit: 1,
       );
@@ -702,18 +750,17 @@ Future<Map<String, Object?>> _runSenderPendingOpenProof(
       proofSequence.add('open_tapped');
       try {
         launchPhase = 'prepare';
+        _tracePhase('sender_prepare_start');
         final activeController = controller!;
         final prepared = await activeController.prepareResult(
           identity,
           continuityGuard,
         );
         final grant = prepared.grant;
+        _tracePhase('sender_prepare_complete');
         if (grant == null) {
           throw StateError('p262 sender pending open was refused');
         }
-        sqlStateSequence.add(await readExactSqlState('opening'));
-        proofSequence.add('opening_sql_observed');
-
         final route = MaterialPageRoute<void>(
           builder: (_) => DirectPrivateMediaViewer(
             grant: grant,
@@ -722,9 +769,16 @@ Future<Map<String, Object?>> _runSenderPendingOpenProof(
         );
         late final DirectPrivateMediaSettleResult settled;
         try {
+          // Own the grant even when a SQL assertion fails before route push.
+          // Otherwise controller disposal waits forever for an unmounted viewer.
+          sqlStateSequence.add(await readExactSqlState('opening'));
+          proofSequence.add('opening_sql_observed');
+          _tracePhase('sender_opening_sql_observed');
           launchPhase = 'route_push';
+          _tracePhase('sender_route_push');
           await navigatorKey.currentState!.push<void>(route);
           launchPhase = 'route_completed';
+          _tracePhase('sender_route_completed');
           await route.completed;
         } finally {
           // The viewer starts settlement before its route completes. Calling
@@ -804,7 +858,7 @@ Future<Map<String, Object?>> _runSenderPendingOpenProof(
     final messageRow = find.byKey(const ValueKey('msg-$_pendingOpenFixtureId'));
     final scopedOpen = find.descendant(
       of: messageRow,
-      matching: find.byKey(const ValueKey('private-media-open')),
+      matching: find.byKey(const ValueKey('private-media-card-visual')),
     );
     for (
       var attempt = 0;
@@ -834,6 +888,14 @@ Future<Map<String, Object?>> _runSenderPendingOpenProof(
           rows.single['private_media_state'] == 'viewing';
       if (viewingObserved) break;
     }
+    // Closed phase/count facts make a native failure diagnosable without
+    // exposing private rows or relying on failure cleanup to complete.
+    // ignore: avoid_print
+    print(
+      'P234_VIEW_STATE phase=$launchPhase taps=$openTapCount '
+      'viewers=${viewer.evaluate().length} '
+      'launchComplete=${launchCompleted.isCompleted}',
+    );
     expect(viewingObserved, isTrue);
     expect(
       find.byKey(const ValueKey('direct-private-media-viewer')),
@@ -898,11 +960,29 @@ Future<Map<String, Object?>> _runSenderPendingOpenProof(
       'pendingOpenSqlStateSequence': sqlStateSequence,
       'pendingOpenProofSequence': proofSequence,
     };
+  } on Object catch (error, stack) {
+    // A failed setup assertion can precede asynchronous cleanup. Retain only
+    // its type and this fixture's source line, never exception payload data.
+    final location = RegExp(
+      r'direct_private_media_device_local_journey_harness\.dart:(\d+):',
+    ).firstMatch(stack.toString());
+    // ignore: avoid_print
+    print('P234_FAILURE_TYPE=${error.runtimeType}');
+    if (location != null) {
+      // ignore: avoid_print
+      print('P234_FAILURE_LINE=${location.group(1)}');
+    }
+    rethrow;
   } finally {
+    _tracePhase('sender_pending_cleanup_start');
     await tester.pumpWidget(const SizedBox.shrink());
+    _tracePhase('sender_pending_widget_removed');
     await tester.pump();
+    _tracePhase('sender_pending_frame_pumped');
     if (controller != null) await controller.dispose();
+    _tracePhase('sender_pending_controller_disposed');
     await protectionEvents.close();
+    _tracePhase('sender_pending_events_closed');
     if (database != null && database.isOpen) await database.close();
     if (pendingStoredPath != null) {
       await mediaFileManager.deleteOwnedPendingUploadFilesForMessage(
@@ -1411,7 +1491,7 @@ Future<sqlcipher.Database> _openProofDatabase(String path) {
   return sqlcipher.openDatabase(
     path,
     password: 'plan-234-session-06-device-local-proof',
-    version: 100,
+    version: currentIdentityDatabaseVersion,
     singleInstance: false,
     onCreate: runProductionOnCreate,
     onUpgrade: runProductionOnUpgrade,

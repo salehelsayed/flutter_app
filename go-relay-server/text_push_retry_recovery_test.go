@@ -12,6 +12,7 @@ import (
 
 	"firebase.google.com/go/v4/messaging"
 	"github.com/alicebob/miniredis/v2"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -179,6 +180,7 @@ func TestRelayNotificationClosure_TextAutomaticRecoveryAfterProviderExhaustion(t
 						t.Fatalf("store %s: %v", lane, err)
 					}
 				}
+				attemptedBefore := testutil.ToFloat64(groupContentWakeCounter.WithLabelValues("attempted"))
 				store()
 				var correlation string
 				awaitAndroidRich(t, "durable retry after exactly three failed provider attempts", func() bool {
@@ -192,6 +194,13 @@ func TestRelayNotificationClosure_TextAutomaticRecoveryAfterProviderExhaustion(t
 					}
 					return false
 				})
+				wantStrictAttempts := float64(0)
+				if lane == "strict-group" {
+					wantStrictAttempts = 1
+				}
+				if delta := testutil.ToFloat64(groupContentWakeCounter.WithLabelValues("attempted")) - attemptedBefore; delta != wantStrictAttempts {
+					t.Fatalf("strict group logical wake attempts=%v, want %v", delta, wantStrictAttempts)
+				}
 				if calls.Load() != 3 {
 					t.Fatalf("initial attempts=%d, want3", calls.Load())
 				}
@@ -228,6 +237,9 @@ func TestRelayNotificationClosure_TextAutomaticRecoveryAfterProviderExhaustion(t
 				}
 				if calls.Load() != 4 {
 					t.Fatalf("duplicate after ACK/completion resubmitted: %d", calls.Load())
+				}
+				if delta := testutil.ToFloat64(groupContentWakeCounter.WithLabelValues("attempted")) - attemptedBefore; delta != wantStrictAttempts {
+					t.Fatalf("recovery or duplicate recounted a logical wake: %v, want %v", delta, wantStrictAttempts)
 				}
 				requireRichTerminal(t, f, correlation)
 			})
@@ -694,4 +706,39 @@ func TestAndroidRichRecoveryPreservesProviderSizeFallback(t *testing.T) {
 		t.Fatalf("provider size rescue calls=%d, want one original and one bounded rescue", calls)
 	}
 	requireRichTerminal(t, f, a.correlation)
+}
+
+func TestStrictGroupWakeMetricSelectedRouteAndCapacityFallback(t *testing.T) {
+	for _, mode := range []string{"ios-preflight", "android-capacity"} {
+		t.Run(mode, func(t *testing.T) {
+			f := newAndroidRichTestFixture(t, false)
+			recorder := newRecordingPushSender()
+			f.push.sender = recorder.Send
+			if mode == "ios-preflight" {
+				if err := f.pushBackend.RegisterToken(richTestPeer, "private-provider-token", "ios"); err != nil {
+					t.Fatal(err)
+				}
+			}
+			signed := newTC364GroupContentFixture(t, "group-content-metric", "logical-author", richTestSender)
+			event := "gr1:" + strings.Repeat("a", 32) + ":00000000000000000001:" + strings.Repeat("b", 32)
+			message := signed.envelope(t, "group_message", event, "", []string{richTestPeer}, "metric")
+			entry := inboxMessage{ID: "metric-custody", From: richTestSender, Message: message, Timestamp: f.now.UnixMilli()}
+			before := testutil.ToFloat64(groupContentWakeCounter.WithLabelValues("attempted"))
+			if mode == "ios-preflight" {
+				if _, _, err := f.inbox.StoreAckCustody(richTestPeer, entry, ackCustodyGroupContentKind); err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				_, admission, admitted := f.inbox.preflightDirectWakeOutcome(richTestPeer, entry, wakeOutcomeProducerGroupMessage, "", event)
+				if !admitted || len(admission.androidRichMaterial) == 0 {
+					t.Fatal("expected Android rich capacity fallback material")
+				}
+				f.inbox.launchDirectPushForWakeAdmission(richTestPeer, entry, admission)
+			}
+			waitForGroupReactionPushes(t, recorder, 1)
+			if delta := testutil.ToFloat64(groupContentWakeCounter.WithLabelValues("attempted")) - before; delta != 1 {
+				t.Fatalf("logical wake attempts=%v, want 1", delta)
+			}
+		})
+	}
 }

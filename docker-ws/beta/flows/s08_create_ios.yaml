@@ -1,0 +1,20 @@
+appId: com.mknoon.app
+name: S08 iPhone creates a group with the Pixel, sends G1, waits for the Pixel's G2
+---
+- runFlow: ensure_chat.yaml
+- tapOn: "Back"
+- extendedWaitUntil: { visible: "Create group", timeout: 20000 }
+- tapOn: "Create group"
+- tapOn: "New Group"
+- takeScreenshot: s08_picker_ios
+- tapOn: ".*${PEER}.*"
+- tapOn: ".*Group name.*"
+- inputText: "Beta Group ${NONCE}"
+- runFlow: kb_hide.yaml
+- tapOn: "Start group chat"
+- extendedWaitUntil: { visible: ".*Write something.*", timeout: 30000 }
+- takeScreenshot: s08_group_open_ios
+- runFlow: { file: send_text.yaml, env: { MSG: "G1 hello group from iPhone ${NONCE}" } }
+- runFlow: kb_hide.yaml
+- extendedWaitUntil: { visible: ".*G2 hello group from Pixel ${NONCE}.*", timeout: 360000 }
+- takeScreenshot: s08_got_g2_ios

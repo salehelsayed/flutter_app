@@ -1,0 +1,9 @@
+appId: com.mknoon.app
+name: S05e Pixel calls, nobody answers
+---
+- runFlow: ensure_chat.yaml
+- tapOn: "Start voice call"
+- extendedWaitUntil: { visible: "(.*\\n)?Ringing(\\n.*)?", timeout: 60000 }
+- extendedWaitUntil: { visible: ".*No answer.*", timeout: 180000 }
+- takeScreenshot: s05e_noanswer_android
+- runFlow: ensure_chat.yaml

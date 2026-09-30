@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter_app/core/debug/wake_token_directionality_e2e.dart';
@@ -58,6 +59,58 @@ Map<String, Object?> _aggregate({
 );
 
 void main() {
+  test('staged command survives the old poller shutdown', () async {
+    var running = true;
+    var pending = false;
+    var oldProcessConsumed = false;
+    await stageAndroidWakeCommand(
+      stop: () async => running = false,
+      stage: () async {
+        pending = true;
+        if (running) {
+          pending = false;
+          oldProcessConsumed = true;
+        }
+      },
+    );
+    // The newly launched process must still have the one-use command to read.
+    running = true;
+    expect(oldProcessConsumed, isFalse);
+    expect(running && pending, isTrue);
+  });
+
+  test('command publication awaits completed process shutdown', () async {
+    final stopped = Completer<void>();
+    var published = false;
+    final staging = stageAndroidWakeCommand(
+      stop: () => stopped.future,
+      stage: () async => published = true,
+    );
+    try {
+      await Future<void>.delayed(Duration.zero);
+      expect(published, isFalse);
+    } finally {
+      stopped.complete();
+      await staging;
+    }
+    expect(published, isTrue);
+  });
+
+  test(
+    'failed process shutdown preserves the existing command state',
+    () async {
+      var state = 'previous command';
+      await expectLater(
+        stageAndroidWakeCommand(
+          stop: () async => throw StateError('stop failed'),
+          stage: () async => state = 'new command',
+        ),
+        throwsStateError,
+      );
+      expect(state, 'previous command');
+    },
+  );
+
   test('binds three independent matching hashes into passing evidence', () {
     final proof = _aggregate();
 

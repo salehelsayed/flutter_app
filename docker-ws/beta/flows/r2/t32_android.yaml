@@ -1,0 +1,6 @@
+appId: com.mknoon.app
+name: T32 Pixel answers and stays on the call until the iPhone ends it
+---
+- runFlow: { file: answer_connected.yaml, env: { ATIMEOUT: 120000 } }
+- extendedWaitUntil: { notVisible: "End", timeout: 330000 }
+- takeScreenshot: t32_ended_android

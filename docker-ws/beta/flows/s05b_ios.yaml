@@ -1,0 +1,13 @@
+appId: com.mknoon.app
+name: S05b iPhone declines the Pixel's call
+---
+- runFlow:
+    when: { visible: "Dismiss" }
+    commands: [ { tapOn: "Dismiss" } ]
+- extendedWaitUntil: { visible: "Decline", timeout: 90000 }
+- takeScreenshot: s05b_incoming_ios
+- tapOn: "Decline"
+- runFlow: { file: sleep.yaml, env: { MS: 3000 } }
+- runFlow: ensure_chat.yaml
+- extendedWaitUntil: { visible: ".*You declined.*", timeout: 60000 }
+- takeScreenshot: s05b_row_ios

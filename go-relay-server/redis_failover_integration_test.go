@@ -359,7 +359,9 @@ func TestRedisControlPlaneSharedAcrossProcesses(t *testing.T) {
 
 func TestRedisBackendHelperProcess(t *testing.T) {
 	if os.Getenv("GO_WANT_REDIS_HELPER") != "1" {
-		t.Skip("helper process only")
+		// Parent integration tests invoke this entry point in a child process.
+		// Ordinary discovery has no helper request; it is not a skipped scenario.
+		return
 	}
 
 	var req redisHelperRequest

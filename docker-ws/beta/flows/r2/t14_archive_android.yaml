@@ -1,0 +1,13 @@
+appId: com.mknoon.app
+name: T14 Pixel archives the chat with the iPhone
+---
+- runFlow: home_list.yaml
+- swipe: { from: { text: "${PEER}\\n.*" }, direction: LEFT, duration: 500 }
+- tapOn: "Archive"
+- runFlow: { file: ../sleep.yaml, env: { MS: 2500 } }
+- takeScreenshot: t14_archived_all
+- assertNotVisible: "${PEER}\\n.*"
+- tapOn: "Archived.*"
+- extendedWaitUntil: { visible: "${PEER}\\n.*", timeout: 10000 }
+- takeScreenshot: t14_archived_filter
+- tapOn: "All.*"

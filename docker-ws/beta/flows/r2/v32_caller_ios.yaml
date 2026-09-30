@@ -1,0 +1,6 @@
+appId: com.mknoon.app
+name: R2-10 iPhone calls the Pixel, stays connected TALK_MS, ends
+---
+- runFlow: call_connected.yaml
+- runFlow: { file: ../sleep.yaml, env: { MS: "${TALK_MS}" } }
+- runFlow: ../end_call.yaml

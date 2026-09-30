@@ -1,0 +1,10 @@
+appId: com.mknoon.app
+name: S05b Pixel calls, the iPhone declines
+---
+- runFlow: ensure_chat.yaml
+- tapOn: "Start voice call"
+- runFlow: { file: sleep.yaml, env: { MS: 2500 } }
+- takeScreenshot: s05b_calling_android
+- extendedWaitUntil: { visible: ".*Call declined.*", timeout: 90000 }
+- takeScreenshot: s05b_declined_android
+- runFlow: ensure_chat.yaml

@@ -70,6 +70,32 @@ Future<(SendGroupReactionResult, MessageReaction?)> sendGroupReaction({
   GroupInviteDeliveryAttemptRepository? inviteDeliveryAttemptRepo,
   DateTime? authoredAt,
 }) async {
+  (SendGroupReactionResult, MessageReaction?) observedResult(
+    (SendGroupReactionResult, MessageReaction?) result,
+  ) {
+    // Correlate the actual return with read-only production journey evidence.
+    // Hash identities; a locally queued row is not proof of live acceptance.
+    // Observation failures must never alter the already-decided send result.
+    try {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'GROUP_REACTION_SEND_RESULT',
+        details: {
+          'groupSha256': sha256.convert(utf8.encode(groupId)).toString(),
+          'messageSha256': sha256.convert(utf8.encode(messageId)).toString(),
+          'senderIdentitySha256': sha256
+              .convert(utf8.encode(senderPeerId))
+              .toString(),
+          'outcome': result.$1.name,
+          'reactionId': result.$2?.id,
+        },
+      );
+    } catch (_) {
+      // Existing production admission, persistence and transport remain authoritative.
+    }
+    return result;
+  }
+
   final snapshot = await runGroupAuthorityPhase(
     groupId: groupId,
     action: () async {
@@ -139,13 +165,13 @@ Future<(SendGroupReactionResult, MessageReaction?)> sendGroupReaction({
   // is not a signer-authority failure, and both conditions are terminal before
   // any crypto, local projection, or network effect.
   if (snapshot.group == null) {
-    return (SendGroupReactionResult.groupNotFound, null);
+    return observedResult((SendGroupReactionResult.groupNotFound, null));
   }
   if (snapshot.group!.isDissolved) {
-    return (SendGroupReactionResult.groupDissolved, null);
+    return observedResult((SendGroupReactionResult.groupDissolved, null));
   }
   if (snapshot.member == null) {
-    return (SendGroupReactionResult.notMember, null);
+    return observedResult((SendGroupReactionResult.notMember, null));
   }
   final resolverAbsentLegacy = isResolverAbsentLegacyGroupContentAuthoring(
     owner: groupRepo,
@@ -156,17 +182,23 @@ Future<(SendGroupReactionResult, MessageReaction?)> sendGroupReaction({
           !resolverAbsentLegacy &&
           snapshot.resolution.kind !=
               GroupContentAuthoringResolutionKind.strict)) {
-    return (SendGroupReactionResult.unauthorizedSenderKey, null);
+    return observedResult((
+      SendGroupReactionResult.unauthorizedSenderKey,
+      null,
+    ));
   }
   if (snapshot.resolution.kind == GroupContentAuthoringResolutionKind.strict &&
       !snapshot.authorBindingUnique) {
-    return (SendGroupReactionResult.unauthorizedSenderKey, null);
+    return observedResult((
+      SendGroupReactionResult.unauthorizedSenderKey,
+      null,
+    ));
   }
   if (snapshot.resolution.kind == GroupContentAuthoringResolutionKind.strict &&
       !snapshot.targetEligible) {
-    return (SendGroupReactionResult.messageNotFound, null);
+    return observedResult((SendGroupReactionResult.messageNotFound, null));
   }
-  return _sendGroupReaction(
+  final result = await _sendGroupReaction(
     bridge: bridge,
     groupRepo: groupRepo,
     msgRepo: msgRepo,
@@ -186,6 +218,7 @@ Future<(SendGroupReactionResult, MessageReaction?)> sendGroupReaction({
     inviteDeliveryAttemptRepo: inviteDeliveryAttemptRepo,
     authoredAt: authoredAt,
   );
+  return observedResult(result);
 }
 
 Future<(SendGroupReactionResult, MessageReaction?)> _sendGroupReaction({

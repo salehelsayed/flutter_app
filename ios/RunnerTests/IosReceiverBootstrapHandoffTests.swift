@@ -989,16 +989,25 @@ final class IosReceiverBootstrapHandoffTests: XCTestCase {
       IosSetupReadinessEntryCoordinator.attemptEnvironmentKey: rawAttempt,
       IosSetupReadinessEntryCoordinator.profileEnvironmentKey:
         IosSetupReadinessEntryCoordinator.expectedProfileId,
+      IosSetupReadinessEntryCoordinator.usernameEnvironmentKey: "fixture-user",
+      "UNRELATED_SECRET": "must-not-cross-bridge",
     ]
     let validRoot = parent.appendingPathComponent("valid", isDirectory: true)
     let coordinator = IosSetupReadinessEntryCoordinator(
       documentsDirectory: validRoot
     )
 
+    XCTAssertTrue(coordinator.readSetupLaunchEnvironment().isEmpty)
     XCTAssertEqual(
       coordinator.armNativeLaunch(environment: validEnvironment),
       .published
     )
+    XCTAssertEqual(coordinator.readSetupLaunchEnvironment(), [
+      IosSetupReadinessEntryCoordinator.attemptEnvironmentKey: rawAttempt,
+      IosSetupReadinessEntryCoordinator.profileEnvironmentKey:
+        IosSetupReadinessEntryCoordinator.expectedProfileId,
+      IosSetupReadinessEntryCoordinator.usernameEnvironmentKey: "fixture-user",
+    ])
     var receipt = try json(coordinator.receiptURL)
     XCTAssertEqual(Set(receipt.keys), Set([
       "schema", "status", "stage", "reason", "profileId",
@@ -1023,6 +1032,8 @@ final class IosReceiverBootstrapHandoffTests: XCTestCase {
     let nativeBytes = try Data(contentsOf: coordinator.receiptURL)
     XCTAssertLessThanOrEqual(nativeBytes.count, 2_048)
     XCTAssertFalse(String(decoding: nativeBytes, as: UTF8.self).contains(rawAttempt))
+    XCTAssertFalse(String(decoding: nativeBytes, as: UTF8.self).contains("fixture-user"))
+    XCTAssertFalse(String(decoding: nativeBytes, as: UTF8.self).contains("must-not-cross-bridge"))
     let attributes = try FileManager.default.attributesOfItem(
       atPath: coordinator.receiptURL.path
     )
@@ -1105,6 +1116,7 @@ final class IosReceiverBootstrapHandoffTests: XCTestCase {
         gateCase.1,
         "gate case \(index)"
       )
+      XCTAssertTrue(rejected.readSetupLaunchEnvironment().isEmpty)
       XCTAssertFalse(FileManager.default.fileExists(atPath: rejected.receiptURL.path))
       XCTAssertThrowsError(try rejected.acknowledgeDartMain(arguments: [
         "schema": IosSetupReadinessEntryCoordinator.schema,
@@ -1120,6 +1132,7 @@ final class IosReceiverBootstrapHandoffTests: XCTestCase {
       blocked.armNativeLaunch(environment: validEnvironment),
       .rejected
     )
+    XCTAssertTrue(blocked.readSetupLaunchEnvironment().isEmpty)
     XCTAssertThrowsError(try blocked.acknowledgeDartMain(arguments: [
       "schema": IosSetupReadinessEntryCoordinator.schema,
       "profileId": IosSetupReadinessEntryCoordinator.expectedProfileId,

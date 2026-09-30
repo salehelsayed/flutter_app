@@ -51,7 +51,9 @@ def file_hash(path):
 
 
 def git(root, *args):
-    p = subprocess.run(['git', *args], cwd=root, capture_output=True, timeout=60)
+    # Large preserved dirty worktrees can spend over a minute in rename
+    # detection. Keep the exact changed-path query and allow it to finish.
+    p = subprocess.run(['git', *args], cwd=root, capture_output=True, timeout=180)
     if p.returncode:
         raise InvalidPlan('Git baseline/candidate operation failed: ' + args[0])
     return p.stdout
@@ -192,6 +194,16 @@ def validate(root, rules, files=None):
                     or not (root / adapter).is_file()):
                 errors.append('Invalid/missing SIMS fixture adapter: ' + cid)
             package = c.get('disposable_android_package')
+            if 'provider_android_package' in c and (
+                    c['provider_android_package'] != 'com.mknoon.app' or
+                    c.get('provider_android_role') != 'android_emulator' or
+                    c.get('provider_android_profile') != 'android.production_fcm.journey' or
+                    c.get('capability') not in ('production.notification_open', 'production.notification_sound')):
+                errors.append('Invalid production notification receiver policy: ' + cid)
+            if 'provider_delivery_required' in c and (
+                    c['provider_delivery_required'] is not True or
+                    c.get('provider_android_profile') != 'android.production_fcm.journey'):
+                errors.append('Invalid provider delivery requirement: ' + cid)
             if package is not None and not is_disposable_android_package(package):
                 errors.append('Invalid fixed disposable Android package: ' + cid)
             if 'requires_disposable_android_package' in c and (
@@ -270,18 +282,22 @@ def select(rules, changes, mode, files, root):
                     'timeout_seconds': 900, 'estimated_seconds': None, 'investigate': [path]}
                 add(cid, 'added/modified/renamed test: ' + path)
             else:
-                # Standalone assertion mains are not Flutter package:test files.
-                # Reuse only an exact, already validated source-owned recipe;
-                # new external test files still require an ownership decision.
+                # Reuse an exact, already validated source-owned recipe for
+                # standalone mains or native device proofs. Unknown external
+                # tests still require an ownership decision.
+                exact_owners = {o['owner'] for o in rules.get('full_inventory', {}).get('obligations', [])
+                                if o.get('path') == path and o.get('owner')}
                 owners = [c for c in rules.get('full_commands', [])
                           if c.get('kind') == 'full_adapter'
-                          and c.get('command') == ['dart', '--enable-asserts', path]
+                          and (c['id'] in exact_owners or (
+                          c.get('command') == ['dart', '--enable-asserts', path]
                           and len(c.get('steps', [])) == 1
-                          and c['steps'][0].get('format') == 'assert_main']
+                          and c['steps'][0].get('format') == 'assert_main'))]
                 if len(owners) == 1:
                     owner = owners[0]
                     rules['checks'][owner['id']] = {**owner, 'paths': [path]}
-                    add(owner['id'], 'changed standalone assertion main: ' + path)
+                    add(owner['id'], 'changed source-owned assertion recipe: ' + path)
+                    unmapped = [p for p in unmapped if p != path]
                 else:
                     unmapped.append(path)
     return {'selected': [{'id': cid, 'reasons': sorted(set(why)), **rules['checks'][cid]}
@@ -578,8 +594,14 @@ def prerequisites(check, root, device_config, matrix):
             if not device_config.get('fixture_reference'): reasons.append('fixture reference required')
             try:
                 package = sims_android_package(check, device_config)
-                if check.get('requires_firebase_android_client') and not firebase_android_client_matches(root, package):
+                firebase_package = package or check.get('environment', {}).get('ANDROID_APP_PACKAGE')
+                if check.get('requires_firebase_android_client') and not firebase_android_client_matches(root, firebase_package):
                     reasons.append('Matching Firebase Android client configuration required for disposable package')
+                provider_package = check.get('provider_android_package')
+                if provider_package and not firebase_android_client_matches(root, provider_package):
+                    reasons.append('Matching Firebase Android client configuration required for production notification receiver')
+                if check.get('provider_delivery_required') and not provider_credential_matches(root, device_config):
+                    reasons.append('Matching private Firebase service account required for provider delivery')
             except InvalidPlan as error:
                 reasons.append(str(error))
     return reasons
@@ -761,6 +783,25 @@ def is_campaign(check):
     return check['kind'] in ('sims', 'legacy') or (check['kind'] == 'full_adapter' and bool(check.get('device_roles')))
 
 
+def host_result_blocks_devices(row):
+    if row['status'] not in ('FAIL', 'BLOCKED'):
+        return False
+    attempts = row.get('attempts', [])
+    # Retain incomplete coverage as BLOCKED. A completed host suite with only
+    # recorded skips does not prevent independent device execution; explicit
+    # dependency edges still require PASS below.
+    return not (row['status'] == 'BLOCKED' and attempts and all(
+        attempt.get('checkpoint') == 'incomplete_or_zero_test_execution'
+        and attempt.get('completion_observed') is True
+        and attempt.get('exit_status') == 0
+        and not attempt.get('timed_out')
+        and not attempt.get('missing_test_files')
+        and attempt.get('counts', {}).get('passed', 0) > 0
+        and attempt.get('counts', {}).get('failed') == 0
+        and attempt.get('counts', {}).get('skipped', 0) > 0
+        for attempt in attempts))
+
+
 def check_resources(check):
     resources = set(check.get('resources') or ['unknown'])
     if any(r not in ('performance.global', 'shared-native-build') and not r.startswith(
@@ -795,15 +836,19 @@ def obligation_results(obligations, results):
             outcomes = []
             for binding in bindings:
                 parent = results[binding['owner']]
-                key = next((k for k in ('capability', 'route') if k in binding), None)
-                if key is None:
+                keys = [k for k in ('capability', 'route') if k in binding]
+                if not keys:
                     outcomes.append(parent); continue
                 attempts = parent.get('attempts', [])
                 if not attempts:
                     outcomes.append(dict(status=parent['status'] if parent['status'] in ('FAIL','BLOCKED') else 'NOT RUN'))
                 for attempt in attempts:
-                    receipts = [r for r in attempt.get(key+'_results', []) if r['id'] == binding[key]]
-                    outcomes.extend(receipts if len(receipts) == 1 else [dict(status='NOT RUN', reason='No unique child execution receipt')])
+                    for key in keys:
+                        receipts = [r for r in attempt.get(key+'_results', [])
+                                    if r['id'] == binding[key] and
+                                    (key != 'route' or 'capability' not in binding or
+                                     r.get('capability') == binding['capability'])]
+                        outcomes.extend(receipts if len(receipts) == 1 else [dict(status='NOT RUN', reason='No unique child execution receipt')])
             row['status'] = 'N/A' if outcomes and all(r['status']=='N/A' for r in outcomes) else aggregate(outcomes)
             reason = next((r.get('reason') for r in outcomes if r['status'] == row['status'] and r.get('reason')), None)
             if reason: row['reason'] = reason
@@ -851,7 +896,7 @@ def safe_sims_facts(data, capability_ids=(), profile_ids=()):
     return dict(builds=safe_builds, schedule=safe_schedule)
 
 
-def sims_receipt_details(path, attempt, capability_ids=(), profile_ids=()):
+def sims_receipt_details(path, attempt, capability_ids=(), profile_ids=(), native_specs=None, root=ROOT):
     if not path.is_file(): return {}
     data = json.loads(path.read_text())
     receipts = []
@@ -869,7 +914,13 @@ def sims_receipt_details(path, attempt, capability_ids=(), profile_ids=()):
                              reason='target_unavailable_by_project_policy' if status == 'N/A' else None,
                              assertions_attempted=verdict.get('assertionsAttempted')
                              if type(verdict.get('assertionsAttempted')) is int and verdict['assertionsAttempted'] >= 0 else None))
-    return dict(capability_results=receipts, **safe_sims_facts(data, capability_ids, profile_ids), install_seconds=None)
+    details = dict(capability_results=receipts, **safe_sims_facts(data, capability_ids, profile_ids), install_seconds=None)
+    if native_specs:
+        from sims_native_xctest_receipts import collect
+        native = collect(root, data, attempt, native_specs)
+        details.update(route_results=native,
+            native_xctest_receipts_complete=all(r['status'] in ('PASS', 'N/A') for r in native))
+    return details
 
 
 def execute_plan(args, root, rules, plan, files, device_config, matrix, directory, started):
@@ -1020,16 +1071,24 @@ def execute_plan(args, root, rules, plan, files, device_config, matrix, director
                                 if report_path.is_file(): os.chmod(report_path, 0o600)
                                 a = inspect_sims(report_path, c['capability'], code, timeout,
                                     c['selected_paths'] if c.get('expanded_capabilities') else None)
-                                if a['status'] in ('PASS', 'N/A'):
+                                # A valid aggregate can contain both failed and
+                                # passing children. Verify its integrity before
+                                # accepting any child receipt, even on failure.
+                                if report_path.is_file():
                                     verify_command = ['dart', 'tool/sims/sims.dart', 'verify-report', str(report_path)]
                                     _, verify_code, verify_timeout, verify_seconds = launch(verify_command, root, 120, env)
                                     seconds += verify_seconds
                                     if verify_code or verify_timeout:
-                                        a.update(status='BLOCKED', checkpoint='sims_report_verification_failed')
+                                        a['report_verification_failed'] = True
+                                        if a['status'] in ('PASS', 'N/A'):
+                                            a.update(status='BLOCKED', checkpoint='sims_report_verification_failed')
                                     else:
                                         a['report_verification_observed'] = True
                                 a.update(sims_receipt_details(report_path, a, c['selected_paths'],
-                                    [r['buildProfile'] for r in c.get('expanded_capabilities', []) if r.get('buildProfile')]))
+                                    [r['buildProfile'] for r in c.get('expanded_capabilities', []) if r.get('buildProfile')],
+                                    native_specs=c.get('native_xctest_receipts'), root=root))
+                                if a['status'] == 'PASS' and a.get('native_xctest_receipts_complete') is False:
+                                    a.update(status='BLOCKED', checkpoint='native_xctest_evidence_incomplete')
                             if c.get('capability') == 'reliability.full.cleaned_legacy':
                                 nested_dir = Path(env['MKNOON_LEGACY_RECEIPT_DIRECTORY'])
                                 a['route_results'] = legacy_receipt_details(nested_dir, a, c.get('expanded_legacy_routes', []))
@@ -1054,8 +1113,9 @@ def execute_plan(args, root, rules, plan, files, device_config, matrix, director
                         os.chmod(diagnostic, 0o600)
                         a = {'status':'BLOCKED','checkpoint':'adapter_fixture_invalid',
                              'exit_status':None,'duration_seconds':0,'attempt':attempt + 1}
-                    except OSError:
-                        a = {'status':'BLOCKED','checkpoint':'test_runner_startup','exit_status':None,'duration_seconds':0, 'attempt':attempt + 1}
+                    except OSError as error:
+                        a = {'status':'BLOCKED','checkpoint':'test_runner_startup','exit_status':None,'duration_seconds':0,
+                             'os_error_errno':error.errno if type(error.errno) is int else None, 'attempt':attempt + 1}
                     if campaign_started and a['status'] != 'PASS':
                         a['cleanup_review_required'] = True
                     row['attempts'].append(a)
@@ -1066,7 +1126,7 @@ def execute_plan(args, root, rules, plan, files, device_config, matrix, director
         def commit(row):
             nonlocal prerequisite_failed, device_cleanup_pending
             results_by_id[row['id']] = row
-            if row['id'] in host_prerequisite_ids and row['status'] in ('FAIL', 'BLOCKED'):
+            if row['id'] in host_prerequisite_ids and host_result_blocks_devices(row):
                 prerequisite_failed = True
             if any(a.get('cleanup_review_required') for a in row['attempts']):
                 device_cleanup_pending = True
@@ -1130,6 +1190,10 @@ def execute_plan(args, root, rules, plan, files, device_config, matrix, director
     gaps = ['Unmapped behavior-affecting change: ' + p for p in plan['unmapped_changes']]
     gaps += ['Uncovered full obligation: ' + oid for oid in plan.get('coverage_gaps', [])]
     if cancel_event.is_set(): gaps.append('Run cancelled; unfinished obligations retained')
+    # All workers have drained. The final read-only identity audit must still
+    # run its version probes after cancellation of an omitted/main-thread check.
+    if hasattr(_LAUNCH_CONTEXT, 'cancel_event'):
+        del _LAUNCH_CONTEXT.cancel_event
     current = source_identity(root, source_files(root), rules)
     if current != plan['identity']: gaps.append('Source/configuration changed during execution; candidate evidence invalidated')
     if plan.get('toolchains') and toolchain_identity(root) != plan['toolchains']:
@@ -1175,6 +1239,23 @@ def firebase_android_client_matches(root, package):
         return False
 
 
+def provider_credential_matches(root, config):
+    """Check only private credential binding fields; never return their values."""
+    try:
+        supplied = config.get('full_suite', {}).get('service_account')
+        if not isinstance(supplied, str) or not supplied.strip(): return False
+        credential = Path(supplied)
+        if not credential.is_absolute(): credential = root / credential
+        if not credential.is_file() or credential.stat().st_mode & 0o777 != 0o600:
+            return False
+        project = json.loads((root / 'android/app/google-services.json').read_text())['project_info']['project_id']
+        private = json.loads(credential.read_text())
+        return (private.get('project_id') == project and
+                bool(private.get('client_email')) and bool(private.get('private_key')))
+    except (OSError, ValueError, KeyError, TypeError, AttributeError):
+        return False
+
+
 def sims_android_package(check, config):
     fixed = check.get('disposable_android_package')
     if fixed is None and not check.get('requires_disposable_android_package'):
@@ -1204,6 +1285,16 @@ def sims_environment(config, report, check=None):
     env = {name: '' for name in roles.values()}
     env.update({roles[k]: v for k,v in config.get('devices', {}).items()})
     ids = config.get('devices', {})
+    reserved = config.get('reserved_device_ids', [])
+    if (not isinstance(reserved, list) or
+            any(not isinstance(v, str) or not re.fullmatch(r'[A-Za-z0-9_.:-]{1,160}', v) for v in reserved) or
+            len(set(reserved)) != len(reserved)):
+        raise InvalidPlan('Invalid reserved device IDs')
+    if set(reserved).intersection(ids.values()):
+        raise InvalidPlan('A reserved device cannot also be pinned for testing')
+    # Explicit operator reservations are different from an omitted pin. Clear
+    # ambient reservations as well so they cannot silently omit a test target.
+    env['SIMS_RESERVED_DEVICE_IDS_JSON'] = json.dumps(sorted(reserved))
     pins = {('ios-simulator-a' if k == 'ios_simulator' else k.replace('_', '-')): v for k,v in ids.items()}
     if ids.get('ios_simulator') and ids.get('ios_simulator_a') != ids['ios_simulator'] and ids.get('ios_simulator_a'):
         raise InvalidPlan('Conflicting iOS simulator role aliases')
@@ -1283,6 +1374,21 @@ def inspect_sims(path, capability, code, timeout, selected_capabilities=None):
             'not_applicable':[r['capabilityId'] for r in not_applicable if r['capabilityId'] in (selected_capabilities or [])]}
 
 
+def legacy_log_incomplete_checkpoint(text):
+    """Shared child/parent refusal of skipped or empty legacy executions."""
+    text = re.sub(r'\x1b\[[0-?]*[ -/]*[@-~]', '', text)
+    if re.search(r'No tests ran|No tests were found|\b0 tests? (?:passed|ran)|(?:Ran|Executed)\s+0\s+tests?|unbound variable|command not found|\[BLOCKED\]', text, re.I):
+        return 'legacy_runner_incomplete'
+    # Flutter's ~N is a skip count only inside its timed progress counters.
+    # Protocol logs also use ~N for estimates such as "Sending ~100KB".
+    flutter_skips = re.search(
+        r'\b\d{1,3}:\d{2}(?::\d{2})?\s+(?=[+~-])'
+        r'(?=[^:\r\n]*~[1-9]\d*\b)(?:[+~-]\d+\s*)+:', text)
+    if flutter_skips or re.search(r'\[SKIP\]|--- SKIP:|\b[1-9]\d* (?:tests? )?skipped|\bskipped[=: ]+[1-9]\d*|"skipped"\s*:\s*true', text, re.I):
+        return 'legacy_skipped_tests'
+    return None
+
+
 def legacy_receipt_details(directory, attempt, expected_routes):
     summary = directory / 'summary.tsv'
     if not summary.is_file(): return []
@@ -1306,7 +1412,10 @@ def legacy_receipt_details(directory, attempt, expected_routes):
                     file_hash(log) != r.get('log_sha256') or
                     (r['status'] == 'N/A' and r['checkpoint'] != 'target_unavailable_by_project_policy')):
                 return []
-            receipts.append(dict(id=r['id'], status=r['status'], checkpoint=r['checkpoint']))
+            status, checkpoint = r['status'], r['checkpoint']
+            if status == 'PASS' and legacy_log_incomplete_checkpoint(log.read_text(errors='replace')):
+                status, checkpoint = 'BLOCKED', 'legacy_child_incomplete'
+            receipts.append(dict(id=r['id'], status=status, checkpoint=checkpoint))
         return receipts
     expected = {r['label'] for r in expected_routes}
     rows = [r.split('\t') for r in summary.read_text().splitlines()]
@@ -1342,10 +1451,9 @@ def inspect_legacy(directory, code, timeout, expected_routes=None):
     if len(logs) != expected_count: return {'status':'BLOCKED','checkpoint':'missing_full_regression_logs'}
     for log in logs:
         text = log.read_text(errors='replace')
-        if re.search(r'No tests ran|No tests were found|0 tests? (?:passed|ran)|(?:Ran|Executed)\s+0\s+tests?|unbound variable|command not found', text, re.I):
-            return {'status':'BLOCKED','checkpoint':'legacy_runner_incomplete', 'route_log':log.name}
-        if re.search(r'~[1-9]\d*|--- SKIP:|\b[1-9]\d* (?:tests? )?skipped|\bskipped[=: ]+[1-9]\d*|"skipped"\s*:\s*true', text, re.I):
-            return {'status':'BLOCKED','checkpoint':'legacy_skipped_tests', 'route_log':log.name}
+        checkpoint = legacy_log_incomplete_checkpoint(text)
+        if checkpoint:
+            return {'status':'BLOCKED','checkpoint':checkpoint, 'route_log':log.name}
     return {'status':'PASS','checkpoint':'legacy_95_routes_completed' if expected_routes is None else 'legacy_selected_routes_completed', 'route_count':expected_count,
             'timed_out':False, 'summary_sha256':file_hash(summary),
             'limitation':'Legacy per-route summaries are retained; case-level counts are not available for every nested runner.'}
@@ -1363,7 +1471,7 @@ def make_full_plan(args, root, rules, *, capture_toolchains=True):
     for c in rules['full_commands']:
         check = dict(c)
         check['command'] = list(c['command'])
-        if c['kind'] == 'sims' and getattr(args, 'sims_jobs', 1) > 1:
+        if c['kind'] == 'sims' and not c.get('adapter') and getattr(args, 'sims_jobs', 1) > 1:
             check['command'].append('--simultaneous')
         check['selected_paths'] = expand_paths(root, c.get('paths',[]), files) if c['kind'] == 'flutter' else c.get('paths',[])
         plan['selected'].append(check)

@@ -154,14 +154,23 @@ class GroupMemberRow extends StatelessWidget {
                     ),
                   ),
                 if (onRemove != null)
-                  IconButton(
-                    key: ValueKey('group-member-remove-${member.peerId}'),
-                    icon: Icon(
-                      Icons.remove_circle_outline,
-                      color: readableColors.iconMuted,
-                      size: 20,
+                  Semantics(
+                    identifier: 'group-member-remove-${member.peerId}',
+                    label:
+                        '${l10n.group_info_remove_action} ${member.username ?? member.peerId}',
+                    button: true,
+                    onTap: onRemove,
+                    excludeSemantics: true,
+                    child: IconButton(
+                      key: ValueKey('group-member-remove-${member.peerId}'),
+                      tooltip: l10n.group_info_remove_action,
+                      icon: Icon(
+                        Icons.remove_circle_outline,
+                        color: readableColors.iconMuted,
+                        size: 20,
+                      ),
+                      onPressed: onRemove,
                     ),
-                    onPressed: onRemove,
                   ),
               ],
             ),

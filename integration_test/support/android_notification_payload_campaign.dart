@@ -1315,3 +1315,26 @@ Map<String, Object?> androidNotificationScenarioArtifact({
   'checks': <String, bool>{for (final check in passedChecks) check: true},
   'evidence': evidence,
 };
+
+/// Closed diagnostic vocabulary; receipt text and peer/message data never escape.
+String safeAndroidNotificationDualPathFailureCode(Object? value) =>
+    value is String &&
+        const <String>{
+          'request_rejected',
+          'disabled',
+          'replayed_or_busy',
+          'canceled',
+          'deadline',
+          'control_binding',
+          'authority_changed',
+          'encryption_failed',
+          'custody_not_fresh',
+          'live_not_acked',
+          'authority_unavailable',
+          'custody_unavailable',
+          'control_malformed',
+          'control_cleanup_failed',
+          'operation_failed',
+        }.contains(value)
+    ? value
+    : 'unavailable';

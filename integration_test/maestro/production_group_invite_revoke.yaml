@@ -1,0 +1,9 @@
+appId: ${APP_ID}
+name: production_group_invite_revoke
+---
+- tapOn: Group information
+- tapOn: Revoke
+- assertVisible: Cancel
+- tapOn: Revoke
+- assertNotVisible: Cancel
+- assertVisible: '(?s)^Members\n.*\nRevoked$'

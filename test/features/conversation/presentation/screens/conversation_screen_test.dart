@@ -2335,6 +2335,80 @@ void main() {
     );
   });
 
+  testWidgets('chat keeps message space above a landscape Android keyboard', (
+    tester,
+  ) async {
+    // Pixel 7a landscape screenshot: 2048x924 physical pixels, with the IME
+    // occupying roughly the lower 587 pixels.
+    tester.view.devicePixelRatio = 2.625;
+    tester.view.physicalSize = const Size(2048, 924);
+    tester.view.viewInsets = const FakeViewPadding(bottom: 587);
+    tester.view.padding = const FakeViewPadding(top: 63);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetViewInsets);
+    addTearDown(tester.view.resetPadding);
+
+    await tester.pumpWidget(
+      buildTestWidget(
+        initialLoadDone: true,
+        messages: [makeMessage(text: 'Landscape message', isIncoming: false)],
+      ),
+    );
+    await tester.pump();
+
+    expect(find.byType(ConversationHeader), findsNothing);
+    expect(tester.takeException(), isNull);
+    expect(
+      tester.getSize(find.byKey(const ValueKey('messages'))).height,
+      greaterThan(40),
+    );
+    expect(find.byType(TextField), findsOneWidget);
+
+    tester.view.resetViewInsets();
+    await tester.pump();
+    expect(find.byType(ConversationHeader), findsOneWidget);
+
+    await tester.enterText(find.byType(TextField), 'Unsent landscape draft');
+    tester.view.viewInsets = const FakeViewPadding(bottom: 587);
+    await tester.pump();
+    expect(
+      tester.widget<TextField>(find.byType(TextField)).controller!.text,
+      'Unsent landscape draft',
+    );
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('landscape keyboard keeps quoted composer usable', (
+    tester,
+  ) async {
+    tester.view.devicePixelRatio = 2.625;
+    tester.view.physicalSize = const Size(2048, 924);
+    tester.view.viewInsets = const FakeViewPadding(bottom: 587);
+    tester.view.padding = const FakeViewPadding(top: 63);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetViewInsets);
+    addTearDown(tester.view.resetPadding);
+
+    await tester.pumpWidget(
+      buildTestWidget(
+        initialLoadDone: true,
+        messages: [makeMessage(text: 'Earlier message')],
+        activeQuoteText: 'Earlier message',
+        onClearQuote: () {},
+      ),
+    );
+    await tester.pump();
+
+    expect(tester.takeException(), isNull);
+    expect(
+      tester.getSize(find.byKey(const ValueKey('messages'))).height,
+      greaterThan(40),
+    );
+    expect(find.byType(TextField), findsOneWidget);
+  });
+
   group('ConversationScreen attachments', () {
     late Directory tempDir;
     late List<File> testFiles;

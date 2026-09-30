@@ -339,6 +339,7 @@ _build(
   AuthenticatedCallSignalingContextObserver? signalingContextObserver,
   ProvisionalNativeIncomingCallLifecycle? provisionalNativeLifecycle,
   AuthenticatedCallDisplayNameResolver? authenticatedDisplayNameResolver,
+  AndroidAuthenticatedContactPresenter? androidAuthenticatedContactPresenter,
   Duration provisionalNativeTerminalTimeout = const Duration(seconds: 2),
   CallNetworkEffectsAllowed? networkEffectsAllowed,
 }) async {
@@ -373,6 +374,8 @@ _build(
       signalingContextObserver: signalingContextObserver,
       provisionalNativeLifecycle: provisionalNativeLifecycle,
       authenticatedDisplayNameResolver: authenticatedDisplayNameResolver,
+      androidAuthenticatedContactPresenter:
+          androidAuthenticatedContactPresenter,
       provisionalNativeTerminalTimeout: provisionalNativeTerminalTimeout,
     ),
     envelope: envelope,
@@ -875,6 +878,41 @@ void main() {
         'updateAuthenticatedContact:$_callHandle:Alice:rejected',
         'updateAuthenticatedContact:$_callHandle:Alice',
       ]);
+    },
+  );
+
+  test(
+    'Android background presentation receives the verified local name',
+    () async {
+      final coordinator = _coordinator(_Effects());
+      addTearDown(coordinator.dispose);
+      final presenter = _Presenter();
+      final updates = <String>[];
+      final built = await _build(
+        coordinator,
+        presenter,
+        authenticatedDisplayNameResolver: (peerId) async {
+          expect(peerId, 'sender-account');
+          return '  Alice  ';
+        },
+        androidAuthenticatedContactPresenter: (callId, displayName) async {
+          expect(presenter.calls, 1);
+          expect(callId, _callId);
+          updates.add(displayName);
+          return true;
+        },
+      );
+
+      final outcome = await built.handler.handle(
+        IncomingCallSignalFrame(
+          envelopeJson: built.envelope,
+          authenticatedTransportPeerId: 'sender-device',
+          route: CallRouteClass.direct,
+        ),
+      );
+
+      expect(outcome, IncomingCallSignalOutcome.accepted);
+      expect(updates, <String>['Alice']);
     },
   );
 

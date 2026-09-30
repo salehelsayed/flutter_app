@@ -1,0 +1,12 @@
+appId: com.mknoon.app
+name: T09 Pixel sends a 1200-character text; waits for the iPhone's three
+---
+- runFlow: ../ensure_chat.yaml
+- tapOn: { id: "chat_composer" }
+- inputText: "T09 long ${NONCE} Lorem ipsum dolor sit amet consectetur adipiscing elit sed do eiusmod tempor incididunt ut labore et dolore magna aliqua Lorem ipsum dolor sit amet consectetur adipiscing elit sed do eiusmod tempor incididunt ut labore et dolore magna aliqua Lorem ipsum dolor sit amet consectetur adipiscing elit sed do eiusmod tempor incididunt ut labore et dolore magna aliqua Lorem ipsum dolor sit amet consectetur adipiscing elit sed do eiusmod tempor incididunt ut labore et dolore magna aliqua Lorem ipsum dolor sit amet consectetur adipiscing elit sed do eiusmod tempor incididunt ut labore et dolore magna aliqua Lorem ipsum dolor sit amet consectetur adipiscing elit sed do eiusmod tempor incididunt ut labore et dolore magna aliqua Lorem ipsum dolor sit amet consectetur adipiscing elit sed do eiusmod tempor incididunt ut labore et dolore magna aliqua Lorem ipsum dolor sit amet consectetur adipiscing elit sed do eiusmod tempor incididunt ut labore et dolore magna aliqua Lorem ipsum dolor sit amet consectetur adipiscing elit sed do eiusmod tempor incididunt ut labore et dolore magna aliqua Lorem ipsum dolor sit amet consectetur adipiscing elit sed do eiusmod tempor incididunt ut labore et dolore magna aliqua END"
+- tapOn: "Send message"
+- runFlow: ../kb_hide.yaml
+- extendedWaitUntil: { visible: ".*T09 arabic.*${NONCE}.*", timeout: 240000 }
+- extendedWaitUntil: { visible: ".*T09 emoji.*${NONCE}.*", timeout: 120000 }
+- extendedWaitUntil: { visible: ".*T09 url https://example.com/r2.*${NONCE}.*", timeout: 120000 }
+- takeScreenshot: t09_got_all

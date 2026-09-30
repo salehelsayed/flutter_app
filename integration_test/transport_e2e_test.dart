@@ -207,6 +207,13 @@ Future<_TestStack> _setupStack() async {
   final custodyDb = DirectInboxCustodyDbBindings(db);
   final messageRepo = MessageRepositoryImpl(
     dbInsertMessage: (row) => dbInsertMessage(db, row),
+    dbApplyIncomingOrdinaryTextMutation:
+        ({required incomingRow, required kind}) =>
+            dbApplyIncomingOrdinaryTextMutation(
+              db,
+              incomingRow: incomingRow,
+              kind: kind,
+            ),
     dbLoadMessagesForContact: (contactPeerId) =>
         dbLoadMessagesForContact(db, contactPeerId),
     dbLoadLatestMessageForContact: (contactPeerId) =>
@@ -356,6 +363,29 @@ Future<_TestStack> _setupStack() async {
   mediaAttachmentRepo = MediaAttachmentRepositoryImpl(
     dbSaveMediaAttachmentPreservingLocalState: (row) =>
         dbSaveMediaAttachmentPreservingLocalState(db, row),
+    dbCanApplyGenericMediaAttachmentSave: (row) =>
+        dbCanApplyGenericMediaAttachmentSave(db, row),
+    dbStageOutgoingDirectMediaInboxCustody:
+        ({
+          required expectedRow,
+          required stagedRow,
+          required attachmentRows,
+          required kind,
+          required recipientPeerId,
+          required wireEnvelope,
+          wireMediaBlobManifestHash,
+          wireMediaBlobExpiresAtMs,
+        }) => dbStageOutgoingDirectMediaInboxCustody(
+          db,
+          expectedRow: expectedRow,
+          stagedRow: stagedRow,
+          attachmentRows: attachmentRows,
+          kind: kind,
+          recipientPeerId: recipientPeerId,
+          wireEnvelope: wireEnvelope,
+          wireMediaBlobManifestHash: wireMediaBlobManifestHash,
+          wireMediaBlobExpiresAtMs: wireMediaBlobExpiresAtMs,
+        ),
     dbStageOutgoingOrdinaryAttemptWithMedia:
         ({
           required expectedRow,

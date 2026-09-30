@@ -69,6 +69,36 @@ class RuntimeAdapterTest(unittest.TestCase):
         import full_suite_adapters
         return full_suite_adapters
 
+    def test_campaign_reuses_only_exact_native_case_receipts(self):
+        m = self.module()
+        step = {'format':'marker', 'marker':'campaign validated',
+                'native_xctest_counts':{'Example/testSetup':1, 'Example/testTap':2}}
+        setup = "Test Case '-[RunnerUITests.Example testSetup]' passed (0.1 seconds).\n"
+        tap = "Test Case '-[RunnerUITests.Example testTap]' passed (0.1 seconds).\n"
+        output = setup + tap + tap + 'campaign validated'
+        proof = m.inspect(step, output, 0, False, ROOT)
+        self.assertEqual(proof['status'], 'PASS')
+        self.assertEqual(proof['route_results'], [
+            {'id':'xctest:Example/testSetup','status':'PASS','counts':{'passed':1,'failed':0,'skipped':0}},
+            {'id':'xctest:Example/testTap','status':'PASS','counts':{'passed':2,'failed':0,'skipped':0}}])
+        for bad in ['campaign validated', setup + tap + 'campaign validated',
+                    output + tap, output + "Test Case '-[Example testOther]' passed\n",
+                    output + "Test Case '-[Example testTap]' failed\n",
+                    output + "Test Case '-[Example testTap]' skipped\n"]:
+            with self.subTest(output=bad):
+                result = m.inspect(step, bad, 0, False, ROOT)
+                self.assertEqual(result['status'], 'BLOCKED')
+                self.assertNotIn('route_results', result)
+        self.assertNotIn('route_results', m.inspect(step, output, 1, False, ROOT))
+
+    def test_campaign_native_receipt_metadata_rejects_invalid_counts(self):
+        m = self.module()
+        for counts in [{}, {'Example/testTap':0}, {'Example/testTap':True},
+                       {'Example/testTap':'2'}, {'not a selector':1}]:
+            check = {'steps':[{'command':['dart','campaign.dart'], 'format':'marker',
+                              'marker':'done', 'native_xctest_counts':counts}]}
+            self.assertTrue(m.validate(check, ROOT))
+
     def test_config_and_pinned_target_are_bound_without_shell_interpolation(self):
         m=self.module()
         check={'id':'reaction','device_roles':['android_physical','android_emulator'],
@@ -116,12 +146,55 @@ class RuntimeAdapterTest(unittest.TestCase):
             p.write_text('<testsuite tests="1"><testcase classname="Other" name="assertion"/></testsuite>')
             self.assertEqual(m.inspect(step,'BUILD SUCCESSFUL',0,False,root)['status'],'BLOCKED')
 
+    def test_junit_failure_survives_gradle_nonzero_exit(self):
+        m=self.module()
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp)
+            (root/'TEST-Proof.xml').write_text(
+                '<testsuite tests="1" failures="1"><testcase classname="Proof" name="assertion">'
+                '<failure>expected 117, actual 119</failure></testcase></testsuite>')
+            proof=m.inspect({'format':'junit','report_glob':'TEST-*.xml','classes':['Proof']},
+                            'There were failing tests. BUILD FAILED',1,False,root)
+            self.assertEqual(proof['status'],'FAIL')
+            self.assertEqual(proof['checkpoint'],'native_assertion_failed')
+            self.assertEqual(proof['counts'],{'passed':0,'failed':1,'skipped':0})
+            self.assertEqual(proof['exit_status'],1)
+
+    def test_junit_passing_xml_cannot_override_gradle_failure(self):
+        m=self.module()
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp)
+            (root/'TEST-Proof.xml').write_text(
+                '<testsuite tests="1"><testcase classname="Proof" name="assertion"/></testsuite>')
+            proof=m.inspect({'format':'junit','report_glob':'TEST-*.xml','classes':['Proof']},
+                            'BUILD FAILED',1,False,root)
+            self.assertEqual(proof['status'],'BLOCKED')
+            self.assertEqual(proof['checkpoint'],'adapter_process_failed')
+            self.assertEqual(proof['exit_status'],1)
+
 import sys
 sys.path.insert(0,str(ROOT/'scripts/test'))
 from mknoon_full_checks_test import FullExecutionFixture
 
 
 class AdapterCLITest(FullExecutionFixture):
+    def test_startup_os_error_retains_errno_without_private_exception_text(self):
+        import errno
+        from unittest import mock
+        from mknoon_checks_test import checks
+        task = {'id':'adapter','kind':'full_adapter','command':[sys.executable,'-c','pass'],
+                'steps':[{'command':[sys.executable,'-c','pass'],'format':'marker','marker':'done'}],
+                'boundary':'startup failure fixture','timeout_seconds':10,'resources':['isolated:adapter']}
+        for number in [errno.ENOSPC, errno.ENOENT]:
+            with self.subTest(errno=number), mock.patch.object(
+                    checks, 'launch', side_effect=OSError(number, 'private-credential-path')):
+                code, report = self.run_full([task])
+            self.assertNotEqual(code, 0)
+            attempt = report['results'][0]['attempts'][0]
+            self.assertEqual(attempt['checkpoint'], 'test_runner_startup')
+            self.assertEqual(attempt['os_error_errno'], number)
+            self.assertNotIn('private-credential-path', json.dumps(report))
+
     def test_existing_full_cli_executes_adapter_steps_and_retains_completion(self):
         self.write('contract.py',"from pathlib import Path\nPath('.codex-test-logs/proof').write_text('executed')\nprint('EXACT ASSERTIONS COMPLETE')\n")
         task={'id':'adapter','kind':'full_adapter','command':['python3','contract.py'],
@@ -290,6 +363,20 @@ class ClassificationSafetyTest(unittest.TestCase):
             self.assertTrue(any('source' in e.lower() for e in errors),errors)
 
 class ChangedStandaloneContractTest(unittest.TestCase):
+    def test_changed_native_flutter_proof_reuses_existing_exact_owner(self):
+        import copy
+        from mknoon_checks_test import checks
+        rules=json.loads((ROOT/'tool/testing/selection.json').read_text())
+        path='integration_test/group_exit_release_diagnostics_sqlcipher_proof_test.dart'
+        owner=next(c for c in rules['full_commands'] if c['id']=='full.native.pb266-release')
+        result=checks.select(copy.deepcopy(rules),[{'path':path,'status':'M'}],'change',[path],ROOT)
+        self.assertEqual(result['unmapped_changes'],[])
+        selected=[c for c in result['selected'] if c['id']==owner['id']]
+        self.assertEqual(len(selected),1)
+        self.assertEqual(selected[0]['command'],owner['command'])
+        self.assertEqual(selected[0]['steps'],owner['steps'])
+        self.assertEqual(selected[0]['device_roles'],['android_physical'])
+
     def test_changed_assertion_mains_reuse_exact_adapters_and_unknown_tests_fail_closed(self):
         import copy
         from mknoon_checks_test import checks
@@ -310,3 +397,277 @@ class ChangedStandaloneContractTest(unittest.TestCase):
             with self.subTest(path=path):
                 result=subprocess.run([str(DART),'--enable-asserts',path],cwd=ROOT,text=True,capture_output=True)
                 self.assertEqual(result.returncode,0,result.stderr)
+
+
+class SelectorFlowContracts(unittest.TestCase):
+    def test_warm_dart_route_failure_cannot_pass_native_foreground_check(self):
+        source=(ROOT/'scripts/run_ios_notification_tap_ui_smoke.sh').read_text().removesuffix('main "$@"\n')
+        with tempfile.TemporaryDirectory() as name:
+            root=Path(name);log=root/'log';log.write_text('REMOTE_NOTIFICATION_ROUTE_ERROR: missing fixture contact\n')
+            script=root/'probe.sh'
+            script.write_text(source+'\nassert_log_contains() { return 0; }\nassert_scenario_markers warm "$CONTRACT_LOG" direct text direct_message\n')
+            result=subprocess.run(['bash',str(script)],env={**os.environ,'CONTRACT_LOG':str(log)},capture_output=True,text=True,timeout=10)
+            self.assertNotEqual(result.returncode,0)
+            self.assertIn('REMOTE_NOTIFICATION_ROUTE_ERROR',result.stderr)
+
+    def test_both_build_paths_enable_existing_debug_fixture_seam(self):
+        source=(ROOT/'scripts/run_ios_notification_tap_ui_smoke.sh').read_text().removesuffix('main "$@"\n')
+        for skip in (0, 1):
+            with self.subTest(skip=skip), tempfile.TemporaryDirectory() as name:
+                root=Path(name);script=root/'probe.sh'
+                script.write_text(source+r'''
+RESULT_ROOT="$CONTRACT_ROOT/output"
+APP_PATH="$CONTRACT_ROOT"
+MATRIX_FIXTURE="$CONTRACT_MATRIX"
+skip_build="$CONTRACT_SKIP"
+scenario_filter=cold:direct_video
+flutter() { printf '%s\n' "$*" >> "$CONTRACT_ROOT/flutter-args"; }
+split_devices() { printf 'simulator\tContract phone\n'; }
+prepare_xcode_ui_tests() { :; }
+install_app_on_device() { :; }
+run_scenario() { :; }
+main
+''')
+                result=subprocess.run(['bash',str(script)],env={**os.environ,'CONTRACT_ROOT':name,'CONTRACT_SKIP':str(skip),'CONTRACT_MATRIX':str(ROOT/'test/features/push/fixtures/ios_notification_message_matrix.json')},capture_output=True,text=True,timeout=10)
+                self.assertEqual(result.returncode,0,result.stderr)
+                args=(root/'flutter-args').read_text()
+                self.assertIn('--dart-define=E2E_TEST_MODE=true',args)
+                self.assertIn('--dart-define=PRODUCTION_FCM=true',args)
+                self.assertEqual('--config-only' in args, bool(skip))
+
+    def test_warm_host_push_requires_fresh_authorized_alert_settings(self):
+        source=(ROOT/'scripts/run_ios_notification_tap_ui_smoke.sh').read_text().removesuffix('main "$@"\n')
+        for authorization,alert,emit,expected in [(2,2,True,True),(0,0,True,False),(1,1,True,False),(2,1,True,False),(2,2,False,False)]:
+            with self.subTest(authorization=authorization,alert=alert,emit=emit), tempfile.TemporaryDirectory() as name:
+                root=Path(name);log=root/'log'
+                # Old authorization is insufficient if the current launch emits none.
+                log.write_text('[PUSH_DIAG] native_notification_settings authorization=UNAuthorizationStatus(rawValue: 2) alert=UNNotificationSetting(rawValue: 2)\n')
+                script=root/'probe.sh'
+                script.write_text(source+r'''
+xcrun() {
+  if [[ "$4" == com.apple.springboard ]]; then touch "$CONTRACT_ROOT/backgrounded";
+  elif [[ "$CONTRACT_EMIT" == 1 ]]; then
+    printf '[PUSH_DIAG] native_notification_settings authorization=UNAuthorizationStatus(rawValue: %s) alert=UNNotificationSetting(rawValue: %s)\n' "$CONTRACT_AUTH" "$CONTRACT_ALERT"
+  fi
+}
+wait_for_any_pattern_after_line() { return 0; }
+sleep() { :; }
+launch_warm_app_for_host_push simulator "$CONTRACT_ROOT/log" "$$"
+''')
+                result=subprocess.run(['bash',str(script)],env={**os.environ,'CONTRACT_ROOT':name,'CONTRACT_EMIT':str(int(emit)),'CONTRACT_AUTH':str(authorization),'CONTRACT_ALERT':str(alert)},capture_output=True,text=True,timeout=10)
+                self.assertEqual(result.returncode==0,expected,result.stderr)
+                self.assertEqual((root/'backgrounded').exists(),expected)
+
+    def test_install_requires_permission_setup_and_ends_its_launch(self):
+        source=(ROOT/'scripts/run_ios_notification_tap_ui_smoke.sh').read_text().removesuffix('main "$@"\n')
+        for authorized,native_code in [(True,0),(False,0),(True,7)]:
+            with self.subTest(authorized=authorized,native_code=native_code), tempfile.TemporaryDirectory() as name:
+                root=Path(name);script=root/'probe.sh'
+                script.write_text(source+r'''
+RESULT_ROOT="$CONTRACT_ROOT"
+xcrun() { printf '%s\n' "$*" >> "$CONTRACT_ROOT/order"; }
+write_auto_setup_config() { printf 'auto_setup\n' >> "$CONTRACT_ROOT/order"; }
+start_log_stream() { /bin/sleep 5 & started_pid=$!; }
+run_xcode_ui_test() {
+  printf 'selector=%s\n' "$2" >> "$CONTRACT_ROOT/order"
+  (exit "$CONTRACT_NATIVE_CODE") & started_pid=$!
+}
+wait_for_ready_signal() { return 0; }
+launch_warm_app_for_host_push() {
+  printf 'authorization_readback\n' >> "$CONTRACT_ROOT/order"
+  [[ "$CONTRACT_AUTHORIZED" == 1 ]]
+}
+install_app_on_device simulator Contract
+''')
+                result=subprocess.run(['bash',str(script)],env={**os.environ,'CONTRACT_ROOT':name,'CONTRACT_AUTHORIZED':str(int(authorized)),'CONTRACT_NATIVE_CODE':str(native_code)},capture_output=True,text=True,timeout=10)
+                self.assertEqual(result.returncode==0,authorized and native_code==0,result.stderr)
+                order=(root/'order').read_text().splitlines()
+                self.assertIn('selector=-only-testing:RunnerUITests/NotificationTapUITests/testPrepareWarmNotificationTap',order)
+                self.assertEqual('authorization_readback' in order,native_code==0)
+                self.assertEqual(order[-1],'simctl terminate simulator com.mknoon.app')
+
+    def test_default_device_failure_is_not_automatically_retried(self):
+        source=(ROOT/'scripts/run_ios_notification_tap_ui_smoke.sh').read_text().removesuffix('main "$@"\n')
+        with tempfile.TemporaryDirectory() as name:
+            root=Path(name);script=root/'probe.sh'
+            script.write_text(source+r'''
+run_scenario_once() { printf 'attempt\n' >> "$CONTRACT_ROOT/attempts"; return 17; }
+sleep() { :; }
+run_scenario simulator Contract direct_text warm Fixture
+''')
+            env={k:v for k,v in os.environ.items() if k!='IOS_NOTIFICATION_TAP_SMOKE_RETRIES'}
+            result=subprocess.run(['bash',str(script)],env={**env,'CONTRACT_ROOT':name},capture_output=True,text=True,timeout=10)
+            self.assertEqual(result.returncode,17,result.stderr)
+            self.assertEqual((root/'attempts').read_text().splitlines(),['attempt'])
+
+    def test_direct_fixture_uses_existing_contact_seeding_and_preserves_foreign_commands(self):
+        source=(ROOT/'scripts/run_ios_notification_tap_ui_smoke.sh').read_text().removesuffix('main "$@"\n')
+        for foreign in (False, True):
+            with self.subTest(foreign=foreign), tempfile.TemporaryDirectory() as name:
+                root=Path(name);documents=root/'Documents';documents.mkdir()
+                config=documents/'intro_e2e_config.json'
+                if foreign: config.write_text('{"stepId":"foreign-owner"}')
+                script=root/'probe.sh'
+                script.write_text(source+r'''
+RESULT_ROOT="$CONTRACT_ROOT"
+MATRIX_FIXTURE="$CONTRACT_MATRIX"
+xcrun() {
+  if [[ "$2" == get_app_container ]]; then printf '%s\n' "$CONTRACT_ROOT";
+  else printf '%s\n' "$*" >> "$CONTRACT_ROOT/actions"; fi
+}
+prepare_direct_notification_fixture simulator direct_video direct
+cp "$CONTRACT_ROOT/Documents/intro_e2e_config.json" "$CONTRACT_ROOT/observed.json"
+cleanup_notification_fixture_commands
+''')
+                result=subprocess.run(['bash',str(script)],env={**os.environ,'CONTRACT_ROOT':name,'CONTRACT_MATRIX':str(ROOT/'test/features/push/fixtures/ios_notification_message_matrix.json')},capture_output=True,text=True,timeout=10)
+                if foreign:
+                    self.assertNotEqual(result.returncode,0)
+                    self.assertEqual(json.loads(config.read_text()),{'stepId':'foreign-owner'})
+                else:
+                    self.assertEqual(result.returncode,0,result.stderr)
+                    command=json.loads((root/'observed.json').read_text())
+                    contact=json.loads(command['add_contacts'][0]['qrPayload'])
+                    self.assertEqual(contact['ns'],'peer-alice')
+                    self.assertEqual(contact['un'],'Alice')
+                    self.assertFalse(config.exists())
+
+    def test_readiness_requires_an_emitted_event(self):
+        source=(ROOT/'scripts/run_ios_notification_tap_ui_smoke.sh').read_text().removesuffix('main "$@"\n')
+        cases=[
+            ('predicate', '', 'Filtering the log data using "eventMessage CONTAINS \'MKNOON_APNS_TAP_READY\'"', False),
+            ('build_export', '', 'export MKNOON_APNS_TAP_READY_FILE=/tmp/case.ready', False),
+            ('empty_ready_file', '', '', False),
+            ('partial_event', 'MKNOON_APNS_TAP_READY mode=warm', '', False),
+            ('log_event', None, 'timestamp Runner: MKNOON_APNS_TAP_READY mode=cold title_configured=true', True),
+            ('file_event', 'MKNOON_APNS_TAP_READY mode=warm title_configured=true\n', '', True),
+        ]
+        for label,ready,log,expected in cases:
+            with self.subTest(label=label), tempfile.TemporaryDirectory() as name:
+                root=Path(name)
+                if ready is not None: (root/'ready').write_text(ready)
+                (root/'log').write_text(log)
+                script=root/'probe.sh'
+                script.write_text(source+'\nwait_for_ready_signal "$CONTRACT_ROOT/ready" "$CONTRACT_ROOT/log" "$$" 1\n')
+                result=subprocess.run(['bash',str(script)],env={**os.environ,'CONTRACT_ROOT':name},capture_output=True,text=True,timeout=5)
+                self.assertEqual(result.returncode==0,expected,result.stderr)
+
+    def run_flow(self, method, mode, *, ready=True, push=True, native_code=0):
+        with tempfile.TemporaryDirectory() as name:
+            root=Path(name)
+            # Evaluate the actual campaign functions, replacing only external
+            # device/build operations with a bounded synthetic process.
+            source=(ROOT/'scripts/run_ios_notification_tap_ui_smoke.sh').read_text().removesuffix('main "$@"\n')
+            harness=source+r'''
+RESULT_ROOT="$CONTRACT_ROOT"
+native_selector="$CONTRACT_METHOD"
+sleep() { /bin/sleep 0.01; }
+matrix_case_fields() { printf 'Fixture title\tFixture body\tdirect\ttext\tdirect\n'; }
+prepare_direct_notification_fixture() { printf 'fixture\n' >> "$CONTRACT_ROOT/order"; }
+start_log_stream() { /bin/sleep 5 & started_pid=$!; }
+run_xcode_ui_test() {
+  printf 'selector=%s\n' "$2" >> "$CONTRACT_ROOT/order"
+  (
+    if [[ "$CONTRACT_READY" == 1 ]]; then
+      printf 'MKNOON_APNS_TAP_READY mode=%s title_configured=true\n' "$CONTRACT_MODE" > "$5"
+    fi
+    for ((i=0;i<200;i++)); do
+      [[ -f "$CONTRACT_ROOT/pushed" ]] && break
+      /bin/sleep 0.01
+    done
+    [[ -f "$CONTRACT_ROOT/pushed" ]] || exit 78
+    if [[ "$CONTRACT_NATIVE_CODE" == 0 ]]; then
+      printf "Test Case '-[RunnerUITests.NotificationTapUITests %s]' passed (0.100 seconds).\n" "$CONTRACT_METHOD" >> "$3"
+    else
+      printf "Test Case '-[RunnerUITests.NotificationTapUITests %s]' failed (0.100 seconds).\n" "$CONTRACT_METHOD" >> "$3"
+    fi
+    exit "$CONTRACT_NATIVE_CODE"
+  ) & started_pid=$!
+}
+if [[ "$CONTRACT_READY" != 1 ]]; then wait_for_ready_signal() { return 1; }; fi
+push_fixture() {
+  printf 'push\n' >> "$CONTRACT_ROOT/order"
+  [[ "$CONTRACT_PUSH" == 1 ]] || return 1
+  : > "$CONTRACT_ROOT/pushed"
+}
+xcrun() { printf 'native=%s\n' "$*" >> "$CONTRACT_ROOT/order"; }
+assert_scenario_markers() { printf 'route_assertions\n' >> "$CONTRACT_ROOT/order"; }
+run_scenario_once simulator 'Contract phone' direct_text "$CONTRACT_MODE" case
+'''
+            script=root/'harness.sh';script.write_text(harness)
+            env={**os.environ,'CONTRACT_ROOT':str(root),'CONTRACT_METHOD':method,'CONTRACT_MODE':mode,
+                 'CONTRACT_READY':str(int(ready)),'CONTRACT_PUSH':str(int(push)),'CONTRACT_NATIVE_CODE':str(native_code)}
+            result=subprocess.run(['bash',str(script)],env=env,text=True,capture_output=True,timeout=10)
+            order=(root/'order').read_text().splitlines() if (root/'order').exists() else []
+            return result,order
+
+    def test_integrated_warm_injects_after_exact_selector_and_keeps_route_assertions(self):
+        result,order=self.run_flow('testNotificationTap','warm')
+        self.assertEqual(result.returncode,0,result.stderr)
+        self.assertEqual(order,['fixture','selector=-only-testing:RunnerUITests/NotificationTapUITests/testNotificationTap','push','route_assertions'])
+        self.assertIn("testNotificationTap]' passed",result.stdout)
+
+    def test_integrated_cold_terminates_before_native_ready_and_injection(self):
+        result,order=self.run_flow('testColdNotificationTap','cold')
+        self.assertEqual(result.returncode,0,result.stderr)
+        self.assertEqual(order,['fixture','native=simctl terminate simulator com.mknoon.app','selector=-only-testing:RunnerUITests/NotificationTapUITests/testColdNotificationTap','push','route_assertions'])
+
+    def test_existing_notification_preserves_push_before_tap(self):
+        result,order=self.run_flow('testTapExistingNotification','cold')
+        self.assertEqual(result.returncode,0,result.stderr)
+        self.assertLess(order.index('push'),next(i for i,x in enumerate(order) if x.startswith('selector=')))
+        self.assertEqual(order[-1],'route_assertions')
+
+    def test_missing_readiness_never_injects_or_claims_pass(self):
+        result,order=self.run_flow('testNotificationTap','warm',ready=False)
+        self.assertNotEqual(result.returncode,0)
+        self.assertNotIn('push',order)
+        self.assertNotIn('route_assertions',order)
+        self.assertNotIn('PASS case',result.stdout)
+
+    def test_injection_failure_never_reaches_route_assertions(self):
+        result,order=self.run_flow('testNotificationTap','warm',push=False)
+        self.assertNotEqual(result.returncode,0)
+        self.assertNotIn('route_assertions',order)
+        self.assertNotIn('PASS case',result.stdout)
+
+    def test_native_failure_remains_failure(self):
+        result,order=self.run_flow('testColdNotificationTap','cold',native_code=65)
+        self.assertEqual(result.returncode,65)
+        self.assertIn("testColdNotificationTap]' failed",result.stdout)
+        self.assertNotIn('route_assertions',order)
+        self.assertNotIn('PASS case',result.stdout)
+
+class SelectorArgumentContracts(unittest.TestCase):
+    def selection(self, args):
+        with tempfile.TemporaryDirectory() as name:
+            root=Path(name);script=root/'scripts/run_ios_notification_tap_ui_smoke.sh';script.parent.mkdir()
+            script.write_text((ROOT/'scripts/run_ios_notification_tap_ui_smoke.sh').read_text())
+            fixture=root/'test/features/push/fixtures/ios_notification_message_matrix.json';fixture.parent.mkdir(parents=True)
+            fixture.write_bytes((ROOT/'test/features/push/fixtures/ios_notification_message_matrix.json').read_bytes())
+            return subprocess.run(['bash',str(script),'--selection-only',*args],text=True,capture_output=True,timeout=10)
+
+    def test_three_exact_native_modes_validate_without_device_actions(self):
+        for method,scenario in [('testNotificationTap','warm:direct_text'),('testColdNotificationTap','cold:direct_video'),('testTapExistingNotification','cold:direct_video')]:
+            with self.subTest(method=method):
+                result=self.selection(['--native-selector',method,'--scenario',scenario,'--retries','0'])
+                self.assertEqual(result.returncode,0,result.stderr)
+                self.assertEqual(result.stdout.strip(),scenario)
+
+    def test_native_modes_reject_missing_scenario_wrong_pair_and_unknown_selector(self):
+        for args in [
+            ['--native-selector','testNotificationTap','--retries','0'],
+            ['--native-selector','testNotificationTap','--scenario','cold:direct_video','--retries','0'],
+            ['--native-selector','testColdNotificationTap','--scenario','warm:direct_text','--retries','0'],
+            ['--native-selector','testArbitraryMethod','--scenario','warm:direct_text','--retries','0'],
+        ]:
+            with self.subTest(args=args):self.assertEqual(self.selection(args).returncode,2)
+
+    def test_native_modes_require_no_automatic_retry(self):
+        result=self.selection(['--native-selector','testNotificationTap','--scenario','warm:direct_text','--retries','1'])
+        self.assertEqual(result.returncode,2)
+        self.assertIn('--retries 0',result.stderr)
+
+    def test_existing_matrix_selection_still_has_twelve_cases(self):
+        result=self.selection([])
+        self.assertEqual(result.returncode,0,result.stderr)
+        self.assertEqual(len(result.stdout.splitlines()),12)

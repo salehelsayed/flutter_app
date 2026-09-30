@@ -22,7 +22,13 @@ GroupSmokeCriterion evaluateG4(Map<String, dynamic> bob) {
 GroupSmokeCriterion evaluateG5(
   Map<String, dynamic> alice,
   Map<String, dynamic> bob,
-) {
+) => _evaluateLifecycle(alice, bob, aliceUsesBooleanReceipt: false);
+
+GroupSmokeCriterion _evaluateLifecycle(
+  Map<String, dynamic> alice,
+  Map<String, dynamic> bob, {
+  required bool aliceUsesBooleanReceipt,
+}) {
   final aliceTimeline = _mapList(alice['timeline']);
   final bobTimeline = _mapList(bob['timeline']);
   final failures = <String>[];
@@ -54,8 +60,10 @@ GroupSmokeCriterion evaluateG5(
     final label = entry['label']?.toString() ?? '';
     if (label == 'recv') {
       final received = entry['received'];
-      if (received is! Map ||
-          !_hasReceipt(Map<String, dynamic>.from(received))) {
+      final receiptPresent = aliceUsesBooleanReceipt
+          ? received == true
+          : received is Map && _hasReceipt(Map<String, dynamic>.from(received));
+      if (!receiptPresent) {
         failures.add('Alice msg$n missing Bob receipt');
       }
     } else if (!_isSuccessfulSend(entry)) {
@@ -128,4 +136,72 @@ List<Map<String, dynamic>> _mapList(Object? value) {
       .whereType<Map>()
       .map((entry) => Map<String, dynamic>.from(entry))
       .toList(growable: false);
+}
+
+GroupSmokeCriterion evaluateS3(
+  Map<String, dynamic> alice,
+  Map<String, dynamic> bob,
+) {
+  return GroupSmokeCriterion(
+    _isSuccessfulSend(alice) &&
+        alice['sendPath'] == 'inbox' &&
+        _hasReceipt(bob),
+    'offline inbox requires successful custody and Bob receipt; e2e=${bob['e2eMs']}',
+  );
+}
+
+GroupSmokeCriterion evaluateS8(
+  Map<String, dynamic> alice,
+  Map<String, dynamic> bob,
+) {
+  final result = _evaluateLifecycle(alice, bob, aliceUsesBooleanReceipt: true);
+  bool complete(Object? raw) {
+    final entries = _mapList(raw);
+    return entries.length == 10 &&
+        entries
+            .map((e) => e['n'])
+            .toSet()
+            .containsAll(List.generate(10, (i) => i + 1));
+  }
+
+  return GroupSmokeCriterion(
+    result.ok && complete(alice['timeline']) && complete(bob['timeline']),
+    result.detail,
+  );
+}
+
+GroupSmokeCriterion evaluateS9(
+  Map<String, dynamic> alice,
+  Map<String, dynamic> bob,
+) {
+  final sends = _mapList(alice['timings']);
+  final receipts = _mapList(bob['timings']);
+  return GroupSmokeCriterion(
+    sends.length == 5 &&
+        sends.every(_isSuccessfulSend) &&
+        bob['count'] == 5 &&
+        receipts.length == 5 &&
+        receipts.every(_hasReceipt),
+    'batch inbox requires all five successful sends and receiver receipts; received=${bob['count']}',
+  );
+}
+
+GroupSmokeCriterion evaluateS10(
+  Map<String, dynamic> alice,
+  Map<String, dynamic> bob,
+) {
+  return GroupSmokeCriterion(
+    _isSuccessfulSend(alice) &&
+        bob['received'] == true &&
+        bob['deleted'] == true,
+    'deletion outcome=${alice['outcome']} receiverDeleted=${bob['deleted']}',
+  );
+}
+
+GroupSmokeCriterion evaluateS11(Map<String, dynamic> alice) {
+  final timing = alice['voiceTiming'];
+  return GroupSmokeCriterion(
+    alice['error'] == null && timing is Map && timing['outcome'] == 'success',
+    'voice send outcome=${timing is Map ? timing['outcome'] : 'missing'}',
+  );
 }

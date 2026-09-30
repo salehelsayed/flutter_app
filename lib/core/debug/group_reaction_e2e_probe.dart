@@ -5,6 +5,7 @@ import 'package:crypto/crypto.dart';
 import 'package:sqflite_sqlcipher/sqflite.dart';
 
 import '../database/helpers/canonical_notification_badge_state_db_helpers.dart';
+import '../notifications/deterministic_notification_id.dart';
 import '../secure_storage/secret_storage_references.dart';
 import '../secure_storage/secure_key_store.dart';
 
@@ -335,6 +336,14 @@ Future<Map<String, Object?>> observeGroupReactionE2EState({
       ? _expectedGroupMessageCollapseIdentifierSha256(
           runOwnedMessageRows.single['id'] as String?,
         )
+      : combinedIosJourney &&
+            request.phase == 'reaction' &&
+            matchingAddRows.length == 1
+      ? _sha256Text(
+          boundedReactionEventIdentity(
+            matchingAddRows.single['reaction_id'] as String,
+          ),
+        )
       : null;
 
   final canonicalBadgeState = await _observeCanonicalBadgeState(
@@ -375,7 +384,7 @@ Future<Map<String, Object?>> observeGroupReactionE2EState({
       'reactionIdSha256': matchingAddRows.length == 1
           ? _sha256Text(matchingAddRows.single['reaction_id'] as String)
           : null,
-    if (combinedIosJourney && request.phase == 'message')
+    if (combinedIosJourney)
       'expectedCollapseIdentifierSha256': expectedCollapseIdentifierSha256,
     'canonicalBadgeState': canonicalBadgeState,
   };

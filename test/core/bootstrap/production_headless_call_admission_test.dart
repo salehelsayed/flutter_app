@@ -858,6 +858,81 @@ void main() {
   // owner now schedules a decline-reply run: the same headless session
   // authenticates the invite row again, sends the caller one `reject`, and
   // acknowledges the rows of the ended call.
+  group('ringing reply mode', () {
+    final ringingInvocation = HeadlessCallAdmissionInvocation(
+      nonce: invocation.nonce,
+      callId: invocation.callId,
+      wakeHandle: invocation.wakeHandle,
+      expiresAtMs: invocation.expiresAtMs,
+      mode: HeadlessCallAdmissionMode.ringingReply,
+    );
+
+    test(
+      'sends from authenticated invite and preserves mailbox custody',
+      () async {
+        final mailbox = _Mailbox(<CallMailboxEvent>[_event()]);
+        var replies = 0;
+        var rollbacks = 0;
+        final authenticate = _signalAuthenticator();
+        final session = MailboxProductionHeadlessCallAdmissionSession(
+          mailboxClient: mailbox,
+          authenticateEvent: ({required invocation, required event}) async {
+            final value = await authenticate(
+              invocation: invocation,
+              event: event,
+            );
+            return HeadlessAuthenticatedMailboxEvent(
+              event: value.event,
+              signal: value.signal,
+              rollbackReplay: () => rollbacks++,
+            );
+          },
+          ringingReplySender: (invite, handle) async {
+            expect(invite.event, CallSignalType.invite);
+            expect(handle, ringingInvocation.callId);
+            replies++;
+            return true;
+          },
+          closeResources: () async => _Session.safeCleanup,
+        );
+        expect(
+          await session.evaluate(ringingInvocation),
+          HeadlessCallAdmissionDisposition.terminal,
+        );
+        expect(await session.close(), _Session.safeCleanup);
+        expect(replies, 1);
+        expect(rollbacks, 1);
+        expect(mailbox.ackedHandles, isEmpty);
+      },
+    );
+
+    test(
+      'terminal companion suppresses ringing without acknowledging',
+      () async {
+        final mailbox = _Mailbox(<CallMailboxEvent>[
+          _event(),
+          _event(messageId: '55555555-5555-4555-8555-555555555555'),
+        ]);
+        var replies = 0;
+        final session = MailboxProductionHeadlessCallAdmissionSession(
+          mailboxClient: mailbox,
+          authenticateEvent: _signalAuthenticator(),
+          ringingReplySender: (_, _) async {
+            replies++;
+            return true;
+          },
+          closeResources: () async => _Session.safeCleanup,
+        );
+        expect(
+          await session.evaluate(ringingInvocation),
+          HeadlessCallAdmissionDisposition.deferred,
+        );
+        expect(replies, 0);
+        expect(mailbox.ackedHandles, isEmpty);
+      },
+    );
+  });
+
   group('decline reply mode', () {
     final declineInvocation = HeadlessCallAdmissionInvocation(
       nonce: invocation.nonce,

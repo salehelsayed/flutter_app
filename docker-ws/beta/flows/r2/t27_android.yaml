@@ -1,0 +1,9 @@
+appId: com.mknoon.app
+name: T27 Pixel lets the four quick calls go, answers the call after "T27 go"
+---
+- runFlow: ../ensure_chat.yaml
+- extendedWaitUntil: { visible: ".*T27 go ${NONCE}.*", timeout: 420000 }
+- takeScreenshot: t27_rows_android
+- runFlow: { file: answer_connected.yaml, env: { ATIMEOUT: 120000 } }
+- extendedWaitUntil: { notVisible: "End", timeout: 120000 }
+- takeScreenshot: t27_ended_android

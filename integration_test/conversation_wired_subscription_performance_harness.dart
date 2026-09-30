@@ -36,6 +36,7 @@ import '../test/features/conversation/domain/repositories/fake_reaction_reposito
 import '../test/features/contacts/domain/repositories/fake_contact_repository.dart';
 import '../test/features/identity/domain/repositories/fake_identity_repository.dart';
 import '../test/shared/fakes/fake_audio_recorder_service.dart';
+import '../test/shared/fakes/fake_mic_permission_gateway.dart';
 import '../test/shared/fakes/in_memory_media_attachment_repository.dart';
 
 late final IntegrationTestWidgetsFlutterBinding binding;
@@ -254,6 +255,7 @@ class _HarnessEnvironment {
     required this.p2pService,
     required this.mediaAttachmentRepo,
     required this.audioRecorderService,
+    required this.micPermissionGateway,
     required this.conversationTracker,
     required this.contact,
     required this.initialMessages,
@@ -271,6 +273,7 @@ class _HarnessEnvironment {
   final FakeP2PService p2pService;
   final InMemoryMediaAttachmentRepository mediaAttachmentRepo;
   final FakeAudioRecorderService audioRecorderService;
+  final FakeMicPermissionGateway micPermissionGateway;
   final ActiveConversationTracker conversationTracker;
   final ContactModel contact;
   final List<ConversationMessage> initialMessages;
@@ -355,6 +358,11 @@ class _HarnessEnvironment {
       p2pService: FakeP2PService(),
       mediaAttachmentRepo: InMemoryMediaAttachmentRepository(),
       audioRecorderService: FakeAudioRecorderService()..fakeDurationMs = 1200,
+      // The screen defaults to the real PermissionHandlerMicGateway, whose
+      // plugin is absent on the macOS perf host; without this fake the
+      // record-start call throws MissingPluginException and RecordingOverlay
+      // never mounts.
+      micPermissionGateway: FakeMicPermissionGateway(),
       conversationTracker: ActiveConversationTracker(),
       contact: contact,
       initialMessages: initialMessages,
@@ -413,6 +421,7 @@ class _ConversationHostState extends State<_ConversationHost> {
         mediaAttachmentRepo: widget.env.mediaAttachmentRepo,
         conversationTracker: widget.env.conversationTracker,
         audioRecorderService: widget.env.audioRecorderService,
+        micPermissionGateway: widget.env.micPermissionGateway,
         reactionRepo: widget.env.reactionRepo,
         reactionListener: widget.env.reactionListener,
       ),

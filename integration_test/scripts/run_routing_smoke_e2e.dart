@@ -314,19 +314,8 @@ Future<void> main(List<String> args) async {
       timeout: const Duration(minutes: 3),
     );
     _signals.writeSignal('s3_verified');
-    // S3 measures the full offline → inbox → restart → drain → delivery pipeline.
-    // The inbox store (Alice's side) always succeeds. Bob's inbox drain may not
-    // deliver within the timeout if relay session was dropped — this is a known
-    // infrastructure behavior, not a test failure. Pass if Alice stored successfully.
-    final s3AliceOk =
-        s3Alice['outcome'] == 'success' && s3Alice['sendPath'] == 'inbox';
-    final s3BobE2e = s3Bob['e2eMs'] as int? ?? -1;
-    _check(
-      'S3',
-      s3AliceOk,
-      'send=${s3Alice['sendMs']}ms path=${s3Alice['sendPath']} '
-          'e2e=${s3BobE2e == -1 ? 'pending (inbox drain)' : '${s3BobE2e}ms'}',
-    );
+    final s3Result = evaluateS3(s3Alice, s3Bob);
+    _check('S3', s3Result.ok, s3Result.detail);
 
     // ══════════ S4: Reconnect ══════════
     _log('ORCH', '─── S4: Reconnect ───');
@@ -439,11 +428,8 @@ Future<void> main(List<String> args) async {
     );
     final s8AliceTimeline = s8Alice['timeline'] as List<dynamic>? ?? [];
     final s8BobTimeline = s8Bob['timeline'] as List<dynamic>? ?? [];
-    _check(
-      'S8',
-      s8AliceTimeline.length >= 9 && s8BobTimeline.length >= 9,
-      'Alice timeline=${s8AliceTimeline.length} Bob timeline=${s8BobTimeline.length}',
-    );
+    final s8Result = evaluateS8(s8Alice, s8Bob);
+    _check('S8', s8Result.ok, s8Result.detail);
 
     // ══════════ S9: Batch inbox drain (5 messages) ══════════
     _log('ORCH', '─── S9: Batch inbox drain ───');
@@ -459,13 +445,11 @@ Future<void> main(List<String> args) async {
     final s9AliceTimings = s9Alice['timings'] as List<dynamic>? ?? [];
     _log('ORCH', 'S9: Alice sent ${s9AliceTimings.length} msgs to inbox');
     _signals.writeSignal('s9_bob_restart');
-    // Bob's inbox drain is async — don't block on it. Pass if Alice stored all 5.
-    _check(
-      'S9',
-      s9AliceTimings.length == 5,
-      'Alice stored ${s9AliceTimings.length}/5 to inbox (drain async)',
+    final s9Bob = await _signals.waitForJson(
+      's9_bob_received', timeout: const Duration(minutes: 3),
     );
-    // Write verified so both harnesses can proceed to teardown
+    final s9Result = evaluateS9(s9Alice, s9Bob);
+    _check('S9', s9Result.ok, s9Result.detail);
     _signals.writeSignal('s9_verified');
 
     // ══════════ S10: Delete-for-everyone ══════════
@@ -477,12 +461,12 @@ Future<void> main(List<String> args) async {
       's10_alice_delete_sent',
       timeout: const Duration(minutes: 3),
     );
-    _signals.writeSignal('s10_verified');
-    _check(
-      'S10',
-      true,
-      'delete sent in ${s10Delete['deleteMs']}ms outcome=${s10Delete['outcome']}',
+    final s10Bob = await _signals.waitForJson(
+      's10_bob_deleted', timeout: const Duration(minutes: 3),
     );
+    _signals.writeSignal('s10_verified');
+    final s10Result = evaluateS10(s10Delete, s10Bob);
+    _check('S10', s10Result.ok, s10Result.detail);
 
     // ══════════ S13: ACK under load ══════════
     _log('ORCH', '─── S13: ACK under load ───');
@@ -512,11 +496,8 @@ Future<void> main(List<String> args) async {
       timeout: const Duration(minutes: 3),
     );
     _signals.writeSignal('s11_verified');
-    _check(
-      'S11',
-      true,
-      'upload=${s11Alice['uploadMs']}ms ok=${s11Alice['ok']}',
-    );
+    final s11Result = evaluateS11(s11Alice);
+    _check('S11', s11Result.ok, s11Result.detail);
 
     // ══════════ S12: Media transfer (1MB + 5MB) ══════════
     _log('ORCH', '─── S12: Media transfer (1MB + 5MB) ───');

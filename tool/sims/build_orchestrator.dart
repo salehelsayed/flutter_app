@@ -21,6 +21,7 @@ const String _androidGroupMedia269ApplicationId =
     'com.mknoon.sims.groupmedia269';
 const _androidNonProviderDisposablePackages = <String, String>{
   'android.e2e.main': 'com.mknoon.sims.connectivity',
+  'android.e2e.performance_relay': 'com.mknoon.sims.connectivity',
   'android.e2e.direct_media_custody': 'com.mknoon.sims.directmedia',
 };
 const String simsIosDeviceProductValidatorInputName =
@@ -1095,7 +1096,8 @@ final class SimsBuildOrchestrator {
     if (profile.platform == 'android') {
       return 'build/app/outputs/flutter-apk/app-debug.apk';
     }
-    if (profile.id == 'ios.simulator.e2e') {
+    if (profile.id == 'ios.simulator.e2e' ||
+        profile.id == 'ios.simulator.app') {
       return 'build/ios/iphonesimulator/Runner.app';
     }
     if (profile.id == _iosDeviceProductionProfileId) {
@@ -1196,7 +1198,7 @@ List<String> effectiveSimsBuildArguments(
       ...defineArgs,
     ];
   }
-  if (profile.id == 'ios.simulator.e2e') {
+  if (profile.id == 'ios.simulator.e2e' || profile.id == 'ios.simulator.app') {
     return <String>[
       'build',
       'ios',
@@ -1248,6 +1250,7 @@ Map<String, String> effectiveSimsCompileDefines(
   }
   if (profile.platform == 'android' ||
       profile.id == 'ios.simulator.e2e' ||
+      profile.id == 'ios.simulator.app' ||
       _iosDeviceBuildConfiguration(profile.id) != null) {
     final relayAddresses = effectiveEnvironment['MKNOON_RELAY_ADDRESSES']
         ?.trim();
@@ -1269,6 +1272,11 @@ String effectiveSimsApplicationId(
   Directory? projectDirectory,
 }) {
   final effectiveEnvironment = environment ?? Platform.environment;
+  // The additive notification receiver uses the repository Firebase client.
+  // Sender/disposable and original provider profiles retain their own policy.
+  if (profile.id == 'android.production_fcm.journey') {
+    return 'com.mknoon.app';
+  }
   if (profile.id == _iosDeviceGroupMedia269ProfileId) {
     return _iosDeviceGroupMedia269BundleId;
   }
@@ -1357,7 +1365,7 @@ FileSystemEntity _cachedArtifact(
       '${entryRoot.path}/${iosDeviceConfiguration.cachedBundleName}',
     );
   }
-  if (profile.id == 'ios.simulator.e2e') {
+  if (profile.id == 'ios.simulator.e2e' || profile.id == 'ios.simulator.app') {
     return Directory('${entryRoot.path}/Runner.app');
   }
   if (profile.platform == 'android') {
@@ -1376,6 +1384,11 @@ FileSystemEntity? _artifactEntity(String path) {
     _ => null,
   };
 }
+
+/// The same byte/permission/link manifest used by central build attestations.
+/// Additive prepared-product consumers must verify this identity before use.
+List<int> simsPreparedArtifactDigestBytes(FileSystemEntity entity) =>
+    _artifactDigestBytes(entity);
 
 List<int> _artifactDigestBytes(FileSystemEntity entity) {
   if (!entity.existsSync()) return const <int>[];
@@ -2141,7 +2154,9 @@ String _versionDigestFromText(String value) =>
 
 bool _ignoredSourcePath(String path) {
   final normalized = _normalizedProjectPath(path);
-  return normalized.contains('/build/') ||
+  return (normalized.contains('/__pycache__/') &&
+          normalized.endsWith('.pyc')) ||
+      normalized.contains('/build/') ||
       normalized.contains('/.gradle/') ||
       normalized.contains('/.dart_tool/') ||
       normalized.contains('/.kotlin/') ||

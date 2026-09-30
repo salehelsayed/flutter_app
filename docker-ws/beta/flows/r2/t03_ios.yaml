@@ -1,0 +1,15 @@
+appId: com.mknoon.app
+name: T03 iPhone opens the View once photo, closes it, tries again
+---
+- runFlow: ../ensure_chat.yaml
+- extendedWaitUntil: { visible: ".*T03 marker ${NONCE}.*", timeout: 300000 }
+- runFlow: ../kb_hide.yaml
+- takeScreenshot: t03_received
+- tapOn: { text: "View-once photo|Open photo.*|Open private media.*|.*View once.*|.*only view this once.*", index: -1 }
+- runFlow: { file: ../sleep.yaml, env: { MS: 5000 } }
+- takeScreenshot: t03_viewing
+- runFlow: leave_viewer.yaml
+- runFlow: { file: ../sleep.yaml, env: { MS: 3000 } }
+- takeScreenshot: t03_after_view
+- assertVisible: ".*Already viewed on this device.*|.*Opened.*|.*Viewed.*"
+- runFlow: { file: ../send_text.yaml, env: { MSG: "T03 opened ${NONCE}" } }

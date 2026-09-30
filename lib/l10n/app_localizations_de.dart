@@ -1259,6 +1259,14 @@ class AppLocalizationsDe extends AppLocalizations {
       'Die Medien sind auch nach der Komprimierung zu groß.';
 
   @override
+  String get media_video_processing_stalled =>
+      'Die Videoverarbeitung wurde angehalten. Erneut versuchen.';
+
+  @override
+  String get media_video_processing_unavailable =>
+      'Die Videoverarbeitung ist nicht verfügbar. Starte MKnoon neu, um Videos hinzuzufügen.';
+
+  @override
   String get media_gif_too_large =>
       'GIF-Dateien größer als 25 MB können nicht hinzugefügt werden.';
 

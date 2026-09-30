@@ -1,0 +1,11 @@
+FLOW B5_send android PASS rc=0
+FLOW B5_rx ios FAIL rc=1
+FLOW B4a_send android PASS rc=0
+FLOW B4a_rx ios FAIL rc=1
+FLOW B4b_send android PASS rc=0
+FLOW B4b_rx ios FAIL rc=1
+FLOW N3_callee android PASS rc=0
+FLOW N3_caller ios PASS rc=0
+FLOW N4_caller ios FAIL rc=1
+FLOW N4_callee android FAIL rc=1
+/Volumes/CrucialX9/flutter_app/docker-ws/beta/r26_followup.sh: line 145: 18970 Terminated: 15          nohup perl -e 'use POSIX qw(setsid); setsid(); exec @ARGV' "$ANDROID_HOME/platform-tools/adb" -s "$SERIAL" logcat -T 1 -v threadtime > "$RUN/android_logcat_live.txt" 2>&1 < /dev/null

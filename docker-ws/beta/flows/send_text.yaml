@@ -1,0 +1,9 @@
+appId: com.mknoon.app
+name: send one text message in the open chat (MSG)
+---
+- tapOn: ".*Write something.*"
+- inputText: "${MSG}"
+- tapOn: "Send message"
+- extendedWaitUntil:
+    visible: ".*${MSG}.*"
+    timeout: 15000

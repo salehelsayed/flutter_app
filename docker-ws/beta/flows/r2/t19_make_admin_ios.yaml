@@ -1,0 +1,12 @@
+appId: com.mknoon.app
+name: T19 iPhone makes the Pixel an admin
+---
+- runFlow: { file: open_group.yaml, env: { GROUP: "R2 (Group|Renamed|By Pixel) ${NONCE}", GTIMEOUT: 30000 } }
+- runFlow: group_info.yaml
+- tapOn: "Manage role"
+- tapOn: "Make Admin"
+- runFlow: { file: ../sleep.yaml, env: { MS: 1500 } }
+- takeScreenshot: t19_confirm
+- tapOn: "Make Admin"
+- runFlow: { file: ../sleep.yaml, env: { MS: 4000 } }
+- takeScreenshot: t19_made_admin

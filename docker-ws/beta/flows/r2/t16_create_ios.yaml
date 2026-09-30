@@ -1,0 +1,18 @@
+appId: com.mknoon.app
+name: T16 iPhone creates R2 Group with the Pixel and waits for its reply
+---
+- runFlow: ../ensure_chat.yaml
+- tapOn: "Back"
+- extendedWaitUntil: { visible: "Create group", timeout: 20000 }
+- tapOn: "Create group"
+- tapOn: "New Group"
+- tapOn: ".*${PEER}.*"
+- tapOn: ".*Group name.*"
+- inputText: "R2 Group ${NONCE}"
+- runFlow: ../kb_hide.yaml
+- tapOn: "Start group chat"
+- extendedWaitUntil: { visible: ".*Write something.*", timeout: 30000 }
+- runFlow: { file: ../send_text.yaml, env: { MSG: "T16 hello ${NONCE}" } }
+- runFlow: ../kb_hide.yaml
+- extendedWaitUntil: { visible: ".*T16 hi ${NONCE}.*", timeout: 420000 }
+- takeScreenshot: t16_group_ios

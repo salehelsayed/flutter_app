@@ -1,0 +1,26 @@
+appId: com.mknoon.app
+name: T15 unblock the friend from the chat list (a blocked contact is hidden from the orbit, so the 1:1 chat cannot be reached from home)
+---
+- launchApp: { stopApp: false }
+- repeat:
+    times: 4
+    while: { notVisible: "Show all chats|Show inner circle" }
+    commands: [ { runFlow: ../go_back.yaml } ]
+- runFlow:
+    when: { visible: "Show all chats" }
+    commands: [ { tapOn: "Show all chats" } ]
+- runFlow:
+    when: { visible: "All.*" }
+    commands: [ { tapOn: "All.*" } ]
+- runFlow: { file: ../sleep.yaml, env: { MS: 2000 } }
+- takeScreenshot: t15_list_while_blocked
+- swipe: { from: { text: "${PEER}\\n.*" }, direction: LEFT, duration: 500 }
+- runFlow: { file: ../sleep.yaml, env: { MS: 1500 } }
+- takeScreenshot: t15_swipe_actions
+- tapOn: "Unblock"
+- runFlow: { file: ../sleep.yaml, env: { MS: 1500 } }
+- runFlow:
+    when: { visible: "Unblock" }
+    commands: [ { tapOn: "Unblock" } ]
+- runFlow: { file: ../sleep.yaml, env: { MS: 3000 } }
+- takeScreenshot: t15_unblocked_list

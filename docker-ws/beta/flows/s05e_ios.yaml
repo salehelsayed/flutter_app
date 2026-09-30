@@ -1,0 +1,13 @@
+appId: com.mknoon.app
+name: S05e iPhone lets the Pixel's call ring out (no answer)
+---
+- runFlow:
+    when: { visible: "Dismiss" }
+    commands: [ { tapOn: "Dismiss" } ]
+- extendedWaitUntil: { visible: "Answer", timeout: 90000 }
+- takeScreenshot: s05e_incoming_ios
+- extendedWaitUntil: { notVisible: "Answer", timeout: 150000 }
+- runFlow: { file: sleep.yaml, env: { MS: 3000 } }
+- runFlow: ensure_chat.yaml
+- extendedWaitUntil: { visible: ".*Missed voice call.*", timeout: 60000 }
+- takeScreenshot: s05e_row_ios

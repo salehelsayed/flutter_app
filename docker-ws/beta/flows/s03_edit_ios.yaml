@@ -1,0 +1,14 @@
+appId: com.mknoon.app
+name: S03 iPhone edits B1; waits for the Pixel's reply B3 and for B2 to be deleted
+---
+- runFlow: ensure_chat.yaml
+- longPressOn: ".*B1 hi from iPhone ${NONCE}.*"
+- tapOn: "Edit"
+- eraseText: 60
+- inputText: "B1 edited by iPhone ${NONCE}"
+- tapOn: "Send message"
+- extendedWaitUntil: { visible: ".*B1 edited by iPhone ${NONCE}.*", timeout: 15000 }
+- runFlow: kb_hide.yaml
+- extendedWaitUntil: { visible: ".*B3 reply from Pixel ${NONCE}.*", timeout: 120000 }
+- extendedWaitUntil: { notVisible: ".*B2 hi from Pixel ${NONCE}.*", timeout: 90000 }
+- takeScreenshot: s03_final_ios

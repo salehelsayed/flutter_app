@@ -31,6 +31,7 @@ open class MknoonFirebaseMessagingService : FlutterFirebaseMessagingService() {
 
         /** Debug-build logcat tag naming the exact call wake parse rejection. */
         internal const val CALL_WAKE_DIAGNOSTIC_TAG = "MknoonCallWake"
+        internal const val JOURNEY_PROVIDER_DIAGNOSTIC_TAG = "MknoonJourneyFCM"
 
         // NotificationCompat's silent-group convention: a grouped child with
         // summary-only alert behavior never sounds even on an audible channel.
@@ -80,6 +81,7 @@ open class MknoonFirebaseMessagingService : FlutterFirebaseMessagingService() {
     }
 
     override fun onMessageReceived(message: RemoteMessage) {
+        emitJourneyProviderIngress(message)
         val appDiagnostics = com.mknoon.app.diagnostics.MknoonAppDiagnostics.get(this)
         val appTrace = java.util.UUID.randomUUID().toString()
         appDiagnostics.record("push", "receive", "ok", values = mapOf("direction" to "incoming"), traceId = appTrace)
@@ -159,6 +161,20 @@ open class MknoonFirebaseMessagingService : FlutterFirebaseMessagingService() {
         emitPlan393FixedWakeIngressDiagnostic(committed)
         appDiagnostics.record("push", "commit", if (committed == null) "blocked" else "ok", if (committed == null) "authority_rejected" else "none", mapOf("committed" to (committed != null)), traceId = appTrace)
         committed?.let { signalWarmRuntimeRecovery(it.generation) }
+    }
+
+    /** Read-only proof that the provider entered this production receiver. */
+    private fun emitJourneyProviderIngress(message: RemoteMessage) {
+        if (!BuildConfig.DEBUG || packageName != "com.mknoon.app" || message.notification != null) return
+        val probeId = message.data["probe_id"] ?: return
+        if (!Regex("^wave2-[A-Za-z0-9_-]{12,100}$").matches(probeId)) return
+        val digest = java.security.MessageDigest.getInstance("SHA-256")
+            .digest(probeId.toByteArray(Charsets.UTF_8))
+            .joinToString("") { "%02x".format(it.toInt() and 0xff) }
+        android.util.Log.i(
+            JOURNEY_PROVIDER_DIAGNOSTIC_TAG,
+            "providerIngress=true probeSha256=$digest package=com.mknoon.app",
+        )
     }
 
     /** Privacy-safe proof emitted only by the real production FCM ingress. */

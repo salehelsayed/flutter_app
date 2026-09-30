@@ -1,0 +1,11 @@
+appId: com.mknoon.app
+name: S05d Pixel sees the call ring then stop (caller cancelled)
+---
+- runFlow: ensure_chat.yaml
+- extendedWaitUntil: { visible: "Answer", timeout: 90000 }
+- takeScreenshot: s05d_incoming_android
+- extendedWaitUntil: { notVisible: "Answer", timeout: 60000 }
+- runFlow: { file: sleep.yaml, env: { MS: 3000 } }
+- runFlow: ensure_chat.yaml
+- extendedWaitUntil: { visible: ".*Missed voice call.*", timeout: 60000 }
+- takeScreenshot: s05d_row_android

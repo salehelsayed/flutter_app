@@ -1,0 +1,11 @@
+appId: com.mknoon.app
+name: T19 iPhone sees the Pixel's rename, then removes its admin role
+---
+- runFlow: { file: open_group.yaml, env: { GROUP: "R2 (Group|Renamed|By Pixel) ${NONCE}", GTIMEOUT: 240000 } }
+- runFlow: group_info.yaml
+- tapOn: "Manage role"
+- tapOn: "Remove Admin"
+- runFlow: { file: ../sleep.yaml, env: { MS: 1500 } }
+- tapOn: "Remove Admin"
+- runFlow: { file: ../sleep.yaml, env: { MS: 4000 } }
+- takeScreenshot: t19_admin_removed

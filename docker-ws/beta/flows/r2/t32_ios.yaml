@@ -1,0 +1,10 @@
+appId: com.mknoon.app
+name: T32 iPhone calls and talks 4 minutes
+---
+- runFlow: call_connected.yaml
+- runFlow: { file: ../sleep.yaml, env: { MS: 120000 } }
+- takeScreenshot: t32_2min_ios
+- runFlow: { file: ../sleep.yaml, env: { MS: 120000 } }
+- takeScreenshot: t32_4min_ios
+- assertVisible: "End"
+- runFlow: ../end_call.yaml

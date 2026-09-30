@@ -2156,6 +2156,10 @@ Future<Map<String, dynamic>> callP2PMessageSend(
       'hasReply': response['reply'] != null,
       'transport': response['transport'],
       'errorCode': response['errorCode'],
+      // Native send already measures these phases. Keep the diagnostic
+      // numeric-only so malformed native fields cannot expose payload text.
+      for (final field in ['streamOpenMs', 'writeMs', 'ackWaitMs'])
+        if (response[field] is int) field: response[field],
     },
   );
 

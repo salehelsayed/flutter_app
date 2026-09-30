@@ -1,0 +1,13 @@
+appId: com.mknoon.app
+name: R2-4c Pixel sends two photos + VIDEO - waits for the send button, then sends with caption
+---
+- runFlow: ../ensure_chat.yaml
+- runFlow: { file: v24_pick_android_multi.yaml, env: { FILE1: "r2_photo_2.png", FILE2: "r2_photo_3.png", FILE3: "${VIDEO}" } }
+- takeScreenshot: v27_pending
+- extendedWaitUntil: { visible: "Send message", timeout: 420000 }
+- runFlow: { file: ../sleep.yaml, env: { MS: 3000 } }
+- takeScreenshot: v27_ready
+- runFlow: { file: caption_send.yaml, env: { MSG: "R27 album ${NONCE}" } }
+- runFlow: ../kb_hide.yaml
+- runFlow: { file: ../sleep.yaml, env: { MS: 6000 } }
+- takeScreenshot: v27_sent

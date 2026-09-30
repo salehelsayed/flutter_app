@@ -1,0 +1,8 @@
+appId: com.mknoon.app
+name: T22 iPhone sees the Pixel left
+---
+- runFlow: { file: open_group.yaml, env: { GROUP: "R2 (Group|Renamed|By Pixel) ${NONCE}", GTIMEOUT: 30000 } }
+- runFlow: { file: ../sleep.yaml, env: { MS: 30000 } }
+- runFlow: group_info.yaml
+- extendedWaitUntil: { visible: ".*1 member.*", timeout: 180000 }
+- takeScreenshot: t22_one_member

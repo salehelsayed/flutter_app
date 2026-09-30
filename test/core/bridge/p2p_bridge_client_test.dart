@@ -1576,6 +1576,9 @@ void main() {
           'sent': false,
           'errorCode': 'SEND_FAILED',
           'errorMessage': 'native detail naming recipient-private',
+          'streamOpenMs': 912,
+          'writeMs': 3,
+          'ackWaitMs': 'native detail naming recipient-private',
         };
 
         final result = await callP2PMessageSend(
@@ -1599,6 +1602,10 @@ void main() {
           response['details'] as Map<String, dynamic>,
           isNot(contains('errorMessage')),
         );
+        final details = response['details'] as Map<String, dynamic>;
+        expect(details['streamOpenMs'], 912);
+        expect(details['writeMs'], 3);
+        expect(details, isNot(contains('ackWaitMs')));
         expect(flowEvents.toString(), isNot(contains('recipient-private')));
         expect(
           flowEvents.toString(),

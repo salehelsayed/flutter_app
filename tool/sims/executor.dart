@@ -31,6 +31,8 @@ final class SimsProcessExecutor {
     Map<String, Map<String, String>> environmentByCapabilityId =
         const <String, Map<String, String>>{},
     this.preparedArtifacts = const <String, String>{},
+    this.preparedInputDigests = const <String, String>{},
+    this.preparedArtifactDigests = const <String, String>{},
     this.buildFailures = const <String, String>{},
     this.preflightVerdicts = const <String, SimsVerdict>{},
   }) : logDirectory = logDirectory ?? Directory('build/sims/logs'),
@@ -49,6 +51,8 @@ final class SimsProcessExecutor {
   final Map<String, String> environment;
   final Map<String, Map<String, String>> environmentByCapabilityId;
   final Map<String, String> preparedArtifacts;
+  final Map<String, String> preparedInputDigests;
+  final Map<String, String> preparedArtifactDigests;
   final Map<String, String> buildFailures;
   final Map<String, SimsVerdict> preflightVerdicts;
 
@@ -104,6 +108,29 @@ final class SimsProcessExecutor {
       );
     }
 
+    for (final resource in row.resources) {
+      if (!resource.name.startsWith('build:') ||
+          resource.access != ResourceAccess.read) {
+        continue;
+      }
+      final profile = resource.name.substring('build:'.length);
+      if (profile == row.buildProfileId ||
+          !row.dependencies.contains('build.$profile')) {
+        continue;
+      }
+      final artifact = preparedArtifacts[profile];
+      if (artifact == null ||
+          !_preparedArtifactExists(artifact) ||
+          preparedInputDigests[profile] == null ||
+          preparedArtifactDigests[profile] == null) {
+        return _internalBlocked(
+          row,
+          SimsBlockerKind.missingArtifact,
+          'Prepared companion artifact is incomplete for $profile.',
+        );
+      }
+    }
+
     final childEnvironment = <String, String>{
       ...environment,
       ...?environmentByCapabilityId[row.id],
@@ -111,6 +138,10 @@ final class SimsProcessExecutor {
     childEnvironment.addAll(<String, String>{
       'SIMS_CAPABILITY_ID': row.id,
       'SIMS_ARTIFACT_PROFILE_ID': row.buildProfileId,
+      if (preparedInputDigests[row.buildProfileId] case final digest?)
+        'SIMS_ARTIFACT_INPUT_DIGEST': digest,
+      if (preparedArtifactDigests[row.buildProfileId] case final digest?)
+        'SIMS_ARTIFACT_SHA256': digest,
       'SIMS_PROOF_DIRECTORY': Directory(
         'build/sims/proofs/${_safeFileName(row.id)}',
       ).absolute.path,
@@ -121,11 +152,25 @@ final class SimsProcessExecutor {
     // artifact with BOTH a declared build dependency and read lease is exposed;
     // ambient paths and unrelated cached artifacts remain stripped above.
     for (final resource in row.resources) {
-      if (!resource.name.startsWith('build:') || resource.access != ResourceAccess.read) continue;
+      if (!resource.name.startsWith('build:') ||
+          resource.access != ResourceAccess.read)
+        continue;
       final profile = resource.name.substring('build:'.length);
       if (!row.dependencies.contains('build.$profile')) continue;
       final artifact = preparedArtifacts[profile];
-      if (artifact != null) childEnvironment[_artifactEnvironmentName(profile)] = artifact;
+      if (artifact != null) {
+        childEnvironment[_artifactEnvironmentName(profile)] = artifact;
+        final suffix = profile.toUpperCase().replaceAll(
+          RegExp('[^A-Z0-9]'),
+          '_',
+        );
+        if (preparedInputDigests[profile] case final digest?) {
+          childEnvironment['SIMS_ARTIFACT_INPUT_DIGEST_$suffix'] = digest;
+        }
+        if (preparedArtifactDigests[profile] case final digest?) {
+          childEnvironment['SIMS_ARTIFACT_SHA256_$suffix'] = digest;
+        }
+      }
     }
     String executable = row.command.first;
     File? buildViolationLog;
@@ -418,6 +463,9 @@ exec $quotedExecutable "\$@"
 ''',
     'xcodebuild' =>
       '''#!/bin/sh
+if [ "\$#" -eq 1 ] && [ "\$1" = "-version" ]; then
+  exec $quotedExecutable "\$@"
+fi
 xcode_allowed=0
 if [ "\${SIMS_CHILD_BUILDS_FORBIDDEN-}" = "1" ] &&
    [ "\$#" -eq 10 ] &&

@@ -1,0 +1,6 @@
+appId: com.mknoon.app
+name: T32 re-run - the call must still be connected after the runner's hold; then end it
+---
+- takeScreenshot: t32b_before_end_ios
+- assertVisible: "End"
+- runFlow: ../end_call.yaml

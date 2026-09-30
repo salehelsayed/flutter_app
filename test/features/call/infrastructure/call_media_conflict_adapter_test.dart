@@ -30,7 +30,7 @@ void main() {
     await lease.release();
     await lease.release();
 
-    expect(checks, 1);
+    expect(checks, 2, reason: 'preflight and atomic acquisition both check');
   });
 
   test(
@@ -58,51 +58,46 @@ void main() {
     },
   );
 
-  test(
-    'voice-note arming excludes call capture until permission denial exits',
-    () async {
-      final recorder = _RecorderSpy();
-      addTearDown(recorder.dispose);
-      final controller = ConversationVoiceCaptureController();
-      addTearDown(controller.dispose);
-      final permission = Completer<MicPermissionStatus>();
-      final conflicts = CallMediaConflictAdapter(
-        microphoneCaptureLeases: microphoneCaptureLeasesFor(recorder),
-      );
+  test('answer aborts voice-note arming while permission is pending', () async {
+    final recorder = _RecorderSpy();
+    addTearDown(recorder.dispose);
+    final controller = ConversationVoiceCaptureController(
+      onCallInterruptionOutcome: (_) {},
+    );
+    addTearDown(controller.dispose);
+    final permission = Completer<MicPermissionStatus>();
+    final conflicts = CallMediaConflictAdapter(
+      microphoneCaptureLeases: microphoneCaptureLeasesFor(recorder),
+    );
 
-      final arming = controller.start(
-        recorder: recorder,
-        requestPermission: () => permission.future,
-      );
-      expect(controller.state.phase, ConversationVoiceCapturePhase.arming);
+    final arming = controller.start(
+      recorder: recorder,
+      requestPermission: () => permission.future,
+    );
+    expect(controller.state.phase, ConversationVoiceCapturePhase.arming);
 
-      await expectLater(
-        conflicts.acquireForCall(),
-        throwsA(isA<CallMediaConflictRefused>()),
-      );
+    final answering = conflicts.acquireForCall();
 
-      permission.complete(MicPermissionStatus.denied);
-      final denied = await arming;
-      expect(
-        denied.status,
-        ConversationVoiceCaptureStartStatus.permissionDenied,
-      );
+    permission.complete(MicPermissionStatus.denied);
+    final denied = await arming;
+    expect(denied.status, ConversationVoiceCaptureStartStatus.aborted);
 
-      final callLease = await conflicts.acquireForCall();
-      await callLease.release();
-      await callLease.release();
-      expect(recorder.startCalls, 0);
-      expect(recorder.stopCalls, 0);
-      expect(recorder.cancelCalls, 0);
-    },
-  );
+    final callLease = await answering;
+    await callLease.release();
+    await callLease.release();
+    expect(recorder.startCalls, 0);
+    expect(recorder.stopCalls, 0);
+    expect(recorder.cancelCalls, 0);
+  });
 
   test(
     'voice-note permission failure releases shared microphone lease',
     () async {
       final recorder = _RecorderSpy();
       addTearDown(recorder.dispose);
-      final controller = ConversationVoiceCaptureController();
+      final controller = ConversationVoiceCaptureController(
+        onCallInterruptionOutcome: (_) {},
+      );
       addTearDown(controller.dispose);
       final conflicts = CallMediaConflictAdapter(
         microphoneCaptureLeases: microphoneCaptureLeasesFor(recorder),
@@ -172,9 +167,9 @@ void main() {
       recorder.stopGate = stopGate;
       final stopping = controller.stop();
       await _flushUntil(() => recorder.stopCalls == 1);
-      await expectLater(
-        conflicts.acquireForCall(),
-        throwsA(isA<CallMediaConflictRefused>()),
+      expect(
+        () => microphoneCaptureLeasesFor(recorder).acquire(),
+        throwsA(isA<MicrophoneCaptureLeaseRefused>()),
       );
       stopGate.complete();
       await stopping;
@@ -192,9 +187,9 @@ void main() {
       recorder.cancelGate = cancelGate;
       final cancelling = controller.cancel();
       await _flushUntil(() => recorder.cancelCalls == 1);
-      await expectLater(
-        conflicts.acquireForCall(),
-        throwsA(isA<CallMediaConflictRefused>()),
+      expect(
+        () => microphoneCaptureLeasesFor(recorder).acquire(),
+        throwsA(isA<MicrophoneCaptureLeaseRefused>()),
       );
       cancelGate.complete();
       await cancelling;
@@ -254,7 +249,9 @@ void main() {
 
     final disposedRecorder = _RecorderSpy();
     addTearDown(disposedRecorder.dispose);
-    final disposedController = ConversationVoiceCaptureController();
+    final disposedController = ConversationVoiceCaptureController(
+      onCallInterruptionOutcome: (_) {},
+    );
     final disposedConflicts = CallMediaConflictAdapter(
       microphoneCaptureLeases: microphoneCaptureLeasesFor(disposedRecorder),
     );
@@ -265,13 +262,143 @@ void main() {
     final disposeGate = Completer<void>();
     disposedRecorder.cancelGate = disposeGate;
     disposedController.dispose();
-    await expectLater(
-      disposedConflicts.acquireForCall(),
-      throwsA(isA<CallMediaConflictRefused>()),
+    final acquiringAfterDispose = disposedConflicts.acquireForCall();
+    expect(
+      () => microphoneCaptureLeasesFor(disposedRecorder).acquire(),
+      throwsA(isA<MicrophoneCaptureLeaseRefused>()),
     );
     disposeGate.complete();
     await _flushUntil(() => !disposedRecorder.isRecording);
-    await (await disposedConflicts.acquireForCall()).release();
+    await (await acquiringAfterDispose).release();
+  });
+
+  test('answer waits for voice-note stop and retains its outcome', () async {
+    final recorder = _RecorderSpy()
+      ..stopResult = AudioRecording(
+        filePath: '/tmp/interrupted-voice.m4a',
+        durationMs: 4000,
+        sizeBytes: 8000,
+      );
+    addTearDown(recorder.dispose);
+    final outcomes = <ConversationVoiceCaptureOutcome>[];
+    final controller = ConversationVoiceCaptureController(
+      onCallInterruptionOutcome: outcomes.add,
+    );
+    addTearDown(controller.dispose);
+    final conflicts = CallMediaConflictAdapter(
+      microphoneCaptureLeases: microphoneCaptureLeasesFor(recorder),
+    );
+    expect(
+      (await controller.start(
+        recorder: recorder,
+        requestPermission: () async => MicPermissionStatus.granted,
+      )).status,
+      ConversationVoiceCaptureStartStatus.started,
+    );
+
+    final stopGate = Completer<void>();
+    recorder.stopGate = stopGate;
+    final answering = conflicts.acquireForCall();
+    await _flushUntil(() => recorder.stopCalls == 1);
+    expect(outcomes, isEmpty);
+    expect(
+      () => microphoneCaptureLeasesFor(recorder).acquire(),
+      throwsA(isA<MicrophoneCaptureLeaseRefused>()),
+    );
+    stopGate.complete();
+    final callLease = await answering;
+
+    expect(recorder.stopCalls, 1);
+    expect(recorder.cancelCalls, 0);
+    expect(outcomes, hasLength(1));
+    expect(outcomes.single.recording, same(recorder.stopResult));
+    expect(controller.state, ConversationVoiceCaptureViewState.idle);
+    await callLease.release();
+  });
+
+  test(
+    'answer aborts an in-flight recorder start before call capture',
+    () async {
+      final recorder = _RecorderSpy();
+      addTearDown(recorder.dispose);
+      final outcomes = <ConversationVoiceCaptureOutcome>[];
+      final controller = ConversationVoiceCaptureController(
+        onCallInterruptionOutcome: outcomes.add,
+      );
+      addTearDown(controller.dispose);
+      final conflicts = CallMediaConflictAdapter(
+        microphoneCaptureLeases: microphoneCaptureLeasesFor(recorder),
+      );
+      final startGate = Completer<void>();
+      recorder.startGate = startGate;
+      final starting = controller.start(
+        recorder: recorder,
+        requestPermission: () async => MicPermissionStatus.granted,
+      );
+      await _flushUntil(() => recorder.startCalls == 1);
+
+      final answering = conflicts.acquireForCall();
+      await Future<void>.delayed(Duration.zero);
+      expect(recorder.cancelCalls, 0);
+      startGate.complete();
+      expect(
+        (await starting).status,
+        ConversationVoiceCaptureStartStatus.aborted,
+      );
+      final callLease = await answering;
+
+      expect(recorder.cancelCalls, 1);
+      expect(recorder.stopCalls, 0);
+      expect(outcomes, isEmpty);
+      await callLease.release();
+    },
+  );
+
+  test('recorder stop failure refuses call capture', () async {
+    final recorder = _RecorderSpy()
+      ..stopError = StateError('native stop failed');
+    addTearDown(recorder.dispose);
+    final outcomes = <ConversationVoiceCaptureOutcome>[];
+    final controller = ConversationVoiceCaptureController(
+      onCallInterruptionOutcome: outcomes.add,
+    );
+    addTearDown(controller.dispose);
+    await controller.start(
+      recorder: recorder,
+      requestPermission: () async => MicPermissionStatus.granted,
+    );
+    final conflicts = CallMediaConflictAdapter(
+      microphoneCaptureLeases: microphoneCaptureLeasesFor(recorder),
+    );
+
+    await expectLater(
+      conflicts.acquireForCall(),
+      throwsA(isA<CallMediaConflictRefused>()),
+    );
+    expect(recorder.stopCalls, 1);
+    expect(outcomes.single.error, isA<StateError>());
+  });
+
+  test('unconfigured capture owner is not interrupted or discarded', () async {
+    final recorder = _RecorderSpy();
+    addTearDown(recorder.dispose);
+    final controller = ConversationVoiceCaptureController();
+    addTearDown(controller.dispose);
+    await controller.start(
+      recorder: recorder,
+      requestPermission: () async => MicPermissionStatus.granted,
+    );
+    final conflicts = CallMediaConflictAdapter(
+      microphoneCaptureLeases: microphoneCaptureLeasesFor(recorder),
+    );
+
+    await expectLater(
+      conflicts.acquireForCall(),
+      throwsA(isA<CallMediaConflictRefused>()),
+    );
+    expect(recorder.isRecording, isTrue);
+    expect(recorder.stopCalls, 0);
+    await controller.cancel();
   });
 }
 
@@ -293,8 +420,11 @@ final class _RecorderSpy implements AudioRecorderService {
   int cancelCalls = 0;
   bool _recording = false;
   Object? startError;
+  Object? stopError;
+  Completer<void>? startGate;
   Completer<void>? stopGate;
   Completer<void>? cancelGate;
+  AudioRecording? stopResult;
 
   @override
   void Function(AudioRecording? recording)? onAutoStopped;
@@ -313,6 +443,8 @@ final class _RecorderSpy implements AudioRecorderService {
     startCalls++;
     final error = startError;
     if (error != null) throw error;
+    final gate = startGate;
+    if (gate != null) await gate.future;
     _recording = true;
   }
 
@@ -321,8 +453,10 @@ final class _RecorderSpy implements AudioRecorderService {
     stopCalls++;
     final gate = stopGate;
     if (gate != null) await gate.future;
+    final error = stopError;
+    if (error != null) throw error;
     _recording = false;
-    return null;
+    return stopResult;
   }
 
   @override

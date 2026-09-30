@@ -18,11 +18,14 @@ class BonsoirServiceDiscovery: BonsoirAction {
     /// Contains all found services.
     private var services: [BonsoirService] = []
     
-    /// Contains all services we're currently resolving.
-    private var pendingResolution: [DNSServiceRef] = []
-
-    /// Contains all dispatch sources.
-    private var pendingDispatchSources: [DispatchSourceRead] = []
+    /// Each read source owns its DNS-SD handle until its cancel handler runs.
+    private struct PendingResolution {
+        let sdRef: DNSServiceRef
+        let source: DispatchSourceRead
+    }
+    private var pendingResolution: [PendingResolution] = []
+    private let resolutionQueue = DispatchQueue(label: "fr.skyost.bonsoir.discovery.resolve", qos: .userInitiated)
+    private var isDisposed = false
 
     /// Initializes this class.
     public init(id: Int, printLogs: Bool, onDispose: @escaping () -> Void, messenger: FlutterBinaryMessenger, type: String) {
@@ -117,69 +120,62 @@ class BonsoirServiceDiscovery: BonsoirAction {
     
     /// Resolves a service.
     public func resolveService(name: String, type: String) -> Bool {
+        guard !isDisposed else { return false }
         guard let service = findService(name, type) else {
             onError(message: Generated.discoveryUndiscoveredServiceResolveFailed, parameters: [name, type])
             return false
         }
         var sdRef: DNSServiceRef? = nil
         let error = DNSServiceResolve(&sdRef, 0, 0, name, type, "local.", BonsoirServiceDiscovery.resolveCallback, Unmanaged.passUnretained(self).toOpaque())
-        if error != kDNSServiceErr_NoError {
+        guard error == kDNSServiceErr_NoError, let sdRef = sdRef else {
             onSuccess(eventId: Generated.discoveryServiceResolveFailed, service: service, parameters: [error])
-            stopResolution(sdRef: sdRef, remove: false)
+            if let sdRef = sdRef { DNSServiceRefDeallocate(sdRef) }
             return false
         }
 
-        pendingResolution.append(sdRef!)
-
-        let socket = DNSServiceRefSockFD(sdRef);
+        let socket = DNSServiceRefSockFD(sdRef)
         if socket == -1 {
             onSuccess(eventId: Generated.discoveryServiceResolveFailed, service: service, parameters: [])
-            stopResolution(sdRef: sdRef, remove: false)
+            DNSServiceRefDeallocate(sdRef)
             return false
         }
 
-        let dispatchSource = DispatchSource.makeReadSource(fileDescriptor: socket, queue: DispatchQueue.global(qos: .userInitiated));
-        dispatchSource.setEventHandler(handler: {
-            DNSServiceProcessResult(sdRef)
-            
-            DispatchQueue.main.async {
-                let foundIndex = self.pendingDispatchSources.firstIndex(where: {
-                    return $0.isEqual(dispatchSource);
-                })
-                
-                if foundIndex != nil {
-                    self.pendingDispatchSources.remove(at: foundIndex!)
+        let source = DispatchSource.makeReadSource(fileDescriptor: socket, queue: resolutionQueue)
+        source.setEventHandler { [weak self] in
+            // Keep the callback context alive while DNSServiceProcessResult runs.
+            guard let self = self else { return }
+            let result = DNSServiceProcessResult(sdRef)
+            if result != kDNSServiceErr_NoError {
+                DispatchQueue.main.async { [weak self] in
+                    self?.failResolution(sdRef: sdRef, name: name, type: type, error: result)
                 }
             }
-        });
-
-        dispatchSource.setCancelHandler(handler: {
-            DispatchQueue.main.async {
-                let foundIndex = self.pendingDispatchSources.firstIndex(where: {
-                    return $0.isEqual(dispatchSource);
-                })
-                
-                if foundIndex != nil {
-                    self.pendingDispatchSources.remove(at: foundIndex!)
-                }
-                
-                self.onSuccess(eventId: Generated.discoveryServiceResolveFailed, service: service, parameters: [])
-                self.stopResolution(sdRef: sdRef, remove: false)
-            }
-        });
-
-        dispatchSource.activate()
-        
-        pendingDispatchSources.append(dispatchSource)
+        }
+        source.setCancelHandler {
+            // This runs on resolutionQueue after any active read handler returns.
+            // No other path may free a handle once its source is activated.
+            DNSServiceRefDeallocate(sdRef)
+        }
+        pendingResolution.append(PendingResolution(sdRef: sdRef, source: source))
+        source.activate()
         return true
     }
     
     /// Stops the resolution of the given service.
-    private func stopResolution(sdRef: DNSServiceRef?, remove: Bool = true) {
-        if remove, let index = pendingResolution.firstIndex(where: { $0 == sdRef }) {
-            pendingResolution.remove(at: index)
+    private func stopResolution(sdRef: DNSServiceRef) {
+        guard let index = pendingResolution.firstIndex(where: { $0.sdRef == sdRef }) else { return }
+        let resolution = pendingResolution.remove(at: index)
+        resolution.source.cancel()
+    }
+
+    private func failResolution(sdRef: DNSServiceRef, name: String, type: String, error: DNSServiceErrorType) {
+        guard pendingResolution.contains(where: { $0.sdRef == sdRef }) else { return }
+        if let service = findService(name, type) {
+            onSuccess(eventId: Generated.discoveryServiceResolveFailed, service: service, parameters: [error])
+        } else {
+            onError(message: Generated.discoveryServiceResolveFailed, parameters: ["nil", error])
         }
-        DNSServiceRefDeallocate(sdRef)
+        stopResolution(sdRef: sdRef)
     }
     
     /// Starts the discovery.
@@ -188,9 +184,9 @@ class BonsoirServiceDiscovery: BonsoirAction {
     }
     
     override public func dispose() {
-        for sdRef in pendingResolution {
-            stopResolution(sdRef: sdRef, remove: false)
-        }
+        guard !isDisposed else { return }
+        isDisposed = true
+        for resolution in pendingResolution { resolution.source.cancel() }
         pendingResolution.removeAll()
         services.removeAll()
         if [.setup, .ready].contains(browser.state) {
@@ -201,34 +197,26 @@ class BonsoirServiceDiscovery: BonsoirAction {
     
     /// Callback triggered by`DNSServiceResolve`.
     private static let resolveCallback: DNSServiceResolveReply = { sdRef, _, _, errorCode, fullName, hosttarget, port, _, _, context in
-        let discovery = Unmanaged<BonsoirServiceDiscovery>.fromOpaque(context!).takeUnretainedValue()
-        var service: BonsoirService?
-        if fullName != nil, let serviceData = parseBonjourFqdn(unescapeAscii(String(cString: fullName!))) {
-            service = discovery.findService(serviceData.0, serviceData.1)
-        }
-        if service != nil && errorCode == kDNSServiceErr_NoError {
-            if hosttarget != nil {
-                service!.host = String(cString: hosttarget!)
-            }
-            service!.port = Int(CFSwapInt16BigToHost(port))
-
-            DispatchQueue.main.async {
-                discovery.onSuccess(eventId: Generated.discoveryServiceResolved, service: service)
-            }
-        } else {
-            if service == nil {
-                DispatchQueue.main.async {
-                    discovery.onError(message: Generated.discoveryServiceResolveFailed, parameters: ["nil", errorCode])
-                }
-            } else {
-                DispatchQueue.main.async {
-                    discovery.onSuccess(eventId: Generated.discoveryServiceResolveFailed, service: service, parameters: [errorCode])
-                }
-            }
-        }
-        
+        guard let sdRef = sdRef, let context = context else { return }
+        let discovery = Unmanaged<BonsoirServiceDiscovery>.fromOpaque(context).takeUnretainedValue()
+        // DNS-SD owns these C strings only for the duration of this callback.
+        let resolvedName = fullName.map { String(cString: $0) }
+        let resolvedHost = hosttarget.map { String(cString: $0) }
         DispatchQueue.main.async {
-            discovery.stopResolution(sdRef: sdRef, remove: sdRef != nil)
+            guard discovery.pendingResolution.contains(where: { $0.sdRef == sdRef }) else { return }
+            let service = resolvedName
+                .flatMap { parseBonjourFqdn(unescapeAscii($0)) }
+                .flatMap { discovery.findService($0.0, $0.1) }
+            if let service = service, errorCode == kDNSServiceErr_NoError {
+                service.host = resolvedHost
+                service.port = Int(CFSwapInt16BigToHost(port))
+                discovery.onSuccess(eventId: Generated.discoveryServiceResolved, service: service)
+            } else if let service = service {
+                discovery.onSuccess(eventId: Generated.discoveryServiceResolveFailed, service: service, parameters: [errorCode])
+            } else {
+                discovery.onError(message: Generated.discoveryServiceResolveFailed, parameters: ["nil", errorCode])
+            }
+            discovery.stopResolution(sdRef: sdRef)
         }
     }
     

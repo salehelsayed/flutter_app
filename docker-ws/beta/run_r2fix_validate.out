@@ -1,0 +1,15 @@
+FLOW v0_old_dissolve android PASS rc=0
+FLOW v1_create android PASS rc=0
+FLOW v1_create ios PASS rc=0
+FLOW v1_dissolve ios PASS rc=0
+FLOW v1_member_sees android PASS rc=0
+FLOW v2_create ios PASS rc=0
+FLOW v2_create android PASS rc=0
+FLOW v2_ginfo ios PASS rc=0
+FLOW v2_remove ios PASS rc=0
+FLOW v2_member_sees android PASS rc=0
+FLOW v3_create ios FAIL rc=1
+FLOW v3_create android FAIL rc=1
+FLOW v3_dissolve android PASS rc=0
+FLOW v3_member_sees ios PASS rc=0
+/Volumes/CrucialX9/flutter_app/docker-ws/beta/run_r2fix_validate.sh: line 101: 40745 Terminated: 15          nohup perl -e 'use POSIX qw(setsid); setsid(); exec @ARGV' "$ANDROID_HOME/platform-tools/adb" -s "$SERIAL" logcat -T 1 -v threadtime > "$RUN/android_logcat_live.txt" 2>&1 < /dev/null

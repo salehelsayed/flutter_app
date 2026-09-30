@@ -1,0 +1,12 @@
+appId: com.mknoon.app
+name: T23 iPhone dissolves Beta Group n4
+---
+- runFlow: { file: open_group.yaml, env: { GROUP: "Beta Group n4", GTIMEOUT: 30000 } }
+- runFlow: group_info.yaml
+- scrollUntilVisible: { element: "Dissolve Group", direction: DOWN, timeout: 10000 }
+- tapOn: "Dissolve Group"
+- runFlow: { file: ../sleep.yaml, env: { MS: 1500 } }
+- takeScreenshot: t23_dissolve_dialog
+- tapOn: "Dissolve"
+- runFlow: { file: ../sleep.yaml, env: { MS: 6000 } }
+- takeScreenshot: t23_dissolved_ios

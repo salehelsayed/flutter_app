@@ -36,6 +36,7 @@ import 'package:flutter_app/core/media/direct_upload_retry_signal.dart';
 import 'package:flutter_app/core/media/outgoing_direct_private_mutation_coordinator.dart';
 import 'package:flutter_app/core/media/pending_composer_media.dart';
 import 'package:flutter_app/core/media/picture_in_picture_gateway.dart';
+import 'package:flutter_app/core/widgets/video_processing_notice.dart';
 import 'package:flutter_app/core/media/upload_retry_projection.dart';
 import 'package:flutter_app/core/permissions/mic_permission_gateway.dart';
 import 'package:flutter_app/core/permissions/mic_permission_prompt.dart';
@@ -1423,6 +1424,7 @@ class _ConversationWiredState extends State<ConversationWired>
         );
     _voiceCaptureController = ConversationVoiceCaptureController(
       onAutoStopOutcome: _onVoiceCaptureAutoStopOutcome,
+      onCallInterruptionOutcome: _onVoiceCaptureCallInterruptionOutcome,
     );
     _uploadActivityController.addListener(_onControllerInvalidated);
     _reactionProjectionController.addListener(_onControllerInvalidated);
@@ -1809,13 +1811,21 @@ class _ConversationWiredState extends State<ConversationWired>
 
     final compressedCandidates = <PendingComposerMedia>[];
     for (final candidate in candidateAttachments) {
-      compressedCandidates.add(
-        await _preparePendingMedia(
-          candidate.file.path,
-          imageQualityPreference: ImageQualityPreference.compressed,
-          videoQualityPreference: ImageQualityPreference.compressed,
-        ),
-      );
+      try {
+        compressedCandidates.add(
+          await _preparePendingMedia(
+            candidate.file.path,
+            imageQualityPreference: ImageQualityPreference.compressed,
+            videoQualityPreference: ImageQualityPreference.compressed,
+          ),
+        );
+      } on VideoProcessingTimeoutException {
+        _showVideoProcessingTimeout(candidate.file.path);
+        return null;
+      } on VideoProcessingUnavailableException {
+        _showVideoProcessingUnavailable();
+        return null;
+      }
     }
 
     final compressedBudgetBytes = totalPendingComposerBudgetBytes([
@@ -1869,6 +1879,65 @@ class _ConversationWiredState extends State<ConversationWired>
         behavior: SnackBarBehavior.floating,
       ),
     );
+  }
+
+  void _showVideoProcessingTimeout(String path) {
+    if (!mounted) return;
+    if (widget.imageProcessor?.canProcessVideo == false) {
+      _showVideoProcessingUnavailable();
+      return;
+    }
+    final l10n = AppLocalizations.of(context)!;
+    showVideoProcessingNotice(
+      context,
+      message: l10n.media_video_processing_stalled,
+      retryLabel: l10n.btn_retry,
+      onRetry: () => unawaited(_retryVideoAttachment(path)),
+    );
+  }
+
+  void _showVideoProcessingUnavailable() {
+    if (!mounted) return;
+    showVideoProcessingNotice(
+      context,
+      message: AppLocalizations.of(context)!.media_video_processing_unavailable,
+    );
+  }
+
+  void _showVideoProcessingFailed() {
+    if (!mounted) return;
+    showVideoProcessingNotice(
+      context,
+      message: AppLocalizations.of(context)!.media_unavailable,
+    );
+  }
+
+  Future<void> _retryVideoAttachment(String path) async {
+    if (!mounted ||
+        _composerController.pendingAttachments.length >= _maxAttachments) {
+      return;
+    }
+    try {
+      final result = await _preparePendingMedia(path);
+      if (mounted) await _attemptAddPendingMedia([result]);
+    } on VideoProcessingTimeoutException {
+      _showVideoProcessingTimeout(path);
+    } on VideoProcessingUnavailableException {
+      _showVideoProcessingUnavailable();
+    } catch (e) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'CONV_FL_RETRY_VIDEO_ERROR',
+        details: {'error': e.toString()},
+      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(AppLocalizations.of(context)!.media_unavailable),
+          ),
+        );
+      }
+    }
   }
 
   Future<PendingComposerMedia> _preparePendingMedia(
@@ -5665,6 +5734,12 @@ class _ConversationWiredState extends State<ConversationWired>
               ownsProcessingLifecycle: !useBatchProcessing,
             );
             media.add(result);
+          } on VideoProcessingTimeoutException {
+            _showVideoProcessingTimeout(xf.path);
+          } on VideoProcessingUnavailableException {
+            _showVideoProcessingUnavailable();
+          } on VideoProcessingFailedException {
+            _showVideoProcessingFailed();
           } on _RejectedPendingMediaException {
             continue;
           }
@@ -5688,6 +5763,12 @@ class _ConversationWiredState extends State<ConversationWired>
         event: 'CONV_FL_PICK_GALLERY_ERROR',
         details: {'error': e.toString()},
       );
+      if (mounted) {
+        showVideoProcessingNotice(
+          context,
+          message: AppLocalizations.of(context)!.media_unavailable,
+        );
+      }
     }
   }
 
@@ -5713,9 +5794,11 @@ class _ConversationWiredState extends State<ConversationWired>
   }
 
   Future<void> _pickVideoFromCamera() async {
+    String? pickedPath;
     try {
       final picked = await _mediaPicker.pickVideo(source: ImageSource.camera);
       if (picked == null || !mounted) return;
+      pickedPath = picked.path;
       if (_composerController.pendingAttachments.length >= _maxAttachments) {
         return;
       }
@@ -5724,6 +5807,12 @@ class _ConversationWiredState extends State<ConversationWired>
       if (!mounted) return;
 
       await _attemptAddPendingMedia([result]);
+    } on VideoProcessingTimeoutException {
+      if (pickedPath != null) _showVideoProcessingTimeout(pickedPath);
+    } on VideoProcessingUnavailableException {
+      _showVideoProcessingUnavailable();
+    } on VideoProcessingFailedException {
+      _showVideoProcessingFailed();
     } catch (e) {
       emitFlowEvent(
         layer: 'FL',
@@ -6343,6 +6432,34 @@ class _ConversationWiredState extends State<ConversationWired>
         'kept': true,
         'durationMs': recording.durationMs,
       },
+    );
+  }
+
+  void _onVoiceCaptureCallInterruptionOutcome(
+    ConversationVoiceCaptureOutcome outcome,
+  ) {
+    if (!mounted || !_voiceCaptureController.isCurrentOutcome(outcome)) return;
+    if (outcome.error != null) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'CONV_FL_RECORD_CALL_INTERRUPTION_ERROR',
+        details: {'error': outcome.error.toString()},
+      );
+      return;
+    }
+    final recording = outcome.recording;
+    if (recording == null) return;
+    _pendingReviewRecording = recording;
+    _pendingReviewWaveform = outcome.waveform;
+    _updateComposerState(
+      recordingState: VoiceRecordingState.reviewing,
+      recordingDuration: Duration(milliseconds: recording.durationMs),
+      amplitudeValues: const [],
+    );
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'CONV_FL_RECORD_CALL_INTERRUPTED',
+      details: {'durationMs': recording.durationMs},
     );
   }
 
@@ -8652,33 +8769,38 @@ class _DeleteSheetAction extends StatelessWidget {
     final chipBorder = isLight
         ? readable.surfaceBorder
         : const Color.fromRGBO(255, 255, 255, 0.08);
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(18),
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(18),
-            color: chipFill,
-            border: Border.all(color: chipBorder),
-          ),
-          child: Row(
-            children: [
-              Icon(icon, size: 18, color: color),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Text(
-                  label,
-                  style: TextStyle(
-                    fontSize: 15,
-                    fontWeight: FontWeight.w600,
-                    color: color,
+    return Semantics(
+      identifier: key is ValueKey<String>
+          ? (key as ValueKey<String>).value
+          : null,
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(18),
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(18),
+              color: chipFill,
+              border: Border.all(color: chipBorder),
+            ),
+            child: Row(
+              children: [
+                Icon(icon, size: 18, color: color),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Text(
+                    label,
+                    style: TextStyle(
+                      fontSize: 15,
+                      fontWeight: FontWeight.w600,
+                      color: color,
+                    ),
                   ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
         ),
       ),

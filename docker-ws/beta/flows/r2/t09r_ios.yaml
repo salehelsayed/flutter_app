@@ -1,0 +1,13 @@
+appId: com.mknoon.app
+name: T09 rerun - iPhone sends Arabic, emoji, a URL and a 1200-character text; waits for the Pixel's 270-character text
+---
+- runFlow: ../ensure_chat.yaml
+- runFlow: { file: ../send_text.yaml, env: { MSG: "T09 arabic مرحبا بالعالم ${NONCE}" } }
+- runFlow: { file: ../send_text.yaml, env: { MSG: "T09 emoji 😀🎉👍🏽❤️ ${NONCE}" } }
+- runFlow: { file: send.yaml, env: { MSG: "T09 url https://example.com/r2?q=${NONCE}&x=1 ${NONCE}" } }
+- extendedWaitUntil: { visible: ".*T09 url https://example.com/r2.q=${NONCE}.x=1 ${NONCE}.*", timeout: 15000 }
+- runFlow: { file: send.yaml, env: { MSG: "T09 long ${NONCE} Lorem ipsum dolor sit amet consectetur adipiscing elit sed do eiusmod tempor incididunt ut labore et dolore magna aliqua Lorem ipsum dolor sit amet consectetur adipiscing elit sed do eiusmod tempor incididunt ut labore et dolore magna aliqua Lorem ipsum dolor sit amet consectetur adipiscing elit sed do eiusmod tempor incididunt ut labore et dolore magna aliqua Lorem ipsum dolor sit amet consectetur adipiscing elit sed do eiusmod tempor incididunt ut labore et dolore magna aliqua Lorem ipsum dolor sit amet consectetur adipiscing elit sed do eiusmod tempor incididunt ut labore et dolore magna aliqua Lorem ipsum dolor sit amet consectetur adipiscing elit sed do eiusmod tempor incididunt ut labore et dolore magna aliqua Lorem ipsum dolor sit amet consectetur adipiscing elit sed do eiusmod tempor incididunt ut labore et dolore magna aliqua Lorem ipsum dolor sit amet consectetur adipiscing elit sed do eiusmod tempor incididunt ut labore et dolore magna aliqua Lorem ipsum dolor sit amet consectetur adipiscing elit sed do eiusmod tempor incididunt ut labore et dolore magna aliqua Lorem ipsum dolor sit amet consectetur adipiscing elit sed do eiusmod tempor incididunt ut labore et dolore magna aliqua END" } }
+- extendedWaitUntil: { visible: ".*T09 long ${NONCE}.*", timeout: 30000 }
+- runFlow: ../kb_hide.yaml
+- extendedWaitUntil: { visible: ".*T09 mid ${NONCE}.*", timeout: 300000 }
+- takeScreenshot: t09r_ios

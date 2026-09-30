@@ -21,7 +21,7 @@ typedef ResolveHeadlessCallEndpoint =
 /// (Android app killed, call presented and declined headlessly). Device
 /// 2026-09-05 17:44Z: nothing reached the caller, whose ringback played until
 /// its own cancel. From the authenticated invite this builds the callee's one
-/// `reject` (reason `declined`, first sender sequence, the invite's ICE
+/// `reject` (reason `declined`, second sender sequence, the invite's ICE
 /// generation, the standard 40 s lifetime) and writes it through the same
 /// direct-plus-mailbox transport the foreground uses, under the invite's
 /// mailbox handle.
@@ -93,7 +93,9 @@ final class HeadlessCallDeclineReplyTransmitter {
         senderDevicePeerId: _localDevicePeerId,
         recipientAccountPeerId: invite.senderAccountPeerId,
         recipientDevicePeerId: invite.senderDevicePeerId,
-        senderSequence: 1,
+        // The separate headless ringing run reserves sequence 1 at the caller.
+        // Sequence 2 also works when that run could not send a ringing reply.
+        senderSequence: 2,
         iceGeneration: invite.iceGeneration,
         createdAtMs: now,
         expiresAtMs: now + signalLifetime.inMilliseconds,

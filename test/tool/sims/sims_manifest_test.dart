@@ -14,6 +14,60 @@ void main() {
   });
 
   test(
+    'explicit partitions retain dependencies and cannot claim release green',
+    () {
+      const excluded = <String>[
+        'android.direct_media_blob_custody',
+        'build.android.e2e.direct_media_custody',
+      ];
+      final planner = SimsPlanner(manifest);
+      final partition = planner.compile(excludedIds: excluded);
+      final fixture = planner.compile(onlyId: excluded.first);
+      expect(partition.selectedIds.intersection(fixture.selectedIds), isEmpty);
+      expect(
+        partition.selectedIds.union(fixture.selectedIds),
+        planner.compile().selectedIds,
+      );
+      expect(partition.releaseEligibleCandidate, isFalse);
+      final restored = SimsPlan.fromJson(partition.toJson());
+      expect(restored.excludedIds, excluded);
+      expect(restored.selectedIds, partition.selectedIds);
+      expect(
+        planner.compile(excludedIds: excluded, simultaneous: true).selectedIds,
+        partition.selectedIds,
+      );
+      expect(
+        () => planner.compile(excludedIds: [excluded.last]),
+        throwsStateError,
+      );
+      expect(
+        () => planner.compile(excludedIds: ['unknown.capability']),
+        throwsStateError,
+      );
+      expect(
+        () => planner.compile(onlyId: excluded.first, excludedIds: excluded),
+        throwsStateError,
+      );
+    },
+  );
+
+  test('exclusion CLI cannot resume an unfiltered checkpoint', () {
+    final options = SimsCliOptions.parse([
+      '--exclude',
+      'android.direct_media_blob_custody',
+      '--exclude=build.android.e2e.direct_media_custody',
+    ]);
+    expect(options.excludedIds, [
+      'android.direct_media_blob_custody',
+      'build.android.e2e.direct_media_custody',
+    ]);
+    expect(
+      () => SimsCliOptions.parse(['--resume', '--exclude', 'host.dart.all']),
+      throwsFormatException,
+    );
+  });
+
+  test(
     'no-argument mode is major and smoke/full cannot claim release green',
     () {
       expect(SimsCliOptions.parse(const <String>[]).mode, SimsMode.major);
@@ -763,11 +817,28 @@ void main() {
     final row = manifest.capabilityById('groups.media_send_reliability_ios')!;
     expect(row.command.last, 'group_media_ios_receiver_background_recovery');
     expect(row.buildProfileId, 'ios.device.group_media_269');
-    expect(row.dependencies, ['build.ios.device.group_media_269', 'build.android.e2e.group_media_269']);
-    expect(row.artifactValidator, 'validateGroupMediaIosBackgroundRecoveryArtifact');
-    expect(row.targetCapabilities, containsAll(['ios.physical', 'android.physical']));
-    for (final profile in ['ios.device.group_media_269','android.e2e.group_media_269']) {
-      expect(row.resources.any((r) => r.name == 'build:$profile' && r.access == ResourceAccess.read), isTrue);
+    expect(row.dependencies, [
+      'build.ios.device.group_media_269',
+      'build.android.e2e.group_media_269',
+    ]);
+    expect(
+      row.artifactValidator,
+      'validateGroupMediaIosBackgroundRecoveryArtifact',
+    );
+    expect(
+      row.targetCapabilities,
+      containsAll(['ios.physical', 'android.physical']),
+    );
+    for (final profile in [
+      'ios.device.group_media_269',
+      'android.e2e.group_media_269',
+    ]) {
+      expect(
+        row.resources.any(
+          (r) => r.name == 'build:$profile' && r.access == ResourceAccess.read,
+        ),
+        isTrue,
+      );
     }
     expect(row.declaredBuildException, isFalse);
   });

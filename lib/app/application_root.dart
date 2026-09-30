@@ -1,3 +1,4 @@
+import 'package:flutter_app/debug/production_journeys/foreground_group_push_control.dart';
 import 'dart:async';
 import 'package:flutter_app/app/bootstrap/call_signaling_composition.dart';
 import 'package:flutter_app/features/call/application/foreground_call_capability.dart';
@@ -508,6 +509,8 @@ class MyApp extends StatefulWidget {
   final Widget Function(Widget)? debugE2EOverlayBuilder;
   final Future<StartNodeResult> Function()? debugE2EStartP2PNodeOverride;
   final Future<void> Function()? debugE2EAfterRuntimeReady;
+  final ForegroundGroupPushControl? debugForegroundGroupPush;
+  final void Function()? debugProductionJourneyRuntimeReady;
   final bool isDesktop;
   final ReactionRepositoryImpl reactionRepository;
   final NotificationService notificationService;
@@ -680,6 +683,8 @@ class MyApp extends StatefulWidget {
     this.debugE2EOverlayBuilder,
     this.debugE2EStartP2PNodeOverride,
     this.debugE2EAfterRuntimeReady,
+    this.debugForegroundGroupPush,
+    this.debugProductionJourneyRuntimeReady,
     required this.reactionRepository,
     required this.isDesktop,
     required this.notificationService,
@@ -1022,6 +1027,14 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
     // latch inside _setupPushListeners keeps this idempotent against the (no-op)
     // initState call above.
     unawaited(_ensureRuntimeServicesReady().then((_) => _setupPushListeners()));
+    widget.debugForegroundGroupPush?.bind(_handleForegroundRemotePush);
+    if (widget.debugProductionJourneyRuntimeReady != null) {
+      unawaited(
+        _ensureRuntimeServicesReady().then((_) {
+          if (mounted) widget.debugProductionJourneyRuntimeReady?.call();
+        }),
+      );
+    }
     final debugE2EAfterRuntimeReady = widget.debugE2EAfterRuntimeReady;
     if (debugE2EAfterRuntimeReady != null) {
       unawaited(
@@ -2875,6 +2888,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
       }
 
       Future<bool> drainGroupInboxCompletely(String groupId) async {
+        widget.debugForegroundGroupPush?.beforeGroupDrain(groupId);
         if (!await _allowsAccountRuntimeNetworkSideEffects(
           'push_foreground_group_drain',
         )) {
@@ -2952,7 +2966,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
           )) {
         return;
       }
-      await showForegroundPushFallbackNotificationIfNeeded(
+      final shown = await showForegroundPushFallbackNotificationIfNeeded(
         result: result,
         notificationService: widget.notificationService,
         message: message,
@@ -2980,6 +2994,10 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
             _isForegroundGroupNotificationReadAcknowledged,
         groupConversationNotificationProjectionResolver:
             _loadForegroundGroupConversationNotificationProjection,
+      );
+      widget.debugForegroundGroupPush?.observePushResult(
+        result: result.name,
+        fallbackShown: shown,
       );
     } catch (e) {
       emitFlowEvent(
@@ -3431,6 +3449,8 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
           isLinkedGroupAuthoritySettled: widget.isLinkedGroupAuthoritySettled,
           groupMessageRepository: widget.groupMessageRepository,
           groupExitDiagnosticRepository: widget.groupExitDiagnosticRepository,
+          groupInviteDeliveryAttemptRepository:
+              widget.groupInviteDeliveryAttemptRepository,
           groupPendingKeyRepairRepository:
               widget.groupPendingKeyRepairRepository,
           groupHistoryGapRepairRepository:

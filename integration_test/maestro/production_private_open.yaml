@@ -1,0 +1,7 @@
+appId: ${APP_ID}
+name: production_private_open
+---
+- tapOn:
+    id: conversation.private.${MESSAGE_ID}
+- assertVisible:
+    id: conversation.private.viewer

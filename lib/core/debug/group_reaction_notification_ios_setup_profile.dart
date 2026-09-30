@@ -105,6 +105,37 @@ String? resolveGroupReactionNotificationIosSetupReadinessAttempt({
   return attempt;
 }
 
+/// Reads only the setup launch inputs through the existing native entry bridge.
+/// iOS does not expose process environment variables through dart:io.
+Future<Map<String, String>>
+readGroupReactionNotificationIosSetupLaunchEnvironment({
+  required bool isIos,
+  required bool e2eTestMode,
+  required String installedProfileId,
+  required Future<Object?> Function() readNative,
+}) async {
+  if (!isIos ||
+      !allowsGroupReactionNotificationIosSetupActions(
+        e2eTestMode: e2eTestMode,
+        installedProfileId: installedProfileId,
+      )) {
+    return const <String, String>{};
+  }
+  final raw = await readNative();
+  const keys = <String>{
+    groupReactionNotificationIosAutoSetupUsernameEnvironmentKey,
+    groupReactionNotificationIosSetupReadinessAttemptEnvironmentKey,
+    groupReactionNotificationIosSetupEntryProfileEnvironmentKey,
+  };
+  if (raw is! Map ||
+      raw.entries.any(
+        (entry) => !keys.contains(entry.key) || entry.value is! String,
+      )) {
+    throw StateError('Plan 398 native launch inputs rejected');
+  }
+  return Map<String, String>.unmodifiable(Map<String, String>.from(raw));
+}
+
 Future<bool> acknowledgeGroupReactionNotificationIosDartMainEntry({
   required bool isIos,
   required bool e2eTestMode,

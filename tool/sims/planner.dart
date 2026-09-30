@@ -10,6 +10,7 @@ class SimsPlan {
     required this.onlyId,
     required this.rows,
     this.lane,
+    this.excludedIds = const <String>[],
   });
 
   factory SimsPlan.fromJson(Map<String, Object?> json) => SimsPlan(
@@ -20,6 +21,8 @@ class SimsPlan {
     family: json['family'] as String?,
     onlyId: json['onlyId'] as String?,
     lane: json['lane'] as String?,
+    excludedIds: (json['excludedIds'] as List<dynamic>? ?? const [])
+        .cast<String>(),
     rows: (json['rows']! as List<dynamic>)
         .map(
           (row) => CapabilitySpec.fromJson(
@@ -38,6 +41,7 @@ class SimsPlan {
   final String? family;
   final String? onlyId;
   final String? lane;
+  final List<String> excludedIds;
   final List<CapabilitySpec> rows;
 
   Set<String> get selectedIds => rows.map((row) => row.id).toSet();
@@ -51,6 +55,7 @@ class SimsPlan {
     if (family != null) 'family': family,
     if (onlyId != null) 'onlyId': onlyId,
     if (lane != null) 'lane': lane,
+    if (excludedIds.isNotEmpty) 'excludedIds': excludedIds,
     'selectedIds': rows.map((row) => row.id).toList(),
     'rows': rows.map((row) => row.toJson()).toList(),
   };
@@ -67,6 +72,7 @@ class SimsPlanner {
     String? lane,
     String? onlyId,
     bool simultaneous = false,
+    List<String> excludedIds = const <String>[],
   }) {
     manifest.validateOrThrow();
     final activeForMode = manifest.capabilities
@@ -75,6 +81,17 @@ class SimsPlanner {
     final byId = <String, CapabilitySpec>{
       for (final capability in activeForMode) capability.id: capability,
     };
+    final exclusions = excludedIds.toSet().toList()..sort();
+    for (final id in exclusions) {
+      if (!byId.containsKey(id)) {
+        throw StateError(
+          'Unknown or inactive excluded capability for $mode: $id',
+        );
+      }
+    }
+    if (onlyId != null && exclusions.contains(onlyId)) {
+      throw StateError('Selected capability is also excluded: $onlyId');
+    }
 
     Iterable<CapabilitySpec> initial = activeForMode;
     if (family != null) {
@@ -93,13 +110,21 @@ class SimsPlanner {
       initial = <CapabilitySpec>[selected];
     }
 
-    final selectedIds = initial.map((capability) => capability.id).toSet();
+    final selectedIds = initial
+        .where((capability) => !exclusions.contains(capability.id))
+        .map((capability) => capability.id)
+        .toSet();
     void includeDependencies(String id) {
       final capability = byId[id];
       if (capability == null) {
         throw StateError('Selected capability depends on inactive row: $id');
       }
       for (final dependency in capability.dependencies) {
+        if (exclusions.contains(dependency)) {
+          throw StateError(
+            'Selected capability $id requires excluded $dependency',
+          );
+        }
         if (selectedIds.add(dependency)) includeDependencies(dependency);
       }
     }
@@ -122,12 +147,14 @@ class SimsPlanner {
           mode == SimsMode.major &&
           family == null &&
           lane == null &&
-          onlyId == null,
+          onlyId == null &&
+          exclusions.isEmpty,
       manifestDigest: manifest.digest,
       family: family,
       onlyId: onlyId,
       rows: ordered,
       lane: lane,
+      excludedIds: List<String>.unmodifiable(exclusions),
     );
   }
 }

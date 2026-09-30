@@ -292,6 +292,11 @@ class GroupRow extends StatelessWidget {
       ),
     );
 
+    final identifiedCard = Semantics(
+      identifier: 'orbit.group.${group.groupId}',
+      child: card,
+    );
+
     // The give-up badge is a dead-end without an action: surface a manual
     // "Retry now" (force-eligible + rejoin) and a "Leave" exit (G2).
     if (!group.hasExitIntent &&
@@ -299,11 +304,11 @@ class GroupRow extends StatelessWidget {
         (onRetryStuckRejoin != null || onLeaveStuckGroup != null)) {
       return Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [card, _buildStuckActions(context)],
+        children: [identifiedCard, _buildStuckActions(context)],
       );
     }
 
-    return card;
+    return identifiedCard;
   }
 
   Widget _buildStuckActions(BuildContext context) {

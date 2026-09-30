@@ -1,0 +1,8 @@
+appId: ${APP_ID}
+name: production_group_invite_decline
+---
+- tapOn: '(?s)^Intros.*$'
+- assertVisible: '(?s)^${GROUP_NAME}\nInvited by .*'
+- tapOn: Decline
+- assertVisible: '(?s)^${GROUP_NAME}\nInvite declined$'
+- assertNotVisible: Decline

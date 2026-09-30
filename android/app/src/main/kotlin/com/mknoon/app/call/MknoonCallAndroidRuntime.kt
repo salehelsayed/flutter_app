@@ -360,6 +360,20 @@ internal class MknoonCallRuntime private constructor(context: Context) {
     fun presentAuthenticated(callHandle: String, expiresAtMs: Long): Boolean =
         presentAuthenticated(callHandle, expiresAtMs, null)
 
+    fun isRingingAuthenticated(callHandle: String, expiresAtMs: Long): Boolean {
+        val callId = runCatching { UUID.fromString(callHandle) }.getOrNull() ?: return false
+        return controller.snapshot()?.let { descriptor ->
+            descriptor.nativeCallId == callId &&
+                descriptor.callHandle == callHandle &&
+                descriptor.expiresAtMs == expiresAtMs &&
+                descriptor.direction == PendingNativeCallDirection.INCOMING &&
+                descriptor.events.any { it.type == PendingNativeCallEventType.PRESENTED } &&
+                descriptor.terminalEvent == null &&
+                !descriptor.answerRequested &&
+                expiresAtMs > System.currentTimeMillis()
+        } == true
+    }
+
     fun presentAuthenticated(callHandle: String, expiresAtMs: Long, display: MknoonIncomingCallDisplay?): Boolean {
         val observedNow = System.currentTimeMillis()
         return presentAuthenticatedCall(
@@ -655,7 +669,10 @@ internal class MknoonCallRuntime private constructor(context: Context) {
     private inner class AndroidMknoonCallForegroundRuntime(
         private val service: Service,
     ) : MknoonCallForegroundRuntime {
-        private val notifications = MknoonCallNotificationFactory(service)
+        private val notifications = MknoonCallNotificationFactory(
+            service,
+            presentation = controller::presentation,
+        )
 
         override fun isActiveLifecycle(nativeCallId: UUID): Boolean =
             controller.activeNativeCallId() == nativeCallId
@@ -803,7 +820,10 @@ private class AndroidMknoonCallPlatform(
     private val callsManager = CallsManager(applicationContext)
     private val notificationManager =
         applicationContext.getSystemService(NotificationManager::class.java)
-    private val notificationFactory = MknoonCallNotificationFactory(applicationContext)
+    private val notificationFactory = MknoonCallNotificationFactory(
+        applicationContext,
+        presentation = { nativeCallId -> controller().presentation(nativeCallId) },
+    )
     private val sessions = ConcurrentHashMap<UUID, CallControlScope>()
     private val endpointJobs = ConcurrentHashMap<UUID, Job>()
     private val availableEndpoints = ConcurrentHashMap<UUID, List<CallEndpointCompat>>()

@@ -16,7 +16,7 @@ publish_to: 'none' # Remove this line if you wish to publish to pub.dev
 # https://developer.apple.com/library/archive/documentation/General/Reference/InfoPlistKeyReference/Articles/CoreFoundationKeys.html
 # In Windows, build-name is used as the major, minor, and patch parts
 # of the product and file versions while build-number is used as the build suffix.
-version: 1.0.1+119
+version: 1.0.1+120
 
 environment:
   sdk: ^3.9.0
@@ -81,6 +81,9 @@ dependencies:
 
   sqflite_common: any
 dependency_overrides:
+  # R2-4: local Android transcoder update and compression-state cleanup.
+  video_compress:
+    path: third_party/video_compress
   # 334: pinned sqflite_sqlcipher 3.4.0 fork with one Android FIFO scheduler
   # and mutable ownership state per Flutter engine. The causal Pixel RED and
   # exact allowlisted diff are recorded in the vendored PATCH.md.

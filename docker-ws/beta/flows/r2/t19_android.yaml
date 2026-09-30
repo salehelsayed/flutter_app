@@ -1,0 +1,16 @@
+appId: com.mknoon.app
+name: T19 Pixel (now admin) renames the group
+---
+- runFlow: { file: open_group.yaml, env: { GROUP: "R2 (Group|Renamed|By Pixel) ${NONCE}", GTIMEOUT: 30000 } }
+- runFlow: group_info.yaml
+- extendedWaitUntil: { visible: ".*You\\nadmin.*", timeout: 240000 }
+- takeScreenshot: t19_pixel_admin
+- tapOn: "Edit Details"
+- tapOn: { below: "Group Name" }
+- eraseText: 40
+- inputText: "R2 By Pixel ${NONCE}"
+- runFlow: ../kb_hide.yaml
+- scrollUntilVisible: { element: "Save", direction: DOWN, timeout: 10000 }
+- tapOn: "Save"
+- extendedWaitUntil: { visible: ".*R2 By Pixel ${NONCE}.*", timeout: 30000 }
+- takeScreenshot: t19_pixel_renamed

@@ -139,6 +139,7 @@ final class ProductionCallSignalingGraph
     required this.localIdentity,
     required this.platform,
     required this.mediaOwner,
+    this.microphoneCaptureLeases,
     this.androidCallLifecycleAdapter,
     this.iosCallLifecycleAdapter,
     this.iosVoipTokenCoordinator,
@@ -183,6 +184,7 @@ final class ProductionCallSignalingGraph
 
   final CallSignalingRuntime runtime;
   final CallCoordinator coordinator;
+  final MicrophoneCaptureLeaseCoordinator? microphoneCaptureLeases;
   final CallSignalingService signalingService;
   final CallEndpointResolver endpointResolver;
   final CallTrustedRosterProvider trustedRosterProvider;
@@ -532,6 +534,18 @@ final class ProductionCallSignalingGraph
         session == null ||
         session.callId != callId ||
         session.isTerminal) {
+      return ForegroundCallActionResult.unavailable;
+    }
+    try {
+      await microphoneCaptureLeases?.prepareForCall();
+    } on MicrophoneCaptureLeaseRefused {
+      return ForegroundCallActionResult.unavailable;
+    } catch (_) {
+      return ForegroundCallActionResult.failed;
+    }
+    if (_shuttingDown ||
+        coordinator.activeSession?.callId != callId ||
+        coordinator.activeSession?.isTerminal != false) {
       return ForegroundCallActionResult.unavailable;
     }
     final answerNatively =
@@ -1460,11 +1474,13 @@ CallSignalingComposition createProductionCallSignalingComposition({
   CallMicrophonePermission? microphonePermission,
   EnsureOutgoingCallWakeAuthority? ensureOutgoingCallWakeAuthority,
   AwaitCallSignalingReadiness? awaitForegroundPresentationReadiness,
+  Duration? callTransportStartupWait,
   IncomingCallPresenter? incomingCallPresenter,
   AndroidCallLifecycleAdapterFactory? androidCallLifecycleAdapterFactory,
   IosCallLifecycleAdapterFactory? iosCallLifecycleAdapterFactory,
   IosVoipTokenCoordinatorFactory? iosVoipTokenCoordinatorFactory,
   AndroidCallTokenCoordinatorFactory? androidCallTokenCoordinatorFactory,
+  AndroidCallTokenReader? androidCallTokenReader,
   ProductionCallSignalingGraphObserver? onGraphBuilt,
   bool Function()? isForeground,
   int Function()? nowMs,
@@ -1488,6 +1504,23 @@ CallSignalingComposition createProductionCallSignalingComposition({
     requestOutgoingMicrophonePermission: resolvedMicrophonePermission.request,
     ensureOutgoingCallWakeAuthority: ensureOutgoingCallWakeAuthority,
     awaitReadiness: () async {
+      if (callTransportStartupWait != null &&
+          !p2pService.currentState.isStarted) {
+        // A native call can be visible while the foreground engine is still
+        // starting its P2P node. Keep this start attempt alive until the node
+        // reports readiness instead of failing and waiting for another wake.
+        final ready = Completer<void>();
+        final subscription = p2pService.stateStream.listen((state) {
+          if (state.isStarted && !ready.isCompleted) ready.complete();
+        });
+        try {
+          if (!p2pService.currentState.isStarted) {
+            await ready.future.timeout(callTransportStartupWait);
+          }
+        } finally {
+          await subscription.cancel();
+        }
+      }
       if (!p2pService.currentState.isStarted) {
         throw StateError('call transport is unavailable');
       }
@@ -1667,9 +1700,18 @@ CallSignalingComposition createProductionCallSignalingComposition({
                       callNetworkEffectsAreAllowed(networkEffectsAllowed),
                 )
           : null;
+      AndroidCallTokenCoordinator defaultAndroidTokenFactory({
+        required CallAuthorityClient authorityClient,
+        required DateTime Function() clock,
+        required CallTokenPublicationAllowed publicationAllowed,
+      }) => _createFirebaseAndroidCallTokenCoordinator(
+        authorityClient: authorityClient,
+        clock: clock,
+        publicationAllowed: publicationAllowed,
+        readToken: androidCallTokenReader,
+      );
       final androidTokenCoordinator = useAndroidNativeLifecycle
-          ? (androidCallTokenCoordinatorFactory ??
-                    _createFirebaseAndroidCallTokenCoordinator)
+          ? (androidCallTokenCoordinatorFactory ?? defaultAndroidTokenFactory)
                 .call(
                   authorityClient: authority,
                   clock: callClock,
@@ -1971,7 +2013,9 @@ CallSignalingComposition createProductionCallSignalingComposition({
         incomingCallPresenter:
             incomingCallPresenter ?? nativeLifecycleAdapter ?? composition,
         provisionalNativeLifecycle: iosLifecycleAdapter,
-        authenticatedDisplayNameResolver: iosLifecycleAdapter == null
+        androidAuthenticatedContactPresenter:
+            androidLifecycleAdapter?.updateAuthenticatedContactName,
+        authenticatedDisplayNameResolver: nativeLifecycleAdapter == null
             ? null
             : (contactAccountPeerId) async {
                 try {
@@ -2043,6 +2087,7 @@ CallSignalingComposition createProductionCallSignalingComposition({
         localIdentity: identity,
         platform: endpointPlatform,
         mediaOwner: mediaOwner,
+        microphoneCaptureLeases: microphoneCaptureLeases,
         androidCallLifecycleAdapter: androidLifecycleAdapter,
         iosCallLifecycleAdapter: iosLifecycleAdapter,
         iosVoipTokenCoordinator: iosTokenCoordinator,
@@ -2193,10 +2238,11 @@ AndroidCallTokenCoordinator _createFirebaseAndroidCallTokenCoordinator({
   required CallAuthorityClient authorityClient,
   required DateTime Function() clock,
   required CallTokenPublicationAllowed publicationAllowed,
+  AndroidCallTokenReader? readToken,
 }) => AndroidCallTokenCoordinator(
   authorityClient: authorityClient,
   clock: clock,
-  readToken: () => FirebaseMessaging.instance.getToken(),
+  readToken: readToken ?? () => FirebaseMessaging.instance.getToken(),
   // Lazy on purpose: FirebaseMessaging.instance is first touched when the
   // graph starts, after the live services initialised Firebase.
   tokenRefreshes: Stream<String>.multi((controller) {

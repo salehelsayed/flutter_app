@@ -29,6 +29,8 @@ var mediaCustodyProcessBody = []byte("committed ciphertext survives a real relay
 // proof and bytes from the final marker, then durably ACK them. This does not
 // exercise or authorize concurrent writers on one volume.
 func TestDirectMediaBlobCustodySurvivesRelayProcessHandoff(t *testing.T) {
+	// Admission defaults on; explicitly exercise reopening in drain mode.
+	t.Setenv(mediaCustodyAdmissionEnabledEnv, "false")
 	if mode := os.Getenv(mediaCustodyProcessHelperMode); mode != "" {
 		runMediaCustodyProcessHelper(t, mode, os.Getenv(mediaCustodyProcessRoot))
 		return

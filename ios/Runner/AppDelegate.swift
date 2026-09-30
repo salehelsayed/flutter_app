@@ -568,6 +568,8 @@ final class IosSetupReadinessEntryCoordinator {
   static let schema = "mknoon.plan398.ios-setup-readiness.v3"
   static let channelName = "mknoon/plan398_ios_setup_entry"
   static let acknowledgeMethod = "acknowledgeDartMain"
+  static let launchEnvironmentMethod = "readSetupLaunchEnvironment"
+  static let usernameEnvironmentKey = "MKNOON_397_AUTO_SETUP_USERNAME"
 
   private static let receiptFileName = "intro_e2e_setup_readiness.json"
   private static let receiptMaximumBytes = 2_048
@@ -585,6 +587,7 @@ final class IosSetupReadinessEntryCoordinator {
   private var nativeArmAttempted = false
   private var armedLaunchAttemptSha256: String?
   private var dartEntryAcknowledged = false
+  private var setupLaunchEnvironment: [String: String] = [:]
   private var advancementPermanentlyRejected = false
 
   init(
@@ -634,12 +637,27 @@ final class IosSetupReadinessEntryCoordinator {
         )
       )
       armedLaunchAttemptSha256 = launchAttemptSha256
+      // Dart Platform.environment is empty on iOS. Forward only the fixture's
+      // launch inputs, in memory, after the native launch binding is accepted.
+      setupLaunchEnvironment = environment.filter {
+        [Self.attemptEnvironmentKey, Self.profileEnvironmentKey,
+         Self.usernameEnvironmentKey].contains($0.key)
+      }
       return .published
     } catch {
       advancementPermanentlyRejected = true
       removeReceiptIfPresent()
       return .rejected
     }
+  }
+
+  func readSetupLaunchEnvironment() -> [String: String] {
+    lock.lock()
+    defer { lock.unlock() }
+    guard armedLaunchAttemptSha256 != nil, !advancementPermanentlyRejected else {
+      return [:]
+    }
+    return setupLaunchEnvironment
   }
 
   func acknowledgeDartMain(arguments: [String: Any]) throws -> [String: Any] {
@@ -1866,6 +1884,10 @@ final class IosSetupReadinessEntryCoordinator {
       binaryMessenger: messenger
     )
     channel.setMethodCallHandler { [weak self] call, result in
+      if call.method == IosSetupReadinessEntryCoordinator.launchEnvironmentMethod {
+        result(self?.iosSetupReadinessEntryCoordinator.readSetupLaunchEnvironment() ?? [:])
+        return
+      }
       guard call.method == IosSetupReadinessEntryCoordinator.acknowledgeMethod else {
         result(FlutterMethodNotImplemented)
         return

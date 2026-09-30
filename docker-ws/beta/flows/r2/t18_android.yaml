@@ -1,0 +1,13 @@
+appId: com.mknoon.app
+name: T18 Pixel sends a photo and a voice note to the group
+---
+- runFlow: { file: open_group.yaml, env: { GROUP: "R2 (Group|Renamed|By Pixel) ${NONCE}", GTIMEOUT: 30000 } }
+- runFlow: { file: pick_android.yaml, env: { FILE: "r2_photo_3.png" } }
+- runFlow: { file: caption_send.yaml, env: { MSG: "T18 group photo ${NONCE}" } }
+- extendedWaitUntil: { visible: ".*T18 group photo ${NONCE}.*", timeout: 60000 }
+- runFlow: ../kb_hide.yaml
+- tapOn: "Record voice message.*"
+- runFlow: { file: ../sleep.yaml, env: { MS: 3500 } }
+- tapOn: "Stop and send voice message.*"
+- runFlow: { file: ../sleep.yaml, env: { MS: 10000 } }
+- takeScreenshot: t18_sent

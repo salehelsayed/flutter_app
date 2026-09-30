@@ -7,6 +7,7 @@ import 'package:flutter_app/core/debug/intro_e2e_runner.dart' as intro_runner;
 import 'package:flutter_app/features/contact_request/application/send_contact_request_use_case.dart'
     as contact_request;
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 
 import '../../../integration_test/scripts/run_intro_accept_notification_android.dart'
     as intro_campaign;
@@ -14,6 +15,63 @@ import '../../../integration_test/scripts/run_intro_accept_notification_sims.dar
     as intro_sims;
 
 void main() {
+  group('fixture message readiness', () {
+    const systemMessage = ConversationMessage(
+      id: 'intro-copy',
+      contactPeerId: 'a',
+      senderPeerId: 'a',
+      text: 'a introduced you to b',
+      timestamp: '2026-09-23T00:00:00Z',
+      status: 'delivered',
+      isIncoming: false,
+      createdAt: '2026-09-23T00:00:00Z',
+      transport: 'system',
+    );
+    const copyExpectation = <String, dynamic>{
+      'text': 'a introduced you to b',
+      'transport': 'system',
+    };
+    test('ordinary chat cannot be satisfied by system copy', () {
+      expect(
+        intro_runner.matchesIntroE2EMessageExpectation(systemMessage, {
+          'text': systemMessage.text,
+        }),
+        isFalse,
+      );
+    });
+    test('explicit system copy matches only its requested transport', () {
+      expect(
+        intro_runner.matchesIntroE2EMessageExpectation(
+          systemMessage,
+          copyExpectation,
+        ),
+        isTrue,
+      );
+      expect(
+        intro_runner.matchesIntroE2EMessageExpectation(
+          systemMessage.copyWith(transport: 'relay'),
+          copyExpectation,
+        ),
+        isFalse,
+      );
+    });
+    test('copy readiness rejects missing text, hidden and deleted rows', () {
+      for (final message in [
+        systemMessage.copyWith(text: 'different copy'),
+        systemMessage.copyWith(hiddenAt: '2026-09-23T01:00:00Z'),
+        systemMessage.copyWith(deletedAt: '2026-09-23T01:00:00Z'),
+      ]) {
+        expect(
+          intro_runner.matchesIntroE2EMessageExpectation(
+            message,
+            copyExpectation,
+          ),
+          isFalse,
+        );
+      }
+    });
+  });
+
   test(
     'poller teardown is idempotent and cancels initial and periodic work',
     () {

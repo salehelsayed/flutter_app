@@ -1,0 +1,27 @@
+appId: com.mknoon.app
+name: attach one Photos item (PHPicker) - ITEM regex + IDX index, or grid point PX when the picker's labels are not readable
+---
+- runFlow: ../kb_hide.yaml
+- tapOn: "Add attachment"
+- tapOn: "Media Library"
+- extendedWaitUntil: { visible: "Cancel", timeout: 12000, optional: true }
+- runFlow:
+    when: { visible: "Cancel" }
+    commands:
+      - tapOn:
+          text: "${ITEM}"
+          index: ${IDX}
+      - runFlow:
+          when: { visible: "Add|Done" }
+          commands: [ { tapOn: "Add|Done" } ]
+# Fallback (2026-09-27 run: the XCTest snapshot of the out-of-process picker came back empty
+# although the grid was on screen): tap the grid cell, then the check mark, by position.
+- runFlow:
+    when: { notVisible: "Send message" }
+    commands:
+      - runFlow: { file: ../sleep.yaml, env: { MS: 3000 } }
+      - takeScreenshot: pick_ios_fallback
+      - tapOn: { point: "${PX}" }
+      - runFlow: { file: ../sleep.yaml, env: { MS: 1500 } }
+      - tapOn: { point: "90%,12%" }
+- extendedWaitUntil: { visible: "Send message", timeout: 60000 }

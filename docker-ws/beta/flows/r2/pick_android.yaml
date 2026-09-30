@@ -1,0 +1,9 @@
+appId: com.mknoon.app
+name: attach FILE (Android file picker) to the open chat composer
+---
+- runFlow: ../kb_hide.yaml
+- tapOn: "Add attachment"
+- tapOn: "Media Library"
+- extendedWaitUntil: { visible: "${FILE}", timeout: 30000 }
+- tapOn: "${FILE}"
+- extendedWaitUntil: { visible: "Send message", timeout: 30000 }

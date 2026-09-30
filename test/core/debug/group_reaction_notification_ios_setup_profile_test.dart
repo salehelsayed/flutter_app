@@ -5,6 +5,86 @@ import 'package:flutter_test/flutter_test.dart';
 
 void main() {
   test(
+    'iOS setup obtains launch inputs from native and preserves entry binding',
+    () async {
+      const attempt = 'native-ios-launch-attempt-0001';
+      const environment = <String, String>{
+        groupReactionNotificationIosSetupReadinessAttemptEnvironmentKey:
+            attempt,
+        groupReactionNotificationIosSetupEntryProfileEnvironmentKey:
+            groupReactionNotificationIosSetupBuildProfile,
+        groupReactionNotificationIosAutoSetupUsernameEnvironmentKey:
+            'fixture-user',
+      };
+      var reads = 0;
+      Future<Object?> readNative() async {
+        reads++;
+        return environment;
+      }
+
+      for (final gate in <(bool, bool, String)>[
+        (false, true, groupReactionNotificationIosSetupBuildProfile),
+        (true, false, groupReactionNotificationIosSetupBuildProfile),
+        (true, true, 'ios.device.production'),
+      ]) {
+        expect(
+          await readGroupReactionNotificationIosSetupLaunchEnvironment(
+            isIos: gate.$1,
+            e2eTestMode: gate.$2,
+            installedProfileId: gate.$3,
+            readNative: readNative,
+          ),
+          isEmpty,
+        );
+      }
+      expect(reads, 0);
+      final input =
+          await readGroupReactionNotificationIosSetupLaunchEnvironment(
+            isIos: true,
+            e2eTestMode: true,
+            installedProfileId: groupReactionNotificationIosSetupBuildProfile,
+            readNative: readNative,
+          );
+      expect(reads, 1);
+      expect(input, environment);
+      expect(() => input.clear(), throwsUnsupportedError);
+      expect(
+        await acknowledgeGroupReactionNotificationIosDartMainEntry(
+          isIos: true,
+          e2eTestMode: true,
+          installedProfileId: groupReactionNotificationIosSetupBuildProfile,
+          launchEnvironment: input,
+          acknowledgeNative: (arguments) async =>
+              buildGroupReactionNotificationIosSetupEntryReadinessReceipt(
+                launchAttemptSha256:
+                    arguments['launchAttemptSha256']! as String,
+                stage: GroupReactionNotificationIosSetupEntryStage.dartMain,
+              ),
+        ),
+        isTrue,
+      );
+      for (final malformed in <Object?>[
+        null,
+        <String, Object?>{...environment, 'unrelated-secret': 'must-not-cross'},
+        <String, Object?>{
+          ...environment,
+          groupReactionNotificationIosAutoSetupUsernameEnvironmentKey: 1,
+        },
+      ]) {
+        await expectLater(
+          readGroupReactionNotificationIosSetupLaunchEnvironment(
+            isIos: true,
+            e2eTestMode: true,
+            installedProfileId: groupReactionNotificationIosSetupBuildProfile,
+            readNative: () async => malformed,
+          ),
+          throwsStateError,
+        );
+      }
+    },
+  );
+
+  test(
     'Plan 397 setup actions require both E2E mode and the exact profile',
     () {
       expect(
@@ -494,18 +574,14 @@ void main() {
       );
 
       final ready = await execute();
-      expect(
-        ready.writes.map((receipt) => receipt['stage']),
-        <String>[
-          'profile_launch',
-          'identity_generation',
-          'identity_reload',
-          'qr_generation',
-          'identity_export',
-          'ready',
-        ],
-        reason: 'TC-398-08 setup readiness closed stage order',
-      );
+      expect(ready.writes.map((receipt) => receipt['stage']), <String>[
+        'profile_launch',
+        'identity_generation',
+        'identity_reload',
+        'qr_generation',
+        'identity_export',
+        'ready',
+      ], reason: 'TC-398-08 setup readiness closed stage order');
       expect(
         classifyGroupReactionNotificationIosSetupReadinessReceipt(
           ready.receipt,

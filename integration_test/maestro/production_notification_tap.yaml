@@ -1,0 +1,10 @@
+appId: ${APP_ID}
+name: production_notification_tap
+---
+- swipe:
+    start: 10%, 1%
+    end: 10%, 85%
+- assertVisible: ${MESSAGE_PATTERN}
+- tapOn: ${MESSAGE_PATTERN}
+- assertVisible:
+    id: chat_composer

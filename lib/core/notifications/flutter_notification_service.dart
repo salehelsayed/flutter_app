@@ -1,6 +1,8 @@
 import 'package:flutter_app/core/notifications/deterministic_notification_id.dart';
 import 'dart:async';
 
+import 'notification_request_observation.dart';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:flutter_app/core/notifications/app_visibility_authority.dart';
@@ -36,6 +38,7 @@ class FlutterNotificationService
         ConversationNotificationGenerationCancellation,
         ConversationNotificationReadSettlement,
         ConversationNotificationGenerationReplacement {
+  final NotificationRequestObserver? _requestObserver;
   final bool _requestApplePermissions;
   final ConversationNotificationIdRegistryResolver
   _notificationIdRegistryResolver;
@@ -61,6 +64,7 @@ class FlutterNotificationService
 
   FlutterNotificationService({
     bool requestApplePermissions = true,
+    NotificationRequestObserver? requestObserver,
     ConversationNotificationIdRegistryResolver? notificationIdRegistryResolver,
     ConversationNotificationIdResolver? notificationIdResolver,
     ConversationNotificationIdLookup? notificationIdLookup,
@@ -72,7 +76,8 @@ class FlutterNotificationService
     ConversationNotificationRecoverySettlementCallback?
     onConversationReadSettled,
     NotificationRecoverySettlementCallback? onAllNotificationsCleared,
-  }) : _requestApplePermissions = requestApplePermissions,
+  }) : _requestObserver = requestObserver,
+       _requestApplePermissions = requestApplePermissions,
        _notificationIdResolver = notificationIdResolver,
        _notificationIdLookup = notificationIdLookup,
        _notificationContentRegistryResolver =
@@ -410,6 +415,7 @@ class FlutterNotificationService
               conversationKey: contactPeerId,
               metadata: metadata,
             );
+      final requestedSilent = silent;
       var publishedSilently = silent;
       Future<void> show({required bool silent}) async {
         // A user who blocked "Messages" must not receive this card through the
@@ -425,6 +431,20 @@ class FlutterNotificationService
               plugin: _plugin,
             );
         publishedSilently = effectiveSilent;
+        if (_requestObserver != null) {
+          observeNotificationRequest(
+            _requestObserver,
+            NotificationRequestObservation.message(
+              notificationId: notificationId,
+              contactPeerId: contactPeerId,
+              routePayload: resolvedPayload,
+              requestedSilent: requestedSilent,
+              silent: effectiveSilent,
+              title: senderUsername,
+              body: messageText,
+            ),
+          );
+        }
         return _plugin.show(
           notificationId,
           senderUsername,
@@ -549,6 +569,15 @@ class FlutterNotificationService
           _genericNotificationConversationKey(payload: payload, title: title),
         );
     try {
+      observeNotificationRequest(
+        _requestObserver,
+        NotificationRequestObservation(
+          kind: 'generic',
+          notificationId: notificationId,
+          routePayload: payload,
+          silent: false,
+        ),
+      );
       await _plugin.show(
         notificationId,
         title,

@@ -2446,6 +2446,35 @@ bool groupReactionIosRelayRegistrationSucceeded(String recipientLog) =>
               RegExp(r'\bplatform=ios\b').hasMatch(line),
         );
 
+/// Public NSE success markers omit payload metadata. They establish decrypt
+/// success only after the native inventory has bound the expected card to the
+/// capture's group/event hashes and phase. Legacy typed markers stay supported.
+bool groupReactionIosNseDecryptSucceeded(
+  String line, {
+  required String payloadKind,
+  required String? validatedNativePhase,
+}) {
+  final (kind, phase) = switch (payloadKind) {
+    'group_message' => ('group', 'message'),
+    'group_reaction' => ('group_reaction', 'reaction'),
+    _ => ('', ''),
+  };
+  if (kind.isEmpty) return false;
+  if (line.contains('[FLOW_PROOF]')) {
+    if (validatedNativePhase != phase) return false;
+    final events = _flowEventObjects(line, marker: '[FLOW_PROOF]');
+    if (events.length != 1) return false;
+    final event = events.single;
+    final details = event['details'];
+    return event['event'] == 'PUSH_NSE_DECRYPT_OK' &&
+        details is Map &&
+        details.isEmpty;
+  }
+  return line.contains('PUSH_NSE_DECRYPT_OK') &&
+      (RegExp('\\bkind(?:=|: )$kind(?:\\s|[,}]|\$)').hasMatch(line) ||
+          line.contains('"kind":"$kind"'));
+}
+
 class GroupReactionNotificationEvidenceRequirement {
   const GroupReactionNotificationEvidenceRequirement({
     required this.kind,
@@ -4517,6 +4546,11 @@ Future<void> _validateCaptureBundle(
   }
 }
 
+const _androidMainActivityComponents = <String>{
+  'com.mknoon.app/.MainActivity',
+  'com.mknoon.app/com.mknoon.app.MainActivity',
+};
+
 void _validateCommandJournal(
   List<Map<String, Object?>> commands, {
   required GroupReactionNotificationScenario requirement,
@@ -4721,15 +4755,12 @@ void _validateCommandJournal(
   final providerBoundary = parentPreparedCentralPrebuiltAndroid
       ? recipientDeviceId != null &&
             providerInstallCommands.isEmpty &&
-            hasSuccessfulAdbCommand(
-              'provider_registration',
-              recipientDeviceId,
-              const <String>{
-                'shell',
-                'am',
-                'start',
-                'com.mknoon.app/.MainActivity',
-              },
+            _androidMainActivityComponents.any(
+              (component) => hasSuccessfulAdbCommand(
+                'provider_registration',
+                recipientDeviceId,
+                <String>{'shell', 'am', 'start', component},
+              ),
             )
       : providerInstallCommands.isNotEmpty;
   if (!providerBoundary || !hasSqlCipherBoundary) {
@@ -4851,7 +4882,7 @@ void _validateCommandJournal(
                   (command['args'] as List).contains('start') &&
                   (command['args'] as List).any(
                     (argument) =>
-                        '$argument'.contains('com.mknoon.app/.MainActivity'),
+                        _androidMainActivityComponents.contains(argument),
                   ),
               runtimeProbeIndex + 1,
             );
@@ -4913,7 +4944,7 @@ void _validateCommandJournal(
                 (command['args'] as List).contains('start') &&
                 (command['args'] as List).any(
                   (argument) =>
-                      '$argument'.contains('com.mknoon.app/.MainActivity'),
+                      _androidMainActivityComponents.contains(argument),
                 ),
             normalReinstallIndex + 1,
           );
@@ -6254,6 +6285,7 @@ _Plan397WindowEvidence? _validatePlan397Window({
       'messageIdSha256',
       'targetMessageIdSha256',
       'eventIdSha256',
+      'expectedCollapseIdentifierSha256',
       'reactionIdSha256',
       'reactionTargetIdSha256',
       'firstIncoming',
@@ -6279,6 +6311,7 @@ _Plan397WindowEvidence? _validatePlan397Window({
     'messageIdSha256',
     'targetMessageIdSha256',
     'eventIdSha256',
+    'expectedCollapseIdentifierSha256',
   ]) {
     if (!_isSha256(android[key])) {
       failures.add('$path.androidObservation.$key must be SHA-256');
@@ -6610,105 +6643,23 @@ void _validatePlan397NativeInventory({
   required String? expectedRecipientDeviceId,
   required List<String> failures,
 }) {
-  _expectExactKeys(
+  final valid = _isValidPlan398NativeObservationReceipt(
     native,
-    const <String>{
-      'schema',
-      'action',
-      'phase',
-      'status',
-      'containsSecrets',
-      'bundleId',
-      'captureNonceSha256',
-      'receiverDeviceIdSha256',
-      'expectedGroupIdSha256',
-      'expectedEventIdSha256',
-      'expectedTargetMessageIdSha256',
-      'matchingRemoteCount',
-      'matchingLocalCount',
-      'matchingUsefulProviderCount',
-      'matchingSanitizedProviderCount',
-      'matchingFlutterLocalCount',
-      'matchingUnknownCount',
-      'matchingTotalCount',
-      'stableSampleCount',
-      'stableSampleIntervalMilliseconds',
-      'observationDeadlineMilliseconds',
-      'sampledThroughDeadline',
-      'badSourceSeen',
-      'duplicateSeen',
-      'requestIdentifierSha256',
-      'childBuildCount',
-      'manualActionCount',
-      'runnerTerminated',
-      'preTapCleanupLaunchCount',
-      'resultCode',
-      'completedAt',
-    },
-    path,
-    failures,
+    phase: phase,
+    captureNonceSha256: '$observerNonceSha256',
+    receiverDeviceIdSha256: expectedRecipientDeviceId == null
+        ? '${native['receiverDeviceIdSha256']}'
+        : sha256.convert(utf8.encode(expectedRecipientDeviceId)).toString(),
+    expectedGroupIdSha256: '${android['groupIdSha256']}',
+    expectedEventIdSha256: '${android['eventIdSha256']}',
+    expectedTargetMessageIdSha256: '${android['targetMessageIdSha256']}',
+    expectedCollapseIdentifierSha256:
+        '${android['expectedCollapseIdentifierSha256']}',
   );
-  for (final entry in <String, Object?>{
-    'schema': 'mknoon.sims.ios-group-notification-observation-host-receipt.v1',
-    'action': 'observe-group',
-    'phase': phase,
-    'status': 'PASS',
-    'containsSecrets': false,
-    'bundleId': 'com.mknoon.app',
-    'matchingRemoteCount': 1,
-    'matchingLocalCount': 0,
-    'matchingUsefulProviderCount': 1,
-    'matchingSanitizedProviderCount': 0,
-    'matchingFlutterLocalCount': 0,
-    'matchingUnknownCount': 0,
-    'matchingTotalCount': 1,
-    'stableSampleCount': 3,
-    'stableSampleIntervalMilliseconds': 500,
-    'observationDeadlineMilliseconds': 8000,
-    'sampledThroughDeadline': true,
-    'badSourceSeen': false,
-    'duplicateSeen': false,
-    'childBuildCount': 0,
-    'manualActionCount': 0,
-    'runnerTerminated': true,
-    'preTapCleanupLaunchCount': 0,
-    'resultCode': 'ok',
-  }.entries) {
-    _expectValue(native, entry.key, entry.value, path, failures);
-  }
-  final digestBindings = <String, Object?>{
-    'captureNonceSha256': observerNonceSha256,
-    'expectedGroupIdSha256': android['groupIdSha256'],
-    'expectedEventIdSha256': android['eventIdSha256'],
-    'expectedTargetMessageIdSha256': android['targetMessageIdSha256'],
-  };
-  if (expectedRecipientDeviceId != null) {
-    digestBindings['receiverDeviceIdSha256'] = sha256
-        .convert(utf8.encode(expectedRecipientDeviceId))
-        .toString();
-  }
-  for (final entry in digestBindings.entries) {
-    if (!_isSha256(native[entry.key]) || native[entry.key] != entry.value) {
-      failures.add('$path.${entry.key} is not bound to the phase authority');
-    }
-  }
-  for (final key in const <String>[
-    'captureNonceSha256',
-    'receiverDeviceIdSha256',
-    'expectedGroupIdSha256',
-    'expectedEventIdSha256',
-    'expectedTargetMessageIdSha256',
-  ]) {
-    if (!_isSha256(native[key])) failures.add('$path.$key must be SHA-256');
-  }
-  final identifiers = native['requestIdentifierSha256'];
-  if (identifiers is! List ||
-      identifiers.length != 1 ||
-      !_isSha256(identifiers.single)) {
-    failures.add('$path.requestIdentifierSha256 must contain one hashed id');
-  }
-  if (DateTime.tryParse('${native['completedAt']}') == null) {
-    failures.add('$path.completedAt must be an ISO-8601 timestamp');
+  if (!valid || native['status'] != 'PASS') {
+    failures.add(
+      '$path must be a passing current receipt bound to the phase authority',
+    );
   }
 }
 
@@ -7256,7 +7207,7 @@ void _validateIosAuthoritativeEvidence({
 
   final providerLines = provider
       .split('\n')
-      .where((line) => line.contains('[PUSH] Notification sent to'))
+      .where(relayJournalContainsAndroidProviderSend)
       .toList(growable: false);
   if (providerLines.length != expectedRelayWakeAttempts ||
       providerLines.any(
@@ -7282,8 +7233,12 @@ void _validateIosAuthoritativeEvidence({
     );
   }
 
-  if (!recipientApp.contains('ios_notification_open_stored_pending') ||
-      !recipientApp.contains('IOS_APNS_INITIAL_NOTIFICATION_OPENED') ||
+  // Profile builds deliberately disable Dart FLOW logging. The exact native
+  // tap test measures the stopped app before tapping and then asserts the
+  // expected group/target render; its passed selector remains required below.
+  if (!xcuiTest.contains(
+        'MKNOON_257_COLD_NOTIFICATION_STATE app_not_running=true',
+      ) ||
       recipientApp.contains('IOS_APNS_NOTIFICATION_OPEN_ERROR') ||
       recipientApp.contains('NOTIFICATION_TAP_NAV_ERROR') ||
       recipientApp.contains('INITIAL_LOCAL_NOTIFICATION_ROUTE_ERROR')) {
@@ -7300,46 +7255,98 @@ void _validateIosAuthoritativeEvidence({
     failures: failures,
   );
 
-  final nseEvents = _flowEventNames(nseLog);
-  if (nseEvents.where((event) => event == 'PUSH_NSE_DECRYPT_OK').length !=
-          expectedRelayWakeAttempts ||
-      nseEvents.any(
-        (event) =>
-            event == 'PUSH_NSE_DECRYPT_FAIL' || event == 'PUSH_NSE_TIMEOUT',
-      ) ||
-      !nseLog.contains('"kind":"group_reaction"')) {
-    failures.add(
-      r'$.evidence[nse_log] lacks two raw successful group-reaction NSE '
-      'resolutions or contains a failure',
-    );
-  }
-
   const observationPrefix = 'MKNOON_257_IOS_NOTIFICATION_OBSERVATION ';
   final observations = xcuiTest
       .split('\n')
       .where((line) => line.contains(observationPrefix))
       .toList(growable: false);
+  final stdoutObservations = observations
+      .where((line) => line.startsWith(observationPrefix))
+      .toList(growable: false);
   Map<String, Object?>? observation;
-  if (observations.length == 1) {
-    final encoded = observations.single.substring(
-      observations.single.indexOf(observationPrefix) + observationPrefix.length,
+  if (stdoutObservations.length == 1 && observations.length <= 2) {
+    final encoded = stdoutObservations.single.substring(
+      observationPrefix.length,
     );
-    observation = _decodeObject(
-      encoded,
-      r'$.evidence[xcuitest].notificationObservation',
-      failures,
-    );
+    // The selector writes one serialized observation through both NSLog and
+    // stdout. Accept that identical mirror, never a second observation or a
+    // conflicting copy from either stream.
+    if (observations.every(
+      (line) =>
+          line
+              .substring(
+                line.indexOf(observationPrefix) + observationPrefix.length,
+              )
+              .trim() ==
+          encoded.trim(),
+    )) {
+      observation = _decodeObject(
+        encoded,
+        r'$.evidence[xcuitest].notificationObservation',
+        failures,
+      );
+    }
   }
   final expectedBody = '$actorName reacted 👍 to your message';
-  if (observation == null ||
-      observation['schema'] !=
-          'mknoon.plan257.ios-notification-observation.v1' ||
-      observation['title'] != groupName ||
-      observation['body'] != expectedBody ||
-      observation['matchingCardCount'] != 1 ||
-      observation['containsNewMessageCopy'] != false) {
+  final exactNativeReactionCard =
+      observation != null &&
+      observation['schema'] ==
+          'mknoon.plan257.ios-notification-observation.v1' &&
+      observation['title'] == groupName &&
+      observation['body'] == expectedBody &&
+      observation['expectedTargetMessageText'] == targetMarker &&
+      observation['matchingCardCount'] == 1 &&
+      observation['containsNewMessageCopy'] == false;
+  if (!exactNativeReactionCard) {
     failures.add(
       r'$.evidence[xcuitest] lacks one raw matching Springboard reaction card',
+    );
+  }
+
+  final publicNse = _flowEventObjects(nseLog, marker: '[FLOW_PROOF]');
+  final publicReceived = publicNse
+      .where(
+        (event) =>
+            event['event'] == 'PUSH_NSE_DID_RECEIVE' &&
+            event['details'] is Map &&
+            (event['details'] as Map).isEmpty,
+      )
+      .length;
+  final publicDecrypts = publicNse
+      .where(
+        (event) =>
+            event['event'] == 'PUSH_NSE_DECRYPT_OK' &&
+            event['details'] is Map &&
+            (event['details'] as Map).isEmpty,
+      )
+      .length;
+  final publicHandoffs = publicNse.where((event) {
+    final details = event['details'];
+    return event['event'] == 'PUSH_NSE_CONTENT_HANDOFF' &&
+        details is Map &&
+        details['authorized'] == 'true' &&
+        details['presentation'] == 'active';
+  }).length;
+  final legacyNseEvents = _flowEventNames(nseLog);
+  // Public proof intentionally omits payload kind. Bind the two actual
+  // receive/decrypt/authorized-handoff sequences to the exact native reaction
+  // card, passed tap and SQLCipher state, rather than inventing private fields.
+  final nseSucceeded = nseLog.contains('[FLOW_PROOF]')
+      ? exactNativeReactionCard &&
+            publicReceived == expectedRelayWakeAttempts &&
+            publicDecrypts == expectedRelayWakeAttempts &&
+            publicHandoffs == expectedRelayWakeAttempts
+      : legacyNseEvents
+                    .where((event) => event == 'PUSH_NSE_DECRYPT_OK')
+                    .length ==
+                expectedRelayWakeAttempts &&
+            nseLog.contains('"kind":"group_reaction"');
+  if (!nseSucceeded ||
+      nseLog.contains('PUSH_NSE_DECRYPT_FAIL') ||
+      nseLog.contains('PUSH_NSE_TIMEOUT')) {
+    failures.add(
+      r'$.evidence[nse_log] lacks two raw successful group-reaction NSE '
+      'resolutions or contains a failure',
     );
   }
   if (!xcuiTest.contains('testAnnouncementReactionNotificationTap') ||
@@ -7373,12 +7380,15 @@ List<String> _flowEventNames(String text) {
   ).map((value) => value['event']).whereType<String>().toList(growable: false);
 }
 
-List<Map<String, Object?>> _flowEventObjects(String text) {
+List<Map<String, Object?>> _flowEventObjects(
+  String text, {
+  String marker = '[FLOW]',
+}) {
   final result = <Map<String, Object?>>[];
   for (final line in text.split('\n')) {
-    final marker = line.indexOf('[FLOW]');
-    if (marker < 0) continue;
-    final jsonStart = line.indexOf('{', marker);
+    final markerIndex = line.indexOf(marker);
+    if (markerIndex < 0) continue;
+    final jsonStart = line.indexOf('{', markerIndex);
     if (jsonStart < 0) continue;
     try {
       final value = jsonDecode(line.substring(jsonStart));

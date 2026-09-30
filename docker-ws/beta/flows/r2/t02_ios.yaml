@@ -1,0 +1,18 @@
+appId: com.mknoon.app
+name: T02 iPhone receives the album, opens the video, then checks Shared media
+---
+- runFlow: ../ensure_chat.yaml
+- extendedWaitUntil: { visible: ".*T02 album ${NONCE}.*", timeout: 300000 }
+- runFlow: { file: ../sleep.yaml, env: { MS: 15000 } }
+- takeScreenshot: t02_received
+- tapOn: "Conversation options"
+- tapOn: "Shared media"
+- runFlow: { file: ../sleep.yaml, env: { MS: 4000 } }
+- takeScreenshot: t02_shared_media
+- runFlow:
+    when: { visible: "Videos" }
+    commands:
+      - tapOn: "Videos"
+      - runFlow: { file: ../sleep.yaml, env: { MS: 2500 } }
+      - takeScreenshot: t02_shared_videos
+- runFlow: leave_viewer.yaml

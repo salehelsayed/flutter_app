@@ -16,6 +16,17 @@ import stat
 # These entry points return before device work with --list-scenarios. Keeping
 # the commands here prevents a config typo from accidentally running a journey.
 HOST_PROBES = {
+    'production-group-removed-reaction': ('integration_test/scripts/run_production_group_removed_reaction.dart', 'production.group_catalog.private_removed_reaction_rejected'),
+    'production-group-reaction': ('integration_test/scripts/run_production_group_reaction.dart', 'production.group_catalog.private_reaction_roundtrip'),
+    'production-group-reaction-toggle': ('integration_test/scripts/run_production_group_reaction_toggle.dart', 'production.group_catalog.private_reaction_toggle_convergence'),
+    'production-group-create': ('integration_test/scripts/run_production_group_create.dart', 'production.group_catalog.private_abc_create'),
+    'production-group-invites': ('integration_test/scripts/run_production_group_invite_reliability.dart', 'production.group_invite_reliability'),
+    'production-startup-resume-performance': ('integration_test/scripts/run_production_startup_resume_performance.dart', 'production.startup_resume_performance'),
+    'production-private-media': ('integration_test/scripts/run_production_private_media_local.dart', 'production.private_media_local'),
+    'production-routing': ('integration_test/scripts/run_production_routing.dart', 'production.routing_smoke'),
+    'production-notification-open': ('integration_test/scripts/run_production_notification_open.dart', 'production.notification_open'),
+    'production-notification-sound': ('integration_test/scripts/run_production_notification_sound.dart', 'production.notification_sound'),
+    'production-foreground-group-push': ('integration_test/scripts/run_production_foreground_group_push.dart', 'production.foreground_group_push'),
     'notification-runner': ('integration_test/scripts/run_notification_tap_device_real.dart', 'tc_a6_replay_before_ack_custody'),
     'one-to-one-runner': ('integration_test/scripts/run_1to1_device_real.dart', 'android.production_1to1_audio_call'),
 }
@@ -44,7 +55,17 @@ def validate_metadata(check):
     if probe is not None and (not isinstance(probe, str) or probe not in HOST_PROBES):
         errors.append('Unknown safe host preflight')
     if check.get('kind') in ('sims', 'legacy') and (check.get('device_roles') or check.get('sims_mode')):
-        if check.get('ui_driver') != 'existing_campaign' or not isinstance(check.get('ui_driver_reason'), str) or not check['ui_driver_reason'].strip():
+        reason = check.get('ui_driver_reason')
+        if check.get('ui_driver') == 'maestro':
+            flows = check.get('maestro_flows')
+            if (not isinstance(flows, list) or not flows
+                    or any(not isinstance(flow, str) or '..' in flow.split('/')
+                           or not flow.startswith('integration_test/maestro/')
+                           or not flow.endswith(('.yaml', '.yml')) for flow in flows)
+                    or len(set(flows)) != len(flows)
+                    or not isinstance(reason, str) or not reason.strip()):
+                errors.append('Maestro campaigns require exact flows and a proof boundary reason')
+        elif check.get('ui_driver') != 'existing_campaign' or not isinstance(reason, str) or not reason.strip():
             errors.append('Existing device campaigns must explain their non-Appium proof requirement')
     return errors
 
@@ -165,7 +186,12 @@ def run(check, root, config, launch, env):
         entrypoint, expected = HOST_PROBES[probe]
         command = ['dart', 'run', entrypoint, '--list-scenarios']
         output, code, timeout, seconds = launch(command, root, 120, env)
-        completed = code == 0 and not timeout and expected in output.splitlines()
+        # Dart can prepend its native-hook progress without a newline. Keep
+        # exact scenario-line matching after removing only that known prefix.
+        listing = output
+        while listing.startswith('Running build hooks...'):
+            listing = listing[len('Running build hooks...'):]
+        completed = code == 0 and not timeout and expected in listing.splitlines()
         observations.append({'probe': probe, 'state': 'ready' if completed else 'unavailable',
                              'exit_status': code, 'timed_out': timeout, 'duration_seconds': seconds,
                              'output_sha256': hashlib.sha256(output.encode()).hexdigest()})

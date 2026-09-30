@@ -1,0 +1,17 @@
+FLOW A1_send android PASS rc=0
+FLOW A1_rx ios PASS rc=0
+FLOW A2_send android PASS rc=0
+FLOW A2_rx ios PASS rc=0
+FLOW A3_send android PASS rc=0
+FLOW A3_rx ios PASS rc=0
+FLOW A4_send android PASS rc=0
+FLOW A4_rx ios FAIL rc=1
+FLOW A5_send android PASS rc=0
+FLOW A5_rx ios PASS rc=0
+FLOW A6_send ios PASS rc=0
+FLOW A6_rx android PASS rc=0
+FLOW N1_caller ios FAIL rc=1
+FLOW N1_callee android FAIL rc=1
+FLOW N2_caller ios FAIL rc=1
+FLOW N2_callee android FAIL rc=1
+/Volumes/CrucialX9/flutter_app/docker-ws/beta/run_r25_validate.sh: line 192: 64220 Terminated: 15          nohup perl -e 'use POSIX qw(setsid); setsid(); exec @ARGV' "$ANDROID_HOME/platform-tools/adb" -s "$SERIAL" logcat -T 1 -v threadtime > "$RUN/android_logcat_live.txt" 2>&1 < /dev/null

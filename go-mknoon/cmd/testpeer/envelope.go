@@ -66,6 +66,7 @@ func buildV1Envelope(text, senderPeerId, senderUsername string, opts map[string]
 //	{
 //	  "type": "chat_message",
 //	  "version": "2",
+//	  "id": "<same id as authenticated inner payload>",
 //	  "senderPeerId": "...",
 //	  "encrypted": {
 //	    "kem": "...",
@@ -121,6 +122,7 @@ func buildV2Envelope(
 	envelope := map[string]interface{}{
 		"type":         "chat_message",
 		"version":      "2",
+		"id":           msgID,
 		"senderPeerId": senderPeerId,
 		"encrypted": map[string]string{
 			"kem":        encrypted.Kem,

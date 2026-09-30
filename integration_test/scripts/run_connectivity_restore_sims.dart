@@ -27,7 +27,13 @@ Future<bool> launchConnectivityRestoreApp({
   required String packageName,
   required Future<ProcessResult> Function(List<String>) runAdb,
 }) async {
+  const activity = 'com.mknoon.app.MainActivity';
   final component = '$packageName/com.mknoon.app.MainActivity';
+  final reportedComponents = <String>[
+    component,
+    if (activity.startsWith('$packageName.'))
+      '$packageName/${activity.substring(packageName.length)}',
+  ];
   final result = await runAdb(<String>[
     'shell',
     'am',
@@ -47,8 +53,8 @@ Future<bool> launchConnectivityRestoreApp({
         multiLine: true,
       ).hasMatch(output) ||
       !RegExp(
-        r'(?:\bcmp=|^Activity:[ \t]+)' +
-            RegExp.escape(component) +
+        r'(?:\bcmp=|^Activity:[ \t]+)'
+            '(?:${reportedComponents.map(RegExp.escape).join('|')})'
             r'(?=[\s}]|$)',
         multiLine: true,
       ).hasMatch(output)) {

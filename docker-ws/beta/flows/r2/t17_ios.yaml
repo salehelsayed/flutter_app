@@ -1,0 +1,14 @@
+appId: com.mknoon.app
+name: T17 iPhone reacts to g1, sends g2, waits for the Pixel's reply to g2
+---
+- runFlow: { file: open_group.yaml, env: { GROUP: "R2 (Group|Renamed|By Pixel) ${NONCE}", GTIMEOUT: 30000 } }
+- extendedWaitUntil: { visible: ".*T17 g1 ${NONCE}.*", timeout: 240000 }
+- runFlow: { file: ../react.yaml, env: { TARGET: "T17 g1 ${NONCE}", EMOJI: "❤️" } }
+- runFlow: { file: ../send_text.yaml, env: { MSG: "T17 g2 ${NONCE}" } }
+- runFlow: ../kb_hide.yaml
+- longPressOn: ".*T17 g2 ${NONCE}.*"
+- takeScreenshot: t17_menu_own_ios
+- tapOn: { point: "50%,11%" }
+- extendedWaitUntil: { visible: ".*T17 reply ${NONCE}.*", timeout: 240000 }
+- runFlow: { file: ../sleep.yaml, env: { MS: 3000 } }
+- takeScreenshot: t17_reply_ios

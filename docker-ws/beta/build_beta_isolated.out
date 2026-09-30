@@ -1,0 +1,17 @@
+note=working tree copy, not a commit; .git deliberately not copied
+=== flutter pub get (in /Volumes/CrucialX9/flutter_app-beta0924) ===
+  xml 6.6.1 (7.0.1 available)
+  yaml 3.1.3 (3.1.4 available)
+Got dependencies!
+124 packages have newer versions incompatible with dependency constraints.
+Try `flutter pub outdated` for more information.
+pub_get rc=0
+=== disk after ===
+Filesystem       Size    Used   Avail Capacity iused ifree %iused  Mounted on
+/dev/disk13s1   931Gi   736Gi   195Gi    80%    4.4M  2.0G    0%   /Volumes/CrucialX9
+PREPARED=/Volumes/CrucialX9/flutter_app-beta0924
+defines: --dart-define=E2E_TEST_MODE=true --dart-define=PRODUCTION_FCM=true --dart-define=VOICE_CALL_CAPABILITY_V1=true --dart-define=VOICE_CALL_OUTGOING_ENABLED=true --dart-define=VOICE_CALL_INCOMING_ENABLED=true --dart-define=VOICE_CALL_TURN_ENABLED=true --dart-define=VOICE_CALL_ANDROID_NATIVE_ENABLED=true --dart-define=VOICE_CALL_IOS_NATIVE_ENABLED=true --dart-define=VOICE_CALL_ALWAYS_RELAY_ENABLED=true --dart-define=VOICE_CALL_FORCE_RELAY_ENABLED=false --dart-define=VOICE_CALL_STUN_URLS=stun:mknoun.xyz:3478
+=== android build 1.0.0-237e88dd5.d169.t260924214456
+=== ios simulator build
+ANDROID OK 1.0.0-237e88dd5.d169.t260924214456
+IOS OK 1.0.0-237e88dd5.d169.t260924214456

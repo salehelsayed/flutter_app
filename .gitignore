@@ -245,6 +245,7 @@ artifacts/**/*-logarchive-*.tar
 !/.agents/skills/mknoon-change-check/
 !/.agents/skills/mknoon-release-check/
 !/.agents/skills/mknoon-test-maintenance/
+!/.agents/skills/mknoon-wave2-rerun/
 
 # Signed app exports and store artifacts — build outputs, never source.
 *.ipa
@@ -288,3 +289,11 @@ graphify-arch/graphify-out/.graphify_analysis.json
 # Unreferenced large test fixtures (11 PNGs of 10-50 MB) and design mockups.
 /image-test-files/
 /mockups/
+
+# Third-party reference clone (affaan-m/ecc), not part of the app
+/ecc/
+
+# Local device-run output (phone logs, screenshots, call diagnostics), not source.
+/artifacts/beta-2026092*/
+/docker-ws/.and_copy/
+/docker-ws/beta/__pycache__/

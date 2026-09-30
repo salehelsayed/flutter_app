@@ -1,0 +1,58 @@
+appId: ${APP_ID}
+name: production_direct_send_batch5
+---
+- tapOn:
+    id: chat_composer
+- hideKeyboard
+- inputText: ${MESSAGE_1}
+- assertVisible:
+    id: chat_composer
+    text: '(?-i)^${MESSAGE_PATTERN_1}$'
+- tapOn:
+    id: chat_send
+- assertVisible: '(?s-i)^.*\n${MESSAGE_PATTERN_1}\n.*$'
+- hideKeyboard
+- tapOn:
+    id: chat_composer
+- hideKeyboard
+- inputText: ${MESSAGE_2}
+- assertVisible:
+    id: chat_composer
+    text: '(?-i)^${MESSAGE_PATTERN_2}$'
+- tapOn:
+    id: chat_send
+- assertVisible: '(?s-i)^.*\n${MESSAGE_PATTERN_2}\n.*$'
+- hideKeyboard
+- tapOn:
+    id: chat_composer
+- hideKeyboard
+- inputText: ${MESSAGE_3}
+- assertVisible:
+    id: chat_composer
+    text: '(?-i)^${MESSAGE_PATTERN_3}$'
+- tapOn:
+    id: chat_send
+- assertVisible: '(?s-i)^.*\n${MESSAGE_PATTERN_3}\n.*$'
+- hideKeyboard
+- tapOn:
+    id: chat_composer
+- hideKeyboard
+- inputText: ${MESSAGE_4}
+- assertVisible:
+    id: chat_composer
+    text: '(?-i)^${MESSAGE_PATTERN_4}$'
+- tapOn:
+    id: chat_send
+- assertVisible: '(?s-i)^.*\n${MESSAGE_PATTERN_4}\n.*$'
+- hideKeyboard
+- tapOn:
+    id: chat_composer
+- hideKeyboard
+- inputText: ${MESSAGE_5}
+- assertVisible:
+    id: chat_composer
+    text: '(?-i)^${MESSAGE_PATTERN_5}$'
+- tapOn:
+    id: chat_send
+- assertVisible: '(?s-i)^.*\n${MESSAGE_PATTERN_5}\n.*$'
+- hideKeyboard

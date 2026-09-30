@@ -239,15 +239,24 @@ result_file_path() {
   echo "$docs/$RESULT_FILE"
 }
 
-capture_step_screenshots() {
+capture_step_screenshots() (
   local step_id="$1"
   local dir="$PWD/$ARTIFACT_ROOT/$step_id"
+  local capture_dir
+  # Simulator's screenshot writer may lack removable-volume access even when
+  # this shell can write the artifact directory. Keep its write on internal
+  # storage, then move the unchanged PNG into the retained host artifacts.
+  capture_dir=$(mktemp -d /tmp/mknoon-intro-screenshot.XXXXXX)
+  trap 'rm -rf "$capture_dir"' EXIT
   mkdir -p "$dir"
-  xcrun simctl io "$DEVICE_A" screenshot "$dir/a.png" >/dev/null
-  xcrun simctl io "$DEVICE_B" screenshot "$dir/b.png" >/dev/null
-  xcrun simctl io "$DEVICE_C" screenshot "$dir/c.png" >/dev/null
+  xcrun simctl io "$DEVICE_A" screenshot "$capture_dir/a.png" >/dev/null
+  mv "$capture_dir/a.png" "$dir/a.png"
+  xcrun simctl io "$DEVICE_B" screenshot "$capture_dir/b.png" >/dev/null
+  mv "$capture_dir/b.png" "$dir/b.png"
+  xcrun simctl io "$DEVICE_C" screenshot "$capture_dir/c.png" >/dev/null
+  mv "$capture_dir/c.png" "$dir/c.png"
   echo "  Screenshots: $dir"
-}
+)
 
 assert_system_message_for_contact() {
   local result_path="$1"
@@ -1004,6 +1013,12 @@ EOF
   write_config "$DEVICE_B" "$(cat <<EOF
 {
   "stepId": "$step_id",
+  "expected_chat_messages": [
+    {"contactPeerId": "$PEER_A", "text": "$USER_A introduced $USER_C to you", "transport": "system"},
+    {"contactPeerId": "$PEER_D", "text": "$USER_D introduced $USER_C to you", "transport": "system"}
+  ],
+  "chat_poll_cycles": 90,
+  "chat_poll_interval_ms": 500,
   "contact_request_action": "none",
   "introduction_action": "none",
   "poll_cycles": 90,
@@ -1015,6 +1030,12 @@ EOF
   write_config "$DEVICE_C" "$(cat <<EOF
 {
   "stepId": "$step_id",
+  "expected_chat_messages": [
+    {"contactPeerId": "$PEER_A", "text": "$USER_A introduced you to $USER_B", "transport": "system"},
+    {"contactPeerId": "$PEER_D", "text": "$USER_D introduced you to $USER_B", "transport": "system"}
+  ],
+  "chat_poll_cycles": 90,
+  "chat_poll_interval_ms": 500,
   "contact_request_action": "none",
   "introduction_action": "none",
   "poll_cycles": 90,
@@ -1297,6 +1318,9 @@ run_copy_send_phase() {
   write_config "$DEVICE_A" "$(cat <<EOF
 {
   "stepId": "$step_id",
+  "expected_chat_messages": [{"contactPeerId": "$PEER_B", "text": "You introduced $USER_C to $USER_B", "transport": "system"}],
+  "chat_poll_cycles": 20,
+  "chat_poll_interval_ms": 500,
   "send_introductions": [
     {
       "recipientPeerId": "$PEER_B",
@@ -1315,6 +1339,9 @@ EOF
   write_config "$DEVICE_B" "$(cat <<EOF
 {
   "stepId": "$step_id",
+  "expected_chat_messages": [{"contactPeerId": "$PEER_A", "text": "$USER_A introduced $USER_C to you", "transport": "system"}],
+  "chat_poll_cycles": 35,
+  "chat_poll_interval_ms": 500,
   "contact_request_action": "none",
   "introduction_action": "none",
   "poll_cycles": 35,
@@ -1328,6 +1355,9 @@ EOF
   write_config "$DEVICE_C" "$(cat <<EOF
 {
   "stepId": "$step_id",
+  "expected_chat_messages": [{"contactPeerId": "$PEER_A", "text": "$USER_A introduced you to $USER_B", "transport": "system"}],
+  "chat_poll_cycles": 35,
+  "chat_poll_interval_ms": 500,
   "contact_request_action": "none",
   "introduction_action": "none",
   "poll_cycles": 35,
@@ -1351,6 +1381,9 @@ run_copy_accept_phase() {
   write_config "$DEVICE_A" "$(cat <<EOF
 {
   "stepId": "$step_id",
+  "expected_chat_messages": [{"contactPeerId": "$PEER_B", "text": "You introduced $USER_C to $USER_B", "transport": "system"}],
+  "chat_poll_cycles": 20,
+  "chat_poll_interval_ms": 500,
   "contact_request_action": "none",
   "introduction_action": "none",
   "poll_cycles": 20,
@@ -1364,6 +1397,9 @@ EOF
   write_config "$DEVICE_B" "$(cat <<EOF
 {
   "stepId": "$step_id",
+  "expected_chat_messages": [{"contactPeerId": "$PEER_C", "text": "You and $USER_C are now connected — introduced by $USER_A", "transport": "system"}],
+  "chat_poll_cycles": 35,
+  "chat_poll_interval_ms": 500,
   "contact_request_action": "none",
   "introduction_action": "accept_all",
   "poll_cycles": 35,
@@ -1377,6 +1413,9 @@ EOF
   write_config "$DEVICE_C" "$(cat <<EOF
 {
   "stepId": "$step_id",
+  "expected_chat_messages": [{"contactPeerId": "$PEER_B", "text": "You and $USER_B are now connected — introduced by $USER_A", "transport": "system"}],
+  "chat_poll_cycles": 35,
+  "chat_poll_interval_ms": 500,
   "contact_request_action": "none",
   "introduction_action": "accept_all",
   "poll_cycles": 35,
@@ -1838,7 +1877,10 @@ scenario_repair_missing_side() {
   prepare_devices
   run_handshake_phase "repair-handshake"
   run_intro_phase "repair-first-intro" "none" "drop_first"
-  run_intro_phase "repair-resend-intro" "accept_all" "accept_all"
+  # Finish replacement fanout before accepting: B still has the old pending
+  # row and can otherwise accept it before the resend reaches either target.
+  run_intro_phase "repair-resend-intro" "none" "none"
+  run_intro_action_phase "repair-resend-accept" "accept_all" "accept_all"
   run_settle_phase "repair-resend-settle"
   assert_pair_state "mutual_accepted" "yes"
 }
@@ -1916,7 +1958,7 @@ scenario_split_brain_mutual_acceptance_recovery() {
   prepare_devices
   run_handshake_phase "split-brain-handshake"
   run_intro_phase "split-brain-send" "none" "none"
-  run_intro_phase "split-brain-first-accept" "accept_all" "none"
+  run_intro_action_phase "split-brain-first-accept" "accept_all" "none"
   run_split_brain_second_accept_phase
   assert_split_brain_mid_state
   run_split_brain_recovery_phase

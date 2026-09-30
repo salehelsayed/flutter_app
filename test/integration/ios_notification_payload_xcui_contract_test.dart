@@ -14,7 +14,103 @@ String _between(String source, String start, String end) {
   return source.substring(startIndex, endIndex);
 }
 
+String _bootstrapFailure(
+  String detail, {
+  String status = 'FAIL',
+  Map<String, Object?> extra = const <String, Object?>{},
+}) =>
+    'IOS_RECEIVER_BOOTSTRAP_RESULT_JSON=${jsonEncode(<String, Object?>{'schema': 'mknoon.sims.ios-receiver-bootstrap-result.v1', 'status': status, 'containsSecrets': false, 'detail': detail, ...extra})}';
+
 void main() {
+  test('receiver bootstrap retains known failure codes without raw output', () {
+    for (final entry in <String, String>{
+      'the protected capture request could not be staged': 'request_not_staged',
+      'the installed app could not process the capture request':
+          'capture_not_launched',
+      'the app did not publish a nonce-bound receiver handoff in time':
+          'handoff_deadline',
+      'the private receiver handoff is unreadable': 'handoff_unreadable',
+      'the private receiver handoff is not protected JSON':
+          'handoff_unprotected',
+      'the private receiver handoff failed nonce/schema validation':
+          'handoff_binding',
+      'the app-container receiver handoff cleanup failed': 'cleanup_failed',
+    }.entries) {
+      expect(
+        ios_payload_driver.receiverBootstrapFailureCode(
+          _bootstrapFailure(entry.key),
+          exitCode: 1,
+          timedOut: false,
+        ),
+        entry.value,
+      );
+    }
+    expect(
+      ios_payload_driver.receiverBootstrapFailureCode(
+        _bootstrapFailure(
+          'the bootstrap-enabled app is not launchable on the selected iPhone',
+          status: 'BLOCKED',
+        ),
+        exitCode: 78,
+        timedOut: false,
+      ),
+      'app_not_launchable',
+    );
+  });
+
+  test(
+    'receiver bootstrap rejects malformed or secret-bearing diagnostics',
+    () {
+      const detail =
+          'the app did not publish a nonce-bound receiver handoff in time';
+      final valid = _bootstrapFailure(detail);
+      for (final output in <String>[
+        '',
+        'IOS_RECEIVER_BOOTSTRAP_RESULT_JSON={',
+        '$valid\n$valid',
+        _bootstrapFailure('private-token-must-never-escape'),
+        _bootstrapFailure('$detail private-token-must-never-escape'),
+        _bootstrapFailure(detail, status: 'PASS'),
+        _bootstrapFailure(detail, status: 'BLOCKED'),
+        _bootstrapFailure(
+          detail,
+          extra: <String, Object?>{'apnsDeviceToken': 'private-token'},
+        ),
+        valid.replaceFirst('"containsSecrets":false', '"containsSecrets":true'),
+        valid.replaceFirst('bootstrap-result.v1', 'bootstrap-result.v9'),
+        'x' * 65537,
+      ]) {
+        expect(
+          ios_payload_driver.receiverBootstrapFailureCode(
+            output,
+            exitCode: 1,
+            timedOut: false,
+          ),
+          'unavailable',
+        );
+      }
+    },
+  );
+
+  test('receiver bootstrap timeout and missing output stay distinct', () {
+    expect(
+      ios_payload_driver.receiverBootstrapFailureCode(
+        'private output',
+        exitCode: -1,
+        timedOut: true,
+      ),
+      'helper_timeout',
+    );
+    expect(
+      ios_payload_driver.receiverBootstrapFailureCode(
+        'private output',
+        exitCode: 0,
+        timedOut: false,
+      ),
+      'handoff_missing',
+    );
+  });
+
   test('physical driver accepts only the exact producer activation shape', () {
     final payload = <String, Object?>{
       'fixture_schema': 'mknoon.sims.ios-payload-private-fixture.v1',

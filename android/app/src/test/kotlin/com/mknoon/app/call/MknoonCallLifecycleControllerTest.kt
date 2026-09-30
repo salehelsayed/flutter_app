@@ -659,6 +659,28 @@ class MknoonCallLifecycleControllerTest {
     }
 
     @Test
+    fun `verified background contact name refreshes incoming notification and preserves projection`() {
+        val rig = LifecycleRig()
+        val id = rig.payload.nativeCallId
+        assertEquals(MknoonCallPresentationResult.PRESENTED, rig.controller.present(rig.payload))
+        assertNull(rig.controller.presentation(id))
+
+        val (accepted, refreshed) = rig.controller.updateAuthenticatedContactName(id, "Known contact")
+        assertTrue(accepted)
+        assertFalse(refreshed) // This fake platform records the refresh and reports no SystemUI result.
+        assertEquals(id to "ringing", rig.platform.projectCalls.last())
+        val first = requireNotNull(rig.controller.presentation(id))
+        assertEquals("Known contact", first.displayName)
+
+        val foreground = first.copy(state = "connected", muted = true, muteAvailable = true)
+        assertTrue(rig.controller.updatePresentation(id, foreground))
+        assertTrue(rig.controller.updateAuthenticatedContactName(id, "Updated contact").first)
+        assertEquals(foreground.copy(displayName = "Updated contact"), rig.controller.presentation(id))
+        assertFalse(rig.controller.updateAuthenticatedContactName(UUID.fromString(OTHER_CALL_ID), "Other").first)
+        assertFalse(rig.controller.updateAuthenticatedContactName(id, " ").first)
+    }
+
+    @Test
     fun `duplicate or busy initial display cannot overwrite exact call foreground presentation`() {
         val rig = LifecycleRig()
         val id = rig.payload.nativeCallId
@@ -2334,6 +2356,7 @@ internal class LifecycleFakePlatform(
     var registerCalls = 0
     var registerOutgoingCalls = 0
     var showIncomingCalls = 0
+    val projectCalls = mutableListOf<Pair<UUID, String>>()
     var startForegroundCalls = 0
     var answerCalls = 0
     var endCalls = 0
@@ -2345,6 +2368,10 @@ internal class LifecycleFakePlatform(
     var stopEndpointUpdatesCalls = 0
     var startMicrophoneCalls = 0
     var stopIncomingRingerCalls = 0
+    override fun project(nativeCallId: UUID, state: String): Boolean {
+        projectCalls += nativeCallId to state
+        return false
+    }
     var lastRegistrationTimeoutMs: Long? = null
     var onRegisterIncoming: ((MknoonCallRegistrationCallback) -> Unit)? = null
     var onRegisterOutgoing: ((MknoonCallRegistrationCallback) -> Unit)? = null

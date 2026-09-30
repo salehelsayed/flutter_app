@@ -210,7 +210,7 @@ const _privacySha256 =
 // Strict async analysis now keeps read-acknowledgement failures inside their
 // existing catch; the sole additional normalized-source change is `return await`.
 const _applicationRootNormalizedSha256 =
-    '93d55922ed389bf89ebda8df9ae9fef66256ca5320a3b2b82e7a1186f2e078a9';
+    'd1c0e19ab0911136f65208488a88e122c8c01475b570a48e3a987db977983d29';
 // Plan 358 forwards the strict local-path commit's `nowMs` sample through the
 // same already-wired delegate and relocates nothing. Plan 360 additionally
 // constructs the role-aware deferred-runtime-start owner over the SAME
@@ -338,12 +338,12 @@ const _productionBootstrapNormalizedSha256 =
     // same owner. App composition and all adapter/lifecycle layers stay here.
     // Protected group replay now reads the existing active node transport;
     // the app-owned replay handler and account/lifecycle owners remain here.
-    '4995bb2d4f8e34f83e3781b09e3d8d23357d3f6481adfdcabb7243f2b0acade9';
+    'e2aee3a3a48c69f67eb9d8038a37141ad0b2120fcb44864d1b7727dd5a7753ee';
 
 // The P269 strict-custody proof forwards two optional debug download hooks
 // at the existing media owner; no application or notification owner moves.
 const _productionBootstrapWithoutHistoricalNotificationSha256 =
-    'e258179590eaf99b1f9f02921ee8dc5ad034733e7dbdc61585e2f4fa9568aca5';
+    'f75953d45f3e056acb4f22eb857481c035bcfcb44354230886be7f8134193fe2';
 
 const _reviewedResumeExceptionTargets = <String>{
   'lib/features/account_migration/application/'

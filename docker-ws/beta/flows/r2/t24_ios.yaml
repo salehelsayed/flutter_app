@@ -1,0 +1,16 @@
+appId: com.mknoon.app
+name: T24 iPhone calls; mute, unmute, speaker on, speaker off; ends after 45 s
+---
+- runFlow: call_connected.yaml
+- runFlow: { file: ../sleep.yaml, env: { MS: 4000 } }
+- tapOn: "Mute"
+- runFlow: { file: ../sleep.yaml, env: { MS: 3000 } }
+- takeScreenshot: t24_muted_ios
+- tapOn: "Unmute|Mute"
+- tapOn: "Speaker"
+- runFlow: { file: ../sleep.yaml, env: { MS: 3000 } }
+- takeScreenshot: t24_speaker_ios
+- tapOn: "Turn speaker off|Speaker"
+- runFlow: { file: ../sleep.yaml, env: { MS: 25000 } }
+- takeScreenshot: t24_before_end_ios
+- runFlow: ../end_call.yaml

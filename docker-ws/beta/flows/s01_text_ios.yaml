@@ -1,0 +1,13 @@
+appId: com.mknoon.app
+name: S01 iPhone sends B1, waits for the Pixel's reply B2
+---
+- runFlow: ensure_chat.yaml
+- runFlow:
+    file: send_text.yaml
+    env:
+      MSG: "B1 hi from iPhone ${NONCE}"
+- runFlow:
+    file: wait_text.yaml
+    env:
+      WAIT: "B2 hi from Pixel ${NONCE}"
+      TIMEOUT: 120000

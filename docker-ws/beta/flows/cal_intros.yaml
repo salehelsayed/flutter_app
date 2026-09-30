@@ -1,0 +1,4 @@
+appId: com.mknoon.app
+---
+- tapOn: "1 item pending.*"
+- runFlow: { file: sleep.yaml, env: { MS: 2500 } }

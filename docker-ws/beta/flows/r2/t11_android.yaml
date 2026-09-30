@@ -1,0 +1,10 @@
+appId: com.mknoon.app
+name: T11 Pixel (network off) sends three messages; they must go out after the network returns
+---
+- runFlow: ../ensure_chat.yaml
+- runFlow: { file: send.yaml, env: { MSG: "T11 o1 ${NONCE}" } }
+- runFlow: { file: send.yaml, env: { MSG: "T11 o2 ${NONCE}" } }
+- runFlow: { file: send.yaml, env: { MSG: "T11 o3 ${NONCE}" } }
+- runFlow: ../kb_hide.yaml
+- runFlow: { file: ../sleep.yaml, env: { MS: 5000 } }
+- takeScreenshot: t11_offline_status

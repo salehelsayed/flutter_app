@@ -1,0 +1,12 @@
+appId: com.mknoon.app
+name: T22 Pixel leaves the R2 group
+---
+- runFlow: { file: open_group.yaml, env: { GROUP: "R2 (Group|Renamed|By Pixel) ${NONCE}", GTIMEOUT: 30000 } }
+- runFlow: group_info.yaml
+- scrollUntilVisible: { element: "Leave Group", direction: DOWN, timeout: 10000 }
+- tapOn: "Leave Group"
+- runFlow: { file: ../sleep.yaml, env: { MS: 1500 } }
+- takeScreenshot: t22_leave_dialog
+- tapOn: "Leave & Delete|Leave|Continue to leave"
+- runFlow: { file: ../sleep.yaml, env: { MS: 6000 } }
+- takeScreenshot: t22_after_leave

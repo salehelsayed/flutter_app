@@ -426,6 +426,50 @@ classify_path() {
       record "support" "$path" "support" "manifest-owned build-free physical-Android plus emulator connectivity restore campaign"
       return
       ;;
+    integration_test/scripts/run_production_notification_open.dart)
+      record "support" "$path" "support" "manifest-owned production-bootstrap notification-open journey with Maestro native taps and exact warm/cold/same-peer receipts; original routes retained"
+      return
+      ;;
+    integration_test/scripts/run_production_private_media_local.dart)
+      record "support" "$path" "support" "manifest-owned production private-media local UI and committed SQL lifecycle proof; original component harness retained"
+      return
+      ;;
+    integration_test/scripts/run_production_routing.dart)
+      record "support" "$path" "support" "manifest-owned production-bootstrap routing with 27 original direct/group criteria and production-owned protocol controls; original routes retained"
+      return
+      ;;
+    integration_test/scripts/run_production_notification_sound.dart)
+      record "support" "$path" "support" "manifest-owned production-bootstrap notification sound S1-S16 and control journey with Maestro UI, exact descriptor projection and retained original native disposition oracle; original routes retained"
+      return
+      ;;
+    integration_test/scripts/run_production_foreground_group_push.dart)
+      record "support" "$path" "support" "manifest-owned production-bootstrap foreground group-push pilot with Maestro UI and exact S1/S2/S3 protocol receipts; original routes retained"
+      return
+      ;;
+    integration_test/scripts/run_production_group_create.dart)
+      record "support" "$path" "support" "manifest-owned production group-catalog create/join journey; original route retained"
+      return
+      ;;
+    integration_test/scripts/run_production_group_invite_reliability.dart)
+      record "support" "$path" "support" "manifest-owned production group-invite reliability journey; original route retained"
+      return
+      ;;
+    integration_test/scripts/run_production_group_reaction.dart)
+      record "support" "$path" "support" "manifest-owned production group-reaction roundtrip journey; original route retained"
+      return
+      ;;
+    integration_test/scripts/run_production_group_reaction_toggle.dart)
+      record "support" "$path" "support" "manifest-owned production group-reaction toggle-convergence journey; original route retained"
+      return
+      ;;
+    integration_test/scripts/run_production_group_removed_reaction.dart)
+      record "support" "$path" "support" "manifest-owned production removed-member reaction-rejection journey; original route retained"
+      return
+      ;;
+    integration_test/scripts/run_production_startup_resume_performance.dart)
+      record "support" "$path" "support" "manifest-owned production startup/resume performance journey; original route retained"
+      return
+      ;;
     integration_test/scripts/run_connectivity_restore_media_outbox_sims.dart)
       record "support" "$path" "support" "manifest-owned production private-media outbox restore campaign"
       return

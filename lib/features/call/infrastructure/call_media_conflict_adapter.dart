@@ -3,9 +3,9 @@ import '../application/call_audio_controller.dart';
 
 typedef IsVoiceNoteRecording = bool Function();
 
-/// Refuses foreground call capture while the existing voice-note recorder owns
-/// the microphone. Eligible playback pause/resume remains owned by the shared
-/// audio-session interruption policy; microphone recording is never resumed.
+/// Lets an active voice-note owner finish its recording before call capture.
+/// Other microphone owners remain exclusive. Playback interruption remains
+/// owned by the shared audio-session policy; recording is never resumed.
 final class CallMediaConflictAdapter implements CallMediaConflictPort {
   CallMediaConflictAdapter({
     IsVoiceNoteRecording? isVoiceNoteRecording,
@@ -22,8 +22,9 @@ final class CallMediaConflictAdapter implements CallMediaConflictPort {
   @override
   Future<CallMediaConflictLease> acquireForCall() async {
     try {
+      await _microphoneCaptureLeases.prepareForCall();
       return _CallMediaConflictLease(_microphoneCaptureLeases.acquire());
-    } on MicrophoneCaptureLeaseRefused {
+    } catch (_) {
       throw const CallMediaConflictRefused();
     }
   }

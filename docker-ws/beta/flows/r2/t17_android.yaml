@@ -1,0 +1,16 @@
+appId: com.mknoon.app
+name: T17 Pixel sends g1, replies to the iPhone's g2, then checks the iPhone's reaction on g1
+---
+- runFlow: { file: open_group.yaml, env: { GROUP: "R2 (Group|Renamed|By Pixel) ${NONCE}", GTIMEOUT: 30000 } }
+- runFlow: { file: ../send_text.yaml, env: { MSG: "T17 g1 ${NONCE}" } }
+- runFlow: ../kb_hide.yaml
+- extendedWaitUntil: { visible: ".*T17 g2 ${NONCE}.*", timeout: 240000 }
+- longPressOn: ".*T17 g2 ${NONCE}.*"
+- takeScreenshot: t17_menu_received_android
+- tapOn: "Reply"
+- tapOn: { id: "chat_composer" }
+- inputText: "T17 reply ${NONCE}"
+- tapOn: "Send message"
+- runFlow: ../kb_hide.yaml
+- extendedWaitUntil: { visible: ".*T17 g1 ${NONCE}.*❤️.*", timeout: 180000 }
+- takeScreenshot: t17_reaction_seen_android

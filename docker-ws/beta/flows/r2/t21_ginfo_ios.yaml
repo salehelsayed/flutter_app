@@ -1,0 +1,6 @@
+appId: com.mknoon.app
+name: T21 iPhone opens group info (the driver then taps the unlabeled remove icon)
+---
+- runFlow: { file: open_group.yaml, env: { GROUP: "R2 (Group|Renamed|By Pixel) ${NONCE}", GTIMEOUT: 30000 } }
+- runFlow: group_info.yaml
+- runFlow: { file: ../sleep.yaml, env: { MS: 2000 } }

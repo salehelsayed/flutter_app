@@ -1,0 +1,6 @@
+appId: com.mknoon.app
+name: T30 iPhone calls the backgrounded Pixel, talks 15 s, ends
+---
+- runFlow: call_connected.yaml
+- runFlow: { file: ../sleep.yaml, env: { MS: 15000 } }
+- runFlow: ../end_call.yaml

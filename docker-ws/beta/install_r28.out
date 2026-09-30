@@ -1,0 +1,12 @@
+[23:06:47] sync start
+[23:07:12] synced: synced_at=2026-09-28T21:06:58Z source=/Volumes/CrucialX9/flutter_app source_head=06d5ab5704cf0106e730f0dab17b0abfd645fe7c source_head_short=06d5ab570 source_dirty_files=508 note=working tree copy, not a commit; .git deliberately not copied 
+[23:07:12] R2-6 fix markers present
+[23:07:12] android build 1.0.0-06d5ab570.d508.t260928230712
+[23:09:04] ANDROID OK go_new_symbol=2
+[23:09:04] apk has updatePresentationAndRefreshIncoming: 3
+build name: 1.0.0-06d5ab570.d508.t260928230712
+android push: 279515059/279515059 bytes in 1 s
+android pm install: Success in 1 s
+android installed: 1.0.0-06d5ab570.d508.t260928230712 MATCH
+ios installed: 260928210936
+INSTALL DONE

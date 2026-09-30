@@ -1,0 +1,23 @@
+appId: com.mknoon.app
+name: open 1:1 chat with the friend (via the static list view, not the animated orbit)
+---
+- runFlow:
+    when:
+      visible: "Allow"
+    commands:
+      - tapOn: "Allow"
+- extendedWaitUntil:
+    visible: "Open chat with ${PEER}.*|Show inner circle"
+    timeout: 60000
+- runFlow:
+    when: { visible: "Show all chats" }
+    commands: [ { tapOn: "Show all chats" } ]
+- runFlow:
+    when: { visible: "All.*" }
+    commands: [ { tapOn: "All.*" } ]
+- tapOn: "${PEER}\\n.*"
+- extendedWaitUntil:
+    visible: ".*Write something.*"
+    timeout: 30000
+- assertVisible: { id: "mknoon.conversation.${PEER}" }
+- takeScreenshot: open_chat_${DEV}

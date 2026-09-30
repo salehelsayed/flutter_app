@@ -1,0 +1,18 @@
+appId: com.mknoon.app
+name: explore - iPhone - leave the viewer, open attach > Media Library
+---
+- runFlow:
+    when: { visible: "Dismiss menu" }
+    commands: [ { tapOn: "Dismiss menu" } ]
+- repeat:
+    times: 3
+    while: { notVisible: ".*Write something.*" }
+    commands:
+      - runFlow: go_back.yaml
+      - runFlow: { file: sleep.yaml, env: { MS: 1000 } }
+- runFlow: ensure_chat.yaml
+- tapOn: "Add attachment"
+- runFlow: { file: sleep.yaml, env: { MS: 1500 } }
+- tapOn: "Media Library"
+- runFlow: { file: sleep.yaml, env: { MS: 6000 } }
+- takeScreenshot: x_ios_library

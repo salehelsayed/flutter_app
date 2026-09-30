@@ -1,0 +1,9 @@
+appId: com.mknoon.app
+name: relaunch the stopped app and wait for all three offline messages
+---
+- launchApp: { stopApp: false }
+- runFlow: open_chat.yaml
+- extendedWaitUntil: { visible: ".*${P}3 offline msg ${NONCE}.*", timeout: 180000 }
+- extendedWaitUntil: { visible: ".*${P}2 offline msg ${NONCE}.*", timeout: 20000 }
+- extendedWaitUntil: { visible: ".*${P}1 offline msg ${NONCE}.*", timeout: 20000 }
+- takeScreenshot: offline_received_${DEV}

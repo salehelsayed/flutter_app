@@ -3,6 +3,88 @@ import 'package:flutter_test/flutter_test.dart';
 import '../../integration_test/scripts/routing_smoke_group_criteria.dart';
 
 void main() {
+  group('routing smoke direct criteria', () {
+    test('S3 rejects sender success without offline receiver custody', () {
+      final sent = {'outcome': 'success', 'sendPath': 'inbox'};
+      expect(evaluateS3(sent, {'e2eMs': -1}).ok, isFalse);
+      expect(evaluateS3(sent, {}).ok, isFalse);
+      expect(evaluateS3(sent, {'e2eMs': 25}).ok, isTrue);
+    });
+    test('S8 requires ten distinct entries and every receiver receipt', () {
+      final alice = _aliceTimeline()
+        ..add({'n': 10, 'label': 'warm', 'outcome': 'success'});
+      // The direct harness records a boolean from its real database poll.
+      alice[6]['received'] = true;
+      final bob = _bobTimeline()..add({'n': 10, 'role': 'recv', 'e2eMs': 5});
+      expect(evaluateS8({'timeline': alice}, {'timeline': bob}).ok, isTrue);
+      alice[6]['received'] = false;
+      expect(evaluateS8({'timeline': alice}, {'timeline': bob}).ok, isFalse);
+      alice[6]['received'] = null;
+      expect(evaluateS8({'timeline': alice}, {'timeline': bob}).ok, isFalse);
+      alice[6]['received'] = true;
+      bob[4] = {'n': 5, 'role': 'recv_inbox', 'pending': true};
+      expect(evaluateS8({'timeline': alice}, {'timeline': bob}).ok, isFalse);
+      bob[4] = {'n': 5, 'role': 'recv_inbox', 'e2eMs': 5};
+      bob[9] = {'n': 9, 'role': 'recv', 'e2eMs': 5};
+      expect(evaluateS8({'timeline': alice}, {'timeline': bob}).ok, isFalse);
+    });
+    test('S9 rejects send-only and partial batch receipts', () {
+      final alice = {
+        'timings': List.generate(5, (_) => {'outcome': 'success'}),
+      };
+      final bob = {
+        'count': 5,
+        'timings': List.generate(5, (_) => {'e2eMs': 25}),
+      };
+      expect(evaluateS9(alice, bob).ok, isTrue);
+      expect(evaluateS9(alice, {'count': 0, 'timings': []}).ok, isFalse);
+      expect(evaluateS9(alice, {'count': 5, 'timings': []}).ok, isFalse);
+      expect(
+        evaluateS9({
+          'timings': List.generate(5, (_) => {'outcome': 'failed'}),
+        }, bob).ok,
+        isFalse,
+      );
+    });
+    test('S10 rejects unavailable custody and missing recipient deletion', () {
+      expect(
+        evaluateS10(
+          {'outcome': 'mutation_custody_unavailable'},
+          {'received': true, 'deleted': false},
+        ).ok,
+        isFalse,
+      );
+      expect(
+        evaluateS10(
+          {'outcome': 'success'},
+          {'received': true, 'deleted': false},
+        ).ok,
+        isFalse,
+      );
+      expect(
+        evaluateS10(
+          {'outcome': 'success'},
+          {'received': true, 'deleted': true},
+        ).ok,
+        isTrue,
+      );
+    });
+    test('S11 requires actual successful voice send timing', () {
+      expect(
+        evaluateS11({
+          'voiceTiming': {'outcome': 'send_failed'},
+        }).ok,
+        isFalse,
+      );
+      expect(evaluateS11({}).ok, isFalse);
+      expect(
+        evaluateS11({
+          'voiceTiming': {'outcome': 'success'},
+        }).ok,
+        isTrue,
+      );
+    });
+  });
   group('routing smoke group criteria', () {
     test('G2 requires all five warm messages', () {
       expect(evaluateG2({'count': 5}).ok, isTrue);

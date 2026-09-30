@@ -896,6 +896,7 @@ void _testOnlySuppression() {}
         'packages/background_push_crypto',
         'third_party/bonsoir_darwin',
         'third_party/sqflite_sqlcipher',
+        'third_party/video_compress',
       ]);
       expect(
         inventory.entries,

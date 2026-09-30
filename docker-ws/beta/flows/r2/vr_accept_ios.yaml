@@ -1,0 +1,23 @@
+appId: com.mknoon.app
+name: R2-1 validation (reverse) - the iPhone accepts R2 Group NONCE and replies
+---
+- runFlow: ../ensure_chat.yaml
+- tapOn: "Back"
+- extendedWaitUntil: { visible: "Show all chats|Show inner circle", timeout: 20000 }
+- runFlow:
+    when: { visible: "Show all chats" }
+    commands: [ { tapOn: "Show all chats" } ]
+- extendedWaitUntil: { visible: "[0-9]+ items? pending.*", timeout: 300000 }
+- tapOn: "[0-9]+ items? pending.*"
+- runFlow: { file: ../sleep.yaml, env: { MS: 2500 } }
+- takeScreenshot: vr_intros_ios
+- tapOn: "Accept"
+- runFlow: { file: ../sleep.yaml, env: { MS: 4000 } }
+- runFlow:
+    when: { visible: "All.*" }
+    commands: [ { tapOn: "All.*" } ]
+- extendedWaitUntil: { visible: ".*R2 Group ${NONCE}.*", timeout: 90000 }
+- tapOn: ".*R2 Group ${NONCE}.*"
+- extendedWaitUntil: { visible: ".*V3 hello ${NONCE}.*", timeout: 180000 }
+- runFlow: { file: ../send_text.yaml, env: { MSG: "V3 hi ${NONCE}" } }
+- runFlow: ../kb_hide.yaml

@@ -1,0 +1,4 @@
+FLOW V1_caller ios FAIL rc=1
+/Volumes/CrucialX9/flutter_app/docker-ws/beta/r23_wait_then_run.sh: line 37:  3221 Terminated: 15          bash "$H/run_r23_validate.sh"
+/Volumes/CrucialX9/flutter_app/docker-ws/beta/r23_wait_then_run.sh: line 43: 89242 Terminated: 15          nohup perl -e 'use POSIX qw(setsid); setsid(); exec @ARGV' /bin/bash -c "$ANDROID_HOME/platform-tools/adb -s $SERIAL logcat -T 1 -v threadtime | grep --line-buffered -E 'appium|Force stopping com\.mknoon\.app|killDueToPackageUpdate' > '$W'" > /dev/null 2>&1 < /dev/null
+FLOW V1_callee android FAIL rc=143

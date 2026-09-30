@@ -1,0 +1,20 @@
+RUN=/Volumes/CrucialX9/flutter_app/artifacts/beta-20260925/run-20260926-204733
+FLOW ready_s05 ios PASS rc=0
+FLOW ready_s05 android PASS rc=0
+FLOW s05a android PASS rc=0
+FLOW s05a ios PASS rc=0
+FLOW s05b android PASS rc=0
+FLOW s05b ios PASS rc=0
+FLOW s05c ios PASS rc=0
+FLOW s05c android PASS rc=0
+FLOW s05d ios PASS rc=0
+FLOW s05d android PASS rc=0
+FLOW s05e android PASS rc=0
+FLOW s05e ios PASS rc=0
+FLOW ready_s09 android PASS rc=0
+FLOW ready_s09 ios PASS rc=0
+FLOW s09_back android PASS rc=0
+FLOW s09_back ios PASS rc=0
+FLOW ready_end android PASS rc=0
+FLOW ready_end ios PASS rc=0
+/Volumes/CrucialX9/flutter_app/docker-ws/beta/run_b5.sh: line 54: 30309 Terminated: 15          nohup perl -e 'use POSIX qw(setsid); setsid(); exec @ARGV' "$ANDROID_HOME/platform-tools/adb" -s "$SERIAL" logcat -T 1 -v threadtime > "$RUN/android_logcat_live.txt" 2>&1 < /dev/null

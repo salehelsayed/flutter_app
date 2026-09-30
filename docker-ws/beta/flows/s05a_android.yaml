@@ -1,0 +1,15 @@
+appId: com.mknoon.app
+name: S05a Pixel answers the iPhone's call, waits for hang-up
+---
+- runFlow: ensure_chat.yaml
+- extendedWaitUntil: { visible: "Answer", timeout: 90000 }
+- takeScreenshot: s05a_incoming_android
+- tapOn: "Answer"
+- extendedWaitUntil: { visible: "(.*\\n)?Connected(\\n.*)?", timeout: 60000 }
+- takeScreenshot: s05a_connected_android
+- extendedWaitUntil: { notVisible: "(.*\\n)?Connected(\\n.*)?", timeout: 90000 }
+- runFlow: { file: sleep.yaml, env: { MS: 3000 } }
+- takeScreenshot: s05a_after_end_android
+- runFlow: ensure_chat.yaml
+- extendedWaitUntil: { visible: ".*Voice call.*", timeout: 60000 }
+- takeScreenshot: s05a_row_android

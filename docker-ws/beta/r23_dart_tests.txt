@@ -1,0 +1,13 @@
+test/features/call/infrastructure/call_media_conflict_adapter_test.dart
+test/features/conversation/presentation/controllers/conversation_voice_capture_controller_test.dart
+test/core/bootstrap/call_signaling_composition_test.dart
+test/core/bootstrap/production_call_signaling_graph_live_call_guard_test.dart
+test/features/call/application/call_coordinator_shutdown_terminate_test.dart
+test/features/call/presentation/foreground_call_back_button_test.dart
+test/features/call/presentation/foreground_call_overlay_test.dart
+test/features/conversation/presentation/controllers/conversation_controller_composition_contract_test.dart
+test/features/conversation/presentation/widgets/action_discoverability_test.dart
+test/features/groups/presentation/linked_group_microphone_lease_test.dart
+test/features/posts/phase1/compose_post_sheet_test.dart
+test/features/conversation/presentation/screens/conversation_wired_test.dart
+test/features/groups/presentation/group_conversation_wired_test.dart

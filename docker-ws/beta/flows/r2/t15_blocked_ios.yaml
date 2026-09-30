@@ -1,0 +1,14 @@
+appId: com.mknoon.app
+name: T15 iPhone (blocked) sends a message and calls
+---
+- runFlow: ../ensure_chat.yaml
+- runFlow: { file: ../send_text.yaml, env: { MSG: "T15 while blocked ${NONCE}" } }
+- runFlow: ../kb_hide.yaml
+- runFlow: { file: ../sleep.yaml, env: { MS: 15000 } }
+- takeScreenshot: t15_ios_msg_status
+- tapOn: "Start voice call"
+- runFlow: { file: ../sleep.yaml, env: { MS: 25000 } }
+- takeScreenshot: t15_ios_call_state
+- runFlow: end_if_any.yaml
+- runFlow: { file: ../sleep.yaml, env: { MS: 3000 } }
+- takeScreenshot: t15_ios_after_call

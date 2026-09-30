@@ -1,0 +1,9 @@
+appId: com.mknoon.app
+name: T21 tap POINT (the remove icon), confirm Remove
+---
+- tapOn: { point: "${POINT}" }
+- runFlow: { file: ../sleep.yaml, env: { MS: 1500 } }
+- takeScreenshot: t21_remove_dialog
+- tapOn: "Remove"
+- runFlow: { file: ../sleep.yaml, env: { MS: 4000 } }
+- takeScreenshot: t21_removed_ios

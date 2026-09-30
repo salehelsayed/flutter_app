@@ -1,0 +1,12 @@
+appId: com.mknoon.app
+name: T23 Pixel sees Beta Group n4 dissolved, deletes it locally
+---
+- runFlow: { file: open_group.yaml, env: { GROUP: "Beta Group n4", GTIMEOUT: 30000 } }
+- extendedWaitUntil: { visible: ".*dissolved.*|.*Dissolved.*", timeout: 240000 }
+- takeScreenshot: t23_dissolved_android
+- runFlow: group_info.yaml
+- scrollUntilVisible: { element: "Delete Locally", direction: DOWN, timeout: 10000 }
+- tapOn: "Delete Locally"
+- tapOn: "Delete Locally"
+- runFlow: { file: ../sleep.yaml, env: { MS: 4000 } }
+- takeScreenshot: t23_deleted_locally

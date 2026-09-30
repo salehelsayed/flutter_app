@@ -1,0 +1,9 @@
+appId: com.mknoon.app
+name: S11 (F1) Pixel rings, caller's native end must show as a missed call
+---
+- runFlow: ensure_chat.yaml
+- extendedWaitUntil: { visible: "Answer", timeout: 90000 }
+- extendedWaitUntil: { notVisible: "Answer", timeout: 60000 }
+- runFlow: { file: sleep.yaml, env: { MS: 3000 } }
+- runFlow: ensure_chat.yaml
+- takeScreenshot: s11_rows_android

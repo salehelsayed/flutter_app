@@ -143,20 +143,20 @@ class _ReactionBarState extends State<ReactionBar>
 
   Widget _plusButton(BuildContext context) {
     final readableColors = context.backgroundReadableColors;
-    return GestureDetector(
-      onTap: widget.onPlusTap,
-      child: Container(
-        width: 44,
-        height: 44,
-        alignment: Alignment.center,
-        decoration: BoxDecoration(
-          color: readableColors.surfaceSubtle,
-          borderRadius: BorderRadius.circular(22),
-        ),
-        child: Icon(
-          Icons.add,
-          size: 20,
-          color: readableColors.iconSecondary,
+    return Semantics(
+      identifier: 'message_reaction_more',
+      button: true,
+      child: GestureDetector(
+        onTap: widget.onPlusTap,
+        child: Container(
+          width: 44,
+          height: 44,
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            color: readableColors.surfaceSubtle,
+            borderRadius: BorderRadius.circular(22),
+          ),
+          child: Icon(Icons.add, size: 20, color: readableColors.iconSecondary),
         ),
       ),
     );

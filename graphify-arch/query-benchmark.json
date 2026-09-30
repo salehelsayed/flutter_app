@@ -135,14 +135,14 @@
     },
     {
       "name": "direct-media-custody-flag",
-      "question": "lib/core/config/direct_media_blob_custody_client_flag.dart proof",
+      "question": "lib/core/config/direct_media_blob_custody_client_flag.dart DirectConversationRouteAuthority proof",
       "profile": "tdd",
       "budget": 700,
       "expected": {
         "confidence": "anchored",
         "route": "architecture",
         "source_any": ["lib/core/config/direct_media_blob_custody_client_flag.dart"],
-        "proof_any": ["test/features/conversation/presentation/screens/conversation_wired_test.dart"]
+        "proof_any": ["test/features/conversation/presentation/screens/direct_conversation_route_authority_contract_test.dart"]
       }
     },
     {

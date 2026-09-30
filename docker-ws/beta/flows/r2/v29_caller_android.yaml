@@ -1,0 +1,10 @@
+appId: com.mknoon.app
+name: R2-8 V5 Pixel calls the iPhone, talks 20 s, ends
+---
+- runFlow: ../ensure_chat.yaml
+- extendedWaitUntil: { visible: "Start voice call", timeout: 90000 }
+- tapOn: "Start voice call"
+- extendedWaitUntil: { visible: "(.*\\n)?Connected(\\n.*)?", timeout: 90000 }
+- takeScreenshot: v29_pixel_caller_connected
+- runFlow: { file: ../sleep.yaml, env: { MS: 20000 } }
+- runFlow: ../end_call.yaml

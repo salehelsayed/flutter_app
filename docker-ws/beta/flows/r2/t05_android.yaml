@@ -1,0 +1,11 @@
+appId: com.mknoon.app
+name: T05 Pixel receives the photo and opens it
+---
+- runFlow: ../ensure_chat.yaml
+- extendedWaitUntil: { visible: ".*T05 photo from iPhone ${NONCE}.*", timeout: 300000 }
+- runFlow: { file: ../sleep.yaml, env: { MS: 8000 } }
+- takeScreenshot: t05_received
+- tapOn: ".*T05 photo from iPhone ${NONCE}.*"
+- runFlow: { file: ../sleep.yaml, env: { MS: 3000 } }
+- takeScreenshot: t05_viewer
+- runFlow: leave_viewer.yaml

@@ -11,6 +11,7 @@ import '../../tool/sims/artifact_evidence.dart';
 import '../../tool/sims/device_criteria.dart';
 import '../support/android_app_state_guard.dart';
 import '_android_app_package.dart';
+import 'run_connectivity_restore_sims.dart' show launchConnectivityRestoreApp;
 
 const String _capabilityId = privateMediaOutboxE2EScenario;
 const String _validatorId = 'validatePrivateMediaOutboxRestoreArtifact';
@@ -536,20 +537,10 @@ final class _Campaign {
   }
 
   Future<void> _launch(String device) async {
-    final result = await _adb(device, <String>[
-      'shell',
-      'am',
-      'start',
-      '-W',
-      '-n',
-      '$packageName/com.mknoon.app.MainActivity',
-    ], allowFailure: true);
-    final output = '${result.stdout}\n${result.stderr}';
-    if (result.exitCode != 0 ||
-        !RegExp(
-          r'^Status:[ \t]+ok[ \t]*\r?$',
-          multiLine: true,
-        ).hasMatch(output)) {
+    if (!await launchConnectivityRestoreApp(
+      packageName: packageName,
+      runAdb: (arguments) => _adb(device, arguments, allowFailure: true),
+    )) {
       throw _Failure('App launch failed on $device.');
     }
   }
@@ -661,9 +652,38 @@ final class _Campaign {
           return null;
         }
         if (result['status'] == 'failed') {
+          String safeDiagnosticToken(String key) {
+            final value = result[key];
+            return value is String &&
+                    RegExp(r'^[A-Za-z][A-Za-z0-9_]{0,79}$').hasMatch(value)
+                ? value
+                : 'unknown';
+          }
+
+          final errorType = safeDiagnosticToken('errorType');
+          final failureCode = safeDiagnosticToken('failureCode');
+          await proofDirectory.create(recursive: true);
+          final diagnostic = File(
+            '${proofDirectory.path}/private-media-outbox-'
+            '${request.runCorrelationSha256}-${request.role}-failure.json',
+          );
+          await diagnostic.writeAsString(
+            jsonEncode(<String, Object?>{
+              'schema': 'mknoon.private-media-outbox-failure-diagnostic.v1',
+              'diagnosticOnly': true,
+              'runCorrelationSha256': request.runCorrelationSha256,
+              'phase': request.phase,
+              'role': request.role,
+              'expectedStatus': expectedStatus,
+              'errorType': errorType,
+              'failureCode': failureCode,
+            }),
+            flush: true,
+          );
           throw _Failure(
             'Production private-media endpoint failed in phase '
-            '${request.phase}/${request.role}.',
+            '${request.phase}/${request.role}: $errorType/$failureCode. '
+            'Diagnostic: ${diagnostic.path}',
           );
         }
         if (result['status'] != expectedStatus) return null;

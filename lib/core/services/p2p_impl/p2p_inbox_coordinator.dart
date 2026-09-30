@@ -1966,20 +1966,44 @@ class _P2PInboxCoordinator {
   /// A recovery-only runtime parks a plaintext delivery receipt for the
   /// foreground runtime. No further headless pass can replay it and it never
   /// notifies, so it must not keep headless recovery from converging.
+  static const _foregroundDeferredMessageType = 'delivery_receipt';
+  static const _foregroundDeferredReasonCode = 'typed_handler_unavailable';
+
   bool _isForegroundDeferredReceipt(InboxStagingEntry entry) =>
       _recoveryOnly &&
-      entry.messageType == 'delivery_receipt' &&
-      entry.rejectReasonCode == 'typed_handler_unavailable';
+      entry.messageType == _foregroundDeferredMessageType &&
+      entry.rejectReasonCode == _foregroundDeferredReasonCode;
 
   Future<DirectInboxDrainOutcome> _verifyFullDrainOutcome(
     DirectInboxDrainOutcome outcome,
   ) async {
     if (!outcome.isSuccessful || outcome.hasMore) return outcome;
     try {
+      final repo = _inboxStagingRepository;
+      if (_recoveryOnly && repo is InboxStagingRecoverableWorkProbeRepository) {
+        // Parked receipts can outnumber any page, so ask whether anything
+        // else is waiting instead of inspecting a capped page.
+        final probe = repo as InboxStagingRecoverableWorkProbeRepository;
+        final hasOtherWork = await probe.hasRecoverableEntryExcluding(
+          messageType: _foregroundDeferredMessageType,
+          rejectReasonCode: _foregroundDeferredReasonCode,
+        );
+        if (!hasOtherWork) return outcome;
+        return const DirectInboxDrainOutcome(
+          isSuccessful: false,
+          hasMore: true,
+          failureReason: 'staged_replay_pending',
+        );
+      }
+      final limit = _recoveryOnly ? _maxRecoverableInboxReplayEntries : 1;
       final recoverable = await _inboxStagingRepository.getRecoverableEntries(
-        limit: _recoveryOnly ? _maxRecoverableInboxReplayEntries : 1,
+        limit: limit,
       );
-      if (recoverable.every(_isForegroundDeferredReceipt)) return outcome;
+      // A full page of parked receipts cannot prove the rest are receipts too.
+      if (recoverable.length < limit &&
+          recoverable.every(_isForegroundDeferredReceipt)) {
+        return outcome;
+      }
       return const DirectInboxDrainOutcome(
         isSuccessful: false,
         hasMore: true,

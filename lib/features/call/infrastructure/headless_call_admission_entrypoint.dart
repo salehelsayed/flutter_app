@@ -1,7 +1,19 @@
-
 import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
+import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/call/diagnostics/call_diagnostic_schema.dart';
+
+void _emitHeadlessAdmissionEntryPhase(String phase) {
+  try {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'CALL_HEADLESS_ADMISSION_ENTRY',
+      details: <String, Object?>{'phase': phase},
+    );
+  } catch (_) {
+    // Diagnostics cannot change admission or its cleanup path.
+  }
+}
 
 enum HeadlessCallAdmissionDisposition {
   admitted('admitted'),
@@ -21,7 +33,8 @@ enum HeadlessCallAdmissionDisposition {
 /// caller its `reject` and acknowledges the ended call's rows.
 enum HeadlessCallAdmissionMode {
   admission('admission'),
-  declineReply('decline_reply');
+  declineReply('decline_reply'),
+  ringingReply('ringing_reply');
 
   const HeadlessCallAdmissionMode(this.wireName);
 
@@ -76,10 +89,13 @@ final class HeadlessCallAdmissionInvocation {
     }
     var mode = HeadlessCallAdmissionMode.admission;
     if (arguments.length == 5) {
-      if (arguments[4] != HeadlessCallAdmissionMode.declineReply.wireName) {
+      if (arguments[4] != HeadlessCallAdmissionMode.declineReply.wireName &&
+          arguments[4] != HeadlessCallAdmissionMode.ringingReply.wireName) {
         throw const FormatException('invalid headless call admission mode');
       }
-      mode = HeadlessCallAdmissionMode.declineReply;
+      mode = arguments[4] == HeadlessCallAdmissionMode.declineReply.wireName
+          ? HeadlessCallAdmissionMode.declineReply
+          : HeadlessCallAdmissionMode.ringingReply;
     }
     return HeadlessCallAdmissionInvocation(
       nonce: nonce,
@@ -210,7 +226,11 @@ Future<void> runAndroidHeadlessCallAdmission(
   required Future<HeadlessCallAdmissionCleanup> Function() emergencyShutdown,
   HeadlessCallAdmissionResultChannel? resultChannel,
 }) async {
+  // Fixed-shape entry markers separate Dart startup and binding setup from
+  // the production runner's per-step timings on a killed, locked device.
+  _emitHeadlessAdmissionEntryPhase('begin');
   WidgetsFlutterBinding.ensureInitialized();
+  _emitHeadlessAdmissionEntryPhase('binding_ready');
   final invocation = HeadlessCallAdmissionInvocation.parse(arguments);
   final channel =
       resultChannel ?? MethodChannelHeadlessCallAdmissionResultChannel();

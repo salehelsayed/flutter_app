@@ -59,6 +59,7 @@ class ComposeArea extends StatefulWidget {
   final String privateMediaRecipientName;
   final TargetPlatform? privateMediaTargetPlatform;
   final bool privateMediaSenderReopenEnabled;
+  final bool compact;
 
   const ComposeArea({
     super.key,
@@ -92,6 +93,7 @@ class ComposeArea extends StatefulWidget {
     this.privateMediaRecipientName = 'them',
     this.privateMediaTargetPlatform,
     this.privateMediaSenderReopenEnabled = false,
+    this.compact = false,
   });
 
   @override
@@ -437,7 +439,12 @@ class _ComposeAreaState extends State<ComposeArea>
       child: BackdropFilter(
         filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
         child: Container(
-          padding: EdgeInsets.fromLTRB(16, 12, 16, 12 + bottomPadding),
+          padding: EdgeInsets.fromLTRB(
+            16,
+            widget.compact ? 4 : 12,
+            16,
+            (widget.compact ? 4 : 12) + bottomPadding,
+          ),
           decoration: BoxDecoration(
             gradient: LinearGradient(
               begin: Alignment.topCenter,
@@ -449,10 +456,11 @@ class _ComposeAreaState extends State<ComposeArea>
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              if (widget.privateMediaEligibility.allowsNewPrivateMedia &&
+              if (!widget.compact &&
+                  widget.privateMediaEligibility.allowsNewPrivateMedia &&
                   widget.onPrivateMediaPolicyChanged != null)
                 _buildPrivateMediaSelector(context),
-              if (showQuotePreview)
+              if (showQuotePreview && !widget.compact)
                 QuotePreviewBar(
                   text: quotePreviewText!,
                   onDismiss: widget.onClearQuote,
@@ -568,9 +576,9 @@ class _ComposeAreaState extends State<ComposeArea>
                           )
                         : AnimatedContainer(
                             duration: const Duration(milliseconds: 200),
-                            constraints: const BoxConstraints(
+                            constraints: BoxConstraints(
                               minHeight: 44,
-                              maxHeight: 160,
+                              maxHeight: widget.compact ? 48 : 160,
                             ),
                             decoration: BoxDecoration(
                               color: isLightSurface
@@ -645,6 +653,19 @@ class _ComposeAreaState extends State<ComposeArea>
                                   height: 1.5,
                                 ),
                                 decoration: InputDecoration(
+                                  prefixIcon: widget.compact
+                                      ? showQuotePreview
+                                            ? const Icon(
+                                                Icons.format_quote,
+                                                size: 18,
+                                              )
+                                            : widget.hasAttachments
+                                            ? const Icon(
+                                                Icons.attach_file,
+                                                size: 18,
+                                              )
+                                            : null
+                                      : null,
                                   hintText: AppLocalizations.of(
                                     context,
                                   )!.conversation_hint,
@@ -668,9 +689,9 @@ class _ComposeAreaState extends State<ComposeArea>
                                   // square fill rect on top of it.
                                   filled: false,
                                   counterText: '',
-                                  contentPadding: const EdgeInsets.symmetric(
+                                  contentPadding: EdgeInsets.symmetric(
                                     horizontal: 16,
-                                    vertical: 12,
+                                    vertical: widget.compact ? 8 : 12,
                                   ),
                                 ),
                               ),

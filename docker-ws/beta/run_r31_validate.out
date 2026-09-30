@@ -1,0 +1,27 @@
+FLOW L2a_callee android PASS rc=0
+FLOW L2a_caller ios PASS rc=0
+FLOW L2b_callee android PASS rc=0
+FLOW L2b_caller ios PASS rc=0
+FLOW L2c_callee android PASS rc=0
+FLOW L2c_caller ios PASS rc=0
+FLOW L3_callee android FAIL rc=1
+FLOW L3_caller ios FAIL rc=1
+FLOW L2ua_callee android PASS rc=0
+FLOW L2ua_caller ios PASS rc=0
+FLOW L1_callee android PASS rc=0
+FLOW L1_caller ios PASS rc=0
+FLOW K1_callee android PASS rc=0
+FLOW K1_caller ios PASS rc=0
+FLOW B1_callee android PASS rc=0
+FLOW B1_caller ios PASS rc=0
+FLOW D1_caller ios PASS rc=0
+FLOW D1_callee android PASS rc=0
+FLOW D2_caller ios PASS rc=0
+FLOW D2_callee android PASS rc=0
+FLOW F1_callee android PASS rc=0
+FLOW F1_caller ios PASS rc=0
+FLOW L2d_callee android PASS rc=0
+FLOW L2d_caller ios PASS rc=0
+FLOW L2e_callee android PASS rc=0
+FLOW L2e_caller ios PASS rc=0
+/Volumes/CrucialX9/flutter_app/docker-ws/beta/run_r31_validate.sh: line 240: 80052 Terminated: 15          nohup perl -e 'use POSIX qw(setsid); setsid(); exec @ARGV' "$ANDROID_HOME/platform-tools/adb" -s "$SERIAL" logcat -T 1 -v threadtime > "$RUN/android_logcat_live.txt" 2>&1 < /dev/null

@@ -68,6 +68,12 @@ Verified evidence: `.codex-test-logs/codex-graphify-removal-checks/results.json`
 records 247 passing Codex host tests plus passing fast/workflow/schema checks.
 Python check selectors must enumerate files: wildcard expansion is implemented
 for Flutter selectors, while the Python runner forwards paths to `unittest`.
+The retained Graphify contracts use `.claude/skills/graphify/SKILL.md` and
+reject reinstating the retired Codex hook. Their direct-media precision proof
+now points to `direct_conversation_route_authority_contract_test.dart`, where
+the production routing assertion moved. The `graphify-tooling` selector runs
+the existing 53-test suite; all 53 pass in
+`.codex-test-logs/all-tests-y227gs8x/checkpoint-003-repaired/results.json`.
 
 Fresh-checkout verification exposed two Codex integration errors: the tests
 unconditionally read ignored `.codex/config.toml` and `.codex/hooks.json` from
@@ -167,6 +173,131 @@ diagnose that connection before proposing another UI driver. The manifest's
 `ui_driver_reason` makes existing campaign exceptions reviewable; validation
 requires a nonempty reason but cannot judge its correctness.
 
+When the user reserves a discovered device for another session, record its ID
+in the ignored configuration's `reserved_device_ids` list. The wrapper clears
+ambient reservations and forwards only that explicit list. SIMS retains raw
+discovery and its digest, but removes reserved runtime/AVD aliases from the
+execution-available pool. A required additional peer that is then unavailable
+uses the existing policy N/A result; an ordinary missing pin, failed discovery,
+or conflicting reserved-and-pinned assignment still blocks. This does not boot,
+stop, or control the reserved target.
+
+The friends fixture reset must wait on each pinned simulator through
+`xcrun simctl bootstatus <id> -b`; it does not need a desktop application named
+Simulator. On this installed Xcode, `open -a Simulator` failed after the owned
+QA applications were uninstalled, before any friendship scenario started. All
+three selected targets were already booted, and explicit boot-readiness probes
+passed without installing or controlling an app. The original failure and
+cleanup probe are retained in `friends-headless-setup-repair-001/`. The native
+recheck passed the first three scenarios, then exposed a separate missing-side
+fixture race. Its retained system-message timestamps show B accepting the old
+invitation before the replacement arrived; the action poll can finish after
+three idle half-second polls while the sender waits ten seconds before resend.
+The missing-side fixture now completes the resend phase before starting its
+existing acceptance phase. Original final state/contact assertions and deadlines
+remain unchanged. Evidence: `friends-missing-side-failure-001/causal-review.json`;
+the exact repaired native scenario passed in `friends-resend-phase-native-002/`,
+including mutual acceptance and both contact assertions. The full friends owner
+remains pending. The copy scenario must also wait for exact system-message
+readiness before navigation/snapshot. Its `introduction_action=none` returns
+immediately; `poll_cycles` does not wait for incoming copy in that branch.
+The failed C snapshot had no introduction/message, while subsequent actual
+Appium MCP source and screenshot showed the exact expected copy. The existing
+message expectation poll now accepts an explicitly requested `system` transport;
+ordinary chat still rejects system rows, and hidden/deleted rows remain rejected.
+Both copy phases use their existing poll budgets and unchanged host deadlines.
+Evidence: `friends-copy-failure-001/` (first snapshot, MCP source/screenshot,
+causal review, and focused failing/passing readiness tests). Broader notification
+fixture contracts passed630tests and workflow240 with zero skips. The native
+recheck passed all send-copy assertions, then failed external-drive screenshot
+output with NSCocoaError513/EPERM. The same pinned `simctl io` screenshot succeeded
+on internal `/tmp`; the shell could write the retained destination. The helper
+now captures into an owned internal temp directory, moves unchanged PNGs into
+the artifact directory, and cleans up on exit. Its exact three-target probe
+passed with valid PNGs and no leftover temp directory (`friends-screenshot-path-repair-001/`).
+The complete native copy recheck passed in `friends-screenshot-path-native-001/`,
+including acceptance/contact assertions and all six screenshots (visually
+reviewed and retained with hashes). The full friends owner remains pending.
+
+Split-brain's first acceptance must use the acceptance-only phase. Calling the
+send helper there replaced the invitation while B accepted the old ID; the
+retained A/C snapshots held the new pending ID. The repaired native scenario
+passed the unchanged intermediate split, reconnect, mutual-acceptance and contact
+assertions (`friends-split-brain-native-001/`, command 0). Its host sequencing
+contract executes the scenario through trace-only device seams and rejects the
+original two-send sequence. Workflow 240 and provider 5 passed with zero skips.
+The following folded-duplicate send phase exposed another passive snapshot race:
+B/C initially recorded no introductions, while the existing four-peer settle
+probe later recorded both introductions and one folded item without resending.
+Both recipients must gate their send-phase snapshot on both introducers' exact
+system messages using the existing 90-cycle budget. Original pending/folding and
+terminal-contact assertions remain required. The complete repaired four-peer
+scenario passed (`friends-folded-readiness-native-001/`), including both pending
+introductions, folded acceptance and exactly one terminal contact per peer.
+All 40 intro-runner preservation tests, 240 workflow tests and five provider
+contracts passed. Original evidence: `friends-folded-readiness-failure-001/`.
+Full owning checks remain pending.
+
+The group multi-party integration harness must register `testWidgets` before
+awaiting platform runtime configuration; put asynchronous configuration in
+`setUpAll` and keep registration-time names independent of late runtime fields.
+The retained source039 attempt registered too late (`Can't call test() once
+tests have begun running`), producing 109 preidentity scenario failures. Also,
+Flutter 3.47.2 ignores the deprecated `drive --no-build` flag for prebuilt launch;
+pass the attested `--use-application-binary` path to reuse the prepared iOS app.
+The focused launch and criteria contracts passed. Native GE-001 then passed
+with all three role identities/verdicts in 87 seconds and no Xcode rebuild in
+any role log; the complete owning group sweep remains pending. Evidence: `.codex-test-logs/all-tests-y227gs8x/`
+`restart-checkpoint-016-major-source039/group-sweep-first-failures/` and
+`source040-host-group-repair/`.
+
+Muted-group header targeting must prefer the localized accessible info-button
+label. The retained physical Android tree exposes `content-desc="Group
+information"`; selecting only unlabeled buttons returned null before the mute
+assertion. The captured-shape regression failed before the fix, and all 70
+muted-group host criteria tests passed afterward. The fresh complete native
+campaign then passed all three scenarios and six assertions; its unchanged
+report verified after the generated-cache quarantine described below. The
+original failure receipt's `lastUiDump.path` is relative to the capture directory,
+not the checkout. Evidence: `restart-checkpoint-016-major-source039/`
+`muted-group-first-failure/` under the same ignored run root.
+
+The private-media outbox restore runner must retain a bound diagnostic before
+its existing network/app restoration. The first phase-two sender failure lost
+the endpoint reason during cleanup. Failure receipts now map only exact fixed
+harness messages to diagnostic codes; unknown errors retain their type with an
+`unknown` code, never their message. The host retains only the run hash, role,
+phase, expected status, and bounded diagnostic tokens. These files are explicitly
+`diagnosticOnly`, not success artifacts. The privacy regression reproduced the
+missing code; all 33 endpoint/conversation/wiring/connectivity tests passed.
+The original device failure's cause remains unproven until a fresh native run.
+Evidence: `source042-private-outbox-diagnostics/` under the same ignored run root.
+
+The whole-suite source digest excludes generated `__pycache__/*.pyc` files,
+while retaining Python source and intentional bytecode fixtures outside those
+cache directories. A parser diagnostic generated one cache during a muted-group
+campaign; all three native scenarios passed, but the original verifier rejected
+the cache-only digest change. Quarantining that sole generated file made the
+unchanged report verify successfully. The cache was restored and the original
+rejection retained. The digest regression failed before the fix; all 27 cache,
+report, and filesystem-verification tests passed afterward. Evidence:
+`source040-muted-dns-retry/muted-group/source-digest-causal-probe.json` and
+`source041-token-source-digest-repair/` under the same ignored run root.
+
+The Docker host-tool bridge must pass its random token as `--token=value`.
+`secrets.token_urlsafe` can start with a hyphen, which argparse rejects when the
+value is passed as a separate argument. The existing Docker-update contract now
+forces that token shape without changing production randomness; it reproduced
+the failure and passed after the fix. The first owning SIMS contract attempt
+remains 53 passed/one failed until its full recheck completes.
+
+An isolated checkout must retain the SIMS shell adapter used by its contracts,
+even when `.claude/skills/sims/scripts/run_with_devices.sh` is ignored by Git.
+Restore the exact repository copy rather than dropping the adapter contracts.
+Physical-iOS group media custody also requires the configured fixture driver to
+resolve inside the execution checkout; an identical executable in the main
+checkout is rejected. These are preparation requirements, not device proof.
+
 Before a long run, resolve available targets and use a fresh wrapper invocation
 with the intended source, resolved SDK, isolated configuration, and artifact.
 `scripts/device_campaign_preflight.py`, called by `scripts/mknoon_checks.py`, adds
@@ -206,6 +337,291 @@ authorization is genuinely required. A failed prerequisite never authorizes
 killing a foreign process, changing credentials, broadening network access, or
 weakening a test. Prior approvals apply only within their actual scope.
 
+On the available iPhone 11 / iOS 26.5 with Xcode 27, the pinned Appium MCP
+runtime created an XCUITest session and read device information and UI elements
+with `appium:xcodeOrgId=397R9Q4WMX`, `appium:xcodeSigningId=Apple Development`,
+`appium:updatedWDABundleId=com.facebook.WebDriverAgentRunner`, and
+`appium:wdaLaunchTimeout=420000`. Preserve these signing settings; do not mix
+this path with `appium_prepare_ios_real_device`. After an Appium QA runtime
+reinstall, run `bash docker-ws/repair_appium_ios_real_device.sh` as instructed by
+the supplied repair procedure. No reinstall or preparation call was needed for
+the observed successful session. Session deletion and an empty MCP session list
+did not stop its surviving WDA `xcodebuild` child; verify ownership and end only
+that child before handing the device to another campaign. The receipt at
+`.codex-test-logs/all-tests-y227gs8x/appium-mcp-transport-001/readiness.json`
+proves automation readiness, not Mknoon behavior or a signed candidate.
+
+The user authorizes unlocking the connected test iPhone through actual Appium
+MCP when needed. Read `IPHONE_PIN` locally from the ignored repository `.env`;
+never copy its value into tracked code, command arguments, reports, screenshots,
+or retained tool output. Inspect the lock screen, use Appium's unlock action,
+and enter the PIN through the observed passcode UI if required. Preserve the
+signing configuration above. A native and WDA automation-enable timeout was
+cleared after the user entered the password; the unchanged native diagnostic
+then reached its notification assertion (`ios-card-probe-003.xcresult`).
+Appium also created a session and read the UI again (`ios-card-probe-004/`).
+This recovery is distinct from the installation stall below.
+If the automation-enable failure returns, an already-unlocked-since-boot flag
+alone does not establish XCTest readiness. The later `iphone-fresh-runner-001/`
+probe rebuilt WDA successfully with the same signing team and bundle ID and
+`useNewWDA=true`, but its launched runner still timed out enabling automation.
+The MCP session list was empty afterward and no Xcode child remained. No PIN
+was used: the MCP unlock action requires an active session, and this failure
+occurs before one exists. Keep this failure separate from signing/install errors.
+The subsequent `iphone-device-syslog-probe-001/` capture confirms that the
+phone's test manager receives the session, authorizes the WDA process and enters
+`AutomationMode` before the same timeout. `devicectl` reports no passcode required.
+A subsequent read-only CoreDevice screenshot captured during the same MCP
+session startup shows the actual OS prompt: “Enter iPhone Passcode for ‘XCTest’ —
+Enable UI Automation.” This is separate from ordinary screen unlock and from the
+Developer settings toggle. It appears before Appium has a session, so Appium
+cannot enter the PIN at that boundary; the device owner must authorize the
+visible XCTest prompt. A screenshot after the timeout shows the unlocked home
+screen instead, so inspection must occur during startup. Xcode 27's
+`devicectl device capture screenshot` can capture this state without an XCTest
+session; the older screenshotr service did not work on this device. Evidence is
+in `iphone-automation-screen-probe-001/automation-gate-screen.private.png` under
+the same ignored run directory. This capture is a bounded setup diagnostic,
+not an alternative UI automation driver. The optional RemoteXPC tunnel warning
+is not evidence of the observed authorization failure. The redacted triage note
+remains advisory, and no PIN was read or used.
+After the user restarted the phone, `iphone-home-screen-retry-001/` still
+captured the authorization prompt and timed out. The next same-signed attempt,
+`iphone-home-screen-retry-002/`, created an Appium session and read the live UI
+successfully without a PIN being read or entered by the agent. The exact
+authorization-state change is unknown; do not attribute it to a signing repair.
+This receipt establishes automation readiness only. At that point the main
+`com.mknoon.app` package was absent and required candidate installation.
+
+A separate CoreDevice installation stall can occur after XCTest has already
+enabled automation. In `ios-group-deployed-006/`, the first selector waited for
+Xcode to complete Mknoon's launch. A clean WDA rebuild then stalled at install,
+and native installation of that same valid signed 2.8-MB WDA bundle timed out
+at sixty seconds. The supplied WDA cleanup and a developer-image remount did
+not resolve it. After confirming no active XCTest/Appium owner, restarting the
+same-user Mac CoreDevice XPC service changed the unchanged native install to a
+2.034-second success; the next actual Appium MCP session also started
+successfully with the original signing settings. Retain the failed attempts,
+check ownership before any service recovery, and rerun the small installation
+probe before another campaign. This establishes environment recovery only;
+it does not pass notification delivery. Evidence is in
+`.codex-test-logs/all-tests-y227gs8x/ios-group-launch-probe-001/` and
+`ios-group-launch-probe-002/`.
+
+The iOS group notification campaign must settle the normal app's notification
+permission before waiting for push-token registration. Its existing preparation
+selector already handles the identified permission alert; running that selector
+after the registration wait deadlocked a fresh normal install at setup. In
+`ios-group-deployed-007/`, three setup XTests passed, but the normal app then
+waited on notification authorization. Actual Appium MCP inspection confirmed
+the alert, and allowing it produced three recipient-owned
+`relay_push_registration_success platform=ios` events in the same app process.
+The capture now runs existing notification preparation before the unchanged
+three-minute registration wait. Evidence is retained in
+`.codex-test-logs/all-tests-y227gs8x/ios-registration-probe-001/`.
+The device log archive established this causal result. Both default and legacy
+`idevicesyslog` live-stream probes initially returned only connection markers.
+Ordinary failure cleanup omitted the campaign's iOS logger, leaving an orphan
+with the exact command and start time of the normal-install boundary. After
+ending that owned process, live system events resumed; relaunching the normal
+app through Appium MCP produced fresh live registration success in 4.096 seconds
+(`ios-registration-probe-002/fresh-registration-verdict.json`). Ordinary cleanup
+now closes the iOS logger and attempts every cleanup action while preserving
+the first failure. The permission and logging probes are not delivery proof;
+an owning notification campaign rerun remains required.
+
+Successful public NSE proof records intentionally have empty `details`; the
+private `kind` field is not exposed by `nsePublicProofPayload`. The next group
+campaign (`ios-group-deployed-008/`) passed registration and native inventory
+for the exact expected message, but its old log parser still required that
+private field and timed out. The retained device archive shows one receive,
+one successful decrypt and an authorized active content handoff. Group capture
+now accepts the structured public success marker only after the existing native
+inventory validator binds the expected phase, nonce, device and group/event
+hashes; absent or mismatched native phase still rejects it. Legacy typed markers
+remain supported, with exact kind boundaries. Production logging is unchanged.
+Evidence is retained under `ios-nse-probe-001/` in the same run directory.
+
+The group notification setup stops the Android app before clearing its private
+entries. An in-place install can restart background writers: attempt
+`ios-group-deployed-009/` failed deleting `shared_prefs` while the app was still
+running. Stopping that owned process made the exact deletion succeed and the
+path remain absent (`android-reset-probe.json`). This reset precedes the push
+delivery window; the delivery lifecycle still forbids force-stop.
+
+On the same iOS/Xcode combination, a descendant query ending in `firstMatch`
+escaped an index-bound SpringBoard notification container. The group tap test
+counted an unrelated card as matching the expected title and body, alongside
+the actual Mknoon card. The native diagnostic, recording and actual Appium MCP
+hierarchy establish the mismatch (`ios-card-probe-003.xcresult` and
+`ios-card-probe-004/selector-review.json` in the same run directory). Match both
+texts against one resolved `XCUIElementSnapshot` tree per card instead. The
+unchanged exact-one-card and cold-open assertions then passed on the retained
+notification (`ios-card-probe-005/result.xcresult`, 16.340 seconds), with the
+unrelated card rejected. This focused pass does not replace a fresh full
+message-and-reaction campaign.
+
+The subsequent campaign passed fresh message inventory and tap, then exposed a
+reaction-fixture binding defect: the Android observer emitted the expected
+collapse hash only for messages, so the host sent an all-zero sentinel for the
+reaction. The existing production `boundedReactionEventIdentity` formula,
+applied to the recorded reaction event, matched the actual delivered request
+hash exactly. Re-observing that retained card with the correct hash passed the
+unchanged full-horizon native contract (`ios-group-deployed-011/` and
+`reaction-collapse-native-probe-001/`). The fixture observer now reuses that
+identity helper for reactions too; the host requires the hash in both phases.
+The two-phase artifact validator also uses the existing current native receipt
+validator instead of its stale v1 shape, preserving exact identity, source,
+duplicate and deadline requirements. Host regressions retain rejection of the
+old schema, zero collapse hash and a reaction bound to the message collapse ID.
+The fresh complete campaign `ios-group-deployed-012/` then passed both native
+inventory windows, both notification taps and final artifact validation, with
+seven actual XCTest invocations passing and no failed or skipped cases. That
+campaign closes these two defects on its recorded candidate; later candidate
+changes still require the affected owner checks.
+
+The announcement campaign's legacy launch also needs the existing signed setup
+profile and permission selector before identity collection. Its profile build
+previously omitted the identity-export permission, while a Local Network prompt
+remained visible. Ordinary host environment variables were then absent from
+XCTest: the unchanged compiled selector passed after forwarding them through
+`TEST_RUNNER_`. Keep its XCTest app in Profile and use `ENABLE_TESTABILITY=YES`,
+as the central builder does, so `RunnerTests` can import the app module. The
+focused Profile probe passed, allowed Local Network, and exported an identity
+whose digest matched the native/Dart readiness receipt. Evidence is under
+`.codex-test-logs/all-tests-y227gs8x/announcement-profile-probe-001/`; this setup
+proof does not establish announcement reaction delivery or tap behavior.
+
+Announcement evidence must accept the relay's current `outcome=success` provider
+records and the NSE's privacy-safe `FLOW_PROOF` records. Profile builds do not
+emit Dart debug flow events; cold tap proof therefore requires XCTest to assert
+the app is stopped before tapping, then prove the group and target are visible.
+One card observation may appear once on stdout and once through NSLog, with
+identical content; repeated stdout observations or conflicting mirrors fail.
+The original `ios-announcement-deployed-004/` ran five passing native cases and
+the real SQLCipher probe but failed its stale artifact reader. Keep that failed
+result. Its live command journal subsequently gained cleanup records, breaking
+the earlier artifact checksum. Artifact writers now retain a separate immutable
+capture journal while preserving the full live journal for cleanup review.
+The fresh `ios-announcement-deployed-006/` passed all five native cases, the
+physical SQLCipher probe and final artifact validation after cleanup. Its
+capture journal still matched the recorded bytes and digest. Successful
+cleanup now also flushes the separate live journal, matching failure-path
+retention; the immutable capture snapshot remains the artifact reference.
+
+The full inventory binds the eight announcement/chat XCTest methods to exact
+native receipts from those existing campaigns. Their source-declared case
+counts must match the raw XCTest log exactly (five announcement invocations,
+seven chat invocations, including both preparation/tap windows). Missing,
+duplicate, failed, skipped or unexpected cases cannot be replaced by a parent
+completion marker. This avoids standalone runs of fixture-dependent methods
+after the campaign has consumed their notifications; it does not reuse a
+historical run as evidence for a new candidate.
+
+The earlier recommendation to reset Android group fixtures with `pm clear` is
+superseded: it violates the retained Keystore-state contract. Guarded Android
+children already bypass their own reset, but standalone reset paths must also
+preserve Keystore entries. They now stop the app, validate and remove its private
+file inventory, then reinstall the same APK to repair package-managed cache roots
+before staging identity inputs. The existing no-clear source sentinel exposed
+the earlier repair in `first-wake-shared-guard-change-001/` (62 other state-guard
+tests passed); its focused post-fix assertion passes in
+`group-reset-keystore-green-001.log`. Fresh group campaigns remain required to
+verify startup with this reset. The historical recovery observation remains: in
+`ios-announcement-deployed-005/`, the unchanged kernel started a VM with no
+application isolate and Appium showed a blank screen; restarting preserved the
+failure. Appium's app-data clear followed by the same setup input produced a
+valid identity and the ready Orbit screen. The precise retained platform state
+was not identified. Keep the original failure and the bounded causal probe in
+`announcement-android-startup-probe-001/`. The fresh owning run
+`ios-announcement-deployed-006/` completed setup and passed the full scenario.
+
+A full adapter that fails before launch now retains the numeric OS error code
+without copying exception text or private paths into the shared report.
+`media-stable-id-ios-continued-001/` predates this diagnostic and has no raw
+startup error, so its exact cause is unproven. The system volume independently
+ran out of space while the external workspace had ample room. Inactive test
+recovery data was relocated with verified file hashes; this project's inactive
+DerivedData is preserved externally with its original path linked to it.
+Repeated SDK-cache write failures also required moving the idle Flutter 3.47.2
+engine-artifact cache externally. All 571 files, their modes and links were
+verified before replacing the original cache path with a symlink; SDK source,
+Dart SDK and the shared Gradle daemon's source-directory watchers stayed in
+place. Flutter 3.47.2 / Go 1.25.0 and the notification/recovery host checks passed
+afterward (`flutter-engine-artifacts-relocation.json` in the retained directory).
+When resuming after a host restart, revalidate saved network environment settings.
+The retained run environment contained an expired localhost `https_proxy`; Xcode
+package resolution failed before compilation. Removing that stale setting and
+successfully rerunning `xcodebuild -resolvePackageDependencies` restored the
+central production iOS build. The failure, probe and attested preparation result
+are retained in `restart-20260923-spm-probe-001/`,
+`restart-20260923-spm-probe-002/` and `ios-production-central-build-004/` under the
+same all-tests run directory. Build preparation alone proves no device scenario.
+
+Prepare CocoaPods before freezing an isolated macOS candidate. Its Go-binding
+script phase serializes absolute input paths into the tracked Xcode project;
+first preparation rewrote the main-checkout prefix and equivalent path quoting
+for the isolated checkout. The parsed project was otherwise identical, and
+substituting that one file's preimage reproduced the original candidate digest.
+The wrapper correctly invalidated the first `FEED_INIT` assertion pass for source
+drift. A fresh owning rerun passed on the stable prepared candidate with no drift
+gap (`restart-macos-input-path-review-001.json` and
+`restart-checkpoint-003-feed-init-stable/`). Preserve the invalidated original;
+do not exclude the tracked build configuration from candidate fingerprints.
+
+Future test temporary files use a short, private external `TMPDIR` outside the
+checkout. A temporary root beneath the checkout makes nested `dart run` discover
+the app's ancestor `pubspec.yaml` and execute native build hooks inside otherwise
+isolated host fixtures. The unchanged benchmark boundary test passed with only
+`TMPDIR` moved outside the package tree (`external-temp-package-probe-001.log`).
+Retained paths and verification are in
+`.codex-test-logs/all-tests-y227gs8x/retained-system-temp-recovery-001/`.
+
+The Android keepalive campaign's warm-dial terminal can precede the production
+disconnect callback. A cached dial success alone does not prove the dropped-send
+precondition (`connected=false`). The campaign now observes the latest exact
+target `[CONN]` callback within the same 16-second warm window and retains only
+readiness booleans, the terminal name and elapsed time. It does not force a
+disconnect or change the send assertions. A fresh physical Android/emulator
+run remains required to establish its runtime timing. The
+affected host check passed all 195 cases without skips in
+`keepalive-readiness-change-001/`; the original
+`checkpoint-006-major` failure remains retained. TC-187-20 preserves healthy
+connection reuse even when a stale keepalive drop mark exists.
+
+Android activity checks must match the complete application ID. A word boundary
+after `com.mknoon.app` also matches the sibling `com.mknoon.app.ui25proof`.
+The `reaction-head-deployed-001/` campaign timed out at its stopped-app boundary;
+the retained post-cleanup native snapshot in `reaction-head-stop-probe-001/`
+has no target PID but contains the sibling's activity. Keep both attached and
+resumed checks exact, and preserve the rejection of a real target activity.
+The fresh owner `reaction-head-deployed-002/` passed the complete head-provenance
+campaign and its artifact validation on the same Android pair. The original
+failure and the separate sibling app remain preserved.
+
+The central-prebuilt head campaign now observes SQLCipher at its existing five
+unread UI boundaries through the existing intro file channel. The debug/E2E-only
+`direct_notification_state_observe` action performs SELECTs in one transaction;
+it cannot drain the inbox, navigate, or mark messages read. Requests bind the
+run, nonce, phase, contact and unique message markers; receipts hash identities.
+The campaign rejects mismatched counts, premature reads and changing message
+identities. Six observer tests and 74 bridge tests passed in
+`direct-notification-observation-shadow-001/host-applied-001.log`; native evidence
+for this extension is still required. A head artifact without the five SQL
+receipts does not satisfy the strict TC-16 database evidence requirement.
+
+Review triage dry-run payloads even when credential checks succeed. Android
+serials can occur in failure prose and JSON as well as `adb -s` arguments.
+The first `reaction-head-deployed-001/triage-dry-run.private.log` exposed that
+redaction gap and was not sent. The redactor now covers those serial forms;
+the advisory result remains separate from actual test and cleanup evidence.
+Native address-update logs also contain `/ip6/` relay multiaddresses outside
+`MKNOON_RELAY_ADDRESSES` assignments. The background-reconnect dry run exposed
+that gap and was not sent; its advisory used a reviewed, address-free state
+excerpt instead. Redact full, compressed and IPv4-mapped IPv6 multiaddresses
+while preserving timestamps and transport/port details. Credential-pattern
+checks alone do not establish that device and relay identifiers were scrubbed.
+
 Keep campaign-specific readiness checks in their existing runner: complete
 fixture setup, prove the required authenticated peer round trip and provider
 path, and bind evidence to the actual source/configuration/artifact. A generic
@@ -240,6 +656,112 @@ confirmed complete idle frames on the available physical Android and emulator,
 both API 37, using parser `13f9e6ca`. It required no unlock and restored owned
 automation afterward. This establishes format compatibility for those observed
 targets; campaign recovery still requires its own execution evidence.
+
+The Android app-state guard must distinguish an unavailable package lookup from
+an absent package. A timed-out `pm path` was previously converted into empty
+output, allowing a contradictory absent/running snapshot. Host-process failures
+now block capture; empty or failed package lookups require an independent,
+successful package inventory. Capture rejects package/process disagreement
+before force-stop. Foreground detection matches the exact application component:
+`com.mknoon.app.ui25proof/com.mknoon.app.MainActivity` is not `com.mknoon.app`.
+The existing recovery decoder already rejected inconsistent manifests and remains
+authoritative. The `android-state-guard-contract` selection preserves these
+regressions and original backup/restore contracts. Evidence is retained under
+`.codex-test-logs/all-tests-y227gs8x/`: the original cancelled checkpoint 005,
+`guard-foreground-red.log`, `guard-foreground-green.log` (66 passing tests,
+including legacy binding), and `live-guard-probe-repaired.json` with verified
+capture/restoration on the connected Pixel 6 and existing API 35 emulator.
+This does not establish restoration of the earlier API 37 emulator's original
+private data; its incomplete backup remains an unresolved recovery limitation.
+
+The TC-07 background-crypto campaign has a separate attached-process activity
+parser. It must also match the component's exact package, including when a
+sibling package uses `com.mknoon.app.MainActivity` as its activity class. Its
+former substring match rejected quiescence while only `com.mknoon.app.ui25proof`
+was attached. `reaction-durable-deployed-005/` retained both setup and cleanup
+failures, with zero provider sends; APK bytes and notification permission were
+restored. The existing parser contract reproduces that failure and preserves
+rejection of actual resumed, pausing and process-attached target activities.
+The repaired parser distinguishes both apps in the retained physical snapshot
+(`crypto-quiescence-probe-001/parser-review.json`). Its contract test is included
+in `notification-payload-harness-contract`.
+
+FCM token freshness in that campaign uses a timestamp produced on Android.
+Validate its age against a fresh UTC read from the same pinned phone, preserving
+the existing nonnegative, at-most-two-minute window. In
+`reaction-durable-deployed-006/`, a valid bundle failed the former host-clock
+comparison. The bounded setup-only capture in `crypto-bundle-probe-001/` had no
+bundle contract errors but appeared 848 milliseconds in the future on the Mac.
+The parser still rejects genuinely future or older-than-two-minute observations;
+the runner now obtains Android's subsecond UTC time before checking freshness.
+The fresh `reaction-durable-deployed-007/` crypto owner passed one reaction,
+twelve ordinary-message cases and three authorization-rejection cases, with
+sixteen successful provider sends and verified fixture, APK and permission
+restoration. The owning artifact assertion passed after cleanup.
+
+The first durable direct-reaction publication cannot require an existing
+reaction completion row: SQL transaction B writes that row only after the native
+notification effect. When an exact READY display-outbox entry is present, final
+background validation uses its event/reaction/actor tuple and current canonical
+message/reaction state; the enclosing final barrier still reloads the exact
+READY row last. Existing completion rows, when present, must match. Callers
+without a READY entry still require the completion row. Deletion, privacy,
+read-acknowledgment and authority checks remain in force.
+The existing real-SQLite test previously preseeded the completion row and missed
+this circular requirement. Removing that seed reproduced `unknown` instead of
+`keep` (`durable-reaction-first-publication-red-001.log`); the repair passed
+1,219 affected push tests, 460 recovery tests and nine SQL handoff tests.
+The physical Android durable-reaction owner in `reaction-durable-deployed-007/`
+then proved `osPosted`, no fallback and no deferrals, exact reaction copy and a
+conversation tap against deployed relay SHA `8ce3cd49a8562417e73748abc6a0cda1744e95499857b281be6f5cea8aa913c3`.
+
+Normal-APK restoration can restart the campaign's Android app. Its cleanup must
+force-stop that exact package and verify process/activity absence both before
+installing the replacement and before returning. Stopping only after install
+left a queued System UI relaunch in `reaction-durable-deployed-008/`, observed
+174 milliseconds after the stop. Otherwise the following first-wake campaign correctly rejects a live
+app before backing up private data. The first failure and native PID snapshots
+are retained in `reaction-durable-deployed-007/` and
+`first-wake-initial-state-probe-001/`; the corrected cleanup requires a fresh
+sequential durable-reaction/first-wake run.
+
+Contact and wake setup commands are consumed before their first receipt. After
+the matching completed receipt, leave that ready peer running for the next
+exchange. A redundant cold relaunch raced the next peer's authorization send in
+attempt 008: its direct dial failed before the receiving listener started, and
+the wake token arrived through inbox recovery later. The original 60-second
+persistence deadline remains unchanged. The redacted event timeline and native
+logs are retained in `reaction-wake-setup-probe-008/`; a fresh owning device
+campaign must verify the removed restarts. The triage note is advisory only.
+
+Attempt 009 passed the durable-reaction owner and the subsequent first-wake
+stopped-app baseline capture, closing those setup and handoff repairs. First-wake
+then retained its notification card but failed private-data restoration. Streaming
+archive comparison found five changed cache-directory modes on the emulator;
+the physical phone also lost 38 cache members after the reinstall used to repair
+package metadata. This is covered by the existing `AndroidAppStateGuard`, which
+preserves privileged cache directories, replays cache contents after metadata
+repair, and verifies a canonical full-archive digest. First-wake now reuses that
+guard, retaining its 256 MiB backup limit, idle/empty-notification precondition,
+and post-restoration artifact boundary. Its artifact assertion requires entries
+for both exact devices. The first failure and metadata-only comparison remain
+in `reaction-durable-deployed-009/` and `first-wake-restoration-probe-009/`;
+the fresh `reaction-durable-deployed-010/` owner passed in 361.163 seconds. It
+required one actual notification from the stopped Profile/AOT receiver, emitted
+no measurement-only receipt, and verified both exact devices' package, private
+data, permissions, empty notification state and idle process before deleting
+the host backup and writing PASS. The deployed relay SHA remained `8ce3cd49a8562417e73748abc6a0cda1744e95499857b281be6f5cea8aa913c3`.
+
+Android `am start -W` may report the equivalent abbreviated production component
+`com.mknoon.app/.MainActivity` and `Status: timeout` while the exact app process
+is alive. The reconnect campaigns share one launcher that checks component
+identity and the live PID; an isolated package may not substitute `.MainActivity`
+for the actual `com.mknoon.app.MainActivity` class. Identity readiness retains
+its own unchanged deadline. The live causal probe and the 63 guard/10 launcher
+checks are retained in `.codex-test-logs/all-tests-y227gs8x/physical-launch-probe.log`
+and `repair-device-run-001/`. One-second process-runner fixtures use shell
+processes so their kill/reap and inherited-pipe assertions do not accidentally
+measure cold Dart compilation under load.
 
 ## Device configuration and evidence
 
@@ -280,6 +802,103 @@ that an operator's attestation is true. Retain the reviewed original receipts.
 Do not fabricate evidence merely to fill the schema.
 
 ## Full regression and CI
+
+The full inventory routes direct-media custody, production one-to-one audio,
+and fixed-wake recovery through their existing outer fixture adapters. These
+adapters start the local service before compiling the relay address into the
+APK. The main SIMS partition excludes those three scenarios and their dedicated
+build rows; full-inventory validation requires an alternate owner for every
+excluded row and verifies that command flags match the declared partition.
+Partition metadata survives binding and report verification, and a filtered
+SIMS plan cannot claim release eligibility. The current full plan records the
+complete check and obligation counts. The routing repair passed 182 workflow tests
+and all 192 SIMS host tests in
+`.codex-test-logs/all-tests-y227gs8x/fixture-routing-run-001/`; these host results
+do not substitute for execution of the fixture-owned device scenarios.
+
+A completed host suite with recorded skips remains BLOCKED, including its
+coverage obligations, but does not prevent independent device campaigns from
+executing. Explicit dependencies still require PASS; assertion failures,
+timeouts, missing completion/files, and zero-test runs still stop dependent
+device work. The fixed-wake adapter uses its existing `com.mknoon.app` FCM
+profile with the app-state capture/restore guard; a disposable package without
+a matching Firebase registration cannot establish production delivery.
+These contracts passed all 185 workflow tests in
+`.codex-test-logs/all-tests-y227gs8x/host-readiness-repair-001/`.
+
+The relay integration subprocess entry point returns during ordinary discovery;
+its parent tests still launch it with `GO_WANT_REDIS_HELPER=1` and validate the
+real child operations. A helper-only discovery skip was incorrectly blocking
+full coverage. The owning integration package completed 1,543 reported tests
+with no failures or skips in `host-fixture-closure-001/` under the same run root;
+that count includes the helper entry point, not an extra product scenario.
+
+Project-memory real-corpus tests accept `PROJECT_MEMORY_TEST_MEMORY_DIR` for an
+existing external fixture at a different host mount; the production default path
+assertion remains independent and unchanged. Absolute provenance paths count
+against recall's fixed budget. On this Mac, the longer home path displaced Q8's
+required facts; replacing only that prefix in a diagnostic graph restored the
+answer (`memory-path-budget-probe-001.json`). A private temporary copy of the
+existing 100 files, verified byte-for-byte with modification times preserved,
+passed all 22 original tests without raising budgets or changing expectations
+(`memory-path-fixture-probe-002.log`). Keep that fixture alive for the whole run
+and retain its provenance manifest; never synthesize memory facts.
+
+The audio oracle requires the existing production-audio fixture to be ready
+before the oracle starts. Starting it after the NSE-lite check was too late
+in the full schedule; the original missing-credentials failure is retained in
+`full-stable-001/` under the same run root. A ready-first retry passed all 15
+oracle tests and verified fixture teardown and private credential removal.
+Do not extend issued credential lifetimes or synthesize credentials to repair
+this ordering problem.
+
+The background-push-crypto Robolectric class now explicitly selects SDK 34,
+matching the bundled Robolectric 4.13 runtime. Its default inherited SDK 36
+failed before any test body (`targetSdkVersion=36 > maxSdkVersion=34`). The
+three unchanged plugin/bridge assertions pass with the explicit test SDK in
+the readiness run above. Production SDK settings are unchanged; these mocked
+bridge tests do not establish live device cryptography or notification delivery.
+
+The notification runner's no-device listing can begin with repeated
+`Running build hooks...` progress text without a newline. Preflight removes
+only that exact leading text before matching a complete scenario-ID line;
+failed commands, timeouts, arbitrary prefixes and missing scenarios still block.
+The preflight and platform-binding repairs passed 188 workflow tests and the
+existing 10-case connectivity-launch contract in
+`.codex-test-logs/all-tests-y227gs8x/platform-preflight-repair-run-001/`.
+
+Fixed-wake device observation must capture the live notification dump alongside
+the independent sender/recipient log reads, and collect slower relay diagnostics
+after observing the generic card. Fast warm recovery can retire that card in
+about a second; serial sampling missed its entire lifetime in
+`notification-recovery-repair-001/`, even though ingress, custody and recovery
+had succeeded. Keep the original two-minute observation deadline and exact
+opaque +1/rich +0 route assertions. The concurrent-read helper also timestamps
+the actual dump completion and propagates every failed read. All 538 notification
+contract tests passed in `notification-observation-host-run-002/`, including a
+held-log regression; the fresh `notification-recovery-repair-002/` passed all
+six device assertions with independent report verification and state restoration.
+These paths share the run root above; the original failure remains retained.
+
+The swipe-back and group-conversation polish proofs require the real iOS
+binding. Both legacy catalogs pin swipe-back to `ios-simulator-a`; the full
+catalog also pins group polish there. A source comment referring to another
+test is not execution ownership. The original Android swipe-back failure is
+retained in `full-stable-002/` under the same run root. The unchanged proofs
+passed all three swipe-back and five group-rendering cases on the available
+iPhone 17 Pro / iOS 26.5 simulator in `ios-platform-repair-probe-001/`, alongside
+the strict analyzer gate. Flutter's recursive extended-attribute cleanup can
+take several minutes before Xcode starts; a booted simulator on its home screen
+during that preparation does not establish that a test has launched.
+
+The project-memory suite deliberately pins its external fixture at
+`/claude-home/.claude/projects/-workspace/memory`. On this macOS host the
+existing directory is under
+`~/.claude-docker-home/.claude/projects/-workspace/memory`. Mounting that real
+directory read-only at the expected container path passed all 22 existing
+tests with no skips (`project-memory-real-fixture-001.log` under the same run
+root). The five skips from the original host invocation remain in its report;
+this separate fixture verification does not rewrite the canonical full result.
 
 Preview without running the long suite, then run only when explicitly intended:
 
@@ -339,13 +958,1380 @@ attested artifacts reach the child; ambient artifact paths remain rejected.
 New capabilities append without shifting existing array indices used by runtime
 root mappings; discovery contracts check the preserved indices and new suffix.
 
+Production-bootstrap migration Wave 2 resumed on 2026-09-28. Waves 3–5 remain
+paused except the shared registrations required by Wave 2 gates. The current
+acceptance matrix, preservation decisions and candidate evidence limits are
+recorded in [the Wave 2 resumption checkpoint](production-bootstrap-migration-crosswalk.md#wave-2-resumption-checkpoint).
+No overall migration closure or retirement is established.
+
+On current integrated-main source identity
+`e6130e3970c8ed93590cc5f15ea08a684d654467523dced88dc8ebc420861572`, the
+explicit-base/local wrapper subset passed workflow (241), provider-schema (5),
+runtime-roots (20), SIMS plan contracts (235), debug composition boundaries
+(121), Maestro flow contracts (9), production journey contracts (582) and strict
+group-media preservation (129), with zero failed cases. Its broader candidate
+report remains `BLOCKED`: 149 checks were selected, eight ran, 141 remained
+`NOT RUN`, and 604 local paths remain unmapped. Provider delivery, sound, routing,
+notification-open and private-media device campaigns were not run because the
+required isolated device/account/service configuration is absent. These results
+are not a full affected-selection or full-host pass.
+The candidate-bound wrapper ledger is retained in
+`.codex-test-logs/production-bootstrap-migration-20260928/wave2-resumption-001/host-prereq-002/`.
+
+**Superseded setup conclusion:** `tool/testing/config.local.json` is not a
+required filename. The later review accepted the existing ignored configuration
+through explicit `--device-config` and reported no Wave 2 campaign setup reason
+in `.codex-test-logs/production-bootstrap-migration-20260928/wave2-review-001/preview/plan.json`.
+That was a configuration preview, not provider or scenario proof. The active
+continuation rechecked the live pair and uses its own ignored device configuration
+for USB Android `21071FDF600CSC` and available emulator `emulator-5554`; retain
+each actual campaign result and cleanup separately in the crosswalk.
+
+For the Wave 2 sound journey, S5–S13 send encrypted media *descriptors* with
+notification copy and metadata but no playable fixture bytes. The conversation
+UI may show “Loading media” or “Media unavailable” on either peer; those labels
+do not prove media transfer and are outside the sound assertion. The separate
+private-media journey must prove actual bytes, viewer open/close and ownership.
+S16 also crosses an Android background-isolate boundary: a native audible card
+can be posted while the foreground-isolate request observer remains unchanged.
+The 2026-09-28 attempt in detached candidate
+`/Volumes/CrucialX9/flutter_app-wave2-candidate-20260928/.codex-test-logs/wave2-frozen-016/sound-run-001/`
+retained a real background
+`osPosted`/`silent=false` event, one stored message, accepted FCM delivery,
+native ingress, and a later duplicate suppression; its old observer-only wait
+timed out and cleanup restored both peers exactly. The additive S16 proof now
+requires a run-marked background publication event and first native card with
+exact copy, stable ID and the preserved OS disposition check. This diagnostic
+finding is not a passing complete sound campaign.
+The next attempt, retained under the same candidate's `wave2-frozen-017/`,
+captured that first audible native card but used the handler's legacy
+background-post event (`silent=false`) rather than its durable event shape;
+the extra durable-only requirement failed, and cleanup again passed. The
+production proof accepts either observed event shape while retaining the
+same native and duplicate checks.
+The later `wave2-frozen-018/` attempt completed all 17 case observations and
+S16's first native/OS verifier, but the final oracle failed. Its live-path
+request was an exact silent update to the same native card; it must not be
+counted as another audible post. Replaying that evidence also exposed an
+independent S16 gap: the receiver's readiness was offline before the send,
+and its committed message transport was `inbox`. The original S16 assertion
+requires a paused receiver whose bridge remains connected. The bounded
+diagnostic moves the original 11-second tone cooldown before backgrounding,
+records readiness immediately after pause, and reads the committed transport;
+`inbox` recovery cannot certify the connected seam.
+The S16-only `wave2-frozen-019/` diagnostic found the receiver online just
+after pause but an inbox-transport message after a 28-second Maestro send.
+The narrow `wave2-frozen-020/` diagnostic used the retained harness's actual
+production `sendChatMessage` use case immediately after pause: readiness stayed
+online, the committed transport was `direct`, one audible live local request
+appeared, the first native card passed the unchanged S16 OS verifier, and the
+later provider callback was suppressed as a duplicate. That diagnostic
+deliberately omits S1–S15, so its wrapper failure does not certify the full
+sound campaign. The final oracle now accepts the observed live publication
+path and still rejects inbox transport, a second audible request, changed card
+identity or missing provider deduplication.
+The next full sound attempt, `wave2-frozen-021/sound-run-001/`, completed
+S1–S11 but failed while authoring S12's announcement descriptor. Its sender
+log shows an in-place group-topic recovery beginning immediately before the
+production send; the send returned `error`, and exact cleanup passed for both
+Android peers. The additive fixture now retains the first error and permits
+one bounded retry of that same production send only when no message row was
+created and the recovery gate has cleared. This is a fixture timing repair,
+not a relaxation of the original S12 notification assertions. A later full
+campaign must prove the result. Speaker tone remains unobserved because the
+emulator audio could not be monitored; OS card/channel checks cannot replace
+that acoustic observation.
+The subsequent full candidate run under `wave2-frozen-022/sound-run-001/`
+passed all 17 sound observations (S1–S16 plus S15's post-clear control),
+including S14's before-update first card and S16's connected direct transport,
+provider ingress and duplicate suppression. The preserved S16 native verifier
+returned `audibleStrict` pass; the scenario oracle had no failures, and exact
+cleanup passed on `21071FDF600CSC` and `emulator-5554`. It used source
+`83a9a919bb042b1cfb77a49d9b96d7133f24d45e4f9be4ec3884e9d876fb6081`
+and built two previously unattested profile artifacts. S12 succeeded on its
+first send in this run, so the conditional recovery retry remains unexercised.
+The wrapper's overall `BLOCKED` classification is due to deliberately unrun
+checks outside this one-campaign subset, not a failed sound assertion.
+The first current-candidate notification-open run,
+`wave2-frozen-023/open-run-001/`, failed its warm other-chat wait after the
+receiver had persisted the exact incoming row. The receiver's Android log
+recorded a durable background `osPosted` card and a suppressed duplicate FCM
+callback, while its foreground-isolate request list stayed empty. The old
+additive wait required that foreground list to grow, so it missed a real
+headless notification; exact device cleanup passed. The replacement now
+captures the active Android card before tapping, verifies its package,
+channel, title, exact body and unique card identity, and keeps the same
+30-second bound. The original warm/cold/same-peer route, unread and cold
+initial-payload assertions remain in the oracle. The new native-card parser
+and headless/negative criteria tests pass; a full device rerun is still
+required.
+The first rerun under `wave2-frozen-024/open-run-001/` failed before sending:
+Maestro's driver startup timed out on the physical Android target. Its cleanup
+passed, and a pinned read-only Maestro hierarchy probe then started correctly.
+The fresh `wave2-frozen-025/open-run-001/` run passed warm other-chat,
+cold-start and same-peer cases with an empty oracle, accepted provider/native
+ingress receipts, exact native cards before each tap, zero new builds and two
+attested cache hits. The cold case recorded process death and a fresh
+initial-payload route event; cleanup restored both peers exactly. Its source
+identity is `19f590e3abc2b798f94908ebe2945b5c0b96468103e518c27c15e1a2b56b1e84`.
+As with sound, the one-campaign wrapper remains overall `BLOCKED` only because
+the unrelated selected checks were intentionally not run in that invocation.
+The current-source private-media run,
+`wave2-frozen-026/private-run-001/`, passed its production-entrypoint local
+journey with an empty oracle, including projection, committed SQL and exact
+bytes, incoming open/close, protected viewer window, file ownership and
+attachment cleanup, cold persistence and consumed refusal. It reused the
+attested `android.e2e.main` artifact with zero rebuilds; exact cleanup passed
+on both Android targets. Its source identity is the same
+`19f590e3abc2b798f94908ebe2945b5c0b96468103e518c27c15e1a2b56b1e84`.
+The native/crypto/policy owners remain separate from this local UI journey.
+The full current-source routing run,
+`wave2-frozen-027/routing-run-001/`, passed all 27 ordered observations with
+an empty oracle and exact two-peer cleanup. S14 persisted exact lower-case
+`relay fallback` text on both peers over relay transport, closing the prior
+case-sensitive text mismatch without changing the original three-minute
+deadline. The `android.e2e.main` artifact was an attested cache hit with zero
+new builds. Source identity was again
+`19f590e3abc2b798f94908ebe2945b5c0b96468103e518c27c15e1a2b56b1e84`.
+The first final-source sound rerun, `wave2-frozen-028/sound-run-001/`, failed
+at S3 before a message was sent. The sender's screenshot retained the exact
+composer text, and its log recorded `GROUP_SEND_MSG_USE_CASE_RECOVERY_PENDING`
+while an in-place announcement-topic recovery overlapped the UI tap. This is
+the same production recovery gate implicated in the earlier S12 timing
+failure. The existing five-case `production_group_recovery_hold_test.dart`
+passes and exact device cleanup passed. The failure is retained; the prior
+17-case sound pass has an earlier source identity, so a fresh full run is
+required to align sound with the other current-source campaigns.
+The fresh `wave2-frozen-029/sound-run-001/` passed all 17 sound observations
+on source `19f590e3abc2b798f94908ebe2945b5c0b96468103e518c27c15e1a2b56b1e84`,
+including the S14 first card, S15 post-clear control, and S16 paused-connected
+direct message with accepted FCM/native ingress and duplicate suppression.
+Its S16 preserved native verifier returned `audibleStrict` pass, the campaign
+oracle was empty, both attested artifacts were cache hits with zero builds,
+and exact cleanup restored both Android peers. This establishes current-source
+OS card/channel and internal disposition evidence; the emulator speaker was
+not monitorable, so acoustic sound remains unobserved.
+The first focused host run on that source passed seven of eight selected
+checks; `sims-plan-contract` failed one companion-artifact test because its
+fixture supplied a filename but no existing APK or attestation digests. The
+executor correctly rejected the incomplete companion. The test now prepares
+a real temporary APK and both digests, retains the absent-dependency negative
+control, and passes all 21 tests in `sims_executor_test.dart`. The original
+failed wrapper report is retained at `wave2-frozen-030/host-focused-001/`.
+This test-only source change requires fresh final-source campaign evidence.
+The fresh focused wrapper on source
+`e12057b99186b265e34c95c4a5ed392fdf4d2ed1503a9c3bb274f40311abf3fb`
+passed all eight selected checks: workflow, provider schema, strict group
+media manifest, runtime roots, debug composition boundaries, SIMS plan
+contract, production journey contracts and Maestro flow contracts. Its
+receipt is `wave2-frozen-031/host-focused-001/`. The wrapper remains overall
+`BLOCKED` because the broad dirty-tree selection contains intentionally
+unrun checks; there is no failing assertion among the eight executed gates.
+
+The subsequent integrated-main wave-boundary `host-all` ran with Flutter
+3.47.2 and a pinned available iOS simulator. Its original log is
+`.codex-test-logs/production-bootstrap-migration-20260928/wave2-continuation-001/host-all-final-001.log`.
+Plan 371 passed eight iOS XCTest methods; Plan 373 passed its native mutation,
+restoration and NSE proofs; Plan 374 passed nine Android classes and 75 methods
+after the user's separately approved exact manifest registration. The Flutter
+batch ran 18,328 tests and failed five broad-tree assertions: three unchanged
+DTR-18 fingerprints against concurrently changed source, the analyzer
+suppression inventory after `third_party/video_compress` appeared, and a
+runtime-root directive in preserved beta video-compress evidence. The Go
+libp2p contract leg failed two local `DialPeer` calls during the full sweep;
+both exact tests passed when rerun alone. Preserve the initial failure. The
+full host gate therefore remains failed; focused or native passes cannot
+replace it. The separately approved bootstrap caller-census patch registers
+three new Wave 2 journey send callers without changing assertions. Generated
+iOS Pods now inherit the app's existing iOS 15 minimum, repairing the Xcode 27
+native prerequisite. The final candidate identity after these changes is
+`48f5fd4fcbc941d838f0a63da638c6d3bf110efae447661e8a2b6671cb9dd18e`;
+fresh device receipts on that exact source are separate from the earlier
+`19f590e3abc2b798f94908ebe2945b5c0b96468103e518c27c15e1a2b56b1e84`
+campaign passes.
+The later root-cause repair restored the one missing beta video-compress
+`subscription.dart` beside its already preserved `compress_mixin.dart`; the
+added file matches the vendored package byte-for-byte. After separate
+shadow-copy verification and exact user approvals, the DTR-18 original test
+has only its two reviewed bootstrap fingerprint constants updated, and the
+analyzer original test has only `third_party/video_compress` registered as an
+expected package root. The original runtime-root, DTR-18 and analyzer files
+then passed 29 tests together. The first failed host sweep remains retained.
+The fresh full host sweep at `wave2-continuation-002/host-all-002.log` exited
+zero: 18,333 Flutter tests passed with two skips, the Go and relay legs
+passed, Plan 371 passed its iOS native owner, Plan 373 passed its iOS
+NSE/native owner, and Plan 374 passed nine Android native classes with 75
+JUnit methods. The passing wave-boundary gate does not replace the separate
+device receipts.
+The final-source notification-open rerun
+`wave2-frozen-035/open-run-002/production-notification-open-0-sims.json`
+passed all three warm-other-chat, cold-start and same-peer assertions with
+independent report verification, two attested cache hits, zero builds, and
+exact cleanup of both pinned Android peers. Its proof is
+`build/sims/proofs/production.notification_open/attempt-k9BbhV/`. The
+one-campaign wrapper is overall `BLOCKED` only because other selected checks
+were intentionally `NOT RUN`.
+The first final-source private-media attempt
+`wave2-frozen-035/private-run-002/` passed its scenario and exact cleanup,
+but the wrapper's immediate independent report verification blocked that
+invocation. Running the exact `verify-report` command afterward passed; the
+first wrapper block remains retained. A fresh full invocation at
+`wave2-frozen-035/private-run-003/production-private-media-0-sims.json`
+passed the production local journey, independent report verification, one
+attested cache hit with zero builds, and exact cleanup. Its proof is
+`build/sims/proofs/production.private_media_local/attempt-WP74GE/`.
+The first final-source routing attempt
+`wave2-frozen-035/routing-run-001/` reached S9 and timed out in the Maestro
+batch-send flow without reporting steps. Its first failure and exact cleanup
+remain retained. A pinned read-only Maestro hierarchy probe then passed.
+The fresh full `wave2-frozen-035/routing-run-002/production-routing-0-sims.json`
+passed all 27 ordered cases on final candidate source, with an empty oracle,
+independent report verification, one attested cache hit, zero builds, and
+exact two-peer cleanup. S14 stored exact lower-case `relay fallback` on both
+peers with relay transport; the original three-minute deadline remained.
+Its proof is `build/sims/proofs/production.routing_smoke/attempt-cVi14A/`.
+The final-source sound run
+`wave2-frozen-035/sound-run-001/production-notification-sound-0-sims.json`
+passed all 17 observations (S1–S16 plus S15 post-clear), independent report
+verification, two attested profile cache hits, zero builds, and exact
+two-peer cleanup. S14 retained its first-card-before-update capture; S16 had
+a connected, online paused receiver, accepted provider/native ingress and
+duplicate suppression. Its unchanged native OS verifier returned
+`audibleStrict` pass and the oracle was empty. The proof is
+`build/sims/proofs/production.notification_sound/attempt-2tPq7W/`.
+The user could not monitor this S16 run, so this proves OS card/channel
+disposition and internal behavior, not an acoustic speaker tone. A later
+S16-only diagnostic retained native `audibleStrict` and exact cleanup but
+intentionally lacked the other 16 receipts, so it cannot certify the full
+campaign. A Mac microphone recording detected the Pixie Dust reference when
+played through Mac speakers, but found no matching waveform during that S16
+diagnostic. Android Settings showed the emulator's notification stream at
+5/7, unmuted and routed to speaker; its sound preview likewise produced no
+clear microphone signal. The user subsequently heard a tone but could not
+identify whether it coincided with the Mknoon S16 notification or Settings
+preview. Acoustic S16 attribution remains unverified. Diagnostic artifacts
+are under `wave2-continuation-001/acoustic-s16-001/` and the candidate's
+`wave2-frozen-036/sound-s16-acoustic-001/`.
+The final candidate's eight-check focused wrapper
+`wave2-frozen-035/host-focused-001/` passed workflow, provider schema,
+strict group-media manifest, runtime roots, debug composition boundaries,
+SIMS plan contracts, production journey contracts and Maestro flow contracts
+on the same `48f5fd4fcbc941d838f0a63da638c6d3bf110efae447661e8a2b6671cb9dd18e`
+source. Its overall `BLOCKED` result reflects the other selected checks
+intentionally `NOT RUN` by `--only`, not a failure among these eight.
+On integrated main source `914ac51ae5bbfc3818be44f09c4a26bd160371d129f377716004b51f980dcab0`, the first explicit-base/local Wave 2 selection
+`wave2-continuation-002/main-wave2-run-001/` passed those same eight focused
+host checks. Its notification-open and sound setup checks each timed out
+after 15 seconds reading `dumpsys activity processes` from pinned emulator
+`emulator-5554`; neither launched a scenario. Three immediate direct repeats
+of that exact read returned in under a quarter-second, establishing an
+intermittent probe timeout, not unavailable hardware. The private-media
+campaign passed setup and made one cold `android.e2e.main` build, then its
+first `alice-reopen` Maestro flow timed out without step results before any
+media assertion. The first failure is `attempt-VozCOG/first-failure.txt`;
+`cleanup.json` verifies exact restoration of both Android peers. A fresh
+Appium page-source read and a pinned Maestro hierarchy probe on the physical
+phone succeeded after cleanup. The wrapper left routing unrun for cleanup
+review. The cause of the Maestro startup timeout remains a hypothesis; these
+results are setup/automation evidence, not passing device assertions.
+A fresh `wave2-continuation-002/main-private-run-002/` passed setup and both
+peer reopen flows, but the following projection-open Maestro invocation
+timed out before step output. Its `attempt-CkxFQn/first-failure.txt` and
+`cleanup.json` retain the second failure and exact restoration. The host was
+simultaneously running repeated iOS native builds with a load average around
+124, so resource contention is a hypothesis rather than an established app
+failure. Preserve both attempts and rerun only after the host load settles.
+After the host gate passed, `wave2-continuation-002/main-open-run-001/` stopped
+before scenario launch because the USB Pixel's Android process census showed
+an active Appium UiAutomator2 instrumentation owned outside this task's MCP
+sessions. The pinned phone and emulator remained available; another owner's
+automation session is a device-ownership prerequisite, not a product failure.
+On 2026-09-29 the user authorized taking over the USB Pixel. Its active Appium
+instrumentation was released without stopping the unrelated Appium server or
+other devices. The available and selected Wave 2 pair remained USB Pixel
+`21071FDF600CSC` and `emulator-5554`; `emulator-5556` was never a campaign
+target. The current-main notification-open first run at
+`wave2-continuation-003/main-open-run-002/` reached its provider send and
+failed before a case assertion because the adapter read only stdout while the
+provider helper emitted redacted rejection diagnostics on stderr. A focused
+parser test and analyzer pass preceded a fresh run. That fresh run at
+`main-open-run-003/` identified FCM `404 UNREGISTERED`, with exact cleanup.
+The token had been claimed before a deliberate app reopen; current bootstrap
+rotates the cached FCM token on its first eligible read after each process
+start. The journey now claims after reopen and again after the cold tap starts
+a new process. `main-open-run-004/` then passed all three original cases,
+accepted provider sends and native ingress, empty oracle, wrapper report
+verification, and exact two-peer cleanup. Its proof is
+`build/sims/proofs/production.notification_open/attempt-ftEuOX/`.
+On the same `bb29798e632479a820b8b4849894a32ba517e7f5344859187d91e07d16de1dc4`
+source, `main-private-run-001/` passed the real private-media journey, empty
+oracle, wrapper report verification and exact cleanup in
+`build/sims/proofs/production.private_media_local/attempt-rzBO1g/`.
+The first routing attempt `main-routing-run-001/` recorded through G1 and
+failed at G2 because Maestro enumerated an unrelated temporarily offline
+ADB emulator, despite its pinned Pixel target. It did not drive that emulator;
+the first failure and exact cleanup remain in `attempt-gSPx0s/`. A pinned
+read-only Pixel hierarchy probe passed. Fresh `main-routing-run-002/` passed
+all 27 ordered cases, empty oracle, wrapper report verification and exact
+cleanup in `build/sims/proofs/production.routing_smoke/attempt-r987Ml/`.
+S14 stored exact lower-case `relay fallback` with relay transport on both
+peers. These three passing one-campaign wrapper runs are overall `BLOCKED`
+only because other selected checks were intentionally `NOT RUN`.
+The first two current-main sound attempts remain failed. `main-sound-run-001/` recorded S1 and
+S2 before a no-step Maestro leave-chat invocation timed out after 110 seconds;
+`attempt-UTaiEs/first-failure.txt` and `cleanup.json` retain failure and exact
+restoration. A pinned read-only Pixel hierarchy probe then passed.
+`main-sound-run-002/` failed before S1 when Bob's reopen Maestro invocation
+timed out after 110 seconds without step output; `attempt-wEw0Qe/` retains
+the first failure and exact cleanup. Host load was high around the first
+timeout and fluctuated during the second; resource contention is a hypothesis,
+not a proved cause. The second run began on source identity
+`0c0b6fccb7514726d74bd15636e1951df18b4b3698c571e75467c89838458703`,
+different from the three passing main wrapper fingerprints. Preserve that
+distinction. Fresh `main-sound-run-003/` passed all 17 observations, including
+S14 first-card identity and S16 background provider delivery, accepted FCM
+and native ingress, the original `audibleStrict` native disposition, empty
+oracle, independent report verification and exact two-peer cleanup in
+`build/sims/proofs/production.notification_sound/attempt-T6INKk/`. Its
+wrapper fingerprint was
+`b5e11c661e396bd857224695c7516ea6786c36752145786012946e0f67e7e624`.
+The four passing integrated-main SIMS reports nevertheless have the identical
+campaign source digest
+`82d32bb186b69fea5fe9b77dbf811ca997a47afaa629ff19a2f3e058f43a94fc`
+and sender/provider APK digests
+`3b2729fd2b9d9d0330aa827daf8d836687848b460218a37371c56b92d99d5a1e`
+and `51e19f1740ac2054c0c257e3acb310184d601b54ba7fc58d007cca8c4bc83211`.
+The broader wrapper source identity changes with non-campaign checkout files;
+the concurrently active call campaign wrote untracked inputs into this
+checkout. Across these four passing runs, the build ledger records two cold
+builds followed by four attested cache hits. All four selected device checks
+passed; each one-campaign wrapper is overall `BLOCKED` only because its other
+selected checks were intentionally `NOT RUN`.
+
+For this S16, `adb -s emulator-5554 shell dumpsys audio` retained a SystemUI
+`USAGE_NOTIFICATION` MediaPlayer started at 15:34:26.912, 0.616 seconds after
+the S16 `OS_POSTED` event in the native log. The playback event reported no
+mute, speaker device ID 2 and a stop at 15:34:28.770; the notification stream
+was unmuted at volume 5/7 with ringer mode normal. The correlated excerpt is
+`attempt-T6INKk/S16-android-audio-playback.txt`. This proves an Android
+speaker playback event beyond the card/channel disposition, but not a measured
+acoustic waveform or a person hearing the S16 tone. The user could not
+monitor this arrival, so S16 acoustic attribution remains open.
+
+The fresh focused wrapper `wave2-continuation-003/host-focused-run-001/`
+passed eight selected host checks on the sound-run wrapper fingerprint. The
+first subsequent full `host-all` at
+`wave2-continuation-003/host-all-final-003.log` passed 18,333 Flutter tests
+with two skips but failed the original UP-012 group membership notification
+assertion once in the batch. The exact case passed alone and all 91 tests in
+its original file passed together in `group-up012-focused-001.log` and
+`group-membership-file-001.log`; the batch-only cause is unproved. The
+complete Dart `host-all` rerun at `host-all-dart-rerun-001.log` passed 18,334
+tests with two skips, including UP-012. Preserve the first batch failure.
+The first run's Go/relay tails and Plan 374 Android native 9-class/75-method
+owner passed. Plans 371 and 373 stopped before XCTest because the host
+invocation lacked `MKNOON_NATIVE_IOS_SIMULATOR_ID`. The user then permitted
+available iOS simulators other than iPhone 15, or connected iPhones, for
+separate iOS-specific checks. Pinned native reruns use the available iPhone
+17 Pro simulator `674DFFF6-5F38-4235-93F6-AF7FBF86AE65`. Plan 371 passed
+its native host contract in `ios-native-371-001.log`; the XCTest result in
+`/tmp/plan371-native.Q1GeXu/` records eight passed and zero failed methods.
+The user requested a stop for reboot during Plan 373. Three intentional
+mutations each re-redded and restored Swift source hash
+`e0900f0c246af544ac60a83b21f715ddfeae6c293a37ca483bcd36510149b650`.
+The restored XCTest build was interrupted before its 28-method verdict;
+`ios-native-373-001.log` and `/tmp/plan373-native.HdQXuo/` retain the
+partial evidence. At that reboot checkpoint, the check was unrun to
+completion, not failed; the 2026-09-30 result below supersedes this status.
+
+A bounded `emulator-5554` scrcpy audio-capture positive control was
+inconclusive: Android Settings started a notification-sound preview
+MediaPlayer, but `sound-audio-positive-001.opus` had no sustained signal above
+-55 dB. The capture, device trace and analysis are retained under
+`wave2-continuation-003/`. This recorder cannot establish S16 acoustics from
+the current probe. The user could not monitor the S16 arrival; do not treat
+the earlier heard tone of uncertain timing as attributable to that case.
+
+The bounded follow-up used macOS ScreenCaptureKit global system-audio capture.
+Its positive control recorded two Android Settings notification previews at
+windows consistent with SoundPicker's notification MediaPlayer starts, with
+about 0.78 seconds capture latency. App-only filtering remained silent, so the
+positive control applies to global capture only. A fresh full sound run on the
+pinned Pixel and `emulator-5554` used two attested APK cache hits and no builds,
+but stopped after S7: a return-home Maestro invocation timed out after 110
+seconds without step results. Its seven observations, first-failure record and
+exact two-peer cleanup are in `wave2-continuation-003/main-sound-run-004/` and
+`build/sims/proofs/production.notification_sound/attempt-kO09aL/`. It never
+reached S15 or S16, so no S16 waveform was captured. Retain the earlier passing
+17-case `main-sound-run-003/` and its unmuted speaker-path trace separately;
+neither the positive control nor the playback trace proves acoustic hearing of
+that S16 arrival. Sound exploration was deliberately stopped at this bound.
+
+The user accepted the earlier S16 `audibleStrict` receipt and correlated
+unmuted SystemUI notification MediaPlayer on the emulator speaker at volume
+5/7 as sufficient audible-device evidence for **WAVE 2 COMPLETE** on
+2026-09-30. This is native speaker-path evidence; no S16 waveform or human
+hearing is claimed. The failed S7 repeat and its exact cleanup remain retained
+as first-attempt evidence, without replacing the passing 17-case receipt.
+
+For Plan 373 iOS native verification, use the repository's Flutter 3.47.2 SDK
+and pin the available iPhone 17 Pro simulator
+`674DFFF6-5F38-4235-93F6-AF7FBF86AE65`. The first resumed run with the
+default Flutter 3.41.4 tool failed before assertion because stale plugin
+metadata left both Swift Package Manager and CocoaPods producing
+`WebRTC.framework`; its log remains `ios-native-373-002.log`. Correct-SDK
+`flutter pub get` and `pod install` removed the duplicate producer. The next
+`ios-native-373-003/` native wrapper passed exact Go/fixture/binding checks,
+three intended one-test XCTest mutation failures, one restored-source pass and
+the exact 28-method XCTest set (28 passed, zero failed/skipped). Its cleanup
+removed owned DerivedData and restored Swift SHA-256
+`e0900f0c246af544ac60a83b21f715ddfeae6c293a37ca483bcd36510149b650`.
+Do not count the setup failure or the earlier reboot interruption as a failed
+native assertion. The original-file audit in
+`wave2-continuation-003/final-original-preservation-audit.json` confirms all
+282 baseline `integration_test` files unchanged and lists wider dirty-tree
+test differences separately; it does not certify unrelated modifications.
+
+The integrated-main checkpoint validates testing metadata and observes passing
+bootstrap (21), Go-wrapper (4), group-harness (357), Maestro-flow (9), production
+journey (582) and UI-action (263) host checks. Both focused wrapper invocations
+also report source changes during execution and invalidate candidate evidence:
+concurrent unrelated main edits were preserved. These counts are diagnostic
+observations, not a stable-candidate acceptance result. The complete outcomes,
+source fingerprints and raw logs are retained in
+`.codex-test-logs/production-bootstrap-migration-20260927/integration-checkpoint-001/`.
+
+At the 2026-09-27 integration checkpoint, six production runners lacked
+reliability-discovery classification and three reaction runners lacked
+runtime-root registrations. Those original failures remain retained. Wave 2
+resumption added the exact support classifications and reaction entrypoints;
+current workflow (241), SIMS plan (235) and runtime-root (20) checks pass. The
+final classification output is retained in
+`.codex-test-logs/production-bootstrap-migration-20260928/wave2-resumption-001/reliability-discovery-final.stdout.tsv`.
+
+At the 2026-09-27 integration checkpoint, the architecture boundary check
+rejected the unchanged beta evidence path ending
+`step-035-assertCondition-[0-9]+_items_pending.json`. The evidence bytes remain
+unchanged. The checker now accepts glob punctuation only as literal characters
+from NUL-delimited Git filenames while preserving strict canonical path checks
+and wildcard rejection for user-authored exact paths. A temporary-repository
+regression test exercises the literal filename; the current debug-boundary check
+passes 121 cases. The initial failure and preservation audit remain in
+`workflow-failure-review.json`, `boundary-checks-002/` and
+`post-verification-preservation-audit.json`.
+
+The additive `ProductionSharedXCTest` consumer verifies the central prepared
+bundle's profile, input digest, artifact bytes/permissions/link manifest and
+signed product graph before use. Every selector receives independent fixture,
+relocated plist and xcresult paths; a matching single method/class receipt,
+bound fixture assertions and verified restoration are all required. Only
+`test-without-building` is executable through this consumer. Original fresh-build
+owners remain unchanged. The 29 focused host cases (including retained plist
+relocation and repaired flow-identity contracts) passed in
+`production-bootstrap-migration-20260927/wave4-xctest-causal-003.log`.
+Codesign and child execution are simulated in these host cases; actual shared
+bundle execution and native scenario evidence remain pending.
+
+The foreground group-push simulator campaign must prepare both role-specific
+iOS apps before launching either timed peer. Its previous serial `flutter drive`
+builds let Alice publish readiness and start the five-minute Bob-identity wait
+while Bob was still compiling. The native failure is retained in
+`.codex-test-logs/all-tests-y227gs8x/reliability-held-route-probes-003/logs/001.log`.
+The runner now builds each role with the same run ID, database name, shared
+directory and relay defines used at launch, saves each fresh app before the next
+build replaces `Runner.app`, and uses Flutter's `--use-application-binary` path.
+Peer and scenario deadlines stay unchanged. Three host contracts check build
+ordering, exact role/configuration retention, failure before peer launch, and
+the existing Android path. The fresh native attempt recorded below passed.
+
+The subsequent native run reached both peers and recovered the exact S1
+message, but its notification assertion observed zero rather than one. The
+older harness had supplied only tracker/lifecycle inputs; the current listener's
+compatibility notification path requires `AppVisibilitySuppressionReader`.
+The harness now reuses `TrackerBackedAppVisibility` from the existing shared
+test fakes with its original tracker and lifecycle closure. The one-notification
+assertion and all scenario deadlines remain unchanged. The first assertion
+failure is retained in `foreground-group-preparation-device-probe-003/` under
+the all-tests run directory. Attempt `foreground-group-preparation-device-probe-004`
+then passed S1 recovery and S2 live-plus-push deduplication, each with exactly
+one notification. S3 failed before its missing-member eligibility check because
+its fallback call also lacked required visibility and durable presentation
+authority. That call now reuses the same visibility reader and the existing
+`DurableNotificationToneLease` fixture from the host non-current-group test,
+with a run-owned temporary directory and teardown. S3 still requires one drain
+attempt, no fallback display, and zero generic notifications. The original
+failures remain retained. Attempt
+`foreground-group-preparation-device-probe-005` reached the next S3 assertion:
+the deliberately failed drain returns `notificationNeededAfterDrainFailure`,
+not the older `notificationNeeded`. The harness and its verdict predicate now
+expect the precise existing result, which keeps canonical recovery incomplete;
+the one-drain/no-notification assertions remain intact.
+Fresh attempt `foreground-group-preparation-device-probe-006` passed all three
+scenarios on the existing iPhone 17 Pro and iPhone Air simulators: S1 recovered
+the missed message with one notification, S2 retained one message and one
+notification, and S3 recorded the precise failed-drain result with one drain,
+no fallback display, and zero generic notifications. This closes the focused
+repair; the complete owning suite still requires its fresh full invocation.
+
+The additive production-entrypoint pilot must reopen after prerequisite contact
+seeding, because the first startup already selected the first-contact surface.
+For a fresh fixture containing a discussion group, normal reopening reaches
+Orbit's inner circle without the persistent Feed/Orbit navigation bar. Open
+the all-chats view before selecting its group row. Appium MCP confirmed the
+group-row and composer identifiers and return to the list after keyboard
+dismissal in `.codex-test-logs/production-bootstrap-migration-20260927/pilot-ui-probe-001/`.
+UiAutomator2 ID lookup needs `disableIdLocatorAutocompletion=true` for these
+verbatim Flutter resource identifiers. Focused keyboard input enabled Send;
+an unfocused `setValue` changed exposed text without enabling that action in
+this probe. These observations establish the UI path, not foreground-push
+scenario completion. First failures and exact restoration receipts remain in
+`pilot-device-001-raw/` and `pilot-device-004-raw/`. The probe reused the same
+APK with one cache hit and zero builds; its scenario result is deliberately
+non-passing in `pilot-ui-probe-wrapper-001/`.
+The group message's accessibility label combines sender, exact message text,
+timestamp and status. Match the escaped message as a complete line within that
+label; whole-label equality fails even when the exact message is visibly sent.
+`pilot-device-006-raw/` preserves the screenshot, hierarchy and successful
+restoration from that failure. `pilot-message-label-probe-001.log` reproduces
+the mismatch with Java's regex engine, accepts the exact line, and rejects
+prefix, suffix, scenario and run-ID changes. Repository equality and row-count
+assertions remain independent and unchanged.
+
+Production-bootstrap foreground-push fixtures also include the real periodic
+group recovery owner. Leaving only the native topic does not sustain a live gap
+through a Maestro send: pilot `007` observed automatic rejoin 17 seconds after
+leave and rejected S1 because the row arrived before push. The additive fixture
+holds the existing serialized recovery gate, waits for earlier passes, and
+releases it before S2; its three-minute expiry rejects continued observations.
+The foreground-push targeted drain, real listener, native notification boundary
+and exact S1/S2/S3 oracle remain active. Evidence:
+`.codex-test-logs/production-bootstrap-migration-20260927/pilot-device-007-raw/`.
+This failed attempt is preserved and is not scenario-passing evidence.
+Fresh production-entrypoint attempts `pilot-device-008` and
+`pilot-device-009-warm` passed all S1/S2/S3 predicates, each exact Maestro flow,
+and exact restoration of both Android targets. Their shared APK SHA-256 is
+`c55bf61da656fc32ca4e17b679b88f5f40eae3d6c90df7dd365cdb39da5d6338`.
+The cold attempt built once; the unchanged warm attempt recorded zero builds
+and one cache hit. Raw evidence and restoration reviews are retained in their
+corresponding `-raw/` directories. The owning wrapper invocations used a
+diagnostic subset, so these are selected-pilot passes, not full-suite passes.
+Maestro's exact `xcodebuild -version` probe is read-only; the child-build guard
+allows that single query while still refusing default or explicit builds.
+
+Production notification observations must preserve the incoming silent decision
+separately from the effective native silent decision. The optional observer
+records exact contact/payload/notification-ID identity and hashes of the native
+title/body without retaining their plaintext. A causal host probe overrides
+only the native publication's silent argument and verifies the upstream value
+remains distinct; an observer exception still permits the real plugin call.
+The unchanged notification-service suite plus new observer/runtime probes passed
+58 tests in `production-bootstrap-migration-20260927/wave2-sound-observer-probes-001.log`.
+These observations do not establish speaker sound or complete the sound journey.
+The first production notification-open attempt passed its selected 512 host
+tests but failed on real background delivery before any notification tap.
+`wave2-device-001-raw/` and `wave2-device-001/cleanup-review.json` retain the
+failure and exact restoration. The small `background-probe-001/` used actual
+Appium MCP with that same attested APK. A foreground control delivered over
+relay; a send after a confirmed paused observation did not reach the receiver
+while its observation control still responded. Earlier queued inbox content
+appeared after resume. Thus Android's later process freeze is not the sole
+explanation, and extending observation deadlines is not a repair.
+The ordinary `android.e2e.main` profile suppresses provider push registration
+(`shouldEnableProductionPushRegistration`); a provider-enabled background proof
+needs a matching Firebase client. The available main-checkout client config
+binds only `com.mknoon.app`. The user specified reuse of that production
+configuration, superseding the request for a separate disposable-package client.
+The existing `android.production_fcm` profile enables production registration
+with that package. Replacement integration must bind the matching artifact to
+the available Android emulator receiver and preserve its existing package/data
+through the exact app-state guard; it must not relabel the client as
+`com.mknoon.sims.connectivity` or replace the physical sender's production app.
+The unfinished mixed sender/receiver adapter is now integrated into main. Its
+new `android.production_fcm.journey` profile fixes the receiver package without
+changing the original provider profile. Separate prepared input/artifact digests,
+per-peer package operations and both state guards are implemented, but dedicated
+causal tests, provider readiness and device execution remain pending. The current
+`production-journey-contracts` host gate passes 582 cases, but does not establish
+provider readiness or real background delivery. The replacement's real
+background assertion remains unpassed; original logical-lifecycle harnesses and
+their assertions are retained. These artifact paths are relative to
+`.codex-test-logs/production-bootstrap-migration-20260927/`.
+The additive sound journey preserves S1–S16 and S15's post-clear control,
+using real navigation/visibility, production-owned descriptor projection and
+the unchanged original native disposition oracle. S14 must retain an actual
+first-card capture whose package, ID and body identify the first message; a
+capture after the second message cannot prove the intermediate audible card.
+The 39 causal and composition probes passed in
+`production-bootstrap-migration-20260927/wave2-sound-causal-probes-002.log`.
+The original disposition contract initially rejected the unclassified new
+runner; adding its exact manifest-owned support classification restored that
+unchanged contract (`wave2-sound-original-disposition-003.log`). Syntax checks
+and analysis pass. Device scenario evidence remains pending.
+
+A native XCTest build can fail although a generic Runner build succeeds when
+the optional Go framework is absent: `GoBridge` is compiled behind
+`canImport(GoMknoon)`, while the original critical-task XCTest owner references
+that type. The frozen pilot candidate's missing framework inputs caused the
+visibility owner's compile failure and prevented the NSE mutation from reaching
+its named semantic assertion. The latter source was restored byte-for-byte.
+Retained evidence: `production-bootstrap-migration-20260927/wave1-host-all-002/`
+(including `cleanup-review.json`). The same gate's Android native owner passed
+nine classes/73 methods. Provisioned frameworks in the later candidate pass
+the original freshness checks, but do not close either failed native owner
+until those owners actually execute on that candidate.
+
+The additive production routing oracle retains the original 27 ordered case
+receipts and reuses the unchanged pure direct/group predicates. It also binds
+their inputs to actual peer, message, group and key-generation identities and
+rejects missing intermediate lifecycle/deletion receipts. Fixed upload and LAN
+observations retain their original informational scope. The 54 focused checks,
+including original DTR preservation contracts, and 613 selected host checks
+passed in `production-bootstrap-migration-20260927/wave2-routing-causal-probes-002.log`
+and `wave2-routing-host-001/`. Device routing remains pending. The measured
+receiver polling interval starts after the UI send flow completes; it must not
+be reported as cross-device end-to-end latency.
+
+Repeated production journey reopen actions must allocate independent evidence
+directories. Routing device attempt 001 reached S6, then the second Alice
+reopen reused `alice-reopen-maestro`; the adapter correctly refused to overwrite
+the first PASS receipt before launching another flow. Both devices restored
+exactly. The replacement host helper now allocates a fresh directory per flow,
+retains adapter errors, and requires the exact successful child receipt. Four
+causal tests cover repeated labels, later failure, missing receipts and foreign
+receipts. Evidence: `production-bootstrap-migration-20260927/`
+`wave2-routing-device-001/cleanup-review.json`, `wave2-routing-device-001-raw/`
+and `wave2-flow-identity-causal-001.log`. This repair does not certify the
+remaining routing scenarios or change any original harness.
+
+The later cached routing attempt reached S14 after recording the cases through
+S12/S13, then retained a three-minute exact-row timeout. Requested text contained
+`relay fallback`; the actual delivered row contained `relay Fallback`, with a
+successful send timing event. The new UI regex checks had accepted that case
+change. Both Android package states restored exactly
+(`routing-catalog-cached-device-001/cleanup-review.json`). Appium subsequently
+entered the exact text, and small Maestro probes passed with both visible and
+hidden keyboards. The original transformation was not reproduced, so IME
+interference remains a hypothesis. The additive direct-send flow now dismisses
+the keyboard before entry and checks explicit case-sensitive exact composer and
+bubble text. The host exact-row assertion and three-minute deadline are retained.
+The diagnostic's final SQL snapshot omitted the required `groupIds` list and was
+rejected; its UI receipts remain valid but it is not a routing scenario PASS.
+Both devices restored exactly; the owned Appium session was deleted
+(`routing-input-cached-ui-probe-001/diagnostic-review-002.json`). Full routing
+execution remains pending after this flow change.
+
+The wider host run exposed an unawaited asynchronous write in the new synthetic
+flow adapter fixture. The real adapter already writes its receipt before exit.
+The synthetic adapter now writes synchronously; its four contracts pass after
+the repair. The original failure remains in `wave2-private-host-001/`
+`production-journey-contracts-1.raw.log`. That frozen host run passed 3,755 tests,
+failed this one new case and skipped none; it is not a passing affected gate.
+
+The additive private-media application oracle binds the production conversation
+projection, real committed sender view-once SQL sequence, exact pending owner
+path and bytes, attachment/file cleanup, and fresh-process consumed refusal.
+Its 43 positive/negative cases and six composition/original preservation checks
+passed in `production-bootstrap-migration-20260927/wave2-private-causal-001.log`.
+The original device-local encryption, policy, download, expiry and native privacy
+proofs remain independently required. Host oracle tests alone do not establish native privacy or remote revocation;
+the later device evidence and its scope are recorded below.
+
+Private device attempts 002 and 003 retained projection failures and exact
+restoration receipts. Real protected bytes render the plan-301 thumbnail;
+missing bytes render the 88-pixel outgoing card without an Open action because
+`localMediaAvailable` is false. The unchanged protected-photo widget test and
+production outgoing-placeholder guard establish this distinction. The new
+oracle requires both variants; original mounted-widget assertions remain
+unchanged. The recipient extension additionally uses canonical incoming storage,
+actual UI open/consume/cold-refusal and committed SQL observations. Sender native
+window evidence requires FLAG_SECURE absent before open, present during viewing
+and absent after closure. The first failures remain in
+`wave2-private-device-003/cleanup-review.json` and its retained raw evidence;
+the later extended device result is recorded below.
+
+The extended private-media oracle passed 67 causal cases, alongside all seven
+unchanged protected-photo thumbnail widget tests (`private-recipient-causal-001.log`).
+The extended controls/runner analyze cleanly (`private-recipient-analysis-002.log`).
+The extended recipient/native-window campaign subsequently passed on the pinned
+physical Android/emulator pair in `wave2-private-device-004/results.json`: four
+assertion groups, no oracle failures and exact package restoration on both targets.
+The central APK required one build (172.206 seconds), and scenario execution took
+498.999 seconds. Raw observations remain in `wave2-private-device-004-raw/`.
+This local application proof does not replace the independent crypto, expiry,
+download, remote-revocation or account-wide proofs, nor the final full selection.
+
+The additive production invitation module retains the original F/C/D decline,
+exact resent-ID revocation, and stale-to-fresh metadata convergence. Forty-four
+causal oracle checks plus six composition/original DTR checks passed in
+`group-invite-causal-001.log`; analysis is clean in `group-invite-analysis-003.log`.
+Creation, decline and revocation use the existing UI; bounded controls read
+production-owned repositories and retain the original explicit inbox/config-request
+protocol legs. Appium MCP exploration confirmed that declined sender rows have
+no Resend action. The original declined-to-resend protocol operation therefore
+uses a one-shot, exact-attempt control over the existing production use case.
+D retains fixed fresh-metadata setup without a broadcast, because a UI edit
+could converge the recipient before its config request and mask a resync defect.
+The initial Appium MCP probe created and declined an invitation, exposing a
+missing invitation-delivery repository edge at the ordinary home StartupRouter.
+The omitted edge caused no initial delivery-attempt persistence and an unknown
+sender status. The production repair forwards the existing repository; the
+new wiring sentinel passes. Its original source-fingerprint update is separately
+proposed and unapplied. The retained decline card also requires a terminal UI
+assertion, not disappearance of the group name. Evidence and exact restoration:
+`text-entry-probe-001/diagnostic-review.json`. Actual F/C/D campaign receipts remain pending; host checks do not certify
+delivery. The later revocation exploration is recorded below.
+The repaired-build Appium probe confirms delivery-attempt persistence, sender
+Sent/Declined/Revoked UI states, the exact fresh second invite, and its recipient
+revocation tombstone. `group-ui-probe-001/diagnostic-review.json` binds those
+observations and exact restoration. Its snapshot failure reproduced as a dynamic
+enum lookup through an untyped empty-list fallback; `production_group_invite_controls_test.dart`
+now exercises the real snapshot action over typed member models. The typed
+fallback repair passes; the first red remains in `group-invite-controls-causal-001.log`.
+The four selected host gates subsequently passed 380 tests with zero failures
+and zero skips in `groups-host-001/` (bootstrap 21, Maestro contracts 9,
+production journey contracts 330, runtime-root contracts 20). The wrapper
+remains a diagnostic subset with omitted obligations; it is not full closure.
+The separate registration probe passed 25 tests in `group-invite-registration-001.log`.
+The latest preservation audit passed all 2,411 original files, with only the three
+approved file exceptions (`groups-original-preservation-audit-001.json`).
+
+The additive startup/resume performance route observes the production-owned
+node through early, bounded flow capture and drives actual OS pause/resume.
+Its interval is the production readiness window's `totalMs`, not process entry
+to first frame. Six fresh fixture identities/processes retain the original B
+cold/distribution distinction; hot core/node operations retain M's existing
+production method calls. BR healthy, degraded and extended background paths
+use actual lifecycle observations, and recovery retains explicit connected-relay
+faults and production health/inbox operations. The original thresholds remain:
+initial cold sendable/optional online below six seconds, optional native
+discoverability below five seconds, cold relay gap at most five seconds,
+full hot-node readiness waits ten seconds, degraded-state wait fifteen seconds, resume
+readiness waits thirty seconds and extended background at least thirty seconds.
+The registered proof measures one available physical Android target. It uses
+the separately attested `android.e2e.performance_relay` production profile with
+the existing `DISABLE_LOCAL_DISCOVERY` compile flag. Ordinary journey profiles
+retain their prior configuration. Capture, activation and oracle contracts
+passed in `performance-causal-001.log`; actual performance validation is pending.
+The initial ordinary-profile device attempt failed the unchanged cold dotted
+readiness bound even though production timing recorded sendable at 554 ms and
+relay-ready at 555 ms: later state was `onlineDirect`. A single-phone causal
+probe also failed, refuting the second-fixture-only hypothesis. Production starts
+LAN discovery; the original component benchmark does not provide that service.
+The relay-only variant preserves the original dotted predicate and deadlines
+without disconnecting other applications or changing the phone's disabled
+mobile-data setting. Both failures and exact package restoration remain in
+`groups-performance-device-001/cleanup-review.json` and
+`performance-single-peer-probe-001/diagnostic-review.json`.
+The original benchmark dispatches,
+GP/H simulator/CLI boundaries and other performance families remain independently
+required. No original measurement or execution owner is replaced.
+
+The frozen C8 production invitation campaign passed all F/C/D stages and its
+oracle on the pinned physical/emulator pair, with exact restoration on both
+phones (`groups-performance-device-001/results.json` and its cleanup review).
+This is the initial candidate's device evidence; subsequent main-checkout
+reconciliation and the complete multi-party catalog still require validation.
+
+The first multi-party replacement, `production.group_catalog.private_abc_create`,
+uses production UI for three-person creation, both pending-invitation accepts,
+and the first message. Read-only controls observe the existing SQL repositories;
+the catalog invocation does not bind fixture import, forced join or direct-send
+shortcuts. Its host oracle checks both intermediate invitations and consumed
+identities, readable join rows, pre-send absence, exact message identity/count,
+initial epoch and configuration convergence before calling the unchanged original
+`evaluateGroupMultiPartyVerdicts` oracle. The selection helper keeps all 109 cases
+and the original smoke/slice order; this first module does not cover the other
+108 cases. Thirty-six focused checks passed in `catalog-causal-003.log`; original
+oracle/selector and composition preservation checks passed 574 tests in
+`catalog-original-oracle-preservation-001.log`. The first three-target campaign
+completed every UI flow, both consumed invitations, readable joins and the exact
+initial message on all peers, but the unchanged terminal oracle rejected different
+configuration hashes on Alice versus Bob/Charlie. This is a failed scenario,
+not completed catalog coverage. Exact restoration passed on all three targets;
+`catalog-device-001-raw/` and `catalog-device-001/cleanup-review.json` retain it.
+Field-level configuration digests now support a causal comparison without
+exporting key material or changing the complete-state predicate. The configuration
+observer, oracle and expanded graph guard passed 40 tests in
+`catalog-config-causal-001.log`. The curated diagnostic selection previously passed 421 journey,
+9 Maestro and 20 runtime-root checks in `catalog-host-002/`; omitted required
+checks still prevent a full-suite verdict.
+The first field-digest probe did not reach configuration comparison: production
+recorded two selected contacts, but both member additions hit the existing
+recovery gate during an in-place relay recovery, leaving zero invite recipients.
+The two-minute pending-invite timeout and exact three-target restoration remain
+in `catalog-config-probe-001/diagnostic-review.json`. This refutes a UI-selection
+failure; it does not resolve the earlier configuration divergence. The additive
+runner now observes actual transport readiness and the existing recovery gate
+before creating a group, within its existing bounded observation deadline. It
+does not release or bypass the gate. Forty focused observer/oracle/graph tests
+pass in `catalog-readiness-causal-001.log`. The fresh diagnostic reached both
+accepted groups and isolated the sole non-hash difference: the creator and both
+authenticated invitation payloads retained null `metadataUpdatedAt`, while each
+recipient changed it to `createdAt` (`catalog-config-probe-002/diagnostic-review.json`,
+exact restoration on all three targets). The on-join response sender uses creation
+time as its initial metadata timestamp; the receiver previously treated that
+same initial echo as a newer edit. The receiver now uses the identical creation
+floor for its strictly-newer check, preserving null for an unchanged initial
+configuration. Authentication still runs first, and actual newer edits still
+apply. The additive encrypted request/response regression first reproduced the
+failure (`catalog-config-convergence-red-001.log`); 83 focused original and new
+checks now pass (`catalog-config-convergence-causal-001.log`). The C10 affected
+selection then passed 3,204 group tests, 357 original harness contracts and 439
+production-journey contracts, with zero failures or skips (`catalog-next-host-001/`).
+That source also includes the next reaction module's return-boundary observation;
+its live acceptance and queued-retry distinction passed four additive tests plus
+the existing send/roundtrip tests. The selected wrapper remains incomplete for
+omitted checks. The fresh full device attempt passes the unchanged oracle, with the same
+configuration hash on all three roles and exact package restoration on each
+(`catalog-device-002/results.json`, `catalog-device-002/cleanup-review.json`,
+`catalog-device-002-raw/`). It used one central build (38.011 seconds), zero child
+builds, and four scenario action receipts. This closes ML-001 on that candidate;
+the other 108 cases and final stable-candidate closure remain incomplete.
+
+The additive PL-009 reaction module preserves the exact case identity through
+its shared create/accept/message observer and the unchanged original oracle.
+It requires a real successful send result, independent receiver stream events on
+Alice and Charlie, and exactly one matching SQL reaction per role; optimistic
+local storage with a queued publish cannot pass. The observation attaches to the
+existing production send return and listener stream and is bounded by target,
+sender, count, lifetime and controller disposal. Seventy-two focused tests pass
+in `catalog-reaction-criteria-causal-002.log`, including refusal of queued publish,
+missing stream events, stale/foreign reactions and divergent epoch/configuration.
+The initial two failed negative tests are retained in the preceding `001` log.
+Fourteen graph/shortcut checks pass in `catalog-reaction-shortcut-guard-001.log`;
+both catalog cases refuse fixture imports, forced joins and protocol send
+shortcuts. Analysis is clean in `catalog-reaction-criteria-analysis-001.log`.
+Appium MCP then exercised the real message long-press, full picker, horizontal
+category swipe and 🔥 selection using the previously attested creation APK.
+The exact target displayed the selected reaction; the owned session was deleted
+before verified restoration on all three targets
+(`catalog-reaction-cached-ui-probe-001/diagnostic-review.json`). This is UI
+exploration only, with zero builds; it does not establish PL-009 publish/stream
+proof. The full-picker control lacked an accessibility identifier, so its existing
+action now exposes `message_reaction_more`. Eleven original/new widget checks
+pass in `catalog-reaction-ui-causal-004.log`, and all nine Maestro receipt checks
+pass in `catalog-reaction-maestro-contracts-001.log`. The additive reaction flow
+uses the observed menu/category path. Metadata validates and the pinned three-peer
+selection has no missing setup prerequisites (`catalog-reaction-plan-001/`).
+The complete manifest `production-journey-contracts` command then passed 486 tests
+with zero failures or skips (`catalog-reaction-curated-direct-001/`); this direct
+host invocation is separate from wrapper-wide/device closure. The original-file
+preservation audit passes 2,558 tests/harnesses under its recorded scope, including
+later accepted main test edits and only the three exact approved file exceptions
+(`reaction-original-preservation-audit-002.json`). The earlier audit's broad name
+match also included testing documentation/inventory infrastructure; its scope
+correction does not change any executable selector. The actual observation-enabled
+PL-009 device campaign remains pending; these results do not close that case.
+
+The next catalog module, RT-001, is a production-composed protocol timing case.
+Its original harness awaits each real add/remove/re-add return and spaces the
+next call by 500 ms. Appium/Maestro picker navigation cannot establish a fixed
+interval measured from the domain operation's asynchronous return; waiting for
+receiver UI convergence would also remove the original rapid-churn condition.
+The required adapter is therefore limited to a once-only Bob operation on the
+already UI-created target, calling the same production send/remove functions
+with existing bridge/repository owners and the original two 500 ms delays.
+Creation, invitation acceptance and target send remain UI operations. Independent
+receiver-stream removal and SQL convergence remain required. Its host oracle
+is implemented alongside the original RT-001 oracle; runtime/device proof is
+still pending. The runtime adapter now binds only Bob, validates the exact armed
+target and current identity, consumes its sole attempt before awaiting transport,
+and refuses arguments, repeat attempts and failed observation streams. Four
+focused tests exercise the actual production send/remove functions with fake
+transport, including stopping after queued add or removal
+(`catalog-toggle-execution-causal-001.log`). The complete curated host lane passes
+536 tests with zero failures or skips (`catalog-toggle-curated-direct-001/`),
+and analysis is clean (`catalog-toggle-analysis-003.log`). These are host results;
+the RT-001 device case remains pending. No generic send, fixture import, service
+construction or retry endpoint is authorized by this bounded case.
+
+PL-010 requires an actual reaction attempt by Charlie after removal, with the
+old target still stored locally. The removed-member UI does not offer an
+authorized reaction action, so UI automation alone cannot prove that the domain
+operation rejects the attempt or that receivers remain unchanged. Its
+adapter is limited to one Charlie send on a previously observed run-owned target,
+after independently observed membership exclusion. Group creation, acceptance,
+target send and Alice's removal action remain UI operations. The unchanged
+original oracle, actual send return, empty local/remote reaction rows and original
+five-second receiver absence window remain required. The shared message and
+reaction criteria pass 108 focused cases (`catalog-removed-reaction-criteria-001.log`);
+the new controls and graph/shortcut preservation tests pass 34 cases
+(`catalog-removed-reaction-controls-001.log`). The control's actual production
+send call returns `notMember` after removal without bridge publication or local
+reaction storage. Appium MCP separately removed Charlie through the ordinary
+UI and observed two members/key epoch 2; the owned session ended and all three
+fixtures restored exactly (`catalog-removed-cached-ui-probe-001/`). This diagnostic
+is not PL-010 proof. The additive runner/flow is registered, and a stable member
+removal identifier preserves the same action. Its widget and flow-identity checks
+pass five cases (`catalog-removed-ui-causal-002.log`); the first semantics failure
+is retained in `001`. Complete PL-010 device proof remains pending. This gap does
+not authorize a generic send or removal control.
+
+The relay-only cold prerequisite passed on the physical Pixel with actual
+`onlineDotted`, send/inbox readiness and exact restoration
+(`performance-relay-cold-probe-001/`). A full attempt then failed on the second
+identity because `production_reopen_seeded` required an all-chats surface that
+fresh, contact-free identities do not show. The performance helper now uses the
+existing launch-only `production_resume` flow for fresh samples; all six identity,
+PID, timing and readiness predicates remain. The focused second-identity probe
+passed with exact restoration and zero builds (`performance-relay-fresh-probe-001/`).
+The first full attempt remains retained in `performance-relay-device-001-raw/`;
+these prerequisites do not establish full B/M/BR completion.
+The next attempt completed all six cold samples, then failed because the additive
+runner incorrectly imposed M's ten-second usability wait on B's core-only
+operation. The unchanged B-Sim-3 harness measures `startNodeCore` return and
+optional online timing; `P2PService.startNodeCore` intentionally omits warm tasks.
+M-Sim-Hot uses full `startNode` and retains both ten-second waits. The additive
+runner now keeps those scopes separate and performs the core-only observation
+last, checking actual already-running resynchronization without using it as an
+application-readiness claim. Forty-two oracle checks passed in
+`performance-core-scope-causal-001.log`; the six cold samples, failed hot-core wait
+and exact restoration remain in `performance-relay-device-002-raw/`.
+The third full attempt completed cold and full hot-start samples, then observed a
+real relay outage during the healthy-resume interval; its required already-online
+event was absent (`performance-relay-device-003-raw/`). A single Maestro session
+still spent about thirteen seconds paused and observed an outage, so separate
+driver startup alone is an insufficient explanation. A one-second Appium MCP
+background/resume probe emitted the exact already-online event with the same
+process and identity; its session was deleted before exact package restoration
+(`performance-relay-appium-probe-001/diagnostic-review.json`). The new healthy flow
+uses one session and an explicit empty permission map because fixture setup already
+grants notifications; the default Maestro launch grants permissions again. This
+flow passed the focused device probe: launch took about 114 ms, the exact healthy
+event appeared, the existing APK was reused with zero builds, and exact cleanup
+passed (`performance-relay-healthy-probe-002/diagnostic-review.json`). Full B/M/BR
+evidence remains pending. Actual
+paused state is captured at the framework callback and is immutable, window-bound,
+and unavailable after disposal or expiry. Fifty-five focused tests and nine
+Maestro contracts passed in `performance-healthy-causal-002.log` and
+`performance-healthy-maestro-001.log`. These diagnostic outcomes do not relax
+the original healthy predicate or readiness deadlines.
+The fourth full attempt passed healthy, degraded and extended resume, then the
+new foreground recovery control rejected its command after observed relay loss
+(`performance-relay-device-004-raw/`, exact restoration verified). The control had
+added a second must-still-be-degraded check absent from the original M-Sim-2.
+An additive causal test reproduced rejection after automatic reconnection. The
+control now retains the actual post-disconnect loss observation within that
+measurement window, requires foreground state, and invokes the real health
+check and inbox drain exactly once. Missing observations, stale windows, repeated
+operations and real operation failures remain rejected. Seventy focused checks
+pass in `performance-recovery-causal-001.log`. The device probe deliberately
+waited for automatic reconnection before the recovery command and passed with
+actual recovery timing events, the same process/node, and exact restoration
+(`performance-relay-recovery-probe-001/diagnostic-review.json`). Full B/M/BR
+validation is separate from this causal probe. The fresh fifth full scenario
+passed all twelve stages on the C10 candidate, using zero builds and one cache
+hit, with exact restoration (`performance-relay-device-005/results.json`,
+`performance-relay-device-005-raw/` and its cleanup review). Its selected wrapper
+is still BLOCKED for omitted obligations; this is neither the final C11 identity
+nor full migration closure. All four earlier full failures remain retained.
+
+The additive composition guard covers admitted production-journey controls,
+registered replacement runners and shared adapters. Six causal negative probes
+reject implicit/explicit constructors, prefixed legacy-stack calls and named
+repository factories (`composition-guard-host-scope-001.log`, nine tests total).
+Its scope does not constrain intentionally isolated original component harnesses.
+
+Fresh isolated checkouts must provision the pinned Flutter SDK's missing Gradle
+wrapper files before build fingerprints are calculated. C8's first APK build
+created three ignored wrapper files; the next build therefore had a different
+source closure and Gradle-toolchain fingerprint. A read-only reconstruction
+reproduced both exact input hashes, while the two APK hashes were equal
+(`build-reuse-diagnostic-001.json`). Actual costs remain two builds, 68.345 and
+50.081 seconds. Provisioning preserves existing wrapper files and records copied
+SDK hashes; removing these real inputs from fingerprints is not a remedy.
+
+For native XCTest setup, frameworks must exist before CocoaPods resolves the
+conditional Go dependencies. The original C2 Pods configuration omitted GoMknoon
+search/link flags, so `canImport(GoMknoon)` excluded the GoBridge type and native
+371/373 stopped at compilation. The pinned framework import probe passes;
+regenerating Flutter's iOS configuration before `pod install` retains the
+repository's SwiftPM/CocoaPods split and restores the original lockfile bytes.
+A direct early pod install temporarily added SwiftPM plugins to CocoaPods; that
+generated configuration was corrected before any native build. Semantically
+identical Xcode project sorting was also restored to its original bytes.
+Native execution remains separate from these setup observations.
+The C11 dependency preparation now completes with the Go frameworks and existing
+local plist present before Flutter configuration and CocoaPods resolution.
+`catalog-native-pods-preparation-001/review.json` verifies byte-identical original
+Podfile lock, Xcode project and workspace files after setup. The iOS export
+binding check also exits successfully (`catalog-native-bindings-probe-001.log`).
+Neither setup result replaces fresh native 371/373 execution.
+The earlier C9 original 371 run passed its Android checks, then failed at the
+generic Runner build because the isolated checkout omitted the existing ignored
+`ios/Runner/GoogleService-Info.plist`. The plist was copied byte-for-byte from the
+main checkout and parsed without exposing credentials. No XCTest ran; the
+original harness removed its owned DerivedData and the failure/cleanup review
+remain in `native-retry-002/`. The later C11 `native-retry-004/` completed both
+original 371 and 373 routes successfully: native 373's three mutations re-redded
+the intended assertion, byte-exact source restoration passed, all 28 selected
+Runner XCTest cases passed, and the generated binding phase was a digest no-op.
+Owned DerivedData cleanup completed. The wrapper's overall BLOCKED disposition
+reflects omitted full checks; it is not an integrated-main or full-suite PASS.
+
+The MD-004 multi-device group runner also started its five-minute
+`cli_group_join_fixture.json` deadline before the primary app finished building.
+The first attempt is retained in
+`.codex-test-logs/all-tests-y227gs8x/reliability-held-route-probes-004/logs/002.log`;
+its primary log had not reached a test, and its owned Xcode build survived the
+Flutter parent. Cleanup reviewed that exact process tree and terminated only
+its descendants and the two owned simulator fixture apps. The existing
+foreground campaign's preparation implementation now lives in
+`integration_test/_support/prepared_ios_harness.dart` and serves both runners.
+MD-004 prepares both exact role binaries before starting either the CLI peer or
+an app; its CLI fixture path, relay defines, run ID, database names and five-minute
+fixture deadline remain unchanged. Six host process contracts pass, including
+both original foreground paths and the new MD-004 build-failure/Android controls.
+Fresh native verification of the shared implementation is recorded below.
+The next native attempt (`group-multi-device-preparation-device-probe-002`)
+built both roles, synchronized membership, and delivered the CLI message with
+the expected sibling unread count. It then timed out at the one-notification
+assertion: the shared stack, like the foreground fixture above, still omitted
+the visibility reader required by the listener's compatibility path. The stack
+now reuses `TrackerBackedAppVisibility` with its existing paused lifecycle and
+the same group tracker. All 227 existing group-listener tests passed and analysis
+was clean (`md004-visibility-repair-001/`); the fresh native result follows.
+The affected-group wrapper check also passed all 3,195 tests with zero skips
+(`md004-visibility-change-001/results.json`). Main and isolated checkout input
+identities match in `isolated-source-identity-review-006.json`.
+Fresh native attempt `group-multi-device-preparation-device-probe-004` passed
+on the existing iPhone 17 Pro and iPhone Air: both roles reported three passing
+native tests, and the sibling completion signal followed the original
+one-notification and device-local unread assertions. Role builds completed
+before timed peers started (81.8 and 48.9 seconds). Earlier failures remain
+retained; the complete owning suite still requires its final full invocation.
+The soak runner had the same build/readiness coupling: its 120-second fixture
+timer expired during Flutter preparation, before a fixture or scenario was
+observed (`reliability-held-route-probes-031/logs/003.log`). It now uses the
+existing simulator preparation helper before starting either peer, preserving
+that readiness limit and the five-minute soak duration. Physical-device launch
+paths are unchanged. The focused native recheck passed all three tests and
+the five-minute soak, including four disconnects and two inbox-store rounds
+(`soak-build-deadline-native-001/`). Preparation took 186 seconds; the app
+fixture followed CLI fixture creation by 15.417 seconds. Workflow checks passed
+240 cases with zero skips. The failed attempt, preparation log, timing receipt
+and cleanup review remain in `soak-build-deadline-repair-001/`.
+
+The CLI group-recovery fixture must use `currentIdentityDatabaseVersion` and
+the shared production create/upgrade registry. Its old version-101 handwritten
+list omitted migration 099, so a real relay delivery failed when the repository
+inserted `group_messages.is_forwarded`. The first failure remains in
+`reliability-held-route-probes-005/logs/001.log` under the all-tests run directory.
+The fixture now reuses the registry; 18 migration tests and 337 group-harness
+contracts passed, and analysis was clean (`group-recovery-schema-repair-001/`
+and `group-recovery-schema-change-001/`). Its full legacy entry now invokes the
+existing CLI-peer campaign too: a standalone fixture invocation without its peer
+returns without exercising recovery. Both route contracts bind the runner and
+fixture source hashes. The fresh group-recovery route passed on the physical
+Android phone against the deployed relay (`reliability-held-route-probes-006/`),
+including both live and offline message recovery.
+
+Android invitation peers must retain their test installations until the
+existing signal broker has finished. Flutter 3.47.2 defaults `flutter test`
+to uninstall on role exit. In `reliability-held-route-probes-006/logs/002.log`,
+decline, revocation and configuration convergence completed and the primary
+exited successfully, but its final `alice_done` signal never reached the host;
+the sibling timed out. Both app packages were absent after the run. The runner
+now uses Flutter's existing `--no-uninstall` option on Android, preserving the
+app-private signal files after a role stops. Existing deadlines and latency
+capture barriers are unchanged. Twenty runner contracts and the expanded
+357-test group-harness check passed with zero skips
+(`invite-final-signal-diagnostic-001/`, `invite-final-signal-change-001/`).
+The fresh invitation-reliability route passed on both Android devices in
+`reliability-held-route-probes-007/`; the primary and sibling both completed
+successfully with the original final-signal wait intact.
+The runner now captures initially absent Android packages with the existing
+`AndroidAppStateGuard` and restores that absence only after both role exits,
+signal synchronization and host validation succeed. Pre-existing installations
+are excluded from this cleanup, and failed runs retain diagnostic state.
+This preserves the final signals without leaving a newly created install that
+blocks the subsequent sound campaign. The fresh Android pair passed and both
+main packages were absent afterward (`reliability-held-route-probes-014/logs/001.log`,
+`invite-owned-install-cleanup-repair-001/native-restoration.json`); the existing
+20 invitation runner contracts and 63 state-guard contracts also passed.
+
+Real-repository direct-message harnesses must bind the existing
+`DirectInboxCustodyDbBindings.loadOwnerForMessageId` callback as well as stage,
+load, failure and completion callbacks. The repository's current
+`supportsDirectTextInboxCustody` contract requires this owner lookup. Seven
+constructions in the notification-during-other-chat, routing, Wi-Fi fallback,
+soak and basic smoke harnesses omitted it. The notification sender therefore
+returned `missing_direct_inbox_custody_capability` before attempting delivery;
+the receiver subsequently timed out waiting for its notification. The repair
+only supplies the existing callback, preserving production behavior and native
+assertions. Ninety repository/database tests passed. The next native attempt
+sent successfully but exposed a separate missing receiver delegate:
+`dbApplyIncomingOrdinaryTextMutation`. Without that callback, the repository
+refuses the decrypted ordinary text before persistence. Nine constructions in
+the same harnesses plus transport and conversation-bridge now bind the existing
+atomic database helper, as the notification-sound harness already does.
+The 80-test database-helper suite and 21 legacy-runner contracts passed.
+The fresh notification-during-other-chat route then passed its warm, cold and
+same-peer routing assertions on the simulator pair
+(`reliability-held-route-probes-011/logs/001.log`). The other changed harnesses
+still require their own native results. Evidence and preimages:
+`custody-harness-binding-repair-001/` and
+`custody-harness-incoming-repair-002/`; both preceding failed runs are retained.
+
+Routing smoke must attach its existing incoming router and chat/deletion
+listeners before starting the node, and retain them across node restarts.
+The broadcast stream survives restart: replacing its listener after startup
+can lose the inbox replay between the drain and subscription. Both peers must
+bind the existing ordinary-text mutation and incoming deletion database
+callbacks; voice/media fixtures must also bind the existing generic-save and
+outgoing media-custody delegates. The direct S8 receipt is a boolean, whereas
+the group G5 receipt is a timing map; their criteria must preserve that
+distinction. Host verdicts for S3, S8, S9, S10 and S11 now require actual receiver
+receipts, committed deletion and successful send outcomes. Previously some
+returned PASS despite missing delivery or failed sends. The focused criteria,
+router and deletion-listener tests pass, and all 19 direct routing checks passed
+in `reliability-held-route-probes-015/logs/001.log`. That owning route still
+failed before its group assertions because simulator installation ran out of
+disk space; it is not a complete routing pass. The unchanged group app then
+installed in 2.142 seconds after verified storage recovery
+(`routing-install-space-recovery-001/install-probe.json`). Keep the first false
+green, corrected-criterion failures and later environment failure separately;
+the fresh complete route passed all 27 checks (19 direct and eight group) in
+`reliability-held-route-probes-020/logs/001.log`, with a hash-bound PASS receipt
+in that directory's `routes.json`. The broader `full-sims` owner remains pending.
+
+The subsequent invitation-latency closure completed all 30 samples, but its
+`create|online-cold` median was 1,458.2 ms against the unchanged 1,300 ms limit.
+Both role exits were successful; the host performance rejection still makes
+the route fail. The live-send phase dominated this cell, and existing bridge
+responses identify relay transport. Numeric-only native stream-open, write and
+ACK timings are retained in the existing send-response flow event. A second
+30-sample capture failed at 1,387.28 ms and identified relay stream opening
+at 746–1,034 ms. Group creation now starts the existing connection-only
+`warmPeer` operation for unique validated recipient transport IDs before local
+group persistence, overlapping connection setup with that work. Invitation
+encryption, delivery and persistence still follow their original order.
+The fresh 30-sample closure passed with a 1,252.374 ms cold-create median;
+all recipients observed exactly one event. Neither the 1,300 ms limit nor
+the cold-recipient restart conditions changed. Two causal tests verify that
+group creation proceeds while warming is pending; affected group checks
+passed 3,197 tests, with 162 schema and 627 notification contracts passing.
+Evidence: `reliability-held-route-probes-007/logs/002.log`,
+`reliability-held-route-latency-timing-probe-001/`,
+`invite-warm-overlap-repair-001/`, `invite-warm-change-001/`, and
+`reliability-held-route-latency-warm-probe-001/`. Retain both first failures;
+do not replace closure mode or relax its limit to obtain a pass.
+
+The 1,252.374 ms pass did not establish a stable margin: the later owning
+`restart-checkpoint-014-reliability-permissions/` run completed all thirty
+samples but failed at 1,385.823 ms. Its production post-frame settlement marker
+was delayed by the harness's 100 ms frame pumps plus 40 ms polling pauses.
+A live-binding probe with late asynchronous completion measured median
+113.029 ms versus 24.402 ms after using 16 ms pumps without the extra pause;
+the earlier fast-completion probe did not reproduce and is retained. The helper
+now pumps near 60 Hz, preserving the production callback, all samples, actual
+cold node restarts and the 1,300 ms gate. Affected harness contracts passed 357
+checks. The native recheck (`invite-latency-frame-native-001/`) reduced median
+navigation settlement to 90.335 ms, but still failed the overall gate at
+1,392.872 ms because other phases took longer. This remains an unresolved
+performance shortfall; neither role success nor the cadence correction closes
+it. Captured send responses identify relay transport. The harness artifact's
+`direct` label means live wire acknowledgment, not independent evidence of a
+direct network path.
+
+The invitation runner's initial-install state guard must restore from its outer
+`finally`, including host performance rejection and unsuccessful role exits.
+Its earlier success-only restoration left run-created Android installations
+after both latency failures and later blocked the sound campaign before launch.
+The original retained manifest proved both packages were initially absent;
+loading that manifest through the existing guard restored both targets. A
+failure injected immediately after real guard capture reproduced a retained
+recovery directory with the original runner and verified restoration with the
+fixed runner, preserving the original exception and excluding success output.
+Evidence: `invite-failure-cleanup-repair-001/restoration.json` and
+`invite-failure-cleanup-repair-001/failure-probe-result.json`. This cleanup
+repair does not resolve the remaining latency shortfall.
+
+Both media-journey full routes must enable the existing
+`GIF_MANUAL_ACCEPTANCE=true` test define. Without it the native image journey
+passes but the animated-GIF acceptance case is skipped, as retained in
+`reliability-held-route-probes-008/logs/003.log`. The existing GIF assertions
+cover the picker preview, sender/receiver grids and full-screen viewers; the
+fresh run executed them as well as the image case and passed with no skips
+(`reliability-held-route-probes-009/logs/001.log`).
+
+The Android sound campaign deliberately requires an absent test package before
+any child starts, because it verifies exact notification-card/channel baseline
+restoration. A retained invitation test install therefore blocks its setup;
+remove only the explicitly authorized test package under its device leases.
+The first complete Android run passed all 16 programmatic/OS scenarios and
+restored both baselines, but failed its five-second signal-sync cleanup bound.
+The synchronizer had checked its stop flag only before a whole batch, allowing
+remaining file/device operations to continue after the Flutter roles exited.
+It now checks the same flag between operations, preserving the cleanup limit.
+A one-off probe executing the original/current synchronizer with held I/O
+failed/passed respectively; existing sound-disposition contracts and analysis
+passed. The fresh complete device campaign then passed all 16 scenarios,
+stable conversation card IDs, cleanup and exact state restoration
+(`reliability-held-route-probes-013/logs/001.log`). Evidence:
+`notification-sound-setup-recovery-001.json`,
+`reliability-held-route-probes-012/logs/001.log`, and
+`notification-sound-sync-repair-001/`. Non-interactive OS/channel evidence does
+not establish that a person heard sound from the speaker.
+
+The media sound sequence (S5–S13) must retain its card within each conversation
+and clear only between lanes. Clearing after each item conflicts with the
+primary-channel continuity assertion: the next tone-debounced item is then a
+first silent publication, which correctly uses the silent channel. Checkpoint
+`restart-checkpoint-012-reliability/` retained this S12 failure with `silent=true`
+and an exact restored Android baseline. The fixture now preserves the card;
+production channel selection, the disposition contract, S14's strict same-ID
+silent-update assertion and deadlines are unchanged. Existing active-card and
+first-silent preservation tests passed (17); the notification change gate passed
+88 tests. `notification-sound-channel-native-001/` passed all sixteen
+programmatic/OS scenarios and exact restoration. Its media flags were audible;
+S14 separately observed `[false, true]` on the primary channel. The subsequent
+owning run `restart-checkpoint-013-reliability-repaired/` also passed all sixteen
+sound cases and exact restoration; S13 observed `silent=true` on the retained
+primary card (`sound-retained-summary.json`). This supplies native evidence for
+the repaired media debounce path. The parent reliability run failed later in
+the separate iOS notification matrix and is not a full-family pass.
+
+Host-only full-run fixtures must use a temporary lease directory with the real
+lease implementation. Otherwise a concurrent native campaign can block a
+synthetic task on `mknoon.shared-native-build`. The cancellation fixture also
+must not signal the test process unless its owned child actually started:
+after a blocked run returns, the runner has already restored the signal handler.
+The first failures are retained under `shared-preparation-change-002/` and
+`shared-preparation-change-003/` in the all-tests run directory. The CLI fixture
+and seven scheduling/cancellation checks passed while a real native build held
+the global lease (`host-cli-lease-isolation-test-001.log` and
+`host-full-fixture-lease-focused-001.log`). Production lease paths and exclusion
+remain unchanged; the complete workflow recheck is recorded below.
+The broader run then exposed the same global-lease dependency in CI acceptance
+and synthetic device/postprocessing fixtures (`shared-preparation-change-005/`).
+Isolation now belongs to their shared `RepositoryFixture`; explicit fixture
+lease directories still take precedence. All 19 affected CI, scheduler and
+cancellation checks passed while the native campaign held the global lease
+(`shared-repository-lease-focused-001.log`). The expanded 230-test workflow had
+previously completed in 177.156 seconds and then hit its 180-second aggregate
+budget during concurrent compilation. Its aggregate budget is now 360 seconds;
+the individual fixture and device deadlines and selected assertions are unchanged.
+The complete workflow recheck passed all 230 tests with zero skips in 146.817
+seconds (`shared-preparation-change-006/results.json`) while native preparation
+continued. This validates the host fixture repair, not the remaining device suite.
+The duplicate `full-workflow` selection must preserve that canonical aggregate
+budget as well as its exact test list. It still used 180 seconds after the change
+entry had moved to 360; checkpoint `restart-checkpoint-015-major-source038/`
+stopped at 180 seconds with cleanup OS error 1 and no retained raw test output.
+The same 240-test suite had just passed in 214.349 seconds through change mode.
+The full entry now matches the existing 360-second budget; individual fixture
+and device deadlines remain unchanged. A composition contract checks both the
+selection and budget against the canonical workflow entry. Evidence:
+`full-workflow-budget-repair-001/`; owning verification remains pending.
+
+The generic `testNotificationTap`, `testColdNotificationTap`, and
+`testTapExistingNotification` full-suite entries use the existing simulator
+APNs fixture campaign's explicit `--native-selector` mode. It accepts only the
+three declared single-case pairings, requires zero automatic retries, pins the
+simulator, disables parallel XCTest cloning, and forwards actual native method
+results for exact receipt validation. Warm/cold native-to-Dart routing assertions
+remain in the campaign. These methods have no physical-only or real-provider
+assertion; physical APNs/NSE, reaction and Local Network proofs retain their
+separate owners. Focused host contracts verify orchestration, fail-closed
+argument handling, fixture ownership and both build paths. The synthetic direct
+matrix sender must exist in the recipient contact repository before launch;
+otherwise cold routing fails, and a native foregrounding assertion alone can
+falsely accept a warm route failure. The runner stages the matching contact via
+the existing debug-only `intro_e2e_config.json` repository seam, enables
+`E2E_TEST_MODE` and `PRODUCTION_FCM` in both build paths, refuses foreign fixture
+commands, and rejects
+`REMOTE_NOTIFICATION_ROUTE_ERROR` as well as the cold bridge error. Production
+missing-contact behavior remains unchanged. All three exact native selectors
+passed with their host route assertions in `restart-checkpoint-010-notification-fixture/`
+and `restart-checkpoint-011-notification-preservation/`; the full matrix remains
+a separate obligation. The original warm false-positive and cold failure, copied-log
+causal probe, 73 passing Dart preservation tests, and 236 passing workflow
+contracts are retained in the all-tests run directory under
+`notification-contact-fixture-repair-001/` and the checkpoint reports.
+
+The production-push opt-in is required even for simulator fixture pushes:
+ordinary E2E mode suppresses push registration and its OS permission request.
+In `restart-checkpoint-013-reliability-repaired/`, native warm preparation passed
+but the body assertion failed after the host push; current native settings were
+still authorization 0 / alert 0. Warm host relaunch now requires fresh authorized
+alert settings before sending, and the full matrix binding explicitly sets
+`--retries 0` (the runner default is also zero). The source-028 probe
+`notification-permission-warm-probe-001/` started at authorization 0, observed the
+real permission request become authorized, then passed the original two-stage
+warm tap and routing assertions. Twelve focused orchestration/binding tests,
+twelve permission/push preservation tests, and 238 workflow contracts passed.
+This probe does not close the full twelve-case matrix or certify provider delivery.
+
+Cold delivery also requires permission preparation on its own simulator. The
+next full matrix passed all six warm cases, then failed cold direct video because
+the second simulator had never launched to request permission. Actual Appium
+MCP inspection confirmed authorization 0 and the visible permission prompt,
+without granting it (`notification-cold-permission-failure-001/`). Installation
+now uses the existing native warm preparation helper, verifies authorized alerts,
+and terminates that setup launch before scenario execution. Its log/result bundle
+is separate from the exact selected test receipt. The unchanged cold direct-video
+tap and routing checks then passed from initial authorization 0 in
+`notification-cold-permission-probe-001/`; workflow contracts passed 240 with no
+skips. The original complete xcresult and exported recording are retained. The
+fresh full matrix then passed all six warm and six cold cases with zero retries
+(`reliability-held-route-probes-032/logs/007.log`, native result directory
+`20260923T171221Z`). This verifies the complete simulator matrix; the broader
+full reliability owner and real-provider proofs remain separate obligations.
+
+The six payload XCTest methods already execute inside
+`notifications.ios_payload_fast_path`. Their full-suite ownership reuses that
+existing three-phase campaign instead of requiring six independent UI fixture
+setups. `sims_native_xctest_receipts.py` joins the verified parent artifact to
+each phase receipt by SHA-256, then verifies the recorded UI-log hash and the
+exact native selector counts using the shared XCTest parser. All three phase
+receipts must belong to one capture. Both the exact capability and its scoped
+method receipt are required; a parent-only PASS, changed/missing log, duplicate
+phase, skipped case or unexpected selector cannot complete the method. Native
+receipt failure also blocks the full owner. Offline contracts exercise this
+join and the real executor's status propagation with synthetic process output;
+they are not physical-device proof. Fresh full-suite closure remains pending.
+
 `full_inventory` also owns exact singleton reaction selections, all eight UI
 performance dispatches, the 17 original benchmark dispatches and their distinct
 CLI-peer fixtures, native proof wrappers, true-release PB266 instrumentation,
 plugin JUnit and standalone Dart assertion mains. FEED aliases its existing
 direct `registerFeedPerf()` entrypoint, including its explicit skipped cases.
 Changed standalone Dart mains reuse these exact assertion-enabled adapters in
-change selection; an unknown non-host Dart test still fails closed.
+change selection. Changed device tests also reuse a unique exact native adapter
+already named by `full_inventory.obligations`, including PB266's release
+instrumentation recipe. Unknown or ambiguous non-host test ownership still fails
+closed; no generic device command is invented.
+JUnit adapters inspect exact selected-class reports even when Gradle exits
+nonzero, so an observed assertion failure remains FAIL instead of being hidden
+as a process/setup blocker. Passing XML cannot override a nonzero process exit,
+and the wrapper's stale-report rejection still applies. The PB266 release proof
+exposed this boundary with a real device failure: its three schema-version
+expectations still named 117 after production moved to 119. Schema bumps must
+keep the head, upgraded-database and fresh-database expectations aligned with
+`currentIdentityDatabaseVersion`; encrypted reopen, wrong-key rejection,
+migration idempotence and Settings remount assertions remain required. The first
+failure and parser RED are retained under
+`.codex-test-logs/all-tests-y227gs8x/native-config-repair-002/pb266-first-failure-review/`.
+The same stale 117-versus-119 head assertion later stopped all six cases in
+`direct_inbox_custody_outbox_sqlcipher_proof_test.dart` before database creation
+(`sims-reliability-continued-002/full-sims-0-routes/logs/013.log` under that run
+root). Review related native proofs when the schema advances: direct inbox,
+direct notification/reaction, group exit, group notification and self-removal
+proofs also compare the upgraded or freshly opened database to the current
+head. Their historical starting versions and downgrade-refusal boundaries
+remain fixed; updating the final head must not remove custody/data assertions.
+The group-notification export manifest also reports the current schema, so its
+stale 116 expectation required the same correction. All six affected native
+proof files then passed on the physical Android target (eleven cases across
+`sqlcipher-device-probes-001/` and `sqlcipher-device-probes-002/` under that run
+root); these focused probes do not close the complete reliability owner.
+The protected reliability PB266 route reuses the existing full-regression
+profile-drive command: a default debug `flutter test` invocation violates its
+explicit `kDebugMode == false` prerequisite. The independent
+`full.native.pb266-release` adapter still requires true release instrumentation;
+profile execution does not satisfy that variant. Source-pinned legacy records
+must be reviewed and refreshed when the proof file changes.
 The six previously missing UI performance dispatches select desktop macOS,
 where their registrations execute; mobile self-skips are not performance proof.
 The iOS media stable-ID leg has its own pinned simulator selection. General UI
@@ -373,6 +2359,18 @@ roles (and desktop roles) before launching any child. The boundary regression
 executes the actual harness file helpers with the captured compile defines,
 proving fixture and signal path agreement; its synthetic leaves do not certify
 an installed simulator app or produce product benchmark results.
+
+GP/H must observe the exact Flutter benchmark `testStart` before starting the
+three-minute peer-fixture handshake. `independent-checkpoint-001/` exhausted the
+old handshake deadline during the iOS build, with only the loading test started.
+The existing completion observer now provides a separate bounded startup wait
+and rejects an early child exit; signal deadlines and terminal assertions are
+unchanged. Four causal startup tests and all 193 workflow checks passed in
+`benchmark-start-change-002/` under `.codex-test-logs/all-tests-y227gs8x/`.
+The separate group-publish and timeout-accuracy owners subsequently passed on
+the pinned iOS simulator in `benchmark-device-repair-001/results.json` under
+the same run root. Those recorded-candidate passes do not replace final full
+verification after later changes.
 
 Protected benchmark scripts require `MKNOON_RELAY_ADDRESSES`, supplied from
 `full_suite.relay_addresses`, before any child starts. The bounded parser accepts
@@ -441,6 +2439,67 @@ unknown discovery, absent configuration/credentials, or an unavailable supplied
 target remains precisely blocked. Missing fixtures are runtime prerequisites,
 separate from inventory completeness.
 
+Physical iOS group-notification scenarios require a physical Android sender
+and physical iPhone recipient. Their group staging manifest uses `provider=apns`
+and the scenario-specific `iosCapture` selectors returned by
+`groupReactionNotificationIosSelectorsFor`; neither the Android FCM group
+manifest nor the separate iOS payload-fast-path attestation has that schema.
+Reuse the existing selector helper and staging validator when preparing this
+configuration. The chat-group iOS capture additionally requires the existing
+central `android.production_fcm` and `ios.device.production` artifacts through
+its four prebuilt artifact/report arguments. Prepare them with
+SIMS `--prepare-builds`; the capture joins exact artifact bytes, cache-adjacent
+attestations and build reports no older than one hour. A prepared build or
+accepted manifest is not a passing device scenario. The full-suite adapter also
+passes the existing `--no-child-builds` setup-app path and exact directory digest,
+so a prepared signed setup app is reused instead of rebuilt inside the capture.
+Configuration/topology
+failures and their cleanup journals remain in the original run artifacts.
+
+The physical-iPhone setup attempt in
+`.codex-test-logs/all-tests-y227gs8x/ios-group-deployed-004/` passed its one
+permission-settling XCTest but failed before identity export or notification
+assertions. The native receipt said `dart_main_not_reached`; the retained
+unified log instead established a Dart `setup entry launch binding rejected`
+exception. Dart's iOS process-environment implementation returns an empty map,
+so `Platform.environment` cannot carry XCTest launch inputs. The existing
+setup-entry channel now reads only the three accepted launch fields from its
+native coordinator, in memory, with the same profile gate and acknowledgement
+binding. Host tests preserve rejected profiles, malformed inputs and receipt
+privacy. The exact native entry test also passed on the available iPhone 17 Pro
+simulator (`ios-startup-native-001/result.xcresult`, one test, zero skips);
+the physical iPhone startup probe then passed the existing receipt classifier
+with its fresh launch hash and exact identity-export bytes
+(`ios-group-startup-probe-002/startup-verdict.json`). Appium observed the running
+app and relay readiness; its later screenshot shows a Local Network prompt,
+which was not graded as settled by this startup probe. Group notification
+delivery remains a separate campaign assertion.
+The original receipt, app diagnostics and Appium ownership/cleanup review are
+retained under `ios-group-startup-probe-001/` beside that attempt.
+
+The subsequent `ios-group-deployed-005/` attempt passed that initial startup
+boundary, then timed out on contact fixture completion. Its device log confirmed
+that the host's contact-stage `--terminate-existing` relaunch omitted the setup
+inputs and failed the entry gate. Preserve the same campaign-owned setup binding
+on every setup launch, including the existing group-creation and target-author
+XCTest selectors. The host uses CoreDevice's `DEVICECTL_CHILD_` environment
+forwarding only during Plan-397 fixture staging; the XCTest selectors share the
+existing validation and forwarding helper. Production-normal and trace-only
+launch paths retain their own behavior. Keep the original three-minute contact
+completion deadline and success assertion. First-failure evidence is retained in
+`ios-group-contact-probe-001/`; the prior ready receipt alone does not prove that
+a later unbound process started successfully.
+
+The wrapper's temporary Python execution fixture must declare its isolated
+resource. Without that declaration, conservative unknown-resource handling takes
+the shared native-build lease, and three otherwise passing wrapper self-tests
+block when a Flutter check runs concurrently. The retained first failure,
+serial diagnostic pass and held-lease reproduction are
+`ios-startup-mapping-001.log`, `ios-startup-mapping-002.log` and
+`ios-startup-mapping-lease-reproduction.json`. The fixture regression rejects
+any native/device lease request while still executing its real Python child;
+production build/device ownership rules remain in force.
+
 XCTest adapters build into fresh private DerivedData and run each exact method,
 checking named passing test cases rather than accepting `TEST SUCCEEDED` alone.
 `ios_ui_fixtures` is a private JSON object keyed by `Class/testMethod`; each entry
@@ -484,6 +2543,38 @@ not a claim that host execution proved XCTest assertions. Native/XCTest failures
 retain the campaign cleanup barrier. Availability checks do not establish that
 external iOS automation is idle.
 
+Before their native Xcode builds, both adapters refresh Flutter's generated
+configuration with `flutter build ios --simulator --debug --config-only --no-pub
+--target lib/main.dart`, the existing notification-smoke preparation path.
+Running Flutter integration tests first can leave `Generated.xcconfig` pointing
+to a deleted temporary `flutter_test_listener/.../listener.dart`; Xcode then
+fails in `kernel_snapshot_program` before XCTest starts. The retained
+`native-371-build-probe-001` logs under `.codex-test-logs/all-tests-y227gs8x/`
+show that failure and the same build succeeding after the configuration refresh.
+The subsequent `native-config-repair-002` owning checks passed: Plan 371 ran two
+Android methods and eight exact XCTest methods; Plan 373 verified all three
+intentional mutation failures, restored-source GREEN and its 28-method native
+baseline with zero skips. The final wrapper reported no source/configuration
+drift. Original failures remain retained. The Swift compiler's separate
+exit-zero/incomplete-output diagnostic also appeared in the successful build;
+it was not the proven blocker.
+
+The Plan 373 intentional mutation runs use `-collect-test-diagnostics never`:
+Xcode 27 otherwise spent 600 seconds collecting a simulator sysdiagnose after
+each expected assertion failure. Exact semantic failure logs, xcresults,
+one-failure/zero-skip checks, fixture census, fresh DerivedData and source-hash
+restoration remain required. Restored-source and baseline runs retain ordinary
+failure diagnostics. The original three diagnostic collections are retained in
+`native-config-repair-002`. The later `vc204-373-repair-001` owner passed all
+three exact mutation checks, restored-source GREEN (one test), the 28-method
+baseline and privacy/binding checks. Every phase had zero skips. Its original
+report retains a cancellation-time toolchain-drift diagnostic: omitted checks
+left the cancellation event on the reporting thread, cancelling final version
+probes. A fresh version/package comparison matched every original identity
+field, and a causal wrapper test reproduced that false diagnostic. Final audits
+must clear the reporting thread's check cancellation state after workers drain;
+the cancellation gap and unfinished checks remain unchanged.
+
 `devices.android_emulator_second` and `devices.ios_simulator_a` through `_d`
 are supported extra roles. `ios_simulator` aliases the `_a` role; conflicting
 pins are invalid. Every forwarded SIMS target, including configured extra roles
@@ -499,6 +2590,18 @@ is serialized with `performance.global` and has an explicit legacy build
 exception because its audited children own their existing builds. Device
 ownership comes from each route's leases and preflight. The `unknown` resource
 guard remains in force for opaque SIMS rows.
+
+Group-lifecycle route identities retain the `:GROUP_SIM_SCENARIO=<value>`
+suffix, but their Flutter argument must be `--dart-define=GROUP_SIM_SCENARIO=<value>`
+with the key only once. A duplicated key made the dispatcher register its
+unknown-scenario failure before entering any scenario. The original device
+failure is retained in
+`.codex-test-logs/all-tests-y227gs8x/sims-reliability-continued-003/full-sims-0-routes/logs/023.log`.
+The binding regression compares all four selected values against the existing
+Dart dispatcher's cases; route labels, scenario assertions, and device pins stay
+unchanged. The corrected four native scenarios passed seven cases in
+`group-dispatch-device-probes-001/` under that run root, after all 197 runner
+contracts passed. This focused verification does not close the complete owner.
 
 Use the same one-command full runner with an explicit baseline and pinned config:
 
@@ -526,12 +2629,117 @@ private-media journey receives its actual `--sender`/`--recipient` arguments;
 the visibility proof receives fresh build/artifact/result directories and its
 exact scenario. All original general UI, posts, and scenario selections remain.
 
+The device-local private-media journey must create its fixture database at
+`currentIdentityDatabaseVersion` through the existing production migration
+registry. Its prior fixed version 100 lacked the custody-intent column added
+by migration 110, while the current message serializer already writes that
+column. The retained sender diagnostic at
+`.codex-test-logs/all-tests-y227gs8x/private-media-sender-causal-probe-001/`
+failed at the first fixture insert. Historical migration-boundary proofs keep
+their explicit versions; this journey instead tests current production writers,
+SQL state transitions, and rendering. Its protected route also pins the native
+harness source. The journey runner intentionally discards raw child output,
+so its generic exit-code failure alone does not establish a cause; capture the
+exact existing leaf privately before diagnosing it.
+After the schema correction, the next native failure reached the old inline
+Delete expectation for a consumed view-once receipt. That presentation was
+superseded by the compact receipt and outer long-press menu: the existing
+`direct_private_media_card_test.dart` proves the outer Reply/Delete paths.
+The native journey now opens that same menu after attachment cleanup and
+repumping, requires a visible Delete action and the exact message callback,
+and retains the absent-inline-action and privacy checks. The 134 existing
+card/viewer/artifact cases passed in `private-media-terminal-host-001/` under
+the same run root; native journey closure remains separate.
+
+The sender pending-open subproof exercises the one-shot SQL lifecycle and must
+seed **view-once**, then tap its `private-media-card-visual` tile. Plan 302 made
+outgoing protected opens lease-free and repeatable; expecting `opening` from a
+protected row is stale. Existing real-database tests in
+`direct_private_media_sender_pending_open_test.dart` preserve protected reopen
+and byte-retention behavior. The native fixture keeps its exact
+`available → opening → viewing → consumed` sequence and attachment/file deletion
+assertions. Grant settlement/release also covers assertions before route push,
+so a failed assertion cannot leave controller disposal awaiting an unmounted
+viewer. The related 154 host cases passed without skips, and the complete
+physical-Android/available-emulator journey passed in
+`.codex-test-logs/all-tests-y227gs8x/private-media-journey-device-probe-004/`.
+
+The SQLCipher capability file includes a cross-platform artifact case that
+skips when neither portability define is supplied. Full legacy routes now use
+`scripts/migration_sqlcipher_portability.py` to run the existing Android export,
+copy only that run's snapshot/metadata through pinned `adb run-as`, and run the
+existing verifier on an available iOS simulator. These native assertions prove
+cipher parameters, checksum, schema and rows; Appium UI cannot establish them.
+The adapter requires three cases and zero skips on each platform. Android export
+uses Flutter's `--no-uninstall` until `run-as` transfers the fixture, then removes
+the unique fixture and its test app before verification. The six native cases
+passed without skips in
+`.codex-test-logs/all-tests-y227gs8x/sqlcipher-portability-device-probe-001/`:
+the physical Android's snapshot was imported by the available iPhone 17 Pro
+simulator. The 200 workflow and five provider-schema cases also passed in
+`private-media-portability-change-002/`; full owning checks remain separate.
+
 Each route writes a private log and an exact hash-bound receipt. The parent
 requires unique, ordered child identities, matching summaries and unchanged
 logs. Reliability source and scenario obligations join these route receipts;
 parent success cannot replace a missing child. Device failures retain the
 cleanup barrier; host-only routes can still run. Original first failures remain
 visible after a diagnostic rerun.
+Child execution and parent inspection share skip/empty-run detection, including
+Flutter's expanded `+2 ~1` output. A zero exit with a skip blocks the child and
+holds later device routes for cleanup review; an earlier skipped child cannot
+be reported as PASS merely because a later route already failed.
+Skip counters must occur in Flutter's timed progress syntax: protocol estimates
+such as `Sending ~100KB` are not skipped tests. ANSI-colored counters still count,
+and the zero-test sentinel must not match `100 tests passed`. The causal red and
+28 passing parser/legacy-receipt contracts are retained under
+`.codex-test-logs/all-tests-y227gs8x/legacy-approximate-size-parser-repair-001/`.
+The original transport receipt remains BLOCKED even though its 37 device
+scenarios and 32 host assertions passed; replaying its log through the repaired
+parser is diagnostic evidence, not a replacement for the owning full-suite run.
+The protected Wi-Fi fallback route explicitly passes `--retry 0`; its standalone
+runner otherwise repeats a failed device campaign twice before returning.
+Preserve the first attempt and review cleanup before a fresh invocation.
+The iOS notification runner accepts `IOS_NOTIFICATION_TAP_SMOKE_RETRIES=0` for
+the same purpose. Its negative selector contract explicitly requests one retry;
+inheriting a zero-retry campaign environment legitimately satisfies the gate.
+Keep Flutter 3.47.2's default DDS enabled for the Android Wi-Fi fallback runner.
+With `--no-dds`, all four device scenarios and four host assertions passed, but
+test loading failed with `streamListen: invalid 'streamId'` for the integration
+golden comparator. Removing that option produced a complete device/host PASS
+in `reliability-held-route-probes-023/logs/001.log`; the first failed result is
+preserved in attempt 021. The standalone Dart VM did not reproduce this Flutter
+engine failure, so its host probe is not evidence of mobile compatibility.
+The full legacy Wi-Fi entry must also use this CLI runner: all four device
+scenarios require its peer fixture. The former standalone route could execute
+zero scenarios and accept an empty failure list. Both device and host summaries
+now require exactly S1 through S4. The corrected full entry passed all four
+device and four host results in `wifi-full-owner-native-002/`; wrapper contracts
+passed 233 cases with zero skips in `notification-wifi-completeness-change-001/`.
+
+The iOS tap runner requires the actual emitted readiness line, including mode
+and title-configuration fields. A log-stream predicate, Xcode environment
+export, empty ready file, or incomplete marker is not readiness. Four causal
+counterexamples failed before repair; seven flow/readiness contracts passed
+afterward in `ios-readiness-repair-001/`. Initial XCTest compilation runs during
+setup, before the unchanged 120-second readiness handshake. Each scenario still
+refreshes its bundled tap configuration and retains native routing assertions.
+The compilation allowance must be explicit at the three callers that launch
+XCTest. Applying it to ordinary readiness calls delays even a one-second probe
+until the 1,800-second case-start budget expires. The approved readiness fix
+preserves that build allowance at campaign callers and the supplied deadline
+elsewhere. The unchanged emitted-event contract passes, as do seven isolated
+probes including delayed build readiness; evidence is in
+`.codex-test-logs/production-bootstrap-migration-20260927/approved-readiness-original-test-001.log`
+and `proposed-notification-readiness-probe-001.log`. Preserve the initial five
+timeout errors in `pilot-device-002/workflow-1.raw.log`. The protected legacy
+registry must bind the approved harness bytes; its former digest correctly
+blocked execution in `pilot-device-003/workflow-1.raw.log`.
+The notification matrix's first attempt passed three warm cases, then failed
+to locate the group-image body while Springboard logged XPC interruptions.
+Later actual MCP inspection found the exact delivered card. Its focused native
+rerun passed in `ios-group-image-single-probe-001/`; neither that later card nor
+the rerun proves the original UI failure's cause or replaces the full matrix.
 
 `ROUTING_PATHS` now requests CLI unregister at the actual R-Sim-3 boundary. A
 fresh run secret authenticates a bounded loopback request carrying run, target,
@@ -864,6 +3072,48 @@ do not count `test(...)` strings as executions. Runner listings took about
 
 ## Shared dependency lessons
 
+- Video preparation has a native `video_compress` call and a composer lifecycle.
+  A Dart deadline must request native cancellation, stop its progress listener,
+  release the composer, and keep completed siblings. The direct and group wired
+  tests cover recovery and retry; `image_processor_test.dart` covers idle and
+  overall deadlines, cancellation, and late results. The share-batch test
+  preserves the metadata-stripping boundary: a timed-out transcode must not
+  substitute the raw source. These host fakes do not establish that a device's
+  native codec obeys cancellation; repeat the 7 s R2-4 attachment on an
+  available Android target for that proof.
+  R2-4's 2026-09-28 Pixel emulator probe found Transcoder 0.10.5 blocked in
+  `eglSwapBuffers` with its software encoder output unconsumed (details and
+  first-attempt evidence in `artifacts/beta-20260927/BETA_REPORT_R2.md`). A
+  Dart timeout clears the composer but cannot free that native job; the plugin
+  rejects every later video in the same process. The local `video_compress`
+  fork now compiles against Transcoder 0.11.2. That version initially rejected
+  the R2-4 clip's out-of-order decoded timestamps; a tested monotonic timestamp
+  adapter lets it complete. On the available Android emulator, five consecutive
+  picks in one app process produced five processed MP4s, and `ffmpeg` decoded
+  the first output (5.88 s, 176 frames). Host tests prove that an unsettled
+  timed-out job blocks later compression with a visible error, the direct/group
+  notice expires above the composer, and external share skips unsanitized
+  videos after timeout or native failure. The later R2-5 beta on the same
+  emulator found that 0.11.2 still stalled on four of four 30 fps synthetic
+  videos at `eglSwapBuffers`; each left an unfinished MP4. The local fork now
+  caps Android transcodes at 15 fps and unlinks the current output on cancel,
+  failure, or abandoned late completion. Three consecutive picks of the
+  30 fps `r25_motion.mp4` fixture in one emulator process produced complete
+  90-frame, approximately six-second MP4s; `ffmpeg` decoded the first with no
+  errors. The final debug APK (SHA-256
+  `1986711011a978d53085690bec19ab75b00654688c109c76824e61cacc1568e9`)
+  repeated that result on `emulator-5556`; its decoded output and `ffprobe`
+  summary are retained in ignored `.codex-test-logs/r2-5-final-emulator-output.*`.
+  The 4:4:4 fixture also produced a complete MP4, but exposed a
+  thumbnail extraction null-frame error, now handled by a fallback lookup and
+  one typed native error. A real Android handset, prolonged-stall cleanup on
+  the revised build, and receiver-side delivery remain untested; host tests
+  cannot prove hardware codec behavior. The `TranscodeOutputGuard` JVM tests
+  cover partial-file unlink and successful-file retention; the selected
+  affected-media host lane passed 637 tests. The change wrapper selected the
+  lane but did not launch it because another campaign owned the shared
+  native-build lease; the direct host result is retained in ignored
+  `.codex-test-logs/r2-5-affected-media.log`.
 - Bridge/event and transport/lifecycle changes affect direct messages, groups,
   media, notification consumers, and calls. A bridge-only unit test cannot
   establish that these consumers still behave correctly.
@@ -913,6 +3163,21 @@ do not count `test(...)` strings as executions. Runner listings took about
   Orbit's create action uses `Semantics.identifier` separately from its spoken
   open/closed label. Stable keys preserve its semantic node across scrim and
   menu insertion; both FAB anchors retain identity after selection/dismissal.
+- **Call Answer during voice capture (R2-3):** the beta T28 Android callee
+  accepted the call while a voice note still held the shared microphone lease;
+  call audio returned `mediaConflict` and the call ended `mediaFailed`. The
+  capture owner now finishes before in-app native Answer, and call audio repeats
+  the handoff for notification answers. Direct and ordinary group composers
+  hold completed audio for review without sending it. Focused host tests cover
+  a pending permission/start, delayed stop, stop error, Answer ordering, and
+  both review surfaces. The first affected-suite run exposed three expected
+  source-shape fingerprint/signature assertions; retaining `_onRecordStop()`
+  and repinning the reviewed group handoff made the exact tests and the full
+  affected conversation/group host suites pass. First failures are under
+  `.codex-test-logs/r2-3-affected-screens/`, final passing suites under
+  `.codex-test-logs/r2-3-affected-screens-final/`. These source tests do not
+  establish a connected call on installed devices; repeat T28 with a current
+  two-peer Android build.
   The [fixture contract](../../test/integration/group_reaction_notification_device_criteria_test.dart)
   now matches Android `resource-id`, as documented by the
   installed SDK. These host assertions do not establish native identifier
@@ -1018,6 +3283,22 @@ visible and cannot become an ordinary first-attempt PASS.
 
 ## Diagnostics and confirmed lessons
 
+- **R2-7 short chat viewport:** the Pixel 7a landscape keyboard left about
+  128 logical pixels for the direct chat, and the normal header plus composer
+  overflowed (device screenshot in
+  `artifacts/beta-20260927/run-20260927-205235/maestro/t34_landscape_android/`).
+  `conversation_screen_test.dart` reproduces a RenderFlex overflow with the
+  captured physical size and IME inset before the compact layout, then checks
+  that direct history retains visible height, the header returns when the
+  keyboard closes, and an unsent draft survives the height transition.
+  `group_conversation_screen_test.dart` checks the same constraint and draft
+  retention for a quoted group composer. The compact layout hides secondary
+  banners and previews only while height is below 260 logical pixels; their
+  state remains mounted in the owning screen and they return at normal height.
+  `app_diagnostic_error_handlers_test.dart` checks the fixed, content-free
+  debug log marker for future RenderFlex overflows. Host layout tests establish
+  Flutter constraints, not a rebuilt Android device screenshot.
+
 - **Legacy group dissolve/removal audit identity:** when a member has no device
   roster, `resolveGroupSenderDeviceBinding` returns no device binding, so its
   account-signed transition omits device/transport fields. Go publication fills
@@ -1042,6 +3323,106 @@ visible and cannot become an ordinary first-attempt PASS.
   including all 24 focused R2 cases. Its whole-worktree status remains incomplete
   because unrelated selected checks were not run. These are host tests with fake
   bridge crypto/storage, not a rebuilt two-device production-relay proof.
+
+- **Wake command staging:** stop and await the old Android command poller before
+  deleting its prior result and publishing the next one-use command. Starting
+  the prepared activity must not force-stop after publication. The native
+  observer in `source046-wake-token-native/` recorded the presenter consuming
+  its command and writing `running/p2p_ready` in PID 11903, followed by a harness
+  restart to PID 12163 with no command remaining; the original three-minute
+  wait then failed. Both generic contact and typed endpoint staging now use the
+  same stop-before-publication boundary. Three behavioral regressions cover an
+  active old poller, delayed shutdown and failed shutdown; all failed with the
+  unsafe ordering and pass after repair. Evidence is in
+  `.codex-test-logs/all-tests-y227gs8x/source047-wake-staging-repair/`.
+  The complete native campaign remains required; deadlines and token assertions
+  are unchanged.
+- **iOS receiver bootstrap diagnostics:** a failed helper can emit a typed result
+  while the payload driver reports only a generic missing-handoff failure.
+  Retain an allowlisted failure code from exactly one matching result schema,
+  status and privacy declaration. Unknown, duplicate, oversized, malformed or
+  secret-bearing records yield only `unavailable`; helper timeout and missing
+  output have separate fixed codes. Never persist arbitrary helper detail or
+  APNs handoff material in the causal diagnostic. Parsing/privacy regressions
+  are in `source047-focused-green.log` under the same ignored run root. This
+  repairs lost diagnostic information; it does not establish the original
+  physical iOS handoff failure's cause or prove native delivery.
+
+- **Strict group wake accounting:** durable Android rich admission, its capacity
+  fallback, and preselected iOS routes must preserve the strict group logical
+  `attempted` counter. Count once when the inbox launches the logical wake;
+  provider retries and duplicate custody must not count again, and ordinary
+  group-topic/direct traffic must not increment this counter. The existing
+  provider-outage recovery test reproduced actual provider attempts with a zero
+  counter delta for both token-storage routes. The causal red and overlay green
+  are in `.codex-test-logs/all-tests-y227gs8x/strict-group-metric-{red,green-002}.log`.
+  This establishes an accounting regression, not live notification delivery.
+  The applied change passed all 1,526 relay tests with no skips in
+  `relay-metric-run-001/`. The Go 1.25.0 binary ending `aa913c3` was deployed to
+  EC2; retained-message restart checks and all six dual-stack TCP/WSS/QUIC
+  protocol probes passed in `relay-metric-deploy/`. A fresh strict-group device
+  result remains required for the campaign's notification claims.
+- **Android launch components:** successful provider and retry launches can name
+  the same activity as `com.mknoon.app/.MainActivity` or
+  `com.mknoon.app/com.mknoon.app.MainActivity`. The group command-journal
+  validator uses one exact-component set for provider preparation and both
+  central-prebuilt and rebuilt exact-ADD retry paths. Existing stage, exit,
+  device-binding and probe-order checks remain in place; a different activity
+  is rejected. Captured full-name commands reproduced stale shorthand-only
+  rejection in the provider and both retry branches. The unchanged artifacts
+  pass diagnostic validation after repair; all 135 validator tests pass.
+  Evidence is in `source045-group-component-repair/` and
+  `source046-group-retry-component-repair/` under
+  `.codex-test-logs/all-tests-y227gs8x/`. These diagnostics do not replace a
+  fresh complete native group campaign.
+- **Real audio fixture preparation:** compiling/linking the Go relay and audio
+  oracle inside the Dart scenario can consume its entire 30-second limit before
+  audio executes. The opt-in real fixture test now compiles exact-candidate
+  binaries during suite loading, then uses an exact-command shim preserving
+  the original selectors, single execution and Go limits. The audio case keeps
+  its original deadline and all bidirectional payload/route assertions. Unique
+  prepared tools are removed in suite teardown; preparation is not a scenario
+  pass. The repaired fixture completed with its Go process at 6.75 seconds in
+  `source045-focused-green.log`; the two full focused files passed 137 cases.
+- **Bounded journal publication:** `recordTerminal` may return after its 200 ms
+  caller-impact budget while atomic persistence continues. Tests asserting the
+  published JSON must observe the existing atomic-writer completion seam before
+  reading disk; they must not extend the production deadline. The affected push
+  suite passes 1,219 tests without skips in `emission-builds-change-001/` under
+  `.codex-test-logs/all-tests-y227gs8x/`. The emission test registers the assertion
+  for its compile-time configuration: ordinary builds stay default-on, while
+  the manifest's separate explicit-rollback command runs the existing disabled
+  assertion (one pass). Both configurations are full-suite obligations.
+  The same boundary applies to a failed writer's temporary-file cleanup: the
+  caller can return before the writer throws and its owned temporary is removed.
+  The preservation test now holds the injected writer past the caller budget,
+  releases its failure, and observes cleanup under the existing test timeout
+  before asserting unchanged complete slots. The old immediate assertion was
+  reproduced in `journal-late-cleanup-red-001.log`; all 11 journal tests pass in
+  `journal-late-cleanup-green-001.log` under
+  `.codex-test-logs/all-tests-y227gs8x/`. Production timing is unchanged.
+  Concurrent slot tests have the same boundary: a fixed clock and nonce do
+  not make the bounded caller a disk-write join. The controlled probe holds
+  all 12 atomic writers beyond the unchanged caller budget, reproducing the
+  old zero-record read; it then releases them and observes all publications
+  before asserting 12 distinct slot files. All 11 journal tests pass in
+  `source044-journal-concurrent-repair/green.log` under the same run directory.
+
+- **Background reconnect smoke observes transitions:** the real-device test's
+  plain `Online` state can exist entirely between its 500 ms polling ticks.
+  In `sims-legacy-continued-001/full-sims-0-routes/logs/006.log` under
+  `.codex-test-logs/all-tests-y227gs8x/`, the state stream recorded truthful
+  send/inbox readiness without relay readiness at +2,104 ms, followed by dotted
+  `Online.` at +2,434 ms; polling nevertheless timed out. Subscribe after the
+  fresh proof-window reset and retain the actual emitted snapshot, so startup
+  observations cannot satisfy the resumed proof and automatic recovery cannot
+  erase it. Keep the original 15-second observation deadline, both capability
+  assertions, absent relay readiness, subsequent dotted-state assertion, and
+  listener cleanup. The repaired original test passed on the physical Android
+  against the deployed relay in `background-reconnect-device-probe-001/`.
+  `background-reconnect-change-001/` passed 1,285 transport/lifecycle tests and
+  196 runner contracts with no skips; the full reliability owner still needs
+  its separate complete rerun. No production recovery timing changed.
 
 - **iOS reconnect duration and suspended recovery:** correlate authenticated relay
   peers to consenting diagnostic owners before attributing endpoint reports.
@@ -1580,7 +3961,7 @@ visible and cannot become an ordinary first-attempt PASS.
   `integrated-call-report.json` and `device-audio-supplement.json` retain the
   artifact binding. A focused current Go socket run also executed all 14 selected
   IPv6/address/fallback cases without skips. Follow-up execution identifies the
-  conditional gaps: the four conversation files containing the ten opt-in
+  historical conditional gaps: the four conversation files containing the ten opt-in
   custody skips pass 278 cases with
   `MKNOON_DIRECT_MEDIA_BLOB_CUSTODY_CLIENT_ENABLED=true`; the exact emission
   rollback case passes with `MKNOON_EMIT_WAKE_TOKEN=false`. Those are explicitly
@@ -1602,6 +3983,12 @@ visible and cannot become an ordinary first-attempt PASS.
   in `continuation-execution-supplements.json`. The explicit-base focused wrapper
   passes workflow, provider schema and the repaired fixture; omitted selections
   remain NOT RUN in that focused report. No unrelated broad suite was repeated.
+  The ten conversation skips were subsequently removed: persisted-generation
+  retry tests execute independently of the rollout selector, and voice/composer
+  tests explicitly enable their existing injected custody selector. All ten
+  original cases now execute in the ordinary host configuration with unchanged
+  assertions and deadlines. Their focused run passes ten cases with zero skips
+  in `.codex-test-logs/all-tests-y227gs8x/ten-tests-attempt-001.jsonl`.
 - **Established dual-stack messaging failure:** a fresh IPv6 handshake stall
   was already covered, but did not prove recovery of a reused connection.
   A socket-scoped loopback proxy first delivered over IPv6, then discarded
@@ -1859,6 +4246,16 @@ visible and cannot become an ordinary first-attempt PASS.
   with no unhandled exception in that captured resume window. The redacted
   timestamp/line receipt is `final-ios-resume-proof.json` in that evidence root.
 
+- **iOS DNS-SD resolve handle lifetime (R2-2):** four beta iPhone crash reports
+  in `artifacts/beta-20260927/crash/` implicate the vendored Bonsoir discovery
+  resolver. Its read handler could call `DNSServiceProcessResult` while main
+  deallocated the same handle, and its callback mutated a service object off
+  main while Flutter serialized it. The fork now cancels each read source and
+  deallocates in its cancel handler on the resolver queue; service updates and
+  event delivery run on main. The `bonsoir_darwin` iOS simulator pod build passed
+  on 2026-09-28. No long-running device discovery soak has yet established
+  crash-free operation; the build is compilation evidence only.
+
 - **Disposable transport profile contract:** the debug activation policy allows
   iOS disposable profiles and requires distinct account/transport authority
   for Android disposable profiles. The behavior cases in
@@ -1954,6 +4351,17 @@ visible and cannot become an ordinary first-attempt PASS.
   observer delegates to the canonical prepared-group upload function. The
   exact four network owners remain unchanged. The compile-gated process-death
   barrier is registered only as a typed schema reader, and the contract passes.
+  Relay process-handoff tests that prove drain mode must explicitly set
+  `DIRECT_MEDIA_BLOB_CUSTODY_ADMISSION_ENABLED=false`; an unset variable now
+  exercises enabled admission. Device-fixture snapshots contain process-global
+  selected-route counters, so their contract compares against the captured
+  baseline, including a seeded nonzero prior observation, rather than assuming
+  every fixture starts at zero. Fixtures register cleanup immediately after
+  creation. The repaired integration suite passes 1,539 cases with no failures;
+  its helper-only process entry remains skipped and the wrapper consequently
+  reports incomplete execution. Original failures and the repaired owning run
+  remain in `.codex-test-logs/all-tests-y227gs8x/checkpoint-002/` and
+  `checkpoint-003-repaired/` respectively.
   Source defaults do not change an existing deployed process: an older relay
   needs an explicit enabled environment setting or a binary upgrade. These Go
   tests do not establish a passing physical-device media scenario. The subsequent
@@ -2946,6 +5354,11 @@ visible and cannot become an ordinary first-attempt PASS.
   The receiver remains pinned through release. Its later stored/listener proof
   must identify a notify-capable live transport, rejecting silent inbox replay;
   original one-card/audible-channel/typed-suppression gates remain unchanged.
+  Failed exact sender receipts now retain only fixed, allowlisted error and
+  cleanup codes in the diagnostic-only host observation before retirement and
+  app restoration. This does not relax live acknowledgement or custody gates;
+  the original source042 sender failure had no retained code and its cause
+  remains unproven (all-tests-y227gs8x/source042-android-payload-native).
   Cancellation retires only this action and preserves the original failure;
   held completion or cleanup cannot extend its original three-minute budget.
   [Seven-file host verification](../../.codex-test-logs/audio-call-beta-rest-20260917/candidate148-source/notification-dual-path/final-wrapper/results.json)
@@ -3033,6 +5446,10 @@ visible and cannot become an ordinary first-attempt PASS.
   completes; returning the “new terminal appended” flag instead falsely
   invalidated calling authority and revoked the endpoint. Unknown, ACK-retired
   and predecessor UUIDs remain rejected without affecting a successor.
+  VC204 Dart-end expectations in outgoing, network-transition, process-recovery
+  and repeated-cleanup phases must confirm this retained completed terminal; the
+  exactly-one terminal event and duplicate remote/Telecom/audio no-op checks
+  remain required.
   Debug `1.0.1(127)` with identical APK hashes on both targets passed a genuinely
   process-absent locked incoming Decline, a subsequent Answer with bidirectional
   RTP progress, native End, and another incoming Decline. Incoming and answered
@@ -3098,6 +5515,98 @@ visible and cannot become an ordinary first-attempt PASS.
   (935 passing tests), initial failures and corrections remain under
   `.codex-test-logs/android-outgoing-ux-20260916/`; that snapshot does not certify
   subsequent source changes or device timing.
+  For killed-app Android call proof, compare the pinned callee's wall clock with
+  the caller/host before diagnosing a missing worker. On 2026-09-29,
+  `emulator-5556` lagged the host and USB Pixel by about 81 seconds: FCM started
+  the app process, but `CALL_ANDROID_WAKE_PARSE` rejected the call as
+  `too_far_future` before admission. The emulator's automatic time detector
+  preferred a stale telephony suggestion over a fresh network suggestion;
+  correcting its telephony time restored native admission and named full-screen
+  presentation. The [R2-9 handoff](../../artifacts/beta-20260927/R2-9_ANDROID_KILLED_LOCKED_CALL_HANDOFF.md)
+  records the raw device receipts and the remaining late-presentation and
+  caller-Ringing limitations. A dispatched relay wake alone is not evidence
+  that Android accepted the wake. Keep the callee process absent, `stopped=false`,
+  and the screen asleep for more than 30 seconds before each exact locked-call
+  attempt: immediate-after-lock calls presented in 3–26 seconds, but the
+  original debug APK presented an exact-idle call only after the caller's
+  30-second timeout. Fixed-shape Dart step timings showed cumulative process,
+  worker, database/identity, and native-presentation delay, rather than one
+  indefinitely blocked Dart step. The profile and non-debuggable release-mode
+  APKs also had variable late presentation; one release attempt finished its
+  worker before Dart started the network node, while another reached native
+  presentation in under one second after Android process start. Neither build
+  produced a verified connected Answer. Do not count fast
+  immediate-after-lock calls toward the R2-9 3/3 exact-idle pass condition;
+  the linked handoff retains the raw timestamps and build identities.
+  A later non-wiping cold start of the **emulator process**, using the same
+  installed R28 APK, restored Android Appium and produced three consecutive
+  killed/locked calls after at least 35 seconds idle: native presentation in
+  1.790–2.459 seconds after process start, Answer controls found in 9.708–10.766
+  seconds after caller tap, and both iPhone 15 simulator and Android Connected.
+  A fourth call presented in 1.695 seconds with Android automation disconnected;
+  the iPhone showed Ringing before automation reattached. This supersedes the
+  earlier W1 failure verdict only for that recovered baseline, not current-source
+  or signed-candidate validation. The cause remains unproven; NFC/UWB service
+  crashes persisted after restart. Check the app PID **after** `am kill` and
+  again before dialing: a remaining process invalidates killed-app evidence.
+  See the handoff's emulator recovery section and ignored `coldboot-recovery/`
+  receipts for exact conditions, connected-state evidence, and the late Answer
+  on the fourth control (not a connected-call pass).
+  The later quiet-Mac R2-9 run passed W1 6/6, but W3 still lagged native
+  presentation by 6.3–8.8 seconds. Its L2a logs show native `PRESENTED` at
+  18:17:31.361, a foreground signaling start refused at 18:17:34.022 because
+  P2P was not started, P2P core ready at 18:17:35.383, and authenticated
+  `ringing` send attempted at 18:17:37.228. The current startup change keeps
+  that start attempt waiting for the P2P ready event, with an eight-second
+  bound; its focused causal test, affected-calls and call-signaling lanes pass
+  under Flutter 3.47.2. The first candidate still showed `Ringing` 6.1 s after
+  native presentation on a killed, locked emulator: headless P2P was ready
+  before presentation, while foreground startup delayed the reply. The next
+  candidate sends authenticated `ringing` from a separate headless run after
+  presentation, verifying the exact live native descriptor and leaving the
+  mailbox invite for foreground adoption. Two clock-aligned killed/locked
+  runs first observed caller `Ringing` 3.2 s after native presentation, with
+  about 0.43 s Appium polling; a third showed `Ringing` but its emulator clock
+  jumped, so no precise native-to-caller delta is claimed. One clean headless
+  run reached direct custody; another reached mailbox custody after direct
+  delivery was unacknowledged. A fourth killed/locked call connected after
+  Appium tapped the full-screen Answer control, and both peers showed
+  Connected. This is W3 evidence on emulator-5554 and iPhone 15 simulator;
+  physical Android and busy-Mac timing remain unmeasured. The original R28
+  APK, app-data inode, and full-screen permission were restored. The
+  focused 48 Dart tests, Flutter analysis, and Android call worker's 35 JVM
+  tests passed. The affected-calls, android-call-native, and final
+  call-signaling lanes passed; the latter now includes the core headless
+  admission test in the selection manifest. The complete shared-tree
+  selection remains BLOCKED because unrelated checks were not run. The
+  explicit-base local selection includes unrelated dirty-tree checks left
+  NOT RUN; see `.codex-test-logs/r29-w3-startup-20260929/` and the R2-9
+  handoff for first-attempt and follow-up artifacts.
+  The R2-9 headless `ringing` reply exposed an R2-10 killed-app Decline
+  regression: ringing and decline both signed sender sequence 1, so the caller
+  admitted ringing and rejected the later decline as non-monotonic. The
+  [R2-10 handoff](../../artifacts/beta-20260927/R2-10_ANDROID_KILLED_APP_DECLINE_DROPPED_HANDOFF.md)
+  preserves the original 3/3 failures and the subsequent fix. Headless decline
+  now signs sequence 2. Its causal test sends actual ringing and decline
+  replies into the caller replay store and also checks decline without prior
+  ringing; it failed before the fix and passed after. Both headless reply tests
+  are in the mandatory `call-signaling` selection. On debug APK
+  `1.0.0-06d5ab570.r210` (SHA-256 beginning `0383e1661cb5`), Appium-driven
+  Pixel_7a emulator to iPhone 15 simulator proof passed killed-app notification
+  Decline 3/3 (caller declined in 1.81–2.46 s), killed + locked full-screen
+  Decline, killed + locked Answer 3/3, K1, B1, D1, L1 and F1. K1 and two L2
+  native-presentation-to-caller-Ringing intervals were 1.99–2.64 s. Caller
+  cancellation and no-answer timeout cleared Android's incoming UI. Two
+  unlocked and one locked setup calls timed out before Appium could tap
+  Decline; do not count them as app failures or as successful decline trials.
+  Focused tests, `affected-calls`, and the updated `call-signaling` lane passed;
+  unrelated selected checks remain NOT RUN in the shared-tree wrapper report.
+  See `.codex-test-logs/r2-10-device/`,
+  `.codex-test-logs/r2-10-decline-checks/`, and
+  `.codex-test-logs/r2-10-final-signaling/`. This is debug emulator/simulator
+  evidence, not signed-release or physical-Android evidence. At the user's
+  explicit request, the fixed APK remains installed on `emulator-5556` with
+  its app data and full-screen access retained.
   Locked-call name/avatar/theme/state are an ephemeral display-only projection
   bound to the already authenticated native call. Push payloads cannot supply
   display authority, and metadata is not persisted. Native audio activation
@@ -3164,7 +5673,117 @@ visible and cannot become an ordinary first-attempt PASS.
   as a setup failure, without inferring a single underlying cause. See the
   [beta findings](audio-call-beta-findings.md) for exact artifact/run provenance.
   Android CallStyle can render the caller-person label instead of the builder's
-  content title. A real notification test must bind the unique designated app
+  content title. R2-6's native notification test first failed on API 28, 33,
+  and 34 with the generic caller label, then passed when the factory read the
+  authenticated, in-memory call presentation for both incoming and ongoing
+  notifications. The native bridge test covers refreshing a ringing
+  notification when the contact name arrives after the first post; an unknown
+  caller still uses the generic label. These JVM tests establish payload and
+  ownership wiring, not actual SystemUI rendering. The later R2-6 beta showed
+  the actual Android ringing notification stayed generic for 12 seconds and
+  acquired the name only after Answer. Foreground projection awaited avatar
+  rendering before sending metadata, and the Android adapter dropped a name
+  sent before the native call bound. The revised projection sends the name
+  before the avatar, maps `incomingValidating` to the native `preparing` state,
+  and the adapter replays the latest early presentation after successful native
+  binding. Focused Dart tests cover both races; a privacy-safe native log line
+  records acceptance and refresh without the name. The
+  [second R2-6 beta](../../artifacts/beta-20260927/BETA_REPORT_R2.md) confirmed
+  that the real name reached Android while ringing (`named=true` six times),
+  but all 60 presentation updates reported `refreshed=false`; SystemUI showed
+  the Flutter `Unknown contact` placeholder until Answer. The pending-journal
+  refresh check excluded the adopted call after its ADOPTED acknowledgement,
+  although the controller still accepted its metadata. Refresh must use the
+  exact active incoming lifecycle, including adopted custody, and unresolved
+  Flutter placeholder text must stay out of native metadata. The adopted-call
+  bridge regression passed with the native lifecycle and notification factory
+  tests (105/105), and the focused Flutter projection tests passed (96/96).
+  A foreground call from iPhone 15 simulator
+  `FB7E3D88-B92D-4028-9CA7-A9CD9D34615F` to Pixel 7a emulator
+  `emulator-5556` then showed `Beta iPhone` in the Android notification while
+  it was still ringing:
+  `dumpsys notification` reported CallStyle `callType=1` and title `Beta iPhone`,
+  and the native log recorded `named=true refreshed=true` followed by
+  `refreshed=false` for unchanged metadata. The
+  [Appium screenshot](../../.codex-test-logs/r2-6-late-name/ringing-notification-appium.png)
+  and [native log](../../.codex-test-logs/r2-6-late-name/android-logcat-proof.txt)
+  preserve that proof. It used a debug APK with voice-call Dart defines and
+  `enableAndroidNativeCalls=true`, SHA-256
+  `e181255896018f603837ef5ef6e0eae3bff32101b3bf7503bd58925ef1a7c548`.
+  Background incoming delivery remains unverified because the known relay
+  wake-up failure can prevent the call reaching Android.
+
+  The [R2-8 background-call handoff](../../artifacts/beta-20260927/R2-8_ANDROID_BACKGROUND_CALLS_HANDOFF.md)
+  records three beta runs where the first Android call wake failed, the relay
+  then sent no further wake, and the foreground app reported an unchanged call
+  token. A read-only production check on 2026-09-28 found the relay active with
+  `RELAY_SERVER_IP=13.60.250.19`, while `mknoun.xyz` resolved to
+  `51.21.194.144`. The relay's Firebase service account and the Android app
+  both identified project `mknoon-c6e62`, so the configured projects matched.
+  The journal recorded `wake=failed` without the provider category. After the
+  Pixel restarted, an exact read-only encoded-key query found its
+  `standard_call` record, and a Firebase `validate_only` call with that record's
+  token returned HTTP 404, `NOT_FOUND`, structured `UNREGISTERED`, and
+  `NotRegistered` message class without delivering a push. The
+  [redacted receipt](../../.codex-test-logs/r28-background-calls/fcm-validate-only.log)
+  is the causal provider evidence: the relay's invalid-token classification is
+  correct, while re-publishing the same token cannot restore reachability.
+  The client must replace its cached FCM token and publish the replacement to
+  both chat and call routes. The 2026-09-29 implementation shares a serialized
+  first-read delete/get across chat and call and republishes the call token on
+  start, resume, and advertisement. Host tests cover both behaviors. A second
+  `validate_only` provider probe against the newly registered token returned
+  HTTP 200 and `validate_only_accepted=True` without delivering a push; the
+  [redacted receipt](../../.codex-test-logs/r28-background-calls/fcm-validate-only-final-apk.log)
+  retains that result. After explicit
+  approval, the production relay IP was corrected to `51.21.194.144`. The
+  first restart's 20-second health deadline was shorter than the observed
+  roughly 37-second startup and rolled back to the saved environment; that
+  restored service returned HTTP 200 on metrics. A retry with a 90-second
+  deadline completed, and a separate read-only check found the service active,
+  metrics HTTP 200, TCP 4005 open, and two new IPv4 announcement lines with no
+  old IPv4 announcement. The [restart timeline](../../.codex-test-logs/r28-background-calls/relay-ip-service-events.txt)
+  retains the rolled-back first attempt and successful retry. Both Android
+  devices subsequently logged the new IPv4 on fresh app start without the old
+  one in the circuit-address list.
+
+  The final Android proof APK, SHA-256
+  `f903db1ba37d38159ca2dfc22531e6e534c4fb4bf15c467896ede092e134e0a2`,
+  used Flutter 3.47.2, Android arm64 debug, release voice-call defines,
+  production FCM, E2E mode, and native Android calls. On USB Pixel 6
+  `21071FDF600CSC` and emulator `emulator-5556`, Appium MCP proved foreground,
+  warm-background (over 30 seconds), repeated same-process background, and
+  killed-process (`stopped=false`) calls connected after Android notification
+  answer. The killed-process caller recorded `wake=dispatched`. A first
+  killed-process answer missed the 30-second caller deadline during lengthy UI
+  inspection; the faster repeat connected, and the first logs remain preserved.
+  The warm-background notification originally said `MKnoon caller`; the final
+  authenticated-name update showed the saved contact `puxel`, and iPhone →
+  Android calls showed `Beta iPhone`. The
+  [live evidence](../../.codex-test-logs/r28-background-calls/live-device-evidence.md)
+  records the exact targets, screenshots, first attempts, and build identity.
+  Android → foreground iPhone also connected. An extra Android → backgrounded
+  iPhone call failed after the iPhone verified the invite because presentation
+  returned `presented=false`. The [installed iOS build's defines](../../artifacts/beta-20260928/build-r2-7/defines_ios.txt)
+  set `VOICE_CALL_IOS_NATIVE_ENABLED=false`, so this attempt cannot establish
+  native iOS background-callee parity. The [R2-8 handoff](../../artifacts/beta-20260927/R2-8_ANDROID_BACKGROUND_CALLS_HANDOFF.md)
+  distinguishes the Android passes from that open iOS parity leg. Focused
+  Flutter call (243), adapter (67), and iOS preservation (56) tests passed;
+  the Android native lifecycle test and full native lane built successfully.
+  The explicit-base change selector's affected-calls, affected-push, and
+  call-signaling lanes passed. Its overall result was `BLOCKED` because the
+  already dirty shared working tree selected many other required checks that
+  were not run; do not treat the subset as full repository validation.
+
+  An earlier selected affected-calls host lane passed 1,200
+  tests when run alone. Its first overlapping attempt retained four failures
+  caused by a missing macOS SQLite native asset; the asset was present before
+  the passing sequential run. Raw attempts are retained in ignored
+  `.codex-test-logs/r2-5-affected-calls*.log`. The change wrapper also left
+  `android-call-native` unrun because another campaign owned the shared
+  native-build lease; focused bridge and notification factory JVM tests passed
+  directly. A real notification test
+  must bind the unique designated app
   row and current invitation, stabilize its action bounds, and re-resolve them
   immediately before input. A screenshot and an Answer coordinate do not prove
   Answer delivery: candidate136 physical03 actually delivered OPEN_INCOMING and
@@ -4121,6 +6740,19 @@ State an investigation area separately from a proven root cause.
   four-test census suite passed after that addition; exact equality, production
   source hashes and architecture guards remain unchanged. Preserve its first
   failure under `tdd-change-investigation/layering-census-assessment.json`.
+- **Archived-source analysis and workspace access metadata:** strict analysis
+  included historical Dart copies under `artifacts/`, producing 98,277 archive
+  diagnostics alongside five current-source lint issues. Exclude the historical
+  artifact tree, keep current sources subject to strict analysis, and repair
+  those five lint issues. The strict command then passed; routing/binding and
+  suppression-ratchet preservation tests also passed. Root `info.plist` contains
+  workspace access metadata whose timestamp can change during builds; exclude
+  only that exact root file from candidate identity. The regression verifies
+  that `ios/Runner/Info.plist` changes still change the candidate identity.
+  Evidence: `.codex-test-logs/all-tests-y227gs8x/analyzer-repaired.log`,
+  `analyzer-routing-preservation.log`, and `workspace-metadata-green.log`.
+  These repairs do not turn the interrupted checkpoint 005 host batch into a
+  completed result; its owning checks require fresh execution.
 - **Confirmed runner hazard, prior evidence:**
   `artifacts/phantom-notification-20260910/host-runner-audit.md` records a
   222-path 1:1 Flutter invocation with 3,747 passes and four skips in about

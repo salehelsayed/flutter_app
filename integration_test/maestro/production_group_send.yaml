@@ -1,0 +1,17 @@
+appId: ${APP_ID}
+name: production_group_send
+---
+- assertVisible:
+    id: orbit.view.inner_circle
+- tapOn:
+    id: orbit.group.${GROUP_ID}
+- tapOn:
+    id: chat_composer
+- inputText: ${MESSAGE}
+- tapOn:
+    id: chat_send
+- assertVisible: '(?s)^.*\n${MESSAGE_PATTERN}\n.*$'
+- hideKeyboard
+- back
+- assertVisible:
+    id: orbit.view.inner_circle

@@ -1354,6 +1354,13 @@ InboxStagingRepositoryImpl _buildInboxStagingRepository(
         limit: limit,
         entryIds: entryIds,
       ),
+  dbHasRecoverableInboxStagingEntryExcluding:
+      ({required messageType, required rejectReasonCode}) =>
+          dbHasRecoverableInboxStagingEntryExcluding(
+            database,
+            messageType: messageType,
+            rejectReasonCode: rejectReasonCode,
+          ),
   dbLoadInboxStagingEntry: (id) => dbLoadInboxStagingEntry(database, id),
   dbDeleteInboxStagingEntry: (id) => dbDeleteInboxStagingEntry(database, id),
   dbMarkInboxStagingEntryRetryable: (id, {required reasonCode, reasonDetail}) =>

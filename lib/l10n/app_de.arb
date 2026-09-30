@@ -563,6 +563,8 @@
   },
   "media_compress": "Komprimieren",
   "media_too_large_after_compress": "Die Medien sind auch nach der Komprimierung zu groß.",
+  "media_video_processing_stalled": "Die Videoverarbeitung wurde angehalten. Erneut versuchen.",
+  "media_video_processing_unavailable": "Die Videoverarbeitung ist nicht verfügbar. Starte MKnoon neu, um Videos hinzuzufügen.",
   "media_gif_too_large": "GIF-Dateien größer als 25 MB können nicht hinzugefügt werden.",
   "media_too_large_chip": "Zu groß",
   "media_gif_too_large_chip": "GIF zu groß",

@@ -417,6 +417,76 @@ void main() {
     },
   );
 
+  test(
+    'recovery drain stays pending when real work is queued behind a full page of deferred receipts',
+    () async {
+      final bridge = _RecoveryBridge()
+        ..when('node:start', (_) => _nodeState(peerId: 'self-peer'))
+        ..when(
+          'inbox:retrieve_pending',
+          (_) => <String, dynamic>{
+            'ok': true,
+            'messages': <dynamic>[],
+            'hasMore': false,
+            'custodyContract': ackOrExpiryInboxCustodyContract,
+          },
+        );
+      final repo = InMemoryInboxStagingRepository();
+      // One more parked receipt than the verifier's page, so a page-bounded
+      // check sees only receipts and never reaches the real entry.
+      for (
+        var i = 0;
+        i <= P2PServiceImpl.maxRecoverableInboxReplayEntries;
+        i++
+      ) {
+        repo.seed(
+          InboxStagingEntry(
+            entryId: 'receipt-$i',
+            ownerPeerId: 'self-peer',
+            senderPeerId: 'remote-peer',
+            messageType: 'delivery_receipt',
+            relayTimestamp: '2026-08-16T00:00:00.000Z',
+            envelope: jsonEncode(<String, dynamic>{
+              'type': 'delivery_receipt',
+              'messageId': 'sent-$i',
+            }),
+            status: 'retryable',
+            rejectReasonCode: 'typed_handler_unavailable',
+            stagedAt: '2026-08-16T00:00:00.000Z',
+          ),
+        );
+      }
+      repo.seed(
+        InboxStagingEntry(
+          entryId: 'real-chat',
+          ownerPeerId: 'self-peer',
+          senderPeerId: 'remote-peer',
+          messageType: 'chat_message',
+          relayTimestamp: '2026-08-16T00:00:01.000Z',
+          envelope: _chatEnvelope('real-chat'),
+          stagedAt: '2026-08-16T00:00:01.000Z',
+        ),
+      );
+      final service = P2PServiceImpl(
+        bridge: bridge,
+        inboxStagingRepository: repo,
+        recoveryOnly: true,
+      );
+      addTearDown(service.dispose);
+
+      expect(
+        await service.startRecoveryOnlyNode(privateKey, 'self-peer'),
+        isTrue,
+      );
+      final outcome = await service.drainOfflineInboxFully();
+
+      expect(outcome.isSuccessful, isFalse);
+      expect(outcome.hasMore, isTrue);
+      expect(outcome.failureReason, 'staged_replay_pending');
+      expect(repo.entry('real-chat')?.status, 'pending');
+    },
+  );
+
   test('recovery seal awaits admitted LAN staged replay', () async {
     final bridge = _RecoveryBridge()
       ..when('node:start', (_) => _nodeState(peerId: 'self-peer'));

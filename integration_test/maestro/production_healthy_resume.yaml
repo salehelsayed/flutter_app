@@ -1,0 +1,7 @@
+appId: ${APP_ID}
+name: production_healthy_resume
+---
+- pressKey: Home
+- launchApp:
+    stopApp: false
+    permissions: {}

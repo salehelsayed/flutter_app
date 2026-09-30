@@ -6,7 +6,9 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT_DIR"
 
 python3 - <<'PY'
+import json
 import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -97,5 +99,43 @@ for device in ("DEVICE_B", "DEVICE_C"):
         min_idle_cycles_after_seen=12,
     )
 
-print("PASS: intro E2E accept window contract")
+split_brain = function_body(
+    "scenario_split_brain_mutual_acceptance_recovery",
+    "scenario_folded_duplicate",
+).rsplit("}", 1)[0]
+# Execute the scenario with device operations replaced by trace-only seams.
+# Accepting must act on the original invitation, not race a second send.
+trace = subprocess.check_output([
+    "bash", "-c", '''
+prepare_devices() { :; }
+run_handshake_phase() { :; }
+run_intro_phase() { echo send; }
+run_intro_action_phase() { echo "accept:$2:$3"; }
+run_split_brain_second_accept_phase() { echo second_accept; }
+assert_split_brain_mid_state() { echo assert_split; }
+run_split_brain_recovery_phase() { echo recover; }
+run_settle_phase() { :; }
+assert_pair_state() { echo "assert_final:$1:$2"; }
+''' + split_brain,
+], text=True).splitlines()
+actions = [line for line in trace if line and not line.startswith("===")]
+expected = ["send", "accept:accept_all:none", "second_accept", "assert_split",
+            "recover", "assert_final:mutual_accepted:yes"]
+if actions != expected:
+    fail(f"split-brain fixture must preserve one introduction: {actions}")
+
+folded_send = function_body(
+    "run_folded_duplicate_send_phase", "run_folded_duplicate_accept_phase",
+)
+for device in ("DEVICE_B", "DEVICE_C"):
+    config = json.loads(device_config(folded_send, device))
+    messages = config.get("expected_chat_messages", [])
+    if (len(messages) != 2 or
+            {m.get("contactPeerId") for m in messages} != {"$PEER_A", "$PEER_D"} or
+            any(m.get("transport") != "system" for m in messages)):
+        fail(f"folded send {device}: snapshot must wait for both introducers")
+    if config.get("chat_poll_cycles") != config["poll_cycles"]:
+        fail(f"folded send {device}: readiness must use the existing poll budget")
+
+print("PASS: intro E2E acceptance, sequencing and folded-readiness contracts")
 PY

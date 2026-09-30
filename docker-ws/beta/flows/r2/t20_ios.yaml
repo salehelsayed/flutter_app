@@ -1,0 +1,10 @@
+appId: com.mknoon.app
+name: T20 iPhone sends three group messages while the Pixel app is stopped
+---
+- runFlow: { file: open_group.yaml, env: { GROUP: "R2 (Group|Renamed|By Pixel) ${NONCE}", GTIMEOUT: 30000 } }
+- runFlow: { file: ../send_text.yaml, env: { MSG: "T20 g1 ${NONCE}" } }
+- runFlow: { file: ../send_text.yaml, env: { MSG: "T20 g2 ${NONCE}" } }
+- runFlow: { file: ../send_text.yaml, env: { MSG: "T20 g3 ${NONCE}" } }
+- runFlow: ../kb_hide.yaml
+- runFlow: { file: ../sleep.yaml, env: { MS: 8000 } }
+- takeScreenshot: t20_sent

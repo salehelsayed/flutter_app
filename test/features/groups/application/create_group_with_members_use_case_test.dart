@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -106,6 +107,21 @@ class _FailingSaveMemberGroupRepository extends InMemoryGroupRepository {
       throw StateError('Injected saveMember failure for ${member.peerId}');
     }
     await super.saveMember(member);
+  }
+}
+
+class _HeldWarmP2PService extends FakeP2PService {
+  _HeldWarmP2PService() : super(initialState: const NodeState(isStarted: true));
+
+  final warmGate = Completer<void>();
+  final warmedPeers = <String>[];
+  void Function()? onWarm;
+
+  @override
+  Future<void> warmPeer(String peerId, {bool preferQuic = false}) {
+    warmedPeers.add(peerId);
+    onWarm?.call();
+    return warmGate.future;
   }
 }
 
@@ -446,6 +462,45 @@ void main() {
     });
 
     tearDown(setProtectedGroupAuthorityAdapter);
+
+    for (final deviceBound in [false, true]) {
+      test(
+        'warms the selected transport during creation without awaiting it ($deviceBound)',
+        () async {
+          final warming = _HeldWarmP2PService();
+          addTearDown(() => warming.warmGate.complete());
+          var warmStartedBeforeCreate = false;
+          warming.onWarm = () {
+            warmStartedBeforeCreate = bridge.commandLog.isEmpty;
+          };
+          final bindings = deviceBound
+              ? _initialPhysicalBindings([contactAlice])
+              : <String, GroupMemberDeviceIdentity>{};
+          final attempts = _TrackingInviteDeliveryAttemptRepository();
+          final result = await createGroupWithMembers(
+            bridge: bridge,
+            groupRepo: groupRepo,
+            p2pService: warming,
+            identity: testIdentity,
+            selectedContacts: [contactAlice, contactAlice],
+            selectedContactDeviceBindings: bindings,
+            type: GroupType.chat,
+            inviteDeliveryAttemptRepo: attempts,
+          ).timeout(const Duration(seconds: 5));
+          expect(warmStartedBeforeCreate, isTrue);
+          expect(warming.warmedPeers, [
+            deviceBound ? 'device-peer-alice' : 'peer-alice',
+          ]);
+          expect(warming.warmGate.isCompleted, isFalse);
+          expect(result.membersAdded, 1);
+          expect(result.invitesSent, 1);
+          expect(
+            attempts.attempts.values.single.status,
+            GroupInviteDeliveryStatus.sent,
+          );
+        },
+      );
+    }
 
     test(
       'protected initial creation: complete frozen recipient coverage and canonical watermark survive invites',
@@ -1749,6 +1804,7 @@ void main() {
       expect(await groupRepo.getGroup('test-group-id'), isNull);
       expect(await groupRepo.getMembers('test-group-id'), isEmpty);
       expect(await groupRepo.getLatestKey('test-group-id'), isNull);
+      expect(p2pService.warmPeerCallCount, 0);
     });
 
     test(

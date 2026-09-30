@@ -5,6 +5,7 @@ new commands from operator configuration. Every subprocess stays under the
 wrapper's build/device leases, cancellation, raw-log and cleanup barriers.
 """
 import copy
+from collections import Counter
 import json
 import re
 from pathlib import Path
@@ -100,6 +101,22 @@ def bind(check, config, root, output):
     return steps, {k:value(v) for k,v in check.get('environment',{}).items()}
 
 
+def native_xctest_receipts(output, expected):
+    """Require the complete source-declared native selector multiset."""
+    if (not isinstance(expected, dict) or not expected or
+            any(not isinstance(k, str) or type(v) is not int or v <= 0
+                for k, v in expected.items())):
+        return None
+    passed = Counter(c+'/'+m for c,m in re.findall(
+        r"Test Case '-\[(?:\w+\.)?(\w+) (\w+)\]' passed", output))
+    if (passed != Counter(expected) or
+            re.search(r"Test Case .* (?:failed|skipped)|Executed 0 tests", output)):
+        return None
+    return [{'id':'xctest:'+selector, 'status':'PASS',
+             'counts':{'passed':count,'failed':0,'skipped':0}}
+            for selector,count in sorted(expected.items())]
+
+
 def inspect(step, output, code, timeout, root):
     from mknoon_checks import parse_execution
     fmt=step['format']
@@ -132,7 +149,10 @@ def inspect(step, output, code, timeout, root):
         if fmt=='assert_main' and re.search(r'Unhandled exception:\s*(?:Bad state:|.*AssertionError)',output):
             result['counts']['failed']=1
             return {**result,'status':'FAIL','checkpoint':'contract_assertion_failed','exit_status':code}
-        return {**result,'checkpoint':'adapter_process_failed','exit_status':code}
+        result.update(checkpoint='adapter_process_failed',exit_status=code)
+        # Gradle exits nonzero for actual test failures too. Preserve the exact
+        # JUnit assertion evidence before classifying a process failure.
+        if fmt!='junit': return result
     if fmt=='build':
         if not step.get('expected_files') or not all((Path(root)/p).is_file() for p in step['expected_files']): return result
         return {**result,'status':'PASS','checkpoint':'build_preparation_completed','preparation_only':True}
@@ -145,6 +165,13 @@ def inspect(step, output, code, timeout, root):
         if re.search(r'\[(?:SKIP|BLOCKED)\]', output): return result
         if re.search(r'No tests ran|Executed 0 tests|\b[1-9]\d* (?:tests? )?skipped|"skipped"\s*:\s*true',output,re.I): return result
         result['counts']['passed']=1
+        if 'native_xctest_counts' in step:
+            expected = step['native_xctest_counts']
+            receipts = native_xctest_receipts(output, expected)
+            if receipts is None:
+                return {**result, 'checkpoint':'incomplete_native_xctest_proof',
+                        'counts':{'passed':0,'failed':0,'skipped':0}}
+            result['route_results'] = receipts
     elif fmt=='xctest':
         passed=re.findall(r"Test Case '-\[(?:\w+\.)?(\w+) (\w+)\]' passed",output)
         expected=set(step['selectors'])
@@ -163,6 +190,7 @@ def inspect(step, output, code, timeout, root):
             result['counts'][key]+=1
         if result['counts']['failed']: return {**result,'status':'FAIL','checkpoint':'native_assertion_failed'}
         if result['counts']['skipped']: return result
+        if code: return result
     else: raise ValueError('Unknown adapter proof format: '+fmt)
     return {**result,'status':'PASS','checkpoint':'adapter_assertions_completed','completion_observed':True}
 
@@ -176,6 +204,12 @@ def validate(check, root):
             errors.append('Invalid adapter step')
         if step.get('format')=='marker' and not step.get('marker'): errors.append('Missing adapter completion marker')
         if step.get('format')=='xctest' and not step.get('selectors'): errors.append('Missing exact XCTest selectors')
+        if 'native_xctest_counts' in step:
+            counts = step['native_xctest_counts']
+            if (step.get('format') != 'marker' or not isinstance(counts,dict) or not counts or
+                    any(not isinstance(k,str) or not re.fullmatch(r'\w+/test\w+',k) or
+                        type(v) is not int or v < 1 for k,v in counts.items())):
+                errors.append('Native campaign receipts require exact XCTest selectors and positive counts')
         if step.get('format')=='junit' and (not step.get('classes') or not step.get('report_glob')): errors.append('Missing JUnit class/report selection')
         if step.get('format')=='assert_main' and step.get('command',[])[:2] != ['dart','--enable-asserts']:
             errors.append('Assertion mains must enable Dart assertions')

@@ -1,0 +1,8 @@
+appId: com.mknoon.app
+name: explore - confirm the sheet choice and send the pending photo
+---
+- tapOn: "Use .*"
+- runFlow: { file: sleep.yaml, env: { MS: 1500 } }
+- tapOn: "Send message"
+- runFlow: { file: sleep.yaml, env: { MS: 12000 } }
+- takeScreenshot: x_sent_photo_${DEV}

@@ -1,0 +1,21 @@
+appId: com.mknoon.app
+name: R2-3 caller calls, talks 20 s, ends
+---
+# A new iOS Maestro session starts its driver app, which sends Mknoon to the background:
+# ensure_chat brings the app and the 1:1 chat back first.
+- runFlow: ../ensure_chat.yaml
+- extendedWaitUntil: { visible: "Start voice call", timeout: 90000 }
+- tapOn: "Start voice call"
+- extendedWaitUntil: { visible: "(.*\\n)?Connected(\\n.*)?", timeout: 90000 }
+- takeScreenshot: v23_caller_connected
+- runFlow: { file: ../sleep.yaml, env: { MS: 20000 } }
+- runFlow: ../end_call.yaml
+- runFlow: { file: ../sleep.yaml, env: { MS: 3000 } }
+- runFlow:
+    when: { visible: "Dismiss call status" }
+    commands: [ { tapOn: "Dismiss call status" } ]
+# iOS: the terminal call notice ("Call ended.") shows a plain "Dismiss" button over the composer.
+- runFlow:
+    when: { visible: "Dismiss" }
+    commands: [ { tapOn: "Dismiss" } ]
+- runFlow: { file: ../sleep.yaml, env: { MS: 1500 } }

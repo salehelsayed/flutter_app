@@ -1,0 +1,10 @@
+appId: com.mknoon.app
+name: R2-8 locked Pixel - the call opens the full-screen incoming screen over the lock screen, answer there
+---
+- extendedWaitUntil: { visible: "Answer|ANSWER", timeout: 240000 }
+- runFlow: { file: ../sleep.yaml, env: { MS: 1500 } }
+- takeScreenshot: v30_locked_ringing
+- tapOn: "Answer|ANSWER"
+- extendedWaitUntil: { visible: "(.*\\n)?Connected(\\n.*)?", timeout: 60000 }
+- takeScreenshot: v30_locked_connected
+- extendedWaitUntil: { notVisible: "End", timeout: 120000 }

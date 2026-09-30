@@ -1,0 +1,7 @@
+FLOW L4e_caller ios PASS rc=0
+FLOW L4e_callee android PASS rc=0
+FLOW L4f_caller ios PASS rc=0
+FLOW L4f_callee android PASS rc=0
+FLOW L4g_caller ios PASS rc=0
+FLOW L4g_callee android PASS rc=0
+/Volumes/CrucialX9/flutter_app/docker-ws/beta/run_r33_validate.sh: line 258:  5137 Terminated: 15          nohup perl -e 'use POSIX qw(setsid); setsid(); exec @ARGV' "$ANDROID_HOME/platform-tools/adb" -s "$SERIAL" logcat -T 1 -v threadtime > "$RUN/android_logcat_live.txt" 2>&1 < /dev/null

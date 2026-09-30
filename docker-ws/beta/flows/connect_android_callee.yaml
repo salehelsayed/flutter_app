@@ -1,0 +1,7 @@
+appId: com.mknoon.app
+name: Pixel answers and waits until connected
+---
+- extendedWaitUntil: { visible: "Answer", timeout: 90000 }
+- tapOn: "Answer"
+- extendedWaitUntil: { visible: "(.*\\n)?Connected(\\n.*)?", timeout: 60000 }
+- takeScreenshot: connected_${TAG}_android

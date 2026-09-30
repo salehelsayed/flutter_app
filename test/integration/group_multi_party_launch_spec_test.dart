@@ -738,7 +738,17 @@ void main() {
         expect(iosSpec.args, contains('-d'));
         expect(iosSpec.args, contains('38FECA55-03C1-4907-BD9D-8E64BF8E3469'));
         expect(iosSpec.args, contains('--no-build'));
+        expect(
+          iosSpec.args,
+          contains(
+            '--use-application-binary=${resolveGroupMultiPartyIosRunnerAppPath()}',
+          ),
+        );
         expect(hostSpec.args.first, 'test');
+        expect(
+          hostSpec.args,
+          isNot(anyElement(startsWith('--use-application-binary='))),
+        );
         expect(
           hostSpec.args,
           contains(

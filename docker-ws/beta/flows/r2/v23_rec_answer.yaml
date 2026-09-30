@@ -1,0 +1,5 @@
+appId: com.mknoon.app
+name: R2-3 callee in the 1:1 chat - record, answer, send the kept clip
+---
+- runFlow: ../ensure_chat.yaml
+- runFlow: v23_rec_body.yaml

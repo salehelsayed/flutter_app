@@ -1,0 +1,11 @@
+appId: com.mknoon.app
+name: T04 iPhone sends a Protected view photo via the Photos picker
+---
+- runFlow: ../ensure_chat.yaml
+- runFlow: { file: pick_ios.yaml, env: { ITEM: "Photo, September 27.*", IDX: 0, PX: "50%,25%" } }
+- runFlow: { file: set_private.yaml, env: { MODE: "Protected view" } }
+- takeScreenshot: t04_pending_protected
+- runFlow: { file: caption_send.yaml, env: { MSG: "" } }
+- runFlow: { file: ../sleep.yaml, env: { MS: 15000 } }
+- runFlow: { file: ../send_text.yaml, env: { MSG: "T04 marker ${NONCE}" } }
+- takeScreenshot: t04_sent

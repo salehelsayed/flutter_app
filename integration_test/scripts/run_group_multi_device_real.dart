@@ -5,6 +5,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import '../_support/signal_files.dart';
+import '../_support/prepared_ios_harness.dart';
 
 const _defaultPrimaryDevice = '347FB118-10D0-40C8-A05B-B0C3BD6B8CCD';
 const _defaultSiblingDevice = '5BA69F1C-B112-47BE-B1FF-8C1003728C8F';
@@ -179,12 +180,27 @@ class TestPeer {
   }
 }
 
+List<String> _harnessDefines({
+  required String role,
+  required Directory sharedDir,
+  required String cliFixturePath,
+  required String runId,
+}) => <String>[
+  '--dart-define=CLI_PEER_FIXTURE=$cliFixturePath',
+  '--dart-define=E2E_SHARED_DIR=${sharedDir.path}',
+  '--dart-define=MD004_ROLE=$role',
+  '--dart-define=MD004_RUN_ID=$runId',
+  '--dart-define=E2E_DB_NAME=group_multi_device_real_${runId}_$role.db',
+  ..._relayDartDefines(),
+];
+
 Future<Process> _startHarnessRole({
   required String role,
   required String deviceId,
   required Directory sharedDir,
   required String cliFixturePath,
   required String runId,
+  String? applicationBinary,
 }) async {
   final args = <String>[
     if (_isIosDeviceId(deviceId)) ...<String>[
@@ -193,13 +209,15 @@ Future<Process> _startHarnessRole({
       '--target=$_harnessPath',
       '--publish-port',
       '--no-pub',
+      if (applicationBinary != null)
+        '--use-application-binary=$applicationBinary',
     ] else ...<String>['test', '--no-pub', _harnessPath],
-    '--dart-define=CLI_PEER_FIXTURE=$cliFixturePath',
-    '--dart-define=E2E_SHARED_DIR=${sharedDir.path}',
-    '--dart-define=MD004_ROLE=$role',
-    '--dart-define=MD004_RUN_ID=$runId',
-    '--dart-define=E2E_DB_NAME=group_multi_device_real_${runId}_$role.db',
-    ..._relayDartDefines(),
+    ..._harnessDefines(
+      role: role,
+      sharedDir: sharedDir,
+      cliFixturePath: cliFixturePath,
+      runId: runId,
+    ),
     '-d',
     deviceId,
   ];
@@ -269,6 +287,37 @@ Future<void> main(List<String> args) async {
       throw StateError('make testpeer failed: ${build.stderr}');
     }
 
+    // Build both roles before any app or fixture deadline starts. The CLI
+    // fixture path is compiled here; its contents are written before launch.
+    final primaryBinary = _isIosDeviceId(primaryDevice)
+        ? await prepareIosSimulatorHarness(
+            harness: _harnessPath,
+            role: 'primary',
+            dartDefines: _harnessDefines(
+              role: 'primary',
+              sharedDir: sharedDir,
+              cliFixturePath: cliFixturePath,
+              runId: runId,
+            ),
+            sharedDirectory: sharedDir,
+            log: phoneLog,
+          )
+        : null;
+    final siblingBinary = _isIosDeviceId(siblingDevice)
+        ? await prepareIosSimulatorHarness(
+            harness: _harnessPath,
+            role: 'sibling',
+            dartDefines: _harnessDefines(
+              role: 'sibling',
+              sharedDir: sharedDir,
+              cliFixturePath: cliFixturePath,
+              runId: runId,
+            ),
+            sharedDirectory: sharedDir,
+            log: siblingLog,
+          )
+        : null;
+
     await peer.start();
     await peer.generateIdentity();
     await peer.startNode();
@@ -277,6 +326,7 @@ Future<void> main(List<String> args) async {
     primary = await _startHarnessRole(
       role: 'primary',
       deviceId: primaryDevice,
+      applicationBinary: primaryBinary,
       sharedDir: sharedDir,
       cliFixturePath: cliFixturePath,
       runId: runId,
@@ -293,6 +343,7 @@ Future<void> main(List<String> args) async {
     sibling = await _startHarnessRole(
       role: 'sibling',
       deviceId: siblingDevice,
+      applicationBinary: siblingBinary,
       sharedDir: sharedDir,
       cliFixturePath: cliFixturePath,
       runId: runId,

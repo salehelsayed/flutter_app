@@ -1,0 +1,13 @@
+appId: com.mknoon.app
+name: S09 (F4) iPhone calls; stays connected while the Pixel presses Back; then hangs up
+---
+- runFlow: ensure_chat.yaml
+- extendedWaitUntil: { visible: "Start voice call", timeout: 90000 }
+- tapOn: "Start voice call"
+- extendedWaitUntil: { visible: "(.*\\n)?Connected(\\n.*)?", timeout: 90000 }
+- runFlow: { file: sleep.yaml, env: { MS: 30000 } }
+- assertVisible: "(.*\\n)?Connected(\\n.*)?"
+- takeScreenshot: s09_still_connected_ios
+- runFlow: end_call.yaml
+- runFlow: { file: sleep.yaml, env: { MS: 3000 } }
+- runFlow: ensure_chat.yaml

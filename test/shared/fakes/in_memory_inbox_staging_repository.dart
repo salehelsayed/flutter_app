@@ -5,7 +5,8 @@ class InMemoryInboxStagingRepository
     implements
         InboxStagingRepository,
         InboxStagingPrerequisiteWaitingRepository,
-        InboxStagingProtectedAckPendingRepository {
+        InboxStagingProtectedAckPendingRepository,
+        InboxStagingRecoverableWorkProbeRepository {
   final Map<String, InboxStagingEntry> _entries = {};
 
   void seed(InboxStagingEntry entry) {
@@ -44,6 +45,17 @@ class InMemoryInboxStagingRepository
           ..sort((a, b) => a.relayTimestamp.compareTo(b.relayTimestamp));
     return entries.take(limit).toList();
   }
+
+  @override
+  Future<bool> hasRecoverableEntryExcluding({
+    required String messageType,
+    required String rejectReasonCode,
+  }) async => _entries.values.any(
+    (entry) =>
+        (entry.status == 'pending' || entry.status == 'retryable') &&
+        (entry.messageType != messageType ||
+            entry.rejectReasonCode != rejectReasonCode),
+  );
 
   @override
   Future<List<InboxStagingEntry>> getRecoverableEntriesByIds(

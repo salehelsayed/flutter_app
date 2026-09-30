@@ -98,6 +98,8 @@ class GroupConversationScreen extends StatelessWidget {
   final VoidCallback? onRecordStart;
   final VoidCallback? onRecordStop;
   final VoidCallback? onRecordCancel;
+  final VoidCallback? onReviewSend;
+  final VoidCallback? onReviewDiscard;
   final bool isRecording;
   final VoiceRecordingState recordingState;
   final Duration recordingDuration;
@@ -192,6 +194,8 @@ class GroupConversationScreen extends StatelessWidget {
     this.onRecordStart,
     this.onRecordStop,
     this.onRecordCancel,
+    this.onReviewSend,
+    this.onReviewDiscard,
     this.isRecording = false,
     this.recordingState = VoiceRecordingState.idle,
     this.recordingDuration = Duration.zero,
@@ -257,24 +261,25 @@ class GroupConversationScreen extends StatelessWidget {
       body: AmbientBackground(
         preference: backgroundPreference,
         isChatSurface: true,
-        child: Builder(
-          builder: (context) {
-            return Column(
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            final compactForKeyboard = constraints.maxHeight < 260;
+            final content = Column(
               children: [
-                _buildHeader(context),
-                if (backlogRetentionNotice != null)
+                if (!compactForKeyboard) _buildHeader(context),
+                if (!compactForKeyboard && backlogRetentionNotice != null)
                   _buildBacklogRetentionBanner(
                     context,
                     backlogRetentionNotice!,
                   ),
-                if (historyGapRepairNotice != null)
+                if (!compactForKeyboard && historyGapRepairNotice != null)
                   _buildHistoryGapRepairBanner(
                     context,
                     historyGapRepairNotice!,
                   ),
-                if (p2pService != null)
+                if (!compactForKeyboard && p2pService != null)
                   OfflineMessageBanner(p2pService: p2pService!),
-                if (uploadProgress != null)
+                if (!compactForKeyboard && uploadProgress != null)
                   UploadProgressBanner(
                     state: uploadProgress!,
                     onCancel: onCancelUpload,
@@ -285,14 +290,27 @@ class GroupConversationScreen extends StatelessWidget {
                       : _buildMessageList(context),
                 ),
                 if (composerStateListenable == null)
-                  _buildComposerSection(_legacyComposerState)
+                  _buildComposerSection(
+                    _legacyComposerState,
+                    compact: compactForKeyboard,
+                  )
                 else
                   ValueListenableBuilder<ConversationComposerViewState>(
                     valueListenable: composerStateListenable!,
                     builder: (context, composerState, child) =>
-                        _buildComposerSection(composerState),
+                        _buildComposerSection(
+                          composerState,
+                          compact: compactForKeyboard,
+                        ),
                   ),
               ],
+            );
+            return SafeArea(
+              top: compactForKeyboard,
+              bottom: false,
+              left: false,
+              right: false,
+              child: content,
             );
           },
         ),
@@ -300,11 +318,15 @@ class GroupConversationScreen extends StatelessWidget {
     );
   }
 
-  Widget _buildComposerSection(ConversationComposerViewState composerState) {
+  Widget _buildComposerSection(
+    ConversationComposerViewState composerState, {
+    bool compact = false,
+  }) {
     return Column(
       children: [
-        if (composerState.pendingAttachments.isNotEmpty ||
-            composerState.isProcessing)
+        if (!compact &&
+            (composerState.pendingAttachments.isNotEmpty ||
+                composerState.isProcessing))
           AttachmentPreviewStrip(
             attachments: composerState.pendingAttachments,
             isUploading: composerState.isUploading,
@@ -323,6 +345,7 @@ class GroupConversationScreen extends StatelessWidget {
           Column(
             children: [
               ComposeArea(
+                compact: compact,
                 onSend: onSend,
                 onAttach: onAttach,
                 hasAttachments: composerState.pendingAttachments.isNotEmpty,
@@ -333,6 +356,8 @@ class GroupConversationScreen extends StatelessWidget {
                 onRecordStart: onRecordStart,
                 onRecordStop: onRecordStop,
                 onRecordCancel: onRecordCancel,
+                onReviewSend: onReviewSend,
+                onReviewDiscard: onReviewDiscard,
                 recordingDuration: composerState.recordingDuration,
                 amplitudeValues: composerState.amplitudeValues,
                 initialText: initialText,

@@ -1,0 +1,18 @@
+appId: com.mknoon.app
+name: S03 Pixel waits for the edit, deletes B2 for everyone, replies to B1 with B3
+---
+- runFlow: ensure_chat.yaml
+- extendedWaitUntil: { visible: ".*B1 edited by iPhone ${NONCE}.*", timeout: 120000 }
+- takeScreenshot: s03_got_edit_android
+- longPressOn: ".*B2 hi from Pixel ${NONCE}.*"
+- tapOn: "Delete"
+- tapOn: "Delete for Everyone"
+- extendedWaitUntil: { notVisible: ".*B2 hi from Pixel ${NONCE}.*", timeout: 15000 }
+- longPressOn: ".*B1 edited by iPhone ${NONCE}.*"
+- tapOn: "Reply"
+- tapOn: ".*Write something.*"
+- inputText: "B3 reply from Pixel ${NONCE}"
+- tapOn: "Send message"
+- extendedWaitUntil: { visible: ".*B3 reply from Pixel ${NONCE}.*", timeout: 15000 }
+- runFlow: kb_hide.yaml
+- takeScreenshot: s03_final_android

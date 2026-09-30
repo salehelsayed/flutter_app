@@ -186,6 +186,7 @@ Future<void> main(List<String> args) async {
     final outputDone = _pipeOutput(harness.stdout, 'HARNESS', logFile, completion);
     final errorDone = _pipeOutput(harness.stderr, 'HARNESS-ERR', logFile);
 
+    await completion.waitForStart(exitCode: harness.exitCode);
     final receiverFixture = await signals.waitForJson(
       'receiver_fixture.json',
       timeout: const Duration(minutes: 3),

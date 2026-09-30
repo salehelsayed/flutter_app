@@ -255,89 +255,98 @@ class _DirectPrivateMediaViewerState extends State<DirectPrivateMediaViewer>
       },
       // The viewer route hosts raw Text overlays; without a Material ancestor
       // they render with the framework's yellow-underline fallback style.
-      child: Material(
-        type: MaterialType.transparency,
-        child: Stack(
-          key: const ValueKey('direct-private-media-viewer'),
-          children: [
-            FullScreenTypedMediaViewer(
-              items: [item],
-              privacyMinimized: true,
-              onFirstRenderedFrame: () async {
-                final accepted = await widget.controller.markFirstFrame(grant);
-                if (!accepted) {
-                  _coverAndClose(DirectPrivateMediaExitReason.postFrameFailure);
-                }
-                return accepted;
-              },
-              onPreFrameFailure: () => _coverAndClose(
-                DirectPrivateMediaExitReason.preFrameDecodeFailure,
+      child: Semantics(
+        identifier: 'conversation.private.viewer',
+        container: true,
+        child: Material(
+          type: MaterialType.transparency,
+          child: Stack(
+            key: const ValueKey('direct-private-media-viewer'),
+            children: [
+              FullScreenTypedMediaViewer(
+                items: [item],
+                privacyMinimized: true,
+                onFirstRenderedFrame: () async {
+                  final accepted = await widget.controller.markFirstFrame(
+                    grant,
+                  );
+                  if (!accepted) {
+                    _coverAndClose(
+                      DirectPrivateMediaExitReason.postFrameFailure,
+                    );
+                  }
+                  return accepted;
+                },
+                onPreFrameFailure: () => _coverAndClose(
+                  DirectPrivateMediaExitReason.preFrameDecodeFailure,
+                ),
+                onPostFrameFailure: () => _coverAndClose(
+                  DirectPrivateMediaExitReason.postFrameFailure,
+                ),
+                onBackRequested: () async {
+                  await Navigator.of(context).maybePop();
+                },
               ),
-              onPostFrameFailure: () =>
-                  _coverAndClose(DirectPrivateMediaExitReason.postFrameFailure),
-              onBackRequested: () async {
-                await Navigator.of(context).maybePop();
-              },
-            ),
-            if (!minimalViewerChrome)
-              Positioned(
-                left: 12,
-                right: 12,
-                bottom: 12,
-                child: SafeArea(
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Text(
-                        l10n.private_media_notification_body,
-                        key: const ValueKey('private-media-generic-copy'),
-                        style: const TextStyle(color: Colors.white70),
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        captureLimitCopy,
-                        textAlign: TextAlign.center,
-                        style: const TextStyle(
-                          color: Colors.white54,
-                          fontSize: 11,
+              if (!minimalViewerChrome)
+                Positioned(
+                  left: 12,
+                  right: 12,
+                  bottom: 12,
+                  child: SafeArea(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          l10n.private_media_notification_body,
+                          key: const ValueKey('private-media-generic-copy'),
+                          style: const TextStyle(color: Colors.white70),
                         ),
-                      ),
-                      if (widget.onSafeAction != null)
-                        Row(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            _PrivateActionButton(
-                              action: DirectPrivateMediaAction.reply,
-                              icon: Icons.reply_rounded,
-                              tooltip: l10n.media_viewer_action_reply,
-                              onPressed: _dispatchSafe,
-                            ),
-                            _PrivateActionButton(
-                              action: DirectPrivateMediaAction.info,
-                              icon: Icons.info_outline_rounded,
-                              tooltip: l10n.media_viewer_action_info,
-                              onPressed: _dispatchSafe,
-                            ),
-                            _PrivateActionButton(
-                              action: DirectPrivateMediaAction.deleteForMe,
-                              icon: Icons.delete_outline_rounded,
-                              tooltip: l10n.media_viewer_action_delete,
-                              onPressed: _dispatchSafe,
-                            ),
-                          ],
+                        const SizedBox(height: 4),
+                        Text(
+                          captureLimitCopy,
+                          textAlign: TextAlign.center,
+                          style: const TextStyle(
+                            color: Colors.white54,
+                            fontSize: 11,
+                          ),
                         ),
-                    ],
+                        if (widget.onSafeAction != null)
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              _PrivateActionButton(
+                                action: DirectPrivateMediaAction.reply,
+                                icon: Icons.reply_rounded,
+                                tooltip: l10n.media_viewer_action_reply,
+                                onPressed: _dispatchSafe,
+                              ),
+                              _PrivateActionButton(
+                                action: DirectPrivateMediaAction.info,
+                                icon: Icons.info_outline_rounded,
+                                tooltip: l10n.media_viewer_action_info,
+                                onPressed: _dispatchSafe,
+                              ),
+                              _PrivateActionButton(
+                                action: DirectPrivateMediaAction.deleteForMe,
+                                icon: Icons.delete_outline_rounded,
+                                tooltip: l10n.media_viewer_action_delete,
+                                onPressed: _dispatchSafe,
+                              ),
+                            ],
+                          ),
+                      ],
+                    ),
                   ),
                 ),
-              ),
-            if (_covered)
-              const Positioned.fill(
-                child: ColoredBox(
-                  key: ValueKey('private-media-cover'),
-                  color: Colors.black,
+              if (_covered)
+                const Positioned.fill(
+                  child: ColoredBox(
+                    key: ValueKey('private-media-cover'),
+                    color: Colors.black,
+                  ),
                 ),
-              ),
-          ],
+            ],
+          ),
         ),
       ),
     );

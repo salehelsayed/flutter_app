@@ -1,0 +1,35 @@
+appId: com.mknoon.app
+name: explore - screenshot tour of chat menu, profile, list swipe, group info, settings
+---
+- runFlow: ensure_chat.yaml
+- tapOn: { text: "Conversation options", optional: true }
+- runFlow: { file: sleep.yaml, env: { MS: 1500 } }
+- takeScreenshot: t1_conv_options
+- runFlow: go_back.yaml
+- tapOn: { text: "View contact profile.*", optional: true }
+- runFlow: { file: sleep.yaml, env: { MS: 2500 } }
+- takeScreenshot: t2_profile
+- scroll
+- takeScreenshot: t3_profile_scrolled
+- runFlow: go_back.yaml
+- tapOn: { text: "Back", optional: true }
+- runFlow: { file: sleep.yaml, env: { MS: 2000 } }
+- runFlow:
+    when: { visible: "Show all chats" }
+    commands: [ { tapOn: "Show all chats" } ]
+- runFlow: { file: sleep.yaml, env: { MS: 1500 } }
+- takeScreenshot: t4_list
+- swipe: { from: { text: "${PEER}\\n.*" }, direction: LEFT, duration: 500 }
+- runFlow: { file: sleep.yaml, env: { MS: 1500 } }
+- takeScreenshot: t5_row_swiped_left
+- swipe: { from: { text: "${PEER}\\n.*" }, direction: RIGHT, duration: 500 }
+- runFlow: { file: sleep.yaml, env: { MS: 1500 } }
+- takeScreenshot: t6_row_swiped_right
+- tapOn: { text: ".*Beta Group.*", optional: true }
+- runFlow: { file: sleep.yaml, env: { MS: 3000 } }
+- takeScreenshot: t7_group
+- tapOn: { text: "View group info.*|Group info.*|.*Beta Group.*", index: 0, optional: true }
+- runFlow: { file: sleep.yaml, env: { MS: 3000 } }
+- takeScreenshot: t8_group_info
+- scroll
+- takeScreenshot: t9_group_info_scrolled

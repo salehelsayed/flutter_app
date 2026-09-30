@@ -1,0 +1,6 @@
+appId: com.mknoon.app
+name: R2-4 after a stall, pick the 7 s video again (no app restart) to see if video processing can start
+---
+- runFlow: pick_android.yaml
+- runFlow: { file: ../sleep.yaml, env: { MS: 8000 } }
+- takeScreenshot: v24_repick

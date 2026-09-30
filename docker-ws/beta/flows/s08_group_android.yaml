@@ -1,0 +1,13 @@
+appId: com.mknoon.app
+name: S08 Pixel finds the new group, reads G1, replies G2
+---
+- runFlow: ensure_chat.yaml
+- tapOn: "Back"
+- extendedWaitUntil: { visible: "Show all chats", timeout: 20000 }
+- tapOn: "Show all chats"
+- extendedWaitUntil: { visible: ".*Beta Group ${NONCE}.*", timeout: 180000 }
+- takeScreenshot: s08_group_row_android
+- tapOn: ".*Beta Group ${NONCE}.*"
+- extendedWaitUntil: { visible: ".*G1 hello group from iPhone ${NONCE}.*", timeout: 120000 }
+- runFlow: { file: send_text.yaml, env: { MSG: "G2 hello group from Pixel ${NONCE}" } }
+- takeScreenshot: s08_sent_g2_android

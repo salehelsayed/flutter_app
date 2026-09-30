@@ -26,6 +26,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -33,11 +34,11 @@ SRC_DIR = REPO_ROOT / "project-memory" / "src"
 EVAL_DIR = REPO_ROOT / "project-memory" / "eval"
 REAL_CORPUS = REPO_ROOT / "Test-Flight-Improv"
 
-# The live session-memory directory. Deliberately a literal here: the test must
-# pin the boundary independently of the builder's own constant (TC-382-01
-# asserts the two agree), and importing a not-yet-existing constant would red
-# the 13 plan-381 rows instead of only the plan-382 ones.
-MEMORY_DIR = Path("/claude-home/.claude/projects/-workspace/memory")
+# Pin the production default independently of the builder. An explicit test-only
+# override locates the same external fixture on hosts with a different mount;
+# TC-382-01 still verifies the unchanged production default.
+EXPECTED_DEFAULT_MEMORY_DIR = Path("/claude-home/.claude/projects/-workspace/memory")
+MEMORY_DIR = Path(os.environ.get("PROJECT_MEMORY_TEST_MEMORY_DIR", str(EXPECTED_DEFAULT_MEMORY_DIR)))
 HAS_MEMORY = MEMORY_DIR.is_dir()
 needs_memory = unittest.skipUnless(
     HAS_MEMORY, "session-memory directory absent on this machine ({})".format(MEMORY_DIR)
@@ -720,7 +721,7 @@ class TestMemoryPass(unittest.TestCase):
     def test_memory_pass_parses_real_dir(self):
         """TC-382-01: the live memory directory parses, with total provenance."""
         self.assertEqual(
-            Path(build_graph.DEFAULT_MEMORY_DIR), MEMORY_DIR,
+            Path(build_graph.DEFAULT_MEMORY_DIR), EXPECTED_DEFAULT_MEMORY_DIR,
             "builder default drifted from the boundary this suite pins",
         )
         db = real_db_with_memory()
@@ -1008,7 +1009,7 @@ class TestMemoryPass(unittest.TestCase):
             finally:
                 build_graph.DEFAULT_MEMORY_DIR = original
             self.assertTrue(run_eval.gated({"v1_scope": False, "v2_scope": True})
-                            is (True if HAS_MEMORY else False))
+                            is Path(original).is_dir())
 
     def test_memory_pass_deterministic_with_date_fallback(self):
         """TC-382-06: rebuilds are byte-stable; a missing `modified:` falls back to mtime."""
@@ -1105,7 +1106,8 @@ class TestMemoryEvalAndRecall(unittest.TestCase):
                 row["required"], V2_LOOSE_BEFORE[row["id"]],
                 "{}: required terms were reverted to the loose keyword".format(row["id"]))
 
-        gated = [row for row in expectations if run_eval.gated(row)]
+        with patch.object(build_graph, "DEFAULT_MEMORY_DIR", MEMORY_DIR):
+            gated = [row for row in expectations if run_eval.gated(row)]
         self.assertEqual(len(gated), 18)
 
         db = real_db_with_memory()

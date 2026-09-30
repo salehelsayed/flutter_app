@@ -1,0 +1,12 @@
+[05:22:54] sync start
+[05:23:36] synced: synced_at=2026-09-28T03:23:18Z source=/Volumes/CrucialX9/flutter_app source_head=fbe1ae45f07e24e523cc6b63a0f8eb67fab42aab source_head_short=fbe1ae45f source_dirty_files=451 note=working tree copy, not a commit; .git deliberately not copied 
+[05:23:37] fix markers present (B, B5, B8, R2-1)
+[05:23:37] android build 1.0.0-fbe1ae45f.d451.t260928052337
+[05:26:31] ANDROID OK go_new_symbol=2
+[05:26:31] ios go bindings
+[05:26:42] ios build (in-app call UI)
+build name: 1.0.0-fbe1ae45f.d451.t260928052337
+android push: 279476891/279476891 bytes in 1 s
+android pm install: Success in 1 s
+android installed: 1.0.0-fbe1ae45f.d451.t260928052337 MATCH
+INSTALL DONE

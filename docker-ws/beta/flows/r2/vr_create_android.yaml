@@ -1,0 +1,20 @@
+appId: com.mknoon.app
+name: R2-1 validation (reverse) - the Pixel creates R2 Group NONCE with the iPhone, waits for its reply
+---
+- runFlow: ../ensure_chat.yaml
+- tapOn: "Back"
+- extendedWaitUntil: { visible: "Create group", timeout: 20000 }
+- tapOn: "Create group"
+- tapOn: "New Group"
+- runFlow: { file: ../sleep.yaml, env: { MS: 1500 } }
+- takeScreenshot: vr_picker_android
+- tapOn: ".*${PEER}.*"
+- tapOn: ".*Group name.*"
+- inputText: "R2 Group ${NONCE}"
+- runFlow: ../kb_hide.yaml
+- tapOn: "Start group chat"
+- extendedWaitUntil: { visible: ".*Write something.*", timeout: 30000 }
+- runFlow: { file: ../send_text.yaml, env: { MSG: "V3 hello ${NONCE}" } }
+- runFlow: ../kb_hide.yaml
+- extendedWaitUntil: { visible: ".*V3 hi ${NONCE}.*", timeout: 420000 }
+- takeScreenshot: vr_group_android

@@ -1,0 +1,8 @@
+appId: com.mknoon.app
+name: T12 iPhone sends m1..m3
+---
+- runFlow: ../ensure_chat.yaml
+- runFlow: { file: ../send_text.yaml, env: { MSG: "T12 m1 ${NONCE}" } }
+- runFlow: { file: ../send_text.yaml, env: { MSG: "T12 m2 ${NONCE}" } }
+- runFlow: { file: ../send_text.yaml, env: { MSG: "T12 m3 ${NONCE}" } }
+- runFlow: ../kb_hide.yaml

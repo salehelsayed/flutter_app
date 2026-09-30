@@ -1,0 +1,17 @@
+appId: ${APP_ID}
+name: production_catalog_react
+---
+- assertVisible: '(?s)^.*\n${MESSAGE_PATTERN}\n.*$'
+- longPressOn: '(?s)^.*\n${MESSAGE_PATTERN}\n.*$'
+- tapOn:
+    id: message_reaction_more
+- assertVisible: Travel
+- swipe:
+    from:
+      text: Travel
+    direction: LEFT
+- tapOn: Symbols
+- tapOn: '🔥'
+- assertVisible:
+    id: chat_composer
+- assertVisible: '(?s)^.*\n${MESSAGE_PATTERN}\n.*🔥.*$'

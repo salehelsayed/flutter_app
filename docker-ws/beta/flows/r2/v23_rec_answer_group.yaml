@@ -1,0 +1,5 @@
+appId: com.mknoon.app
+name: R2-3 callee in group GROUP - record, answer the 1:1 call, send the kept clip to the group
+---
+- runFlow: { file: open_group.yaml, env: { GROUP: "${GROUP}", GTIMEOUT: 60000 } }
+- runFlow: v23_rec_body.yaml

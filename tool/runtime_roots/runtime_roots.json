@@ -666,6 +666,171 @@
           "value": "integration_test/scripts/run_group_strict_notification_sims.dart"
         }
       ]
+    },
+    {
+      "path": "integration_test/scripts/run_production_foreground_group_push.dart",
+      "owner": "QA / production bootstrap migration",
+      "reason": "Additive production-main journey; the central Sims manifest owns the exact host invocation and the application owns service composition.",
+      "condition": "Retain alongside the original harness; retirement requires approved equivalent assertion and device evidence.",
+      "seedsTooling": true,
+      "evidence": [
+        {
+          "kind": "json-value",
+          "source": "tool/sims/critical_features.json",
+          "keyPath": "capabilities.48.command.2",
+          "value": "integration_test/scripts/run_production_foreground_group_push.dart"
+        }
+      ]
+    },
+    {
+      "path": "integration_test/scripts/run_production_notification_open.dart",
+      "owner": "QA / production bootstrap migration",
+      "reason": "Additive production-main journey; the central Sims manifest owns the exact host invocation and the application owns service composition.",
+      "condition": "Retain alongside the original harness; retirement requires approved equivalent assertion and device evidence.",
+      "seedsTooling": true,
+      "evidence": [
+        {
+          "kind": "json-value",
+          "source": "tool/sims/critical_features.json",
+          "keyPath": "capabilities.49.command.2",
+          "value": "integration_test/scripts/run_production_notification_open.dart"
+        }
+      ]
+    },
+    {
+      "path": "integration_test/scripts/run_production_notification_sound.dart",
+      "owner": "QA / production bootstrap migration",
+      "reason": "Additive production-main journey; the central Sims manifest owns the exact host invocation and the application owns service composition.",
+      "condition": "Retain alongside the original harness; retirement requires approved equivalent assertion and device evidence.",
+      "seedsTooling": true,
+      "evidence": [
+        {
+          "kind": "json-value",
+          "source": "tool/sims/critical_features.json",
+          "keyPath": "capabilities.50.command.2",
+          "value": "integration_test/scripts/run_production_notification_sound.dart"
+        }
+      ]
+    },
+    {
+      "path": "integration_test/scripts/run_production_routing.dart",
+      "owner": "QA / production bootstrap migration",
+      "reason": "Additive production-main journey; the central Sims manifest owns the exact host invocation and the application owns service composition.",
+      "condition": "Retain alongside the original harness; retirement requires approved equivalent assertion and device evidence.",
+      "seedsTooling": true,
+      "evidence": [
+        {
+          "kind": "json-value",
+          "source": "tool/sims/critical_features.json",
+          "keyPath": "capabilities.51.command.2",
+          "value": "integration_test/scripts/run_production_routing.dart"
+        }
+      ]
+    },
+    {
+      "path": "integration_test/scripts/run_production_private_media_local.dart",
+      "owner": "QA / production bootstrap migration",
+      "reason": "Additive production-main journey; the central Sims manifest owns the exact host invocation and the application owns service composition.",
+      "condition": "Retain alongside the original harness; retirement requires approved equivalent assertion and device evidence.",
+      "seedsTooling": true,
+      "evidence": [
+        {
+          "kind": "json-value",
+          "source": "tool/sims/critical_features.json",
+          "keyPath": "capabilities.52.command.2",
+          "value": "integration_test/scripts/run_production_private_media_local.dart"
+        }
+      ]
+    },
+    {
+      "path": "integration_test/scripts/run_production_group_invite_reliability.dart",
+      "owner": "QA / production bootstrap migration",
+      "reason": "Additive production-main journey; the central Sims manifest owns the exact host invocation and the application owns service composition.",
+      "condition": "Retain alongside the original harness; retirement requires approved equivalent assertion and device evidence.",
+      "seedsTooling": true,
+      "evidence": [
+        {
+          "kind": "json-value",
+          "source": "tool/sims/critical_features.json",
+          "keyPath": "capabilities.53.command.2",
+          "value": "integration_test/scripts/run_production_group_invite_reliability.dart"
+        }
+      ]
+    },
+    {
+      "path": "integration_test/scripts/run_production_startup_resume_performance.dart",
+      "owner": "QA / production bootstrap migration",
+      "reason": "Additive production-main journey; the central Sims manifest owns the exact host invocation and the application owns service composition.",
+      "condition": "Retain alongside the original harness; retirement requires approved equivalent assertion and device evidence.",
+      "seedsTooling": true,
+      "evidence": [
+        {
+          "kind": "json-value",
+          "source": "tool/sims/critical_features.json",
+          "keyPath": "capabilities.54.command.2",
+          "value": "integration_test/scripts/run_production_startup_resume_performance.dart"
+        }
+      ]
+    },
+    {
+      "path": "integration_test/scripts/run_production_group_create.dart",
+      "owner": "QA / production bootstrap migration",
+      "reason": "Additive production-main journey; the central Sims manifest owns the exact host invocation and the application owns service composition.",
+      "condition": "Retain alongside the original harness; retirement requires approved equivalent assertion and device evidence.",
+      "seedsTooling": true,
+      "evidence": [
+        {
+          "kind": "json-value",
+          "source": "tool/sims/critical_features.json",
+          "keyPath": "capabilities.56.command.2",
+          "value": "integration_test/scripts/run_production_group_create.dart"
+        }
+      ]
+    },
+    {
+      "path": "integration_test/scripts/run_production_group_reaction.dart",
+      "owner": "QA / production bootstrap migration",
+      "reason": "Additive production-main journey; the central Sims manifest owns the exact host invocation and the application owns service composition.",
+      "condition": "Retain alongside the original harness; retirement requires approved equivalent assertion and device evidence.",
+      "seedsTooling": true,
+      "evidence": [
+        {
+          "kind": "json-value",
+          "source": "tool/sims/critical_features.json",
+          "keyPath": "capabilities.57.command.2",
+          "value": "integration_test/scripts/run_production_group_reaction.dart"
+        }
+      ]
+    },
+    {
+      "path": "integration_test/scripts/run_production_group_reaction_toggle.dart",
+      "owner": "QA / production bootstrap migration",
+      "reason": "Additive production-main journey; the central Sims manifest owns the exact host invocation and the application owns service composition.",
+      "condition": "Retain alongside the original harness; retirement requires approved equivalent assertion and device evidence.",
+      "seedsTooling": true,
+      "evidence": [
+        {
+          "kind": "json-value",
+          "source": "tool/sims/critical_features.json",
+          "keyPath": "capabilities.58.command.2",
+          "value": "integration_test/scripts/run_production_group_reaction_toggle.dart"
+        }
+      ]
+    },
+    {
+      "path": "integration_test/scripts/run_production_group_removed_reaction.dart",
+      "owner": "QA / production bootstrap migration",
+      "reason": "Additive production-main journey; the central Sims manifest owns the exact host invocation and the application owns service composition.",
+      "condition": "Retain alongside the original harness; retirement requires approved equivalent assertion and device evidence.",
+      "seedsTooling": true,
+      "evidence": [
+        {
+          "kind": "json-value",
+          "source": "tool/sims/critical_features.json",
+          "keyPath": "capabilities.59.command.2",
+          "value": "integration_test/scripts/run_production_group_removed_reaction.dart"
+        }
+      ]
     }
   ],
   "declarations": [

@@ -1,0 +1,6 @@
+appId: com.mknoon.app
+name: T21 Pixel sees that it was removed
+---
+- runFlow: { file: open_group.yaml, env: { GROUP: "R2 (Group|Renamed|By Pixel) ${NONCE}", GTIMEOUT: 30000 } }
+- extendedWaitUntil: { visible: ".*removed.*|.*no longer in this group.*|.*Delete from Device.*", timeout: 240000 }
+- takeScreenshot: t21_removed_android

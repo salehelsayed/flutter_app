@@ -88,8 +88,11 @@ echo "=== Step 2/3: Booting simulators ==="
 for dev in "${DEVICES[@]}"; do
   xcrun simctl boot "$dev" 2>/dev/null || true
 done
-open -a Simulator
-sleep 2
+# Automation uses simctl directly; a GUI application named Simulator may not
+# be installed. Wait for each explicitly selected target to finish booting.
+for dev in "${DEVICES[@]}"; do
+  xcrun simctl bootstatus "$dev" -b
+done
 echo "  Done."
 
 # ── Pre-grant notification permission ─────────────────────

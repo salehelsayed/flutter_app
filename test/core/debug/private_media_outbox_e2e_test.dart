@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter_app/core/debug/private_media_outbox_e2e.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -293,6 +295,39 @@ void main() {
       );
     },
   );
+
+  test('failure diagnostics expose only fixed codes for known boundaries', () {
+    final cases = <(Object, String)>[
+      (
+        StateError('private-media outbox composer is not clean'),
+        'composer_not_clean',
+      ),
+      (
+        TimeoutException(
+          'private-media outbox timed out waiting for '
+          '$privateMediaOutboxOfflineLifecycleCondition',
+        ),
+        'offline_lifecycle_timeout',
+      ),
+      (StateError('secret path peer key and media bytes'), 'unknown'),
+      (
+        TimeoutException(
+          'private-media outbox timed out waiting for secret path',
+        ),
+        'unknown',
+      ),
+    ];
+    for (final (error, code) in cases) {
+      final receipt = privateMediaOutboxE2EFailureReceipt(
+        config: _config(phase: 2),
+        error: error,
+      );
+      expect(receipt['failureCode'], code);
+      expect(receipt['success'], isFalse);
+      expect(receipt.toString(), isNot(contains('secret path')));
+      expect(receipt.toString(), isNot(contains('contact-media-outbox-1')));
+    }
+  });
 
   test('failure receipt exposes only safe bound hashes and error type', () {
     final receipt = privateMediaOutboxE2EFailureReceipt(

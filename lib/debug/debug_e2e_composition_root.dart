@@ -1,8 +1,22 @@
+import 'production_journeys/production_journey_controller.dart';
+import 'production_journeys/production_group_fixture_controls.dart';
+import 'production_journeys/production_direct_journey_controls.dart';
+import 'production_journeys/production_sound_journey_controls.dart';
+import 'production_journeys/production_routing_journey_controls.dart';
+import 'production_journeys/production_private_media_controls.dart';
+import 'production_journeys/production_provider_probe_control.dart';
+import 'production_journeys/production_group_invite_controls.dart';
+import 'production_journeys/production_performance_controls.dart';
+import 'production_journeys/production_group_reaction_controls.dart';
+import 'production_journeys/production_group_reaction_toggle.dart';
+import 'production_journeys/production_group_removed_reaction_controls.dart';
+
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
 import 'package:crypto/crypto.dart';
+import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -304,6 +318,7 @@ final class DebugE2EActivation {
 final class DebugE2ECompositionRoot {
   DebugE2ECompositionRoot._({
     required this.activation,
+    required this.productionJourney,
     required GroupMediaReliabilityE2EController
     groupMediaReliabilityE2EController,
     required GroupMediaIosBackgroundE2EController
@@ -315,6 +330,7 @@ final class DebugE2ECompositionRoot {
        _productionAudioCallObserver = productionAudioCallObserver;
 
   final DebugE2EActivation activation;
+  final ProductionJourneyController? productionJourney;
   final GroupMediaReliabilityE2EController _groupMediaReliabilityE2EController;
   final GroupMediaIosBackgroundE2EController
   _groupMediaIosBackgroundE2EController;
@@ -379,6 +395,12 @@ final class DebugE2ECompositionRoot {
         )!;
     return DebugE2ECompositionRoot._(
       activation: resolvedActivation,
+      productionJourney: ProductionJourneyController.forInstalledProfile(
+        stateDirectory: stateDirectory,
+        isDebugMode: resolvedActivation.isDebugMode,
+        e2eTestMode: resolvedActivation.e2eTestMode,
+        profileId: resolvedActivation.installedSimsProfile,
+      ),
       groupMediaReliabilityE2EController: createReliabilityController(
         stateDirectory,
       ),
@@ -406,6 +428,7 @@ final class DebugE2ECompositionRoot {
   Future<void> dispose() => _disposeFuture ??= _dispose();
 
   Future<void> _dispose() async {
+    productionJourney?.dispose();
     try {
       await stopIntroE2EPoller();
     } catch (_) {}
@@ -499,15 +522,34 @@ final class DebugE2ECompositionRoot {
     'mknoon/plan398_ios_setup_entry',
   );
 
+  static Future<Map<String, String>>? _iosSetupLaunchEnvironment;
+
+  static Future<Map<String, String>> _readIosSetupLaunchEnvironment() =>
+      _iosSetupLaunchEnvironment ??=
+          readGroupReactionNotificationIosSetupLaunchEnvironment(
+            isIos: !kIsWeb && Platform.isIOS,
+            e2eTestMode: const bool.fromEnvironment('E2E_TEST_MODE'),
+            installedProfileId: const String.fromEnvironment(
+              'SIMS_BUILD_PROFILE_ID',
+            ),
+            readNative: () => _iosSetupReadinessEntryChannel
+                .invokeMethod<Object?>('readSetupLaunchEnvironment'),
+          ).catchError((Object error, StackTrace stackTrace) {
+            // Cache only a successful read; a failed native call must be
+            // retryable instead of failing every later caller.
+            _iosSetupLaunchEnvironment = null;
+            return Future<Map<String, String>>.error(error, stackTrace);
+          });
+
   static Future<bool>
-  acknowledgeGroupReactionNotificationIosDartMainEntryIfConfigured() =>
+  acknowledgeGroupReactionNotificationIosDartMainEntryIfConfigured() async =>
       acknowledgeGroupReactionNotificationIosDartMainEntry(
         isIos: !kIsWeb && Platform.isIOS,
         e2eTestMode: const bool.fromEnvironment('E2E_TEST_MODE'),
         installedProfileId: const String.fromEnvironment(
           'SIMS_BUILD_PROFILE_ID',
         ),
-        launchEnvironment: Platform.environment,
+        launchEnvironment: await _readIosSetupLaunchEnvironment(),
         acknowledgeNative: (arguments) => _iosSetupReadinessEntryChannel
             .invokeMethod<Object?>('acknowledgeDartMain', arguments),
       );
@@ -534,7 +576,7 @@ final class DebugE2ECompositionRoot {
           isIos: Platform.isIOS,
           e2eTestMode: e2eTestMode,
           installedProfileId: installedProfileId,
-          launchEnvironment: Platform.environment,
+          launchEnvironment: await _readIosSetupLaunchEnvironment(),
         );
     if (setupReadinessAttempt == null) return;
     final launchAttemptSha256 = sha256
@@ -561,13 +603,13 @@ final class DebugE2ECompositionRoot {
           isIos: Platform.isIOS,
           e2eTestMode: e2eTestMode,
           installedProfileId: installedProfileId,
-          launchEnvironment: Platform.environment,
+          launchEnvironment: await _readIosSetupLaunchEnvironment(),
         );
     final launchUsername = resolveGroupReactionNotificationIosAutoSetupUsername(
       isIos: Platform.isIOS,
       e2eTestMode: e2eTestMode,
       installedProfileId: installedProfileId,
-      launchEnvironment: Platform.environment,
+      launchEnvironment: await _readIosSetupLaunchEnvironment(),
     );
     if (setupReadinessAttempt != null) {
       final launchAttemptSha256 = sha256
@@ -796,6 +838,123 @@ final class DebugE2ECompositionRoot {
     DebugE2EPollerDependencies dependencies,
   ) {
     if (!activation.startsIntroPoller) return;
+    final journey = productionJourney;
+    if (journey != null) {
+      bindProductionPerformanceControls(
+        controller: journey,
+        bridge: dependencies.bridge,
+        p2pService: dependencies.p2pService,
+        identityRepository: dependencies.identityRepository,
+      );
+      bindProductionGroupFixtureControls(
+        controller: journey,
+        bridge: dependencies.bridge,
+        p2pService: dependencies.p2pService,
+        identityRepository: dependencies.identityRepository,
+        contactRepository: dependencies.contactRepository,
+        groupRepository: dependencies.groupRepository,
+        groupMessageRepository: dependencies.groupMessageRepository,
+        inviteDeliveryRepository:
+            dependencies.groupInviteDeliveryAttemptRepository,
+      );
+      bindProductionGroupReactionControls(
+        controller: journey,
+        groupRepository: dependencies.groupRepository,
+        messageRepository: dependencies.groupMessageRepository,
+        reactionRepository: dependencies.reactionRepository,
+        identityRepository: dependencies.identityRepository,
+        groupMessageListener: dependencies.groupMessageListener,
+        executeToggle:
+            ({required groupId, required messageId, required reactorPeerId}) =>
+                executeProductionReactionToggle(
+                  bridge: dependencies.bridge,
+                  groupRepository: dependencies.groupRepository,
+                  messageRepository: dependencies.groupMessageRepository,
+                  reactionRepository: dependencies.reactionRepository,
+                  replayOutboxRepository:
+                      dependencies.groupReactionReplayOutboxRepository,
+                  inviteDeliveryRepository:
+                      dependencies.groupInviteDeliveryAttemptRepository,
+                  identityRepository: dependencies.identityRepository,
+                  groupId: groupId,
+                  messageId: messageId,
+                  reactorPeerId: reactorPeerId,
+                ),
+      );
+      bindProductionRemovedReactionControls(
+        controller: journey,
+        bridge: dependencies.bridge,
+        groupRepository: dependencies.groupRepository,
+        messageRepository: dependencies.groupMessageRepository,
+        reactionRepository: dependencies.reactionRepository,
+        replayOutboxRepository:
+            dependencies.groupReactionReplayOutboxRepository,
+        inviteDeliveryRepository:
+            dependencies.groupInviteDeliveryAttemptRepository,
+        identityRepository: dependencies.identityRepository,
+        groupMessageListener: dependencies.groupMessageListener,
+      );
+      bindProductionDirectJourneyControls(
+        controller: journey,
+        navigatorKey: dependencies.navigatorKey,
+        contactRepository: dependencies.contactRepository,
+        messageRepository: dependencies.messageRepository,
+        conversationTracker: dependencies.conversationTracker,
+      );
+      bindProductionProviderProbeControl(
+        controller: journey,
+        getToken: () => FirebaseMessaging.instance.getToken(),
+      );
+      bindProductionSoundJourneyControls(
+        controller: journey,
+        bridge: dependencies.bridge,
+        p2pService: dependencies.p2pService,
+        identityRepository: dependencies.identityRepository,
+        contactRepository: dependencies.contactRepository,
+        messageRepository: dependencies.messageRepository,
+        mediaAttachmentRepository: dependencies.mediaAttachmentRepository,
+        groupRepository: dependencies.groupRepository,
+        groupMessageRepository: dependencies.groupMessageRepository,
+        inviteDeliveryRepository:
+            dependencies.groupInviteDeliveryAttemptRepository,
+        conversationTracker: dependencies.conversationTracker,
+        groupConversationTracker: dependencies.groupConversationTracker,
+      );
+      bindProductionRoutingJourneyControls(
+        controller: journey,
+        bridge: dependencies.bridge,
+        p2pService: dependencies.p2pService,
+        identityRepository: dependencies.identityRepository,
+        contactRepository: dependencies.contactRepository,
+        messageRepository: dependencies.messageRepository,
+        mediaAttachmentRepository: dependencies.mediaAttachmentRepository,
+        groupRepository: dependencies.groupRepository,
+        groupMessageRepository: dependencies.groupMessageRepository,
+        conversationTracker: dependencies.conversationTracker,
+        groupConversationTracker: dependencies.groupConversationTracker,
+      );
+      bindProductionGroupInviteControls(
+        controller: journey,
+        bridge: dependencies.bridge,
+        p2pService: dependencies.p2pService,
+        identityRepository: dependencies.identityRepository,
+        contactRepository: dependencies.contactRepository,
+        groupRepository: dependencies.groupRepository,
+        pendingInviteRepository: dependencies.pendingGroupInviteRepository,
+        deliveryRepository: dependencies.groupInviteDeliveryAttemptRepository,
+      );
+      bindProductionPrivateMediaControls(
+        controller: journey,
+        database: dependencies.database,
+        messageRepository: dependencies.messageRepository,
+        mediaAttachmentRepository: dependencies.mediaAttachmentRepository,
+        mediaFileManager: dependencies.mediaFileManager,
+        identityRepository: dependencies.identityRepository,
+        contactRepository: dependencies.contactRepository,
+        navigatorKey: dependencies.navigatorKey,
+      );
+      unawaited(journey.start());
+    }
     final wakeTokenAttachmentObserver = _wakeTokenAttachmentObserver;
     final privateMediaOutboxE2EController = _privateMediaOutboxE2EController;
     if (wakeTokenAttachmentObserver == null ||

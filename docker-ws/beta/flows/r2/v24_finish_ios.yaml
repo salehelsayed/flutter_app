@@ -1,0 +1,15 @@
+appId: com.mknoon.app
+name: R2-4 bring the app back WITHOUT restarting it, close a left-open menu, send the attached video with a caption
+---
+- launchApp: { appId: "com.mknoon.app", stopApp: false }
+- runFlow: { file: ../sleep.yaml, env: { MS: 3000 } }
+- runFlow:
+    when: { visible: "Shared media" }
+    commands: [ { tapOn: { point: "8%,62%" } } ]
+- runFlow: { file: ../sleep.yaml, env: { MS: 1500 } }
+- takeScreenshot: v24_finish_before
+- extendedWaitUntil: { visible: "Send message", timeout: 30000 }
+- runFlow: { file: caption_send.yaml, env: { MSG: "R24 ivideo ${NONCE}" } }
+- extendedWaitUntil: { visible: ".*R24 ivideo ${NONCE}.*", timeout: 120000 }
+- runFlow: { file: ../sleep.yaml, env: { MS: 15000 } }
+- takeScreenshot: v24_finish_sent

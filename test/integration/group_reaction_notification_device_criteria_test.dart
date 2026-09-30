@@ -15,6 +15,37 @@ import '../../integration_test/scripts/group_reaction_notification_device_criter
 import '../../integration_test/scripts/reaction_notification_proof_support.dart';
 
 void main() {
+  test(
+    'capture journal remains valid after cleanup updates the live journal',
+    () async {
+      final directory = await Directory.systemTemp.createTemp(
+        'capture-journal-',
+      );
+      addTearDown(() => directory.delete(recursive: true));
+      final live = File('${directory.path}/automation_command_journal.json');
+      const captured = '{"commands":[{"stage":"capture","exitCode":0}]}';
+      await live.writeAsString(captured, flush: true);
+      final snapshot = await fixture_driver.snapshotGroupReactionCommandJournal(
+        live,
+      );
+      final digest = sha256.convert(await snapshot.readAsBytes()).toString();
+      await live.writeAsString(
+        '{"commands":[{"stage":"capture","exitCode":0},'
+        '{"stage":"cleanup","exitCode":0}]}',
+        flush: true,
+      );
+      expect(await snapshot.readAsString(), captured);
+      expect(sha256.convert(await snapshot.readAsBytes()).toString(), digest);
+      expect((await snapshot.stat()).mode & 0x1ff, 0x180);
+      expect(await live.readAsString(), contains('cleanup'));
+      await expectLater(
+        fixture_driver.snapshotGroupReactionCommandJournal(live),
+        throwsA(isA<FileSystemException>()),
+      );
+      expect(await snapshot.readAsString(), captured);
+    },
+  );
+
   for (final entry in {
     'en': ['Create group', 'Close create menu'],
     'de': ['Gruppe erstellen', 'Erstellungsmenü schließen'],
@@ -741,6 +772,67 @@ void main() {
       expect(result.ok, isTrue, reason: result.detail);
     });
 
+    for (final component in <String, bool>{
+      'com.mknoon.app/com.mknoon.app.MainActivity': true,
+      'com.mknoon.app/com.other.app.MainActivity': false,
+    }.entries) {
+      test('provider launch validates component ${component.key}', () async {
+        const scenario = 'android_group_message_unread_lifecycle';
+        final artifact = await _writeArtifactFixture(
+          tempDirectory,
+          scenario,
+          centralPrebuilt: true,
+        );
+        _mutateCaptureJson(artifact, 'commandJournal', (journal) {
+          for (final raw in journal['commands'] as List<dynamic>) {
+            final command = raw as Map<String, dynamic>;
+            if (command['stage'] != 'provider_registration') continue;
+            final args = command['args'] as List<dynamic>;
+            final index = args.indexOf('com.mknoon.app/.MainActivity');
+            if (index >= 0) args[index] = component.key;
+          }
+        });
+        final result = await validateGroupReactionNotificationArtifact(
+          scenario: scenario,
+          artifactFile: artifact,
+        );
+        expect(result.ok, component.value, reason: result.detail);
+      });
+    }
+
+    for (final centralPrebuilt in <bool>[true, false]) {
+      for (final component in <String, bool>{
+        'com.mknoon.app/com.mknoon.app.MainActivity': true,
+        'com.mknoon.app/com.other.app.MainActivity': false,
+      }.entries) {
+        test(
+          'retry launch component ${component.key} central=$centralPrebuilt',
+          () async {
+            const scenario = 'android_group_reaction_recipient';
+            final artifact = await _writeArtifactFixture(
+              tempDirectory,
+              scenario,
+              centralPrebuilt: centralPrebuilt,
+            );
+            _mutateCaptureJson(artifact, 'commandJournal', (journal) {
+              for (final raw in journal['commands'] as List<dynamic>) {
+                final command = raw as Map<String, dynamic>;
+                if (command['stage'] != 'android_reaction_lifecycle') continue;
+                final args = command['args'] as List<dynamic>;
+                final index = args.indexOf('com.mknoon.app/.MainActivity');
+                if (index >= 0) args[index] = component.key;
+              }
+            });
+            final result = await validateGroupReactionNotificationArtifact(
+              scenario: scenario,
+              artifactFile: artifact,
+            );
+            expect(result.ok, component.value, reason: result.detail);
+          },
+        );
+      }
+    }
+
     test('allows a direct central-prebuilt run to install its APK', () async {
       const scenario = 'android_group_message_unread_lifecycle';
       final artifact = await _writeArtifactFixture(
@@ -936,6 +1028,79 @@ void main() {
 
       expect(result.ok, isTrue, reason: result.detail);
     });
+
+    test(
+      'iOS public evidence still rejects missing or contradictory proof',
+      () async {
+        const scenario = 'ios_announcement_reaction_recipient';
+        const prefix = 'MKNOON_257_IOS_NOTIFICATION_OBSERVATION ';
+        final mutations = <String, (String, String Function(String))>{
+          'cold-state': (
+            'xcuitest',
+            (text) => text.replaceAll(
+              'MKNOON_257_COLD_NOTIFICATION_STATE app_not_running=true',
+              '',
+            ),
+          ),
+          'duplicate-observation': (
+            'xcuitest',
+            (text) =>
+                '$text${text.split('\n').singleWhere((line) => line.startsWith(prefix))}\n',
+          ),
+          'conflicting-mirror': (
+            'xcuitest',
+            (text) => text.replaceFirst(
+              '"matchingCardCount":1',
+              '"matchingCardCount":2',
+            ),
+          ),
+          'wrong-target': (
+            'xcuitest',
+            (text) => text.replaceAll(
+              '"expectedTargetMessageText":"',
+              '"expectedTargetMessageText":"other-',
+            ),
+          ),
+          'missing-provider-accept': (
+            'provider_apns',
+            (text) => '${text.split('\n').first}\n',
+          ),
+          'failed-decrypt': (
+            'nse_log',
+            (text) =>
+                '$text[FLOW_PROOF] {"event":"PUSH_NSE_DECRYPT_FAIL","details":{}}\n',
+          ),
+          'unauthorized-handoff': (
+            'nse_log',
+            (text) =>
+                text.replaceAll('"authorized":"true"', '"authorized":"false"'),
+          ),
+          'public-private-kind': (
+            'nse_log',
+            (text) => text.replaceAll(
+              '"event":"PUSH_NSE_DECRYPT_OK","details":{}',
+              '"event":"PUSH_NSE_DECRYPT_OK","details":{"kind":"group_reaction"}',
+            ),
+          ),
+        };
+        for (final entry in mutations.entries) {
+          final directory = Directory('${tempDirectory.path}/${entry.key}')
+            ..createSync();
+          final artifact = await _writeArtifactFixture(directory, scenario);
+          final (kind, mutate) = entry.value;
+          final evidence = (_readArtifact(artifact)['evidence'] as List)
+              .cast<Map<String, dynamic>>()
+              .singleWhere((row) => row['kind'] == kind);
+          final file = File('${artifact.parent.path}/${evidence['path']}');
+          _rewriteEvidence(artifact, kind, mutate(file.readAsStringSync()));
+          final result = await validateGroupReactionNotificationArtifact(
+            scenario: scenario,
+            artifactFile: artifact,
+          );
+          expect(result.ok, isFalse, reason: entry.key);
+        }
+      },
+    );
 
     test('rejects iOS proof backed only by Android candidate hashes', () async {
       const scenario = 'ios_announcement_reaction_recipient';
@@ -1726,6 +1891,65 @@ void main() {
           '[PUSH_DIAG] relay_push_registration_success platform=android',
         ),
         isFalse,
+      );
+    });
+
+    test('public NSE success requires the validated native kind binding', () {
+      const publicSuccess =
+          'NotificationService [FLOW_PROOF] '
+          '{"details":{},"event":"PUSH_NSE_DECRYPT_OK"}';
+      for (final (kind, phase) in <(String, String)>[
+        ('group_message', 'message'),
+        ('group_reaction', 'reaction'),
+      ]) {
+        expect(
+          groupReactionIosNseDecryptSucceeded(
+            publicSuccess,
+            payloadKind: kind,
+            validatedNativePhase: phase,
+          ),
+          isTrue,
+        );
+        for (final invalidPhase in <String?>[
+          null,
+          phase == 'message' ? 'reaction' : 'message',
+        ]) {
+          expect(
+            groupReactionIosNseDecryptSucceeded(
+              publicSuccess,
+              payloadKind: kind,
+              validatedNativePhase: invalidPhase,
+            ),
+            isFalse,
+          );
+        }
+      }
+      for (final invalidLine in <String>[
+        publicSuccess.replaceAll(
+          'PUSH_NSE_DECRYPT_OK',
+          'PUSH_NSE_DECRYPT_FAIL',
+        ),
+        publicSuccess.replaceAll('"details":{}', '"details":{"kind":"direct"}'),
+        'NotificationService [FLOW_PROOF] malformed PUSH_NSE_DECRYPT_OK',
+        'NotificationService PUSH_NSE_DECRYPT_OK',
+        'NotificationService PUSH_NSE_DECRYPT_OK kind=group_reaction',
+      ]) {
+        expect(
+          groupReactionIosNseDecryptSucceeded(
+            invalidLine,
+            payloadKind: 'group_message',
+            validatedNativePhase: 'message',
+          ),
+          isFalse,
+        );
+      }
+      expect(
+        groupReactionIosNseDecryptSucceeded(
+          'NotificationService PUSH_NSE_DECRYPT_OK kind=group',
+          payloadKind: 'group_message',
+          validatedNativePhase: null,
+        ),
+        isTrue,
       );
     });
 
@@ -2684,7 +2908,7 @@ void main() {
       expect(method, isNot(contains("'--debug'")));
     });
 
-    test('chat-group iOS setup app embeds the exact Plan 397 profile', () {
+    test('both iOS setup campaigns embed the existing signed setup profile', () {
       final source = File(
         'integration_test/scripts/capture_group_reaction_notification_device.dart',
       ).readAsStringSync();
@@ -2699,12 +2923,64 @@ void main() {
       expect(methodEnd, greaterThan(methodStart));
 
       final method = source.substring(methodStart, methodEnd);
-      expect(method, contains('if (_isPlan397 && e2eMode)'));
+      expect(method, contains('if (e2eMode)'));
+      expect(method, isNot(contains('if (_isPlan397 && e2eMode)')));
       expect(method, contains("'--dart-define=SIMS_BUILD_PROFILE_ID='"));
       expect(
         method,
         contains(r"'$groupReactionNotificationIosSetupBuildProfile'"),
       );
+    });
+
+    test('announcement setup settles permission before identity export', () {
+      final source = File(
+        'integration_test/scripts/capture_group_reaction_notification_device.dart',
+      ).readAsStringSync();
+      final start = source.indexOf('Future<void> _runIosAvailableStages()');
+      final end = source.indexOf(
+        'Future<void> _runPlan397IosAvailableStages()',
+        start,
+      );
+      final method = source.substring(start, end);
+      final permission = method.indexOf(
+        'await _runIosUiSelector(\n      _iosLocalNetworkCampaignSelector,',
+      );
+      expect(permission, greaterThan(0));
+      expect(
+        permission,
+        lessThan(method.indexOf('await _collectIosIdentity(recipient)')),
+      );
+      final swift = File(
+        'ios/RunnerUITests/NotificationTapUITests.swift',
+      ).readAsStringSync();
+      for (final selector in <String>[
+        'testCreateAnnouncementReactionFixture',
+        'testAuthorAnnouncementReactionTarget',
+      ]) {
+        final start = swift.indexOf('func $selector()');
+        final end = swift.indexOf('\n  func ', start + 1);
+        final method = swift.substring(start, end);
+        expect(
+          method.indexOf('configurePlan398SetupLaunchEnvironment(for: app)'),
+          inInclusiveRange(0, method.indexOf('app.launch()')),
+        );
+      }
+    });
+
+    test('legacy iOS XCTest receives setup environment on a profile app', () {
+      final source = File(
+        'integration_test/scripts/capture_group_reaction_notification_device.dart',
+      ).readAsStringSync();
+      final start = source.indexOf('Future<String> _runIosUiSelector(');
+      final end = source.indexOf(
+        'Future<void> _acceptIosCreatedGroupOnAndroid()',
+        start,
+      );
+      final method = source.substring(start, end);
+      expect(method, contains("'-configuration',\n              'Profile'"));
+      expect(method, contains("'ENABLE_TESTABILITY=YES'"));
+      expect(method, contains("if (!_isPlan397)"));
+      expect(method, contains(r"'TEST_RUNNER_${entry.key}': entry.value"));
     });
 
     test('Plan 398 no-child capture consumes coordinator-prepared setup app', () {
@@ -2994,6 +3270,45 @@ void main() {
         );
 
         expect(result.ok, isTrue, reason: result.detail);
+      },
+    );
+
+    test(
+      'rejects stale receipts and wrong reaction collapse identities',
+      () async {
+        for (final mutation in <String>[
+          'old-schema',
+          'zero-collapse',
+          'message-collapse',
+        ]) {
+          final directory = Directory('${root.path}/$mutation')..createSync();
+          final artifact = await _writePlan397ArtifactFixture(directory);
+          final value = _readArtifact(artifact);
+          final windows = value['windows'] as List;
+          final reaction = windows[1] as Map;
+          final native = reaction['nativeInventory'] as Map;
+          switch (mutation) {
+            case 'old-schema':
+              native['schema'] =
+                  'mknoon.sims.ios-group-notification-observation-host-receipt.v1';
+            case 'zero-collapse':
+              (reaction['androidObservation']
+                      as Map)['expectedCollapseIdentifierSha256'] =
+                  '0' * 64;
+            case 'message-collapse':
+              (reaction['androidObservation']
+                      as Map)['expectedCollapseIdentifierSha256'] =
+                  ((windows[0] as Map)['androidObservation']
+                      as Map)['expectedCollapseIdentifierSha256'];
+          }
+          _writeArtifact(artifact, value);
+          final result = await validateGroupReactionNotificationArtifact(
+            scenario: iosChatGroupMessageAndReactionScenarioId,
+            artifactFile: artifact,
+          );
+          expect(result.ok, isFalse, reason: mutation);
+          expect(result.detail, contains('phase authority'), reason: mutation);
+        }
       },
     );
 
@@ -4836,6 +5151,9 @@ Future<File> _writePlan397ArtifactFixture(Directory root) async {
     final reaction = phase == 'reaction';
     final eventId = reaction ? reactionId : messageId;
     final observerNonce = _plan397FixtureDigest('observer-nonce-$phase');
+    final collapseHash = _plan397FixtureDigest(
+      '${reaction ? 'reaction' : 'group-message'}:${eventId.substring(0, 48)}',
+    );
     return <String, Object?>{
       'phase': phase,
       'ordinal': ordinal,
@@ -4850,6 +5168,7 @@ Future<File> _writePlan397ArtifactFixture(Directory root) async {
         'messageIdSha256': messageId,
         'targetMessageIdSha256': targetId,
         'eventIdSha256': eventId,
+        'expectedCollapseIdentifierSha256': collapseHash,
         'reactionIdSha256': reaction ? reactionId : null,
         'reactionTargetIdSha256': reaction ? targetId : null,
         'firstIncoming': false,
@@ -4874,44 +5193,18 @@ Future<File> _writePlan397ArtifactFixture(Directory root) async {
         'windowSha256': _plan397FixtureDigest('nse-window-$phase'),
         'rawPayloadPersisted': false,
       },
-      'nativeInventory': <String, Object?>{
-        'schema':
-            'mknoon.sims.ios-group-notification-observation-host-receipt.v1',
-        'action': 'observe-group',
-        'phase': phase,
-        'status': 'PASS',
-        'containsSecrets': false,
-        'bundleId': 'com.mknoon.app',
-        'captureNonceSha256': observerNonce,
-        'receiverDeviceIdSha256': _plan397FixtureDigest(recipientId),
-        'expectedGroupIdSha256': groupId,
-        'expectedEventIdSha256': eventId,
-        'expectedTargetMessageIdSha256': targetId,
-        'matchingRemoteCount': 1,
-        'matchingLocalCount': 0,
-        'matchingUsefulProviderCount': 1,
-        'matchingSanitizedProviderCount': 0,
-        'matchingFlutterLocalCount': 0,
-        'matchingUnknownCount': 0,
-        'matchingTotalCount': 1,
-        'stableSampleCount': 3,
-        'stableSampleIntervalMilliseconds': 500,
-        'observationDeadlineMilliseconds': 8000,
-        'sampledThroughDeadline': true,
-        'badSourceSeen': false,
-        'duplicateSeen': false,
-        'requestIdentifierSha256': <String>[
-          _plan397FixtureDigest('request-identifier-$phase'),
-        ],
-        'childBuildCount': 0,
-        'manualActionCount': 0,
-        'runnerTerminated': true,
-        'preTapCleanupLaunchCount': 0,
-        'resultCode': 'ok',
-        'completedAt': reaction
-            ? '2026-08-22T12:03:00.000Z'
-            : '2026-08-22T12:01:00.000Z',
-      },
+      'nativeInventory': _plan398NativeObservationReceipt(
+        status: 'PASS',
+        phase: phase,
+        observationBindings: <String, String>{
+          'captureNonceSha256': observerNonce,
+          'receiverDeviceIdSha256': _plan397FixtureDigest(recipientId),
+          'expectedGroupIdSha256': groupId,
+          'expectedEventIdSha256': eventId,
+          'expectedTargetMessageIdSha256': targetId,
+          'expectedCollapseIdentifierSha256': collapseHash,
+        },
+      ),
       'tap': <String, Object?>{
         'selector': 'testChatGroupNotificationTap',
         'passed': true,
@@ -5564,9 +5857,7 @@ String _rawEvidence({
     case 'relay_metrics':
       return groupReactionRelayMetricsFixture();
     case 'provider_apns':
-      return '${<String>['2026-07-12T12:00:04.000Z relay[257]: [PUSH] Notification sent to '
-          '[peer] (attempt 1/3)', '2026-07-12T12:00:05.000Z relay[257]: [PUSH] Notification sent to '
-          '[peer] (attempt 1/3)'].join('\n')}\n';
+      return '${<String>['2026-07-12T12:00:04.000Z relay[257]: [PUSH] outcome=success attempt=1 total_attempts=3', '2026-07-12T12:00:05.000Z relay[257]: [PUSH] outcome=success attempt=1 total_attempts=3'].join('\n')}\n';
     case 'sender_app':
       if (messageScenario) {
         return '${<String>[
@@ -5583,11 +5874,8 @@ String _rawEvidence({
       ].join('\n')}\n';
     case 'recipient_app':
       if (scenario.recipientPlatform == 'ios') {
-        return '${<String>[
-          '2026-07-12T12:00:06.000Z Runner[257] [PUSH_DIAG] '
-              'ios_notification_open_stored_pending',
-          _flowLine('IOS_APNS_INITIAL_NOTIFICATION_OPENED', <String, Object?>{'source': 'native_initial_notification'}),
-        ].join('\n')}\n';
+        return '${<String>['2026-07-12T12:00:06.000Z Runner[257] [PUSH_DIAG] '
+            'native_notification_settings context=didBecomeActive'].join('\n')}\n';
       }
       if (messageScenario) {
         return '${<String>[
@@ -5656,8 +5944,7 @@ String _rawEvidence({
       );
     case 'nse_log':
       return '${<String>[
-        _flowLine('PUSH_NSE_DECRYPT_OK', <String, Object?>{'kind': 'group_reaction'}),
-        _flowLine('PUSH_NSE_DECRYPT_OK', <String, Object?>{'kind': 'group_reaction'}),
+        for (var index = 0; index < 2; index++) ...<String>['[FLOW_PROOF] {"event":"PUSH_NSE_DID_RECEIVE","details":{}}', '[FLOW_PROOF] {"event":"PUSH_NSE_DECRYPT_OK","details":{}}', '[FLOW_PROOF] {"event":"PUSH_NSE_CONTENT_HANDOFF","details":{"authorized":"true","presentation":"active"}}'],
       ].join('\n')}\n';
     case 'xcuitest':
       final observation = jsonEncode(<String, Object?>{
@@ -5666,9 +5953,10 @@ String _rawEvidence({
         'body': '$actorName reacted 👍 to your message',
         'matchingCardCount': 1,
         'containsNewMessageCopy': false,
+        'expectedTargetMessageText': targetMarker,
       });
       return '${<String>["Test Case '-[RunnerUITests.NotificationTapUITests "
-          "testAnnouncementReactionNotificationTap]' started.", 'MKNOON_257_IOS_NOTIFICATION_OBSERVATION $observation', 'Announcement reaction tap rendered group $groupName and target '
+          "testAnnouncementReactionNotificationTap]' started.", 'MKNOON_257_COLD_NOTIFICATION_STATE app_not_running=true', '2026-07-12T12:00:06.000Z RunnerUITests: MKNOON_257_IOS_NOTIFICATION_OBSERVATION $observation', 'MKNOON_257_IOS_NOTIFICATION_OBSERVATION $observation', 'Announcement reaction tap rendered group $groupName and target '
           '$targetMarker', 'MKNOON_257_ANNOUNCEMENT_REACTION_TAP group_rendered=true '
           'target_message_visible=true manual_taps=0 cold_launch=true', "Test Case '-[RunnerUITests.NotificationTapUITests "
           "testAnnouncementReactionNotificationTap]' passed (8.000 seconds)."].join('\n')}\n';
@@ -5884,8 +6172,10 @@ Map<String, String> _plan398NativeObservationBindings() => <String, String>{
 
 Map<String, Object?> _plan398NativeObservationReceipt({
   required String status,
+  Map<String, String>? observationBindings,
+  String phase = 'message',
 }) {
-  final bindings = _plan398NativeObservationBindings();
+  final bindings = observationBindings ?? _plan398NativeObservationBindings();
   final canonical = bindings['expectedCollapseIdentifierSha256']!;
   final sibling = _plan397FixtureDigest('plan398-sibling-request');
   final dispatchCorrelation = _plan397FixtureDigest(
@@ -5899,15 +6189,18 @@ Map<String, Object?> _plan398NativeObservationReceipt({
       <Map<String, Object?>>[
         <String, Object?>{
           'requestIdentifierSha256': canonical,
-          'dispatchCorrelationSha256': dispatchCorrelation,
-          'claimedCollapseIdentifierSha256':
-              bindings['expectedCollapseIdentifierSha256'],
+          'dispatchCorrelationSha256': phase == 'message'
+              ? dispatchCorrelation
+              : null,
+          'claimedCollapseIdentifierSha256': phase == 'message'
+              ? bindings['expectedCollapseIdentifierSha256']
+              : null,
           'providerMessageIdSha256': providerMessageId,
           'triggerOrigin': 'remote',
           'sourceClass': 'usefulProviderRich',
           'reason': 'exactUseful',
           'expectedCollapseIdentifierMatch': true,
-          'dispatchClaim': 'groupInbox',
+          'dispatchClaim': phase == 'message' ? 'groupInbox' : 'absent',
         },
         if (!pass)
           <String, Object?>{
@@ -5932,7 +6225,7 @@ Map<String, Object?> _plan398NativeObservationReceipt({
   return <String, Object?>{
     'schema': 'mknoon.sims.ios-group-notification-observation-host-receipt.v3',
     'action': 'observe-group',
-    'phase': 'message',
+    'phase': phase,
     'status': status,
     'containsSecrets': false,
     'bundleId': 'com.mknoon.app',

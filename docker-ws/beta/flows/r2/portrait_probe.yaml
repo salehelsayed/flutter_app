@@ -1,0 +1,13 @@
+appId: com.mknoon.app
+name: put the device back in portrait, then check a home-screen tap works (Show all chats -> list)
+---
+- setOrientation: PORTRAIT
+- runFlow: { file: ../sleep.yaml, env: { MS: 3000 } }
+- launchApp: { stopApp: false }
+- runFlow: { file: ../sleep.yaml, env: { MS: 5000 } }
+- takeScreenshot: portrait_probe_home
+- runFlow:
+    when: { visible: "Show all chats" }
+    commands: [ { tapOn: "Show all chats" } ]
+- extendedWaitUntil: { visible: "Show inner circle", timeout: 20000 }
+- takeScreenshot: portrait_probe_list

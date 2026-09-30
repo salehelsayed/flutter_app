@@ -31,6 +31,7 @@ import '../test/features/contacts/domain/repositories/fake_contact_repository.da
 import '../test/features/conversation/domain/repositories/fake_message_repository.dart';
 import '../test/features/conversation/domain/repositories/fake_reaction_repository.dart';
 import '../test/features/identity/domain/repositories/fake_identity_repository.dart';
+import '../test/shared/fakes/fake_mic_permission_gateway.dart';
 
 late final IntegrationTestWidgetsFlutterBinding binding;
 
@@ -451,6 +452,7 @@ class _ConversationHarnessEnvironment {
     required this.reactionRepo,
     required this.reactionListener,
     required this.audioRecorderService,
+    required this.micPermissionGateway,
     required this.seededIncomingMessage,
     required this.seededOutgoingMessage,
   });
@@ -468,6 +470,7 @@ class _ConversationHarnessEnvironment {
   final _TrackingReactionRepository reactionRepo;
   final _TrackingReactionListener reactionListener;
   final _TrackingAudioRecorderService audioRecorderService;
+  final FakeMicPermissionGateway micPermissionGateway;
   final ConversationMessage seededIncomingMessage;
   final ConversationMessage seededOutgoingMessage;
 
@@ -483,6 +486,7 @@ class _ConversationHarnessEnvironment {
       reactionRepo: reactionRepo,
       reactionListener: reactionListener,
       audioRecorderService: audioRecorderService,
+      micPermissionGateway: micPermissionGateway,
     );
   }
 
@@ -649,6 +653,10 @@ Future<_ConversationHarnessEnvironment> _makeEnvironment() async {
     bridge: bridge,
   );
   final audioRecorderService = _TrackingAudioRecorderService(recorder);
+  // The screen defaults to the real PermissionHandlerMicGateway, whose plugin
+  // is absent on the macOS perf host; without this fake the record-start call
+  // throws MissingPluginException and the recording UI never mounts.
+  final micPermissionGateway = FakeMicPermissionGateway();
 
   return _ConversationHarnessEnvironment(
     recorder: recorder,
@@ -664,6 +672,7 @@ Future<_ConversationHarnessEnvironment> _makeEnvironment() async {
     reactionRepo: reactionRepo,
     reactionListener: reactionListener,
     audioRecorderService: audioRecorderService,
+    micPermissionGateway: micPermissionGateway,
     seededIncomingMessage: seededIncomingMessage,
     seededOutgoingMessage: seededOutgoingMessage,
   );

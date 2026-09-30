@@ -1,0 +1,13 @@
+appId: com.mknoon.app
+name: probe - with the keyboard up in Edit Group Details, does tapping the sheet title hide it and reveal Save?
+---
+- takeScreenshot: kb_probe_before
+- tapOn: "Edit Group Details"
+- runFlow: { file: ../sleep.yaml, env: { MS: 2000 } }
+- takeScreenshot: kb_probe_after_title_tap
+- runFlow:
+    when: { visible: "Save" }
+    commands:
+      - tapOn: "Save"
+      - runFlow: { file: ../sleep.yaml, env: { MS: 4000 } }
+      - takeScreenshot: kb_probe_saved

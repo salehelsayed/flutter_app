@@ -1,0 +1,15 @@
+appId: com.mknoon.app
+name: S08b Pixel accepts the group invite, reads G1, replies G2
+---
+- tapOn: "Accept"
+- runFlow: { file: sleep.yaml, env: { MS: 4000 } }
+- takeScreenshot: s08b_after_accept_android
+- runFlow:
+    when: { visible: "All.*" }
+    commands: [ { tapOn: "All.*" } ]
+- extendedWaitUntil: { visible: ".*Beta Group ${NONCE}.*", timeout: 60000 }
+- tapOn: ".*Beta Group ${NONCE}.*"
+- extendedWaitUntil: { visible: ".*G1 hello group from iPhone ${NONCE}.*", timeout: 120000 }
+- takeScreenshot: s08b_got_g1_android
+- runFlow: { file: send_text.yaml, env: { MSG: "G2 hello group from Pixel ${NONCE}" } }
+- takeScreenshot: s08b_sent_g2_android

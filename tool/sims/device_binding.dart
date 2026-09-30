@@ -27,26 +27,69 @@ final class SimsDevicePlanBinding {
     Map<String, String> processEnvironment = const <String, String>{},
     bool blockPreparationRequired = true,
   }) {
-    final resolver = SimsLiveDeviceResolver(inventory);
     final environment = <String, String>{};
     final environmentByCapabilityId = <String, Map<String, String>>{};
     final assignments = <String, String>{};
     final preflight = <String, SimsVerdict>{};
     final preparationById = <String, SimsLiveDeviceTarget>{};
     final rows = <CapabilitySpec>[];
-    final protectedJson = processEnvironment['SIMS_PROTECTED_DEVICE_ASSIGNMENTS_JSON'];
+    final protectedJson =
+        processEnvironment['SIMS_PROTECTED_DEVICE_ASSIGNMENTS_JSON'];
     final protectedTargets = protectedJson == null
         ? null
         : Map<String, String>.from(jsonDecode(protectedJson) as Map);
-    final requiredTargetIds = Map<String, String>.of(_requiredTargetIdsForPlan(
-      source.rows,
-      processEnvironment,
-    ));
+    final requiredTargetIds = Map<String, String>.of(
+      _requiredTargetIdsForPlan(source.rows, processEnvironment),
+    );
     for (final row in source.rows) {
       for (final lock in row.resources) {
         final pin = protectedTargets?[lock.name.split(':').last];
         if (pin != null) requiredTargetIds.putIfAbsent(lock.name, () => pin);
       }
+    }
+
+    final reservedJson = processEnvironment['SIMS_RESERVED_DEVICE_IDS_JSON'];
+    final reservedValue = reservedJson == null
+        ? <Object?>[]
+        : jsonDecode(reservedJson);
+    if (reservedValue is! List ||
+        reservedValue.any(
+          (value) =>
+              value is! String ||
+              !RegExp(r'^[A-Za-z0-9_.:-]{1,160}$').hasMatch(value),
+        ) ||
+        reservedValue.toSet().length != reservedValue.length) {
+      throw const FormatException('Invalid reserved device IDs');
+    }
+    final reservedIds = reservedValue.cast<String>().toSet();
+    bool isReserved(SimsLiveDeviceTarget target) =>
+        reservedIds.contains(target.runtimeId) ||
+        reservedIds.contains(target.launchId);
+    final reservedAliases = <String>{
+      ...reservedIds,
+      for (final target in inventory.targets.where(isReserved)) ...<String>[
+        if (target.runtimeId != null) target.runtimeId!,
+        if (target.launchId != null) target.launchId!,
+      ],
+    };
+    if (requiredTargetIds.values.any(reservedAliases.contains) ||
+        (protectedTargets?.values.any(reservedAliases.contains) ?? false)) {
+      throw const FormatException(
+        'A reserved device cannot also be pinned for testing',
+      );
+    }
+    // Retain the raw discovery/digest. Only the execution-available pool omits
+    // explicitly reserved targets; an ordinary missing pin still fails closed.
+    final resolver = SimsLiveDeviceResolver(
+      SimsLiveDeviceInventory(
+        targets: inventory.targets.where((target) => !isReserved(target)),
+        sourceResults: inventory.sourceResults.values,
+        notReadyTargetClasses: inventory.notReadyTargetClasses,
+      ),
+    );
+    if (reservedIds.isNotEmpty) {
+      final ordered = reservedIds.toList()..sort();
+      environment['SIMS_RESERVED_DEVICE_IDS_JSON'] = jsonEncode(ordered);
     }
 
     for (final row in source.rows) {
@@ -64,10 +107,14 @@ final class SimsDevicePlanBinding {
       // This serialized adapter acquires and preflights each exact leaf target
       // before builds/device control. It never discovers a fallback device.
       if (row.targetCapabilities.contains('legacy.protected-target-contract') &&
-          (protectedTargets == null || processEnvironment['MKNOON_LEGACY_ISOLATED'] != '1')) {
-        preflight[row.id] = SimsVerdict.blocked(row.id,
+          (protectedTargets == null ||
+              processEnvironment['MKNOON_LEGACY_ISOLATED'] != '1')) {
+        preflight[row.id] = SimsVerdict.blocked(
+          row.id,
           blocker: SimsBlockerKind.environment,
-          detail: 'Protected legacy routes require pinned isolated fixture configuration.');
+          detail:
+              'Protected legacy routes require pinned isolated fixture configuration.',
+        );
         rows.add(row.copyWith(dependencies: const <String>[]));
         continue;
       }
@@ -82,13 +129,17 @@ final class SimsDevicePlanBinding {
       // its own devices. Truly absent targets retain the resolver's policy N/A.
       if (protectedTargets != null &&
           (row.resources.any((lock) => lock.name == 'unknown') ||
-              resolution.status == SimsDeviceResolutionStatus.preparationRequired ||
-              resolution.assignments.entries.any((entry) =>
-                  protectedTargets[entry.key.split(':').last] != entry.value))) {
+              resolution.status ==
+                  SimsDeviceResolutionStatus.preparationRequired ||
+              resolution.assignments.entries.any(
+                (entry) =>
+                    protectedTargets[entry.key.split(':').last] != entry.value,
+              ))) {
         preflight[row.id] = SimsVerdict.blocked(
           row.id,
           blocker: SimsBlockerKind.environment,
-          detail: 'Device execution requires explicit leased runtime targets; '
+          detail:
+              'Device execution requires explicit leased runtime targets; '
               'automatic preparation and opaque device selection are unprotected.',
         );
         rows.add(row.copyWith(dependencies: const <String>[]));
@@ -322,6 +373,7 @@ final class SimsDevicePlanBinding {
         manifestDigest: source.manifestDigest,
         family: source.family,
         onlyId: source.onlyId,
+        excludedIds: source.excludedIds,
         lane: source.lane,
         rows: List<CapabilitySpec>.unmodifiable(rows),
       ),

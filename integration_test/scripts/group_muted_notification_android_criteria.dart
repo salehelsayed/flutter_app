@@ -1176,7 +1176,8 @@ Future<void> _validateSelfReactionAudience(
     failures,
   );
   final marker = _requiredString(audience, 'targetMarker', path, failures);
-  if (marker != null && !RegExp(r'^Plan379Warm[A-Za-z0-9]{6,32}$').hasMatch(marker)) {
+  if (marker != null &&
+      !RegExp(r'^Plan379Warm[A-Za-z0-9]{6,32}$').hasMatch(marker)) {
     failures.add(
       '$path.targetMarker must be the SENDER-authored warm-up message — the '
       'lane\'s other targets are authored by the recipient, so reacting to '
@@ -2603,13 +2604,33 @@ bool? groupMuteSwitchChecked(String xml) {
   return null;
 }
 
-/// Centre of the group header's unlabeled info control.
+/// Centre of the group header's info control.
 ///
-/// Back sits at the header's left edge and info at its right, both rendered as
-/// label-free buttons, so the topmost button row is scanned and its rightmost
-/// member returned.
+/// Prefer the localized tooltip exposed by the current accessible header.
+/// Older headers expose label-free buttons, with back at the left and info at
+/// the right; retain that top-row fallback for those captures.
 (int, int)? findGroupInfoEntryCenter(String xml, {int headerBandPixels = 80}) {
-  final candidates = parseGroupMutedUiNodes(xml)
+  final nodes = parseGroupMutedUiNodes(xml);
+  const infoLabels = <String>{
+    'Group information',
+    'Gruppeninformationen',
+    'معلومات المجموعة',
+  };
+  final labeled = nodes
+      .where(
+        (node) =>
+            node.clickable &&
+            node.className.toLowerCase().contains('button') &&
+            (infoLabels.contains(node.description) ||
+                infoLabels.contains(node.text)),
+      )
+      .toList(growable: false);
+  if (labeled.isNotEmpty) {
+    return labeled.length == 1
+        ? (labeled.single.centerX, labeled.single.centerY)
+        : null;
+  }
+  final candidates = nodes
       .where(
         (node) =>
             node.clickable &&

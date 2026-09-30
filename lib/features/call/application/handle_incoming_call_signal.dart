@@ -192,6 +192,9 @@ abstract interface class IncomingCallPresenter {
 typedef AuthenticatedCallDisplayNameResolver =
     Future<String?> Function(String contactAccountPeerId);
 
+typedef AndroidAuthenticatedContactPresenter =
+    Future<bool> Function(CallId callId, String displayName);
+
 /// Optional iOS provisional-call boundary. Every argument is an opaque call
 /// handle; wake-authority/contact handles remain native-private.
 abstract interface class ProvisionalNativeIncomingCallLifecycle {
@@ -234,6 +237,7 @@ final class HandleIncomingCallSignal {
     AuthenticatedCallSignalingContextObserver? signalingContextObserver,
     ProvisionalNativeIncomingCallLifecycle? provisionalNativeLifecycle,
     AuthenticatedCallDisplayNameResolver? authenticatedDisplayNameResolver,
+    AndroidAuthenticatedContactPresenter? androidAuthenticatedContactPresenter,
     Duration provisionalNativeTerminalTimeout = const Duration(seconds: 2),
   }) : assert(provisionalNativeTerminalTimeout > Duration.zero),
        _admission = IncomingCallPrePresentationAdmission(
@@ -247,6 +251,8 @@ final class HandleIncomingCallSignal {
        _provisionalNativeLifecycle = provisionalNativeLifecycle,
        _provisionalNativeTerminalTimeout = provisionalNativeTerminalTimeout,
        _authenticatedDisplayNameResolver = authenticatedDisplayNameResolver,
+       _androidAuthenticatedContactPresenter =
+           androidAuthenticatedContactPresenter,
        _signalingContextObserver = signalingContextObserver,
        _negotiationMaterialStore =
            negotiationMaterialStore ?? CallNegotiationMaterialStore();
@@ -258,6 +264,8 @@ final class HandleIncomingCallSignal {
   final ProvisionalNativeIncomingCallLifecycle? _provisionalNativeLifecycle;
   final Duration _provisionalNativeTerminalTimeout;
   final AuthenticatedCallDisplayNameResolver? _authenticatedDisplayNameResolver;
+  final AndroidAuthenticatedContactPresenter?
+  _androidAuthenticatedContactPresenter;
   final AuthenticatedCallSignalingContextObserver? _signalingContextObserver;
   final CallNegotiationMaterialStore _negotiationMaterialStore;
 
@@ -684,6 +692,15 @@ final class HandleIncomingCallSignal {
           signal.senderAccountPeerId,
         );
       }
+      if (signal.event == CallSignalType.invite) {
+        // Android may have no foreground Flutter view while its process is in
+        // the background. The authenticated native notification still needs
+        // the local contact name after the descriptor has been presented.
+        await _updateAndroidAuthenticatedContactSafely(
+          signal.callId,
+          signal.senderAccountPeerId,
+        );
+      }
 
       final shown = await _coordinator.dispatch(
         _derivedEvent(
@@ -829,6 +846,26 @@ final class HandleIncomingCallSignal {
     } catch (_) {
       // The privacy-safe generic native label remains valid.
       return false;
+    }
+  }
+
+  Future<void> _updateAndroidAuthenticatedContactSafely(
+    CallId callId,
+    String contactAccountPeerId,
+  ) async {
+    final resolver = _authenticatedDisplayNameResolver;
+    final presenter = _androidAuthenticatedContactPresenter;
+    if (resolver == null || presenter == null) return;
+    try {
+      final displayName = (await resolver(contactAccountPeerId))?.trim();
+      if (displayName == null ||
+          displayName.isEmpty ||
+          displayName.length > 128) {
+        return;
+      }
+      await presenter(callId, displayName);
+    } catch (_) {
+      // A display update cannot change authenticated call admission.
     }
   }
 

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -8,6 +9,82 @@ import 'package:flutter_test/flutter_test.dart';
 import '../../integration_test/scripts/reaction_notification_proof_support.dart';
 
 void main() {
+  test(
+    'unread read receipt requires the positive committed pair and omits identifiers',
+    () {
+      String line(
+        Object? count, {
+        String event = 'MARK_CONVERSATION_READ_SUCCESS',
+        String timestamp = '2026-09-23T00:00:00.000Z',
+      }) =>
+          '[FLOW] ${jsonEncode({
+            'ts': timestamp,
+            'layer': 'UC',
+            'event': event,
+            'details': {'markedCount': count, 'contactPeerId': 'private-peer'},
+          })}';
+      for (final log in <String>[
+        line(0),
+        line(1),
+        line(3),
+        line('2'),
+        line(2.0),
+        line(2, event: 'MARK_CONVERSATION_READ_START'),
+        line(2, timestamp: 'not-a-time'),
+        '[FLOW] {partial',
+      ]) {
+        expect(directUnreadReadCommitReceipt(log), isNull);
+      }
+      final receipt = directUnreadReadCommitReceipt('${line(0)}\n${line(2)}');
+      expect(receipt?['markedCount'], 2);
+      expect(receipt?['observedAt'], '2026-09-23T00:00:00.000Z');
+      expect(jsonEncode(receipt), isNot(contains('private-peer')));
+    },
+  );
+  test(
+    'fixed-wake captures a transient card while device logs are held',
+    () async {
+      final sender = Completer<String>();
+      final recipient = Completer<String>();
+      var genericCardPresent = true;
+      final observation = captureAndroidFixedWakeObservation(
+        readSenderLog: () => sender.future,
+        readRecipientLog: () => recipient.future,
+        readNotificationDump: () async =>
+            genericCardPresent ? 'generic card' : 'canonical card',
+      );
+      await Future<void>.delayed(Duration.zero);
+      final logsReleasedAt = DateTime.now().toUtc();
+      genericCardPresent = false;
+      sender.complete('reaction sent');
+      recipient.complete('recovery acknowledged');
+
+      final result = await observation;
+      expect(result.notificationDump, 'generic card');
+      expect(result.senderLog, 'reaction sent');
+      expect(result.recipientLog, 'recovery acknowledged');
+      expect(result.notificationCapturedAt.isAfter(logsReleasedAt), isFalse);
+    },
+  );
+
+  for (final failedRead in ['sender', 'recipient', 'notification']) {
+    test('fixed-wake propagates a failed $failedRead observation', () async {
+      Future<String> read(String source) async {
+        if (source == failedRead) throw StateError('observation unavailable');
+        return source;
+      }
+
+      await expectLater(
+        captureAndroidFixedWakeObservation(
+          readSenderLog: () => read('sender'),
+          readRecipientLog: () => read('recipient'),
+          readNotificationDump: () => read('notification'),
+        ),
+        throwsStateError,
+      );
+    });
+  }
+
   // Replaces the relay-journal token-registration wait, which greps a line
   // relay v1.8.0 no longer emits. The relay's [PUSH] vocabulary is now
   // deliberately content-free, so registration is attributed at the RECIPIENT
@@ -2195,6 +2272,32 @@ Jul 12 01:20:02 relay [PUSH] Notification sent to recipient-prefix-123 (attempt 
   });
 
   group('hasAttachedAndroidActivity', () {
+    test('a sibling package or its activity class is not the target app', () {
+      for (final sibling in <String>[
+        'com.mknoon.app.ui25proof',
+        'com.mknoon.application',
+        'com.mknoon.app2',
+      ]) {
+        final dump =
+            '''
+* Task{abc #12}
+  * Hist #0: ActivityRecord{def u0 $sibling/com.mknoon.app.MainActivity t12}
+topResumedActivity=ActivityRecord{def u0 $sibling/com.mknoon.app.MainActivity t12}
+mRemoteInsetsControlTarget=target
+''';
+        expect(hasAttachedAndroidActivity(dump, 'com.mknoon.app'), isFalse);
+        expect(hasResumedAndroidActivity(dump, 'com.mknoon.app'), isFalse);
+        expect(
+          isAndroidAppProcessAndActivityAbsent(
+            pidOutput: '',
+            dumpsysActivities: dump,
+            packageName: 'com.mknoon.app',
+          ),
+          isTrue,
+        );
+      }
+    });
+
     test('detects an active task/activity for the package', () {
       const dump = '''
 * Task{abc #12}
@@ -3489,6 +3592,25 @@ unstructured continuation text
       expect(observed.durableShown, isFalse);
       expect(observed.fallbackShown, isTrue);
       expect(observed.deferralReasons, ['exact_sql_authority_unavailable']);
+    });
+
+    test('retains a canonical deferral alongside a later durable card', () {
+      final observed = androidDurableDirectReactionShow(
+        [
+          flow('PUSH_BACKGROUND_DURABLE_CANONICAL_DEFERRED', <String, Object?>{
+            'reason': 'direct_canonical_unknown',
+          }),
+          flow('PUSH_BACKGROUND_NOTIFICATION_SHOWN', <String, Object?>{
+            'durable': true,
+            'producer': 'direct_reaction',
+            'disposition': 'osPosted',
+            'silent': true,
+          }),
+        ].join('\n'),
+      );
+      expect(observed.durableShown, isTrue);
+      expect(observed.durableArmExecuted, isTrue);
+      expect(observed.deferralReasons, ['direct_canonical_unknown']);
     });
 
     test('does not accept another producer as the direct-reaction arm', () {
