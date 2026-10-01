@@ -43,7 +43,22 @@ const groupCatalogGm034Journey =
     'production.group_catalog.gm034';
 const groupCatalogGm016Journey =
     'production.group_catalog.gm016';
+const groupCatalogGe004Journey =
+    'production.group_catalog.ge004';
+const groupCatalogGm007Journey =
+    'production.group_catalog.gm007';
+const groupCatalogGm019Journey =
+    'production.group_catalog.gm019';
+const groupCatalogGe009Journey =
+    'production.group_catalog.ge009';
+const groupCatalogRapidReaddJourney =
+    'production.group_catalog.private_rapid_readd';
 const productionGroupCatalogJourneys = {
+  groupCatalogGe004Journey,
+  groupCatalogGm007Journey,
+  groupCatalogGm019Journey,
+  groupCatalogGe009Journey,
+  groupCatalogRapidReaddJourney,
   groupCatalogGm020Journey,
   groupCatalogGm034Journey,
   groupCatalogGm016Journey,
@@ -162,6 +177,11 @@ final class ProductionJourneyController {
           groupCatalogGm020Journey,
           groupCatalogGm034Journey,
                   groupCatalogGm016Journey,
+          groupCatalogGe004Journey,
+          groupCatalogGm007Journey,
+          groupCatalogGm019Journey,
+          groupCatalogGe009Journey,
+          groupCatalogRapidReaddJourney,
           performanceJourney,
         }.contains(invocation.scenarioId) ||
         !(productionThreePeerJourneys.contains(invocation.scenarioId)

@@ -202,6 +202,11 @@ final class ProductionAndroidJourney {
       'production.group_catalog.gm020',
       'production.group_catalog.gm034',
       'production.group_catalog.gm016',
+      'production.group_catalog.ge004',
+      'production.group_catalog.gm007',
+      'production.group_catalog.gm019',
+      'production.group_catalog.ge009',
+      'production.group_catalog.private_rapid_readd',
     }.contains(scenario)) {
       final third = required('SIMS_ANDROID_EMULATOR_SECOND_DEVICE_ID');
       if (!RegExp(r'^emulator-[0-9]+$').hasMatch(third) || third == emulator) {

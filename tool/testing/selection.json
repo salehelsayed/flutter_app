@@ -1924,6 +1924,11 @@
         "test/integration/production_group_invite_activation_test.dart",
         "test/integration/production_group_invite_controls_test.dart",
         "test/integration/production_group_invite_matrix_criteria_test.dart",
+        "test/integration/production_group_rapid_readd_criteria_test.dart",
+        "test/integration/production_group_ge009_criteria_test.dart",
+        "test/integration/production_group_gm019_criteria_test.dart",
+        "test/integration/production_group_gm007_criteria_test.dart",
+        "test/integration/production_group_ge004_criteria_test.dart",
         "test/integration/production_group_gm016_criteria_test.dart",
         "test/core/bridge/debug_group_delivery_observer_test.dart",
         "test/integration/production_group_gm034_criteria_test.dart",
@@ -3003,6 +3008,221 @@
         "integration_test/maestro/production_reopen_seeded.yaml"
       ],
       "host_preflight": "production-group-gm016"
+    },
+    "production-group-ge004": {
+      "kind": "sims",
+      "capability": "production.group_catalog.ge004",
+      "boundary": "Production UI group creation and acceptance, UI removal and key rotation, UI re-add and Charlie's acceptance, then one post-re-add message from each member, validated by the unchanged original GE-004 oracle",
+      "timeout_seconds": 2400,
+      "estimated_seconds": null,
+      "requirements": [
+        "dart",
+        "flutter",
+        "adb",
+        "maestro"
+      ],
+      "device_roles": [
+        "android_physical",
+        "android_emulator",
+        "android_emulator_second"
+      ],
+      "references": [
+        "tool/sims/critical_features.json"
+      ],
+      "investigate": [
+        "lib/debug/production_journeys"
+      ],
+      "limitations": "Durable recipients come from the debug-build-only group delivery observer; membership, epochs and rows are read-only snapshot observations.",
+      "disposable_android_package": "com.mknoon.sims.connectivity",
+      "ui_driver": "maestro",
+      "ui_driver_reason": "Maestro drives creation, acceptances, the removal, the re-add, Charlie's acceptance and every send. Read-only observations feed the unchanged original oracle.",
+      "maestro_flows": [
+        "integration_test/maestro/production_catalog_group_create.yaml",
+        "integration_test/maestro/production_catalog_group_create_verbatim.yaml",
+        "integration_test/maestro/production_catalog_invite_accept.yaml",
+        "integration_test/maestro/production_catalog_remove_charlie.yaml",
+        "integration_test/maestro/production_catalog_remove_charlie_retry.yaml",
+        "integration_test/maestro/production_back_to_chat.yaml",
+        "integration_test/maestro/production_group_info_add_member.yaml",
+        "integration_test/maestro/production_group_info_add_member_retry.yaml",
+        "integration_test/maestro/production_home_tabs.yaml",
+        "integration_test/maestro/production_verbatim_send.yaml",
+        "integration_test/maestro/production_direct_send.yaml",
+        "integration_test/maestro/production_reopen_seeded.yaml"
+      ],
+      "host_preflight": "production-group-ge004"
+    },
+    "production-group-gm007": {
+      "kind": "sims",
+      "capability": "production.group_catalog.gm007",
+      "boundary": "Production UI group creation and acceptance, pre-removal history, UI removal, three removed-window messages, UI re-add and acceptance, then a post-re-add message caught up after one explicit production drain, validated by the unchanged original GM-007, KE-018 and IR-005 oracle",
+      "timeout_seconds": 2400,
+      "estimated_seconds": null,
+      "requirements": [
+        "dart",
+        "flutter",
+        "adb",
+        "maestro"
+      ],
+      "device_roles": [
+        "android_physical",
+        "android_emulator",
+        "android_emulator_second"
+      ],
+      "references": [
+        "tool/sims/critical_features.json"
+      ],
+      "investigate": [
+        "lib/debug/production_journeys"
+      ],
+      "limitations": "Durable recipients come from the debug-build-only group delivery observer; membership, epochs and rows are read-only snapshot observations. Charlie's post-re-add catch-up is one explicit call of the production drain use case, mirroring the original.",
+      "disposable_android_package": "com.mknoon.sims.connectivity",
+      "ui_driver": "maestro",
+      "ui_driver_reason": "Maestro drives creation, acceptances, the removal, the re-add, Charlie's acceptance and every send. Read-only observations feed the unchanged original oracle.",
+      "maestro_flows": [
+        "integration_test/maestro/production_catalog_group_create.yaml",
+        "integration_test/maestro/production_catalog_group_create_verbatim.yaml",
+        "integration_test/maestro/production_catalog_invite_accept.yaml",
+        "integration_test/maestro/production_catalog_remove_charlie.yaml",
+        "integration_test/maestro/production_catalog_remove_charlie_retry.yaml",
+        "integration_test/maestro/production_back_to_chat.yaml",
+        "integration_test/maestro/production_group_info_add_member.yaml",
+        "integration_test/maestro/production_group_info_add_member_retry.yaml",
+        "integration_test/maestro/production_home_tabs.yaml",
+        "integration_test/maestro/production_verbatim_send.yaml",
+        "integration_test/maestro/production_direct_send.yaml",
+        "integration_test/maestro/production_reopen_seeded.yaml"
+      ],
+      "host_preflight": "production-group-gm007"
+    },
+    "production-group-gm019": {
+      "kind": "sims",
+      "capability": "production.group_catalog.gm019",
+      "boundary": "Production UI group creation and acceptance, UI removal, a removed-window message, UI re-add and acceptance, then Alice and Bob post-re-add messages with their durable recipient windows, validated by the unchanged original GM-019 oracle",
+      "timeout_seconds": 2400,
+      "estimated_seconds": null,
+      "requirements": [
+        "dart",
+        "flutter",
+        "adb",
+        "maestro"
+      ],
+      "device_roles": [
+        "android_physical",
+        "android_emulator",
+        "android_emulator_second"
+      ],
+      "references": [
+        "tool/sims/critical_features.json"
+      ],
+      "investigate": [
+        "lib/debug/production_journeys"
+      ],
+      "limitations": "Durable recipients come from the debug-build-only group delivery observer; membership, epochs and rows are read-only snapshot observations.",
+      "disposable_android_package": "com.mknoon.sims.connectivity",
+      "ui_driver": "maestro",
+      "ui_driver_reason": "Maestro drives creation, acceptances, the removal, the re-add, Charlie's acceptance and every send. Read-only observations feed the unchanged original oracle.",
+      "maestro_flows": [
+        "integration_test/maestro/production_catalog_group_create.yaml",
+        "integration_test/maestro/production_catalog_group_create_verbatim.yaml",
+        "integration_test/maestro/production_catalog_invite_accept.yaml",
+        "integration_test/maestro/production_catalog_remove_charlie.yaml",
+        "integration_test/maestro/production_catalog_remove_charlie_retry.yaml",
+        "integration_test/maestro/production_back_to_chat.yaml",
+        "integration_test/maestro/production_group_info_add_member.yaml",
+        "integration_test/maestro/production_group_info_add_member_retry.yaml",
+        "integration_test/maestro/production_home_tabs.yaml",
+        "integration_test/maestro/production_verbatim_send.yaml",
+        "integration_test/maestro/production_direct_send.yaml",
+        "integration_test/maestro/production_reopen_seeded.yaml"
+      ],
+      "host_preflight": "production-group-gm019"
+    },
+    "production-group-ge009": {
+      "kind": "sims",
+      "capability": "production.group_catalog.ge009",
+      "boundary": "Production UI group creation and acceptance, messages from all three, UI removal, UI re-add with Charlie's acceptance delayed while Alice and Bob exchange, then Charlie's acceptance, catch-up and post-heal message, validated by the unchanged original GE-009 oracle",
+      "timeout_seconds": 2400,
+      "estimated_seconds": null,
+      "requirements": [
+        "dart",
+        "flutter",
+        "adb",
+        "maestro"
+      ],
+      "device_roles": [
+        "android_physical",
+        "android_emulator",
+        "android_emulator_second"
+      ],
+      "references": [
+        "tool/sims/critical_features.json"
+      ],
+      "investigate": [
+        "lib/debug/production_journeys"
+      ],
+      "limitations": "Durable recipients come from the debug-build-only group delivery observer; membership, epochs and rows are read-only snapshot observations.",
+      "disposable_android_package": "com.mknoon.sims.connectivity",
+      "ui_driver": "maestro",
+      "ui_driver_reason": "Maestro drives creation, acceptances, the removal, the re-add, Charlie's acceptance and every send. Read-only observations feed the unchanged original oracle.",
+      "maestro_flows": [
+        "integration_test/maestro/production_catalog_group_create.yaml",
+        "integration_test/maestro/production_catalog_group_create_verbatim.yaml",
+        "integration_test/maestro/production_catalog_invite_accept.yaml",
+        "integration_test/maestro/production_catalog_remove_charlie.yaml",
+        "integration_test/maestro/production_catalog_remove_charlie_retry.yaml",
+        "integration_test/maestro/production_back_to_chat.yaml",
+        "integration_test/maestro/production_group_info_add_member.yaml",
+        "integration_test/maestro/production_group_info_add_member_retry.yaml",
+        "integration_test/maestro/production_home_tabs.yaml",
+        "integration_test/maestro/production_verbatim_send.yaml",
+        "integration_test/maestro/production_direct_send.yaml",
+        "integration_test/maestro/production_reopen_seeded.yaml"
+      ],
+      "host_preflight": "production-group-ge009"
+    },
+    "production-group-rapid-readd": {
+      "kind": "sims",
+      "capability": "production.group_catalog.private_rapid_readd",
+      "boundary": "Production UI group creation and acceptance, UI removal, a removed-window message and an immediate UI re-add without waiting for the removal to apply, then post-re-add messages, validated by the unchanged original ML-009 oracle",
+      "timeout_seconds": 2400,
+      "estimated_seconds": null,
+      "requirements": [
+        "dart",
+        "flutter",
+        "adb",
+        "maestro"
+      ],
+      "device_roles": [
+        "android_physical",
+        "android_emulator",
+        "android_emulator_second"
+      ],
+      "references": [
+        "tool/sims/critical_features.json"
+      ],
+      "investigate": [
+        "lib/debug/production_journeys"
+      ],
+      "limitations": "Durable recipients come from the debug-build-only group delivery observer; membership, epochs and rows are read-only snapshot observations.",
+      "disposable_android_package": "com.mknoon.sims.connectivity",
+      "ui_driver": "maestro",
+      "ui_driver_reason": "Maestro drives creation, acceptances, the removal, the re-add, Charlie's acceptance and every send. Read-only observations feed the unchanged original oracle.",
+      "maestro_flows": [
+        "integration_test/maestro/production_catalog_group_create.yaml",
+        "integration_test/maestro/production_catalog_group_create_verbatim.yaml",
+        "integration_test/maestro/production_catalog_invite_accept.yaml",
+        "integration_test/maestro/production_catalog_remove_charlie.yaml",
+        "integration_test/maestro/production_catalog_remove_charlie_retry.yaml",
+        "integration_test/maestro/production_back_to_chat.yaml",
+        "integration_test/maestro/production_group_info_add_member.yaml",
+        "integration_test/maestro/production_group_info_add_member_retry.yaml",
+        "integration_test/maestro/production_home_tabs.yaml",
+        "integration_test/maestro/production_verbatim_send.yaml",
+        "integration_test/maestro/production_direct_send.yaml",
+        "integration_test/maestro/production_reopen_seeded.yaml"
+      ],
+      "host_preflight": "production-group-rapid-readd"
     },
     "production-group-invite-matrix": {
       "kind": "sims",
@@ -4575,6 +4795,11 @@
         "integration_test/scripts/run_production_group_gm020.dart",
         "integration_test/scripts/run_production_group_gm034.dart",
         "integration_test/scripts/run_production_group_gm016.dart",
+        "integration_test/scripts/run_production_group_ge004.dart",
+        "integration_test/scripts/run_production_group_gm007.dart",
+        "integration_test/scripts/run_production_group_gm019.dart",
+        "integration_test/scripts/run_production_group_ge009.dart",
+        "integration_test/scripts/run_production_group_rapid_readd.dart",
         "integration_test/scripts/run_production_startup_resume_performance.dart",
         "test/integration/production_performance_*",
         "integration_test/scripts/run_production_group_create.dart",
@@ -4631,6 +4856,11 @@
         "production-group-gm020",
         "production-group-gm034",
         "production-group-gm016",
+        "production-group-ge004",
+        "production-group-gm007",
+        "production-group-gm019",
+        "production-group-ge009",
+        "production-group-rapid-readd",
         "production-startup-resume-performance",
         "production-group-create",
         "production-group-reaction",
@@ -8373,6 +8603,46 @@
           "integration_test/maestro/production_group_info_self.yaml"
         ],
         "reason": "Additive production invite-status matrix display proof; the original seeded harness remains unchanged."
+      },
+      {
+        "owner": "full-sims-major",
+        "capability": "production.group_catalog.private_rapid_readd",
+        "patterns": [
+          "integration_test/scripts/run_production_group_rapid_readd.dart"
+        ],
+        "reason": "Additive production catalog private_rapid_readd; the original multi-party harness and catalog selectors remain unchanged."
+      },
+      {
+        "owner": "full-sims-major",
+        "capability": "production.group_catalog.ge009",
+        "patterns": [
+          "integration_test/scripts/run_production_group_ge009.dart"
+        ],
+        "reason": "Additive production catalog ge009; the original multi-party harness and catalog selectors remain unchanged."
+      },
+      {
+        "owner": "full-sims-major",
+        "capability": "production.group_catalog.gm019",
+        "patterns": [
+          "integration_test/scripts/run_production_group_gm019.dart"
+        ],
+        "reason": "Additive production catalog gm019; the original multi-party harness and catalog selectors remain unchanged."
+      },
+      {
+        "owner": "full-sims-major",
+        "capability": "production.group_catalog.gm007",
+        "patterns": [
+          "integration_test/scripts/run_production_group_gm007.dart"
+        ],
+        "reason": "Additive production catalog gm007; the original multi-party harness and catalog selectors remain unchanged."
+      },
+      {
+        "owner": "full-sims-major",
+        "capability": "production.group_catalog.ge004",
+        "patterns": [
+          "integration_test/scripts/run_production_group_ge004.dart"
+        ],
+        "reason": "Additive production catalog ge004; the original multi-party harness and catalog selectors remain unchanged."
       },
       {
         "owner": "full-sims-major",

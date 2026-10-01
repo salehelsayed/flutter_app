@@ -2089,3 +2089,51 @@ debug-only production-journey hooks) were intended; that commit's re-pin
 never matched its own file. Both bootstrap digests in
 `test/unit/dtr18_layering_relocation_contract_test.dart` were re-pinned in
 f79b13f37; all DTR-18 freeze tests pass.
+
+## 2026-10-01 Wave 3 catalog re-add family: ge004, gm007, gm019, ge009, private_rapid_readd
+
+Shared support: `integration_test/support/production_catalog_runner.dart`
+(generic runner), `production_catalog_membership_steps.dart` (UI create and
+accept, remove, re-add with Charlie's acceptance from the Intros tab, send and
+receive), `tool/sims/production_catalog_case.dart` (adapter base: identity-
+checked stages, durable sent rows, received rows, verdicts, unchanged
+original oracle) and `test/integration/support/production_catalog_fixture.dart`.
+Criteria tests: 7 each (35).
+
+| Check | Pass run | Negative probe | Probe outcome |
+|---|---|---|---|
+| ge004 | `wave3-run-20261001T194734Z` (`attempt-f9avCa`) | Charlie never accepts the re-add: `T202827Z` | FAIL: Charlie's group observation refused an ambiguous or replaced run group once the unaccepted re-add invitation arrived (same as the gm006 probe; cause not diagnosed) |
+| gm007 (+ KE-018, IR-005) | `T195627Z` (`attempt-fiKHl7`) | Charlie never removed: `T204128Z` | FAIL: "Alice rotated epoch" |
+| gm019 | `T222832Z` (`attempt-rQga0n`) | Charlie never re-added: `T205512Z` | FAIL: "charlie receives aliceGm019AfterReadd" |
+| private_rapid_readd (ML-009) | `T201946Z` (`attempt-qi8KRO`) | pending (see below) | |
+| ge009 | none (see below) | Charlie accepts at once: `T215253Z` | FAIL: "charlie pending invitation" |
+
+GM-019 uses real timestamps: the original forces send timestamps one second
+after its own removal and re-add times; the adapter reports Alice's real
+`lastMembershipEventAt` for both events and the real send timestamps, and the
+original ordering rule held. GM-007's post-re-add message reached Charlie live
+before the explicit drain. `T200624Z` (gm019) was BLOCKED at
+`test_runner_startup` (launching dart failed with errno 1); the rerun passed.
+
+ML-009 probe: the first probe (Charlie never removed, `T221606Z`) failed at
+"alice-back-to-chat", a navigation step, not at anything the case proves; the
+replacement (Charlie never re-added) `T223712Z` failed at Bob's first
+acceptance flow while the emulators were throttled (macOS priority 4). A
+valid ML-009 probe is still pending.
+
+**GE-009 does not pass: production finding.** Run `T200850Z` (`attempt-cLnwiW`)
+completed until the heal: after accepting the re-add, Charlie never received
+Alice's post-re-add message. Alice's durable copy was addressed to Bob only
+(`recipientPeerIds = [bob]`, one topic peer), while Bob's copy in the same
+window included Charlie and arrived; Charlie's catch-up drain logged
+`GROUP_DRAIN_OFFLINE_INBOX_REPLAY_RECIPIENT_SKIPPED`. Cause:
+`_loadGroupSendMembership` (`send_group_message_use_case.dart:374-403`) drops
+members whose locally persisted invite status is not joined, and only the
+inviter holds those invite-attempt records. The inviter and the other members
+therefore disagree on whether a pending re-added member is a recipient, and
+the inviter's messages in that window can never reach him. The original
+assumes a re-added member is a recipient immediately. Pending a decision
+(product bug or by design).
+
+Not built in this batch: GM-024 (needs per-member device rows in the snapshot)
+and GM-014 (its rotation reports delivery to Charlie without sending it).
