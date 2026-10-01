@@ -35,6 +35,8 @@ HOST_PROBES = {
     'production-group-gm001': ('integration_test/scripts/run_production_group_gm001.dart', 'production.group_catalog.gm001'),
     'production-group-ge001': ('integration_test/scripts/run_production_group_ge001.dart', 'production.group_catalog.ge001'),
     'production-group-de003': ('integration_test/scripts/run_production_group_de003.dart', 'production.group_catalog.de003'),
+    'production-group-ge002': ('integration_test/scripts/run_production_group_ge002.dart', 'production.group_catalog.ge002'),
+    'production-group-ge003': ('integration_test/scripts/run_production_group_ge003.dart', 'production.group_catalog.ge003'),
     'production-group-invite-matrix': ('integration_test/scripts/run_production_group_invite_status_matrix.dart', 'production.group_invite_status_matrix'),
     'production-startup-resume-performance': ('integration_test/scripts/run_production_startup_resume_performance.dart', 'production.startup_resume_performance'),
     'production-private-media': ('integration_test/scripts/run_production_private_media_local.dart', 'production.private_media_local'),

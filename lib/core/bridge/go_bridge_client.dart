@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
 import 'bridge.dart';
+import 'debug_group_delivery_observer.dart';
 import '../database/db_write_transaction.dart';
 import '../diagnostics/app_diagnostics.dart';
 import '../diagnostics/local_connection_diagnostics.dart';
@@ -1079,6 +1080,16 @@ class GoBridgeClient extends Bridge {
                 _ => 'bridge_rejected',
               },
       );
+      final deliveryObserver = debugGroupDeliveryObserver;
+      if (deliveryObserver != null &&
+          payload != null &&
+          debugObservedGroupDeliveryCommands.contains(cmd)) {
+        try {
+          deliveryObserver(cmd, payload, decoded);
+        } catch (_) {
+          // A debug observer never replaces an ordinary bridge result.
+        }
+      }
       return sanitized;
     } on MissingPluginException catch (e) {
       bridgeStopwatch.stop();

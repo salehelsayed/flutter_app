@@ -1958,3 +1958,76 @@ Not portable as written: RA-011 (`private_late_leave_readd`) waits for
 production stopped emitting when the repair path was removed in 27fb81446
 (Plan 263); RA-012 (`private_rotated_device_readd`) re-adds Charlie with
 made-up rotated ML-KEM material that the app never produces.
+
+## 2026-10-01 Wave 3 catalog cases kept on the original harness (not portable to production)
+
+Decision (user, 2026-10-01): catalog cases whose original proof depends on
+forged or injected protocol traffic, made-up key material, hand-edited local
+state, or a production path that no longer exists are **not portable to
+production**. They stay on the original multi-party harness
+(`integration_test/group_multi_party_device_real_harness.dart`, unchanged
+oracle) and get no production replacement. A production journey can only
+produce what the app itself produces, so a replacement would either fake the
+input (no stronger than the original) or need a new production feature.
+
+| Scenario | Row | Why it is not portable |
+|---|---|---|
+| gm009 | GM-009 | the same remove event is republished a second time |
+| gm010 | GM-010 | a members-added event is published twice; the UI cannot re-add a current member |
+| gm011 | GM-011 | an old add event is replayed (`handleReplayEnvelope`) after removal |
+| gm012 | GM-012 | an old remove event is replayed after re-add |
+| gm013 | GM-013 | Charlie's racing send uses hand-made after-cutoff envelopes |
+| gm017 | GM-017 | Alice and Bob install a local config without Charlie that is never published |
+| go003 | GO-003 | same local-only config as GM-017, seen from the sender status |
+| gm018 | GM-018 | same local-only config, plus a live-only send |
+| gm021 | GM-021 | `saveMember` with a made-up key package and a stale-binding publish |
+| gm023 | GM-023 | an inactive shadow member inside a raw config payload |
+| gm025 | GM-025 | Charlie sends a `member_banned` action the app never lets him send |
+| gm033 | GM-033 | removed-window messages are stored into Charlie's database by the harness |
+| private_invite_terminal_states | ML-018 | a delayed invite copy is re-stored by the harness |
+| private_stale_invite_readd | ML-019, KE-016, RA-004 | same delayed invite copy |
+| private_stale_lower_key_update | KE-003 | a forged lower-epoch key update |
+| private_same_epoch_key_conflict | KE-005 | a forged signed same-epoch conflicting key |
+| private_removed_old_key_publish_rejected | SV-002, SV-008 | the removed member publishes with an old key and sends a forbidden config update |
+| private_stale_roster_recipient_omission | GS-B02 | Charlie's local roster is edited to drop Bob |
+| private_override_removal_nonconvergence | GS-C07 | a local role grant written with `saveMember` |
+| ge016 | GE-016 | a made-up member and a prepared stale removal |
+| ge021 | GE-021 | fake transport peers and a scripted flaky member |
+| private_late_leave_readd | RA-011 | waits for `GROUP_MESSAGE_LISTENER_SELF_REMOVAL_LEAVE_REPAIRED_AFTER_READD`, removed with the repair path in 27fb81446 (Plan 263) |
+| private_rotated_device_readd | RA-012 | re-adds Charlie with made-up rotated ML-KEM material |
+
+Partly portable (the production replacement covers the rest of the case):
+`private_readd_current` sub-rows KE-011, RA-006 and RA-014 (forged same-epoch
+key and duplicate removal) and the duplicate live republish in `gm035`.
+
+## 2026-10-01 Wave 3 catalog ge002, ge003
+
+`production.group_catalog.ge002` (GE-002) and `ge003` (GE-003) share
+`integration_test/support/production_catalog_removal_pair_journey.dart`: UI
+creation and acceptance, UI removal of Charlie, then ten original texts from
+the sender (Alice for GE-002, Bob for GE-003) through the composer, each
+observed once on the remaining receiver; Charlie's retained group is read at
+the end. `tool/sims/production_group_removal_pair_criteria.dart` (18 tests)
+feeds the unchanged original oracle.
+
+New debug-build-only seam `lib/core/bridge/debug_group_delivery_observer.dart`
+(3 tests): `GoBridgeClient.send` hands each completed `group:sendReliable` or
+`group:inboxStore` exchange to an observer that is null in normal builds and
+settable only in debug builds. The catalog watch controls copy only the
+message id, durable recipients and delivery counts (never the request
+payload, which carries signing keys), so the original's
+`actualDurablePayloadProof` and `everyPostRemovalExcludedCharlie` read the
+real durable recipients instead of a recording test bridge.
+
+Device: ge002 PASS `wave3-run-20261001T163111Z` (`attempt-ZEapbx`, ten
+reliable sends, each addressed to Bob only); ge003 PASS `T164318Z`
+(`attempt-NbRvYE`); both oracle `failures: []`. Negative probes: ge002 with
+Charlie never removed, `T165410Z` (`attempt-ifdMUx`) FAILED at "Bob excludes
+Charlie"; ge003 with the delivery observer recording nothing, `T161317Z`
+(`attempt-MfCLWi`) FAILED in the original oracle
+(`actualDurablePayloadProof or actualLiveTopicPeerProof must be true`,
+`everyPostRemovalExcludedCharlie must be true`). Probe files restored byte
+for byte. Earlier attempts `T160436Z`, `T160535Z` and one ge002 probe were
+BLOCKED by `device_automation_unobserved`: macOS had throttled the hidden
+emulator windows (process priority 4, 10 to 20 s per adb call); the queue now
+waits while either emulator is throttled.

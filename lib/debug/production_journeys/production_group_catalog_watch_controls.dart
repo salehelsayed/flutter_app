@@ -1,5 +1,8 @@
+import 'dart:convert';
+
 import 'package:flutter/widgets.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
+import 'package:flutter_app/core/bridge/debug_group_delivery_observer.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/groups/application/group_config_payload.dart';
@@ -27,6 +30,8 @@ const productionCatalogWatchJourneys = {
   groupCatalogGm001Journey,
   groupCatalogGe001Journey,
   groupCatalogDe003Journey,
+  groupCatalogGe002Journey,
+  groupCatalogGe003Journey,
 };
 
 const _watchedFlowEvents = {
@@ -75,6 +80,39 @@ void bindProductionGroupCatalogWatchControls({
     flowEvents.add(Map<String, Object?>.from(event));
   });
   controller.bindDisposer(lease.release);
+
+  // Durable recipients of each group send, for originals that read them from
+  // a recording bridge. Copies only ids, recipients and delivery counts; the
+  // request payload (which carries signing keys) is never retained.
+  final deliveries = <Map<String, Object?>>[];
+  debugGroupDeliveryObserver = (cmd, payload, response) {
+    String? messageId;
+    if (cmd == 'group:sendReliable') {
+      messageId = payload['messageId'] as String?;
+    } else if (payload['message'] case final String envelope) {
+      try {
+        messageId = (jsonDecode(envelope) as Map)['messageId'] as String?;
+      } catch (_) {}
+    }
+    if (messageId == null || deliveries.length >= 512) return;
+    final recipients = cmd == 'group:sendReliable'
+        ? response['recipientPeerIds']
+        : payload['recipientPeerIds'];
+    deliveries.add({
+      'cmd': cmd,
+      'messageId': messageId,
+      'ok': response['ok'] == true,
+      'recipientPeerIds': [
+        if (recipients is List)
+          for (final r in recipients) '$r',
+      ],
+      'inboxStored': ?response['inboxStored'],
+      'topicPeers': ?(response['topicPeerCount'] ?? response['topicPeers']),
+      'expectedRecipientCount': ?response['expectedRecipientCount'],
+      'deliveryMode': ?response['deliveryMode'],
+    });
+  };
+  controller.bindDisposer(() => debugGroupDeliveryObserver = null);
 
   // The original removed-member proof: one send attempt by the removed role
   // through the production use case, recording the actual (rejected) outcome.
@@ -247,6 +285,7 @@ void bindProductionGroupCatalogWatchControls({
       'lifecycle': WidgetsBinding.instance.lifecycleState?.name,
       'flowEvents': List.of(flowEvents),
       'flowEventOverflow': overflow,
+      'deliveries': List.of(deliveries),
       'groupPresent': named.isNotEmpty,
     };
     if (named.isEmpty) return base;

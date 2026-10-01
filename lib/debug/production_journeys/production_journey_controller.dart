@@ -35,7 +35,11 @@ const groupCatalogOfflineReaddJourney =
 const groupCatalogGm001Journey = 'production.group_catalog.gm001';
 const groupCatalogGe001Journey = 'production.group_catalog.ge001';
 const groupCatalogDe003Journey = 'production.group_catalog.de003';
+const groupCatalogGe002Journey = 'production.group_catalog.ge002';
+const groupCatalogGe003Journey = 'production.group_catalog.ge003';
 const productionGroupCatalogJourneys = {
+  groupCatalogGe002Journey,
+  groupCatalogGe003Journey,
   groupCatalogDe003Journey,
   groupCatalogGe001Journey,
   groupCatalogGm001Journey,
@@ -144,6 +148,8 @@ final class ProductionJourneyController {
           groupCatalogGm001Journey,
           groupCatalogGe001Journey,
           groupCatalogDe003Journey,
+          groupCatalogGe002Journey,
+          groupCatalogGe003Journey,
           performanceJourney,
         }.contains(invocation.scenarioId) ||
         !(productionThreePeerJourneys.contains(invocation.scenarioId)
