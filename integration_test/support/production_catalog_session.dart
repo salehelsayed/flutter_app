@@ -223,6 +223,40 @@ final class ProductionCatalogSession {
     }
   }
 
+  /// Runs a text-entry flow with the device switched to the verbatim Appium
+  /// keyboard for its duration (keyboards also autocorrect learned names such
+  /// as "gm005" -> "gm004"); the flow must not use hideKeyboard. Falls back to
+  /// [fallbackName] on devices without the Appium keyboard.
+  Future<void> verbatimFlow(
+    String role,
+    String name,
+    String fallbackName,
+    String label,
+    Map<String, String> values,
+  ) async {
+    final peer = actors[role]!;
+    final installed = '${(await peer.adb(['shell', 'ime', 'list', '-a', '-s'])).stdout}'
+        .contains(verbatimIme);
+    if (!installed) {
+      imeSwitches.add({'role': role, 'label': label, 'restoreTo': null});
+      await flow(role, fallbackName, label, values);
+      return;
+    }
+    final original =
+        '${(await peer.adb(['shell', 'settings', 'get', 'secure', 'default_input_method'])).stdout}'
+            .trim();
+    await peer.adb(['shell', 'ime', 'enable', verbatimIme]);
+    await peer.adb(['shell', 'ime', 'set', verbatimIme]);
+    imeSwitches.add({'role': role, 'label': label, 'restoreTo': original});
+    try {
+      await flow(role, name, label, values);
+    } finally {
+      if (original.isNotEmpty && original != verbatimIme) {
+        await peer.adb(['shell', 'ime', 'set', original]);
+      }
+    }
+  }
+
   Future<void> invitedAndAccept(
     String role,
     String label,

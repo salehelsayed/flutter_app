@@ -3,6 +3,8 @@ import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/groups/application/group_config_payload.dart';
+import 'package:flutter_app/features/groups/application/drain_group_offline_inbox_use_case.dart';
+import 'package:flutter_app/features/groups/application/group_message_listener.dart';
 import 'package:flutter_app/features/groups/application/send_group_message_use_case.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_invite_delivery_attempt_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_message_repository.dart';
@@ -18,12 +20,24 @@ const productionCatalogWatchJourneys = {
   groupCatalogRelayOnlyJourney,
   groupCatalogProcessDeathJourney,
   groupCatalogGm004Journey,
+  groupCatalogGm005Journey,
 };
 
 const _watchedFlowEvents = {
   'GROUP_DISCOVERY',
   'GROUP_SEND_MSG_USE_CASE_SUCCESS',
   'GROUP_SEND_MSG_USE_CASE_SUCCESS_NO_PEERS',
+  ..._drainFlowEvents,
+};
+
+// The drain diagnostics the original offline-removal proof summarizes.
+const _drainFlowEvents = {
+  'GROUP_FL_BRIDGE_INBOX_RETRIEVE_CURSOR_RESPONSE',
+  'GROUP_DRAIN_OFFLINE_INBOX_GROUP_DONE',
+  'GROUP_DRAIN_OFFLINE_INBOX_STOP_GROUP_REMOVED',
+  'GROUP_DRAIN_OFFLINE_INBOX_REPLAY_RECIPIENT_SKIPPED',
+  'GROUP_DRAIN_OFFLINE_INBOX_REPLAY_SIGNATURE_REJECTED',
+  'GROUP_DRAIN_OFFLINE_INBOX_DECODE_SKIPPED',
 };
 
 /// Read-only catalog observation: the run group, its members and key epoch,
@@ -37,6 +51,7 @@ void bindProductionGroupCatalogWatchControls({
   required GroupRepository groupRepository,
   required GroupMessageRepository messageRepository,
   required GroupInviteDeliveryAttemptRepository inviteDeliveryRepository,
+  required GroupMessageListener groupMessageListener,
 }) {
   if (!productionCatalogWatchJourneys.contains(
     controller.invocation.scenarioId,
@@ -105,6 +120,82 @@ void bindProductionGroupCatalogWatchControls({
       'accepted':
           result == SendGroupMessageResult.success ||
           result == SendGroupMessageResult.successNoPeers,
+    };
+  });
+
+  // The original `_drainOfflineRemovalUntilSelfRemoved`: explicit production
+  // drains every second until the group is gone or 45 s elapse, summarizing
+  // the drain diagnostics emitted during that window.
+  controller.bindAction('catalog_drain_until_self_removed', (_) async {
+    final identity = await identityRepository.loadIdentity();
+    final named = (await groupRepository.getAllGroups())
+        .where((g) => g.name == productionCatalogGroupName(controller))
+        .toList();
+    if (identity == null || named.length != 1) {
+      throw StateError('exact run group required for catch-up drain');
+    }
+    final groupId = named.single.id;
+    final start = flowEvents.length;
+    final deadline = DateTime.now().add(const Duration(seconds: 45));
+    var attempts = 0, completed = 0;
+    final errors = <String>[];
+    while (true) {
+      attempts++;
+      try {
+        await drainGroupOfflineInboxForGroup(
+          bridge: bridge,
+          groupRepo: groupRepository,
+          msgRepo: messageRepository,
+          groupId: groupId,
+          groupMessageListener: groupMessageListener,
+          selfPeerId: identity.peerId,
+        );
+        completed++;
+      } catch (error) {
+        errors.add('$error');
+      }
+      if (await groupRepository.getGroup(groupId) == null ||
+          !DateTime.now().isBefore(deadline)) {
+        break;
+      }
+      await Future<void>.delayed(const Duration(seconds: 1));
+    }
+    int count(Object? value) =>
+        value is int ? value : int.tryParse('${value ?? ''}') ?? 0;
+    final retrieve = <int>[], groupDone = <int>[];
+    var removalStop = false;
+    var recipientSkipped = 0, signatureRejected = 0, decodeSkipped = 0;
+    for (final event in flowEvents.skip(start)) {
+      final details = event['details'] is Map
+          ? event['details'] as Map
+          : const {};
+      switch (event['event']) {
+        case 'GROUP_FL_BRIDGE_INBOX_RETRIEVE_CURSOR_RESPONSE':
+          retrieve.add(count(details['count']));
+        case 'GROUP_DRAIN_OFFLINE_INBOX_GROUP_DONE':
+          groupDone.add(count(details['messageCount']));
+        case 'GROUP_DRAIN_OFFLINE_INBOX_STOP_GROUP_REMOVED':
+          removalStop = true;
+        case 'GROUP_DRAIN_OFFLINE_INBOX_REPLAY_RECIPIENT_SKIPPED':
+          recipientSkipped++;
+        case 'GROUP_DRAIN_OFFLINE_INBOX_REPLAY_SIGNATURE_REJECTED':
+          signatureRejected++;
+        case 'GROUP_DRAIN_OFFLINE_INBOX_DECODE_SKIPPED':
+          decodeSkipped++;
+      }
+    }
+    return {
+      'drainAttemptCount': attempts,
+      'completedDrainCount': completed,
+      'drainErrorCount': errors.length,
+      if (errors.isNotEmpty) 'drainErrors': errors.take(5).toList(),
+      'drainRetrieveCounts': retrieve,
+      'drainRetrievedMessageCount': retrieve.fold<int>(0, (a, b) => a + b),
+      'drainGroupDoneMessageCounts': groupDone,
+      'drainSawRemovalStop': removalStop,
+      'drainRecipientSkippedCount': recipientSkipped,
+      'drainSignatureRejectedCount': signatureRejected,
+      'drainDecodeSkippedCount': decodeSkipped,
     };
   });
 

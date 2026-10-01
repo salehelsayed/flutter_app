@@ -1854,3 +1854,39 @@ Negative probe (no removal): `T084143Z` failed before the probed step (Bob's
 invitation did not arrive within the four-minute wait; retained);
 `T085113Z` (`attempt-8ZWdxo/`) FAILED at "Bob excludes Charlie". Cleanup was
 exact both times and the runner was restored byte-for-byte.
+
+## 2026-10-01 Wave 3 catalog gm005
+
+`production.group_catalog.gm005` (offline removal; USB Pixel 6 Alice,
+`emulator-5554` Bob, `emulator-5556` Charlie) follows the original
+`_runGm005*` path: Charlie persists the old configuration and key, then goes
+offline (verified owned-process death); Alice removes him through the UI and
+sends the three original post-removal texts, each received by Bob; Charlie
+relaunches and runs the original drain-until-self-removed loop, now the
+reusable `catalog_drain_until_self_removed` control (explicit production drains
+every second for up to 45 s, summarizing the original's six drain flow events
+inside that window), then his rejected send.
+`tool/sims/production_group_gm005_criteria.dart` (11 tests) feeds the unchanged
+original oracle.
+
+Typing measure: SwiftKey on the USB Pixel had learned "gm004" and
+autocorrected the new group name. Text-entry flows on the Pixel now run with
+the verbatim Appium keyboard for their duration
+(`ProductionCatalogSession.verbatimFlow`, new
+`production_catalog_group_create_verbatim.yaml` without `hideKeyboard`); the
+GM-004 runner uses the same step (its earlier pass was on the prior runner
+source; the final full run re-covers it).
+
+Device: `wave3-run-20261001T090516Z` FAILED at group creation (the autocorrected
+name above). `T091106Z` **PASS**, oracle `failures: []` (`attempt-RroYFj/`):
+Charlie's send `groupNotFound`, no edit retries, SwiftKey restored. Caveat: the
+46 explicit catch-up drains retrieved nothing — the app's own startup drain
+had already applied the removal when Charlie relaunched; the original rule
+requires only a completed drain after reconnect.
+
+Negative probe (Charlie stays online): `T091933Z` failed at Bob's reopen and
+`T092722Z` was BLOCKED by preflight because `emulator-5554` had become
+unresponsive (up 19 h, memory compaction, 5 s per adb call); it was rebooted
+(same AVD and port, then 0.2 s per call). `T093000Z` (`attempt-FanlBz/`)
+FAILED at "verified Charlie process death". Cleanup exact each time; runner
+restored byte-for-byte.

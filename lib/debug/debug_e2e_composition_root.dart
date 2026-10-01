@@ -1000,6 +1000,7 @@ final class DebugE2ECompositionRoot {
         messageRepository: dependencies.groupMessageRepository,
         inviteDeliveryRepository:
             dependencies.groupInviteDeliveryAttemptRepository,
+        groupMessageListener: dependencies.groupMessageListener,
       );
       bindProductionPrivateMediaControls(
         controller: journey,
