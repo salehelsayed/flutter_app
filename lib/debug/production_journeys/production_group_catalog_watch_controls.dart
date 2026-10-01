@@ -21,6 +21,7 @@ const productionCatalogWatchJourneys = {
   groupCatalogProcessDeathJourney,
   groupCatalogGm004Journey,
   groupCatalogGm005Journey,
+  groupCatalogOfflineRemoveJourney,
 };
 
 const _watchedFlowEvents = {

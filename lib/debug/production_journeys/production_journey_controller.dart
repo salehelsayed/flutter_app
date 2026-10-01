@@ -27,8 +27,11 @@ const groupCatalogProcessDeathJourney =
     'production.group_catalog.private_process_death_matrix';
 const groupCatalogGm004Journey = 'production.group_catalog.gm004';
 const groupCatalogGm005Journey = 'production.group_catalog.gm005';
+const groupCatalogOfflineRemoveJourney =
+    'production.group_catalog.private_offline_remove';
 const productionGroupCatalogJourneys = {
   groupCatalogCreateJourney,
+  groupCatalogOfflineRemoveJourney,
   groupCatalogGm005Journey,
   groupCatalogGm004Journey,
   groupCatalogProcessDeathJourney,
@@ -124,6 +127,7 @@ final class ProductionJourneyController {
           groupCatalogProcessDeathJourney,
           groupCatalogGm004Journey,
           groupCatalogGm005Journey,
+          groupCatalogOfflineRemoveJourney,
           performanceJourney,
         }.contains(invocation.scenarioId) ||
         !(productionThreePeerJourneys.contains(invocation.scenarioId)

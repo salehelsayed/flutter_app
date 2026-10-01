@@ -1890,3 +1890,19 @@ unresponsive (up 19 h, memory compaction, 5 s per adb call); it was rebooted
 (same AVD and port, then 0.2 s per call). `T093000Z` (`attempt-FanlBz/`)
 FAILED at "verified Charlie process death". Cleanup exact each time; runner
 restored byte-for-byte.
+
+## 2026-10-01 Wave 3 catalog private_offline_remove
+
+`production.group_catalog.private_offline_remove` (ML-006 and IR-004) shares
+the GM-005 offline-removal path: Charlie persists old state and goes offline
+(verified process death), Alice removes him through the UI, Alice and Bob
+exchange the original ML-006 texts, Charlie relaunches, runs the original
+drain-until-removed loop and attempts his rejected send.
+`tool/sims/production_group_offline_remove_criteria.dart` (12 tests) builds the
+original ML-006 and IR-004 proof maps for all three roles and feeds the
+unchanged original oracle.
+
+Device: `wave3-run-20261001T094409Z/` PASS at the first attempt, oracle
+`failures: []` (`attempt-Ow8l2I/`); cleanup exact. Negative probe (Charlie
+stays online): `T095251Z` (`attempt-f3equa/`) FAILED at "verified Charlie
+process death"; cleanup exact; runner restored byte-for-byte.
