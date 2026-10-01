@@ -25,8 +25,10 @@ const groupCatalogRelayOnlyJourney =
     'production.group_catalog.private_relay_only_delivery';
 const groupCatalogProcessDeathJourney =
     'production.group_catalog.private_process_death_matrix';
+const groupCatalogGm004Journey = 'production.group_catalog.gm004';
 const productionGroupCatalogJourneys = {
   groupCatalogCreateJourney,
+  groupCatalogGm004Journey,
   groupCatalogProcessDeathJourney,
   groupCatalogOnlineRemoveJourney,
   groupCatalogRelayOnlyJourney,
@@ -118,6 +120,7 @@ final class ProductionJourneyController {
           groupCatalogOnlineRemoveJourney,
           groupCatalogRelayOnlyJourney,
           groupCatalogProcessDeathJourney,
+          groupCatalogGm004Journey,
           performanceJourney,
         }.contains(invocation.scenarioId) ||
         !(productionThreePeerJourneys.contains(invocation.scenarioId)

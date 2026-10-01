@@ -1824,3 +1824,33 @@ verified; no membership-edit retries needed; cleanup exact on all three devices.
 Negative probe: without Bob's kill at the removal checkpoint the run FAILED at
 "bob:remove: verified owned-process kill" (`T081521Z`, `attempt-dtJrUv/`);
 cleanup exact, runner restored byte-for-byte, keyboards restored.
+
+## 2026-10-01 Wave 3 shared catalog tooling and catalog gm004
+
+Shared tooling for the remaining catalog cases:
+`integration_test/support/production_catalog_session.dart` (readiness, UI flows
+with receipts, read-only waits, quiet-group wait, user-like retry of edits
+refused by the recovery gate, verbatim proof sends with keyboard restore,
+invitation acceptance, verified kill and relaunch) and
+`tool/sims/production_catalog_verdicts.dart` (original sent/received/base
+verdict entries from production rows). The catalog observation control gained
+`catalog_attempt_removed_send`: one removed-member send through the production
+use case, recording the actual outcome (there is no UI composer for a removed
+member).
+
+`production.group_catalog.gm004` (USB Pixel 6 Alice, `emulator-5554` Bob,
+`emulator-5556` Charlie) follows the original `_runGm004*` path: UI create and
+accepts, Alice removes Charlie, the rotated key reaches Bob, Alice and Bob
+exchange the original post-removal texts, Charlie's leak count after the
+original five-second window and his rejected send.
+`tool/sims/production_group_gm004_criteria.dart` (11 tests) feeds the unchanged
+original oracle.
+
+Device: `wave3-run-20261001T083409Z/` PASS at the first attempt, oracle
+`failures: []` (`attempt-hy8C8s/`), Charlie's send `groupNotFound`, no
+membership-edit retries; cleanup exact.
+
+Negative probe (no removal): `T084143Z` failed before the probed step (Bob's
+invitation did not arrive within the four-minute wait; retained);
+`T085113Z` (`attempt-8ZWdxo/`) FAILED at "Bob excludes Charlie". Cleanup was
+exact both times and the runner was restored byte-for-byte.

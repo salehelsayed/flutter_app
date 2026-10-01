@@ -993,10 +993,13 @@ final class DebugE2ECompositionRoot {
       );
       bindProductionGroupCatalogWatchControls(
         controller: journey,
+        bridge: dependencies.bridge,
         p2pService: dependencies.p2pService,
         identityRepository: dependencies.identityRepository,
         groupRepository: dependencies.groupRepository,
         messageRepository: dependencies.groupMessageRepository,
+        inviteDeliveryRepository:
+            dependencies.groupInviteDeliveryAttemptRepository,
       );
       bindProductionPrivateMediaControls(
         controller: journey,

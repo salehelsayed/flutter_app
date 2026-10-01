@@ -1924,6 +1924,7 @@
         "test/integration/production_group_invite_activation_test.dart",
         "test/integration/production_group_invite_controls_test.dart",
         "test/integration/production_group_invite_matrix_criteria_test.dart",
+        "test/integration/production_group_gm004_criteria_test.dart",
         "test/integration/production_group_process_death_criteria_test.dart",
         "test/features/groups/presentation/widgets/group_info_add_member_accessibility_test.dart",
         "test/integration/production_group_relay_only_criteria_test.dart",
@@ -2468,6 +2469,45 @@
         "integration_test/maestro/production_reopen_seeded.yaml"
       ],
       "host_preflight": "production-group-process-death"
+    },
+    "production-group-gm004": {
+      "kind": "sims",
+      "capability": "production.group_catalog.gm004",
+      "boundary": "Production UI create/accept/remove and post-removal sends for catalog gm004, with Charlie's rejected send and leak counts, validated by the unchanged original oracle",
+      "timeout_seconds": 2400,
+      "estimated_seconds": null,
+      "requirements": [
+        "dart",
+        "flutter",
+        "adb",
+        "maestro"
+      ],
+      "device_roles": [
+        "android_physical",
+        "android_emulator",
+        "android_emulator_second"
+      ],
+      "references": [
+        "tool/sims/critical_features.json"
+      ],
+      "investigate": [
+        "lib/debug/production_journeys"
+      ],
+      "limitations": "Charlie's post-removal send is a narrow call to the production send use case (no UI composer exists for a removed member).",
+      "disposable_android_package": "com.mknoon.sims.connectivity",
+      "ui_driver": "maestro",
+      "ui_driver_reason": "Maestro drives group creation, both acceptances, Charlie's removal and both proof sends. The removed member's rejected publish has no UI path; a narrow control calls the production send use case once and records the actual outcome. Read-only observations feed the unchanged original oracle.",
+      "maestro_flows": [
+        "integration_test/maestro/production_catalog_group_create.yaml",
+        "integration_test/maestro/production_catalog_invite_accept.yaml",
+        "integration_test/maestro/production_catalog_remove_charlie.yaml",
+        "integration_test/maestro/production_catalog_remove_charlie_retry.yaml",
+        "integration_test/maestro/production_back_to_chat.yaml",
+        "integration_test/maestro/production_verbatim_send.yaml",
+        "integration_test/maestro/production_direct_send.yaml",
+        "integration_test/maestro/production_reopen_seeded.yaml"
+      ],
+      "host_preflight": "production-group-gm004"
     },
     "production-group-invite-matrix": {
       "kind": "sims",
@@ -4027,6 +4067,7 @@
         "integration_test/scripts/run_production_group_online_remove.dart",
         "integration_test/scripts/run_production_group_relay_only.dart",
         "integration_test/scripts/run_production_group_process_death.dart",
+        "integration_test/scripts/run_production_group_gm004.dart",
         "integration_test/scripts/run_production_startup_resume_performance.dart",
         "test/integration/production_performance_*",
         "integration_test/scripts/run_production_group_create.dart",
@@ -4070,6 +4111,7 @@
         "production-group-online-remove",
         "production-group-relay-only",
         "production-group-process-death",
+        "production-group-gm004",
         "production-startup-resume-performance",
         "production-group-create",
         "production-group-reaction",
@@ -7812,6 +7854,14 @@
           "integration_test/maestro/production_group_info_self.yaml"
         ],
         "reason": "Additive production invite-status matrix display proof; the original seeded harness remains unchanged."
+      },
+      {
+        "owner": "full-sims-major",
+        "capability": "production.group_catalog.gm004",
+        "patterns": [
+          "integration_test/scripts/run_production_group_gm004.dart"
+        ],
+        "reason": "Additive production catalog gm004; the original multi-party harness and catalog selectors remain unchanged."
       },
       {
         "owner": "full-sims-major",

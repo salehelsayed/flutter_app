@@ -1,7 +1,10 @@
 import 'package:flutter/widgets.dart';
+import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/groups/application/group_config_payload.dart';
+import 'package:flutter_app/features/groups/application/send_group_message_use_case.dart';
+import 'package:flutter_app/features/groups/domain/repositories/group_invite_delivery_attempt_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_message_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
@@ -14,6 +17,7 @@ import 'production_journey_controller.dart';
 const productionCatalogWatchJourneys = {
   groupCatalogRelayOnlyJourney,
   groupCatalogProcessDeathJourney,
+  groupCatalogGm004Journey,
 };
 
 const _watchedFlowEvents = {
@@ -27,10 +31,12 @@ const _watchedFlowEvents = {
 /// events the original oracle's diagnostics need. Never sends or mutates.
 void bindProductionGroupCatalogWatchControls({
   required ProductionJourneyController controller,
+  required Bridge bridge,
   required P2PService p2pService,
   required IdentityRepository identityRepository,
   required GroupRepository groupRepository,
   required GroupMessageRepository messageRepository,
+  required GroupInviteDeliveryAttemptRepository inviteDeliveryRepository,
 }) {
   if (!productionCatalogWatchJourneys.contains(
     controller.invocation.scenarioId,
@@ -48,6 +54,59 @@ void bindProductionGroupCatalogWatchControls({
     flowEvents.add(Map<String, Object?>.from(event));
   });
   controller.bindDisposer(lease.release);
+
+  // The original removed-member proof: one send attempt by the removed role
+  // through the production use case, recording the actual (rejected) outcome.
+  var removedSendAttempted = false;
+  controller.bindAction('catalog_attempt_removed_send', (args) async {
+    final key = args['key'];
+    final text = args['text'];
+    if (key is! String || text is! String || removedSendAttempted) {
+      throw StateError('removed send attempt refused');
+    }
+    final identity = await identityRepository.loadIdentity();
+    final named = (await groupRepository.getAllGroups())
+        .where((g) => g.name == productionCatalogGroupName(controller))
+        .toList();
+    if (identity == null ||
+        named.length != 1 ||
+        await groupRepository.getMember(named.single.id, identity.peerId) !=
+            null) {
+      throw StateError('exact removed identity and retained group required');
+    }
+    removedSendAttempted = true;
+    final groupId = named.single.id;
+    final scenario = controller.invocation.scenarioId.split('.').last;
+    final messageId =
+        'gmp_${controller.invocation.runId}_${scenario}_${key}_${controller.invocation.role}';
+    final (result, message) = await sendGroupMessage(
+      bridge: bridge,
+      groupRepo: groupRepository,
+      msgRepo: messageRepository,
+      groupId: groupId,
+      text: text,
+      senderPeerId: identity.peerId,
+      senderPublicKey: identity.publicKey,
+      senderPrivateKey: identity.privateKey,
+      senderUsername: identity.username,
+      messageId: messageId,
+      inviteDeliveryAttemptRepo: inviteDeliveryRepository,
+    );
+    return {
+      'key': key,
+      'messageId': message?.id ?? messageId,
+      'text': text,
+      'outcome': result.name,
+      'senderPeerId': identity.peerId,
+      'keyEpoch':
+          message?.keyGeneration ??
+          (await groupRepository.getLatestKey(groupId))?.keyGeneration ??
+          0,
+      'accepted':
+          result == SendGroupMessageResult.success ||
+          result == SendGroupMessageResult.successNoPeers,
+    };
+  });
 
   controller.bindAction('catalog_watch_snapshot', (args) async {
     final identity = await identityRepository.loadIdentity();

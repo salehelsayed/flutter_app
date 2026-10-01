@@ -482,6 +482,10 @@ classify_path() {
       record "support" "$path" "support" "manifest-owned production catalog private_process_death_matrix journey; original route retained"
       return
       ;;
+    integration_test/scripts/run_production_group_gm004.dart)
+      record "support" "$path" "support" "manifest-owned production catalog gm004 journey; original route retained"
+      return
+      ;;
     integration_test/scripts/run_production_group_reaction.dart)
       record "support" "$path" "support" "manifest-owned production group-reaction roundtrip journey; original route retained"
       return
