@@ -59,3 +59,24 @@ Map<String, Object?> productionCatalogBaseVerdict({
 List<Map> productionCatalogRows(Map snapshot, String key) =>
     ((((snapshot['watched'] as Map?)?[key]) as List?) ?? const [])
         .cast<Map>();
+
+/// [productionCatalogSent] plus the durable recipients the debug delivery
+/// observer recorded for the same message id (`deliveries` of a snapshot).
+Map<String, Object?> productionCatalogDurableSent(
+  Map row,
+  String key,
+  List deliveries,
+) {
+  final durable = [
+    for (final d in deliveries)
+      if (d is Map && d['messageId'] == row['messageId'] && d['ok'] == true) d,
+  ];
+  final recipients = durable.isEmpty
+      ? null
+      : [for (final r in durable.last['recipientPeerIds'] as List) '$r'];
+  return {
+    ...productionCatalogSent(row, key),
+    'recipientPeerIds': recipients ?? const <String>[],
+    'actualDurablePayloadProof': recipients != null,
+  };
+}

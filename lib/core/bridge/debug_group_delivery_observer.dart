@@ -30,3 +30,22 @@ set debugGroupDeliveryObserver(GroupDeliveryDebugObserver? observer) {
   }
   _observer = observer;
 }
+
+/// Receives one raw inbound group message or reaction event from the bridge.
+typedef GroupInboundDebugObserver =
+    void Function(String kind, Map<String, dynamic> data);
+
+GroupInboundDebugObserver? _inboundObserver;
+
+/// Debug-build-only seam for production journeys whose original proof counts
+/// the raw group traffic a removed member still receives (catalog GM-016).
+/// Only readable and settable in debug builds.
+GroupInboundDebugObserver? get debugGroupInboundObserver =>
+    kDebugMode ? _inboundObserver : null;
+
+set debugGroupInboundObserver(GroupInboundDebugObserver? observer) {
+  if (!kDebugMode) {
+    throw StateError('group inbound observer is debug-only');
+  }
+  _inboundObserver = observer;
+}

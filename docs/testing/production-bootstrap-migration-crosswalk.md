@@ -2031,3 +2031,51 @@ for byte. Earlier attempts `T160436Z`, `T160535Z` and one ge002 probe were
 BLOCKED by `device_automation_unobserved`: macOS had throttled the hidden
 emulator windows (process priority 4, 10 to 20 s per adb call); the queue now
 waits while either emulator is throttled.
+
+## 2026-10-01 Wave 3 catalog gm020, gm034, gm016, private_history_retention
+
+Four removal-family replacements, each feeding the unchanged original oracle:
+`gm020` (GM-020: Alice's send right after the UI removal, Charlie's verified
+process death, Alice's second send, Charlie's relaunch and leak count),
+`gm034` (GM-034: one message before and one after the removal config update,
+Bob's exact-once receipts, single removal timeline row and final config),
+`gm016` (GM-016: Charlie's leave, five-second quiet window and no post-leave
+traffic, rejoin or discovery) and `private_history_retention` (ML-017).
+Criteria tests: gm020 9, gm034 10, gm016 9, history retention 9.
+
+New read-only facts in the catalog watch snapshot: `configMemberPeerIds`,
+`lastMembershipEventAt`, `memberRemovedTimelineIds`, `inbound` (raw inbound
+group message/reaction counts for the run group) and the leave/join/parse
+flow events. The inbound counts come from a second debug-build-only seam in
+`lib/core/bridge/debug_group_delivery_observer.dart`, called where
+`GoBridgeClient` dispatches `group_message:received` and
+`group_reaction:received` (counts only, null in normal builds). It is not in
+`production_application_bootstrap.dart`, whose content is SHA-pinned by the
+DTR-18 freeze tests. Those freeze tests are red at the branch HEAD
+independently of this work (the bootstrap file and the test last changed in
+c4b38285f); they run only in `core-host-all`.
+
+| Check | Pass run | Negative probe | Probe outcome |
+|---|---|---|---|
+| gm020 | `wave3-run-20261001T171300Z` (`attempt-Dv8wgn`) | Charlie stays online: `T174221Z` (`attempt-WCmM2K`) | FAIL, original oracle: `charlieUnavailableBeforeOfflinePostRemoval` / `unavailableBeforeOfflinePostRemoval must be true` |
+| gm034 | `T172040Z` (`attempt-bVoNiN`) | Charlie never removed: `T175553Z` (`attempt-8ResA3`) | FAIL: "Bob excludes Charlie" |
+| gm016 | `T173533Z` (`attempt-cGos4W`) | quiet window 1 s: `T182359Z` (`attempt-OAH5sj`) | FAIL, original oracle: `postLeaveQuietWindowMs >= 3000` |
+| private_history_retention | none (see below) | Charlie never removed: `T180927Z` (`attempt-5618nH`) | FAIL: "Bob excludes Charlie" |
+
+GM-016 caveat: the original also counts `GROUP_DECRYPTION_FAILED`, which
+production no longer emits anywhere; that count is always zero and proves
+nothing.
+
+**ML-017 (`private_history_retention`) does not pass, by one stale original
+expectation.** Run `T183726Z` (`attempt-FJSkvN`) completed the whole journey;
+every other original field held (retained group and pre-removal history, no
+current key, self member removed, no post-removal plaintext, rotated epoch on
+Alice and Bob, remaining-pair delivery). The only failures:
+`postRemovalSendRejected must be true` and `postRemovalSendOutcome must be
+unauthorized`. Production rejects the removed member's publish with
+`groupNotFound`: since Plan 263 the send use case returns `groupNotFound`
+once the group carries the self-removed marker
+(`send_group_message_use_case.dart`, `group.selfRemovedAt != null`). The
+original pins the pre-Plan-263 outcome. Left failing for a decision; the
+oracle is not changed. (`T172713Z` failed earlier on a late invitation, an
+infrastructure delay.)

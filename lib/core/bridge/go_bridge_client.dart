@@ -761,6 +761,7 @@ class GoBridgeClient extends Bridge {
           break;
 
         case 'group_message:received':
+          _observeGroupInbound('message', eventData);
           if (onGroupMessageReceived != null) {
             try {
               onGroupMessageReceived!(eventData);
@@ -788,6 +789,7 @@ class GoBridgeClient extends Bridge {
           break;
 
         case 'group_reaction:received':
+          _observeGroupInbound('reaction', eventData);
           if (onGroupReactionReceived != null) {
             try {
               onGroupReactionReceived!(eventData);
@@ -890,6 +892,16 @@ class GoBridgeClient extends Bridge {
       debugPrint(
         '[GoBridgeClient] Error handling event: ${sanitizeDiagnosticText(e)}',
       );
+    }
+  }
+
+  void _observeGroupInbound(String kind, Object? eventData) {
+    final observer = debugGroupInboundObserver;
+    if (observer == null || eventData is! Map<String, dynamic>) return;
+    try {
+      observer(kind, eventData);
+    } catch (_) {
+      // A debug observer never affects inbound group delivery.
     }
   }
 

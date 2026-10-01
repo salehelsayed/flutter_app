@@ -32,10 +32,20 @@ const productionCatalogWatchJourneys = {
   groupCatalogDe003Journey,
   groupCatalogGe002Journey,
   groupCatalogGe003Journey,
+  groupCatalogGm020Journey,
+  groupCatalogGm034Journey,
+  groupCatalogHistoryRetentionJourney,
+  groupCatalogGm016Journey,
 };
 
 const _watchedFlowEvents = {
   'GROUP_DISCOVERY',
+  'GROUP_FL_BRIDGE_LEAVE_REQUEST',
+  'GROUP_FL_BRIDGE_LEAVE_RESPONSE',
+  'GROUP_FL_BRIDGE_JOIN_REQUEST',
+  'GROUP_FL_BRIDGE_JOIN_CONFIG_REQUEST',
+  'GROUP_PAYLOAD_PARSE_FAILED',
+  'GROUP_DECRYPTION_FAILED',
   'GROUP_SEND_MSG_USE_CASE_SUCCESS',
   'GROUP_SEND_MSG_USE_CASE_SUCCESS_NO_PEERS',
   ..._drainFlowEvents,
@@ -113,6 +123,17 @@ void bindProductionGroupCatalogWatchControls({
     });
   };
   controller.bindDisposer(() => debugGroupDeliveryObserver = null);
+
+  // Raw inbound group traffic per group id, for originals that count what a
+  // removed member still receives. Counts only; payloads are not retained.
+  final inbound = <String, Map<String, int>>{};
+  debugGroupInboundObserver = (kind, data) {
+    final groupId = data['groupId'];
+    if (groupId is! String) return;
+    final counts = inbound.putIfAbsent(groupId, () => {});
+    counts[kind] = (counts[kind] ?? 0) + 1;
+  };
+  controller.bindDisposer(() => debugGroupInboundObserver = null);
 
   // The original removed-member proof: one send attempt by the removed role
   // through the production use case, recording the actual (rejected) outcome.
@@ -296,16 +317,26 @@ void bindProductionGroupCatalogWatchControls({
       limit: 500,
     );
     final watched = (args['texts'] as Map?) ?? const {};
+    final config = buildGroupConfigPayload(group, members);
     return {
       ...base,
       'groupId': group.id,
       'topicName': group.topicName,
       'keyEpoch':
           (await groupRepository.getLatestKey(group.id))?.keyGeneration ?? 0,
-      'groupConfigStateHash': buildGroupConfigPayload(
-        group,
-        members,
-      )[groupConfigStateHashField],
+      'groupConfigStateHash': config[groupConfigStateHashField],
+      'configMemberPeerIds': [
+        for (final m in (config['members'] as List? ?? const []))
+          if (m is Map && m['peerId'] is String) m['peerId'] as String,
+      ],
+      'lastMembershipEventAt': group.lastMembershipEventAt
+          ?.toUtc()
+          .toIso8601String(),
+      'memberRemovedTimelineIds': [
+        for (final m in messages)
+          if (m.id.startsWith('sys-member_removed:')) m.id,
+      ],
+      'inbound': inbound[group.id] ?? const {},
       'memberPeerIds': [for (final m in members) m.peerId],
       'selfMember': members.any((m) => m.peerId == identity.peerId),
       'timelineTexts': [
