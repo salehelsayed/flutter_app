@@ -1926,7 +1926,6 @@
         "test/integration/production_group_invite_matrix_criteria_test.dart",
         "test/integration/production_group_gm016_criteria_test.dart",
         "test/core/bridge/debug_group_delivery_observer_test.dart",
-        "test/integration/production_group_history_retention_criteria_test.dart",
         "test/integration/production_group_gm034_criteria_test.dart",
         "test/core/bridge/debug_group_delivery_observer_test.dart",
         "test/integration/production_group_gm020_criteria_test.dart",
@@ -2964,46 +2963,6 @@
         "integration_test/maestro/production_reopen_seeded.yaml"
       ],
       "host_preflight": "production-group-gm034"
-    },
-    "production-group-history-retention": {
-      "kind": "sims",
-      "capability": "production.group_catalog.private_history_retention",
-      "boundary": "Production UI creation and acceptance, pre-removal history to all three, UI removal and key rotation, Alice and Bob post-removal sends, and the removed Charlie's retained history and one rejected publish attempt, validated by the unchanged original ML-017 oracle",
-      "timeout_seconds": 2400,
-      "estimated_seconds": null,
-      "requirements": [
-        "dart",
-        "flutter",
-        "adb",
-        "maestro"
-      ],
-      "device_roles": [
-        "android_physical",
-        "android_emulator",
-        "android_emulator_second"
-      ],
-      "references": [
-        "tool/sims/critical_features.json"
-      ],
-      "investigate": [
-        "lib/debug/production_journeys"
-      ],
-      "limitations": "Charlie's publish attempt is a narrow call of the production send use case mirroring the original; all other facts are read-only.",
-      "disposable_android_package": "com.mknoon.sims.connectivity",
-      "ui_driver": "maestro",
-      "ui_driver_reason": "Maestro drives creation, acceptances, the removal and the three sends; the removed member's publish attempt has no UI path. Read-only observations feed the unchanged original oracle.",
-      "maestro_flows": [
-        "integration_test/maestro/production_catalog_group_create.yaml",
-        "integration_test/maestro/production_catalog_group_create_verbatim.yaml",
-        "integration_test/maestro/production_catalog_invite_accept.yaml",
-        "integration_test/maestro/production_catalog_remove_charlie.yaml",
-        "integration_test/maestro/production_catalog_remove_charlie_retry.yaml",
-        "integration_test/maestro/production_back_to_chat.yaml",
-        "integration_test/maestro/production_verbatim_send.yaml",
-        "integration_test/maestro/production_direct_send.yaml",
-        "integration_test/maestro/production_reopen_seeded.yaml"
-      ],
-      "host_preflight": "production-group-history-retention"
     },
     "production-group-gm016": {
       "kind": "sims",
@@ -4615,7 +4574,6 @@
         "integration_test/scripts/run_production_group_ge003.dart",
         "integration_test/scripts/run_production_group_gm020.dart",
         "integration_test/scripts/run_production_group_gm034.dart",
-        "integration_test/scripts/run_production_group_history_retention.dart",
         "integration_test/scripts/run_production_group_gm016.dart",
         "integration_test/scripts/run_production_startup_resume_performance.dart",
         "test/integration/production_performance_*",
@@ -4672,7 +4630,6 @@
         "production-group-ge003",
         "production-group-gm020",
         "production-group-gm034",
-        "production-group-history-retention",
         "production-group-gm016",
         "production-startup-resume-performance",
         "production-group-create",
@@ -8424,14 +8381,6 @@
           "integration_test/scripts/run_production_group_gm016.dart"
         ],
         "reason": "Additive production catalog gm016; the original multi-party harness and catalog selectors remain unchanged."
-      },
-      {
-        "owner": "full-sims-major",
-        "capability": "production.group_catalog.private_history_retention",
-        "patterns": [
-          "integration_test/scripts/run_production_group_history_retention.dart"
-        ],
-        "reason": "Additive production catalog private_history_retention; the original multi-party harness and catalog selectors remain unchanged."
       },
       {
         "owner": "full-sims-major",

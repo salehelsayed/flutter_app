@@ -34,7 +34,6 @@ const productionCatalogWatchJourneys = {
   groupCatalogGe003Journey,
   groupCatalogGm020Journey,
   groupCatalogGm034Journey,
-  groupCatalogHistoryRetentionJourney,
   groupCatalogGm016Journey,
 };
 

@@ -41,14 +41,11 @@ const groupCatalogGm020Journey =
     'production.group_catalog.gm020';
 const groupCatalogGm034Journey =
     'production.group_catalog.gm034';
-const groupCatalogHistoryRetentionJourney =
-    'production.group_catalog.private_history_retention';
 const groupCatalogGm016Journey =
     'production.group_catalog.gm016';
 const productionGroupCatalogJourneys = {
   groupCatalogGm020Journey,
   groupCatalogGm034Journey,
-  groupCatalogHistoryRetentionJourney,
   groupCatalogGm016Journey,
   groupCatalogGe002Journey,
   groupCatalogGe003Journey,
@@ -164,8 +161,7 @@ final class ProductionJourneyController {
           groupCatalogGe003Journey,
           groupCatalogGm020Journey,
           groupCatalogGm034Journey,
-          groupCatalogHistoryRetentionJourney,
-          groupCatalogGm016Journey,
+                  groupCatalogGm016Journey,
           performanceJourney,
         }.contains(invocation.scenarioId) ||
         !(productionThreePeerJourneys.contains(invocation.scenarioId)

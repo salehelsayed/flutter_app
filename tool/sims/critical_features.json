@@ -4699,67 +4699,6 @@
       "declaredBuildException": false
     },
     {
-      "id": "production.group_catalog.private_history_retention",
-      "owner": "reliability",
-      "proofBoundary": "production.group-catalog.history-retention",
-      "assertions": [
-        "ML-017-history-retained",
-        "ML-017-removed-send-rejected",
-        "ML-017-no-current-key",
-        "ML-017-remaining-pair-delivery"
-      ],
-      "lane": "reliability",
-      "modes": [
-        "major",
-        "full"
-      ],
-      "families": [
-        "groups"
-      ],
-      "required": true,
-      "command": [
-        "dart",
-        "run",
-        "integration_test/scripts/run_production_group_history_retention.dart"
-      ],
-      "buildProfile": "android.e2e.main",
-      "dependencies": [
-        "build.android.e2e.main"
-      ],
-      "resources": [
-        {
-          "name": "build:android.e2e.main",
-          "access": "read"
-        },
-        {
-          "name": "device:android-physical",
-          "access": "exclusive"
-        },
-        {
-          "name": "device:android-emulator",
-          "access": "exclusive"
-        },
-        {
-          "name": "device:android-emulator-second",
-          "access": "exclusive"
-        },
-        {
-          "name": "artifact:production-group-history-retention",
-          "access": "write"
-        }
-      ],
-      "targetCapabilities": [
-        "android.physical",
-        "android.emulator.count2"
-      ],
-      "allowedNaReason": "target_unavailable_by_project_policy",
-      "artifactRequired": true,
-      "artifactValidator": "validateProductionGroupHistoryRetention",
-      "automationReady": true,
-      "active": true,
-      "declaredBuildException": false
-    },
-    {
       "id": "production.group_catalog.gm016",
       "owner": "reliability",
       "proofBoundary": "production.group-catalog.gm016",

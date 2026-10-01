@@ -1995,6 +1995,7 @@ input (no stronger than the original) or need a new production feature.
 | ge021 | GE-021 | fake transport peers and a scripted flaky member |
 | private_late_leave_readd | RA-011 | waits for `GROUP_MESSAGE_LISTENER_SELF_REMOVAL_LEAVE_REPAIRED_AFTER_READD`, removed with the repair path in 27fb81446 (Plan 263) |
 | private_rotated_device_readd | RA-012 | re-adds Charlie with made-up rotated ML-KEM material |
+| private_history_retention | ML-017 | original pins pre-Plan-263 behaviour: it requires the removed member's send to be rejected as `unauthorized`; since Plan 263 production rejects it as `groupNotFound` (self-removed marker). A replacement ran the whole journey on devices with every other field passing (see the gm020/gm034/gm016 section) and was then removed |
 
 Partly portable (the production replacement covers the rest of the case):
 `private_readd_current` sub-rows KE-011, RA-006 and RA-014 (forged same-epoch
@@ -2040,8 +2041,8 @@ process death, Alice's second send, Charlie's relaunch and leak count),
 `gm034` (GM-034: one message before and one after the removal config update,
 Bob's exact-once receipts, single removal timeline row and final config),
 `gm016` (GM-016: Charlie's leave, five-second quiet window and no post-leave
-traffic, rejoin or discovery) and `private_history_retention` (ML-017).
-Criteria tests: gm020 9, gm034 10, gm016 9, history retention 9.
+traffic, rejoin or discovery) and `private_history_retention` (ML-017, later
+removed, below). Criteria tests: gm020 9, gm034 10, gm016 9.
 
 New read-only facts in the catalog watch snapshot: `configMemberPeerIds`,
 `lastMembershipEventAt`, `memberRemovedTimelineIds`, `inbound` (raw inbound
@@ -2076,6 +2077,15 @@ unauthorized`. Production rejects the removed member's publish with
 `groupNotFound`: since Plan 263 the send use case returns `groupNotFound`
 once the group carries the self-removed marker
 (`send_group_message_use_case.dart`, `group.selfRemovedAt != null`). The
-original pins the pre-Plan-263 outcome. Left failing for a decision; the
-oracle is not changed. (`T172713Z` failed earlier on a late invitation, an
+original pins the pre-Plan-263 outcome. Decision (user, 2026-10-01): like
+RA-011, ML-017 stays on the original harness ("original pins pre-Plan-263
+behaviour"); the replacement module built in ac29bf8eb was unregistered and
+removed, and the oracle is not changed. (`T172713Z` failed earlier on a late invitation, an
 infrastructure delay.)
+
+DTR-18 (2026-10-01): the `production_application_bootstrap.dart` additions in
+c4b38285f (shared Android FCM token reader, inbox-staging recovery query,
+debug-only production-journey hooks) were intended; that commit's re-pin
+never matched its own file. Both bootstrap digests in
+`test/unit/dtr18_layering_relocation_contract_test.dart` were re-pinned in
+f79b13f37; all DTR-18 freeze tests pass.

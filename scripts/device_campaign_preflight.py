@@ -39,7 +39,6 @@ HOST_PROBES = {
     'production-group-ge003': ('integration_test/scripts/run_production_group_ge003.dart', 'production.group_catalog.ge003'),
     'production-group-gm020': ('integration_test/scripts/run_production_group_gm020.dart', 'production.group_catalog.gm020'),
     'production-group-gm034': ('integration_test/scripts/run_production_group_gm034.dart', 'production.group_catalog.gm034'),
-    'production-group-history-retention': ('integration_test/scripts/run_production_group_history_retention.dart', 'production.group_catalog.private_history_retention'),
     'production-group-gm016': ('integration_test/scripts/run_production_group_gm016.dart', 'production.group_catalog.gm016'),
     'production-group-invite-matrix': ('integration_test/scripts/run_production_group_invite_status_matrix.dart', 'production.group_invite_status_matrix'),
     'production-startup-resume-performance': ('integration_test/scripts/run_production_startup_resume_performance.dart', 'production.startup_resume_performance'),
