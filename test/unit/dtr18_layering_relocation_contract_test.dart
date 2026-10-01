@@ -338,12 +338,17 @@ const _productionBootstrapNormalizedSha256 =
     // same owner. App composition and all adapter/lifecycle layers stay here.
     // Protected group replay now reads the existing active node transport;
     // the app-owned replay handler and account/lifecycle owners remain here.
-    'e2aee3a3a48c69f67eb9d8038a37141ad0b2120fcb44864d1b7727dd5a7753ee';
+    // Re-pinned 2026-10-01: the c4b38285f snapshot added the shared Android
+    // FCM token reader (chat and call registration read one generation), the
+    // inbox-staging recovery query and the debug-only production-journey
+    // hooks; that commit's pin never matched its own bootstrap.
+    '4196305a7f1b26f992db88e285a6f585a071a32b907400e0307c66e53faec455';
 
 // The P269 strict-custody proof forwards two optional debug download hooks
 // at the existing media owner; no application or notification owner moves.
+// Re-pinned 2026-10-01 for the same c4b38285f bootstrap additions.
 const _productionBootstrapWithoutHistoricalNotificationSha256 =
-    'f75953d45f3e056acb4f22eb857481c035bcfcb44354230886be7f8134193fe2';
+    '3407d8ecfadf1ad3210cb5d287790dd9555a18fd05fc60d3cc69756b2c480c1a';
 
 const _reviewedResumeExceptionTargets = <String>{
   'lib/features/account_migration/application/'
