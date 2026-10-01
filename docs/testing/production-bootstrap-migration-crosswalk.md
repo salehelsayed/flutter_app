@@ -1906,3 +1906,55 @@ Device: `wave3-run-20261001T094409Z/` PASS at the first attempt, oracle
 `failures: []` (`attempt-Ow8l2I/`); cleanup exact. Negative probe (Charlie
 stays online): `T095251Z` (`attempt-f3equa/`) FAILED at "verified Charlie
 process death"; cleanup exact; runner restored byte-for-byte.
+
+## 2026-10-01 Wave 3 catalog gm006, private_offline_readd, gm001, ge001, de003
+
+`production.group_catalog.gm006` (GM-006 immediate re-add) and
+`production.group_catalog.private_offline_readd` (RA-003) remove Charlie
+through group info, send the original removed-window text from Alice, re-add
+Charlie through Add Member, and have Charlie accept from the Intros tab. RA-003
+first takes Charlie offline (verified process death) and resolves the removal
+on an ordinary relaunch. `tool/sims/production_group_gm006_criteria.dart`
+(12 tests) and `tool/sims/production_group_offline_readd_criteria.dart`
+(13 tests) feed the unchanged original oracle. Charlie's removed-window leak
+count is before plus after the re-add, as the original counts it.
+
+`production.group_catalog.gm001` (GM-001 and DE-001), `ge001` (GE-001) and
+`de003` (DE-003) share `integration_test/support/production_catalog_send_journey.dart`:
+UI creation and acceptance, then an ordered list of original proof sends, each
+observed once on every other member. `tool/sims/production_catalog_send_sequence.dart`
+builds the per-role verdicts; `tool/sims/production_group_send_cases_criteria.dart`
+adds the DE-001 and DE-003 proof maps (22 tests). DE-003's replay check is one
+explicit call of the production catch-up drain (`catalog_drain_once`) on each
+receiver, mirroring the original.
+
+Support changes: the pending-invitation observation now lets a new invitation
+bind after the earlier one was seen leaving the pending list (a re-add without
+a restart sends a second invitation for the same group), and
+`ProductionCatalogSession.invitedAndAccept` waits for the accepted invitation
+to leave that list. New flow `production_home_tabs.yaml`.
+
+Device:
+
+| Check | Pass run | Negative probe | Probe outcome |
+|---|---|---|---|
+| gm006 | `wave3-run-20261001T141947Z` (`attempt-5HwUH7`) | Charlie never accepts the re-add: `T153259Z` (`attempt-P8BPVd`) | FAIL: Charlie's group observation refused an ambiguous or replaced run group once the unaccepted re-add invitation arrived (cause not diagnosed) |
+| private_offline_readd | `T130707Z` (`attempt-pdypSe`) | Charlie stays online: `T143645Z` (`attempt-RvVecM`) | FAIL: "Charlie process death verified before the removal" |
+| gm001 | `T131906Z` (`attempt-QvtUiO`) | Charlie never accepts: `T145420Z` (`attempt-3XFH23`) | FAIL: "charlie settled 3-member group" timeout |
+| ge001 | `T132631Z` (`attempt-pfYmkt`) | Bob sends an altered text: `T150726Z` (`attempt-BlcTC5`) | FAIL: "alice receives bobGe001Initial" timeout |
+| de003 | `T143047Z` (`attempt-Fb5aMO`) | receivers skip the drain: `T152127Z` (`attempt-aUFRVg`) | FAIL: original oracle, `duplicateReplayDeduped must be true` for bob and charlie |
+
+Every pass has oracle `failures: []` and no membership-edit retries; every
+probe file was restored byte for byte. Earlier attempts were lost to
+infrastructure, not to the journeys: ADB and Maestro timeouts while the Mac
+load average was 60 to 107 on 12 cores, `device_lease_unavailable` while
+another session's check campaign ran, and `sims_report_verification_failed`
+(`T133454Z`) because another session edited the checkout during the run.
+Later runs waited for 20 minutes without foreign edits to the report's source
+roots.
+
+Not portable as written: RA-011 (`private_late_leave_readd`) waits for
+`GROUP_MESSAGE_LISTENER_SELF_REMOVAL_LEAVE_REPAIRED_AFTER_READD`, which
+production stopped emitting when the repair path was removed in 27fb81446
+(Plan 263); RA-012 (`private_rotated_device_readd`) re-adds Charlie with
+made-up rotated ML-KEM material that the app never produces.

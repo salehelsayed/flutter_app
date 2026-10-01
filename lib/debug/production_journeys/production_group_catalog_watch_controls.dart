@@ -22,6 +22,11 @@ const productionCatalogWatchJourneys = {
   groupCatalogGm004Journey,
   groupCatalogGm005Journey,
   groupCatalogOfflineRemoveJourney,
+  groupCatalogGm006Journey,
+  groupCatalogOfflineReaddJourney,
+  groupCatalogGm001Journey,
+  groupCatalogGe001Journey,
+  groupCatalogDe003Journey,
 };
 
 const _watchedFlowEvents = {
@@ -198,6 +203,27 @@ void bindProductionGroupCatalogWatchControls({
       'drainSignatureRejectedCount': signatureRejected,
       'drainDecodeSkippedCount': decodeSkipped,
     };
+  });
+
+  // The original DE-003 replay check: one explicit production catch-up drain
+  // of the run group; the host then counts the rows by message id.
+  controller.bindAction('catalog_drain_once', (_) async {
+    final identity = await identityRepository.loadIdentity();
+    final named = (await groupRepository.getAllGroups())
+        .where((g) => g.name == productionCatalogGroupName(controller))
+        .toList();
+    if (identity == null || named.length != 1) {
+      throw StateError('exact run group required for catch-up drain');
+    }
+    await drainGroupOfflineInboxForGroup(
+      bridge: bridge,
+      groupRepo: groupRepository,
+      msgRepo: messageRepository,
+      groupId: named.single.id,
+      groupMessageListener: groupMessageListener,
+      selfPeerId: identity.peerId,
+    );
+    return {'completedDrainCount': 1};
   });
 
   controller.bindAction('catalog_watch_snapshot', (args) async {

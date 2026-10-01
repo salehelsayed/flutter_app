@@ -1,0 +1,9 @@
+appId: ${APP_ID}
+name: production_home_tabs
+---
+- runFlow:
+    when:
+      notVisible: '(?s)^Intros.*$'
+    commands:
+      - back
+- assertVisible: '(?s)^Intros.*$'

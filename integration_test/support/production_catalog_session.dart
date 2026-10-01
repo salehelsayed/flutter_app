@@ -272,6 +272,14 @@ final class ProductionCatalogSession {
     await flow(role, 'production_catalog_invite_accept', label, {
       'GROUP_NAME': groupName,
     });
+    // The accepted invitation leaves the pending list; observing that lets a
+    // later re-add invitation bind as a new one.
+    await wait(
+      role,
+      'catalog_pending_snapshot',
+      '$role invitation consumed',
+      (s) => (s['pending'] as List).isEmpty,
+    );
   }
 
   Future<void> killAndRecover(String role, String kill) async {

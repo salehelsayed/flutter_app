@@ -161,6 +161,9 @@ void bindProductionGroupCatalogInviteObservations({
     final pending = (await pendingRepository.getPendingInvites())
         .where((i) => i.groupName == name)
         .toList();
+    // A bound invitation seen leaving the pending list was consumed (accepted
+    // or declined); a later re-add invitation may then bind afresh.
+    if (pending.isEmpty) boundInviteId = null;
     if (pending.length > 1 ||
         (boundInviteId != null &&
             pending.any((i) => i.inviteId != boundInviteId))) {
