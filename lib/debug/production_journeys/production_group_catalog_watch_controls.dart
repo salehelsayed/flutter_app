@@ -11,7 +11,10 @@ import 'production_journey_controller.dart';
 
 /// Catalog journeys whose original proof reads production flow diagnostics
 /// (for example NW-002 `group:discovery` route events).
-const productionCatalogWatchJourneys = {groupCatalogRelayOnlyJourney};
+const productionCatalogWatchJourneys = {
+  groupCatalogRelayOnlyJourney,
+  groupCatalogProcessDeathJourney,
+};
 
 const _watchedFlowEvents = {
   'GROUP_DISCOVERY',

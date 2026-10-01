@@ -1,0 +1,6 @@
+appId: ${APP_ID}
+name: production_back_to_chat
+---
+- back
+- assertVisible:
+    id: chat_composer

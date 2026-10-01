@@ -1,0 +1,15 @@
+appId: ${APP_ID}
+name: production_catalog_remove_charlie_retry
+---
+- assertVisible: Group Info
+- scrollUntilVisible:
+    element:
+      id: 'group-member-remove-${CHARLIE_PEER_ID}'
+    direction: DOWN
+- tapOn:
+    id: 'group-member-remove-${CHARLIE_PEER_ID}'
+- assertVisible: 'Remove Journeycharlie from the group\?'
+- tapOn: Remove
+- assertVisible: '(?s)^.*\n2 members\n.*$'
+- assertNotVisible:
+    id: 'group-member-remove-${CHARLIE_PEER_ID}'

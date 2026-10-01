@@ -1,0 +1,12 @@
+appId: ${APP_ID}
+name: production_verbatim_send
+---
+- tapOn:
+    id: chat_composer
+- inputText: ${MESSAGE}
+- assertVisible:
+    id: chat_composer
+    text: '(?-i)^${MESSAGE_PATTERN}$'
+- tapOn:
+    id: chat_send
+- assertVisible: '(?s-i)^.*\n${MESSAGE_PATTERN}\n.*$'

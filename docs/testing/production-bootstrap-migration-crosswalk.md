@@ -1776,3 +1776,51 @@ Host: focused Dart tests (124) and Go tests pass; curated `workflow`,
 `notifications` passed. `go-core` ran 1,909 tests with 0 failures and 2
 pre-existing skips and is classified BLOCKED by its own "skips remain
 incomplete" rule; neither skip is from this change.
+
+## 2026-10-01 Wave 3 catalog private_process_death_matrix
+
+`production.group_catalog.private_process_death_matrix` (ST-007; USB Pixel 6
+Alice, `emulator-5554` Bob, `emulator-5556` Charlie) reproduces the original
+sequence with real UI: Alice creates the group with Bob, adds Charlie from
+Group Info (Charlie accepts the invitation), removes Charlie, and re-adds him.
+Charlie is killed right after the add is persisted, Bob right after the
+removal is persisted, and Charlie again after the re-add, each with the
+journey's verified owned-UID `kill -9` and an ordinary relaunch; recovery,
+removed-window exclusion and post-restart delivery are observed read-only.
+`tool/sims/production_group_process_death_criteria.dart` (12 tests) carries the
+original checkpoint/killed-role catalog verbatim and feeds the unchanged
+original oracle; received entries are taken at receipt time, as the original
+records them.
+
+New production accessibility identifier: Group Info's Add Member button is now
+`Semantics(identifier: 'group-info-add-member', button: true)` (its text was
+merged into the Members node and could not be targeted), with
+`test/features/groups/presentation/widgets/group_info_add_member_accessibility_test.dart`;
+the five existing Group Info test files (28 tests) still pass.
+
+Findings and runner measures, all retained as attempts with exact cleanup:
+- `wave3-run-20261001T070820Z`: Add Member not targetable (fixed by the
+  identifier above).
+- `T072202Z` and `T073934Z`: the app refused the add/remove with "Group
+  recovery is in progress". The refusal gate is also held by background work
+  such as the pending-message retrier (`pending_message_retrier.dart:783`), so
+  real users can be refused at random; this is recorded as a product finding.
+  The runner waits for a quiet group (every invite attempt joined and recovery
+  inactive for three consecutive seconds) and retries a refused edit the way a
+  user would, at most three times, recording each retry.
+- `T072857Z` and `T074823Z`: the USB Pixel's SwiftKey autocorrected the
+  original text ("readd" became "read"). `T075851Z`: switching the whole run
+  to the Appium keyboard broke `hideKeyboard` (it pressed Back). Final measure:
+  for each proof send only, the device is switched to the installed Appium
+  keyboard (verbatim, no on-screen keyboard), sends through
+  `production_verbatim_send`, and its own keyboard is restored immediately;
+  `emulator-5556` has no Appium keyboard and uses its own with the same exact
+  composer check. Every switch is recorded; keyboards were verified restored.
+
+Pass: `wave3-run-20261001T080438Z/` PASS, oracle `failures: []`
+(`attempt-cvPXUe/`): kills `charlie:add`, `bob:remove`, `charlie:readd` all
+verified; no membership-edit retries needed; cleanup exact on all three devices.
+
+Negative probe: without Bob's kill at the removal checkpoint the run FAILED at
+"bob:remove: verified owned-process kill" (`T081521Z`, `attempt-dtJrUv/`);
+cleanup exact, runner restored byte-for-byte, keyboards restored.

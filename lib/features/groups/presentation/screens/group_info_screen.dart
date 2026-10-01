@@ -645,36 +645,43 @@ class GroupInfoScreen extends StatelessWidget {
 
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-      child: GestureDetector(
+      child: Semantics(
+        identifier: 'group-info-add-member',
+        label: l10n.group_add_member,
+        button: true,
         onTap: onAddMember,
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-          decoration: BoxDecoration(
-            color: actionBlue.withValues(
-              alpha: readableColors.isLightSurface ? 0.08 : 0.10,
-            ),
-            borderRadius: BorderRadius.circular(10),
-            border: Border.all(
+        excludeSemantics: true,
+        child: GestureDetector(
+          onTap: onAddMember,
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            decoration: BoxDecoration(
               color: actionBlue.withValues(
-                alpha: readableColors.isLightSurface ? 0.20 : 0.18,
+                alpha: readableColors.isLightSurface ? 0.08 : 0.10,
               ),
-              width: 0.5,
-            ),
-          ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(Icons.person_add_outlined, size: 20, color: actionBlue),
-              const SizedBox(width: 8),
-              Text(
-                l10n.group_add_member,
-                style: TextStyle(
-                  fontSize: 14,
-                  fontWeight: FontWeight.w500,
-                  color: actionBlue,
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(
+                color: actionBlue.withValues(
+                  alpha: readableColors.isLightSurface ? 0.20 : 0.18,
                 ),
+                width: 0.5,
               ),
-            ],
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(Icons.person_add_outlined, size: 20, color: actionBlue),
+                const SizedBox(width: 8),
+                Text(
+                  l10n.group_add_member,
+                  style: TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w500,
+                    color: actionBlue,
+                  ),
+                ),
+              ],
+            ),
           ),
         ),
       ),

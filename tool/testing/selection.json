@@ -1924,6 +1924,8 @@
         "test/integration/production_group_invite_activation_test.dart",
         "test/integration/production_group_invite_controls_test.dart",
         "test/integration/production_group_invite_matrix_criteria_test.dart",
+        "test/integration/production_group_process_death_criteria_test.dart",
+        "test/features/groups/presentation/widgets/group_info_add_member_accessibility_test.dart",
         "test/integration/production_group_relay_only_criteria_test.dart",
         "test/core/bridge/debug_node_feature_flags_test.dart",
         "test/integration/production_group_online_remove_criteria_test.dart",
@@ -2423,6 +2425,49 @@
         "integration_test/maestro/production_reopen_seeded.yaml"
       ],
       "host_preflight": "production-group-relay-only"
+    },
+    "production-group-process-death": {
+      "kind": "sims",
+      "capability": "production.group_catalog.private_process_death_matrix",
+      "boundary": "Production UI create/add/remove/re-add with three verified owned-process kills (Charlie at add, Bob at removal, Charlie at re-add) and recovery, validated by the unchanged original ST-007 oracle",
+      "timeout_seconds": 2400,
+      "estimated_seconds": null,
+      "requirements": [
+        "dart",
+        "flutter",
+        "adb",
+        "maestro"
+      ],
+      "device_roles": [
+        "android_physical",
+        "android_emulator",
+        "android_emulator_second"
+      ],
+      "references": [
+        "tool/sims/critical_features.json"
+      ],
+      "investigate": [
+        "lib/debug/production_journeys"
+      ],
+      "limitations": "Kills happen after the operation is persisted on the dying role, as in the original; the original's checkpoint and killed-role catalog strings are carried verbatim. Adds are real UI invitations accepted by Charlie instead of the original's direct fixture import.",
+      "disposable_android_package": "com.mknoon.sims.connectivity",
+      "ui_driver": "maestro",
+      "ui_driver_reason": "Maestro drives group creation, member add and re-add through Group Info, invitation acceptance, removal and every proof send. Process death uses the journey's verified owned-UID kill and an ordinary relaunch; read-only repository observations capture persisted, recovered and receipt-time state for the unchanged original oracle.",
+      "maestro_flows": [
+        "integration_test/maestro/production_verbatim_send.yaml",
+        "integration_test/maestro/production_group_open.yaml",
+        "integration_test/maestro/production_catalog_remove_charlie_retry.yaml",
+        "integration_test/maestro/production_group_info_add_member_retry.yaml",
+        "integration_test/maestro/production_group_create.yaml",
+        "integration_test/maestro/production_catalog_invite_accept.yaml",
+        "integration_test/maestro/production_group_info_add_member.yaml",
+        "integration_test/maestro/production_direct_send.yaml",
+        "integration_test/maestro/production_catalog_remove_charlie.yaml",
+        "integration_test/maestro/production_back_to_chat.yaml",
+        "integration_test/maestro/production_group_send.yaml",
+        "integration_test/maestro/production_reopen_seeded.yaml"
+      ],
+      "host_preflight": "production-group-process-death"
     },
     "production-group-invite-matrix": {
       "kind": "sims",
@@ -3981,6 +4026,7 @@
         "integration_test/scripts/run_production_group_new_member_media.dart",
         "integration_test/scripts/run_production_group_online_remove.dart",
         "integration_test/scripts/run_production_group_relay_only.dart",
+        "integration_test/scripts/run_production_group_process_death.dart",
         "integration_test/scripts/run_production_startup_resume_performance.dart",
         "test/integration/production_performance_*",
         "integration_test/scripts/run_production_group_create.dart",
@@ -3997,6 +4043,8 @@
         "integration_test/scripts/run_production_group_removed_reaction.dart",
         "lib/features/groups/presentation/widgets/group_member_row.dart",
         "test/features/groups/presentation/widgets/group_member_remove_accessibility_test.dart",
+        "lib/features/groups/presentation/screens/group_info_screen.dart",
+        "test/features/groups/presentation/widgets/group_info_add_member_accessibility_test.dart",
         "integration_test/support/production_android_artifact.dart",
         "integration_test/support/production_provider_delivery.dart",
         "scripts/test/provider_delivery_preflight_test.py",
@@ -4021,6 +4069,7 @@
         "production-group-new-member-media",
         "production-group-online-remove",
         "production-group-relay-only",
+        "production-group-process-death",
         "production-startup-resume-performance",
         "production-group-create",
         "production-group-reaction",
@@ -7763,6 +7812,19 @@
           "integration_test/maestro/production_group_info_self.yaml"
         ],
         "reason": "Additive production invite-status matrix display proof; the original seeded harness remains unchanged."
+      },
+      {
+        "owner": "full-sims-major",
+        "capability": "production.group_catalog.private_process_death_matrix",
+        "patterns": [
+          "integration_test/scripts/run_production_group_process_death.dart",
+          "integration_test/maestro/production_group_info_add_member.yaml",
+          "integration_test/maestro/production_back_to_chat.yaml",
+          "integration_test/maestro/production_catalog_remove_charlie_retry.yaml",
+          "integration_test/maestro/production_group_info_add_member_retry.yaml",
+          "integration_test/maestro/production_verbatim_send.yaml"
+        ],
+        "reason": "Additive production catalog private_process_death_matrix; the original multi-party harness and catalog selectors remain unchanged."
       },
       {
         "owner": "full-sims-major",
