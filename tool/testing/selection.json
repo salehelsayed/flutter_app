@@ -1548,7 +1548,8 @@
         "android/app/src/testDebug/kotlin/com/mknoon/app/call/DebugCallAudioSignalTest.kt",
         "android/app/src/test/kotlin/com/mknoon/app/call/MknoonIncomingCallPresentationTest.kt",
         "android/app/src/test/kotlin/com/mknoon/app/MainActivityOnNewIntentTest.kt",
-        "android/app/src/test/kotlin/com/mknoon/app/AndroidCallWakeBridgeTest.kt"
+        "android/app/src/test/kotlin/com/mknoon/app/AndroidCallWakeBridgeTest.kt",
+        "android/app/src/test/kotlin/com/mknoon/app/HeadlessCanonicalRecoveryWorkerTest.kt"
       ],
       "boundary": "Android incoming call lock-screen privacy and lifecycle, native call actions, notification permissions, admission and cleanup, including activity intent routing",
       "limitations": "Robolectric/JVM tests do not establish actual keyguard visibility, OS full-screen access, push delivery or audible media. Run with the repository Flutter/JDK toolchain.",
