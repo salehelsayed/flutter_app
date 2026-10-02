@@ -1,5 +1,6 @@
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/semantics.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/shared/widgets/linkable_text.dart';
 
@@ -27,6 +28,50 @@ void main() {
       ),
     );
   }
+
+  testWidgets(
+    'linked messages expose complete text and a working link action',
+    (tester) async {
+      final semantics = tester.ensureSemantics();
+      final opened = <String>[];
+      await tester.pumpWidget(
+        wrap(
+          LinkableText(
+            text: 'Read https://example.com for details',
+            prefixSpans: const [TextSpan(text: 'Alice: ')],
+            suffixSpans: [
+              const TextSpan(text: ' 12:34'),
+              WidgetSpan(
+                child: Semantics(
+                  label: 'Sent to inbox',
+                  child: Icon(Icons.inbox),
+                ),
+              ),
+            ],
+            onLinkTap: opened.add,
+          ),
+        ),
+      );
+      final node = tester.getSemantics(find.byType(LinkableText));
+      expect(
+        node.getSemanticsData().label,
+        matches(
+          RegExp(
+            r'Alice:.*Read.*https://example.com.*for details.*12:34',
+            dotAll: true,
+          ),
+        ),
+      );
+      expect(node.getSemanticsData().label, contains('Sent to inbox'));
+      expect(node.getSemanticsData().hasAction(SemanticsAction.tap), isTrue);
+      tester.binding.pipelineOwner.semanticsOwner!.performAction(
+        node.id,
+        SemanticsAction.tap,
+      );
+      expect(opened, ['https://example.com']);
+      semantics.dispose();
+    },
+  );
 
   group('LinkableText textDirection', () {
     testWidgets('renders without textDirection for backward compat only', (

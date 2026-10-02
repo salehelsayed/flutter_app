@@ -294,6 +294,7 @@ class _QRDisplayWiredState extends State<QRDisplayWired> {
       appBar: AppBar(
         leading: IconButton(
           icon: const Icon(Icons.arrow_back),
+          tooltip: MaterialLocalizations.of(context).backButtonTooltip,
           onPressed: widget.onClose,
         ),
         title: Text(AppLocalizations.of(context)!.qr_my_code),

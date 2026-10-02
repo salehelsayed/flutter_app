@@ -4153,4 +4153,107 @@ class AppLocalizationsAr extends AppLocalizations {
 
   @override
   String get media_voice_message_label => 'رسالة صوتية';
+
+  @override
+  String get call_end_permission =>
+      'يلزم السماح باستخدام الميكروفون لإجراء المكالمات.';
+
+  @override
+  String get call_end_unsupported =>
+      'المكالمات الصوتية غير متاحة على هذا الجهاز.';
+
+  @override
+  String get call_end_busy => 'جهة الاتصال في مكالمة أخرى.';
+
+  @override
+  String get call_end_declined => 'رُفضت المكالمة.';
+
+  @override
+  String get call_end_no_answer => 'لا توجد إجابة.';
+
+  @override
+  String get call_end_signaling_failed => 'تعذر الاتصال.';
+
+  @override
+  String get call_end_audio_start_failed => 'تعذر بدء صوت المكالمة.';
+
+  @override
+  String get call_end_audio_interrupted => 'انقطع صوت المكالمة.';
+
+  @override
+  String get call_end_reconnect_failed => 'تعذر إعادة الاتصال.';
+
+  @override
+  String get call_end_expired => 'انتهت مهلة المكالمة.';
+
+  @override
+  String get call_end_unavailable => 'المكالمات الصوتية غير متاحة.';
+
+  @override
+  String get call_end_ended => 'انتهت المكالمة.';
+
+  @override
+  String get call_audio_output_unavailable => 'مخرج الصوت هذا غير متاح';
+
+  @override
+  String get call_audio_controls_failed => 'تعذر تحديث عناصر التحكم بالصوت';
+
+  @override
+  String get call_audio_controls_not_ready =>
+      'عناصر التحكم بالصوت غير متاحة حتى يصبح صوت المكالمة جاهزًا';
+
+  @override
+  String get call_audio_permission =>
+      'يلزم السماح باستخدام الميكروفون لإجراء المكالمات';
+
+  @override
+  String get call_audio_unavailable => 'صوت المكالمة غير متاح حاليًا';
+
+  @override
+  String get connection_online => 'متصل';
+
+  @override
+  String get connection_connecting => 'جارٍ الاتصال';
+
+  @override
+  String get connection_offline => 'غير متصل';
+
+  @override
+  String get connection_semantics_offline => 'غير متصل';
+
+  @override
+  String get connection_semantics_connecting => 'جارٍ الاتصال';
+
+  @override
+  String get connection_semantics_online =>
+      'متصل، الإرسال وصندوق الوارد جاهزان، حجز المرحّل قيد الانتظار';
+
+  @override
+  String get connection_semantics_reserved =>
+      'متصل، الإرسال وصندوق الوارد جاهزان، حجز المرحّل جاهز';
+
+  @override
+  String get connection_semantics_direct =>
+      'متصل، الإرسال وصندوق الوارد جاهزان، يمكن الوصول مباشرة';
+
+  @override
+  String get group_invited_not_joined =>
+      'تمت دعوته – لم ينضم بعد؛ لا يتلقى الرسائل';
+
+  @override
+  String get group_you_joined => 'لقد انضممت';
+
+  @override
+  String get call_unknown_contact => 'جهة اتصال غير معروفة';
+
+  @override
+  String get call_mute_unavailable =>
+      'التحكم بالميكروفون غير متاح حتى يصبح الصوت جاهزًا';
+
+  @override
+  String get call_speaker_unavailable =>
+      'مكبر الصوت غير متاح لمسار الصوت الحالي';
+
+  @override
+  String get call_audio_output_failed => 'تعذر تغيير مخرج الصوت';
 }

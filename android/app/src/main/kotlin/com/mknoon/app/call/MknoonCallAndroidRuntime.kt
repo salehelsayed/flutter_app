@@ -464,6 +464,7 @@ internal class MknoonCallRuntime private constructor(context: Context) {
             failCloser = ::failClosed,
             beforeAttach = ::settleUnconsumableTerminalBeforeAttach,
             authenticatedPresenter = ::presentAuthenticated,
+            authenticatedDisplayPresenter = ::presentAuthenticated,
             authenticatedOutgoingRegistrar = ::registerOutgoingAuthenticated,
             admissionSettlementCapture = ::captureAdmissionSettlement,
             admissionSettlementCommit = ::settleAuthenticatedAdmission,

@@ -20,6 +20,34 @@ import org.robolectric.annotation.Config
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [33])
 class MknoonCallNativeBridgeTest {
+    @Test
+    fun `authenticated display seed crosses presentation before the first notification`() {
+        val rig = LifecycleRig()
+        var seeded: MknoonIncomingCallDisplay? = null
+        val bridge = MknoonCallNativeBridge(
+            controller = rig.controller, messenger = null,
+            authenticatedDisplayPresenter = { handle, expiry, display ->
+                assertEquals(rig.payload.callHandle, handle)
+                assertEquals(rig.payload.expiresAtMs, expiry)
+                seeded = display
+                true
+            },
+        )
+        val arguments = mapOf(
+            "version" to 1, "callHandle" to rig.payload.callHandle,
+            "expiresAtMs" to rig.payload.expiresAtMs,
+            "display" to mapOf("displayName" to "Alice", "avatarPng" to null, "light" to true),
+        )
+        val result = CapturingCallBridgeResult()
+        bridge.onMethodCall(MethodCall("presentAuthenticated", arguments), result)
+        assertEquals(true, result.value)
+        assertEquals("Alice", seeded?.displayName)
+        val malformed = CapturingCallBridgeResult()
+        bridge.onMethodCall(MethodCall("presentAuthenticated", arguments +
+            ("display" to mapOf("displayName" to "Alice", "secret" to "untrusted"))), malformed)
+        assertEquals("bad_args", malformed.errorCode)
+    }
+
     @Test fun `admission settlement does not block main behind Telecom and checks owner at execution`() {
         val rig = LifecycleRig()
         val relay = MknoonCallEventRelay()

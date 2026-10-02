@@ -146,11 +146,13 @@ final class _Presenter implements IncomingCallPresenter {
     this.succeeds = true,
     this.resultGate,
     this.throwOnPresent = false,
+    this.unavailable = false,
   });
 
   final bool succeeds;
   final Completer<bool>? resultGate;
   final bool throwOnPresent;
+  final bool unavailable;
   int calls = 0;
   int dismissCalls = 0;
   final Completer<void> started = Completer<void>();
@@ -159,6 +161,7 @@ final class _Presenter implements IncomingCallPresenter {
   Future<bool> present(IncomingCallPresentation presentation) async {
     calls++;
     if (!started.isCompleted) started.complete();
+    if (unavailable) throw const IncomingCallPresentationUnavailable();
     if (throwOnPresent) throw StateError('native call surface unavailable');
     return resultGate == null ? succeeds : resultGate!.future;
   }
@@ -1102,6 +1105,27 @@ void main() {
       effects.effects,
       isNot(contains(CallEffectType.prepareAcceptedMedia)),
     );
+  });
+
+  test('foreground-only background presentation reports unsupported', () async {
+    final effects = _Effects();
+    final coordinator = _coordinator(effects);
+    addTearDown(coordinator.dispose);
+    final built = await _build(coordinator, _Presenter(unavailable: true));
+    expect(
+      await built.handler.handle(
+        IncomingCallSignalFrame(
+          envelopeJson: built.envelope,
+          authenticatedTransportPeerId: 'sender-device',
+          route: CallRouteClass.direct,
+        ),
+      ),
+      IncomingCallSignalOutcome.rejected,
+    );
+    expect(coordinator.activeSession, isNull);
+    expect(coordinator.lastSnapshot?.endReason, CallEndReason.unsupported);
+    expect(effects.effects, contains(CallEffectType.sendTerminate));
+    expect(effects.effects, isNot(contains(CallEffectType.sendRinging)));
   });
 
   test('native decline survives a late presentation refusal', () async {

@@ -1533,7 +1533,7 @@ void main() {
     );
 
     test(
-      'persists archived sender message but suppresses UI emission',
+      'persists archived sender message and publishes its row update',
       () async {
         final senderPeerId = 'sender-peer-archived';
         contactRepo.seedContact(_makeContact(senderPeerId, isArchived: true));
@@ -1552,7 +1552,7 @@ void main() {
 
         expect(messageRepo.saved, hasLength(1));
         expect(messageRepo.saved.first.id, 'msg-archived');
-        expect(emitted, isEmpty);
+        expect(emitted.single.id, 'msg-archived');
 
         listener.dispose();
       },

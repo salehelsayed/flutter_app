@@ -4085,4 +4085,109 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get media_voice_message_label => 'Voice message';
+
+  @override
+  String get call_end_permission =>
+      'Microphone permission is needed to make calls.';
+
+  @override
+  String get call_end_unsupported =>
+      'Voice calling is unavailable on this device.';
+
+  @override
+  String get call_end_busy => 'The contact is on another call.';
+
+  @override
+  String get call_end_declined => 'Call declined.';
+
+  @override
+  String get call_end_no_answer => 'No answer.';
+
+  @override
+  String get call_end_signaling_failed => 'Call could not connect.';
+
+  @override
+  String get call_end_audio_start_failed => 'Call audio could not start.';
+
+  @override
+  String get call_end_audio_interrupted => 'Call audio was interrupted.';
+
+  @override
+  String get call_end_reconnect_failed => 'Call could not reconnect.';
+
+  @override
+  String get call_end_expired => 'The call expired.';
+
+  @override
+  String get call_end_unavailable => 'Voice calling is unavailable.';
+
+  @override
+  String get call_end_ended => 'Call ended.';
+
+  @override
+  String get call_audio_output_unavailable =>
+      'That audio output is unavailable';
+
+  @override
+  String get call_audio_controls_failed =>
+      'Audio controls could not be updated';
+
+  @override
+  String get call_audio_controls_not_ready =>
+      'Audio controls are unavailable until call audio is ready';
+
+  @override
+  String get call_audio_permission =>
+      'Microphone permission is needed to make calls';
+
+  @override
+  String get call_audio_unavailable => 'Call audio is unavailable right now';
+
+  @override
+  String get connection_online => 'Online';
+
+  @override
+  String get connection_connecting => 'Connecting';
+
+  @override
+  String get connection_offline => 'Offline';
+
+  @override
+  String get connection_semantics_offline => 'offline';
+
+  @override
+  String get connection_semantics_connecting => 'connecting';
+
+  @override
+  String get connection_semantics_online =>
+      'online, send and inbox ready, relay reservation pending';
+
+  @override
+  String get connection_semantics_reserved =>
+      'online, send and inbox ready, relay reservation ready';
+
+  @override
+  String get connection_semantics_direct =>
+      'online, send and inbox ready, directly reachable';
+
+  @override
+  String get group_invited_not_joined =>
+      'Invited – not joined yet; not receiving messages';
+
+  @override
+  String get group_you_joined => 'You joined';
+
+  @override
+  String get call_unknown_contact => 'Unknown contact';
+
+  @override
+  String get call_mute_unavailable =>
+      'Microphone controls are unavailable until audio is ready';
+
+  @override
+  String get call_speaker_unavailable =>
+      'Speaker is unavailable for the current audio route';
+
+  @override
+  String get call_audio_output_failed => 'Audio output could not be changed';
 }

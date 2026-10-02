@@ -65,6 +65,21 @@ class MknoonIncomingCallPresentationTest {
     }
 
     @Test
+    fun `unlocked ringing wakes the screen without granting lockscreen access`() {
+        locked = false
+        presentation.onIntent(openIntent(), answerFromIntent = false)
+        assertWindowEnabled(false, expectedWake = true)
+        assertNull(cover())
+        presentation.onStop()
+        assertWindowEnabled(false)
+        presentation.onResume()
+        assertWindowEnabled(false, expectedWake = true)
+        source.current = null
+        tick()
+        assertWindowEnabled(false)
+    }
+
+    @Test
     fun `initial and warm call launch cover private routes and expose explicit answer and decline`() {
         presentation.onIntent(openIntent(), answerFromIntent = true)
 
@@ -127,7 +142,7 @@ class MknoonIncomingCallPresentationTest {
         presentation.onIntent(openIntent(), answerFromIntent = false)
         assertTrue(exit === listener())
         assertNull(cover())
-        assertWindowEnabled(false)
+        assertWindowEnabled(false, expectedWake = true)
         locked = true
         presentation.onResume()
         assertTrue(exit === listener())
@@ -213,7 +228,7 @@ class MknoonIncomingCallPresentationTest {
 
             locked = false
             tick()
-            assertWindowEnabled(false)
+            assertWindowEnabled(false, expectedWake = true)
             assertNull(cover())
             assertEquals(View.IMPORTANT_FOR_ACCESSIBILITY_YES, privateContent.importantForAccessibility)
             assertTrue(privateContent.isFocusable)
@@ -869,7 +884,7 @@ class MknoonIncomingCallPresentationTest {
         presentation.onIntent(openIntent(), answerFromIntent = true)
         locked = false
         tick()
-        assertWindowEnabled(false)
+        assertWindowEnabled(false, expectedWake = true)
         assertNull(cover())
         assertEquals(View.VISIBLE, privateContent.visibility)
         locked = true
@@ -886,7 +901,7 @@ class MknoonIncomingCallPresentationTest {
         presentation.onStop()
         presentation.onResume()
         assertNull(cover())
-        assertWindowEnabled(false)
+        assertWindowEnabled(false, expectedWake = true)
         assertEquals(View.VISIBLE, privateContent.visibility)
         locked = true
         tick()
@@ -912,7 +927,7 @@ class MknoonIncomingCallPresentationTest {
     fun `unlocked incoming launch keeps Flutter visible and never grants lockscreen flags`() {
         locked = false
         presentation.onIntent(openIntent(), answerFromIntent = true)
-        assertWindowEnabled(false)
+        assertWindowEnabled(false, expectedWake = true)
         assertNull(cover())
         assertEquals(View.VISIBLE, privateContent.visibility)
         assertTrue(source.answers.isEmpty())
@@ -1074,16 +1089,17 @@ class MknoonIncomingCallPresentationTest {
         assertNull(button(R.string.call_notification_end))
     }
 
-    private fun assertWindowEnabled(expected: Boolean) {
+    private fun assertWindowEnabled(expected: Boolean, expectedWake: Boolean = expected) {
         assertEquals("Lockscreen access must follow the opaque cover", 0, activity.unsafeGrants)
         if (Build.VERSION.SDK_INT >= 27) {
             assertEquals(expected, shadowOf(activity).showWhenLocked)
-            assertEquals(expected, shadowOf(activity).turnScreenOn)
+            assertEquals(expectedWake, shadowOf(activity).turnScreenOn)
         } else {
             @Suppress("DEPRECATION")
-            val flags = WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED or
-                WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON
-            assertEquals(if (expected) flags else 0, activity.window.attributes.flags and flags)
+            val lockFlag = WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED
+            val wakeFlag = WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON
+            assertEquals(if (expected) lockFlag else 0, activity.window.attributes.flags and lockFlag)
+            assertEquals(if (expectedWake) wakeFlag else 0, activity.window.attributes.flags and wakeFlag)
         }
     }
 

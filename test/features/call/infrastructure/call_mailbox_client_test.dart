@@ -537,7 +537,15 @@ void main() {
         .where((event) => event['event'] == 'CALL_MAILBOX_BRIDGE_FAILURE')
         .map((event) => event['details'] as Map<String, Object?>)
         .toList(growable: false);
-    expect(failures.map((failure) => failure['code']), safeRelayCodes);
+    expect(
+      failures.map((failure) => failure['code']),
+      safeRelayCodes.where((code) => code != 'CALL_REPLAY'),
+    );
+    final duplicates = diagnostics.where(
+      (event) => event['event'] == 'CALL_MAILBOX_BRIDGE_DUPLICATE',
+    );
+    expect(duplicates, hasLength(1));
+    expect(duplicates.single['details'], containsPair('code', 'CALL_REPLAY'));
     expect(jsonEncode(failures), isNot(contains('raw relay detail')));
   });
 

@@ -3,6 +3,26 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  test(
+    'native Firebase configuration precedes plugin startup and APNs registration',
+    () async {
+      final source = await File('ios/Runner/AppDelegate.swift').readAsString();
+      final launch = source.indexOf('didFinishLaunchingWithOptions');
+      final configure = source.indexOf('FirebaseApp.configure()', launch);
+      final plugins = source.indexOf('super.application(', launch);
+      final apns = source.indexOf('registerForRemoteNotifications()', launch);
+      expect(configure, greaterThan(launch));
+      expect(plugins, greaterThan(configure));
+      expect(apns, greaterThan(configure));
+      // Querying FirebaseApp before configure() logs I-COR000003 (default
+      // app) or I-COR000005 (app list) on every iPhone launch, so the guard
+      // is the app's own flag and never asks Firebase.
+      expect(source, contains('if !Self.firebaseConfigured {'));
+      expect(source, isNot(contains('FirebaseApp.app()')));
+      expect(source, isNot(contains('FirebaseApp.allApps')));
+    },
+  );
+
   group('iOS push project config', () {
     test(
       'GoogleService-Info.plist keeps the expected Firebase project and bundle id',

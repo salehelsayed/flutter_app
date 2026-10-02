@@ -461,6 +461,26 @@ void main() {
     expect(boxDecoration.borderRadius, isNotNull);
   }
 
+  testWidgets('own acceptance row says You joined in the current locale', (
+    tester,
+  ) async {
+    final joined = testMessages.first.copyWith(
+      id: 'sys-member_joined:group-1:peer-1:join',
+      senderPeerId: 'peer-1',
+      text: 'Alice joined the group',
+    );
+    for (final locale in [const Locale('en'), const Locale('ar')]) {
+      await tester.pumpWidget(
+        buildTestWidget(messages: [joined], locale: locale),
+      );
+      expect(
+        find.text(locale.languageCode == 'en' ? 'You joined' : 'لقد انضممت'),
+        findsOneWidget,
+      );
+      expect(find.text('Alice joined the group'), findsNothing);
+    }
+  });
+
   testWidgets('renders messages', (tester) async {
     await tester.pumpWidget(buildTestWidget(messages: testMessages));
 

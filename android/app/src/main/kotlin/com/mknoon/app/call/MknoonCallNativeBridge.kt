@@ -153,6 +153,7 @@ internal class MknoonCallNativeBridge(
     private val failCloser: (() -> Boolean)? = null,
     private val beforeAttach: (() -> Unit)? = null,
     private val authenticatedPresenter: ((String, Long) -> Boolean)? = null,
+    private val authenticatedDisplayPresenter: ((String, Long, MknoonIncomingCallDisplay) -> Boolean)? = null,
     private val authenticatedOutgoingRegistrar: ((String, Long) -> Boolean)? = null,
     private val admissionSettlementCapture: ((UUID) -> MknoonCallAdmissionToken?)? = null,
     private val admissionSettlementCommit: ((MknoonCallAdmissionToken) -> Boolean)? = null,
@@ -500,12 +501,16 @@ internal class MknoonCallNativeBridge(
 
     private fun presentAuthenticated(arguments: Any?, result: MethodChannel.Result) {
         val map = arguments as? Map<*, *> ?: return badArguments(result)
-        if (map.keys != setOf("version", "callHandle", "expiresAtMs")) {
+        if (map.keys != setOf("version", "callHandle", "expiresAtMs") &&
+            map.keys != setOf("version", "callHandle", "expiresAtMs", "display")) {
             return badArguments(result)
         }
         if (!validVersion(map["version"])) return badArguments(result)
         val callHandle = map["callHandle"] as? String ?: return badArguments(result)
         val expiresAtMs = parseLong(map["expiresAtMs"]) ?: return badArguments(result)
+        val display = if (map.containsKey("display")) {
+            MknoonIncomingCallDisplay.parse(map["display"]) ?: return badArguments(result)
+        } else null
         val descriptor = controller.snapshot()
         val alreadyPresented = descriptor != null &&
                 descriptor.callHandle == callHandle &&
@@ -513,7 +518,9 @@ internal class MknoonCallNativeBridge(
                 descriptor.terminalEvent == null
         if (alreadyPresented) return result.success(true)
         dispatchRegistration(result) {
-            authenticatedPresenter?.invoke(callHandle, expiresAtMs) == true
+            if (display != null && authenticatedDisplayPresenter != null) {
+                authenticatedDisplayPresenter.invoke(callHandle, expiresAtMs, display)
+            } else authenticatedPresenter?.invoke(callHandle, expiresAtMs) == true
         }
     }
 

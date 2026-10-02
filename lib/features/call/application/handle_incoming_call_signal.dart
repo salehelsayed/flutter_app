@@ -169,14 +169,21 @@ final class IncomingCallPresentation {
     required this.callId,
     required this.callerAccountPeerId,
     required this.expiresAt,
+    this.displayName,
   });
 
   final CallId callId;
   final String callerAccountPeerId;
   final DateTime expiresAt;
+  final String? displayName;
 
   @override
   String toString() => 'IncomingCallPresentation(redacted)';
+}
+
+/// A valid invite cannot be surfaced in this runtime configuration.
+final class IncomingCallPresentationUnavailable implements Exception {
+  const IncomingCallPresentationUnavailable();
 }
 
 abstract interface class IncomingCallPresenter {
@@ -580,7 +587,17 @@ final class HandleIncomingCallSignal {
         }
       }
 
+      String? initialDisplayName;
+      try {
+        final name = (await _authenticatedDisplayNameResolver?.call(
+          signal.senderAccountPeerId,
+        ))?.trim();
+        if (name != null && name.isNotEmpty && name.length <= 128) {
+          initialDisplayName = name;
+        }
+      } catch (_) {}
       final presentation = IncomingCallPresentation(
+        displayName: initialDisplayName,
         callId: signal.callId,
         callerAccountPeerId: signal.senderAccountPeerId,
         expiresAt: DateTime.fromMillisecondsSinceEpoch(
@@ -601,8 +618,11 @@ final class HandleIncomingCallSignal {
       );
       var presented = false;
       var presentationThrew = false;
+      var presentationUnavailable = false;
       try {
         presented = await _incomingCallPresenter.present(presentation);
+      } on IncomingCallPresentationUnavailable {
+        presentationUnavailable = true;
       } catch (_) {
         presentationThrew = true;
         presented = false;
@@ -618,8 +638,14 @@ final class HandleIncomingCallSignal {
       diagnostics.record(
         stage: 'presentation',
         action: 'present',
-        outcome: presented ? 'ok' : 'failed',
-        reason: presented ? 'none' : 'native_lifecycle_failed',
+        outcome: presented
+            ? 'ok'
+            : (presentationUnavailable ? 'unavailable' : 'failed'),
+        reason: presented
+            ? 'none'
+            : (presentationUnavailable
+                  ? 'capability_unavailable'
+                  : 'native_lifecycle_failed'),
         traceId: traceId,
       );
       final now = _coordinator.clock();
@@ -674,7 +700,9 @@ final class HandleIncomingCallSignal {
             remoteDeviceId: signal.senderDevicePeerId,
             // A refused or failed native surface does not establish that
             // microphone permission was denied.
-            endReason: CallEndReason.signalingFailed,
+            endReason: presentationUnavailable
+                ? CallEndReason.unsupported
+                : CallEndReason.signalingFailed,
           ),
         );
         admitted.commitReplay();

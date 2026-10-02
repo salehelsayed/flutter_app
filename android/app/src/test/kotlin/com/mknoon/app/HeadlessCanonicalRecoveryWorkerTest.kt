@@ -252,12 +252,15 @@ class HeadlessCanonicalRecoveryWorkerTest {
     fun `stop only signals while execute finally performs cleanup`() = runBlocking {
         val entered = CompletableDeferred<Unit>()
         val cancelled = CompletableDeferred<Unit>()
+        val finishing = CompletableDeferred<Unit>()
+        val releaseFinish = CompletableDeferred<Unit>()
         val runner = FakeHeadlessRecoveryRunner {
             entered.complete(Unit)
             cancelled.await()
             successfulCompletion()
         }.also { candidate ->
             candidate.onStop = { cancelled.complete(Unit) }
+            candidate.onFinish = { finishing.complete(Unit); releaseFinish.await() }
         }
         val execution = execution(FakeHeadlessRecoveryAuthority(), runner)
 
@@ -266,6 +269,11 @@ class HeadlessCanonicalRecoveryWorkerTest {
         execution.requestStop()
 
         assertEquals(0, runner.finishCalls)
+        finishing.await()
+        // JobScheduler stop must return even while engine teardown is blocked.
+        java.util.concurrent.CompletableFuture.runAsync { execution.requestStop() }
+            .get(1, java.util.concurrent.TimeUnit.SECONDS)
+        releaseFinish.complete(Unit)
         assertEquals(HeadlessCanonicalRecoveryWorkOutcome.RETRY, result.await())
         assertTrue(runner.stopCalls >= 1)
         assertEquals(1, runner.finishCalls)
@@ -603,6 +611,7 @@ private class FakeHeadlessRecoveryRunner(
     var finishCalls = 0
     var finishFailure: Throwable? = null
     var onStop: () -> Unit = {}
+    var onFinish: suspend () -> Unit = {}
 
     override suspend fun run(
         snapshot: HeadlessCanonicalRecoveryStartSnapshot,
@@ -618,6 +627,7 @@ private class FakeHeadlessRecoveryRunner(
 
     override suspend fun finish() {
         finishCalls += 1
+        onFinish()
         finishFailure?.let { throw it }
     }
 }

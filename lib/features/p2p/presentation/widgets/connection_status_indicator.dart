@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import '../../../../core/services/p2p_service.dart';
 import '../../../../core/utils/flow_event_emitter.dart';
@@ -49,30 +50,30 @@ ConnectionHealth _legacyHealthForBadgeState(BadgeReadinessState state) {
   };
 }
 
-String _labelForBadgeState(BadgeReadinessState state) {
+String _labelForBadgeState(BadgeReadinessState state, AppLocalizations l10n) {
   return switch (state) {
-    BadgeReadinessState.offline => 'Offline',
-    BadgeReadinessState.connecting => 'Connecting',
-    BadgeReadinessState.online => 'Online',
-    BadgeReadinessState.onlineDotted => 'Online.',
+    BadgeReadinessState.offline => l10n.connection_offline,
+    BadgeReadinessState.connecting => l10n.connection_connecting,
+    BadgeReadinessState.online => l10n.connection_online,
+    BadgeReadinessState.onlineDotted => '${l10n.connection_online}.',
     // FDC-14: a distinct, non-linear cue (NOT a third punctuation-only variant
     // on the relay-dot ladder — directly-reachable is decoupled from relay).
-    BadgeReadinessState.onlineDirect => 'Online ✦',
+    BadgeReadinessState.onlineDirect => '${l10n.connection_online} ✦',
   };
 }
 
-String _semanticsLabelForBadgeState(BadgeReadinessState state) {
+String _semanticsLabelForBadgeState(
+  BadgeReadinessState state,
+  AppLocalizations l10n,
+) {
   return switch (state) {
-    BadgeReadinessState.offline => 'offline',
-    BadgeReadinessState.connecting => 'connecting',
-    BadgeReadinessState.online =>
-      'online, send and inbox ready, relay reservation pending',
-    BadgeReadinessState.onlineDotted =>
-      'online, send and inbox ready, relay reservation ready',
+    BadgeReadinessState.offline => l10n.connection_semantics_offline,
+    BadgeReadinessState.connecting => l10n.connection_semantics_connecting,
+    BadgeReadinessState.online => l10n.connection_semantics_online,
+    BadgeReadinessState.onlineDotted => l10n.connection_semantics_reserved,
     // FDC-14: the binding distinctness lives here (a screen reader must hear
     // "directly reachable", not the relay-reservation phrasing).
-    BadgeReadinessState.onlineDirect =>
-      'online, send and inbox ready, directly reachable',
+    BadgeReadinessState.onlineDirect => l10n.connection_semantics_direct,
   };
 }
 
@@ -189,6 +190,9 @@ class _ConnectionStatusIndicatorState extends State<ConnectionStatusIndicator> {
 
   @override
   Widget build(BuildContext context) {
+    final l10n =
+        AppLocalizations.of(context) ??
+        lookupAppLocalizations(const Locale('en'));
     final badgeState = _displayedBadgeState;
     final connectionCount = _connectionCount;
     final readableColors = context.backgroundReadableColors;
@@ -219,9 +223,9 @@ class _ConnectionStatusIndicatorState extends State<ConnectionStatusIndicator> {
     }
     final plain = widget.style == ConnectionStatusIndicatorStyle.plain;
     final label = plain && _isReadyBadgeState(badgeState)
-        ? 'Online'
-        : _labelForBadgeState(badgeState);
-    final semanticsLabel = _semanticsLabelForBadgeState(badgeState);
+        ? l10n.connection_online
+        : _labelForBadgeState(badgeState, l10n);
+    final semanticsLabel = _semanticsLabelForBadgeState(badgeState, l10n);
 
     final contents = Row(
       key: plain ? const ValueKey('connection-status-plain') : null,
@@ -233,12 +237,14 @@ class _ConnectionStatusIndicatorState extends State<ConnectionStatusIndicator> {
           decoration: BoxDecoration(color: baseColor, shape: BoxShape.circle),
         ),
         const SizedBox(width: 6),
-        Text(
-          label,
-          style: TextStyle(
-            color: textColor,
-            fontSize: 12,
-            fontWeight: FontWeight.w500,
+        Flexible(
+          child: Text(
+            label,
+            style: TextStyle(
+              color: textColor,
+              fontSize: 12,
+              fontWeight: FontWeight.w500,
+            ),
           ),
         ),
         if (plain && _isReadyBadgeState(badgeState) && connectionCount > 0) ...[

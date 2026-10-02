@@ -3,6 +3,9 @@ package node
 import (
 	"testing"
 
+	"github.com/libp2p/go-libp2p/core/peer"
+	"github.com/libp2p/go-libp2p/core/peerstore"
+
 	ma "github.com/multiformats/go-multiaddr"
 )
 
@@ -32,5 +35,31 @@ func TestDebugAdvertiseRelayOnlyDefaultsOff(t *testing.T) {
 	}
 	if (&NodeConfig{}).EffectiveFlags().DebugAdvertiseRelayOnly {
 		t.Fatal("nil-map effective flags must not advertise relay-only")
+	}
+}
+
+// Configured relay addresses must survive connected/session address expiry.
+func TestConfiguredRelayAddressesSurviveSessionExpiry(t *testing.T) {
+	const relayID = "12D3KooWGMYMmN1RGUYjWaSV6P3XtnBjwnosnJGNMnttfVCRnd6g"
+	node := NewNode()
+	_, err := node.Start(NodeConfig{
+		PrivateKeyHex:  generateTestKey(t),
+		RelayAddresses: []string{"/ip4/127.0.0.1/tcp/1/p2p/" + relayID},
+		AutoRegister:   false,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer node.Stop()
+	id, err := peer.Decode(relayID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := node.Host().Peerstore()
+	store.UpdateAddrs(id, peerstore.ConnectedAddrTTL, 0)
+	store.UpdateAddrs(id, peerstore.RecentlyConnectedAddrTTL, 0)
+	got := store.Addrs(id)
+	if len(got) != 1 || got[0].String() != "/ip4/127.0.0.1/tcp/1" {
+		t.Fatalf("configured relay address lost after session expiry: %v", got)
 	}
 }

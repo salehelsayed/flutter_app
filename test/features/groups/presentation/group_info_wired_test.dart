@@ -4736,11 +4736,9 @@ void main() {
               return '${entry.peerId}:${decoded['type']}';
             })
             .toList(growable: false);
-        expect(
-          inviteLogs.map((entry) => entry.peerId),
-          ['peer-dana'],
-          reason: 'sent p2p messages: $sentTypes',
-        );
+        expect(inviteLogs.map((entry) => entry.peerId), [
+          'peer-dana',
+        ], reason: 'sent p2p messages: $sentTypes');
 
         final envelope =
             jsonDecode(inviteLogs.single.content) as Map<String, dynamic>;
@@ -4890,6 +4888,12 @@ void main() {
         await pumpFrames(tester);
 
         expect(find.text('Edit Group Details'), findsOneWidget);
+        final editorDialog = tester.widget<Dialog>(find.byType(Dialog));
+        expect(
+          editorDialog.backgroundColor!.a,
+          1,
+          reason: 'private group text must not bleed through the editor',
+        );
 
         await tester.enterText(
           find.descendant(
@@ -4906,6 +4910,20 @@ void main() {
           'Fresh description',
         );
 
+        tester.view.viewInsets = const FakeViewPadding(bottom: 300);
+        addTearDown(tester.view.resetViewInsets);
+        await pumpFrames(tester);
+        final visibleBottom =
+            (tester.view.physicalSize.height - 300) /
+            tester.view.devicePixelRatio;
+        for (final key in ['group-edit-save', 'group-edit-cancel']) {
+          final action = find.byKey(ValueKey(key));
+          expect(action.hitTestable(), findsOneWidget);
+          expect(
+            tester.getRect(action).bottom,
+            lessThanOrEqualTo(visibleBottom),
+          );
+        }
         await tester.tap(find.byKey(const ValueKey('group-edit-save')));
         await pumpFrames(tester, count: 30);
 

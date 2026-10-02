@@ -1,5 +1,7 @@
 import 'dart:async';
 import 'dart:io';
+import 'm4a_duration.dart';
+import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:record/record.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:flutter_app/core/device/upload_wake_lock.dart';
@@ -138,16 +140,17 @@ class RecordAudioRecorderService implements AudioRecorderService {
     _ticker?.cancel();
     _maxDurationTimer?.cancel();
     _isRecording = false;
-    // Release before the plugin call: a throwing stop() must not leak a hold.
-    await _releaseWakeLock();
-
-    final path = await _recorder.stop();
     final elapsed = _startTime != null
         ? DateTime.now().difference(_startTime!).inMilliseconds
         : 0;
     _startTime = null;
+    // Release before the plugin call: a throwing stop() must not leak a hold.
+    await _releaseWakeLock();
+    final path = await _recorder.stop();
+    final encodedDuration = path == null ? null : await readM4aDurationMs(path);
+    final duration = encodedDuration ?? elapsed;
 
-    if (path == null || elapsed < 500) {
+    if (path == null || duration < 500) {
       // Too short — clean up
       if (_currentOutputPath != null) {
         final file = File(_currentOutputPath!);
@@ -161,7 +164,18 @@ class RecordAudioRecorderService implements AudioRecorderService {
     final size = await file.exists() ? await file.length() : 0;
     _currentOutputPath = null;
 
-    return AudioRecording(filePath: path, durationMs: elapsed, sizeBytes: size);
+    if (encodedDuration != null && (encodedDuration - elapsed).abs() > 1000) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'VOICE_RECORDING_DURATION_MISMATCH',
+        details: {'wallMs': elapsed, 'encodedMs': encodedDuration},
+      );
+    }
+    return AudioRecording(
+      filePath: path,
+      durationMs: duration,
+      sizeBytes: size,
+    );
   }
 
   @override
@@ -192,9 +206,7 @@ class RecordAudioRecorderService implements AudioRecorderService {
       // Some device/emulator plugin backends can stall while tearing down the
       // amplitude event stream. Keep recorder disposal bounded so app shutdown
       // and device integration tests do not hang indefinitely.
-      await _amplitudeBridgeSub
-          ?.cancel()
-          .timeout(const Duration(seconds: 2));
+      await _amplitudeBridgeSub?.cancel().timeout(const Duration(seconds: 2));
     } catch (_) {}
     _amplitudeBridgeSub = null;
     await _durationController.close();

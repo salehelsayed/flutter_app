@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/services/incoming_message_router.dart';
+import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/local_discovery/local_discovery_service.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
@@ -290,6 +291,34 @@ void main() {
         );
         expect(unknowns, isEmpty);
         expect(keyUpdates, isEmpty);
+      },
+    );
+
+    test(
+      'readiness proof is internal control traffic, not an unknown message',
+      () async {
+        final unknown = <ChatMessage>[];
+        final chat = <ChatMessage>[];
+        final events = <Map<String, dynamic>>[];
+        final unknownSub = router.unknownMessageStream.listen(unknown.add);
+        final chatSub = router.chatMessageStream.listen(chat.add);
+        debugSetFlowEventSink(events.add);
+        try {
+          p2pService.inject(_makeMessage('readiness_proof'));
+          await Future<void>.delayed(Duration.zero);
+          expect(unknown, isEmpty);
+          expect(chat, isEmpty);
+          expect(
+            events.where(
+              (e) => e['event'] == 'MESSAGE_ROUTER_UNKNOWN_TYPE',
+            ),
+            isEmpty,
+          );
+        } finally {
+          debugSetFlowEventSink(null);
+          await unknownSub.cancel();
+          await chatSub.cancel();
+        }
       },
     );
 

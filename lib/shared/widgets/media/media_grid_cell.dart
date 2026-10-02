@@ -56,22 +56,30 @@ class MediaGridCell extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return GestureDetector(
-      // 231: stable per-tile handle for tap/long-press targeting in tests.
-      key: ValueKey('media-grid-cell-${attachment.messageId}-${attachment.id}'),
-      onTap: _canOpen ? onTap : null,
-      onLongPress: onLongPress,
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(borderRadius),
-        child: Stack(
-          fit: StackFit.expand,
-          children: [
-            _buildContent(context),
-            if (_canShowVideoOverlay)
-              VideoThumbnailOverlay(durationMs: attachment.durationMs),
-            if (_showsGifBadge) _buildGifBadge(),
-            if (showOverlayCount && overlayCount > 0) _buildOverlayCount(),
-          ],
+    final l10n = AppLocalizations.of(context)!;
+    return Semantics(
+      label: attachment.mediaType == 'image'
+          ? l10n.shared_media_kind_photo
+          : l10n.shared_media_kind_video,
+      child: GestureDetector(
+        // 231: stable per-tile handle for tap/long-press targeting in tests.
+        key: ValueKey(
+          'media-grid-cell-${attachment.messageId}-${attachment.id}',
+        ),
+        onTap: _canOpen ? onTap : null,
+        onLongPress: onLongPress,
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(borderRadius),
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              _buildContent(context),
+              if (_canShowVideoOverlay)
+                VideoThumbnailOverlay(durationMs: attachment.durationMs),
+              if (_showsGifBadge) _buildGifBadge(),
+              if (showOverlayCount && overlayCount > 0) _buildOverlayCount(),
+            ],
+          ),
         ),
       ),
     );

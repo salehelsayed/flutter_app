@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
@@ -141,6 +142,42 @@ Color? _dotColor(WidgetTester tester) {
 }
 
 void main() {
+  testWidgets('Arabic readiness label and semantics fit largest text scale', (
+    tester,
+  ) async {
+    final semantics = tester.ensureSemantics();
+
+    await tester.pumpWidget(
+      MaterialApp(
+        locale: const Locale('ar'),
+        localizationsDelegates: AppLocalizations.localizationsDelegates,
+        supportedLocales: AppLocalizations.supportedLocales,
+        home: Scaffold(
+          body: MediaQuery(
+            data: const MediaQueryData(textScaler: TextScaler.linear(3.2)),
+            child: const Center(
+              child: SizedBox(
+                width: 220,
+                child: ConnectionStatusIndicator.preview(
+                  state: BadgeReadinessState.online,
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    expect(find.text('متصل'), findsOneWidget);
+    expect(
+      find.bySemanticsLabel(
+        'متصل، الإرسال وصندوق الوارد جاهزان، حجز المرحّل قيد الانتظار',
+      ),
+      findsOneWidget,
+    );
+    expect(tester.takeException(), isNull);
+    semantics.dispose();
+  });
+
   group('Legacy relay health helper', () {
     test('stays connecting until circuit or reservation-ready state arrives', () {
       // Node is started but has no circuit addresses — should be "degraded" (connecting)
@@ -490,58 +527,57 @@ void main() {
 
     // T8 — onlineDirect is a ready state: no TIME_TO_ONLINE_BADGE re-emit on
     // dotted→direct, but exactly one on connecting→direct (first reach ready).
-    testWidgets(
-      'no badge timing re-emit moving between Online. and onlineDirect',
-      (tester) async {
-        // Sub-case A: dotted → direct is a ready-tier reshuffle → no emit.
-        final fakeService = await _pumpIndicator(
-          tester,
-          _stateForBadgeState(BadgeReadinessState.onlineDotted),
+    testWidgets('no badge timing re-emit moving between Online. and onlineDirect', (
+      tester,
+    ) async {
+      // Sub-case A: dotted → direct is a ready-tier reshuffle → no emit.
+      final fakeService = await _pumpIndicator(
+        tester,
+        _stateForBadgeState(BadgeReadinessState.onlineDotted),
+      );
+      final reshuffleEvents = await _captureFlowEvents(() async {
+        fakeService.pushState(
+          _stateForBadgeState(BadgeReadinessState.onlineDirect),
         );
-        final reshuffleEvents = await _captureFlowEvents(() async {
-          fakeService.pushState(
-            _stateForBadgeState(BadgeReadinessState.onlineDirect),
-          );
-          await tester.pump();
-          await tester.pump();
-        });
-        expect(
-          reshuffleEvents
-              .where((e) => e['event'] == 'TIME_TO_ONLINE_BADGE_WIDGET')
-              .toList(),
-          isEmpty,
-        );
-        fakeService.dispose();
-
-        // Unmount the indicator so the next _pumpIndicator builds a FRESH State
-        // (same widget type with no key would otherwise reuse the State and skip
-        // initState — leaving it subscribed to the disposed stream above).
-        await tester.pumpWidget(const MaterialApp(home: SizedBox.shrink()));
         await tester.pump();
+        await tester.pump();
+      });
+      expect(
+        reshuffleEvents
+            .where((e) => e['event'] == 'TIME_TO_ONLINE_BADGE_WIDGET')
+            .toList(),
+        isEmpty,
+      );
+      fakeService.dispose();
 
-        // Sub-case B (LOAD-BEARING): connecting → direct is the first-reach-ready
-        // transition → exactly one emit. This is the assertion that re-reds when
-        // onlineDirect is omitted from _isReadyBadgeState.
-        final fakeService2 = await _pumpIndicator(
-          tester,
-          _stateForBadgeState(BadgeReadinessState.connecting),
+      // Unmount the indicator so the next _pumpIndicator builds a FRESH State
+      // (same widget type with no key would otherwise reuse the State and skip
+      // initState — leaving it subscribed to the disposed stream above).
+      await tester.pumpWidget(const MaterialApp(home: SizedBox.shrink()));
+      await tester.pump();
+
+      // Sub-case B (LOAD-BEARING): connecting → direct is the first-reach-ready
+      // transition → exactly one emit. This is the assertion that re-reds when
+      // onlineDirect is omitted from _isReadyBadgeState.
+      final fakeService2 = await _pumpIndicator(
+        tester,
+        _stateForBadgeState(BadgeReadinessState.connecting),
+      );
+      final reachEvents = await _captureFlowEvents(() async {
+        fakeService2.pushState(
+          _stateForBadgeState(BadgeReadinessState.onlineDirect),
         );
-        final reachEvents = await _captureFlowEvents(() async {
-          fakeService2.pushState(
-            _stateForBadgeState(BadgeReadinessState.onlineDirect),
-          );
-          await tester.pump();
-          await tester.pump();
-        });
-        expect(
-          reachEvents
-              .where((e) => e['event'] == 'TIME_TO_ONLINE_BADGE_WIDGET')
-              .toList(),
-          hasLength(1),
-        );
-        fakeService2.dispose();
-      },
-    );
+        await tester.pump();
+        await tester.pump();
+      });
+      expect(
+        reachEvents
+            .where((e) => e['event'] == 'TIME_TO_ONLINE_BADGE_WIDGET')
+            .toList(),
+        hasLength(1),
+      );
+      fakeService2.dispose();
+    });
 
     // T9 — onlineDirect keeps the green ready styling: BOTH the label text
     // colour AND the status-dot (baseColor) match the plain-online green.

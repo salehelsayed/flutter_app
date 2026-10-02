@@ -500,6 +500,34 @@ void main() {
       JustAudioPlatform.instance = originalPlatform;
     });
 
+    testWidgets('twenty disposed rows tolerate late source load completion', (
+      tester,
+    ) async {
+      for (var index = 0; index < 20; index++) {
+        final load = fakePlatform.enqueueLoad(
+          reportedDuration: const Duration(seconds: 6),
+        );
+        await tester.pumpWidget(
+          buildApp(
+            availableAttachment(
+              id: 'late-load-$index',
+              localPath: '/tmp/late_load_$index.m4a',
+              durationMs: 6000,
+            ),
+          ),
+        );
+        await tester.pump();
+        await load.started;
+        await tester.pumpWidget(const SizedBox.shrink());
+        load.complete();
+        await flushAsyncPlayerTasks(tester);
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 1));
+        expect(tester.takeException(), isNull);
+      }
+      expect(fakePlatform.activePlayerIds, isEmpty);
+    });
+
     testWidgets('renders WaveformSeekBar when attachment has waveform data', (
       tester,
     ) async {

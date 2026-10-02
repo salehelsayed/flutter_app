@@ -1,4 +1,6 @@
+import 'dart:async';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:record/record.dart';
@@ -46,8 +48,7 @@ class _FakeAudioRecorder implements AudioRecorder {
       Stream<Amplitude>.empty();
 
   @override
-  dynamic noSuchMethod(Invocation invocation) =>
-      super.noSuchMethod(invocation);
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
 
 /// Simulates wakelock_plus failing at the platform layer (e.g. Android
@@ -90,14 +91,40 @@ void main() {
     UploadWakeLockController.debugReset(driver: FakeUploadWakeLockDriver());
   });
 
-  group('wake lock on start/stop', () {
-    test('start() acquires the wake lock after recorder start succeeds',
-        () async {
-      await service.start(outputPath: testOutputPath);
+  test(
+    'finalized M4A duration defines sent metadata without altering audio',
+    () async {
+      final directory = await Directory.systemTemp.createTemp('r2-recording-');
+      addTearDown(() => directory.delete(recursive: true));
+      final path = '${directory.path}/encoded.m4a';
+      final bytes = Uint8List(40);
+      final data = ByteData.sublistView(bytes);
+      data.setUint32(0, 40);
+      bytes.setRange(4, 8, 'moov'.codeUnits);
+      data.setUint32(8, 32);
+      bytes.setRange(12, 16, 'mvhd'.codeUnits);
+      data.setUint32(28, 1000);
+      data.setUint32(32, 17000);
+      await File(path).writeAsBytes(bytes);
+      fakeRecorder.stopReturnsPath = path;
+      await service.start(outputPath: path);
+      await Future<void>.delayed(const Duration(milliseconds: 550));
+      final recording = await service.stop();
+      expect(recording!.durationMs, 17000);
+      expect(await File(path).readAsBytes(), bytes);
+    },
+  );
 
-      expect(UploadWakeLockController.debugActiveHolds, 1);
-      expect(fakeDriver.enableCalls, 1);
-    });
+  group('wake lock on start/stop', () {
+    test(
+      'start() acquires the wake lock after recorder start succeeds',
+      () async {
+        await service.start(outputPath: testOutputPath);
+
+        expect(UploadWakeLockController.debugActiveHolds, 1);
+        expect(fakeDriver.enableCalls, 1);
+      },
+    );
 
     test('stop() releases the wake lock', () async {
       await service.start(outputPath: testOutputPath);
@@ -107,16 +134,18 @@ void main() {
       expect(fakeDriver.disableCalls, 1);
     });
 
-    test('stop() when never started does not release an external hold',
-        () async {
-      // Simulates a concurrent upload holding the shared ref-counted lock.
-      await UploadWakeLockController.acquire();
+    test(
+      'stop() when never started does not release an external hold',
+      () async {
+        // Simulates a concurrent upload holding the shared ref-counted lock.
+        await UploadWakeLockController.acquire();
 
-      await service.stop();
+        await service.stop();
 
-      expect(UploadWakeLockController.debugActiveHolds, 1);
-      expect(fakeDriver.disableCalls, 0);
-    });
+        expect(UploadWakeLockController.debugActiveHolds, 1);
+        expect(fakeDriver.disableCalls, 0);
+      },
+    );
   });
 
   group('wake lock on cancel/dispose', () {
@@ -134,8 +163,7 @@ void main() {
       expect(UploadWakeLockController.debugActiveHolds, 0);
     });
 
-    test('stop() then cancel() then dispose() releases exactly once',
-        () async {
+    test('stop() then cancel() then dispose() releases exactly once', () async {
       await service.start(outputPath: testOutputPath);
       await service.stop();
       await service.cancel();
@@ -177,43 +205,47 @@ void main() {
       expect(UploadWakeLockController.debugActiveHolds, 0);
     });
 
-    test('start() rolls back fully when the wake-lock driver enable throws',
-        () async {
-      final throwingDriver = _ThrowingEnableDriver();
-      UploadWakeLockController.debugReset(driver: throwingDriver);
+    test(
+      'start() rolls back fully when the wake-lock driver enable throws',
+      () async {
+        final throwingDriver = _ThrowingEnableDriver();
+        UploadWakeLockController.debugReset(driver: throwingDriver);
 
-      await expectLater(
-        service.start(outputPath: testOutputPath),
-        throwsA(isA<StateError>()),
-      );
+        await expectLater(
+          service.start(outputPath: testOutputPath),
+          throwsA(isA<StateError>()),
+        );
 
-      // Invariant the UI relies on: throw out of start() == service holds
-      // nothing — no counted hold, not recording, plugin recording stopped.
-      expect(UploadWakeLockController.debugActiveHolds, 0);
-      expect(service.isRecording, isFalse);
-      expect(fakeRecorder.stopCalls, 1);
+        // Invariant the UI relies on: throw out of start() == service holds
+        // nothing — no counted hold, not recording, plugin recording stopped.
+        expect(UploadWakeLockController.debugActiveHolds, 0);
+        expect(service.isRecording, isFalse);
+        expect(fakeRecorder.stopCalls, 1);
 
-      // The controller is not poisoned: a later recording works normally.
-      UploadWakeLockController.debugReset(driver: fakeDriver);
-      await service.start(outputPath: testOutputPath);
-      expect(UploadWakeLockController.debugActiveHolds, 1);
-      await service.stop();
-      expect(UploadWakeLockController.debugActiveHolds, 0);
-    });
+        // The controller is not poisoned: a later recording works normally.
+        UploadWakeLockController.debugReset(driver: fakeDriver);
+        await service.start(outputPath: testOutputPath);
+        expect(UploadWakeLockController.debugActiveHolds, 1);
+        await service.stop();
+        expect(UploadWakeLockController.debugActiveHolds, 0);
+      },
+    );
 
-    test('second start() failing after force-stop leaves no held lock',
-        () async {
-      await service.start(outputPath: testOutputPath);
-      fakeRecorder.throwOnStart = true;
+    test(
+      'second start() failing after force-stop leaves no held lock',
+      () async {
+        await service.start(outputPath: testOutputPath);
+        fakeRecorder.throwOnStart = true;
 
-      await expectLater(
-        service.start(outputPath: testOutputPath),
-        throwsA(isA<StateError>()),
-      );
+        await expectLater(
+          service.start(outputPath: testOutputPath),
+          throwsA(isA<StateError>()),
+        );
 
-      expect(UploadWakeLockController.debugActiveHolds, 0);
-      expect(fakeDriver.disableCalls, 1);
-    });
+        expect(UploadWakeLockController.debugActiveHolds, 0);
+        expect(fakeDriver.disableCalls, 1);
+      },
+    );
   });
 
   group('wake lock on auto-stop', () {
@@ -242,10 +274,14 @@ void main() {
         maxDuration: const Duration(milliseconds: 50),
       );
       final captured = <AudioRecording?>[];
-      service.onAutoStopped = captured.add;
+      final completed = Completer<void>();
+      service.onAutoStopped = (recording) {
+        captured.add(recording);
+        completed.complete();
+      };
 
       await service.start(outputPath: testOutputPath);
-      await Future<void>.delayed(const Duration(milliseconds: 120));
+      await completed.future.timeout(const Duration(seconds: 3));
 
       expect(service.isRecording, isFalse);
       expect(captured, hasLength(1));
@@ -275,10 +311,14 @@ void main() {
         fakeRecorder.stopReturnsPath = captureFile.path;
 
         final captured = <AudioRecording?>[];
-        service.onAutoStopped = captured.add;
+        final completed = Completer<void>();
+        service.onAutoStopped = (recording) {
+          captured.add(recording);
+          completed.complete();
+        };
 
         await service.start(outputPath: testOutputPath);
-        await Future<void>.delayed(const Duration(milliseconds: 700));
+        await completed.future.timeout(const Duration(seconds: 3));
 
         expect(service.isRecording, isFalse);
         expect(captured, hasLength(1));

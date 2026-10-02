@@ -129,6 +129,31 @@ void main() {
     home: Scaffold(body: child),
   );
 
+  testWidgets('image grid exposes a Photo label before decoding', (
+    tester,
+  ) async {
+    final semantics = tester.ensureSemantics();
+    await tester.pumpWidget(
+      wrap(
+        SizedBox(
+          width: 160,
+          height: 160,
+          child: MediaGridCell(
+            attachment: _attachment(
+              id: 'photo-label',
+              mime: 'image/jpeg',
+              mediaType: 'image',
+              downloadStatus: 'pending',
+              localPath: null,
+            ),
+          ),
+        ),
+      ),
+    );
+    expect(find.bySemanticsLabel(RegExp('Photo')), findsOneWidget);
+    semantics.dispose();
+  });
+
   for (final light in [false, true]) {
     testWidgets('UI25 08.2 loading label retains spinner and theme $light', (
       tester,

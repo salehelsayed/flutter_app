@@ -106,6 +106,7 @@ internal class MknoonCallNotificationFactory(
             ?.takeIf { it.isNotEmpty() && it.length <= 128 }
             ?: applicationContext.getString(R.string.call_notification_person)
 
+    @Suppress("UNUSED_PARAMETER")
     fun createIncoming(
         nativeCallId: UUID,
         fullScreenAllowed: Boolean = canPresentFullScreen(),
@@ -151,9 +152,10 @@ internal class MknoonCallNotificationFactory(
         // only automatic presentation; this open action never answers the call.
         val openIncoming = pendingIntents.fullScreen(nativeCallId)
         builder.setContentIntent(openIncoming)
-        if (fullScreenAllowed) {
-            builder.setFullScreenIntent(openIncoming, true)
-        }
+        // SystemUI enforces full-screen access. Retain the intent when denied:
+        // Android 14 uses it to show the expanded, actionable heads-up on the
+        // locked/off screen for 60 seconds instead of launching the activity.
+        builder.setFullScreenIntent(openIncoming, true)
         return builder.build()
     }
 

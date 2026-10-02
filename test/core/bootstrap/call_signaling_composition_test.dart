@@ -2913,7 +2913,10 @@ void main() {
 
       graph.emitForeground(validated);
       foreground = false;
-      expect(await composition.present(presentation), isFalse);
+      await expectLater(
+        composition.present(presentation),
+        throwsA(isA<IncomingCallPresentationUnavailable>()),
+      );
       foreground = true;
       expect(await composition.present(presentation), isTrue);
       expect(composition.current, same(validated));

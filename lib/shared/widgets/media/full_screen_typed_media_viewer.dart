@@ -440,6 +440,7 @@ class _FullScreenTypedMediaViewerState
         backgroundColor: Colors.transparent,
         elevation: 0,
         leading: IconButton(
+          tooltip: MaterialLocalizations.of(context).backButtonTooltip,
           icon: const Icon(Icons.arrow_back, color: Colors.white),
           onPressed: widget.onBackRequested == null
               ? () => Navigator.of(context).pop()

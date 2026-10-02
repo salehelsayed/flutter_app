@@ -1104,7 +1104,6 @@ final class CallSignalingComposition
         _terminal ||
         !_foregroundAllowed ||
         _featureFlags['voice_call_incoming_enabled'] != true ||
-        !_isForeground() ||
         !_foregroundChanges.hasListener ||
         !presentation.expiresAt.isAfter(_clock().toUtc())) {
       return false;
@@ -1119,6 +1118,9 @@ final class CallSignalingComposition
         session.state != CallState.incomingValidating ||
         !session.incomingValidated) {
       return false;
+    }
+    if (!_isForeground()) {
+      throw const IncomingCallPresentationUnavailable();
     }
     _presentedIncomingCallId = presentation.callId;
     _acceptForegroundProjection(graph, projection, _foregroundGeneration);

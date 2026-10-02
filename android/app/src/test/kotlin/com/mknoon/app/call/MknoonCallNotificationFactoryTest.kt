@@ -75,7 +75,7 @@ class MknoonCallNotificationFactoryTest {
     }
 
     @Test
-    fun `incoming CallStyle is ongoing actionable and degraded without full-screen intent`() {
+    fun `incoming CallStyle retains the intent for the OS denied-access heads-up fallback`() {
         val callId = UUID.fromString(CALL_ID)
 
         val notification = factory.createIncoming(
@@ -86,7 +86,7 @@ class MknoonCallNotificationFactoryTest {
         assertEquals(Notification.CATEGORY_CALL, notification.category)
         assertTrue(notification.flags and Notification.FLAG_ONGOING_EVENT != 0)
         assertTrue(notification.flags and Notification.FLAG_AUTO_CANCEL == 0)
-        assertNull(notification.fullScreenIntent)
+        assertNotNull(notification.fullScreenIntent)
         assertEquals(
             listOf(
                 CallNotificationPendingIntentRequest(
@@ -113,7 +113,7 @@ class MknoonCallNotificationFactoryTest {
             fullScreenAllowed = false,
         )
 
-        assertNull(notification.fullScreenIntent)
+        assertNotNull(notification.fullScreenIntent)
         assertNotNull(notification.contentIntent)
         // A notification body tap is an open action, never an implicit Answer.
         // Its immutable PendingIntent also rejects replacement call identity.
@@ -144,7 +144,7 @@ class MknoonCallNotificationFactoryTest {
     }
 
     @Test
-    fun `incoming full-screen intent is added only when explicitly allowed`() {
+    fun `incoming full-screen intent is retained for OS permission enforcement`() {
         val callId = UUID.fromString(CALL_ID)
 
         val notification = factory.createIncoming(
@@ -172,13 +172,13 @@ class MknoonCallNotificationFactoryTest {
 
     @Test
     @Config(sdk = [34], shadows = [IncomingNotificationPermissionShadow::class])
-    fun `every ringing replacement rechecks Android full-screen permission and retains actionable fallback`() {
+    fun `every ringing replacement retains the OS actionable fallback across permission changes`() {
         val callId = UUID.fromString(CALL_ID)
         val productionFactory = MknoonCallNotificationFactory(context)
         listOf(true, true, false, false, true).forEach { allowed ->
             IncomingNotificationPermissionShadow.allowed = allowed
             val notification = productionFactory.createIncoming(callId)
-            assertEquals(allowed, notification.fullScreenIntent != null)
+            assertNotNull(notification.fullScreenIntent)
             assertNotNull(notification.contentIntent)
             assertEquals(2, notification.actions.count { it.actionIntent != null })
             assertTrue(notification.flags and Notification.FLAG_ONLY_ALERT_ONCE != 0)

@@ -66,6 +66,7 @@ internal class MknoonIncomingCallPresentation(
     private var unregisterBack: (() -> Unit)? = null
     private var previousSystemIconAppearance: SystemIconAppearance? = null
     private var windowEnabled = false
+    private var screenWakeEnabled = false
     private var disposed = false
     private var stopped = false
     private var intentSequence = 0
@@ -181,6 +182,7 @@ internal class MknoonIncomingCallPresentation(
             setWindowEnabled(false)
             removeCover()
         }
+        setScreenWakeEnabled(locked || !descriptor.answerRequested)
         handler.postDelayed(observation, OBSERVE_MS)
     }
 
@@ -440,15 +442,30 @@ internal class MknoonIncomingCallPresentation(
     }
 
     private fun setWindowEnabled(enabled: Boolean) {
-        if (windowEnabled == enabled) return
+        if (windowEnabled == enabled) {
+            if (!enabled) setScreenWakeEnabled(false)
+            return
+        }
         windowEnabled = enabled
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
             activity.setShowWhenLocked(enabled)
+            setScreenWakeEnabled(enabled)
+        } else {
+            @Suppress("DEPRECATION")
+            val flags = WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED
+            if (enabled) activity.window.addFlags(flags) else activity.window.clearFlags(flags)
+            setScreenWakeEnabled(enabled)
+        }
+    }
+
+    private fun setScreenWakeEnabled(enabled: Boolean) {
+        if (screenWakeEnabled == enabled) return
+        screenWakeEnabled = enabled
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
             activity.setTurnScreenOn(enabled)
         } else {
             @Suppress("DEPRECATION")
-            val flags = WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED or
-                WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON
+            val flags = WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON
             if (enabled) activity.window.addFlags(flags) else activity.window.clearFlags(flags)
         }
     }

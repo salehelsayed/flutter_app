@@ -174,8 +174,18 @@ final class IosCallLifecycleAdapter
   Future<void> start() => _translate(_delegate.start());
 
   @override
-  Future<bool> present(IncomingCallPresentation presentation) =>
-      _translate(_delegate.present(presentation));
+  Future<bool> present(IncomingCallPresentation presentation) => _translate(
+    _delegate.present(
+      // iOS v1 accepts only the authenticated handle and expiry. CallKit
+      // resolves names through its verified opaque-contact mapping; Android's
+      // initial display projection is not part of the iOS method contract.
+      IncomingCallPresentation(
+        callId: presentation.callId,
+        callerAccountPeerId: presentation.callerAccountPeerId,
+        expiresAt: presentation.expiresAt,
+      ),
+    ),
+  );
 
   @override
   Future<void> dismiss(IncomingCallPresentation presentation) =>

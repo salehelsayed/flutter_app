@@ -141,8 +141,10 @@ void main() {
   late _FakeBridge bridge;
   late P2PServiceImpl service;
   late _StatusFeed statusFeed;
+  bool foreground = true;
 
   setUp(() {
+    foreground = true;
     bridge = _FakeBridge();
     statusFeed = _StatusFeed(sticky: _statusJson(relayState: 'online'));
     bridge.whenCommand('node:status', (_) => statusFeed.next());
@@ -161,6 +163,7 @@ void main() {
     );
     service = P2PServiceImpl(
       bridge: bridge,
+      isAppForeground: () => foreground,
       inboxStagingRepository: InMemoryInboxStagingRepository(),
     );
   });
@@ -183,6 +186,25 @@ void main() {
     expect(drains(), 1, reason: 'fixture: healthy tick drains exactly once');
     bridge.calledCommands.clear();
   }
+
+  test(
+    'background health polling pauses while explicit inbox drains still run',
+    () async {
+      await startAndLatchOnline();
+      foreground = false;
+      statusFeed.sticky = _statusJson(relayState: 'degraded');
+      await service.performImmediateHealthCheck();
+      expect(bridge.calledCommands, isEmpty);
+      await service.drainOfflineInbox();
+      expect(drains(), 1);
+      expect(reconnects(), 0);
+      foreground = true;
+      await service.performImmediateHealthCheck();
+      expect(bridge.calledCommands, contains('node:status'));
+      expect(reconnects(), 1);
+      expect(drains(), greaterThanOrEqualTo(2));
+    },
+  );
 
   test(
     // TC-189-01 (INV-1)

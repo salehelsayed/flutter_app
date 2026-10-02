@@ -724,6 +724,9 @@ class ChatMessageListener {
                   : conversationMessage.senderPeerId,
             },
           );
+          // Row updates are independent of notification policy, including
+          // the Archived list and an open archived conversation.
+          _messageController.add(conversationMessage);
           // The handler already promoted marker-first custody. Retire it from
           // current policy immediately instead of waiting for a future resume.
           _retryNotificationDisplaysAfterCommit();

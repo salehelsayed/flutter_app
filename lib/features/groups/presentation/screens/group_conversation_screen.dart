@@ -717,7 +717,12 @@ class GroupConversationScreen extends StatelessWidget {
         final messageMedia = redactsPrivateMedia
             ? const <MediaAttachment>[]
             : loadedMessageMedia;
-        final displayText = redactsPrivateMedia ? '' : message.text;
+        final displayText = redactsPrivateMedia
+            ? ''
+            : message.id.startsWith('sys-member_joined:') &&
+                  message.senderPeerId == ownPeerId
+            ? AppLocalizations.of(context)!.group_you_joined
+            : message.text;
         final messageReactions = redactsPrivateMedia
             ? const <MessageReaction>[]
             : (reactions[message.id] ?? const <MessageReaction>[]);

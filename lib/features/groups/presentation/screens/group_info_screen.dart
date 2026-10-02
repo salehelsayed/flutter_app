@@ -169,6 +169,7 @@ class GroupInfoScreen extends StatelessWidget {
           IconButton(
             icon: const Icon(Icons.arrow_back_ios_new, size: 20),
             color: readableColors.iconPrimary,
+            tooltip: l10n.action_back,
             onPressed: onBack,
           ),
           const SizedBox(width: 4),
@@ -591,6 +592,7 @@ class GroupInfoScreen extends StatelessWidget {
             inviteAttempt: inviteAttemptsByPeerId[member.peerId],
             isAdmin: isAdmin,
             isSelf: isSelf,
+            isCreator: member.peerId == group.createdBy,
             isResendingInvite: resendingInvitePeerIds.contains(member.peerId),
             isRevokingInvite: revokingInvitePeerIds.contains(member.peerId),
             onToggleAdminRole:

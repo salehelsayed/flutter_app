@@ -6817,6 +6817,192 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Voice message'**
   String get media_voice_message_label;
+
+  /// No description provided for @call_end_permission.
+  ///
+  /// In en, this message translates to:
+  /// **'Microphone permission is needed to make calls.'**
+  String get call_end_permission;
+
+  /// No description provided for @call_end_unsupported.
+  ///
+  /// In en, this message translates to:
+  /// **'Voice calling is unavailable on this device.'**
+  String get call_end_unsupported;
+
+  /// No description provided for @call_end_busy.
+  ///
+  /// In en, this message translates to:
+  /// **'The contact is on another call.'**
+  String get call_end_busy;
+
+  /// No description provided for @call_end_declined.
+  ///
+  /// In en, this message translates to:
+  /// **'Call declined.'**
+  String get call_end_declined;
+
+  /// No description provided for @call_end_no_answer.
+  ///
+  /// In en, this message translates to:
+  /// **'No answer.'**
+  String get call_end_no_answer;
+
+  /// No description provided for @call_end_signaling_failed.
+  ///
+  /// In en, this message translates to:
+  /// **'Call could not connect.'**
+  String get call_end_signaling_failed;
+
+  /// No description provided for @call_end_audio_start_failed.
+  ///
+  /// In en, this message translates to:
+  /// **'Call audio could not start.'**
+  String get call_end_audio_start_failed;
+
+  /// No description provided for @call_end_audio_interrupted.
+  ///
+  /// In en, this message translates to:
+  /// **'Call audio was interrupted.'**
+  String get call_end_audio_interrupted;
+
+  /// No description provided for @call_end_reconnect_failed.
+  ///
+  /// In en, this message translates to:
+  /// **'Call could not reconnect.'**
+  String get call_end_reconnect_failed;
+
+  /// No description provided for @call_end_expired.
+  ///
+  /// In en, this message translates to:
+  /// **'The call expired.'**
+  String get call_end_expired;
+
+  /// No description provided for @call_end_unavailable.
+  ///
+  /// In en, this message translates to:
+  /// **'Voice calling is unavailable.'**
+  String get call_end_unavailable;
+
+  /// No description provided for @call_end_ended.
+  ///
+  /// In en, this message translates to:
+  /// **'Call ended.'**
+  String get call_end_ended;
+
+  /// No description provided for @call_audio_output_unavailable.
+  ///
+  /// In en, this message translates to:
+  /// **'That audio output is unavailable'**
+  String get call_audio_output_unavailable;
+
+  /// No description provided for @call_audio_controls_failed.
+  ///
+  /// In en, this message translates to:
+  /// **'Audio controls could not be updated'**
+  String get call_audio_controls_failed;
+
+  /// No description provided for @call_audio_controls_not_ready.
+  ///
+  /// In en, this message translates to:
+  /// **'Audio controls are unavailable until call audio is ready'**
+  String get call_audio_controls_not_ready;
+
+  /// No description provided for @call_audio_permission.
+  ///
+  /// In en, this message translates to:
+  /// **'Microphone permission is needed to make calls'**
+  String get call_audio_permission;
+
+  /// No description provided for @call_audio_unavailable.
+  ///
+  /// In en, this message translates to:
+  /// **'Call audio is unavailable right now'**
+  String get call_audio_unavailable;
+
+  /// No description provided for @connection_online.
+  ///
+  /// In en, this message translates to:
+  /// **'Online'**
+  String get connection_online;
+
+  /// No description provided for @connection_connecting.
+  ///
+  /// In en, this message translates to:
+  /// **'Connecting'**
+  String get connection_connecting;
+
+  /// No description provided for @connection_offline.
+  ///
+  /// In en, this message translates to:
+  /// **'Offline'**
+  String get connection_offline;
+
+  /// No description provided for @connection_semantics_offline.
+  ///
+  /// In en, this message translates to:
+  /// **'offline'**
+  String get connection_semantics_offline;
+
+  /// No description provided for @connection_semantics_connecting.
+  ///
+  /// In en, this message translates to:
+  /// **'connecting'**
+  String get connection_semantics_connecting;
+
+  /// No description provided for @connection_semantics_online.
+  ///
+  /// In en, this message translates to:
+  /// **'online, send and inbox ready, relay reservation pending'**
+  String get connection_semantics_online;
+
+  /// No description provided for @connection_semantics_reserved.
+  ///
+  /// In en, this message translates to:
+  /// **'online, send and inbox ready, relay reservation ready'**
+  String get connection_semantics_reserved;
+
+  /// No description provided for @connection_semantics_direct.
+  ///
+  /// In en, this message translates to:
+  /// **'online, send and inbox ready, directly reachable'**
+  String get connection_semantics_direct;
+
+  /// No description provided for @group_invited_not_joined.
+  ///
+  /// In en, this message translates to:
+  /// **'Invited – not joined yet; not receiving messages'**
+  String get group_invited_not_joined;
+
+  /// No description provided for @group_you_joined.
+  ///
+  /// In en, this message translates to:
+  /// **'You joined'**
+  String get group_you_joined;
+
+  /// No description provided for @call_unknown_contact.
+  ///
+  /// In en, this message translates to:
+  /// **'Unknown contact'**
+  String get call_unknown_contact;
+
+  /// No description provided for @call_mute_unavailable.
+  ///
+  /// In en, this message translates to:
+  /// **'Microphone controls are unavailable until audio is ready'**
+  String get call_mute_unavailable;
+
+  /// No description provided for @call_speaker_unavailable.
+  ///
+  /// In en, this message translates to:
+  /// **'Speaker is unavailable for the current audio route'**
+  String get call_speaker_unavailable;
+
+  /// No description provided for @call_audio_output_failed.
+  ///
+  /// In en, this message translates to:
+  /// **'Audio output could not be changed'**
+  String get call_audio_output_failed;
 }
 
 class _AppLocalizationsDelegate

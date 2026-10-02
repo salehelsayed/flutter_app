@@ -417,7 +417,9 @@ final class BridgeCallMailboxClient implements CallMailboxClient {
     try {
       emitFlowEvent(
         layer: 'FL',
-        event: 'CALL_MAILBOX_BRIDGE_FAILURE',
+        event: code == 'CALL_REPLAY'
+            ? 'CALL_MAILBOX_BRIDGE_DUPLICATE'
+            : 'CALL_MAILBOX_BRIDGE_FAILURE',
         details: <String, Object?>{'operation': operation, 'code': code},
       );
     } catch (_) {

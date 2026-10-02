@@ -134,6 +134,7 @@ class _ContactPickerScreenState extends State<ContactPickerScreen> {
           IconButton(
             icon: const Icon(Icons.arrow_back_ios_new, size: 20),
             color: readableColors.iconPrimary,
+            tooltip: MaterialLocalizations.of(context).backButtonTooltip,
             onPressed: widget.onBack,
           ),
           const SizedBox(width: 4),

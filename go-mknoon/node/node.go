@@ -25,6 +25,7 @@ import (
 	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
+	"github.com/libp2p/go-libp2p/core/peerstore"
 	"github.com/libp2p/go-libp2p/p2p/host/autorelay"
 	"github.com/libp2p/go-libp2p/p2p/net/connmgr"
 	relayclient "github.com/libp2p/go-libp2p/p2p/protocol/circuitv2/client"
@@ -469,6 +470,12 @@ func (n *Node) Start(cfg NodeConfig) (state *NodeState, err error) {
 		return nil, fmt.Errorf("create host: %w", err)
 	}
 	localHost = h
+	// Configured relay addresses remain valid until configuration changes. A
+	// Connect-only temporary TTL loses them after disconnect, so AutoRelay's
+	// later reservation dial can fail with "no good addresses".
+	for _, relay := range relayInfos {
+		h.Peerstore().AddAddrs(relay.ID, relay.Addrs, peerstore.PermanentAddrTTL)
+	}
 
 	pubsubStart := time.Now()
 	ps, err := pubsub.NewGossipSub(localCtx, h, pubsub.WithFloodPublish(true))

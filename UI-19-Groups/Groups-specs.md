@@ -191,7 +191,7 @@ GossipSub can also be a "private" group chat?
   │ Partial history │ Send keys from a certain point │ Middle ground — "you can see the last 30 days"                           │
   └─────────────────┴────────────────────────────────┴──────────────────────────────────────────────────────────────────────────┘
 
-  This is a product decision, not a technical one. You can support any of these since the relay already stores the encrypted messages — it's just a question of which keys you hand over.
+  Decision (2026-09-30, R2 open-issues handoff O10): **No history, join-point only.** A member receives only messages sent after they accept the invite. Messages sent while their invite is pending are not delivered later; there is no backfill. The member sees a localized “You joined” marker, and pending invitees are identified as not joined and not receiving messages.
 
   What the new member does
 

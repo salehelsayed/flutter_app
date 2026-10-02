@@ -577,6 +577,21 @@ Future<void> _drainGroupInbox({
         throw error;
       }
 
+      if (_isV3MissingGroupKeyError(error)) {
+        final v3Envelope = _tryDecodeReplayEnvelope(msg['message']);
+        if (v3Envelope != null && _isV3GroupMessageEnvelope(v3Envelope)) {
+          final settled = await _settleV3PastEpochMessage(
+            groupRepo: groupRepo,
+            msgRepo: msgRepo,
+            groupId: groupId,
+            relayEnvelope: msg,
+            v3Envelope: v3Envelope,
+            selfPeerId: selfPeerId,
+          );
+          if (settled) return true;
+        }
+      }
+
       var placeholderSaved = false;
       if (_isMissingGroupReplayKeyError(error)) {
         final replayEnvelope = _tryDecodeReplayEnvelope(msg['message']);
@@ -2304,6 +2319,109 @@ Future<bool> _persistUndecryptablePlaceholderFromEnvelope({
 
 bool _isMissingGroupReplayKeyError(Object error) {
   return error.toString().contains('Missing group replay key');
+}
+
+/// The v3 decoder's own wording (`_decodeV3GroupMessageEnvelope`). It is not
+/// a replay envelope, so the replay missing-key path above cannot settle it.
+bool _isV3MissingGroupKeyError(Object error) {
+  return error is StateError &&
+      error.message.startsWith('missing group key for epoch ');
+}
+
+/// Settles a v3 message whose key epoch is older than the newest key this
+/// device holds and whose key is missing. That key is never shared later
+/// (members get only the key current when they join), so leaving the message
+/// in the inbox retries it on every drain forever. A message from before this
+/// device joined is skipped, as pre-join replays are; a later one becomes one
+/// undecryptable placeholder, as a missing replay key does. Returns false
+/// (keep retrying) for the current or a future epoch, whose key may arrive.
+Future<bool> _settleV3PastEpochMessage({
+  required GroupRepository groupRepo,
+  required GroupMessageRepository msgRepo,
+  required String groupId,
+  required Map<String, dynamic> relayEnvelope,
+  required Map<String, dynamic> v3Envelope,
+  required String? selfPeerId,
+}) async {
+  final keyEpoch = v3Envelope['keyEpoch'];
+  final signature = v3Envelope['signature'];
+  if (keyEpoch is! int || signature is! String || signature.isEmpty) {
+    return false;
+  }
+  final latestKeyGeneration = (await groupRepo.getLatestKey(
+    groupId,
+  ))?.keyGeneration;
+  if (latestKeyGeneration == null || keyEpoch >= latestKeyGeneration) {
+    return false;
+  }
+  if (await groupRepo.getKeyByGeneration(groupId, keyEpoch) != null) {
+    return false;
+  }
+
+  final relayTimestamp = _tryParseRelayTimestamp(relayEnvelope['timestamp']);
+  final normalizedSelfPeerId = selfPeerId?.trim();
+  if (relayTimestamp != null &&
+      normalizedSelfPeerId != null &&
+      normalizedSelfPeerId.isNotEmpty) {
+    final selfJoinedAt = (await groupRepo.getMember(
+      groupId,
+      normalizedSelfPeerId,
+    ))?.joinedAt.toUtc();
+    if (selfJoinedAt != null && relayTimestamp.isBefore(selfJoinedAt)) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'GROUP_DRAIN_OFFLINE_INBOX_PRE_JOIN_V3_PAST_EPOCH_SKIPPED',
+        details: {
+          'groupId': _safeId(groupId),
+          'keyEpoch': keyEpoch,
+          'latestKeyGeneration': latestKeyGeneration,
+        },
+      );
+      return true;
+    }
+  }
+
+  final digest = sha256
+      .convert(utf8.encode('$groupId|$keyEpoch|$signature'))
+      .toString();
+  final messageId = 'v3-undecryptable-${digest.substring(0, 32)}';
+  if (await msgRepo.getMessage(messageId) == null) {
+    final senderId = (v3Envelope['senderId'] as String?)?.trim();
+    final relayFrom = (relayEnvelope['from'] as String?)?.trim();
+    final senderPeerId = senderId != null && senderId.isNotEmpty
+        ? senderId
+        : relayFrom;
+    await msgRepo.saveMessage(
+      GroupMessage(
+        id: messageId,
+        groupId: groupId,
+        senderPeerId: senderPeerId == null || senderPeerId.isEmpty
+            ? 'unknown'
+            : senderPeerId,
+        transportPeerId: relayFrom == null || relayFrom.isEmpty
+            ? null
+            : relayFrom,
+        senderUsername: null,
+        text: groupUndecryptablePlaceholderText,
+        timestamp: relayTimestamp ?? DateTime.now().toUtc(),
+        keyGeneration: keyEpoch,
+        status: 'undecryptable',
+        isIncoming: true,
+        createdAt: DateTime.now().toUtc(),
+      ),
+    );
+  }
+  emitFlowEvent(
+    layer: 'FL',
+    event: 'GROUP_DRAIN_OFFLINE_INBOX_UNDECRYPTABLE_PLACEHOLDER_SAVED',
+    details: {
+      'groupId': _safeId(groupId),
+      'messageId': _safeId(messageId),
+      'keyEpoch': keyEpoch,
+      'format': 'v3',
+    },
+  );
+  return true;
 }
 
 Future<({int keyEpoch, int latestKeyGeneration, int minAcceptedKeyGeneration})?>

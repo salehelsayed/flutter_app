@@ -1,4 +1,5 @@
 import Flutter
+import FirebaseCore
 import FirebaseMessaging
 import CoreFoundation
 import CryptoKit
@@ -832,6 +833,7 @@ final class IosSetupReadinessEntryCoordinator {
 
 @main
 @objc class AppDelegate: FlutterAppDelegate, FlutterImplicitEngineDelegate {
+  private static var firebaseConfigured = false
 #if canImport(GoMknoon)
   private var goBridge: GoBridge?
 #endif
@@ -924,6 +926,15 @@ final class IosSetupReadinessEntryCoordinator {
     _ application: UIApplication,
     didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?
   ) -> Bool {
+    // APNs registration can complete before Flutter starts. Configure the
+    // default app before any native Messaging access or plugin registration.
+    // Querying FirebaseApp before it is configured logs an error (I-COR000003
+    // for the default app, I-COR000005 for the app list), so guard with our
+    // own flag: nothing configures Firebase before this point.
+    if !Self.firebaseConfigured {
+      FirebaseApp.configure()
+      Self.firebaseConfigured = true
+    }
     MknoonAppDiagnostics.shared.record("startup", "launch", "started", "bootstrap")
     iosCallKitController.setCapabilityChangeHandler { [weak self] enabled in
       self?.iosVoipPushRegistry.applyCapability(enabled) ?? false

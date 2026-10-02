@@ -51,10 +51,11 @@ void main() {
         native.callsOf('acknowledge').single.arguments['callHandle'],
         retiredHandle,
       );
-      expect(
-        native.callsOf('presentAuthenticated').single.arguments['callHandle'],
-        _callHandle,
-      );
+      expect(native.callsOf('presentAuthenticated').single.arguments, {
+        'version': 1,
+        'callHandle': _callHandle,
+        'expiresAtMs': _expiresAtMs,
+      });
       expect(native.callsOf('failClosed'), isEmpty);
     },
   );
@@ -1066,6 +1067,7 @@ Future<void> _bindRinging(
 }
 
 IncomingCallPresentation _presentation() => IncomingCallPresentation(
+  displayName: 'Alice',
   callId: _callId,
   callerAccountPeerId: 'remote-account',
   expiresAt: DateTime.fromMillisecondsSinceEpoch(_expiresAtMs, isUtc: true),

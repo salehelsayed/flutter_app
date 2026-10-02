@@ -13628,6 +13628,124 @@ void main() {
     },
   );
 
+  group('v3 message whose key epoch is missing', () {
+    Map<String, dynamic> v3RelayMessage({
+      required int keyEpoch,
+      required DateTime relayTime,
+      String signature = 'sig-v3-old',
+    }) => {
+      'from': 'peer-sender',
+      'message': jsonEncode({
+        'version': '3',
+        'type': 'group_message',
+        'groupId': 'group-1',
+        'senderId': 'peer-sender',
+        'senderPublicKey': 'pk-sender',
+        'signature': signature,
+        'keyEpoch': keyEpoch,
+        'encrypted': {'ciphertext': 'ct-v3', 'nonce': 'nonce-v3'},
+      }),
+      'timestamp': relayTime.millisecondsSinceEpoch,
+    };
+
+    Future<List<Map<String, dynamic>>> drainCapturingFlow() async {
+      final output = <String>[];
+      final previousLogging = flowEventLoggingEnabled;
+      final originalDebugPrint = debugPrint;
+      flowEventLoggingEnabled = true;
+      debugPrint = (String? message, {int? wrapWidth}) {
+        if (message != null) output.add(message);
+      };
+      addTearDown(() {
+        debugPrint = originalDebugPrint;
+        flowEventLoggingEnabled = previousLogging;
+      });
+      await drainGroupOfflineInbox(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        selfPeerId: 'peer-local',
+      );
+      return output
+          .where((line) => line.startsWith('[FLOW] '))
+          .map(
+            (line) =>
+                jsonDecode(line.substring('[FLOW] '.length))
+                    as Map<String, dynamic>,
+          )
+          .toList();
+    }
+
+    setUp(() async {
+      // v3 envelopes reach the drain as-is; no legacy replay signing.
+      bridge.signLegacyReplayMessage = null;
+      await groupRepo.saveKey(
+        GroupKeyInfo(
+          groupId: 'group-1',
+          keyGeneration: 2,
+          encryptedKey: 'key-2',
+          createdAt: DateTime.now().toUtc(),
+        ),
+      );
+    });
+
+    test(
+      'an older epoch sent after joining becomes one placeholder, once',
+      () async {
+        final message = v3RelayMessage(
+          keyEpoch: 1,
+          relayTime: DateTime.utc(2026, 5, 2),
+        );
+        bridge.addPage('group-1', '', [message, message], '');
+
+        final events = await drainCapturingFlow();
+
+        final placeholders = (await msgRepo.getMessagesPage('group-1'))
+            .where((m) => m.status == 'undecryptable')
+            .toList();
+        expect(placeholders, hasLength(1));
+        expect(placeholders.single.id, startsWith('v3-undecryptable-'));
+        expect(placeholders.single.keyGeneration, 1);
+        expect(placeholders.single.text, groupUndecryptablePlaceholderText);
+        expect(
+          events.where(
+            (e) => e['event'] == 'GROUP_DRAIN_OFFLINE_INBOX_DECODE_SKIPPED',
+          ),
+          isEmpty,
+        );
+        expect(bridge.commandLog, isNot(contains('group.decrypt')));
+      },
+    );
+
+    test('an older epoch sent before joining is skipped silently', () async {
+      bridge.addPage('group-1', '', [
+        v3RelayMessage(keyEpoch: 1, relayTime: DateTime.utc(2026, 4, 30)),
+      ], '');
+
+      final events = await drainCapturingFlow();
+
+      expect(msgRepo.count, 0);
+      expect(
+        events.map((e) => e['event']),
+        contains('GROUP_DRAIN_OFFLINE_INBOX_PRE_JOIN_V3_PAST_EPOCH_SKIPPED'),
+      );
+    });
+
+    test('a future epoch keeps waiting for its key', () async {
+      bridge.addPage('group-1', '', [
+        v3RelayMessage(keyEpoch: 3, relayTime: DateTime.utc(2026, 5, 2)),
+      ], '');
+
+      final events = await drainCapturingFlow();
+
+      expect(msgRepo.count, 0);
+      final skipped = events.firstWhere(
+        (e) => e['event'] == 'GROUP_DRAIN_OFFLINE_INBOX_DECODE_SKIPPED',
+      );
+      expect(skipped['details']['placeholderSaved'], isFalse);
+    });
+  });
+
   test(
     'future epoch encrypted replay creates one undecryptable placeholder without decrypting',
     () async {

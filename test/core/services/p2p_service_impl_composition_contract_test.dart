@@ -80,6 +80,9 @@ const _constructorParameters = <String>[
   'BeginIosInboxDrainGeneration? beginIosInboxDrainGeneration',
   'EndIosInboxDrainGeneration? endIosInboxDrainGeneration',
   'bool recoveryOnly = false',
+  // R2 O7: lifecycle policy pauses foreground health polling; inbox replay
+  // remains independently callable while the application is backgrounded.
+  'bool Function()? isAppForeground',
 ];
 
 const _publicFields = <String>{
@@ -670,7 +673,8 @@ String _publicApiFingerprint(ClassDeclaration facade) {
 // Historical notification repair: one optional constructor callback supplies
 // exact delivered-owner proof from each production lifetime's scoped database.
 // Public STORE methods and custody function signatures retain their shape.
-const _expectedFacadeApiFingerprint = '15fe5f1e';
+// The only API addition is the O7 foreground lifecycle predicate above.
+const _expectedFacadeApiFingerprint = 'a4892d0a';
 
 void _expectCallbackOwnership(ClassDeclaration facade, String facadeSource) {
   final constructorBody = _compact(
@@ -914,7 +918,7 @@ void main() {
             .toList(growable: false),
         _constructorParameters,
       );
-      expect(constructor.parameters.parameters, hasLength(28));
+      expect(constructor.parameters.parameters, hasLength(29));
       expect(
         _fieldNames(facade).where((name) => !name.startsWith('_')).toSet(),
         _publicFields,

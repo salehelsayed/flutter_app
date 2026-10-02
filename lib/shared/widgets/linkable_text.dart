@@ -1,5 +1,6 @@
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/semantics.dart';
 import 'package:flutter_app/core/theme/feed_colors.dart';
 import 'package:flutter_app/core/utils/url_parser.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -125,11 +126,29 @@ class _LinkableTextState extends State<LinkableText> {
       if (widget.suffixSpans != null) ...widget.suffixSpans!,
     ];
 
-    return Text.rich(
+    final urls = parseUrls(
+      widget.text,
+    ).where((s) => s.isUrl).map((s) => s.text).toList();
+    final richText = Text.rich(
       TextSpan(children: allSpans),
       maxLines: widget.maxLines,
       overflow: widget.overflow ?? TextOverflow.clip,
       textDirection: widget.textDirection,
+    );
+    if (urls.isEmpty) return richText;
+    // A link's recognizer splits RichText into accessibility fragments. Merge
+    // the complete message while retaining inline timestamp/status widgets.
+    return MergeSemantics(
+      child: Semantics(
+        onTap: urls.length == 1 ? () => _handleTap(urls.single) : null,
+        customSemanticsActions: urls.length > 1
+            ? {
+                for (final url in urls)
+                  CustomSemanticsAction(label: url): () => _handleTap(url),
+              }
+            : null,
+        child: richText,
+      ),
     );
   }
 }

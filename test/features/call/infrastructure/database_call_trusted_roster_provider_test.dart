@@ -124,7 +124,10 @@ void main() {
       expect(blocked.contactAccepted, isTrue);
       expect(blocked.contactBlocked, isTrue);
       expect(blocked.devices, isEmpty);
-      expect(await provider.resolveAuthenticatedTransport(_account), isNull);
+      await expectLater(
+        provider.resolveAuthenticatedTransport(_account),
+        throwsA(isA<CallSenderBlockedException>()),
+      );
     },
   );
 

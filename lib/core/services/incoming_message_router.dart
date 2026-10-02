@@ -238,6 +238,10 @@ class IncomingMessageRouter {
           _postPinUpdateController.add(message);
         case 'post_pin_remove':
           _postPinRemoveController.add(message);
+        case 'readiness_proof':
+          // The inbox coordinator consumes this transport readiness signal.
+          // It has no conversation/UI destination.
+          break;
         case 'delivery_receipt':
           // 115 P2: receipts are the receiver's durable-persist confirmation
           // — the only thing that flips relay-inbox custody ('inboxed') to

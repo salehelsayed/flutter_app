@@ -58,10 +58,6 @@ final class ForegroundCallOverlay extends StatefulWidget {
 class _ForegroundCallOverlayState extends State<ForegroundCallOverlay> {
   static const Duration _terminalNoticeDuration = Duration(seconds: 6);
   static const String _unknownContactName = 'Unknown contact';
-  static const String _speakerUnavailableMessage =
-      'Speaker is unavailable for the current audio route';
-  static const String _muteUnavailableMessage =
-      'Microphone controls are unavailable until audio is ready';
 
   StreamSubscription<ForegroundCallProjection?>? _subscription;
   ForegroundCallProjection? _projection;
@@ -294,20 +290,26 @@ class _ForegroundCallOverlayState extends State<ForegroundCallOverlay> {
       surface = switch (surfaceKind) {
         _ForegroundCallSurface.incoming => IncomingCallScreen(
           contactPeerId: peerId,
-          contactUsername: _contactDisplayName,
+          contactUsername: _contactDisplayName == _unknownContactName
+              ? AppLocalizations.of(context)!.call_unknown_contact
+              : _contactDisplayName,
           state: session!.state,
           onAnswer: () => _runAction(() => widget.capability?.answer(callId)),
           onDecline: () => _runAction(() => widget.capability?.decline(callId)),
         ),
         _ForegroundCallSurface.outgoing => OutgoingCallScreen(
           contactPeerId: peerId,
-          contactUsername: _contactDisplayName,
+          contactUsername: _contactDisplayName == _unknownContactName
+              ? AppLocalizations.of(context)!.call_unknown_contact
+              : _contactDisplayName,
           state: session!.state,
           onCancel: () => _runAction(() => widget.capability?.cancel(callId)),
         ),
         _ForegroundCallSurface.active => ActiveCallScreen(
           contactPeerId: peerId,
-          contactUsername: _contactDisplayName,
+          contactUsername: _contactDisplayName == _unknownContactName
+              ? AppLocalizations.of(context)!.call_unknown_contact
+              : _contactDisplayName,
           state: session!.state,
           connectedAt: session.connectedAt,
           now: widget.now ?? DateTime.now,
@@ -316,7 +318,10 @@ class _ForegroundCallOverlayState extends State<ForegroundCallOverlay> {
         _ForegroundCallSurface.terminal =>
           _terminalNoticeVisible
               ? _TerminalCallNotice(
-                  message: _terminalMessage(session!),
+                  message: _terminalMessage(
+                    session!,
+                    AppLocalizations.of(context)!,
+                  ),
                   onDismiss: _dismissTerminalNotice,
                 )
               : null,
@@ -408,6 +413,7 @@ class _ForegroundCallOverlayState extends State<ForegroundCallOverlay> {
   }
 
   CallControls _buildControls(CallId callId, CallAudioControlState audio) {
+    final l10n = AppLocalizations.of(context)!;
     final speakerOn = audio.selectedRoute == CallAudioOutputRoute.speaker;
     final speakerAvailable =
         audio.active &&
@@ -418,15 +424,18 @@ class _ForegroundCallOverlayState extends State<ForegroundCallOverlay> {
       isSpeakerOn: speakerOn,
       isSpeakerAvailable: speakerAvailable,
       selectedRoute: audio.selectedRoute,
-      audioStatusMessage: _audioStatusMessage(audio.failure),
-      muteUnavailableMessage: _muteUnavailableMessage,
-      speakerUnavailableMessage: _speakerUnavailableMessage,
+      audioStatusMessage: _audioStatusMessage(
+        audio.failure,
+        AppLocalizations.of(context)!,
+      ),
+      muteUnavailableMessage: l10n.call_mute_unavailable,
+      speakerUnavailableMessage: l10n.call_speaker_unavailable,
       onMute: () =>
           _runAction(() => widget.capability?.setMuted(callId, !audio.muted)),
       onSpeaker: () => _runAction(
         () => widget.capability?.setSpeakerEnabled(callId, !speakerOn),
-        unavailableMessage: 'That audio output is unavailable',
-        failedMessage: 'Audio output could not be changed',
+        unavailableMessage: l10n.call_audio_output_unavailable,
+        failedMessage: l10n.call_audio_output_failed,
       ),
       onEnd: () => _runAction(() => widget.capability?.end(callId)),
     );
@@ -518,48 +527,45 @@ _ForegroundCallSurface _surfaceKind(CallSessionSnapshot? session) {
   };
 }
 
-String _terminalMessage(CallSessionSnapshot session) =>
+String _terminalMessage(CallSessionSnapshot session, AppLocalizations l10n) =>
     switch (session.endReason) {
-      CallEndReason.permissionDenied =>
-        'Microphone permission is needed to make calls.',
-      CallEndReason.unsupported =>
-        'Voice calling is unavailable on this device.',
-      CallEndReason.busy => 'The contact is on another call.',
-      CallEndReason.declined => 'Call declined.',
-      CallEndReason.noAnswer => 'No answer.',
-      CallEndReason.signalingFailed => 'Call could not connect.',
+      CallEndReason.permissionDenied => l10n.call_end_permission,
+      CallEndReason.unsupported => l10n.call_end_unsupported,
+      CallEndReason.busy => l10n.call_end_busy,
+      CallEndReason.declined => l10n.call_end_declined,
+      CallEndReason.noAnswer => l10n.call_end_no_answer,
+      CallEndReason.signalingFailed => l10n.call_end_signaling_failed,
       CallEndReason.mediaFailed =>
         session.connectedAt == null
-            ? 'Call audio could not start.'
-            : 'Call audio was interrupted.',
-      CallEndReason.reconnectFailed => 'Call could not reconnect.',
-      CallEndReason.expired => 'The call expired.',
-      CallEndReason.policyRejected => 'Voice calling is unavailable.',
+            ? l10n.call_end_audio_start_failed
+            : l10n.call_end_audio_interrupted,
+      CallEndReason.reconnectFailed => l10n.call_end_reconnect_failed,
+      CallEndReason.expired => l10n.call_end_expired,
+      CallEndReason.policyRejected => l10n.call_end_unavailable,
       CallEndReason.callerCancelled ||
       CallEndReason.remoteHangup ||
       CallEndReason.localHangup ||
       CallEndReason.appShutdown ||
-      null => 'Call ended.',
+      null => l10n.call_end_ended,
     };
 
-String? _audioStatusMessage(CallAudioFailure failure) => switch (failure) {
-  CallAudioFailure.none => null,
-  CallAudioFailure.unsupportedRoute => 'That audio output is unavailable',
-  CallAudioFailure.controlFailed => 'Audio controls could not be updated',
-  CallAudioFailure.notActive ||
-  CallAudioFailure.notLocallyAccepted ||
-  CallAudioFailure.closed =>
-    'Audio controls are unavailable until call audio is ready',
-  CallAudioFailure.permissionDenied =>
-    'Microphone permission is needed to make calls',
-  CallAudioFailure.invalidConfiguration ||
-  CallAudioFailure.permissionFailed ||
-  CallAudioFailure.mediaConflict ||
-  CallAudioFailure.audioSessionFailed ||
-  CallAudioFailure.engineFailed ||
-  CallAudioFailure.interruptionFailed ||
-  CallAudioFailure.cleanupFailed => 'Call audio is unavailable right now',
-};
+String? _audioStatusMessage(CallAudioFailure failure, AppLocalizations l10n) =>
+    switch (failure) {
+      CallAudioFailure.none => null,
+      CallAudioFailure.unsupportedRoute => l10n.call_audio_output_unavailable,
+      CallAudioFailure.controlFailed => l10n.call_audio_controls_failed,
+      CallAudioFailure.notActive ||
+      CallAudioFailure.notLocallyAccepted ||
+      CallAudioFailure.closed => l10n.call_audio_controls_not_ready,
+      CallAudioFailure.permissionDenied => l10n.call_audio_permission,
+      CallAudioFailure.invalidConfiguration ||
+      CallAudioFailure.permissionFailed ||
+      CallAudioFailure.mediaConflict ||
+      CallAudioFailure.audioSessionFailed ||
+      CallAudioFailure.engineFailed ||
+      CallAudioFailure.interruptionFailed ||
+      CallAudioFailure.cleanupFailed => l10n.call_audio_unavailable,
+    };
 
 class _TerminalCallNotice extends StatelessWidget {
   const _TerminalCallNotice({required this.message, required this.onDismiss});

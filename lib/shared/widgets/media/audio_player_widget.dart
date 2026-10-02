@@ -4,6 +4,7 @@ import 'package:audio_session/audio_session.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_app/core/media/group_media_integrity_policy.dart';
 import 'package:just_audio/just_audio.dart';
+import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 import 'media_display_helpers.dart';
@@ -247,6 +248,7 @@ class _AudioPlayerWidgetState extends State<AudioPlayerWidget>
   int _loadVersion = 0;
   bool _playStartPending = false;
   bool _isDisposing = false;
+  final Set<Future<void>> _sourceLoads = {};
   bool _retainsInterruptedPlayback = false;
 
   /// Retain only active or reversibly interrupted user playback. User-paused,
@@ -333,7 +335,14 @@ class _AudioPlayerWidgetState extends State<AudioPlayerWidget>
     }
   }
 
-  Future<void> _loadAudio() async {
+  Future<void> _loadAudio() {
+    if (_isDisposing) return Future<void>.value();
+    final task = _loadAudioSource();
+    _sourceLoads.add(task);
+    return task.whenComplete(() => _sourceLoads.remove(task));
+  }
+
+  Future<void> _loadAudioSource() async {
     final path = widget.attachment.localPath;
     if (path == null || !_isAvailable) return;
     if ((_isLoaded && _loadedPath == path) || _loadingPath == path) return;
@@ -403,7 +412,7 @@ class _AudioPlayerWidgetState extends State<AudioPlayerWidget>
       updateKeepAlive();
     }
 
-    if (_isAvailable) {
+    if (!_isDisposing && _isAvailable) {
       await _loadAudio();
     }
   }
@@ -417,8 +426,30 @@ class _AudioPlayerWidgetState extends State<AudioPlayerWidget>
     unawaited(_durationSubscription.cancel());
     unawaited(_interruptionSubscription?.cancel());
     unawaited(_becomingNoisySubscription?.cancel());
-    unawaited(_player.dispose());
+    _loadVersion++;
+    unawaited(_disposePlayerAfterLoads());
     super.dispose();
+  }
+
+  Future<void> _disposePlayerAfterLoads() async {
+    // stop interrupts a pending platform load. Do not close just_audio's
+    // subjects until the load continuation has released its event listener.
+    try {
+      await _player.stop();
+    } catch (_) {
+      // A platform stop error must not close subjects under a pending load.
+    }
+    await Future.wait(_sourceLoads.toList());
+    try {
+      await _player.dispose();
+    } catch (_) {
+      // This detached row has no UI to report a platform teardown failure to.
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'AUDIO_PLAYER_DISPOSE_FAILED',
+        details: const {},
+      );
+    }
   }
 
   void _startPositionTimer() {

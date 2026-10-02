@@ -34,6 +34,7 @@ enum IncomingCallPrePresentationAdmissionFailureCode {
 enum IncomingCallPrePresentationAdmissionGate {
   rosterUnavailable('roster_unavailable'),
   senderUnknown('sender_unknown'),
+  senderBlocked('sender_blocked'),
   localAuthorityUnavailable('local_authority_unavailable'),
   envelope('envelope'),
   expectationMismatch('expectation_mismatch'),
@@ -197,6 +198,11 @@ final class IncomingCallPrePresentationAdmission {
     try {
       sender = await _trustedRosterProvider.resolveAuthenticatedTransport(
         authenticatedTransportPeerId,
+      );
+    } on CallSenderBlockedException {
+      throw const IncomingCallPrePresentationAdmissionException(
+        IncomingCallPrePresentationAdmissionFailureCode.permanentReject,
+        gate: IncomingCallPrePresentationAdmissionGate.senderBlocked,
       );
     } catch (_) {
       throw const IncomingCallPrePresentationAdmissionException(

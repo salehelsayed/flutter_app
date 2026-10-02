@@ -16,6 +16,7 @@ class GroupMemberRow extends StatelessWidget {
   final GroupInviteDeliveryAttempt? inviteAttempt;
   final bool isAdmin;
   final bool isSelf;
+  final bool isCreator;
   final bool isResendingInvite;
   final bool isRevokingInvite;
   final VoidCallback? onToggleAdminRole;
@@ -31,6 +32,7 @@ class GroupMemberRow extends StatelessWidget {
     this.inviteAttempt,
     this.isAdmin = false,
     this.isSelf = false,
+    this.isCreator = false,
     this.isResendingInvite = false,
     this.isRevokingInvite = false,
     this.onToggleAdminRole,
@@ -70,13 +72,36 @@ class GroupMemberRow extends StatelessWidget {
                 ),
                 const SizedBox(height: 2),
                 _RoleBadge(role: member.role, l10n: l10n),
-                if (!isSelf) ...[
+                // Invite delivery status is an admin tool. A non-admin viewer
+                // has no invite record for members someone else invited, so
+                // an unknown status would only read as a problem.
+                if (!isSelf &&
+                    !isCreator &&
+                    (isAdmin ||
+                        inviteStatus != GroupInviteDeliveryStatus.unknown)) ...[
                   const SizedBox(height: 6),
                   _InviteStatusBadge(
                     peerId: member.peerId,
                     status: inviteStatus,
                     lastError: inviteAttempt?.lastError,
                     l10n: l10n,
+                  ),
+                ],
+                if (!isSelf &&
+                    !isCreator &&
+                    const {
+                      GroupInviteDeliveryStatus.sent,
+                      GroupInviteDeliveryStatus.queued,
+                      GroupInviteDeliveryStatus.needsResend,
+                    }.contains(inviteStatus)) ...[
+                  const SizedBox(height: 4),
+                  Text(
+                    l10n.group_invited_not_joined,
+                    key: ValueKey('group-member-pending-${member.peerId}'),
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: readableColors.textSecondary,
+                    ),
                   ),
                 ],
                 if (identitySafety?.identityChanged == true) ...[

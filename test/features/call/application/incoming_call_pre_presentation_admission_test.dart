@@ -84,6 +84,29 @@ void main() {
     },
   );
 
+  test(
+    'blocked sender is refused with a distinct identity-free reason',
+    () async {
+      final fixture = await _fixture();
+      fixture.roster.blocked = true;
+      await expectLater(
+        fixture.admission.authenticateMailboxInvite(
+          nativeCallId: _callHandle,
+          wakeExpiresAtMs: _nowMs + 45_000,
+          event: fixture.event,
+        ),
+        throwsA(
+          isA<IncomingCallPrePresentationAdmissionException>().having(
+            (failure) => failure.reasonCode,
+            'reason',
+            'sender_blocked',
+          ),
+        ),
+      );
+      expect(fixture.localAuthorityLoads, 0);
+    },
+  );
+
   test('wake, outer, and inner mailbox binding mismatches reject', () async {
     for (final mismatch in _BindingMismatch.values) {
       final fixture = await _fixture();
@@ -341,6 +364,7 @@ final class _Roster implements CallTrustedRosterProvider {
   _Roster(this.authority);
 
   final TrustedCallDeviceAuthority? authority;
+  bool blocked = false;
   final List<String> resolvedTransports = <String>[];
 
   @override
@@ -352,6 +376,7 @@ final class _Roster implements CallTrustedRosterProvider {
     String authenticatedTransportPeerId,
   ) async {
     resolvedTransports.add(authenticatedTransportPeerId);
+    if (blocked) throw const CallSenderBlockedException();
     return authority;
   }
 }

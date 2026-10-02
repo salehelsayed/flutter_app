@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:clock/clock.dart';
 import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/widgets.dart' show WidgetsBinding, AppLifecycleState;
 import 'p2p_service.dart';
 import '../notifications/active_conversation_tracker.dart';
 import '../notifications/automatic_recovery_notification_policy.dart';
@@ -241,6 +242,21 @@ class P2PServiceImpl
       StreamController<LocalMediaReady>.broadcast();
 
   NodeState _currentState = NodeState.stopped;
+  final bool Function() _isAppForeground;
+
+  static bool _defaultAppForeground() {
+    // Pure host consumers have no Flutter binding. The production app always
+    // has one before constructing this service.
+    try {
+      final state = WidgetsBinding.instance.lifecycleState;
+      return state == null ||
+          state == AppLifecycleState.resumed ||
+          state == AppLifecycleState.inactive;
+    } catch (_) {
+      return true;
+    }
+  }
+
   Timer? _healthCheckTimer;
   String? _lastFcmToken;
   String? _lastFcmPlatform;
@@ -412,7 +428,9 @@ class P2PServiceImpl
     // owner. Callers must opt in at construction before using
     // [startRecoveryOnlyNode].
     bool recoveryOnly = false,
-  }) : _bridge = bridge,
+    bool Function()? isAppForeground,
+  }) : _isAppForeground = isAppForeground ?? _defaultAppForeground,
+       _bridge = bridge,
        _pushTokenStore = pushTokenStore,
        _accountMigrationNetworkGate = accountMigrationNetworkGate,
        _recoveryOnly = recoveryOnly,
@@ -2064,6 +2082,7 @@ class P2PServiceImpl
   }
 
   Future<void> _attemptRelayRecovery({required String recoverySource}) async {
+    if (!_isAppForeground() && recoverySource == 'health_check_poll') return;
     if (!await _allowsAccountNetworkSideEffects('p2p_relay_recovery')) {
       return;
     }
@@ -2451,7 +2470,7 @@ class P2PServiceImpl
 
   /// Poll node:status, attempt recovery if degraded, and emit state changes.
   Future<void> _performHealthCheck() async {
-    if (_isHealthChecking || _stopped) {
+    if (_isHealthChecking || _stopped || !_isAppForeground()) {
       if (kDebugMode) {
         debugPrint(
           '[HEALTH] _performHealthCheck() skipped — already in progress or stopped',
@@ -3255,7 +3274,7 @@ class P2PServiceImpl
 
   @override
   Future<void> performImmediateHealthCheck() async {
-    if (_recoveryOnly) return;
+    if (_recoveryOnly || !_isAppForeground()) return;
     if (!await _allowsAccountNetworkSideEffects('p2p_immediate_health_check')) {
       return;
     }

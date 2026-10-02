@@ -970,11 +970,19 @@ final class AndroidCallLifecycleAdapter
       return false;
     }
     _adoptionAcknowledgementPending = true;
-    final presented =
-        await _invokeBoolean('presentAuthenticated', <String, Object?>{
-          ..._handleArguments(handle),
-          'expiresAtMs': presentation.expiresAt.millisecondsSinceEpoch,
-        });
+    final presented = await _invokeBoolean(
+      'presentAuthenticated',
+      <String, Object?>{
+        ..._handleArguments(handle),
+        'expiresAtMs': presentation.expiresAt.millisecondsSinceEpoch,
+        if (presentation.displayName != null)
+          'display': <String, Object?>{
+            'displayName': presentation.displayName,
+            'avatarPng': null,
+            'light': true,
+          },
+      },
+    );
     if (!presented) _adoptionAcknowledgementPending = false;
     if (presented) await _flushLockedPresentation(presentation.callId);
     return presented;

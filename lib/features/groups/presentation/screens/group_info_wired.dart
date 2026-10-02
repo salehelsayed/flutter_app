@@ -1914,7 +1914,7 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
       builder: (context) {
         final readableColors = context.backgroundReadableColors;
         return Dialog(
-          backgroundColor: readableColors.surfaceBase,
+          backgroundColor: readableColors.surfaceBase.withValues(alpha: 1),
           insetPadding: const EdgeInsets.all(16),
           child: _GroupMetadataEditorSheet(
             group: _group,
@@ -3293,7 +3293,6 @@ class _GroupMetadataEditorSheetState extends State<_GroupMetadataEditorSheet> {
 
   @override
   Widget build(BuildContext context) {
-    final bottomInset = MediaQuery.of(context).viewInsets.bottom;
     final readableColors = context.backgroundReadableColors;
     final l10n = AppLocalizations.of(context)!;
     final isSaveDisabled =
@@ -3302,135 +3301,143 @@ class _GroupMetadataEditorSheetState extends State<_GroupMetadataEditorSheet> {
     return SafeArea(
       top: false,
       child: Padding(
-        padding: EdgeInsets.fromLTRB(16, 16, 16, bottomInset + 16),
-        child: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Center(
-                child: Container(
-                  width: 36,
-                  height: 4,
-                  decoration: BoxDecoration(
-                    color: readableColors.divider,
-                    borderRadius: BorderRadius.circular(2),
-                  ),
-                ),
-              ),
-              const SizedBox(height: 16),
-              Text(
-                l10n.group_edit_details_title,
-                style: TextStyle(
-                  fontSize: 18,
-                  fontWeight: FontWeight.w700,
-                  color: readableColors.textPrimary,
-                ),
-              ),
-              const SizedBox(height: 16),
-              Center(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Flexible(
+              child: SingleChildScrollView(
                 child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    GroupInfoScreenAvatarPreview(
-                      group: widget.group,
-                      previewBytes: _removeAvatar ? null : _previewBytes,
-                      showCurrentAvatar: !_removeAvatar,
-                    ),
-                    const SizedBox(height: 12),
-                    FilledButton.tonalIcon(
-                      key: const ValueKey('group-edit-pick-photo'),
-                      onPressed: _isPickingImage ? null : _pickAvatar,
-                      icon: const Icon(Icons.photo_library_outlined),
-                      label: Text(
-                        _preparedAvatarPath != null ||
-                                widget.group.avatarPath != null
-                            ? l10n.group_edit_change_photo
-                            : l10n.group_edit_add_photo,
+                    Center(
+                      child: Container(
+                        width: 36,
+                        height: 4,
+                        decoration: BoxDecoration(
+                          color: readableColors.divider,
+                          borderRadius: BorderRadius.circular(2),
+                        ),
                       ),
                     ),
-                    if (_hasCurrentAvatar || _removeAvatar)
-                      TextButton(
-                        key: const ValueKey('group-edit-remove-photo'),
-                        onPressed: _removePhoto,
-                        child: Text(l10n.group_edit_remove_photo),
+                    const SizedBox(height: 16),
+                    Text(
+                      l10n.group_edit_details_title,
+                      style: TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.w700,
+                        color: readableColors.textPrimary,
                       ),
+                    ),
+                    const SizedBox(height: 16),
+                    Center(
+                      child: Column(
+                        children: [
+                          GroupInfoScreenAvatarPreview(
+                            group: widget.group,
+                            previewBytes: _removeAvatar ? null : _previewBytes,
+                            showCurrentAvatar: !_removeAvatar,
+                          ),
+                          const SizedBox(height: 12),
+                          FilledButton.tonalIcon(
+                            key: const ValueKey('group-edit-pick-photo'),
+                            onPressed: _isPickingImage ? null : _pickAvatar,
+                            icon: const Icon(Icons.photo_library_outlined),
+                            label: Text(
+                              _preparedAvatarPath != null ||
+                                      widget.group.avatarPath != null
+                                  ? l10n.group_edit_change_photo
+                                  : l10n.group_edit_add_photo,
+                            ),
+                          ),
+                          if (_hasCurrentAvatar || _removeAvatar)
+                            TextButton(
+                              key: const ValueKey('group-edit-remove-photo'),
+                              onPressed: _removePhoto,
+                              child: Text(l10n.group_edit_remove_photo),
+                            ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 20),
+                    Text(
+                      l10n.group_edit_name,
+                      style: TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                        color: readableColors.textSecondary,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    _EditorField(
+                      key: const ValueKey('group-edit-name-field'),
+                      controller: _nameController,
+                      maxLines: 1,
+                      onChanged: (_) => setState(() {}),
+                    ),
+                    const SizedBox(height: 16),
+                    Text(
+                      l10n.group_edit_description,
+                      style: TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                        color: readableColors.textSecondary,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    _EditorField(
+                      key: const ValueKey('group-edit-description-field'),
+                      controller: _descriptionController,
+                      maxLines: 4,
+                    ),
+                    const SizedBox(height: 20),
+                    if (_isRecoveryActive) ...[
+                      Text(
+                        l10n.group_edit_recovery_waiting,
+                        style: TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600,
+                          color: readableColors.textPrimary,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        l10n.group_edit_recovery_waiting_elapsed(
+                          _recoveryWaitSeconds,
+                        ),
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: readableColors.textSecondary,
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                    ],
                   ],
                 ),
               ),
-              const SizedBox(height: 20),
-              Text(
-                l10n.group_edit_name,
-                style: TextStyle(
-                  fontSize: 13,
-                  fontWeight: FontWeight.w600,
-                  color: readableColors.textSecondary,
-                ),
-              ),
-              const SizedBox(height: 8),
-              _EditorField(
-                key: const ValueKey('group-edit-name-field'),
-                controller: _nameController,
-                maxLines: 1,
-                onChanged: (_) => setState(() {}),
-              ),
-              const SizedBox(height: 16),
-              Text(
-                l10n.group_edit_description,
-                style: TextStyle(
-                  fontSize: 13,
-                  fontWeight: FontWeight.w600,
-                  color: readableColors.textSecondary,
-                ),
-              ),
-              const SizedBox(height: 8),
-              _EditorField(
-                key: const ValueKey('group-edit-description-field'),
-                controller: _descriptionController,
-                maxLines: 4,
-              ),
-              const SizedBox(height: 20),
-              if (_isRecoveryActive) ...[
-                Text(
-                  l10n.group_edit_recovery_waiting,
-                  style: TextStyle(
-                    fontSize: 13,
-                    fontWeight: FontWeight.w600,
-                    color: readableColors.textPrimary,
+            ),
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton(
+                    key: const ValueKey('group-edit-cancel'),
+                    onPressed: () => Navigator.of(context).pop(),
+                    child: Text(l10n.btn_cancel),
                   ),
                 ),
-                const SizedBox(height: 4),
-                Text(
-                  l10n.group_edit_recovery_waiting_elapsed(
-                    _recoveryWaitSeconds,
-                  ),
-                  style: TextStyle(
-                    fontSize: 12,
-                    color: readableColors.textSecondary,
+                const SizedBox(width: 12),
+                Expanded(
+                  child: FilledButton(
+                    key: const ValueKey('group-edit-save'),
+                    onPressed: isSaveDisabled ? null : _save,
+                    child: Text(l10n.btn_save),
                   ),
                 ),
-                const SizedBox(height: 12),
               ],
-              Row(
-                children: [
-                  Expanded(
-                    child: OutlinedButton(
-                      key: const ValueKey('group-edit-cancel'),
-                      onPressed: () => Navigator.of(context).pop(),
-                      child: Text(l10n.btn_cancel),
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: FilledButton(
-                      key: const ValueKey('group-edit-save'),
-                      onPressed: isSaveDisabled ? null : _save,
-                      child: Text(l10n.btn_save),
-                    ),
-                  ),
-                ],
-              ),
-            ],
-          ),
+            ),
+          ],
         ),
       ),
     );

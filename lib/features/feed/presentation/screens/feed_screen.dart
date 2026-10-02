@@ -380,6 +380,7 @@ class _FeedScreenState extends State<FeedScreen> {
             iconSize: 18,
             color: tokens.textMeta.color,
             icon: const Icon(Icons.arrow_back_ios_new),
+            tooltip: MaterialLocalizations.of(context).backButtonTooltip,
             onPressed: () => widget.onClearFocus?.call(),
           ),
           if (name.isNotEmpty)

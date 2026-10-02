@@ -97,6 +97,29 @@ void main() {
     );
   }
 
+  testWidgets(
+    'creator has no unknown invite and pending invitees cannot receive messages',
+    (tester) async {
+      await tester.pumpWidget(
+        buildTestWidget(
+          members: testMembers,
+          inviteStatusesByPeerId: const {
+            'peer-member': GroupInviteDeliveryStatus.sent,
+          },
+        ),
+      );
+      expect(find.text('Invite unknown'), findsNothing);
+      expect(
+        find.byKey(const ValueKey('group-member-pending-peer-member')),
+        findsOneWidget,
+      );
+      expect(
+        find.text('Invited – not joined yet; not receiving messages'),
+        findsOneWidget,
+      );
+    },
+  );
+
   testWidgets('shows members', (tester) async {
     await tester.pumpWidget(buildTestWidget(members: testMembers));
 
@@ -215,12 +238,12 @@ void main() {
     (tester) async {
       GroupMember? revokedMember;
       GroupMember writer(String peerId) => GroupMember(
-            groupId: 'group-1',
-            peerId: peerId,
-            username: peerId,
-            role: MemberRole.writer,
-            joinedAt: DateTime.now().toUtc(),
-          );
+        groupId: 'group-1',
+        peerId: peerId,
+        username: peerId,
+        role: MemberRole.writer,
+        joinedAt: DateTime.now().toUtc(),
+      );
 
       await tester.pumpWidget(
         buildTestWidget(
@@ -266,34 +289,89 @@ void main() {
   );
 
   testWidgets(
-    'C: non-admins never see the revoke action',
+    'non-admin viewer sees no unknown invite for a member someone else invited',
     (tester) async {
-      GroupMember writer(String peerId) => GroupMember(
-            groupId: 'group-1',
-            peerId: peerId,
-            username: peerId,
-            role: MemberRole.writer,
-            joinedAt: DateTime.now().toUtc(),
-          );
+      GroupMember member(String peerId, MemberRole role) => GroupMember(
+        groupId: 'group-1',
+        peerId: peerId,
+        username: peerId,
+        role: role,
+        joinedAt: DateTime.now().toUtc(),
+      );
+      final members = [
+        testMembers.first,
+        member('peer-other-admin', MemberRole.admin),
+        member('peer-member', MemberRole.writer),
+      ];
 
+      // The writer device holds no invite record for peer-other-admin.
       await tester.pumpWidget(
         buildTestWidget(
-          members: [testMembers.first, writer('peer-sent')],
+          members: members,
+          ownPeerId: 'peer-member',
+          isAdmin: false,
+        ),
+      );
+      expect(find.text('Invite unknown'), findsNothing);
+      expect(
+        find.byKey(
+          const ValueKey('group-member-invite-status-peer-other-admin'),
+        ),
+        findsNothing,
+      );
+
+      // A known status still shows for a non-admin viewer.
+      await tester.pumpWidget(
+        buildTestWidget(
+          members: members,
           ownPeerId: 'peer-member',
           isAdmin: false,
           inviteStatusesByPeerId: const {
-            'peer-sent': GroupInviteDeliveryStatus.sent,
+            'peer-other-admin': GroupInviteDeliveryStatus.joined,
           },
-          onRevokeInvite: (_) {},
         ),
       );
+      expect(find.text('Joined'), findsOneWidget);
 
-      expect(
-        find.byKey(const ValueKey('group-member-revoke-invite-peer-sent')),
-        findsNothing,
+      // Admins keep the unknown state: invite delivery is their tool.
+      await tester.pumpWidget(
+        buildTestWidget(members: members, ownPeerId: 'peer-admin'),
       );
+      expect(find.text('Invite unknown'), findsNWidgets(2));
     },
   );
+
+  testWidgets('back button has an accessible Back label', (tester) async {
+    await tester.pumpWidget(buildTestWidget(members: testMembers));
+    expect(find.byTooltip('Back'), findsOneWidget);
+  });
+
+  testWidgets('C: non-admins never see the revoke action', (tester) async {
+    GroupMember writer(String peerId) => GroupMember(
+      groupId: 'group-1',
+      peerId: peerId,
+      username: peerId,
+      role: MemberRole.writer,
+      joinedAt: DateTime.now().toUtc(),
+    );
+
+    await tester.pumpWidget(
+      buildTestWidget(
+        members: [testMembers.first, writer('peer-sent')],
+        ownPeerId: 'peer-member',
+        isAdmin: false,
+        inviteStatusesByPeerId: const {
+          'peer-sent': GroupInviteDeliveryStatus.sent,
+        },
+        onRevokeInvite: (_) {},
+      ),
+    );
+
+    expect(
+      find.byKey(const ValueKey('group-member-revoke-invite-peer-sent')),
+      findsNothing,
+    );
+  });
 
   testWidgets('shows disabled invite resend busy state', (tester) async {
     await tester.pumpWidget(

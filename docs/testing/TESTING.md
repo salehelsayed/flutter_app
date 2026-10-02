@@ -3072,6 +3072,48 @@ do not count `test(...)` strings as executions. Runner listings took about
 
 ## Shared dependency lessons
 
+- R2 open-issue regressions: finalized M4A duration comes from the bounded
+  `moov/mvhd` movie clock, with wall time used only when that clock is unavailable.
+  The recorder minimum-length decision uses the same encoded duration. The
+  parser and recorder tests preserve the original bytes and cover a 17-second
+  encoded file even when the host wall clock has barely advanced. Historical
+  59/36- and 26/17-second recordings were unavailable; these tests cannot
+  establish whether their encoders lost samples.
+  Fresh USB iPhone 11 ↔ iPhone 13 group transfers on the R2 fix profile build
+  displayed 0:39 and 1:20 for encoded durations 39.31 s and 80.27 s. Both
+  transfers retained identical sender/receiver SHA-256 hashes, decoded without
+  errors, and advanced during receiver playback. Ignored evidence is under
+  `.codex-test-logs/r2-open-issues/iphone-proof/`; the exact profile artifact
+  hashes are in `artifact-hashes-final.json`. These fresh transfers do not
+  supersede the missing historical Pixel integrity evidence.
+  Recorder auto-stop tests must await their completion callback before reading
+  the finalized file; fixed sleeps raced finalization under the full host batch.
+  This fixture repair does not extend the production recording deadline.
+- Audio-player disposal must fence reloads and await pending source loads before
+  closing the player's streams. The 20-cycle pending-load teardown regression
+  covers the closed-subject race. A stop failure still permits teardown;
+  disposal failures emit an identity-free diagnostic.
+  Ten Appium playback/navigation cycles on the USB iPhone 13 profile build
+  also completed without a visible error or crash; the causal pending-load
+  assertion remains the host test rather than an inference from those cycles.
+- Archived direct-message arrivals still publish the conversation change event
+  before suppressing notifications. The listener regression covers both effects.
+  On USB iPhone 13, the open Archived list updated the iPhone 11 row to a fresh
+  incoming message without navigation. Appium XML and pixels are retained in
+  ignored `r2-open-issues/iphone-proof/archivedPreview13.xml` and
+  `archived-preview13.png`; the QA contact was subsequently unarchived.
+- Rich-text link semantics must retain the entire message and WidgetSpan status
+  metadata. `linkable_text_test.dart` invokes the merged semantic link action;
+  `letter_card_test.dart` preserves timestamps and transport-status labels.
+  Group-editor actions remain outside the scrolling fields, and the editor
+  surface must be opaque while the keyboard is open. Host tests cover those
+  layout properties; USB iPhone Appium evidence is recorded separately.
+- Dart background health polling must stop on paused/detached lifecycle states
+  while explicit offline-inbox drains remain available. The health-drain test
+  verifies no poll/reconnect in background and recovery after resume. Configured
+  relay addresses retain permanent peerstore custody; the Go address-expiry test
+  covers expiry of transient connected-address TTLs. This does not establish
+  that every internal Go relay task is suspended.
 - Video preparation has a native `video_compress` call and a composer lifecycle.
   A Dart deadline must request native cancellation, stop its progress listener,
   release the composer, and keep completed siblings. The direct and group wired
@@ -5710,6 +5752,20 @@ visible and cannot become an ordinary first-attempt PASS.
   preserve that proof. It used a debug APK with voice-call Dart defines and
   `enableAndroidNativeCalls=true`, SHA-256
   `e181255896018f603837ef5ef6e0eae3bff32101b3bf7503bd58925ef1a7c548`.
+  R2 open-issue host regressions also seed the validated local caller name
+  directly into authenticated native presentation before its first notification.
+  The adapter payload and strict native bridge tests preserve adopted-call
+  metadata refresh and reject malformed display maps. They do not establish
+  Android SystemUI rendering on the current candidate; the task permits only
+  USB-connected iPhones for live device testing.
+  The shared Dart reconciler also backs iOS, whose authenticated presentation
+  v1 request accepts exactly `version`, `callHandle`, and `expiresAtMs`.
+  Android's optional initial `display` map must not cross that iOS boundary.
+  An actual USB iPhone attempt rejected that extra key with native
+  `invalid_request`; the iOS adapter now projects its strict contract, while
+  CallKit retains verified opaque-contact name resolution and later updates.
+  The iOS regression supplies a named presentation and asserts every request
+  key. The corrected affected-calls selection passes 1,139 tests.
   Background incoming delivery remains unverified because the known relay
   wake-up failure can prevent the call reaching Android.
 
@@ -5774,6 +5830,18 @@ visible and cannot become an ordinary first-attempt PASS.
   call-signaling lanes passed. Its overall result was `BLOCKED` because the
   already dirty shared working tree selected many other required checks that
   were not run; do not treat the subset as full repository validation.
+
+  The R2 open-issue candidate subsequently passed USB iPhone 11 → iPhone 13
+  foreground and suspended-callee calls with native iOS calls enabled and
+  test mode disabled. Appium established state 2 before the background invite;
+  the native CallKit banner displayed `iphone-11`, its Answer action connected
+  both peers, and both diagnostic traces recorded bidirectional RTP progress
+  and `completed_after_media` with local/remote user endings. Exact screenshots,
+  XML, artifact hashes and bounded diagnostic records are retained under
+  ignored `.codex-test-logs/r2-open-issues/iphone-proof/`. Some diagnostic
+  records are quota-truncated; observed terminal and media fields remain
+  present. This establishes the available iOS → iOS background boundary,
+  not Android → iOS parity, locked-screen behavior or a signed release.
 
   An earlier selected affected-calls host lane passed 1,200
   tests when run alone. Its first overlapping attempt retained four failures
@@ -6106,6 +6174,16 @@ visible and cannot become an ordinary first-attempt PASS.
   resource/artifact inclusion without logging contents. A native call wake or
   notification alongside this failure does not prove the Dart default
   Firebase app initialized.
+  On iOS, `AppDelegate` initializes the native default Firebase app before
+  Flutter plugin registration and APNs registration, guarded by `FirebaseApp.app()`
+  to prevent a second configuration. The project-config regression verifies
+  that ordering; compilation and launch do not establish APNs delivery.
+  After a fresh R2 profile launch, a new group message from USB iPhone 11
+  appeared in iPhone 13 Notification Center while Mknoon reported state 2
+  (suspended). Tapping its actual notification content opened the exact group
+  and message. The Appium XML and screenshots are retained in the same ignored
+  `iphone-proof` directory. This establishes that background message path on
+  those accounts; it does not certify CallKit/VoIP push or every registration race.
   Independently, best-effort startup initialization can fail while the
   registration coordinator is already reachable. Every registration attempt
   must establish readiness before subscribing to token refresh or requesting

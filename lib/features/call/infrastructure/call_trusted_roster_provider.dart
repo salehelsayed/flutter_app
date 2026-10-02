@@ -24,12 +24,18 @@ final class CallTrustedRosterSnapshot {
       'blocked: $contactBlocked, devices: ${devices.length})';
 }
 
+/// Identity-free refusal; blocked transports never expose device authority.
+final class CallSenderBlockedException implements Exception {
+  const CallSenderBlockedException();
+}
+
 abstract interface class CallTrustedRosterProvider {
   Future<CallTrustedRosterSnapshot> loadForContact(String contactAccountPeerId);
 
   /// Reverse-resolves an authenticated transport to one current device
-  /// authority. Unknown, blocked, inactive, revoked, or ambiguous transports
-  /// return null without exposing the underlying authority value.
+  /// authority. Blocked transports throw [CallSenderBlockedException]. Unknown,
+  /// inactive, revoked, or ambiguous transports return null without exposing
+  /// the underlying authority value.
   Future<TrustedCallDeviceAuthority?> resolveAuthenticatedTransport(
     String authenticatedTransportPeerId,
   );
@@ -154,8 +160,10 @@ final class DatabaseCallTrustedRosterProvider
       transportPeerId: normalizedTransport,
     );
     final accountPeerId = resolution.contactAccountPeerId;
+    if (resolution.contactIsBlocked) {
+      throw const CallSenderBlockedException();
+    }
     if (!resolution.authorized ||
-        resolution.contactIsBlocked ||
         accountPeerId == null) {
       return null;
     }

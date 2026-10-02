@@ -276,13 +276,17 @@ void main() {
         'enabled': true,
       });
       expect(resolverCalls, 0, reason: 'attach must not guess call authority');
-      expect(await adapter.present(_presentation()), isTrue);
+      expect(
+        await adapter.present(_presentation(displayName: 'Alice')),
+        isTrue,
+      );
       expect(resolverCalls, 1);
       expect(native.callsOf('presentAuthenticated'), hasLength(1));
       expect(native.callsOf('presentAuthenticated').single.arguments, {
         'version': 1,
         'callHandle': _callHandle,
         'expiresAtMs': _expiresAtMs,
+        'display': {'displayName': 'Alice', 'avatarPng': null, 'light': true},
       });
 
       await adapter.close();
@@ -4102,11 +4106,13 @@ AndroidCallLifecycleAdapter _adapter(
   return adapter;
 }
 
-IncomingCallPresentation _presentation() => IncomingCallPresentation(
-  callId: _callId,
-  callerAccountPeerId: 'remote-account',
-  expiresAt: DateTime.fromMillisecondsSinceEpoch(_expiresAtMs, isUtc: true),
-);
+IncomingCallPresentation _presentation({String? displayName}) =>
+    IncomingCallPresentation(
+      displayName: displayName,
+      callId: _callId,
+      callerAccountPeerId: 'remote-account',
+      expiresAt: DateTime.fromMillisecondsSinceEpoch(_expiresAtMs, isUtc: true),
+    );
 
 Map<String, Object?> _emptyBatch() => <String, Object?>{
   'version': 1,
