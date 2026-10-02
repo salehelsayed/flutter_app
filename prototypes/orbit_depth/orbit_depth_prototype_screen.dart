@@ -1,8 +1,11 @@
+import 'dart:convert';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/physics.dart';
 import 'package:flutter/services.dart';
+
+part 'photos.dart';
 
 /// Standalone visual prototype: the Orbit inner circle tilting from today's
 /// flat rings into a "depth" view where friends' thoughts appear, and a way
@@ -86,7 +89,7 @@ const _people = <(String, _Hue, String?, bool)>[
   ('tarek', _cyan, 'who has a drill I can borrow?', true),
   ('nour', _purple, 'airport at 6. taxi anyone?', true),
   ('layla', _pink, 'roof sunrise again. who\u2019s up?', true),
-  ('sara', _orange, 'new plant. his name is kevin', false),
+  ('sara', _orange, 'we adopted her! meet luna', false),
   ('karim', _red, null, false),
   ('dina', _green, null, false),
   ('rami', _blue, null, false),
@@ -152,15 +155,13 @@ List<_ProtoFriend> _buildFriends() {
 
 enum _ThoughtKind { text, voice, photo }
 
-enum _Scene { sunrise, plant }
-
 /// What a thought carries beyond its one line; shown when the friend turns
 /// to the front of the orbit.
 class _ThoughtDetail {
   final _ThoughtKind kind;
   final String? more;
   final int seconds;
-  final _Scene? scene;
+  final String? photo;
   final int comments;
   final String age;
 
@@ -168,7 +169,7 @@ class _ThoughtDetail {
     this.kind = _ThoughtKind.text,
     this.more,
     this.seconds = 0,
-    this.scene,
+    this.photo,
     this.comments = 0,
     this.age = '1 d',
   });
@@ -177,7 +178,7 @@ class _ThoughtDetail {
 const _details = <String, _ThoughtDetail>{
   'layla': _ThoughtDetail(
     kind: _ThoughtKind.photo,
-    scene: _Scene.sunrise,
+    photo: 'layla_card',
     comments: 4,
     age: '2 h',
   ),
@@ -200,7 +201,7 @@ const _details = <String, _ThoughtDetail>{
   ),
   'sara': _ThoughtDetail(
     kind: _ThoughtKind.photo,
-    scene: _Scene.plant,
+    photo: 'sara_card',
     comments: 6,
     age: '5 h',
   ),
@@ -216,6 +217,14 @@ const _details = <String, _ThoughtDetail>{
     age: '4 h',
   ),
 };
+
+final Map<String, MemoryImage> _photoCache = {};
+
+/// A friend's profile photo (by name), 'you', or a post photo.
+ImageProvider _photo(String key) => _photoCache.putIfAbsent(
+  key,
+  () => MemoryImage(base64Decode(_photoData[key]!)),
+);
 
 _ThoughtDetail _detailFor(_ProtoFriend friend) =>
     _details[friend.name] ?? const _ThoughtDetail();
@@ -277,6 +286,7 @@ class _OrbitDepthPrototypeScreenState extends State<OrbitDepthPrototypeScreen>
   double _rotAtStart = 0;
   double _k = 1;
   bool _reduceMotion = false;
+  bool _photosWarm = false;
 
   double get _tilt => (_v.value / _tiltSpan).clamp(-0.08, 1.0);
   double get _camera => math.max(0, (_v.value - _tiltSpan) / _layerSpan);
@@ -295,6 +305,12 @@ class _OrbitDepthPrototypeScreenState extends State<OrbitDepthPrototypeScreen>
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
+    if (!_photosWarm) {
+      _photosWarm = true;
+      for (final key in _photoData.keys) {
+        precacheImage(_photo(key), context);
+      }
+    }
     _reduceMotion = MediaQuery.disableAnimationsOf(context);
     if (_reduceMotion) {
       _float.stop();
@@ -669,6 +685,21 @@ class _OrbitStage extends StatelessWidget {
       return a.ringPoint.dy.compareTo(b.ringPoint.dy);
     });
 
+    // The friend at the front of the current orbit is under the highlight:
+    // the only name shown, a brighter platform, a slight lift, and (when they
+    // shared a thought) the card.
+    final appear = _interval(tc, 0.55, 0.9);
+    _Seat? spotlight;
+    for (final seat in seats) {
+      if (seat.layer.rel.abs() >= 0.35) continue;
+      if (spotlight == null || seat.depth > spotlight.depth) spotlight = seat;
+    }
+    final highlight = spotlight == null
+        ? 0.0
+        : _smoothstep(0.88, 0.995, spotlight.depth) *
+              appear *
+              (1 - spotlight.layer.rel.abs() * 3).clamp(0.0, 1.0);
+
     final home = layers[0];
     final youSize = 76 * k * (home?.scale ?? 1);
     final youRing = Offset(cx, home?.cy ?? cy);
@@ -694,6 +725,9 @@ class _OrbitStage extends StatelessWidget {
             youRing: home == null ? null : youRing,
             youPedestal: youPedestal,
             youOpacity: home?.opacity ?? 0,
+            youSize: youSize,
+            spotlight: spotlight,
+            highlight: highlight,
             floatPhase: floatPhase,
           ),
         ),
@@ -761,6 +795,7 @@ class _OrbitStage extends StatelessWidget {
             child: _FriendAvatar(
               key: ValueKey('avatar-${seat.friend.name}'),
               seat: seat,
+              highlight: identical(seat, spotlight) ? highlight : 0,
               onTap: () => onFriendTap(seat.friend),
             ),
           ),
@@ -769,26 +804,25 @@ class _OrbitStage extends StatelessWidget {
     }
     if (!youPlaced) placeYou();
 
-    final nameOpacity = _interval(tc, 0.35, 0.85);
-    for (final seat in seats) {
-      final near = 1 - seat.layer.rel.abs() / 0.6;
-      if (nameOpacity <= 0 || near <= 0) continue;
-      final scale = seat.layer.scale;
+    final named = spotlight;
+    if (named != null && highlight > 0.01) {
+      final scale = named.layer.scale;
       children.add(
         Positioned(
-          left: seat.ringPoint.dx - 45 * k * scale,
-          top: _nameTop(seat, k, tc),
-          width: 90 * k * scale,
+          left: named.ringPoint.dx - 60 * k * scale,
+          top: _nameTop(named, k, tc) + 2 * k * scale,
+          width: 120 * k * scale,
           child: IgnorePointer(
             child: Opacity(
-              opacity: (nameOpacity * seat.opacity * near).clamp(0.0, 1.0),
+              opacity: highlight.clamp(0.0, 1.0),
               child: Text(
-                seat.friend.name,
+                named.friend.name,
                 textAlign: TextAlign.center,
                 style: TextStyle(
                   color: _ink,
-                  fontSize: 12.5 * k * scale,
+                  fontSize: 14 * k * scale,
                   fontWeight: FontWeight.w600,
+                  letterSpacing: 0.2,
                 ),
               ),
             ),
@@ -797,7 +831,7 @@ class _OrbitStage extends StatelessWidget {
       );
     }
 
-    children.addAll(_bubbles(seats, k, tc));
+    children.addAll(_bubbles(seats, k, tc, spotlight, highlight));
 
     if (tc > 0.02) {
       children.add(_layerMeter(k, tc, size.height));
@@ -806,15 +840,28 @@ class _OrbitStage extends StatelessWidget {
     return Stack(clipBehavior: Clip.none, children: children);
   }
 
+  /// Where things under an avatar start: just below the front edge of its
+  /// platform once tilted (the disc plus its edge), under the avatar when flat.
   double _nameTop(_Seat seat, double k, double tc) =>
-      seat.ringPoint.dy + _lerp(seat.size / 2, 5 * k * seat.layer.scale, tc);
+      seat.ringPoint.dy +
+      _lerp(
+        seat.size / 2,
+        seat.pedestal.height * 0.55 + 4 * k * seat.layer.scale,
+        tc,
+      );
 
   /// Thought bubbles never disappear while the orbit turns. Friends at the
   /// back carry theirs above the head, friends at the front below the name;
   /// at the sides, where both spots are free, the bubble cross-fades from one
   /// to the other. A bubble that would land on a neighbour's is nudged
   /// further out instead of hidden.
-  List<Widget> _bubbles(List<_Seat> seats, double k, double tc) {
+  List<Widget> _bubbles(
+    List<_Seat> seats,
+    double k,
+    double tc,
+    _Seat? spotlight,
+    double highlight,
+  ) {
     final candidates =
         seats
             .where((s) => s.friend.thought != null && s.layer.rel.abs() < 0.5)
@@ -825,19 +872,9 @@ class _OrbitStage extends StatelessWidget {
     final widgets = <Widget>[];
     final appear = _interval(tc, 0.55, 0.9);
 
-    // The friend at the front of the current orbit gets the spotlight: their
-    // bubble grows into a card in the free space below the orbit, dropping
-    // just low enough to clear the neighbours' bubbles.
-    _Seat? spotlight;
-    for (final seat in seats) {
-      if (seat.layer.rel.abs() >= 0.35) continue;
-      if (spotlight == null || seat.depth > spotlight.depth) spotlight = seat;
-    }
-    final focus = spotlight == null || spotlight.friend.thought == null
-        ? 0.0
-        : _smoothstep(0.88, 0.995, spotlight.depth) *
-              appear *
-              (1 - spotlight.layer.rel.abs() * 3).clamp(0.0, 1.0);
+    // The spotlight friend's bubble grows into a card in the free space below
+    // the orbit, dropping just low enough to clear the neighbours' bubbles.
+    final focus = spotlight?.friend.thought == null ? 0.0 : highlight;
     for (final seat in candidates) {
       final scale = seat.layer.scale;
       final fade = appear * (1 - seat.layer.rel.abs() * 2.5).clamp(0.0, 1.0);
@@ -902,7 +939,7 @@ class _OrbitStage extends StatelessWidget {
         );
       }
       if (isSpotlight) {
-        final top = _nameTop(seat, k, tc) + (16 + 40 * focus) * k * scale;
+        final top = _nameTop(seat, k, tc) + (16 + 22 * focus) * k * scale;
         final cardWidth = _lerp(
           width,
           math.min(320 * k, size.width - 32 * k),
@@ -940,7 +977,7 @@ class _OrbitStage extends StatelessWidget {
         final rect = nudge(
           Rect.fromLTWH(
             left,
-            _nameTop(seat, k, tc) + 20 * k * scale,
+            _nameTop(seat, k, tc) + 4 * k * scale,
             width,
             height,
           ),
@@ -1017,9 +1054,15 @@ class _OrbitStage extends StatelessWidget {
 
 class _FriendAvatar extends StatelessWidget {
   final _Seat seat;
+  final double highlight;
   final VoidCallback onTap;
 
-  const _FriendAvatar({super.key, required this.seat, required this.onTap});
+  const _FriendAvatar({
+    super.key,
+    required this.seat,
+    required this.highlight,
+    required this.onTap,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -1034,32 +1077,107 @@ class _FriendAvatar extends StatelessWidget {
         onTap: onTap,
         child: Opacity(
           opacity: seat.opacity.clamp(0.0, 1.0),
-          child: DecoratedBox(
-            decoration: BoxDecoration(
-              color: f.hue.fill,
-              borderRadius: radius,
-              border: Border.all(color: f.hue.color, width: 2),
-              boxShadow: const [
-                BoxShadow(
-                  color: Color(0x8C000000),
-                  blurRadius: 14,
-                  offset: Offset(0, 6),
+          child: Transform.scale(
+            scale: 1 + 0.08 * highlight,
+            alignment: Alignment.bottomCenter,
+            child: _Sheen(
+              radius: f.group ? radius : null,
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  borderRadius: radius,
+                  // Lit from above: lighter at the top, deeper at the bottom.
+                  gradient: LinearGradient(
+                    begin: Alignment.topCenter,
+                    end: Alignment.bottomCenter,
+                    colors: [
+                      Color.lerp(f.hue.fill, f.hue.color, 0.22)!,
+                      f.hue.fill,
+                      Color.lerp(f.hue.fill, Colors.black, 0.4)!,
+                    ],
+                  ),
+                  border: Border.all(color: f.hue.color, width: 2),
+                  boxShadow: [
+                    const BoxShadow(
+                      color: Color(0x73000000),
+                      blurRadius: 10,
+                      offset: Offset(0, 4),
+                    ),
+                    if (highlight > 0.01)
+                      BoxShadow(
+                        color: f.hue.color.withValues(alpha: 0.45 * highlight),
+                        blurRadius: 22,
+                        spreadRadius: 1,
+                      ),
+                  ],
                 ),
-              ],
-            ),
-            child: Center(
-              child: Text(
-                f.group ? '#' : f.name.characters.first.toUpperCase(),
-                style: TextStyle(
-                  color: f.hue.color,
-                  fontSize: seat.size * 0.38,
-                  fontWeight: FontWeight.w600,
+                child: Padding(
+                  padding: const EdgeInsets.all(2),
+                  child: ClipRRect(
+                    borderRadius: f.group
+                        ? BorderRadius.circular(seat.size * 0.3 - 2)
+                        : BorderRadius.circular(seat.size / 2),
+                    child: Image(
+                      image: _photo(f.name),
+                      fit: BoxFit.cover,
+                      gaplessPlayback: true,
+                      filterQuality: FilterQuality.medium,
+                    ),
+                  ),
                 ),
               ),
             ),
           ),
         ),
       ),
+    );
+  }
+}
+
+/// A soft highlight from the top left laid over an avatar, so it reads as a
+/// rounded object catching the light rather than a flat sticker. Sits over a
+/// real photo just as well.
+class _Sheen extends StatelessWidget {
+  final Widget child;
+
+  /// Corner radius for square avatars (groups); null means a circle.
+  final BorderRadius? radius;
+
+  const _Sheen({required this.child, this.radius});
+
+  @override
+  Widget build(BuildContext context) {
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        child,
+        IgnorePointer(
+          child: DecoratedBox(
+            decoration: BoxDecoration(
+              shape: radius == null ? BoxShape.circle : BoxShape.rectangle,
+              borderRadius: radius,
+              gradient: const LinearGradient(
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
+                stops: [0.55, 1],
+                colors: [Color(0x00000000), Color(0x40000000)],
+              ),
+            ),
+          ),
+        ),
+        IgnorePointer(
+          child: DecoratedBox(
+            decoration: BoxDecoration(
+              shape: radius == null ? BoxShape.circle : BoxShape.rectangle,
+              borderRadius: radius,
+              gradient: const RadialGradient(
+                center: Alignment(-0.35, -0.55),
+                radius: 0.75,
+                colors: [Color(0x2EFFFFFF), Color(0x00FFFFFF)],
+              ),
+            ),
+          ),
+        ),
+      ],
     );
   }
 }
@@ -1072,26 +1190,32 @@ class _YouAvatar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        shape: BoxShape.circle,
-        color: const Color(0xFF0F1F15),
-        border: Border.all(color: _accent, width: 2.5),
-        boxShadow: [
-          BoxShadow(
-            color: _accent.withValues(alpha: _lerp(0.12, 0.32, t)),
-            blurRadius: _lerp(12, 36, t),
-            spreadRadius: _lerp(1, 8, t),
-          ),
-        ],
-      ),
-      child: Center(
-        child: Text(
-          'You',
-          style: TextStyle(
-            color: _accent,
-            fontSize: size * 0.28,
-            fontWeight: FontWeight.w700,
+    return _Sheen(
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          color: const Color(0xFF0F1F15),
+          border: Border.all(color: _accent, width: 2.5),
+          boxShadow: [
+            BoxShadow(
+              color: _accent.withValues(alpha: _lerp(0.12, 0.32, t)),
+              blurRadius: _lerp(12, 36, t),
+              spreadRadius: _lerp(1, 8, t),
+            ),
+          ],
+        ),
+        child: Semantics(
+          label: 'You',
+          child: Padding(
+            padding: const EdgeInsets.all(2.5),
+            child: ClipOval(
+              child: Image(
+                image: _photo('you'),
+                fit: BoxFit.cover,
+                gaplessPlayback: true,
+                filterQuality: FilterQuality.medium,
+              ),
+            ),
           ),
         ),
       ),
@@ -1254,10 +1378,10 @@ class _ThoughtCardState extends State<_ThoughtCard>
                   Padding(
                     padding: EdgeInsets.only(bottom: 6 * k),
                     child: Text(
-                      '${friend.name} · ${_detail.age}',
+                      '${_detail.age} ago',
                       textAlign: TextAlign.center,
                       style: TextStyle(
-                        color: friend.hue.color,
+                        color: _muted,
                         fontSize: 12 * k,
                         fontWeight: FontWeight.w600,
                       ),
@@ -1287,7 +1411,7 @@ class _ThoughtCardState extends State<_ThoughtCard>
   Widget _extras(double k) {
     final detail = _detail;
     final more = detail.more;
-    final scene = detail.scene;
+    final photo = detail.photo;
     return Column(
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -1305,14 +1429,19 @@ class _ThoughtCardState extends State<_ThoughtCard>
               ),
             ),
           ),
-        if (detail.kind == _ThoughtKind.photo && scene != null)
+        if (detail.kind == _ThoughtKind.photo && photo != null)
           Padding(
             padding: EdgeInsets.only(top: 10 * k),
             child: ClipRRect(
               borderRadius: BorderRadius.circular(12 * k),
               child: SizedBox(
                 height: 124 * k,
-                child: CustomPaint(painter: _ScenePainter(scene)),
+                width: double.infinity,
+                child: Image(
+                  image: _photo(photo),
+                  fit: BoxFit.cover,
+                  gaplessPlayback: true,
+                ),
               ),
             ),
           ),
@@ -1441,104 +1570,6 @@ class _WaveformPainter extends CustomPainter {
   bool shouldRepaint(_WaveformPainter old) => old.progress != progress;
 }
 
-/// Stand-in photos drawn in code, so the prototype needs no image assets.
-class _ScenePainter extends CustomPainter {
-  final _Scene scene;
-
-  _ScenePainter(this.scene);
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    switch (scene) {
-      case _Scene.sunrise:
-        _sunrise(canvas, size);
-      case _Scene.plant:
-        _plant(canvas, size);
-    }
-  }
-
-  void _sunrise(Canvas canvas, Size size) {
-    final rect = Offset.zero & size;
-    canvas.drawRect(
-      rect,
-      Paint()
-        ..shader = const LinearGradient(
-          begin: Alignment.topCenter,
-          end: Alignment.bottomCenter,
-          colors: [Color(0xFF2B1E4A), Color(0xFFB4506A), Color(0xFFF2A65A)],
-        ).createShader(rect),
-    );
-    canvas.drawCircle(
-      Offset(size.width * 0.62, size.height * 0.78),
-      size.height * 0.24,
-      Paint()..color = const Color(0xFFFFD27A),
-    );
-    final roofs = Paint()..color = const Color(0xFF120E18);
-    final heights = [0.42, 0.3, 0.55, 0.36, 0.48, 0.26, 0.4];
-    final w = size.width / heights.length;
-    for (var i = 0; i < heights.length; i++) {
-      canvas.drawRect(
-        Rect.fromLTWH(
-          i * w,
-          size.height * (1 - heights[i]),
-          w + 1,
-          size.height * heights[i],
-        ),
-        roofs,
-      );
-    }
-    final windows = Paint()..color = const Color(0xFFF4D35E);
-    for (final (x, y) in const [
-      (0.08, 0.7),
-      (0.33, 0.6),
-      (0.36, 0.75),
-      (0.8, 0.68),
-    ]) {
-      canvas.drawRect(
-        Rect.fromLTWH(size.width * x, size.height * y, 4, 4),
-        windows,
-      );
-    }
-  }
-
-  void _plant(Canvas canvas, Size size) {
-    final rect = Offset.zero & size;
-    canvas.drawRect(rect, Paint()..color = const Color(0xFFE9E1D4));
-    canvas.drawRect(
-      Rect.fromLTWH(0, size.height * 0.82, size.width, size.height * 0.18),
-      Paint()..color = const Color(0xFFCFC2AE),
-    );
-    final cx = size.width / 2;
-    final leaf = Paint()..color = const Color(0xFF3F8F4E);
-    final leafDark = Paint()..color = const Color(0xFF2E6B3A);
-    for (var i = 0; i < 7; i++) {
-      final angle = -math.pi / 2 + (i - 3) * 0.42;
-      canvas.save();
-      canvas.translate(cx, size.height * 0.6);
-      canvas.rotate(angle + math.pi / 2);
-      canvas.drawOval(
-        Rect.fromCenter(
-          center: Offset(0, -size.height * 0.22),
-          width: size.height * 0.16,
-          height: size.height * 0.42,
-        ),
-        i.isEven ? leaf : leafDark,
-      );
-      canvas.restore();
-    }
-    final pot = Path()
-      ..moveTo(cx - size.height * 0.22, size.height * 0.58)
-      ..lineTo(cx + size.height * 0.22, size.height * 0.58)
-      ..lineTo(cx + size.height * 0.16, size.height * 0.9)
-      ..lineTo(cx - size.height * 0.16, size.height * 0.9)
-      ..close();
-    canvas.drawPath(pot, Paint()..color = const Color(0xFFC0643C));
-  }
-
-  @override
-  bool shouldRepaint(_ScenePainter old) => old.scene != scene;
-}
-
 /// A star with a direction from the centre, a spread and a depth in [0, 1).
 class _Star {
   final double angle;
@@ -1573,6 +1604,9 @@ class _DepthPainter extends CustomPainter {
   final Offset? youRing;
   final Size youPedestal;
   final double youOpacity;
+  final double youSize;
+  final _Seat? spotlight;
+  final double highlight;
   final double floatPhase;
 
   _DepthPainter({
@@ -1588,6 +1622,9 @@ class _DepthPainter extends CustomPainter {
     required this.youRing,
     required this.youPedestal,
     required this.youOpacity,
+    required this.youSize,
+    required this.spotlight,
+    required this.highlight,
     required this.floatPhase,
   });
 
@@ -1610,7 +1647,15 @@ class _DepthPainter extends CustomPainter {
     final reveal = Curves.easeOut.transform(t);
     final you = youRing;
     if (you != null) {
-      _pedestal(canvas, you, youPedestal, _accent, youOpacity, reveal);
+      _pedestal(
+        canvas,
+        you,
+        youPedestal,
+        _accent,
+        youOpacity,
+        reveal,
+        avatarSize: youSize,
+      );
     }
     for (final seat in seats) {
       _pedestal(
@@ -1620,6 +1665,8 @@ class _DepthPainter extends CustomPainter {
         seat.friend.hue.color,
         seat.opacity,
         reveal,
+        avatarSize: seat.size,
+        glow: identical(seat, spotlight) ? highlight : 0,
       );
     }
   }
@@ -1678,14 +1725,20 @@ class _DepthPainter extends CustomPainter {
     }
   }
 
+  /// The platform under an avatar: a soft pool of light on the orbit's
+  /// floor, a faint outline and a gentle contact shadow where the avatar
+  /// stands. No hard edge, so it stays quiet under real photos. [glow]
+  /// brightens the spotlight friend's platform.
   void _pedestal(
     Canvas canvas,
     Offset at,
     Size pedestal,
     Color color,
     double opacity,
-    double reveal,
-  ) {
+    double reveal, {
+    required double avatarSize,
+    double glow = 0,
+  }) {
     final strength = opacity * reveal;
     if (strength <= 0.01) return;
     final rect = Rect.fromCenter(
@@ -1693,22 +1746,44 @@ class _DepthPainter extends CustomPainter {
       width: pedestal.width,
       height: pedestal.height,
     );
+    double a(double v) => (v * strength).clamp(0.0, 1.0);
+
+    // Soft bloom around it.
     canvas.drawOval(
       rect.inflate(4 * k),
       Paint()
-        ..color = color.withValues(alpha: 0.22 * strength)
-        ..maskFilter = MaskFilter.blur(BlurStyle.normal, 10 * k),
+        ..color = color.withValues(alpha: a(0.14 + 0.18 * glow))
+        ..maskFilter = MaskFilter.blur(BlurStyle.normal, (10 + 6 * glow) * k),
     );
-    canvas.drawOval(
-      rect,
-      Paint()..color = color.withValues(alpha: 0.16 * strength),
-    );
+    // The pool of light itself, brightest under the avatar.
     canvas.drawOval(
       rect,
       Paint()
-        ..color = color.withValues(alpha: 0.5 * strength)
+        ..shader = RadialGradient(
+          colors: [
+            color.withValues(alpha: a(0.26 + 0.16 * glow)),
+            color.withValues(alpha: a(0.06)),
+          ],
+        ).createShader(rect),
+    );
+    // Contact shadow where the avatar stands.
+    canvas.drawOval(
+      Rect.fromCenter(
+        center: at.translate(0, -rect.height * 0.06),
+        width: avatarSize * 0.55,
+        height: math.max(2 * k, rect.height * 0.32),
+      ),
+      Paint()
+        ..color = Colors.black.withValues(alpha: a(0.32))
+        ..maskFilter = MaskFilter.blur(BlurStyle.normal, 3 * k),
+    );
+    // A faint outline.
+    canvas.drawOval(
+      rect,
+      Paint()
+        ..color = color.withValues(alpha: a(0.28 + 0.2 * glow))
         ..style = PaintingStyle.stroke
-        ..strokeWidth = 1,
+        ..strokeWidth = 0.8,
     );
   }
 

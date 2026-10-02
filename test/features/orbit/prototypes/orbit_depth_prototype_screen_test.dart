@@ -72,7 +72,7 @@ void main() {
       'exam at 9. wish me luck',
       'who has a drill I can borrow?',
       'airport at 6. taxi anyone?',
-      'new plant. his name is kevin',
+      'we adopted her! meet luna',
     ];
     await pumpPrototype(tester);
     await swipe(tester, const Offset(0, -200));
@@ -135,7 +135,7 @@ void main() {
       await gesture.up();
       await settle(tester);
     }
-    expect(find.text('omar · 35 min'), findsOneWidget);
+    expect(find.text('35 min ago'), findsOneWidget);
     await tester.tap(find.byTooltip('Play voice note'));
     await tester.pump();
     await tester.pump(const Duration(seconds: 2));
