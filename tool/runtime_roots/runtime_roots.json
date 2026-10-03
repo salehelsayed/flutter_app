@@ -22,6 +22,19 @@
   ],
   "externalEntrypoints": [
     {
+      "path": "prototypes/orbit_depth/main.dart",
+      "owner": "orbit / UI prototyping",
+      "reason": "Standalone visual prototype of the tilted Orbit with thoughts; fake friends, no identity or P2P. Reaches lib/ only for the RingAvatar default-avatar widget.",
+      "condition": "Delete once the depth Orbit ships in OrbitScreen or the prototype is abandoned.",
+      "seedsTooling": false,
+      "evidence": [
+        {
+          "kind": "dart-main",
+          "source": "prototypes/orbit_depth/main.dart"
+        }
+      ]
+    },
+    {
       "path": "artifacts/phantom-notification-20260909/early_receipt_counterexample_test.dart",
       "owner": "messaging / reliability investigation",
       "reason": "Retained 2026-09-09 isolated early delivery-receipt counterexample; fake transport and repository fixtures exercise production send and receipt handling.",
