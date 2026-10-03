@@ -37,7 +37,8 @@ Future<GroupModel> updateGroupMetadata({
     },
   );
 
-  if (isGroupRecoveryInProgress()) {
+  // Wait out a short in-flight recovery pass rather than refusing at once.
+  if (!await waitForGroupRecoveryIdle()) {
     emitFlowEvent(
       layer: 'FL',
       event: 'GROUP_UPDATE_METADATA_USE_CASE_RECOVERY_PENDING',

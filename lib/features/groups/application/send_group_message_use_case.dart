@@ -23,7 +23,6 @@ import 'package:flutter_app/features/groups/application/group_private_media_avai
 import 'package:flutter_app/features/groups/application/group_private_media_lifecycle.dart';
 import 'package:flutter_app/features/groups/application/group_recovery_gate.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
-import 'package:flutter_app/features/groups/domain/models/group_invite_delivery_attempt.dart';
 import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
@@ -219,7 +218,6 @@ Future<GroupContentAuthoringResolution?> _classifyGroupContentAuthoringEntry({
     groupId: groupId,
     senderPeerId: senderPeerId,
     membershipCutoff: membershipCutoff,
-    inviteDeliveryAttemptRepo: inviteDeliveryAttemptRepo,
   );
   GroupMember? sender;
   for (final candidate in membership.members) {
@@ -258,7 +256,6 @@ Future<bool> strictGroupContentAuthorityMatchesAssumingPhase({
     groupRepo: groupRepo,
     groupId: groupId,
     senderPeerId: senderPeerId,
-    inviteDeliveryAttemptRepo: inviteDeliveryAttemptRepo,
   );
   GroupMember? sender;
   for (final member in membership.members) {
@@ -377,15 +374,16 @@ _loadGroupSendMembership({
   required String groupId,
   required String senderPeerId,
   DateTime? membershipCutoff,
-  GroupInviteDeliveryAttemptRepository? inviteDeliveryAttemptRepo,
 }) async {
-  final inviteStatuses = inviteDeliveryAttemptRepo == null
-      ? const <String, GroupInviteDeliveryStatus>{}
-      : await inviteDeliveryAttemptRepo.getStatusesForGroupMembers(groupId);
-  // Keep the live roster read last. Private-media callers use this helper as
-  // their final async authority snapshot; reading members before the invite
-  // await would let a demotion race through with a stale writer/admin role.
+  // Private-media callers use this helper as their final async authority
+  // snapshot, so the live roster read is its only await.
   final members = await groupRepo.getMembers(groupId);
+  // Every roster member is a recipient, including one whose invitation is
+  // still pending. Invite rows exist only on the inviting device, so excluding
+  // pending invitees there (plan 318) made the inviter alone drop them: a
+  // re-added member never received what the inviter sent before he accepted
+  // (GE-009), while every other member's copies reached him. Receive-side
+  // suppression keeps never-accepted invitees from dead-end notifications.
   final normalizedCutoff = membershipCutoff?.toUtc();
   final normalizedSenderPeerId = senderPeerId.trim();
   final recipientPeerIds = members
@@ -394,8 +392,7 @@ _loadGroupSendMembership({
         return (normalizedCutoff == null ||
                 !member.joinedAt.toUtc().isAfter(normalizedCutoff)) &&
             hasDeliverableGroupMemberIdentity(member) &&
-            peerId != normalizedSenderPeerId &&
-            !isPersistedNonJoinedGroupInviteStatus(inviteStatuses[peerId]);
+            peerId != normalizedSenderPeerId;
       })
       .map((member) => member.peerId.trim())
       .toSet()
@@ -614,29 +611,6 @@ bool sameGroupPrivateMediaRecipientPeerIds(
       normalizedLeft.containsAll(normalizedRight);
 }
 
-/// Exclusion by affirmative local evidence only (plan 318): a roster member is
-/// dropped from the recipient set iff THIS device holds a persisted invite row
-/// in a non-joined state for them. The add-member flow writes rows at stage
-/// time ([recordPendingGroupInviteFanoutAttempts]) and the create flow at
-/// invite-send-result time, so a null status can only mean the member predates
-/// this device's observation (an incumbent) or was staged by another device —
-/// both are included. Inferring "pending invitee" from a MISSING row lost
-/// messages (F7: a later-joined admin silently excluded incumbents from relay
-/// custody, which is the retrieval ACL), and include-on-doubt is the tradeoff
-/// already accepted for non-tracker joiners (REG-119b) and the reaction lane.
-/// `unknown` is a persisted row in an indeterminate state
-/// (resend_group_invite_use_case writes it) — affirmative evidence,
-/// conservatively excluded. Creator and joiner inclusion (REG-119/REG-119b)
-/// are structural now: no inference arm exists to except them from. Do NOT
-/// re-introduce a null-status inference here.
-bool isPersistedNonJoinedGroupInviteStatus(GroupInviteDeliveryStatus? status) {
-  return status == GroupInviteDeliveryStatus.sent ||
-      status == GroupInviteDeliveryStatus.queued ||
-      status == GroupInviteDeliveryStatus.needsResend ||
-      status == GroupInviteDeliveryStatus.cannotSend ||
-      status == GroupInviteDeliveryStatus.unknown;
-}
-
 String _classifyGroupPublishLiveFanout({
   required int? topicPeers,
   required int expectedRecipientCount,
@@ -804,7 +778,6 @@ Future<GroupContentAuthoringAdmission> prepareGroupContentAuthoringAdmission({
       groupRepo: groupRepo,
       groupId: groupId,
       senderPeerId: senderPeerId,
-      inviteDeliveryAttemptRepo: inviteDeliveryAttemptRepo,
     );
     GroupMember? sender;
     for (final candidate in membership.members) {
@@ -1607,7 +1580,6 @@ qualifyCurrentPrivateGroupMediaSend({
       groupId: expectedParent.groupId,
       senderPeerId: senderPeerId,
       membershipCutoff: membershipCutoff,
-      inviteDeliveryAttemptRepo: inviteDeliveryAttemptRepo,
     );
     if (membership.members.isEmpty) return null;
     GroupMember? sender;
@@ -2072,7 +2044,6 @@ _sendGroupMessageWithAuthorityRecheck({
         groupId: groupId,
         senderPeerId: senderPeerId,
         membershipCutoff: membershipCutoff,
-        inviteDeliveryAttemptRepo: inviteDeliveryAttemptRepo,
       );
       final keyFuture = groupRepo.getLatestKey(groupId);
       final membership = await membershipFuture;
@@ -2724,7 +2695,6 @@ _sendGroupMessageWithAuthorityRecheck({
           groupId: groupId,
           senderPeerId: senderPeerId,
           membershipCutoff: membershipCutoff,
-          inviteDeliveryAttemptRepo: inviteDeliveryAttemptRepo,
         );
         GroupMember? recheckedSender;
         for (final candidate in recheckedMembership.members) {
@@ -2986,7 +2956,6 @@ _sendGroupMessageWithAuthorityRecheck({
         groupId: groupId,
         senderPeerId: senderPeerId,
         membershipCutoff: membershipCutoff,
-        inviteDeliveryAttemptRepo: inviteDeliveryAttemptRepo,
       );
       GroupMember? currentSender;
       for (final candidate in currentMembership.members) {

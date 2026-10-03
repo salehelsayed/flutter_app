@@ -40,6 +40,17 @@ const productionCatalogWatchJourneys = {
   groupCatalogGm019Journey,
   groupCatalogGe009Journey,
   groupCatalogRapidReaddJourney,
+  groupCatalogIr001Journey,
+  groupCatalogGm008Journey,
+  groupCatalogGe007Journey,
+  groupCatalogGe008Journey,
+  groupCatalogGe005Journey,
+  groupCatalogReaddCyclesJourney,
+  groupCatalogGe010Journey,
+  groupCatalogGo001Journey,
+  groupCatalogGe011Journey,
+  groupCatalogFullMeshJourney,
+  groupCatalogDe002Journey,
 };
 
 const _watchedFlowEvents = {
@@ -54,6 +65,13 @@ const _watchedFlowEvents = {
   'GROUP_SEND_MSG_USE_CASE_SUCCESS_NO_PEERS',
   ..._drainFlowEvents,
 };
+
+// Membership-edit outcomes, so a refused UI removal or re-add records why.
+const _watchedFlowEventPrefixes = [
+  'GROUP_REMOVE_MEMBER_USE_CASE_',
+  'GROUP_ADD_MEMBER_USE_CASE_',
+  'GROUP_RECOVERY_GATE_',
+];
 
 // The drain diagnostics the original offline-removal proof summarizes.
 const _drainFlowEvents = {
@@ -86,7 +104,11 @@ void bindProductionGroupCatalogWatchControls({
   final flowEvents = <Map<String, Object?>>[];
   var overflow = false;
   final lease = installScopedE2EFlowEventSink((event) {
-    if (!_watchedFlowEvents.contains(event['event'])) return;
+    final name = '${event['event']}';
+    if (!_watchedFlowEvents.contains(name) &&
+        !_watchedFlowEventPrefixes.any(name.startsWith)) {
+      return;
+    }
     if (flowEvents.length >= 2048) {
       overflow = true;
       return;
@@ -129,23 +151,32 @@ void bindProductionGroupCatalogWatchControls({
   controller.bindDisposer(() => debugGroupDeliveryObserver = null);
 
   // Raw inbound group traffic per group id, for originals that count what a
-  // removed member still receives. Counts only; payloads are not retained.
+  // removed member still receives, and the ids of messages that arrived live
+  // on the topic (anything else came from the offline inbox). Counts and ids
+  // only; payloads are not retained.
   final inbound = <String, Map<String, int>>{};
+  final liveMessageIds = <String, Set<String>>{};
   debugGroupInboundObserver = (kind, data) {
     final groupId = data['groupId'];
     if (groupId is! String) return;
     final counts = inbound.putIfAbsent(groupId, () => {});
     counts[kind] = (counts[kind] ?? 0) + 1;
+    final messageId = data['messageId'];
+    if (kind == 'message' && messageId is String) {
+      final ids = liveMessageIds.putIfAbsent(groupId, () => {});
+      if (ids.length < 2048) ids.add(messageId);
+    }
   };
   controller.bindDisposer(() => debugGroupInboundObserver = null);
 
-  // The original removed-member proof: one send attempt by the removed role
+  // The original removed-member proof: one send attempt per original key by
+  // the removed role
   // through the production use case, recording the actual (rejected) outcome.
-  var removedSendAttempted = false;
+  final removedSendKeys = <String>{};
   controller.bindAction('catalog_attempt_removed_send', (args) async {
     final key = args['key'];
     final text = args['text'];
-    if (key is! String || text is! String || removedSendAttempted) {
+    if (key is! String || text is! String || removedSendKeys.contains(key)) {
       throw StateError('removed send attempt refused');
     }
     final identity = await identityRepository.loadIdentity();
@@ -158,7 +189,7 @@ void bindProductionGroupCatalogWatchControls({
             null) {
       throw StateError('exact removed identity and retained group required');
     }
-    removedSendAttempted = true;
+    removedSendKeys.add(key);
     final groupId = named.single.id;
     final scenario = controller.invocation.scenarioId.split('.').last;
     final messageId =
@@ -341,7 +372,19 @@ void bindProductionGroupCatalogWatchControls({
           if (m.id.startsWith('sys-member_removed:')) m.id,
       ],
       'inbound': inbound[group.id] ?? const {},
+      'liveMessageIds': [...?liveMessageIds[group.id]],
       'memberPeerIds': [for (final m in members) m.peerId],
+      'memberDetails': [
+        for (final m in members)
+          {
+            'peerId': m.peerId,
+            'role': m.role.name,
+            'deviceCount': m.devices.length,
+            'activeTransportPeerIds': [
+              for (final d in m.activeDevices) d.transportPeerId,
+            ],
+          },
+      ],
       'selfMember': members.any((m) => m.peerId == identity.peerId),
       'timelineTexts': [
         for (final m in messages)

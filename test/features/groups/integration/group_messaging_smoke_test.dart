@@ -13521,7 +13521,7 @@ void main() {
     );
 
     test(
-      'INV-106 mixed accepted and unaccepted invitees target only accepted ordinary-message recipients',
+      'GE-009 mixed accepted and pending invitees are all ordinary-message recipients',
       () async {
         final inviteRepo = _InMemoryGroupInviteDeliveryAttemptRepository();
         final alice = GroupTestUser.create(
@@ -13606,7 +13606,7 @@ void main() {
 
         final (sendResult, sentMessage) = await alice.sendGroupMessageViaBridge(
           groupId: groupId,
-          text: 'INV-106 accepted recipient only',
+          text: 'GE-009 pending invitee is a recipient',
           messageId: messageId,
           timestamp: createdAt.add(const Duration(minutes: 3)),
         );
@@ -13626,11 +13626,7 @@ void main() {
                 as Map<String, dynamic>;
         expect(
           (inboxPayload['recipientPeerIds'] as List<dynamic>).cast<String>(),
-          [bob.peerId],
-        );
-        expect(
-          inboxPayload['recipientPeerIds'],
-          isNot(contains(charlie.peerId)),
+          unorderedEquals(<String>[bob.peerId, charlie.peerId]),
         );
 
         final reliableRaw = alice.bridge.sentMessages.lastWhere(
@@ -13643,11 +13639,7 @@ void main() {
                 as Map<String, dynamic>;
         expect(
           (reliablePayload['recipientPeerIds'] as List<dynamic>).cast<String>(),
-          [bob.peerId],
-        );
-        expect(
-          reliablePayload['recipientPeerIds'],
-          isNot(contains(charlie.peerId)),
+          unorderedEquals(<String>[bob.peerId, charlie.peerId]),
         );
         expect(reliablePayload['preserveRecipientPeerIds'], isTrue);
 
@@ -13662,6 +13654,8 @@ void main() {
           bobMessages.where((message) => message.id == messageId),
           hasLength(1),
         );
+        // Charlie has not accepted, so his app is not on the topic and holds
+        // nothing yet; the relay custody above is addressed to him.
         final charlieMessages = await charlie.loadGroupMessages(groupId);
         expect(
           charlieMessages.where((message) => message.id == messageId),

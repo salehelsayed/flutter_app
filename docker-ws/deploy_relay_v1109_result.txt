@@ -1,0 +1,44 @@
+=== relay v1.10.9 deploy started 20261003T095020Z ===
+--- pre-deploy state ---
+relay: active NRestarts=0
+live binary: 8ce3cd49a8562417e73748abc6a0cda1744e95499857b281be6f5cea8aa913c3
+uploaded binary: 535d30e65da24d1d797e71dce08a7a1fa375d05dbf646e4fa9cf70c29eaec7db
+relay_apns_voip_push_enabled 1
+relay_backend_durable 1
+--- install ---
+backup: /usr/local/bin/relay-server.pre-1.10.9-20261003T095020Z
+installed: 535d30e65da24d1d797e71dce08a7a1fa375d05dbf646e4fa9cf70c29eaec7db
+--- post-restart ---
+relay: active NRestarts=0
+t+12s: active NRestarts=0
+t+40s: active NRestarts=0
+t+40s: active NRestarts=0
+--- frame errors since restart ---
+2
+=== done 20261003T095159Z ===
+--- verification 2026-10-03T09:52:09Z ---
+NRestarts=0
+ActiveEnterTimestamp=Sat 2026-10-03 09:50:21 UTC
+relay_apns_voip_push_enabled 1
+relay_backend_durable 1
+frame errors after restart: 0
+group retrieves after restart: 8
+Oct 03 09:50:20 ip-172-31-34-24 relay-server[22809]: 2026/10/03 09:50:20 [INBOX] Write error: frame too large: 150162
+Oct 03 09:50:20 ip-172-31-34-24 relay-server[22809]: 2026/10/03 09:50:20 [RENDEZVOUS] Incoming stream from 12D3KooWCGLAHFFi2bB4...
+Oct 03 09:50:20 ip-172-31-34-24 relay-server[22809]: 2026/10/03 09:50:20 [RENDEZVOUS] Request type=0 from 12D3KooWCGLAHFFi2bB4...
+Oct 03 09:50:20 ip-172-31-34-24 relay-server[22809]: 2026/10/03 09:50:20 [RENDEZVOUS] REGISTER ns=mknoon:chat:12D3KooWCGLAHFFi2bB4bcC5HFQ3fmNAzdAdzcrFvrrNENPnJ7
+Oct 03 09:50:20 ip-172-31-34-24 relay-server[22809]: 2026/10/03 09:50:20 [RENDEZVOUS] Sent response type=1
+Oct 03 09:50:20 ip-172-31-34-24 relay-server[22809]: 2026/10/03 09:50:20 [RENDEZVOUS] stream handled in 494.493µs
+Oct 03 09:50:20 ip-172-31-34-24 relay-server[22809]: 2026/10/03 09:50:20 [INBOX] Write error: frame too large: 150162
+Oct 03 09:50:20 ip-172-31-34-24 relay-server[22809]: 2026/10/03 09:50:20 [RENDEZVOUS] Incoming stream from 12D3KooWCGLAHFFi2bB4...
+Oct 03 09:50:20 ip-172-31-34-24 relay-server[22809]: 2026/10/03 09:50:20 [RENDEZVOUS] Request type=0 from 12D3KooWCGLAHFFi2bB4...
+Oct 03 09:50:20 ip-172-31-34-24 relay-server[22809]: 2026/10/03 09:50:20 [RENDEZVOUS] REGISTER ns=mknoon:chat:12D3KooWCGLAHFFi2bB4bcC5HFQ3fmNAzdAdzcrFvrrNENPnJ7
+Oct 03 09:50:20 ip-172-31-34-24 relay-server[22809]: 2026/10/03 09:50:20 [RENDEZVOUS] Sent response type=1
+Oct 03 09:50:20 ip-172-31-34-24 relay-server[22809]: 2026/10/03 09:50:20 [RENDEZVOUS] stream handled in 635.939µs
+main pid: 70852
+Oct 03 09:50:21 ip-172-31-34-24 systemd[1]: Stopping relay-server.service - mknoon relay server...
+Oct 03 09:50:21 ip-172-31-34-24 relay-server[22809]: 2026/10/03 09:50:21 Shutting down (terminated)...
+Oct 03 09:50:21 ip-172-31-34-24 relay-server[22809]: 2026/10/03 09:50:21 Node stopped.
+Oct 03 09:50:21 ip-172-31-34-24 relay-server[22809]: 2026/10/03 09:50:21 [REDIS][INBOX] stats read failed: redis: client is closed
+retrieves by the looping peer since restart: 3
+frame errors since restart: 0

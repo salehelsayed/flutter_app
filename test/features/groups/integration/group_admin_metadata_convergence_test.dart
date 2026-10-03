@@ -1945,6 +1945,11 @@ Future<void> runGroupAdminMetadataConvergenceScenario({
 }
 
 void main() {
+  // These tests hold the recovery gate open and expect an immediate refusal;
+  // production edits wait up to [defaultGroupRecoveryEditWait] instead.
+  setUp(() => debugGroupRecoveryEditWait = Duration.zero);
+  tearDown(() => debugGroupRecoveryEditWait = defaultGroupRecoveryEditWait);
+
   TestWidgetsFlutterBinding.ensureInitialized();
 
   group('Group admin metadata convergence', () {

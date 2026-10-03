@@ -22,6 +22,11 @@ import '../../../shared/fakes/in_memory_group_message_repository.dart';
 import '../../../shared/fakes/in_memory_group_repository.dart';
 
 void main() {
+  // These tests hold the recovery gate open and expect an immediate refusal;
+  // production edits wait up to [defaultGroupRecoveryEditWait] instead.
+  setUp(() => debugGroupRecoveryEditWait = Duration.zero);
+  tearDown(() => debugGroupRecoveryEditWait = defaultGroupRecoveryEditWait);
+
   late FakeBridge bridge;
   late InMemoryGroupRepository groupRepo;
 
@@ -744,6 +749,30 @@ void main() {
     final member = await groupRepo.getMember('group-1', 'peer-to-remove');
     expect(member, isNotNull);
     expect(bridge.commandLog, isEmpty);
+  });
+
+  test('waits out a short recovery pass, then removes', () async {
+    debugGroupRecoveryEditWait = const Duration(seconds: 5);
+    final release = Completer<void>();
+    final pass = runWithGroupRecoveryGate(() => release.future);
+    final removal = removeGroupMember(
+      bridge: bridge,
+      groupRepo: groupRepo,
+      groupId: 'group-1',
+      memberPeerId: 'peer-to-remove',
+    );
+    await Future<void>.delayed(const Duration(milliseconds: 50));
+    expect(
+      bridge.commandLog,
+      isEmpty,
+      reason: 'no mutation while the recovery pass holds the gate',
+    );
+    release.complete();
+    await pass;
+    await removal;
+
+    expect(await groupRepo.getMember('group-1', 'peer-to-remove'), isNull);
+    expect(bridge.commandLog, contains('group:updateConfig'));
   });
 
   test(

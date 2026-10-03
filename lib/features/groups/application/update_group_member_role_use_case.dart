@@ -70,7 +70,8 @@ Future<({DateTime eventAt, String eventId})?> updateGroupMemberRole({
     },
   );
 
-  if (isGroupRecoveryInProgress()) {
+  // Wait out a short in-flight recovery pass rather than refusing at once.
+  if (!await waitForGroupRecoveryIdle()) {
     emitFlowEvent(
       layer: 'FL',
       event: 'GROUP_UPDATE_MEMBER_ROLE_USE_CASE_RECOVERY_PENDING',

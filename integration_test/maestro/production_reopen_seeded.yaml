@@ -5,7 +5,24 @@ name: production_reopen_seeded
 - launchApp
 - assertVisible:
     id: orbit.view.all_chats
-- tapOn:
-    id: orbit.view.all_chats
-- assertVisible:
-    id: orbit.view.inner_circle
+# A relaunch after missed messages can raise a heads-up notification over the
+# top of the screen at any moment; dismiss it and retry the view switch.
+- retry:
+    maxRetries: 3
+    commands:
+      - runFlow:
+          when:
+            visible: 'MKnoon'
+          commands:
+            - swipe:
+                start: 50%, 15%
+                end: 50%, 1%
+      - runFlow:
+          when:
+            notVisible:
+              id: orbit.view.inner_circle
+          commands:
+            - tapOn:
+                id: orbit.view.all_chats
+      - assertVisible:
+          id: orbit.view.inner_circle

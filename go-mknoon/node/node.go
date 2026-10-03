@@ -880,11 +880,19 @@ func (n *Node) RefreshRelaySession() *RecoveryResult {
 
 	recovery, isNew := mgr.BeginRecovery()
 	if isNew {
-		go runRelayRecoveryOwned(mgr, recovery, func() (*RecoveryResult, error) {
+		go n.runRelayRecovery(mgr, recovery, func() (*RecoveryResult, error) {
 			return n.refreshRelaySessionOwned(), nil
 		})
 	}
 	return waitForSharedRecoveryResult(recovery)
+}
+
+// runRelayRecovery runs one owned recovery, then reports the settled relay
+// state. Relay state events are held back while the recovery runs (see
+// emitRelayStateEvent), so this is the one event Flutter sees for it.
+func (n *Node) runRelayRecovery(mgr *RelaySessionManager, recovery *recoveryPromise, work func() (*RecoveryResult, error)) {
+	runRelayRecoveryOwned(mgr, recovery, work)
+	n.emitRelayStateEvent("relay_recovery_complete")
 }
 
 // The native work retains its ownership after the API wait expires. Keep the
@@ -1263,7 +1271,7 @@ func (n *Node) ReconnectRelays() (*RecoveryResult, error) {
 
 	recovery, isNew := mgr.BeginRecovery()
 	if isNew {
-		go runRelayRecoveryOwned(mgr, recovery, n.reconnectRelaysOwned)
+		go n.runRelayRecovery(mgr, recovery, n.reconnectRelaysOwned)
 	}
 	return waitForSharedRecoveryOutcome(recovery)
 }
@@ -2504,6 +2512,12 @@ func (n *Node) isRelayPeer(pid peer.ID) bool {
 
 func (n *Node) emitRelayStateEvent(reason string) {
 	if n.relaySessionMgr == nil || !n.reservationAwareHealthEnabled() {
+		return
+	}
+	// While a recovery runs the aggregate state reads "recovering" even when
+	// the relay link is fine. Flutter treats that as an outage and starts
+	// group recovery, so the settled state is sent once the recovery ends.
+	if n.relaySessionMgr.IsRecovering() {
 		return
 	}
 

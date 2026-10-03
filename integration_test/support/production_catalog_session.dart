@@ -136,12 +136,13 @@ final class ProductionCatalogSession {
 
   /// Membership edits are refused while group recovery runs, and recovery can
   /// restart when a join is processed: require every invite attempt joined
-  /// and recovery inactive for three consecutive seconds.
+  /// and recovery inactive for ten consecutive seconds (recovery passes run
+  /// often; three seconds still let a pass start under the next tap).
   Future<void> quiet(String role) async {
     var since = DateTime.now();
     await waitForProductionObservation(
       '$role quiet group',
-      const Duration(minutes: 3),
+      const Duration(minutes: 5),
       () async {
         final s = await actors[role]!.command('catalog_group_snapshot');
         final group = s['group'];
@@ -156,7 +157,7 @@ final class ProductionCatalogSession {
           since = DateTime.now();
           return null;
         }
-        return DateTime.now().difference(since) >= const Duration(seconds: 3)
+        return DateTime.now().difference(since) >= const Duration(seconds: 10)
             ? true
             : null;
       },
@@ -164,7 +165,8 @@ final class ProductionCatalogSession {
   }
 
   /// Retries an edit refused by the recovery gate the way a user would: wait
-  /// for a quiet group and tap again from the same screen; at most three tries.
+  /// for a quiet group and tap again from the same screen; at most six tries
+  /// (each refused attempt keeps the role's snapshot as `editFailure:*`).
   Future<void> membershipEdit(
     String role,
     String label,
@@ -184,7 +186,11 @@ final class ProductionCatalogSession {
         );
         break;
       } catch (_) {
-        if (attempt >= 3 || await applied()) rethrow;
+        // Keep the role's own flow events for the refused attempt.
+        try {
+          proof['editFailure:$label:$attempt'] = await snap(role);
+        } catch (_) {}
+        if (attempt >= 6 || await applied()) rethrow;
         retries[label] = attempt;
         await persist();
         await quiet(role);

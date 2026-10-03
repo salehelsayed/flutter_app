@@ -106,7 +106,8 @@ Future<({DateTime eventAt, String eventId})> removeGroupMember({
     },
   );
 
-  if (isGroupRecoveryInProgress()) {
+  // Wait out a short in-flight recovery pass rather than refusing at once.
+  if (!await waitForGroupRecoveryIdle()) {
     emitFlowEvent(
       layer: 'FL',
       event: 'GROUP_REMOVE_MEMBER_USE_CASE_RECOVERY_PENDING',

@@ -207,6 +207,17 @@ final class ProductionAndroidJourney {
       'production.group_catalog.gm019',
       'production.group_catalog.ge009',
       'production.group_catalog.private_rapid_readd',
+      'production.group_catalog.ir001',
+      'production.group_catalog.gm008',
+      'production.group_catalog.ge007',
+      'production.group_catalog.ge008',
+      'production.group_catalog.ge005',
+      'production.group_catalog.private_readd_cycles',
+      'production.group_catalog.ge010',
+      'production.group_catalog.go001',
+      'production.group_catalog.ge011',
+      'production.group_catalog.private_full_mesh_online',
+      'production.group_catalog.de002',
     }.contains(scenario)) {
       final third = required('SIMS_ANDROID_EMULATOR_SECOND_DEVICE_ID');
       if (!RegExp(r'^emulator-[0-9]+$').hasMatch(third) || third == emulator) {

@@ -39,6 +39,11 @@ class _TimeoutCommandBridge extends FakeBridge {
 }
 
 void main() {
+  // These tests hold the recovery gate open and expect an immediate refusal;
+  // production edits wait up to [defaultGroupRecoveryEditWait] instead.
+  setUp(() => debugGroupRecoveryEditWait = Duration.zero);
+  tearDown(() => debugGroupRecoveryEditWait = defaultGroupRecoveryEditWait);
+
   late FakeBridge bridge;
   late InMemoryGroupRepository groupRepo;
 

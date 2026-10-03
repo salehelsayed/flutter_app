@@ -554,6 +554,50 @@ classify_path() {
       record "support" "$path" "support" "manifest-owned production catalog private_rapid_readd journey; original route retained"
       return
       ;;
+    integration_test/scripts/run_production_group_ir001.dart)
+      record "support" "$path" "support" "manifest-owned production catalog ir001 journey; original route retained"
+      return
+      ;;
+    integration_test/scripts/run_production_group_gm008.dart)
+      record "support" "$path" "support" "manifest-owned production catalog gm008 journey; original route retained"
+      return
+      ;;
+    integration_test/scripts/run_production_group_ge007.dart)
+      record "support" "$path" "support" "manifest-owned production catalog ge007 journey; original route retained"
+      return
+      ;;
+    integration_test/scripts/run_production_group_ge008.dart)
+      record "support" "$path" "support" "manifest-owned production catalog ge008 journey; original route retained"
+      return
+      ;;
+    integration_test/scripts/run_production_group_ge005.dart)
+      record "support" "$path" "support" "manifest-owned production catalog ge005 journey; original route retained"
+      return
+      ;;
+    integration_test/scripts/run_production_group_readd_cycles.dart)
+      record "support" "$path" "support" "manifest-owned production catalog private_readd_cycles journey; original route retained"
+      return
+      ;;
+    integration_test/scripts/run_production_group_ge010.dart)
+      record "support" "$path" "support" "manifest-owned production catalog ge010 journey; original route retained"
+      return
+      ;;
+    integration_test/scripts/run_production_group_go001.dart)
+      record "support" "$path" "support" "manifest-owned production catalog go001 journey; original route retained"
+      return
+      ;;
+    integration_test/scripts/run_production_group_ge011.dart)
+      record "support" "$path" "support" "manifest-owned production catalog ge011 journey; original route retained"
+      return
+      ;;
+    integration_test/scripts/run_production_group_full_mesh.dart)
+      record "support" "$path" "support" "manifest-owned production catalog private_full_mesh_online journey; original route retained"
+      return
+      ;;
+    integration_test/scripts/run_production_group_de002.dart)
+      record "support" "$path" "support" "manifest-owned production catalog de002 journey; original route retained"
+      return
+      ;;
     integration_test/scripts/run_production_group_reaction.dart)
       record "support" "$path" "support" "manifest-owned production group-reaction roundtrip journey; original route retained"
       return

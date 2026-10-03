@@ -1995,11 +1995,32 @@ input (no stronger than the original) or need a new production feature.
 | ge021 | GE-021 | fake transport peers and a scripted flaky member |
 | private_late_leave_readd | RA-011 | waits for `GROUP_MESSAGE_LISTENER_SELF_REMOVAL_LEAVE_REPAIRED_AFTER_READD`, removed with the repair path in 27fb81446 (Plan 263) |
 | private_rotated_device_readd | RA-012 | re-adds Charlie with made-up rotated ML-KEM material |
+| gm022 | GM-022 | hand-built `saveMember` key packages and 20 re-adds Charlie never accepts |
+| gm024 | GM-024 | needs per-member device rows; production members carry no device identities (see the 2026-10-02 section) |
 | private_history_retention | ML-017 | original pins pre-Plan-263 behaviour: it requires the removed member's send to be rejected as `unauthorized`; since Plan 263 production rejects it as `groupNotFound` (self-removed marker). A replacement ran the whole journey on devices with every other field passing (see the gm020/gm034/gm016 section) and was then removed |
+| de017 | DE-017 | `addGroupMember` with a future `joinedAt`, a direct members-added publish, `removedAtOverride` and made-up send timestamps |
+| ir015 | IR-015 | seven made-up media attachments with fake key material, backdated sends and a direct drain call |
+| ir016 | IR-016 | group, member and key rows backdated past the retention window by direct repository writes |
+| pl002 | PL-002 | a made-up voice note with fake key and nonce |
+| pl012 | PL-012 | five made-up attachments on one message with a fixed timestamp |
+| private_relay_reconnect_group_recovery | NW-004 | `stopNode` with the app alive, `callP2PRelayReconnect` and `callGroupAcknowledgeRecovery` (also pinned to the iOS simulator) |
+| go002 | GO-002 | an inbox-store failure forced by a wrapping fake bridge and a direct `retryFailedGroupInboxStores` call |
+| ge012 | GE-012 | a second device planted with `saveMember` and made-up key packages |
+| ge013 | GE-013 | the same planted device, revoked by a direct write and imported fixtures |
+| ge014 | GE-014 | Charlie's invited-but-not-joined state written with `saveGroup`/`saveMember` |
+| ge015 | GE-015 | a fake restart by fixture re-import with hard-coded interruption flags |
+| ge023 | GE-023 | made-up image attachments and an imported re-add |
+| private_long_offline_epoch_churn | NW-012 | key rotations whose send stub pretends Charlie got the key, then a hand import (also pinned to the iOS simulator) |
+| private_max_group_size_churn | ST-009 | 47 made-up members with fabricated key material (also pinned to the iOS simulator) |
+| private_timeline_truth | ML-015 | the local member deleted and restored with `removeMember`/`saveMember` |
+| private_partial_key_distribution | KE-015 | a scripted send that fails only for Charlie and a direct deferred key distribution |
+| gm035 | GM-035 | its oracle requires a duplicate live republish of Charlie's envelope through `callGroupPublish` |
+| ge020 | GE-020 | its "live refresh" is a direct `callGroupLeave` + `callGroupJoinWithConfig` inside a running app; a kill and relaunch would test a cold start instead, already covered by IR-001, GE-007 and GE-008 (user decision 2026-10-03) |
 
 Partly portable (the production replacement covers the rest of the case):
 `private_readd_current` sub-rows KE-011, RA-006 and RA-014 (forged same-epoch
-key and duplicate removal) and the duplicate live republish in `gm035`.
+key and duplicate removal). (`gm035` was listed here first; its oracle
+requires the duplicate republish, so it is not portable; see the table.)
 
 ## 2026-10-01 Wave 3 catalog ge002, ge003
 
@@ -2137,3 +2158,127 @@ assumes a re-added member is a recipient immediately. Pending a decision
 
 Not built in this batch: GM-024 (needs per-member device rows in the snapshot)
 and GM-014 (its rotation reports delivery to Charlie without sending it).
+
+## 2026-10-02 Wave 3 catalog offline, storm and cycle families: ir001, gm008, ge007, ge008, ge005, private_readd_cycles
+
+Shared support additions: `takeOffline` / `bringOnline` (verified owned-process
+death and an ordinary relaunch that keeps the app's own database; the
+originals wipe the database and re-import a fixture), `acceptReadd(online:)`,
+`receivedAtEnd` (receipts read from the final snapshot for long cycle runs),
+and the removed member may attempt each original key once
+(`catalog_attempt_removed_send`). Criteria tests: ir001 7, gm008 7, ge007 7,
+ge008 7, ge005 6, readd cycles 6.
+
+| Check | Pass run | Negative probe | Probe outcome |
+|---|---|---|---|
+| ir001 | `wave3-run-20261002T083539Z` (`attempt-ldtah4`) | Bob stays online: `T090613Z` | FAIL, original oracle: `bobOfflineBeforeMissedSendObserved`, `usedOfflineDrainForMissed must be true` |
+| gm008 | `T084608Z` (`attempt-aEiK1j`) | Charlie never re-added: `T092026Z` | FAIL: "charlie-after-readd" |
+| ge007 | `T112521Z` | Bob stays online: `T075947Z` | FAIL, original oracle: `bobOfflineDuringMutation`, `offlineDuringMutation must be true` |
+| ge008 | `T094843Z` (`attempt-KjlGrF`) | Charlie never re-added: `T123927Z` | FAIL: "send-charlieGe008Post0" |
+| ml009 (batch 3) | (`T201946Z`, 2026-10-01) | Charlie never re-added: `T081809Z` | FAIL: "charlie pending invitation" |
+| ge005 | pending | Charlie never re-added: `T105530Z` | FAIL: "charlie receives bobGe005Readd01" |
+| private_readd_cycles (ML-008) | pending | Charlie never re-added: `T111037Z` | FAIL: "charlie receives ml008AlicePostReadd1" |
+
+GM-008: after his restart Charlie still holds the retained group; his
+publish is rejected (`groupNotFound`). GE-008: all 16 phase sends arrived
+exactly once at every intended receiver; both removed-window publish attempts
+were rejected. ML-008 restarts are kill-and-relaunch (the original only
+restarts the group listener).
+
+Reopen flow: a relaunch after missed messages can raise a heads-up
+notification over the top bar; `production_reopen_seeded.yaml` now dismisses
+it and retries the view switch (ge007 failed twice on it before the fix).
+
+GE-005 and ML-008 runs so far failed on infrastructure, never on the
+journey: Alice's removal was refused three times in a row after 4 (ge005) and
+8 (ml008) completed cycles while the relay connection repeatedly degraded
+(`RELAY_RECOVERY_START` bursts on the devices); a Maestro Android driver did
+not start on an emulator; and the Maestro device server died mid-input. The
+catalog watch now records the removal/add use-case events
+(`GROUP_REMOVE_MEMBER_USE_CASE_*`, `GROUP_ADD_MEMBER_USE_CASE_*`) and the
+session keeps the editing role's snapshot after each refused attempt, so the
+next refusal names its cause.
+
+Not portable as written (kept on the original harness): GM-022 (its oracle
+needs hand-built `saveMember` key packages and 20 re-adds Charlie never
+accepts) and GM-024 (its oracle needs per-member device rows; production
+members carry no device identities: a production run, `T113613Z` on 2026-10-02,
+showed `deviceCount 0` for every member on every device, so
+`activeCharlieDeviceCount` can never be 1). GM-024's replacement was
+unregistered and removed. GE-006 is blocked on the GE-009 decision (it needs
+the inviter's post-re-add copy addressed to a still-pending Charlie).
+
+
+## 2026-10-02 Wave 3 remaining three-person catalog triage
+
+The 33 three-person catalog cases still pending were read against the
+original harness and oracle (read only).
+
+Not portable (forged, injected or hand-written state; added to the table in
+"catalog cases kept on the original harness"): DE-017, IR-015, IR-016,
+PL-002, PL-012, NW-004, GO-002, GE-012, GE-013, GE-014, GE-015, GE-023,
+NW-012, ST-009, ML-015, KE-015.
+
+Pinned by the oracle to `appPeerPlatform == ios_26_2_core_simulator`, so they
+wait for the iOS-simulator journeys (an Android run never reports that
+platform): NW-003 (`private_partition_readd_heal`), NW-006
+(`private_peer_disconnect_not_removal`), NW-010
+(`private_background_resume_group_delivery`), ML-016
+(`private_non_friend_member_delivery`), ML-020
+(`private_admin_role_transfer_delivery`) and the metadata/intro/photo case
+(`private_admin_metadata_intro_photo_convergence`).
+
+Need a production UI flow that does not exist yet: media send from the group
+composer (`private_media_reaction_roundtrip`), quote reply (GE-024), leave as
+the last admin (GM-015, which also reads a leave-command counter no snapshot
+exposes), admin dissolve (`private_online_dissolve_convergence`, GS-I01) and
+member leave (`private_voluntary_leave_convergence`, GS-H01;
+`production_orbit_group_leave_delete.yaml` is a starting point).
+
+Blocked on the GE-009 decision (the inviter leaves a not-yet-accepted member
+out of its recipients): DE-007 (its oracle needs Bob and Charlie to join
+after Alice's send and still receive it) and GE-006.
+
+Portable with existing flows, built as the next batch: GE-010, GO-001 (same
+role scripts as GE-010), GE-011, NW-001 (`private_full_mesh_online`) and
+DE-002. GM-035 ports only without its duplicate-republish step, which its
+oracle requires, so it stays on the original harness.
+
+## 2026-10-03 Product fixes found by the catalog runs
+
+**Relay: group inbox pages over the frame limit (fixed, relay v1.10.9).**
+GE-005 and ML-008 kept failing because Alice's membership edits were refused
+by the group recovery gate. Cause: the relay built group inbox pages by count
+only; a page of large membership and key events encoded to more than the
+128 KB frame (`[INBOX] Write error: frame too large: 150162`, 640 times in 30
+minutes). The relay closed the stream without a reply, the app treated the
+EOF as a transient relay error, forced a relay reconnect and asked again, and
+each reconnect re-armed a full retry pass that held the gate about 88% of the
+time. Fix: `group_retrieve_cursor` and `group_retrieve` pages stop before 96
+KB of messages (always at least one) and resume by cursor
+(`go-relay-server/inbox.go`, tests in `group_inbox_reply_budget_test.go`).
+Deployed to production 2026-10-03T09:50:21Z with user approval
+(`docker-ws/deploy_relay_v1109.sh` + `_result.txt`); no frame errors since,
+and the device that was looping reads its inbox again.
+
+**Go: relay refresh reported as "recovering" (fixed, B1).** A successful
+in-place relay refresh emitted `relay:state` with the aggregate state still
+`recovering`, which the app treats as an outage. `emitRelayStateEvent` now
+sends nothing while a recovery runs, and `runRelayRecovery` sends the settled
+state once it ends (`go-mknoon/node/node.go`,
+`relay_recovery_state_event_test.go`).
+
+**App: the inviter dropped pending invitees from its recipients (fixed,
+GE-009; user decision 2026-10-03: include everywhere).** Plan 318 kept one
+exclusion: a sender dropped members its own device held a non-joined invite
+row for. Only the inviting device holds those rows, so the inviter alone
+left a pending (re-added) member out, and that member never received what the
+inviter sent before he accepted, while every other member's copies reached
+him. `_loadGroupSendMembership` and the strict reaction recipients now include
+every deliverable roster member (`send_group_message_use_case.dart`,
+`send_group_reaction_use_case.dart`). Never-accepted invitees now receive the
+same custody and push from the inviter that they already received from other
+members; receive-side suppression still keeps them from dead-end
+notifications (Android drops on missing local group state, iOS sanitizes).
+The INV-106 tests were turned into tests of the new contract. GE-009, GE-006
+and DE-007 are unblocked.

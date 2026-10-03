@@ -34,6 +34,11 @@ const (
 	// Group inbox constants.
 	maxMessagesPerGroup = 500
 	groupMessageTTL     = 7 * 24 * time.Hour
+	// groupInboxReplyByteBudget bounds the group messages of one inbox reply
+	// so the encoded response stays under maxFrameLen with room for the rest
+	// of the envelope. A reply over maxFrameLen is never written: the client
+	// sees a closed stream and asks for the same page again.
+	groupInboxReplyByteBudget = 96 * 1024
 
 	pushNotificationTitle       = "New Message"
 	pushNotificationBody        = "You have a new message"
@@ -3981,6 +3986,9 @@ func (s *GroupInboxStore) RetrieveWithCursorAuthorized(
 			break
 		}
 	}
+	if capped, resumeAfter := capGroupInboxReply(result); resumeAfter != "" {
+		result, nextCursor = capped, resumeAfter
+	}
 
 	groupInboxRetrievedCounter.Add(float64(len(result)))
 	return result, nextCursor, buildGroupInboxHistoryGaps(groupId, cursor, cursorFound, result)
@@ -4176,6 +4184,32 @@ func groupInboxMessageAuthorizedForPeer(message groupInboxMessage, peerId string
 		return false
 	}
 	return message.From == peerId || containsPeer(message.RecipientPeerIds, peerId)
+}
+
+// groupInboxMessageReplyBytes is the encoded size of one message inside a
+// reply's groupMessages array, plus its separating comma.
+func groupInboxMessageReplyBytes(message groupInboxMessage) int {
+	encoded, err := json.Marshal(message)
+	if err != nil {
+		return maxFrameLen
+	}
+	return len(encoded) + 1
+}
+
+// capGroupInboxReply keeps the leading messages that fit
+// groupInboxReplyByteBudget (always at least one) and, when it leaves some
+// out, returns the id of the last kept message so the reader resumes after
+// it with group_retrieve_cursor.
+func capGroupInboxReply(messages []groupInboxMessage) ([]groupInboxMessage, string) {
+	used := 0
+	for i, message := range messages {
+		size := groupInboxMessageReplyBytes(message)
+		if i > 0 && used+size > groupInboxReplyByteBudget {
+			return messages[:i], messages[i-1].ID
+		}
+		used += size
+	}
+	return messages, ""
 }
 
 func filterGroupInboxMessagesForPeer(messages []groupInboxMessage, peerId string) []groupInboxMessage {
@@ -4823,7 +4857,8 @@ func HandleInboxStream(
 		} else {
 			messages := groupInbox.RetrieveAuthorized(req.GroupId, req.SinceTimestamp, remotePeer)
 			if len(messages) > 0 {
-				resp = inboxResponse{Status: "OK", GroupMessages: messages}
+				page, resumeAfter := capGroupInboxReply(messages)
+				resp = inboxResponse{Status: "OK", GroupMessages: page, NextCursor: resumeAfter}
 			} else {
 				resp = inboxResponse{Status: "NO_MESSAGES"}
 			}

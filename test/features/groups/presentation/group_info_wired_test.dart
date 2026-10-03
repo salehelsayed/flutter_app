@@ -1180,6 +1180,11 @@ List<String> _lastUpdateConfigMemberPeerIds(FakeBridge bridge) {
 }
 
 void main() {
+  // These tests hold the recovery gate open and expect an immediate refusal;
+  // production edits wait up to [defaultGroupRecoveryEditWait] instead.
+  setUp(() => debugGroupRecoveryEditWait = Duration.zero);
+  tearDown(() => debugGroupRecoveryEditWait = defaultGroupRecoveryEditWait);
+
   group('GroupInfoWired', () {
     setUp(() {
       groupRecoveryGate.resetForTest();

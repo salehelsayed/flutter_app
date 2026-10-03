@@ -119,7 +119,6 @@ Future<RemoveGroupReactionResult> removeGroupReaction({
               groupRepo: groupRepo,
               groupId: groupId,
               senderTransportPeerId: strictDevice.transportPeerId,
-              inviteDeliveryAttemptRepo: inviteDeliveryAttemptRepo,
               members: strictMembers,
             )
           : const <String>[];

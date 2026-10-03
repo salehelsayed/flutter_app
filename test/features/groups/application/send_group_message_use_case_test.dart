@@ -4509,7 +4509,7 @@ void main() {
   );
 
   test(
-    'INV-106 excludes persisted non-joined invite attempts from every ordinary send recipient list',
+    'GE-009 includes pending invitees in every ordinary send recipient list',
     () async {
       final joinedAt = DateTime.utc(2026, 6, 4, 8);
       const bobPeerId = 'peer-accepted-bob';
@@ -4583,7 +4583,7 @@ void main() {
           groupRepo: groupRepo,
           msgRepo: msgRepo,
           groupId: 'group-1',
-          text: 'INV-106 accepted recipients only for $messageId',
+          text: 'GE-009 pending invitee included for $messageId',
           senderPeerId: 'peer-1',
           senderPublicKey: 'pk-1',
           senderPrivateKey: 'sk-1',
@@ -4598,7 +4598,7 @@ void main() {
         expect(message!.inboxRetryPayload, isNotNull);
         expect(
           _recipientPeerIdsFromRetryPayload(message.inboxRetryPayload!),
-          <String>[bobPeerId],
+          unorderedEquals(<String>[bobPeerId, charliePeerId]),
           reason: messageId,
         );
 
@@ -4607,20 +4607,15 @@ void main() {
         expect(saved!.inboxRetryPayload, isNotNull);
         expect(
           _recipientPeerIdsFromRetryPayload(saved.inboxRetryPayload!),
-          <String>[bobPeerId],
+          unorderedEquals(<String>[bobPeerId, charliePeerId]),
           reason: '$messageId saved retry payload',
         );
 
         final inboxPayload = _lastGroupInboxStorePayload(scenarioBridge);
         expect(
           (inboxPayload['recipientPeerIds'] as List<dynamic>).cast<String>(),
-          <String>[bobPeerId],
+          unorderedEquals(<String>[bobPeerId, charliePeerId]),
           reason: '$messageId group:inboxStore',
-        );
-        expect(
-          inboxPayload['recipientPeerIds'],
-          isNot(contains(charliePeerId)),
-          reason: '$messageId group:inboxStore excludes unaccepted invitee',
         );
         expect(inboxPayload['preserveRecipientPeerIds'], isTrue);
 
@@ -4630,13 +4625,8 @@ void main() {
         );
         expect(
           (reliablePayload['recipientPeerIds'] as List<dynamic>).cast<String>(),
-          <String>[bobPeerId],
+          unorderedEquals(<String>[bobPeerId, charliePeerId]),
           reason: '$messageId group:sendReliable',
-        );
-        expect(
-          reliablePayload['recipientPeerIds'],
-          isNot(contains(charliePeerId)),
-          reason: '$messageId native reliable send excludes unaccepted invitee',
         );
         expect(reliablePayload['preserveRecipientPeerIds'], isTrue);
       }
@@ -4646,15 +4636,16 @@ void main() {
         GroupInviteDeliveryStatus.queued,
         GroupInviteDeliveryStatus.needsResend,
         GroupInviteDeliveryStatus.cannotSend,
+        GroupInviteDeliveryStatus.unknown,
       ]) {
         await expectRecipients(
-          messageId: 'inv106-${status.toValue()}',
+          messageId: 'ge009-${status.toValue()}',
           charlieStatus: status,
         );
       }
 
       await expectRecipients(
-        messageId: 'inv106-joined-control',
+        messageId: 'ge009-joined-control',
         charlieStatus: GroupInviteDeliveryStatus.sent,
         bobStatus: GroupInviteDeliveryStatus.joined,
       );
@@ -5109,9 +5100,11 @@ void main() {
     },
   );
 
-  test('INV-106 preserves explicit empty accepted recipient lists', () async {
+  test('preserves explicit empty recipient lists when no remote member is deliverable', () async {
     final joinedAt = DateTime.utc(2026, 6, 4, 8);
-    const charliePeerId = 'peer-only-unaccepted-charlie';
+    // Charlie has no deliverable identity (no devices, no public key), so the
+    // send has no remote recipient; his pending invite row plays no part.
+    const charliePeerId = 'peer-undeliverable-charlie';
     final attemptRepo = _InMemoryInviteDeliveryAttemptRepository();
     final attemptAt = joinedAt.add(const Duration(minutes: 1));
 
@@ -5126,7 +5119,7 @@ void main() {
         peerId: charliePeerId,
         username: 'Charlie',
         role: MemberRole.writer,
-        publicKey: 'pk-charlie-unaccepted',
+        publicKey: '',
         joinedAt: joinedAt,
       ),
     );

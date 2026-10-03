@@ -62,6 +62,30 @@ final class ProductionCatalogCase {
     );
   }
 
+  /// [sent] plus the publish evidence of that message
+  /// ([productionCatalogFanout]); null (and a failure) when absent.
+  Map<String, Object?>? sentFanout(String role, String key) {
+    final s = sent(role, key);
+    if (s == null) return null;
+    final row = productionCatalogRows(finalOf(role), key).single;
+    return {
+      ...s,
+      ...productionCatalogFanout(
+        row,
+        (finalOf(role)['deliveries'] as List?) ?? const [],
+      ),
+    };
+  }
+
+  /// Whether [role]'s copy of [key] arrived live on the topic (its message id
+  /// is in the final snapshot's `liveMessageIds`); false when it came from
+  /// the offline inbox or is absent.
+  bool live(String role, String key) {
+    final rows = productionCatalogRows(finalOf(role), key);
+    final ids = (finalOf(role)['liveMessageIds'] as List?) ?? const [];
+    return rows.length == 1 && ids.contains(rows.single['messageId']);
+  }
+
   /// [role]'s incoming row for [key] from stage `got:<key>:<role>`, with the
   /// final persisted count; null (and a failure) when absent.
   Map<String, Object?>? received(String role, String key) {
@@ -76,6 +100,20 @@ final class ProductionCatalogCase {
       key,
       productionCatalogRows(finalOf(role), key).length,
     );
+  }
+
+  /// [role]'s incoming row for [key] read from its final snapshot (for long
+  /// cycle runs that keep no per-receipt stage); null (and a failure) when
+  /// absent or not exactly one.
+  Map<String, Object?>? receivedAtEnd(String role, String key) {
+    final rows = productionCatalogRows(finalOf(role), key);
+    require(
+      rows.length == 1 && rows.single['isIncoming'] == true,
+      '$role: exactly one incoming $key row at the end',
+    );
+    return rows.length == 1
+        ? productionCatalogReceived(rows.single, key, 1)
+        : null;
   }
 
   /// Rows of [key] in [role]'s final snapshot.

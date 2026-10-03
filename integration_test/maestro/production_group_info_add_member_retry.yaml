@@ -3,9 +3,10 @@ name: production_group_info_add_member_retry
 ---
 - assertVisible: 'Add Members \(1\)'
 - tapOn: Send Invites
+# The add may first wait (up to 20 s) for a group recovery pass.
 - extendedWaitUntil:
     visible: Group Info
-    timeout: 20000
+    timeout: 45000
 - back
 - assertVisible:
     id: chat_composer

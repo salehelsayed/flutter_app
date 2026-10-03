@@ -2,6 +2,8 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 
+import '../../../core/utils/flow_event_emitter.dart';
+
 /// Serializes group-recovery passes (startup rejoin, app-resume recovery,
 /// background retrier sweeps) so they execute one at a time instead of
 /// overlapping.
@@ -54,9 +56,21 @@ class GroupRecoveryGate {
   Future<T> run<T>(Future<T> Function() action) {
     begin();
     final Completer<T> completer = Completer<T>();
+    final caller = _callerOf(StackTrace.current);
+    final queuedAt = DateTime.now();
 
     void start() {
       _running = true;
+      final acquiredAt = DateTime.now();
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'GROUP_RECOVERY_GATE_ACQUIRED',
+        details: {
+          'caller': caller,
+          'waitedMs': acquiredAt.difference(queuedAt).inMilliseconds,
+          'depth': _activeDepth,
+        },
+      );
       // ignore: unawaited_futures — completion is observed via [completer].
       () async {
         try {
@@ -64,6 +78,15 @@ class GroupRecoveryGate {
         } catch (e, st) {
           completer.completeError(e, st);
         } finally {
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'GROUP_RECOVERY_GATE_RELEASED',
+            details: {
+              'caller': caller,
+              'heldMs': DateTime.now().difference(acquiredAt).inMilliseconds,
+              'queued': _queued.length,
+            },
+          );
           end();
           _running = false;
           if (_queued.isNotEmpty) {
@@ -81,6 +104,32 @@ class GroupRecoveryGate {
     return completer.future;
   }
 
+  /// Completes `true` once no pass is active or queued, or `false` when
+  /// [timeout] elapses first. Lets a user action wait out a short recovery
+  /// pass instead of failing while one happens to run.
+  Future<bool> whenIdle({required Duration timeout}) {
+    if (!isActive) return Future<bool>.value(true);
+    if (timeout <= Duration.zero) return Future<bool>.value(false);
+    final completer = Completer<bool>();
+    Timer? timer;
+    void listener() {
+      if (_activeDepth == 0 && !completer.isCompleted) {
+        timer?.cancel();
+        _activeDepthListenable.removeListener(listener);
+        completer.complete(true);
+      }
+    }
+
+    _activeDepthListenable.addListener(listener);
+    timer = Timer(timeout, () {
+      if (!completer.isCompleted) {
+        _activeDepthListenable.removeListener(listener);
+        completer.complete(false);
+      }
+    });
+    return completer.future;
+  }
+
   /// Like [run] but returns `null` immediately — without queueing — when a pass
   /// is already active or queued. Used by best-effort retrier sweeps that
   /// should skip rather than pile on behind an in-flight recovery.
@@ -89,6 +138,18 @@ class GroupRecoveryGate {
       return null;
     }
     return run(action);
+  }
+
+  /// The first stack frame outside this file, as `file.dart:line`, naming
+  /// which recovery pass entered the gate.
+  static String _callerOf(StackTrace trace) {
+    for (final line in trace.toString().split('\n')) {
+      final match = RegExp(r'([A-Za-z0-9_]+\.dart):(\d+)').firstMatch(line);
+      if (match != null && match.group(1) != 'group_recovery_gate.dart') {
+        return '${match.group(1)}:${match.group(2)}';
+      }
+    }
+    return 'unknown';
   }
 
   void resetForTest() {
@@ -100,6 +161,22 @@ class GroupRecoveryGate {
 }
 
 final groupRecoveryGate = GroupRecoveryGate();
+
+/// How long a membership or metadata edit waits for an in-flight recovery
+/// pass before it is refused. Recovery passes are short (seconds) but frequent
+/// (every relay recovery arms one), so refusing immediately made admin edits
+/// fail at random.
+const defaultGroupRecoveryEditWait = Duration(seconds: 20);
+
+Duration _groupRecoveryEditWait = defaultGroupRecoveryEditWait;
+
+/// Tests that hold the gate open can make edits refuse immediately.
+@visibleForTesting
+set debugGroupRecoveryEditWait(Duration wait) => _groupRecoveryEditWait = wait;
+
+/// Waits up to the edit wait for group recovery to finish; `true` when idle.
+Future<bool> waitForGroupRecoveryIdle() =>
+    groupRecoveryGate.whenIdle(timeout: _groupRecoveryEditWait);
 
 const groupRecoveryPendingError =
     'Group recovery is in progress. Try again after resync completes.';

@@ -80,3 +80,35 @@ Map<String, Object?> productionCatalogDurableSent(
     'actualDurablePayloadProof': recipients != null,
   };
 }
+
+/// The publish evidence the debug delivery observer recorded for [row]'s
+/// message id: topic peers at send, inbox custody and the live fanout state.
+/// The outcome and fanout state follow `send_group_message_use_case.dart`
+/// (`successNoPeers` is zero topic peers with inbox custody; the state is
+/// `_classifyGroupPublishLiveFanout`).
+Map<String, Object?> productionCatalogFanout(Map row, List deliveries) {
+  final durable = [
+    for (final d in deliveries)
+      if (d is Map && d['messageId'] == row['messageId'] && d['ok'] == true) d,
+  ];
+  if (durable.isEmpty) return {'actualTopicPeerProof': false};
+  final d = durable.last;
+  final peers = d['topicPeers'] as int?;
+  final expected = d['expectedRecipientCount'] as int?;
+  final inbox = d['inboxStored'] == true;
+  final sent = ['sent', 'delivered'].contains(row['status']);
+  return {
+    'topicPeers': peers,
+    'actualTopicPeerProof': peers != null,
+    'inboxStored': inbox,
+    'expectedRecipientCount': expected,
+    'liveFanoutState': peers == null
+        ? 'legacy_unknown'
+        : peers <= 0
+        ? 'zero_peers'
+        : expected != null && peers < expected
+        ? 'partial_peers'
+        : 'full_peers',
+    if (sent) 'outcome': peers == 0 && inbox ? 'successNoPeers' : 'success',
+  };
+}

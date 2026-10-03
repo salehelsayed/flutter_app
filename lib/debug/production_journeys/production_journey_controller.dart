@@ -53,7 +53,33 @@ const groupCatalogGe009Journey =
     'production.group_catalog.ge009';
 const groupCatalogRapidReaddJourney =
     'production.group_catalog.private_rapid_readd';
+const groupCatalogIr001Journey = 'production.group_catalog.ir001';
+const groupCatalogGm008Journey = 'production.group_catalog.gm008';
+const groupCatalogGe007Journey = 'production.group_catalog.ge007';
+const groupCatalogGe008Journey =
+    'production.group_catalog.ge008';
+const groupCatalogGe005Journey =
+    'production.group_catalog.ge005';
+const groupCatalogReaddCyclesJourney =
+    'production.group_catalog.private_readd_cycles';
+const groupCatalogGe010Journey = 'production.group_catalog.ge010';
+const groupCatalogGo001Journey = 'production.group_catalog.go001';
+const groupCatalogGe011Journey = 'production.group_catalog.ge011';
+const groupCatalogFullMeshJourney =
+    'production.group_catalog.private_full_mesh_online';
+const groupCatalogDe002Journey = 'production.group_catalog.de002';
 const productionGroupCatalogJourneys = {
+  groupCatalogGe010Journey,
+  groupCatalogGo001Journey,
+  groupCatalogGe011Journey,
+  groupCatalogFullMeshJourney,
+  groupCatalogDe002Journey,
+  groupCatalogGe008Journey,
+  groupCatalogGe005Journey,
+  groupCatalogReaddCyclesJourney,
+  groupCatalogIr001Journey,
+  groupCatalogGm008Journey,
+  groupCatalogGe007Journey,
   groupCatalogGe004Journey,
   groupCatalogGm007Journey,
   groupCatalogGm019Journey,
@@ -182,6 +208,17 @@ final class ProductionJourneyController {
           groupCatalogGm019Journey,
           groupCatalogGe009Journey,
           groupCatalogRapidReaddJourney,
+          groupCatalogIr001Journey,
+          groupCatalogGm008Journey,
+          groupCatalogGe007Journey,
+          groupCatalogGe008Journey,
+          groupCatalogGe005Journey,
+          groupCatalogReaddCyclesJourney,
+          groupCatalogGe010Journey,
+          groupCatalogGo001Journey,
+          groupCatalogGe011Journey,
+          groupCatalogFullMeshJourney,
+          groupCatalogDe002Journey,
           performanceJourney,
         }.contains(invocation.scenarioId) ||
         !(productionThreePeerJourneys.contains(invocation.scenarioId)

@@ -185,4 +185,64 @@ void main() {
       },
     );
   });
+
+  group('edit wait', () {
+    setUp(() => groupRecoveryGate.resetForTest());
+    tearDown(() {
+      groupRecoveryGate.resetForTest();
+      debugGroupRecoveryEditWait = defaultGroupRecoveryEditWait;
+    });
+
+    test('an idle gate lets an edit proceed at once', () async {
+      expect(await waitForGroupRecoveryIdle(), isTrue);
+    });
+
+    test('an edit waits out an in-flight pass and then proceeds', () async {
+      debugGroupRecoveryEditWait = const Duration(seconds: 5);
+      final release = Completer<void>();
+      final pass = runWithGroupRecoveryGate(() => release.future);
+      var idle = false;
+      final waiting = waitForGroupRecoveryIdle().then((v) => idle = v);
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+      expect(idle, isFalse, reason: 'still waiting while the pass runs');
+      release.complete();
+      await pass;
+      await waiting;
+      expect(idle, isTrue);
+    });
+
+    test('an edit waits for queued passes too', () async {
+      debugGroupRecoveryEditWait = const Duration(seconds: 5);
+      final first = Completer<void>();
+      final second = Completer<void>();
+      final p1 = runWithGroupRecoveryGate(() => first.future);
+      final p2 = runWithGroupRecoveryGate(() => second.future);
+      var idle = false;
+      final waiting = waitForGroupRecoveryIdle().then((v) => idle = v);
+      first.complete();
+      await p1;
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      expect(idle, isFalse, reason: 'the queued pass still holds the gate');
+      second.complete();
+      await p2;
+      await waiting;
+      expect(idle, isTrue);
+    });
+
+    test('an edit is refused when recovery outlasts the wait', () async {
+      debugGroupRecoveryEditWait = const Duration(milliseconds: 100);
+      final release = Completer<void>();
+      final pass = runWithGroupRecoveryGate(() => release.future);
+      expect(await waitForGroupRecoveryIdle(), isFalse);
+      release.complete();
+      await pass;
+    });
+
+    test('a zero wait refuses at once while a pass runs', () async {
+      debugGroupRecoveryEditWait = Duration.zero;
+      groupRecoveryGate.begin();
+      expect(await waitForGroupRecoveryIdle(), isFalse);
+      groupRecoveryGate.end();
+    });
+  });
 }

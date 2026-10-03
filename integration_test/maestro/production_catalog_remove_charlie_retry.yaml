@@ -10,6 +10,9 @@ name: production_catalog_remove_charlie_retry
     id: 'group-member-remove-${CHARLIE_PEER_ID}'
 - assertVisible: 'Remove Journeycharlie from the group\?'
 - tapOn: Remove
-- assertVisible: '(?s)^.*\n2 members\n.*$'
+# The removal may first wait (up to 20 s) for a group recovery pass.
+- extendedWaitUntil:
+    visible: '(?s)^.*\n2 members\n.*$'
+    timeout: 45000
 - assertNotVisible:
     id: 'group-member-remove-${CHARLIE_PEER_ID}'

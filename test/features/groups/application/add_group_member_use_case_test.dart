@@ -26,6 +26,11 @@ import '../../../shared/fakes/in_memory_group_message_repository.dart';
 import '../../../shared/fakes/in_memory_group_repository.dart';
 
 void main() {
+  // These tests hold the recovery gate open and expect an immediate refusal;
+  // production edits wait up to [defaultGroupRecoveryEditWait] instead.
+  setUp(() => debugGroupRecoveryEditWait = Duration.zero);
+  tearDown(() => debugGroupRecoveryEditWait = defaultGroupRecoveryEditWait);
+
   late FakeBridge bridge;
   late InMemoryGroupRepository groupRepo;
 

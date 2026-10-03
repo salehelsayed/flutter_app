@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'production_catalog_session.dart';
 
 /// Shared UI membership steps for catalog journeys built on
@@ -78,7 +80,12 @@ extension ProductionCatalogMembershipSteps on ProductionCatalogSession {
       'production_group_info_add_member',
       'production_group_info_add_member_retry',
       {'CONTACT_NAME': 'Journeycharlie'},
-      () async => false,
+      // A re-add that went through despite a slow or failed flow leaves
+      // Charlie a pending invitation; a user would not invite him again.
+      () async =>
+          ((await actors['charlie']!.command('catalog_pending_snapshot'))['pending']
+                  as List)
+              .isNotEmpty,
     );
     proof['aliceReadded'] = await snap('alice');
     if (accept) await acceptReadd(name);
@@ -86,10 +93,15 @@ extension ProductionCatalogMembershipSteps on ProductionCatalogSession {
 
   /// Charlie returns to the home tabs and accepts the re-add invitation, then
   /// all three settle on the 3-member group.
-  Future<void> acceptReadd(String name) async {
+  ///
+  /// Only the [online] roles are waited on (an offline role settles later).
+  Future<void> acceptReadd(
+    String name, {
+    List<String> online = const ['alice', 'bob', 'charlie'],
+  }) async {
     await flow('charlie', 'production_home_tabs', 'charlie-home');
     await invitedAndAccept('charlie', 'accept-charlie-readd', name);
-    for (final role in ['alice', 'bob', 'charlie']) {
+    for (final role in online) {
       await settled(role, 3);
     }
   }
@@ -114,5 +126,21 @@ extension ProductionCatalogMembershipSteps on ProductionCatalogSession {
       await Future<void>.delayed(const Duration(seconds: 2));
       proof['got:$key:$receiver'] = await snap(receiver);
     }
+  }
+
+  /// Takes [role] offline by a verified owned-process death; records whether
+  /// the death was verified under proof key [label].
+  Future<void> takeOffline(String role, String label) async {
+    await journey.killOwnedProcess(actors[role]!);
+    proof[label] = File(
+      '${output.path}/${actors[role]!.invocation.nonce}-process-death.json',
+    ).existsSync();
+    await persist();
+  }
+
+  /// Brings [role] back with an ordinary relaunch of the same install.
+  Future<void> bringOnline(String role) async {
+    replace(role, await journey.reopen(actors[role]!));
+    await persist();
   }
 }

@@ -14,7 +14,6 @@ import 'package:flutter_app/features/groups/application/group_offline_replay_env
 import 'package:flutter_app/features/groups/application/group_membership_event_watermark.dart';
 import 'package:flutter_app/features/groups/application/send_group_message_use_case.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
-import 'package:flutter_app/features/groups/domain/models/group_invite_delivery_attempt.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/groups/domain/models/group_reaction_payload.dart';
 import 'package:flutter_app/features/groups/domain/models/group_reaction_replay_outbox_entry.dart';
@@ -132,7 +131,6 @@ Future<(SendGroupReactionResult, MessageReaction?)> sendGroupReaction({
               groupRepo: groupRepo,
               groupId: groupId,
               senderTransportPeerId: strictDevice.transportPeerId,
-              inviteDeliveryAttemptRepo: inviteDeliveryAttemptRepo,
               members: strictMembers,
             );
       final authorBindingUnique =
@@ -599,7 +597,6 @@ sendStrictGroupReactionContent({
           groupRepo: groupRepo,
           groupId: groupId,
           senderTransportPeerId: senderDevice.transportPeerId,
-          inviteDeliveryAttemptRepo: inviteDeliveryAttemptRepo,
         )
       : List<String>.unmodifiable(frozenRecipientPeerIds);
   final notificationRecipients = action == GroupReactionPayload.actionAdd
@@ -937,7 +934,6 @@ Future<bool> _strictReactionAuthorityMatchesAssumingPhase({
     groupRepo: groupRepo,
     groupId: groupId,
     senderTransportPeerId: senderDevice.transportPeerId,
-    inviteDeliveryAttemptRepo: inviteDeliveryAttemptRepo,
     members: currentMembers,
   );
   final currentNotificationRecipients =
@@ -1025,7 +1021,6 @@ Future<bool> strictGroupReactionAuthorityMatchesAssumingPhase({
     groupRepo: groupRepo,
     groupId: groupId,
     senderTransportPeerId: senderTransportPeerId,
-    inviteDeliveryAttemptRepo: inviteDeliveryAttemptRepo,
     members: currentMembers,
   );
   final notificationRecipients =
@@ -1056,21 +1051,12 @@ Future<List<String>> loadStrictGroupReactionRecipientPeerIds({
   required GroupRepository groupRepo,
   required String groupId,
   required String senderTransportPeerId,
-  GroupInviteDeliveryAttemptRepository? inviteDeliveryAttemptRepo,
   List<GroupMember>? members,
 }) async {
-  final inviteStatuses = inviteDeliveryAttemptRepo == null
-      ? const <String, GroupInviteDeliveryStatus>{}
-      : await inviteDeliveryAttemptRepo.getStatusesForGroupMembers(groupId);
   final result = <String>{};
   final transportClaims = <String, int>{};
   for (final member in members ?? await groupRepo.getMembers(groupId)) {
-    if (member.peerId.trim().isEmpty ||
-        isPersistedNonJoinedGroupInviteStatus(
-          inviteStatuses[member.peerId.trim()],
-        )) {
-      continue;
-    }
+    if (member.peerId.trim().isEmpty) continue;
     for (final device in member.activeDevicesWithLegacyFallback()) {
       final deviceId = device.deviceId.trim();
       final transport = device.transportPeerId.trim();

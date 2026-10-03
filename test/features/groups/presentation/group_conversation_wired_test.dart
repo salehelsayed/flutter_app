@@ -15310,7 +15310,7 @@ void main() {
     );
 
     testWidgets(
-      'retry control preserves accepted-recipient filtering for failed outgoing text row',
+      'retry control addresses a pending invitee like every member for failed outgoing text row',
       (tester) async {
         final group = makeChatGroup().copyWith(
           createdAt: DateTime.utc(2026, 5, 1, 9),
@@ -15415,11 +15415,7 @@ void main() {
         );
         expect(
           (reliablePayload['recipientPeerIds'] as List<dynamic>).cast<String>(),
-          <String>['peer-bob'],
-        );
-        expect(
-          reliablePayload['recipientPeerIds'],
-          isNot(contains('peer-charlie')),
+          unorderedEquals(<String>['peer-bob', 'peer-charlie']),
         );
         expect(reliablePayload['preserveRecipientPeerIds'], isTrue);
 
@@ -15429,11 +15425,7 @@ void main() {
         );
         expect(
           (inboxPayload['recipientPeerIds'] as List<dynamic>).cast<String>(),
-          <String>['peer-bob'],
-        );
-        expect(
-          inboxPayload['recipientPeerIds'],
-          isNot(contains('peer-charlie')),
+          unorderedEquals(<String>['peer-bob', 'peer-charlie']),
         );
         expect(inboxPayload['preserveRecipientPeerIds'], isTrue);
         expect(find.text('Could not retry message.'), findsNothing);
