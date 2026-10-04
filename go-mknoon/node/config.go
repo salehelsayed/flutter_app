@@ -49,11 +49,12 @@ const (
 	// PubSub.
 	GroupTopicPrefix = "/mknoon/group/"
 	PubSubTimeout    = 30 * time.Second
-	// KeyRotationGracePeriod is the DEFAULT key-rotation grace window. It now
-	// constrains only which prior epoch a node will sign/publish under (the
-	// receive path anchors to keys held in the ring, not the clock). Bumped from
-	// 30s to 10m so a slow rollout still publishes acceptably under the prior
-	// epoch. Override per-node via NodeConfig.KeyRotationGracePeriod.
+	// KeyRotationGracePeriod is the DEFAULT key-rotation grace window: how long
+	// a replaced epoch is protected from eviction out of the held ring, so
+	// members still catching up can keep publishing under it (the receive path
+	// anchors to keys held in the ring, not the clock). Bumped from 30s to 10m
+	// so a slow rollout still publishes acceptably under a prior epoch.
+	// Override per-node via NodeConfig.KeyRotationGracePeriod.
 	KeyRotationGracePeriod = 10 * time.Minute
 	// RetainedEpochKeys bounds the held-keys ring: a node decrypts/verifies any
 	// of the last K epochs it legitimately held. Past K, the oldest is evicted

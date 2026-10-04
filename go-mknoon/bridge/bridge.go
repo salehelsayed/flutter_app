@@ -3046,10 +3046,11 @@ func GroupGenerateNextKey(paramsJSON string) (result string) {
 	if currentKeyInfo == nil {
 		return errJSON("GROUP_KEY_NOT_FOUND", "current group key not found; restore or join the group before generating the next key")
 	}
-	if currentKeyInfo.PrevKey != "" &&
-		!currentKeyInfo.GraceDeadline.IsZero() &&
-		time.Now().Before(currentKeyInfo.GraceDeadline) {
-		return errJSON("GROUP_KEY_GRACE_ACTIVE", "previous group key grace is still active; wait for grace deadline before generating another key")
+	// A key may rotate again inside the grace window: receivers hold the last
+	// RetainedEpochKeys epochs. Only a rotation that would evict a key still in
+	// its grace window waits (a removal is then re-keyed by the app's retry).
+	if node.NextGroupKeyWouldEvictKeyInGrace(currentKeyInfo, n.KeyRotationGracePeriod(), time.Now()) {
+		return errJSON("GROUP_KEY_GRACE_ACTIVE", "rotating now would evict a held group key still in its grace window; retry after it")
 	}
 
 	newKey, err := mcrypto.GenerateGroupKey()

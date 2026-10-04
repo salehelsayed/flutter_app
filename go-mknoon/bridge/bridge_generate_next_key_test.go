@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"testing"
 	"time"
+
+	"github.com/mknoon/go-mknoon/node"
 )
 
 func TestGroupGenerateNextKey_NodeNotInitialized(t *testing.T) {
@@ -179,13 +181,15 @@ func TestGroupGenerateNextKey_KE002UsesLatestCommittedEpochWithoutMutating(t *te
 		t.Fatalf("expected committed rotation to leave active previous-key grace, got prevKey=%q deadline=%v", committedPrevKey, committedGraceDeadline)
 	}
 
+	// A second rotation inside the grace window is allowed while the held
+	// ring has room; generating still never mutates stored key state.
 	secondNextMap := parseJSON(t, GroupGenerateNextKey(string(nextInput)))
-	assertNotOk(t, secondNextMap, "GROUP_KEY_GRACE_ACTIVE")
-	if _, ok := secondNextMap["groupKey"]; ok {
-		t.Fatal("active grace rejection must not include groupKey")
+	assertOk(t, secondNextMap)
+	if key, _ := secondNextMap["groupKey"].(string); key == "" {
+		t.Fatal("second generateNextKey missing non-empty groupKey")
 	}
-	if _, ok := secondNextMap["keyEpoch"]; ok {
-		t.Fatal("active grace rejection must not include keyEpoch")
+	if epoch, _ := secondNextMap["keyEpoch"].(float64); int(epoch) != int(firstNextEpoch)+1 {
+		t.Fatalf("second keyEpoch = %v, want %d", secondNextMap["keyEpoch"], int(firstNextEpoch)+1)
 	}
 
 	nodeMu.Lock()
@@ -208,7 +212,7 @@ func TestGroupGenerateNextKey_KE002UsesLatestCommittedEpochWithoutMutating(t *te
 	}
 }
 
-func TestGroupGenerateNextKey_GroupKeyGraceActiveRejectsSecondNativeRotation(t *testing.T) {
+func TestGroupGenerateNextKey_SecondNativeRotationInsideGraceIsAllowed(t *testing.T) {
 	withFreshSingletonNode(t)
 
 	keyHex := generateTestKeyHex(t)
@@ -276,13 +280,15 @@ func TestGroupGenerateNextKey_GroupKeyGraceActiveRejectsSecondNativeRotation(t *
 		t.Fatalf("expected active previous-key grace before second generate, got deadline %v", storedBeforeReject.GraceDeadline)
 	}
 
+	// A second rotation inside the grace window is allowed while the held
+	// ring has room; generating still never mutates stored key state.
 	secondNextMap := parseJSON(t, GroupGenerateNextKey(string(nextInput)))
-	assertNotOk(t, secondNextMap, "GROUP_KEY_GRACE_ACTIVE")
-	if _, ok := secondNextMap["groupKey"]; ok {
-		t.Fatal("active grace rejection must not include groupKey")
+	assertOk(t, secondNextMap)
+	if key, _ := secondNextMap["groupKey"].(string); key == "" {
+		t.Fatal("second generateNextKey missing non-empty groupKey")
 	}
-	if _, ok := secondNextMap["keyEpoch"]; ok {
-		t.Fatal("active grace rejection must not include keyEpoch")
+	if epoch, _ := secondNextMap["keyEpoch"].(float64); int(epoch) != int(firstNextEpoch)+1 {
+		t.Fatalf("second keyEpoch = %v, want %d", secondNextMap["keyEpoch"], int(firstNextEpoch)+1)
 	}
 
 	nodeMu.Lock()
@@ -365,5 +371,59 @@ func TestGroupGenerateNextKey_KE013UsesRestoredEpochAfterRestartMemoryLoss(t *te
 	}
 	if storedAfterGenerate.KeyEpoch != restoredEpoch {
 		t.Fatalf("generateNextKey should not mutate restored epoch: got %d want %d", storedAfterGenerate.KeyEpoch, restoredEpoch)
+	}
+}
+
+func TestGroupGenerateNextKey_RefusesRotationThatWouldEvictKeyInGrace(t *testing.T) {
+	withFreshSingletonNode(t)
+
+	keyHex := generateTestKeyHex(t)
+	assertOk(t, parseJSON(t, StartNode(startNodeJSON(t, keyHex))))
+	genIdentity := parseJSON(t, GenerateIdentity())
+	assertOk(t, genIdentity)
+	identity := genIdentity["identity"].(map[string]interface{})
+	createInput, _ := json.Marshal(map[string]interface{}{
+		"name":                  "Held Ring Eviction Group",
+		"groupType":             "chat",
+		"creatorPeerId":         identity["peerId"].(string),
+		"creatorPublicKey":      identity["publicKey"].(string),
+		"creatorMlKemPublicKey": "mlkem-pk-creator",
+	})
+	createMap := parseJSON(t, GroupCreate(string(createInput)))
+	assertOk(t, createMap)
+	groupId := createMap["groupId"].(string)
+	nextInput, _ := json.Marshal(map[string]string{"groupId": groupId})
+
+	rotate := func() map[string]interface{} {
+		t.Helper()
+		next := parseJSON(t, GroupGenerateNextKey(string(nextInput)))
+		if next["ok"] != true {
+			return next
+		}
+		update, _ := json.Marshal(map[string]interface{}{
+			"groupId":  groupId,
+			"groupKey": next["groupKey"],
+			"keyEpoch": int(next["keyEpoch"].(float64)),
+		})
+		assertOk(t, parseJSON(t, GroupUpdateKey(string(update))))
+		return next
+	}
+
+	// Four quick rotations fill the held ring with epochs all retired just now.
+	for i := 0; i < node.RetainedEpochKeys-1; i++ {
+		assertOk(t, rotate())
+	}
+	nodeMu.Lock()
+	full := singletonNode.GetGroupKeyInfo(groupId)
+	nodeMu.Unlock()
+	if len(full.Keys) != node.RetainedEpochKeys {
+		t.Fatalf("held ring = %d keys, want %d", len(full.Keys), node.RetainedEpochKeys)
+	}
+
+	// A fifth would evict an epoch replaced moments ago.
+	refused := parseJSON(t, GroupGenerateNextKey(string(nextInput)))
+	assertNotOk(t, refused, "GROUP_KEY_GRACE_ACTIVE")
+	if _, ok := refused["groupKey"]; ok {
+		t.Fatal("eviction refusal must not include groupKey")
 	}
 }

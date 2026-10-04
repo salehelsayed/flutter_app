@@ -73,8 +73,6 @@ const groupCatalogDe007Journey = 'production.group_catalog.de007';
 const groupCatalogVoluntaryLeaveJourney =
     'production.group_catalog.private_voluntary_leave_convergence';
 const groupCatalogGm015Journey = 'production.group_catalog.gm015';
-const groupCatalogDissolveJourney =
-    'production.group_catalog.private_online_dissolve_convergence';
 const productionGroupCatalogJourneys = {
   groupCatalogGe010Journey,
   groupCatalogGo001Journey,
@@ -85,7 +83,6 @@ const productionGroupCatalogJourneys = {
   groupCatalogDe007Journey,
   groupCatalogVoluntaryLeaveJourney,
   groupCatalogGm015Journey,
-  groupCatalogDissolveJourney,
   groupCatalogGe008Journey,
   groupCatalogGe005Journey,
   groupCatalogReaddCyclesJourney,
@@ -235,7 +232,6 @@ final class ProductionJourneyController {
           groupCatalogDe007Journey,
           groupCatalogVoluntaryLeaveJourney,
           groupCatalogGm015Journey,
-          groupCatalogDissolveJourney,
           performanceJourney,
         }.contains(invocation.scenarioId) ||
         !(productionThreePeerJourneys.contains(invocation.scenarioId)

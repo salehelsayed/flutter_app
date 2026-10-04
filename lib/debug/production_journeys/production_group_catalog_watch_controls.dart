@@ -11,7 +11,6 @@ import 'package:flutter_app/features/groups/application/drain_group_offline_inbo
 import 'package:flutter_app/features/groups/application/group_exit_intent_sink.dart';
 import 'package:flutter_app/features/groups/application/group_pending_broadcast_sink.dart';
 import 'package:flutter_app/features/groups/application/group_message_listener.dart';
-import 'package:flutter_app/features/groups/application/group_sender_device_binding.dart';
 import 'package:flutter_app/features/groups/application/send_group_message_use_case.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_invite_delivery_attempt_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_message_repository.dart';
@@ -59,7 +58,6 @@ const productionCatalogWatchJourneys = {
   groupCatalogDe007Journey,
   groupCatalogVoluntaryLeaveJourney,
   groupCatalogGm015Journey,
-  groupCatalogDissolveJourney,
 };
 
 const _watchedFlowEvents = {
@@ -80,9 +78,11 @@ const _watchedFlowEventPrefixes = [
   'GROUP_REMOVE_MEMBER_USE_CASE_',
   'GROUP_ADD_MEMBER_USE_CASE_',
   'GROUP_RECOVERY_GATE_',
-  'GROUP_DISSOLVE_USE_CASE_',
   'GROUP_ROTATE_KEY_',
   'GROUP_INFO_FL_REMOVE_',
+  'GROUP_CREATOR_OWED_REKEY_',
+  'GROUP_INVITE_STORE_PENDING_',
+  'GROUP_DRAIN_OFFLINE_INBOX_REPLAY_',
 ];
 
 // The drain diagnostics the original offline-removal proof summarizes.
@@ -357,31 +357,6 @@ void bindProductionGroupCatalogWatchControls({
       selfPeerId: identity.peerId,
     );
     return {'completedDrainCount': 1};
-  });
-
-  // The original I-01 binding check, read-only: the sender device binding a
-  // dissolve of the run group would sign, resolved as the app resolves it.
-  controller.bindAction('catalog_sender_binding', (_) async {
-    final identity = await identityRepository.loadIdentity();
-    final named = (await groupRepository.getAllGroups())
-        .where((g) => g.name == productionCatalogGroupName(controller))
-        .toList();
-    if (identity == null || named.length != 1) {
-      throw StateError('exact run group required for sender binding');
-    }
-    final self = p2pService.currentState.peerId;
-    final binding = await resolveGroupSenderDeviceBinding(
-      groupRepo: groupRepository,
-      groupId: named.single.id,
-      senderPeerId: identity.peerId,
-      preferredDeviceId: self,
-      preferredTransportPeerId: self,
-      senderPublicKey: identity.publicKey,
-    );
-    return {
-      'deviceIdPresent': binding.deviceId?.isNotEmpty ?? false,
-      'transportPeerIdPresent': binding.transportPeerId?.isNotEmpty ?? false,
-    };
   });
 
   // The durable exit state of one group by id, readable after the group is

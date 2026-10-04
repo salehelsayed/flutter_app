@@ -62,6 +62,9 @@ type GroupConfig struct {
 type GroupEpochKey struct {
 	Key      string `json:"key"`      // base64 AES-256 key for this epoch
 	KeyEpoch int    `json:"keyEpoch"` // key rotation epoch
+	// RetiredAtMs is when a newer epoch replaced this one (Unix ms); 0 for the
+	// current epoch and for keys whose retirement predates this field.
+	RetiredAtMs int64 `json:"retiredAtMs,omitempty"`
 }
 
 // GroupKeyInfo holds the symmetric encryption key(s) for a group.

@@ -721,6 +721,56 @@ void main() {
     }
 
     testWidgets(
+      'GE-006 shows a re-add invite once the stale membership is removed',
+      (tester) async {
+        setLargeTestSurface(tester);
+        suppressOverflowErrors();
+        identityRepo.seed(testIdentity);
+
+        const groupId = 'grp-readd-while-offline';
+        // Offline through his removal and re-add, the member stores the
+        // re-add invite before his removal applies.
+        await seedCurrentMembership(groupId: groupId, groupName: 'Readd');
+        await pendingInviteRepo.savePendingInvite(
+          makePendingInvite(groupId: groupId, groupName: 'Readd'),
+        );
+        final removed = StreamController<String>.broadcast();
+        addTearDown(removed.close);
+        final groupInviteListener = _FakeGroupInviteListener(
+          joinedStream: joinedGroupInviteController.stream,
+          pendingStream: pendingInviteController.stream,
+          pendingInviteRepo: pendingInviteRepo,
+        );
+
+        await tester.pumpWidget(
+          buildOrbitWired(
+            groupInviteListener: groupInviteListener,
+            groupMessageListener: _RemovingGroupMessageListener(
+              groupMessageStreamController.stream,
+              removed.stream,
+            ),
+            initialFilterTab: 'intros',
+          ),
+        );
+        await pumpOrbitFrames(tester, count: 6);
+        expect(
+          find.byKey(const ValueKey('pending-group-invite-$groupId')),
+          findsNothing,
+          reason: 'still a member: the invite stays hidden',
+        );
+
+        await groupRepo.removeMember(groupId, testIdentity.peerId);
+        removed.add(groupId);
+        await pumpOrbitFrames(tester, count: 6);
+
+        expect(
+          find.byKey(const ValueKey('pending-group-invite-$groupId')),
+          findsOneWidget,
+        );
+      },
+    );
+
+    testWidgets(
       'TC-203-17 loads identity in orbit header without Close Friends text',
       (tester) async {
         setLargeTestSurface(tester);
@@ -9740,6 +9790,17 @@ class _FakeContactRequestListener extends ContactRequestListener {
   Stream<ContactRequestModel> get requestStream => _controller.stream;
 
   void emitRequest(ContactRequestModel request) => _controller.add(request);
+}
+
+/// [_FakeGroupMessageListener] that also reports groups this account was
+/// removed from.
+class _RemovingGroupMessageListener extends _FakeGroupMessageListener {
+  _RemovingGroupMessageListener(super._externalStream, this._removed);
+
+  final Stream<String> _removed;
+
+  @override
+  Stream<String> get groupRemovedStream => _removed;
 }
 
 /// Fake [GroupMessageListener] with a controllable stream for testing.

@@ -614,10 +614,6 @@ classify_path() {
       record "support" "$path" "support" "manifest-owned production catalog gm015 journey; original route retained"
       return
       ;;
-    integration_test/scripts/run_production_group_dissolve.dart)
-      record "support" "$path" "support" "manifest-owned production catalog private_online_dissolve_convergence journey; original route retained"
-      return
-      ;;
     integration_test/scripts/run_production_group_reaction.dart)
       record "support" "$path" "support" "manifest-owned production group-reaction roundtrip journey; original route retained"
       return

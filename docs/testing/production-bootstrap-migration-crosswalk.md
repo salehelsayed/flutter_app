@@ -2015,6 +2015,7 @@ input (no stronger than the original) or need a new production feature.
 | private_timeline_truth | ML-015 | the local member deleted and restored with `removeMember`/`saveMember` |
 | private_partial_key_distribution | KE-015 | a scripted send that fails only for Charlie and a direct deferred key distribution |
 | gm035 | GM-035 | its oracle requires a duplicate live republish of Charlie's envelope through `callGroupPublish` |
+| private_online_dissolve_convergence | I-01 | its oracle requires `actorBindingSigned` (a device-bound dissolve audit); production members carry no device rows (as GM-024), so the audit is a plain-account audit; every other I-01 check passed on devices 2026-10-03 (user decision 2026-10-04) |
 | ge020 | GE-020 | its "live refresh" is a direct `callGroupLeave` + `callGroupJoinWithConfig` inside a running app; a kill and relaunch would test a cold start instead, already covered by IR-001, GE-007 and GE-008 (user decision 2026-10-03) |
 
 Partly portable (the production replacement covers the rest of the case):
@@ -2356,3 +2357,30 @@ logs `GROUP_INFO_FL_REMOVE_REKEY_DEFERRED` and nothing retries, so the removed
 member keeps the key in use. Device run 2026-10-04: 6 of 20 removals rotated,
 14 deferred, all `GROUP_KEY_GRACE_ACTIVE`. All 20 cycles converged (the
 transition-chain fix holds).
+
+## 2026-10-04 GE-006, ML-008 and the decisions of 2026-10-04
+
+| Scenario | Run | Probe |
+|---|---|---|
+| ge006 (GE-006) | PASS | Charlie stays online: FAIL at the original oracle (`charlieOfflineDuringMutation`, `offlineDuringRemovalAndReadd`) |
+| private_readd_cycles (ML-008) | PASS (20 cycles, final epoch 22 on all three devices) | earlier probe stands |
+
+Product fixes (user decisions 2026-10-04):
+- **GE-006, lost re-add invitation:** an invitation whose key epoch is ahead of
+  every key the device holds is kept as pending even while the stale device
+  still lists itself as a member (`GROUP_INVITE_STORE_PENDING_AHEAD_OF_LOCAL_MEMBERSHIP`,
+  `handle_incoming_group_invite_use_case.dart`); Orbit reloads pending invites
+  when the account is removed from a group, so the kept invite appears once the
+  removal applies (`orbit_wired.dart`). Device-confirmed: invite epoch 2 versus
+  local key 1, stored, then accepted.
+- **ML-008, removal without rotation (option C):** Go now lets a group key
+  rotate again inside the 10-minute grace window; it waits only when the held
+  ring (5 epochs) is full and the epoch it would evict was replaced less than
+  the grace period ago (`NextGroupKeyWouldEvictKeyInGrace`, per-epoch
+  `retiredAtMs`; `go-mknoon/node/pubsub.go`, `bridge/bridge.go`). The app keeps
+  a once-a-minute sweep (`group_owed_key_rotation_sweeper.dart`) that re-keys a
+  group whose settled removal is newer than its latest key, for that rare wait
+  and for a stop before the rotation. Device run: every one of 20 removals
+  rotated (one extra rotation came from the sweep racing a removal's own
+  rotation; the sweep now waits a minute for a removal to settle).
+- **I-01:** recorded as not portable (see the table); its module was removed.

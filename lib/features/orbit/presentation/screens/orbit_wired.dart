@@ -344,6 +344,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
   StreamSubscription<ContactModel>? _contactUpdateSubscription;
   StreamSubscription<ContactRequestModel>? _requestSubscription;
   StreamSubscription<GroupMessage>? _groupMessageSubscription;
+  StreamSubscription<String>? _groupRemovedInviteSubscription;
   StreamSubscription<GroupModel>? _groupJoinedInviteSubscription;
   StreamSubscription<PendingGroupInvite>? _pendingGroupInviteSubscription;
   StreamSubscription<IntroductionModel>? _introReceivedSubscription;
@@ -2294,6 +2295,18 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
     final listener = widget.groupMessageListener;
     if (listener == null) return;
 
+    // A pending re-add invite stays hidden while this account is still a
+    // member of its group. A member offline through his removal and re-add
+    // stores the invite before his removal applies, so show it once the
+    // removal does.
+    _groupRemovedInviteSubscription = listener.groupRemovedStream.listen((_) {
+      if (!_isOrbitActive) {
+        _invitesDirty = true;
+        return;
+      }
+      unawaited(_loadPendingGroupInvites());
+    });
+
     _groupMessageSubscription = listener.groupMessageStream.listen(
       (message) {
         _markGroupChanged(message.groupId);
@@ -3080,6 +3093,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
     _contactUpdateSubscription?.cancel();
     _requestSubscription?.cancel();
     _groupMessageSubscription?.cancel();
+    _groupRemovedInviteSubscription?.cancel();
     _groupJoinedInviteSubscription?.cancel();
     _pendingGroupInviteSubscription?.cancel();
     _introReceivedSubscription?.cancel();

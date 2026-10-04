@@ -35,6 +35,7 @@ import 'package:flutter_app/features/conversation/domain/models/media_attachment
 import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
 import 'package:flutter_app/features/conversation/domain/models/reaction_change.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/reaction_repository.dart';
+import 'package:flutter_app/features/groups/application/group_owed_key_rotation_sweeper.dart';
 import 'package:flutter_app/features/groups/application/group_avatar_storage.dart';
 import 'package:flutter_app/features/groups/application/group_config_payload.dart';
 import 'package:flutter_app/features/groups/application/group_conversation_notification_snapshot.dart';
@@ -272,6 +273,7 @@ class GroupMessageListener {
   >?
   _notificationReconciliationRetryCoordinator;
   Timer? _notificationDisplayRetryTimer;
+  GroupOwedKeyRotationSweeper? _owedGroupKeyRotationSweeper;
   DateTime? _notificationDisplayRetryDueAt;
   int _canonicalNotificationRecoveryDepth = 0;
   bool _canonicalNotificationRecoveryFailed = false;
@@ -619,6 +621,15 @@ class GroupMessageListener {
       trackInFlight: _trackInFlight,
       isStoppingOrDisposed: () => _isStopping || _isDisposed,
     );
+    if (rotateGroupKeyAfterRemoteRemoval != null) {
+      _owedGroupKeyRotationSweeper = GroupOwedKeyRotationSweeper(
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        resolveSelfPeerId: _resolveSelfPeerId,
+        rotate: rotateGroupKeyAfterRemoteRemoval,
+        allowsSideEffects: _allowsInboundAccountSideEffects,
+      );
+    }
     _systemTransitionProcessor = _GroupMessageSystemTransitionProcessor(
       groupRepo: groupRepo,
       bridge: bridge,
@@ -2510,6 +2521,7 @@ class GroupMessageListener {
       event: 'GROUP_MESSAGE_LISTENER_START',
       details: {},
     );
+    _owedGroupKeyRotationSweeper?.start();
 
     _subscription = incomingGroupMessages
         .asyncMap(_handleLiveMessage)
@@ -3559,6 +3571,7 @@ class GroupMessageListener {
     _notificationDisplayRetryTimer?.cancel();
     _notificationDisplayRetryTimer = null;
     _notificationDisplayRetryDueAt = null;
+    _owedGroupKeyRotationSweeper?.stop();
     emitFlowEvent(
       layer: 'FL',
       event: 'GROUP_MESSAGE_LISTENER_STOP',
@@ -3618,6 +3631,7 @@ class GroupMessageListener {
     _isStopping = true;
     _notificationDisplayRetryTimer?.cancel();
     _notificationDisplayRetryTimer = null;
+    _owedGroupKeyRotationSweeper?.stop();
     _notificationDisplayRetryDueAt = null;
     _notificationDisplayRetryCoordinator?.dispose();
     _notificationReconciliationRetryCoordinator?.dispose();

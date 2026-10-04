@@ -636,7 +636,18 @@ storeIncomingPendingGroupInvite({
     final selfIsActiveMember = selfPeerId == null || selfPeerId.isEmpty
         ? true
         : (await groupRepo.getMember(payload.groupId, selfPeerId)) != null;
-    if (selfIsActiveMember) {
+    // A member offline through his removal and re-add reads the re-add
+    // invite from the direct inbox before the group inbox applies his
+    // removal, so he still lists himself as a member. An invite whose key
+    // epoch is ahead of every key this device holds proves the group moved
+    // on without him: keep it pending (accept re-joins once the removal is
+    // applied) instead of dropping it as a duplicate, which lost it for good.
+    final localKeyGeneration = selfIsActiveMember
+        ? (await groupRepo.getLatestKey(payload.groupId))?.keyGeneration
+        : null;
+    final inviteAheadOfLocalKey =
+        localKeyGeneration != null && payload.keyEpoch > localKeyGeneration;
+    if (selfIsActiveMember && !inviteAheadOfLocalKey) {
       emitFlowEvent(
         layer: 'FL',
         event: 'GROUP_INVITE_STORE_PENDING_DUPLICATE_GROUP',
@@ -650,11 +661,17 @@ storeIncomingPendingGroupInvite({
     }
     emitFlowEvent(
       layer: 'FL',
-      event: 'GROUP_INVITE_STORE_PENDING_REJOIN_AFTER_REMOVAL',
+      event: selfIsActiveMember
+          ? 'GROUP_INVITE_STORE_PENDING_AHEAD_OF_LOCAL_MEMBERSHIP'
+          : 'GROUP_INVITE_STORE_PENDING_REJOIN_AFTER_REMOVAL',
       details: {
         'groupId': payload.groupId.length > 8
             ? payload.groupId.substring(0, 8)
             : payload.groupId,
+        if (selfIsActiveMember) ...{
+          'inviteEpoch': payload.keyEpoch,
+          'localKeyGeneration': localKeyGeneration,
+        },
       },
     );
     // Fall through to store the pending invite so the accept/materialize path

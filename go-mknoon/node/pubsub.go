@@ -845,10 +845,15 @@ func (n *Node) rotateGroupKeyRing(current *GroupKeyInfo, incoming *GroupKeyInfo)
 	// Prepend the new (current) epoch.
 	newRing := make([]GroupEpochKey, 0, RetainedEpochKeys)
 	newRing = append(newRing, GroupEpochKey{Key: incoming.Key, KeyEpoch: incoming.KeyEpoch})
+	retiredAtMs := time.Now().UnixMilli()
 	for _, ek := range ring {
 		if ek.KeyEpoch == incoming.KeyEpoch {
 			// Defensive: never duplicate the incoming epoch.
 			continue
+		}
+		if ek.RetiredAtMs == 0 && ek.KeyEpoch == current.KeyEpoch {
+			// The epoch being replaced retires now.
+			ek.RetiredAtMs = retiredAtMs
 		}
 		newRing = append(newRing, ek)
 		if len(newRing) >= RetainedEpochKeys {
@@ -1314,6 +1319,31 @@ func joinedGroupKeyInfo(keyInfo *GroupKeyInfo) *GroupKeyInfo {
 		cloned.Keys = heldGroupKeyRing(keyInfo)
 	}
 	return &cloned
+}
+
+// NextGroupKeyWouldEvictKeyInGrace reports whether rotating once more would
+// push out of the held ring (RetainedEpochKeys) an epoch replaced less than
+// grace ago. Receivers keep the ring, so members still catching up can keep
+// publishing under any held epoch; evicting one that recently retired would
+// make their messages unreadable. Keys with no recorded retirement count as
+// old.
+func NextGroupKeyWouldEvictKeyInGrace(keyInfo *GroupKeyInfo, grace time.Duration, now time.Time) bool {
+	ring := heldGroupKeyRing(keyInfo)
+	if len(ring) < RetainedEpochKeys {
+		return false
+	}
+	// The next rotation keeps the new epoch plus ring[0:RetainedEpochKeys-1].
+	evicted := ring[RetainedEpochKeys-1]
+	if evicted.RetiredAtMs == 0 {
+		return false
+	}
+	return now.Before(time.UnixMilli(evicted.RetiredAtMs).Add(grace))
+}
+
+// KeyRotationGracePeriod is how long a replaced group key stays protected
+// from eviction out of the held ring.
+func (n *Node) KeyRotationGracePeriod() time.Duration {
+	return n.lastConfig.EffectiveKeyRotationGracePeriod()
 }
 
 // hasKeyRotationGrace reports whether a node may still SIGN/PUBLISH under its

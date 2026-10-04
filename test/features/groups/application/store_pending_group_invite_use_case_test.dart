@@ -9,6 +9,7 @@ import 'package:flutter_app/features/groups/application/handle_incoming_group_in
 import 'package:flutter_app/features/groups/domain/models/group_invite_payload.dart';
 import 'package:flutter_app/features/groups/domain/models/group_invite_consumption.dart';
 import 'package:flutter_app/features/groups/domain/models/group_invite_revocation.dart';
+import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
 import 'package:flutter_app/features/groups/domain/models/group_welcome_key_package.dart';
 import 'package:flutter_app/features/groups/domain/models/group_welcome_key_package_tombstone.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
@@ -873,6 +874,79 @@ void main() {
       expect(result, StorePendingGroupInviteResult.duplicateGroup);
       expect(invite, isNull);
       expect(pendingInviteRepo.count, 0);
+    });
+
+    group('member who has not applied his removal yet', () {
+      Future<void> staleMembership() async {
+        await groupRepo.saveGroup(
+          GroupModel(
+            id: 'grp-abc123',
+            name: 'Joined Group',
+            type: GroupType.chat,
+            topicName: '/mknoon/group/grp-abc123',
+            createdAt: DateTime.utc(2026, 3, 2),
+            createdBy: '12D3KooWAlice',
+            myRole: GroupRole.member,
+          ),
+        );
+        await groupRepo.saveMember(
+          GroupMember(
+            groupId: 'grp-abc123',
+            peerId: 'myPeerId',
+            username: 'Me',
+            role: MemberRole.writer,
+            publicKey: 'myPubKey64',
+            mlKemPublicKey: 'myMlKem64',
+            joinedAt: DateTime.utc(2026, 3, 2),
+          ),
+        );
+        await groupRepo.saveKey(
+          GroupKeyInfo(
+            groupId: 'grp-abc123',
+            keyGeneration: 1,
+            encryptedKey: 'local-key',
+            createdAt: DateTime.utc(2026, 3, 2),
+          ),
+        );
+      }
+
+      test(
+        'stores a re-add invite whose key epoch is ahead of the local key',
+        () async {
+          // GE-006: offline through his removal and re-add, he reads the
+          // re-add invite before the group inbox applies his removal.
+          await staleMembership();
+          final (result, invite) = await storeIncomingPendingGroupInvite(
+            message: makeMessage(keyEpoch: 2),
+            groupRepo: groupRepo,
+            pendingInviteRepo: pendingInviteRepo,
+            contactRepo: contactRepo,
+            bridge: bridge,
+            ownPeerId: 'myPeerId',
+          );
+          expect(result, StorePendingGroupInviteResult.storedPending);
+          expect(invite, isNotNull);
+          expect(
+            await pendingInviteRepo.getPendingInvite('grp-abc123'),
+            isNotNull,
+          );
+        },
+      );
+
+      test('still drops an invite at the local key epoch', () async {
+        await staleMembership();
+        final (result, invite) = await storeIncomingPendingGroupInvite(
+          message: makeMessage(keyEpoch: 1),
+          groupRepo: groupRepo,
+          pendingInviteRepo: pendingInviteRepo,
+          contactRepo: contactRepo,
+          bridge: bridge,
+          ownPeerId: 'myPeerId',
+        );
+        expect(result, StorePendingGroupInviteResult.duplicateGroup);
+        expect(invite, isNull);
+        expect(pendingInviteRepo.count, 0);
+      });
     });
 
     test(

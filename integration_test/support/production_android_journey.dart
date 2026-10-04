@@ -264,7 +264,6 @@ final class ProductionAndroidJourney {
       'production.group_catalog.de007',
       'production.group_catalog.private_voluntary_leave_convergence',
       'production.group_catalog.gm015',
-      'production.group_catalog.private_online_dissolve_convergence',
     }.contains(scenario)) {
       final third = required('SIMS_ANDROID_EMULATOR_SECOND_DEVICE_ID');
       if (!RegExp(r'^emulator-[0-9]+$').hasMatch(third) || third == emulator) {
