@@ -37,29 +37,20 @@ const groupCatalogGe001Journey = 'production.group_catalog.ge001';
 const groupCatalogDe003Journey = 'production.group_catalog.de003';
 const groupCatalogGe002Journey = 'production.group_catalog.ge002';
 const groupCatalogGe003Journey = 'production.group_catalog.ge003';
-const groupCatalogGm020Journey =
-    'production.group_catalog.gm020';
-const groupCatalogGm034Journey =
-    'production.group_catalog.gm034';
-const groupCatalogGm016Journey =
-    'production.group_catalog.gm016';
-const groupCatalogGe004Journey =
-    'production.group_catalog.ge004';
-const groupCatalogGm007Journey =
-    'production.group_catalog.gm007';
-const groupCatalogGm019Journey =
-    'production.group_catalog.gm019';
-const groupCatalogGe009Journey =
-    'production.group_catalog.ge009';
+const groupCatalogGm020Journey = 'production.group_catalog.gm020';
+const groupCatalogGm034Journey = 'production.group_catalog.gm034';
+const groupCatalogGm016Journey = 'production.group_catalog.gm016';
+const groupCatalogGe004Journey = 'production.group_catalog.ge004';
+const groupCatalogGm007Journey = 'production.group_catalog.gm007';
+const groupCatalogGm019Journey = 'production.group_catalog.gm019';
+const groupCatalogGe009Journey = 'production.group_catalog.ge009';
 const groupCatalogRapidReaddJourney =
     'production.group_catalog.private_rapid_readd';
 const groupCatalogIr001Journey = 'production.group_catalog.ir001';
 const groupCatalogGm008Journey = 'production.group_catalog.gm008';
 const groupCatalogGe007Journey = 'production.group_catalog.ge007';
-const groupCatalogGe008Journey =
-    'production.group_catalog.ge008';
-const groupCatalogGe005Journey =
-    'production.group_catalog.ge005';
+const groupCatalogGe008Journey = 'production.group_catalog.ge008';
+const groupCatalogGe005Journey = 'production.group_catalog.ge005';
 const groupCatalogReaddCyclesJourney =
     'production.group_catalog.private_readd_cycles';
 const groupCatalogGe010Journey = 'production.group_catalog.ge010';
@@ -73,7 +64,12 @@ const groupCatalogDe007Journey = 'production.group_catalog.de007';
 const groupCatalogVoluntaryLeaveJourney =
     'production.group_catalog.private_voluntary_leave_convergence';
 const groupCatalogGm015Journey = 'production.group_catalog.gm015';
+const groupCatalogGe024Journey = 'production.group_catalog.ge024';
+const groupCatalogMediaReactionJourney =
+    'production.group_catalog.private_media_reaction_roundtrip';
 const productionGroupCatalogJourneys = {
+  groupCatalogGe024Journey,
+  groupCatalogMediaReactionJourney,
   groupCatalogGe010Journey,
   groupCatalogGo001Journey,
   groupCatalogGe011Journey,
@@ -122,6 +118,7 @@ const groupInviteAcceptSpinnerJourney =
 const groupNewMemberMediaJourney = 'production.group_new_member_media';
 const groupDeletePreservesFriendsJourney =
     'production.group_delete_preserves_friends';
+
 /// Journeys whose topology has a third Android peer, Charlie.
 const productionThreePeerJourneys = {
   ...productionGroupCatalogJourneys,
@@ -211,7 +208,7 @@ final class ProductionJourneyController {
           groupCatalogGe003Journey,
           groupCatalogGm020Journey,
           groupCatalogGm034Journey,
-                  groupCatalogGm016Journey,
+          groupCatalogGm016Journey,
           groupCatalogGe004Journey,
           groupCatalogGm007Journey,
           groupCatalogGm019Journey,
@@ -232,6 +229,8 @@ final class ProductionJourneyController {
           groupCatalogDe007Journey,
           groupCatalogVoluntaryLeaveJourney,
           groupCatalogGm015Journey,
+          groupCatalogGe024Journey,
+          groupCatalogMediaReactionJourney,
           performanceJourney,
         }.contains(invocation.scenarioId) ||
         !(productionThreePeerJourneys.contains(invocation.scenarioId)

@@ -12,8 +12,19 @@ Map<String, Object?> productionCatalogSent(Map row, String key) {
     'keyEpoch': row['keyEpoch'],
     'timestamp': row['timestamp'],
     'accepted': ok,
+    ...productionCatalogQuoteAndMedia(row),
   };
 }
+
+/// The original entry's optional `quotedMessageId` and `mediaAttachmentCount`,
+/// present only when the row has a quote or at least one attachment (the
+/// original omits both otherwise).
+Map<String, Object?> productionCatalogQuoteAndMedia(Map row) => {
+  if (row['quotedMessageId'] case final String quoted when quoted.isNotEmpty)
+    'quotedMessageId': quoted,
+  if (row['mediaAttachmentCount'] case final int count when count > 0)
+    'mediaAttachmentCount': count,
+};
 
 Map<String, Object?> productionCatalogReceived(
   Map row,
@@ -30,6 +41,7 @@ Map<String, Object?> productionCatalogReceived(
   'keyEpoch': row['keyEpoch'],
   'isIncoming': row['isIncoming'],
   'persistedCount': persistedCount,
+  ...productionCatalogQuoteAndMedia(row),
 };
 
 /// Common verdict fields from one role's final production snapshot.
@@ -57,8 +69,7 @@ Map<String, Object?> productionCatalogBaseVerdict({
 
 /// The watched rows for [key] in a snapshot.
 List<Map> productionCatalogRows(Map snapshot, String key) =>
-    ((((snapshot['watched'] as Map?)?[key]) as List?) ?? const [])
-        .cast<Map>();
+    ((((snapshot['watched'] as Map?)?[key]) as List?) ?? const []).cast<Map>();
 
 /// [productionCatalogSent] plus the durable recipients the debug delivery
 /// observer recorded for the same message id (`deliveries` of a snapshot).

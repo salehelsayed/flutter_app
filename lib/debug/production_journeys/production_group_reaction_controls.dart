@@ -28,7 +28,11 @@ void bindProductionGroupReactionControls({
 }) {
   final scenario = controller.invocation.scenarioId;
   final isToggle = scenario == groupCatalogReactionToggleJourney;
-  if (scenario != groupCatalogReactionJourney && !isToggle) return;
+  if (scenario != groupCatalogReactionJourney &&
+      scenario != groupCatalogMediaReactionJourney &&
+      !isToggle) {
+    return;
+  }
   ProductionGroupReactionCapture? capture;
   String? boundGroup, boundMessage, boundReactor;
   var toggleAttempted = false;

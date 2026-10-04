@@ -1,0 +1,9 @@
+appId: ${APP_ID}
+name: production_catalog_assert_replies
+---
+- extendedWaitUntil:
+    visible: '(?s-i)^.*${FIRST_PATTERN}.*$'
+    timeout: 30000
+- extendedWaitUntil:
+    visible: '(?s-i)^.*${SECOND_PATTERN}.*$'
+    timeout: 30000

@@ -3,8 +3,10 @@ import 'dart:convert';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/bridge/debug_group_delivery_observer.dart';
+import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
+import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
 import 'package:flutter_app/features/groups/application/debug_group_exit_observer.dart';
 import 'package:flutter_app/features/groups/application/group_config_payload.dart';
 import 'package:flutter_app/features/groups/application/drain_group_offline_inbox_use_case.dart';
@@ -58,6 +60,8 @@ const productionCatalogWatchJourneys = {
   groupCatalogDe007Journey,
   groupCatalogVoluntaryLeaveJourney,
   groupCatalogGm015Journey,
+  groupCatalogGe024Journey,
+  groupCatalogMediaReactionJourney,
 };
 
 const _watchedFlowEvents = {
@@ -105,6 +109,7 @@ void bindProductionGroupCatalogWatchControls({
   required IdentityRepository identityRepository,
   required GroupRepository groupRepository,
   required GroupMessageRepository messageRepository,
+  required MediaAttachmentRepository mediaAttachmentRepository,
   required GroupInviteDeliveryAttemptRepository inviteDeliveryRepository,
   required GroupMessageListener groupMessageListener,
 }) {
@@ -204,7 +209,9 @@ void bindProductionGroupCatalogWatchControls({
     final counts = record['counts']! as Map<String, int>;
     counts[step] = (counts[step] ?? 0) + 1;
     if (step == 'request_leave') record['request'] = Map.of(details);
-    if (step == 'rotation_result') record['rotationDeferred'] = details['deferred'];
+    if (step == 'rotation_result') {
+      record['rotationDeferred'] = details['deferred'];
+    }
   };
   controller.bindDisposer(() => debugGroupExitObserver = null);
 
@@ -375,8 +382,9 @@ void bindProductionGroupCatalogWatchControls({
     );
     return {
       'groupPresent': await groupRepository.getGroup(groupId) != null,
-      'latestKeyGeneration':
-          (await groupRepository.getLatestKey(groupId))?.keyGeneration,
+      'latestKeyGeneration': (await groupRepository.getLatestKey(
+        groupId,
+      ))?.keyGeneration,
       'messageCount': messages.length,
       'memberRemovedTimelineIds': [
         for (final m in messages)
@@ -487,6 +495,12 @@ void bindProductionGroupCatalogWatchControls({
                   'keyEpoch': m.keyGeneration,
                   'isIncoming': m.isIncoming,
                   'status': m.status,
+                  'quotedMessageId': m.quotedMessageId,
+                  'mediaAttachmentCount':
+                      (await mediaAttachmentRepository.getAttachmentsForMessage(
+                        m.id,
+                        owner: MediaOwnerLane.group,
+                      )).length,
                 },
           ],
       },

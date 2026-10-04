@@ -998,6 +998,7 @@ final class DebugE2ECompositionRoot {
         identityRepository: dependencies.identityRepository,
         groupRepository: dependencies.groupRepository,
         messageRepository: dependencies.groupMessageRepository,
+        mediaAttachmentRepository: dependencies.mediaAttachmentRepository,
         inviteDeliveryRepository:
             dependencies.groupInviteDeliveryAttemptRepository,
         groupMessageListener: dependencies.groupMessageListener,

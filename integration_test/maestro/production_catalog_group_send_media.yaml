@@ -1,0 +1,25 @@
+appId: ${APP_ID}
+name: production_catalog_group_send_media
+---
+- tapOn:
+    id: chat_attach
+- tapOn: '^Media Library$'
+- extendedWaitUntil:
+    visible: ${FILE}
+    timeout: 30000
+- tapOn: ${FILE}
+- extendedWaitUntil:
+    visible:
+      id: chat_composer
+    timeout: 30000
+- tapOn:
+    id: chat_composer
+- inputText: ${MESSAGE}
+- assertVisible:
+    id: chat_composer
+    text: '(?-i)^${MESSAGE_PATTERN}$'
+- tapOn:
+    id: chat_send
+- extendedWaitUntil:
+    visible: '(?s-i)^(.*\n)?${MESSAGE_PATTERN}(\n.*)?$'
+    timeout: 60000

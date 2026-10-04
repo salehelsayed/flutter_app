@@ -95,7 +95,10 @@ final class ProductionJourneyFlowRunner {
         return await _runOnce(device, name, label, values, packageName);
       } on _DriverNeverStarted {
         if (start >= 2) throw StateError('$label Maestro flow failed');
-        for (final package in ['dev.mobile.maestro', 'dev.mobile.maestro.test']) {
+        for (final package in [
+          'dev.mobile.maestro',
+          'dev.mobile.maestro.test',
+        ]) {
           await runner.run('adb', [
             '-s',
             device,
@@ -264,6 +267,8 @@ final class ProductionAndroidJourney {
       'production.group_catalog.de007',
       'production.group_catalog.private_voluntary_leave_convergence',
       'production.group_catalog.gm015',
+      'production.group_catalog.ge024',
+      'production.group_catalog.private_media_reaction_roundtrip',
     }.contains(scenario)) {
       final third = required('SIMS_ANDROID_EMULATOR_SECOND_DEVICE_ID');
       if (!RegExp(r'^emulator-[0-9]+$').hasMatch(third) || third == emulator) {
