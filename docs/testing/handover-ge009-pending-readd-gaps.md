@@ -126,3 +126,27 @@ app to view updates.' card."
   Android `push_decrypt_preview.dart:924-941`, likely no card, catch site not
   traced; iOS `NotificationPreviewResolver.swift:1300-1307`, passive card). No
   readable content before he accepts.
+
+### Gap 1 closed (2026-10-04, run `T133639Z`, PASS)
+
+- Alice's durable copy of `aliceGe009PostReadd` lists Bob and Charlie (2
+  recipients, 1 live topic peer at send).
+- Charlie holds every proof message exactly once: before the partition Alice's
+  and Bob's arrived live; after the re-add `aliceGe009PostReadd` and
+  `bobGe009PostReadd` came from the relay inbox. Bob's behaviour is unchanged.
+- `GROUP_DRAIN_OFFLINE_INBOX_REPLAY_RECIPIENT_SKIPPED` still fires 3 times on
+  Charlie (13:43:32, 13:44:01, 13:48:06), but none of them is a proof message:
+  all six arrived. The timing matches Charlie's own acceptance records, which
+  the relay returns to their author; the event carries no message id, so this
+  is not proven.
+
+### Gaps 2 and 3 closed (2026-10-04)
+
+- **Gap 2:** O10 re-tested with the USB Pixel as admin and the iPhone 13 as a
+  brand-new invitee, both on this branch. The message was delivered once after
+  accept, from the relay inbox. Before accept the iPhone showed only the invite
+  card and the passive "Mknoon / Open the app to view updates." card. The O10
+  row in `beta-test-coverage.md` now uses the proposed wording.
+- **Gap 3:** recorded in the crosswalk section "2026-10-04 O10 iPhone re-check
+  and GE-009 gap closure" and in `beta-test-coverage.md`. No test was added, so
+  `selection.json` is unchanged.

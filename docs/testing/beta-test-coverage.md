@@ -79,7 +79,7 @@ screen dumps (`ui/`) and a `timeline.txt`. Error scan: `python3 docker-ws/beta/r
 | T20 | Group messages while the member's app is stopped | PASS |
 | T21 | Remove a member | FAIL in R2 (R2-1); fixed and device-validated 09-28 |
 | T23 | Admin dissolves a group | FAIL in R2 (R2-1); fixed and device-validated 09-28 |
-| O10 | Message sent before the invite is accepted | Not delivered, by design; "Invite sent / not joined yet" and "You joined" shown (iPhone, 10-01) |
+| O10 | Message sent before the invite is accepted | PASS (Pixel admin, iPhone 13 new invitee, 10-04, after the GE-009 fix): delivered once after accept, from the relay inbox; a second copy was dropped as a duplicate. Before accept the iPhone showed the invite card and a passive "Mknoon / Open the app to view updates." card with no text and no sound; the group did not exist in the app. "You joined" shown. The 10-01 result "not delivered" is replaced. Logs `docker-ws/deploy-captures/o10-20261004`, screenshots `artifacts/beta-20260928/r2o-shots/o10_*` |
 | O12 b, c, e, f, i | Remove-member label, Add Member button, link node, no "Invite unknown" for non-admins, Edit Group sheet above the keyboard | PASS (iPhone, 10-01) |
 
 ### Notifications, layout, language

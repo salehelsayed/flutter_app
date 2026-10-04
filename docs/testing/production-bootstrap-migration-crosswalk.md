@@ -2384,3 +2384,31 @@ Product fixes (user decisions 2026-10-04):
   rotated (one extra rotation came from the sweep racing a removal's own
   rotation; the sweep now waits a minute for a removal to settle).
 - **I-01:** recorded as not portable (see the table); its module was removed.
+
+## 2026-10-04 O10 iPhone re-check and GE-009 gap closure
+
+O10 (message sent before the invite is accepted) was re-run on real phones
+after the GE-009 fix: USB Pixel 6 as admin (`1.0.0-0045db3b3.d64`), iPhone 13
+as a brand-new invitee (`1.0.0-0045db3b3.d77.flowlog`, bundle `261004164053`).
+Group "O10 recheck 1650" (`c0967714`). Result: PASS.
+
+- Pixel: message `8be354e5` was sent with `expectedRecipientCount: 1` (the
+  pending invitee) and `inboxStored: true`. Before the fix this count was 0.
+- iPhone before accept: the invite push showed a normal card; the message push
+  reached the notification extension, which could not decrypt it
+  (`PUSH_NSE_DECRYPT_FAIL`, `failureClass: policy`) and handed over a sanitized
+  card: "Mknoon / Open the app to view updates.", no sound. The group did not
+  exist in the app.
+- iPhone after accept: the accept-time drain saved `8be354e5` once
+  (`deliverySource: replay`); a second drain 12 s later dropped it as
+  `GROUP_HANDLE_INCOMING_MSG_DUPLICATE`. The chat shows it once, then "You
+  joined". The Pixel recorded the invitee as `joined`.
+- The same second drain held 2 items: the duplicate and one
+  `GROUP_DRAIN_OFFLINE_INBOX_REPLAY_RECIPIENT_SKIPPED`. So the skipped item was
+  not the proof message. This supports the GE-009 note that these skips are the
+  device's own records returned by the relay.
+
+Evidence: `docker-ws/deploy-captures/o10-20261004/iphone13_syslog.txt`,
+screenshots `artifacts/beta-20260928/r2o-shots/o10_*`. Row updated in
+`docs/testing/beta-test-coverage.md`. No test was added, so `selection.json`
+is unchanged.
