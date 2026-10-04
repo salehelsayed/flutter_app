@@ -301,6 +301,7 @@ final class ProductionAndroidJourney implements ProductionJourney {
       'production.group_catalog.gm015',
       'production.group_catalog.ge024',
       'production.group_catalog.private_media_reaction_roundtrip',
+      'production.group_catalog.private_removed_notification_privacy',
       ...productionFourPeerScenarios,
     }.contains(scenario)) {
       final third = required('SIMS_ANDROID_EMULATOR_SECOND_DEVICE_ID');

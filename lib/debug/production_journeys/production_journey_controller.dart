@@ -79,7 +79,10 @@ const groupCatalogNw003Journey =
     'production.group_catalog.private_partition_readd_heal';
 const groupCatalogNw010Journey =
     'production.group_catalog.private_background_resume_group_delivery';
+const groupCatalogUp012Journey =
+    'production.group_catalog.private_removed_notification_privacy';
 const productionGroupCatalogJourneys = {
+  groupCatalogUp012Journey,
   groupCatalogNw010Journey,
   groupCatalogNw003Journey,
   groupCatalogMl020Journey,
@@ -267,6 +270,7 @@ final class ProductionJourneyController {
           groupCatalogMl020Journey,
           groupCatalogNw003Journey,
           groupCatalogNw010Journey,
+          groupCatalogUp012Journey,
           performanceJourney,
         }.contains(invocation.scenarioId) ||
         !(productionFourPeerJourneys.contains(invocation.scenarioId)

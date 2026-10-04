@@ -654,6 +654,10 @@ classify_path() {
       record "support" "$path" "support" "manifest-owned production catalog private_background_resume_group_delivery journey on iOS simulators; original route retained"
       return
       ;;
+    integration_test/scripts/run_production_group_up012.dart)
+      record "support" "$path" "support" "manifest-owned production catalog private_removed_notification_privacy journey; original route retained"
+      return
+      ;;
     integration_test/scripts/run_production_group_reaction.dart)
       record "support" "$path" "support" "manifest-owned production group-reaction roundtrip journey; original route retained"
       return

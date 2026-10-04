@@ -70,6 +70,7 @@ const productionCatalogWatchJourneys = {
   groupCatalogMl020Journey,
   groupCatalogNw003Journey,
   groupCatalogNw010Journey,
+  groupCatalogUp012Journey,
 };
 
 const _watchedFlowEvents = {
@@ -481,6 +482,10 @@ void bindProductionGroupCatalogWatchControls({
       'inbound': inbound[group.id] ?? const {},
       'liveMessageIds': [...?liveMessageIds[group.id]],
       'memberPeerIds': [for (final m in members) m.peerId],
+      // UP-012 reads every notification request of this app process (title
+      // and body hashes only).
+      if (controller.invocation.scenarioId == groupCatalogUp012Journey)
+        'notifications': controller.foregroundPush.snapshotNotifications(),
       'memberDetails': [
         for (final m in members)
           {
