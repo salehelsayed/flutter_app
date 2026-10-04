@@ -79,7 +79,7 @@ Future<void> main(List<String> arguments) => runProductionCatalogJourney(
       });
     }
     await s.persist();
-    await s.flow('bob', 'production_catalog_react', 'react-bob', {
+    await s.flow('bob', 'production_catalog_react_media', 'react-bob', {
       'MESSAGE_PATTERN': pattern,
     });
     for (final role in ['alice', 'bob', 'charlie']) {

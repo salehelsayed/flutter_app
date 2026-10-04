@@ -2412,3 +2412,77 @@ Evidence: `docker-ws/deploy-captures/o10-20261004/iphone13_syslog.txt`,
 screenshots `artifacts/beta-20260928/r2o-shots/o10_*`. Row updated in
 `docs/testing/beta-test-coverage.md`. No test was added, so `selection.json`
 is unchanged.
+
+## 2026-10-04 Wave 3 batches 10 to 13, the fourth role and iOS simulators
+
+**Pace changes (user, 2026-10-04).** A probe restore puts the file's original
+times back, so no five-minute quiet wait follows it; a batch's passing runs go
+in one campaign call; the next batch is written in the git worktree
+`.claude/worktrees/wave3-next` while devices run on the main checkout.
+
+**Batch 10 (three Android devices).**
+
+| Scenario | Run | Probe |
+|---|---|---|
+| ge024 (GE-024) | PASS | Bob's second reply quotes the entitled parent: FAIL at `alice-renders-replies` (the quote bar does not show the removed-window parent) |
+| private_media_reaction_roundtrip (L-01) | pending re-run (see below) | the receivers expect two attachments: FAIL at `bob receives the image message` |
+
+GE-024: Bob quote-replies from the message menu (Reply); every copy keeps the
+original quoted parent id; Charlie never holds the removed-window parent and
+renders that quote as "Message unavailable". The catalog watch snapshot now
+reports each watched row's `quotedMessageId` and attachment count; the shared
+verdict builders pass both through only when present.
+L-01: Alice picks a real 1.4 KB repository JPEG from the gallery (pushed and
+dated now, so it is the newest picker entry) and sends it with the original
+caption; Bob reacts from the message menu. Two device fixes: the pushed file
+kept its July date and was buried in the picker's Recent list; the reaction
+control accepted only the PL-009 and RT-001 target texts.
+
+**Fourth Android role.** `android_emulator_third` (Dana) on emulator-5558
+(Pixel_8, user approved 2026-10-04): runner role map, live device resolver,
+device binding, manifest (`android.emulator.count3`), journey helper and debug
+controller; a separate four-device config so three-device checks never lease
+it.
+
+**Batch 11 (four Android devices).** gm002, ML-002 (`private_online_add`),
+gm003 and ML-003 (`private_offline_add`): Alice creates the group with Bob
+and Charlie through the UI, then adds Dana through Add Member and Dana
+accepts her real invitation; offline cases add her after a verified process
+death and relaunch her after the post-add sends. Proof fields the original
+writes as constants are observed. Device results: pending.
+
+**iOS simulator journeys.** `ProductionIosSimulatorJourney` runs every role on
+its own disposable simulator (iPhone 17 Pro, iPhone Air, iPhone 17; iOS 26.5).
+The oracles pin `appPeerPlatform == ios_26_2_core_simulator`, a constant in the
+original harness; the user decided (2026-10-04) to run on iOS 26.5 with that
+label. Batch 12: NW-006, ML-020, NW-003, NW-010 with OB-011. Device results:
+pending. Flows that stepped back with Android's back key now tap the app's
+Back button on iOS (Android unchanged); member rows' role menus carry a
+Semantics identifier.
+
+**Batch 13.** UP-012 (`private_removed_notification_privacy`): removed
+Charlie's app shows no notification; Alice and Bob each show one for the
+other's post (production notification observer, hashes only). Device result:
+pending.
+
+**Guard.** The composition guard now also scans the shared catalog support
+and host adapters and rejects imports of the original multi-party role
+scripts (checked by planting such an import).
+
+Not portable (added to "catalog cases kept on the original harness"):
+
+| Scenario | Row | Why it is not portable |
+|---|---|---|
+| private_readd_active_members | RA-017 | needs a key rotation on every re-add (final epoch at least 7); production rotates only on removal (rotate-on-add is an off-by-default build flag); user decision 2026-10-04 |
+| private_readd_alternating_churn | RA-018 | same, final epoch at least 13 |
+| private_non_friend_member_delivery | ML-016 | the app drops group invitations from non-contacts, so Dana cannot join as a non-friend through the UI |
+| private_admin_metadata_intro_photo_convergence | PROMPT-GROUP | the oracle requires an `image/png` group photo; the app uploads `image/jpeg` |
+| private_admin_demotion_enforcement | SCENARIO-4 | the same `image/png` group photo, plus Bob's blocked metadata and add attempts recorded as direct-call outcomes |
+| regression_group_admin_permissions_and_message_reliability_four_users | REGRESSION | more than 24 rejected-action outcome strings from direct calls and per-stage state hashes; no production seam records them |
+| private_concurrent_admin_membership_edits | ML-012 | the oracle requires both delivery orders (add then remove, remove then add) to have been tested; a real run cannot choose them |
+| private_readd_current | ML-007 and sub-rows | its oracle runs every sub-row validator; KE-011, RA-006, RA-014, KE-012, UP-003 and SV-003 need forged keys, a duplicate removal and an imported pending state |
+| gm014 | GM-014 | its rotation reports delivery to Charlie without sending it (2026-10-02) |
+| scenario7_group_invite_stale_metadata_recovery | SCENARIO-7 | the stale invitation is made by stopping Dana's invite listener; the retry accept is a direct call |
+| private_never_member_publish_rejected | SV-001 | Dana imports group state and publishes directly as a non-member |
+| private_network_chaos_invariants | NW-014 and ST rows | fake network chaos and fixed-seed fault injection |
+| private_same_user_multi_device_readd | RA-013 | Dana plays a second device of Charlie's account |
