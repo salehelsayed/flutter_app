@@ -1,0 +1,14 @@
+appId: ${APP_ID}
+name: production_ios_allow_notifications
+---
+# First launch on a fresh simulator install may ask for notification
+# permission; answer it like a user so it never covers later flows.
+- extendedWaitUntil:
+    visible: '^Allow$'
+    timeout: 15000
+    optional: true
+- runFlow:
+    when:
+      visible: '^Allow$'
+    commands:
+      - tapOn: '^Allow$'

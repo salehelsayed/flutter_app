@@ -6333,6 +6333,43 @@
       "automationReady": true,
       "active": true,
       "declaredBuildException": false
+    },
+    {
+      "id": "build.ios.simulator.app",
+      "owner": "sims-build-cache",
+      "proofBoundary": "build.ios.simulator-app.attested",
+      "assertions": [
+        "build.ios_simulator_artifact_attested"
+      ],
+      "lane": "reliability",
+      "modes": [
+        "major",
+        "full"
+      ],
+      "families": [
+        "group"
+      ],
+      "required": true,
+      "command": [
+        "@prepare-build",
+        "ios.simulator.app"
+      ],
+      "buildProfile": "ios.simulator.app",
+      "dependencies": [],
+      "resources": [
+        {
+          "name": "build:ios.simulator.app",
+          "access": "write"
+        }
+      ],
+      "targetCapabilities": [
+        "host.xcode"
+      ],
+      "allowedNaReason": "target_unavailable_by_project_policy",
+      "artifactRequired": true,
+      "artifactValidator": "sha256-ios-simulator-attestation",
+      "active": true,
+      "declaredBuildException": false
     }
   ],
   "ownership": [

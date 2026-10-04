@@ -40,9 +40,13 @@ def main():
     parser.add_argument('--expected-name', required=True)
     parser.add_argument('--env', action='append', default=[])
     parser.add_argument('--maestro', default='maestro')
+    # iOS simulator drivers can take minutes to start on a loaded host.
+    parser.add_argument('--timeout', type=int, default=110)
     args = parser.parse_args()
     if not args.flow.is_file() or not args.device.strip():
         parser.error('existing flow and explicit target required')
+    if not 30 <= args.timeout <= 600:
+        parser.error('timeout must be 30-600 seconds')
     args.output.mkdir(parents=True, exist_ok=False)
     command = [args.maestro, 'test', '--device', args.device,
                '--format', 'JUNIT', '--output', str(args.output / 'junit.xml'),
@@ -55,7 +59,7 @@ def main():
     with (args.output / 'process.log').open('wb') as log:
         process = subprocess.Popen(command, stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
         try:
-            code = process.wait(timeout=110)
+            code = process.wait(timeout=args.timeout)
         except subprocess.TimeoutExpired:
             timed_out = True
             os.killpg(process.pid, signal.SIGTERM)

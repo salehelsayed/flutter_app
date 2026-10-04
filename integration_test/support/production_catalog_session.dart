@@ -1,7 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
 
-import 'production_android_journey.dart';
+import 'production_journey.dart';
 import 'production_journey_peer.dart';
 
 /// Shared host-side steps for production group-catalog journeys: readiness,
@@ -17,7 +17,7 @@ final class ProductionCatalogSession {
     proof['kills'] = kills;
   }
 
-  final ProductionAndroidJourney journey;
+  final ProductionJourney journey;
   final Directory output;
   final Map<String, Object?> proof;
   final Map<String, ProductionJourneyPeer> actors;
@@ -32,9 +32,8 @@ final class ProductionCatalogSession {
 
   static const verbatimIme = 'io.appium.settings/.AppiumIME';
 
-  Future<void> persist() => File(
-    '${output.path}/observations.json',
-  ).writeAsString(jsonEncode(proof));
+  Future<void> persist() =>
+      File('${output.path}/observations.json').writeAsString(jsonEncode(proof));
 
   void replace(String role, ProductionJourneyPeer peer) {
     actors[role] = peer;
@@ -207,8 +206,15 @@ final class ProductionCatalogSession {
   Future<void> verbatimSend(String role, String label, String text) async {
     final peer = actors[role]!;
     final values = {'MESSAGE': text, 'MESSAGE_PATTERN': RegExp.escape(text)};
-    final installed = '${(await peer.adb(['shell', 'ime', 'list', '-a', '-s'])).stdout}'
-        .contains(verbatimIme);
+    if (peer.isIosSimulator) {
+      // The simulator keyboard has autocorrection off (journey setup).
+      imeSwitches.add({'role': role, 'label': label, 'restoreTo': null});
+      await flow(role, 'production_verbatim_send', label, values);
+      return;
+    }
+    final installed =
+        '${(await peer.adb(['shell', 'ime', 'list', '-a', '-s'])).stdout}'
+            .contains(verbatimIme);
     if (!installed) {
       imeSwitches.add({'role': role, 'label': label, 'restoreTo': null});
       await flow(role, 'production_direct_send', label, values);
@@ -241,8 +247,15 @@ final class ProductionCatalogSession {
     Map<String, String> values,
   ) async {
     final peer = actors[role]!;
-    final installed = '${(await peer.adb(['shell', 'ime', 'list', '-a', '-s'])).stdout}'
-        .contains(verbatimIme);
+    if (peer.isIosSimulator) {
+      // The simulator keyboard has autocorrection off (journey setup).
+      imeSwitches.add({'role': role, 'label': label, 'restoreTo': null});
+      await flow(role, name, label, values);
+      return;
+    }
+    final installed =
+        '${(await peer.adb(['shell', 'ime', 'list', '-a', '-s'])).stdout}'
+            .contains(verbatimIme);
     if (!installed) {
       imeSwitches.add({'role': role, 'label': label, 'restoreTo': null});
       await flow(role, fallbackName, label, values);

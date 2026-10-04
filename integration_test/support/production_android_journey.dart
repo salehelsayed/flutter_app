@@ -6,6 +6,7 @@ import 'package:flutter_app/debug/production_journeys/sims_runtime_protocol.dart
 
 import 'android_app_state_guard.dart';
 import 'production_android_artifact.dart';
+import 'production_journey.dart';
 import 'production_journey_peer.dart';
 
 const productionJourneyAndroidProfile = 'android.e2e.main';
@@ -87,14 +88,23 @@ final class ProductionJourneyFlowRunner {
         !RegExp(r'^production_[a-z0-9_]+$').hasMatch(name)) {
       throw ArgumentError('invalid flow identity');
     }
-    // A Maestro Android driver that never starts ran no UI step: clear a
-    // leftover driver on this device and run the flow once more, in a fresh
-    // evidence directory.
+    // A Maestro driver that never starts ran no UI step: clear a leftover
+    // driver on this device and run the flow once more, in a fresh evidence
+    // directory.
     for (var start = 1; ; start++) {
       try {
         return await _runOnce(device, name, label, values, packageName);
       } on _DriverNeverStarted {
         if (start >= 2) throw StateError('$label Maestro flow failed');
+        if (_isSimulator(device)) {
+          await runner.run('xcrun', [
+            'simctl',
+            'terminate',
+            device,
+            'dev.mobile.maestro-driver-iosUITests.xctrunner',
+          ]);
+          continue;
+        }
         for (final package in [
           'dev.mobile.maestro',
           'dev.mobile.maestro.test',
@@ -131,6 +141,7 @@ final class ProductionJourneyFlowRunner {
       name,
       '--output',
       destination.path,
+      if (_isSimulator(device)) ...['--timeout', '300'],
       '--env',
       'APP_ID=$packageName',
       for (final entry in values.entries) ...[
@@ -148,9 +159,7 @@ final class ProductionJourneyFlowRunner {
     if (result.exitCode != 0) {
       final log = File('${destination.path}/process.log');
       if (log.existsSync() &&
-          log.readAsStringSync().contains(
-            'Maestro Android driver did not start up in time',
-          )) {
+          _driverNeverStarted.any(log.readAsStringSync().contains)) {
         throw const _DriverNeverStarted();
       }
       throw StateError('$label Maestro flow failed');
@@ -168,13 +177,24 @@ final class ProductionJourneyFlowRunner {
   }
 }
 
+// Messages Maestro logs when its device driver or device server never came
+// up (the beta runner's iOS retry patterns), not when a flow step failed.
+const _driverNeverStarted = [
+  'Maestro Android driver did not start up in time',
+  'driver not ready in time',
+  'DeviceServerDiedException',
+  'Unable to launch',
+];
+
+bool _isSimulator(String device) => RegExp(
+  r'^[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}$',
+  caseSensitive: false,
+).hasMatch(device);
+
 final class _DriverNeverStarted implements Exception {
   const _DriverNeverStarted();
 }
 
-/// Host-owned installation, invocation and cleanup. Production main constructs
-/// the entire application. This helper never builds or supplies application
-/// services, never drives the UI itself, and never declares a scenario passed.
 /// Catalog scenarios with a fourth Android peer, Dana, on the pinned third
 /// emulator (`SIMS_ANDROID_EMULATOR_THIRD_DEVICE_ID`).
 const productionFourPeerScenarios = {
@@ -184,7 +204,10 @@ const productionFourPeerScenarios = {
   'production.group_catalog.private_offline_add',
 };
 
-final class ProductionAndroidJourney {
+/// Host-owned installation, invocation and cleanup. Production main constructs
+/// the entire application. This helper never builds or supplies application
+/// services, never drives the UI itself, and never declares a scenario passed.
+final class ProductionAndroidJourney implements ProductionJourney {
   ProductionAndroidJourney.fromEnvironment(
     this.scenario,
     this.output, {
@@ -301,9 +324,12 @@ final class ProductionAndroidJourney {
     }
   }
 
+  @override
   final String scenario;
   final Directory output;
+  @override
   final String runId = 'journey-${DateTime.now().microsecondsSinceEpoch}';
+  @override
   final AndroidHostProcessRunner runner;
   final ProductionAndroidGuardCapture captureGuard;
   final _random = Random.secure();
@@ -313,8 +339,11 @@ final class ProductionAndroidJourney {
   late final File artifact;
   late final String profileId, inputDigest, artifactDigest, physical;
   late final String? emulator;
+  @override
   late ProductionJourneyPeer alice, bob;
+  @override
   final additionalPeers = <String, ProductionJourneyPeer>{};
+  @override
   List<ProductionJourneyPeer> get actors =>
       scenario == 'production.startup_resume_performance'
       ? [alice]
@@ -357,6 +386,7 @@ final class ProductionAndroidJourney {
     );
   }
 
+  @override
   Future<void> prepare() async {
     // B/M/BR measure one independent production node. Other journeys prepare
     // only the peers required by their topology before ordinary UI actions.
@@ -450,6 +480,7 @@ final class ProductionAndroidJourney {
     return next;
   }
 
+  @override
   Future<ProductionJourneyPeer> reopen(ProductionJourneyPeer previous) async {
     final next = await stageFreshInvocation(previous);
     await flow(
@@ -487,6 +518,7 @@ final class ProductionAndroidJourney {
     return next;
   }
 
+  @override
   Future<String> flow(
     ProductionJourneyPeer p,
     String name,
@@ -506,6 +538,7 @@ final class ProductionAndroidJourney {
 
   /// Abrupt death of only this owned UID preserves a posted native card for the
   /// cold-tap boundary. Force-stop changes that precondition and is unsuitable.
+  @override
   Future<void> killOwnedProcess(ProductionJourneyPeer p) async {
     final found = await p.adb(['shell', 'pidof', p.packageName]);
     final pid = '${found.stdout}'.trim();
@@ -546,6 +579,7 @@ final class ProductionAndroidJourney {
     );
   }
 
+  @override
   Future<void> restore() async {
     if (_guards.isEmpty) return;
     try {
@@ -579,6 +613,7 @@ final class ProductionAndroidJourney {
     }
   }
 
+  @override
   Map<String, Object?> provenance() => {
     'scenario': scenario,
     'runId': runId,

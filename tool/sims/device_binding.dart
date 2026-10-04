@@ -479,6 +479,11 @@ Map<String, String> _requiredTargetIdsFor(
       'android-emulator' => 'SIMS_ANDROID_EMULATOR_DEVICE_ID',
       'android-emulator-second' => 'SIMS_ANDROID_EMULATOR_SECOND_DEVICE_ID',
       'android-emulator-third' => 'SIMS_ANDROID_EMULATOR_THIRD_DEVICE_ID',
+      // Production catalog journeys pin one simulator per role directly.
+      'ios-simulator-a' => 'SIMS_IOS_SIMULATOR_A_DEVICE_ID',
+      'ios-simulator-b' => 'SIMS_IOS_SIMULATOR_B_DEVICE_ID',
+      'ios-simulator-c' => 'SIMS_IOS_SIMULATOR_C_DEVICE_ID',
+      'ios-simulator-d' => 'SIMS_IOS_SIMULATOR_D_DEVICE_ID',
       _ => null,
     };
     if (environmentName == null) continue;

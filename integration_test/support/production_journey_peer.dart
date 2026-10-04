@@ -24,10 +24,53 @@ final class ProductionJourneyPeer {
   final AndroidHostProcessRunner runner;
   int sequence = 0;
 
+  /// An iOS simulator target is a simulator UUID; Android targets are adb
+  /// serials. Simulator app files live in the app's data container on this
+  /// host, so they are read and written directly instead of through adb.
+  bool get isIosSimulator => _simulatorId.hasMatch(device);
+  static final _simulatorId = RegExp(
+    r'^[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}$',
+    caseSensitive: false,
+  );
+  String? _container;
+
+  /// The simulator app's data container (its `Documents` is the app's
+  /// documents directory). A reinstall gets a new container: call
+  /// [forgetContainer] after installing.
+  Future<String> dataContainer() async {
+    if (_container case final known?) return known;
+    final result = await simctl([
+      'get_app_container',
+      device,
+      packageName,
+      'data',
+    ]);
+    final path = '${result.stdout}'.trim();
+    if (!path.startsWith('/') || !Directory(path).existsSync()) {
+      throw StateError('simulator app container unavailable');
+    }
+    return _container = path;
+  }
+
+  void forgetContainer() => _container = null;
+
+  Future<ProcessResult> simctl(
+    List<String> args, {
+    bool allowFailure = false,
+  }) async {
+    if (!isIosSimulator) throw StateError('simctl targets a simulator only');
+    final result = await runner.run('xcrun', ['simctl', ...args]);
+    if (result.exitCode != 0 && !allowFailure) {
+      throw StateError('simctl operation failed: ${args.take(1).join(' ')}');
+    }
+    return result;
+  }
+
   Future<ProcessResult> adb(
     List<String> args, {
     bool allowFailure = false,
   }) async {
+    if (isIosSimulator) throw StateError('adb targets Android only');
     final result = await runner.run('adb', ['-s', device, ...args]);
     if (result.exitCode != 0 && !allowFailure) {
       throw StateError('ADB operation failed: ${args.take(2).join(' ')}');
@@ -40,6 +83,13 @@ final class ProductionJourneyPeer {
       '${output.path}/${invocation.role}-${invocation.nonce}-${name.replaceAll('/', '-')}.staging',
     );
     await local.writeAsString(jsonEncode(value));
+    if (isIosSimulator) {
+      final target = File('${await dataContainer()}/Documents/$name');
+      await target.parent.create(recursive: true);
+      final staged = await local.copy('${target.path}.tmp');
+      await staged.rename(target.path);
+      return;
+    }
     final remote = '/data/local/tmp/${invocation.nonce}.json';
     await adb(['push', local.path, remote]);
     try {
@@ -73,6 +123,17 @@ final class ProductionJourneyPeer {
   }
 
   Future<Map<String, Object?>?> readAppFile(String name) async {
+    if (isIosSimulator) {
+      final file = File(
+        '${await dataContainer()}/Documents/production-journey/$name',
+      );
+      if (!file.existsSync()) return null;
+      try {
+        return _object(jsonDecode(await file.readAsString()));
+      } on FormatException {
+        return null;
+      }
+    }
     final result = await adb([
       'exec-out',
       'run-as',
@@ -140,14 +201,21 @@ final class ProductionJourneyPeer {
       }
       return token;
     } finally {
-      await adb([
-        'shell',
-        'run-as',
-        packageName,
-        'rm',
-        '-f',
-        'app_flutter/production-journey/command-result.json',
-      ], allowFailure: true);
+      if (isIosSimulator) {
+        final reply = File(
+          '${await dataContainer()}/Documents/production-journey/command-result.json',
+        );
+        if (reply.existsSync()) await reply.delete();
+      } else {
+        await adb([
+          'shell',
+          'run-as',
+          packageName,
+          'rm',
+          '-f',
+          'app_flutter/production-journey/command-result.json',
+        ], allowFailure: true);
+      }
     }
   }
 

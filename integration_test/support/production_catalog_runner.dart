@@ -4,6 +4,8 @@ import 'dart:io';
 import '../../tool/sims/artifact_evidence.dart';
 import '../../tool/sims/production_catalog_case.dart';
 import 'production_android_journey.dart';
+import 'production_ios_simulator_journey.dart';
+import 'production_journey.dart';
 import 'production_catalog_session.dart';
 
 /// Runs one catalog journey: proof directory, journey and session setup,
@@ -35,10 +37,10 @@ Future<void> runProductionCatalogJourney({
     output = await (await Directory(
       path,
     ).absolute.create(recursive: true)).createTemp('attempt-');
-    final journey = ProductionAndroidJourney.fromEnvironment(
-      capability,
-      output,
-    );
+    final ProductionJourney journey =
+        productionIosSimulatorScenarioRoles.containsKey(capability)
+        ? ProductionIosSimulatorJourney.fromEnvironment(capability, output)
+        : ProductionAndroidJourney.fromEnvironment(capability, output);
     final proof = <String, Object?>{'runId': journey.runId};
     final s = ProductionCatalogSession(journey, output, proof);
     try {
