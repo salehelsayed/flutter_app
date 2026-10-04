@@ -56,9 +56,14 @@ void bindProductionGroupReactionControls({
         target.groupId != group.id ||
         target.senderPeerId != group.createdBy ||
         target.text !=
-            (isToggle
-                ? 'RT-001 Alice reaction toggle target ${controller.invocation.runId}'
-                : 'PL-009 Alice reaction target ${controller.invocation.runId}') ||
+            switch (scenario) {
+              groupCatalogReactionToggleJourney =>
+                'RT-001 Alice reaction toggle target ${controller.invocation.runId}',
+              groupCatalogMediaReactionJourney =>
+                'L-01 Alice media reaction target ${controller.invocation.runId}',
+              _ =>
+                'PL-009 Alice reaction target ${controller.invocation.runId}',
+            } ||
         reactor?.username != 'Journeybob' ||
         identity == null ||
         (controller.invocation.role == 'bob') !=
