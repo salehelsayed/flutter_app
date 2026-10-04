@@ -6488,6 +6488,65 @@
       "automationReady": true,
       "active": true,
       "declaredBuildException": false
+    },
+    {
+      "id": "production.group_catalog.private_partition_readd_heal",
+      "owner": "reliability",
+      "proofBoundary": "production.group-catalog.private_partition_readd_heal",
+      "assertions": [
+        "NW-003-partition",
+        "NW-003-removed-window-excludes-charlie",
+        "NW-003-post-heal-delivery"
+      ],
+      "lane": "reliability",
+      "modes": [
+        "major",
+        "full"
+      ],
+      "families": [
+        "groups"
+      ],
+      "required": true,
+      "command": [
+        "dart",
+        "run",
+        "integration_test/scripts/run_production_group_nw003.dart"
+      ],
+      "buildProfile": "ios.simulator.app",
+      "dependencies": [
+        "build.ios.simulator.app"
+      ],
+      "resources": [
+        {
+          "name": "build:ios.simulator.app",
+          "access": "read"
+        },
+        {
+          "name": "device:ios-simulator-a",
+          "access": "exclusive"
+        },
+        {
+          "name": "device:ios-simulator-b",
+          "access": "exclusive"
+        },
+        {
+          "name": "device:ios-simulator-c",
+          "access": "exclusive"
+        },
+        {
+          "name": "artifact:production-group-nw003",
+          "access": "write"
+        }
+      ],
+      "targetCapabilities": [
+        "ios.simulator"
+      ],
+      "allowedNaReason": "target_unavailable_by_project_policy",
+      "artifactRequired": true,
+      "artifactValidator": "validateProductionGroupNw003",
+      "automationReady": true,
+      "active": true,
+      "declaredBuildException": false
     }
   ],
   "ownership": [

@@ -68,6 +68,7 @@ const productionCatalogWatchJourneys = {
   groupCatalogMl003Journey,
   groupCatalogNw006Journey,
   groupCatalogMl020Journey,
+  groupCatalogNw003Journey,
 };
 
 const _watchedFlowEvents = {
