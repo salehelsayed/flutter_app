@@ -175,6 +175,10 @@ final class _DriverNeverStarted implements Exception {
 /// Host-owned installation, invocation and cleanup. Production main constructs
 /// the entire application. This helper never builds or supplies application
 /// services, never drives the UI itself, and never declares a scenario passed.
+/// Catalog scenarios with a fourth Android peer, Dana, on the pinned third
+/// emulator (`SIMS_ANDROID_EMULATOR_THIRD_DEVICE_ID`).
+const productionFourPeerScenarios = <String>{};
+
 final class ProductionAndroidJourney {
   ProductionAndroidJourney.fromEnvironment(
     this.scenario,
@@ -269,6 +273,7 @@ final class ProductionAndroidJourney {
       'production.group_catalog.gm015',
       'production.group_catalog.ge024',
       'production.group_catalog.private_media_reaction_roundtrip',
+      ...productionFourPeerScenarios,
     }.contains(scenario)) {
       final third = required('SIMS_ANDROID_EMULATOR_SECOND_DEVICE_ID');
       if (!RegExp(r'^emulator-[0-9]+$').hasMatch(third) || third == emulator) {
@@ -277,6 +282,17 @@ final class ProductionAndroidJourney {
         );
       }
       additionalPeers['charlie'] = peer(third, 'charlie');
+      if (productionFourPeerScenarios.contains(scenario)) {
+        final fourth = required('SIMS_ANDROID_EMULATOR_THIRD_DEVICE_ID');
+        if (!RegExp(r'^emulator-[0-9]+$').hasMatch(fourth) ||
+            fourth == emulator ||
+            fourth == third) {
+          throw StateError(
+            'catalog requires a distinct pinned fourth Android target',
+          );
+        }
+        additionalPeers['dana'] = peer(fourth, 'dana');
+      }
     }
   }
 

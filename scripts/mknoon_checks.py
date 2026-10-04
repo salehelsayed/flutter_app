@@ -1275,6 +1275,7 @@ def sims_android_package(check, config):
 def sims_environment(config, report, check=None):
     roles = {'android_physical':'SIMS_ANDROID_PHYSICAL_DEVICE_ID','android_emulator':'SIMS_ANDROID_EMULATOR_DEVICE_ID',
              'android_emulator_second':'SIMS_ANDROID_EMULATOR_SECOND_DEVICE_ID',
+             'android_emulator_third':'SIMS_ANDROID_EMULATOR_THIRD_DEVICE_ID',
              'ios_simulator':'SIMS_IOS_SIMULATOR_ID','ios_physical':'SIMS_IOS_DEVICE_ID',
              'macos':'SIMS_MACOS_DEVICE_ID',
              **{'ios_simulator_'+p:'SIMS_IOS_SIMULATOR_'+p.upper()+'_DEVICE_ID' for p in 'abcd'}}

@@ -157,9 +157,12 @@ List<String> validateProductionCatalogCase({
   final failures = <String>[];
   try {
     final c = ProductionCatalogCase._(proof, scenario, failures);
+    // Alice, Bob and Charlie always; four-person cases add Dana.
+    final roles = {..._roles, ...c.peers.keys.cast<String>()};
     c.require(
-      _roles.map((r) => c.peers[r]).toSet().length == 3,
-      'three distinct peers',
+      roles.map((r) => c.peers[r]).whereType<String>().toSet().length ==
+          roles.length,
+      roles.length == 3 ? 'three distinct peers' : 'distinct peer per role',
     );
     c.require(
       (proof['flows'] as List).join(',') == flows.join(','),

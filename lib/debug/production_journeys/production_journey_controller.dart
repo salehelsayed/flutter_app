@@ -124,6 +124,9 @@ const productionThreePeerJourneys = {
   ...productionGroupCatalogJourneys,
   groupDeletePreservesFriendsJourney,
 };
+
+/// Catalog journeys whose topology adds a fourth Android peer, Dana.
+const productionFourPeerJourneys = <String>{};
 const privateMediaJourney = 'production.private_media_local';
 const performanceJourney = 'production.startup_resume_performance';
 typedef ProductionJourneyAction =
@@ -233,7 +236,9 @@ final class ProductionJourneyController {
           groupCatalogMediaReactionJourney,
           performanceJourney,
         }.contains(invocation.scenarioId) ||
-        !(productionThreePeerJourneys.contains(invocation.scenarioId)
+        !(productionFourPeerJourneys.contains(invocation.scenarioId)
+                ? {'alice', 'bob', 'charlie', 'dana'}
+                : productionThreePeerJourneys.contains(invocation.scenarioId)
                 ? {'alice', 'bob', 'charlie'}
                 : {'alice', 'bob'})
             .contains(invocation.role) ||

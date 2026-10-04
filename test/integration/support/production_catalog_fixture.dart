@@ -6,14 +6,24 @@ import '../../../tool/sims/production_catalog_case.dart';
 /// Builds synthetic catalog proofs for adapter tests: three peers, stage
 /// snapshots with watched rows, durable deliveries and exact flows.
 final class CatalogFixture {
-  CatalogFixture(this.scenario, this.texts, this.flows);
+  CatalogFixture(this.scenario, this.texts, this.flows, {this.dana = false});
 
   final String scenario;
   final Map<String, ProductionCatalogText> texts;
   final List<String> flows;
 
-  static const peers = {'alice': 'peer-a', 'bob': 'peer-b', 'charlie': 'peer-c'};
+  /// Four-person cases: Dana is a fourth peer.
+  final bool dana;
+
+  static const peers = {
+    'alice': 'peer-a',
+    'bob': 'peer-b',
+    'charlie': 'peer-c',
+  };
   static const all = ['peer-a', 'peer-b', 'peer-c'];
+  static const fourPeers = {...peers, 'dana': 'peer-d'};
+
+  Map<String, String> get _peers => dana ? fourPeers : peers;
 
   Map<String, Object?> row(
     String key, {
@@ -24,7 +34,7 @@ final class CatalogFixture {
     'messageId': 'm-$key',
     'groupId': 'g',
     'text': texts[key]!.text,
-    'senderPeerId': peers[texts[key]!.role],
+    'senderPeerId': _peers[texts[key]!.role],
     'timestamp': timestamp,
     'keyEpoch': epoch,
     'isIncoming': incoming,
@@ -42,8 +52,8 @@ final class CatalogFixture {
     'runId': 'run',
     'role': role,
     'scenario': scenario,
-    'peerId': peers[role],
-    'transportPeerId': peers[role],
+    'peerId': _peers[role],
+    'transportPeerId': _peers[role],
     'relayReady': true,
     'lifecycle': 'resumed',
     'groupPresent': true,
@@ -70,13 +80,13 @@ final class CatalogFixture {
     'cmd': 'group:sendReliable',
     'messageId': 'm-$key',
     'ok': true,
-    'recipientPeerIds': [for (final r in to) peers[r]],
+    'recipientPeerIds': [for (final r in to) _peers[r]],
   };
 
   Map<String, dynamic> base() => {
     'runId': 'run',
     'relayAddresses': expectedMultiPartyRelayAddresses,
-    'peers': peers,
+    'peers': _peers,
     'flows': [...flows],
   };
 }

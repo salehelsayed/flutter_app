@@ -178,6 +178,15 @@ class NativeBoundaryTest(RepositoryFixture):
         self.assertEqual(set(json.loads(env.get('SIMS_PROTECTED_DEVICE_ASSIGNMENTS_JSON', '{}')).values()), set(ids.values()))
         self.assertEqual(env.get('SIMS_ANDROID_EMULATOR_SECOND_DEVICE_ID'), 'emu2')
 
+    def test_fourth_android_role_pins_the_third_emulator(self):
+        ids = dict(android_physical='usb', android_emulator='emu', android_emulator_second='emu2',
+                   android_emulator_third='emu3')
+        env = checks.sims_environment(dict(devices=ids), self.root / 'report')
+        self.assertEqual(env['SIMS_ANDROID_EMULATOR_THIRD_DEVICE_ID'], 'emu3')
+        self.assertEqual(json.loads(env['SIMS_PROTECTED_DEVICE_ASSIGNMENTS_JSON'])['android-emulator-third'], 'emu3')
+        self.assertEqual(checks.sims_environment(dict(devices=dict(android_physical='usb')),
+                                                 self.root / 'report')['SIMS_ANDROID_EMULATOR_THIRD_DEVICE_ID'], '')
+
     def test_reservations_are_explicit_validated_and_clear_ambient_values(self):
         config = dict(devices=dict(android_physical='usb', android_emulator='emulator-5554'),
                       reserved_device_ids=['emulator-5556'])

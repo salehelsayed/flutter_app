@@ -49,7 +49,7 @@ Future<void> runProductionCatalogJourney({
           key: {'text': value.text, 'senderPeerId': s.peers[value.role]},
       };
       await steps(s);
-      for (final role in ['alice', 'bob', 'charlie']) {
+      for (final role in s.actors.keys) {
         proof['${role}Final'] = await s.snap(role);
       }
       await s.persist();

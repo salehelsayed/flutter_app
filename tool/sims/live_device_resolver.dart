@@ -672,7 +672,8 @@ final class SimsLiveDeviceResolver {
           target.platform == SimsLiveDevicePlatform.android &&
               target.kind == SimsLiveDeviceKind.physical,
         _DeviceRole.androidEmulator ||
-        _DeviceRole.androidEmulatorSecond => target.isAndroidEmulator,
+        _DeviceRole.androidEmulatorSecond ||
+        _DeviceRole.androidEmulatorThird => target.isAndroidEmulator,
         _DeviceRole.iosPhysical =>
           target.platform == SimsLiveDevicePlatform.ios &&
               target.kind == SimsLiveDeviceKind.physical,
@@ -687,6 +688,7 @@ final class SimsLiveDeviceResolver {
         ? 0
         : switch (role) {
             _DeviceRole.androidEmulatorSecond => 1,
+            _DeviceRole.androidEmulatorThird => 2,
             _DeviceRole.iosSimulatorB => 1,
             _DeviceRole.iosSimulatorC => 2,
             _DeviceRole.iosSimulatorD => 3,
@@ -702,7 +704,8 @@ final class SimsLiveDeviceResolver {
         SimsDeviceDiscoverySource.adb,
       },
       _DeviceRole.androidEmulator ||
-      _DeviceRole.androidEmulatorSecond => const <SimsDeviceDiscoverySource>{
+      _DeviceRole.androidEmulatorSecond ||
+      _DeviceRole.androidEmulatorThird => const <SimsDeviceDiscoverySource>{
         SimsDeviceDiscoverySource.flutterDevices,
         SimsDeviceDiscoverySource.adb,
         SimsDeviceDiscoverySource.flutterEmulators,
@@ -730,6 +733,7 @@ enum _DeviceRole {
   androidPhysical,
   androidEmulator,
   androidEmulatorSecond,
+  androidEmulatorThird,
   iosPhysical,
   iosSimulatorA,
   iosSimulatorB,
@@ -740,7 +744,8 @@ enum _DeviceRole {
 SimsLiveDeviceClass _targetClass(_DeviceRole role) => switch (role) {
   _DeviceRole.androidPhysical => SimsLiveDeviceClass.androidPhysical,
   _DeviceRole.androidEmulator ||
-  _DeviceRole.androidEmulatorSecond => SimsLiveDeviceClass.androidEmulator,
+  _DeviceRole.androidEmulatorSecond ||
+  _DeviceRole.androidEmulatorThird => SimsLiveDeviceClass.androidEmulator,
   _DeviceRole.iosPhysical => SimsLiveDeviceClass.iosPhysical,
   _DeviceRole.iosSimulatorA ||
   _DeviceRole.iosSimulatorB ||
@@ -758,6 +763,7 @@ _DeviceRole? _roleForResource(String value) {
     'android-physical' => _DeviceRole.androidPhysical,
     'android-emulator' => _DeviceRole.androidEmulator,
     'android-emulator-second' => _DeviceRole.androidEmulatorSecond,
+    'android-emulator-third' => _DeviceRole.androidEmulatorThird,
     'ios-physical' => _DeviceRole.iosPhysical,
     'ios-simulator-a' => _DeviceRole.iosSimulatorA,
     'ios-simulator-b' => _DeviceRole.iosSimulatorB,
@@ -776,6 +782,7 @@ Map<String, String> _environmentFor(
   final androidPhysical = id(_DeviceRole.androidPhysical);
   final androidEmulator = id(_DeviceRole.androidEmulator);
   final androidEmulatorSecond = id(_DeviceRole.androidEmulatorSecond);
+  final androidEmulatorThird = id(_DeviceRole.androidEmulatorThird);
   final iosPhysical = id(_DeviceRole.iosPhysical);
   final iosSimulatorA = id(_DeviceRole.iosSimulatorA);
   final iosSimulatorB = id(_DeviceRole.iosSimulatorB);
@@ -792,6 +799,9 @@ Map<String, String> _environmentFor(
   }
   if (androidEmulatorSecond != null) {
     result['SIMS_ANDROID_EMULATOR_SECOND_DEVICE_ID'] = androidEmulatorSecond;
+  }
+  if (androidEmulatorThird != null) {
+    result['SIMS_ANDROID_EMULATOR_THIRD_DEVICE_ID'] = androidEmulatorThird;
   }
   if (androidEmulator != null && androidEmulatorSecond != null) {
     result['SIMS_ANDROID_EMULATOR_DEVICE_IDS'] =

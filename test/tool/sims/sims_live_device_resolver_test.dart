@@ -390,6 +390,54 @@ void main() {
     );
 
     test(
+      'four-party Android locks choose one physical and three emulators',
+      () async {
+        final inventory = await _inventory(
+          flutterDevices: <Map<String, Object?>>[
+            ..._flutterDevices,
+            for (final id in const ['emulator-5556', 'emulator-5558'])
+              <String, Object?>{
+                'name': 'Android Emulator $id',
+                'id': id,
+                'targetPlatform': 'android-x64',
+                'emulator': true,
+                'isSupported': true,
+              },
+          ],
+          adbDevices:
+              '$_adbDevices'
+              'emulator-5556 device product:sdk_phone '
+              'model:Second_Android_Emulator transport_id:5\n'
+              'emulator-5558 device product:sdk_phone '
+              'model:Third_Android_Emulator transport_id:6\n',
+        );
+        final resolution = SimsLiveDeviceResolver(inventory)
+            .resolveResourceNames(const <String>[
+              'device:android-physical',
+              'device:android-emulator',
+              'device:android-emulator-second',
+              'device:android-emulator-third',
+            ]);
+
+        expect(resolution.status, SimsDeviceResolutionStatus.resolved);
+        expect(
+          resolution.deviceIdFor('device:android-emulator-third'),
+          'emulator-5558',
+        );
+        expect(
+          resolution.environment['SIMS_ANDROID_EMULATOR_THIRD_DEVICE_ID'],
+          'emulator-5558',
+        );
+        // The pair list stays the original two emulators.
+        expect(
+          resolution.environment['SIMS_ANDROID_EMULATOR_DEVICE_IDS'],
+          'emulator-5554,emulator-5556',
+        );
+        expect(resolution.assignments.values.toSet(), hasLength(4));
+      },
+    );
+
+    test(
       'four iOS simulator locks receive distinct deterministic assignments',
       () async {
         final inventory = await _inventory(

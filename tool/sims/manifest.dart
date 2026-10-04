@@ -524,6 +524,20 @@ List<String> _targetResourceErrors(CapabilitySpec capability) {
       }
     }
   }
+  if (capability.targetCapabilities.contains('android.emulator.count3')) {
+    for (final lock in const <String>{
+      'device:android-emulator',
+      'device:android-emulator-second',
+      'device:android-emulator-third',
+    }) {
+      if (!resources.contains(lock)) {
+        errors.add(
+          '${capability.id} declares target android.emulator.count3 without '
+          '$lock',
+        );
+      }
+    }
+  }
   requireTargetLock('ios.physical', const <String>{'device:ios-physical'});
   if (capability.targetCapabilities.contains('ios.simulator')) {
     requireTargetLock('ios.simulator', const <String>{

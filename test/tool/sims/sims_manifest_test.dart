@@ -229,6 +229,32 @@ void main() {
       isTrue,
     );
 
+    final missingThirdEmulator = android.copyWith(
+      targetCapabilities: const <String>[
+        'android.physical',
+        'android.emulator.count3',
+      ],
+      resources: <ResourceLock>[
+        for (final name in [
+          'device:android-physical',
+          'device:android-emulator',
+          'device:android-emulator-second',
+        ])
+          ResourceLock(name: name, access: ResourceAccess.exclusive),
+      ],
+    );
+    expect(
+      manifest
+          .copyWith(capabilities: <CapabilitySpec>[missingThirdEmulator])
+          .validate()
+          .any(
+            (error) =>
+                error.contains('android.emulator.count3') &&
+                error.contains('device:android-emulator-third'),
+          ),
+      isTrue,
+    );
+
     final controlledPhysical = manifest.capabilityById(
       'android.connectivity_restore_media_outbox',
     )!;

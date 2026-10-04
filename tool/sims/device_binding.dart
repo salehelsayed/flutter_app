@@ -478,6 +478,7 @@ Map<String, String> _requiredTargetIdsFor(
       'android-physical' => 'SIMS_ANDROID_PHYSICAL_DEVICE_ID',
       'android-emulator' => 'SIMS_ANDROID_EMULATOR_DEVICE_ID',
       'android-emulator-second' => 'SIMS_ANDROID_EMULATOR_SECOND_DEVICE_ID',
+      'android-emulator-third' => 'SIMS_ANDROID_EMULATOR_THIRD_DEVICE_ID',
       _ => null,
     };
     if (environmentName == null) continue;
