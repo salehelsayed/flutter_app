@@ -91,6 +91,13 @@ void main() {
         'integration_test/support/production_android_journey.dart',
         'integration_test/support/production_journey_peer.dart',
         'integration_test/support/production_shared_xctest.dart',
+        // Shared catalog journey steps and the host adapters that feed the
+        // unchanged original oracles.
+        for (final dir in ['integration_test/support', 'tool/sims'])
+          for (final file in Directory(dir).listSync().whereType<File>())
+            if (file.uri.pathSegments.last.startsWith('production_') &&
+                file.path.endsWith('.dart'))
+              file.path,
       };
       for (final path in paths) {
         final file = File(path);
@@ -108,6 +115,14 @@ void main() {
           expect(
             uri,
             isNot(contains('group_multi_device_real_harness')),
+            reason: file.path,
+          );
+          // The original multi-party role scripts stay with the original
+          // route; replacements may read only its unchanged oracle
+          // (`group_multi_party_device_criteria.dart`).
+          expect(
+            uri,
+            isNot(contains('group_multi_party_device_real_harness')),
             reason: file.path,
           );
         }
