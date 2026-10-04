@@ -16,6 +16,15 @@ name: production_group_info_add_member
 - extendedWaitUntil:
     visible: Group Info
     timeout: 45000
-- back
+- runFlow:
+    when:
+      platform: Android
+    commands:
+      - back
+- runFlow:
+    when:
+      platform: iOS
+    commands:
+      - tapOn: '^Back$'
 - assertVisible:
     id: chat_composer

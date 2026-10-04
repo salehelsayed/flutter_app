@@ -1,0 +1,32 @@
+appId: ${APP_ID}
+name: production_group_info_set_role
+---
+# Group Info > the member's role menu > Make Admin / Remove Admin > confirm,
+# then back to the chat.
+- tapOn: Group information
+- assertVisible: Group Info
+- scrollUntilVisible:
+    element:
+      id: 'group-member-actions-${MEMBER_PEER_ID}'
+    direction: DOWN
+- tapOn:
+    id: 'group-member-actions-${MEMBER_PEER_ID}'
+- tapOn: '^${ROLE_ACTION}$'
+- assertVisible: '${CONFIRM_TITLE}'
+- tapOn: '^${ROLE_ACTION}$'
+- extendedWaitUntil:
+    notVisible: '${CONFIRM_TITLE}'
+    timeout: 45000
+- assertVisible: Group Info
+- runFlow:
+    when:
+      platform: Android
+    commands:
+      - back
+- runFlow:
+    when:
+      platform: iOS
+    commands:
+      - tapOn: '^Back$'
+- assertVisible:
+    id: chat_composer

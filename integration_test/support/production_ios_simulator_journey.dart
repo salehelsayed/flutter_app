@@ -23,6 +23,11 @@ const productionIosSimulatorScenarioRoles = <String, List<String>>{
     'bob',
     'charlie',
   ],
+  'production.group_catalog.private_admin_role_transfer_delivery': [
+    'alice',
+    'bob',
+    'charlie',
+  ],
 };
 
 /// The prepared `ios.simulator.app` bundle, bound to the executor's digests

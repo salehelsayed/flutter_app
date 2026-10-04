@@ -149,33 +149,38 @@ class GroupMemberRow extends StatelessWidget {
                     ),
                   ),
                 if (onToggleAdminRole != null)
-                  PopupMenuButton<_GroupMemberAction>(
-                    key: ValueKey('group-member-actions-${member.peerId}'),
-                    tooltip: l10n.group_member_manage_role,
-                    color: readableColors.surfaceRaised,
-                    onSelected: (action) {
-                      if (action == _GroupMemberAction.toggleAdminRole) {
-                        onToggleAdminRole?.call();
-                      }
-                    },
-                    itemBuilder: (context) => [
-                      PopupMenuItem<_GroupMemberAction>(
-                        key: ValueKey(
-                          'group-member-toggle-admin-${member.peerId}',
+                  // Per-member identifier for UI automation, as the remove
+                  // button has: every row's menu shares one tooltip.
+                  Semantics(
+                    identifier: 'group-member-actions-${member.peerId}',
+                    child: PopupMenuButton<_GroupMemberAction>(
+                      key: ValueKey('group-member-actions-${member.peerId}'),
+                      tooltip: l10n.group_member_manage_role,
+                      color: readableColors.surfaceRaised,
+                      onSelected: (action) {
+                        if (action == _GroupMemberAction.toggleAdminRole) {
+                          onToggleAdminRole?.call();
+                        }
+                      },
+                      itemBuilder: (context) => [
+                        PopupMenuItem<_GroupMemberAction>(
+                          key: ValueKey(
+                            'group-member-toggle-admin-${member.peerId}',
+                          ),
+                          value: _GroupMemberAction.toggleAdminRole,
+                          child: Text(
+                            member.role == MemberRole.admin
+                                ? l10n.group_info_remove_admin_action
+                                : l10n.group_info_make_admin_action,
+                            style: TextStyle(color: readableColors.textPrimary),
+                          ),
                         ),
-                        value: _GroupMemberAction.toggleAdminRole,
-                        child: Text(
-                          member.role == MemberRole.admin
-                              ? l10n.group_info_remove_admin_action
-                              : l10n.group_info_make_admin_action,
-                          style: TextStyle(color: readableColors.textPrimary),
-                        ),
+                      ],
+                      icon: Icon(
+                        Icons.admin_panel_settings_outlined,
+                        color: readableColors.iconMuted,
+                        size: 20,
                       ),
-                    ],
-                    icon: Icon(
-                      Icons.admin_panel_settings_outlined,
-                      color: readableColors.iconMuted,
-                      size: 20,
                     ),
                   ),
                 if (onRemove != null)

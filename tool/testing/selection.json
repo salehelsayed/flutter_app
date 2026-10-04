@@ -1925,6 +1925,7 @@
         "test/integration/production_group_invite_activation_test.dart",
         "test/integration/production_group_invite_controls_test.dart",
         "test/integration/production_group_invite_matrix_criteria_test.dart",
+        "test/integration/production_group_ml020_criteria_test.dart",
         "test/integration/production_group_nw006_criteria_test.dart",
         "test/integration/production_group_dana_add_criteria_test.dart",
         "test/integration/production_group_dana_add_criteria_test.dart",
@@ -4183,6 +4184,47 @@
       ],
       "host_preflight": "production-group-nw006"
     },
+    "production-group-ml020": {
+      "kind": "sims",
+      "capability": "production.group_catalog.private_admin_role_transfer_delivery",
+      "boundary": "On three iOS simulators: production UI group creation by Alice with Bob and Charlie and their acceptance; Alice makes Bob an admin and Bob removes Alice's admin role through Group Info role menus; Bob removes Charlie, Alice and Bob post in the removed window, Bob re-adds Charlie and all three post; Charlie never holds the removed-window posts and the final roles are writer, admin, writer, validated by the unchanged original ML-020 oracle",
+      "timeout_seconds": 2400,
+      "estimated_seconds": null,
+      "requirements": [
+        "dart",
+        "flutter",
+        "xcrun",
+        "maestro"
+      ],
+      "device_roles": [
+        "ios_simulator_a",
+        "ios_simulator_b",
+        "ios_simulator_c"
+      ],
+      "references": [
+        "tool/sims/critical_features.json"
+      ],
+      "investigate": [
+        "lib/debug/production_journeys"
+      ],
+      "limitations": "Role changes, removal and re-add are UI edits observed through read-only rosters; Charlie's removed-window plaintext count is read five seconds after the window and at the end. The iOS 26.2 platform label is the original's constant; the simulators run iOS 26.5 (user decision 2026-10-04).",
+      "ui_driver": "maestro",
+      "ui_driver_reason": "Maestro drives creation, acceptances, opening the group and sends on the simulators; offline is verified process death and an ordinary relaunch. Read-only observations feed the unchanged original oracle.",
+      "maestro_flows": [
+        "integration_test/maestro/production_catalog_group_create_verbatim.yaml",
+        "integration_test/maestro/production_catalog_invite_accept.yaml",
+        "integration_test/maestro/production_verbatim_send.yaml",
+        "integration_test/maestro/production_group_info_set_role.yaml",
+        "integration_test/maestro/production_catalog_remove_charlie.yaml",
+        "integration_test/maestro/production_catalog_remove_charlie_retry.yaml",
+        "integration_test/maestro/production_back_to_chat.yaml",
+        "integration_test/maestro/production_group_info_add_member.yaml",
+        "integration_test/maestro/production_group_info_add_member_retry.yaml",
+        "integration_test/maestro/production_home_tabs.yaml",
+        "integration_test/maestro/production_ios_allow_notifications.yaml"
+      ],
+      "host_preflight": "production-group-ml020"
+    },
     "production-group-invite-matrix": {
       "kind": "sims",
       "capability": "production.group_invite_status_matrix",
@@ -5781,6 +5823,7 @@
         "integration_test/scripts/run_production_group_gm003.dart",
         "integration_test/scripts/run_production_group_ml003.dart",
         "integration_test/scripts/run_production_group_nw006.dart",
+        "integration_test/scripts/run_production_group_ml020.dart",
         "integration_test/scripts/run_production_startup_resume_performance.dart",
         "test/integration/production_performance_*",
         "integration_test/scripts/run_production_group_create.dart",
@@ -5864,6 +5907,7 @@
         "production-group-gm003",
         "production-group-ml003",
         "production-group-nw006",
+        "production-group-ml020",
         "production-startup-resume-performance",
         "production-group-create",
         "production-group-reaction",
@@ -9606,6 +9650,15 @@
           "integration_test/maestro/production_group_info_self.yaml"
         ],
         "reason": "Additive production invite-status matrix display proof; the original seeded harness remains unchanged."
+      },
+      {
+        "owner": "full-sims-major",
+        "capability": "production.group_catalog.private_admin_role_transfer_delivery",
+        "patterns": [
+          "integration_test/scripts/run_production_group_ml020.dart",
+          "integration_test/maestro/production_group_info_set_role.yaml"
+        ],
+        "reason": "Additive production catalog private_admin_role_transfer_delivery on iOS simulators; the original multi-party harness and catalog selectors remain unchanged."
       },
       {
         "owner": "full-sims-major",

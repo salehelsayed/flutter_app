@@ -5,5 +5,14 @@ name: production_home_tabs
     when:
       notVisible: '(?s)^Intros.*$'
     commands:
-      - back
+      - runFlow:
+          when:
+            platform: Android
+          commands:
+            - back
+      - runFlow:
+          when:
+            platform: iOS
+          commands:
+            - tapOn: '^Back$'
 - assertVisible: '(?s)^Intros.*$'
