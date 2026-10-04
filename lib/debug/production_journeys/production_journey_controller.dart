@@ -67,7 +67,15 @@ const groupCatalogGm015Journey = 'production.group_catalog.gm015';
 const groupCatalogGe024Journey = 'production.group_catalog.ge024';
 const groupCatalogMediaReactionJourney =
     'production.group_catalog.private_media_reaction_roundtrip';
+const groupCatalogGm002Journey = 'production.group_catalog.gm002';
+const groupCatalogMl002Journey = 'production.group_catalog.private_online_add';
+const groupCatalogGm003Journey = 'production.group_catalog.gm003';
+const groupCatalogMl003Journey = 'production.group_catalog.private_offline_add';
 const productionGroupCatalogJourneys = {
+  groupCatalogGm002Journey,
+  groupCatalogMl002Journey,
+  groupCatalogGm003Journey,
+  groupCatalogMl003Journey,
   groupCatalogGe024Journey,
   groupCatalogMediaReactionJourney,
   groupCatalogGe010Journey,
@@ -126,7 +134,12 @@ const productionThreePeerJourneys = {
 };
 
 /// Catalog journeys whose topology adds a fourth Android peer, Dana.
-const productionFourPeerJourneys = <String>{};
+const productionFourPeerJourneys = {
+  groupCatalogGm002Journey,
+  groupCatalogMl002Journey,
+  groupCatalogGm003Journey,
+  groupCatalogMl003Journey,
+};
 const privateMediaJourney = 'production.private_media_local';
 const performanceJourney = 'production.startup_resume_performance';
 typedef ProductionJourneyAction =
@@ -234,6 +247,10 @@ final class ProductionJourneyController {
           groupCatalogGm015Journey,
           groupCatalogGe024Journey,
           groupCatalogMediaReactionJourney,
+          groupCatalogGm002Journey,
+          groupCatalogMl002Journey,
+          groupCatalogGm003Journey,
+          groupCatalogMl003Journey,
           performanceJourney,
         }.contains(invocation.scenarioId) ||
         !(productionFourPeerJourneys.contains(invocation.scenarioId)

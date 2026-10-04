@@ -177,7 +177,12 @@ final class _DriverNeverStarted implements Exception {
 /// services, never drives the UI itself, and never declares a scenario passed.
 /// Catalog scenarios with a fourth Android peer, Dana, on the pinned third
 /// emulator (`SIMS_ANDROID_EMULATOR_THIRD_DEVICE_ID`).
-const productionFourPeerScenarios = <String>{};
+const productionFourPeerScenarios = {
+  'production.group_catalog.gm002',
+  'production.group_catalog.private_online_add',
+  'production.group_catalog.gm003',
+  'production.group_catalog.private_offline_add',
+};
 
 final class ProductionAndroidJourney {
   ProductionAndroidJourney.fromEnvironment(

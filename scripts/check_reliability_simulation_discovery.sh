@@ -622,6 +622,22 @@ classify_path() {
       record "support" "$path" "support" "manifest-owned production catalog private_media_reaction_roundtrip journey; original route retained"
       return
       ;;
+    integration_test/scripts/run_production_group_gm002.dart)
+      record "support" "$path" "support" "manifest-owned production catalog gm002 journey; original route retained"
+      return
+      ;;
+    integration_test/scripts/run_production_group_ml002.dart)
+      record "support" "$path" "support" "manifest-owned production catalog private_online_add journey; original route retained"
+      return
+      ;;
+    integration_test/scripts/run_production_group_gm003.dart)
+      record "support" "$path" "support" "manifest-owned production catalog gm003 journey; original route retained"
+      return
+      ;;
+    integration_test/scripts/run_production_group_ml003.dart)
+      record "support" "$path" "support" "manifest-owned production catalog private_offline_add journey; original route retained"
+      return
+      ;;
     integration_test/scripts/run_production_group_reaction.dart)
       record "support" "$path" "support" "manifest-owned production group-reaction roundtrip journey; original route retained"
       return

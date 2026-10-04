@@ -7,8 +7,7 @@ import 'production_catalog_session.dart';
 /// through group info, and Alice re-adds Charlie through Add Member.
 extension ProductionCatalogMembershipSteps on ProductionCatalogSession {
   /// The run group name the catalog controls observe.
-  String catalogName(String scenario) =>
-      'Catalog $scenario ${journey.runId}';
+  String catalogName(String scenario) => 'Catalog $scenario ${journey.runId}';
 
   /// UI creation by Alice, then Bob's and Charlie's acceptance, until all
   /// three see the 3-member group; then the original's five-second settle.
@@ -83,7 +82,9 @@ extension ProductionCatalogMembershipSteps on ProductionCatalogSession {
       // A re-add that went through despite a slow or failed flow leaves
       // Charlie a pending invitation; a user would not invite him again.
       () async =>
-          ((await actors['charlie']!.command('catalog_pending_snapshot'))['pending']
+          ((await actors['charlie']!.command(
+                    'catalog_pending_snapshot',
+                  ))['pending']
                   as List)
               .isNotEmpty,
     );
@@ -104,6 +105,45 @@ extension ProductionCatalogMembershipSteps on ProductionCatalogSession {
     for (final role in online) {
       await settled(role, 3);
     }
+  }
+
+  /// Alice adds Dana through Add Member (flow label `add-dana`) and records
+  /// `aliceAddedDana`. Dana may be offline: the edit counts as applied once
+  /// Alice's own roster lists her.
+  Future<void> addDana() async {
+    await membershipEdit(
+      'alice',
+      'add-dana',
+      'production_group_info_add_member',
+      'production_group_info_add_member_retry',
+      {'CONTACT_NAME': 'Journeydana'},
+      () async => ProductionCatalogSession.members(
+        await snap('alice'),
+      ).contains(peers['dana']),
+    );
+    proof['aliceAddedDana'] = await snap('alice');
+  }
+
+  /// Dana observes her one pending invitation (`danaPending`) while she has
+  /// no group yet (`danaBeforeAccept`), accepts it (flow label
+  /// `accept-dana`) and every role in [online] settles on 4 members.
+  Future<void> acceptDana(
+    String name, {
+    List<String> online = const ['alice', 'bob', 'charlie', 'dana'],
+  }) async {
+    proof['danaPending'] = await wait(
+      'dana',
+      'catalog_pending_snapshot',
+      'dana pending invitation',
+      (s) => (s['pending'] as List).length == 1,
+    );
+    proof['danaBeforeAccept'] = await snap('dana');
+    await invitedAndAccept('dana', 'accept-dana', name);
+    for (final role in online) {
+      await settled(role, 4);
+    }
+    proof['danaAccepted'] = await snap('dana');
+    await persist();
   }
 
   /// [role] sends [text] verbatim (flow label [label]); every role in

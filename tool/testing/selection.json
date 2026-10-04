@@ -1925,6 +1925,10 @@
         "test/integration/production_group_invite_activation_test.dart",
         "test/integration/production_group_invite_controls_test.dart",
         "test/integration/production_group_invite_matrix_criteria_test.dart",
+        "test/integration/production_group_dana_add_criteria_test.dart",
+        "test/integration/production_group_dana_add_criteria_test.dart",
+        "test/integration/production_group_dana_add_criteria_test.dart",
+        "test/integration/production_group_dana_add_criteria_test.dart",
         "test/integration/production_group_media_reaction_criteria_test.dart",
         "test/integration/production_group_ge024_criteria_test.dart",
         "test/integration/production_group_gm015_criteria_test.dart",
@@ -3983,6 +3987,166 @@
       ],
       "host_preflight": "production-group-media-reaction"
     },
+    "production-group-gm002": {
+      "kind": "sims",
+      "capability": "production.group_catalog.gm002",
+      "boundary": "Production UI group creation by Alice with Bob and Charlie and their acceptance, then Alice adds online Dana through Add Member and Dana accepts; Alice and Dana exchange post-join messages with every member, validated by the unchanged original GM-002 oracle",
+      "timeout_seconds": 2400,
+      "estimated_seconds": null,
+      "requirements": [
+        "dart",
+        "flutter",
+        "adb",
+        "maestro"
+      ],
+      "device_roles": [
+        "android_physical",
+        "android_emulator",
+        "android_emulator_second",
+        "android_emulator_third"
+      ],
+      "references": [
+        "tool/sims/critical_features.json"
+      ],
+      "investigate": [
+        "lib/debug/production_journeys"
+      ],
+      "limitations": "Proof fields the original writes as constants are observed: live receipt from the topic message ids, offline order from verified process death and relaunch milestones, membership from read-only snapshots.",
+      "disposable_android_package": "com.mknoon.sims.connectivity",
+      "ui_driver": "maestro",
+      "ui_driver_reason": "Maestro drives creation, acceptances, removals, re-adds and sends; offline is verified process death and an ordinary relaunch. Read-only observations feed the unchanged original oracle.",
+      "maestro_flows": [
+        "integration_test/maestro/production_catalog_group_create.yaml",
+        "integration_test/maestro/production_catalog_group_create_verbatim.yaml",
+        "integration_test/maestro/production_catalog_invite_accept.yaml",
+        "integration_test/maestro/production_group_info_add_member.yaml",
+        "integration_test/maestro/production_group_info_add_member_retry.yaml",
+        "integration_test/maestro/production_verbatim_send.yaml",
+        "integration_test/maestro/production_direct_send.yaml",
+        "integration_test/maestro/production_reopen_seeded.yaml"
+      ],
+      "host_preflight": "production-group-gm002"
+    },
+    "production-group-ml002": {
+      "kind": "sims",
+      "capability": "production.group_catalog.private_online_add",
+      "boundary": "Production UI group creation by Alice with Bob and Charlie and their acceptance, then Alice adds online Dana through Add Member and Dana accepts; Alice and Bob post after the join and Dana receives both live on the topic with the current key, then sends to all, validated by the unchanged original ML-002 oracle",
+      "timeout_seconds": 2400,
+      "estimated_seconds": null,
+      "requirements": [
+        "dart",
+        "flutter",
+        "adb",
+        "maestro"
+      ],
+      "device_roles": [
+        "android_physical",
+        "android_emulator",
+        "android_emulator_second",
+        "android_emulator_third"
+      ],
+      "references": [
+        "tool/sims/critical_features.json"
+      ],
+      "investigate": [
+        "lib/debug/production_journeys"
+      ],
+      "limitations": "Proof fields the original writes as constants are observed: live receipt from the topic message ids, offline order from verified process death and relaunch milestones, membership from read-only snapshots.",
+      "disposable_android_package": "com.mknoon.sims.connectivity",
+      "ui_driver": "maestro",
+      "ui_driver_reason": "Maestro drives creation, acceptances, removals, re-adds and sends; offline is verified process death and an ordinary relaunch. Read-only observations feed the unchanged original oracle.",
+      "maestro_flows": [
+        "integration_test/maestro/production_catalog_group_create.yaml",
+        "integration_test/maestro/production_catalog_group_create_verbatim.yaml",
+        "integration_test/maestro/production_catalog_invite_accept.yaml",
+        "integration_test/maestro/production_group_info_add_member.yaml",
+        "integration_test/maestro/production_group_info_add_member_retry.yaml",
+        "integration_test/maestro/production_verbatim_send.yaml",
+        "integration_test/maestro/production_direct_send.yaml",
+        "integration_test/maestro/production_reopen_seeded.yaml"
+      ],
+      "host_preflight": "production-group-ml002"
+    },
+    "production-group-gm003": {
+      "kind": "sims",
+      "capability": "production.group_catalog.gm003",
+      "boundary": "Production UI group creation by Alice with Bob and Charlie and their acceptance, then Alice adds Dana through Add Member while Dana's app is dead (verified process death) and posts; Dana relaunches, accepts and catches up from the relay inbox without the pre-add message, then sends to all, validated by the unchanged original GM-003 oracle",
+      "timeout_seconds": 2400,
+      "estimated_seconds": null,
+      "requirements": [
+        "dart",
+        "flutter",
+        "adb",
+        "maestro"
+      ],
+      "device_roles": [
+        "android_physical",
+        "android_emulator",
+        "android_emulator_second",
+        "android_emulator_third"
+      ],
+      "references": [
+        "tool/sims/critical_features.json"
+      ],
+      "investigate": [
+        "lib/debug/production_journeys"
+      ],
+      "limitations": "Proof fields the original writes as constants are observed: live receipt from the topic message ids, offline order from verified process death and relaunch milestones, membership from read-only snapshots.",
+      "disposable_android_package": "com.mknoon.sims.connectivity",
+      "ui_driver": "maestro",
+      "ui_driver_reason": "Maestro drives creation, acceptances, removals, re-adds and sends; offline is verified process death and an ordinary relaunch. Read-only observations feed the unchanged original oracle.",
+      "maestro_flows": [
+        "integration_test/maestro/production_catalog_group_create.yaml",
+        "integration_test/maestro/production_catalog_group_create_verbatim.yaml",
+        "integration_test/maestro/production_catalog_invite_accept.yaml",
+        "integration_test/maestro/production_group_info_add_member.yaml",
+        "integration_test/maestro/production_group_info_add_member_retry.yaml",
+        "integration_test/maestro/production_verbatim_send.yaml",
+        "integration_test/maestro/production_direct_send.yaml",
+        "integration_test/maestro/production_reopen_seeded.yaml"
+      ],
+      "host_preflight": "production-group-gm003"
+    },
+    "production-group-ml003": {
+      "kind": "sims",
+      "capability": "production.group_catalog.private_offline_add",
+      "boundary": "Production UI group creation by Alice with Bob and Charlie and their acceptance, then Alice adds Dana through Add Member while Dana's app is dead and Alice and Bob post; Dana relaunches, stores and accepts the pending invite, replays both posts once from the relay inbox without the pre-add control, then receives a live post without restart, validated by the unchanged original ML-003 oracle",
+      "timeout_seconds": 2400,
+      "estimated_seconds": null,
+      "requirements": [
+        "dart",
+        "flutter",
+        "adb",
+        "maestro"
+      ],
+      "device_roles": [
+        "android_physical",
+        "android_emulator",
+        "android_emulator_second",
+        "android_emulator_third"
+      ],
+      "references": [
+        "tool/sims/critical_features.json"
+      ],
+      "investigate": [
+        "lib/debug/production_journeys"
+      ],
+      "limitations": "Proof fields the original writes as constants are observed: live receipt from the topic message ids, offline order from verified process death and relaunch milestones, membership from read-only snapshots.",
+      "disposable_android_package": "com.mknoon.sims.connectivity",
+      "ui_driver": "maestro",
+      "ui_driver_reason": "Maestro drives creation, acceptances, removals, re-adds and sends; offline is verified process death and an ordinary relaunch. Read-only observations feed the unchanged original oracle.",
+      "maestro_flows": [
+        "integration_test/maestro/production_catalog_group_create.yaml",
+        "integration_test/maestro/production_catalog_group_create_verbatim.yaml",
+        "integration_test/maestro/production_catalog_invite_accept.yaml",
+        "integration_test/maestro/production_group_info_add_member.yaml",
+        "integration_test/maestro/production_group_info_add_member_retry.yaml",
+        "integration_test/maestro/production_verbatim_send.yaml",
+        "integration_test/maestro/production_direct_send.yaml",
+        "integration_test/maestro/production_reopen_seeded.yaml"
+      ],
+      "host_preflight": "production-group-ml003"
+    },
     "production-group-invite-matrix": {
       "kind": "sims",
       "capability": "production.group_invite_status_matrix",
@@ -5576,6 +5740,10 @@
         "integration_test/scripts/run_production_group_gm015.dart",
         "integration_test/scripts/run_production_group_ge024.dart",
         "integration_test/scripts/run_production_group_media_reaction.dart",
+        "integration_test/scripts/run_production_group_gm002.dart",
+        "integration_test/scripts/run_production_group_ml002.dart",
+        "integration_test/scripts/run_production_group_gm003.dart",
+        "integration_test/scripts/run_production_group_ml003.dart",
         "integration_test/scripts/run_production_startup_resume_performance.dart",
         "test/integration/production_performance_*",
         "integration_test/scripts/run_production_group_create.dart",
@@ -5654,6 +5822,10 @@
         "production-group-gm015",
         "production-group-ge024",
         "production-group-media-reaction",
+        "production-group-gm002",
+        "production-group-ml002",
+        "production-group-gm003",
+        "production-group-ml003",
         "production-startup-resume-performance",
         "production-group-create",
         "production-group-reaction",
@@ -9396,6 +9568,38 @@
           "integration_test/maestro/production_group_info_self.yaml"
         ],
         "reason": "Additive production invite-status matrix display proof; the original seeded harness remains unchanged."
+      },
+      {
+        "owner": "full-sims-major",
+        "capability": "production.group_catalog.private_offline_add",
+        "patterns": [
+          "integration_test/scripts/run_production_group_ml003.dart"
+        ],
+        "reason": "Additive production catalog private_offline_add; the original multi-party harness and catalog selectors remain unchanged."
+      },
+      {
+        "owner": "full-sims-major",
+        "capability": "production.group_catalog.gm003",
+        "patterns": [
+          "integration_test/scripts/run_production_group_gm003.dart"
+        ],
+        "reason": "Additive production catalog gm003; the original multi-party harness and catalog selectors remain unchanged."
+      },
+      {
+        "owner": "full-sims-major",
+        "capability": "production.group_catalog.private_online_add",
+        "patterns": [
+          "integration_test/scripts/run_production_group_ml002.dart"
+        ],
+        "reason": "Additive production catalog private_online_add; the original multi-party harness and catalog selectors remain unchanged."
+      },
+      {
+        "owner": "full-sims-major",
+        "capability": "production.group_catalog.gm002",
+        "patterns": [
+          "integration_test/scripts/run_production_group_gm002.dart"
+        ],
+        "reason": "Additive production catalog gm002; the original multi-party harness and catalog selectors remain unchanged."
       },
       {
         "owner": "full-sims-major",
