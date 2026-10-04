@@ -23,6 +23,11 @@ const productionIosSimulatorScenarioRoles = <String, List<String>>{
     'bob',
     'charlie',
   ],
+  'production.group_catalog.private_background_resume_group_delivery': [
+    'alice',
+    'bob',
+    'charlie',
+  ],
   'production.group_catalog.private_partition_readd_heal': [
     'alice',
     'bob',

@@ -69,6 +69,7 @@ const productionCatalogWatchJourneys = {
   groupCatalogNw006Journey,
   groupCatalogMl020Journey,
   groupCatalogNw003Journey,
+  groupCatalogNw010Journey,
 };
 
 const _watchedFlowEvents = {
@@ -82,6 +83,13 @@ const _watchedFlowEvents = {
   'GROUP_SEND_MSG_USE_CASE_SUCCESS',
   'GROUP_SEND_MSG_USE_CASE_SUCCESS_NO_PEERS',
   ..._drainFlowEvents,
+};
+
+// NW-010 reads the order in which a relaunched member applied its catch-up:
+// each incoming message and the membership removal.
+const _applyOrderFlowEvents = {
+  'GROUP_HANDLE_INCOMING_MSG_SUCCESS',
+  'GROUP_MESSAGE_LISTENER_MEMBER_REMOVED',
 };
 
 // Membership-edit outcomes, so a refused UI removal or re-add records why.
@@ -127,10 +135,13 @@ void bindProductionGroupCatalogWatchControls({
   }
   final flowEvents = <Map<String, Object?>>[];
   var overflow = false;
+  final applyOrder =
+      controller.invocation.scenarioId == groupCatalogNw010Journey;
   final lease = installScopedE2EFlowEventSink((event) {
     final name = '${event['event']}';
     if (!_watchedFlowEvents.contains(name) &&
-        !_watchedFlowEventPrefixes.any(name.startsWith)) {
+        !_watchedFlowEventPrefixes.any(name.startsWith) &&
+        !(applyOrder && _applyOrderFlowEvents.contains(name))) {
       return;
     }
     // Long journeys keep the newest events; the overflow flag records that

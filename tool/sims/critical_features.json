@@ -6547,6 +6547,66 @@
       "automationReady": true,
       "active": true,
       "declaredBuildException": false
+    },
+    {
+      "id": "production.group_catalog.private_background_resume_group_delivery",
+      "owner": "reliability",
+      "proofBoundary": "production.group-catalog.private_background_resume_group_delivery",
+      "assertions": [
+        "NW-010-ordered-catch-up",
+        "NW-010-entitlement-filter",
+        "NW-010-live-after-foreground",
+        "OB-011-cause-coverage"
+      ],
+      "lane": "reliability",
+      "modes": [
+        "major",
+        "full"
+      ],
+      "families": [
+        "groups"
+      ],
+      "required": true,
+      "command": [
+        "dart",
+        "run",
+        "integration_test/scripts/run_production_group_nw010.dart"
+      ],
+      "buildProfile": "ios.simulator.app",
+      "dependencies": [
+        "build.ios.simulator.app"
+      ],
+      "resources": [
+        {
+          "name": "build:ios.simulator.app",
+          "access": "read"
+        },
+        {
+          "name": "device:ios-simulator-a",
+          "access": "exclusive"
+        },
+        {
+          "name": "device:ios-simulator-b",
+          "access": "exclusive"
+        },
+        {
+          "name": "device:ios-simulator-c",
+          "access": "exclusive"
+        },
+        {
+          "name": "artifact:production-group-nw010",
+          "access": "write"
+        }
+      ],
+      "targetCapabilities": [
+        "ios.simulator"
+      ],
+      "allowedNaReason": "target_unavailable_by_project_policy",
+      "artifactRequired": true,
+      "artifactValidator": "validateProductionGroupNw010",
+      "automationReady": true,
+      "active": true,
+      "declaredBuildException": false
     }
   ],
   "ownership": [
