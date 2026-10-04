@@ -372,4 +372,108 @@ void main() {
       );
     },
   );
+
+  group('removal signed before the remover rotated the key', () {
+    const otherId = 'peer-other';
+    bool rejected(Map<String, dynamic> f) =>
+        f['event'] == 'GROUP_MESSAGE_LISTENER_SIGNED_AUDIT_REJECTED';
+
+    setUp(() async {
+      await repo.saveMember(
+        GroupMember(
+          groupId: groupId,
+          peerId: otherId,
+          username: 'Other',
+          publicKey: 'pk-other',
+          role: MemberRole.writer,
+          joinedAt: joinedAt,
+        ),
+      );
+    });
+
+    // The remover's key update (generation 2) reached this member over the
+    // direct channel before the removal it followed.
+    Future<void> rotatedKeyArrives() => repo.saveKey(
+      GroupKeyInfo(
+        groupId: groupId,
+        keyGeneration: 2,
+        encryptedKey: 'rotated-group-key',
+        createdAt: eventAt,
+      ),
+    );
+
+    Future<Map<String, dynamic>> removal({
+      required String preState,
+      required int keyEpoch,
+    }) async => {
+      ...await envelope(
+        'member_removed',
+        target: otherId,
+        observedDevice: null,
+        observedTransport: null,
+        preState: preState,
+      ),
+      'keyEpoch': keyEpoch,
+    };
+
+    test('applies at the epoch it was encrypted under', () async {
+      final preState = await buildGroupTransitionStateHash(repo, groupId);
+      await rotatedKeyArrives();
+      await listener.handleReplayEnvelope(
+        await removal(preState: preState, keyEpoch: 1),
+      );
+      await Future<void>.delayed(Duration.zero);
+      expect(await repo.getMember(groupId, otherId), isNull);
+      expect(await repo.getMember(groupId, selfId), isNotNull);
+      expect(flows.where(rejected), isEmpty);
+      expect(
+        flows.any(
+          (f) =>
+              f['event'] ==
+              'GROUP_MESSAGE_LISTENER_SIGNED_AUDIT_AT_ENVELOPE_EPOCH',
+        ),
+        isTrue,
+      );
+    });
+
+    test('still rejects when the envelope carries the local epoch', () async {
+      final preState = await buildGroupTransitionStateHash(repo, groupId);
+      await rotatedKeyArrives();
+      await listener.handleReplayEnvelope(
+        await removal(preState: preState, keyEpoch: 2),
+      );
+      await Future<void>.delayed(Duration.zero);
+      expect(await repo.getMember(groupId, otherId), isNotNull);
+      expect(
+        flows.any(
+          (f) =>
+              rejected(f) &&
+              (f['details'] as Map?)?['reason'] ==
+                  'previous_transition_hash_mismatch',
+        ),
+        isTrue,
+      );
+    });
+
+    test('still rejects a diverged roster at the envelope epoch', () async {
+      final preState = await buildGroupTransitionStateHash(repo, groupId);
+      await repo.saveMember(
+        GroupMember(
+          groupId: groupId,
+          peerId: 'peer-late',
+          username: 'Late',
+          publicKey: 'pk-late',
+          role: MemberRole.writer,
+          joinedAt: eventAt,
+        ),
+      );
+      await rotatedKeyArrives();
+      await listener.handleReplayEnvelope(
+        await removal(preState: preState, keyEpoch: 1),
+      );
+      await Future<void>.delayed(Duration.zero);
+      expect(await repo.getMember(groupId, otherId), isNotNull);
+      expect(flows.any(rejected), isTrue);
+    });
+  });
 }

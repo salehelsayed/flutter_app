@@ -1,0 +1,16 @@
+appId: ${APP_ID}
+name: production_group_info_leave_blocked
+---
+- tapOn: Group information
+- assertVisible: Group Info
+- scrollUntilVisible:
+    element: '^Leave Group$'
+    direction: DOWN
+- tapOn: '^Leave Group$'
+- extendedWaitUntil:
+    visible: "You can.t leave this group because you.re the only admin\\."
+    timeout: 30000
+- assertVisible: Group Info
+- back
+- assertVisible:
+    id: chat_composer

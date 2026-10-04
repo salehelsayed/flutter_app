@@ -11,10 +11,11 @@ void main() {
     expect(debugGroupDeliveryObserver, isNull);
   });
 
-  test('only the two durable group delivery commands are observable', () {
+  test('only the durable delivery commands and the topic leave are observable', () {
     expect(debugObservedGroupDeliveryCommands, {
       'group:inboxStore',
       'group:sendReliable',
+      'group:leave',
     });
   });
 

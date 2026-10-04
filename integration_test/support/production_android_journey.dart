@@ -87,6 +87,35 @@ final class ProductionJourneyFlowRunner {
         !RegExp(r'^production_[a-z0-9_]+$').hasMatch(name)) {
       throw ArgumentError('invalid flow identity');
     }
+    // A Maestro Android driver that never starts ran no UI step: clear a
+    // leftover driver on this device and run the flow once more, in a fresh
+    // evidence directory.
+    for (var start = 1; ; start++) {
+      try {
+        return await _runOnce(device, name, label, values, packageName);
+      } on _DriverNeverStarted {
+        if (start >= 2) throw StateError('$label Maestro flow failed');
+        for (final package in ['dev.mobile.maestro', 'dev.mobile.maestro.test']) {
+          await runner.run('adb', [
+            '-s',
+            device,
+            'shell',
+            'am',
+            'force-stop',
+            package,
+          ]);
+        }
+      }
+    }
+  }
+
+  Future<String> _runOnce(
+    String device,
+    String name,
+    String label,
+    Map<String, String> values,
+    String packageName,
+  ) async {
     final attempt = await output.createTemp('flow-$label-');
     final destination = Directory('${attempt.path}/maestro');
     final result = await runner.run('python3', [
@@ -113,7 +142,16 @@ final class ProductionJourneyFlowRunner {
         'stderr': '${result.stderr}',
       }),
     );
-    if (result.exitCode != 0) throw StateError('$label Maestro flow failed');
+    if (result.exitCode != 0) {
+      final log = File('${destination.path}/process.log');
+      if (log.existsSync() &&
+          log.readAsStringSync().contains(
+            'Maestro Android driver did not start up in time',
+          )) {
+        throw const _DriverNeverStarted();
+      }
+      throw StateError('$label Maestro flow failed');
+    }
     final receipt = File('${destination.path}/result.json');
     final value = jsonDecode(await receipt.readAsString()) as Map;
     if (value['status'] != 'PASS' ||
@@ -125,6 +163,10 @@ final class ProductionJourneyFlowRunner {
     }
     return receipt.path;
   }
+}
+
+final class _DriverNeverStarted implements Exception {
+  const _DriverNeverStarted();
 }
 
 /// Host-owned installation, invocation and cleanup. Production main constructs
@@ -218,6 +260,11 @@ final class ProductionAndroidJourney {
       'production.group_catalog.ge011',
       'production.group_catalog.private_full_mesh_online',
       'production.group_catalog.de002',
+      'production.group_catalog.ge006',
+      'production.group_catalog.de007',
+      'production.group_catalog.private_voluntary_leave_convergence',
+      'production.group_catalog.gm015',
+      'production.group_catalog.private_online_dissolve_convergence',
     }.contains(scenario)) {
       final third = required('SIMS_ANDROID_EMULATOR_SECOND_DEVICE_ID');
       if (!RegExp(r'^emulator-[0-9]+$').hasMatch(third) || third == emulator) {

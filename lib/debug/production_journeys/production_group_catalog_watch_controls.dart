@@ -5,9 +5,13 @@ import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/bridge/debug_group_delivery_observer.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
+import 'package:flutter_app/features/groups/application/debug_group_exit_observer.dart';
 import 'package:flutter_app/features/groups/application/group_config_payload.dart';
 import 'package:flutter_app/features/groups/application/drain_group_offline_inbox_use_case.dart';
+import 'package:flutter_app/features/groups/application/group_exit_intent_sink.dart';
+import 'package:flutter_app/features/groups/application/group_pending_broadcast_sink.dart';
 import 'package:flutter_app/features/groups/application/group_message_listener.dart';
+import 'package:flutter_app/features/groups/application/group_sender_device_binding.dart';
 import 'package:flutter_app/features/groups/application/send_group_message_use_case.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_invite_delivery_attempt_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_message_repository.dart';
@@ -51,6 +55,11 @@ const productionCatalogWatchJourneys = {
   groupCatalogGe011Journey,
   groupCatalogFullMeshJourney,
   groupCatalogDe002Journey,
+  groupCatalogGe006Journey,
+  groupCatalogDe007Journey,
+  groupCatalogVoluntaryLeaveJourney,
+  groupCatalogGm015Journey,
+  groupCatalogDissolveJourney,
 };
 
 const _watchedFlowEvents = {
@@ -71,6 +80,9 @@ const _watchedFlowEventPrefixes = [
   'GROUP_REMOVE_MEMBER_USE_CASE_',
   'GROUP_ADD_MEMBER_USE_CASE_',
   'GROUP_RECOVERY_GATE_',
+  'GROUP_DISSOLVE_USE_CASE_',
+  'GROUP_ROTATE_KEY_',
+  'GROUP_INFO_FL_REMOVE_',
 ];
 
 // The drain diagnostics the original offline-removal proof summarizes.
@@ -109,9 +121,11 @@ void bindProductionGroupCatalogWatchControls({
         !_watchedFlowEventPrefixes.any(name.startsWith)) {
       return;
     }
+    // Long journeys keep the newest events; the overflow flag records that
+    // older ones were dropped.
     if (flowEvents.length >= 2048) {
       overflow = true;
-      return;
+      flowEvents.removeAt(0);
     }
     flowEvents.add(Map<String, Object?>.from(event));
   });
@@ -121,7 +135,15 @@ void bindProductionGroupCatalogWatchControls({
   // a recording bridge. Copies only ids, recipients and delivery counts; the
   // request payload (which carries signing keys) is never retained.
   final deliveries = <Map<String, Object?>>[];
+  // Native topic leaves per group id (H-01 bridge leave counts).
+  final topicLeaves = <String, int>{};
   debugGroupDeliveryObserver = (cmd, payload, response) {
+    if (cmd == 'group:leave') {
+      if (payload['groupId'] case final String groupId) {
+        topicLeaves[groupId] = (topicLeaves[groupId] ?? 0) + 1;
+      }
+      return;
+    }
     String? messageId;
     if (cmd == 'group:sendReliable') {
       messageId = payload['messageId'] as String?;
@@ -168,6 +190,23 @@ void bindProductionGroupCatalogWatchControls({
     }
   };
   controller.bindDisposer(() => debugGroupInboundObserver = null);
+
+  // Voluntary exit steps per group id, for originals that read the durable
+  // exit evidence of a leave (H-01, GM-015): step counts (requests by kind:
+  // request_leave, request_queue, request_retry), the rotation outcome and
+  // the leave request's status with the intent ids.
+  final exits = <String, Map<String, Object?>>{};
+  debugGroupExitObserver = (step, groupId, details) {
+    final record = exits.putIfAbsent(
+      groupId,
+      () => <String, Object?>{'counts': <String, int>{}},
+    );
+    final counts = record['counts']! as Map<String, int>;
+    counts[step] = (counts[step] ?? 0) + 1;
+    if (step == 'request_leave') record['request'] = Map.of(details);
+    if (step == 'rotation_result') record['rotationDeferred'] = details['deferred'];
+  };
+  controller.bindDisposer(() => debugGroupExitObserver = null);
 
   // The original removed-member proof: one send attempt per original key by
   // the removed role
@@ -320,6 +359,61 @@ void bindProductionGroupCatalogWatchControls({
     return {'completedDrainCount': 1};
   });
 
+  // The original I-01 binding check, read-only: the sender device binding a
+  // dissolve of the run group would sign, resolved as the app resolves it.
+  controller.bindAction('catalog_sender_binding', (_) async {
+    final identity = await identityRepository.loadIdentity();
+    final named = (await groupRepository.getAllGroups())
+        .where((g) => g.name == productionCatalogGroupName(controller))
+        .toList();
+    if (identity == null || named.length != 1) {
+      throw StateError('exact run group required for sender binding');
+    }
+    final self = p2pService.currentState.peerId;
+    final binding = await resolveGroupSenderDeviceBinding(
+      groupRepo: groupRepository,
+      groupId: named.single.id,
+      senderPeerId: identity.peerId,
+      preferredDeviceId: self,
+      preferredTransportPeerId: self,
+      senderPublicKey: identity.publicKey,
+    );
+    return {
+      'deviceIdPresent': binding.deviceId?.isNotEmpty ?? false,
+      'transportPeerIdPresent': binding.transportPeerId?.isNotEmpty ?? false,
+    };
+  });
+
+  // The durable exit state of one group by id, readable after the group is
+  // deleted: presence, its remaining rows, and whether its exit intent and
+  // pending leave broadcast are gone (terminal cleanup).
+  controller.bindAction('catalog_exit_snapshot', (args) async {
+    final groupId = args['groupId'];
+    if (groupId is! String || groupId.isEmpty) {
+      throw StateError('exit snapshot needs a group id');
+    }
+    final lookup = await loadGroupExitIntent(groupId);
+    final pending = await loadGroupPendingBroadcasts(groupId);
+    final messages = await messageRepository.getMessagesPage(
+      groupId,
+      limit: 500,
+    );
+    return {
+      'groupPresent': await groupRepository.getGroup(groupId) != null,
+      'latestKeyGeneration':
+          (await groupRepository.getLatestKey(groupId))?.keyGeneration,
+      'messageCount': messages.length,
+      'memberRemovedTimelineIds': [
+        for (final m in messages)
+          if (m.id.startsWith('sys-member_removed:')) m.id,
+      ],
+      'intentLookupAvailable': lookup.isAvailable,
+      'intentPresent': lookup.intent != null,
+      'intentState': lookup.intent?.state.databaseValue,
+      'pendingBroadcastIds': [for (final b in pending) b.id],
+    };
+  });
+
   controller.bindAction('catalog_watch_snapshot', (args) async {
     final identity = await identityRepository.loadIdentity();
     if (identity == null) throw StateError('production identity absent');
@@ -342,6 +436,11 @@ void bindProductionGroupCatalogWatchControls({
       'flowEvents': List.of(flowEvents),
       'flowEventOverflow': overflow,
       'deliveries': List.of(deliveries),
+      'topicLeaves': Map.of(topicLeaves),
+      'exits': {
+        for (final MapEntry(:key, :value) in exits.entries)
+          key: {...value, 'counts': Map.of(value['counts']! as Map)},
+      },
       'groupPresent': named.isNotEmpty,
     };
     if (named.isEmpty) return base;
@@ -367,6 +466,13 @@ void bindProductionGroupCatalogWatchControls({
       'lastMembershipEventAt': group.lastMembershipEventAt
           ?.toUtc()
           .toIso8601String(),
+      'messageCount': messages.length,
+      'createdBy': group.createdBy,
+      'isDissolved': group.isDissolved,
+      'dissolveTimelineTexts': [
+        for (final m in messages)
+          if (m.id.startsWith('sys-group_dissolved:')) m.text,
+      ],
       'memberRemovedTimelineIds': [
         for (final m in messages)
           if (m.id.startsWith('sys-member_removed:')) m.id,

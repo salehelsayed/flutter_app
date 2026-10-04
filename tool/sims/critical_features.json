@@ -5718,6 +5718,306 @@
       "automationReady": true,
       "active": true,
       "declaredBuildException": false
+    },
+    {
+      "id": "production.group_catalog.ge006",
+      "owner": "reliability",
+      "proofBoundary": "production.group-catalog.ge006",
+      "assertions": [
+        "GE-006-removed-window-excludes-charlie",
+        "GE-006-post-readd-durable-includes-charlie",
+        "GE-006-offline-catch-up"
+      ],
+      "lane": "reliability",
+      "modes": [
+        "major",
+        "full"
+      ],
+      "families": [
+        "groups"
+      ],
+      "required": true,
+      "command": [
+        "dart",
+        "run",
+        "integration_test/scripts/run_production_group_ge006.dart"
+      ],
+      "buildProfile": "android.e2e.main",
+      "dependencies": [
+        "build.android.e2e.main"
+      ],
+      "resources": [
+        {
+          "name": "build:android.e2e.main",
+          "access": "read"
+        },
+        {
+          "name": "device:android-physical",
+          "access": "exclusive"
+        },
+        {
+          "name": "device:android-emulator",
+          "access": "exclusive"
+        },
+        {
+          "name": "device:android-emulator-second",
+          "access": "exclusive"
+        },
+        {
+          "name": "artifact:production-group-ge006",
+          "access": "write"
+        }
+      ],
+      "targetCapabilities": [
+        "android.physical",
+        "android.emulator.count2"
+      ],
+      "allowedNaReason": "target_unavailable_by_project_policy",
+      "artifactRequired": true,
+      "artifactValidator": "validateProductionGroupGe006",
+      "automationReady": true,
+      "active": true,
+      "declaredBuildException": false
+    },
+    {
+      "id": "production.group_catalog.de007",
+      "owner": "reliability",
+      "proofBoundary": "production.group-catalog.de007",
+      "assertions": [
+        "DE-007-zero-peer-success-no-peers",
+        "DE-007-custody-covers-pending-invitees",
+        "DE-007-offline-replay-once"
+      ],
+      "lane": "reliability",
+      "modes": [
+        "major",
+        "full"
+      ],
+      "families": [
+        "groups"
+      ],
+      "required": true,
+      "command": [
+        "dart",
+        "run",
+        "integration_test/scripts/run_production_group_de007.dart"
+      ],
+      "buildProfile": "android.e2e.main",
+      "dependencies": [
+        "build.android.e2e.main"
+      ],
+      "resources": [
+        {
+          "name": "build:android.e2e.main",
+          "access": "read"
+        },
+        {
+          "name": "device:android-physical",
+          "access": "exclusive"
+        },
+        {
+          "name": "device:android-emulator",
+          "access": "exclusive"
+        },
+        {
+          "name": "device:android-emulator-second",
+          "access": "exclusive"
+        },
+        {
+          "name": "artifact:production-group-de007",
+          "access": "write"
+        }
+      ],
+      "targetCapabilities": [
+        "android.physical",
+        "android.emulator.count2"
+      ],
+      "allowedNaReason": "target_unavailable_by_project_policy",
+      "artifactRequired": true,
+      "artifactValidator": "validateProductionGroupDe007",
+      "automationReady": true,
+      "active": true,
+      "declaredBuildException": false
+    },
+    {
+      "id": "production.group_catalog.private_voluntary_leave_convergence",
+      "owner": "reliability",
+      "proofBoundary": "production.group-catalog.private_voluntary_leave_convergence",
+      "assertions": [
+        "H-01-durable-exit-once",
+        "H-01-leaver-hard-delete",
+        "H-01-remaining-rekey-and-leave-row"
+      ],
+      "lane": "reliability",
+      "modes": [
+        "major",
+        "full"
+      ],
+      "families": [
+        "groups"
+      ],
+      "required": true,
+      "command": [
+        "dart",
+        "run",
+        "integration_test/scripts/run_production_group_voluntary_leave.dart"
+      ],
+      "buildProfile": "android.e2e.main",
+      "dependencies": [
+        "build.android.e2e.main"
+      ],
+      "resources": [
+        {
+          "name": "build:android.e2e.main",
+          "access": "read"
+        },
+        {
+          "name": "device:android-physical",
+          "access": "exclusive"
+        },
+        {
+          "name": "device:android-emulator",
+          "access": "exclusive"
+        },
+        {
+          "name": "device:android-emulator-second",
+          "access": "exclusive"
+        },
+        {
+          "name": "artifact:production-group-voluntary-leave",
+          "access": "write"
+        }
+      ],
+      "targetCapabilities": [
+        "android.physical",
+        "android.emulator.count2"
+      ],
+      "allowedNaReason": "target_unavailable_by_project_policy",
+      "artifactRequired": true,
+      "artifactValidator": "validateProductionGroupVoluntaryLeave",
+      "automationReady": true,
+      "active": true,
+      "declaredBuildException": false
+    },
+    {
+      "id": "production.group_catalog.gm015",
+      "owner": "reliability",
+      "proofBoundary": "production.group-catalog.gm015",
+      "assertions": [
+        "GM-015-last-admin-leave-blocked",
+        "GM-015-no-exit-side-effects",
+        "GM-015-members-still-deliver"
+      ],
+      "lane": "reliability",
+      "modes": [
+        "major",
+        "full"
+      ],
+      "families": [
+        "groups"
+      ],
+      "required": true,
+      "command": [
+        "dart",
+        "run",
+        "integration_test/scripts/run_production_group_gm015.dart"
+      ],
+      "buildProfile": "android.e2e.main",
+      "dependencies": [
+        "build.android.e2e.main"
+      ],
+      "resources": [
+        {
+          "name": "build:android.e2e.main",
+          "access": "read"
+        },
+        {
+          "name": "device:android-physical",
+          "access": "exclusive"
+        },
+        {
+          "name": "device:android-emulator",
+          "access": "exclusive"
+        },
+        {
+          "name": "device:android-emulator-second",
+          "access": "exclusive"
+        },
+        {
+          "name": "artifact:production-group-gm015",
+          "access": "write"
+        }
+      ],
+      "targetCapabilities": [
+        "android.physical",
+        "android.emulator.count2"
+      ],
+      "allowedNaReason": "target_unavailable_by_project_policy",
+      "artifactRequired": true,
+      "artifactValidator": "validateProductionGroupGm015",
+      "automationReady": true,
+      "active": true,
+      "declaredBuildException": false
+    },
+    {
+      "id": "production.group_catalog.private_online_dissolve_convergence",
+      "owner": "reliability",
+      "proofBoundary": "production.group-catalog.private_online_dissolve_convergence",
+      "assertions": [
+        "I-01-dissolve-success-signed",
+        "I-01-dissolved-everywhere",
+        "I-01-dissolve-row"
+      ],
+      "lane": "reliability",
+      "modes": [
+        "major",
+        "full"
+      ],
+      "families": [
+        "groups"
+      ],
+      "required": true,
+      "command": [
+        "dart",
+        "run",
+        "integration_test/scripts/run_production_group_dissolve.dart"
+      ],
+      "buildProfile": "android.e2e.main",
+      "dependencies": [
+        "build.android.e2e.main"
+      ],
+      "resources": [
+        {
+          "name": "build:android.e2e.main",
+          "access": "read"
+        },
+        {
+          "name": "device:android-physical",
+          "access": "exclusive"
+        },
+        {
+          "name": "device:android-emulator",
+          "access": "exclusive"
+        },
+        {
+          "name": "device:android-emulator-second",
+          "access": "exclusive"
+        },
+        {
+          "name": "artifact:production-group-dissolve",
+          "access": "write"
+        }
+      ],
+      "targetCapabilities": [
+        "android.physical",
+        "android.emulator.count2"
+      ],
+      "allowedNaReason": "target_unavailable_by_project_policy",
+      "artifactRequired": true,
+      "artifactValidator": "validateProductionGroupDissolve",
+      "automationReady": true,
+      "active": true,
+      "declaredBuildException": false
     }
   ],
   "ownership": [

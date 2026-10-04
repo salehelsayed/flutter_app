@@ -1,3 +1,4 @@
+import 'package:flutter_app/features/groups/application/debug_group_exit_observer.dart';
 import 'package:flutter_app/features/groups/application/group_exit_intent_coordinator.dart';
 import 'package:flutter_app/features/groups/application/group_exit_intent_runner.dart';
 import 'package:flutter_app/features/groups/application/group_exit_policy.dart';
@@ -183,17 +184,18 @@ class DiagnosingGroupExitActionAdapter {
   }
 
   Future<GroupExitIntentRequestResult> requestLeave(String groupId) =>
-      _runRequest(groupId, requestLeaveInner);
+      _runRequest(groupId, 'leave', requestLeaveInner);
 
   Future<GroupExitIntentRequestResult> queueLeaveWhenSyncCompletes(
     String groupId,
-  ) => _runRequest(groupId, queueLeaveInner);
+  ) => _runRequest(groupId, 'queue', queueLeaveInner);
 
   Future<GroupExitIntentRequestResult> retry(String groupId) =>
-      _runRequest(groupId, retryInner);
+      _runRequest(groupId, 'retry', retryInner);
 
   Future<GroupExitIntentRequestResult> _runRequest(
     String groupId,
+    String kind,
     Future<GroupExitIntentRequestResult> Function(String groupId) action,
   ) async {
     final GroupExitIntentRequestResult result;
@@ -210,6 +212,12 @@ class DiagnosingGroupExitActionAdapter {
       Error.throwWithStackTrace(error, stackTrace);
     }
 
+    notifyGroupExitDebugObserver('request_$kind', groupId, {
+      'status': result.status.name,
+      'intentId': result.intent?.intentId,
+      'sourceEventId': result.intent?.sourceEventId,
+      'pendingBroadcastId': result.intent?.pendingBroadcastId,
+    });
     if (result.intent == null) {
       final ownedFacts = result.diagnosticFacts.where(
         (fact) =>

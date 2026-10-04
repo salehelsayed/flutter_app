@@ -177,6 +177,23 @@ final class _GroupMessageSystemTransitionProcessor {
         null;
   }
 
+  /// The transition state hash of [groupId], or with [keyGeneration] in
+  /// place of the local latest key generation.
+  Future<String> _transitionStateHashAt(
+    String groupId, {
+    int? keyGeneration,
+  }) async {
+    if (keyGeneration == null) {
+      return buildGroupTransitionStateHash(_groupRepo, groupId);
+    }
+    return buildGroupTransitionStateHashFromSnapshot(
+      groupId: groupId,
+      group: await _groupRepo.getGroup(groupId),
+      members: await _groupRepo.getMembers(groupId),
+      latestKeyGeneration: keyGeneration,
+    );
+  }
+
   Future<void> _handleSystemMessage(
     String groupId,
     String text,
@@ -186,6 +203,7 @@ final class _GroupMessageSystemTransitionProcessor {
     String? senderDeviceId,
     String? transportPeerId,
     String? sourceEventId,
+    int? envelopeKeyEpoch,
     required GroupMessageRepository msgRepo,
     bool rethrowOnError = false,
     bool authorityPhaseHeld = false,
@@ -328,6 +346,7 @@ final class _GroupMessageSystemTransitionProcessor {
       }
       SignedGroupTransitionAuditVerification? signedTransitionAudit;
       String? verifiedOrdinaryPreTransitionStateHash;
+      int? verifiedPreTransitionKeyGeneration;
       if (_shouldRequireSignedTransitionAudit(sysType, parsed)) {
         final signedAuditHash = signedGroupTransitionAuditHashFromPayload(
           parsed,
@@ -441,21 +460,67 @@ final class _GroupMessageSystemTransitionProcessor {
             ? null
             : await buildGroupTransitionStateHash(_groupRepo, groupId);
         verifiedOrdinaryPreTransitionStateHash = preTransitionStateHash;
-        final auditCheck = await verifyGroupTransitionAudit(
-          bridge: _bridge!,
-          containerPayload: parsed,
-          groupId: groupId,
-          transitionType: sysType ?? '',
-          sourceEventId: transitionSourceEventId,
-          eventAt: eventAt ?? envelopeEventAt ?? DateTime.now().toUtc(),
-          actorPeerId: senderId,
-          actorUsername: senderUsername,
-          actorSigningPublicKey: actorPublicKey ?? '',
-          actorDeviceId: expectedAuditActorBinding.deviceId,
-          actorTransportPeerId: expectedAuditActorBinding.transportPeerId,
-          expectedPreTransitionStateHash: preTransitionStateHash,
-          expectedTransitionSubject: buildGroupSystemTransitionSubject(parsed),
-        );
+        Future<SignedGroupTransitionAuditCheck> verifyAudit(String? preStateHash) =>
+            verifyGroupTransitionAudit(
+              bridge: _bridge!,
+              containerPayload: parsed,
+              groupId: groupId,
+              transitionType: sysType ?? '',
+              sourceEventId: transitionSourceEventId,
+              eventAt: eventAt ?? envelopeEventAt ?? DateTime.now().toUtc(),
+              actorPeerId: senderId,
+              actorUsername: senderUsername,
+              actorSigningPublicKey: actorPublicKey ?? '',
+              actorDeviceId: expectedAuditActorBinding.deviceId,
+              actorTransportPeerId: expectedAuditActorBinding.transportPeerId,
+              expectedPreTransitionStateHash: preStateHash,
+              expectedTransitionSubject: buildGroupSystemTransitionSubject(
+                parsed,
+              ),
+            );
+        var auditCheck = await verifyAudit(preTransitionStateHash);
+        // A remover signs the removal, then rotates the key and sends the new
+        // key to each remaining member directly. A member who misses the live
+        // removal can store that key before the removal arrives from the
+        // inbox; its local state then differs from the signed pre-state only
+        // by the newer key generation, and it would reject the removal (and
+        // every later transition) forever. Judge such a removal at the key
+        // epoch it was encrypted under; the roster and group fields stay
+        // strictly checked.
+        if (!auditCheck.isValid &&
+            sysType == 'member_removed' &&
+            preTransitionStateHash != null &&
+            auditCheck.failure?.reason == 'previous_transition_hash_mismatch' &&
+            envelopeKeyEpoch != null) {
+          final localKeyGeneration = (await _groupRepo.getLatestKey(
+            groupId,
+          ))?.keyGeneration;
+          if (localKeyGeneration != null &&
+              envelopeKeyEpoch < localKeyGeneration) {
+            final atEnvelopeEpoch = await _transitionStateHashAt(
+              groupId,
+              keyGeneration: envelopeKeyEpoch,
+            );
+            final retried = await verifyAudit(atEnvelopeEpoch);
+            if (retried.isValid) {
+              auditCheck = retried;
+              verifiedOrdinaryPreTransitionStateHash = atEnvelopeEpoch;
+              verifiedPreTransitionKeyGeneration = envelopeKeyEpoch;
+              emitFlowEvent(
+                layer: 'FL',
+                event: 'GROUP_MESSAGE_LISTENER_SIGNED_AUDIT_AT_ENVELOPE_EPOCH',
+                details: {
+                  'groupId': groupId.length > 8
+                      ? groupId.substring(0, 8)
+                      : groupId,
+                  'type': sysType,
+                  'envelopeKeyEpoch': envelopeKeyEpoch,
+                  'localKeyGeneration': localKeyGeneration,
+                },
+              );
+            }
+          }
+        }
         if (!auditCheck.isValid) {
           _emitSignedTransitionAuditRejected(
             groupId,
@@ -572,9 +637,9 @@ final class _GroupMessageSystemTransitionProcessor {
         }
         final expectedStateHash = verifiedOrdinaryPreTransitionStateHash;
         if (signedTransitionAudit != null && expectedStateHash != null) {
-          final currentStateHash = await buildGroupTransitionStateHash(
-            _groupRepo,
+          final currentStateHash = await _transitionStateHashAt(
             groupId,
+            keyGeneration: verifiedPreTransitionKeyGeneration,
           );
           if (currentStateHash != expectedStateHash) {
             _emitSignedTransitionAuditRejected(

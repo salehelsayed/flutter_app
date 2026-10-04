@@ -1273,6 +1273,11 @@ void main() {
           (auditPayload['actor'] as Map)['signingPublicKey'],
           contactSelf.publicKey,
         );
+        // Receivers rebuild the signed eventAt from the envelope time.
+        expect(
+          DateTime.parse(payload['timestamp'] as String),
+          DateTime.parse(auditPayload['eventAt'] as String),
+        );
 
         final signIndex = bridge.commandLog.indexOf('payload.sign');
         final publishIndex = bridge.commandLog.indexOf('group:publish');

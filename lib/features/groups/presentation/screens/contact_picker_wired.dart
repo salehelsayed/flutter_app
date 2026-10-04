@@ -798,6 +798,9 @@ class _ContactPickerWiredState extends State<ContactPickerWired> {
                   senderDevicePublicKey: senderBinding.devicePublicKey,
                   senderKeyPackageId: senderBinding.keyPackageId,
                   messageId: sourceEventId,
+                  // Receivers rebuild the signed eventAt from the envelope
+                  // time; without it Go stamps its own publish time.
+                  timestamp: publishedAt,
                 );
               } catch (_) {
                 membersAddedPublishFailed = true;

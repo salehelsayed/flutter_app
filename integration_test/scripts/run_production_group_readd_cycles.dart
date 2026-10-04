@@ -18,11 +18,24 @@ Future<void> main(List<String> arguments) => runProductionCatalogJourney(
       (x) => ProductionCatalogSession.rows(x, key) == 1,
     );
     await s.createAndAcceptAll(name);
+    // Alice's key epoch and her new rotation/removal events after each
+    // removal, so a removal that did not rotate names its cause.
+    final seenRotationEvents = <String>{};
     for (var c = 1; c <= productionMl008Cycles; c++) {
       await s.removeCharlie();
       s.proof['charlieSelfRemoved:$c'] =
           (s.proof['charlieRemoved'] as Map)['selfMember'] == false;
       await s.rotatedForRemainingPair();
+      final alice = await s.snap('alice');
+      s.proof['rotation:$c'] = {
+        'keyEpoch': alice['keyEpoch'],
+        'events': [
+          for (final e in (alice['flowEvents'] as List? ?? const []).cast<Map>())
+            if ('${e['event']}'.startsWith('GROUP_ROTATE_KEY_') ||
+                '${e['event']}'.startsWith('GROUP_INFO_FL_REMOVE_'))
+              if (seenRotationEvents.add('${e['ts']}${e['event']}')) e,
+        ],
+      };
       await s.flow('alice', 'production_back_to_chat', 'alice-back-to-chat');
       final removed = productionMl008RemovedKey(c);
       await s.verbatimSend('alice', 'alice-removed-$c', t[removed]!.text);

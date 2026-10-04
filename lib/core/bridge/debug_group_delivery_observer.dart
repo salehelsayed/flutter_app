@@ -1,10 +1,12 @@
 import 'package:flutter/foundation.dart';
 
-/// Group delivery bridge commands whose request and response a production
-/// journey may observe: the relay inbox copy and the reliable send.
+/// Group bridge commands whose request and response a production journey may
+/// observe: the relay inbox copy, the reliable send and the native topic
+/// leave (counted per group for the durable exit evidence of H-01).
 const debugObservedGroupDeliveryCommands = {
   'group:inboxStore',
   'group:sendReliable',
+  'group:leave',
 };
 
 /// Receives one completed group delivery bridge exchange.

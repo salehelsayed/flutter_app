@@ -2282,3 +2282,77 @@ members; receive-side suppression still keeps them from dead-end
 notifications (Android drops on missing local group state, iOS sanitizes).
 The INV-106 tests were turned into tests of the new contract. GE-009, GE-006
 and DE-007 are unblocked.
+
+**Groups: a member forks from the signed transition chain when the rotated
+key arrives before the removal (fixed, user decision 2026-10-03).** ML-008
+(`private_readd_cycles`) failed at cycle 14: Bob never applied Alice's removal
+of Charlie and logged `GROUP_MESSAGE_LISTENER_SIGNED_AUDIT_REJECTED
+member_removed previous_transition_hash_mismatch` on every inbox drain. Alice
+signs a removal over the pre-state hash (roster, group fields and the latest
+key generation, `signed_group_transition_audit.dart:451-485`), then rotates
+the key and sends it to each remaining member directly. Bob missed the live
+removal; the direct key update (generation 6) was stored at 17:58:33, the
+removal (signed at generation 5) replayed from the inbox at 17:58:35, and his
+state hash could never match again: no repair path, and every later
+transition builds on the state he refused. Fix: a `member_removed` audit that
+fails only the pre-state check, carried in an envelope encrypted at a key
+epoch older than the local latest key, is judged at that epoch; roster, group
+fields and signature stay strict, and the pre-commit re-check uses the same
+epoch (`group_message_listener_system_transition_processor.dart`, tests in
+`group_terminal_transition_binding_test.dart`).
+
+Also found: every live `members_added` publish from Add Member failed its
+audit (`payload_mismatch`) because the publish carried no timestamp and Go
+stamped its own; the direct copy applied the add, so nothing broke. The live
+publish now carries the signed `publishedAt` (`contact_picker_wired.dart`).
+
+Open: why Bob dropped the live removal, and why the key epoch rose only from 1
+to 6 over 14 removals (most removals did not rotate); Alice's log for that
+window had rotated away.
+
+## 2026-10-03 Wave 3 catalog batches 8 and 9: de007, ge006, voluntary leave, gm015, dissolve
+
+Shared support: a debug-build-only group exit observer
+(`lib/features/groups/application/debug_group_exit_observer.dart`, fed by the
+durable runner and the request adapter: request status by kind, notice
+prepare/attempt, rotation attempt/outcome, native leave), native topic leaves
+per group through the debug bridge observer (`group:leave`), the
+`catalog_exit_snapshot` and `catalog_sender_binding` read-only controls, two UI
+flows (`production_group_info_leave_blocked`, `production_group_info_dissolve`),
+and a single retry of a flow whose Maestro Android driver never started (no UI
+step ran). The catalog watch now keeps its newest 2048 flow events.
+
+| Scenario | Run | Probe | Result |
+|---|---|---|---|
+| de007 (DE-007) | PASS | Bob and Charlie join before the send | FAIL: exact ordered UI flows (the order is the property) |
+| private_voluntary_leave_convergence (H-01) | PASS | Charlie never leaves | FAIL: "Charlie deleted the group" |
+| gm015 (GM-015) | PASS | Alice never attempts to leave | FAIL: exact ordered UI flows |
+| private_online_dissolve_convergence (I-01) | FAIL: only `actorBindingSigned` | Alice never dissolves | FAIL: "alice sees the group dissolved" |
+| ge006 (GE-006) | FAIL: re-add invitation lost (below) | pending | pending |
+| private_readd_cycles (ML-008) | FAIL: only `finalEpoch >= 20` (below) | pending | pending |
+
+The DE-002 probe was strengthened (labels in order, texts reversed) and now
+fails at the original oracle (`preservedSendOrder`, strictly increasing
+timestamps).
+
+I-01: every check passes except `actorBindingSigned`, which needs per-member
+device rows; production members carry none (as GM-024), so the dissolve audit
+is a plain-account audit, which receivers accept since the R2-1 fix. Pending a
+decision (not portable, as GM-024).
+
+GE-006 finding (pending a decision): a member offline through both his removal
+and his re-add loses the re-add invitation. On relaunch his 1:1 inbox (the
+invitation, relay-stored 19:38:38) is read before his group inbox applies the
+removal, so `handle_incoming_group_invite_use_case.dart:620-640` (and
+`:875-890`) drops it as `duplicateGroup` while he still lists himself as a
+member, and the inbox entry is acknowledged. He then applies the removal and
+has no invitation.
+
+ML-008 finding (pending a decision): a removal within the key grace window of
+the previous rotation does not rotate. Go refuses `generateNextKey` while the
+previous key's grace (10 minutes, `go-mknoon/node/config.go:57`) is active
+(`GROUP_KEY_GRACE_ACTIVE`, `go-mknoon/bridge/bridge.go:3049-3053`); Group Info
+logs `GROUP_INFO_FL_REMOVE_REKEY_DEFERRED` and nothing retries, so the removed
+member keeps the key in use. Device run 2026-10-04: 6 of 20 removals rotated,
+14 deferred, all `GROUP_KEY_GRACE_ACTIVE`. All 20 cycles converged (the
+transition-chain fix holds).

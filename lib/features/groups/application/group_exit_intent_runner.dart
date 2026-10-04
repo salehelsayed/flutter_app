@@ -4,6 +4,7 @@ import 'dart:async';
 
 import 'package:flutter_app/core/bridge/bridge_group_helpers.dart';
 import 'package:flutter_app/features/groups/application/broadcast_voluntary_leave_use_case.dart';
+import 'package:flutter_app/features/groups/application/debug_group_exit_observer.dart';
 import 'package:flutter_app/features/groups/application/group_exit_release_diagnostics.dart';
 import 'package:flutter_app/features/groups/domain/models/group_exit_diagnostic.dart';
 import 'package:flutter_app/features/groups/application/group_membership_event_watermark.dart';
@@ -657,6 +658,7 @@ class GroupExitIntentRunner
       tracker.setFallback(
         const GroupExitProcessDiagnosticFact.noticePrepareFailed(),
       );
+      notifyGroupExitDebugObserver('notice_prepare', intent.groupId, const {});
       prepared = await prepareNotice(
         intent: intent,
         sourceEventId: sourceEventId,
@@ -799,6 +801,7 @@ class GroupExitIntentRunner
       tracker.setFallback(
         const GroupExitProcessDiagnosticFact.noticePrepareFailed(),
       );
+      notifyGroupExitDebugObserver('notice_attempt', intent.groupId, const {});
       attempt = await attemptNotice(intent: intent, pendingBroadcast: notice);
     } on GroupExitTypedProcessFailure catch (error) {
       tracker.add(error.fact);
@@ -888,11 +891,17 @@ class GroupExitIntentRunner
     var outcome = GroupExitPersistedOutcome.fromPersistedCode(
       claimed.current!.lastErrorCode,
     );
+    notifyGroupExitDebugObserver('rotation_attempt', intent.groupId, const {});
+    var rotationDeferred = false;
     try {
       await rotateKeys(claimed.current!);
     } catch (_) {
+      rotationDeferred = true;
       outcome = _withRotationDeferred(outcome, afterRestart: false);
     }
+    notifyGroupExitDebugObserver('rotation_result', intent.groupId, {
+      'deferred': rotationDeferred,
+    });
     tracker.setFallback(
       const GroupExitProcessDiagnosticFact.unexpected(
         GroupExitDiagnosticPhase.rotation,
@@ -936,6 +945,7 @@ class GroupExitIntentRunner
       tracker.setFallback(
         const GroupExitProcessDiagnosticFact.nativeUncertain(),
       );
+      notifyGroupExitDebugObserver('native_leave', intent.groupId, const {});
       await nativeLeave(intent);
     } on GroupExitTypedProcessFailure catch (error) {
       tracker.add(error.fact);

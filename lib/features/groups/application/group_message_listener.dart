@@ -3126,6 +3126,7 @@ class GroupMessageListener {
           senderDeviceId: senderDeviceId,
           transportPeerId: transportPeerId,
           sourceEventId: wireMessageId,
+          envelopeKeyEpoch: data['keyEpoch'] as int?,
           msgRepo: msgRepo,
           rethrowOnError: rethrowOnError,
           authorityPhaseHeld: membershipPhaseHeld,
