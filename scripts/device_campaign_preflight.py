@@ -66,6 +66,7 @@ HOST_PROBES = {
     'production-group-ml002': ('integration_test/scripts/run_production_group_ml002.dart', 'production.group_catalog.private_online_add'),
     'production-group-gm003': ('integration_test/scripts/run_production_group_gm003.dart', 'production.group_catalog.gm003'),
     'production-group-ml003': ('integration_test/scripts/run_production_group_ml003.dart', 'production.group_catalog.private_offline_add'),
+    'production-group-nw006': ('integration_test/scripts/run_production_group_nw006.dart', 'production.group_catalog.private_peer_disconnect_not_removal'),
     'production-group-invite-matrix': ('integration_test/scripts/run_production_group_invite_status_matrix.dart', 'production.group_invite_status_matrix'),
     'production-startup-resume-performance': ('integration_test/scripts/run_production_startup_resume_performance.dart', 'production.startup_resume_performance'),
     'production-private-media': ('integration_test/scripts/run_production_private_media_local.dart', 'production.private_media_local'),

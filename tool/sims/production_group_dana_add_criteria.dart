@@ -107,20 +107,6 @@ bool _before(ProductionCatalogCase c, String a, String b) {
       order.indexOf(a) < order.indexOf(b);
 }
 
-/// [role]'s incoming entry for [key] with the original's `liveOnly` and
-/// `usedOfflineDrain`, observed: live means the message id arrived on the
-/// topic (`liveMessageIds`), otherwise it came from the offline inbox.
-Map<String, Object?>? _receivedVia(
-  ProductionCatalogCase c,
-  String role,
-  String key,
-) {
-  final r = c.received(role, key);
-  if (r == null) return null;
-  final live = c.live(role, key);
-  return {...r, 'liveOnly': live, 'usedOfflineDrain': !live};
-}
-
 bool _danaEverywhere(ProductionCatalogCase c) =>
     _all.every((r) => c.members(c.finalOf(r)).contains('${c.peers['dana']}'));
 
@@ -258,8 +244,8 @@ List<String> validateProductionGroupMl002(
         'dana',
         sent: [c.sent('dana', 'danaAfterJoin')],
         received: [
-          _receivedVia(c, 'dana', 'aliceAfterDanaAdd'),
-          _receivedVia(c, 'dana', 'bobAfterDanaAdd'),
+          c.receivedVia('dana', 'aliceAfterDanaAdd'),
+          c.receivedVia('dana', 'bobAfterDanaAdd'),
         ],
         extra: {'ml002OnlineAddProof': proofFor('dana')},
       ),
@@ -407,8 +393,8 @@ List<String> validateProductionGroupMl003(
       c.verdict(
         'dana',
         received: [
-          for (final key in replayKeys) _receivedVia(c, 'dana', key),
-          _receivedVia(c, 'dana', 'aliceLiveAfterDanaDrain'),
+          for (final key in replayKeys) c.receivedVia('dana', key),
+          c.receivedVia('dana', 'aliceLiveAfterDanaDrain'),
         ],
         extra: {
           'ml003OfflineAddProof': {

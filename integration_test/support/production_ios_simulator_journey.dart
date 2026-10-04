@@ -17,7 +17,13 @@ const productionJourneyIosBundle = 'com.mknoon.app';
 
 /// Catalog scenarios whose unchanged original oracle requires every role to
 /// run on the iOS simulator, with the roles in simulator order (a, b, c, d).
-const productionIosSimulatorScenarioRoles = <String, List<String>>{};
+const productionIosSimulatorScenarioRoles = <String, List<String>>{
+  'production.group_catalog.private_peer_disconnect_not_removal': [
+    'alice',
+    'bob',
+    'charlie',
+  ],
+};
 
 /// The prepared `ios.simulator.app` bundle, bound to the executor's digests
 /// exactly as [ProductionAndroidArtifact] binds an APK.

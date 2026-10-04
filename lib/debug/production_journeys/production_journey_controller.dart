@@ -71,7 +71,10 @@ const groupCatalogGm002Journey = 'production.group_catalog.gm002';
 const groupCatalogMl002Journey = 'production.group_catalog.private_online_add';
 const groupCatalogGm003Journey = 'production.group_catalog.gm003';
 const groupCatalogMl003Journey = 'production.group_catalog.private_offline_add';
+const groupCatalogNw006Journey =
+    'production.group_catalog.private_peer_disconnect_not_removal';
 const productionGroupCatalogJourneys = {
+  groupCatalogNw006Journey,
   groupCatalogGm002Journey,
   groupCatalogMl002Journey,
   groupCatalogGm003Journey,
@@ -251,6 +254,7 @@ final class ProductionJourneyController {
           groupCatalogMl002Journey,
           groupCatalogGm003Journey,
           groupCatalogMl003Journey,
+          groupCatalogNw006Journey,
           performanceJourney,
         }.contains(invocation.scenarioId) ||
         !(productionFourPeerJourneys.contains(invocation.scenarioId)

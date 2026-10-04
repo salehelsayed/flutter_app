@@ -102,6 +102,16 @@ final class ProductionCatalogCase {
     );
   }
 
+  /// [received] with the original's `liveOnly` and `usedOfflineDrain`,
+  /// observed: live means the message id arrived on the topic
+  /// (`liveMessageIds`), otherwise it came from the offline inbox.
+  Map<String, Object?>? receivedVia(String role, String key) {
+    final r = received(role, key);
+    if (r == null) return null;
+    final viaTopic = live(role, key);
+    return {...r, 'liveOnly': viaTopic, 'usedOfflineDrain': !viaTopic};
+  }
+
   /// [role]'s incoming row for [key] read from its final snapshot (for long
   /// cycle runs that keep no per-receipt stage); null (and a failure) when
   /// absent or not exactly one.
