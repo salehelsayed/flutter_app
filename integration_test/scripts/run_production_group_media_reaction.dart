@@ -27,6 +27,9 @@ Future<void> main(List<String> arguments) => runProductionCatalogJourney(
         'mknoon_l01_${s.journey.runId.replaceAll(RegExp('[^A-Za-z0-9]'), '')}.jpg';
     final remote = '/sdcard/Pictures/$file';
     await alice.adb(['push', File(_fixture).absolute.path, remote]);
+    // adb push keeps the source file's date; give the image the current one
+    // so it is the newest entry of the picker's Recent list.
+    await alice.adb(['shell', 'touch', remote]);
     await alice.adb([
       'shell',
       'am',
