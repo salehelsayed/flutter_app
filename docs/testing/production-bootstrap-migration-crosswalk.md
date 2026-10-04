@@ -2425,7 +2425,7 @@ in one campaign call; the next batch is written in the git worktree
 | Scenario | Run | Probe |
 |---|---|---|
 | ge024 (GE-024) | PASS | Bob's second reply quotes the entitled parent: FAIL at `alice-renders-replies` (the quote bar does not show the removed-window parent) |
-| private_media_reaction_roundtrip (L-01) | pending re-run (see below) | the receivers expect two attachments: FAIL at `bob receives the image message` |
+| private_media_reaction_roundtrip (L-01) | PASS | the receivers expect two attachments: FAIL at `bob receives the image message` |
 
 GE-024: Bob quote-replies from the message menu (Reply); every copy keeps the
 original quoted parent id; Charlie never holds the removed-window parent and
@@ -2434,9 +2434,11 @@ reports each watched row's `quotedMessageId` and attachment count; the shared
 verdict builders pass both through only when present.
 L-01: Alice picks a real 1.4 KB repository JPEG from the gallery (pushed and
 dated now, so it is the newest picker entry) and sends it with the original
-caption; Bob reacts from the message menu. Two device fixes: the pushed file
+caption; Bob reacts from the message menu. Three device fixes: the pushed file
 kept its July date and was buried in the picker's Recent list; the reaction
-control accepted only the PL-009 and RT-001 target texts.
+control accepted only the PL-009 and RT-001 target texts; the image bubble
+keeps its caption and reaction chip in separate elements, so the media flow
+checks the chip on screen.
 
 **Fourth Android role.** `android_emulator_third` (Dana) on emulator-5558
 (Pixel_8, user approved 2026-10-04): runner role map, live device resolver,
@@ -2449,7 +2451,19 @@ gm003 and ML-003 (`private_offline_add`): Alice creates the group with Bob
 and Charlie through the UI, then adds Dana through Add Member and Dana
 accepts her real invitation; offline cases add her after a verified process
 death and relaunch her after the post-add sends. Proof fields the original
-writes as constants are observed. Device results: pending.
+writes as constants are observed.
+
+| Scenario | Run | Probe |
+|---|---|---|
+| gm002 | PASS | pending |
+| private_online_add (ML-002) | PASS (Dana receives both posts live) | pending |
+| gm003 | PASS | pending |
+| private_offline_add (ML-003) | PASS (replay once, then live without restart) | pending |
+
+From 2026-10-04 evening the device runs use the worktree as their checkout:
+another session was editing the main checkout's sources, which blocked a run
+(`sims_report_verification_failed`) and would have built its unfinished code
+into the test app.
 
 **iOS simulator journeys.** `ProductionIosSimulatorJourney` runs every role on
 its own disposable simulator (iPhone 17 Pro, iPhone Air, iPhone 17; iOS 26.5).
@@ -2462,8 +2476,8 @@ Semantics identifier.
 
 **Batch 13.** UP-012 (`private_removed_notification_privacy`): removed
 Charlie's app shows no notification; Alice and Bob each show one for the
-other's post (production notification observer, hashes only). Device result:
-pending.
+other's post (production notification observer, hashes only). Run: PASS;
+probe: pending.
 
 **Guard.** The composition guard now also scans the shared catalog support
 and host adapters and rejects imports of the original multi-party role
