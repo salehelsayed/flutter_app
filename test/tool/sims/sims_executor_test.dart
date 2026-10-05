@@ -363,6 +363,88 @@ printf 'SIMS_RESULT_JSON={"status":"PASS","assertionsAttempted":1,"artifactPrese
     },
   );
 
+  group('nested xcodebuild guard and the Maestro iOS driver', () {
+    late Directory bin;
+    late File xctestrun;
+    setUp(() {
+      bin = Directory('${temporaryDirectory.path}/bin')..createSync();
+      final xcodebuild = File('${bin.path}/xcodebuild')
+        ..writeAsStringSync('#!/bin/sh\nexit 0\n');
+      Process.runSync('chmod', <String>['700', xcodebuild.path]);
+      final runnerDir = Directory(
+        '${temporaryDirectory.path}/6597ECAD-38EE-49AF-9A08-B1B0CA4BDD761234',
+      )..createSync();
+      xctestrun = File('${runnerDir.path}/maestro-driver-ios-config.xctestrun')
+        ..writeAsStringSync('prebuilt maestro driver');
+    });
+
+    Future<SimsVerdictStatus> run(String invocation) async {
+      final row = _processRow(declaredBuildException: false).copyWith(
+        command: <String>[
+          'bash',
+          '-c',
+          '$invocation && '
+              'printf \'SIMS_RESULT_JSON={"status":"PASS",'
+              '"assertionsAttempted":1,"artifactPresent":false,'
+              '"printOnly":false}\\n\'',
+        ],
+      );
+      final execution = await SimsProcessExecutor(
+        logDirectory: Directory('${temporaryDirectory.path}/logs'),
+        environment: <String, String>{
+          ...Platform.environment,
+          'PATH': '${bin.path}:${Platform.environment['PATH'] ?? ''}',
+        },
+      ).execute(row);
+      return execution.verdict.status;
+    }
+
+    String derived() =>
+        '${temporaryDirectory.path}/maestro_xctestrunner_xcodebuild_output42';
+
+    test('permits Maestro\'s prebuilt driver on one simulator', () async {
+      expect(
+        await run(
+          'xcodebuild test-without-building -xctestrun ${xctestrun.path} '
+          '-destination id=6597ECAD-38EE-49AF-9A08-B1B0CA4BDD76 '
+          '-derivedDataPath ${derived()}',
+        ),
+        SimsVerdictStatus.pass,
+      );
+    });
+
+    for (final (name, args) in [
+      (
+        'another xctestrun',
+        (String run, String d) =>
+            'test-without-building -xctestrun ${run.replaceAll('maestro-driver-ios-config', 'Runner')} '
+            '-destination id=X -derivedDataPath $d',
+      ),
+      (
+        'a build action',
+        (String run, String d) =>
+            'build-for-testing -xctestrun $run -destination id=X -derivedDataPath $d',
+      ),
+      (
+        'another derived-data folder',
+        (String run, String d) =>
+            'test-without-building -xctestrun $run -destination id=X -derivedDataPath /tmp/elsewhere',
+      ),
+      (
+        'an unsafe destination',
+        (String run, String d) =>
+            'test-without-building -xctestrun $run -destination "id=X;rm" -derivedDataPath $d',
+      ),
+    ]) {
+      test('still blocks $name', () async {
+        expect(
+          await run('xcodebuild ${args(xctestrun.path, derived())}'),
+          SimsVerdictStatus.fail,
+        );
+      });
+    }
+  });
+
   test('absolute xcodebuild path cannot bypass the nested guard', () async {
     final bin = Directory('${temporaryDirectory.path}/bin')..createSync();
     final xcodebuild = File('${bin.path}/xcodebuild')

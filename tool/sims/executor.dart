@@ -512,6 +512,34 @@ fi
 if [ "\$xcode_allowed" -eq 1 ]; then
   exec $quotedExecutable "\$@"
 fi
+# Maestro's iOS driver: it runs Maestro's own prebuilt XCTest runner (extracted
+# to a temporary folder) on one simulator. Nothing of the app is built.
+maestro_driver=0
+if [ "\$#" -eq 7 ] &&
+   [ "\$1" = "test-without-building" ] &&
+   [ "\$2" = "-xctestrun" ] &&
+   [ "\$4" = "-destination" ] &&
+   [ "\$6" = "-derivedDataPath" ]; then
+  case "\$3" in
+    /*/maestro-driver-ios-config.xctestrun) [ -f "\$3" ] && maestro_driver=1 ;;
+  esac
+  case "\$5" in
+    id=*)
+      maestro_device="\${5#id=}"
+      case "\$maestro_device" in
+        ''|*[!A-Za-z0-9-]*) maestro_driver=0 ;;
+      esac
+      ;;
+    *) maestro_driver=0 ;;
+  esac
+  case "\$7" in
+    /*/maestro_xctestrunner_xcodebuild_output*) ;;
+    *) maestro_driver=0 ;;
+  esac
+fi
+if [ "\$maestro_driver" -eq 1 ]; then
+  exec $quotedExecutable "\$@"
+fi
 printf 'xcodebuild' >>"\${SIMS_BUILD_GUARD_LOG:?}"
 printf ' %s' "\$@" >>"\$SIMS_BUILD_GUARD_LOG"
 printf '\n' >>"\$SIMS_BUILD_GUARD_LOG"
