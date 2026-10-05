@@ -62,10 +62,10 @@ void main() {
           'ios',
           '--simulator',
           '--debug',
-          '--no-codesign',
           '--target=lib/main.dart',
         ]),
       );
+      expect(arguments, isNot(contains('--no-codesign')));
       expect(arguments, isNot(contains('--release')));
       expect(
         effectiveSimsCompileDefines(app, environment: environment),
@@ -80,6 +80,10 @@ void main() {
         contains(
           '--target=integration_test/group_multi_party_device_real_harness.dart',
         ),
+      );
+      expect(
+        effectiveSimsBuildArguments(original, environment: environment),
+        contains('--no-codesign'),
       );
       expect(
         effectiveSimsCompileDefines(original, environment: environment),

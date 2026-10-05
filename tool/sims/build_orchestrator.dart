@@ -1204,7 +1204,9 @@ List<String> effectiveSimsBuildArguments(
       'ios',
       '--simulator',
       '--debug',
-      '--no-codesign',
+      // The production bootstrap needs the notification App Group container,
+      // which a simulator build only gets when Xcode signs it locally.
+      if (profile.id == 'ios.simulator.e2e') '--no-codesign',
       '--target=$entrypoint',
       ...defineArgs,
     ];
