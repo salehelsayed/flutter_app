@@ -2609,3 +2609,81 @@ the ordinary profile reaches `onlineDirect` rather than relay-ready (use
 `performance_relay` where relay readiness is required); emulator and Mac load
 distort latency, so measured runs run alone and the emulator window stays
 visible; the startup/resume result still needs final-candidate reconciliation.
+
+## 2026-10-05 Wave 4 device results
+
+Devices: physical Pixel 6 `21071FDF600CSC` (alice) and `emulator-5554`
+Pixel_7 (bob), each measured run alone on the Mac with the emulator window
+visible; iPhone 11 `00008030-001A6D2801BB802E` for the shared-XCTest caller
+(user approved; Appium's WebDriverAgent on that phone was stopped first, at
+the user's choice). Quiet wait between runs: 1 minute (user, 2026-10-05).
+
+| Capability | Covers | Run | Negative probe |
+|---|---|---|---|
+| production.startup_resume_performance (+ C-Sim-2) | B, M, BR, C-Sim-1, C-Sim-2 | PASS; also the final-candidate reconciliation | third repeated recovery skipped: FAIL at the oracle |
+| production.transport_census | transport census | PASS | last send skipped: FAIL at the oracle (`every requested send attempted`) |
+| production.message_latency | A-Sim-1..3, R-Sim-1, 2d, 3, 4, 5, 7, GP | PASS | last group publish skipped: FAIL at the oracle (`GP: 5 planned sends attempted`) |
+| production.notification_tap_latency | N (cold, warm; same-peer recorded) | PASS (see the regression note) | tap timing dropped: FAIL at the oracle |
+| production.shared_xctest | shared-XCTest consumer (iPhone 11) | PASS: one central `ios.device.production` build (no child builds); a changed bundle copy and a wrong input digest rejected with zero xcodebuild launches; two independent `test-without-building` runs of `NotificationTapUITests/testAirplaneToggleStateDecoderContract` (10.6 s, 8.1 s) with own fixtures, result bundles and exact cleanup | not applicable: the rejection cases are part of the run and its oracle rejects 15 mutations |
+
+Measured values (report only; the originals have no thresholds):
+- C-Sim-2: three relay-loss recoveries, loss seen in 373-421 ms from the
+  production state stream; sendable 0.4-1.6 s, relay-ready 0.35-0.43 s.
+  The first device run missed the third loss by host polling; the controls
+  now watch the state stream from just before the disconnect, as the
+  original's capture does.
+- Census: A_cold 50/50 delivered by relay, median 912 ms, p95 1030 ms;
+  B_warm 20/20 by connection reuse, median 271 ms, p95 347 ms.
+- Message latency: A-Sim-1 p50 324 / p95 641 ms; A-Sim-2 p50 294 / p95
+  519 ms; unreachable peer (A-Sim-3, R-Sim-4/5) inbox 1.6 s; R-Sim-1 p50 313 /
+  p95 897 ms; R-Sim-2d 512 ms; R-Sim-3 (receiver left rendezvous) inbox 1.6 s;
+  GP p50 379 / p95 841 ms; R-Sim-7 p50 285 / p95 1.86 s (inbox while the
+  receiver was stopped).
+- Notification tap: interval (a) production open to first readable frame,
+  warm 341 ms, cold 1,293 ms (cold excludes process start); interval (b)
+  device-clock upper bound 10.7 s / 14.6 s (includes the shade swipe and
+  Maestro start-up). Same-peer: the conversation is already open
+  (`CONVERSATION_NOTIFICATION_ROUTE_ALREADY_ACTIVE`), so production builds
+  no screen and emits no timing; the oracle requires none.
+
+Findings:
+- **Original A and R benchmarks no longer reach the network.** They call
+  `sendChatMessage` without `recipientMlKemPublicKey`
+  (`benchmark_1_1_send_harness.dart:50-58`,
+  `benchmark_routing_paths_harness.dart:32-40`), so every send returns
+  `encryption_required` (`send_chat_message_use_case.dart:1775-1792`) before
+  any transport runs; their timings measure that early rejection. The
+  production measurement passes the key. Changing the originals needs the
+  user's approval (not done).
+- **Notification regression on main (`329ff3140`).** The Wave 2
+  `production.notification_open` journey fails at HEAD: the push reaches
+  Bob, the background handler logs `PUSH_BACKGROUND_DURABLE_EFFECT_DEFERRED`
+  (`exact_sql_authority_unavailable`) and `PUSH_ANDROID_DATA_DECRYPT_FAIL`,
+  and Alice's message never reaches Bob's database. With the five
+  notification-lock files of that commit put back to `9d253a273` (run tree
+  only), the same journey PASSES. The commit carried another session's
+  unfinished notification-lock work (bounded_posix_flock, conversation id
+  registry, effect coordinator, tone lease, ledger store, new
+  notification_lock_transaction). The notification tap latency run and its
+  probe therefore ran with those five files at `9d253a273`; every other
+  Wave 4 run used the branch head. Fixing or reverting that work is the
+  user's decision.
+- R-Sim-6 (all paths fail) and R-Sim-8 (host baseline file) are recorded
+  as not reproduced; R-Sim-2 is measured as R-Sim-2d (cold after a
+  connection drop instead of a fresh identity).
+- The shared-XCTest caller needed two fixes on the device: the bundle is
+  centrally built signed (a signing attestation minted from the real
+  development provisioning profile by
+  `docker-ws/beta/wave4/mint_signing_attestation.sh`), and the caller sets
+  `SIMS_CHILD_BUILDS_FORBIDDEN=1` on its test-only xcodebuild like the other
+  attested-bundle callers, so the SIMS guard allows exactly
+  `test-without-building`. The original route builds once per selector run
+  (`scripts/full_suite_adapters.py`); the shared bundle served two runs from
+  one build.
+- A forced-relay census on `android.e2e.performance_relay` is not part of
+  `production.transport_census` (that profile is reserved to the
+  startup/resume scenario).
+
+Wave 4 exit: the 6 harnesses needing a production measurement have one
+(plus the 3 already covered), 15 are retained as component evidence and 2
+dispatchers stay; the shared-XCTest adapter has a real caller.
