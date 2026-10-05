@@ -1,6 +1,14 @@
 appId: ${APP_ID}
 name: production_home_tabs
 ---
+# The iOS simulator app can open on the circle view; the steps below need the chat list.
+- runFlow:
+    when:
+      visible:
+        id: orbit.view.all_chats
+    commands:
+      - tapOn:
+          id: orbit.view.all_chats
 - runFlow:
     when:
       notVisible: '(?s)^Intros.*$'

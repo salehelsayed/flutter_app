@@ -1,6 +1,14 @@
 appId: ${APP_ID}
 name: production_catalog_invite_accept
 ---
+# The iOS simulator app can open on the circle view; the steps below need the chat list.
+- runFlow:
+    when:
+      visible:
+        id: orbit.view.all_chats
+    commands:
+      - tapOn:
+          id: orbit.view.all_chats
 - tapOn: '(?s)^Intros.*$'
 - assertVisible: '(?s)^${GROUP_NAME}\nInvited by .*'
 - tapOn: Accept
