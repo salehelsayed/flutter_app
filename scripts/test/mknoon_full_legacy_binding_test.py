@@ -27,10 +27,9 @@ import mknoon_checks as checks
 import migration_sqlcipher_portability as portability
 
 ROOT = Path(__file__).resolve().parents[2]
-DART = Path(os.environ.get('MKNOON_REVIEW_DART') or shutil.which('dart') or '/unavailable/dart').resolve()
-_BUNDLED_DART = DART.parent / 'cache/dart-sdk/bin/dart'
-if _BUNDLED_DART.is_file():
-    DART = _BUNDLED_DART
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from dart_executable import resolve_dart  # noqa: E402
+DART = resolve_dart()
 PINS = {'android-physical':'closure-usb', 'android-emulator':'closure-emu',
         **{'ios-simulator-'+s:'closure-sim-'+s for s in 'abcd'}}
 MATRIX = dict(errors=[], adb=['closure-usb','closure-emu'],
@@ -396,11 +395,20 @@ wait('all_done');signal(role+'_done').write_text('ok')
 '''
 
 
+def _install_ditto_stub(bin_dir):
+    """macOS `ditto` copies a .app bundle; a portable stub keeps these
+    preparation-order fixtures hermetic on non-macOS hosts."""
+    ditto = Path(bin_dir) / 'ditto'
+    ditto.write_text('#!' + sys.executable + '\nimport shutil, sys\nshutil.copytree(sys.argv[1], sys.argv[2])\n')
+    ditto.chmod(0o755)
+
+
 class ForegroundGroupPreparationTest(unittest.TestCase):
     def run_fixture(self, mode):
         with tempfile.TemporaryDirectory(prefix='foreground-build-order-') as temporary:
             root=Path(temporary);(root/'bin').mkdir();(root/'tmp').mkdir()
             flutter=root/'bin/flutter';flutter.write_text('#!'+sys.executable+'\n'+FOREGROUND_PREPARATION_FIXTURE);flutter.chmod(0o755)
+            _install_ditto_stub(root/'bin')
             capture=root/'commands.jsonl'
             devices=('fixture-usb,fixture-emulator' if mode=='android' else
                      '00000000-0000-0000-0000-000000000001,00000000-0000-0000-0000-000000000002')
@@ -610,6 +618,7 @@ class GroupMultiDevicePreparationTest(unittest.TestCase):
             for rel,source in [('bin/flutter',GROUP_MULTI_PREPARATION_FIXTURE),('go-mknoon/bin/testpeer',PEER_FIXTURE)]:
                 script=root/rel;script.write_text('#!'+sys.executable+'\n'+source);script.chmod(0o755)
             make=root/'bin/make';make.write_text('#!/bin/sh\nexit 0\n');make.chmod(0o755)
+            _install_ditto_stub(root/'bin')
             capture=root/'commands.jsonl';peer_capture=root/'peer-commands.jsonl'
             devices=('fixture-usb,fixture-emulator' if mode=='android' else
                      '00000000-0000-0000-0000-000000000001,00000000-0000-0000-0000-000000000002')

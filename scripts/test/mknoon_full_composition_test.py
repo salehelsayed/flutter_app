@@ -15,16 +15,14 @@ import unittest
 from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+from dart_executable import resolve_dart
 from mknoon_checks_test import RepositoryFixture, checks
 from mknoon_full_checks_test import FullExecutionFixture
 import full_suite_adapters as adapters
 import testing_inventory as inventory
 
 PROJECT = Path(__file__).resolve().parents[2]
-DART = Path(os.environ.get('MKNOON_REVIEW_DART') or shutil.which('dart') or '/unavailable/dart').resolve()
-_BUNDLED_DART = DART.parent / 'cache/dart-sdk/bin/dart'
-if _BUNDLED_DART.is_file():
-    DART = _BUNDLED_DART
+DART = resolve_dart()
 
 
 def rules():

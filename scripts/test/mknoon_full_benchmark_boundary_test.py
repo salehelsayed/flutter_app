@@ -22,10 +22,9 @@ import legacy_target_contracts as legacy
 import device_campaign_preflight as preflight
 
 ROOT = Path(__file__).resolve().parents[2]
-DART = Path(os.environ.get('MKNOON_REVIEW_DART') or shutil.which('dart') or '/unavailable/dart').resolve()
-_BUNDLED_DART = DART.parent / 'cache/dart-sdk/bin/dart'
-if _BUNDLED_DART.is_file():
-    DART = _BUNDLED_DART
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from dart_executable import resolve_dart  # noqa: E402
+DART = resolve_dart()
 RELAY = '/dns/isolated.invalid/tcp/4001/p2p/12D3KooWGMYMmN1RGUYjWaSV6P3XtnBjwnosnJGNMnttfVCRnd6g'
 RELAYS = RELAY + ',' + RELAY.replace('/tcp/4001/', '/udp/4002/quic-v1/')
 ANDROID = 'A,B,BR,C,D,E,F,G,I,J,K,L,M,N,R'

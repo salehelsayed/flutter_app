@@ -931,8 +931,6 @@ run_scenario() {
 main() {
   require_command flutter
   require_command node
-  require_command xcodebuild
-  require_command xcrun
 
   if ! [[ "$scenario_retries" =~ ^[0-9]+$ ]]; then
     printf '--retries must be a non-negative integer.\n' >&2
@@ -960,6 +958,9 @@ main() {
     print_selected_scenarios
     exit 0
   fi
+  # Selection/validation is host-portable; only device execution needs Xcode.
+  require_command xcodebuild
+  require_command xcrun
 
   if [[ "$skip_build" -eq 0 ]]; then
     flutter build ios --simulator --debug --target lib/main.dart \

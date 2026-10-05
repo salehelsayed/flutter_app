@@ -422,6 +422,8 @@ MATRIX_FIXTURE="$CONTRACT_MATRIX"
 skip_build="$CONTRACT_SKIP"
 scenario_filter=cold:direct_video
 flutter() { printf '%s\n' "$*" >> "$CONTRACT_ROOT/flutter-args"; }
+xcodebuild() { :; }
+xcrun() { :; }
 split_devices() { printf 'simulator\tContract phone\n'; }
 prepare_xcode_ui_tests() { :; }
 install_app_on_device() { :; }

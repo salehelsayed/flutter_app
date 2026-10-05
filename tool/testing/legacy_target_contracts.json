@@ -4411,7 +4411,7 @@
       ],
       "sources": {
         "scripts/push_fixture_to_simulator.sh": "7bfec06efaff5d7903f94539aa8954a93b56a9b6e846526eaa7971ec5698814f",
-        "scripts/run_ios_notification_tap_ui_smoke.sh": "6a0a4f11b647b2933a01f171a6c975e6a4fd8f944dc340bd2961ebf317df0a70"
+        "scripts/run_ios_notification_tap_ui_smoke.sh": "1b386352d03ae224b1d3bdb225ed7bf06f6c95db62660054f8dac2bd11bb1b1d"
       },
       "audit": "Audited exact leaf parser and all target-control calls; explicit role injection precedes any preparation. Shared-directory peers use iOS simulators; Android-capable pair transports use USB plus emulator.",
       "owns": [
