@@ -37,6 +37,10 @@ Future<Map<String, dynamic>?> _sendAndCaptureTiming(
       senderPeerId: node.peerId,
       senderUsername: 'BenchmarkUser',
       bridge: node.bridge,
+      recipientMlKemPublicKey: await benchmarkRecipientMlKemKey(
+        node,
+        targetPeerId,
+      ),
     );
   });
   final timings = filterEvents(events, 'CHAT_MSG_SEND_TIMING');

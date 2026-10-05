@@ -55,6 +55,10 @@ Future<void> runOneToOneSendBenchmark(WidgetTester tester) async {
           senderPeerId: node.peerId,
           senderUsername: 'BenchmarkUser',
           bridge: node.bridge,
+          recipientMlKemPublicKey: await benchmarkRecipientMlKemKey(
+            node,
+            targetPeerId,
+          ),
         );
       });
       allTimings.addAll(filterEvents(events, 'CHAT_MSG_SEND_TIMING'));
@@ -167,6 +171,10 @@ Future<void> runOneToOneSendBenchmark(WidgetTester tester) async {
       senderPeerId: node.peerId,
       senderUsername: 'BenchmarkUser',
       bridge: node.bridge,
+      recipientMlKemPublicKey: await benchmarkRecipientMlKemKey(
+        node,
+        targetPeerId,
+      ),
     );
 
     // Wait briefly for connection to establish
@@ -184,6 +192,10 @@ Future<void> runOneToOneSendBenchmark(WidgetTester tester) async {
           senderPeerId: node.peerId,
           senderUsername: 'BenchmarkUser',
           bridge: node.bridge,
+          recipientMlKemPublicKey: await benchmarkRecipientMlKemKey(
+            node,
+            targetPeerId,
+          ),
         );
       });
       final send = filterEvents(events, 'CHAT_MSG_SEND_TIMING');
@@ -227,6 +239,10 @@ Future<void> runOneToOneSendBenchmark(WidgetTester tester) async {
         senderPeerId: node.peerId,
         senderUsername: 'BenchmarkUser',
         bridge: node.bridge,
+        recipientMlKemPublicKey: await benchmarkRecipientMlKemKey(
+          node,
+          '12D3KooWOfflinePeerForBenchmarkTest0000000000',
+        ),
       );
     });
 

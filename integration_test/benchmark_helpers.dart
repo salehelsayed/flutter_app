@@ -18,6 +18,7 @@ import '../test/shared/fakes/in_memory_inbox_staging_repository.dart';
 // now live in `_support/node_readiness.dart`. Imported so this file's own
 // BenchmarkNode methods can call them, and re-exported so existing importers
 // of `benchmark_helpers.dart` keep these symbols.
+import '_support/cli_peer_fixture.dart';
 import '_support/node_readiness.dart';
 
 export '_support/node_readiness.dart';
@@ -282,4 +283,41 @@ class BenchmarkNode {
     service.dispose();
     bridge.dispose();
   }
+}
+
+final _benchmarkRecipientKeys = <String, String>{};
+
+/// The recipient ML-KEM public key a benchmark send must carry. Without it
+/// `sendChatMessage` returns `encryption_required` before any transport runs,
+/// so the timing would measure that early rejection. The CLI peer's key comes
+/// from the orchestrator fixture; a made-up peer id (inbox-fallback cases)
+/// gets a real key generated once by the node's own bridge.
+Future<String?> benchmarkRecipientMlKemKey(
+  BenchmarkNode node,
+  String peerId,
+) async {
+  final fixture = loadCliPeerFixture();
+  if (fixture != null && fixture['peerId'] == peerId) {
+    final key = fixture['mlKemPublicKey'] as String?;
+    if (key == null || key.isEmpty) {
+      print(
+        '[WARN] CLI peer fixture has no mlKemPublicKey; sends will stop at '
+        'encryption_required',
+      );
+    }
+    return key;
+  }
+  final cached = _benchmarkRecipientKeys[peerId];
+  if (cached != null) return cached;
+  final result =
+      jsonDecode(
+            await node.bridge.send(
+              jsonEncode({'cmd': 'mlkem.keygen', 'payload': {}}),
+            ),
+          )
+          as Map<String, dynamic>;
+  if (result['ok'] != true) {
+    throw StateError('mlkem.keygen failed: $result');
+  }
+  return _benchmarkRecipientKeys[peerId] = result['publicKey'] as String;
 }

@@ -2687,3 +2687,17 @@ Findings:
 Wave 4 exit: the 6 harnesses needing a production measurement have one
 (plus the 3 already covered), 15 are retained as component evidence and 2
 dispatchers stay; the shared-XCTest adapter has a real caller.
+
+**User decisions after Wave 4 (2026-10-05).**
+- The notification-lock work of `329ff3140` was reverted on main as one
+  unit (Dart lock code, the iOS `IosNotificationAsyncOwner` side, its
+  fixture, native test scripts, Dart test and registrations); the docs, the
+  `docker-ws` files and that commit's reliability discovery contract fix
+  were kept.
+- The original A and R benchmarks were fixed with the user's approval: every
+  send now carries the recipient ML-KEM key (the CLI peer's from the
+  orchestrator fixture, a node-generated key for made-up peers) through
+  `benchmarkRecipientMlKemKey` in `integration_test/benchmark_helpers.dart`,
+  so they reach the transport instead of `encryption_required`. Their
+  preserved source SHA-256 values above are superseded by this approved
+  change. Not re-run on the simulator yet.
