@@ -2455,10 +2455,10 @@ writes as constants are observed.
 
 | Scenario | Run | Probe |
 |---|---|---|
-| gm002 | PASS | pending |
-| private_online_add (ML-002) | PASS (Dana receives both posts live) | pending |
-| gm003 | PASS | pending |
-| private_offline_add (ML-003) | PASS (replay once, then live without restart) | pending |
+| gm002 | PASS | Alice never adds Dana: FAIL at `dana pending invitation` |
+| private_online_add (ML-002) | PASS (Dana receives both posts live) | Bob does not post after the join: FAIL at the oracle (missing `bobAfterDanaAdd`) |
+| gm003 | PASS | Dana stays online during the add: FAIL at the oracle (`danaOfflineDuringAdd`) |
+| private_offline_add (ML-003) | PASS (replay once, then live without restart) | Dana stays online during the add: FAIL at the oracle (`danaOfflineDuringAdd`, `danaNotSubscribedDuringAdd`) |
 
 From 2026-10-04 evening the device runs use the worktree as their checkout:
 another session was editing the main checkout's sources, which blocked a run
@@ -2476,8 +2476,9 @@ Semantics identifier.
 
 **Batch 13.** UP-012 (`private_removed_notification_privacy`): removed
 Charlie's app shows no notification; Alice and Bob each show one for the
-other's post (production notification observer, hashes only). Run: PASS;
-probe: pending.
+other's post (production notification observer, hashes only). Run: PASS.
+Probe (Charlie is never removed): FAIL at `alice-back-to-chat`, the step
+after the skipped removal (Alice never reached Group Info).
 
 **Guard.** The composition guard now also scans the shared catalog support
 and host adapters and rejects imports of the original multi-party role
