@@ -75,6 +75,7 @@ HOST_PROBES = {
     'production-startup-resume-performance': ('integration_test/scripts/run_production_startup_resume_performance.dart', 'production.startup_resume_performance'),
     'production-private-media': ('integration_test/scripts/run_production_private_media_local.dart', 'production.private_media_local'),
     'production-transport-census': ('integration_test/scripts/run_production_transport_census.dart', 'production.transport_census'),
+    'production-shared-xctest': ('integration_test/scripts/run_production_shared_xctest.dart', 'production.shared_xctest'),
     'production-routing': ('integration_test/scripts/run_production_routing.dart', 'production.routing_smoke'),
     'production-notification-open': ('integration_test/scripts/run_production_notification_open.dart', 'production.notification_open'),
     'production-notification-sound': ('integration_test/scripts/run_production_notification_sound.dart', 'production.notification_sound'),

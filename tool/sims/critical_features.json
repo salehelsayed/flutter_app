@@ -6723,6 +6723,59 @@
       "automationReady": true,
       "active": true,
       "declaredBuildException": false
+    },
+    {
+      "id": "production.shared_xctest",
+      "owner": "reliability",
+      "proofBoundary": "production.shared-xctest.attested-bundle-reuse",
+      "assertions": [
+        "shared-bundle-attested",
+        "provenance-rejected-before-xcodebuild",
+        "independent-selector-results",
+        "exact-cleanup",
+        "fewer-builds-than-original"
+      ],
+      "lane": "reliability",
+      "modes": [
+        "major",
+        "full"
+      ],
+      "families": [
+        "notifications"
+      ],
+      "required": true,
+      "command": [
+        "dart",
+        "run",
+        "integration_test/scripts/run_production_shared_xctest.dart"
+      ],
+      "buildProfile": "ios.device.production",
+      "dependencies": [
+        "build.ios.device.production"
+      ],
+      "resources": [
+        {
+          "name": "build:ios.device.production",
+          "access": "read"
+        },
+        {
+          "name": "device:ios-physical",
+          "access": "exclusive"
+        },
+        {
+          "name": "artifact:production-shared-xctest",
+          "access": "write"
+        }
+      ],
+      "targetCapabilities": [
+        "ios.physical"
+      ],
+      "allowedNaReason": "target_unavailable_by_project_policy",
+      "artifactRequired": true,
+      "artifactValidator": "validateProductionSharedXCTest",
+      "automationReady": true,
+      "active": true,
+      "declaredBuildException": false
     }
   ],
   "ownership": [

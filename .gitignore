@@ -297,3 +297,6 @@ graphify-arch/graphify-out/.graphify_analysis.json
 /artifacts/beta-2026092*/
 /docker-ws/.and_copy/
 /docker-ws/beta/__pycache__/
+
+# Wave 4 private run inputs (signing attestation hashes, device-bound)
+/docker-ws/beta/wave4/private/

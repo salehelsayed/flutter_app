@@ -2234,6 +2234,31 @@
       ],
       "host_preflight": "production-routing"
     },
+    "production-shared-xctest": {
+      "kind": "sims",
+      "capability": "production.shared_xctest",
+      "boundary": "One centrally built and attested physical-iOS app/XCTest bundle serves two selector runs through test-without-building with independent fixtures and results; changed provenance is rejected before any xcodebuild launch; original fresh-build routes unchanged",
+      "timeout_seconds": 3600,
+      "estimated_seconds": null,
+      "requirements": [
+        "dart",
+        "flutter",
+        "xcrun"
+      ],
+      "device_roles": [
+        "ios_physical"
+      ],
+      "references": [
+        "tool/sims/critical_features.json"
+      ],
+      "investigate": [
+        "lib/debug/production_journeys"
+      ],
+      "limitations": "The only RunnerUITests selector that launches no app is the airplane-toggle decoder contract, so both runs use it under separate fixtures. Its original route runs on a Debug simulator; the comparison is of build count and setup cost, not of identical platforms.",
+      "ui_driver": "existing_campaign",
+      "ui_driver_reason": "No UI: the selector is a pure decoder contract run through xcodebuild test-without-building; the adapter owns attestation, receipts and cleanup.",
+      "host_preflight": "production-shared-xctest"
+    },
     "production-transport-census": {
       "kind": "sims",
       "capability": "production.transport_census",
@@ -5994,6 +6019,8 @@
         "lib/core/notifications/flutter_notification_service.dart",
         "integration_test/scripts/run_production_notification_sound.dart",
         "integration_test/scripts/run_production_routing.dart",
+        "test/integration/production_shared_xctest_*",
+        "integration_test/scripts/run_production_shared_xctest.dart",
         "test/integration/production_transport_census_*",
         "integration_test/scripts/run_production_transport_census.dart",
         "test/integration/production_routing_*",
@@ -6086,6 +6113,7 @@
         "notifications",
         "production-notification-sound",
         "production-routing",
+        "production-shared-xctest",
         "production-transport-census",
         "production-private-media",
         "production-group-invites",
@@ -9854,6 +9882,8 @@
         "capability": "production.routing_smoke",
         "patterns": [
           "integration_test/scripts/run_production_routing.dart",
+          "test/integration/production_shared_xctest_*",
+          "integration_test/scripts/run_production_shared_xctest.dart",
           "test/integration/production_transport_census_*",
           "integration_test/scripts/run_production_transport_census.dart",
           "integration_test/maestro/production_direct_delete.yaml",
@@ -9861,6 +9891,14 @@
           "integration_test/maestro/production_all_chats.yaml"
         ],
         "reason": "Additive production-composed routing preserves all 27 original cases and their per-role/intermediate receipt requirements; original harness and selectors remain intact."
+      },
+      {
+        "owner": "full-sims-major",
+        "capability": "production.shared_xctest",
+        "patterns": [
+          "integration_test/scripts/run_production_shared_xctest.dart"
+        ],
+        "reason": "Additive shared-XCTest consumer; original full.xctest fresh-build routes remain the owners."
       },
       {
         "owner": "full-sims-major",

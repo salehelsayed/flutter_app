@@ -1,12 +1,12 @@
 #!/bin/bash
-# In the main checkout: format + analyze the CHANGED .dart files (vs HEAD, plus untracked) and run the named
-# Dart tests. Output: docker-ws/beta/main_check.out
-#   main_check.sh [test/...dart ...]
+# In the main checkout: format + analyze ONLY the .dart files named as arguments (other sessions edit this
+# checkout, so never touch files you did not name) and run the named *_test.dart files. Output: main_check.out
+#   main_check.sh lib/a.dart test/b_test.dart ...
 M=/Volumes/CrucialX9/flutter_app
 SDK=$HOME/development/flutter-3.47.2
 OUT=$M/docker-ws/beta/main_check.out
 cd "$M" || exit 1
-CHANGED=$( (git diff --name-only HEAD; git ls-files --others --exclude-standard) | grep '\.dart$' | sort -u)
+CHANGED=$(printf '%s\n' "$@" | grep '\.dart$' | sort -u)
 TESTS=$(printf '%s\n' "$@" | grep '_test\.dart$')
 {
   echo "== changed: $(echo $CHANGED | wc -w) dart files"

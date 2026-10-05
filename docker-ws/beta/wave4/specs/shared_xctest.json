@@ -1,0 +1,22 @@
+{
+  "platform": "ios",
+  "check": "production-shared-xctest",
+  "capability": "production.shared_xctest",
+  "runner": "integration_test/scripts/run_production_shared_xctest.dart",
+  "test_glob": "test/integration/production_shared_xctest_*",
+  "boundary": "One centrally built and attested physical-iOS app/XCTest bundle serves two selector runs through test-without-building with independent fixtures and results; changed provenance is rejected before any xcodebuild launch; original fresh-build routes unchanged",
+  "limitations": "The only RunnerUITests selector that launches no app is the airplane-toggle decoder contract, so both runs use it under separate fixtures. Its original route runs on a Debug simulator; the comparison is of build count and setup cost, not of identical platforms.",
+  "assertions": ["shared-bundle-attested", "provenance-rejected-before-xcodebuild", "independent-selector-results", "exact-cleanup", "fewer-builds-than-original"],
+  "proof_boundary": "production.shared-xctest.attested-bundle-reuse",
+  "families": ["notifications"],
+  "device_roles": ["ios_physical"],
+  "resources": ["device:ios-physical"],
+  "target_capabilities": ["ios.physical"],
+  "build_profile": "ios.device.production",
+  "artifact_validator": "validateProductionSharedXCTest",
+  "ui_driver_reason": "No UI: the selector is a pure decoder contract run through xcodebuild test-without-building; the adapter owns attestation, receipts and cleanup.",
+  "maestro_flows": [],
+  "discovery_reason": "manifest-owned shared-XCTest caller: attested central physical-iOS bundle reused by test-without-building with per-selector fixtures; original fresh-build routes retained",
+  "reason": "Additive shared-XCTest consumer; original full.xctest fresh-build routes remain the owners.",
+  "timeout_seconds": 3600
+}

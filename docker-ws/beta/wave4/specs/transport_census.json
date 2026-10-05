@@ -1,0 +1,21 @@
+{
+  "check": "production-transport-census",
+  "capability": "production.transport_census",
+  "runner": "integration_test/scripts/run_production_transport_census.dart",
+  "test_glob": "test/integration/production_transport_census_*",
+  "boundary": "Production-composed transport census: the original sender loop (cold lever, 2500 ms pacing) over production services with a census-owned TransportMetrics per condition, plus exact receiver storage of every delivered text",
+  "limitations": "Android production source build on the ordinary profile; a forced-relay condition (android.e2e.performance_relay) is not part of this capability. The census reports transport mix and latency; like the original it has no latency threshold. Emulator-to-phone paths differ from the original two-phone path.",
+  "assertions": ["census-sends-attempted", "census-counts-reconciled", "census-receiver-storage", "census-transport-report"],
+  "proof_boundary": "production.transport-census.sender-vantage",
+  "families": ["1to1"],
+  "device_roles": ["android_physical", "android_emulator"],
+  "resources": ["device:android-physical", "device:android-emulator"],
+  "target_capabilities": ["android.physical", "android.emulator"],
+  "build_profile": "android.e2e.main",
+  "artifact_validator": "validateProductionTransportCensus",
+  "ui_driver_reason": "No UI: the original census is a protocol-level sender loop. A production-owned control drives the production send use case with the original cold lever; read-only receiver storage binds delivery.",
+  "maestro_flows": [],
+  "discovery_reason": "manifest-owned production transport census with the original cold/warm sender loop over production services; original harness retained",
+  "reason": "Additive production-composed transport census keeps the original sender loop, conditions and report; the original harness and its orchestrator remain intact.",
+  "timeout_seconds": 3600
+}

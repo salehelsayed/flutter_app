@@ -438,6 +438,10 @@ classify_path() {
       record "support" "$path" "support" "manifest-owned production transport census with the original cold/warm sender loop over production services; original harness retained"
       return
       ;;
+    integration_test/scripts/run_production_shared_xctest.dart)
+      record "support" "$path" "support" "manifest-owned shared-XCTest caller: attested central physical-iOS bundle reused by test-without-building with per-selector fixtures; original fresh-build routes retained"
+      return
+      ;;
     integration_test/scripts/run_production_routing.dart)
       record "support" "$path" "support" "manifest-owned production-bootstrap routing with 27 original direct/group criteria and production-owned protocol controls; original routes retained"
       return
