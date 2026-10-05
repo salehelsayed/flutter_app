@@ -4081,6 +4081,133 @@ void main() {
     await coordinator.dispose();
     await native.events.close();
   });
+
+  // iPhone device logs (2026-10-01, 2026-10-05): after every connected call
+  // the local hang-up cleanup reported `blocked callMedia` twice and became
+  // ready only after two 2 s step timeouts. The CallKit terminal replay sends
+  // the native end back through the coordinator, which is still running the
+  // cleanup, while the cleanup's audio release waited behind that replay.
+  test('local hang-up audio release does not wait behind the terminal replay '
+      '(iOS projection)', () async {
+    late AndroidCallLifecycleAdapter adapter;
+    final native = _NativeHarness()
+      ..attachResult = _emptyBatch()
+      ..audioState = <String, Object?>{
+        'version': 1,
+        'active': true,
+        'muted': false,
+        'route': 'speaker',
+        'availableRoutes': <Object?>['system_default', 'speaker'],
+      };
+    native.latency['project'] = const Duration(milliseconds: 50);
+    final reports = <CallCleanupReport>[];
+    final cleanup = CallCleanupCoordinator(
+      <CallCleanupStep>[
+        CallCleanupStep('call_media', (_) async {
+          // Same order as CallAudioController cleanup: route reset, then
+          // session deactivation. Neither waits for the native end.
+          await adapter.selectOutputRoute(CallAudioOutputRoute.systemDefault);
+          await adapter.deactivate();
+        }, requiredForTerminalAck: true),
+      ],
+      stepTimeout: const Duration(seconds: 2),
+      onReport: reports.add,
+    );
+    final coordinator = _coordinator(cleanupCoordinator: cleanup);
+    adapter = _adapter(native, coordinator, <CallId, String>{
+      _callId: _callHandle,
+    }, projectTerminalBeforeEnd: true);
+    native.onInvokeWithArguments = (method, arguments) {
+      if (method == 'registerOutgoingAuthenticated') {
+        native.events.add(
+          _batch(<Map<String, Object?>>[
+            _event(1, 'hangup-outgoing-presented', 'presented'),
+          ], direction: 'outgoing'),
+        );
+        return;
+      }
+      if (method == 'project' && arguments['state'] == 'ended') {
+        // CallKit commits the local end and journals it for the replay.
+        native.attachResult = _batch(
+          <Map<String, Object?>>[
+            _event(1, 'hangup-outgoing-presented', 'presented'),
+            _event(2, 'hangup-outgoing-local-end', 'end'),
+          ],
+          phase: 'journal',
+          direction: 'outgoing',
+        );
+      }
+    };
+
+    await adapter.start();
+    await coordinator.placeCall(
+      contactPeerId: 'remote-account',
+      localAccountPeerId: 'local-account',
+      localDeviceId: 'local-device',
+    );
+    expect(
+      await adapter.registerOutgoing(
+        _callId,
+        expiresAt: DateTime.fromMillisecondsSinceEpoch(
+          _expiresAtMs,
+          isUtc: true,
+        ),
+      ),
+      isTrue,
+    );
+    for (final type in <CallEventType>[
+      CallEventType.outgoingInviteReady,
+      CallEventType.remoteAccept,
+      CallEventType.negotiationReady,
+      CallEventType.mediaConnected,
+    ]) {
+      await coordinator.dispatch(
+        CallEvent(
+          type: type,
+          eventId: 'hangup-${type.name}',
+          occurredAt: _now,
+          callId: _callId,
+          contactPeerId: 'remote-account',
+        ),
+      );
+    }
+    await adapter.activateAudio();
+    await adapter.selectOutputRoute(CallAudioOutputRoute.speaker);
+    expect(adapter.ownsSession, isTrue);
+
+    final hangUpWatch = Stopwatch()..start();
+    await coordinator.dispatch(
+      CallEvent(
+        type: CallEventType.end,
+        eventId: 'hangup-local-end',
+        occurredAt: _now,
+        callId: _callId,
+        contactPeerId: 'remote-account',
+      ),
+    );
+    hangUpWatch.stop();
+
+    expect(reports, isNotEmpty);
+    expect(reports.first.terminalAckReady, isTrue);
+    expect(reports.first.failedStepNames, isEmpty);
+    expect(hangUpWatch.elapsed, lessThan(const Duration(seconds: 1)));
+    expect(native.callsOf('deactivateAudio'), isEmpty);
+    expect(adapter.ownsSession, isFalse);
+    expect(adapter.selectedRoute, CallAudioOutputRoute.systemDefault);
+    // The replay still ACKs the native terminal once its latency elapses.
+    bool terminalAcked() => native
+        .callsOf('acknowledge')
+        .any((call) => call.arguments['disposition'] == 'TERMINAL');
+    for (var turn = 0; turn < 100 && !terminalAcked(); turn++) {
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+    }
+    expect(terminalAcked(), isTrue);
+    expect(coordinator.terminalCleanupAckReady(_callId), isTrue);
+
+    await adapter.close();
+    await coordinator.dispose();
+    await native.events.close();
+  });
 }
 
 AndroidCallLifecycleAdapter _adapter(
@@ -4275,6 +4402,9 @@ final class _NativeHarness {
   final Map<String, List<Object?>> queuedResults = <String, List<Object?>>{};
   Object? attachResult;
   Object? audioState;
+
+  /// Platform-channel latency per method, like a real CallKit round trip.
+  final Map<String, Duration> latency = <String, Duration>{};
   void Function()? onAttach;
   void Function(String method)? onInvoke;
   void Function(String method, Map<String, Object?> arguments)?
@@ -4284,6 +4414,8 @@ final class _NativeHarness {
     calls.add(_NativeInvocation(method, Map<String, Object?>.of(arguments)));
     onInvoke?.call(method);
     onInvokeWithArguments?.call(method, arguments);
+    final delay = latency[method];
+    if (delay != null) await Future<void>.delayed(delay);
     final queued = queuedResults[method];
     if (queued != null && queued.isNotEmpty) return queued.removeAt(0);
     if (results.containsKey(method)) return results[method];

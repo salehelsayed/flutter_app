@@ -1011,6 +1011,7 @@ final class AndroidCallLifecycleAdapter
   Future<void> requestRoute(CallAudioOutputRoute route) async {
     await start();
     if (_releaseRetainedTerminalAudio(route: route)) return;
+    if (_releaseCanonicalTerminalAudio(route: route)) return;
     await _schedule<void>(() async {
       if (_releaseRetainedTerminalAudio(route: route)) return;
       final handle = _requireBoundHandle();
@@ -1073,6 +1074,7 @@ final class AndroidCallLifecycleAdapter
   Future<void> deactivateAudio() async {
     await start();
     if (_releaseRetainedTerminalAudio()) return;
+    if (_releaseCanonicalTerminalAudio()) return;
     if (_releaseAudioAfterNativeAuthorityLost()) return;
     final handle = _boundHandle;
     if (handle == null) return;
@@ -1118,6 +1120,31 @@ final class AndroidCallLifecycleAdapter
         _boundCallId == null ||
         _boundHandle == null ||
         _pendingTerminal == null ||
+        (route != null && route != CallAudioOutputRoute.systemDefault)) {
+      return false;
+    }
+    _ownsSession = false;
+    _selectedRoute = CallAudioOutputRoute.systemDefault;
+    return true;
+  }
+
+  /// The coordinator already ended the bound call, so the terminal task that
+  /// [_onSnapshot] queued on [_tail] ends (or, on iOS, projects) it natively,
+  /// and Telecom/CallKit release the call audio with it. Media cleanup runs
+  /// inside that same coordinator dispatch. Before the native terminal is
+  /// journaled, neither [_releaseRetainedTerminalAudio] nor
+  /// [_releaseEndedHandleAudio] can release, and the command would queue
+  /// behind the terminal task while that task waits for the coordinator:
+  /// every iPhone hang-up blocked `call_media` for two step timeouts.
+  bool _releaseCanonicalTerminalAudio({CallAudioOutputRoute? route}) {
+    final callId = _boundCallId;
+    final snapshot = _coordinator.lastSnapshot;
+    if (_closed ||
+        _invalid ||
+        callId == null ||
+        snapshot == null ||
+        snapshot.callId != callId ||
+        !snapshot.isTerminal ||
         (route != null && route != CallAudioOutputRoute.systemDefault)) {
       return false;
     }
