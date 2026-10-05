@@ -117,11 +117,17 @@ Future<void> main(List<String> arguments) async {
         'degraded',
         'extended',
         'recovery',
+        // C-Sim-2: three consecutive foreground relay-loss recoveries.
+        'repeated-recovery-1',
+        'repeated-recovery-2',
+        'repeated-recovery-3',
         // B's core-only return sample runs last: unlike M's full start,
         // it deliberately omits the warm tasks that establish usability.
         'hot-core',
       ]) {
         attempts++;
+        final recovery =
+            name == 'recovery' || name.startsWith('repeated-recovery-');
         final before = await journey.alice.command('performance_begin', {
           'window': name,
         });
@@ -170,7 +176,7 @@ Future<void> main(List<String> arguments) async {
             'performance_paused_snapshot',
           );
           await persist();
-        } else if (name != 'recovery') {
+        } else if (!recovery) {
           await journey.flow(
             journey.alice,
             'production_background',
@@ -185,7 +191,7 @@ Future<void> main(List<String> arguments) async {
           );
           await persist();
         }
-        if (name == 'degraded' || name == 'recovery') {
+        if (name == 'degraded' || recovery) {
           final fault = await journey.alice.command(
             'performance_disconnect_relay',
           );
@@ -202,7 +208,7 @@ Future<void> main(List<String> arguments) async {
         if (name == 'extended') {
           await Future<void>.delayed(const Duration(seconds: 30));
         }
-        if (name == 'recovery') {
+        if (recovery) {
           await journey.alice.command('performance_recover');
         } else if (name != 'healthy') {
           await journey.flow(
@@ -227,7 +233,7 @@ Future<void> main(List<String> arguments) async {
             return hasMetric(
                   s,
                   'TIME_TO_SENDABLE_BADGE',
-                  phases: name == 'recovery'
+                  phases: recovery
                       ? ['recovery']
                       : ['background_resume', 'recovery'],
                   after: start,

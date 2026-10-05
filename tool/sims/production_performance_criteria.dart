@@ -170,7 +170,14 @@ List<String> validateProductionPerformance(Map<String, Object?> proof) {
     'degraded',
     'extended',
     'recovery',
+    // C-Sim-2: three consecutive foreground recoveries, each judged like
+    // M-Sim-2's single recovery (loss <=15 s, sendable and relay-ready <=30 s).
+    'repeated-recovery-1',
+    'repeated-recovery-2',
+    'repeated-recovery-3',
   ]) {
+    final recovery =
+        name == 'recovery' || name.startsWith('repeated-recovery-');
     final window = object(proof[name]);
     final before = object(window['before']);
     final after = object(window['after']);
@@ -234,7 +241,7 @@ List<String> validateProductionPerformance(Map<String, Object?> proof) {
       }
       continue;
     }
-    if (name != 'recovery') {
+    if (!recovery) {
       final background = object(window['background']);
       snapshot(background, '$name background', lifecycle: 'paused');
       require(
@@ -281,7 +288,7 @@ List<String> validateProductionPerformance(Map<String, Object?> proof) {
         name,
       );
     } else {
-      final phases = name == 'recovery'
+      final phases = recovery
           ? ['recovery']
           : ['background_resume', 'recovery'];
       final matching = phases
@@ -303,7 +310,7 @@ List<String> validateProductionPerformance(Map<String, Object?> proof) {
           }
         }
       }
-      if (name == 'degraded' || name == 'recovery') {
+      if (name == 'degraded' || recovery) {
         final degraded = object(window['degraded']);
         snapshot(
           degraded,

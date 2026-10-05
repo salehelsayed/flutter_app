@@ -69,7 +69,12 @@ Map<String, Object?> _fixture() {
     'degraded',
     'extended',
     'recovery',
+    'repeated-recovery-1',
+    'repeated-recovery-2',
+    'repeated-recovery-3',
   ]) {
+    final recovery =
+        name == 'recovery' || name.startsWith('repeated-recovery-');
     final es = [...coldEvents];
     final w = <String, Object?>{
       'before': snap(5, es),
@@ -85,11 +90,11 @@ Map<String, Object?> _fixture() {
       }
       w['started'] = true;
     } else {
-      if (name != 'recovery') {
+      if (!recovery) {
         es.add(lifecycle('paused'));
         w['background'] = snap(5, es, state: 'paused');
       }
-      if (name == 'degraded' || name == 'recovery') {
+      if (name == 'degraded' || recovery) {
         w['degraded'] = snap(
           5,
           es,
@@ -103,7 +108,7 @@ Map<String, Object?> _fixture() {
       // in this deterministic fixture's monotonic clock.
       es.add(metric('FIRST_SEND_SUCCESS_IN_WINDOW'));
       es.add(metric('FIRST_INBOX_SUCCESS_IN_WINDOW'));
-      if (name != 'recovery') es.add(lifecycle('resumed'));
+      if (!recovery) es.add(lifecycle('resumed'));
       if (name == 'healthy' || name == 'extended') {
         es.add(
           metric('TIME_TO_ONLINE_BADGE', 'background_resume_already_online'),
@@ -210,6 +215,13 @@ void main() {
         (p['healthy'] as Map)['sendableWaitMs'] = 30001,
     'relay deadline relaxed': (p) =>
         (p['recovery'] as Map)['relayWaitMs'] = 30001,
+    'repeated recovery cycle omitted': (p) => p.remove('repeated-recovery-2'),
+    'repeated recovery without relay loss': (p) =>
+        (p['repeated-recovery-3'] as Map)['degraded']['badge'] = 'onlineDotted',
+    'repeated recovery degrade relaxed': (p) =>
+        (p['repeated-recovery-1'] as Map)['degradeWaitMs'] = 15001,
+    'repeated recovery relay deadline relaxed': (p) =>
+        (p['repeated-recovery-2'] as Map)['relayWaitMs'] = 30001,
   };
   for (final entry in mutations.entries) {
     test('rejects ${entry.key}', () {

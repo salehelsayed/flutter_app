@@ -106,6 +106,34 @@ void main() {
     },
   );
 
+  test('C-Sim-2 runs three recoveries, one per repeated window', () async {
+    for (final window in [
+      'repeated-recovery-1',
+      'repeated-recovery-2',
+      'repeated-recovery-3',
+    ]) {
+      service.emitState(_online);
+      await command('performance_begin', {'window': window});
+      await command('performance_disconnect_relay');
+      service.emitState(_degraded);
+      await command('performance_snapshot');
+      await command('performance_recover');
+      await expectLater(command('performance_recover'), throwsStateError);
+    }
+    expect(service.performImmediateHealthCheckCallCount, 3);
+    expect(service.drainOfflineInboxCallCount, 3);
+    expect(bridge.commandLog, [
+      'peer:disconnect',
+      'peer:disconnect',
+      'peer:disconnect',
+    ]);
+    service.emitState(_online);
+    await expectLater(
+      command('performance_begin', {'window': 'repeated-recovery-4'}),
+      throwsStateError,
+    );
+  });
+
   test(
     'foreground recovery also operates while loss is still visible',
     () async {

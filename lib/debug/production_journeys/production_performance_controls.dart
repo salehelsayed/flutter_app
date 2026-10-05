@@ -9,6 +9,13 @@ import 'package:flutter_app/features/p2p/domain/models/node_state.dart';
 
 import 'production_journey_controller.dart';
 
+/// C-Sim-2: three consecutive relay-loss recoveries in the foreground.
+const repeatedRecoveryWindows = [
+  'repeated-recovery-1',
+  'repeated-recovery-2',
+  'repeated-recovery-3',
+];
+
 /// Read-only production timing/state observations and the original benchmarks'
 /// explicit hot-node-start and relay-disconnect protocol operations. Ordinary
 /// launch/background/resume remain OS UI actions. Never calls lifecycle owners.
@@ -24,11 +31,16 @@ void bindProductionPerformanceControls({
   String? window;
   var recoveryDisconnectCompleted = false;
   var recoveryLossObserved = false;
+  // M-Sim-2's single foreground recovery, and C-Sim-2's three repeated
+  // recoveries, each its own window with the same protocol.
+  bool isRecovery(String? name) =>
+      name == 'recovery' ||
+      (name != null && repeatedRecoveryWindows.contains(name));
   Map<String, Object?> snapshot() {
     // Retain the host-observed loss prerequisite across autonomous recovery.
     // M-Sim-2 observes loss once, then calls health/inbox even if the relay
     // reconnects before those calls. An unobserved fault is never sufficient.
-    if (window == 'recovery' &&
+    if (isRecovery(window) &&
         recoveryDisconnectCompleted &&
         p2pService.currentState.badgeReadinessState !=
             BadgeReadinessState.onlineDotted) {
@@ -67,6 +79,7 @@ void bindProductionPerformanceControls({
           'degraded',
           'extended',
           'recovery',
+          ...repeatedRecoveryWindows,
         }.contains(name) ||
         !used.add(name) ||
         WidgetsBinding.instance.lifecycleState != AppLifecycleState.resumed ||
@@ -95,7 +108,7 @@ void bindProductionPerformanceControls({
     return {'started': started, ...snapshot()};
   });
   controller.bindAction('performance_disconnect_relay', (_) async {
-    if (!{'degraded', 'recovery'}.contains(window) ||
+    if (!(window == 'degraded' || isRecovery(window)) ||
         !used.add('disconnect-$window') ||
         WidgetsBinding.instance.lifecycleState !=
             (window == 'degraded'
@@ -118,15 +131,15 @@ void bindProductionPerformanceControls({
         }),
       );
     }
-    if (window == 'recovery') recoveryDisconnectCompleted = true;
+    if (isRecovery(window)) recoveryDisconnectCompleted = true;
     return {'disconnectedRelayCount': relays.length, ...snapshot()};
   });
   controller.bindAction('performance_recover', (_) async {
-    if (window != 'recovery' ||
-        !used.contains('disconnect-recovery') ||
+    if (!isRecovery(window) ||
+        !used.contains('disconnect-$window') ||
         !recoveryLossObserved ||
         WidgetsBinding.instance.lifecycleState != AppLifecycleState.resumed ||
-        !used.add('recover')) {
+        !used.add('recover-$window')) {
       throw StateError('degraded foreground recovery prerequisite rejected');
     }
     await p2pService.performImmediateHealthCheck();
