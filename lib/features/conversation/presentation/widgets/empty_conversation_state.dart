@@ -32,7 +32,23 @@ class _EmptyConversationStateState extends State<EmptyConversationState>
     _glowController = AnimationController(
       vsync: this,
       duration: const Duration(seconds: 6),
-    )..repeat();
+    );
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // Honour the OS reduce-motion preference (as AmbientBackground does): a
+    // perpetual loop keeps redrawing the screen for users who turned it off.
+    final mediaQuery = MediaQuery.maybeOf(context);
+    final reduceMotion =
+        (mediaQuery?.disableAnimations ?? false) ||
+        (mediaQuery?.accessibleNavigation ?? false);
+    if (reduceMotion) {
+      _glowController.stop();
+    } else if (!_glowController.isAnimating) {
+      _glowController.repeat();
+    }
   }
 
   @override
