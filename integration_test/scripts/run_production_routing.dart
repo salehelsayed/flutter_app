@@ -44,6 +44,8 @@ Future<void> main(List<String> args) async {
       'runId': journey.runId,
       'imeSwitches': imeSwitches,
     };
+    // Restores device keyboards switched for verbatim sends (set below).
+    Future<void> Function() restoreKeyboards = () async {};
     try {
       await journey.prepare();
       final a = await journey.alice.command('identity'),
@@ -77,6 +79,19 @@ Future<void> main(List<String> args) async {
       final openLane = <String, String?>{'alice': null, 'bob': null};
       ProductionJourneyPeer peer(String role) =>
           role == 'alice' ? journey.alice : journey.bob;
+      final keyboards = {
+        for (final role in ['alice', 'bob'])
+          role: ProductionVerbatimKeyboardSession(
+            (args) => peer(role).adb(args),
+            imeSwitches,
+          ),
+      };
+      restoreKeyboards = () async {
+        for (final keyboard in keyboards.values) {
+          await keyboard.restore();
+        }
+      };
+
       String opposite(String role) => role == 'alice' ? 'bob' : 'alice';
       Future<Map<String, Object?>> snapshot(
         String role, {
@@ -184,10 +199,8 @@ Future<void> main(List<String> args) async {
         final text = '$id: $suffix ${journey.runId}';
         final sendWatch = Stopwatch()..start();
         final label = '$id-send-${n ?? serial}';
-        await withProductionVerbatimKeyboard(
-          peer(role).adb,
+        await keyboards[role]!.run(
           label,
-          imeSwitches,
           (verbatim) => flow(
             role,
             verbatim ? 'production_verbatim_send' : 'production_direct_send',
@@ -378,6 +391,8 @@ Future<void> main(List<String> args) async {
         final s9Texts = [
           for (var n = 1; n <= 5; n++) 'S9: batch inbox $n ${journey.runId}',
         ];
+        // The batch flow uses the device keyboard and its hideKeyboard.
+        await keyboards['alice']!.restore();
         await flow('alice', 'production_direct_send_batch5', 'S9-send-batch', {
           for (var n = 1; n <= 5; n++) ...{
             'MESSAGE_$n': s9Texts[n - 1],
@@ -768,6 +783,7 @@ Future<void> main(List<String> args) async {
       ).writeAsString(jsonEncode({'failures': failures}));
       if (failures.isNotEmpty) throw StateError(failures.join('; '));
     } finally {
+      await restoreKeyboards();
       await journey.restore();
     }
     evidence = writeSimsArtifactEvidenceSync(
