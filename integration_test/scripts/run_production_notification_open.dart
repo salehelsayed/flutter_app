@@ -3,17 +3,24 @@ import 'dart:io';
 
 import '../../tool/sims/artifact_evidence.dart';
 import '../../tool/sims/production_notification_open_criteria.dart';
+import '../../tool/sims/production_notification_tap_latency_criteria.dart';
 import '../support/production_android_journey.dart';
 import '../support/production_journey_peer.dart';
 import '../support/production_provider_delivery.dart';
 
-const _scenario = 'production.notification_open';
+const _openScenario = 'production.notification_open';
+
+/// Wave 4: the same journey as a separately named measurement of the real
+/// notification tap (`production.notification_tap_latency`).
+const _latencyScenario = 'production.notification_tap_latency';
 Map<String, Object?> _object(Object? value) =>
     Map<String, Object?>.from(value as Map);
 
 Future<void> main(List<String> arguments) async {
+  final measure = arguments.contains('--measure-tap-latency');
+  final scenario = measure ? _latencyScenario : _openScenario;
   if (arguments.contains('--list-scenarios')) {
-    stdout.writeln(_scenario);
+    stdout.writeln(scenario);
     return;
   }
   var attempts = 0;
@@ -26,7 +33,7 @@ Future<void> main(List<String> arguments) async {
     }
     final root = await Directory(path).absolute.create(recursive: true);
     output = await root.createTemp('attempt-');
-    final journey = ProductionAndroidJourney.fromEnvironment(_scenario, output);
+    final journey = ProductionAndroidJourney.fromEnvironment(scenario, output);
     final cases = <Map<String, Object?>>[];
     Map<String, Object?>? provider;
     final elapsed = Stopwatch()..start();
@@ -153,6 +160,13 @@ Future<void> main(List<String> arguments) async {
           journey.bob = await journey.stageFreshInvocation(previous);
           await journey.killOwnedProcess(previous);
         }
+        // The device clock just before the real tap (latency measurement).
+        final tapClockMs = measure
+            ? int.tryParse(
+                '${(await journey.bob.adb(['shell', 'date', '+%s%3N'])).stdout}'
+                    .trim(),
+              )
+            : null;
         await journey.flow(
           journey.bob,
           'production_notification_tap',
@@ -178,7 +192,9 @@ Future<void> main(List<String> arguments) async {
                     ) &&
                     rows.any(
                       (row) => row['id'] == messageId && row['readAt'] != null,
-                    )
+                    ) &&
+                    (!measure ||
+                        productionNewTapTimings(before, value).isNotEmpty)
                 ? value
                 : null;
           },
@@ -193,6 +209,11 @@ Future<void> main(List<String> arguments) async {
           'provider': delivery,
           'nativeCard': nativeCard,
           'notificationBaseline': baseline.length,
+          if (measure)
+            'tapLatency': {
+              'deviceTapClockMs': tapClockMs,
+              'timings': productionNewTapTimings(before, after),
+            },
           'before': before,
           'after': after,
           if (id == 'cold-start') ...{
@@ -205,7 +226,11 @@ Future<void> main(List<String> arguments) async {
           '${output.path}/scenario-observations.json',
         ).writeAsString(jsonEncode({'cases': cases}));
       }
-      final failures = validateProductionNotificationOpen({'cases': cases});
+      final failures = [
+        ...validateProductionNotificationOpen({'cases': cases}),
+        if (measure)
+          ...validateProductionNotificationTapLatency({'cases': cases}),
+      ];
       await File(
         '${output.path}/oracle.json',
       ).writeAsString(jsonEncode({'failures': failures}));
@@ -221,8 +246,11 @@ Future<void> main(List<String> arguments) async {
     }
     evidence = writeSimsArtifactEvidenceSync(
       directory: output,
-      capabilityId: _scenario,
-      validatorIds: ['validateProductionNotificationOpen'],
+      capabilityId: scenario,
+      validatorIds: [
+        'validateProductionNotificationOpen',
+        if (measure) 'validateProductionNotificationTapLatency',
+      ],
       payload: {
         ...journey.provenance(),
         'cases': cases,

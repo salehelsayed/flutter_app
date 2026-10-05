@@ -366,6 +366,7 @@ final class ProductionAndroidJourney implements ProductionJourney {
   final _guards = <String, ProductionAndroidInstallGuard>{};
   bool get usesProviderReceiver => const {
     'production.notification_open',
+    'production.notification_tap_latency',
     'production.notification_sound',
   }.contains(scenario);
 

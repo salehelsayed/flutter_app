@@ -1,0 +1,21 @@
+{
+  "check": "production-message-latency",
+  "capability": "production.message_latency",
+  "runner": "integration_test/scripts/run_production_message_latency.dart",
+  "test_glob": "test/integration/production_message_latency_*",
+  "boundary": "Production-composed 1:1 send (A-Sim-1..3), routing paths (R-Sim-1, 2d, 3, 4, 5, 7) and group publish (GP) send sequences with the production timing event of every send; R-Sim-3 receiver leaves rendezvous, R-Sim-7 receiver node stops and restarts",
+  "limitations": "Android production source build; reports p50/p95 like the originals (no latency threshold). R-Sim-2 uses a connection drop instead of a fresh identity (named R-Sim-2d); R-Sim-6 and R-Sim-8 are recorded as not reproduced. Emulator-to-phone paths differ from the originals' simulator plus CLI peer.",
+  "assertions": ["latency-sends-attempted", "latency-timing-per-send", "latency-r-sim-3-rendezvous", "latency-r-sim-7-offline", "latency-group-publish"],
+  "proof_boundary": "production.message-latency.sender-vantage",
+  "families": ["1to1", "groups"],
+  "device_roles": ["android_physical", "android_emulator"],
+  "resources": ["device:android-physical", "device:android-emulator"],
+  "target_capabilities": ["android.physical", "android.emulator"],
+  "build_profile": "android.e2e.main",
+  "artifact_validator": "validateProductionMessageLatency",
+  "ui_driver_reason": "No UI: the originals are protocol-level send sequences. Production-owned controls call the production send use cases (with the recipient ML-KEM key) and the receiver's rendezvous and node operations; every send returns the production timing event it emitted.",
+  "maestro_flows": [],
+  "discovery_reason": "manifest-owned production message latency: original A/R/GP send sequences on production services; original benchmarks retained",
+  "reason": "Additive production-composed latency measurement; the original benchmark harnesses remain intact.",
+  "timeout_seconds": 3600
+}

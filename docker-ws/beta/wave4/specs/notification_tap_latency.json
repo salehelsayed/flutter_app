@@ -1,0 +1,43 @@
+{
+  "check": "production-notification-tap-latency",
+  "capability": "production.notification_tap_latency",
+  "runner": "integration_test/scripts/run_production_notification_open.dart",
+  "test_glob": "test/integration/production_notification_tap_latency_*",
+  "boundary": "The production notification-open journey (real FCM delivery, real OS tap, warm/cold/same-peer) as a separately named tap latency measurement: interval (a) Dart open receipt to first readable frame, interval (b) device clock before the tap to that event",
+  "limitations": "Interval (a) is production's own NOTIFICATION_TAP_TO_MESSAGE_TIMING; for the cold tap it excludes process start. Interval (b) is an upper bound including the shade swipe and Maestro start-up. The original benchmark sets its tap time on fake services, so the numbers are not comparable. No latency threshold, as in the original.",
+  "assertions": [
+    "tap-latency-three-cases",
+    "tap-latency-one-timing-per-tap",
+    "tap-latency-intervals-named"
+  ],
+  "proof_boundary": "production.notification-tap-latency.real-os-tap",
+  "families": [
+    "notifications",
+    "1to1"
+  ],
+  "device_roles": [
+    "android_physical",
+    "android_emulator"
+  ],
+  "resources": [
+    "device:android-physical",
+    "device:android-emulator"
+  ],
+  "target_capabilities": [
+    "android.physical",
+    "android.emulator"
+  ],
+  "build_profile": "android.e2e.main",
+  "artifact_validator": "validateProductionNotificationTapLatency",
+  "ui_driver_reason": "Maestro drives all ordinary UI and native notification taps. Narrow production observers establish exact route counts, already-active guard, unread state and database row identity; verified owned-UID process death preserves the native card for cold-tap startup, which force-stop cannot establish. Existing state guard verifies restoration.",
+  "maestro_flows": [
+    "integration_test/maestro/production_direct_open.yaml",
+    "integration_test/maestro/production_direct_send.yaml",
+    "integration_test/maestro/production_background.yaml",
+    "integration_test/maestro/production_notification_tap.yaml",
+    "integration_test/maestro/production_reopen_seeded.yaml"
+  ],
+  "discovery_reason": "manifest-owned production notification tap latency (notification-open journey with --measure-tap-latency); original benchmark retained",
+  "reason": "Additive production tap latency measurement on the notification-open journey; the original benchmark and the notification-open capability remain intact.",
+  "timeout_seconds": 7200
+}

@@ -14,7 +14,10 @@ import 'production_journey_controller.dart';
 bool productionNotificationOtherChatOwner(
   ProductionJourneyController controller,
 ) =>
-    controller.invocation.scenarioId == notificationOpenJourney &&
+    {
+      notificationOpenJourney,
+      notificationTapLatencyJourney,
+    }.contains(controller.invocation.scenarioId) &&
     controller.invocation.role == 'bob' &&
     controller.profileId == 'android.production_fcm.journey';
 
@@ -29,7 +32,12 @@ void bindProductionDirectJourneyControls({
   required MessageRepository messageRepository,
   required ActiveConversationTracker conversationTracker,
 }) {
-  if (controller.invocation.scenarioId != notificationOpenJourney) return;
+  if (!{
+    notificationOpenJourney,
+    notificationTapLatencyJourney,
+  }.contains(controller.invocation.scenarioId)) {
+    return;
+  }
   final observer = directPrivateMediaRouteObserver;
   if (observer is! AppVisibilityRouteObserver) {
     throw StateError('production navigation observer is absent');

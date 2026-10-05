@@ -11,6 +11,7 @@ void bindProductionProviderProbeControl({
       controller.invocation.role != 'bob' ||
       !{
         notificationOpenJourney,
+        notificationTapLatencyJourney,
         notificationSoundJourney,
       }.contains(controller.invocation.scenarioId)) {
     return;

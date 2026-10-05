@@ -9,6 +9,10 @@ export JAVA_HOME=/Library/Java/JavaVirtualMachines/temurin-17.jdk/Contents/Home
 export MAESTRO_CLI_NO_ANALYTICS=1
 # The Maestro iOS driver can take minutes to start on a loaded Mac (beta_env.sh uses the same value).
 export MAESTRO_DRIVER_STARTUP_TIMEOUT=240000
+# Wave 4: the central ios.device.production build needs the signing attestation (minted by
+# docker-ws/beta/wave4/mint_signing_attestation.sh from the real provisioning profile).
+SIGNING=/Volumes/CrucialX9/flutter_app/docker-ws/beta/wave4/private/ios-signing-attestation.json
+[ -f "$SIGNING" ] && export SIMS_IOS_NOTIFICATION_STAGING_MANIFEST="$SIGNING"
 export PATH="$HOME/.maestro/bin:$ANDROID_HOME/platform-tools:/opt/homebrew/bin:$PATH"
 CHECKS="$1"
 CFGDIR="$REPO/.codex-test-logs/production-bootstrap-migration-20260930"

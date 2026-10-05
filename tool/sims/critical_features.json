@@ -6776,6 +6776,128 @@
       "automationReady": true,
       "active": true,
       "declaredBuildException": false
+    },
+    {
+      "id": "production.message_latency",
+      "owner": "reliability",
+      "proofBoundary": "production.message-latency.sender-vantage",
+      "assertions": [
+        "latency-sends-attempted",
+        "latency-timing-per-send",
+        "latency-r-sim-3-rendezvous",
+        "latency-r-sim-7-offline",
+        "latency-group-publish"
+      ],
+      "lane": "reliability",
+      "modes": [
+        "major",
+        "full"
+      ],
+      "families": [
+        "1to1",
+        "groups"
+      ],
+      "required": true,
+      "command": [
+        "dart",
+        "run",
+        "integration_test/scripts/run_production_message_latency.dart"
+      ],
+      "buildProfile": "android.e2e.main",
+      "dependencies": [
+        "build.android.e2e.main"
+      ],
+      "resources": [
+        {
+          "name": "build:android.e2e.main",
+          "access": "read"
+        },
+        {
+          "name": "device:android-physical",
+          "access": "exclusive"
+        },
+        {
+          "name": "device:android-emulator",
+          "access": "exclusive"
+        },
+        {
+          "name": "artifact:production-message-latency",
+          "access": "write"
+        }
+      ],
+      "targetCapabilities": [
+        "android.physical",
+        "android.emulator"
+      ],
+      "allowedNaReason": "target_unavailable_by_project_policy",
+      "artifactRequired": true,
+      "artifactValidator": "validateProductionMessageLatency",
+      "automationReady": true,
+      "active": true,
+      "declaredBuildException": false
+    },
+    {
+      "id": "production.notification_tap_latency",
+      "owner": "reliability",
+      "proofBoundary": "production.notification-tap-latency.real-os-tap",
+      "assertions": [
+        "tap-latency-three-cases",
+        "tap-latency-one-timing-per-tap",
+        "tap-latency-intervals-named"
+      ],
+      "lane": "reliability",
+      "modes": [
+        "major",
+        "full"
+      ],
+      "families": [
+        "notifications",
+        "1to1"
+      ],
+      "required": true,
+      "command": [
+        "dart",
+        "run",
+        "integration_test/scripts/run_production_notification_open.dart",
+        "--measure-tap-latency"
+      ],
+      "buildProfile": "android.e2e.main",
+      "dependencies": [
+        "build.android.e2e.main",
+        "build.android.production_fcm.journey"
+      ],
+      "resources": [
+        {
+          "name": "build:android.e2e.main",
+          "access": "read"
+        },
+        {
+          "name": "device:android-physical",
+          "access": "exclusive"
+        },
+        {
+          "name": "device:android-emulator",
+          "access": "exclusive"
+        },
+        {
+          "name": "artifact:production-notification-tap-latency",
+          "access": "write"
+        },
+        {
+          "name": "build:android.production_fcm.journey",
+          "access": "read"
+        }
+      ],
+      "targetCapabilities": [
+        "android.physical",
+        "android.emulator"
+      ],
+      "allowedNaReason": "target_unavailable_by_project_policy",
+      "artifactRequired": true,
+      "artifactValidator": "validateProductionNotificationTapLatency",
+      "automationReady": true,
+      "active": true,
+      "declaredBuildException": false
     }
   ],
   "ownership": [

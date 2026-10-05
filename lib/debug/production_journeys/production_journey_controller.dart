@@ -10,6 +10,8 @@ import 'sims_runtime_protocol.dart';
 
 const foregroundGroupPushJourney = 'production.foreground_group_push';
 const notificationOpenJourney = 'production.notification_open';
+// Wave 4: the notification-open journey as a tap latency measurement.
+const notificationTapLatencyJourney = 'production.notification_tap_latency';
 const notificationSoundJourney = 'production.notification_sound';
 const routingSmokeJourney = 'production.routing_smoke';
 const groupCatalogCreateJourney = 'production.group_catalog.private_abc_create';
@@ -158,6 +160,7 @@ const productionFourPeerJourneys = {
 const privateMediaJourney = 'production.private_media_local';
 const performanceJourney = 'production.startup_resume_performance';
 const transportCensusJourney = 'production.transport_census';
+const messageLatencyJourney = 'production.message_latency';
 typedef ProductionJourneyAction =
     Future<Map<String, Object?>> Function(Map<String, Object?> arguments);
 
@@ -208,11 +211,13 @@ final class ProductionJourneyController {
             (invocation.role != 'bob' ||
                 !{
                   notificationOpenJourney,
+                  notificationTapLatencyJourney,
                   notificationSoundJourney,
                 }.contains(invocation.scenarioId))) ||
         !{
           foregroundGroupPushJourney,
           notificationOpenJourney,
+          notificationTapLatencyJourney,
           notificationSoundJourney,
           routingSmokeJourney,
           privateMediaJourney,
@@ -274,6 +279,7 @@ final class ProductionJourneyController {
           groupCatalogUp012Journey,
           performanceJourney,
           transportCensusJourney,
+          messageLatencyJourney,
         }.contains(invocation.scenarioId) ||
         !(productionFourPeerJourneys.contains(invocation.scenarioId)
                 ? {'alice', 'bob', 'charlie', 'dana'}
