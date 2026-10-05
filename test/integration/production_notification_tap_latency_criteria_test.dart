@@ -31,7 +31,13 @@ Map<String, Object?> _fixture() => {
   'cases': [
     _case('warm-other-chat', 1000000),
     _case('cold-start', 2000000),
-    _case('same-peer', 3000000),
+    {
+      'id': 'same-peer',
+      'tapLatency': <String, Object?>{
+        'deviceTapClockMs': 3000000,
+        'timings': <Object?>[],
+      },
+    },
   ],
 };
 
@@ -71,9 +77,11 @@ void main() {
         ((p['cases']! as List)[0] as Map).remove('tapLatency'),
     'no timing for a tap': (p) => _latency(p, 1)['timings'] = <Object?>[],
     'two timings for a tap': (p) {
-      final timings = _latency(p, 2)['timings'] as List;
+      final timings = _latency(p, 1)['timings'] as List;
       timings.add(timings.first);
     },
+    'same-peer claims a new screen': (p) => (_latency(p, 2)['timings'] as List)
+        .add(_timing('2026-10-05T10:00:00.000Z')),
     'negative elapsed': (p) =>
         ((_latency(p, 0)['timings'] as List).first['details']
                 as Map)['elapsedMs'] =
@@ -87,7 +95,7 @@ void main() {
                 as Map)['milestone'] =
             'live_render',
     'device clock missing': (p) => _latency(p, 1)['deviceTapClockMs'] = null,
-    'event before the tap': (p) => _latency(p, 2)['deviceTapClockMs'] = 4000000,
+    'event before the tap': (p) => _latency(p, 1)['deviceTapClockMs'] = 4000000,
   };
   for (final entry in mutations.entries) {
     test('rejects ${entry.key}', () {

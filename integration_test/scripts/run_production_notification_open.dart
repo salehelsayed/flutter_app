@@ -193,7 +193,10 @@ Future<void> main(List<String> arguments) async {
                     rows.any(
                       (row) => row['id'] == messageId && row['readAt'] != null,
                     ) &&
+                    // Production emits the tap timing when the conversation
+                    // screen is built; a same-peer tap finds it already open.
                     (!measure ||
+                        id == 'same-peer' ||
                         productionNewTapTimings(before, value).isNotEmpty)
                 ? value
                 : null;

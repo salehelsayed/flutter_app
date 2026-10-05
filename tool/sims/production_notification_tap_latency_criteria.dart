@@ -7,7 +7,10 @@
 /// open to the first readable (stale-render) conversation frame; for the cold
 /// case it excludes process start; and (b) an upper bound from the device
 /// clock just before the Maestro tap flow to that event, which also includes
-/// the shade swipe and Maestro start-up.
+/// the shade swipe and Maestro start-up. Like the original, the timing is
+/// required for the warm and cold opens; a same-peer tap finds the
+/// conversation already open (CONVERSATION_NOTIFICATION_ROUTE_ALREADY_ACTIVE),
+/// so production builds no screen and emits no timing for it.
 const productionNotificationTapIntervals = {
   'a':
       'NOTIFICATION_TAP_TO_MESSAGE_TIMING elapsedMs: Dart open receipt to '
@@ -72,6 +75,13 @@ List<String> validateProductionNotificationTapLatency(
       continue;
     }
     final timings = latency['timings'];
+    if (id == 'same-peer') {
+      require(
+        timings is List && timings.isEmpty,
+        '$id: no new screen, so no tap-to-message timing',
+      );
+      continue;
+    }
     final one =
         timings is List &&
         timings.length == 1 &&
