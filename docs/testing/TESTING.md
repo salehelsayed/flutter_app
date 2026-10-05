@@ -4164,7 +4164,8 @@ visible and cannot become an ordinary first-attempt PASS.
   SIGKILL snapshots are not proof of memory corruption or an engine defect.
   The committed PushKit receiver-retention correction is verified in matching
   distributed 115 and 117 binaries; 115 is the earliest established inclusion.
-  The notification coordination lock can still span awaited work. Its existing
+  At reviewed baseline `f574c0f4a`, the notification coordination lock could
+  still span awaited work. Its existing
   same-isolate contention queue addresses a different condition and must not
   be claimed as a suspension fix. R4's ledger stack supports a probable owner;
   R2/R3 do not identify the locked file. Keep candidate background/CallKit
@@ -4193,6 +4194,142 @@ visible and cannot become an ordinary first-attempt PASS.
   operations preserve seeded rows and bracket actual UN publication/removal
   with lock ownership and unlock-before-lease-end. These private-container
   component runs do not establish App Group/NSE or expiration safety.
+  The current local correction releases flock and its scoped grant around the
+  registry's inventory/replacement/cancellation callbacks and the effect
+  coordinator's canonical/visibility/native publication/retirement/repair
+  callbacks. It awaits actual completion, reacquires with fresh admission, and
+  validates the exact durable operation owner and claim/content generation
+  before settlement. An atomic process-birth/token marker retains logical
+  exclusion while the kernel lock is free; Runner/NSE readers honor it under
+  the existing coordination lock. Unknown owners fail closed, live/suspended
+  foreign processes have no TTL takeover, and dead or completed owners permit
+  existing durable reconciliation. Refused reacquisition must release any
+  acquired segment immediately; an inventory catch cannot then settle without
+  authority. iOS ledger/registry/tone filesystem operations use synchronous
+  calls to avoid disk Future waits; Android keeps the prior async paths.
+  Deterministic expiration/slow-completion regressions are in
+  `notification_lock_external_work_test.dart` (12 passing cases), selected by
+  `notification-lock-diagnostics`. The shared native owner guard is exercised
+  by `python3 scripts/test/run_notification_async_owner_native.py`, including
+  real foreign-process suspension/death, PID-birth mismatch, and malformed
+  marker refusal. Host success does not establish the iOS sandbox boundary.
+  All current `ios/NotificationService/*.swift` sources also typecheck together
+  for arm64/iOS 15 with the real GoMknoonNSE device framework and application
+  extension restrictions; only existing deprecated summary-field warnings
+  remain. This compile proof does not establish signed extension execution.
+  Source-linked Release/AOT fixture evidence on the available physical iPhone
+  11/iOS 26.5 is retained in ignored
+  `.codex-test-logs/notification-lock-fix-20261004/`: `device-fixture/source-receipt.json`,
+  `fixture-build-final.log`, and nine `final_*.xml` Appium states. Actual iOS
+  suspension (Appium state 2) occurred with the callback pending, flock free,
+  and zero live grants. Controlled refusal before admission and on late
+  completion preserved the seed and PUBLISHING state. Termination/relaunch
+  between effect and settlement recovered with one ordinary effect and one
+  silent repair; duplicate replay did not increase either counter. Admission
+  refusal is an injected future-admission control, not a claim to have forced
+  Apple's expiration callback in this fixture. The tiny native adapter exposes
+  only owned-fixture flock/grant observations and callback controls that UI
+  automation cannot inspect. Appium MCP owns lifecycle/UI actions.
+  The first stock Maestro 2.10.0 runs did not pass: its physical-iOS
+  `launchApp` implementation throws `NotImplementedError`. Maestro's official
+  [2.11.0 release notes](https://maestro.dev/blog/maestro-cli-2-11-0) explicitly
+  confirm physical iOS is unsupported; this is not an application defect or
+  a reason to require another phone. Those original failures and partial
+  probes remain visible. The unchanged full
+  `integration_test/maestro/notification_lock_fixture.yaml` subsequently passes
+  all 59 steps on the same physical iPhone 11 using maintained DeviceLab
+  `maestro-runner` 1.1.28 over Appium 3.7.0/XCUITest 12.13.2. The downloaded
+  arm64 archive matches its published SHA-256, the flow is unchanged, and the
+  run has one automation owner. This is a Maestro-compatible runner result,
+  not a claim that stock Maestro supports physical iOS. Exact JSON/JUnit,
+  screenshots and timings are in
+  `compatible-flow-002/2026-10-04_18-40-19/` under the same ignored evidence
+  root. An earlier compatible-runner setup attempt reached no scenario because
+  Appium was still loading; its connection-refused log is retained. Impact
+  checks use verified local-start base
+  `0045db3b3a6a6f1408f4a7db36ab4f65d626adb6` with `--local`; the affected-push,
+  diagnostics, lock, notifications and native-owner lanes pass. The broad
+  workflow lane first failed because the new fixture was unclassified;
+  registering it as automation support restores all 243 workflow tests without
+  altering their assertions. The separate discovery contract initially fails
+  its Plan 379/393 suffix assertion: later production capabilities had already
+  appended in both the local-start base and HEAD. Its original IDs now remain
+  pinned at indices 41 and 42:48, matching the existing runtime-root index
+  contract, instead of incorrectly requiring them to remain the final rows.
+  Replacement, reorder, insertion and deletion still fail; only append-only
+  extension passes the causal mutation controls. The complete original
+  discovery contract passes and is selected by the exact
+  `reliability-discovery-contract` command; 243 workflow and nine Maestro-flow
+  contract tests also pass. Preserve the superseded first failure.
+  The broad
+  working-tree selection also includes unrelated concurrent edits and checks
+  that were not executed; its aggregate is not a full acceptance verdict.
+  The first private-container proof did not establish signed App Group/NSE
+  concurrency or a signed release: the isolated fixture's existing wildcard
+  profile lacks App Group/APS entitlements,
+  and capable profiles use personal production bundle IDs that this task must
+  preserve. `prepare_notification_lock_fixture.py --shared-boundary` now
+  prepares a separate unsigned Runner/NSE fixture with an isolated App Group
+  and an NSE observer that calls the production guard under actual flock.
+  It cannot fall back to a private container when group access fails, cannot
+  initialize or modify the ledger, and gates completion against expiration.
+  Its Release/AOT Runner and embedded NSE build with signing disabled; earlier
+  product-name and Flutter thinning/copy-cycle setup failures remain retained.
+  `shared-fixture/shared-boundary-proposal.json` owns the exact proposed bundle
+  and group IDs. That initial prepared artifact was not provisioned, installed,
+  or runtime-certified. The user subsequently explicitly approved only these
+  isolated identifiers, group and development profiles. Automatic provisioning
+  was attempted on the ignored fixture only, pinned to iPhone 11 and team
+  `397R9Q4WMX`. The first attempt rejected a certificate-fingerprint override
+  with automatic signing; after changing the owned targets to Apple Development,
+  Xcode returned `No Accounts` for both targets. A filtered preference audit
+  confirmed zero signed-in Xcode accounts at that time. Neither initial attempt
+  created or modified identifiers or profiles. Both attempts are retained as
+  `shared-fixture-signing-001.log` and `shared-fixture-signing-002.log`.
+  An existing APNs test key is present at the repository's configured path;
+  current-process environment absence is superseded as a readiness diagnosis.
+  That account blocker subsequently cleared after the user signed in. The
+  approved automatic provisioning/build succeeds in
+  `shared-fixture-signing-003.log`; both isolated profiles include iPhone 11,
+  both targets carry only `group.com.mknoon.fixture.notificationLock`, and
+  Runner carries development APS. The existing certificate fingerprint is
+  verified, and no production identifier or profile was modified. The initial
+  NSE evidence-export attempt hit CoreDevice's restriction to Documents,
+  Library and tmp. Moving only the observer's evidence into the group's
+  `Documents/NotificationLockFixtureEvidence` produces the signed Release/AOT
+  `shared-signed-004/Runner.app`; its signed receipt binds both executable
+  hashes, profile UUIDs and all 27 current source hashes.
+  The real APNs test key is authorized for the isolated topic: accepted pushes
+  plus five separate-process NSE receipts establish actual execution, not
+  merely provider acceptance. Earlier accepted pushes with no receipt inside
+  the original deadline remain failed proof attempts; do not infer their cause
+  or attribute that nondelivery to this lock defect. In the successful actual
+  NSE receipts, flock is free and the existing seed is retained throughout:
+  `AVAILABLE` with no owner, `RUNNER_LIVE_OR_UNCERTAIN` during canonical and
+  native callback waits while Appium reports Runner suspended, `AVAILABLE`
+  after Runner termination before relaunch, and `AVAILABLE` after settlement
+  while the new Runner remains live. The observer calls the source-linked
+  production guard under the shared flock, never mutates the ledger, and cannot
+  use a private-container fallback. It does not run the entire production
+  encrypted-payload/Go/NSE effect pipeline. After effect-before-settlement
+  termination, Appium asserts retained PUBLISHING/one effect, then SETTLED/one
+  effect/one silent repair; duplicate replay adds neither. Exact
+  `nse-*-validation.log`, APNs receipts and `shared-ui-*.xml` retain this proof
+  under the same ignored evidence root. Only physical iPhone 11 was controlled.
+  The unchanged complete Maestro YAML also passes all 59 steps on this same
+  signed App Group build using the previously verified compatible runner.
+  `shared-compatible-flow-001/2026-10-04_21-38-08/report.json` records zero failed
+  or skipped commands and a 64.380-second flow duration. After the evidence-path
+  change, impact-selected workflow (244), Maestro contracts (nine), and native
+  owner command checks pass; aggregate selection remains incomplete for omitted
+  obligations and unrelated concurrent changes. This fixture evidence closes
+  the observed signed App Group/guard boundary, not signed production release
+  certification or the complete production APNs/business-effect pipeline.
+  Already-entered synchronous
+  kernel I/O, blocking acquisition/platform admission checks, and an abandoned
+  Dart isolate whose native token remains live still limit recovery/bounds;
+  the latter may require Runner restart. This correction does not attribute
+  every historical suspension termination or certify APNs delivery.
 - **Historical native badge ownership:** six supplemental iPhone reports sample
   a badge writer waiting in `flock`; a waiter does not identify the held file's
   owner. The old writer retained its descriptor through the asynchronous badge

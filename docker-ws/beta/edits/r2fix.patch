@@ -1,0 +1,3639 @@
+diff --git a/UI-19-Groups/Groups-specs.md b/UI-19-Groups/Groups-specs.md
+index cc4ece833..ad9802388 100644
+--- a/UI-19-Groups/Groups-specs.md
++++ b/UI-19-Groups/Groups-specs.md
+@@ -191,7 +191,7 @@ GossipSub can also be a "private" group chat?
+   │ Partial history │ Send keys from a certain point │ Middle ground — "you can see the last 30 days"                           │
+   └─────────────────┴────────────────────────────────┴──────────────────────────────────────────────────────────────────────────┘
+ 
+-  This is a product decision, not a technical one. You can support any of these since the relay already stores the encrypted messages — it's just a question of which keys you hand over.
++  Decision (2026-09-30, R2 open-issues handoff O10): **No history, join-point only.** A member receives only messages sent after they accept the invite. Messages sent while their invite is pending are not delivered later; there is no backfill. The member sees a localized “You joined” marker, and pending invitees are identified as not joined and not receiving messages.
+ 
+   What the new member does
+ 
+diff --git a/android/app/src/main/kotlin/com/mknoon/app/call/MknoonCallAndroidRuntime.kt b/android/app/src/main/kotlin/com/mknoon/app/call/MknoonCallAndroidRuntime.kt
+index 143a88447..fbcd94a87 100644
+--- a/android/app/src/main/kotlin/com/mknoon/app/call/MknoonCallAndroidRuntime.kt
++++ b/android/app/src/main/kotlin/com/mknoon/app/call/MknoonCallAndroidRuntime.kt
+@@ -464,6 +464,7 @@ internal class MknoonCallRuntime private constructor(context: Context) {
+             failCloser = ::failClosed,
+             beforeAttach = ::settleUnconsumableTerminalBeforeAttach,
+             authenticatedPresenter = ::presentAuthenticated,
++            authenticatedDisplayPresenter = ::presentAuthenticated,
+             authenticatedOutgoingRegistrar = ::registerOutgoingAuthenticated,
+             admissionSettlementCapture = ::captureAdmissionSettlement,
+             admissionSettlementCommit = ::settleAuthenticatedAdmission,
+diff --git a/android/app/src/main/kotlin/com/mknoon/app/call/MknoonCallNativeBridge.kt b/android/app/src/main/kotlin/com/mknoon/app/call/MknoonCallNativeBridge.kt
+index 0c52cb9dd..e98a8de30 100644
+--- a/android/app/src/main/kotlin/com/mknoon/app/call/MknoonCallNativeBridge.kt
++++ b/android/app/src/main/kotlin/com/mknoon/app/call/MknoonCallNativeBridge.kt
+@@ -153,6 +153,7 @@ internal class MknoonCallNativeBridge(
+     private val failCloser: (() -> Boolean)? = null,
+     private val beforeAttach: (() -> Unit)? = null,
+     private val authenticatedPresenter: ((String, Long) -> Boolean)? = null,
++    private val authenticatedDisplayPresenter: ((String, Long, MknoonIncomingCallDisplay) -> Boolean)? = null,
+     private val authenticatedOutgoingRegistrar: ((String, Long) -> Boolean)? = null,
+     private val admissionSettlementCapture: ((UUID) -> MknoonCallAdmissionToken?)? = null,
+     private val admissionSettlementCommit: ((MknoonCallAdmissionToken) -> Boolean)? = null,
+@@ -500,12 +501,16 @@ internal class MknoonCallNativeBridge(
+ 
+     private fun presentAuthenticated(arguments: Any?, result: MethodChannel.Result) {
+         val map = arguments as? Map<*, *> ?: return badArguments(result)
+-        if (map.keys != setOf("version", "callHandle", "expiresAtMs")) {
++        if (map.keys != setOf("version", "callHandle", "expiresAtMs") &&
++            map.keys != setOf("version", "callHandle", "expiresAtMs", "display")) {
+             return badArguments(result)
+         }
+         if (!validVersion(map["version"])) return badArguments(result)
+         val callHandle = map["callHandle"] as? String ?: return badArguments(result)
+         val expiresAtMs = parseLong(map["expiresAtMs"]) ?: return badArguments(result)
++        val display = if (map.containsKey("display")) {
++            MknoonIncomingCallDisplay.parse(map["display"]) ?: return badArguments(result)
++        } else null
+         val descriptor = controller.snapshot()
+         val alreadyPresented = descriptor != null &&
+                 descriptor.callHandle == callHandle &&
+@@ -513,7 +518,9 @@ internal class MknoonCallNativeBridge(
+                 descriptor.terminalEvent == null
+         if (alreadyPresented) return result.success(true)
+         dispatchRegistration(result) {
+-            authenticatedPresenter?.invoke(callHandle, expiresAtMs) == true
++            if (display != null && authenticatedDisplayPresenter != null) {
++                authenticatedDisplayPresenter.invoke(callHandle, expiresAtMs, display)
++            } else authenticatedPresenter?.invoke(callHandle, expiresAtMs) == true
+         }
+     }
+ 
+diff --git a/android/app/src/main/kotlin/com/mknoon/app/call/MknoonCallNotificationFactory.kt b/android/app/src/main/kotlin/com/mknoon/app/call/MknoonCallNotificationFactory.kt
+index c4e009c0e..910d349ff 100644
+--- a/android/app/src/main/kotlin/com/mknoon/app/call/MknoonCallNotificationFactory.kt
++++ b/android/app/src/main/kotlin/com/mknoon/app/call/MknoonCallNotificationFactory.kt
+@@ -106,6 +106,7 @@ internal class MknoonCallNotificationFactory(
+             ?.takeIf { it.isNotEmpty() && it.length <= 128 }
+             ?: applicationContext.getString(R.string.call_notification_person)
+ 
++    @Suppress("UNUSED_PARAMETER")
+     fun createIncoming(
+         nativeCallId: UUID,
+         fullScreenAllowed: Boolean = canPresentFullScreen(),
+@@ -151,9 +152,10 @@ internal class MknoonCallNotificationFactory(
+         // only automatic presentation; this open action never answers the call.
+         val openIncoming = pendingIntents.fullScreen(nativeCallId)
+         builder.setContentIntent(openIncoming)
+-        if (fullScreenAllowed) {
+-            builder.setFullScreenIntent(openIncoming, true)
+-        }
++        // SystemUI enforces full-screen access. Retain the intent when denied:
++        // Android 14 uses it to show the expanded, actionable heads-up on the
++        // locked/off screen for 60 seconds instead of launching the activity.
++        builder.setFullScreenIntent(openIncoming, true)
+         return builder.build()
+     }
+ 
+diff --git a/android/app/src/main/kotlin/com/mknoon/app/call/MknoonIncomingCallPresentation.kt b/android/app/src/main/kotlin/com/mknoon/app/call/MknoonIncomingCallPresentation.kt
+index a30f96864..ec0df654a 100644
+--- a/android/app/src/main/kotlin/com/mknoon/app/call/MknoonIncomingCallPresentation.kt
++++ b/android/app/src/main/kotlin/com/mknoon/app/call/MknoonIncomingCallPresentation.kt
+@@ -66,6 +66,7 @@ internal class MknoonIncomingCallPresentation(
+     private var unregisterBack: (() -> Unit)? = null
+     private var previousSystemIconAppearance: SystemIconAppearance? = null
+     private var windowEnabled = false
++    private var screenWakeEnabled = false
+     private var disposed = false
+     private var stopped = false
+     private var intentSequence = 0
+@@ -181,6 +182,7 @@ internal class MknoonIncomingCallPresentation(
+             setWindowEnabled(false)
+             removeCover()
+         }
++        setScreenWakeEnabled(locked || !descriptor.answerRequested)
+         handler.postDelayed(observation, OBSERVE_MS)
+     }
+ 
+@@ -440,15 +442,30 @@ internal class MknoonIncomingCallPresentation(
+     }
+ 
+     private fun setWindowEnabled(enabled: Boolean) {
+-        if (windowEnabled == enabled) return
++        if (windowEnabled == enabled) {
++            if (!enabled) setScreenWakeEnabled(false)
++            return
++        }
+         windowEnabled = enabled
+         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
+             activity.setShowWhenLocked(enabled)
++            setScreenWakeEnabled(enabled)
++        } else {
++            @Suppress("DEPRECATION")
++            val flags = WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED
++            if (enabled) activity.window.addFlags(flags) else activity.window.clearFlags(flags)
++            setScreenWakeEnabled(enabled)
++        }
++    }
++
++    private fun setScreenWakeEnabled(enabled: Boolean) {
++        if (screenWakeEnabled == enabled) return
++        screenWakeEnabled = enabled
++        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
+             activity.setTurnScreenOn(enabled)
+         } else {
+             @Suppress("DEPRECATION")
+-            val flags = WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED or
+-                WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON
++            val flags = WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON
+             if (enabled) activity.window.addFlags(flags) else activity.window.clearFlags(flags)
+         }
+     }
+diff --git a/android/app/src/test/kotlin/com/mknoon/app/HeadlessCanonicalRecoveryWorkerTest.kt b/android/app/src/test/kotlin/com/mknoon/app/HeadlessCanonicalRecoveryWorkerTest.kt
+index 7e89fd5e5..308413c2d 100644
+--- a/android/app/src/test/kotlin/com/mknoon/app/HeadlessCanonicalRecoveryWorkerTest.kt
++++ b/android/app/src/test/kotlin/com/mknoon/app/HeadlessCanonicalRecoveryWorkerTest.kt
+@@ -252,12 +252,15 @@ class HeadlessCanonicalRecoveryWorkerTest {
+     fun `stop only signals while execute finally performs cleanup`() = runBlocking {
+         val entered = CompletableDeferred<Unit>()
+         val cancelled = CompletableDeferred<Unit>()
++        val finishing = CompletableDeferred<Unit>()
++        val releaseFinish = CompletableDeferred<Unit>()
+         val runner = FakeHeadlessRecoveryRunner {
+             entered.complete(Unit)
+             cancelled.await()
+             successfulCompletion()
+         }.also { candidate ->
+             candidate.onStop = { cancelled.complete(Unit) }
++            candidate.onFinish = { finishing.complete(Unit); releaseFinish.await() }
+         }
+         val execution = execution(FakeHeadlessRecoveryAuthority(), runner)
+ 
+@@ -266,6 +269,11 @@ class HeadlessCanonicalRecoveryWorkerTest {
+         execution.requestStop()
+ 
+         assertEquals(0, runner.finishCalls)
++        finishing.await()
++        // JobScheduler stop must return even while engine teardown is blocked.
++        java.util.concurrent.CompletableFuture.runAsync { execution.requestStop() }
++            .get(1, java.util.concurrent.TimeUnit.SECONDS)
++        releaseFinish.complete(Unit)
+         assertEquals(HeadlessCanonicalRecoveryWorkOutcome.RETRY, result.await())
+         assertTrue(runner.stopCalls >= 1)
+         assertEquals(1, runner.finishCalls)
+@@ -603,6 +611,7 @@ private class FakeHeadlessRecoveryRunner(
+     var finishCalls = 0
+     var finishFailure: Throwable? = null
+     var onStop: () -> Unit = {}
++    var onFinish: suspend () -> Unit = {}
+ 
+     override suspend fun run(
+         snapshot: HeadlessCanonicalRecoveryStartSnapshot,
+@@ -618,6 +627,7 @@ private class FakeHeadlessRecoveryRunner(
+ 
+     override suspend fun finish() {
+         finishCalls += 1
++        onFinish()
+         finishFailure?.let { throw it }
+     }
+ }
+diff --git a/android/app/src/test/kotlin/com/mknoon/app/call/MknoonCallNativeBridgeTest.kt b/android/app/src/test/kotlin/com/mknoon/app/call/MknoonCallNativeBridgeTest.kt
+index 94716ea8d..9bf7dafc4 100644
+--- a/android/app/src/test/kotlin/com/mknoon/app/call/MknoonCallNativeBridgeTest.kt
++++ b/android/app/src/test/kotlin/com/mknoon/app/call/MknoonCallNativeBridgeTest.kt
+@@ -20,6 +20,34 @@ import org.robolectric.annotation.Config
+ @RunWith(RobolectricTestRunner::class)
+ @Config(sdk = [33])
+ class MknoonCallNativeBridgeTest {
++    @Test
++    fun `authenticated display seed crosses presentation before the first notification`() {
++        val rig = LifecycleRig()
++        var seeded: MknoonIncomingCallDisplay? = null
++        val bridge = MknoonCallNativeBridge(
++            controller = rig.controller, messenger = null,
++            authenticatedDisplayPresenter = { handle, expiry, display ->
++                assertEquals(rig.payload.callHandle, handle)
++                assertEquals(rig.payload.expiresAtMs, expiry)
++                seeded = display
++                true
++            },
++        )
++        val arguments = mapOf(
++            "version" to 1, "callHandle" to rig.payload.callHandle,
++            "expiresAtMs" to rig.payload.expiresAtMs,
++            "display" to mapOf("displayName" to "Alice", "avatarPng" to null, "light" to true),
++        )
++        val result = CapturingCallBridgeResult()
++        bridge.onMethodCall(MethodCall("presentAuthenticated", arguments), result)
++        assertEquals(true, result.value)
++        assertEquals("Alice", seeded?.displayName)
++        val malformed = CapturingCallBridgeResult()
++        bridge.onMethodCall(MethodCall("presentAuthenticated", arguments +
++            ("display" to mapOf("displayName" to "Alice", "secret" to "untrusted"))), malformed)
++        assertEquals("bad_args", malformed.errorCode)
++    }
++
+     @Test fun `admission settlement does not block main behind Telecom and checks owner at execution`() {
+         val rig = LifecycleRig()
+         val relay = MknoonCallEventRelay()
+diff --git a/android/app/src/test/kotlin/com/mknoon/app/call/MknoonCallNotificationFactoryTest.kt b/android/app/src/test/kotlin/com/mknoon/app/call/MknoonCallNotificationFactoryTest.kt
+index 60c5c2bfd..fddd6f9fa 100644
+--- a/android/app/src/test/kotlin/com/mknoon/app/call/MknoonCallNotificationFactoryTest.kt
++++ b/android/app/src/test/kotlin/com/mknoon/app/call/MknoonCallNotificationFactoryTest.kt
+@@ -75,7 +75,7 @@ class MknoonCallNotificationFactoryTest {
+     }
+ 
+     @Test
+-    fun `incoming CallStyle is ongoing actionable and degraded without full-screen intent`() {
++    fun `incoming CallStyle retains the intent for the OS denied-access heads-up fallback`() {
+         val callId = UUID.fromString(CALL_ID)
+ 
+         val notification = factory.createIncoming(
+@@ -86,7 +86,7 @@ class MknoonCallNotificationFactoryTest {
+         assertEquals(Notification.CATEGORY_CALL, notification.category)
+         assertTrue(notification.flags and Notification.FLAG_ONGOING_EVENT != 0)
+         assertTrue(notification.flags and Notification.FLAG_AUTO_CANCEL == 0)
+-        assertNull(notification.fullScreenIntent)
++        assertNotNull(notification.fullScreenIntent)
+         assertEquals(
+             listOf(
+                 CallNotificationPendingIntentRequest(
+@@ -113,7 +113,7 @@ class MknoonCallNotificationFactoryTest {
+             fullScreenAllowed = false,
+         )
+ 
+-        assertNull(notification.fullScreenIntent)
++        assertNotNull(notification.fullScreenIntent)
+         assertNotNull(notification.contentIntent)
+         // A notification body tap is an open action, never an implicit Answer.
+         // Its immutable PendingIntent also rejects replacement call identity.
+@@ -144,7 +144,7 @@ class MknoonCallNotificationFactoryTest {
+     }
+ 
+     @Test
+-    fun `incoming full-screen intent is added only when explicitly allowed`() {
++    fun `incoming full-screen intent is retained for OS permission enforcement`() {
+         val callId = UUID.fromString(CALL_ID)
+ 
+         val notification = factory.createIncoming(
+@@ -172,13 +172,13 @@ class MknoonCallNotificationFactoryTest {
+ 
+     @Test
+     @Config(sdk = [34], shadows = [IncomingNotificationPermissionShadow::class])
+-    fun `every ringing replacement rechecks Android full-screen permission and retains actionable fallback`() {
++    fun `every ringing replacement retains the OS actionable fallback across permission changes`() {
+         val callId = UUID.fromString(CALL_ID)
+         val productionFactory = MknoonCallNotificationFactory(context)
+         listOf(true, true, false, false, true).forEach { allowed ->
+             IncomingNotificationPermissionShadow.allowed = allowed
+             val notification = productionFactory.createIncoming(callId)
+-            assertEquals(allowed, notification.fullScreenIntent != null)
++            assertNotNull(notification.fullScreenIntent)
+             assertNotNull(notification.contentIntent)
+             assertEquals(2, notification.actions.count { it.actionIntent != null })
+             assertTrue(notification.flags and Notification.FLAG_ONLY_ALERT_ONCE != 0)
+diff --git a/android/app/src/test/kotlin/com/mknoon/app/call/MknoonIncomingCallPresentationTest.kt b/android/app/src/test/kotlin/com/mknoon/app/call/MknoonIncomingCallPresentationTest.kt
+index acc872d21..9f3555cd4 100644
+--- a/android/app/src/test/kotlin/com/mknoon/app/call/MknoonIncomingCallPresentationTest.kt
++++ b/android/app/src/test/kotlin/com/mknoon/app/call/MknoonIncomingCallPresentationTest.kt
+@@ -64,6 +64,21 @@ class MknoonIncomingCallPresentationTest {
+         presentation.dispose()
+     }
+ 
++    @Test
++    fun `unlocked ringing wakes the screen without granting lockscreen access`() {
++        locked = false
++        presentation.onIntent(openIntent(), answerFromIntent = false)
++        assertWindowEnabled(false, expectedWake = true)
++        assertNull(cover())
++        presentation.onStop()
++        assertWindowEnabled(false)
++        presentation.onResume()
++        assertWindowEnabled(false, expectedWake = true)
++        source.current = null
++        tick()
++        assertWindowEnabled(false)
++    }
++
+     @Test
+     fun `initial and warm call launch cover private routes and expose explicit answer and decline`() {
+         presentation.onIntent(openIntent(), answerFromIntent = true)
+@@ -127,7 +142,7 @@ class MknoonIncomingCallPresentationTest {
+         presentation.onIntent(openIntent(), answerFromIntent = false)
+         assertTrue(exit === listener())
+         assertNull(cover())
+-        assertWindowEnabled(false)
++        assertWindowEnabled(false, expectedWake = true)
+         locked = true
+         presentation.onResume()
+         assertTrue(exit === listener())
+@@ -213,7 +228,7 @@ class MknoonIncomingCallPresentationTest {
+ 
+             locked = false
+             tick()
+-            assertWindowEnabled(false)
++            assertWindowEnabled(false, expectedWake = true)
+             assertNull(cover())
+             assertEquals(View.IMPORTANT_FOR_ACCESSIBILITY_YES, privateContent.importantForAccessibility)
+             assertTrue(privateContent.isFocusable)
+@@ -869,7 +884,7 @@ class MknoonIncomingCallPresentationTest {
+         presentation.onIntent(openIntent(), answerFromIntent = true)
+         locked = false
+         tick()
+-        assertWindowEnabled(false)
++        assertWindowEnabled(false, expectedWake = true)
+         assertNull(cover())
+         assertEquals(View.VISIBLE, privateContent.visibility)
+         locked = true
+@@ -886,7 +901,7 @@ class MknoonIncomingCallPresentationTest {
+         presentation.onStop()
+         presentation.onResume()
+         assertNull(cover())
+-        assertWindowEnabled(false)
++        assertWindowEnabled(false, expectedWake = true)
+         assertEquals(View.VISIBLE, privateContent.visibility)
+         locked = true
+         tick()
+@@ -912,7 +927,7 @@ class MknoonIncomingCallPresentationTest {
+     fun `unlocked incoming launch keeps Flutter visible and never grants lockscreen flags`() {
+         locked = false
+         presentation.onIntent(openIntent(), answerFromIntent = true)
+-        assertWindowEnabled(false)
++        assertWindowEnabled(false, expectedWake = true)
+         assertNull(cover())
+         assertEquals(View.VISIBLE, privateContent.visibility)
+         assertTrue(source.answers.isEmpty())
+@@ -1074,16 +1089,17 @@ class MknoonIncomingCallPresentationTest {
+         assertNull(button(R.string.call_notification_end))
+     }
+ 
+-    private fun assertWindowEnabled(expected: Boolean) {
++    private fun assertWindowEnabled(expected: Boolean, expectedWake: Boolean = expected) {
+         assertEquals("Lockscreen access must follow the opaque cover", 0, activity.unsafeGrants)
+         if (Build.VERSION.SDK_INT >= 27) {
+             assertEquals(expected, shadowOf(activity).showWhenLocked)
+-            assertEquals(expected, shadowOf(activity).turnScreenOn)
++            assertEquals(expectedWake, shadowOf(activity).turnScreenOn)
+         } else {
+             @Suppress("DEPRECATION")
+-            val flags = WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED or
+-                WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON
+-            assertEquals(if (expected) flags else 0, activity.window.attributes.flags and flags)
++            val lockFlag = WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED
++            val wakeFlag = WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON
++            assertEquals(if (expected) lockFlag else 0, activity.window.attributes.flags and lockFlag)
++            assertEquals(if (expectedWake) wakeFlag else 0, activity.window.attributes.flags and wakeFlag)
+         }
+     }
+ 
+diff --git a/docs/testing/TESTING.md b/docs/testing/TESTING.md
+index 541514f35..c0bcf5473 100644
+--- a/docs/testing/TESTING.md
++++ b/docs/testing/TESTING.md
+@@ -3072,6 +3072,48 @@ do not count `test(...)` strings as executions. Runner listings took about
+ 
+ ## Shared dependency lessons
+ 
++- R2 open-issue regressions: finalized M4A duration comes from the bounded
++  `moov/mvhd` movie clock, with wall time used only when that clock is unavailable.
++  The recorder minimum-length decision uses the same encoded duration. The
++  parser and recorder tests preserve the original bytes and cover a 17-second
++  encoded file even when the host wall clock has barely advanced. Historical
++  59/36- and 26/17-second recordings were unavailable; these tests cannot
++  establish whether their encoders lost samples.
++  Fresh USB iPhone 11 ↔ iPhone 13 group transfers on the R2 fix profile build
++  displayed 0:39 and 1:20 for encoded durations 39.31 s and 80.27 s. Both
++  transfers retained identical sender/receiver SHA-256 hashes, decoded without
++  errors, and advanced during receiver playback. Ignored evidence is under
++  `.codex-test-logs/r2-open-issues/iphone-proof/`; the exact profile artifact
++  hashes are in `artifact-hashes-final.json`. These fresh transfers do not
++  supersede the missing historical Pixel integrity evidence.
++  Recorder auto-stop tests must await their completion callback before reading
++  the finalized file; fixed sleeps raced finalization under the full host batch.
++  This fixture repair does not extend the production recording deadline.
++- Audio-player disposal must fence reloads and await pending source loads before
++  closing the player's streams. The 20-cycle pending-load teardown regression
++  covers the closed-subject race. A stop failure still permits teardown;
++  disposal failures emit an identity-free diagnostic.
++  Ten Appium playback/navigation cycles on the USB iPhone 13 profile build
++  also completed without a visible error or crash; the causal pending-load
++  assertion remains the host test rather than an inference from those cycles.
++- Archived direct-message arrivals still publish the conversation change event
++  before suppressing notifications. The listener regression covers both effects.
++  On USB iPhone 13, the open Archived list updated the iPhone 11 row to a fresh
++  incoming message without navigation. Appium XML and pixels are retained in
++  ignored `r2-open-issues/iphone-proof/archivedPreview13.xml` and
++  `archived-preview13.png`; the QA contact was subsequently unarchived.
++- Rich-text link semantics must retain the entire message and WidgetSpan status
++  metadata. `linkable_text_test.dart` invokes the merged semantic link action;
++  `letter_card_test.dart` preserves timestamps and transport-status labels.
++  Group-editor actions remain outside the scrolling fields, and the editor
++  surface must be opaque while the keyboard is open. Host tests cover those
++  layout properties; USB iPhone Appium evidence is recorded separately.
++- Dart background health polling must stop on paused/detached lifecycle states
++  while explicit offline-inbox drains remain available. The health-drain test
++  verifies no poll/reconnect in background and recovery after resume. Configured
++  relay addresses retain permanent peerstore custody; the Go address-expiry test
++  covers expiry of transient connected-address TTLs. This does not establish
++  that every internal Go relay task is suspended.
+ - Video preparation has a native `video_compress` call and a composer lifecycle.
+   A Dart deadline must request native cancellation, stop its progress listener,
+   release the composer, and keep completed siblings. The direct and group wired
+@@ -5710,6 +5752,20 @@ visible and cannot become an ordinary first-attempt PASS.
+   preserve that proof. It used a debug APK with voice-call Dart defines and
+   `enableAndroidNativeCalls=true`, SHA-256
+   `e181255896018f603837ef5ef6e0eae3bff32101b3bf7503bd58925ef1a7c548`.
++  R2 open-issue host regressions also seed the validated local caller name
++  directly into authenticated native presentation before its first notification.
++  The adapter payload and strict native bridge tests preserve adopted-call
++  metadata refresh and reject malformed display maps. They do not establish
++  Android SystemUI rendering on the current candidate; the task permits only
++  USB-connected iPhones for live device testing.
++  The shared Dart reconciler also backs iOS, whose authenticated presentation
++  v1 request accepts exactly `version`, `callHandle`, and `expiresAtMs`.
++  Android's optional initial `display` map must not cross that iOS boundary.
++  An actual USB iPhone attempt rejected that extra key with native
++  `invalid_request`; the iOS adapter now projects its strict contract, while
++  CallKit retains verified opaque-contact name resolution and later updates.
++  The iOS regression supplies a named presentation and asserts every request
++  key. The corrected affected-calls selection passes 1,139 tests.
+   Background incoming delivery remains unverified because the known relay
+   wake-up failure can prevent the call reaching Android.
+ 
+@@ -5775,6 +5831,18 @@ visible and cannot become an ordinary first-attempt PASS.
+   already dirty shared working tree selected many other required checks that
+   were not run; do not treat the subset as full repository validation.
+ 
++  The R2 open-issue candidate subsequently passed USB iPhone 11 → iPhone 13
++  foreground and suspended-callee calls with native iOS calls enabled and
++  test mode disabled. Appium established state 2 before the background invite;
++  the native CallKit banner displayed `iphone-11`, its Answer action connected
++  both peers, and both diagnostic traces recorded bidirectional RTP progress
++  and `completed_after_media` with local/remote user endings. Exact screenshots,
++  XML, artifact hashes and bounded diagnostic records are retained under
++  ignored `.codex-test-logs/r2-open-issues/iphone-proof/`. Some diagnostic
++  records are quota-truncated; observed terminal and media fields remain
++  present. This establishes the available iOS → iOS background boundary,
++  not Android → iOS parity, locked-screen behavior or a signed release.
++
+   An earlier selected affected-calls host lane passed 1,200
+   tests when run alone. Its first overlapping attempt retained four failures
+   caused by a missing macOS SQLite native asset; the asset was present before
+@@ -6106,6 +6174,16 @@ visible and cannot become an ordinary first-attempt PASS.
+   resource/artifact inclusion without logging contents. A native call wake or
+   notification alongside this failure does not prove the Dart default
+   Firebase app initialized.
++  On iOS, `AppDelegate` initializes the native default Firebase app before
++  Flutter plugin registration and APNs registration, guarded by `FirebaseApp.app()`
++  to prevent a second configuration. The project-config regression verifies
++  that ordering; compilation and launch do not establish APNs delivery.
++  After a fresh R2 profile launch, a new group message from USB iPhone 11
++  appeared in iPhone 13 Notification Center while Mknoon reported state 2
++  (suspended). Tapping its actual notification content opened the exact group
++  and message. The Appium XML and screenshots are retained in the same ignored
++  `iphone-proof` directory. This establishes that background message path on
++  those accounts; it does not certify CallKit/VoIP push or every registration race.
+   Independently, best-effort startup initialization can fail while the
+   registration coordinator is already reachable. Every registration attempt
+   must establish readiness before subscribing to token refresh or requesting
+diff --git a/go-mknoon/node/node.go b/go-mknoon/node/node.go
+index a14374913..128b42b89 100644
+--- a/go-mknoon/node/node.go
++++ b/go-mknoon/node/node.go
+@@ -25,6 +25,7 @@ import (
+ 	"github.com/libp2p/go-libp2p/core/host"
+ 	"github.com/libp2p/go-libp2p/core/network"
+ 	"github.com/libp2p/go-libp2p/core/peer"
++	"github.com/libp2p/go-libp2p/core/peerstore"
+ 	"github.com/libp2p/go-libp2p/p2p/host/autorelay"
+ 	"github.com/libp2p/go-libp2p/p2p/net/connmgr"
+ 	relayclient "github.com/libp2p/go-libp2p/p2p/protocol/circuitv2/client"
+@@ -469,6 +470,12 @@ func (n *Node) Start(cfg NodeConfig) (state *NodeState, err error) {
+ 		return nil, fmt.Errorf("create host: %w", err)
+ 	}
+ 	localHost = h
++	// Configured relay addresses remain valid until configuration changes. A
++	// Connect-only temporary TTL loses them after disconnect, so AutoRelay's
++	// later reservation dial can fail with "no good addresses".
++	for _, relay := range relayInfos {
++		h.Peerstore().AddAddrs(relay.ID, relay.Addrs, peerstore.PermanentAddrTTL)
++	}
+ 
+ 	pubsubStart := time.Now()
+ 	ps, err := pubsub.NewGossipSub(localCtx, h, pubsub.WithFloodPublish(true))
+diff --git a/go-mknoon/node/relay_only_addresses_test.go b/go-mknoon/node/relay_only_addresses_test.go
+index 7d59d2e98..85cb3f965 100644
+--- a/go-mknoon/node/relay_only_addresses_test.go
++++ b/go-mknoon/node/relay_only_addresses_test.go
+@@ -3,6 +3,9 @@ package node
+ import (
+ 	"testing"
+ 
++	"github.com/libp2p/go-libp2p/core/peer"
++	"github.com/libp2p/go-libp2p/core/peerstore"
++
+ 	ma "github.com/multiformats/go-multiaddr"
+ )
+ 
+@@ -34,3 +37,29 @@ func TestDebugAdvertiseRelayOnlyDefaultsOff(t *testing.T) {
+ 		t.Fatal("nil-map effective flags must not advertise relay-only")
+ 	}
+ }
++
++// Configured relay addresses must survive connected/session address expiry.
++func TestConfiguredRelayAddressesSurviveSessionExpiry(t *testing.T) {
++	const relayID = "12D3KooWGMYMmN1RGUYjWaSV6P3XtnBjwnosnJGNMnttfVCRnd6g"
++	node := NewNode()
++	_, err := node.Start(NodeConfig{
++		PrivateKeyHex:  generateTestKey(t),
++		RelayAddresses: []string{"/ip4/127.0.0.1/tcp/1/p2p/" + relayID},
++		AutoRegister:   false,
++	})
++	if err != nil {
++		t.Fatal(err)
++	}
++	defer node.Stop()
++	id, err := peer.Decode(relayID)
++	if err != nil {
++		t.Fatal(err)
++	}
++	store := node.Host().Peerstore()
++	store.UpdateAddrs(id, peerstore.ConnectedAddrTTL, 0)
++	store.UpdateAddrs(id, peerstore.RecentlyConnectedAddrTTL, 0)
++	got := store.Addrs(id)
++	if len(got) != 1 || got[0].String() != "/ip4/127.0.0.1/tcp/1" {
++		t.Fatalf("configured relay address lost after session expiry: %v", got)
++	}
++}
+diff --git a/ios/Runner/AppDelegate.swift b/ios/Runner/AppDelegate.swift
+index edced6247..f54c88db0 100644
+--- a/ios/Runner/AppDelegate.swift
++++ b/ios/Runner/AppDelegate.swift
+@@ -1,4 +1,5 @@
+ import Flutter
++import FirebaseCore
+ import FirebaseMessaging
+ import CoreFoundation
+ import CryptoKit
+@@ -924,6 +925,11 @@ final class IosSetupReadinessEntryCoordinator {
+     _ application: UIApplication,
+     didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?
+   ) -> Bool {
++    // APNs registration can complete before Flutter starts. Configure the
++    // default app before any native Messaging access or plugin registration.
++    if FirebaseApp.app() == nil {
++      FirebaseApp.configure()
++    }
+     MknoonAppDiagnostics.shared.record("startup", "launch", "started", "bootstrap")
+     iosCallKitController.setCapabilityChangeHandler { [weak self] enabled in
+       self?.iosVoipPushRegistry.applyCapability(enabled) ?? false
+diff --git a/lib/app/bootstrap/call_signaling_composition.dart b/lib/app/bootstrap/call_signaling_composition.dart
+index b89ef288d..ce66185c8 100644
+--- a/lib/app/bootstrap/call_signaling_composition.dart
++++ b/lib/app/bootstrap/call_signaling_composition.dart
+@@ -1104,7 +1104,6 @@ final class CallSignalingComposition
+         _terminal ||
+         !_foregroundAllowed ||
+         _featureFlags['voice_call_incoming_enabled'] != true ||
+-        !_isForeground() ||
+         !_foregroundChanges.hasListener ||
+         !presentation.expiresAt.isAfter(_clock().toUtc())) {
+       return false;
+@@ -1120,6 +1119,9 @@ final class CallSignalingComposition
+         !session.incomingValidated) {
+       return false;
+     }
++    if (!_isForeground()) {
++      throw const IncomingCallPresentationUnavailable();
++    }
+     _presentedIncomingCallId = presentation.callId;
+     _acceptForegroundProjection(graph, projection, _foregroundGeneration);
+     return identical(_graph, graph) &&
+diff --git a/lib/core/media/record_audio_recorder_service.dart b/lib/core/media/record_audio_recorder_service.dart
+index 1ff6518f9..e1a9004fe 100644
+--- a/lib/core/media/record_audio_recorder_service.dart
++++ b/lib/core/media/record_audio_recorder_service.dart
+@@ -1,5 +1,7 @@
+ import 'dart:async';
+ import 'dart:io';
++import 'm4a_duration.dart';
++import 'package:flutter_app/core/utils/flow_event_emitter.dart';
+ import 'package:record/record.dart';
+ import 'package:path_provider/path_provider.dart';
+ import 'package:flutter_app/core/device/upload_wake_lock.dart';
+@@ -138,16 +140,17 @@ class RecordAudioRecorderService implements AudioRecorderService {
+     _ticker?.cancel();
+     _maxDurationTimer?.cancel();
+     _isRecording = false;
+-    // Release before the plugin call: a throwing stop() must not leak a hold.
+-    await _releaseWakeLock();
+-
+-    final path = await _recorder.stop();
+     final elapsed = _startTime != null
+         ? DateTime.now().difference(_startTime!).inMilliseconds
+         : 0;
+     _startTime = null;
++    // Release before the plugin call: a throwing stop() must not leak a hold.
++    await _releaseWakeLock();
++    final path = await _recorder.stop();
++    final encodedDuration = path == null ? null : await readM4aDurationMs(path);
++    final duration = encodedDuration ?? elapsed;
+ 
+-    if (path == null || elapsed < 500) {
++    if (path == null || duration < 500) {
+       // Too short — clean up
+       if (_currentOutputPath != null) {
+         final file = File(_currentOutputPath!);
+@@ -161,7 +164,18 @@ class RecordAudioRecorderService implements AudioRecorderService {
+     final size = await file.exists() ? await file.length() : 0;
+     _currentOutputPath = null;
+ 
+-    return AudioRecording(filePath: path, durationMs: elapsed, sizeBytes: size);
++    if (encodedDuration != null && (encodedDuration - elapsed).abs() > 1000) {
++      emitFlowEvent(
++        layer: 'FL',
++        event: 'VOICE_RECORDING_DURATION_MISMATCH',
++        details: {'wallMs': elapsed, 'encodedMs': encodedDuration},
++      );
++    }
++    return AudioRecording(
++      filePath: path,
++      durationMs: duration,
++      sizeBytes: size,
++    );
+   }
+ 
+   @override
+@@ -192,9 +206,7 @@ class RecordAudioRecorderService implements AudioRecorderService {
+       // Some device/emulator plugin backends can stall while tearing down the
+       // amplitude event stream. Keep recorder disposal bounded so app shutdown
+       // and device integration tests do not hang indefinitely.
+-      await _amplitudeBridgeSub
+-          ?.cancel()
+-          .timeout(const Duration(seconds: 2));
++      await _amplitudeBridgeSub?.cancel().timeout(const Duration(seconds: 2));
+     } catch (_) {}
+     _amplitudeBridgeSub = null;
+     await _durationController.close();
+diff --git a/lib/core/services/incoming_message_router.dart b/lib/core/services/incoming_message_router.dart
+index f83793b6f..f8e9a0844 100644
+--- a/lib/core/services/incoming_message_router.dart
++++ b/lib/core/services/incoming_message_router.dart
+@@ -238,6 +238,10 @@ class IncomingMessageRouter {
+           _postPinUpdateController.add(message);
+         case 'post_pin_remove':
+           _postPinRemoveController.add(message);
++        case 'readiness_proof':
++          // The inbox coordinator consumes this transport readiness signal.
++          // It has no conversation/UI destination.
++          break;
+         case 'delivery_receipt':
+           // 115 P2: receipts are the receiver's durable-persist confirmation
+           // — the only thing that flips relay-inbox custody ('inboxed') to
+diff --git a/lib/core/services/p2p_service_impl.dart b/lib/core/services/p2p_service_impl.dart
+index 5c4223329..08d6c8b2a 100644
+--- a/lib/core/services/p2p_service_impl.dart
++++ b/lib/core/services/p2p_service_impl.dart
+@@ -3,6 +3,7 @@ import 'dart:convert';
+ import 'package:clock/clock.dart';
+ import 'package:crypto/crypto.dart';
+ import 'package:flutter/foundation.dart';
++import 'package:flutter/widgets.dart' show WidgetsBinding, AppLifecycleState;
+ import 'p2p_service.dart';
+ import '../notifications/active_conversation_tracker.dart';
+ import '../notifications/automatic_recovery_notification_policy.dart';
+@@ -241,6 +242,21 @@ class P2PServiceImpl
+       StreamController<LocalMediaReady>.broadcast();
+ 
+   NodeState _currentState = NodeState.stopped;
++  final bool Function() _isAppForeground;
++
++  static bool _defaultAppForeground() {
++    // Pure host consumers have no Flutter binding. The production app always
++    // has one before constructing this service.
++    try {
++      final state = WidgetsBinding.instance.lifecycleState;
++      return state == null ||
++          state == AppLifecycleState.resumed ||
++          state == AppLifecycleState.inactive;
++    } catch (_) {
++      return true;
++    }
++  }
++
+   Timer? _healthCheckTimer;
+   String? _lastFcmToken;
+   String? _lastFcmPlatform;
+@@ -412,7 +428,9 @@ class P2PServiceImpl
+     // owner. Callers must opt in at construction before using
+     // [startRecoveryOnlyNode].
+     bool recoveryOnly = false,
+-  }) : _bridge = bridge,
++    bool Function()? isAppForeground,
++  }) : _isAppForeground = isAppForeground ?? _defaultAppForeground,
++       _bridge = bridge,
+        _pushTokenStore = pushTokenStore,
+        _accountMigrationNetworkGate = accountMigrationNetworkGate,
+        _recoveryOnly = recoveryOnly,
+@@ -2064,6 +2082,7 @@ class P2PServiceImpl
+   }
+ 
+   Future<void> _attemptRelayRecovery({required String recoverySource}) async {
++    if (!_isAppForeground() && recoverySource == 'health_check_poll') return;
+     if (!await _allowsAccountNetworkSideEffects('p2p_relay_recovery')) {
+       return;
+     }
+@@ -2451,7 +2470,7 @@ class P2PServiceImpl
+ 
+   /// Poll node:status, attempt recovery if degraded, and emit state changes.
+   Future<void> _performHealthCheck() async {
+-    if (_isHealthChecking || _stopped) {
++    if (_isHealthChecking || _stopped || !_isAppForeground()) {
+       if (kDebugMode) {
+         debugPrint(
+           '[HEALTH] _performHealthCheck() skipped — already in progress or stopped',
+@@ -3255,7 +3274,7 @@ class P2PServiceImpl
+ 
+   @override
+   Future<void> performImmediateHealthCheck() async {
+-    if (_recoveryOnly) return;
++    if (_recoveryOnly || !_isAppForeground()) return;
+     if (!await _allowsAccountNetworkSideEffects('p2p_immediate_health_check')) {
+       return;
+     }
+diff --git a/lib/features/call/application/handle_incoming_call_signal.dart b/lib/features/call/application/handle_incoming_call_signal.dart
+index 69268b88d..d64c84911 100644
+--- a/lib/features/call/application/handle_incoming_call_signal.dart
++++ b/lib/features/call/application/handle_incoming_call_signal.dart
+@@ -169,16 +169,23 @@ final class IncomingCallPresentation {
+     required this.callId,
+     required this.callerAccountPeerId,
+     required this.expiresAt,
++    this.displayName,
+   });
+ 
+   final CallId callId;
+   final String callerAccountPeerId;
+   final DateTime expiresAt;
++  final String? displayName;
+ 
+   @override
+   String toString() => 'IncomingCallPresentation(redacted)';
+ }
+ 
++/// A valid invite cannot be surfaced in this runtime configuration.
++final class IncomingCallPresentationUnavailable implements Exception {
++  const IncomingCallPresentationUnavailable();
++}
++
+ abstract interface class IncomingCallPresenter {
+   /// Returns true only after the platform call surface has been accepted.
+   /// Ringing signaling is forbidden until this completes successfully.
+@@ -580,7 +587,17 @@ final class HandleIncomingCallSignal {
+         }
+       }
+ 
++      String? initialDisplayName;
++      try {
++        final name = (await _authenticatedDisplayNameResolver?.call(
++          signal.senderAccountPeerId,
++        ))?.trim();
++        if (name != null && name.isNotEmpty && name.length <= 128) {
++          initialDisplayName = name;
++        }
++      } catch (_) {}
+       final presentation = IncomingCallPresentation(
++        displayName: initialDisplayName,
+         callId: signal.callId,
+         callerAccountPeerId: signal.senderAccountPeerId,
+         expiresAt: DateTime.fromMillisecondsSinceEpoch(
+@@ -601,8 +618,11 @@ final class HandleIncomingCallSignal {
+       );
+       var presented = false;
+       var presentationThrew = false;
++      var presentationUnavailable = false;
+       try {
+         presented = await _incomingCallPresenter.present(presentation);
++      } on IncomingCallPresentationUnavailable {
++        presentationUnavailable = true;
+       } catch (_) {
+         presentationThrew = true;
+         presented = false;
+@@ -618,8 +638,14 @@ final class HandleIncomingCallSignal {
+       diagnostics.record(
+         stage: 'presentation',
+         action: 'present',
+-        outcome: presented ? 'ok' : 'failed',
+-        reason: presented ? 'none' : 'native_lifecycle_failed',
++        outcome: presented
++            ? 'ok'
++            : (presentationUnavailable ? 'unavailable' : 'failed'),
++        reason: presented
++            ? 'none'
++            : (presentationUnavailable
++                  ? 'capability_unavailable'
++                  : 'native_lifecycle_failed'),
+         traceId: traceId,
+       );
+       final now = _coordinator.clock();
+@@ -674,7 +700,9 @@ final class HandleIncomingCallSignal {
+             remoteDeviceId: signal.senderDevicePeerId,
+             // A refused or failed native surface does not establish that
+             // microphone permission was denied.
+-            endReason: CallEndReason.signalingFailed,
++            endReason: presentationUnavailable
++                ? CallEndReason.unsupported
++                : CallEndReason.signalingFailed,
+           ),
+         );
+         admitted.commitReplay();
+diff --git a/lib/features/call/application/incoming_call_pre_presentation_admission.dart b/lib/features/call/application/incoming_call_pre_presentation_admission.dart
+index 416f286d9..05d9dac90 100644
+--- a/lib/features/call/application/incoming_call_pre_presentation_admission.dart
++++ b/lib/features/call/application/incoming_call_pre_presentation_admission.dart
+@@ -34,6 +34,7 @@ enum IncomingCallPrePresentationAdmissionFailureCode {
+ enum IncomingCallPrePresentationAdmissionGate {
+   rosterUnavailable('roster_unavailable'),
+   senderUnknown('sender_unknown'),
++  senderBlocked('sender_blocked'),
+   localAuthorityUnavailable('local_authority_unavailable'),
+   envelope('envelope'),
+   expectationMismatch('expectation_mismatch'),
+@@ -198,6 +199,11 @@ final class IncomingCallPrePresentationAdmission {
+       sender = await _trustedRosterProvider.resolveAuthenticatedTransport(
+         authenticatedTransportPeerId,
+       );
++    } on CallSenderBlockedException {
++      throw const IncomingCallPrePresentationAdmissionException(
++        IncomingCallPrePresentationAdmissionFailureCode.permanentReject,
++        gate: IncomingCallPrePresentationAdmissionGate.senderBlocked,
++      );
+     } catch (_) {
+       throw const IncomingCallPrePresentationAdmissionException(
+         IncomingCallPrePresentationAdmissionFailureCode.deferred,
+diff --git a/lib/features/call/infrastructure/android_call_lifecycle_adapter.dart b/lib/features/call/infrastructure/android_call_lifecycle_adapter.dart
+index 5bcc8ba0c..48babc0a6 100644
+--- a/lib/features/call/infrastructure/android_call_lifecycle_adapter.dart
++++ b/lib/features/call/infrastructure/android_call_lifecycle_adapter.dart
+@@ -970,11 +970,19 @@ final class AndroidCallLifecycleAdapter
+       return false;
+     }
+     _adoptionAcknowledgementPending = true;
+-    final presented =
+-        await _invokeBoolean('presentAuthenticated', <String, Object?>{
+-          ..._handleArguments(handle),
+-          'expiresAtMs': presentation.expiresAt.millisecondsSinceEpoch,
+-        });
++    final presented = await _invokeBoolean(
++      'presentAuthenticated',
++      <String, Object?>{
++        ..._handleArguments(handle),
++        'expiresAtMs': presentation.expiresAt.millisecondsSinceEpoch,
++        if (presentation.displayName != null)
++          'display': <String, Object?>{
++            'displayName': presentation.displayName,
++            'avatarPng': null,
++            'light': true,
++          },
++      },
++    );
+     if (!presented) _adoptionAcknowledgementPending = false;
+     if (presented) await _flushLockedPresentation(presentation.callId);
+     return presented;
+diff --git a/lib/features/call/infrastructure/call_mailbox_client.dart b/lib/features/call/infrastructure/call_mailbox_client.dart
+index 0815d9fe4..e86626594 100644
+--- a/lib/features/call/infrastructure/call_mailbox_client.dart
++++ b/lib/features/call/infrastructure/call_mailbox_client.dart
+@@ -417,7 +417,9 @@ final class BridgeCallMailboxClient implements CallMailboxClient {
+     try {
+       emitFlowEvent(
+         layer: 'FL',
+-        event: 'CALL_MAILBOX_BRIDGE_FAILURE',
++        event: code == 'CALL_REPLAY'
++            ? 'CALL_MAILBOX_BRIDGE_DUPLICATE'
++            : 'CALL_MAILBOX_BRIDGE_FAILURE',
+         details: <String, Object?>{'operation': operation, 'code': code},
+       );
+     } catch (_) {
+diff --git a/lib/features/call/infrastructure/call_trusted_roster_provider.dart b/lib/features/call/infrastructure/call_trusted_roster_provider.dart
+index 4e3892b95..70291161a 100644
+--- a/lib/features/call/infrastructure/call_trusted_roster_provider.dart
++++ b/lib/features/call/infrastructure/call_trusted_roster_provider.dart
+@@ -24,12 +24,18 @@ final class CallTrustedRosterSnapshot {
+       'blocked: $contactBlocked, devices: ${devices.length})';
+ }
+ 
++/// Identity-free refusal; blocked transports never expose device authority.
++final class CallSenderBlockedException implements Exception {
++  const CallSenderBlockedException();
++}
++
+ abstract interface class CallTrustedRosterProvider {
+   Future<CallTrustedRosterSnapshot> loadForContact(String contactAccountPeerId);
+ 
+   /// Reverse-resolves an authenticated transport to one current device
+-  /// authority. Unknown, blocked, inactive, revoked, or ambiguous transports
+-  /// return null without exposing the underlying authority value.
++  /// authority. Blocked transports throw [CallSenderBlockedException]. Unknown,
++  /// inactive, revoked, or ambiguous transports return null without exposing
++  /// the underlying authority value.
+   Future<TrustedCallDeviceAuthority?> resolveAuthenticatedTransport(
+     String authenticatedTransportPeerId,
+   );
+@@ -154,8 +160,10 @@ final class DatabaseCallTrustedRosterProvider
+       transportPeerId: normalizedTransport,
+     );
+     final accountPeerId = resolution.contactAccountPeerId;
++    if (resolution.contactIsBlocked) {
++      throw const CallSenderBlockedException();
++    }
+     if (!resolution.authorized ||
+-        resolution.contactIsBlocked ||
+         accountPeerId == null) {
+       return null;
+     }
+diff --git a/lib/features/call/infrastructure/ios_call_lifecycle_adapter.dart b/lib/features/call/infrastructure/ios_call_lifecycle_adapter.dart
+index bedf7f4e0..aab5ed5a1 100644
+--- a/lib/features/call/infrastructure/ios_call_lifecycle_adapter.dart
++++ b/lib/features/call/infrastructure/ios_call_lifecycle_adapter.dart
+@@ -174,8 +174,18 @@ final class IosCallLifecycleAdapter
+   Future<void> start() => _translate(_delegate.start());
+ 
+   @override
+-  Future<bool> present(IncomingCallPresentation presentation) =>
+-      _translate(_delegate.present(presentation));
++  Future<bool> present(IncomingCallPresentation presentation) => _translate(
++    _delegate.present(
++      // iOS v1 accepts only the authenticated handle and expiry. CallKit
++      // resolves names through its verified opaque-contact mapping; Android's
++      // initial display projection is not part of the iOS method contract.
++      IncomingCallPresentation(
++        callId: presentation.callId,
++        callerAccountPeerId: presentation.callerAccountPeerId,
++        expiresAt: presentation.expiresAt,
++      ),
++    ),
++  );
+ 
+   @override
+   Future<void> dismiss(IncomingCallPresentation presentation) =>
+diff --git a/lib/features/call/presentation/foreground_call_overlay.dart b/lib/features/call/presentation/foreground_call_overlay.dart
+index f3c1e109a..b0485ae9b 100644
+--- a/lib/features/call/presentation/foreground_call_overlay.dart
++++ b/lib/features/call/presentation/foreground_call_overlay.dart
+@@ -58,10 +58,6 @@ final class ForegroundCallOverlay extends StatefulWidget {
+ class _ForegroundCallOverlayState extends State<ForegroundCallOverlay> {
+   static const Duration _terminalNoticeDuration = Duration(seconds: 6);
+   static const String _unknownContactName = 'Unknown contact';
+-  static const String _speakerUnavailableMessage =
+-      'Speaker is unavailable for the current audio route';
+-  static const String _muteUnavailableMessage =
+-      'Microphone controls are unavailable until audio is ready';
+ 
+   StreamSubscription<ForegroundCallProjection?>? _subscription;
+   ForegroundCallProjection? _projection;
+@@ -294,20 +290,26 @@ class _ForegroundCallOverlayState extends State<ForegroundCallOverlay> {
+       surface = switch (surfaceKind) {
+         _ForegroundCallSurface.incoming => IncomingCallScreen(
+           contactPeerId: peerId,
+-          contactUsername: _contactDisplayName,
++          contactUsername: _contactDisplayName == _unknownContactName
++              ? AppLocalizations.of(context)!.call_unknown_contact
++              : _contactDisplayName,
+           state: session!.state,
+           onAnswer: () => _runAction(() => widget.capability?.answer(callId)),
+           onDecline: () => _runAction(() => widget.capability?.decline(callId)),
+         ),
+         _ForegroundCallSurface.outgoing => OutgoingCallScreen(
+           contactPeerId: peerId,
+-          contactUsername: _contactDisplayName,
++          contactUsername: _contactDisplayName == _unknownContactName
++              ? AppLocalizations.of(context)!.call_unknown_contact
++              : _contactDisplayName,
+           state: session!.state,
+           onCancel: () => _runAction(() => widget.capability?.cancel(callId)),
+         ),
+         _ForegroundCallSurface.active => ActiveCallScreen(
+           contactPeerId: peerId,
+-          contactUsername: _contactDisplayName,
++          contactUsername: _contactDisplayName == _unknownContactName
++              ? AppLocalizations.of(context)!.call_unknown_contact
++              : _contactDisplayName,
+           state: session!.state,
+           connectedAt: session.connectedAt,
+           now: widget.now ?? DateTime.now,
+@@ -316,7 +318,10 @@ class _ForegroundCallOverlayState extends State<ForegroundCallOverlay> {
+         _ForegroundCallSurface.terminal =>
+           _terminalNoticeVisible
+               ? _TerminalCallNotice(
+-                  message: _terminalMessage(session!),
++                  message: _terminalMessage(
++                    session!,
++                    AppLocalizations.of(context)!,
++                  ),
+                   onDismiss: _dismissTerminalNotice,
+                 )
+               : null,
+@@ -408,6 +413,7 @@ class _ForegroundCallOverlayState extends State<ForegroundCallOverlay> {
+   }
+ 
+   CallControls _buildControls(CallId callId, CallAudioControlState audio) {
++    final l10n = AppLocalizations.of(context)!;
+     final speakerOn = audio.selectedRoute == CallAudioOutputRoute.speaker;
+     final speakerAvailable =
+         audio.active &&
+@@ -418,15 +424,18 @@ class _ForegroundCallOverlayState extends State<ForegroundCallOverlay> {
+       isSpeakerOn: speakerOn,
+       isSpeakerAvailable: speakerAvailable,
+       selectedRoute: audio.selectedRoute,
+-      audioStatusMessage: _audioStatusMessage(audio.failure),
+-      muteUnavailableMessage: _muteUnavailableMessage,
+-      speakerUnavailableMessage: _speakerUnavailableMessage,
++      audioStatusMessage: _audioStatusMessage(
++        audio.failure,
++        AppLocalizations.of(context)!,
++      ),
++      muteUnavailableMessage: l10n.call_mute_unavailable,
++      speakerUnavailableMessage: l10n.call_speaker_unavailable,
+       onMute: () =>
+           _runAction(() => widget.capability?.setMuted(callId, !audio.muted)),
+       onSpeaker: () => _runAction(
+         () => widget.capability?.setSpeakerEnabled(callId, !speakerOn),
+-        unavailableMessage: 'That audio output is unavailable',
+-        failedMessage: 'Audio output could not be changed',
++        unavailableMessage: l10n.call_audio_output_unavailable,
++        failedMessage: l10n.call_audio_output_failed,
+       ),
+       onEnd: () => _runAction(() => widget.capability?.end(callId)),
+     );
+@@ -518,48 +527,45 @@ _ForegroundCallSurface _surfaceKind(CallSessionSnapshot? session) {
+   };
+ }
+ 
+-String _terminalMessage(CallSessionSnapshot session) =>
++String _terminalMessage(CallSessionSnapshot session, AppLocalizations l10n) =>
+     switch (session.endReason) {
+-      CallEndReason.permissionDenied =>
+-        'Microphone permission is needed to make calls.',
+-      CallEndReason.unsupported =>
+-        'Voice calling is unavailable on this device.',
+-      CallEndReason.busy => 'The contact is on another call.',
+-      CallEndReason.declined => 'Call declined.',
+-      CallEndReason.noAnswer => 'No answer.',
+-      CallEndReason.signalingFailed => 'Call could not connect.',
++      CallEndReason.permissionDenied => l10n.call_end_permission,
++      CallEndReason.unsupported => l10n.call_end_unsupported,
++      CallEndReason.busy => l10n.call_end_busy,
++      CallEndReason.declined => l10n.call_end_declined,
++      CallEndReason.noAnswer => l10n.call_end_no_answer,
++      CallEndReason.signalingFailed => l10n.call_end_signaling_failed,
+       CallEndReason.mediaFailed =>
+         session.connectedAt == null
+-            ? 'Call audio could not start.'
+-            : 'Call audio was interrupted.',
+-      CallEndReason.reconnectFailed => 'Call could not reconnect.',
+-      CallEndReason.expired => 'The call expired.',
+-      CallEndReason.policyRejected => 'Voice calling is unavailable.',
++            ? l10n.call_end_audio_start_failed
++            : l10n.call_end_audio_interrupted,
++      CallEndReason.reconnectFailed => l10n.call_end_reconnect_failed,
++      CallEndReason.expired => l10n.call_end_expired,
++      CallEndReason.policyRejected => l10n.call_end_unavailable,
+       CallEndReason.callerCancelled ||
+       CallEndReason.remoteHangup ||
+       CallEndReason.localHangup ||
+       CallEndReason.appShutdown ||
+-      null => 'Call ended.',
++      null => l10n.call_end_ended,
+     };
+ 
+-String? _audioStatusMessage(CallAudioFailure failure) => switch (failure) {
+-  CallAudioFailure.none => null,
+-  CallAudioFailure.unsupportedRoute => 'That audio output is unavailable',
+-  CallAudioFailure.controlFailed => 'Audio controls could not be updated',
+-  CallAudioFailure.notActive ||
+-  CallAudioFailure.notLocallyAccepted ||
+-  CallAudioFailure.closed =>
+-    'Audio controls are unavailable until call audio is ready',
+-  CallAudioFailure.permissionDenied =>
+-    'Microphone permission is needed to make calls',
+-  CallAudioFailure.invalidConfiguration ||
+-  CallAudioFailure.permissionFailed ||
+-  CallAudioFailure.mediaConflict ||
+-  CallAudioFailure.audioSessionFailed ||
+-  CallAudioFailure.engineFailed ||
+-  CallAudioFailure.interruptionFailed ||
+-  CallAudioFailure.cleanupFailed => 'Call audio is unavailable right now',
+-};
++String? _audioStatusMessage(CallAudioFailure failure, AppLocalizations l10n) =>
++    switch (failure) {
++      CallAudioFailure.none => null,
++      CallAudioFailure.unsupportedRoute => l10n.call_audio_output_unavailable,
++      CallAudioFailure.controlFailed => l10n.call_audio_controls_failed,
++      CallAudioFailure.notActive ||
++      CallAudioFailure.notLocallyAccepted ||
++      CallAudioFailure.closed => l10n.call_audio_controls_not_ready,
++      CallAudioFailure.permissionDenied => l10n.call_audio_permission,
++      CallAudioFailure.invalidConfiguration ||
++      CallAudioFailure.permissionFailed ||
++      CallAudioFailure.mediaConflict ||
++      CallAudioFailure.audioSessionFailed ||
++      CallAudioFailure.engineFailed ||
++      CallAudioFailure.interruptionFailed ||
++      CallAudioFailure.cleanupFailed => l10n.call_audio_unavailable,
++    };
+ 
+ class _TerminalCallNotice extends StatelessWidget {
+   const _TerminalCallNotice({required this.message, required this.onDismiss});
+diff --git a/lib/features/conversation/application/chat_message_listener.dart b/lib/features/conversation/application/chat_message_listener.dart
+index 8ff44150b..4b406a19d 100644
+--- a/lib/features/conversation/application/chat_message_listener.dart
++++ b/lib/features/conversation/application/chat_message_listener.dart
+@@ -724,6 +724,9 @@ class ChatMessageListener {
+                   : conversationMessage.senderPeerId,
+             },
+           );
++          // Row updates are independent of notification policy, including
++          // the Archived list and an open archived conversation.
++          _messageController.add(conversationMessage);
+           // The handler already promoted marker-first custody. Retire it from
+           // current policy immediately instead of waiting for a future resume.
+           _retryNotificationDisplaysAfterCommit();
+diff --git a/lib/features/groups/presentation/screens/group_conversation_screen.dart b/lib/features/groups/presentation/screens/group_conversation_screen.dart
+index 24c565466..1b5881b40 100644
+--- a/lib/features/groups/presentation/screens/group_conversation_screen.dart
++++ b/lib/features/groups/presentation/screens/group_conversation_screen.dart
+@@ -717,7 +717,12 @@ class GroupConversationScreen extends StatelessWidget {
+         final messageMedia = redactsPrivateMedia
+             ? const <MediaAttachment>[]
+             : loadedMessageMedia;
+-        final displayText = redactsPrivateMedia ? '' : message.text;
++        final displayText = redactsPrivateMedia
++            ? ''
++            : message.id.startsWith('sys-member_joined:') &&
++                  message.senderPeerId == ownPeerId
++            ? AppLocalizations.of(context)!.group_you_joined
++            : message.text;
+         final messageReactions = redactsPrivateMedia
+             ? const <MessageReaction>[]
+             : (reactions[message.id] ?? const <MessageReaction>[]);
+diff --git a/lib/features/groups/presentation/screens/group_info_screen.dart b/lib/features/groups/presentation/screens/group_info_screen.dart
+index 961bd7fc5..f72461696 100644
+--- a/lib/features/groups/presentation/screens/group_info_screen.dart
++++ b/lib/features/groups/presentation/screens/group_info_screen.dart
+@@ -591,6 +591,7 @@ class GroupInfoScreen extends StatelessWidget {
+             inviteAttempt: inviteAttemptsByPeerId[member.peerId],
+             isAdmin: isAdmin,
+             isSelf: isSelf,
++            isCreator: member.peerId == group.createdBy,
+             isResendingInvite: resendingInvitePeerIds.contains(member.peerId),
+             isRevokingInvite: revokingInvitePeerIds.contains(member.peerId),
+             onToggleAdminRole:
+diff --git a/lib/features/groups/presentation/screens/group_info_wired.dart b/lib/features/groups/presentation/screens/group_info_wired.dart
+index 25ff311f9..2213b9e94 100644
+--- a/lib/features/groups/presentation/screens/group_info_wired.dart
++++ b/lib/features/groups/presentation/screens/group_info_wired.dart
+@@ -1914,7 +1914,7 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
+       builder: (context) {
+         final readableColors = context.backgroundReadableColors;
+         return Dialog(
+-          backgroundColor: readableColors.surfaceBase,
++          backgroundColor: readableColors.surfaceBase.withValues(alpha: 1),
+           insetPadding: const EdgeInsets.all(16),
+           child: _GroupMetadataEditorSheet(
+             group: _group,
+@@ -3293,7 +3293,6 @@ class _GroupMetadataEditorSheetState extends State<_GroupMetadataEditorSheet> {
+ 
+   @override
+   Widget build(BuildContext context) {
+-    final bottomInset = MediaQuery.of(context).viewInsets.bottom;
+     final readableColors = context.backgroundReadableColors;
+     final l10n = AppLocalizations.of(context)!;
+     final isSaveDisabled =
+@@ -3302,135 +3301,143 @@ class _GroupMetadataEditorSheetState extends State<_GroupMetadataEditorSheet> {
+     return SafeArea(
+       top: false,
+       child: Padding(
+-        padding: EdgeInsets.fromLTRB(16, 16, 16, bottomInset + 16),
+-        child: SingleChildScrollView(
+-          child: Column(
+-            mainAxisSize: MainAxisSize.min,
+-            crossAxisAlignment: CrossAxisAlignment.start,
+-            children: [
+-              Center(
+-                child: Container(
+-                  width: 36,
+-                  height: 4,
+-                  decoration: BoxDecoration(
+-                    color: readableColors.divider,
+-                    borderRadius: BorderRadius.circular(2),
+-                  ),
+-                ),
+-              ),
+-              const SizedBox(height: 16),
+-              Text(
+-                l10n.group_edit_details_title,
+-                style: TextStyle(
+-                  fontSize: 18,
+-                  fontWeight: FontWeight.w700,
+-                  color: readableColors.textPrimary,
+-                ),
+-              ),
+-              const SizedBox(height: 16),
+-              Center(
++        padding: const EdgeInsets.all(16),
++        child: Column(
++          mainAxisSize: MainAxisSize.min,
++          children: [
++            Flexible(
++              child: SingleChildScrollView(
+                 child: Column(
++                  mainAxisSize: MainAxisSize.min,
++                  crossAxisAlignment: CrossAxisAlignment.start,
+                   children: [
+-                    GroupInfoScreenAvatarPreview(
+-                      group: widget.group,
+-                      previewBytes: _removeAvatar ? null : _previewBytes,
+-                      showCurrentAvatar: !_removeAvatar,
++                    Center(
++                      child: Container(
++                        width: 36,
++                        height: 4,
++                        decoration: BoxDecoration(
++                          color: readableColors.divider,
++                          borderRadius: BorderRadius.circular(2),
++                        ),
++                      ),
++                    ),
++                    const SizedBox(height: 16),
++                    Text(
++                      l10n.group_edit_details_title,
++                      style: TextStyle(
++                        fontSize: 18,
++                        fontWeight: FontWeight.w700,
++                        color: readableColors.textPrimary,
++                      ),
+                     ),
+-                    const SizedBox(height: 12),
+-                    FilledButton.tonalIcon(
+-                      key: const ValueKey('group-edit-pick-photo'),
+-                      onPressed: _isPickingImage ? null : _pickAvatar,
+-                      icon: const Icon(Icons.photo_library_outlined),
+-                      label: Text(
+-                        _preparedAvatarPath != null ||
+-                                widget.group.avatarPath != null
+-                            ? l10n.group_edit_change_photo
+-                            : l10n.group_edit_add_photo,
++                    const SizedBox(height: 16),
++                    Center(
++                      child: Column(
++                        children: [
++                          GroupInfoScreenAvatarPreview(
++                            group: widget.group,
++                            previewBytes: _removeAvatar ? null : _previewBytes,
++                            showCurrentAvatar: !_removeAvatar,
++                          ),
++                          const SizedBox(height: 12),
++                          FilledButton.tonalIcon(
++                            key: const ValueKey('group-edit-pick-photo'),
++                            onPressed: _isPickingImage ? null : _pickAvatar,
++                            icon: const Icon(Icons.photo_library_outlined),
++                            label: Text(
++                              _preparedAvatarPath != null ||
++                                      widget.group.avatarPath != null
++                                  ? l10n.group_edit_change_photo
++                                  : l10n.group_edit_add_photo,
++                            ),
++                          ),
++                          if (_hasCurrentAvatar || _removeAvatar)
++                            TextButton(
++                              key: const ValueKey('group-edit-remove-photo'),
++                              onPressed: _removePhoto,
++                              child: Text(l10n.group_edit_remove_photo),
++                            ),
++                        ],
+                       ),
+                     ),
+-                    if (_hasCurrentAvatar || _removeAvatar)
+-                      TextButton(
+-                        key: const ValueKey('group-edit-remove-photo'),
+-                        onPressed: _removePhoto,
+-                        child: Text(l10n.group_edit_remove_photo),
++                    const SizedBox(height: 20),
++                    Text(
++                      l10n.group_edit_name,
++                      style: TextStyle(
++                        fontSize: 13,
++                        fontWeight: FontWeight.w600,
++                        color: readableColors.textSecondary,
++                      ),
++                    ),
++                    const SizedBox(height: 8),
++                    _EditorField(
++                      key: const ValueKey('group-edit-name-field'),
++                      controller: _nameController,
++                      maxLines: 1,
++                      onChanged: (_) => setState(() {}),
++                    ),
++                    const SizedBox(height: 16),
++                    Text(
++                      l10n.group_edit_description,
++                      style: TextStyle(
++                        fontSize: 13,
++                        fontWeight: FontWeight.w600,
++                        color: readableColors.textSecondary,
++                      ),
++                    ),
++                    const SizedBox(height: 8),
++                    _EditorField(
++                      key: const ValueKey('group-edit-description-field'),
++                      controller: _descriptionController,
++                      maxLines: 4,
++                    ),
++                    const SizedBox(height: 20),
++                    if (_isRecoveryActive) ...[
++                      Text(
++                        l10n.group_edit_recovery_waiting,
++                        style: TextStyle(
++                          fontSize: 13,
++                          fontWeight: FontWeight.w600,
++                          color: readableColors.textPrimary,
++                        ),
++                      ),
++                      const SizedBox(height: 4),
++                      Text(
++                        l10n.group_edit_recovery_waiting_elapsed(
++                          _recoveryWaitSeconds,
++                        ),
++                        style: TextStyle(
++                          fontSize: 12,
++                          color: readableColors.textSecondary,
++                        ),
+                       ),
++                      const SizedBox(height: 12),
++                    ],
+                   ],
+                 ),
+               ),
+-              const SizedBox(height: 20),
+-              Text(
+-                l10n.group_edit_name,
+-                style: TextStyle(
+-                  fontSize: 13,
+-                  fontWeight: FontWeight.w600,
+-                  color: readableColors.textSecondary,
+-                ),
+-              ),
+-              const SizedBox(height: 8),
+-              _EditorField(
+-                key: const ValueKey('group-edit-name-field'),
+-                controller: _nameController,
+-                maxLines: 1,
+-                onChanged: (_) => setState(() {}),
+-              ),
+-              const SizedBox(height: 16),
+-              Text(
+-                l10n.group_edit_description,
+-                style: TextStyle(
+-                  fontSize: 13,
+-                  fontWeight: FontWeight.w600,
+-                  color: readableColors.textSecondary,
+-                ),
+-              ),
+-              const SizedBox(height: 8),
+-              _EditorField(
+-                key: const ValueKey('group-edit-description-field'),
+-                controller: _descriptionController,
+-                maxLines: 4,
+-              ),
+-              const SizedBox(height: 20),
+-              if (_isRecoveryActive) ...[
+-                Text(
+-                  l10n.group_edit_recovery_waiting,
+-                  style: TextStyle(
+-                    fontSize: 13,
+-                    fontWeight: FontWeight.w600,
+-                    color: readableColors.textPrimary,
++            ),
++            const SizedBox(height: 12),
++            Row(
++              children: [
++                Expanded(
++                  child: OutlinedButton(
++                    key: const ValueKey('group-edit-cancel'),
++                    onPressed: () => Navigator.of(context).pop(),
++                    child: Text(l10n.btn_cancel),
+                   ),
+                 ),
+-                const SizedBox(height: 4),
+-                Text(
+-                  l10n.group_edit_recovery_waiting_elapsed(
+-                    _recoveryWaitSeconds,
+-                  ),
+-                  style: TextStyle(
+-                    fontSize: 12,
+-                    color: readableColors.textSecondary,
++                const SizedBox(width: 12),
++                Expanded(
++                  child: FilledButton(
++                    key: const ValueKey('group-edit-save'),
++                    onPressed: isSaveDisabled ? null : _save,
++                    child: Text(l10n.btn_save),
+                   ),
+                 ),
+-                const SizedBox(height: 12),
+               ],
+-              Row(
+-                children: [
+-                  Expanded(
+-                    child: OutlinedButton(
+-                      key: const ValueKey('group-edit-cancel'),
+-                      onPressed: () => Navigator.of(context).pop(),
+-                      child: Text(l10n.btn_cancel),
+-                    ),
+-                  ),
+-                  const SizedBox(width: 12),
+-                  Expanded(
+-                    child: FilledButton(
+-                      key: const ValueKey('group-edit-save'),
+-                      onPressed: isSaveDisabled ? null : _save,
+-                      child: Text(l10n.btn_save),
+-                    ),
+-                  ),
+-                ],
+-              ),
+-            ],
+-          ),
++            ),
++          ],
+         ),
+       ),
+     );
+diff --git a/lib/features/groups/presentation/widgets/group_member_row.dart b/lib/features/groups/presentation/widgets/group_member_row.dart
+index 15a22c9d5..7f1213e23 100644
+--- a/lib/features/groups/presentation/widgets/group_member_row.dart
++++ b/lib/features/groups/presentation/widgets/group_member_row.dart
+@@ -16,6 +16,7 @@ class GroupMemberRow extends StatelessWidget {
+   final GroupInviteDeliveryAttempt? inviteAttempt;
+   final bool isAdmin;
+   final bool isSelf;
++  final bool isCreator;
+   final bool isResendingInvite;
+   final bool isRevokingInvite;
+   final VoidCallback? onToggleAdminRole;
+@@ -31,6 +32,7 @@ class GroupMemberRow extends StatelessWidget {
+     this.inviteAttempt,
+     this.isAdmin = false,
+     this.isSelf = false,
++    this.isCreator = false,
+     this.isResendingInvite = false,
+     this.isRevokingInvite = false,
+     this.onToggleAdminRole,
+@@ -70,7 +72,7 @@ class GroupMemberRow extends StatelessWidget {
+                 ),
+                 const SizedBox(height: 2),
+                 _RoleBadge(role: member.role, l10n: l10n),
+-                if (!isSelf) ...[
++                if (!isSelf && !isCreator) ...[
+                   const SizedBox(height: 6),
+                   _InviteStatusBadge(
+                     peerId: member.peerId,
+@@ -79,6 +81,23 @@ class GroupMemberRow extends StatelessWidget {
+                     l10n: l10n,
+                   ),
+                 ],
++                if (!isSelf &&
++                    !isCreator &&
++                    const {
++                      GroupInviteDeliveryStatus.sent,
++                      GroupInviteDeliveryStatus.queued,
++                      GroupInviteDeliveryStatus.needsResend,
++                    }.contains(inviteStatus)) ...[
++                  const SizedBox(height: 4),
++                  Text(
++                    l10n.group_invited_not_joined,
++                    key: ValueKey('group-member-pending-${member.peerId}'),
++                    style: TextStyle(
++                      fontSize: 12,
++                      color: readableColors.textSecondary,
++                    ),
++                  ),
++                ],
+                 if (identitySafety?.identityChanged == true) ...[
+                   const SizedBox(height: 6),
+                   _IdentityChangedWarning(
+diff --git a/lib/features/p2p/presentation/widgets/connection_status_indicator.dart b/lib/features/p2p/presentation/widgets/connection_status_indicator.dart
+index 8d909bed6..1a22c4684 100644
+--- a/lib/features/p2p/presentation/widgets/connection_status_indicator.dart
++++ b/lib/features/p2p/presentation/widgets/connection_status_indicator.dart
+@@ -2,6 +2,7 @@ import 'dart:async';
+ 
+ import 'package:flutter/foundation.dart';
+ import 'package:flutter/material.dart';
++import 'package:flutter_app/l10n/app_localizations.dart';
+ import 'package:flutter_app/core/theme/background_readable_colors.dart';
+ import '../../../../core/services/p2p_service.dart';
+ import '../../../../core/utils/flow_event_emitter.dart';
+@@ -49,30 +50,30 @@ ConnectionHealth _legacyHealthForBadgeState(BadgeReadinessState state) {
+   };
+ }
+ 
+-String _labelForBadgeState(BadgeReadinessState state) {
++String _labelForBadgeState(BadgeReadinessState state, AppLocalizations l10n) {
+   return switch (state) {
+-    BadgeReadinessState.offline => 'Offline',
+-    BadgeReadinessState.connecting => 'Connecting',
+-    BadgeReadinessState.online => 'Online',
+-    BadgeReadinessState.onlineDotted => 'Online.',
++    BadgeReadinessState.offline => l10n.connection_offline,
++    BadgeReadinessState.connecting => l10n.connection_connecting,
++    BadgeReadinessState.online => l10n.connection_online,
++    BadgeReadinessState.onlineDotted => '${l10n.connection_online}.',
+     // FDC-14: a distinct, non-linear cue (NOT a third punctuation-only variant
+     // on the relay-dot ladder — directly-reachable is decoupled from relay).
+-    BadgeReadinessState.onlineDirect => 'Online ✦',
++    BadgeReadinessState.onlineDirect => '${l10n.connection_online} ✦',
+   };
+ }
+ 
+-String _semanticsLabelForBadgeState(BadgeReadinessState state) {
++String _semanticsLabelForBadgeState(
++  BadgeReadinessState state,
++  AppLocalizations l10n,
++) {
+   return switch (state) {
+-    BadgeReadinessState.offline => 'offline',
+-    BadgeReadinessState.connecting => 'connecting',
+-    BadgeReadinessState.online =>
+-      'online, send and inbox ready, relay reservation pending',
+-    BadgeReadinessState.onlineDotted =>
+-      'online, send and inbox ready, relay reservation ready',
++    BadgeReadinessState.offline => l10n.connection_semantics_offline,
++    BadgeReadinessState.connecting => l10n.connection_semantics_connecting,
++    BadgeReadinessState.online => l10n.connection_semantics_online,
++    BadgeReadinessState.onlineDotted => l10n.connection_semantics_reserved,
+     // FDC-14: the binding distinctness lives here (a screen reader must hear
+     // "directly reachable", not the relay-reservation phrasing).
+-    BadgeReadinessState.onlineDirect =>
+-      'online, send and inbox ready, directly reachable',
++    BadgeReadinessState.onlineDirect => l10n.connection_semantics_direct,
+   };
+ }
+ 
+@@ -189,6 +190,9 @@ class _ConnectionStatusIndicatorState extends State<ConnectionStatusIndicator> {
+ 
+   @override
+   Widget build(BuildContext context) {
++    final l10n =
++        AppLocalizations.of(context) ??
++        lookupAppLocalizations(const Locale('en'));
+     final badgeState = _displayedBadgeState;
+     final connectionCount = _connectionCount;
+     final readableColors = context.backgroundReadableColors;
+@@ -219,9 +223,9 @@ class _ConnectionStatusIndicatorState extends State<ConnectionStatusIndicator> {
+     }
+     final plain = widget.style == ConnectionStatusIndicatorStyle.plain;
+     final label = plain && _isReadyBadgeState(badgeState)
+-        ? 'Online'
+-        : _labelForBadgeState(badgeState);
+-    final semanticsLabel = _semanticsLabelForBadgeState(badgeState);
++        ? l10n.connection_online
++        : _labelForBadgeState(badgeState, l10n);
++    final semanticsLabel = _semanticsLabelForBadgeState(badgeState, l10n);
+ 
+     final contents = Row(
+       key: plain ? const ValueKey('connection-status-plain') : null,
+@@ -233,12 +237,14 @@ class _ConnectionStatusIndicatorState extends State<ConnectionStatusIndicator> {
+           decoration: BoxDecoration(color: baseColor, shape: BoxShape.circle),
+         ),
+         const SizedBox(width: 6),
+-        Text(
+-          label,
+-          style: TextStyle(
+-            color: textColor,
+-            fontSize: 12,
+-            fontWeight: FontWeight.w500,
++        Flexible(
++          child: Text(
++            label,
++            style: TextStyle(
++              color: textColor,
++              fontSize: 12,
++              fontWeight: FontWeight.w500,
++            ),
+           ),
+         ),
+         if (plain && _isReadyBadgeState(badgeState) && connectionCount > 0) ...[
+diff --git a/lib/l10n/app_ar.arb b/lib/l10n/app_ar.arb
+index a51aecf4a..e5bdd3ee0 100644
+--- a/lib/l10n/app_ar.arb
++++ b/lib/l10n/app_ar.arb
+@@ -1920,5 +1920,36 @@
+   "push_registration_health_retrying": "جارٍ إعادة المحاولة…",
+   "orbit_loading_contacts": "جارٍ تحميل جهات الاتصال…",
+   "media_loading": "جارٍ تحميل الوسائط…",
+-  "media_voice_message_label": "رسالة صوتية"
++  "media_voice_message_label": "رسالة صوتية",
++  "call_end_permission": "يلزم السماح باستخدام الميكروفون لإجراء المكالمات.",
++  "call_end_unsupported": "المكالمات الصوتية غير متاحة على هذا الجهاز.",
++  "call_end_busy": "جهة الاتصال في مكالمة أخرى.",
++  "call_end_declined": "رُفضت المكالمة.",
++  "call_end_no_answer": "لا توجد إجابة.",
++  "call_end_signaling_failed": "تعذر الاتصال.",
++  "call_end_audio_start_failed": "تعذر بدء صوت المكالمة.",
++  "call_end_audio_interrupted": "انقطع صوت المكالمة.",
++  "call_end_reconnect_failed": "تعذر إعادة الاتصال.",
++  "call_end_expired": "انتهت مهلة المكالمة.",
++  "call_end_unavailable": "المكالمات الصوتية غير متاحة.",
++  "call_end_ended": "انتهت المكالمة.",
++  "call_audio_output_unavailable": "مخرج الصوت هذا غير متاح",
++  "call_audio_controls_failed": "تعذر تحديث عناصر التحكم بالصوت",
++  "call_audio_controls_not_ready": "عناصر التحكم بالصوت غير متاحة حتى يصبح صوت المكالمة جاهزًا",
++  "call_audio_permission": "يلزم السماح باستخدام الميكروفون لإجراء المكالمات",
++  "call_audio_unavailable": "صوت المكالمة غير متاح حاليًا",
++  "connection_online": "متصل",
++  "connection_connecting": "جارٍ الاتصال",
++  "connection_offline": "غير متصل",
++  "connection_semantics_offline": "غير متصل",
++  "connection_semantics_connecting": "جارٍ الاتصال",
++  "connection_semantics_online": "متصل، الإرسال وصندوق الوارد جاهزان، حجز المرحّل قيد الانتظار",
++  "connection_semantics_reserved": "متصل، الإرسال وصندوق الوارد جاهزان، حجز المرحّل جاهز",
++  "connection_semantics_direct": "متصل، الإرسال وصندوق الوارد جاهزان، يمكن الوصول مباشرة",
++  "group_invited_not_joined": "تمت دعوته – لم ينضم بعد؛ لا يتلقى الرسائل",
++  "group_you_joined": "لقد انضممت",
++  "call_unknown_contact": "جهة اتصال غير معروفة",
++  "call_mute_unavailable": "التحكم بالميكروفون غير متاح حتى يصبح الصوت جاهزًا",
++  "call_speaker_unavailable": "مكبر الصوت غير متاح لمسار الصوت الحالي",
++  "call_audio_output_failed": "تعذر تغيير مخرج الصوت"
+ }
+diff --git a/lib/l10n/app_de.arb b/lib/l10n/app_de.arb
+index 4978d654d..9328bb53f 100644
+--- a/lib/l10n/app_de.arb
++++ b/lib/l10n/app_de.arb
+@@ -1920,5 +1920,36 @@
+   "push_registration_health_retrying": "Erneuter Versuch…",
+   "orbit_loading_contacts": "Kontakte werden geladen…",
+   "media_loading": "Medien werden geladen…",
+-  "media_voice_message_label": "Sprachnachricht"
++  "media_voice_message_label": "Sprachnachricht",
++  "call_end_permission": "Zum Telefonieren wird die Mikrofonberechtigung benötigt.",
++  "call_end_unsupported": "Sprachanrufe sind auf diesem Gerät nicht verfügbar.",
++  "call_end_busy": "Der Kontakt führt bereits ein Gespräch.",
++  "call_end_declined": "Anruf abgelehnt.",
++  "call_end_no_answer": "Keine Antwort.",
++  "call_end_signaling_failed": "Der Anruf konnte nicht verbunden werden.",
++  "call_end_audio_start_failed": "Das Anrufaudio konnte nicht gestartet werden.",
++  "call_end_audio_interrupted": "Das Anrufaudio wurde unterbrochen.",
++  "call_end_reconnect_failed": "Der Anruf konnte nicht erneut verbunden werden.",
++  "call_end_expired": "Der Anruf ist abgelaufen.",
++  "call_end_unavailable": "Sprachanrufe sind nicht verfügbar.",
++  "call_end_ended": "Anruf beendet.",
++  "call_audio_output_unavailable": "Diese Audioausgabe ist nicht verfügbar",
++  "call_audio_controls_failed": "Die Audiosteuerung konnte nicht aktualisiert werden",
++  "call_audio_controls_not_ready": "Die Audiosteuerung ist erst verfügbar, wenn das Anrufaudio bereit ist",
++  "call_audio_permission": "Zum Telefonieren wird die Mikrofonberechtigung benötigt",
++  "call_audio_unavailable": "Das Anrufaudio ist derzeit nicht verfügbar",
++  "connection_online": "Online",
++  "connection_connecting": "Verbindung wird hergestellt",
++  "connection_offline": "Offline",
++  "connection_semantics_offline": "offline",
++  "connection_semantics_connecting": "Verbindung wird hergestellt",
++  "connection_semantics_online": "online, Versand und Posteingang bereit, Relay-Reservierung ausstehend",
++  "connection_semantics_reserved": "online, Versand und Posteingang bereit, Relay-Reservierung bereit",
++  "connection_semantics_direct": "online, Versand und Posteingang bereit, direkt erreichbar",
++  "group_invited_not_joined": "Eingeladen – noch nicht beigetreten; empfängt noch keine Nachrichten",
++  "group_you_joined": "Du bist beigetreten",
++  "call_unknown_contact": "Unbekannter Kontakt",
++  "call_mute_unavailable": "Die Mikrofonsteuerung ist erst verfügbar, wenn das Audio bereit ist",
++  "call_speaker_unavailable": "Der Lautsprecher ist für die aktuelle Audioverbindung nicht verfügbar",
++  "call_audio_output_failed": "Die Audioausgabe konnte nicht geändert werden"
+ }
+diff --git a/lib/l10n/app_en.arb b/lib/l10n/app_en.arb
+index 31a1d1786..2d2e8a9ee 100644
+--- a/lib/l10n/app_en.arb
++++ b/lib/l10n/app_en.arb
+@@ -2062,5 +2062,36 @@
+   "media_voice_message_label": "Voice message",
+   "@media_voice_message_label": {
+     "description": "Screen-reader label that tells the user a chat bubble holds a voice message."
+-  }
++  },
++  "call_end_permission": "Microphone permission is needed to make calls.",
++  "call_end_unsupported": "Voice calling is unavailable on this device.",
++  "call_end_busy": "The contact is on another call.",
++  "call_end_declined": "Call declined.",
++  "call_end_no_answer": "No answer.",
++  "call_end_signaling_failed": "Call could not connect.",
++  "call_end_audio_start_failed": "Call audio could not start.",
++  "call_end_audio_interrupted": "Call audio was interrupted.",
++  "call_end_reconnect_failed": "Call could not reconnect.",
++  "call_end_expired": "The call expired.",
++  "call_end_unavailable": "Voice calling is unavailable.",
++  "call_end_ended": "Call ended.",
++  "call_audio_output_unavailable": "That audio output is unavailable",
++  "call_audio_controls_failed": "Audio controls could not be updated",
++  "call_audio_controls_not_ready": "Audio controls are unavailable until call audio is ready",
++  "call_audio_permission": "Microphone permission is needed to make calls",
++  "call_audio_unavailable": "Call audio is unavailable right now",
++  "connection_online": "Online",
++  "connection_connecting": "Connecting",
++  "connection_offline": "Offline",
++  "connection_semantics_offline": "offline",
++  "connection_semantics_connecting": "connecting",
++  "connection_semantics_online": "online, send and inbox ready, relay reservation pending",
++  "connection_semantics_reserved": "online, send and inbox ready, relay reservation ready",
++  "connection_semantics_direct": "online, send and inbox ready, directly reachable",
++  "group_invited_not_joined": "Invited – not joined yet; not receiving messages",
++  "group_you_joined": "You joined",
++  "call_unknown_contact": "Unknown contact",
++  "call_mute_unavailable": "Microphone controls are unavailable until audio is ready",
++  "call_speaker_unavailable": "Speaker is unavailable for the current audio route",
++  "call_audio_output_failed": "Audio output could not be changed"
+ }
+diff --git a/lib/l10n/app_localizations.dart b/lib/l10n/app_localizations.dart
+index 0ac309a20..13495cccb 100644
+--- a/lib/l10n/app_localizations.dart
++++ b/lib/l10n/app_localizations.dart
+@@ -6817,6 +6817,192 @@ abstract class AppLocalizations {
+   /// In en, this message translates to:
+   /// **'Voice message'**
+   String get media_voice_message_label;
++
++  /// No description provided for @call_end_permission.
++  ///
++  /// In en, this message translates to:
++  /// **'Microphone permission is needed to make calls.'**
++  String get call_end_permission;
++
++  /// No description provided for @call_end_unsupported.
++  ///
++  /// In en, this message translates to:
++  /// **'Voice calling is unavailable on this device.'**
++  String get call_end_unsupported;
++
++  /// No description provided for @call_end_busy.
++  ///
++  /// In en, this message translates to:
++  /// **'The contact is on another call.'**
++  String get call_end_busy;
++
++  /// No description provided for @call_end_declined.
++  ///
++  /// In en, this message translates to:
++  /// **'Call declined.'**
++  String get call_end_declined;
++
++  /// No description provided for @call_end_no_answer.
++  ///
++  /// In en, this message translates to:
++  /// **'No answer.'**
++  String get call_end_no_answer;
++
++  /// No description provided for @call_end_signaling_failed.
++  ///
++  /// In en, this message translates to:
++  /// **'Call could not connect.'**
++  String get call_end_signaling_failed;
++
++  /// No description provided for @call_end_audio_start_failed.
++  ///
++  /// In en, this message translates to:
++  /// **'Call audio could not start.'**
++  String get call_end_audio_start_failed;
++
++  /// No description provided for @call_end_audio_interrupted.
++  ///
++  /// In en, this message translates to:
++  /// **'Call audio was interrupted.'**
++  String get call_end_audio_interrupted;
++
++  /// No description provided for @call_end_reconnect_failed.
++  ///
++  /// In en, this message translates to:
++  /// **'Call could not reconnect.'**
++  String get call_end_reconnect_failed;
++
++  /// No description provided for @call_end_expired.
++  ///
++  /// In en, this message translates to:
++  /// **'The call expired.'**
++  String get call_end_expired;
++
++  /// No description provided for @call_end_unavailable.
++  ///
++  /// In en, this message translates to:
++  /// **'Voice calling is unavailable.'**
++  String get call_end_unavailable;
++
++  /// No description provided for @call_end_ended.
++  ///
++  /// In en, this message translates to:
++  /// **'Call ended.'**
++  String get call_end_ended;
++
++  /// No description provided for @call_audio_output_unavailable.
++  ///
++  /// In en, this message translates to:
++  /// **'That audio output is unavailable'**
++  String get call_audio_output_unavailable;
++
++  /// No description provided for @call_audio_controls_failed.
++  ///
++  /// In en, this message translates to:
++  /// **'Audio controls could not be updated'**
++  String get call_audio_controls_failed;
++
++  /// No description provided for @call_audio_controls_not_ready.
++  ///
++  /// In en, this message translates to:
++  /// **'Audio controls are unavailable until call audio is ready'**
++  String get call_audio_controls_not_ready;
++
++  /// No description provided for @call_audio_permission.
++  ///
++  /// In en, this message translates to:
++  /// **'Microphone permission is needed to make calls'**
++  String get call_audio_permission;
++
++  /// No description provided for @call_audio_unavailable.
++  ///
++  /// In en, this message translates to:
++  /// **'Call audio is unavailable right now'**
++  String get call_audio_unavailable;
++
++  /// No description provided for @connection_online.
++  ///
++  /// In en, this message translates to:
++  /// **'Online'**
++  String get connection_online;
++
++  /// No description provided for @connection_connecting.
++  ///
++  /// In en, this message translates to:
++  /// **'Connecting'**
++  String get connection_connecting;
++
++  /// No description provided for @connection_offline.
++  ///
++  /// In en, this message translates to:
++  /// **'Offline'**
++  String get connection_offline;
++
++  /// No description provided for @connection_semantics_offline.
++  ///
++  /// In en, this message translates to:
++  /// **'offline'**
++  String get connection_semantics_offline;
++
++  /// No description provided for @connection_semantics_connecting.
++  ///
++  /// In en, this message translates to:
++  /// **'connecting'**
++  String get connection_semantics_connecting;
++
++  /// No description provided for @connection_semantics_online.
++  ///
++  /// In en, this message translates to:
++  /// **'online, send and inbox ready, relay reservation pending'**
++  String get connection_semantics_online;
++
++  /// No description provided for @connection_semantics_reserved.
++  ///
++  /// In en, this message translates to:
++  /// **'online, send and inbox ready, relay reservation ready'**
++  String get connection_semantics_reserved;
++
++  /// No description provided for @connection_semantics_direct.
++  ///
++  /// In en, this message translates to:
++  /// **'online, send and inbox ready, directly reachable'**
++  String get connection_semantics_direct;
++
++  /// No description provided for @group_invited_not_joined.
++  ///
++  /// In en, this message translates to:
++  /// **'Invited – not joined yet; not receiving messages'**
++  String get group_invited_not_joined;
++
++  /// No description provided for @group_you_joined.
++  ///
++  /// In en, this message translates to:
++  /// **'You joined'**
++  String get group_you_joined;
++
++  /// No description provided for @call_unknown_contact.
++  ///
++  /// In en, this message translates to:
++  /// **'Unknown contact'**
++  String get call_unknown_contact;
++
++  /// No description provided for @call_mute_unavailable.
++  ///
++  /// In en, this message translates to:
++  /// **'Microphone controls are unavailable until audio is ready'**
++  String get call_mute_unavailable;
++
++  /// No description provided for @call_speaker_unavailable.
++  ///
++  /// In en, this message translates to:
++  /// **'Speaker is unavailable for the current audio route'**
++  String get call_speaker_unavailable;
++
++  /// No description provided for @call_audio_output_failed.
++  ///
++  /// In en, this message translates to:
++  /// **'Audio output could not be changed'**
++  String get call_audio_output_failed;
+ }
+ 
+ class _AppLocalizationsDelegate
+diff --git a/lib/l10n/app_localizations_ar.dart b/lib/l10n/app_localizations_ar.dart
+index f6f42e5ae..2e0b3108a 100644
+--- a/lib/l10n/app_localizations_ar.dart
++++ b/lib/l10n/app_localizations_ar.dart
+@@ -4153,4 +4153,107 @@ class AppLocalizationsAr extends AppLocalizations {
+ 
+   @override
+   String get media_voice_message_label => 'رسالة صوتية';
++
++  @override
++  String get call_end_permission =>
++      'يلزم السماح باستخدام الميكروفون لإجراء المكالمات.';
++
++  @override
++  String get call_end_unsupported =>
++      'المكالمات الصوتية غير متاحة على هذا الجهاز.';
++
++  @override
++  String get call_end_busy => 'جهة الاتصال في مكالمة أخرى.';
++
++  @override
++  String get call_end_declined => 'رُفضت المكالمة.';
++
++  @override
++  String get call_end_no_answer => 'لا توجد إجابة.';
++
++  @override
++  String get call_end_signaling_failed => 'تعذر الاتصال.';
++
++  @override
++  String get call_end_audio_start_failed => 'تعذر بدء صوت المكالمة.';
++
++  @override
++  String get call_end_audio_interrupted => 'انقطع صوت المكالمة.';
++
++  @override
++  String get call_end_reconnect_failed => 'تعذر إعادة الاتصال.';
++
++  @override
++  String get call_end_expired => 'انتهت مهلة المكالمة.';
++
++  @override
++  String get call_end_unavailable => 'المكالمات الصوتية غير متاحة.';
++
++  @override
++  String get call_end_ended => 'انتهت المكالمة.';
++
++  @override
++  String get call_audio_output_unavailable => 'مخرج الصوت هذا غير متاح';
++
++  @override
++  String get call_audio_controls_failed => 'تعذر تحديث عناصر التحكم بالصوت';
++
++  @override
++  String get call_audio_controls_not_ready =>
++      'عناصر التحكم بالصوت غير متاحة حتى يصبح صوت المكالمة جاهزًا';
++
++  @override
++  String get call_audio_permission =>
++      'يلزم السماح باستخدام الميكروفون لإجراء المكالمات';
++
++  @override
++  String get call_audio_unavailable => 'صوت المكالمة غير متاح حاليًا';
++
++  @override
++  String get connection_online => 'متصل';
++
++  @override
++  String get connection_connecting => 'جارٍ الاتصال';
++
++  @override
++  String get connection_offline => 'غير متصل';
++
++  @override
++  String get connection_semantics_offline => 'غير متصل';
++
++  @override
++  String get connection_semantics_connecting => 'جارٍ الاتصال';
++
++  @override
++  String get connection_semantics_online =>
++      'متصل، الإرسال وصندوق الوارد جاهزان، حجز المرحّل قيد الانتظار';
++
++  @override
++  String get connection_semantics_reserved =>
++      'متصل، الإرسال وصندوق الوارد جاهزان، حجز المرحّل جاهز';
++
++  @override
++  String get connection_semantics_direct =>
++      'متصل، الإرسال وصندوق الوارد جاهزان، يمكن الوصول مباشرة';
++
++  @override
++  String get group_invited_not_joined =>
++      'تمت دعوته – لم ينضم بعد؛ لا يتلقى الرسائل';
++
++  @override
++  String get group_you_joined => 'لقد انضممت';
++
++  @override
++  String get call_unknown_contact => 'جهة اتصال غير معروفة';
++
++  @override
++  String get call_mute_unavailable =>
++      'التحكم بالميكروفون غير متاح حتى يصبح الصوت جاهزًا';
++
++  @override
++  String get call_speaker_unavailable =>
++      'مكبر الصوت غير متاح لمسار الصوت الحالي';
++
++  @override
++  String get call_audio_output_failed => 'تعذر تغيير مخرج الصوت';
+ }
+diff --git a/lib/l10n/app_localizations_de.dart b/lib/l10n/app_localizations_de.dart
+index 0d72d20d7..4e0f2a232 100644
+--- a/lib/l10n/app_localizations_de.dart
++++ b/lib/l10n/app_localizations_de.dart
+@@ -4178,4 +4178,114 @@ class AppLocalizationsDe extends AppLocalizations {
+ 
+   @override
+   String get media_voice_message_label => 'Sprachnachricht';
++
++  @override
++  String get call_end_permission =>
++      'Zum Telefonieren wird die Mikrofonberechtigung benötigt.';
++
++  @override
++  String get call_end_unsupported =>
++      'Sprachanrufe sind auf diesem Gerät nicht verfügbar.';
++
++  @override
++  String get call_end_busy => 'Der Kontakt führt bereits ein Gespräch.';
++
++  @override
++  String get call_end_declined => 'Anruf abgelehnt.';
++
++  @override
++  String get call_end_no_answer => 'Keine Antwort.';
++
++  @override
++  String get call_end_signaling_failed =>
++      'Der Anruf konnte nicht verbunden werden.';
++
++  @override
++  String get call_end_audio_start_failed =>
++      'Das Anrufaudio konnte nicht gestartet werden.';
++
++  @override
++  String get call_end_audio_interrupted => 'Das Anrufaudio wurde unterbrochen.';
++
++  @override
++  String get call_end_reconnect_failed =>
++      'Der Anruf konnte nicht erneut verbunden werden.';
++
++  @override
++  String get call_end_expired => 'Der Anruf ist abgelaufen.';
++
++  @override
++  String get call_end_unavailable => 'Sprachanrufe sind nicht verfügbar.';
++
++  @override
++  String get call_end_ended => 'Anruf beendet.';
++
++  @override
++  String get call_audio_output_unavailable =>
++      'Diese Audioausgabe ist nicht verfügbar';
++
++  @override
++  String get call_audio_controls_failed =>
++      'Die Audiosteuerung konnte nicht aktualisiert werden';
++
++  @override
++  String get call_audio_controls_not_ready =>
++      'Die Audiosteuerung ist erst verfügbar, wenn das Anrufaudio bereit ist';
++
++  @override
++  String get call_audio_permission =>
++      'Zum Telefonieren wird die Mikrofonberechtigung benötigt';
++
++  @override
++  String get call_audio_unavailable =>
++      'Das Anrufaudio ist derzeit nicht verfügbar';
++
++  @override
++  String get connection_online => 'Online';
++
++  @override
++  String get connection_connecting => 'Verbindung wird hergestellt';
++
++  @override
++  String get connection_offline => 'Offline';
++
++  @override
++  String get connection_semantics_offline => 'offline';
++
++  @override
++  String get connection_semantics_connecting => 'Verbindung wird hergestellt';
++
++  @override
++  String get connection_semantics_online =>
++      'online, Versand und Posteingang bereit, Relay-Reservierung ausstehend';
++
++  @override
++  String get connection_semantics_reserved =>
++      'online, Versand und Posteingang bereit, Relay-Reservierung bereit';
++
++  @override
++  String get connection_semantics_direct =>
++      'online, Versand und Posteingang bereit, direkt erreichbar';
++
++  @override
++  String get group_invited_not_joined =>
++      'Eingeladen – noch nicht beigetreten; empfängt noch keine Nachrichten';
++
++  @override
++  String get group_you_joined => 'Du bist beigetreten';
++
++  @override
++  String get call_unknown_contact => 'Unbekannter Kontakt';
++
++  @override
++  String get call_mute_unavailable =>
++      'Die Mikrofonsteuerung ist erst verfügbar, wenn das Audio bereit ist';
++
++  @override
++  String get call_speaker_unavailable =>
++      'Der Lautsprecher ist für die aktuelle Audioverbindung nicht verfügbar';
++
++  @override
++  String get call_audio_output_failed =>
++      'Die Audioausgabe konnte nicht geändert werden';
+ }
+diff --git a/lib/l10n/app_localizations_en.dart b/lib/l10n/app_localizations_en.dart
+index b02d0248b..954d1a2e6 100644
+--- a/lib/l10n/app_localizations_en.dart
++++ b/lib/l10n/app_localizations_en.dart
+@@ -4085,4 +4085,109 @@ class AppLocalizationsEn extends AppLocalizations {
+ 
+   @override
+   String get media_voice_message_label => 'Voice message';
++
++  @override
++  String get call_end_permission =>
++      'Microphone permission is needed to make calls.';
++
++  @override
++  String get call_end_unsupported =>
++      'Voice calling is unavailable on this device.';
++
++  @override
++  String get call_end_busy => 'The contact is on another call.';
++
++  @override
++  String get call_end_declined => 'Call declined.';
++
++  @override
++  String get call_end_no_answer => 'No answer.';
++
++  @override
++  String get call_end_signaling_failed => 'Call could not connect.';
++
++  @override
++  String get call_end_audio_start_failed => 'Call audio could not start.';
++
++  @override
++  String get call_end_audio_interrupted => 'Call audio was interrupted.';
++
++  @override
++  String get call_end_reconnect_failed => 'Call could not reconnect.';
++
++  @override
++  String get call_end_expired => 'The call expired.';
++
++  @override
++  String get call_end_unavailable => 'Voice calling is unavailable.';
++
++  @override
++  String get call_end_ended => 'Call ended.';
++
++  @override
++  String get call_audio_output_unavailable =>
++      'That audio output is unavailable';
++
++  @override
++  String get call_audio_controls_failed =>
++      'Audio controls could not be updated';
++
++  @override
++  String get call_audio_controls_not_ready =>
++      'Audio controls are unavailable until call audio is ready';
++
++  @override
++  String get call_audio_permission =>
++      'Microphone permission is needed to make calls';
++
++  @override
++  String get call_audio_unavailable => 'Call audio is unavailable right now';
++
++  @override
++  String get connection_online => 'Online';
++
++  @override
++  String get connection_connecting => 'Connecting';
++
++  @override
++  String get connection_offline => 'Offline';
++
++  @override
++  String get connection_semantics_offline => 'offline';
++
++  @override
++  String get connection_semantics_connecting => 'connecting';
++
++  @override
++  String get connection_semantics_online =>
++      'online, send and inbox ready, relay reservation pending';
++
++  @override
++  String get connection_semantics_reserved =>
++      'online, send and inbox ready, relay reservation ready';
++
++  @override
++  String get connection_semantics_direct =>
++      'online, send and inbox ready, directly reachable';
++
++  @override
++  String get group_invited_not_joined =>
++      'Invited – not joined yet; not receiving messages';
++
++  @override
++  String get group_you_joined => 'You joined';
++
++  @override
++  String get call_unknown_contact => 'Unknown contact';
++
++  @override
++  String get call_mute_unavailable =>
++      'Microphone controls are unavailable until audio is ready';
++
++  @override
++  String get call_speaker_unavailable =>
++      'Speaker is unavailable for the current audio route';
++
++  @override
++  String get call_audio_output_failed => 'Audio output could not be changed';
+ }
+diff --git a/lib/shared/widgets/linkable_text.dart b/lib/shared/widgets/linkable_text.dart
+index 478769eac..85a706ff0 100644
+--- a/lib/shared/widgets/linkable_text.dart
++++ b/lib/shared/widgets/linkable_text.dart
+@@ -1,5 +1,6 @@
+ import 'package:flutter/gestures.dart';
+ import 'package:flutter/material.dart';
++import 'package:flutter/semantics.dart';
+ import 'package:flutter_app/core/theme/feed_colors.dart';
+ import 'package:flutter_app/core/utils/url_parser.dart';
+ import 'package:url_launcher/url_launcher.dart';
+@@ -125,11 +126,29 @@ class _LinkableTextState extends State<LinkableText> {
+       if (widget.suffixSpans != null) ...widget.suffixSpans!,
+     ];
+ 
+-    return Text.rich(
++    final urls = parseUrls(
++      widget.text,
++    ).where((s) => s.isUrl).map((s) => s.text).toList();
++    final richText = Text.rich(
+       TextSpan(children: allSpans),
+       maxLines: widget.maxLines,
+       overflow: widget.overflow ?? TextOverflow.clip,
+       textDirection: widget.textDirection,
+     );
++    if (urls.isEmpty) return richText;
++    // A link's recognizer splits RichText into accessibility fragments. Merge
++    // the complete message while retaining inline timestamp/status widgets.
++    return MergeSemantics(
++      child: Semantics(
++        onTap: urls.length == 1 ? () => _handleTap(urls.single) : null,
++        customSemanticsActions: urls.length > 1
++            ? {
++                for (final url in urls)
++                  CustomSemanticsAction(label: url): () => _handleTap(url),
++              }
++            : null,
++        child: richText,
++      ),
++    );
+   }
+ }
+diff --git a/lib/shared/widgets/media/audio_player_widget.dart b/lib/shared/widgets/media/audio_player_widget.dart
+index 41634a53d..cf1b6aa30 100644
+--- a/lib/shared/widgets/media/audio_player_widget.dart
++++ b/lib/shared/widgets/media/audio_player_widget.dart
+@@ -4,6 +4,7 @@ import 'package:audio_session/audio_session.dart';
+ import 'package:flutter/material.dart';
+ import 'package:flutter_app/core/media/group_media_integrity_policy.dart';
+ import 'package:just_audio/just_audio.dart';
++import 'package:flutter_app/core/utils/flow_event_emitter.dart';
+ import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
+ import 'package:flutter_app/l10n/app_localizations.dart';
+ import 'media_display_helpers.dart';
+@@ -247,6 +248,7 @@ class _AudioPlayerWidgetState extends State<AudioPlayerWidget>
+   int _loadVersion = 0;
+   bool _playStartPending = false;
+   bool _isDisposing = false;
++  final Set<Future<void>> _sourceLoads = {};
+   bool _retainsInterruptedPlayback = false;
+ 
+   /// Retain only active or reversibly interrupted user playback. User-paused,
+@@ -333,7 +335,14 @@ class _AudioPlayerWidgetState extends State<AudioPlayerWidget>
+     }
+   }
+ 
+-  Future<void> _loadAudio() async {
++  Future<void> _loadAudio() {
++    if (_isDisposing) return Future<void>.value();
++    final task = _loadAudioSource();
++    _sourceLoads.add(task);
++    return task.whenComplete(() => _sourceLoads.remove(task));
++  }
++
++  Future<void> _loadAudioSource() async {
+     final path = widget.attachment.localPath;
+     if (path == null || !_isAvailable) return;
+     if ((_isLoaded && _loadedPath == path) || _loadingPath == path) return;
+@@ -403,7 +412,7 @@ class _AudioPlayerWidgetState extends State<AudioPlayerWidget>
+       updateKeepAlive();
+     }
+ 
+-    if (_isAvailable) {
++    if (!_isDisposing && _isAvailable) {
+       await _loadAudio();
+     }
+   }
+@@ -417,10 +426,32 @@ class _AudioPlayerWidgetState extends State<AudioPlayerWidget>
+     unawaited(_durationSubscription.cancel());
+     unawaited(_interruptionSubscription?.cancel());
+     unawaited(_becomingNoisySubscription?.cancel());
+-    unawaited(_player.dispose());
++    _loadVersion++;
++    unawaited(_disposePlayerAfterLoads());
+     super.dispose();
+   }
+ 
++  Future<void> _disposePlayerAfterLoads() async {
++    // stop interrupts a pending platform load. Do not close just_audio's
++    // subjects until the load continuation has released its event listener.
++    try {
++      await _player.stop();
++    } catch (_) {
++      // A platform stop error must not close subjects under a pending load.
++    }
++    await Future.wait(_sourceLoads.toList());
++    try {
++      await _player.dispose();
++    } catch (_) {
++      // This detached row has no UI to report a platform teardown failure to.
++      emitFlowEvent(
++        layer: 'FL',
++        event: 'AUDIO_PLAYER_DISPOSE_FAILED',
++        details: const {},
++      );
++    }
++  }
++
+   void _startPositionTimer() {
+     if (_positionTimer != null) return;
+     _positionTimer = Timer.periodic(const Duration(milliseconds: 200), (_) {
+diff --git a/lib/shared/widgets/media/full_screen_image_viewer.dart b/lib/shared/widgets/media/full_screen_image_viewer.dart
+index 926c9c7e8..b2c3e0dff 100644
+--- a/lib/shared/widgets/media/full_screen_image_viewer.dart
++++ b/lib/shared/widgets/media/full_screen_image_viewer.dart
+@@ -67,6 +67,7 @@ class _FullScreenImageViewerState extends State<FullScreenImageViewer> {
+         backgroundColor: Colors.transparent,
+         elevation: 0,
+         leading: IconButton(
++          tooltip: MaterialLocalizations.of(context).backButtonTooltip,
+           icon: const Icon(Icons.arrow_back, color: Colors.white),
+           onPressed: () => Navigator.of(context).pop(),
+         ),
+diff --git a/lib/shared/widgets/media/full_screen_typed_media_viewer.dart b/lib/shared/widgets/media/full_screen_typed_media_viewer.dart
+index 634401970..1b2993312 100644
+--- a/lib/shared/widgets/media/full_screen_typed_media_viewer.dart
++++ b/lib/shared/widgets/media/full_screen_typed_media_viewer.dart
+@@ -440,6 +440,7 @@ class _FullScreenTypedMediaViewerState
+         backgroundColor: Colors.transparent,
+         elevation: 0,
+         leading: IconButton(
++          tooltip: MaterialLocalizations.of(context).backButtonTooltip,
+           icon: const Icon(Icons.arrow_back, color: Colors.white),
+           onPressed: widget.onBackRequested == null
+               ? () => Navigator.of(context).pop()
+diff --git a/lib/shared/widgets/media/media_grid_cell.dart b/lib/shared/widgets/media/media_grid_cell.dart
+index 25f450ebb..682501c57 100644
+--- a/lib/shared/widgets/media/media_grid_cell.dart
++++ b/lib/shared/widgets/media/media_grid_cell.dart
+@@ -56,22 +56,30 @@ class MediaGridCell extends StatelessWidget {
+ 
+   @override
+   Widget build(BuildContext context) {
+-    return GestureDetector(
+-      // 231: stable per-tile handle for tap/long-press targeting in tests.
+-      key: ValueKey('media-grid-cell-${attachment.messageId}-${attachment.id}'),
+-      onTap: _canOpen ? onTap : null,
+-      onLongPress: onLongPress,
+-      child: ClipRRect(
+-        borderRadius: BorderRadius.circular(borderRadius),
+-        child: Stack(
+-          fit: StackFit.expand,
+-          children: [
+-            _buildContent(context),
+-            if (_canShowVideoOverlay)
+-              VideoThumbnailOverlay(durationMs: attachment.durationMs),
+-            if (_showsGifBadge) _buildGifBadge(),
+-            if (showOverlayCount && overlayCount > 0) _buildOverlayCount(),
+-          ],
++    final l10n = AppLocalizations.of(context)!;
++    return Semantics(
++      label: attachment.mediaType == 'image'
++          ? l10n.shared_media_kind_photo
++          : l10n.shared_media_kind_video,
++      child: GestureDetector(
++        // 231: stable per-tile handle for tap/long-press targeting in tests.
++        key: ValueKey(
++          'media-grid-cell-${attachment.messageId}-${attachment.id}',
++        ),
++        onTap: _canOpen ? onTap : null,
++        onLongPress: onLongPress,
++        child: ClipRRect(
++          borderRadius: BorderRadius.circular(borderRadius),
++          child: Stack(
++            fit: StackFit.expand,
++            children: [
++              _buildContent(context),
++              if (_canShowVideoOverlay)
++                VideoThumbnailOverlay(durationMs: attachment.durationMs),
++              if (_showsGifBadge) _buildGifBadge(),
++              if (showOverlayCount && overlayCount > 0) _buildOverlayCount(),
++            ],
++          ),
+         ),
+       ),
+     );
+diff --git a/scripts/test/run_call_native_unit_tests.sh b/scripts/test/run_call_native_unit_tests.sh
+index 6f4345e9c..646301782 100755
+--- a/scripts/test/run_call_native_unit_tests.sh
++++ b/scripts/test/run_call_native_unit_tests.sh
+@@ -22,6 +22,7 @@ set +e
+   --tests 'com.mknoon.app.MainActivityAppVisibilityTest' \
+   --tests 'com.mknoon.app.MknoonFirebaseMessagingServiceTest' \
+   --tests 'com.mknoon.app.AndroidCallWakeBridgeTest' \
++  --tests 'com.mknoon.app.HeadlessCanonicalRecoveryWorkerTest' \
+   >"$LOG" 2>&1
+ status=$?
+ set -e
+diff --git a/test/core/bootstrap/call_signaling_composition_test.dart b/test/core/bootstrap/call_signaling_composition_test.dart
+index d0a33a76a..fed33b14c 100644
+--- a/test/core/bootstrap/call_signaling_composition_test.dart
++++ b/test/core/bootstrap/call_signaling_composition_test.dart
+@@ -2913,7 +2913,10 @@ void main() {
+ 
+       graph.emitForeground(validated);
+       foreground = false;
+-      expect(await composition.present(presentation), isFalse);
++      await expectLater(
++        composition.present(presentation),
++        throwsA(isA<IncomingCallPresentationUnavailable>()),
++      );
+       foreground = true;
+       expect(await composition.present(presentation), isTrue);
+       expect(composition.current, same(validated));
+diff --git a/test/core/media/record_audio_recorder_service_test.dart b/test/core/media/record_audio_recorder_service_test.dart
+index 863e9b7ed..f622e2950 100644
+--- a/test/core/media/record_audio_recorder_service_test.dart
++++ b/test/core/media/record_audio_recorder_service_test.dart
+@@ -1,4 +1,6 @@
++import 'dart:async';
+ import 'dart:io';
++import 'dart:typed_data';
+ 
+ import 'package:flutter_test/flutter_test.dart';
+ import 'package:record/record.dart';
+@@ -46,8 +48,7 @@ class _FakeAudioRecorder implements AudioRecorder {
+       Stream<Amplitude>.empty();
+ 
+   @override
+-  dynamic noSuchMethod(Invocation invocation) =>
+-      super.noSuchMethod(invocation);
++  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+ }
+ 
+ /// Simulates wakelock_plus failing at the platform layer (e.g. Android
+@@ -90,14 +91,40 @@ void main() {
+     UploadWakeLockController.debugReset(driver: FakeUploadWakeLockDriver());
+   });
+ 
++  test(
++    'finalized M4A duration defines sent metadata without altering audio',
++    () async {
++      final directory = await Directory.systemTemp.createTemp('r2-recording-');
++      addTearDown(() => directory.delete(recursive: true));
++      final path = '${directory.path}/encoded.m4a';
++      final bytes = Uint8List(40);
++      final data = ByteData.sublistView(bytes);
++      data.setUint32(0, 40);
++      bytes.setRange(4, 8, 'moov'.codeUnits);
++      data.setUint32(8, 32);
++      bytes.setRange(12, 16, 'mvhd'.codeUnits);
++      data.setUint32(28, 1000);
++      data.setUint32(32, 17000);
++      await File(path).writeAsBytes(bytes);
++      fakeRecorder.stopReturnsPath = path;
++      await service.start(outputPath: path);
++      await Future<void>.delayed(const Duration(milliseconds: 550));
++      final recording = await service.stop();
++      expect(recording!.durationMs, 17000);
++      expect(await File(path).readAsBytes(), bytes);
++    },
++  );
++
+   group('wake lock on start/stop', () {
+-    test('start() acquires the wake lock after recorder start succeeds',
+-        () async {
+-      await service.start(outputPath: testOutputPath);
++    test(
++      'start() acquires the wake lock after recorder start succeeds',
++      () async {
++        await service.start(outputPath: testOutputPath);
+ 
+-      expect(UploadWakeLockController.debugActiveHolds, 1);
+-      expect(fakeDriver.enableCalls, 1);
+-    });
++        expect(UploadWakeLockController.debugActiveHolds, 1);
++        expect(fakeDriver.enableCalls, 1);
++      },
++    );
+ 
+     test('stop() releases the wake lock', () async {
+       await service.start(outputPath: testOutputPath);
+@@ -107,16 +134,18 @@ void main() {
+       expect(fakeDriver.disableCalls, 1);
+     });
+ 
+-    test('stop() when never started does not release an external hold',
+-        () async {
+-      // Simulates a concurrent upload holding the shared ref-counted lock.
+-      await UploadWakeLockController.acquire();
++    test(
++      'stop() when never started does not release an external hold',
++      () async {
++        // Simulates a concurrent upload holding the shared ref-counted lock.
++        await UploadWakeLockController.acquire();
+ 
+-      await service.stop();
++        await service.stop();
+ 
+-      expect(UploadWakeLockController.debugActiveHolds, 1);
+-      expect(fakeDriver.disableCalls, 0);
+-    });
++        expect(UploadWakeLockController.debugActiveHolds, 1);
++        expect(fakeDriver.disableCalls, 0);
++      },
++    );
+   });
+ 
+   group('wake lock on cancel/dispose', () {
+@@ -134,8 +163,7 @@ void main() {
+       expect(UploadWakeLockController.debugActiveHolds, 0);
+     });
+ 
+-    test('stop() then cancel() then dispose() releases exactly once',
+-        () async {
++    test('stop() then cancel() then dispose() releases exactly once', () async {
+       await service.start(outputPath: testOutputPath);
+       await service.stop();
+       await service.cancel();
+@@ -177,43 +205,47 @@ void main() {
+       expect(UploadWakeLockController.debugActiveHolds, 0);
+     });
+ 
+-    test('start() rolls back fully when the wake-lock driver enable throws',
+-        () async {
+-      final throwingDriver = _ThrowingEnableDriver();
+-      UploadWakeLockController.debugReset(driver: throwingDriver);
++    test(
++      'start() rolls back fully when the wake-lock driver enable throws',
++      () async {
++        final throwingDriver = _ThrowingEnableDriver();
++        UploadWakeLockController.debugReset(driver: throwingDriver);
+ 
+-      await expectLater(
+-        service.start(outputPath: testOutputPath),
+-        throwsA(isA<StateError>()),
+-      );
++        await expectLater(
++          service.start(outputPath: testOutputPath),
++          throwsA(isA<StateError>()),
++        );
+ 
+-      // Invariant the UI relies on: throw out of start() == service holds
+-      // nothing — no counted hold, not recording, plugin recording stopped.
+-      expect(UploadWakeLockController.debugActiveHolds, 0);
+-      expect(service.isRecording, isFalse);
+-      expect(fakeRecorder.stopCalls, 1);
++        // Invariant the UI relies on: throw out of start() == service holds
++        // nothing — no counted hold, not recording, plugin recording stopped.
++        expect(UploadWakeLockController.debugActiveHolds, 0);
++        expect(service.isRecording, isFalse);
++        expect(fakeRecorder.stopCalls, 1);
+ 
+-      // The controller is not poisoned: a later recording works normally.
+-      UploadWakeLockController.debugReset(driver: fakeDriver);
+-      await service.start(outputPath: testOutputPath);
+-      expect(UploadWakeLockController.debugActiveHolds, 1);
+-      await service.stop();
+-      expect(UploadWakeLockController.debugActiveHolds, 0);
+-    });
++        // The controller is not poisoned: a later recording works normally.
++        UploadWakeLockController.debugReset(driver: fakeDriver);
++        await service.start(outputPath: testOutputPath);
++        expect(UploadWakeLockController.debugActiveHolds, 1);
++        await service.stop();
++        expect(UploadWakeLockController.debugActiveHolds, 0);
++      },
++    );
+ 
+-    test('second start() failing after force-stop leaves no held lock',
+-        () async {
+-      await service.start(outputPath: testOutputPath);
+-      fakeRecorder.throwOnStart = true;
++    test(
++      'second start() failing after force-stop leaves no held lock',
++      () async {
++        await service.start(outputPath: testOutputPath);
++        fakeRecorder.throwOnStart = true;
+ 
+-      await expectLater(
+-        service.start(outputPath: testOutputPath),
+-        throwsA(isA<StateError>()),
+-      );
++        await expectLater(
++          service.start(outputPath: testOutputPath),
++          throwsA(isA<StateError>()),
++        );
+ 
+-      expect(UploadWakeLockController.debugActiveHolds, 0);
+-      expect(fakeDriver.disableCalls, 1);
+-    });
++        expect(UploadWakeLockController.debugActiveHolds, 0);
++        expect(fakeDriver.disableCalls, 1);
++      },
++    );
+   });
+ 
+   group('wake lock on auto-stop', () {
+@@ -242,10 +274,14 @@ void main() {
+         maxDuration: const Duration(milliseconds: 50),
+       );
+       final captured = <AudioRecording?>[];
+-      service.onAutoStopped = captured.add;
++      final completed = Completer<void>();
++      service.onAutoStopped = (recording) {
++        captured.add(recording);
++        completed.complete();
++      };
+ 
+       await service.start(outputPath: testOutputPath);
+-      await Future<void>.delayed(const Duration(milliseconds: 120));
++      await completed.future.timeout(const Duration(seconds: 3));
+ 
+       expect(service.isRecording, isFalse);
+       expect(captured, hasLength(1));
+@@ -275,10 +311,14 @@ void main() {
+         fakeRecorder.stopReturnsPath = captureFile.path;
+ 
+         final captured = <AudioRecording?>[];
+-        service.onAutoStopped = captured.add;
++        final completed = Completer<void>();
++        service.onAutoStopped = (recording) {
++          captured.add(recording);
++          completed.complete();
++        };
+ 
+         await service.start(outputPath: testOutputPath);
+-        await Future<void>.delayed(const Duration(milliseconds: 700));
++        await completed.future.timeout(const Duration(seconds: 3));
+ 
+         expect(service.isRecording, isFalse);
+         expect(captured, hasLength(1));
+diff --git a/test/core/services/incoming_message_router_test.dart b/test/core/services/incoming_message_router_test.dart
+index 67a256e73..4cdef119a 100644
+--- a/test/core/services/incoming_message_router_test.dart
++++ b/test/core/services/incoming_message_router_test.dart
+@@ -3,6 +3,7 @@ import 'dart:convert';
+ import 'dart:io';
+ import 'package:flutter_test/flutter_test.dart';
+ import 'package:flutter_app/core/services/incoming_message_router.dart';
++import 'package:flutter_app/core/utils/flow_event_emitter.dart';
+ import 'package:flutter_app/core/services/p2p_service.dart';
+ import 'package:flutter_app/core/local_discovery/local_discovery_service.dart';
+ import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
+@@ -293,6 +294,34 @@ void main() {
+       },
+     );
+ 
++    test(
++      'readiness proof is internal control traffic, not an unknown message',
++      () async {
++        final unknown = <ChatMessage>[];
++        final chat = <ChatMessage>[];
++        final events = <Map<String, dynamic>>[];
++        final unknownSub = router.unknownMessageStream.listen(unknown.add);
++        final chatSub = router.chatMessageStream.listen(chat.add);
++        debugSetFlowEventSink(events.add);
++        try {
++          p2pService.inject(_makeMessage('readiness_proof'));
++          await Future<void>.delayed(Duration.zero);
++          expect(unknown, isEmpty);
++          expect(chat, isEmpty);
++          expect(
++            events.where(
++              (e) => e['event'] == 'MESSAGE_ROUTER_UNKNOWN_TYPE',
++            ),
++            isEmpty,
++          );
++        } finally {
++          debugSetFlowEventSink(null);
++          await unknownSub.cancel();
++          await chatSub.cancel();
++        }
++      },
++    );
++
+     test('routes unknown types to unknownMessageStream', () async {
+       final received = router.unknownMessageStream.first;
+ 
+diff --git a/test/core/services/p2p_service_impl_composition_contract_test.dart b/test/core/services/p2p_service_impl_composition_contract_test.dart
+index a51430581..34282cdf4 100644
+--- a/test/core/services/p2p_service_impl_composition_contract_test.dart
++++ b/test/core/services/p2p_service_impl_composition_contract_test.dart
+@@ -80,6 +80,9 @@ const _constructorParameters = <String>[
+   'BeginIosInboxDrainGeneration? beginIosInboxDrainGeneration',
+   'EndIosInboxDrainGeneration? endIosInboxDrainGeneration',
+   'bool recoveryOnly = false',
++  // R2 O7: lifecycle policy pauses foreground health polling; inbox replay
++  // remains independently callable while the application is backgrounded.
++  'bool Function()? isAppForeground',
+ ];
+ 
+ const _publicFields = <String>{
+@@ -670,7 +673,8 @@ String _publicApiFingerprint(ClassDeclaration facade) {
+ // Historical notification repair: one optional constructor callback supplies
+ // exact delivered-owner proof from each production lifetime's scoped database.
+ // Public STORE methods and custody function signatures retain their shape.
+-const _expectedFacadeApiFingerprint = '15fe5f1e';
++// The only API addition is the O7 foreground lifecycle predicate above.
++const _expectedFacadeApiFingerprint = 'a4892d0a';
+ 
+ void _expectCallbackOwnership(ClassDeclaration facade, String facadeSource) {
+   final constructorBody = _compact(
+@@ -914,7 +918,7 @@ void main() {
+             .toList(growable: false),
+         _constructorParameters,
+       );
+-      expect(constructor.parameters.parameters, hasLength(28));
++      expect(constructor.parameters.parameters, hasLength(29));
+       expect(
+         _fieldNames(facade).where((name) => !name.startsWith('_')).toSet(),
+         _publicFields,
+diff --git a/test/core/services/p2p_service_impl_health_drain_test.dart b/test/core/services/p2p_service_impl_health_drain_test.dart
+index db081d9cf..f1c6f284b 100644
+--- a/test/core/services/p2p_service_impl_health_drain_test.dart
++++ b/test/core/services/p2p_service_impl_health_drain_test.dart
+@@ -141,8 +141,10 @@ void main() {
+   late _FakeBridge bridge;
+   late P2PServiceImpl service;
+   late _StatusFeed statusFeed;
++  bool foreground = true;
+ 
+   setUp(() {
++    foreground = true;
+     bridge = _FakeBridge();
+     statusFeed = _StatusFeed(sticky: _statusJson(relayState: 'online'));
+     bridge.whenCommand('node:status', (_) => statusFeed.next());
+@@ -161,6 +163,7 @@ void main() {
+     );
+     service = P2PServiceImpl(
+       bridge: bridge,
++      isAppForeground: () => foreground,
+       inboxStagingRepository: InMemoryInboxStagingRepository(),
+     );
+   });
+@@ -184,6 +187,25 @@ void main() {
+     bridge.calledCommands.clear();
+   }
+ 
++  test(
++    'background health polling pauses while explicit inbox drains still run',
++    () async {
++      await startAndLatchOnline();
++      foreground = false;
++      statusFeed.sticky = _statusJson(relayState: 'degraded');
++      await service.performImmediateHealthCheck();
++      expect(bridge.calledCommands, isEmpty);
++      await service.drainOfflineInbox();
++      expect(drains(), 1);
++      expect(reconnects(), 0);
++      foreground = true;
++      await service.performImmediateHealthCheck();
++      expect(bridge.calledCommands, contains('node:status'));
++      expect(reconnects(), 1);
++      expect(drains(), greaterThanOrEqualTo(2));
++    },
++  );
++
+   test(
+     // TC-189-01 (INV-1)
+     'recovery tick still drains — 3 degraded ticks issue 3 inbox:retrieve_pending',
+diff --git a/test/features/call/application/handle_incoming_call_signal_test.dart b/test/features/call/application/handle_incoming_call_signal_test.dart
+index 941cf6878..e2bbd00d4 100644
+--- a/test/features/call/application/handle_incoming_call_signal_test.dart
++++ b/test/features/call/application/handle_incoming_call_signal_test.dart
+@@ -146,11 +146,13 @@ final class _Presenter implements IncomingCallPresenter {
+     this.succeeds = true,
+     this.resultGate,
+     this.throwOnPresent = false,
++    this.unavailable = false,
+   });
+ 
+   final bool succeeds;
+   final Completer<bool>? resultGate;
+   final bool throwOnPresent;
++  final bool unavailable;
+   int calls = 0;
+   int dismissCalls = 0;
+   final Completer<void> started = Completer<void>();
+@@ -159,6 +161,7 @@ final class _Presenter implements IncomingCallPresenter {
+   Future<bool> present(IncomingCallPresentation presentation) async {
+     calls++;
+     if (!started.isCompleted) started.complete();
++    if (unavailable) throw const IncomingCallPresentationUnavailable();
+     if (throwOnPresent) throw StateError('native call surface unavailable');
+     return resultGate == null ? succeeds : resultGate!.future;
+   }
+@@ -1104,6 +1107,27 @@ void main() {
+     );
+   });
+ 
++  test('foreground-only background presentation reports unsupported', () async {
++    final effects = _Effects();
++    final coordinator = _coordinator(effects);
++    addTearDown(coordinator.dispose);
++    final built = await _build(coordinator, _Presenter(unavailable: true));
++    expect(
++      await built.handler.handle(
++        IncomingCallSignalFrame(
++          envelopeJson: built.envelope,
++          authenticatedTransportPeerId: 'sender-device',
++          route: CallRouteClass.direct,
++        ),
++      ),
++      IncomingCallSignalOutcome.rejected,
++    );
++    expect(coordinator.activeSession, isNull);
++    expect(coordinator.lastSnapshot?.endReason, CallEndReason.unsupported);
++    expect(effects.effects, contains(CallEffectType.sendTerminate));
++    expect(effects.effects, isNot(contains(CallEffectType.sendRinging)));
++  });
++
+   test('native decline survives a late presentation refusal', () async {
+     final effects = _Effects();
+     final coordinator = _coordinator(effects);
+diff --git a/test/features/call/application/incoming_call_pre_presentation_admission_test.dart b/test/features/call/application/incoming_call_pre_presentation_admission_test.dart
+index e58b52d59..29290159d 100644
+--- a/test/features/call/application/incoming_call_pre_presentation_admission_test.dart
++++ b/test/features/call/application/incoming_call_pre_presentation_admission_test.dart
+@@ -84,6 +84,29 @@ void main() {
+     },
+   );
+ 
++  test(
++    'blocked sender is refused with a distinct identity-free reason',
++    () async {
++      final fixture = await _fixture();
++      fixture.roster.blocked = true;
++      await expectLater(
++        fixture.admission.authenticateMailboxInvite(
++          nativeCallId: _callHandle,
++          wakeExpiresAtMs: _nowMs + 45_000,
++          event: fixture.event,
++        ),
++        throwsA(
++          isA<IncomingCallPrePresentationAdmissionException>().having(
++            (failure) => failure.reasonCode,
++            'reason',
++            'sender_blocked',
++          ),
++        ),
++      );
++      expect(fixture.localAuthorityLoads, 0);
++    },
++  );
++
+   test('wake, outer, and inner mailbox binding mismatches reject', () async {
+     for (final mismatch in _BindingMismatch.values) {
+       final fixture = await _fixture();
+@@ -341,6 +364,7 @@ final class _Roster implements CallTrustedRosterProvider {
+   _Roster(this.authority);
+ 
+   final TrustedCallDeviceAuthority? authority;
++  bool blocked = false;
+   final List<String> resolvedTransports = <String>[];
+ 
+   @override
+@@ -352,6 +376,7 @@ final class _Roster implements CallTrustedRosterProvider {
+     String authenticatedTransportPeerId,
+   ) async {
+     resolvedTransports.add(authenticatedTransportPeerId);
++    if (blocked) throw const CallSenderBlockedException();
+     return authority;
+   }
+ }
+diff --git a/test/features/call/infrastructure/android_call_lifecycle_adapter_test.dart b/test/features/call/infrastructure/android_call_lifecycle_adapter_test.dart
+index 932883eb2..91645aa7d 100644
+--- a/test/features/call/infrastructure/android_call_lifecycle_adapter_test.dart
++++ b/test/features/call/infrastructure/android_call_lifecycle_adapter_test.dart
+@@ -276,13 +276,17 @@ void main() {
+         'enabled': true,
+       });
+       expect(resolverCalls, 0, reason: 'attach must not guess call authority');
+-      expect(await adapter.present(_presentation()), isTrue);
++      expect(
++        await adapter.present(_presentation(displayName: 'Alice')),
++        isTrue,
++      );
+       expect(resolverCalls, 1);
+       expect(native.callsOf('presentAuthenticated'), hasLength(1));
+       expect(native.callsOf('presentAuthenticated').single.arguments, {
+         'version': 1,
+         'callHandle': _callHandle,
+         'expiresAtMs': _expiresAtMs,
++        'display': {'displayName': 'Alice', 'avatarPng': null, 'light': true},
+       });
+ 
+       await adapter.close();
+@@ -4102,11 +4106,13 @@ AndroidCallLifecycleAdapter _adapter(
+   return adapter;
+ }
+ 
+-IncomingCallPresentation _presentation() => IncomingCallPresentation(
+-  callId: _callId,
+-  callerAccountPeerId: 'remote-account',
+-  expiresAt: DateTime.fromMillisecondsSinceEpoch(_expiresAtMs, isUtc: true),
+-);
++IncomingCallPresentation _presentation({String? displayName}) =>
++    IncomingCallPresentation(
++      displayName: displayName,
++      callId: _callId,
++      callerAccountPeerId: 'remote-account',
++      expiresAt: DateTime.fromMillisecondsSinceEpoch(_expiresAtMs, isUtc: true),
++    );
+ 
+ Map<String, Object?> _emptyBatch() => <String, Object?>{
+   'version': 1,
+diff --git a/test/features/call/infrastructure/call_mailbox_client_test.dart b/test/features/call/infrastructure/call_mailbox_client_test.dart
+index b08d56e69..03af2d708 100644
+--- a/test/features/call/infrastructure/call_mailbox_client_test.dart
++++ b/test/features/call/infrastructure/call_mailbox_client_test.dart
+@@ -537,7 +537,15 @@ void main() {
+         .where((event) => event['event'] == 'CALL_MAILBOX_BRIDGE_FAILURE')
+         .map((event) => event['details'] as Map<String, Object?>)
+         .toList(growable: false);
+-    expect(failures.map((failure) => failure['code']), safeRelayCodes);
++    expect(
++      failures.map((failure) => failure['code']),
++      safeRelayCodes.where((code) => code != 'CALL_REPLAY'),
++    );
++    final duplicates = diagnostics.where(
++      (event) => event['event'] == 'CALL_MAILBOX_BRIDGE_DUPLICATE',
++    );
++    expect(duplicates, hasLength(1));
++    expect(duplicates.single['details'], containsPair('code', 'CALL_REPLAY'));
+     expect(jsonEncode(failures), isNot(contains('raw relay detail')));
+   });
+ 
+diff --git a/test/features/call/infrastructure/database_call_trusted_roster_provider_test.dart b/test/features/call/infrastructure/database_call_trusted_roster_provider_test.dart
+index eacf4ef31..2d0d66db2 100644
+--- a/test/features/call/infrastructure/database_call_trusted_roster_provider_test.dart
++++ b/test/features/call/infrastructure/database_call_trusted_roster_provider_test.dart
+@@ -124,7 +124,10 @@ void main() {
+       expect(blocked.contactAccepted, isTrue);
+       expect(blocked.contactBlocked, isTrue);
+       expect(blocked.devices, isEmpty);
+-      expect(await provider.resolveAuthenticatedTransport(_account), isNull);
++      await expectLater(
++        provider.resolveAuthenticatedTransport(_account),
++        throwsA(isA<CallSenderBlockedException>()),
++      );
+     },
+   );
+ 
+diff --git a/test/features/call/infrastructure/ios_call_lifecycle_adapter_test.dart b/test/features/call/infrastructure/ios_call_lifecycle_adapter_test.dart
+index a4c717c2d..964c71e8d 100644
+--- a/test/features/call/infrastructure/ios_call_lifecycle_adapter_test.dart
++++ b/test/features/call/infrastructure/ios_call_lifecycle_adapter_test.dart
+@@ -51,10 +51,11 @@ void main() {
+         native.callsOf('acknowledge').single.arguments['callHandle'],
+         retiredHandle,
+       );
+-      expect(
+-        native.callsOf('presentAuthenticated').single.arguments['callHandle'],
+-        _callHandle,
+-      );
++      expect(native.callsOf('presentAuthenticated').single.arguments, {
++        'version': 1,
++        'callHandle': _callHandle,
++        'expiresAtMs': _expiresAtMs,
++      });
+       expect(native.callsOf('failClosed'), isEmpty);
+     },
+   );
+@@ -1066,6 +1067,7 @@ Future<void> _bindRinging(
+ }
+ 
+ IncomingCallPresentation _presentation() => IncomingCallPresentation(
++  displayName: 'Alice',
+   callId: _callId,
+   callerAccountPeerId: 'remote-account',
+   expiresAt: DateTime.fromMillisecondsSinceEpoch(_expiresAtMs, isUtc: true),
+diff --git a/test/features/conversation/application/chat_message_listener_test.dart b/test/features/conversation/application/chat_message_listener_test.dart
+index a3077edd8..401e323b3 100644
+--- a/test/features/conversation/application/chat_message_listener_test.dart
++++ b/test/features/conversation/application/chat_message_listener_test.dart
+@@ -1533,7 +1533,7 @@ void main() {
+     );
+ 
+     test(
+-      'persists archived sender message but suppresses UI emission',
++      'persists archived sender message and publishes its row update',
+       () async {
+         final senderPeerId = 'sender-peer-archived';
+         contactRepo.seedContact(_makeContact(senderPeerId, isArchived: true));
+@@ -1552,7 +1552,7 @@ void main() {
+ 
+         expect(messageRepo.saved, hasLength(1));
+         expect(messageRepo.saved.first.id, 'msg-archived');
+-        expect(emitted, isEmpty);
++        expect(emitted.single.id, 'msg-archived');
+ 
+         listener.dispose();
+       },
+diff --git a/test/features/groups/presentation/group_conversation_screen_test.dart b/test/features/groups/presentation/group_conversation_screen_test.dart
+index 791d84e1b..a1fa1710d 100644
+--- a/test/features/groups/presentation/group_conversation_screen_test.dart
++++ b/test/features/groups/presentation/group_conversation_screen_test.dart
+@@ -461,6 +461,26 @@ void main() {
+     expect(boxDecoration.borderRadius, isNotNull);
+   }
+ 
++  testWidgets('own acceptance row says You joined in the current locale', (
++    tester,
++  ) async {
++    final joined = testMessages.first.copyWith(
++      id: 'sys-member_joined:group-1:peer-1:join',
++      senderPeerId: 'peer-1',
++      text: 'Alice joined the group',
++    );
++    for (final locale in [const Locale('en'), const Locale('ar')]) {
++      await tester.pumpWidget(
++        buildTestWidget(messages: [joined], locale: locale),
++      );
++      expect(
++        find.text(locale.languageCode == 'en' ? 'You joined' : 'لقد انضممت'),
++        findsOneWidget,
++      );
++      expect(find.text('Alice joined the group'), findsNothing);
++    }
++  });
++
+   testWidgets('renders messages', (tester) async {
+     await tester.pumpWidget(buildTestWidget(messages: testMessages));
+ 
+diff --git a/test/features/groups/presentation/group_info_screen_test.dart b/test/features/groups/presentation/group_info_screen_test.dart
+index 984b4bb29..8e586fa11 100644
+--- a/test/features/groups/presentation/group_info_screen_test.dart
++++ b/test/features/groups/presentation/group_info_screen_test.dart
+@@ -97,6 +97,29 @@ void main() {
+     );
+   }
+ 
++  testWidgets(
++    'creator has no unknown invite and pending invitees cannot receive messages',
++    (tester) async {
++      await tester.pumpWidget(
++        buildTestWidget(
++          members: testMembers,
++          inviteStatusesByPeerId: const {
++            'peer-member': GroupInviteDeliveryStatus.sent,
++          },
++        ),
++      );
++      expect(find.text('Invite unknown'), findsNothing);
++      expect(
++        find.byKey(const ValueKey('group-member-pending-peer-member')),
++        findsOneWidget,
++      );
++      expect(
++        find.text('Invited – not joined yet; not receiving messages'),
++        findsOneWidget,
++      );
++    },
++  );
++
+   testWidgets('shows members', (tester) async {
+     await tester.pumpWidget(buildTestWidget(members: testMembers));
+ 
+@@ -215,12 +238,12 @@ void main() {
+     (tester) async {
+       GroupMember? revokedMember;
+       GroupMember writer(String peerId) => GroupMember(
+-            groupId: 'group-1',
+-            peerId: peerId,
+-            username: peerId,
+-            role: MemberRole.writer,
+-            joinedAt: DateTime.now().toUtc(),
+-          );
++        groupId: 'group-1',
++        peerId: peerId,
++        username: peerId,
++        role: MemberRole.writer,
++        joinedAt: DateTime.now().toUtc(),
++      );
+ 
+       await tester.pumpWidget(
+         buildTestWidget(
+@@ -265,35 +288,32 @@ void main() {
+     },
+   );
+ 
+-  testWidgets(
+-    'C: non-admins never see the revoke action',
+-    (tester) async {
+-      GroupMember writer(String peerId) => GroupMember(
+-            groupId: 'group-1',
+-            peerId: peerId,
+-            username: peerId,
+-            role: MemberRole.writer,
+-            joinedAt: DateTime.now().toUtc(),
+-          );
++  testWidgets('C: non-admins never see the revoke action', (tester) async {
++    GroupMember writer(String peerId) => GroupMember(
++      groupId: 'group-1',
++      peerId: peerId,
++      username: peerId,
++      role: MemberRole.writer,
++      joinedAt: DateTime.now().toUtc(),
++    );
+ 
+-      await tester.pumpWidget(
+-        buildTestWidget(
+-          members: [testMembers.first, writer('peer-sent')],
+-          ownPeerId: 'peer-member',
+-          isAdmin: false,
+-          inviteStatusesByPeerId: const {
+-            'peer-sent': GroupInviteDeliveryStatus.sent,
+-          },
+-          onRevokeInvite: (_) {},
+-        ),
+-      );
++    await tester.pumpWidget(
++      buildTestWidget(
++        members: [testMembers.first, writer('peer-sent')],
++        ownPeerId: 'peer-member',
++        isAdmin: false,
++        inviteStatusesByPeerId: const {
++          'peer-sent': GroupInviteDeliveryStatus.sent,
++        },
++        onRevokeInvite: (_) {},
++      ),
++    );
+ 
+-      expect(
+-        find.byKey(const ValueKey('group-member-revoke-invite-peer-sent')),
+-        findsNothing,
+-      );
+-    },
+-  );
++    expect(
++      find.byKey(const ValueKey('group-member-revoke-invite-peer-sent')),
++      findsNothing,
++    );
++  });
+ 
+   testWidgets('shows disabled invite resend busy state', (tester) async {
+     await tester.pumpWidget(
+diff --git a/test/features/groups/presentation/group_info_wired_test.dart b/test/features/groups/presentation/group_info_wired_test.dart
+index 3463e7275..9ca731ec9 100644
+--- a/test/features/groups/presentation/group_info_wired_test.dart
++++ b/test/features/groups/presentation/group_info_wired_test.dart
+@@ -4736,11 +4736,9 @@ void main() {
+               return '${entry.peerId}:${decoded['type']}';
+             })
+             .toList(growable: false);
+-        expect(
+-          inviteLogs.map((entry) => entry.peerId),
+-          ['peer-dana'],
+-          reason: 'sent p2p messages: $sentTypes',
+-        );
++        expect(inviteLogs.map((entry) => entry.peerId), [
++          'peer-dana',
++        ], reason: 'sent p2p messages: $sentTypes');
+ 
+         final envelope =
+             jsonDecode(inviteLogs.single.content) as Map<String, dynamic>;
+@@ -4890,6 +4888,12 @@ void main() {
+         await pumpFrames(tester);
+ 
+         expect(find.text('Edit Group Details'), findsOneWidget);
++        final editorDialog = tester.widget<Dialog>(find.byType(Dialog));
++        expect(
++          editorDialog.backgroundColor!.a,
++          1,
++          reason: 'private group text must not bleed through the editor',
++        );
+ 
+         await tester.enterText(
+           find.descendant(
+@@ -4906,6 +4910,20 @@ void main() {
+           'Fresh description',
+         );
+ 
++        tester.view.viewInsets = const FakeViewPadding(bottom: 300);
++        addTearDown(tester.view.resetViewInsets);
++        await pumpFrames(tester);
++        final visibleBottom =
++            (tester.view.physicalSize.height - 300) /
++            tester.view.devicePixelRatio;
++        for (final key in ['group-edit-save', 'group-edit-cancel']) {
++          final action = find.byKey(ValueKey(key));
++          expect(action.hitTestable(), findsOneWidget);
++          expect(
++            tester.getRect(action).bottom,
++            lessThanOrEqualTo(visibleBottom),
++          );
++        }
+         await tester.tap(find.byKey(const ValueKey('group-edit-save')));
+         await pumpFrames(tester, count: 30);
+ 
+diff --git a/test/features/p2p/presentation/widgets/connection_status_indicator_test.dart b/test/features/p2p/presentation/widgets/connection_status_indicator_test.dart
+index bb6596522..0f7dc5697 100644
+--- a/test/features/p2p/presentation/widgets/connection_status_indicator_test.dart
++++ b/test/features/p2p/presentation/widgets/connection_status_indicator_test.dart
+@@ -2,6 +2,7 @@ import 'dart:async';
+ import 'dart:convert';
+ 
+ import 'package:flutter/material.dart';
++import 'package:flutter_app/l10n/app_localizations.dart';
+ import 'package:flutter_test/flutter_test.dart';
+ import 'package:flutter_app/core/services/p2p_service.dart';
+ import 'package:flutter_app/core/utils/flow_event_emitter.dart';
+@@ -141,6 +142,42 @@ Color? _dotColor(WidgetTester tester) {
+ }
+ 
+ void main() {
++  testWidgets('Arabic readiness label and semantics fit largest text scale', (
++    tester,
++  ) async {
++    final semantics = tester.ensureSemantics();
++
++    await tester.pumpWidget(
++      MaterialApp(
++        locale: const Locale('ar'),
++        localizationsDelegates: AppLocalizations.localizationsDelegates,
++        supportedLocales: AppLocalizations.supportedLocales,
++        home: Scaffold(
++          body: MediaQuery(
++            data: const MediaQueryData(textScaler: TextScaler.linear(3.2)),
++            child: const Center(
++              child: SizedBox(
++                width: 220,
++                child: ConnectionStatusIndicator.preview(
++                  state: BadgeReadinessState.online,
++                ),
++              ),
++            ),
++          ),
++        ),
++      ),
++    );
++    expect(find.text('متصل'), findsOneWidget);
++    expect(
++      find.bySemanticsLabel(
++        'متصل، الإرسال وصندوق الوارد جاهزان، حجز المرحّل قيد الانتظار',
++      ),
++      findsOneWidget,
++    );
++    expect(tester.takeException(), isNull);
++    semantics.dispose();
++  });
++
+   group('Legacy relay health helper', () {
+     test('stays connecting until circuit or reservation-ready state arrives', () {
+       // Node is started but has no circuit addresses — should be "degraded" (connecting)
+@@ -490,58 +527,57 @@ void main() {
+ 
+     // T8 — onlineDirect is a ready state: no TIME_TO_ONLINE_BADGE re-emit on
+     // dotted→direct, but exactly one on connecting→direct (first reach ready).
+-    testWidgets(
+-      'no badge timing re-emit moving between Online. and onlineDirect',
+-      (tester) async {
+-        // Sub-case A: dotted → direct is a ready-tier reshuffle → no emit.
+-        final fakeService = await _pumpIndicator(
+-          tester,
+-          _stateForBadgeState(BadgeReadinessState.onlineDotted),
+-        );
+-        final reshuffleEvents = await _captureFlowEvents(() async {
+-          fakeService.pushState(
+-            _stateForBadgeState(BadgeReadinessState.onlineDirect),
+-          );
+-          await tester.pump();
+-          await tester.pump();
+-        });
+-        expect(
+-          reshuffleEvents
+-              .where((e) => e['event'] == 'TIME_TO_ONLINE_BADGE_WIDGET')
+-              .toList(),
+-          isEmpty,
++    testWidgets('no badge timing re-emit moving between Online. and onlineDirect', (
++      tester,
++    ) async {
++      // Sub-case A: dotted → direct is a ready-tier reshuffle → no emit.
++      final fakeService = await _pumpIndicator(
++        tester,
++        _stateForBadgeState(BadgeReadinessState.onlineDotted),
++      );
++      final reshuffleEvents = await _captureFlowEvents(() async {
++        fakeService.pushState(
++          _stateForBadgeState(BadgeReadinessState.onlineDirect),
+         );
+-        fakeService.dispose();
+-
+-        // Unmount the indicator so the next _pumpIndicator builds a FRESH State
+-        // (same widget type with no key would otherwise reuse the State and skip
+-        // initState — leaving it subscribed to the disposed stream above).
+-        await tester.pumpWidget(const MaterialApp(home: SizedBox.shrink()));
+         await tester.pump();
++        await tester.pump();
++      });
++      expect(
++        reshuffleEvents
++            .where((e) => e['event'] == 'TIME_TO_ONLINE_BADGE_WIDGET')
++            .toList(),
++        isEmpty,
++      );
++      fakeService.dispose();
+ 
+-        // Sub-case B (LOAD-BEARING): connecting → direct is the first-reach-ready
+-        // transition → exactly one emit. This is the assertion that re-reds when
+-        // onlineDirect is omitted from _isReadyBadgeState.
+-        final fakeService2 = await _pumpIndicator(
+-          tester,
+-          _stateForBadgeState(BadgeReadinessState.connecting),
+-        );
+-        final reachEvents = await _captureFlowEvents(() async {
+-          fakeService2.pushState(
+-            _stateForBadgeState(BadgeReadinessState.onlineDirect),
+-          );
+-          await tester.pump();
+-          await tester.pump();
+-        });
+-        expect(
+-          reachEvents
+-              .where((e) => e['event'] == 'TIME_TO_ONLINE_BADGE_WIDGET')
+-              .toList(),
+-          hasLength(1),
++      // Unmount the indicator so the next _pumpIndicator builds a FRESH State
++      // (same widget type with no key would otherwise reuse the State and skip
++      // initState — leaving it subscribed to the disposed stream above).
++      await tester.pumpWidget(const MaterialApp(home: SizedBox.shrink()));
++      await tester.pump();
++
++      // Sub-case B (LOAD-BEARING): connecting → direct is the first-reach-ready
++      // transition → exactly one emit. This is the assertion that re-reds when
++      // onlineDirect is omitted from _isReadyBadgeState.
++      final fakeService2 = await _pumpIndicator(
++        tester,
++        _stateForBadgeState(BadgeReadinessState.connecting),
++      );
++      final reachEvents = await _captureFlowEvents(() async {
++        fakeService2.pushState(
++          _stateForBadgeState(BadgeReadinessState.onlineDirect),
+         );
+-        fakeService2.dispose();
+-      },
+-    );
++        await tester.pump();
++        await tester.pump();
++      });
++      expect(
++        reachEvents
++            .where((e) => e['event'] == 'TIME_TO_ONLINE_BADGE_WIDGET')
++            .toList(),
++        hasLength(1),
++      );
++      fakeService2.dispose();
++    });
+ 
+     // T9 — onlineDirect keeps the green ready styling: BOTH the label text
+     // colour AND the status-dot (baseColor) match the plain-online green.
+diff --git a/test/features/push/application/ios_push_project_config_test.dart b/test/features/push/application/ios_push_project_config_test.dart
+index ff844c6fd..3a3354356 100644
+--- a/test/features/push/application/ios_push_project_config_test.dart
++++ b/test/features/push/application/ios_push_project_config_test.dart
+@@ -3,6 +3,21 @@ import 'dart:io';
+ import 'package:flutter_test/flutter_test.dart';
+ 
+ void main() {
++  test(
++    'native Firebase configuration precedes plugin startup and APNs registration',
++    () async {
++      final source = await File('ios/Runner/AppDelegate.swift').readAsString();
++      final launch = source.indexOf('didFinishLaunchingWithOptions');
++      final configure = source.indexOf('FirebaseApp.configure()', launch);
++      final plugins = source.indexOf('super.application(', launch);
++      final apns = source.indexOf('registerForRemoteNotifications()', launch);
++      expect(configure, greaterThan(launch));
++      expect(plugins, greaterThan(configure));
++      expect(apns, greaterThan(configure));
++      expect(source, contains('if FirebaseApp.app() == nil'));
++    },
++  );
++
+   group('iOS push project config', () {
+     test(
+       'GoogleService-Info.plist keeps the expected Firebase project and bundle id',
+diff --git a/test/shared/widgets/linkable_text_test.dart b/test/shared/widgets/linkable_text_test.dart
+index fbd12a2d4..da8fa08ac 100644
+--- a/test/shared/widgets/linkable_text_test.dart
++++ b/test/shared/widgets/linkable_text_test.dart
+@@ -1,5 +1,6 @@
+ import 'package:flutter/gestures.dart';
+ import 'package:flutter/material.dart';
++import 'package:flutter/semantics.dart';
+ import 'package:flutter_test/flutter_test.dart';
+ import 'package:flutter_app/shared/widgets/linkable_text.dart';
+ 
+@@ -28,6 +29,50 @@ void main() {
+     );
+   }
+ 
++  testWidgets(
++    'linked messages expose complete text and a working link action',
++    (tester) async {
++      final semantics = tester.ensureSemantics();
++      final opened = <String>[];
++      await tester.pumpWidget(
++        wrap(
++          LinkableText(
++            text: 'Read https://example.com for details',
++            prefixSpans: const [TextSpan(text: 'Alice: ')],
++            suffixSpans: [
++              const TextSpan(text: ' 12:34'),
++              WidgetSpan(
++                child: Semantics(
++                  label: 'Sent to inbox',
++                  child: Icon(Icons.inbox),
++                ),
++              ),
++            ],
++            onLinkTap: opened.add,
++          ),
++        ),
++      );
++      final node = tester.getSemantics(find.byType(LinkableText));
++      expect(
++        node.getSemanticsData().label,
++        matches(
++          RegExp(
++            r'Alice:.*Read.*https://example.com.*for details.*12:34',
++            dotAll: true,
++          ),
++        ),
++      );
++      expect(node.getSemanticsData().label, contains('Sent to inbox'));
++      expect(node.getSemanticsData().hasAction(SemanticsAction.tap), isTrue);
++      tester.binding.pipelineOwner.semanticsOwner!.performAction(
++        node.id,
++        SemanticsAction.tap,
++      );
++      expect(opened, ['https://example.com']);
++      semantics.dispose();
++    },
++  );
++
+   group('LinkableText textDirection', () {
+     testWidgets('renders without textDirection for backward compat only', (
+       tester,
+diff --git a/test/shared/widgets/media/audio_player_widget_test.dart b/test/shared/widgets/media/audio_player_widget_test.dart
+index 4a0eb34db..9c30f7922 100644
+--- a/test/shared/widgets/media/audio_player_widget_test.dart
++++ b/test/shared/widgets/media/audio_player_widget_test.dart
+@@ -500,6 +500,34 @@ void main() {
+       JustAudioPlatform.instance = originalPlatform;
+     });
+ 
++    testWidgets('twenty disposed rows tolerate late source load completion', (
++      tester,
++    ) async {
++      for (var index = 0; index < 20; index++) {
++        final load = fakePlatform.enqueueLoad(
++          reportedDuration: const Duration(seconds: 6),
++        );
++        await tester.pumpWidget(
++          buildApp(
++            availableAttachment(
++              id: 'late-load-$index',
++              localPath: '/tmp/late_load_$index.m4a',
++              durationMs: 6000,
++            ),
++          ),
++        );
++        await tester.pump();
++        await load.started;
++        await tester.pumpWidget(const SizedBox.shrink());
++        load.complete();
++        await flushAsyncPlayerTasks(tester);
++        await tester.pump();
++        await tester.pump(const Duration(milliseconds: 1));
++        expect(tester.takeException(), isNull);
++      }
++      expect(fakePlatform.activePlayerIds, isEmpty);
++    });
++
+     testWidgets('renders WaveformSeekBar when attachment has waveform data', (
+       tester,
+     ) async {
+diff --git a/test/shared/widgets/media/media_grid_cell_test.dart b/test/shared/widgets/media/media_grid_cell_test.dart
+index 9714f96c4..d6a80591c 100644
+--- a/test/shared/widgets/media/media_grid_cell_test.dart
++++ b/test/shared/widgets/media/media_grid_cell_test.dart
+@@ -129,6 +129,31 @@ void main() {
+     home: Scaffold(body: child),
+   );
+ 
++  testWidgets('image grid exposes a Photo label before decoding', (
++    tester,
++  ) async {
++    final semantics = tester.ensureSemantics();
++    await tester.pumpWidget(
++      wrap(
++        SizedBox(
++          width: 160,
++          height: 160,
++          child: MediaGridCell(
++            attachment: _attachment(
++              id: 'photo-label',
++              mime: 'image/jpeg',
++              mediaType: 'image',
++              downloadStatus: 'pending',
++              localPath: null,
++            ),
++          ),
++        ),
++      ),
++    );
++    expect(find.bySemanticsLabel(RegExp('Photo')), findsOneWidget);
++    semantics.dispose();
++  });
++
+   for (final light in [false, true]) {
+     testWidgets('UI25 08.2 loading label retains spinner and theme $light', (
+       tester,
+diff --git a/tool/testing/selection.json b/tool/testing/selection.json
+index 6770e167c..70cb4a1e7 100644
+--- a/tool/testing/selection.json
++++ b/tool/testing/selection.json
+@@ -1548,7 +1548,8 @@
+         "android/app/src/testDebug/kotlin/com/mknoon/app/call/DebugCallAudioSignalTest.kt",
+         "android/app/src/test/kotlin/com/mknoon/app/call/MknoonIncomingCallPresentationTest.kt",
+         "android/app/src/test/kotlin/com/mknoon/app/MainActivityOnNewIntentTest.kt",
+-        "android/app/src/test/kotlin/com/mknoon/app/AndroidCallWakeBridgeTest.kt"
++        "android/app/src/test/kotlin/com/mknoon/app/AndroidCallWakeBridgeTest.kt",
++        "android/app/src/test/kotlin/com/mknoon/app/HeadlessCanonicalRecoveryWorkerTest.kt"
+       ],
+       "boundary": "Android incoming call lock-screen privacy and lifecycle, native call actions, notification permissions, admission and cleanup, including activity intent routing",
+       "limitations": "Robolectric/JVM tests do not establish actual keyguard visibility, OS full-screen access, push delivery or audible media. Run with the repository Flutter/JDK toolchain.",
+@@ -3711,7 +3712,9 @@
+         "test/features/identity/presentation/screens/startup_router_recovery_test.dart",
+         "test/features/call/presentation/foreground_call_overlay_test.dart",
+         "android/app/src/main/kotlin/com/mknoon/app/AndroidCallWakeBridge.kt",
+-        "android/app/src/test/kotlin/com/mknoon/app/AndroidCallWakeBridgeTest.kt"
++        "android/app/src/test/kotlin/com/mknoon/app/AndroidCallWakeBridgeTest.kt",
++        "android/app/src/main/kotlin/com/mknoon/app/HeadlessCanonicalRecoveryWorker.kt",
++        "android/app/src/test/kotlin/com/mknoon/app/HeadlessCanonicalRecoveryWorkerTest.kt"
+       ],
+       "checks": [
+         "android-call-native",

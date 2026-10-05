@@ -1,6 +1,89 @@
 import CryptoKit
 import Darwin
 import Foundation
+import CoreFoundation
+
+/// Shared Runner/NSE guard for a Dart operation awaiting external work. The
+/// marker is inspected under the existing coordination flock. Process birth,
+/// rather than a timer, fences recovery from a still-live or suspended owner.
+enum IosNotificationAsyncOwner {
+  static let markerName = ".async-owner-v1.json"
+  private static let lock = NSLock()
+  private static var activeTokens = Set<String>()
+
+  private enum ProcessBirth {
+    case found(String)
+    case absent
+    case uncertain
+  }
+
+  private static func birth(_ pid: Int32) -> ProcessBirth {
+    if kill(pid, 0) != 0 && errno == ESRCH { return .absent }
+    var info = kinfo_proc()
+    var size = MemoryLayout<kinfo_proc>.stride
+    var mib: [Int32] = [CTL_KERN, KERN_PROC, KERN_PROC_PID, pid]
+    guard sysctl(&mib, 4, &info, &size, nil, 0) == 0 else {
+      return errno == ESRCH ? .absent : .uncertain
+    }
+    guard size > 0 else { return .absent }
+    let started = info.kp_proc.p_un.__p_starttime
+    return .found("\(started.tv_sec):\(started.tv_usec)")
+  }
+
+  static func begin(token: String) -> [String: Any]? {
+    guard token.range(of: "^[0-9a-f]{64}$", options: .regularExpression) != nil,
+          case let .found(started) = birth(getpid()) else { return nil }
+    lock.lock()
+    activeTokens.insert(token)
+    lock.unlock()
+    return ["pid": Int(getpid()), "processStart": started]
+  }
+
+  static func end(token: String) {
+    lock.lock()
+    activeTokens.remove(token)
+    lock.unlock()
+  }
+
+  static func isAlive(_ value: [String: Any]) -> Bool {
+    guard value.count == 4, integer(value["version"]) == 1,
+          let pid = integer(value["pid"]), pid > 0, pid <= Int(Int32.max),
+          let started = value["processStart"] as? String,
+          started.range(of: "^[0-9]+:[0-9]{1,6}$", options: .regularExpression) != nil,
+          let token = value["token"] as? String,
+          token.range(of: "^[0-9a-f]{64}$", options: .regularExpression) != nil
+    else { return true }
+    switch birth(Int32(pid)) {
+    case .absent: return false
+    case .uncertain: return true
+    case let .found(actual):
+      guard actual == started else { return false }
+      if pid != Int(getpid()) { return true }
+      lock.lock()
+      defer { lock.unlock() }
+      return activeTokens.contains(token)
+    }
+  }
+
+  private static func integer(_ value: Any?) -> Int? {
+    guard let number = value as? NSNumber,
+          CFGetTypeID(number) != CFBooleanGetTypeID(),
+          !["f", "d"].contains(String(cString: number.objCType))
+    else { return nil }
+    return value as? Int
+  }
+
+  static func permitsNativeEntry(directory: URL) -> Bool {
+    let url = directory.appendingPathComponent(markerName)
+    var status = stat()
+    if lstat(url.path, &status) != 0 { return errno == ENOENT }
+    guard status.st_mode & S_IFMT == S_IFREG, status.st_size <= 1_024,
+          let data = try? Data(contentsOf: url),
+          let value = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+    else { return false }
+    return !isAlive(value)
+  }
+}
 
 enum IosAppVisibilityLifecycle: String, Codable, CaseIterable {
   case foregroundActive = "FOREGROUND_ACTIVE"

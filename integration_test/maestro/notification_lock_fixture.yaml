@@ -1,0 +1,68 @@
+appId: com.mknoon.fixture.notificationLockFixture
+name: Notification callback ownership and restart recovery
+---
+- launchApp:
+    clearState: false
+- assertVisible: Notification lock fixture
+- tapOn: Reset fixture
+- assertVisible: 'Seed: RETAINED'
+- tapOn: Refuse admission
+- tapOn: Replay event
+- assertVisible: 'Result: retryable NotificationIdAllocationException'
+- assertVisible: 'Phase: NONE'
+- assertVisible: 'Effects: 0'
+- tapOn: Allow admission
+- tapOn: Start canonical wait
+- assertVisible: 'Result: canonical pending'
+- assertVisible: 'Phase: PUBLISHING'
+- assertVisible: 'Lock: FREE'
+- assertVisible: 'Native: BLOCKED'
+- assertVisible: 'Grants: 0'
+- tapOn: Refuse admission
+- tapOn: Complete callback
+- assertVisible: 'Result: retryable NotificationIdAllocationException'
+- assertVisible: 'Phase: PUBLISHING'
+- assertVisible: 'Effects: 0'
+- assertVisible: 'Seed: RETAINED'
+- tapOn: Allow admission
+- tapOn: Reset fixture
+- tapOn: Start native wait
+- assertVisible: 'Result: native pending'
+- assertVisible: 'Phase: PUBLISHING'
+- assertVisible: 'Lock: FREE'
+- assertVisible: 'Native: BLOCKED'
+- assertVisible: 'Grants: 0'
+- assertVisible: 'Effects: 1'
+- tapOn: Refuse admission
+- tapOn: Complete callback
+- assertVisible: 'Result: ambiguous'
+- assertVisible: 'Phase: PUBLISHING'
+- assertVisible: 'Effects: 1'
+- tapOn: Allow admission
+- tapOn: Reset fixture
+- tapOn: Start native wait
+- assertVisible: 'Result: native pending'
+- stopApp
+- launchApp:
+    clearState: false
+- assertVisible: 'Phase: PUBLISHING'
+- assertVisible: 'Lock: FREE'
+- assertVisible: 'Native: AVAILABLE'
+- assertVisible: 'Effects: 1'
+- assertVisible: 'Seed: RETAINED'
+- scrollUntilVisible:
+    element: Recover after restart
+    direction: DOWN
+- tapOn: Recover after restart
+- scrollUntilVisible:
+    element: 'Phase: SETTLED'
+    direction: UP
+- assertVisible: 'Result: osPosted'
+- assertVisible: 'Effects: 1'
+- assertVisible: 'Repairs: 1'
+- assertVisible: 'Seed: RETAINED'
+- tapOn: Replay event
+- assertVisible: 'Phase: SETTLED'
+- assertVisible: 'Effects: 1'
+- assertVisible: 'Repairs: 1'
+- takeScreenshot: notification-lock-recovered

@@ -102,4 +102,7 @@ screen dumps (`ui/`) and a `timeline.txt`. Error scan: `python3 docker-ws/beta/r
 - The CallKit-off iPhone build in the background (O1 fix target).
 - Fix C clock-lag call wake (callee clock behind the caller's); B7 late terminate.
 - Android physical phones; anything on the 1.0.1 (121) store build.
+- Calls between phones on different networks (one on cellular), which need the TURN relay. Every call so far had
+  both phones on the same network, so the relay path was never used. coturn advertised the dead 13.60.250.19 until
+  it was fixed on 2026-10-02.
 - Video longer than the emulator fixtures, on real phones (R2-4 follow-up).

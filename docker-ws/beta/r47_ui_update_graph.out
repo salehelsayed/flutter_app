@@ -1,0 +1,29 @@
+[graphify] note: node 'lib_features_push_application_background_push_notification_fallback' was extracted twice from 'lib/features/push/application/background_push_notification_fallback.dart' under different labels — keeping '_', dropping 'background_push_notification_fallback.dart'.
+[graphify] note: node 'lib_features_push_application_group_notification_display_policy' was extracted twice from 'lib/features/push/application/group_notification_display_policy.dart' under different labels — keeping '_', dropping 'group_notification_display_policy.dart'.
+[graphify] note: node 'lib_features_push_application_prepare_notification_open_use_case' was extracted twice from 'lib/features/push/application/prepare_notification_open_use_case.dart' under different labels — keeping '_', dropping 'prepare_notification_open_use_case.dart'.
+[graphify] note: node 'lib_features_push_application_resolve_group_notification_route_target_use_case' was extracted twice from 'lib/features/push/application/resolve_group_notification_route_target_use_case.dart' under different labels — keeping '_', dropping 'resolve_group_notification_route_target_use_case.dart'.
+[graphify] note: node 'lib_features_settings_application_media_download_policy' was extracted twice from 'lib/features/settings/application/media_download_policy.dart' under different labels — keeping '_', dropping 'media_download_policy.dart'.
+[graphify] note: node 'lib_features_settings_domain_models_media_download_preferences' was extracted twice from 'lib/features/settings/domain/models/media_download_preferences.dart' under different labels — keeping '_', dropping 'media_download_preferences.dart'.
+[graphify] note: node 'lib_features_share_application_share_target_selection' was extracted twice from 'lib/features/share/application/share_target_selection.dart' under different labels — keeping '_', dropping 'share_target_selection.dart'.
+[graphify] note: node 'lib_shared_widgets_conversation_conversation_upload_activity_controller' was extracted twice from 'lib/shared/widgets/conversation/conversation_upload_activity_controller.dart' under different labels — keeping '_', dropping 'conversation_upload_activity_controller.dart'.
+[graphify] note: node 'lib_shared_widgets_media_audio_player_widget' was extracted twice from 'lib/shared/widgets/media/audio_player_widget.dart' under different labels — keeping '_', dropping 'audio_player_widget.dart'.
+[graphify] note: node 'test_core_local_discovery_local_ws_durable_ack_integration_test' was extracted twice from 'test/core/local_discovery/local_ws_durable_ack_integration_test.dart' under different labels — keeping '_', dropping 'local_ws_durable_ack_integration_test.dart'.
+[graphify] note: node 'test_features_groups_integration_group_admin_metadata_convergence_test' was extracted twice from 'test/features/groups/integration/group_admin_metadata_convergence_test.dart' under different labels — keeping '_', dropping 'group_admin_metadata_convergence_test.dart'.
+[arch-refresh] wrote graphify-arch/graphify-out/graph.json: 94165 nodes, 148507 edges
+TDD overlay: 1886 files, 19090 named tests, 1470 production targets
+Architecture graph refreshed (--incremental): graphify-arch/graphify-out/graph.json
+TDD proof overlay refreshed: graphify-arch/tdd-overlay.json
+total 216832
+drwxr-xr-x@  7 I560101  staff        224 Oct  2 11:32 .
+drwxr-xr-x@ 18 I560101  staff        576 Oct  2 11:32 ..
+-rw-r--r--@  1 I560101  staff      52907 Oct  2 11:28 .graphify_labels.json
+-rw-r--r--@  1 I560101  staff      32350 Oct  2 11:28 .graphify_labels.json.sig
+-rw-r--r--@  1 I560101  staff     331055 Oct  2 11:28 GRAPH_REPORT.md
+-rw-r--r--@  1 I560101  staff  101713040 Oct  2 11:32 graph.json
+-rw-r--r--@  1 I560101  staff     963987 Oct  2 11:32 manifest.json
+Graph context: profile=general confidence=broad freshness=current fingerprint=b61e898b74d792a8 answer_scope=anchor_discovery_only query_id=1af7501c8e3346c8 evidence_digest=0c4c55dc37183c4d
+Query use: anchor discovery only — no exact symbol, filename, gate, or node ID matched.
+Do not answer implementation, absence, completeness, reliability, or authority questions from this output.
+Anchors:
+- drain — lib/core/notifications/notification_completed_outcome_drainer.dart:147 [lib_core_notifications_notification_completed_outcome_drainer_drain]
+R47 DONE

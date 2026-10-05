@@ -1,0 +1,8 @@
+start 10:57:58 app build/sims/cache/ios.simulator.app/9b804cc49b3f4952e414aab810610496acf7f90f134d941169f991423ba04710/Runner.app
+installed 10:58:01
+com.mknoon.app: 85621
+launched 10:58:01
+runner rc=0 seconds=29
+[Passed] production_ios_allow_notifications (16s)
+1/1 Flow Passed in 16s
+cleaned

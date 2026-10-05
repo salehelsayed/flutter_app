@@ -382,10 +382,12 @@ jq -e '
 # The Plan 379 row stays at its ratcheted index because runtime-roots keyPaths
 # select capabilities by ARRAY INDEX. The call-proof and Plan 399 rows are
 # append-only after the Plan 393 suffix. The full-suite iOS group-media owner
-# appends after them without displacing any existing runtime-root index.
+# appends after them without displacing any existing runtime-root index. Later
+# production capabilities also append, so pin the original block's indices
+# rather than requiring it to remain the final six rows forever.
 jq -e '
   .capabilities[41].id == "groups.muted_notification_campaign" and
-  [.capabilities[-6].id, .capabilities[-5].id, .capabilities[-4].id, .capabilities[-3].id, .capabilities[-2].id, .capabilities[-1].id] == [
+  [.capabilities[42:48][].id] == [
     "notifications.android_typed_reaction_smoke",
     "groups.strict_notification_closure",
     "android.foreground_webrtc_audio",
@@ -395,7 +397,7 @@ jq -e '
   ]
 ' \
   tool/sims/critical_features.json >/dev/null ||
-  fail 'the ratcheted Plan 379/393 capability suffix drifted'
+  fail 'the ratcheted Plan 379/393 capability indices drifted'
 
 # Plan 269 keeps one discoverable prepared-artifact runner with exactly two
 # independently listable target-bounded scenarios. Each platform has its own

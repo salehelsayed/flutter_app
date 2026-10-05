@@ -1,0 +1,8 @@
+start 11:28:50
+PASS	build.ios.simulator.app	assertions=1
+Builds: actual=1, requested=1, cacheHits=0, elapsed=2m10.7s
+  built	ios.simulator.app	2m10.7s
+Sims report: build/sims/latest/report.json (releaseEligible=false)
+end rc=0 11:31:03
+android.e2e.main
+ios.simulator.app

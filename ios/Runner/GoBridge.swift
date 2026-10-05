@@ -450,6 +450,22 @@ class GoBridge: NSObject {
                 result(false)
             }
 
+        case "notificationLockOwnerBegin":
+            result((call.arguments as? String).flatMap {
+                IosNotificationAsyncOwner.begin(token: $0)
+            })
+
+        case "notificationLockOwnerIsAlive":
+            result((call.arguments as? [String: Any]).map {
+                IosNotificationAsyncOwner.isAlive($0)
+            } ?? true)
+
+        case "notificationLockOwnerEnd":
+            if let token = call.arguments as? String {
+                IosNotificationAsyncOwner.end(token: token)
+            }
+            result(nil)
+
         // Background task (Dart-initiated)
         case "bgBegin":
             // Called synchronously on main thread — do NOT use runOnBackground.

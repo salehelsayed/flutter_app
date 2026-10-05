@@ -1,0 +1,25 @@
+quiet 10:34
+12:34  up  3:57, 29 users, load averages: 16.17 13.63 11.92
+== run nw006,ml020,nw003,nw010  (log /workspace/docker-ws/beta/wave3/logs/nw006+ml020+nw003+nw010-run-10051034.log)
+FAIL production-group-ml020
+Wall time: 276.229s (includes selection, discovery and setup)
+Report: /Volumes/CrucialX9/flutter_app/.claude/worktrees/wave3-next/.codex-test-logs/production-bootstrap-migration-20260930/wave3-run-20261005T103426Z/summary.txt
+-- private_peer_disconnect_not_removal: 
+
+
+-- private_admin_role_transfer_delivery: build/sims/proofs/production.group_catalog.private_admin_role_transfer_delivery/attempt-5X8zsV
+ProcessException: Host command timed out.
+  Command: python3 
+#0      SystemAndroidHostProcessRunner._run (file:///Volumes/CrucialX9/flutter_app/.claude/worktrees/wave3-next/integration_test/support/android_app_state_guard.dart:143:7)
+<asynchronous suspension>
+#1      ProductionJourneyFlowRunner._runOnce (file:///Volumes/CrucialX9/flutter_app/.claude/worktrees/wave3-next/integration_test/support/production_android_journey.dart:134:20)
+<asynchronous suspension>
+#2      ProductionJourneyFlowRunner
+
+-- private_partition_readd_heal: 
+
+
+-- private_background_resume_group_delivery: 
+
+
+QUEUE-DONE

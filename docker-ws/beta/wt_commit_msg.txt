@@ -1,0 +1,6 @@
+chore(wave3): keep the Wave 3 device-run tools
+
+The worktree helpers, the device queue with its watchdog, the probe specs
+and the iOS simulator diagnostics the Wave 3 handover points to.
+
+Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>

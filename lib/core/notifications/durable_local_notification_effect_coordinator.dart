@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'notification_lock_transaction.dart';
 import 'dart:math';
 
 import 'package:flutter_app/core/notifications/app_visibility_authority.dart';
@@ -524,14 +525,21 @@ final class DurableLocalNotificationEffectCoordinator {
     AppVisibilityEvaluation? visibility;
     LocalNotificationPresentationState? terminalPresentation;
     Future<bool> authorizeNativeEntry() async {
-      canonical = await context.readFinalCanonicalDisposition();
+      canonical = await NotificationLockTransaction.outside(
+        context.readFinalCanonicalDisposition,
+      );
       final contentCanBeActivated =
           await exactContentIsCurrent() || await hasContentActivationIntent();
       // This is the final awaited authority read. Production wraps this
       // closure inside the already-armed event/tone owners and enters the
       // platform callback immediately after its boolean result.
-      visibility = await appVisibility.evaluate(conversationIdentity);
-      if (!contentCanBeActivated ||
+      visibility = await NotificationLockTransaction.outside(
+        () => appVisibility.evaluate(conversationIdentity),
+      );
+      if (!await _exactClaimStillCurrent(context, record!) ||
+          !(await exactContentIsCurrent() ||
+              await hasContentActivationIntent()) ||
+          !contentCanBeActivated ||
           canonical ==
               DurableLocalNotificationCanonicalDisposition.retryableUnknown) {
         return false;
@@ -558,8 +566,10 @@ final class DurableLocalNotificationEffectCoordinator {
     final publishAtBarrier = publishNativeAtFinalBarrier;
     if (publishAtBarrier != null) {
       try {
-        currentNativeEntryAttempted = await publishAtBarrier(
-          authorizeNativeEntry,
+        currentNativeEntryAttempted = await NotificationLockTransaction.outside(
+          () => publishAtBarrier(
+            () => NotificationLockTransaction.inside(authorizeNativeEntry),
+          ),
         );
       } on Object {
         if (terminalPresentation ==
@@ -598,7 +608,7 @@ final class DurableLocalNotificationEffectCoordinator {
       } else {
         try {
           currentNativeEntryAttempted = true;
-          await publishNative();
+          await NotificationLockTransaction.outside(publishNative);
         } on Object {
           // Native acceptance is ambiguous. PUBLISHING, token and the content
           // activation intent remain intact for an exact silent repair.
@@ -609,9 +619,15 @@ final class DurableLocalNotificationEffectCoordinator {
       }
     }
 
+    if (!await _exactClaimStillCurrent(context, record)) {
+      return DurableLocalNotificationEffectResult.ambiguous(
+        currentNativeEntryAttempted: currentNativeEntryAttempted,
+      );
+    }
     if (terminalPresentation == LocalNotificationPresentationState.osPosted) {
       try {
-        if (!await ensureContentActivated()) {
+        if (!await _exactClaimStillCurrent(context, record) ||
+            !await ensureContentActivated()) {
           return DurableLocalNotificationEffectResult.ambiguous(
             currentNativeEntryAttempted: currentNativeEntryAttempted,
           );
@@ -627,7 +643,12 @@ final class DurableLocalNotificationEffectCoordinator {
       // card, but a contended publication that never reached this decision
       // must leave the existing card untouched.
       try {
-        await retireCurrent();
+        await NotificationLockTransaction.outside(retireCurrent);
+        if (!await _exactClaimStillCurrent(context, record)) {
+          return const DurableLocalNotificationEffectResult.ambiguous(
+            currentNativeEntryAttempted: true,
+          );
+        }
         await completeContentActivation();
       } on Object {
         return const DurableLocalNotificationEffectResult.ambiguous(
@@ -849,16 +870,21 @@ final class DurableLocalNotificationEffectCoordinator {
       return const DurableLocalNotificationEffectResult.retryable();
     }
     try {
-      await retireCurrent();
+      await NotificationLockTransaction.outside(retireCurrent);
     } on Object {
       return const DurableLocalNotificationEffectResult.ambiguous(
         currentNativeEntryAttempted: true,
       );
     }
+    if (!await _exactClaimStillCurrent(context, record)) {
+      return const DurableLocalNotificationEffectResult.ambiguous();
+    }
     await completeContentActivation();
     await clearActivatedContent();
 
-    final canonical = await context.readFinalCanonicalDisposition();
+    final canonical = await NotificationLockTransaction.outside(
+      context.readFinalCanonicalDisposition,
+    );
     if (canonical ==
         DurableLocalNotificationCanonicalDisposition.retryableUnknown) {
       return const DurableLocalNotificationEffectResult.retryable();
@@ -899,7 +925,9 @@ final class DurableLocalNotificationEffectCoordinator {
             LocalNotificationAttemptKind.adoptExistingRemote) {
       return const DurableLocalNotificationEffectResult.retryable();
     }
-    final canonical = await context.readFinalCanonicalDisposition();
+    final canonical = await NotificationLockTransaction.outside(
+      context.readFinalCanonicalDisposition,
+    );
     if (canonical ==
         DurableLocalNotificationCanonicalDisposition.retryableUnknown) {
       return const DurableLocalNotificationEffectResult.retryable();
@@ -982,7 +1010,9 @@ final class DurableLocalNotificationEffectCoordinator {
       }
       currentRecord = resumed;
     }
-    final canonical = await context.readFinalCanonicalDisposition();
+    final canonical = await NotificationLockTransaction.outside(
+      context.readFinalCanonicalDisposition,
+    );
 
     var inventorySucceeded = false;
     var stableIdIsActive = false;
@@ -992,7 +1022,9 @@ final class DurableLocalNotificationEffectCoordinator {
       final resolveActive = activeNotificationIds;
       if (resolveActive != null) {
         try {
-          final activeIds = await resolveActive();
+          final activeIds = await NotificationLockTransaction.outside(
+            resolveActive,
+          );
           inventorySucceeded = true;
           stableIdIsActive = activeIds.any(
             (candidate) => candidate is int && candidate == notificationId,
@@ -1007,7 +1039,15 @@ final class DurableLocalNotificationEffectCoordinator {
     // As on a first attempt, visibility is the final awaited authority read.
     // Any cancel or silent repair callback below is entered immediately after
     // synchronous branches over these captured facts.
-    final visibility = await appVisibility.evaluate(conversationIdentity);
+    if (!NotificationLockTransaction.hasAuthority) {
+      return const DurableLocalNotificationEffectResult.ambiguous();
+    }
+    final visibility = await NotificationLockTransaction.outside(
+      () => appVisibility.evaluate(conversationIdentity),
+    );
+    if (!await _exactClaimStillCurrent(context, currentRecord)) {
+      return const DurableLocalNotificationEffectResult.ambiguous();
+    }
     if (canonical ==
         DurableLocalNotificationCanonicalDisposition.retryableUnknown) {
       return const DurableLocalNotificationEffectResult.retryable();
@@ -1018,8 +1058,13 @@ final class DurableLocalNotificationEffectCoordinator {
     // after an ambiguous native cancel.
     if (currentRecord.attemptKind == LocalNotificationAttemptKind.cancel) {
       try {
-        await retireCurrent();
+        await NotificationLockTransaction.outside(retireCurrent);
       } on Object {
+        return const DurableLocalNotificationEffectResult.ambiguous(
+          currentNativeEntryAttempted: true,
+        );
+      }
+      if (!await _exactClaimStillCurrent(context, currentRecord)) {
         return const DurableLocalNotificationEffectResult.ambiguous(
           currentNativeEntryAttempted: true,
         );
@@ -1061,11 +1106,14 @@ final class DurableLocalNotificationEffectCoordinator {
       }
       currentRecord = armed;
       try {
-        await retireCurrent();
+        await NotificationLockTransaction.outside(retireCurrent);
       } on Object {
         return const DurableLocalNotificationEffectResult.ambiguous(
           currentNativeEntryAttempted: true,
         );
+      }
+      if (!await _exactClaimStillCurrent(context, currentRecord)) {
+        return const DurableLocalNotificationEffectResult.ambiguous();
       }
       await completeContentActivation();
       return _finishRecoveredPublishingLockHeld(
@@ -1092,12 +1140,15 @@ final class DurableLocalNotificationEffectCoordinator {
       final mustCancel = !inventorySucceeded || stableIdIsActive;
       if (mustCancel) {
         try {
-          await retireCurrent();
+          await NotificationLockTransaction.outside(retireCurrent);
         } on Object {
           return const DurableLocalNotificationEffectResult.ambiguous(
             currentNativeEntryAttempted: true,
           );
         }
+      }
+      if (!await _exactClaimStillCurrent(context, currentRecord)) {
+        return const DurableLocalNotificationEffectResult.ambiguous();
       }
       await completeContentActivation();
       return _finishRecoveredPublishingLockHeld(
@@ -1117,6 +1168,9 @@ final class DurableLocalNotificationEffectCoordinator {
     if (inventorySucceeded && exactIdIsActive) {
       // Metadata activation now happens only after native show returns. Exact
       // stable ID plus exact on-disk generation therefore proves the update.
+      if (!await _exactClaimStillCurrent(context, currentRecord)) {
+        return const DurableLocalNotificationEffectResult.ambiguous();
+      }
       await completeContentActivation();
       return _finishRecoveredPublishingLockHeld(
         context: context,
@@ -1139,8 +1193,9 @@ final class DurableLocalNotificationEffectCoordinator {
       return const DurableLocalNotificationEffectResult.ambiguous();
     }
     try {
-      await publishSilent();
-      if (!await ensureContentActivated()) {
+      await NotificationLockTransaction.outside(publishSilent);
+      if (!await _exactClaimStillCurrent(context, currentRecord) ||
+          !await ensureContentActivated()) {
         return const DurableLocalNotificationEffectResult.ambiguous(
           currentNativeEntryAttempted: true,
           currentNativeEntryWasSilentRepair: true,
@@ -1461,6 +1516,19 @@ final class DurableLocalNotificationEffectCoordinator {
       },
     );
     return envelope == null ? null : seeded;
+  }
+
+  Future<bool> _exactClaimStillCurrent(
+    DurableLocalNotificationEffectContext context,
+    LocalNotificationRecordV1 record,
+  ) async {
+    if (!NotificationLockTransaction.hasAuthority) return false;
+    final envelope = await _ledgerStore.readLockHeld(
+      currentOpaqueBinding: context.currentOpaqueBinding,
+    );
+    return envelope != null &&
+        !envelope.claimsSuspended &&
+        _sameRecord(envelope.records[record.eventCorrelation], record);
   }
 
   Future<LocalNotificationRecordV1?> _transitionLockHeld({

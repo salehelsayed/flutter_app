@@ -1,0 +1,199 @@
+=== registered worktrees under them
+none
+=== /Volumes/CrucialX9/.mknoon-all-tests-y227gs8x-tmp  14G newest=2026-10-01 18:02
+_CrucialX9_.mknoon-all-tests-y227gs8x-run_source047-localnetwork-native_full.xctest.notificationtapuitests.testautomatelocalnetworkpermission-1-proof_derived_SourcePackages_artifacts_google-ads-on-device-conversion-ios-sdk_GoogleAdsOnDeviceConversion.lock
+_Users_I560101_.swiftpm.lock
+_Users_I560101_Library_Caches_org.swift.swiftpm_manifests_manifest.db.lock
+_Users_I560101_Library_Caches_org.swift.swiftpm_package-metadata_index-package-metadata.db.lock
+_Users_I560101_Library_Caches_org.swift.swiftpm_package-metadata_package-metadata.db.lock
+_Users_I560101_Library_org.swift.swiftpm_security_fingerprints.lock
+_Volumes_CrucialX9_.mknoon-all-tests-y227gs8x-run_restart-20260923-spm-probe-001_packages_Package.resolved.lock
+_Volumes_CrucialX9_.mknoon-all-tests-y227gs8x-run_restart-20260923-spm-probe-002_packages_artifacts_abseil-cpp-binary_absl.lock
+git dirs: 2
+procs: 0
+=== /Volumes/CrucialX9/mknoon-test-runner-z2tuurrn 386M newest=2026-09-21 05:14
+baseline-manifest.json
+closure-evidence
+closure-final.txt
+closure-fix-evidence
+closure-fix-final.txt
+closure-fix-result.md
+closure-fix-task.md
+closure-result.md
+git dirs: 0
+procs: 0
+=== /Volumes/CrucialX9/mknoon-worktrees  13M newest=2026-09-21 09:37
+diagnostics-deploy-deadlines-20260920
+diagnostics-deploy-owner-transition-20260920
+diagnostics-deploy-readiness-hardening-20260920
+diagnostics-deploy-readiness-ultra-20260920
+diagnostics-deploy-retention-lifecycle-20260920
+diagnostics-deploy-retention-path-scale-20260920
+diagnostics-deploy-rollback-identity-20260920
+diagnostics-deploy-startup-recovery-20260920
+git dirs: 18
+procs: 0
+total 133688
+drwxr-xr-x@  5 I560101  staff       160 Oct  1 18:02 .
+drwxr-xr-x@ 45 I560101  staff      1440 Oct  1 18:02 ..
+-rw-r--r--@  1 I560101  staff     32652 Oct  1 18:02 all-tests-tmp-git-repos.tgz
+-rw-r--r--@  1 I560101  staff  63543678 Oct  1 18:03 mknoon-test-runner-z2tuurrn-notes.tgz
+-rw-r--r--@  1 I560101  staff   3745800 Oct  1 18:02 mknoon-worktrees.tgz
+DELETED /Volumes/CrucialX9/.mknoon-all-tests-y227gs8x-tmp
+DELETED /Volumes/CrucialX9/mknoon-test-runner-z2tuurrn
+rm: /Volumes/CrucialX9/mknoon-worktrees/diagnostics-deploy-deadlines-20260920/.linux-compatibility/evidence/01-empty-omission-GREEN.log: Permission denied
+rm: /Volumes/CrucialX9/mknoon-worktrees/diagnostics-deploy-deadlines-20260920/.linux-compatibility/evidence/05-syntax-scope-diff.json: Permission denied
+rm: /Volumes/CrucialX9/mknoon-worktrees/diagnostics-deploy-deadlines-20260920/.linux-compatibility/evidence/02-failure-composition-GREEN.log: Permission denied
+rm: /Volumes/CrucialX9/mknoon-worktrees/diagnostics-deploy-deadlines-20260920/.linux-compatibility/evidence/parent-preflight-blocker.md: Permission denied
+rm: /Volumes/CrucialX9/mknoon-worktrees/diagnostics-deploy-deadlines-20260920/.linux-compatibility/evidence/run.py: Permission denied
+rm: /Volumes/CrucialX9/mknoon-worktrees/diagnostics-deploy-deadlines-20260920/.linux-compatibility/evidence/01-empty-omission-GREEN.json: Permission denied
+rm: /Volumes/CrucialX9/mknoon-worktrees/diagnostics-deploy-deadlines-20260920/.linux-compatibility/evidence/02-failure-composition-GREEN-sources/test_transaction.py: Permission denied
+rm: /Volumes/CrucialX9/mknoon-worktrees/diagnostics-deploy-deadlines-20260920/.linux-compatibility/evidence/02-failure-composition-GREEN-sources/test_inventory_composition.py: Permission denied
+rm: /Volumes/CrucialX9/mknoon-worktrees/diagnostics-deploy-deadlines-20260920/.linux-compatibility/evidence/02-failure-composition-GREEN-sources/relay_rollout.py: Permission denied
+rm: /Volumes/CrucialX9/mknoon-worktrees/diagnostics-deploy-deadlines-20260920/.linux-compatibility/evidence/02-failure-composition-GREEN-sources/test_inventory.py: Permission denied
+rm: /Volumes/CrucialX9/mknoon-worktrees/diagnostics-deploy-deadlines-20260920/.linux-compatibility/evidence/02-failure-composition-GREEN-sources/test_recovery.py: Permission denied
+rm: /Volumes/CrucialX9/mknoon-worktrees/diagnostics-deploy-deadlines-20260920/.linux-compatibility/evidence/02-failure-composition-GREEN-sources/test_linux_compatibility.py: Permission denied
+rm: /Volumes/CrucialX9/mknoon-worktrees/diagnostics-deploy-deadlines-20260920/.linux-compatibility/evidence/02-failure-composition-GREEN-sources/test_deadlines.py: Permission denied
+rm: /Volumes/CrucialX9/mknoon-worktrees/diagnostics-deploy-deadlines-20260920/.linux-compatibility/evidence/02-failure-composition-GREEN-sources/test_deadline_composition.py: Permission denied
+rm: /Volumes/CrucialX9/mknoon-worktrees/diagnostics-deploy-deadlines-20260920/.linux-compatibility/evidence/02-failure-composition-GREEN-sources/test_preservation.py: Permission denied
+rm: /Volumes/CrucialX9/mknoon-worktrees/diagnostics-deploy-deadlines-20260920/.linux-compatibility/evidence/02-failure-composition-GREEN-sources/test_supervision.py: Permission denied
+rm: /Volumes/CrucialX9/mknoon-worktrees/diagnostics-deploy-deadlines-20260920/.linux-compatibility/evidence/02-failure-composition-GREEN-sources/relay_deploy_template.py: Permission denied
+rm: /Volumes/CrucialX9/mknoon-worktrees/diagnostics-deploy-deadlines-20260920/.linux-compatibility/evidence/02-failure-composition-GREEN-sources/relay_deploy_template_test.py: Permission denied
+rm: /Volumes/CrucialX9/mknoon-worktrees/diagnostics-deploy-deadlines-20260920/.linux-compatibility/evidence/02-failure-composition-GREEN-sources: Permission denied
+rm: /Volumes/CrucialX9/mknoon-worktrees/diagnostics-deploy-deadlines-20260920/.linux-compatibility/evidence/seal.py: Permission denied
+rm: /Volumes/CrucialX9/mknoon-worktrees/diagnostics-deploy-deadlines-20260920/.linux-compatibility/evidence/05-syntax-scope-diff.log: Permission denied
+rm: /Volumes/CrucialX9/mknoon-worktrees/diagnostics-deploy-deadlines-20260920/.linux-compatibility/evidence/04-frozen-full-GREEN.log: Permission denied
+rm: /Volumes/CrucialX9/mknoon-worktrees/diagnostics-deploy-deadlines-20260920/.linux-compatibility/evidence/00-empty-omission-RED-sources/test_transaction.py: Permission denied
+rm: /Volumes/CrucialX9/mknoon-worktrees/diagnostics-deploy-deadlines-20260920/.linux-compatibility/evidence/00-empty-omission-RED-sources/test_inventory_composition.py: Permission denied
+rm: /Volumes/CrucialX9/mknoon-worktrees/diagnostics-deploy-deadlines-20260920/.linux-compatibility/evidence/00-empty-omission-RED-sources/relay_rollout.py: Permission denied
+rm: /Volumes/CrucialX9/mknoon-worktrees/diagnostics-deploy-deadlines-20260920/.linux-compatibility/evidence/00-empty-omission-RED-sources/test_inventory.py: Permission denied
+rm: /Volumes/CrucialX9/mknoon-worktrees/diagnostics-deploy-deadlines-20260920/.linux-compatibility/evidence/00-empty-omission-RED-sources/test_recovery.py: Permission denied
+rm: /Volumes/CrucialX9/mknoon-worktrees/diagnostics-deploy-deadlines-20260920/.linux-compatibility/evidence/00-empty-omission-RED-sources/test_linux_compatibility.py: Permission denied
+rm: /Volumes/CrucialX9/mknoon-worktrees/diagnostics-deploy-deadlines-20260920/.linux-compatibility/evidence/00-empty-omission-RED-sources/test_deadlines.py: Permission denied
+rm: /Volumes/CrucialX9/mknoon-worktrees/diagnostics-deploy-deadlines-20260920/.linux-compatibility/evidence/00-empty-omission-RED-sources/test_deadline_composition.py: Permission denied
+rm: /Volumes/CrucialX9/mknoon-worktrees/diagnostics-deploy-deadlines-20260920/.linux-compatibility/evidence/00-empty-omission-RED-sources/test_preservation.py: Permission denied
+rm: /Volumes/CrucialX9/mknoon-worktrees/diagnostics-deploy-deadlines-20260920/.linux-compatibility/evidence/00-empty-omission-RED-sources/test_supervision.py: Permission denied
+rm: /Volumes/CrucialX9/mknoon-worktrees/diagnostics-deploy-deadlines-20260920/.linux-compatibility/evidence/00-empty-omission-RED-sources/relay_deploy_template.py: Permission denied
+rm: /Volumes/CrucialX9/mknoon-worktrees/diagnostics-deploy-deadlines-20260920/.linux-compatibility/evidence/00-empty-omission-RED-sources/relay_deploy_template_test.py: Permission denied
+rm: /Volumes/CrucialX9/mknoon-worktrees/diagnostics-deploy-deadlines-20260920/.linux-compatibility/evidence/00-empty-omission-RED-sources: Permission denied
+rm: /Volumes/CrucialX9/mknoon-worktrees/diagnostics-deploy-deadlines-20260920/.linux-compatibility/evidence/03-identical-final-RED.json: Permission denied
+rm: /Volumes/CrucialX9/mknoon-worktrees/diagnostics-deploy-deadlines-20260920/.linux-compatibility/evidence/00-empty-omission-RED.json: Permission denied
+rm: /Volumes/CrucialX9/mknoon-worktrees/diagnostics-deploy-deadlines-20260920/.linux-compatibility/evidence/06-artifact-integrity.json: Permission denied
+rm: /Volumes/CrucialX9/mknoon-worktrees/diagnostics-deploy-deadlines-20260920/.linux-compatibility/evidence/03-identical-final-RED-sources/test_transaction.py: Permission denied
+rm: /Volumes/CrucialX9/mknoon-worktrees/diagnostics-deploy-deadlines-20260920/.linux-compatibility/evidence/03-identical-final-RED-sources/test_inventory_composition.py: Permission denied
+rm: /Volumes/CrucialX9/mknoon-worktrees/diagnostics-deploy-deadlines-20260920/.linux-compatibility/evidence/03-identical-final-RED-sources/relay_rollout.py: Permission denied
+rm: /Volumes/CrucialX9/mknoon-worktrees/diagnostics-deploy-deadlines-20260920/.linux-compatibility/evidence/03-identical-final-RED-sources/test_inventory.py: Permission denied
+rm: /Volumes/CrucialX9/mknoon-worktrees/diagnostics-deploy-deadlines-20260920/.linux-compatibility/evidence/03-identical-final-RED-sources/test_recovery.py: Permission denied
+rm: /Volumes/CrucialX9/mknoon-worktrees/diagnostics-deploy-deadlines-20260920/.linux-compatibility/evidence/03-identical-final-RED-sources/test_linux_compatibility.py: Permission denied
+rm: /Volumes/CrucialX9/mknoon-worktrees/diagnostics-deploy-deadlines-20260920/.linux-compatibility/evidence/03-identical-final-RED-sources/test_deadlines.py: Permission denied
+rm: /Volumes/CrucialX9/mknoon-worktrees/diagnostics-deploy-deadlines-20260920/.linux-compatibility/evidence/03-identical-final-RED-sources/test_deadline_composition.py: Permission denied
+rm: /Volumes/CrucialX9/mknoon-worktrees/diagnostics-deploy-deadlines-20260920/.linux-compatibility/evidence/03-identical-final-RED-sources/test_preservation.py: Permission denied
+rm: /Volumes/CrucialX9/mknoon-worktrees/diagnostics-deploy-deadlines-20260920/.linux-compatibility/evidence/03-identical-final-RED-sources/test_supervision.py: Permission denied
+rm: /Volumes/CrucialX9/mknoon-worktrees/diagnostics-deploy-deadlines-20260920/.linux-compatibility/evidence/03-identical-final-RED-sources/relay_deploy_template.py: Permission denied
+rm: /Volumes/CrucialX9/mknoon-worktrees/diagnostics-deploy-deadlines-20260920/.linux-compatibility/evidence/03-identical-final-RED-sources/relay_deploy_template_test.py: Permission denied
+rm: /Volumes/CrucialX9/mknoon-worktrees/diagnostics-deploy-deadlines-20260920/.linux-compatibility/evidence/03-identical-final-RED-sources: Permission denied
+rm: /Volumes/CrucialX9/mknoon-worktrees/diagnostics-deploy-deadlines-20260920/.linux-compatibility/evidence/06-artifact-integrity.log: Permission denied
+rm: /Volumes/CrucialX9/mknoon-worktrees/diagnostics-deploy-deadlines-20260920/.linux-compatibility/evidence/03-identical-final-RED.log: Permission denied
+rm: /Volumes/CrucialX9/mknoon-worktrees/diagnostics-deploy-deadlines-20260920/.linux-compatibility/evidence/02-failure-composition-GREEN.json: Permission denied
+rm: /Volumes/CrucialX9/mknoon-worktrees/diagnostics-deploy-deadlines-20260920/.linux-compatibility/evidence/05-syntax-scope-diff-sources/test_transaction.py: Permission denied
+rm: /Volumes/CrucialX9/mknoon-worktrees/diagnostics-deploy-deadlines-20260920/.linux-compatibility/evidence/05-syntax-scope-diff-sources/test_inventory_composition.py: Permission denied
+rm: /Volumes/CrucialX9/mknoon-worktrees/diagnostics-deploy-deadlines-20260920/.linux-compatibility/evidence/05-syntax-scope-diff-sources/relay_rollout.py: Permission denied
+rm: /Volumes/CrucialX9/mknoon-worktrees/diagnostics-deploy-deadlines-20260920/.linux-compatibility/evidence/05-syntax-scope-diff-sources/test_inventory.py: Permission denied
+rm: /Volumes/CrucialX9/mknoon-worktrees/diagnostics-deploy-deadlines-20260920/.linux-compatibility/evidence/05-syntax-scope-diff-sources/test_recovery.py: Permission denied
+rm: /Volumes/CrucialX9/mknoon-worktrees/diagnostics-deploy-deadlines-20260920/.linux-compatibility/evidence/05-syntax-scope-diff-sources/test_linux_compatibility.py: Permission denied
+rm: /Volumes/CrucialX9/mknoon-worktrees/diagnostics-deploy-deadlines-20260920/.linux-compatibility/evidence/05-syntax-scope-diff-sources/test_deadlines.py: Permission denied
+rm: /Volumes/CrucialX9/mknoon-worktrees/diagnostics-deploy-deadlines-20260920/.linux-compatibility/evidence/05-syntax-scope-diff-sources/test_deadline_composition.py: Permission denied
+rm: /Volumes/CrucialX9/mknoon-worktrees/diagnostics-deploy-deadlines-20260920/.linux-compatibility/evidence/05-syntax-scope-diff-sources/test_preservation.py: Permission denied
+rm: /Volumes/CrucialX9/mknoon-worktrees/diagnostics-deploy-deadlines-20260920/.linux-compatibility/evidence/05-syntax-scope-diff-sources/test_supervision.py: Permission denied
+rm: /Volumes/CrucialX9/mknoon-worktrees/diagnostics-deploy-deadlines-20260920/.linux-compatibility/evidence/05-syntax-scope-diff-sources/relay_deploy_template.py: Permission denied
+rm: /Volumes/CrucialX9/mknoon-worktrees/diagnostics-deploy-deadlines-20260920/.linux-compatibility/evidence/05-syntax-scope-diff-sources/relay_deploy_template_test.py: Permission denied
+rm: /Volumes/CrucialX9/mknoon-worktrees/diagnostics-deploy-deadlines-20260920/.linux-compatibility/evidence/05-syntax-scope-diff-sources: Permission denied
+rm: /Volumes/CrucialX9/mknoon-worktrees/diagnostics-deploy-deadlines-20260920/.linux-compatibility/evidence/parent-predecessor-preflight.stderr: Permission denied
+rm: /Volumes/CrucialX9/mknoon-worktrees/diagnostics-deploy-deadlines-20260920/.linux-compatibility/evidence/parent-predecessor-preflight.json: Permission denied
+rm: /Volumes/CrucialX9/mknoon-worktrees/diagnostics-deploy-deadlines-20260920/.linux-compatibility/evidence/00-empty-omission-RED.log: Permission denied
+rm: /Volumes/CrucialX9/mknoon-worktrees/diagnostics-deploy-deadlines-20260920/.linux-compatibility/evidence/04-frozen-full-GREEN-sources/test_transaction.py: Permission denied
+rm: /Volumes/CrucialX9/mknoon-worktrees/diagnostics-deploy-deadlines-20260920/.linux-compatibility/evidence/04-frozen-full-GREEN-sources/test_inventory_composition.py: Permission denied
+rm: /Volumes/CrucialX9/mknoon-worktrees/diagnostics-deploy-deadlines-20260920/.linux-compatibility/evidence/04-frozen-full-GREEN-sources/relay_rollout.py: Permission denied
+rm: /Volumes/CrucialX9/mknoon-worktrees/diagnostics-deploy-deadlines-20260920/.linux-compatibility/evidence/04-frozen-full-GREEN-sources/test_inventory.py: Permission denied
+rm: /Volumes/CrucialX9/mknoon-worktrees/diagnostics-deploy-deadlines-20260920/.linux-compatibility/evidence/04-frozen-full-GREEN-sources/test_recovery.py: Permission denied
+rm: /Volumes/CrucialX9/mknoon-worktrees/diagnostics-deploy-deadlines-20260920/.linux-compatibility/evidence/04-frozen-full-GREEN-sources/test_linux_compatibility.py: Permission denied
+rm: /Volumes/CrucialX9/mknoon-worktrees/diagnostics-deploy-deadlines-20260920/.linux-compatibility/evidence/04-frozen-full-GREEN-sources/test_deadlines.py: Permission denied
+rm: /Volumes/CrucialX9/mknoon-worktrees/diagnostics-deploy-deadlines-20260920/.linux-compatibility/evidence/04-frozen-full-GREEN-sources/test_deadline_composition.py: Permission denied
+rm: /Volumes/CrucialX9/mknoon-worktrees/diagnostics-deploy-deadlines-20260920/.linux-compatibility/evidence/04-frozen-full-GREEN-sources/test_preservation.py: Permission denied
+rm: /Volumes/CrucialX9/mknoon-worktrees/diagnostics-deploy-deadlines-20260920/.linux-compatibility/evidence/04-frozen-full-GREEN-sources/test_supervision.py: Permission denied
+rm: /Volumes/CrucialX9/mknoon-worktrees/diagnostics-deploy-deadlines-20260920/.linux-compatibility/evidence/04-frozen-full-GREEN-sources/relay_deploy_template.py: Permission denied
+rm: /Volumes/CrucialX9/mknoon-worktrees/diagnostics-deploy-deadlines-20260920/.linux-compatibility/evidence/04-frozen-full-GREEN-sources/relay_deploy_template_test.py: Permission denied
+rm: /Volumes/CrucialX9/mknoon-worktrees/diagnostics-deploy-deadlines-20260920/.linux-compatibility/evidence/04-frozen-full-GREEN-sources: Permission denied
+rm: /Volumes/CrucialX9/mknoon-worktrees/diagnostics-deploy-deadlines-20260920/.linux-compatibility/evidence/verify.py: Permission denied
+rm: /Volumes/CrucialX9/mknoon-worktrees/diagnostics-deploy-deadlines-20260920/.linux-compatibility/evidence/01-empty-omission-GREEN-sources/test_transaction.py: Permission denied
+rm: /Volumes/CrucialX9/mknoon-worktrees/diagnostics-deploy-deadlines-20260920/.linux-compatibility/evidence/01-empty-omission-GREEN-sources/test_inventory_composition.py: Permission denied
+rm: /Volumes/CrucialX9/mknoon-worktrees/diagnostics-deploy-deadlines-20260920/.linux-compatibility/evidence/01-empty-omission-GREEN-sources/relay_rollout.py: Permission denied
+rm: /Volumes/CrucialX9/mknoon-worktrees/diagnostics-deploy-deadlines-20260920/.linux-compatibility/evidence/01-empty-omission-GREEN-sources/test_inventory.py: Permission denied
+rm: /Volumes/CrucialX9/mknoon-worktrees/diagnostics-deploy-deadlines-20260920/.linux-compatibility/evidence/01-empty-omission-GREEN-sources/test_recovery.py: Permission denied
+rm: /Volumes/CrucialX9/mknoon-worktrees/diagnostics-deploy-deadlines-20260920/.linux-compatibility/evidence/01-empty-omission-GREEN-sources/test_linux_compatibility.py: Permission denied
+rm: /Volumes/CrucialX9/mknoon-worktrees/diagnostics-deploy-deadlines-20260920/.linux-compatibility/evidence/01-empty-omission-GREEN-sources/test_deadlines.py: Permission denied
+rm: /Volumes/CrucialX9/mknoon-worktrees/diagnostics-deploy-deadlines-20260920/.linux-compatibility/evidence/01-empty-omission-GREEN-sources/test_deadline_composition.py: Permission denied
+rm: /Volumes/CrucialX9/mknoon-worktrees/diagnostics-deploy-deadlines-20260920/.linux-compatibility/evidence/01-empty-omission-GREEN-sources/test_preservation.py: Permission denied
+rm: /Volumes/CrucialX9/mknoon-worktrees/diagnostics-deploy-deadlines-20260920/.linux-compatibility/evidence/01-empty-omission-GREEN-sources/test_supervision.py: Permission denied
+rm: /Volumes/CrucialX9/mknoon-worktrees/diagnostics-deploy-deadlines-20260920/.linux-compatibility/evidence/01-empty-omission-GREEN-sources/relay_deploy_template.py: Permission denied
+rm: /Volumes/CrucialX9/mknoon-worktrees/diagnostics-deploy-deadlines-20260920/.linux-compatibility/evidence/01-empty-omission-GREEN-sources/relay_deploy_template_test.py: Permission denied
+rm: /Volumes/CrucialX9/mknoon-worktrees/diagnostics-deploy-deadlines-20260920/.linux-compatibility/evidence/01-empty-omission-GREEN-sources: Permission denied
+rm: /Volumes/CrucialX9/mknoon-worktrees/diagnostics-deploy-deadlines-20260920/.linux-compatibility/evidence/04-frozen-full-GREEN.json: Permission denied
+rm: /Volumes/CrucialX9/mknoon-worktrees/diagnostics-deploy-deadlines-20260920/.linux-compatibility/evidence: Directory not empty
+rm: /Volumes/CrucialX9/mknoon-worktrees/diagnostics-deploy-deadlines-20260920/.linux-compatibility/preimage/test_transaction.py: Permission denied
+rm: /Volumes/CrucialX9/mknoon-worktrees/diagnostics-deploy-deadlines-20260920/.linux-compatibility/preimage/test_inventory_composition.py: Permission denied
+rm: /Volumes/CrucialX9/mknoon-worktrees/diagnostics-deploy-deadlines-20260920/.linux-compatibility/preimage/relay_rollout.py: Permission denied
+rm: /Volumes/CrucialX9/mknoon-worktrees/diagnostics-deploy-deadlines-20260920/.linux-compatibility/preimage/test_inventory.py: Permission denied
+rm: /Volumes/CrucialX9/mknoon-worktrees/diagnostics-deploy-deadlines-20260920/.linux-compatibility/preimage/test_recovery.py: Permission denied
+rm: /Volumes/CrucialX9/mknoon-worktrees/diagnostics-deploy-deadlines-20260920/.linux-compatibility/preimage/test_deadlines.py: Permission denied
+rm: /Volumes/CrucialX9/mknoon-worktrees/diagnostics-deploy-deadlines-20260920/.linux-compatibility/preimage/test_deadline_composition.py: Permission denied
+rm: /Volumes/CrucialX9/mknoon-worktrees/diagnostics-deploy-deadlines-20260920/.linux-compatibility/preimage/test_preservation.py: Permission denied
+rm: /Volumes/CrucialX9/mknoon-worktrees/diagnostics-deploy-deadlines-20260920/.linux-compatibility/preimage/test_supervision.py: Permission denied
+rm: /Volumes/CrucialX9/mknoon-worktrees/diagnostics-deploy-deadlines-20260920/.linux-compatibility/preimage/relay_deploy_template.py: Permission denied
+rm: /Volumes/CrucialX9/mknoon-worktrees/diagnostics-deploy-deadlines-20260920/.linux-compatibility/preimage/relay_deploy_template_test.py: Permission denied
+rm: /Volumes/CrucialX9/mknoon-worktrees/diagnostics-deploy-deadlines-20260920/.linux-compatibility/preimage: Directory not empty
+rm: /Volumes/CrucialX9/mknoon-worktrees/diagnostics-deploy-deadlines-20260920/.linux-compatibility/final/test_transaction.py: Permission denied
+rm: /Volumes/CrucialX9/mknoon-worktrees/diagnostics-deploy-deadlines-20260920/.linux-compatibility/final/test_inventory_composition.py: Permission denied
+rm: /Volumes/CrucialX9/mknoon-worktrees/diagnostics-deploy-deadlines-20260920/.linux-compatibility/final/relay_rollout.py: Permission denied
+rm: /Volumes/CrucialX9/mknoon-worktrees/diagnostics-deploy-deadlines-20260920/.linux-compatibility/final/test_inventory.py: Permission denied
+rm: /Volumes/CrucialX9/mknoon-worktrees/diagnostics-deploy-deadlines-20260920/.linux-compatibility/final/test_recovery.py: Permission denied
+rm: /Volumes/CrucialX9/mknoon-worktrees/diagnostics-deploy-deadlines-20260920/.linux-compatibility/final/test_linux_compatibility.py: Permission denied
+rm: /Volumes/CrucialX9/mknoon-worktrees/diagnostics-deploy-deadlines-20260920/.linux-compatibility/final/test_deadlines.py: Permission denied
+rm: /Volumes/CrucialX9/mknoon-worktrees/diagnostics-deploy-deadlines-20260920/.linux-compatibility/final/test_deadline_composition.py: Permission denied
+rm: /Volumes/CrucialX9/mknoon-worktrees/diagnostics-deploy-deadlines-20260920/.linux-compatibility/final/test_preservation.py: Permission denied
+rm: /Volumes/CrucialX9/mknoon-worktrees/diagnostics-deploy-deadlines-20260920/.linux-compatibility/final/test_supervision.py: Permission denied
+rm: /Volumes/CrucialX9/mknoon-worktrees/diagnostics-deploy-deadlines-20260920/.linux-compatibility/final/relay_deploy_template.py: Permission denied
+rm: /Volumes/CrucialX9/mknoon-worktrees/diagnostics-deploy-deadlines-20260920/.linux-compatibility/final/relay_deploy_template_test.py: Permission denied
+rm: /Volumes/CrucialX9/mknoon-worktrees/diagnostics-deploy-deadlines-20260920/.linux-compatibility/final: Directory not empty
+rm: /Volumes/CrucialX9/mknoon-worktrees/diagnostics-deploy-deadlines-20260920/.linux-compatibility/red-final/test_transaction.py: Permission denied
+rm: /Volumes/CrucialX9/mknoon-worktrees/diagnostics-deploy-deadlines-20260920/.linux-compatibility/red-final/test_inventory_composition.py: Permission denied
+rm: /Volumes/CrucialX9/mknoon-worktrees/diagnostics-deploy-deadlines-20260920/.linux-compatibility/red-final/relay_rollout.py: Permission denied
+rm: /Volumes/CrucialX9/mknoon-worktrees/diagnostics-deploy-deadlines-20260920/.linux-compatibility/red-final/test_inventory.py: Permission denied
+rm: /Volumes/CrucialX9/mknoon-worktrees/diagnostics-deploy-deadlines-20260920/.linux-compatibility/red-final/test_recovery.py: Permission denied
+rm: /Volumes/CrucialX9/mknoon-worktrees/diagnostics-deploy-deadlines-20260920/.linux-compatibility/red-final/test_linux_compatibility.py: Permission denied
+rm: /Volumes/CrucialX9/mknoon-worktrees/diagnostics-deploy-deadlines-20260920/.linux-compatibility/red-final/test_deadlines.py: Permission denied
+rm: /Volumes/CrucialX9/mknoon-worktrees/diagnostics-deploy-deadlines-20260920/.linux-compatibility/red-final/test_deadline_composition.py: Permission denied
+rm: /Volumes/CrucialX9/mknoon-worktrees/diagnostics-deploy-deadlines-20260920/.linux-compatibility/red-final/test_preservation.py: Permission denied
+rm: /Volumes/CrucialX9/mknoon-worktrees/diagnostics-deploy-deadlines-20260920/.linux-compatibility/red-final/test_supervision.py: Permission denied
+rm: /Volumes/CrucialX9/mknoon-worktrees/diagnostics-deploy-deadlines-20260920/.linux-compatibility/red-final/relay_deploy_template.py: Permission denied
+rm: /Volumes/CrucialX9/mknoon-worktrees/diagnostics-deploy-deadlines-20260920/.linux-compatibility/red-final/relay_deploy_template_test.py: Permission denied
+rm: /Volumes/CrucialX9/mknoon-worktrees/diagnostics-deploy-deadlines-20260920/.linux-compatibility/red-final: Directory not empty
+rm: /Volumes/CrucialX9/mknoon-worktrees/diagnostics-deploy-deadlines-20260920/.linux-compatibility/syntax/relay_deploy_template.pyc: Permission denied
+rm: /Volumes/CrucialX9/mknoon-worktrees/diagnostics-deploy-deadlines-20260920/.linux-compatibility/syntax/test_inventory_composition.pyc: Permission denied
+rm: /Volumes/CrucialX9/mknoon-worktrees/diagnostics-deploy-deadlines-20260920/.linux-compatibility/syntax/test_preservation.pyc: Permission denied
+rm: /Volumes/CrucialX9/mknoon-worktrees/diagnostics-deploy-deadlines-20260920/.linux-compatibility/syntax/test_deadline_composition.pyc: Permission denied
+rm: /Volumes/CrucialX9/mknoon-worktrees/diagnostics-deploy-deadlines-20260920/.linux-compatibility/syntax/test_recovery.pyc: Permission denied
+rm: /Volumes/CrucialX9/mknoon-worktrees/diagnostics-deploy-deadlines-20260920/.linux-compatibility/syntax/relay_rollout.pyc: Permission denied
+rm: /Volumes/CrucialX9/mknoon-worktrees/diagnostics-deploy-deadlines-20260920/.linux-compatibility/syntax/test_linux_compatibility.pyc: Permission denied
+rm: /Volumes/CrucialX9/mknoon-worktrees/diagnostics-deploy-deadlines-20260920/.linux-compatibility/syntax/relay_deploy_template_test.pyc: Permission denied
+rm: /Volumes/CrucialX9/mknoon-worktrees/diagnostics-deploy-deadlines-20260920/.linux-compatibility/syntax/test_supervision.pyc: Permission denied
+rm: /Volumes/CrucialX9/mknoon-worktrees/diagnostics-deploy-deadlines-20260920/.linux-compatibility/syntax/test_deadlines.pyc: Permission denied
+rm: /Volumes/CrucialX9/mknoon-worktrees/diagnostics-deploy-deadlines-20260920/.linux-compatibility/syntax/test_inventory.pyc: Permission denied
+rm: /Volumes/CrucialX9/mknoon-worktrees/diagnostics-deploy-deadlines-20260920/.linux-compatibility/syntax/test_transaction.pyc: Permission denied
+rm: /Volumes/CrucialX9/mknoon-worktrees/diagnostics-deploy-deadlines-20260920/.linux-compatibility/syntax: Directory not empty
+rm: /Volumes/CrucialX9/mknoon-worktrees/diagnostics-deploy-deadlines-20260920/.linux-compatibility: Directory not empty
+rm: /Volumes/CrucialX9/mknoon-worktrees/diagnostics-deploy-deadlines-20260920: Directory not empty
+rm: /Volumes/CrucialX9/mknoon-worktrees: Directory not empty
+FAIL /Volumes/CrucialX9/mknoon-worktrees
+/dev/disk7s1   931Gi   695Gi   236Gi    75%    3.6M  2.5G    0%   /Volumes/CrucialX9
+R39 DONE

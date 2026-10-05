@@ -1,0 +1,28 @@
+Preparing worktree (detached HEAD 73376731a)
+Updating files:  24% (2167/9002)Updating files:  25% (2251/9002)Updating files:  26% (2341/9002)Updating files:  27% (2431/9002)Updating files:  28% (2521/9002)Updating files:  29% (2611/9002)Updating files:  30% (2701/9002)Updating files:  31% (2791/9002)Updating files:  32% (2881/9002)Updating files:  33% (2971/9002)Updating files:  34% (3061/9002)Updating files:  35% (3151/9002)Updating files:  36% (3241/9002)Updating files:  37% (3331/9002)Updating files:  37% (3399/9002)Updating files:  38% (3421/9002)Updating files:  39% (3511/9002)Updating files:  40% (3601/9002)Updating files:  41% (3691/9002)Updating files:  42% (3781/9002)Updating files:  43% (3871/9002)Updating files:  44% (3961/9002)Updating files:  45% (4051/9002)Updating files:  46% (4141/9002)Updating files:  47% (4231/9002)Updating files:  48% (4321/9002)Updating files:  49% (4411/9002)Updating files:  50% (4501/9002)Updating files:  51% (4592/9002)Updating files:  52% (4682/9002)Updating files:  53% (4772/9002)Updating files:  54% (4862/9002)Updating files:  55% (4952/9002)Updating files:  56% (5042/9002)Updating files:  57% (5132/9002)Updating files:  58% (5222/9002)Updating files:  59% (5312/9002)Updating files:  60% (5402/9002)Updating files:  61% (5492/9002)Updating files:  62% (5582/9002)Updating files:  63% (5672/9002)Updating files:  64% (5762/9002)Updating files:  65% (5852/9002)Updating files:  66% (5942/9002)Updating files:  67% (6032/9002)Updating files:  68% (6122/9002)Updating files:  69% (6212/9002)Updating files:  70% (6302/9002)Updating files:  71% (6392/9002)Updating files:  72% (6482/9002)Updating files:  73% (6572/9002)Updating files:  74% (6662/9002)Updating files:  75% (6752/9002)Updating files:  76% (6842/9002)Updating files:  77% (6932/9002)Updating files:  78% (7022/9002)Updating files:  79% (7112/9002)Updating files:  80% (7202/9002)Updating files:  81% (7292/9002)Updating files:  82% (7382/9002)Updating files:  83% (7472/9002)Updating files:  83% (7561/9002)Updating files:  84% (7562/9002)Updating files:  85% (7652/9002)Updating files:  86% (7742/9002)Updating files:  87% (7832/9002)Updating files:  88% (7922/9002)Updating files:  89% (8012/9002)Updating files:  90% (8102/9002)Updating files:  91% (8192/9002)Updating files:  92% (8282/9002)Updating files:  93% (8372/9002)Updating files:  94% (8462/9002)Updating files:  95% (8552/9002)Updating files:  96% (8642/9002)Updating files:  97% (8732/9002)Updating files:  98% (8822/9002)Updating files:  99% (8912/9002)Updating files: 100% (9002/9002)Updating files: 100% (9002/9002), done.
+HEAD is now at 73376731a chore(sims): keep ML-017 on the original harness
+planned transfer bytes=4701829203
+19:version: 1.0.1+121
+synced_at=2026-10-01 23:08:02
+live_head=73376731a8c91dc6e43a9003c34d30f58d9ce603 live_dirty_files=146
+snapshot_head=73376731a8c91dc6e43a9003c34d30f58d9ce603 snapshot_dirty_files=147
+version=version: 1.0.1+121
+total 640
+drwxr-xr-x@  6 I560101  staff     192 Oct  1 23:08 .
+drwxr-xr-x  34 I560101  staff    1088 Oct  1 23:06 ..
+-rw-r--r--@  1 I560101  staff     209 Oct  1 23:08 provenance.txt
+-rw-r--r--@  1 I560101  staff  209884 Oct  1 23:08 snapshot-tracked.patch
+-rw-r--r--@  1 I560101  staff    2654 Oct  1 23:08 snapshot-untracked-list.txt
+-rw-r--r--@  1 I560101  staff   89952 Oct  1 23:08 snapshot-untracked.tgz
+marker ok ios/Runner/AppDelegate.swift
+marker ok lib/features/groups/application/drain_group_offline_inbox_use_case.dart
+marker ok lib/core/media/m4a_duration.dart
+input ok .env
+input ok android/key.properties
+input ok android/app/libs/GoMknoon.aar
+input ok android/app/google-services.json
+input ok tool/build/voice_call_release_defines.json
+input ok ios/Runner/GoogleService-Info.plist
+124 packages have newer versions incompatible with dependency constraints.
+Try `flutter pub outdated` for more information.
+R40 DONE

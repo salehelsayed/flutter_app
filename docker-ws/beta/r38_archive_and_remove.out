@@ -1,0 +1,96 @@
+ARCHIVED /Users/I560101/production-bootstrap-migration-candidate patch=766527B untracked=462 skipped=2
+REMOVED /Users/I560101/production-bootstrap-migration-candidate
+ARCHIVED /Users/I560101/production-bootstrap-migration-catalog patch=1132924B untracked=552 skipped=2
+REMOVED /Users/I560101/production-bootstrap-migration-catalog
+ARCHIVED /Users/I560101/production-bootstrap-migration-catalog-next patch=1169644B untracked=574 skipped=2
+REMOVED /Users/I560101/production-bootstrap-migration-catalog-next
+ARCHIVED /Users/I560101/production-bootstrap-migration-closure patch=853401B untracked=521 skipped=2
+REMOVED /Users/I560101/production-bootstrap-migration-closure
+ARCHIVED /Users/I560101/production-bootstrap-migration-continuation patch=834766B untracked=504 skipped=2
+REMOVED /Users/I560101/production-bootstrap-migration-continuation
+ARCHIVED /Users/I560101/production-bootstrap-migration-groups patch=845124B untracked=513 skipped=2
+REMOVED /Users/I560101/production-bootstrap-migration-groups
+ARCHIVED /Users/I560101/production-bootstrap-migration-next patch=814823B untracked=493 skipped=2
+REMOVED /Users/I560101/production-bootstrap-migration-next
+ARCHIVED /Users/I560101/production-bootstrap-migration-performance patch=853401B untracked=521 skipped=2
+REMOVED /Users/I560101/production-bootstrap-migration-performance
+ARCHIVED /Users/I560101/production-bootstrap-migration-reconciled patch=1153865B untracked=566 skipped=2
+REMOVED /Users/I560101/production-bootstrap-migration-reconciled
+ARCHIVED /Users/I560101/production-bootstrap-migration-remaining patch=832244B untracked=502 skipped=2
+REMOVED /Users/I560101/production-bootstrap-migration-remaining
+ARCHIVED /Users/I560101/production-bootstrap-migration-waves patch=790024B untracked=475 skipped=2
+REMOVED /Users/I560101/production-bootstrap-migration-waves
+ARCHIVED /Volumes/CrucialX9/.mknoon-all-tests-y227gs8x-tmp/mknoon_256_head_eWfG0U patch=0B untracked=0 skipped=0
+REMOVED /Volumes/CrucialX9/.mknoon-all-tests-y227gs8x-tmp/mknoon_256_head_eWfG0U
+ARCHIVED /Volumes/CrucialX9/.mknoon-all-tests-y227gs8x-worktree patch=1139927B untracked=21 skipped=0
+REMOVED /Volumes/CrucialX9/.mknoon-all-tests-y227gs8x-worktree
+ARCHIVED /Volumes/CrucialX9/flutter_app-r2-phone-proof-20261001 patch=156102B untracked=2 skipped=0
+REMOVED /Volumes/CrucialX9/flutter_app-r2-phone-proof-20261001
+ARCHIVED /Volumes/CrucialX9/flutter_app-wave2-candidate-20260928 patch=1012715B untracked=323 skipped=0
+REMOVED /Volumes/CrucialX9/flutter_app-wave2-candidate-20260928
+ARCHIVED /Volumes/CrucialX9/flutter_app/.codex-test-logs/all-tests-20260920/host-source patch=424680B untracked=9 skipped=0
+REMOVED /Volumes/CrucialX9/flutter_app/.codex-test-logs/all-tests-20260920/host-source
+ARCHIVED /Volumes/CrucialX9/flutter_app/.codex-test-logs/beta-label-fixes-20260924 patch=0B untracked=109 skipped=0
+REMOVED /Volumes/CrucialX9/flutter_app/.codex-test-logs/beta-label-fixes-20260924
+ARCHIVED /Volumes/CrucialX9/flutter_app/.codex-test-logs/ci-enforcement-20260913-15_yatv1/publish-worktree patch=0B untracked=0 skipped=0
+REMOVED /Volumes/CrucialX9/flutter_app/.codex-test-logs/ci-enforcement-20260913-15_yatv1/publish-worktree
+ARCHIVED /Volumes/CrucialX9/flutter_app/.codex-test-logs/failure-fixes-20260920/analyzer-source patch=348178428B untracked=7794 skipped=1
+REMOVED /Volumes/CrucialX9/flutter_app/.codex-test-logs/failure-fixes-20260920/analyzer-source
+ARCHIVED /Volumes/CrucialX9/flutter_app/.codex-test-logs/production-bootstrap-migration-20260927/candidate patch=763026B untracked=460 skipped=2
+REMOVED /Volumes/CrucialX9/flutter_app/.codex-test-logs/production-bootstrap-migration-20260927/candidate
+ARCHIVED /Volumes/CrucialX9/mknoon-audio-host144-20260917 patch=793610B untracked=40 skipped=0
+REMOVED /Volumes/CrucialX9/mknoon-audio-host144-20260917
+ARCHIVED /Volumes/CrucialX9/mknoon-sims-android148-20260918 patch=1389103B untracked=60 skipped=0
+REMOVED /Volumes/CrucialX9/mknoon-sims-android148-20260918
+ARCHIVED /Volumes/CrucialX9/mknoon-synthetic30 patch=55153B untracked=3 skipped=0
+REMOVED /Volumes/CrucialX9/mknoon-synthetic30
+ARCHIVED /Volumes/CrucialX9/mknoon-test-runner-z2tuurrn/review-fix-worktree patch=695259B untracked=13 skipped=0
+REMOVED /Volumes/CrucialX9/mknoon-test-runner-z2tuurrn/review-fix-worktree
+ARCHIVED /Volumes/CrucialX9/mknoon-test-runner-z2tuurrn/worktree patch=1061114B untracked=25 skipped=0
+REMOVED /Volumes/CrucialX9/mknoon-test-runner-z2tuurrn/worktree
+ARCHIVED /Volumes/CrucialX9/mknoon-ui25-050608 patch=280237B untracked=3 skipped=0
+REMOVED /Volumes/CrucialX9/mknoon-ui25-050608
+ARCHIVED /Volumes/CrucialX9/mknoon-ui25-050608-native patch=280237B untracked=8 skipped=0
+REMOVED /Volumes/CrucialX9/mknoon-ui25-050608-native
+ARCHIVED /Volumes/CrucialX9/mknoon-ui25-taps-high patch=47444B untracked=0 skipped=0
+REMOVED /Volumes/CrucialX9/mknoon-ui25-taps-high
+ARCHIVED /Volumes/CrucialX9/mknoon-ui25-taps-native patch=67012B untracked=3 skipped=0
+REMOVED /Volumes/CrucialX9/mknoon-ui25-taps-native
+ARCHIVED /Volumes/CrucialX9/mknoon-worktrees/diagnostic-reader-null-20260920 patch=16264B untracked=0 skipped=0
+REMOVED /Volumes/CrucialX9/mknoon-worktrees/diagnostic-reader-null-20260920
+ARCHIVED /Volumes/CrucialX9/mknoon-worktrees/ingestion-apns-lifetime-20260920 patch=69233B untracked=6 skipped=0
+REMOVED /Volumes/CrucialX9/mknoon-worktrees/ingestion-apns-lifetime-20260920
+ARCHIVED /Volumes/CrucialX9/mknoon-worktrees/ingestion-client-correction-20260920 patch=57740B untracked=0 skipped=0
+REMOVED /Volumes/CrucialX9/mknoon-worktrees/ingestion-client-correction-20260920
+ARCHIVED /Volumes/CrucialX9/mknoon-worktrees/ingestion-client-fix-20260920 patch=48669B untracked=0 skipped=0
+REMOVED /Volumes/CrucialX9/mknoon-worktrees/ingestion-client-fix-20260920
+ARCHIVED /Volumes/CrucialX9/mknoon-worktrees/ingestion-diagnosis-20260920 patch=0B untracked=2 skipped=0
+REMOVED /Volumes/CrucialX9/mknoon-worktrees/ingestion-diagnosis-20260920
+ARCHIVED /Volumes/CrucialX9/mknoon-worktrees/ingestion-main-integration-20260920 patch=61948B untracked=2 skipped=0
+REMOVED /Volumes/CrucialX9/mknoon-worktrees/ingestion-main-integration-20260920
+ARCHIVED /Volumes/CrucialX9/mknoon-worktrees/ingestion-server-correction-20260920 patch=45408B untracked=2 skipped=0
+REMOVED /Volumes/CrucialX9/mknoon-worktrees/ingestion-server-correction-20260920
+ARCHIVED /Volumes/CrucialX9/mknoon-worktrees/ingestion-server-fix-20260920 patch=42331B untracked=2 skipped=0
+REMOVED /Volumes/CrucialX9/mknoon-worktrees/ingestion-server-fix-20260920
+ARCHIVED /Volumes/CrucialX9/mknoon-worktrees/ingestion-server-publication-20260920 patch=51497B untracked=4 skipped=0
+REMOVED /Volumes/CrucialX9/mknoon-worktrees/ingestion-server-publication-20260920
+ARCHIVED /Volumes/CrucialX9/mknoon-worktrees/ingestion-server-queue-fence-20260920 patch=49890B untracked=3 skipped=0
+REMOVED /Volumes/CrucialX9/mknoon-worktrees/ingestion-server-queue-fence-20260920
+ARCHIVED /Volumes/CrucialX9/turn-policy-verification-e7e11bab patch=98652B untracked=1 skipped=0
+REMOVED /Volumes/CrucialX9/turn-policy-verification-e7e11bab
+=== branches
+Deleted branch codex/ci-regression-check (was 17679c660).
+Deleted branch codex/dual-stack-release-validation (was cfc4ad96b).
+Deleted branch codex/preserve-shared-libp2p-connections (was 359f6fca7).
+Deleted branch codex/relay-deployment-receipt (was 5c5c6d2dd).
+Deleted branch codex/turn-network-and-call-diagnostics (was 80a49a84d).
+Deleted branch feat/ipv6-happy-eyeballs (was ad3529a04).
+Deleted branch fix/beta-call-labels-20260924 (was 8a7b8cc54).
+Deleted branch fix/diagnostics-apns-lifetime-20260920 (was 88e35785f).
+Deleted branch fix/r2-open-issues-20261001 (was c8b18e5ac).
+=== after
+/Volumes/CrucialX9/flutter_app c66544d28 [wave3-baseline-20260930]
+  main
+* wave3-baseline-20260930
+557M	/Volumes/CrucialX9/flutter_app/artifacts/worktree-archive-20261001
+R38 DONE

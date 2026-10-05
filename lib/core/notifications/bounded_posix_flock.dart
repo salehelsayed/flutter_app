@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:ffi';
 import 'dart:io';
 
@@ -6,6 +7,7 @@ import 'package:ffi/ffi.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_app/core/diagnostics/app_diagnostic_events.dart';
+import 'notification_lock_transaction.dart';
 
 /// Finite Android acquisition or refused/expired iOS background admission.
 ///
@@ -67,9 +69,10 @@ typedef _FsyncDart = int Function(int);
 /// historical blocking `LOCK_EX` protocol used by the Notification Service
 /// Extension and app process. iOS requests a scoped background assertion before
 /// acquisition, verifies admission after acquisition, and ends it after unlock.
-/// This protects ordinary suspension while the grant is live. An owner that
-/// outlives native expiration remains unsafe; it is never detached or unlocked
-/// early because a pending callback may still mutate durable/native state.
+/// Notification transactions release both before external callbacks, retaining
+/// a durable process owner until reacquisition validates the exact marker.
+/// The primitive action and already-entered synchronous I/O have no hard
+/// execution bound; callers must use explicit external-work boundaries.
 final class BoundedPosixFlock {
   BoundedPosixFlock._();
 
@@ -90,6 +93,16 @@ final class BoundedPosixFlock {
   static final Object _isolateOwnerZoneKey = Object();
   static final Map<String, Future<void>> _isolateTails =
       <String, Future<void>>{};
+
+  static Future<T> withNotificationTransaction<T>(
+    File file,
+    Future<T> Function() action,
+  ) => _withExclusive(
+    file,
+    action,
+    ownerCompletion: false,
+    notificationTransaction: defaultTargetPlatform == TargetPlatform.iOS,
+  );
 
   static Future<T> withExclusive<T>(File file, Future<T> Function() action) =>
       _withExclusive(file, action, ownerCompletion: false);
@@ -138,6 +151,7 @@ final class BoundedPosixFlock {
     File file,
     Future<T> Function() action, {
     required bool ownerCompletion,
+    bool notificationTransaction = false,
   }) async {
     final diagnosticOwner = Object();
     var diagnosticReleased = false;
@@ -160,6 +174,7 @@ final class BoundedPosixFlock {
           file,
           action,
           ownerCompletion: ownerCompletion,
+          notificationTransaction: notificationTransaction,
           diagnosticOwner: diagnosticOwner,
           onNativeReleased: reportReleased,
         );
@@ -170,6 +185,7 @@ final class BoundedPosixFlock {
           file,
           action,
           ownerCompletion: ownerCompletion,
+          notificationTransaction: notificationTransaction,
           diagnosticOwner: diagnosticOwner,
           onNativeReleased: reportReleased,
         ),
@@ -212,6 +228,7 @@ final class BoundedPosixFlock {
     required bool ownerCompletion,
     required Object diagnosticOwner,
     required VoidCallback onNativeReleased,
+    bool notificationTransaction = false,
   }) async {
     await file.create(recursive: true);
     final nativePath = file.path.toNativeUtf8();
@@ -227,9 +244,107 @@ final class BoundedPosixFlock {
 
     var acquired = false;
     int? backgroundTask;
+    Map<String, Object>? operationOwner;
+    String? ownerBytes;
+    var segmentOwner = diagnosticOwner;
+    var segmentWaiting = false;
+    void releaseNative() {
+      if (!acquired) return;
+      _api.flock(descriptor, lockUnlock);
+      acquired = false;
+      segmentWaiting = false;
+      if (identical(segmentOwner, diagnosticOwner)) {
+        onNativeReleased();
+      } else {
+        AppDiagnosticEvents.notificationFileLock(
+          segmentOwner,
+          NotificationFileLockPhase.released,
+        );
+      }
+    }
+
+    Future<void> endGrant() async {
+      final task = backgroundTask;
+      backgroundTask = null;
+      if (task != null) {
+        await _backgroundTasks.invokeMethod<void>('notificationLockEnd', task);
+      }
+    }
+
+    Future<void> acquireSegment() async {
+      segmentOwner = Object();
+      segmentWaiting = true;
+      AppDiagnosticEvents.notificationFileLock(
+        segmentOwner,
+        NotificationFileLockPhase.waiting,
+      );
+      try {
+        if (_usesIosBackgroundTasks) {
+          backgroundTask = await _backgroundTasks.invokeMethod<int>(
+            'notificationLockBegin',
+          );
+          if (backgroundTask == null) {
+            throw const BoundedPosixFlockUnavailableException();
+          }
+        }
+        if (_api.flock(descriptor, lockExclusive) != 0) {
+          throw FileSystemException(
+            'Unable to reacquire notification lock',
+            file.path,
+          );
+        }
+        acquired = true;
+        AppDiagnosticEvents.notificationFileLock(
+          segmentOwner,
+          NotificationFileLockPhase.held,
+        );
+        if (backgroundTask != null &&
+            await _backgroundTasks.invokeMethod<bool>(
+                  'notificationLockIsActive',
+                  backgroundTask,
+                ) !=
+                true) {
+          throw const BoundedPosixFlockUnavailableException();
+        }
+        if (NotificationLockTransaction.readMarker(file) != ownerBytes) {
+          throw const BoundedPosixFlockUnavailableException();
+        }
+      } catch (error, stack) {
+        // Failed admission/token validation must not leave an acquired segment
+        // available to a caller that treats an inventory error as uncertainty.
+        releaseNative();
+        try {
+          await endGrant();
+        } catch (cleanup, cleanupStack) {
+          throw BoundedPosixFlockBackgroundCleanupException(
+            originalError: error,
+            originalStackTrace: stack,
+            cleanupError: cleanup,
+            cleanupStackTrace: cleanupStack,
+          );
+        }
+        Error.throwWithStackTrace(error, stack);
+      }
+    }
+
     Object? originalError;
     StackTrace? originalStackTrace;
     try {
+      // Process liveness is collected without flock, then the exact observed
+      // marker is checked under flock. A racing/new/uncertain owner refuses
+      // admission. Native NSE honors the same process-birth identity.
+      final coordinated =
+          defaultTargetPlatform == TargetPlatform.iOS &&
+          file.uri.pathSegments.last == '.coordination.lock';
+      final observedOwner = coordinated
+          ? NotificationLockTransaction.readMarker(file)
+          : null;
+      final previousOwnerAlive =
+          observedOwner != null &&
+          await NotificationLockTransaction.ownerIsAlive(observedOwner);
+      if (notificationTransaction) {
+        operationOwner = await NotificationLockTransaction.beginOwner();
+      }
       if (_usesIosBackgroundTasks) {
         backgroundTask = await _backgroundTasks.invokeMethod<int>(
           'notificationLockBegin',
@@ -291,34 +406,91 @@ final class BoundedPosixFlock {
         // owner-lifetime limitation, not permission to unlock pending work.
         throw const BoundedPosixFlockUnavailableException();
       }
-      return await action();
+      if (coordinated) {
+        if (NotificationLockTransaction.readMarker(file) != observedOwner ||
+            previousOwnerAlive) {
+          throw const BoundedPosixFlockUnavailableException();
+        }
+        if (observedOwner != null) {
+          NotificationLockTransaction.marker(file).deleteSync();
+          syncDirectory(file.parent);
+        }
+      }
+      final owner = operationOwner;
+      if (owner == null) return await action();
+      ownerBytes = jsonEncode(owner);
+      final marker = NotificationLockTransaction.marker(file);
+      final prepared = File('${marker.path}.${owner['token']}.tmp');
+      prepared.writeAsStringSync(ownerBytes, flush: true);
+      prepared.renameSync(marker.path);
+      syncDirectory(file.parent);
+      return await NotificationLockTransaction(
+        owner: owner,
+        hasFileLock: () => acquired,
+        release: () async {
+          releaseNative();
+          await endGrant();
+        },
+        reacquire: acquireSegment,
+      ).run(action);
     } catch (error, stackTrace) {
       originalError = error;
       originalStackTrace = stackTrace;
       rethrow;
     } finally {
-      if (acquired) {
-        _api.flock(descriptor, lockUnlock);
+      final cleanupErrors = <Object>[];
+      final cleanupStacks = <StackTrace>[];
+      void failedCleanup(Object error, StackTrace stack) {
+        cleanupErrors.add(error);
+        cleanupStacks.add(stack);
       }
-      _api.close(descriptor);
-      onNativeReleased();
-      if (backgroundTask != null) {
-        try {
-          await _backgroundTasks.invokeMethod<void>(
-            'notificationLockEnd',
-            backgroundTask,
-          );
-        } catch (error, stackTrace) {
-          if (originalError != null) {
-            throw BoundedPosixFlockBackgroundCleanupException(
-              originalError: originalError,
-              originalStackTrace: originalStackTrace!,
-              cleanupError: error,
-              cleanupStackTrace: stackTrace,
-            );
-          }
-          rethrow;
+
+      try {
+        if (acquired &&
+            ownerBytes != null &&
+            NotificationLockTransaction.readMarker(file) == ownerBytes) {
+          NotificationLockTransaction.marker(file).deleteSync();
+          syncDirectory(file.parent);
         }
+      } catch (error, stack) {
+        failedCleanup(error, stack);
+      } finally {
+        releaseNative();
+        _api.close(descriptor);
+        if (segmentWaiting) {
+          AppDiagnosticEvents.notificationFileLock(
+            segmentOwner,
+            NotificationFileLockPhase.released,
+          );
+        }
+        onNativeReleased();
+      }
+      try {
+        await endGrant();
+      } catch (error, stack) {
+        failedCleanup(error, stack);
+      }
+      final finishedOwner = operationOwner;
+      if (finishedOwner != null) {
+        try {
+          await NotificationLockTransaction.endOwner(finishedOwner);
+        } catch (error, stack) {
+          failedCleanup(error, stack);
+        }
+      }
+      if (cleanupErrors.isNotEmpty) {
+        final error = cleanupErrors.length == 1
+            ? cleanupErrors.single
+            : cleanupErrors;
+        if (originalError != null) {
+          throw BoundedPosixFlockBackgroundCleanupException(
+            originalError: originalError,
+            originalStackTrace: originalStackTrace!,
+            cleanupError: error,
+            cleanupStackTrace: cleanupStacks.first,
+          );
+        }
+        Error.throwWithStackTrace(error, cleanupStacks.first);
       }
     }
   }

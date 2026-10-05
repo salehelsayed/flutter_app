@@ -1,0 +1,57 @@
+start 11:21:45
+installed
+container /Users/I560101/Library/Developer/CoreSimulator/Devices/6597ECAD-38EE-49AF-9A08-B1B0CA4BDD76/data/Containers/Data/Application/852FFA97-D700-4FEA-83F2-112C795CCF99
+runtime-config: {"schema":"mknoon.sims.runtime-config.v1","profileId":"ios.simulator.app","scenarioId":"production.group_catalog.private_admin_role_transfer_delivery","role":"alice","runId":"journey-1791198455139229","nonce":"6e45e0da5ea0f88d9223659d","values":{"fixtureId":"journey-1791198455139229"}}
+com.mknoon.app: 97910
+--- Documents tree:
+/Documents
+/Documents/intro_e2e_identity.json
+/Documents/production-journey
+/Documents/production-journey/runtime-config.json
+/Documents/production-journey/runtime-ack.json
+/Documents/production-journey/consumed-nonces.json
+/Documents/identity.db
+/Documents/auto_setup.json
+--- ack: {"schema":"mknoon.sims.runtime-ack.v1","profileId":"ios.simulator.app","scenarioId":"production.group_catalog.private_admin_role_transfer_delivery","role":"alice","runId":"journey-1791198455139229","nonce":"6e45e0da5ea0f88d9223659d","accepted":true,"detail":"runtime invocation accepted"}
+--- app log (flutter / errors):
+2026-10-05 13:21:56.234 Df Runner[97910:11aefe] [com.apple.BoardServices:XPCErrors] [C:1] Alloc com.apple.frontboard.systemappservices
+2026-10-05 13:21:56.252 Df Runner[97910:11ae66] [com.apple.FileURL:default] kExcludedFromBackupXattrName set on path: /Users/I560101/Library/Developer/CoreSimulator/Devices/6597ECAD-38EE-49AF-9A08-B1B0CA4BDD76/data/Containers/Data/Applicati
+2026-10-05 13:21:56.269 Df Runner[97910:11ae66] [com.apple.xpc:connection] [0x10620cdc0] failed to do a bootstrap look-up: xpc_error=[3: No such process]
+2026-10-05 13:21:56.270 Df Runner[97910:11af0d] [com.apple.xpc:connection] [0x10620cdc0] failed to do a bootstrap look-up: xpc_error=[3: No such process]
+2026-10-05 13:21:56.286 Df Runner[97910:11ae66] [com.apple.UIKit:EventBus] Event Timing Profile for Touch: not found, path="/System/Library/EventTimingProfiles/Sim.Touch.plist"
+2026-10-05 13:21:56.286 Df Runner[97910:11ae66] [com.apple.UIKit:EventBus] Event Timing Profile for Pencil: not found, path="/System/Library/EventTimingProfiles/Sim.Pencil.plist"
+2026-10-05 13:21:56.290 Df Runner[97910:11ae66] [com.apple.BoardServices:XPCErrors] [C:2] Alloc com.apple.backboard.hid-services.xpc
+2026-10-05 13:21:56.308 E  Runner[97910:11ae66] [com.apple.UIKit:UIFocus] FlutterView implements focusItemsInRect: - caching for linear focus movement is limited as long as this view is on screen.
+2026-10-05 13:21:56.322 Df Runner[97910:11ae66] (Flutter) [IMPORTANT:flutter/shell/platform/darwin/graphics/FlutterDarwinContextMetalImpeller.mm(45)] Using the Impeller rendering backend (Metal).
+2026-10-05 13:21:56.351 Df Runner[97910:11af75] (Flutter) flutter: The Dart VM service is listening on http://127.0.0.1:52290/jj37K80If1E=/
+2026-10-05 13:21:56.389 Df Runner[97910:11ae66] (Flutter) Plugin ReceiveSharingIntentPlugin uses deprecated application lifecycle events. Please contact plugin maintainers and request UIScene lifecycle support. This will be required in a fu
+2026-10-05 13:21:56.864 Df Runner[97910:11ae66] (Flutter) flutter: [STARTUP_TIMING] app_start +0ms
+2026-10-05 13:21:56.867 Df Runner[97910:11ae66] (Flutter) flutter: [FLOW] {"ts":"2026-10-05T11:21:56.867511Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"APP_BUILD_INFO","details":{"gitSha":"","gitDirty":"","buildTimestamp":""}}
+2026-10-05 13:21:56.868 Df Runner[97910:11ae66] (Flutter) flutter: [STARTUP_TIMING] share_launch_probe_begin +6ms
+2026-10-05 13:21:56.890 Df Runner[97910:11ae66] (Flutter) flutter: [STARTUP_TIMING] share_launch_probe_complete +28ms
+2026-10-05 13:21:56.891 Df Runner[97910:11ae66] (Flutter) flutter: [FLOW] {"ts":"2026-10-05T11:21:56.892036Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"MEDIA_RENDER_RESOLVER_SEEDED","details":{"seeded":true}}
+2026-10-05 13:21:56.891 Df Runner[97910:11ae66] (Flutter) flutter: [STARTUP_TIMING] documents_dir_ready +29ms
+2026-10-05 13:21:57.070 Df Runner[97910:11ae66] (Flutter) flutter: [FLOW] {"ts":"2026-10-05T11:21:57.071417Z","milestone":"M1_IDENTITY_INIT","layer":"DB","event":"ENCRYPTED_DB_OPEN_START","details":{"dbName":"identity.db"}}
+2026-10-05 13:21:57.071 Df Runner[97910:11ae66] (Flutter) flutter: [EAR] DB encryption key: LOADED (mode=raw)
+2026-10-05 13:21:57.072 Df Runner[97910:11ae66] (Flutter) flutter: [EAR] DB path: /Users/I560101/Library/Developer/CoreSimulator/Devices/6597ECAD-38EE-49AF-9A08-B1B0CA4BDD76/data/Containers/Data/Application/852FFA97-D700-4FEA-83F2-112C795CC
+2026-10-05 13:21:57.083 Df Runner[97910:11ae66] (Flutter) flutter: [FLOW] {"ts":"2026-10-05T11:21:57.083626Z","milestone":"M1_IDENTITY_INIT","layer":"DB","event":"ID_DB_IDENTITY_MIGRATION_START","details":{"table":"identity"}}
+2026-10-05 13:21:57.083 Df Runner[97910:11ae66] (Flutter) flutter: [FLOW] {"ts":"2026-10-05T11:21:57.084372Z","milestone":"M1_IDENTITY_INIT","layer":"DB","event":"ID_DB_IDENTITY_MIGRATION_SUCCESS","details":{"table":"identity"}}
+2026-10-05 13:21:57.084 Df Runner[97910:11ae66] (Flutter) flutter: [FLOW] {"ts":"2026-10-05T11:21:57.084552Z","milestone":"M1_IDENTITY_INIT","layer":"DB","event":"ID_DB_CONTACTS_MIGRATION_START","details":{"table":"contacts"}}
+2026-10-05 13:21:57.084 Df Runner[97910:11ae66] (Flutter) flutter: [FLOW] {"ts":"2026-10-05T11:21:57.084876Z","milestone":"M1_IDENTITY_INIT","layer":"DB","event":"ID_DB_CONTACTS_MIGRATION_SUCCESS","details":{"table":"contacts"}}
+2026-10-05 13:21:57.084 Df Runner[97910:11ae66] (Flutter) flutter: [FLOW] {"ts":"2026-10-05T11:21:57.084979Z","milestone":"M1_IDENTITY_INIT","layer":"DB","event":"ID_DB_CONTACT_REQUESTS_MIGRATION_START","details":{"table":"contact_requests"
+2026-10-05 13:21:57.084 Df Runner[97910:11ae66] (Flutter) flutter: [FLOW] {"ts":"2026-10-05T11:21:57.085220Z","milestone":"M1_IDENTITY_INIT","layer":"DB","event":"ID_DB_CONTACT_REQUESTS_MIGRATION_SUCCESS","details":{"table":"contact_request
+2026-10-05 13:21:57.084 Df Runner[97910:11ae66] (Flutter) flutter: [FLOW] {"ts":"2026-10-05T11:21:57.085428Z","milestone":"M1_IDENTITY_INIT","layer":"DB","event":"MESSAGES_DB_MIGRATION_START","details":{"table":"messages"}}
+2026-10-05 13:21:57.085 Df Runner[97910:11ae66] (Flutter) flutter: [FLOW] {"ts":"2026-10-05T11:21:57.085882Z","milestone":"M1_IDENTITY_INIT","layer":"DB","event":"MESSAGES_DB_MIGRATION_SUCCESS","details":{"table":"messages"}}
+2026-10-05 13:21:57.085 Df Runner[97910:11ae66] (Flutter) flutter: [FLOW] {"ts":"2026-10-05T11:21:57.086059Z","milestone":"M1_IDENTITY_INIT","layer":"DB","event":"MLKEM_DB_MIGRATION_START","details":{"migration":"003_mlkem_keys"}}
+2026-10-05 13:21:57.086 Df Runner[97910:11ae66] (Flutter) flutter: [FLOW] {"ts":"2026-10-05T11:21:57.086833Z","milestone":"M1_IDENTITY_INIT","layer":"DB","event":"MLKEM_DB_MIGRATION_SUCCESS","details":{"migration":"003_mlkem_keys"}}
+2026-10-05 13:21:57.086 Df Runner[97910:11ae66] (Flutter) flutter: [FLOW] {"ts":"2026-10-05T11:21:57.087307Z","milestone":"M1_IDENTITY_INIT","layer":"DB","event":"SECRET_NULL_CHECKS_MIGRATION_START","details":{"migration":"005_secret_null_c
+2026-10-05 13:21:57.087 Df Runner[97910:11ae66] (Flutter) flutter: [FLOW] {"ts":"2026-10-05T11:21:57.088219Z","milestone":"M1_IDENTITY_INIT","layer":"DB","event":"SECRET_NULL_CHECKS_MIGRATION_SUCCESS","details":{"migration":"005_secret_null
+2026-10-05 13:21:57.088 Df Runner[97910:11ae66] (Flutter) flutter: [FLOW] {"ts":"2026-10-05T11:21:57.088591Z","milestone":"M1_IDENTITY_INIT","layer":"DB","event":"READ_AT_MIGRATION_START","details":{"migration":"006_read_at_column"}}
+2026-10-05 13:21:57.088 Df Runner[97910:11ae66] (Flutter) flutter: [FLOW] {"ts":"2026-10-05T11:21:57.089136Z","milestone":"M1_IDENTITY_INIT","layer":"DB","event":"READ_AT_MIGRATION_SUCCESS","details":{"migration":"006_read_at_column"}}
+2026-10-05 13:21:57.088 Df Runner[97910:11ae66] (Flutter) flutter: [FLOW] {"ts":"2026-10-05T11:21:57.089507Z","milestone":"M1_IDENTITY_INIT","layer":"DB","event":"ARCHIVE_COLUMNS_MIGRATION_START","details":{"migration":"007_archive_columns"
+2026-10-05 13:21:57.089 Df Runner[97910:11ae66] (Flutter) flutter: [FLOW] {"ts":"2026-10-05T11:21:57.090011Z","milestone":"M1_IDENTITY_INIT","layer":"DB","event":"ARCHIVE_COLUMNS_MIGRATION_SUCCESS","details":{"migration":"007_archive_column
+2026-10-05 13:21:57.089 Df Runner[97910:11ae66] (Flutter) flutter: [FLOW] {"ts":"2026-10-05T11:21:57.090352Z","milestone":"M1_IDENTITY_INIT","layer":"DB","event":"BLOCK_COLUMNS_MIGRATION_START","details":{"migration":"008_block_columns"}}
+2026-10-05 13:21:57.090 Df Runner[97910:11ae66] (Flutter) flutter: [FLOW] {"ts":"2026-10-05T11:21:57.090801Z","milestone":"M1_IDENTITY_INIT","layer":"DB","event":"BLOCK_COLUMNS_MIGRATION_SUCCESS","details":{"migration":"008_block_columns"}}
+2026-10-05 13:21:57.090 Df Runner[97910:11ae66] (Flutter) flutter: [FLOW] {"ts":"2026-10-05T11:21:57.091121Z","milestone":"M1_IDENTITY_INIT","layer":"DB","event":"QUOTED_MESSAGE_ID_MIGRATION_START","details":{"migration":"009_quoted_message
+2026-10-05 13:21:57.090 Df Runner[97910:11ae66] (Flutter) flutter: [FLOW] {"ts":"2026-10-05T11:21:57.091383Z","milestone":"M1_IDENTITY_INIT","layer":"DB","event":"QUOTED_MESSAGE_ID_MIGRATION_SUCCESS","details":{"migration":"009_quoted_messa
+end 11:23:28

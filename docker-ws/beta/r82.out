@@ -1,0 +1,18 @@
+start 10:56:49
+runner rc=0 seconds=27
+{
+  "status": "PASS",
+  "flows": [
+    "production_ios_allow_notifications"
+  ],
+  "flow_sha256": "4cd564d5755baa04bb6b9746bf0fdb7b63ae5b25cec008dbe61e72853f1d5eb7",
+  "duration_seconds": 27.20386358399992,
+  "error": null,
+  "exit_status": 0
+}
+
+Waiting for flows to complete...
+[Passed] production_ios_allow_notifications (16s)
+
+1/1 Flow Passed in 16s
+

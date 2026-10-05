@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'notification_lock_transaction.dart';
 import 'dart:io';
 import 'dart:math';
 
@@ -234,7 +235,10 @@ final class LocalNotificationLedgerStore {
   Future<_LedgerLoad> _load() async {
     late final FileSystemEntityType type;
     try {
-      type = await FileSystemEntity.type(ledgerFile.path, followLinks: false);
+      type = await NotificationLockTransaction.io(
+        () => FileSystemEntity.typeSync(ledgerFile.path, followLinks: false),
+        () => FileSystemEntity.type(ledgerFile.path, followLinks: false),
+      );
     } on FileSystemException {
       return const _LedgerLoad(_LedgerLoadKind.ioFailure);
     }
@@ -246,7 +250,10 @@ final class LocalNotificationLedgerStore {
     }
     late final String encoded;
     try {
-      encoded = await ledgerFile.readAsString();
+      encoded = await NotificationLockTransaction.io(
+        ledgerFile.readAsStringSync,
+        ledgerFile.readAsString,
+      );
     } on FileSystemException {
       return const _LedgerLoad(_LedgerLoadKind.ioFailure);
     }
@@ -269,11 +276,19 @@ final class LocalNotificationLedgerStore {
   }
 
   Future<bool> _quarantineSupportedV1() async {
-    if (!await ledgerFile.exists()) return true;
+    if (!await NotificationLockTransaction.io(
+      ledgerFile.existsSync,
+      ledgerFile.exists,
+    )) {
+      return true;
+    }
     final suffix = _randomSuffix();
     final quarantine = File('${ledgerFile.path}.corrupt-$suffix');
     try {
-      await ledgerFile.rename(quarantine.path);
+      await NotificationLockTransaction.io(
+        () => ledgerFile.renameSync(quarantine.path),
+        () => ledgerFile.rename(quarantine.path),
+      );
       BoundedPosixFlock.syncDirectory(directory);
       return true;
     } on FileSystemException {
@@ -284,10 +299,13 @@ final class LocalNotificationLedgerStore {
   Future<bool> _publish(LocalNotificationLedgerEnvelopeV1 envelope) async {
     if (!envelope.isValid) return false;
     try {
-      await directory.create(recursive: true);
-      final targetType = await FileSystemEntity.type(
-        ledgerFile.path,
-        followLinks: false,
+      await NotificationLockTransaction.io(() {
+        directory.createSync(recursive: true);
+        return directory;
+      }, () => directory.create(recursive: true));
+      final targetType = await NotificationLockTransaction.io(
+        () => FileSystemEntity.typeSync(ledgerFile.path, followLinks: false),
+        () => FileSystemEntity.type(ledgerFile.path, followLinks: false),
       );
       if (targetType != FileSystemEntityType.notFound &&
           targetType != FileSystemEntityType.file) {
@@ -297,18 +315,35 @@ final class LocalNotificationLedgerStore {
         '${directory.path}${Platform.pathSeparator}.$fileName-${_randomSuffix()}.tmp',
       );
       try {
-        await temporary.writeAsString(
-          LocalNotificationLedgerCodecV1.encode(envelope),
-          flush: true,
+        await NotificationLockTransaction.io(
+          () => temporary.writeAsStringSync(
+            LocalNotificationLedgerCodecV1.encode(envelope),
+            flush: true,
+          ),
+          () => temporary.writeAsString(
+            LocalNotificationLedgerCodecV1.encode(envelope),
+            flush: true,
+          ),
         );
         await _beforeRename?.call(temporary, ledgerFile);
-        await temporary.rename(ledgerFile.path);
+        await NotificationLockTransaction.io(
+          () => temporary.renameSync(ledgerFile.path),
+          () => temporary.rename(ledgerFile.path),
+        );
         await _afterRenameBeforeDirectorySync?.call(ledgerFile);
         BoundedPosixFlock.syncDirectory(directory);
         return true;
       } finally {
         try {
-          if (await temporary.exists()) await temporary.delete();
+          if (await NotificationLockTransaction.io(
+            temporary.existsSync,
+            temporary.exists,
+          )) {
+            await NotificationLockTransaction.io(
+              temporary.deleteSync,
+              temporary.delete,
+            );
+          }
         } on FileSystemException {
           // Hidden complete temp files grant no authority and are ignored.
         }

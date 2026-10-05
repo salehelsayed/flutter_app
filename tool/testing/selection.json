@@ -1158,10 +1158,11 @@
         "test/core/notifications/app_visibility_authority_test.dart",
         "test/core/notifications/app_visibility_snapshot_test.dart",
         "test/core/notifications/app_visibility_snapshot_wiring_test.dart",
-        "test/core/notifications/app_visibility_route_binding_test.dart"
+        "test/core/notifications/app_visibility_route_binding_test.dart",
+        "test/core/notifications/notification_lock_external_work_test.dart"
       ],
-      "boundary": "Notification lock observation, iOS background lease admission/release, persisted direct outbox retry after denied admission, and unavailable visibility reads clearing cached suppression",
-      "limitations": "Host POSIX ownership and controlled method-channel tests. Native lease, visibility admission and badge lock behavior require existing RunnerTests/GoBridgeCriticalTaskTests, run_app_visibility_native_371.sh and run_ios_nse_native_373.sh separately. Physical background scope evidence is separate; admitted I/O may outlive expiration and unidentified suspension locks remain unresolved.",
+      "boundary": "Notification lock observation, refusal/expiration, external callback release/reacquisition, exact operation/claim/generation fencing, persisted retry, and unavailable visibility clearing suppression",
+      "limitations": "Host POSIX and controlled channel tests. Native process fencing runs in notification-async-owner-native. Native lease/visibility/badge suites retain their existing owners. The isolated iPhone 11 Appium fixture proves only its signed private container; the unchanged full Maestro YAML passes with maestro-runner 1.1.28 over Appium; stock Maestro remains unsupported on physical iOS; App Group/NSE and signed-release evidence remain separate. Already-entered synchronous I/O and unidentified suspension locks remain residual limits.",
       "timeout_seconds": 900,
       "estimated_seconds": null,
       "requirements": [
@@ -1174,7 +1175,12 @@
         "ios/Runner/IosAppVisibilityCoordinator.swift",
         "ios/NotificationService/IosAppVisibilitySnapshot.swift",
         "ios/Runner/GoBridge.swift",
-        "lib/core/notifications/app_visibility_authority.dart"
+        "lib/core/notifications/app_visibility_authority.dart",
+        "lib/core/notifications/notification_lock_transaction.dart",
+        "lib/core/notifications/durable_conversation_notification_id_registry.dart",
+        "lib/core/notifications/durable_local_notification_effect_coordinator.dart",
+        "lib/core/notifications/local_notification_ledger_store.dart",
+        "lib/core/notifications/durable_notification_tone_lease.dart"
       ],
       "inspected": true
     },
@@ -4557,6 +4563,56 @@
         "integration_test/maestro/production_catalog_remove_charlie.yaml"
       ],
       "host_preflight": "production-group-removed-reaction"
+    },
+    "notification-async-owner-native": {
+      "kind": "command",
+      "command": [
+        "python3",
+        "scripts/test/run_notification_async_owner_native.py"
+      ],
+      "success_marker": "PASS: missing/live/completed/malformed/symlink/foreign/suspended/dead/PID-birth owner fencing",
+      "boundary": "Shared Runner/NSE owner guard with actual host processes, suspension, death, process birth and malformed marker refusal",
+      "limitations": "macOS kernel/process and source-linked guard only; cannot attest iOS sandbox/App Group/NSE or APNs. Physical fixture uses copied production sources with a hash receipt and two native plugins.",
+      "requirements": [
+        "python3",
+        "xcrun"
+      ],
+      "timeout_seconds": 90,
+      "references": [
+        "ios/NotificationService/IosAppVisibilitySnapshot.swift",
+        "scripts/test/notification_async_owner_native_test.swift",
+        "integration_test/notification_lock_fixture.dart",
+        "integration_test/support/notification_lock_fixture_native.swift",
+        "scripts/test/prepare_notification_lock_fixture.py",
+        "integration_test/maestro/notification_lock_fixture.yaml",
+        "integration_test/support/notification_lock_fixture_service.swift"
+      ],
+      "ui_driver": "maestro",
+      "maestro_flows": [
+        "integration_test/maestro/notification_lock_fixture.yaml"
+      ],
+      "ui_driver_reason": "Appium MCP and Maestro own fixture UI, lifecycle and assertions. They cannot inspect an fd flock, query the production native admission registry, or pause/complete an awaited canonical/native callback. The private-container adapter is limited to those gaps and uses the production owners; host native tests separately establish real foreign-process fencing. Stock Maestro lacks physical iOS support; the retained full YAML is executed unchanged with maintained maestro-runner 1.1.28 over Appium 3.7.0, pinned to iPhone 11. This is an existing UI driver, not another custom UI harness. The shared-boundary variant prepares an isolated App Group/NSE observer using the same production guard. Separately authorized signed Release/AOT fixture evidence on iPhone 11 now includes actual development-APNs NSE receipts for unowned, suspended-live, dead-before-restart and settled-live owners, plus Appium recovery/replay assertions. Observer evidence exports use the App Group Documents namespace required by CoreDevice. The host command does not execute that physical proof or the full production encrypted-payload/Go/NSE pipeline."
+    },
+    "reliability-discovery-contract": {
+      "kind": "command",
+      "command": [
+        "bash",
+        "scripts/test/reliability_simulation_discovery_contract_test.sh"
+      ],
+      "success_marker": "PASS: reliability simulation discovery disposition contract",
+      "boundary": "Exact reliability discovery dispositions, command expansion and fixed capability-array indices; preserves the original Plan 379/393 IDs while permitting later append-only capabilities",
+      "limitations": "Metadata/oracle and existing CLI discovery only; does not execute mobile scenarios or attest device results",
+      "requirements": [
+        "bash",
+        "flutter",
+        "jq"
+      ],
+      "timeout_seconds": 900,
+      "references": [
+        "scripts/check_reliability_simulation_discovery.sh",
+        "scripts/test/reliability_simulation_discovery_contract_test.sh",
+        "tool/sims/critical_features.json"
+      ]
     }
   },
   "areas": [
@@ -5192,12 +5248,26 @@
         "lib/core/notifications/app_visibility_authority.dart",
         "test/core/notifications/app_visibility_authority_test.dart",
         "scripts/test/run_app_visibility_native_371.sh",
-        "scripts/test/run_ios_nse_native_373.sh"
+        "scripts/test/run_ios_nse_native_373.sh",
+        "lib/core/notifications/notification_lock_transaction.dart",
+        "lib/core/notifications/durable_conversation_notification_id_registry.dart",
+        "lib/core/notifications/durable_local_notification_effect_coordinator.dart",
+        "lib/core/notifications/local_notification_ledger_store.dart",
+        "lib/core/notifications/durable_notification_tone_lease.dart",
+        "test/core/notifications/notification_lock_external_work_test.dart",
+        "scripts/test/notification_async_owner_native_test.swift",
+        "scripts/test/run_notification_async_owner_native.py",
+        "scripts/test/prepare_notification_lock_fixture.py",
+        "integration_test/notification_lock_fixture.dart",
+        "integration_test/support/notification_lock_fixture_native.swift",
+        "integration_test/maestro/notification_lock_fixture.yaml",
+        "integration_test/support/notification_lock_fixture_service.swift"
       ],
       "checks": [
         "notification-lock-diagnostics",
         "diagnostics",
-        "affected-push"
+        "affected-push",
+        "notification-async-owner-native"
       ],
       "why": "Lock admission and observation must preserve ownership, unlock-before-completion ordering, fail-notify visibility and notification consumers; native scripts retain actual file-lock regressions separately from host channel tests"
     },
@@ -5551,7 +5621,9 @@
         "test/features/identity/presentation/screens/startup_router_recovery_test.dart",
         "test/features/call/presentation/foreground_call_overlay_test.dart",
         "android/app/src/main/kotlin/com/mknoon/app/AndroidCallWakeBridge.kt",
-        "android/app/src/test/kotlin/com/mknoon/app/AndroidCallWakeBridgeTest.kt"
+        "android/app/src/test/kotlin/com/mknoon/app/AndroidCallWakeBridgeTest.kt",
+        "android/app/src/main/kotlin/com/mknoon/app/HeadlessCanonicalRecoveryWorker.kt",
+        "android/app/src/test/kotlin/com/mknoon/app/HeadlessCanonicalRecoveryWorkerTest.kt"
       ],
       "checks": [
         "android-call-native",
@@ -6071,6 +6143,17 @@
         "production-audio-harness-contract"
       ],
       "why": "Shared prepared XCTest consumers must reject incompatible source/configuration/artifact identities, incomplete exact method receipts and fixture reuse; original fresh-build routes remain retained."
+    },
+    {
+      "id": "reliability-discovery-contract",
+      "patterns": [
+        "scripts/test/reliability_simulation_discovery_contract_test.sh"
+      ],
+      "checks": [
+        "reliability-discovery-contract",
+        "workflow"
+      ],
+      "why": "The existing discovery contract pins capability-array indices consumed by runtime roots; run its exact original assertions and workflow consumers when that oracle changes. No runtime scenario or mandatory release check is removed."
     }
   ],
   "documentation_only": [

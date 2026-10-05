@@ -1,0 +1,8 @@
+== changed:        2 dart files
+== format
+Formatted 2 files (0 changed) in 0.14 seconds.
+== analyze
+Analyzing drain_group_offline_inbox_use_case.dart, drain_group_offline_inbox_use_case_test.dart...
+No issues found!
+== dart tests
+00:19 +335: All tests passed!

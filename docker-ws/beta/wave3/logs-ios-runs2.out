@@ -1,0 +1,26 @@
+not quiet 10:42
+not quiet 10:44
+quiet 10:46
+12:46  up  4:09, 29 users, load averages: 11.20 15.82 14.85
+== run nw006,ml020,nw003,nw010  (log /workspace/docker-ws/beta/wave3/logs/nw006+ml020+nw003+nw010-run-10051046.log)
+FAIL production-group-ml020
+Wall time: 545.219s (includes selection, discovery and setup)
+Report: /Volumes/CrucialX9/flutter_app/.claude/worktrees/wave3-next/.codex-test-logs/production-bootstrap-migration-20260930/wave3-run-20261005T104630Z/summary.txt
+-- private_peer_disconnect_not_removal: 
+
+
+-- private_admin_role_transfer_delivery: build/sims/proofs/production.group_catalog.private_admin_role_transfer_delivery/attempt-H4Ht2Y
+Bad state: alice-ios-permissions Maestro flow failed
+#0      ProductionJourneyFlowRunner.run (file:///Volumes/CrucialX9/flutter_app/.claude/worktrees/wave3-next/integration_test/support/production_android_journey.dart:98:25)
+<asynchronous suspension>
+#1      ProductionIosSimulatorJourney.flow (file:///Volumes/CrucialX9/flutter_app/.claude/worktrees/wave3-next/integration_test/support/production_ios_simulator_journey.dart:296:21)
+<asynchronous suspension>
+#2      ProductionIosSimulatorJourney.pre
+
+-- private_partition_readd_heal: 
+
+
+-- private_background_resume_group_delivery: 
+
+
+QUEUE-DONE

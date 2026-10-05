@@ -16,7 +16,8 @@ export MAESTRO_CLI_NO_ANALYTICS=1
 export PATH="$HOME/.maestro/bin:$ANDROID_HOME/platform-tools:/opt/homebrew/bin:$PATH"
 
 CHECKS="${1:-production-group-invites,production-group-create,production-group-reaction,production-group-reaction-toggle,production-group-removed-reaction}"
-DEVICE_CONFIG="$REPO/.codex-test-logs/production-bootstrap-migration-20260930/wave3-device-config.json"
+# Optional second argument: another device config (the four-device set pins android_emulator_third).
+DEVICE_CONFIG="${2:-$REPO/.codex-test-logs/production-bootstrap-migration-20260930/wave3-device-config.json}"
 OUT="$REPO/.codex-test-logs/production-bootstrap-migration-20260930/wave3-run-$(date -u +%Y%m%dT%H%M%SZ)"
 # Compare against main (the pre-baseline commit), as Wave 1/2 did: --only may
 # pick only checks that the changes since --base select.

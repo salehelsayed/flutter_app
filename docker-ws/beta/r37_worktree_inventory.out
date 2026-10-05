@@ -1,0 +1,293 @@
+main=06d5ab570 current=wave3-baseline-20260930@da1308717
+=== /Users/I560101/production-bootstrap-migration-candidate
+head=cbb13e8f5 branch=detached date=2026-09-26 subj=fix: all-tests run y227gs8x repairs (harnesses, recovery drain, stale 
+in_main=yes
+dirty_tracked=158 untracked=464 same_as_main_checkout=581 different=40
+newest_dirty=2026-09-27 19:31 ios/Podfile.lock
+top_dirs:  432 docker-ws;  52 integration_test;  39 test;  36 scripts;  22 lib;  10 tool;
+procs_mentioning=0 du=6.8G
+=== /Users/I560101/production-bootstrap-migration-catalog
+head=cbb13e8f5 branch=detached date=2026-09-26 subj=fix: all-tests run y227gs8x repairs (harnesses, recovery drain, stale 
+in_main=yes
+dirty_tracked=221 untracked=554 same_as_main_checkout=704 different=70
+newest_dirty=2026-09-28 04:37 lib/l10n/app_localizations.dart
+top_dirs:  433 docker-ws;  84 integration_test;  78 test;  70 lib;  38 scripts;  23 android;
+procs_mentioning=0 du=7.0G
+=== /Users/I560101/production-bootstrap-migration-catalog-next
+head=cbb13e8f5 branch=detached date=2026-09-26 subj=fix: all-tests run y227gs8x repairs (harnesses, recovery drain, stale 
+in_main=yes
+dirty_tracked=224 untracked=576 same_as_main_checkout=732 different=67
+newest_dirty=2026-09-28 04:39 tool/sims/executor.dart
+top_dirs:  433 docker-ws;  90 integration_test;  88 test;  76 lib;  38 scripts;  23 android;
+procs_mentioning=0 du=548M
+=== /Users/I560101/production-bootstrap-migration-closure
+head=cbb13e8f5 branch=detached date=2026-09-26 subj=fix: all-tests run y227gs8x repairs (harnesses, recovery drain, stale 
+in_main=yes
+dirty_tracked=164 untracked=523 same_as_main_checkout=616 different=70
+newest_dirty=2026-09-28 00:16 integration_test/support/production_android_journey.dart
+top_dirs:  432 docker-ws;  79 integration_test;  55 test;  38 scripts;  36 lib;  17 tool;
+procs_mentioning=0 du=3.3G
+=== /Users/I560101/production-bootstrap-migration-continuation
+head=cbb13e8f5 branch=detached date=2026-09-26 subj=fix: all-tests run y227gs8x repairs (harnesses, recovery drain, stale 
+in_main=yes
+dirty_tracked=164 untracked=506 same_as_main_checkout=604 different=65
+newest_dirty=2026-09-27 22:17 integration_test/scripts/run_production_private_media_local.dart
+top_dirs:  432 docker-ws;  73 integration_test;  49 test;  38 scripts;  33 lib;  15 tool;
+procs_mentioning=0 du=3.7G
+=== /Users/I560101/production-bootstrap-migration-groups
+head=cbb13e8f5 branch=detached date=2026-09-26 subj=fix: all-tests run y227gs8x repairs (harnesses, recovery drain, stale 
+in_main=yes
+dirty_tracked=164 untracked=515 same_as_main_checkout=614 different=64
+newest_dirty=2026-09-27 23:26 docs/testing/TESTING.md
+top_dirs:  432 docker-ws;  78 integration_test;  51 test;  38 scripts;  34 lib;  16 tool;
+procs_mentioning=0 du=3.4G
+=== /Users/I560101/production-bootstrap-migration-next
+head=cbb13e8f5 branch=detached date=2026-09-26 subj=fix: all-tests run y227gs8x repairs (harnesses, recovery drain, stale 
+in_main=yes
+dirty_tracked=162 untracked=495 same_as_main_checkout=599 different=57
+newest_dirty=2026-09-27 21:21 test/integration/production_routing_criteria_test.dart
+top_dirs:  432 docker-ws;  67 integration_test;  46 test;  38 scripts;  30 lib;  14 tool;
+procs_mentioning=0 du=3.4G
+=== /Users/I560101/production-bootstrap-migration-performance
+head=cbb13e8f5 branch=detached date=2026-09-26 subj=fix: all-tests run y227gs8x repairs (harnesses, recovery drain, stale 
+in_main=yes
+dirty_tracked=164 untracked=523 same_as_main_checkout=616 different=70
+newest_dirty=2026-09-28 00:01 docs/testing/TESTING.md
+top_dirs:  432 docker-ws;  79 integration_test;  55 test;  38 scripts;  36 lib;  17 tool;
+procs_mentioning=0 du=3.7G
+=== /Users/I560101/production-bootstrap-migration-reconciled
+head=cbb13e8f5 branch=detached date=2026-09-26 subj=fix: all-tests run y227gs8x repairs (harnesses, recovery drain, stale 
+in_main=yes
+dirty_tracked=223 untracked=568 same_as_main_checkout=722 different=68
+newest_dirty=2026-09-28 04:22 test/unit/dtr18_layering_relocation_contract_test.dart
+top_dirs:  433 docker-ws;  87 integration_test;  85 test;  74 lib;  38 scripts;  23 android;
+procs_mentioning=0 du=3.9G
+=== /Users/I560101/production-bootstrap-migration-remaining
+head=cbb13e8f5 branch=detached date=2026-09-26 subj=fix: all-tests run y227gs8x repairs (harnesses, recovery drain, stale 
+in_main=yes
+dirty_tracked=164 untracked=504 same_as_main_checkout=601 different=66
+newest_dirty=2026-09-27 21:54 docs/testing/TESTING.md
+top_dirs:  432 docker-ws;  72 integration_test;  48 test;  38 scripts;  33 lib;  15 tool;
+procs_mentioning=0 du=3.4G
+=== /Users/I560101/production-bootstrap-migration-waves
+head=cbb13e8f5 branch=detached date=2026-09-26 subj=fix: all-tests run y227gs8x repairs (harnesses, recovery drain, stale 
+in_main=yes
+dirty_tracked=160 untracked=477 same_as_main_checkout=590 different=46
+newest_dirty=2026-09-27 19:42 docs/testing/production-bootstrap-migration-crosswalk.md
+top_dirs:  432 docker-ws;  59 integration_test;  43 test;  36 scripts;  25 lib;  12 tool;
+procs_mentioning=0 du=5.2G
+=== /Volumes/CrucialX9/.mknoon-all-tests-y227gs8x-tmp/mknoon_256_head_eWfG0U
+head=237e88dd5 branch=detached date=2026-09-21 subj=Checkpoint application, diagnostics, and full regression updates
+in_main=yes
+dirty_tracked=0 untracked=0 same_as_main_checkout=0 different=0
+
+procs_mentioning=0 du=2.3G
+=== /Volumes/CrucialX9/.mknoon-all-tests-y227gs8x-worktree
+head=237e88dd5 branch=detached date=2026-09-21 subj=Checkpoint application, diagnostics, and full regression updates
+in_main=yes
+dirty_tracked=167 untracked=21 same_as_main_checkout=156 different=32
+newest_dirty=2026-09-27 15:15 project-memory/src/recall.py
+top_dirs:   59 integration_test;  37 test;  33 scripts;  13 lib;   8 docker-ws;   7 tool;
+procs_mentioning=0 du=104G
+=== /Volumes/CrucialX9/flutter_app-r2-phone-proof-20261001
+head=c8b18e5ac branch=detached date=2026-10-01 subj=feat(sims): shared catalog session tooling and catalog gm004
+in_main=no ahead_of_main=12 unique_vs_main=12
+in_current_branch=yes
+dirty_tracked=65 untracked=2 same_as_main_checkout=59 different=8
+newest_dirty=2026-10-01 14:29 info.plist
+top_dirs:   30 lib;  21 test;   8 android;   2 go-mknoon;   1 UI-19-Groups;   1 tool;
+procs_mentioning=0 du=6.3G
+=== /Volumes/CrucialX9/flutter_app-wave2-candidate-20260928
+head=06d5ab570 branch=detached date=2026-09-28 subj=Fix group dissolution and removal audit verification
+in_main=yes
+dirty_tracked=194 untracked=323 same_as_main_checkout=485 different=32
+newest_dirty=2026-09-29 00:13 ios/Podfile
+top_dirs:  184 docker-ws;  94 integration_test;  86 test;  56 lib;  40 scripts;  23 tool;
+procs_mentioning=0 du=7.1G
+=== /Volumes/CrucialX9/flutter_app/.codex-test-logs/all-tests-20260920/host-source
+head=88e35785f branch=detached date=2026-09-19 subj=docs: record current-source audio call thermal findings
+in_main=yes
+dirty_tracked=73 untracked=9 same_as_main_checkout=52 different=30
+newest_dirty=2026-09-20 18:54 lib/l10n/app_localizations.dart
+top_dirs:   33 lib;  26 test;  16 go-relay-server;   2 scripts;   2 docker-ws;   1 tool;
+procs_mentioning=0 du=482M
+=== /Volumes/CrucialX9/flutter_app/.codex-test-logs/beta-label-fixes-20260924
+head=8a7b8cc54 branch=fix/beta-call-labels-20260924 date=2026-09-26 subj=fix: address the review of the off-main restart restore (B8)
+in_main=yes
+dirty_tracked=0 untracked=109 same_as_main_checkout=0 different=109
+newest_dirty=2026-09-26 00:19 .beta_fix/r4_final.status
+top_dirs:  109 .beta_fix;
+procs_mentioning=0 du=1.1G
+=== /Volumes/CrucialX9/flutter_app/.codex-test-logs/ci-enforcement-20260913-15_yatv1/publish-worktree
+head=17679c660 branch=codex/ci-regression-check date=2026-09-13 subj=docs: record actual CI refusal of skipped regression execution
+in_main=no ahead_of_main=2 unique_vs_main=2
+dirty_tracked=0 untracked=0 same_as_main_checkout=0 different=0
+
+procs_mentioning=0 du=391M
+=== /Volumes/CrucialX9/flutter_app/.codex-test-logs/failure-fixes-20260920/analyzer-source
+head=88e35785f branch=detached date=2026-09-19 subj=docs: record current-source audio call thermal findings
+in_main=yes
+dirty_tracked=7799 untracked=7795 same_as_main_checkout=14904 different=662
+newest_dirty=2026-09-21 00:48 docs/testing/TESTING.md
+top_dirs: 4742 Test-Flight-Improv;3295 test;2673 lib; 728 go-mknoon; 568 artifacts; 556 integration_test;
+procs_mentioning=0 du=311M
+=== /Volumes/CrucialX9/flutter_app/.codex-test-logs/production-bootstrap-migration-20260927/candidate
+head=cbb13e8f5 branch=detached date=2026-09-26 subj=fix: all-tests run y227gs8x repairs (harnesses, recovery drain, stale 
+in_main=yes
+dirty_tracked=157 untracked=462 same_as_main_checkout=578 different=40
+newest_dirty=2026-09-27 17:38 lib/features/orbit/presentation/widgets/orbit_view_toggle_button.dart
+top_dirs:  432 docker-ws;  52 integration_test;  38 test;  36 scripts;  21 lib;  10 tool;
+procs_mentioning=0 du=3.3G
+=== /Volumes/CrucialX9/mknoon-audio-host144-20260917
+head=ece276853 branch=detached date=2026-09-15 subj=Merge branch codex/preserve-shared-libp2p-connections
+in_main=yes
+dirty_tracked=109 untracked=40 same_as_main_checkout=79 different=70
+newest_dirty=2026-09-18 03:42 lib/l10n/app_localizations.dart
+top_dirs:   44 android;  42 lib;  36 test;  10 go-mknoon;   4 integration_test;   3 scripts;
+procs_mentioning=0 du=2.8G
+=== /Volumes/CrucialX9/mknoon-sims-android148-20260918
+head=ece276853 branch=detached date=2026-09-15 subj=Merge branch codex/preserve-shared-libp2p-connections
+in_main=yes
+dirty_tracked=159 untracked=60 same_as_main_checkout=118 different=101
+newest_dirty=2026-09-19 12:30 tool/testing/selection.json
+top_dirs:   63 test;  63 lib;  52 android;  11 integration_test;  10 go-mknoon;   7 scripts;
+procs_mentioning=0 du=9.3G
+=== /Volumes/CrucialX9/mknoon-synthetic30
+head=88e35785f branch=detached date=2026-09-19 subj=docs: record current-source audio call thermal findings
+in_main=yes
+dirty_tracked=22 untracked=3 same_as_main_checkout=13 different=12
+newest_dirty=2026-09-19 20:06 docs/testing/TESTING.md
+top_dirs:   11 lib;  10 test;   2 scripts;   1 tool;   1 docs;
+procs_mentioning=0 du=2.7G
+=== /Volumes/CrucialX9/mknoon-test-runner-z2tuurrn/review-fix-worktree
+head=88e35785f branch=detached date=2026-09-19 subj=docs: record current-source audio call thermal findings
+in_main=yes
+dirty_tracked=135 untracked=13 same_as_main_checkout=97 different=49
+newest_dirty=2026-09-21 02:01 scripts/testing_inventory.py
+top_dirs:   62 lib;  42 test;  16 scripts;  16 go-relay-server;   5 tool;   2 docker-ws;
+procs_mentioning=0 du=357M
+=== /Volumes/CrucialX9/mknoon-test-runner-z2tuurrn/worktree
+head=88e35785f branch=detached date=2026-09-19 subj=docs: record current-source audio call thermal findings
+in_main=yes
+dirty_tracked=152 untracked=25 same_as_main_checkout=109 different=66
+newest_dirty=2026-09-21 04:45 tool/testing/legacy_target_contracts.json
+top_dirs:   62 lib;  46 test;  29 scripts;  16 go-relay-server;  11 integration_test;   7 tool;
+procs_mentioning=0 du=918M
+=== /Volumes/CrucialX9/mknoon-ui25-050608
+head=88e35785f branch=detached date=2026-09-19 subj=docs: record current-source audio call thermal findings
+in_main=yes
+dirty_tracked=57 untracked=3 same_as_main_checkout=30 different=30
+newest_dirty=2026-09-20 05:03 test/features/settings/presentation/widgets/ui25_settings_readability_test.dart
+top_dirs:   31 lib;  24 test;   2 scripts;   1 tool;   1 integration_test;   1 docs;
+procs_mentioning=0 du=940M
+=== /Volumes/CrucialX9/mknoon-ui25-050608-native
+head=88e35785f branch=detached date=2026-09-19 subj=docs: record current-source audio call thermal findings
+in_main=yes
+dirty_tracked=57 untracked=8 same_as_main_checkout=30 different=35
+newest_dirty=2026-09-20 05:32 test/ui25_050608_fixture_test.dart
+top_dirs:   31 lib;  25 test;   4 scripts;   3 integration_test;   1 tool;   1 docs;
+procs_mentioning=0 du=2.6G
+=== /Volumes/CrucialX9/mknoon-ui25-taps-high
+head=88e35785f branch=detached date=2026-09-19 subj=docs: record current-source audio call thermal findings
+in_main=yes
+dirty_tracked=19 untracked=0 same_as_main_checkout=13 different=6
+newest_dirty=2026-09-19 17:57 docs/testing/TESTING.md
+top_dirs:    9 test;   8 lib;   1 tool;   1 docs;
+procs_mentioning=0 du=4.2G
+=== /Volumes/CrucialX9/mknoon-ui25-taps-native
+head=88e35785f branch=detached date=2026-09-19 subj=docs: record current-source audio call thermal findings
+in_main=yes
+dirty_tracked=22 untracked=3 same_as_main_checkout=7 different=18
+newest_dirty=2026-09-20 02:53 lib/l10n/app_localizations.dart
+top_dirs:   23 lib;   2 integration_test;
+procs_mentioning=0 du= 14G
+=== /Volumes/CrucialX9/mknoon-worktrees/diagnostic-reader-null-20260920
+head=975f489e1 branch=detached date=2026-09-20 subj=chore: snapshot inherited testing guidance for isolated diagnostic fix
+in_main=no ahead_of_main=1 unique_vs_main=1
+dirty_tracked=3 untracked=0 same_as_main_checkout=2 different=1
+newest_dirty=2026-09-20 09:42 docs/testing/TESTING.md
+top_dirs:    2 docker-ws;   1 docs;
+procs_mentioning=0 du=457M
+=== /Volumes/CrucialX9/mknoon-worktrees/ingestion-apns-lifetime-20260920
+head=88e35785f branch=fix/diagnostics-apns-lifetime-20260920 date=2026-09-19 subj=docs: record current-source audio call thermal findings
+in_main=yes
+dirty_tracked=10 untracked=6 same_as_main_checkout=16 different=0
+newest_dirty=2026-09-20 16:18 go-relay-server/composition_apns_lifetime_probe_test.go
+top_dirs:   16 go-relay-server;
+procs_mentioning=0 du=310M
+=== /Volumes/CrucialX9/mknoon-worktrees/ingestion-client-correction-20260920
+head=88e35785f branch=detached date=2026-09-19 subj=docs: record current-source audio call thermal findings
+in_main=yes
+dirty_tracked=4 untracked=0 same_as_main_checkout=4 different=0
+newest_dirty=2026-09-20 11:31 lib/features/call/diagnostics/call_diagnostics.dart
+top_dirs:    2 test;   2 lib;
+procs_mentioning=0 du=489M
+=== /Volumes/CrucialX9/mknoon-worktrees/ingestion-client-fix-20260920
+head=88e35785f branch=detached date=2026-09-19 subj=docs: record current-source audio call thermal findings
+in_main=yes
+dirty_tracked=4 untracked=0 same_as_main_checkout=0 different=4
+newest_dirty=2026-09-20 11:08 test/features/call/diagnostics/call_diagnostics_test.dart
+top_dirs:    2 test;   2 lib;
+procs_mentioning=0 du=481M
+=== /Volumes/CrucialX9/mknoon-worktrees/ingestion-diagnosis-20260920
+head=74ecbafee branch=detached date=2026-09-14 subj=Merge pull request #3 from salehelsayed/codex/dual-stack-release-valid
+in_main=yes
+dirty_tracked=0 untracked=2 same_as_main_checkout=0 different=2
+newest_dirty=2026-09-20 10:23 go-relay-server/parent_ingestion_diagnosis_test.go
+top_dirs:    2 go-relay-server;
+procs_mentioning=0 du=429M
+=== /Volumes/CrucialX9/mknoon-worktrees/ingestion-main-integration-20260920
+head=88e35785f branch=detached date=2026-09-19 subj=docs: record current-source audio call thermal findings
+in_main=yes
+dirty_tracked=9 untracked=2 same_as_main_checkout=8 different=3
+newest_dirty=2026-09-20 12:39 go-relay-server/apns_voip_receipts.go
+top_dirs:   11 go-relay-server;
+procs_mentioning=0 du=356M
+=== /Volumes/CrucialX9/mknoon-worktrees/ingestion-server-correction-20260920
+head=74ecbafee branch=detached date=2026-09-14 subj=Merge pull request #3 from salehelsayed/codex/dual-stack-release-valid
+in_main=yes
+dirty_tracked=7 untracked=2 same_as_main_checkout=6 different=3
+newest_dirty=2026-09-20 11:59 go-relay-server/diagnostics_ingestion_hotfix_test.go
+top_dirs:    9 go-relay-server;
+procs_mentioning=0 du=352M
+=== /Volumes/CrucialX9/mknoon-worktrees/ingestion-server-fix-20260920
+head=74ecbafee branch=detached date=2026-09-14 subj=Merge pull request #3 from salehelsayed/codex/dual-stack-release-valid
+in_main=yes
+dirty_tracked=7 untracked=2 same_as_main_checkout=4 different=5
+newest_dirty=2026-09-20 11:22 go-relay-server/diagnostics_ingestion_hotfix_test.go
+top_dirs:    9 go-relay-server;
+procs_mentioning=0 du=309M
+=== /Volumes/CrucialX9/mknoon-worktrees/ingestion-server-publication-20260920
+head=74ecbafee branch=detached date=2026-09-14 subj=Merge pull request #3 from salehelsayed/codex/dual-stack-release-valid
+in_main=yes
+dirty_tracked=8 untracked=4 same_as_main_checkout=10 different=2
+newest_dirty=2026-09-20 15:37 go-relay-server/call_diagnostics_store.go
+top_dirs:   12 go-relay-server;
+procs_mentioning=0 du=308M
+=== /Volumes/CrucialX9/mknoon-worktrees/ingestion-server-queue-fence-20260920
+head=74ecbafee branch=detached date=2026-09-14 subj=Merge pull request #3 from salehelsayed/codex/dual-stack-release-valid
+in_main=yes
+dirty_tracked=8 untracked=3 same_as_main_checkout=8 different=3
+newest_dirty=2026-09-20 12:50 go-relay-server/call_diagnostics_store.go
+top_dirs:   11 go-relay-server;
+procs_mentioning=0 du=352M
+=== /Volumes/CrucialX9/turn-policy-verification-e7e11bab
+head=e7e11bab2 branch=detached date=2026-09-11 subj=fix(calls): remove lifetime event delivery quotas
+in_main=yes
+dirty_tracked=24 untracked=1 same_as_main_checkout=4 different=21
+newest_dirty=2026-09-11 22:04 docs/testing/TESTING.md
+top_dirs:    9 test;   7 lib;   4 go-mknoon;   2 integration_test;   1 tool;   1 docs;
+procs_mentioning=0 du=3.0G
+=== branches
+codex/ci-regression-check 17679c660 2026-09-13 ahead=2 unique=2
+codex/dual-stack-release-validation cfc4ad96b 2026-09-14 merged
+codex/preserve-shared-libp2p-connections 359f6fca7 2026-09-15 merged
+codex/relay-deployment-receipt 5c5c6d2dd 2026-09-14 merged
+codex/turn-network-and-call-diagnostics 80a49a84d 2026-09-14 merged
+feat/ipv6-happy-eyeballs ad3529a04 2026-09-13 merged
+fix/beta-call-labels-20260924 8a7b8cc54 2026-09-26 merged
+fix/diagnostics-apns-lifetime-20260920 88e35785f 2026-09-19 merged
+fix/r2-open-issues-20261001 c8b18e5ac 2026-10-01 ahead=12 unique=12
+main 06d5ab570 2026-09-28 merged
+wave3-baseline-20260930 da1308717 2026-10-01 ahead=14 unique=14
+INVENTORY DONE

@@ -1,0 +1,9 @@
+start 10:56:02 device 6597ECAD-38EE-49AF-9A08-B1B0CA4BDD76
+--- xctest/driver processes before:
+  777 04:17:12 /Applications/Xcode.app/Contents/Applications/DeviceHub.app/Contents/MacOS/DeviceHub
+--- listeners 22087-22100:
+Running on iPhone Air - iOS 26.5 - 6597ECAD-38EE-49AF-9A08-B1B0CA4BDD76
+ > Flow hello_ios
+Launch app "com.apple.Preferences"... COMPLETED
+Assert that "Settings" is visible... COMPLETED
+maestro rc=0 seconds=21
