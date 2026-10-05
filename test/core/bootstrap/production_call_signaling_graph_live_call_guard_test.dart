@@ -512,6 +512,61 @@ void main() {
     },
   );
 
+  // Beta report: after a call, every later call failed until the app was
+  // restarted. One relay outage both fails the advertisement (which withdraws
+  // the graph) and the endpoint revoke inside that withdrawal. The revoke is
+  // relay housekeeping, not a native release, so the next tap must rebuild.
+  test(
+    'a failed relay revoke during withdrawal does not disable calling',
+    () async {
+      final fixture = await _createFixture();
+      await fixture.composition.start();
+      expect(fixture.composition.isOutgoingCallAvailable, isTrue);
+
+      var relayDown = true;
+      fixture.tokenSet.reject = true;
+      for (final command in [
+        'call_endpoint_revoke_v1',
+        'call_token_revoke_v1',
+      ]) {
+        fixture.bridge.responseHandlers[command] = (_) async => relayDown
+            ? const <String, Object?>{
+                'ok': false,
+                'errorCode': 'CALL_CONTROL_UNAVAILABLE',
+              }
+            : const <String, Object?>{'ok': true, 'revoked': true};
+      }
+      await fixture.composition.onResume();
+      await _until(() => fixture.lifecycleMethods.contains('detach'));
+      expect(fixture.composition.isOutgoingCallAvailable, isFalse);
+
+      relayDown = false;
+      fixture.tokenSet.reject = false;
+      expect(await fixture.composition.recoverOutgoingCallReadiness(), isTrue);
+      expect(fixture.graphs, hasLength(2));
+      expect(fixture.composition.isOutgoingCallAvailable, isTrue);
+    },
+  );
+
+  test(
+    'a failed native release during withdrawal still blocks rebuild',
+    () async {
+      final fixture = await _createFixture(
+        failingLifecycleMethods: const <String>{'failClosed'},
+      );
+      await fixture.composition.start();
+      expect(fixture.composition.isOutgoingCallAvailable, isTrue);
+
+      fixture.tokenSet.reject = true;
+      await fixture.composition.onResume();
+      await _until(() => fixture.lifecycleMethods.contains('detach'));
+
+      fixture.tokenSet.reject = false;
+      expect(await fixture.composition.recoverOutgoingCallReadiness(), isFalse);
+      expect(fixture.graphs, hasLength(1));
+    },
+  );
+
   test('shutdown revokes an endpoint publication already in flight', () async {
     final fixture = await _createFixture();
     await fixture.composition.start();
@@ -844,7 +899,10 @@ final class _Fixture {
   final _P2P p2p;
 }
 
-Future<_Fixture> _createFixture({int Function()? nowMs}) async {
+Future<_Fixture> _createFixture({
+  int Function()? nowMs,
+  Set<String> failingLifecycleMethods = const <String>{},
+}) async {
   databaseFactory = databaseFactoryFfi;
   final database = await openDatabase(
     inMemoryDatabasePath,
@@ -935,6 +993,7 @@ Future<_Fixture> _createFixture({int Function()? nowMs}) async {
         }) => IosCallLifecycleAdapter(
           invokeMethod: (method, arguments) async {
             lifecycleMethods.add(method);
+            if (failingLifecycleMethods.contains(method)) return false;
             if (method == 'attach') {
               return const <String, Object?>{
                 'version': 1,

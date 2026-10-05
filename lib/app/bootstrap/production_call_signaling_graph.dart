@@ -1264,7 +1264,11 @@ final class ProductionCallSignalingGraph
     if (iosCallLifecycleAdapter != null || iosVoipTokenCoordinator != null) {
       // Native iOS presentation, token authority, and endpoint authority are
       // withdrawn as one ordered unit before either native channel detaches.
-      await attempt(() => _rollbackIosCallability(terminal: true));
+      await attempt(
+        () => _relayRevocationBestEffort(
+          () => _rollbackIosCallability(terminal: true),
+        ),
+      );
     }
     if (!_deferredAdvertisementRetries.isClosed) {
       await attempt(_deferredAdvertisementRetries.close);
@@ -1275,7 +1279,7 @@ final class ProductionCallSignalingGraph
     }
     final tokenCoordinator = iosVoipTokenCoordinator;
     if (tokenCoordinator != null) {
-      await attempt(tokenCoordinator.close);
+      await attempt(() => _relayRevocationBestEffort(tokenCoordinator.close));
     }
     if (!_foregroundChanges.isClosed) {
       await attempt(_foregroundChanges.close);
@@ -1301,6 +1305,21 @@ final class ProductionCallSignalingGraph
     }
     if (firstError != null) {
       Error.throwWithStackTrace(firstError!, firstStack!);
+    }
+  }
+
+  /// A shutdown error tells the composition that native release is unproven,
+  /// and it then refuses every successor graph until the app restarts. A
+  /// relay that refused or never answered a revoke is not that: the endpoint
+  /// and token expire on their own and the successor publishes new epochs.
+  /// Native failures still throw, because the legs report them first.
+  static Future<void> _relayRevocationBestEffort(
+    Future<void> Function() action,
+  ) async {
+    try {
+      await action();
+    } on CallAuthorityException {
+      // Best effort, like the final endpoint revoke in [shutdown].
     }
   }
 
