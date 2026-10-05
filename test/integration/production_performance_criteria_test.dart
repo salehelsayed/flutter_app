@@ -216,6 +216,16 @@ void main() {
     'relay deadline relaxed': (p) =>
         (p['recovery'] as Map)['relayWaitMs'] = 30001,
     'repeated recovery cycle omitted': (p) => p.remove('repeated-recovery-2'),
+    'repeated recovery loss neither seen nor streamed': (p) {
+      final degraded = (p['repeated-recovery-2'] as Map)['degraded'] as Map;
+      degraded['badge'] = 'onlineDotted';
+      degraded['relayLossObserved'] = false;
+    },
+    'streamed loss cannot excuse M-Sim-2 recovery': (p) {
+      final degraded = (p['recovery'] as Map)['degraded'] as Map;
+      degraded['badge'] = 'onlineDotted';
+      degraded['relayLossObserved'] = true;
+    },
     'repeated recovery without relay loss': (p) =>
         (p['repeated-recovery-3'] as Map)['degraded']['badge'] = 'onlineDotted',
     'repeated recovery degrade relaxed': (p) =>
@@ -230,6 +240,13 @@ void main() {
       expect(validateProductionPerformance(proof), isNotEmpty);
     });
   }
+  test('accepts a C-Sim-2 loss seen only on the production state stream', () {
+    final proof = _fixture();
+    final degraded = (proof['repeated-recovery-1'] as Map)['degraded'] as Map;
+    degraded['badge'] = 'onlineDotted';
+    degraded['relayLossObserved'] = true;
+    expect(validateProductionPerformance(proof), isEmpty);
+  });
   test('does not invent the optional original online/native events', () {
     final proof = _fixture();
     final es = (proof['cold'] as List)[0]['events'] as List;

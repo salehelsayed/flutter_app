@@ -199,7 +199,10 @@ Future<void> main(List<String> arguments) async {
           window['degraded'] = await wait(
             '$name observed relay loss',
             const Duration(seconds: 15),
-            (s) => s['badge'] != 'onlineDotted',
+            (s) =>
+                s['badge'] != 'onlineDotted' ||
+                (name.startsWith('repeated-recovery-') &&
+                    s['relayLossObserved'] == true),
             window,
             'degradeWaitMs',
           );

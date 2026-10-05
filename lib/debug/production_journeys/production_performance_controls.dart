@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/widgets.dart';
@@ -31,6 +32,12 @@ void bindProductionPerformanceControls({
   String? window;
   var recoveryDisconnectCompleted = false;
   var recoveryLossObserved = false;
+  // C-Sim-2 windows: a relay that reconnects within one host poll would hide
+  // the loss, so (like the original, which starts capture before the
+  // disconnect) every state change is watched from just before it.
+  StreamSubscription<NodeState>? lossWatch;
+  var streamedLossObserved = false;
+  controller.bindDisposer(() => lossWatch?.cancel());
   // M-Sim-2's single foreground recovery, and C-Sim-2's three repeated
   // recoveries, each its own window with the same protocol.
   bool isRecovery(String? name) =>
@@ -42,8 +49,9 @@ void bindProductionPerformanceControls({
     // reconnects before those calls. An unobserved fault is never sufficient.
     if (isRecovery(window) &&
         recoveryDisconnectCompleted &&
-        p2pService.currentState.badgeReadinessState !=
-            BadgeReadinessState.onlineDotted) {
+        (streamedLossObserved ||
+            p2pService.currentState.badgeReadinessState !=
+                BadgeReadinessState.onlineDotted)) {
       recoveryLossObserved = true;
     }
     return {
@@ -58,6 +66,8 @@ void bindProductionPerformanceControls({
       'sendReady': p2pService.currentState.sendCapabilityReady,
       'inboxReady': p2pService.currentState.inboxCapabilityReady,
       'badge': p2pService.currentState.badgeReadinessState.name,
+      if (repeatedRecoveryWindows.contains(window))
+        'relayLossObserved': streamedLossObserved,
     };
   }
 
@@ -90,6 +100,9 @@ void bindProductionPerformanceControls({
     window = name;
     recoveryDisconnectCompleted = false;
     recoveryLossObserved = false;
+    await lossWatch?.cancel();
+    lossWatch = null;
+    streamedLossObserved = false;
     capture.clearPausedSnapshot();
     return snapshot();
   });
@@ -123,6 +136,13 @@ void bindProductionPerformanceControls({
         .map((c) => c.peerId)
         .toSet();
     if (relays.isEmpty) throw StateError('no actual connected relay');
+    if (repeatedRecoveryWindows.contains(window)) {
+      lossWatch = p2pService.stateStream.listen((state) {
+        if (state.badgeReadinessState != BadgeReadinessState.onlineDotted) {
+          streamedLossObserved = true;
+        }
+      });
+    }
     for (final peer in relays) {
       await bridge.send(
         jsonEncode({

@@ -134,6 +134,29 @@ void main() {
     );
   });
 
+  test('C-Sim-2 keeps a loss that recovered before the next poll', () async {
+    service.emitState(_online);
+    await command('performance_begin', {'window': 'repeated-recovery-1'});
+    await command('performance_disconnect_relay');
+    service.emitState(_degraded);
+    service.emitState(_online);
+    await Future<void>.delayed(Duration.zero);
+    final receipt = await command('performance_snapshot');
+    expect(receipt['badge'], 'onlineDotted');
+    expect(receipt['relayLossObserved'], isTrue);
+    await command('performance_recover');
+    expect(service.performImmediateHealthCheckCallCount, 1);
+  });
+
+  test('C-Sim-2 without any loss cannot recover', () async {
+    service.emitState(_online);
+    await command('performance_begin', {'window': 'repeated-recovery-1'});
+    await command('performance_disconnect_relay');
+    final receipt = await command('performance_snapshot');
+    expect(receipt['relayLossObserved'], isFalse);
+    await expectLater(command('performance_recover'), throwsStateError);
+  });
+
   test(
     'foreground recovery also operates while loss is still visible',
     () async {

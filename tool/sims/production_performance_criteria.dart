@@ -318,8 +318,14 @@ List<String> validateProductionPerformance(Map<String, Object?> proof) {
           lifecycle: name == 'degraded' ? 'paused' : 'resumed',
           ready: false,
         );
+        // C-Sim-2 windows may prove the loss from the production state
+        // stream (a relay can reconnect within one host poll).
+        final lossSeen =
+            degraded['badge'] != 'onlineDotted' ||
+            (name.startsWith('repeated-recovery-') &&
+                degraded['relayLossObserved'] == true);
         require(
-          degraded['badge'] != 'onlineDotted' &&
+          lossSeen &&
               degraded['nonce'] == before['nonce'] &&
               degraded['processId'] == before['processId'] &&
               degraded['nodePeerId'] == before['nodePeerId'],
