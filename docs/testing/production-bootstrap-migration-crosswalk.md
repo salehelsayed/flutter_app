@@ -2466,13 +2466,48 @@ another session was editing the main checkout's sources, which blocked a run
 into the test app.
 
 **iOS simulator journeys.** `ProductionIosSimulatorJourney` runs every role on
-its own disposable simulator (iPhone 17 Pro, iPhone Air, iPhone 17; iOS 26.5).
-The oracles pin `appPeerPlatform == ios_26_2_core_simulator`, a constant in the
-original harness; the user decided (2026-10-04) to run on iOS 26.5 with that
-label. Batch 12: NW-006, ML-020, NW-003, NW-010 with OB-011. Device results:
-pending. Flows that stepped back with Android's back key now tap the app's
-Back button on iOS (Android unchanged); member rows' role menus carry a
-Semantics identifier.
+its own disposable simulator (DeviceHub iPhone Air, iPhone 17, iPhone 16e;
+iOS 26.5). The oracles pin `appPeerPlatform == ios_26_2_core_simulator`, a
+constant in the original harness; the user decided (2026-10-04) to run on
+iOS 26.5 with that label. Flows that stepped back with Android's back key now
+tap the app's Back button on iOS (Android unchanged); member rows' role menus
+carry a Semantics identifier.
+
+Batch 12 (2026-10-05, three iOS simulators):
+
+| Scenario | Row | Run | Probe |
+|---|---|---|---|
+| private_peer_disconnect_not_removal | NW-006 | PASS | Bob is never taken offline: FAIL at the oracle (`bobDisconnected`) |
+| private_admin_role_transfer_delivery | ML-020 | PASS | Alice's removed-window post also expects Charlie: FAIL at `charlie receives aliceRemovedWindowAfterDemotion` |
+| private_partition_readd_heal | NW-003 | PASS | Charlie stays online through the partition: FAIL at the oracle (`alicePartitionedFromCharlie`, `bobAndCharliePartitionedFromAlice`, `removedWindowLiveDeliveryBlockedDuringPartition`) |
+| private_background_resume_group_delivery | NW-010 + OB-011 | PASS (Bob applies the removal at the envelope epoch, then both posts) | Bob is never taken offline: FAIL at the oracle (`bobBackgroundedDuringAliceActivity`, `groupTopicsRejoinedAfterForeground`) |
+
+What the iOS runs needed, in order:
+- SIMS build guard: Maestro's iOS driver runs `xcodebuild test-without-building`;
+  the guard's shim now allows exactly that call (a14b4d7bc).
+- Signed simulator build: an unsigned (`--no-codesign`) build has no App
+  Group, so the production bootstrap stopped at startup;
+  `ios.simulator.app` now builds signed, `ios.simulator.e2e` is unchanged.
+- The iOS app opens on the circle view, which has no Intros tab or group
+  rows; the accept, group-open and home-tab flows tap "Show all chats" first
+  when it is shown.
+- `simctl spawn` finds no bare `kill`; the verified process death uses
+  `/bin/kill -9`.
+- ML-020: the port waited for a key rotation the original never waits for.
+  After the admin handover neither Bob (admin, not creator) nor Alice
+  (creator, demoted) may rotate, so the wait was removed (oracle unchanged).
+  Product finding recorded: `Test-Flight-Improv/Production-Flow-Audits/findings/group-key-rotation-authority-2026-10-05.md` (001, open).
+
+Product fixes found by these runs:
+- Group Info kept showing a removed member until the new key reached every
+  member (over 45 s with members offline, NW-003). It now reloads as soon as
+  the removal is broadcast (same findings file, 002, fixed).
+- NW-010: Bob, offline during Alice's removal of Charlie, rejected the signed
+  removal on relaunch (`previous_transition_hash_mismatch`) and kept Charlie.
+  State-hash breakdowns (new diagnostic events) showed the states differed only
+  in the key generation, which the receiver already allows for; but the inbox
+  drain dropped the replay envelope's key epoch and reported 0. The drain now
+  keeps the envelope's epoch (0268dfe79).
 
 **Batch 13.** UP-012 (`private_removed_notification_privacy`): removed
 Charlie's app shows no notification; Alice and Bob each show one for the
@@ -2501,3 +2536,9 @@ Not portable (added to "catalog cases kept on the original harness"):
 | private_never_member_publish_rejected | SV-001 | Dana imports group state and publishes directly as a non-member |
 | private_network_chaos_invariants | NW-014 and ST rows | fake network chaos and fixed-seed fault injection |
 | private_same_user_multi_device_readd | RA-013 | Dana plays a second device of Charlie's account |
+
+**Wave 3 census (2026-10-05).** All 107 original multi-device catalog cases
+are accounted for: 51 have a production replacement proven on devices (each
+run PASS and its negative probe FAIL at the intended step; the four iOS
+cases above finished this wave), and 56 are recorded as not portable in the
+tables of this and earlier sections.
