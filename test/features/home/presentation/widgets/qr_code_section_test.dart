@@ -51,4 +51,18 @@ void main() {
     expect(find.byKey(const ValueKey('qr-render-error')), findsOneWidget);
     expect(find.byKey(const ValueKey('qr-loading-shimmer')), findsNothing);
   });
+
+  testWidgets(
+    'reduce motion: QRCodeSection loading shimmer keeps no animation running',
+    (tester) async {
+      tester.platformDispatcher.accessibilityFeaturesTestValue =
+          const FakeAccessibilityFeatures(disableAnimations: true);
+      addTearDown(
+        tester.platformDispatcher.clearAccessibilityFeaturesTestValue,
+      );
+      await tester.pumpWidget(wrap(const QRCodeSection(qrData: null)));
+      await tester.pump(const Duration(seconds: 2));
+      expect(tester.hasRunningAnimations, isFalse);
+    },
+  );
 }

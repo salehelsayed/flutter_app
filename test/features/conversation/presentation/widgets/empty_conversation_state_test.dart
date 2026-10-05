@@ -64,4 +64,18 @@ void main() {
       expect(glow160, isNotEmpty);
     });
   });
+
+  testWidgets(
+    'reduce motion: EmptyConversationState keeps no animation running',
+    (tester) async {
+      tester.platformDispatcher.accessibilityFeaturesTestValue =
+          const FakeAccessibilityFeatures(disableAnimations: true);
+      addTearDown(
+        tester.platformDispatcher.clearAccessibilityFeaturesTestValue,
+      );
+      await tester.pumpWidget(buildTestWidget());
+      await tester.pump(const Duration(seconds: 2));
+      expect(tester.hasRunningAnimations, isFalse);
+    },
+  );
 }
