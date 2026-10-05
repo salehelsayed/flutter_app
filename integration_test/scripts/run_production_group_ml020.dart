@@ -79,7 +79,8 @@ Future<void> main(List<String> arguments) => runProductionCatalogJourney(
       'Charlie self-removed',
       (x) => x['selfMember'] == false,
     );
-    await s.rotatedForRemainingPair();
+    // No rotation wait, as in the original: Bob (admin, not creator) and
+    // Alice (creator, demoted) may not rotate, so the rekey stays deferred.
     await s.flow('bob', 'production_back_to_chat', 'bob-back-to-chat');
 
     await s.sendAndReceive(
