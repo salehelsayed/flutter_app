@@ -2218,9 +2218,18 @@ Future<Map<String, dynamic>> decodeInboxMessage(
           };
         }
 
-        return Map<String, dynamic>.from(
+        final payload = Map<String, dynamic>.from(
           jsonDecode(plaintext) as Map<String, dynamic>,
         );
+        // Senders such as a Group Info removal do not repeat the epoch inside
+        // the plaintext. The envelope's epoch is authentic (decryption used
+        // that epoch's key); without it a member that already holds a newer
+        // key judges a signed removal at epoch 0 and rejects it.
+        final envelopeKeyEpoch = decodedMessage['keyEpoch'];
+        if (payload['keyEpoch'] is! int && envelopeKeyEpoch is int) {
+          payload['keyEpoch'] = envelopeKeyEpoch;
+        }
+        return payload;
       }
 
       if (_isV3GroupMessageEnvelope(decodedMessage)) {

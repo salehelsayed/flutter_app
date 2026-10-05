@@ -1548,6 +1548,49 @@ void main() {
   }
 
   test(
+    'a replay envelope whose plaintext has no keyEpoch keeps the envelope epoch',
+    () async {
+      // NW-010 on iOS: Group Info's removal replay carries its epoch only on
+      // the envelope; the drain reported 0 and the receiver rejected it.
+      await groupRepo.saveKey(
+        GroupKeyInfo(
+          groupId: 'group-1',
+          keyGeneration: 2,
+          encryptedKey: 'replay-key-2',
+          createdAt: DateTime.utc(2026, 5, 2),
+        ),
+      );
+      final payload = repairMessage(
+        id: 'replay-epoch-from-envelope',
+        text: 'epoch from the envelope',
+        timestamp: DateTime.utc(2026, 5, 1, 12),
+      )..remove('keyEpoch');
+      bridge.addPage('group-1', '', [
+        {
+          'from': 'peer-sender',
+          'message': await signedReplayEnvelope(
+            payloadType: groupOfflineReplayPayloadTypeMessage,
+            plaintext: jsonEncode(payload),
+            messageId: 'replay-epoch-from-envelope',
+            keyGeneration: 2,
+          ),
+        },
+      ], '');
+
+      await drainGroupOfflineInbox(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        selfPeerId: 'peer-local',
+      );
+
+      final stored = await msgRepo.getMessage('replay-epoch-from-envelope');
+      expect(stored, isNotNull);
+      expect(stored!.keyGeneration, 2);
+    },
+  );
+
+  test(
     'fresh route authority stops a decoded page when B3 lands before routing',
     () async {
       final routingRepo = _MarkOnNextGroupReadRepository();
@@ -13700,9 +13743,9 @@ void main() {
 
         final events = await drainCapturingFlow();
 
-        final placeholders = (await msgRepo.getMessagesPage('group-1'))
-            .where((m) => m.status == 'undecryptable')
-            .toList();
+        final placeholders = (await msgRepo.getMessagesPage(
+          'group-1',
+        )).where((m) => m.status == 'undecryptable').toList();
         expect(placeholders, hasLength(1));
         expect(placeholders.single.id, startsWith('v3-undecryptable-'));
         expect(placeholders.single.keyGeneration, 1);
