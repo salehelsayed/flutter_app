@@ -52,7 +52,16 @@ Future<void> main(List<String> arguments) async {
             ? 'xcodebuild ${args.isEmpty ? '' : args.first}'
             : executable,
       );
-      return Process.run(executable, args);
+      // Like the other attested-bundle callers, declare that this xcodebuild
+      // only runs tests; the SIMS build guard then allows exactly
+      // test-without-building and still rejects any build.
+      return Process.run(
+        executable,
+        args,
+        environment: executable == 'xcodebuild'
+            ? const {'SIMS_CHILD_BUILDS_FORBIDDEN': '1'}
+            : null,
+      );
     }
 
     int xcodebuildCalls() =>
