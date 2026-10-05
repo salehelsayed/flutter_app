@@ -19,25 +19,37 @@ All 26 Wave 4 harnesses have a disposition:
 - the shared-XCTest adapter has a real caller, `production.shared_xctest`,
   PASS on the iPhone 11.
 
-## Open items for the user
+## Decisions taken (user, 2026-10-05)
 
-1. **Notification regression on main.** `329ff3140` ("commit the remaining
-   working-tree changes") carried another session's unfinished
-   notification-lock work. With it, `production.notification_open` fails:
-   the push reaches the backgrounded receiver, the background handler logs
-   `PUSH_BACKGROUND_DURABLE_EFFECT_DEFERRED (exact_sql_authority_unavailable)`
-   and Alice's message never reaches Bob's database. With the five
-   notification-lock files at `9d253a273` the journey passes (A/B run on the
-   run tree only). main still has the regression; fixing or reverting it is
-   the user's call.
-2. **Original A and R benchmarks** send without the recipient ML-KEM key and
-   stop at `encryption_required` before any transport. Fixing the original
-   harnesses needs approval.
-3. The iPhone 11's Appium WebDriverAgent (another session's) was stopped for
-   the XCTest batch at the user's choice; that session must restart it.
-4. Not done: a forced-relay census condition (the relay-only profile is
-   reserved to the startup/resume scenario); R-Sim-6 and R-Sim-8 recorded as
-   not reproduced.
+1. **Notification regression fixed.** The notification-lock work of
+   `329ff3140` was reverted on main as one unit (`f59db25a8`); afterwards
+   `production.notification_open` and `production.notification_tap_latency`
+   PASS on `6e2d74816`.
+2. **Original A and R benchmarks fixed** (`6e2d74816`): every send carries
+   the recipient ML-KEM key. Analysis-verified; the simulator benchmark
+   route hangs before its `flutter test` starts (see the crosswalk), so the
+   fixed originals were not executed.
+
+## Still open
+
+- The `run_benchmark_suite.dart` simulator route hangs in this environment
+  (idle parentless `flutter_tools test` processes; nothing installed). The
+  Go test peer also needs the WSS relay address when the Mac blocks UDP.
+- The iPhone 11's Appium WebDriverAgent (another session's) was stopped for
+  the XCTest batch; that session must restart it.
+- Not done: a forced-relay census condition; R-Sim-6 and R-Sim-8 recorded
+  as not reproduced.
+- **Host-all on `6e2d74816` (2026-10-05):** Flutter 18,997 passed, 7 failed.
+  Fixed: the TC-342-07 `sendChatMessage` caller census (the two new Wave 4
+  controls are now classified `generatedIdFresh`) and the wake-token binary
+  check (the worktree lacked the git-ignored macOS Go xcframework). Left for
+  the user / the other session: 5 failures caused by `caff0f087` ("fix(inbox):
+  retry stuck messages in the background instead of a banner"), which changed
+  frozen files without re-pinning: 3 DTR-18 digest pins
+  (`production_application_bootstrap.dart`, `application_root.dart`), the
+  TC-294-09 Wired API freeze, and the received-media transport call-site
+  count (24 to 23, it removed a `p2pService` reference from
+  `conversation_wired.dart`). Re-pinning DTR-18 needs the user's approval.
 
 ## How to run
 

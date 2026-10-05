@@ -2700,4 +2700,15 @@ dispatchers stay; the shared-XCTest adapter has a real caller.
   `benchmarkRecipientMlKemKey` in `integration_test/benchmark_helpers.dart`,
   so they reach the transport instead of `encryption_required`. Their
   preserved source SHA-256 values above are superseded by this approved
-  change. Not re-run on the simulator yet.
+  change. Analysis-verified only: three attempts to run A,R through
+  `run_benchmark_suite.dart` on an iPhone 17 Pro simulator (2026-10-05)
+  never reached the benchmark. The Go test peer first could not reach the
+  relay over QUIC from the Mac (fixed by also passing the WSS relay address
+  in `MKNOON_RELAY_ADDRESSES`); after that the suite's `flutter test -d`
+  launch left only idle, parentless `flutter_tools test` processes and
+  installed nothing on the simulator. That orchestrator problem is separate
+  from the fix and remains open.
+- After the revert, on `6e2d74816`: `production.notification_open` PASS and
+  `production.notification_tap_latency` PASS (one earlier attempt on the
+  same head timed out waiting 30 s for the backgrounded receiver's message;
+  the re-run passed).

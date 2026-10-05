@@ -18,7 +18,10 @@ CHECKS="$1"
 CFGDIR="$REPO/.codex-test-logs/production-bootstrap-migration-20260930"
 DEVICE_CONFIG="${2:-$CFGDIR/wave3-device-config.json}"
 OUT="$CFGDIR/wave3-run-$(date -u +%Y%m%dT%H%M%SZ)"
-BASE="$(git rev-parse main)"
+# Change-mode base: docker-ws/beta/wave4/campaign_base (one commit id) when present, else main. After main
+# is moved to HEAD, a base of main selects nothing ("Unknown/unselected --only check").
+BASE_FILE=/Volumes/CrucialX9/flutter_app/docker-ws/beta/wave4/campaign_base
+BASE="$(git rev-parse "$(cat "$BASE_FILE" 2>/dev/null || echo main)")"
 command -v maestro >/dev/null || { echo "FATAL: maestro not on PATH"; exit 2; }
 [ -f "$DEVICE_CONFIG" ] || { echo "FATAL: device config missing: $DEVICE_CONFIG"; exit 2; }
 echo "wave3 (worktree) checks: $CHECKS"; echo "wave3 output: $OUT"; echo "base: $BASE"

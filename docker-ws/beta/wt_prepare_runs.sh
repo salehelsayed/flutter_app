@@ -22,3 +22,5 @@ done
 mkdir -p .codex-test-logs/production-bootstrap-migration-20260930
 cp -p "$MAIN"/.codex-test-logs/production-bootstrap-migration-20260930/wave3-device-config*.json .codex-test-logs/production-bootstrap-migration-20260930/ && echo "copied device configs"
 echo "status: $(git status --porcelain | wc -l | tr -d ' ') changed paths; head $(git log -1 --format='%h %s' | cut -c1-70)"
+# The macOS Go xcframework (git-ignored) for the wake-token binary freshness test.
+[ -d "$MAIN/macos/Runner/GoMknoon.xcframework" ] && { rm -rf "$WT/macos/Runner/GoMknoon.xcframework"; cp -Rp "$MAIN/macos/Runner/GoMknoon.xcframework" "$WT/macos/Runner/"; }

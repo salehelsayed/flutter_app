@@ -72,12 +72,20 @@ const _expectedSendChatMessageCallers =
           kind: _SendChatMessageCallerKind.generatedIdFresh,
         ),
       ],
-      'lib/debug/production_journeys/production_routing_journey_controls.dart': [
-        _ExpectedSendChatMessageCaller(
-          kind: _SendChatMessageCallerKind.preassignedIdFresh,
-          freshIntent: 'true',
-        ),
-      ],
+      // Wave 4 measurements: each send lets the use case generate its id.
+      'lib/debug/production_journeys/production_message_latency_controls.dart':
+          [
+            _ExpectedSendChatMessageCaller(
+              kind: _SendChatMessageCallerKind.generatedIdFresh,
+            ),
+          ],
+      'lib/debug/production_journeys/production_routing_journey_controls.dart':
+          [
+            _ExpectedSendChatMessageCaller(
+              kind: _SendChatMessageCallerKind.preassignedIdFresh,
+              freshIntent: 'true',
+            ),
+          ],
       'lib/debug/production_journeys/production_sound_journey_controls.dart': [
         _ExpectedSendChatMessageCaller(
           kind: _SendChatMessageCallerKind.preassignedIdFresh,
@@ -87,6 +95,12 @@ const _expectedSendChatMessageCallers =
           kind: _SendChatMessageCallerKind.generatedIdFresh,
         ),
       ],
+      'lib/debug/production_journeys/production_transport_census_controls.dart':
+          [
+            _ExpectedSendChatMessageCaller(
+              kind: _SendChatMessageCallerKind.generatedIdFresh,
+            ),
+          ],
       'lib/features/conversation/application/'
           'retry_failed_messages_use_case.dart': [
         _ExpectedSendChatMessageCaller(
@@ -316,35 +330,32 @@ final class _SentinelPrepared implements PreparedApplication {
 }
 
 void main() {
-  test(
-    'foreground acquisition cancellation handler precedes database open',
-    () {
-      final production = File(_productionPath).readAsStringSync();
-      final normal = _method(
-        _productionClass(production),
-        '_prepareNormalApplication',
-      ).body.toSource();
-      final owner = normal.indexOf(
-        'ForegroundCanonicalRuntimeStartup<Database>(',
-      );
-      final handler = normal.indexOf("'mknoon/canonical_runtime_shutdown'");
-      final open = normal.indexOf('canonicalWritableRuntimeSession.open(');
-      expect(owner, greaterThanOrEqualTo(0));
-      expect(handler, greaterThan(owner));
-      expect(open, greaterThan(handler));
-      expect(
-        normal.substring(owner, handler),
-        contains('waitForRetry: waitForRetry'),
-      );
-      expect(normal, contains('canonicalWritableRuntimeSession?.shutdown()'));
-      expect(
-        RegExp(
-          r"'databaseClosed'\s*:\s*canonicalWritableRuntimeSession.databaseClosed",
-        ).hasMatch(normal),
-        isTrue,
-      );
-    },
-  );
+  test('foreground acquisition cancellation handler precedes database open', () {
+    final production = File(_productionPath).readAsStringSync();
+    final normal = _method(
+      _productionClass(production),
+      '_prepareNormalApplication',
+    ).body.toSource();
+    final owner = normal.indexOf(
+      'ForegroundCanonicalRuntimeStartup<Database>(',
+    );
+    final handler = normal.indexOf("'mknoon/canonical_runtime_shutdown'");
+    final open = normal.indexOf('canonicalWritableRuntimeSession.open(');
+    expect(owner, greaterThanOrEqualTo(0));
+    expect(handler, greaterThan(owner));
+    expect(open, greaterThan(handler));
+    expect(
+      normal.substring(owner, handler),
+      contains('waitForRetry: waitForRetry'),
+    );
+    expect(normal, contains('canonicalWritableRuntimeSession?.shutdown()'));
+    expect(
+      RegExp(
+        r"'databaseClosed'\s*:\s*canonicalWritableRuntimeSession.databaseClosed",
+      ).hasMatch(normal),
+      isTrue,
+    );
+  });
 
   test('handled production reset bypasses normal composition', () async {
     var resetCalls = 0;
