@@ -6666,6 +6666,63 @@
       "automationReady": true,
       "active": true,
       "declaredBuildException": false
+    },
+    {
+      "id": "production.transport_census",
+      "owner": "reliability",
+      "proofBoundary": "production.transport-census.sender-vantage",
+      "assertions": [
+        "census-sends-attempted",
+        "census-counts-reconciled",
+        "census-receiver-storage",
+        "census-transport-report"
+      ],
+      "lane": "reliability",
+      "modes": [
+        "major",
+        "full"
+      ],
+      "families": [
+        "1to1"
+      ],
+      "required": true,
+      "command": [
+        "dart",
+        "run",
+        "integration_test/scripts/run_production_transport_census.dart"
+      ],
+      "buildProfile": "android.e2e.main",
+      "dependencies": [
+        "build.android.e2e.main"
+      ],
+      "resources": [
+        {
+          "name": "build:android.e2e.main",
+          "access": "read"
+        },
+        {
+          "name": "device:android-physical",
+          "access": "exclusive"
+        },
+        {
+          "name": "device:android-emulator",
+          "access": "exclusive"
+        },
+        {
+          "name": "artifact:production-transport-census",
+          "access": "write"
+        }
+      ],
+      "targetCapabilities": [
+        "android.physical",
+        "android.emulator"
+      ],
+      "allowedNaReason": "target_unavailable_by_project_policy",
+      "artifactRequired": true,
+      "artifactValidator": "validateProductionTransportCensus",
+      "automationReady": true,
+      "active": true,
+      "declaredBuildException": false
     }
   ],
   "ownership": [

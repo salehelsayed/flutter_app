@@ -2234,6 +2234,33 @@
       ],
       "host_preflight": "production-routing"
     },
+    "production-transport-census": {
+      "kind": "sims",
+      "capability": "production.transport_census",
+      "boundary": "Production-composed transport census: the original sender loop (cold lever, 2500 ms pacing) over production services with a census-owned TransportMetrics per condition, plus exact receiver storage of every delivered text",
+      "timeout_seconds": 3600,
+      "estimated_seconds": null,
+      "requirements": [
+        "dart",
+        "flutter",
+        "adb"
+      ],
+      "device_roles": [
+        "android_physical",
+        "android_emulator"
+      ],
+      "references": [
+        "tool/sims/critical_features.json"
+      ],
+      "investigate": [
+        "lib/debug/production_journeys"
+      ],
+      "limitations": "Android production source build on the ordinary profile; a forced-relay condition (android.e2e.performance_relay) is not part of this capability. The census reports transport mix and latency; like the original it has no latency threshold. Emulator-to-phone paths differ from the original two-phone path.",
+      "disposable_android_package": "com.mknoon.sims.connectivity",
+      "ui_driver": "existing_campaign",
+      "ui_driver_reason": "No UI: the original census is a protocol-level sender loop. A production-owned control drives the production send use case with the original cold lever; read-only receiver storage binds delivery.",
+      "host_preflight": "production-transport-census"
+    },
     "production-private-media": {
       "kind": "sims",
       "capability": "production.private_media_local",
@@ -5967,6 +5994,8 @@
         "lib/core/notifications/flutter_notification_service.dart",
         "integration_test/scripts/run_production_notification_sound.dart",
         "integration_test/scripts/run_production_routing.dart",
+        "test/integration/production_transport_census_*",
+        "integration_test/scripts/run_production_transport_census.dart",
         "test/integration/production_routing_*",
         "integration_test/scripts/run_production_private_media_local.dart",
         "test/integration/production_private_media_*",
@@ -6057,6 +6086,7 @@
         "notifications",
         "production-notification-sound",
         "production-routing",
+        "production-transport-census",
         "production-private-media",
         "production-group-invites",
         "production-group-invite-matrix",
@@ -9824,11 +9854,21 @@
         "capability": "production.routing_smoke",
         "patterns": [
           "integration_test/scripts/run_production_routing.dart",
+          "test/integration/production_transport_census_*",
+          "integration_test/scripts/run_production_transport_census.dart",
           "integration_test/maestro/production_direct_delete.yaml",
           "integration_test/maestro/production_resume.yaml",
           "integration_test/maestro/production_all_chats.yaml"
         ],
         "reason": "Additive production-composed routing preserves all 27 original cases and their per-role/intermediate receipt requirements; original harness and selectors remain intact."
+      },
+      {
+        "owner": "full-sims-major",
+        "capability": "production.transport_census",
+        "patterns": [
+          "integration_test/scripts/run_production_transport_census.dart"
+        ],
+        "reason": "Additive production-composed transport census keeps the original sender loop, conditions and report; the original harness and its orchestrator remain intact."
       },
       {
         "owner": "full-sims-major",

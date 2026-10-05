@@ -157,6 +157,7 @@ const productionFourPeerJourneys = {
 };
 const privateMediaJourney = 'production.private_media_local';
 const performanceJourney = 'production.startup_resume_performance';
+const transportCensusJourney = 'production.transport_census';
 typedef ProductionJourneyAction =
     Future<Map<String, Object?>> Function(Map<String, Object?> arguments);
 
@@ -272,6 +273,7 @@ final class ProductionJourneyController {
           groupCatalogNw010Journey,
           groupCatalogUp012Journey,
           performanceJourney,
+          transportCensusJourney,
         }.contains(invocation.scenarioId) ||
         !(productionFourPeerJourneys.contains(invocation.scenarioId)
                 ? {'alice', 'bob', 'charlie', 'dana'}

@@ -3,6 +3,7 @@ import 'production_journeys/production_group_fixture_controls.dart';
 import 'production_journeys/production_direct_journey_controls.dart';
 import 'production_journeys/production_sound_journey_controls.dart';
 import 'production_journeys/production_routing_journey_controls.dart';
+import 'production_journeys/production_transport_census_controls.dart';
 import 'production_journeys/production_private_media_controls.dart';
 import 'production_journeys/production_provider_probe_control.dart';
 import 'production_journeys/production_group_invite_controls.dart';
@@ -938,6 +939,15 @@ final class DebugE2ECompositionRoot {
         groupMessageRepository: dependencies.groupMessageRepository,
         conversationTracker: dependencies.conversationTracker,
         groupConversationTracker: dependencies.groupConversationTracker,
+      );
+      bindProductionTransportCensusControls(
+        controller: journey,
+        bridge: dependencies.bridge,
+        p2pService: dependencies.p2pService,
+        identityRepository: dependencies.identityRepository,
+        contactRepository: dependencies.contactRepository,
+        messageRepository: dependencies.messageRepository,
+        transportMetrics: dependencies.transportMetrics,
       );
       bindProductionGroupInviteControls(
         controller: journey,

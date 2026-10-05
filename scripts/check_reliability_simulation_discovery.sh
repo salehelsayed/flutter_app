@@ -434,6 +434,10 @@ classify_path() {
       record "support" "$path" "support" "manifest-owned production private-media local UI and committed SQL lifecycle proof; original component harness retained"
       return
       ;;
+    integration_test/scripts/run_production_transport_census.dart)
+      record "support" "$path" "support" "manifest-owned production transport census with the original cold/warm sender loop over production services; original harness retained"
+      return
+      ;;
     integration_test/scripts/run_production_routing.dart)
       record "support" "$path" "support" "manifest-owned production-bootstrap routing with 27 original direct/group criteria and production-owned protocol controls; original routes retained"
       return
