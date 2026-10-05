@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_app/features/groups/domain/utils/group_key_rotation_leader.dart';
 
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/groups/application/group_key_update_signature.dart';
@@ -1634,6 +1635,71 @@ void main() {
       expect(result.key!.keyGeneration, 2);
     },
   );
+
+  Future<void> saveOwnerAndSelf({required MemberRole selfRole}) async {
+    await groupRepo.saveGroup(
+      GroupModel(
+        id: groupId,
+        name: 'Test Group',
+        type: GroupType.chat,
+        topicName: '/mknoon/group/$groupId',
+        createdAt: DateTime.now().toUtc(),
+        createdBy: 'peer-owner',
+        myRole: GroupRole.admin,
+      ),
+    );
+    for (final (peerId, role) in [
+      ('peer-owner', MemberRole.admin),
+      (selfPeerId, selfRole),
+    ]) {
+      await groupRepo.saveMember(
+        GroupMember(
+          groupId: groupId,
+          peerId: peerId,
+          username: peerId,
+          role: role,
+          publicKey: peerId == selfPeerId ? 'selfPubKey' : 'ownerPubKey',
+          mlKemPublicKey: peerId == selfPeerId ? 'selfMlKem' : 'ownerMlKem',
+          joinedAt: DateTime.now().toUtc(),
+        ),
+      );
+    }
+  }
+
+  Future<RotateGroupKeyOutcome> rotateAsTakeover(String takeoverGroupId) {
+    return runZoned(
+      () => rotateAndDistributeGroupKey(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        groupId: groupId,
+        selfPeerId: selfPeerId,
+        senderPublicKey: 'selfPubKey',
+        senderPrivateKey: 'selfPrivKey',
+        senderUsername: 'Self',
+        sendP2PMessage: _sendOk,
+      ),
+      zoneValues: {groupKeyRotationTakeoverZoneKey: takeoverGroupId},
+    );
+  }
+
+  test('a takeover lets a non-leader admin rotate', () async {
+    await saveOwnerAndSelf(selfRole: MemberRole.admin);
+    final result = await rotateAsTakeover(groupId);
+    expect(result.key, isNotNull);
+    expect(result.key!.keyGeneration, 2);
+  });
+
+  test('a takeover for another group does not authorize this one', () async {
+    await saveOwnerAndSelf(selfRole: MemberRole.admin);
+    final result = await rotateAsTakeover('some-other-group');
+    expect(result.key, isNull);
+  });
+
+  test('a takeover never lets a writer rotate', () async {
+    await saveOwnerAndSelf(selfRole: MemberRole.writer);
+    final result = await rotateAsTakeover(groupId);
+    expect(result.key, isNull);
+  });
 
   test('ML-013 bare writer and removed peer cannot rotate keys', () async {
     await groupRepo.saveMember(

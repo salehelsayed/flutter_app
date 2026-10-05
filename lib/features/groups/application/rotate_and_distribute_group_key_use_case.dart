@@ -288,7 +288,9 @@ Future<RotateGroupKeyOutcome> rotateAndDistributeGroupKey({
         group: group,
         members: await groupRepo.getMembers(groupId),
       );
-      if (leaderPeerId != selfPeerId) {
+      // A takeover (the leader stayed offline) comes only from the owed-key
+      // sweeper; the role check above still applies to it.
+      if (leaderPeerId != selfPeerId && !isGroupKeyRotationTakeover(groupId)) {
         emitFlowEvent(
           layer: 'FL',
           event: 'GROUP_ROTATE_KEY_PERMISSION_DENIED',

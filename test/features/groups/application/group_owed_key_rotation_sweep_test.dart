@@ -5,6 +5,7 @@ import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
+import 'package:flutter_app/features/groups/domain/utils/group_key_rotation_leader.dart';
 
 import '../../../shared/fakes/in_memory_group_message_repository.dart';
 import '../../../shared/fakes/in_memory_group_repository.dart';
@@ -17,6 +18,7 @@ void main() {
   late InMemoryGroupRepository repo;
   late InMemoryGroupMessageRepository messages;
   late List<String> rotations;
+  late List<bool> rotationsAsTakeover;
   late bool rotateSucceeds;
   late bool sideEffectsAllowed;
   late List<Map<String, dynamic>> flows;
@@ -74,6 +76,7 @@ void main() {
     repo = InMemoryGroupRepository();
     messages = InMemoryGroupMessageRepository();
     rotations = [];
+    rotationsAsTakeover = [];
     rotateSucceeds = true;
     sideEffectsAllowed = true;
     flows = [];
@@ -84,6 +87,7 @@ void main() {
       resolveSelfPeerId: () async => selfId,
       rotate: (id) async {
         rotations.add(id);
+        rotationsAsTakeover.add(isGroupKeyRotationTakeover(id));
         return rotateSucceeds;
       },
       allowsSideEffects: ({required operation, data}) async =>
@@ -113,12 +117,35 @@ void main() {
     expect(rotations, isEmpty);
   });
 
-  test('never rotates when another member is the rotation leader', () async {
-    // Bob created the group and may still rotate, so Bob leads.
+  test('leaves a fresh owed rotation to the leader', () async {
+    // Bob created the group and may still rotate, so Bob leads; this admin
+    // is second and waits out Bob's turn.
     await saveGroup(createdBy: 'peer-bob', bobRole: MemberRole.admin);
-    await removalAt(keyAt.add(const Duration(minutes: 3)));
+    await removalAt(now.subtract(const Duration(minutes: 10)));
     await sweeper.sweep();
     expect(rotations, isEmpty);
+  });
+
+  test('takes over an owed rotation the offline leader left undone', () async {
+    await saveGroup(createdBy: 'peer-bob', bobRole: MemberRole.admin);
+    await removalAt(
+      now.subtract(
+        GroupOwedKeyRotationSweeper.removalSettle +
+            GroupOwedKeyRotationSweeper.takeoverStep,
+      ),
+    );
+    await sweeper.sweep();
+    expect(rotations, [groupId]);
+    expect(rotationsAsTakeover, [true]);
+    expect(emitted('GROUP_KEY_ROTATION_TAKEOVER'), isTrue);
+  });
+
+  test('the leader rotates without the takeover mark', () async {
+    await saveGroup();
+    await removalAt(keyAt.add(const Duration(minutes: 3)));
+    await sweeper.sweep();
+    expect(rotationsAsTakeover, [false]);
+    expect(emitted('GROUP_KEY_ROTATION_TAKEOVER'), isFalse);
   });
 
   test('rotates a group whose creator was demoted (rotation leader)', () async {

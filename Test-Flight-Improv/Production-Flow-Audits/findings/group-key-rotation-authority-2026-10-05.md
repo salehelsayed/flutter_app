@@ -74,15 +74,20 @@ suggested-fix: >
   two admins, nobody with rotateKeys); a production journey like ML-020 that
   asserts keyEpoch >= 2 on Alice and Bob after Bob removes Charlie.
 verifiable-only-by: device-journey
-status: in-progress
+status: fixed
 progress: >
   2026-10-05: steps 1 and 2 done. groupKeyRotationLeaderPeerId
   (lib/features/groups/domain/utils/group_key_rotation_leader.dart) decides
   who rotates; the rotation use case, the owed-rotation sweeper and the
   rotation on a remote removal use it. A leader that leaves rotates on the
   way out, and the next leader then skips its own rotation for that leave
-  (no epoch fork). Step 3 (takeover when the leader stays offline) is not
-  done yet.
+  (no epoch fork). Step 3 done the same day: the owed-rotation sweeper runs
+  on every member allowed to rotate; position N in the rotation order
+  (groupKeyRotationOrderPeerIds) takes over a removal left unrotated for
+  1 + 15*N minutes (15 > Go's 10-minute key grace window, so an online
+  leader always goes first), logs GROUP_KEY_ROTATION_TAKEOVER and rotates
+  inside a zone that the rotation use case accepts for that group only.
+  Takeover is covered by unit tests, not by a device run.
   Device proof 2026-10-05 15:52 UTC, ML-020 on three iOS simulators (PASS,
   attempt-IZQsm7): after the handover Bob removed Charlie and logged
   GROUP_ROTATE_KEY_DONE newEpoch 2 distributedTo 1; Alice, Bob and the
