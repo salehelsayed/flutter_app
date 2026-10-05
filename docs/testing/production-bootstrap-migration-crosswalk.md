@@ -2542,3 +2542,70 @@ are accounted for: 51 have a production replacement proven on devices (each
 run PASS and its negative probe FAIL at the intended step; the four iOS
 cases above finished this wave), and 56 are recorded as not portable in the
 tables of this and earlier sections.
+
+## 2026-10-05 Wave 4 batch 1: classification of the remaining harnesses
+
+User authorized Wave 4 on 2026-10-05 with a faster plan: classify first, then
+two Android device rounds (phone + `emulator-5554`, each run alone on the Mac
+so measurements are not distorted by load), the physical-iPhone shared-XCTest
+batch in parallel with Android round A, then close-out.
+
+Rule (migration plan section 1 and Wave 4): keep a component benchmark where
+isolation is the measured thing; where a measurement claims application
+startup, resume, routing or end-user latency, keep the original as component
+evidence and add a separately named production-entrypoint measurement.
+
+| Harness | Measured interval / bound (source) | Disposition |
+|---|---|---|
+| benchmark_node_startup (B) | B-Sim-1/2/3 readiness; online <6000 ms, discoverable <5000 ms | covered by `production.startup_resume_performance` (C) |
+| benchmark_time_to_online (M) | M-Sim-1/2/3/Hot | covered (C) |
+| benchmark_background_resume (BR) | BR-S1/S2/S3 with real OS lifecycle; degrade <=15 s, waits <=30 s | covered (C) |
+| benchmark_relay_recovery (C) | C-Sim-1 single recovery; C-Sim-2 three recoveries (`:276-300`) | C-Sim-1 covered by foreground-recovery; C-Sim-2 needs a production measurement (P, round A) |
+| transport_census | transport mix and per-transport latency over N sends, no threshold (`P2PServiceImpl` stack, `:420`) | P, round A (alice phone, bob emulator) |
+| benchmark_1_1_send (A) | `CHAT_MSG_SEND_TIMING` cold/warm p50/p95, no threshold (`:110-125`) | P, round B (in the production routing journey) |
+| benchmark_routing_paths (R) | R-Sim-1..8 send timings; R-Sim-3 must observe its event (`:200`) | P, round B |
+| benchmark_group_publish (GP) | `sim_group_publish_peers_ready_ms` p50/p95, send must succeed (`:160-205`) | P, round B |
+| benchmark_notification_tap (N) | `NOTIFICATION_TAP_TO_MESSAGE_TIMING`, tap to first readable frame (`:279,:317`) | P, round B (production timing includes the real OS tap; a different interval, named separately) |
+| benchmark_ack (L) | direct ACK p95 <2000 ms (`:79-82`) | retain: transport timeout calibration |
+| benchmark_bridge_crossing (F) | `node:status` round trip p99 <50 ms (`:77`) | retain: bridge cost alone |
+| benchmark_connection_reuse (J) | cold vs warm send, no threshold | retain: connection-cache component; the production send latency is measured under A/R |
+| benchmark_encryption (G) | ML-KEM keygen/encrypt/decrypt times | retain: pure crypto |
+| benchmark_event_queue (I) | idle `node:status` p95 <500 ms (`:67`) | retain: bridge queue |
+| benchmark_inbox (D) | inbox store/retrieve/delivery, no threshold | retain: relay inbox component (in-memory repositories by design) |
+| benchmark_media (E) | upload stream events, >=2 progress events | retain: upload component |
+| benchmark_timeout_accuracy (H) | each timeout fires within 10% (`:238-240`) | retain: timer accuracy; own host protocol |
+| benchmark_voice (K) | voice send/upload/total, no threshold | retain: voice upload component |
+| conversation_wired_performance | frame build/raster summaries; skips on Android and iOS (`:1062-1066`); fake services | retain (reclassified): widget frame cost with fakes; no interval or threshold to carry to production |
+| conversation_wired_subscription_performance | same kind; skips on mobile (`:783`) | retain (reclassified) |
+| feed_wired_init_performance | FeedWired mount cold vs warm identity cache; report only; skips on mobile (`:726`) | retain (reclassified); a production first-feed-frame measurement has no baseline |
+| orbit_performance | report only, structural checks (`:298,:520`) | retain (reclassified) |
+| diagnostics_reconnect_isolation | stall <40000 ms, retry <2000 ms, heartbeat gaps <5 s with controlled fake native replies | retain (reclassified): the isolation is the claim |
+| relay_recovery_diagnostics | relay-ready within 30 s with diagnostics on vs off, 4 trials (`:84-104,:256-269`) | retain (reclassified): the measured thing is the on/off comparison; production relay-ready recovery is the foreground-recovery stage |
+| benchmark_harness, performance_harness | dispatchers | retain |
+
+Counts: 3 covered, 6 need a production measurement (C-Sim-2, census, A, R, GP,
+N), 15 retained as component evidence, 2 dispatchers. Six rows were tagged
+"component evidence plus application measurement" in the baseline and are
+reclassified to retain: their source uses fakes, skips on mobile or measures an
+on/off comparison, so a production version would measure something else.
+
+Device rounds:
+- Round A: C-Sim-2 (three recoveries) added to the startup/resume runner,
+  transport census on the ordinary and the `performance_relay` profile, and
+  the startup/resume reconciliation rerun on the final candidate.
+- Round B: 1:1 send and routing paths in one production routing session,
+  group publish, notification tap.
+- Shared XCTest (iPhone 11 / 13): the first caller runs the central
+  `ios.device.production` bundle with `test-without-building` for
+  `NotificationTapUITests/testAirplaneToggleStateDecoderContract` (no app
+  launch, no radio change, deterministic) under two independent fixtures, a
+  real provenance rejection with zero `xcodebuild` launches, and cleanup. Its
+  original route runs on a Debug simulator, so the comparison is of build
+  count and setup cost, not of identical platforms.
+
+Risks kept visible: P rows A, R, GP, N and census have no numeric threshold,
+so each production measurement names its interval explicitly and reports;
+the ordinary profile reaches `onlineDirect` rather than relay-ready (use
+`performance_relay` where relay readiness is required); emulator and Mac load
+distort latency, so measured runs run alone and the emulator window stays
+visible; the startup/resume result still needs final-candidate reconciliation.
