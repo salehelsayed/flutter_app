@@ -1,0 +1,1 @@
+{"file": "integration_test/scripts/run_production_group_ml020.dart", "old": "      text('aliceRemovedWindowAfterDemotion'),\n      ['bob'],\n", "new": "      text('aliceRemovedWindowAfterDemotion'),\n      // NEGATIVE PROBE: expect removed Charlie to receive it too.\n      ['bob', 'charlie'],\n"}

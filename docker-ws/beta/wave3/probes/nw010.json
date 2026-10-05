@@ -1,0 +1,1 @@
+{"file": "integration_test/scripts/run_production_group_nw010.dart", "old": "    await s.takeOffline('bob', 'bob-offline');\n", "new": "    // NEGATIVE PROBE: Bob stays online while Alice is active.\n"}
