@@ -131,7 +131,8 @@ final class ProductionJourneyFlowRunner {
   ) async {
     final attempt = await output.createTemp('flow-$label-');
     final destination = Directory('${attempt.path}/maestro');
-    final result = await runner.run('python3', [
+    final simulator = _isSimulator(device);
+    final args = [
       'scripts/maestro_flow_runner.py',
       '--device',
       device,
@@ -141,14 +142,25 @@ final class ProductionJourneyFlowRunner {
       name,
       '--output',
       destination.path,
-      if (_isSimulator(device)) ...['--timeout', '300'],
+      if (simulator) ...['--timeout', '300'],
       '--env',
       'APP_ID=$packageName',
       for (final entry in values.entries) ...[
         '--env',
         '${entry.key}=${entry.value}',
       ],
-    ]);
+    ];
+    // Simulator flows get Maestro's 300 s bound plus margin, so a driver that
+    // never started is reported (and retried) instead of cut off by the
+    // default host command limit.
+    final runner = this.runner;
+    final result = simulator && runner is AndroidHostProcessRunnerWithTimeout
+        ? await runner.runWithTimeout(
+            'python3',
+            args,
+            timeout: const Duration(seconds: 330),
+          )
+        : await runner.run('python3', args);
     await File('${attempt.path}/adapter.json').writeAsString(
       jsonEncode({
         'exitCode': result.exitCode,
