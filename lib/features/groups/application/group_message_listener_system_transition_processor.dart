@@ -460,24 +460,23 @@ final class _GroupMessageSystemTransitionProcessor {
             ? null
             : await buildGroupTransitionStateHash(_groupRepo, groupId);
         verifiedOrdinaryPreTransitionStateHash = preTransitionStateHash;
-        Future<SignedGroupTransitionAuditCheck> verifyAudit(String? preStateHash) =>
-            verifyGroupTransitionAudit(
-              bridge: _bridge!,
-              containerPayload: parsed,
-              groupId: groupId,
-              transitionType: sysType ?? '',
-              sourceEventId: transitionSourceEventId,
-              eventAt: eventAt ?? envelopeEventAt ?? DateTime.now().toUtc(),
-              actorPeerId: senderId,
-              actorUsername: senderUsername,
-              actorSigningPublicKey: actorPublicKey ?? '',
-              actorDeviceId: expectedAuditActorBinding.deviceId,
-              actorTransportPeerId: expectedAuditActorBinding.transportPeerId,
-              expectedPreTransitionStateHash: preStateHash,
-              expectedTransitionSubject: buildGroupSystemTransitionSubject(
-                parsed,
-              ),
-            );
+        Future<SignedGroupTransitionAuditCheck> verifyAudit(
+          String? preStateHash,
+        ) => verifyGroupTransitionAudit(
+          bridge: _bridge!,
+          containerPayload: parsed,
+          groupId: groupId,
+          transitionType: sysType ?? '',
+          sourceEventId: transitionSourceEventId,
+          eventAt: eventAt ?? envelopeEventAt ?? DateTime.now().toUtc(),
+          actorPeerId: senderId,
+          actorUsername: senderUsername,
+          actorSigningPublicKey: actorPublicKey ?? '',
+          actorDeviceId: expectedAuditActorBinding.deviceId,
+          actorTransportPeerId: expectedAuditActorBinding.transportPeerId,
+          expectedPreTransitionStateHash: preStateHash,
+          expectedTransitionSubject: buildGroupSystemTransitionSubject(parsed),
+        );
         var auditCheck = await verifyAudit(preTransitionStateHash);
         // A remover signs the removal, then rotates the key and sends the new
         // key to each remaining member directly. A member who misses the live
@@ -520,6 +519,30 @@ final class _GroupMessageSystemTransitionProcessor {
               );
             }
           }
+        }
+        if (!auditCheck.isValid &&
+            auditCheck.failure?.reason == 'previous_transition_hash_mismatch') {
+          // Compare with the signer's GROUP_TRANSITION_PRE_STATE_PARTS.
+          final localKeyGeneration = (await _groupRepo.getLatestKey(
+            groupId,
+          ))?.keyGeneration;
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'GROUP_MESSAGE_LISTENER_PRE_STATE_PARTS',
+            details: {
+              'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+              'type': sysType,
+              'signedHash': signedGroupTransitionAuditPreStateHash(
+                parsed,
+              )?.substring(0, 8),
+              'envelopeKeyEpoch': envelopeKeyEpoch,
+              ...groupTransitionStateHashParts(
+                group: await _groupRepo.getGroup(groupId),
+                members: await _groupRepo.getMembers(groupId),
+                latestKeyGeneration: localKeyGeneration,
+              ),
+            },
+          );
         }
         if (!auditCheck.isValid) {
           _emitSignedTransitionAuditRejected(

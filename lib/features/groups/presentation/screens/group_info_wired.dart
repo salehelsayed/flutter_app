@@ -1260,6 +1260,25 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
         widget.groupRepo,
         widget.group.id,
       );
+      // Lets a member that rejects this removal's pre-state name the field.
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'GROUP_TRANSITION_PRE_STATE_PARTS',
+        details: {
+          'groupId': widget.group.id.length > 8
+              ? widget.group.id.substring(0, 8)
+              : widget.group.id,
+          'type': 'member_removed',
+          'hash': preTransitionStateHash.substring(0, 8),
+          ...groupTransitionStateHashParts(
+            group: preRemovalGroup,
+            members: await widget.groupRepo.getMembers(widget.group.id),
+            latestKeyGeneration: (await widget.groupRepo.getLatestKey(
+              widget.group.id,
+            ))?.keyGeneration,
+          ),
+        },
+      );
 
       // 1. Remove from DB + update admin's Go config. Pass NO explicit eventAt:
       // like the role toggle, the use case mints the canonical (eventAt,

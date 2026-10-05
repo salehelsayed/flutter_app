@@ -486,6 +486,60 @@ String buildGroupTransitionStateHashFromSnapshot({
       .toString();
 }
 
+/// Diagnostic breakdown of [buildGroupTransitionStateHashFromSnapshot]: a
+/// short hash per group field and per member config field, plus the key
+/// generation. Two devices whose state hashes differ can compare these to
+/// name the field that differs. Values are hashed, never logged.
+Map<String, Object?> groupTransitionStateHashParts({
+  required GroupModel? group,
+  required List<GroupMember> members,
+  required int? latestKeyGeneration,
+}) {
+  String short(Object? value) => sha256
+      .convert(utf8.encode(canonicalizeGroupEventLogPayload({'v': value})))
+      .toString()
+      .substring(0, 8);
+  final parts = <String, Object?>{
+    'group.name': short(group?.name),
+    'group.type': short(group?.type.toValue()),
+    'group.createdBy': short(group?.createdBy),
+    'group.createdAt': short(group?.createdAt.toUtc().toIso8601String()),
+    'group.isDissolved': short(group?.isDissolved),
+    'group.dissolvedAt': short(group?.dissolvedAt?.toUtc().toIso8601String()),
+    'group.dissolvedBy': short(group?.dissolvedBy),
+    'group.lastMembershipEventAt': short(
+      group?.lastMembershipEventAt?.toUtc().toIso8601String(),
+    ),
+    'group.lastMetadataEventAt': short(
+      group?.lastMetadataEventAt?.toUtc().toIso8601String(),
+    ),
+    'latestKeyGeneration': latestKeyGeneration,
+  };
+  for (final member in members) {
+    final id = member.peerId.length > 6
+        ? member.peerId.substring(member.peerId.length - 6)
+        : member.peerId;
+    final config = member.toConfigJson();
+    for (final entry in config.entries) {
+      parts['member.$id.${entry.key}'] = short(entry.value);
+    }
+  }
+  return parts;
+}
+
+/// The pre-transition state hash a signed audit carries, or null.
+String? signedGroupTransitionAuditPreStateHash(
+  Map<String, dynamic> containerPayload,
+) {
+  final audit = _stringKeyedObjectMap(
+    containerPayload[signedGroupTransitionAuditField],
+  );
+  final signedPayload = audit?['signedPayload'];
+  if (signedPayload is! String) return null;
+  final hash = _decodeSignedPayload(signedPayload)?['preTransitionStateHash'];
+  return hash is String ? hash : null;
+}
+
 Map<String, Object?>? _decodeSignedPayload(String signedPayload) {
   try {
     return _stringKeyedObjectMap(jsonDecode(signedPayload));

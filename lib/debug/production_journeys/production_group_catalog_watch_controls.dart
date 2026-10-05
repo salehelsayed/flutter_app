@@ -103,6 +103,11 @@ const _watchedFlowEventPrefixes = [
   'GROUP_CREATOR_OWED_REKEY_',
   'GROUP_INVITE_STORE_PENDING_',
   'GROUP_DRAIN_OFFLINE_INBOX_REPLAY_',
+  // A rejected signed transition, with the state-hash breakdowns of the
+  // signer and the rejecting member.
+  'GROUP_MESSAGE_LISTENER_SIGNED_AUDIT_',
+  'GROUP_TRANSITION_PRE_STATE_',
+  'GROUP_MESSAGE_LISTENER_PRE_STATE_',
 ];
 
 // The drain diagnostics the original offline-removal proof summarizes.
