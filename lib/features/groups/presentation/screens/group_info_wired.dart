@@ -1614,6 +1614,11 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
                   : member.peerId,
             },
           );
+          // The removal is committed group-wide; show it now. Key rotation
+          // below can take a long time while members are offline, and the
+          // list must not keep showing the removed member meanwhile.
+          _didMutateGroup = true;
+          await _loadGroupInfo();
 
           // 3. Rotate group key and distribute to remaining members
           final rotationOutcome = await rotateAndDistributeGroupKey(

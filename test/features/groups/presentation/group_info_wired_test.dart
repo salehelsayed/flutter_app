@@ -8377,6 +8377,83 @@ void main() {
       expect(find.text('Alice'), findsNothing);
     });
 
+    testWidgets(
+      'removed member leaves the list before slow key distribution ends',
+      (tester) async {
+        final groupRepo = InMemoryGroupRepository();
+        final group = makeAdminGroup();
+        await groupRepo.saveGroup(group);
+        await _saveGroupReplayKey(groupRepo);
+        for (final (peerId, username, role) in [
+          ('peer-admin', 'Admin', MemberRole.admin),
+          ('peer-alice', 'Alice', MemberRole.writer),
+          ('peer-bob', 'Bob', MemberRole.writer),
+        ]) {
+          await groupRepo.saveMember(
+            GroupMember(
+              groupId: 'group-1',
+              peerId: peerId,
+              username: username,
+              role: role,
+              publicKey: 'pk-$username',
+              mlKemPublicKey: 'mlkem-pk-$username',
+              joinedAt: DateTime.now().toUtc(),
+            ),
+          );
+        }
+        final bridge = FakeBridge(
+          initialResponses: {
+            'group:generateNextKey': {
+              'ok': true,
+              'groupKey': 'fake-rotated-key',
+              'keyEpoch': 2,
+            },
+          },
+        );
+        // Bob is offline: every direct send hangs for minutes (NW-003 on
+        // iOS simulators kept the removed member on screen for over 45 s).
+        final p2pService = FakeP2PService()
+          ..sendMessageDelay = const Duration(minutes: 5);
+
+        await tester.pumpWidget(
+          _localizedMaterialApp(
+            home: GroupInfoWired(
+              group: group,
+              groupRepo: groupRepo,
+              contactRepo: InMemoryContactRepository(),
+              bridge: bridge,
+              identityRepo: FakeIdentityRepository(identity: testIdentity),
+              p2pService: p2pService,
+            ),
+          ),
+        );
+        await pumpFrames(tester);
+        final aliceRemoveButton = find.descendant(
+          of: find.ancestor(of: find.text('Alice'), matching: find.byType(Row)),
+          matching: find.byIcon(Icons.remove_circle_outline),
+        );
+        await tester.ensureVisible(aliceRemoveButton);
+        await pumpFrames(tester, count: 5);
+        await tester.tap(aliceRemoveButton, warnIfMissed: false);
+        await pumpFrames(tester);
+        await confirmRemoveMemberDialog(tester);
+
+        // The rotation started and no direct send has finished yet.
+        expect(bridge.commandLog, contains('group:generateNextKey'));
+        expect(p2pService.sendMessageCallCount, 0);
+        expect(find.text('Alice'), findsNothing);
+        expect(find.text('Bob'), findsOneWidget);
+
+        // Bob reconnects: later retries send at once; drain the hung sends
+        // so no timer outlives the test.
+        p2pService.sendMessageDelay = Duration.zero;
+        for (var i = 0; i < 4; i++) {
+          await tester.pump(const Duration(minutes: 6));
+        }
+        await pumpFrames(tester);
+      },
+    );
+
     testWidgets('remove member broadcasts system message and rotates key', (
       tester,
     ) async {

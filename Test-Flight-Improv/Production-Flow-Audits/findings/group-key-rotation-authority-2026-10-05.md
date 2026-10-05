@@ -78,3 +78,36 @@ status: open
 related-docs:
   - docs/testing/production-bootstrap-migration-crosswalk.md (Wave 3 iOS section, ML-020)
 ```
+
+---
+
+```yaml
+id: group-key-rotation-2026-10-05-002
+severity: medium
+what-user-sees: >
+  An admin removes a member while other members are offline. The confirm
+  dialog closes, but Group Info keeps showing the removed member (and the
+  old member count) for a minute or more, so the removal looks like it
+  failed and the admin may tap Remove again.
+chain-break-at: >
+  _GroupInfoWiredState._onRemoveMember reloaded the member list only after
+  rotateAndDistributeGroupKey finished. Key distribution retries direct
+  sends to each offline member before falling back to the inbox, which can
+  take far longer than the removal itself.
+production-files:
+  - lib/features/groups/presentation/screens/group_info_wired.dart:1617
+evidence: >
+  NW-003 on iOS simulators 2026-10-05, attempt
+  build/sims/proofs/production.group_catalog.private_partition_readd_heal/attempt-ZCg8bG:
+  Alice's removal saved at 12:38:24 UTC and was broadcast at 12:38:38, but
+  Group Info still said "3 members" and listed Charlie 45 s after the tap
+  (Bob and Charlie were offline).
+fix: >
+  Reload the member list as soon as the removal is broadcast (committed
+  group-wide), before the rotation starts. Widget test "removed member
+  leaves the list before slow key distribution ends" in
+  test/features/groups/presentation/group_info_wired_test.dart (red without
+  the fix, green with it).
+verifiable-only-by: widget-test
+status: fixed
+```
