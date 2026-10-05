@@ -375,6 +375,135 @@ void main() {
     });
   });
 
+  group('needs-attention background clean-up', () {
+    final now = DateTime.utc(2026, 10, 5, 12);
+    String ago(Duration d) => now.subtract(d).toIso8601String();
+
+    Future<({int abandoned, int deleted, int requeued})> runMaintenance() =>
+        dbRunInboxStagingNeedsAttentionMaintenance(
+          db,
+          messageTypes: const ['chat_message'],
+          now: now,
+          giveUpStagedBefore: now.subtract(const Duration(days: 7)),
+          deleteAbandonedBefore: now.subtract(const Duration(days: 30)),
+          retryAttemptedBefore: now.subtract(const Duration(hours: 1)),
+          attemptCount: 10,
+        );
+
+    Future<String?> statusOf(String entryId) async =>
+        (await dbLoadInboxStagingEntry(db, entryId))?['status'] as String?;
+
+    test('retries, gives up and deletes only the rows that are due', () async {
+      Future<void> seed(
+        String entryId, {
+        String status = 'quarantined',
+        String? messageType = 'chat_message',
+        Duration stagedAgo = const Duration(days: 1),
+        Duration? lastAttemptedAgo,
+        String? rejectReasonCode = 'attempt_cap_exceeded',
+      }) => dbInsertInboxStagingEntry(
+        db,
+        makeRow(
+          entryId: entryId,
+          status: status,
+          messageType: messageType,
+          stagedAt: ago(stagedAgo),
+          lastAttemptedAt: lastAttemptedAgo == null
+              ? null
+              : ago(lastAttemptedAgo),
+          rejectReasonCode: rejectReasonCode,
+        ),
+      );
+
+      await seed('due', lastAttemptedAgo: const Duration(hours: 2));
+      await seed(
+        'never-tried',
+        status: 'rejected',
+        rejectReasonCode: 'duplicate',
+      );
+      await seed('just-tried', lastAttemptedAgo: const Duration(minutes: 10));
+      await seed(
+        'too-old',
+        stagedAgo: const Duration(days: 8),
+        lastAttemptedAgo: const Duration(hours: 2),
+      );
+      await seed(
+        'given-up-long-ago',
+        status: 'abandoned',
+        lastAttemptedAgo: const Duration(days: 31),
+      );
+      await seed(
+        'given-up-recently',
+        status: 'abandoned',
+        lastAttemptedAgo: const Duration(days: 29),
+      );
+      await seed(
+        'blocked',
+        status: 'rejected',
+        stagedAgo: const Duration(days: 8),
+        rejectReasonCode: 'blocked_sender',
+      );
+      await seed(
+        'other-type',
+        messageType: 'protected_group_content',
+        stagedAgo: const Duration(days: 8),
+      );
+      await seed('live', status: 'pending', rejectReasonCode: null);
+
+      final result = await runMaintenance();
+
+      expect(result, (abandoned: 1, deleted: 1, requeued: 2));
+
+      final due = await dbLoadInboxStagingEntry(db, 'due');
+      expect(due!['status'], 'retryable');
+      expect(due['attempt_count'], 10);
+      expect(due['reject_reason_code'], 'background_retry');
+      expect(
+        due['reject_reason_detail'],
+        'background retry from quarantined:attempt_cap_exceeded',
+      );
+      expect(await statusOf('never-tried'), 'retryable');
+      expect(await statusOf('just-tried'), 'quarantined');
+
+      final tooOld = await dbLoadInboxStagingEntry(db, 'too-old');
+      expect(tooOld!['status'], 'abandoned');
+      expect(tooOld['last_attempted_at'], now.toIso8601String());
+      expect(
+        tooOld['reject_reason_detail'],
+        'gave up from quarantined:attempt_cap_exceeded',
+      );
+
+      expect(await statusOf('given-up-long-ago'), isNull);
+      expect(await statusOf('given-up-recently'), 'abandoned');
+      expect(await statusOf('blocked'), 'rejected');
+      expect(await statusOf('other-type'), 'quarantined');
+      expect(await statusOf('live'), 'pending');
+
+      // Given-up rows are never counted or replayed.
+      final recoverable = await dbLoadRecoverableInboxStagingEntries(db);
+      expect(
+        recoverable.map((row) => row['entry_id']).toSet(),
+        {'due', 'never-tried', 'live'},
+      );
+      expect(await dbCountNeedsAttentionInboxStagingEntries(db), 2);
+    });
+
+    test('a second run right away changes nothing', () async {
+      await dbInsertInboxStagingEntry(
+        db,
+        makeRow(
+          entryId: 'due',
+          status: 'quarantined',
+          stagedAt: ago(const Duration(days: 1)),
+          lastAttemptedAt: ago(const Duration(hours: 2)),
+        ),
+      );
+
+      expect(await runMaintenance(), (abandoned: 0, deleted: 0, requeued: 1));
+      expect(await runMaintenance(), (abandoned: 0, deleted: 0, requeued: 0));
+    });
+  });
+
   group('dbDeleteInboxStagingEntry', () {
     test('deletes staged rows after successful replay', () async {
       await dbInsertInboxStagingEntry(db, makeRow());

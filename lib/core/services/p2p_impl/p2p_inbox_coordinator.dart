@@ -2121,6 +2121,7 @@ class _P2PInboxCoordinator {
   }) async {
     try {
       final toPeerId = _port.readNodeState().peerId ?? '';
+      await _runNeedsAttentionMaintenance();
       final replayExistingSw = Stopwatch()..start();
       final replayedExisting = await _replayStagedInboxEntries();
       replayExistingSw.stop();
@@ -2907,16 +2908,42 @@ class _P2PInboxCoordinator {
     return drainOfflineInbox();
   }
 
-  Future<int> countNeedsAttentionInboxEntries() async {
+  /// Stuck 1:1 rows (quarantined, or recoverable-class rejected) are handled
+  /// in the background only; the user sees nothing. Before each drain's
+  /// replay, every stuck row gets one fresh attempt at most once per
+  /// [_needsAttentionRetryEvery]. A row still stuck [_needsAttentionGiveUpAfter]
+  /// after it was staged is given up (`abandoned`), and given-up rows are
+  /// deleted [_needsAttentionDeleteAfter] later. Never throws.
+  static const _needsAttentionMessageTypes = [
+    'chat_message',
+    'introduction',
+    'contact_request',
+    'message_reaction',
+    'message_deletion',
+  ];
+  static const _needsAttentionRetryEvery = Duration(hours: 1);
+  static const _needsAttentionGiveUpAfter = Duration(days: 7);
+  static const _needsAttentionDeleteAfter = Duration(days: 30);
+
+  Future<void> _runNeedsAttentionMaintenance() async {
+    final repo = _inboxStagingRepository;
+    if (repo is! InboxStagingNeedsAttentionMaintenanceRepository) return;
     try {
-      return await _inboxStagingRepository.countNeedsAttentionEntries();
+      await (repo as InboxStagingNeedsAttentionMaintenanceRepository)
+          .runNeedsAttentionMaintenance(
+            messageTypes: _needsAttentionMessageTypes,
+            now: clock.now(),
+            retryEvery: _needsAttentionRetryEvery,
+            giveUpAfter: _needsAttentionGiveUpAfter,
+            deleteAfter: _needsAttentionDeleteAfter,
+            attemptCount: maxInboxReplayAttempts,
+          );
     } catch (e) {
       emitFlowEvent(
         layer: 'FL',
-        event: 'P2P_SERVICE_INBOX_NEEDS_ATTENTION_COUNT_ERROR',
+        event: 'P2P_SERVICE_INBOX_NEEDS_ATTENTION_MAINTENANCE_ERROR',
         details: {'error': e.toString()},
       );
-      return 0;
     }
   }
 }

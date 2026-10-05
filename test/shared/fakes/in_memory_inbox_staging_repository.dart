@@ -1,3 +1,4 @@
+import 'package:clock/clock.dart';
 import 'package:flutter_app/core/inbox/inbox_staging_entry.dart';
 import 'package:flutter_app/core/inbox/inbox_staging_repository.dart';
 
@@ -6,7 +7,8 @@ class InMemoryInboxStagingRepository
         InboxStagingRepository,
         InboxStagingPrerequisiteWaitingRepository,
         InboxStagingProtectedAckPendingRepository,
-        InboxStagingRecoverableWorkProbeRepository {
+        InboxStagingRecoverableWorkProbeRepository,
+        InboxStagingNeedsAttentionMaintenanceRepository {
   final Map<String, InboxStagingEntry> _entries = {};
 
   void seed(InboxStagingEntry entry) {
@@ -90,7 +92,7 @@ class InMemoryInboxStagingRepository
     _entries[entryId] = existing.copyWith(
       status: 'retryable',
       attemptCount: existing.attemptCount + 1,
-      lastAttemptedAt: '2026-04-01T00:00:00.000Z',
+      lastAttemptedAt: clock.now().toUtc().toIso8601String(),
       rejectReasonCode: reasonCode,
       rejectReasonDetail: reasonDetail,
     );
@@ -129,7 +131,7 @@ class InMemoryInboxStagingRepository
     _entries[entryId] = existing.copyWith(
       status: 'rejected',
       attemptCount: existing.attemptCount + 1,
-      lastAttemptedAt: '2026-04-01T00:00:00.000Z',
+      lastAttemptedAt: clock.now().toUtc().toIso8601String(),
       rejectReasonCode: reasonCode,
       rejectReasonDetail: reasonDetail,
     );
@@ -146,7 +148,7 @@ class InMemoryInboxStagingRepository
     _entries[entryId] = existing.copyWith(
       status: 'quarantined',
       attemptCount: existing.attemptCount + 1,
-      lastAttemptedAt: '2026-04-01T00:00:00.000Z',
+      lastAttemptedAt: clock.now().toUtc().toIso8601String(),
       rejectReasonCode: reasonCode,
       rejectReasonDetail: reasonDetail,
     );
@@ -159,20 +161,74 @@ class InMemoryInboxStagingRepository
         .length;
   }
 
+  static const _recoverableClassRejects = {
+    'unknown_sender',
+    'duplicate',
+    'edit_missing_original',
+  };
+
+  bool _needsAttention(InboxStagingEntry entry) =>
+      entry.status == 'quarantined' ||
+      (entry.status == 'rejected' &&
+          _recoverableClassRejects.contains(entry.rejectReasonCode));
+
   @override
   Future<int> countNeedsAttentionEntries() async {
-    const recoverableClassRejects = {
-      'unknown_sender',
-      'duplicate',
-      'edit_missing_original',
-    };
-    return _entries.values
+    return _entries.values.where(_needsAttention).length;
+  }
+
+  /// Mirrors `dbRunInboxStagingNeedsAttentionMaintenance`.
+  @override
+  Future<({int abandoned, int deleted, int requeued})>
+  runNeedsAttentionMaintenance({
+    required List<String> messageTypes,
+    required DateTime now,
+    required Duration retryEvery,
+    required Duration giveUpAfter,
+    required Duration deleteAfter,
+    required int attemptCount,
+  }) async {
+    bool olderThan(String? iso, Duration age) =>
+        iso == null || DateTime.parse(iso).isBefore(now.subtract(age));
+    bool inScope(InboxStagingEntry entry) =>
+        _needsAttention(entry) && messageTypes.contains(entry.messageType);
+    String previous(InboxStagingEntry entry) =>
+        '${entry.status}:${entry.rejectReasonCode ?? ''}';
+
+    var abandoned = 0;
+    for (final entry in _entries.values.toList()) {
+      if (inScope(entry) && olderThan(entry.stagedAt, giveUpAfter)) {
+        _entries[entry.entryId] = entry.copyWith(
+          status: 'abandoned',
+          lastAttemptedAt: now.toUtc().toIso8601String(),
+          rejectReasonCode: 'gave_up',
+          rejectReasonDetail: 'gave up from ${previous(entry)}',
+        );
+        abandoned++;
+      }
+    }
+    final toDelete = _entries.values
         .where(
           (entry) =>
-              entry.status == 'quarantined' ||
-              (entry.status == 'rejected' &&
-                  recoverableClassRejects.contains(entry.rejectReasonCode)),
+              entry.status == 'abandoned' &&
+              entry.lastAttemptedAt != null &&
+              olderThan(entry.lastAttemptedAt, deleteAfter),
         )
-        .length;
+        .map((entry) => entry.entryId)
+        .toList();
+    toDelete.forEach(_entries.remove);
+    var requeued = 0;
+    for (final entry in _entries.values.toList()) {
+      if (inScope(entry) && olderThan(entry.lastAttemptedAt, retryEvery)) {
+        _entries[entry.entryId] = entry.copyWith(
+          status: 'retryable',
+          attemptCount: attemptCount,
+          rejectReasonCode: 'background_retry',
+          rejectReasonDetail: 'background retry from ${previous(entry)}',
+        );
+        requeued++;
+      }
+    }
+    return (abandoned: abandoned, deleted: toDelete.length, requeued: requeued);
   }
 }

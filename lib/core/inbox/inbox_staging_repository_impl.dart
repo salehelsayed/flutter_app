@@ -7,7 +7,8 @@ class InboxStagingRepositoryImpl
         InboxStagingRepository,
         InboxStagingPrerequisiteWaitingRepository,
         InboxStagingProtectedAckPendingRepository,
-        InboxStagingRecoverableWorkProbeRepository {
+        InboxStagingRecoverableWorkProbeRepository,
+        InboxStagingNeedsAttentionMaintenanceRepository {
   final Future<int> Function(Map<String, Object?> row)
   dbInsertInboxStagingEntry;
   final Future<List<Map<String, Object?>>> Function({
@@ -52,6 +53,18 @@ class InboxStagingRepositoryImpl
   /// over-counts).
   final Future<int> Function()? dbCountNeedsAttentionInboxStagingEntries;
 
+  /// Optional so existing construction sites keep compiling; when absent the
+  /// background clean-up does nothing.
+  final Future<({int abandoned, int deleted, int requeued})> Function({
+    required List<String> messageTypes,
+    required DateTime now,
+    required DateTime giveUpStagedBefore,
+    required DateTime deleteAbandonedBefore,
+    required DateTime retryAttemptedBefore,
+    required int attemptCount,
+  })?
+  dbRunInboxStagingNeedsAttentionMaintenance;
+
   /// Optional so existing construction sites keep compiling; when absent,
   /// [hasRecoverableEntryExcluding] falls back to a page scan that reports
   /// work whenever the page is full (it can over-report, never under-report).
@@ -73,6 +86,7 @@ class InboxStagingRepositoryImpl
     required this.dbMarkInboxStagingEntryQuarantined,
     required this.dbCountQuarantinedInboxStagingEntries,
     this.dbCountNeedsAttentionInboxStagingEntries,
+    this.dbRunInboxStagingNeedsAttentionMaintenance,
     this.dbHasRecoverableInboxStagingEntryExcluding,
   });
 
@@ -224,5 +238,27 @@ class InboxStagingRepositoryImpl
       return needsAttention();
     }
     return dbCountQuarantinedInboxStagingEntries();
+  }
+
+  @override
+  Future<({int abandoned, int deleted, int requeued})>
+  runNeedsAttentionMaintenance({
+    required List<String> messageTypes,
+    required DateTime now,
+    required Duration retryEvery,
+    required Duration giveUpAfter,
+    required Duration deleteAfter,
+    required int attemptCount,
+  }) async {
+    final run = dbRunInboxStagingNeedsAttentionMaintenance;
+    if (run == null) return (abandoned: 0, deleted: 0, requeued: 0);
+    return run(
+      messageTypes: messageTypes,
+      now: now,
+      giveUpStagedBefore: now.subtract(giveUpAfter),
+      deleteAbandonedBefore: now.subtract(deleteAfter),
+      retryAttemptedBefore: now.subtract(retryEvery),
+      attemptCount: attemptCount,
+    );
   }
 }

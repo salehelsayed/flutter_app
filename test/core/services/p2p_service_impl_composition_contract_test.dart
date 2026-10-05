@@ -33,7 +33,6 @@ const _implements = <String>[
   'RelayPresenceSet',
   'PeerLivenessProbe',
   'PeerDropSignal',
-  'InboxAttentionSignal',
 ];
 
 const _constructorParameters = <String>[
@@ -158,7 +157,6 @@ const _publicMethods = <String>{
   'pingPeer',
   'isPeerSuspectedDropped',
   'setPeerDropSuspected',
-  'countNeedsAttentionInboxEntries',
   'isConnectedToPeer',
   'isLocalPeer',
   'hasNonCircuitDirectConn',
@@ -242,7 +240,6 @@ const _inboxMethods = <String>{
   'drainProtectedGroupContentFixedPoint',
   'drainProtectedGroupContentRecoveryFixedPoint',
   '_scheduleStartupDrain',
-  'countNeedsAttentionInboxEntries',
   'onNodeStateTransition',
 };
 
@@ -260,7 +257,6 @@ const _inboxDelegates = <String>{
   'resumeProtectedGroupContentAdmission',
   'drainProtectedGroupContentFixedPoint',
   'drainProtectedGroupContentRecoveryFixedPoint',
-  'countNeedsAttentionInboxEntries',
 };
 
 const _inboxPortMembers = <String>{
@@ -674,7 +670,11 @@ String _publicApiFingerprint(ClassDeclaration facade) {
 // exact delivered-owner proof from each production lifetime's scoped database.
 // Public STORE methods and custody function signatures retain their shape.
 // The only API addition is the O7 foreground lifecycle predicate above.
-const _expectedFacadeApiFingerprint = 'a4892d0a';
+//
+// The "couldn't display N messages" banner was removed: stuck inbox rows are
+// now retried and given up in the background, so the InboxAttentionSignal
+// count method is gone from the facade.
+const _expectedFacadeApiFingerprint = '164a877e';
 
 void _expectCallbackOwnership(ClassDeclaration facade, String facadeSource) {
   final constructorBody = _compact(

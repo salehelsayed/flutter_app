@@ -36,11 +36,27 @@ abstract class InboxStagingRepository {
 
   Future<int> countQuarantinedEntries();
 
-  /// 172 (INV-2): kept-but-undisplayed entries the user must be able to see —
-  /// quarantined rows PLUS historical `rejected` rows in the recoverable
+  /// 172: kept-but-undisplayed entries: quarantined rows PLUS historical `rejected` rows in the recoverable
   /// classes (unknown_sender / duplicate / edit_missing_original) that the
   /// pre-172 code terminally rejected. Content-safe rejections never count.
   Future<int> countNeedsAttentionEntries();
+}
+
+/// Optional background clean-up of the needs-attention rows (quarantined and
+/// recoverable-class rejected). The app shows no UI for them: each run gives
+/// them one more replay attempt at most once per [retryEvery], gives up on
+/// rows older than [giveUpAfter], and deletes given-up rows after
+/// [deleteAfter]. Only rows of [messageTypes] are touched.
+abstract interface class InboxStagingNeedsAttentionMaintenanceRepository {
+  Future<({int abandoned, int deleted, int requeued})>
+  runNeedsAttentionMaintenance({
+    required List<String> messageTypes,
+    required DateTime now,
+    required Duration retryEvery,
+    required Duration giveUpAfter,
+    required Duration deleteAfter,
+    required int attemptCount,
+  });
 }
 
 /// Optional status-only transition for protected group authority waiting on a

@@ -172,8 +172,7 @@ class P2PServiceImpl
         RelayPresenceLookup,
         RelayPresenceSet,
         PeerLivenessProbe,
-        PeerDropSignal,
-        InboxAttentionSignal {
+        PeerDropSignal {
   final Bridge _bridge;
   final PushTokenStore? _pushTokenStore;
 
@@ -3407,14 +3406,6 @@ class P2PServiceImpl
   void setPeerDropSuspected(String peerId, bool dropped) {
     _peerTransportCoordinator.setPeerDropSuspected(peerId, dropped);
   }
-
-  // 172: InboxAttentionSignal — the conversation UI's count source for the
-  // "couldn't display N messages" affordance (INV-2: a kept-but-undisplayed
-  // staged entry is never silently invisible). Never throws: any repo/DB error
-  // degrades to 0 (the affordance simply hides).
-  @override
-  Future<int> countNeedsAttentionInboxEntries() =>
-      _inboxCoordinator.countNeedsAttentionInboxEntries();
 
   @override
   bool isConnectedToPeer(String peerId) =>

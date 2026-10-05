@@ -2723,6 +2723,130 @@ void main() {
       );
     });
 
+    // Stuck rows are handled in the background only: the staged replay never
+    // loads quarantined rows by itself, so each drain first gives due rows one
+    // more attempt and gives up on old ones.
+    group('background retry of stuck inbox rows', () {
+      InboxStagingEntry stuckRow(
+        String entryId, {
+        required Duration stagedAgo,
+        required Duration lastAttemptedAgo,
+      }) {
+        final now = DateTime.now().toUtc();
+        return InboxStagingEntry(
+          entryId: entryId,
+          ownerPeerId: 'self-peer',
+          senderPeerId: 'remote-peer',
+          messageType: 'chat_message',
+          relayTimestamp: now.subtract(stagedAgo).toIso8601String(),
+          envelope: _chatEnvelope(
+            id: 'msg-$entryId',
+            text: 'stuck',
+            senderPeerId: 'remote-peer',
+          ),
+          stagedAt: now.subtract(stagedAgo).toIso8601String(),
+          status: 'quarantined',
+          attemptCount: maxInboxReplayAttempts + 1,
+          lastAttemptedAt: now.subtract(lastAttemptedAgo).toIso8601String(),
+          rejectReasonCode: 'attempt_cap_exceeded',
+        );
+      }
+
+      Future<
+        ({InMemoryInboxStagingRepository repo, List<String> replayed})
+      >
+      startService(ChatMessageProcessState replayState) async {
+        service.dispose();
+        final repo = InMemoryInboxStagingRepository();
+        final replayed = <String>[];
+        service = P2PServiceImpl(
+          bridge: bridge,
+          inboxStagingRepository: repo,
+          replayRecoveredInboxChatMessage:
+              (message, {String? stagedEntryId}) async {
+                replayed.add(stagedEntryId ?? '');
+                return mapChatReplayOutcomeToDisposition(
+                  ChatMessageProcessOutcome(state: replayState),
+                );
+              },
+        );
+        bridge.whenCommand(
+          'node:start',
+          (_) => jsonEncode({
+            'ok': true,
+            'peerId': 'self-peer',
+            'isStarted': true,
+            'listenAddresses': [],
+          }),
+        );
+        await service.startNodeCore('cHJpdmF0ZWtleXRlc3Q=', 'self-peer');
+        bridge.whenCommand(
+          'inbox:retrieve_pending',
+          (_) => jsonEncode({
+            'ok': true,
+            'messages': <Map<String, dynamic>>[],
+            'hasMore': false,
+          }),
+        );
+        return (repo: repo, replayed: replayed);
+      }
+
+      test('a since-healed stuck row is displayed on the next drain', () async {
+        final s = await startService(ChatMessageProcessState.stored);
+        s.repo.seed(
+          stuckRow(
+            'entry-healed',
+            stagedAgo: const Duration(days: 1),
+            lastAttemptedAgo: const Duration(hours: 2),
+          ),
+        );
+
+        await service.drainOfflineInbox();
+
+        expect(s.replayed, ['entry-healed']);
+        expect(s.repo.entry('entry-healed'), isNull);
+      });
+
+      test('a row that still fails gets one attempt, then waits an hour',
+          () async {
+        final s = await startService(ChatMessageProcessState.unknownSender);
+        s.repo.seed(
+          stuckRow(
+            'entry-stuck',
+            stagedAgo: const Duration(days: 1),
+            lastAttemptedAgo: const Duration(hours: 2),
+          ),
+        );
+
+        await service.drainOfflineInbox();
+        await service.drainOfflineInbox();
+
+        expect(s.replayed, ['entry-stuck']);
+        final entry = s.repo.entry('entry-stuck');
+        expect(entry, isNotNull);
+        expect(entry!.status, 'quarantined');
+        expect(entry.rejectReasonCode, 'attempt_cap_exceeded');
+      });
+
+      test('a row stuck for over 7 days is given up without a replay',
+          () async {
+        final s = await startService(ChatMessageProcessState.stored);
+        s.repo.seed(
+          stuckRow(
+            'entry-old',
+            stagedAgo: const Duration(days: 8),
+            lastAttemptedAgo: const Duration(hours: 2),
+          ),
+        );
+
+        await service.drainOfflineInbox();
+
+        expect(s.replayed, isEmpty);
+        expect(s.repo.entry('entry-old')!.status, 'abandoned');
+        expect(await s.repo.countNeedsAttentionEntries(), 0);
+      });
+    });
+
     test(
       'marks LAN staged row retryable on decryptionDeferred replay outcome',
       () async {

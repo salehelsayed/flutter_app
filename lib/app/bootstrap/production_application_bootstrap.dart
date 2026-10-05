@@ -2134,6 +2134,23 @@ final class ProductionApplicationBootstrap
           dbCountQuarantinedInboxStagingEntries(db),
       dbCountNeedsAttentionInboxStagingEntries: () =>
           dbCountNeedsAttentionInboxStagingEntries(db),
+      dbRunInboxStagingNeedsAttentionMaintenance:
+          ({
+            required messageTypes,
+            required now,
+            required giveUpStagedBefore,
+            required deleteAbandonedBefore,
+            required retryAttemptedBefore,
+            required attemptCount,
+          }) => dbRunInboxStagingNeedsAttentionMaintenance(
+            db,
+            messageTypes: messageTypes,
+            now: now,
+            giveUpStagedBefore: giveUpStagedBefore,
+            deleteAbandonedBefore: deleteAbandonedBefore,
+            retryAttemptedBefore: retryAttemptedBefore,
+            attemptCount: attemptCount,
+          ),
     );
 
     final postRepository = PostRepositoryImpl(

@@ -40,7 +40,6 @@ import 'package:flutter_app/features/conversation/presentation/widgets/letter_ca
 import 'package:flutter_app/features/conversation/presentation/widgets/message_context_overlay.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/offline_message_banner.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/protected_photo_thumbnail_tile.dart';
-import 'package:flutter_app/features/conversation/presentation/widgets/undelivered_messages_banner.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/upload_progress_banner.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/full_emoji_picker.dart';
 import 'package:flutter_app/features/identity/presentation/widgets/ambient_background.dart';
@@ -313,13 +312,6 @@ class ConversationScreen extends StatefulWidget {
   final Map<String, MessageUploadProgressViewState> messageUploadProgress;
   final VoidCallback? onCancelUpload;
   final P2PService? p2pService;
-
-  /// 172 (INV-2): count of kept-but-undisplayed staged inbox entries; > 0
-  /// renders the "couldn't display N messages" affordance above the list.
-  final int undeliveredCount;
-
-  /// 172: re-drives the staged drain so a since-healed cause gets displayed.
-  final VoidCallback? onRetryUndelivered;
   final VoidCallback? onMakeIntroductions;
   final VoidCallback? onMaybeLater;
   final String? initialText;
@@ -429,8 +421,6 @@ class ConversationScreen extends StatefulWidget {
     this.messageUploadProgress = const {},
     this.onCancelUpload,
     this.p2pService,
-    this.undeliveredCount = 0,
-    this.onRetryUndelivered,
     this.onMakeIntroductions,
     this.onMaybeLater,
     this.initialText,
@@ -827,13 +817,6 @@ class _ConversationScreenState extends State<ConversationScreen>
                 UploadProgressBanner(
                   state: widget.uploadProgress!,
                   onCancel: widget.onCancelUpload,
-                ),
-              // 172 (INV-2): kept-but-undisplayed staged entries are surfaced, not
-              // silently invisible. Outside the ListView so it never shifts scroll.
-              if (!compactForKeyboard && widget.undeliveredCount > 0)
-                UndeliveredMessagesBanner(
-                  count: widget.undeliveredCount,
-                  onRetry: widget.onRetryUndelivered,
                 ),
               // 145: "catching up…" affordance shown while the relay drain is in
               // flight. Outside the message ListView so it never shifts the scroll

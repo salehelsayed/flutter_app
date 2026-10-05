@@ -1399,6 +1399,23 @@ InboxStagingRepositoryImpl _buildInboxStagingRepository(
       dbCountQuarantinedInboxStagingEntries(database),
   dbCountNeedsAttentionInboxStagingEntries: () =>
       dbCountNeedsAttentionInboxStagingEntries(database),
+  dbRunInboxStagingNeedsAttentionMaintenance:
+      ({
+        required messageTypes,
+        required now,
+        required giveUpStagedBefore,
+        required deleteAbandonedBefore,
+        required retryAttemptedBefore,
+        required attemptCount,
+      }) => dbRunInboxStagingNeedsAttentionMaintenance(
+        database,
+        messageTypes: messageTypes,
+        now: now,
+        giveUpStagedBefore: giveUpStagedBefore,
+        deleteAbandonedBefore: deleteAbandonedBefore,
+        retryAttemptedBefore: retryAttemptedBefore,
+        attemptCount: attemptCount,
+      ),
 );
 
 GroupRepositoryImpl _buildGroupRepository(

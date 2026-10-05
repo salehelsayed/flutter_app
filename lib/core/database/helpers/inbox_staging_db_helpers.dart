@@ -331,8 +331,10 @@ Future<int> dbCountQuarantinedInboxStagingEntries(Database db) async {
   return Sqflite.firstIntValue(rows) ?? 0;
 }
 
-/// 172 TC-07 (INV-2): rows the user must be able to SEE exist — every kept-
-/// but-undisplayed entry that is not an intentional content-safe drop:
+/// 172 TC-07: "needs attention" rows — every kept-but-undisplayed entry that
+/// is not an intentional content-safe drop. The app shows nothing for them;
+/// [dbRunInboxStagingNeedsAttentionMaintenance] retries them in the background
+/// and gives up after a while:
 /// - `quarantined` (decryption_failed + attempt_cap_exceeded recoverables);
 /// - historical `rejected` rows whose reason codes belong to the RECOVERABLE
 ///   classes the pre-172 code terminally rejected (the pre-fix casualties
@@ -346,16 +348,120 @@ const _recoverableClassRejectReasonCodes = [
 ];
 
 Future<int> dbCountNeedsAttentionInboxStagingEntries(Database db) async {
+  final filter = _needsAttentionFilter();
+  final rows = await db.rawQuery(
+    'SELECT COUNT(*) AS total FROM inbox_staging_entries WHERE ${filter.where}',
+    filter.args,
+  );
+  return Sqflite.firstIntValue(rows) ?? 0;
+}
+
+/// Background clean-up of needs-attention rows of [messageTypes]. The app
+/// shows nothing for these rows; this keeps them from sitting forever.
+/// Three steps, in this order:
+/// 1. Give up: rows staged before [giveUpStagedBefore] become `abandoned`
+///    (never replayed, never counted). `last_attempted_at` becomes [now] so
+///    step 2 can age them.
+/// 2. Delete: `abandoned` rows given up before [deleteAbandonedBefore].
+/// 3. Retry: rows last attempted before [retryAttemptedBefore] (or never)
+///    move back to `retryable` with [attemptCount] as their attempt count.
+///    Callers pass the replay cap, so each retry is exactly one attempt and a
+///    row that still fails goes straight back to `quarantined`.
+/// The previous status and reason are kept in `reject_reason_detail`.
+Future<({int abandoned, int deleted, int requeued})>
+dbRunInboxStagingNeedsAttentionMaintenance(
+  Database db, {
+  required List<String> messageTypes,
+  required DateTime now,
+  required DateTime giveUpStagedBefore,
+  required DateTime deleteAbandonedBefore,
+  required DateTime retryAttemptedBefore,
+  required int attemptCount,
+}) async {
+  final filter = _needsAttentionFilter(messageTypes: messageTypes);
+  const previousState = "status || ':' || COALESCE(reject_reason_code, '')";
+
+  try {
+    final abandoned = await db.rawUpdate(
+      '''
+      UPDATE inbox_staging_entries
+      SET status = 'abandoned',
+          last_attempted_at = ?,
+          reject_reason_code = 'gave_up',
+          reject_reason_detail = 'gave up from ' || $previousState
+      WHERE ${filter.where} AND staged_at < ?
+      ''',
+      [
+        now.toUtc().toIso8601String(),
+        ...filter.args,
+        giveUpStagedBefore.toUtc().toIso8601String(),
+      ],
+    );
+
+    final deleted = await db.rawDelete(
+      "DELETE FROM inbox_staging_entries "
+      "WHERE status = 'abandoned' AND last_attempted_at < ?",
+      [deleteAbandonedBefore.toUtc().toIso8601String()],
+    );
+
+    final requeued = await db.rawUpdate(
+      '''
+      UPDATE inbox_staging_entries
+      SET status = 'retryable',
+          attempt_count = ?,
+          reject_reason_code = 'background_retry',
+          reject_reason_detail = 'background retry from ' || $previousState
+      WHERE ${filter.where}
+        AND (last_attempted_at IS NULL OR last_attempted_at < ?)
+      ''',
+      [
+        attemptCount,
+        ...filter.args,
+        retryAttemptedBefore.toUtc().toIso8601String(),
+      ],
+    );
+
+    if (abandoned > 0 || deleted > 0 || requeued > 0) {
+      emitFlowEvent(
+        layer: 'DB',
+        event: 'INBOX_STAGING_DB_NEEDS_ATTENTION_MAINTENANCE',
+        details: {
+          'abandoned': abandoned,
+          'deleted': deleted,
+          'requeued': requeued,
+        },
+      );
+    }
+
+    return (abandoned: abandoned, deleted: deleted, requeued: requeued);
+  } catch (e) {
+    emitFlowEvent(
+      layer: 'DB',
+      event: 'INBOX_STAGING_DB_NEEDS_ATTENTION_MAINTENANCE_ERROR',
+      details: {'error': e.toString()},
+    );
+    rethrow;
+  }
+}
+
+({String where, List<Object?> args}) _needsAttentionFilter({
+  List<String>? messageTypes,
+}) {
   final placeholders = List.filled(
     _recoverableClassRejectReasonCodes.length,
     '?',
   ).join(', ');
-  final rows = await db.rawQuery('''
-    SELECT COUNT(*) AS total FROM inbox_staging_entries
-    WHERE status = 'quarantined'
-       OR (status = 'rejected' AND reject_reason_code IN ($placeholders))
-    ''', _recoverableClassRejectReasonCodes);
-  return Sqflite.firstIntValue(rows) ?? 0;
+  var where =
+      "(status = 'quarantined' OR "
+      "(status = 'rejected' AND reject_reason_code IN ($placeholders)))";
+  final args = <Object?>[..._recoverableClassRejectReasonCodes];
+  if (messageTypes != null) {
+    where +=
+        ' AND message_type IN '
+        '(${List.filled(messageTypes.length, '?').join(', ')})';
+    args.addAll(messageTypes);
+  }
+  return (where: where, args: args);
 }
 
 Future<int> dbMarkInboxStagingEntryRejected(
