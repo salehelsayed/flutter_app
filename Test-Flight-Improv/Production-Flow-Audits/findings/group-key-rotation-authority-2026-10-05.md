@@ -83,6 +83,11 @@ progress: >
   way out, and the next leader then skips its own rotation for that leave
   (no epoch fork). Step 3 (takeover when the leader stays offline) is not
   done yet.
+  Device proof 2026-10-05 15:52 UTC, ML-020 on three iOS simulators (PASS,
+  attempt-IZQsm7): after the handover Bob removed Charlie and logged
+  GROUP_ROTATE_KEY_DONE newEpoch 2 distributedTo 1; Alice, Bob and the
+  re-added Charlie all ended on key epoch 2 (before the fix: epoch 1 and
+  GROUP_ROTATE_KEY_PERMISSION_DENIED on both Alice and Bob).
 related-docs:
   - docs/testing/production-bootstrap-migration-crosswalk.md (Wave 3 iOS section, ML-020)
 ```
