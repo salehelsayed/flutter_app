@@ -13,6 +13,7 @@ import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_pending_broadcast.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
+import 'package:flutter_app/features/groups/domain/utils/group_key_rotation_leader.dart';
 import 'package:flutter_app/features/groups/application/group_key_distribution_debug_gate.dart';
 
 String _diagnosticPrefix(String value) =>
@@ -281,7 +282,13 @@ Future<RotateGroupKeyOutcome> rotateAndDistributeGroupKey({
         return RotateGroupKeyOutcome.notRotated;
       }
 
-      if (group.createdBy != selfPeerId) {
+      // One rotation leader per group (the creator while eligible), so a
+      // demoted or departed creator no longer leaves the key unrotatable.
+      final leaderPeerId = groupKeyRotationLeaderPeerId(
+        group: group,
+        members: await groupRepo.getMembers(groupId),
+      );
+      if (leaderPeerId != selfPeerId) {
         emitFlowEvent(
           layer: 'FL',
           event: 'GROUP_ROTATE_KEY_PERMISSION_DENIED',

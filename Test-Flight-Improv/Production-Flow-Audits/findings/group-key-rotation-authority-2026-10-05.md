@@ -74,7 +74,15 @@ suggested-fix: >
   two admins, nobody with rotateKeys); a production journey like ML-020 that
   asserts keyEpoch >= 2 on Alice and Bob after Bob removes Charlie.
 verifiable-only-by: device-journey
-status: open
+status: in-progress
+progress: >
+  2026-10-05: steps 1 and 2 done. groupKeyRotationLeaderPeerId
+  (lib/features/groups/domain/utils/group_key_rotation_leader.dart) decides
+  who rotates; the rotation use case, the owed-rotation sweeper and the
+  rotation on a remote removal use it. A leader that leaves rotates on the
+  way out, and the next leader then skips its own rotation for that leave
+  (no epoch fork). Step 3 (takeover when the leader stays offline) is not
+  done yet.
 related-docs:
   - docs/testing/production-bootstrap-migration-crosswalk.md (Wave 3 iOS section, ML-020)
 ```

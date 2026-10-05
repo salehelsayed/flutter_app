@@ -4301,6 +4301,8 @@ void main() {
       String removedPeerId = 'peer-sender',
       String removedUsername = 'Sender',
       String removedAt = '2026-04-05T12:00:01.000Z',
+      String adminRole = 'admin',
+      String bobRole = 'writer',
     }) {
       return {
         'groupId': 'group-1',
@@ -4319,13 +4321,13 @@ void main() {
               {
                 'peerId': 'peer-admin',
                 'username': 'Admin',
-                'role': 'admin',
+                'role': adminRole,
                 'publicKey': 'pk-admin',
               },
               {
                 'peerId': 'peer-bob',
                 'username': 'Bob',
-                'role': 'writer',
+                'role': bobRole,
                 'publicKey': 'pk-bob',
               },
             ],
@@ -4336,6 +4338,110 @@ void main() {
         'timestamp': removedAt,
       };
     }
+
+    // The creator peer-admin was demoted to writer; Bob is an admin.
+    Future<void> handOverAdminToBob({DateTime? bobJoinedAt}) async {
+      final creator = await groupRepo.getMember('group-1', 'peer-admin');
+      await groupRepo.saveMember(creator!.copyWith(role: MemberRole.writer));
+      await groupRepo.saveMember(
+        GroupMember(
+          groupId: 'group-1',
+          peerId: 'peer-bob',
+          username: 'Bob',
+          role: MemberRole.admin,
+          publicKey: 'pk-bob',
+          joinedAt: bobJoinedAt ?? initialMemberJoinedAt,
+        ),
+      );
+    }
+
+    Future<List<String>> rotationsAsSelf(
+      String selfPeerId,
+      Map<String, dynamic> event,
+    ) async {
+      final rotateCalls = <String>[];
+      listener.dispose();
+      listener = GroupMessageListener(
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        bridge: bridge,
+        getSelfPeerId: () async => selfPeerId,
+        rotateGroupKeyAfterRemoteRemoval: (groupId) async {
+          rotateCalls.add(groupId);
+          return true;
+        },
+      );
+      listener.start(sourceController.stream);
+      sourceController.add(event);
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+      return rotateCalls;
+    }
+
+    test(
+      'the promoted admin rotates when the creator was demoted (rotation leader)',
+      () async {
+        await handOverAdminToBob();
+        final rotateCalls = await rotationsAsSelf(
+          'peer-bob',
+          memberRemovedEvent(
+            messageId: 'leader-demoted-creator',
+            senderId: 'peer-sender',
+            senderUsername: 'Sender',
+            adminRole: 'writer',
+            bobRole: 'admin',
+          ),
+        );
+
+        expect(await groupRepo.getMember('group-1', 'peer-sender'), isNull);
+        expect(rotateCalls, ['group-1']);
+      },
+    );
+
+    test(
+      'the demoted creator no longer rotates once another admin leads',
+      () async {
+        await handOverAdminToBob();
+        final rotateCalls = await rotationsAsSelf(
+          'peer-admin',
+          memberRemovedEvent(
+            messageId: 'leader-demoted-creator-self',
+            senderId: 'peer-sender',
+            senderUsername: 'Sender',
+            adminRole: 'writer',
+            bobRole: 'admin',
+          ),
+        );
+
+        expect(rotateCalls, isEmpty);
+      },
+    );
+
+    test(
+      'the next leader does not rotate again after the leader left on its own',
+      () async {
+        // peer-sender is the earliest admin, so it leads; it rotates on the
+        // way out and Bob must not fork the epoch with a second rotation.
+        await handOverAdminToBob(
+          bobJoinedAt: initialMemberJoinedAt.add(const Duration(minutes: 1)),
+        );
+        final sender = await groupRepo.getMember('group-1', 'peer-sender');
+        await groupRepo.saveMember(sender!.copyWith(role: MemberRole.admin));
+
+        final rotateCalls = await rotationsAsSelf(
+          'peer-bob',
+          memberRemovedEvent(
+            messageId: 'leader-left-itself',
+            senderId: 'peer-sender',
+            senderUsername: 'Sender',
+            adminRole: 'writer',
+            bobRole: 'admin',
+          ),
+        );
+
+        expect(await groupRepo.getMember('group-1', 'peer-sender'), isNull);
+        expect(rotateCalls, isEmpty);
+      },
+    );
 
     test(
       'remaining creator rotates group key on member_removed it did not author',

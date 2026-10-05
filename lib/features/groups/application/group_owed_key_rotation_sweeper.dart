@@ -3,9 +3,11 @@ import 'dart:async';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_message_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
+import 'package:flutter_app/features/groups/domain/utils/group_key_rotation_leader.dart';
 
-/// Re-keys groups this device created whose latest key is older than a member
-/// removal in their timeline.
+/// Re-keys groups whose key rotation leader is this device (the creator while
+/// eligible, see [groupKeyRotationLeaderPeerId]) and whose latest key is older
+/// than a member removal in their timeline.
 ///
 /// Go refuses a new key while the previous one is in its grace window
 /// (`GROUP_KEY_GRACE_ACTIVE`, 10 minutes), so a removal inside that window is
@@ -73,8 +75,12 @@ class GroupOwedKeyRotationSweeper {
       final now = _now().toUtc();
       for (final group in await _groupRepo.getAllGroups()) {
         if (_stopped) return;
-        if (group.isDissolved || group.createdBy != selfPeerId) continue;
+        if (group.isDissolved) continue;
         final members = await _groupRepo.getMembers(group.id);
+        if (groupKeyRotationLeaderPeerId(group: group, members: members) !=
+            selfPeerId) {
+          continue;
+        }
         if (!members.any((m) => m.peerId == selfPeerId) ||
             !members.any((m) => m.peerId != selfPeerId)) {
           continue;
@@ -88,13 +94,12 @@ class GroupOwedKeyRotationSweeper {
         // until the clock passes it, so a skewed remote stamp can cost at
         // most one extra rotation.
         final settledBefore = now.subtract(removalSettle);
-        final owed = (await _msgRepo.getMessagesPage(group.id, limit: 200))
-            .any(
-              (m) =>
-                  m.id.startsWith(removalPrefix) &&
-                  m.timestamp.toUtc().isAfter(keyAt) &&
-                  !m.timestamp.toUtc().isAfter(settledBefore),
-            );
+        final owed = (await _msgRepo.getMessagesPage(group.id, limit: 200)).any(
+          (m) =>
+              m.id.startsWith(removalPrefix) &&
+              m.timestamp.toUtc().isAfter(keyAt) &&
+              !m.timestamp.toUtc().isAfter(settledBefore),
+        );
         if (!owed) continue;
         if (!await _allowsSideEffects(
           operation: 'group_creator_owed_rekey',

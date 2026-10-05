@@ -1537,6 +1537,18 @@ void main() {
       ),
     );
 
+    // The owner is a member allowed to rotate, so the owner leads rotation.
+    await groupRepo.saveMember(
+      GroupMember(
+        groupId: groupId,
+        peerId: 'peer-owner',
+        username: 'Owner',
+        role: MemberRole.admin,
+        publicKey: 'ownerPubKey',
+        mlKemPublicKey: 'ownerMlKem',
+        joinedAt: DateTime.now().toUtc(),
+      ),
+    );
     await groupRepo.saveMember(
       GroupMember(
         groupId: groupId,
@@ -1569,6 +1581,59 @@ void main() {
     expect(await groupRepo.getKeyByGeneration(groupId, 2), isNull);
     expect(await groupRepo.getPendingKeyRotation(groupId), isNull);
   });
+
+  test(
+    'the earliest admin rotates once the owner was demoted (rotation leader)',
+    () async {
+      await groupRepo.saveGroup(
+        GroupModel(
+          id: groupId,
+          name: 'Test Group',
+          type: GroupType.chat,
+          topicName: '/mknoon/group/$groupId',
+          createdAt: DateTime.now().toUtc(),
+          createdBy: 'peer-owner',
+          myRole: GroupRole.admin,
+        ),
+      );
+      await groupRepo.saveMember(
+        GroupMember(
+          groupId: groupId,
+          peerId: 'peer-owner',
+          username: 'Owner',
+          role: MemberRole.writer,
+          publicKey: 'ownerPubKey',
+          mlKemPublicKey: 'ownerMlKem',
+          joinedAt: DateTime.now().toUtc(),
+        ),
+      );
+      await groupRepo.saveMember(
+        GroupMember(
+          groupId: groupId,
+          peerId: selfPeerId,
+          username: 'Self',
+          role: MemberRole.admin,
+          publicKey: 'selfPubKey',
+          mlKemPublicKey: 'selfMlKem',
+          joinedAt: DateTime.now().toUtc(),
+        ),
+      );
+
+      final result = await rotateAndDistributeGroupKey(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        groupId: groupId,
+        selfPeerId: selfPeerId,
+        senderPublicKey: 'selfPubKey',
+        senderPrivateKey: 'selfPrivKey',
+        senderUsername: 'Self',
+        sendP2PMessage: _sendOk,
+      );
+
+      expect(result.key, isNotNull);
+      expect(result.key!.keyGeneration, 2);
+    },
+  );
 
   test('ML-013 bare writer and removed peer cannot rotate keys', () async {
     await groupRepo.saveMember(

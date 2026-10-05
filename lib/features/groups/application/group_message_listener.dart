@@ -56,6 +56,7 @@ import 'package:flutter_app/features/groups/application/trusted_private_group_sy
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
+import 'package:flutter_app/features/groups/domain/utils/group_key_rotation_leader.dart';
 import 'package:flutter_app/features/groups/domain/models/group_multi_device_policy.dart';
 import 'package:flutter_app/features/groups/domain/models/group_pending_membership_message.dart';
 import 'package:flutter_app/features/groups/domain/models/group_pending_reaction.dart';

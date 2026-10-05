@@ -22,7 +22,10 @@ void main() {
   late List<Map<String, dynamic>> flows;
   late GroupOwedKeyRotationSweeper sweeper;
 
-  Future<void> saveGroup({String createdBy = selfId}) async {
+  Future<void> saveGroup({
+    String createdBy = selfId,
+    MemberRole bobRole = MemberRole.writer,
+  }) async {
     await repo.saveGroup(
       GroupModel(
         id: groupId,
@@ -41,7 +44,7 @@ void main() {
           peerId: peer,
           username: peer,
           publicKey: 'pk-$peer',
-          role: peer == selfId ? MemberRole.admin : MemberRole.writer,
+          role: peer == selfId ? MemberRole.admin : bobRole,
           joinedAt: keyAt.subtract(const Duration(hours: 1)),
         ),
       );
@@ -110,11 +113,20 @@ void main() {
     expect(rotations, isEmpty);
   });
 
-  test('never rotates a group another member created', () async {
-    await saveGroup(createdBy: 'peer-bob');
+  test('never rotates when another member is the rotation leader', () async {
+    // Bob created the group and may still rotate, so Bob leads.
+    await saveGroup(createdBy: 'peer-bob', bobRole: MemberRole.admin);
     await removalAt(keyAt.add(const Duration(minutes: 3)));
     await sweeper.sweep();
     expect(rotations, isEmpty);
+  });
+
+  test('rotates a group whose creator was demoted (rotation leader)', () async {
+    // Bob created the group but is a writer now; this admin leads.
+    await saveGroup(createdBy: 'peer-bob');
+    await removalAt(keyAt.add(const Duration(minutes: 3)));
+    await sweeper.sweep();
+    expect(rotations, [groupId]);
   });
 
   test('waits for a removal to settle before judging it', () async {
