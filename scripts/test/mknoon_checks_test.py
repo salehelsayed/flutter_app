@@ -563,6 +563,34 @@ class EvidenceAndExecutionTest(RepositoryFixture):
         matrix = {'flutter': [{'id': 'p', 'targetPlatform': 'android-arm64', 'emulator': False}], 'adb': ['p']}
         self.assertIn('target unavailable: android_emulator', checks.prerequisites(check, self.root, config, matrix))
 
+    def test_emulator_fills_android_physical_only_with_explicit_opt_in(self):
+        check = {'kind': 'sims', 'device_roles': ['android_physical', 'android_emulator']}
+        config = {'isolated_test_environment': True, 'fixture_reference': 'disposable',
+                  'devices': {'android_physical': 'emulator-5556', 'android_emulator': 'emulator-5554'}}
+        matrix = {'flutter': [{'id': 'emulator-5556', 'targetPlatform': 'android-x64', 'emulator': True},
+                              {'id': 'emulator-5554', 'targetPlatform': 'android-x64', 'emulator': True}],
+                  'adb': ['emulator-5556', 'emulator-5554']}
+        self.assertIn('primary Android target must be physical', checks.prerequisites(check, self.root, config, matrix))
+        with mock.patch.dict(os.environ, {'SIMS_ALLOW_EMULATOR_AS_ANDROID_PHYSICAL': '1'}):
+            self.assertEqual(checks.sims_environment(config, self.root / 'report.json')['SIMS_ALLOW_EMULATOR_AS_ANDROID_PHYSICAL'], '')
+        config['allow_emulator_as_android_physical'] = True
+        self.assertNotIn('primary Android target must be physical', checks.prerequisites(check, self.root, config, matrix))
+        self.assertEqual(checks.sims_environment(config, self.root / 'report.json')['SIMS_ALLOW_EMULATOR_AS_ANDROID_PHYSICAL'], '1')
+        config['allow_emulator_as_android_physical'] = 'yes'
+        self.assertIn('primary Android target must be physical', checks.prerequisites(check, self.root, config, matrix))
+        with self.assertRaises(checks.InvalidPlan):
+            checks.sims_environment(config, self.root / 'report.json')
+
+    def test_sims_android_abi_comes_only_from_device_config(self):
+        config = {'devices': {'android_physical': 'p', 'android_emulator': 'e'}}
+        with mock.patch.dict(os.environ, {'SIMS_ANDROID_ABI': 'x86_64'}):
+            self.assertEqual(checks.sims_environment(config, self.root / 'report.json')['SIMS_ANDROID_ABI'], '')
+        config['sims_android_abi'] = 'x86_64'
+        self.assertEqual(checks.sims_environment(config, self.root / 'report.json')['SIMS_ANDROID_ABI'], 'x86_64')
+        config['sims_android_abi'] = 'x86'
+        with self.assertRaises(checks.InvalidPlan):
+            checks.sims_environment(config, self.root / 'report.json')
+
     def test_actual_android_campaign_requires_a_disposable_package_before_launch(self):
         check = {'kind': 'sims', 'capability': 'android.direct_media_blob_custody',
                  'device_roles': ['android_physical', 'android_emulator'],

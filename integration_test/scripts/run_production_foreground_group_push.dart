@@ -10,6 +10,7 @@ import '../../tool/sims/artifact_evidence.dart';
 import '../../tool/sims/build_cache.dart';
 import '../../tool/sims/production_foreground_push_criteria.dart';
 import '../support/android_app_state_guard.dart';
+import '../support/production_sims_result.dart';
 
 const _scenario = 'production.foreground_group_push';
 const _profile = 'android.e2e.production';
@@ -48,7 +49,7 @@ Future<void> main(List<String> arguments) async {
     }
   }
   stdout.writeln(
-    'SIMS_RESULT_JSON=${jsonEncode({'status': failure == null ? 'PASS' : 'FAIL', 'assertionsAttempted': attempts, 'artifactPresent': evidence != null, 'printOnly': false, 'exitCode': failure == null ? 0 : 1, 'detail': failure ?? 'S1/S2/S3 production bootstrap foreground push assertions passed', 'elapsedMs': watch.elapsedMilliseconds, if (evidence != null) 'artifactEvidence': evidence.toJson()})}',
+    'SIMS_RESULT_JSON=${jsonEncode(withProductionFailureBlocker({'status': failure == null ? 'PASS' : 'FAIL', 'assertionsAttempted': attempts, 'artifactPresent': evidence != null, 'printOnly': false, 'exitCode': failure == null ? 0 : 1, 'detail': failure ?? 'S1/S2/S3 production bootstrap foreground push assertions passed', 'elapsedMs': watch.elapsedMilliseconds, if (evidence != null) 'artifactEvidence': evidence.toJson()}))}',
   );
   exitCode = failure == null ? 0 : 1;
 }
@@ -93,8 +94,12 @@ final class _Campaign {
     }
     final physical = required('SIMS_ANDROID_PHYSICAL_DEVICE_ID');
     final emulator = required('SIMS_ANDROID_EMULATOR_DEVICE_ID');
+    // Opt-in, lower-fidelity emulator pair: Alice may be a second emulator.
+    final emulatorAlice =
+        Platform.environment['SIMS_ALLOW_EMULATOR_AS_ANDROID_PHYSICAL'] == '1';
     if (!RegExp(r'^[A-Za-z0-9._:-]+$').hasMatch(physical) ||
-        physical.startsWith('emulator-') ||
+        (physical.startsWith('emulator-') && !emulatorAlice) ||
+        physical == emulator ||
         !RegExp(r'^emulator-[0-9]+$').hasMatch(emulator)) {
       throw StateError('one physical Android and one emulator must be pinned');
     }

@@ -585,7 +585,8 @@ def prerequisites(check, root, device_config, matrix):
                 if role.startswith('android') and (target not in matrix['adb'] or not d['targetPlatform'].startswith('android')):
                     reasons.append('Android target is not live: ' + role)
                 if role.startswith('android_emulator') and not d['emulator']: reasons.append('second Android target must be an emulator')
-                if role == 'android_physical' and d['emulator']: reasons.append('primary Android target must be physical')
+                if role == 'android_physical' and d['emulator'] and device_config.get('allow_emulator_as_android_physical') is not True:
+                    reasons.append('primary Android target must be physical')
                 if role.startswith('ios') and d['targetPlatform'] != 'ios': reasons.append('iOS target required')
                 if role == 'ios_physical' and d['emulator']: reasons.append('physical iPhone required for this proof')
                 if role.startswith('ios_simulator') and (not d['emulator'] or target not in matrix['ios_simulators']):
@@ -1272,6 +1273,18 @@ def sims_android_package(check, config):
     return package
 
 
+def allows_emulator_as_android_physical(config):
+    """Opt-in, lower-fidelity mode: an emulator may fill the android_physical role.
+
+    Results from this mode prove emulator-pair behavior only; they are not
+    phone evidence and do not satisfy the default physical/emulator topology.
+    """
+    value = config.get('allow_emulator_as_android_physical', False)
+    if not isinstance(value, bool):
+        raise InvalidPlan('allow_emulator_as_android_physical must be a boolean')
+    return value
+
+
 def sims_environment(config, report, check=None):
     roles = {'android_physical':'SIMS_ANDROID_PHYSICAL_DEVICE_ID','android_emulator':'SIMS_ANDROID_EMULATOR_DEVICE_ID',
              'android_emulator_second':'SIMS_ANDROID_EMULATOR_SECOND_DEVICE_ID',
@@ -1296,6 +1309,12 @@ def sims_environment(config, report, check=None):
     # Explicit operator reservations are different from an omitted pin. Clear
     # ambient reservations as well so they cannot silently omit a test target.
     env['SIMS_RESERVED_DEVICE_IDS_JSON'] = json.dumps(sorted(reserved))
+    # Always written so an ambient shell value cannot enable the opt-in.
+    env['SIMS_ALLOW_EMULATOR_AS_ANDROID_PHYSICAL'] = '1' if allows_emulator_as_android_physical(config) else ''
+    abi = config.get('sims_android_abi', '')
+    if abi not in ('', 'arm64-v8a', 'x86_64'):
+        raise InvalidPlan('sims_android_abi must be arm64-v8a or x86_64')
+    env['SIMS_ANDROID_ABI'] = abi
     pins = {('ios-simulator-a' if k == 'ios_simulator' else k.replace('_', '-')): v for k,v in ids.items()}
     if ids.get('ios_simulator') and ids.get('ios_simulator_a') != ids['ios_simulator'] and ids.get('ios_simulator_a'):
         raise InvalidPlan('Conflicting iOS simulator role aliases')

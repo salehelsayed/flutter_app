@@ -259,8 +259,12 @@ final class ProductionAndroidJourney implements ProductionJourney {
     emulator = scenario == 'production.startup_resume_performance'
         ? null
         : required('SIMS_ANDROID_EMULATOR_DEVICE_ID');
+    // Opt-in, lower-fidelity emulator pair: Alice may be a second emulator.
+    final emulatorAlice =
+        values['SIMS_ALLOW_EMULATOR_AS_ANDROID_PHYSICAL'] == '1';
     if (!RegExp(r'^[A-Za-z0-9._:-]+$').hasMatch(physical) ||
-        physical.startsWith('emulator-') ||
+        (physical.startsWith('emulator-') && !emulatorAlice) ||
+        physical == emulator ||
         (emulator != null &&
             !RegExp(r'^emulator-[0-9]+$').hasMatch(emulator!))) {
       throw StateError('physical Android and emulator must be pinned');

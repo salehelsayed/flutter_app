@@ -181,6 +181,33 @@ void main() {
     );
   });
 
+  test('SIMS_ANDROID_ABI=x86_64 builds an x64 emulator APK', () {
+    final manifest = SimsManifest.loadSync(
+      File('tool/sims/critical_features.json'),
+    );
+    final profile = manifest.buildProfileById('android.e2e.main')!;
+    final arguments = effectiveSimsBuildArguments(
+      profile,
+      environment: const <String, String>{'SIMS_ANDROID_ABI': 'x86_64'},
+    );
+    expect(arguments, contains('--target-platform=android-x64'));
+    expect(arguments, contains('--android-project-arg=simsAndroidAbi=x86_64'));
+    expect(arguments, isNot(contains('--target-platform=android-arm64')));
+    expect(
+      effectiveSimsBuildArguments(
+        profile,
+        environment: const <String, String>{},
+      ),
+      contains('--target-platform=android-arm64'),
+    );
+    expect(
+      () => effectiveSimsAndroidAbi(const <String, String>{
+        'SIMS_ANDROID_ABI': 'x86',
+      }),
+      throwsFormatException,
+    );
+  });
+
   test(
     'production-call APK command and cache identity include every native option',
     () {

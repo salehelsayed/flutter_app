@@ -5,6 +5,7 @@ import '../../tool/sims/artifact_evidence.dart';
 import '../../tool/sims/production_group_removed_reaction_criteria.dart';
 import '../support/production_android_journey.dart';
 import '../support/production_journey_peer.dart';
+import '../support/production_sims_result.dart';
 
 const _scenario = 'production.group_catalog.private_removed_reaction_rejected';
 
@@ -248,7 +249,7 @@ Future<void> main(List<String> arguments) async {
   }
   final passed = evidence != null;
   stdout.writeln(
-    'SIMS_RESULT_JSON=${jsonEncode({'status': passed ? 'PASS' : 'FAIL', 'assertionsAttempted': attempts, 'artifactPresent': passed, 'printOnly': false, 'exitCode': passed ? 0 : 1, 'detail': passed ? 'production private_removed_reaction_rejected passed' : 'production private_removed_reaction_rejected failed', if (evidence != null) 'artifactEvidence': evidence.toJson()})}',
+    'SIMS_RESULT_JSON=${jsonEncode(withProductionFailureBlocker({'status': passed ? 'PASS' : 'FAIL', 'assertionsAttempted': attempts, 'artifactPresent': passed, 'printOnly': false, 'exitCode': passed ? 0 : 1, 'detail': passed ? 'production private_removed_reaction_rejected passed' : 'production private_removed_reaction_rejected failed', if (evidence != null) 'artifactEvidence': evidence.toJson()}))}',
   );
   exitCode = passed ? 0 : 1;
 }

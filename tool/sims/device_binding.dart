@@ -86,6 +86,8 @@ final class SimsDevicePlanBinding {
         sourceResults: inventory.sourceResults.values,
         notReadyTargetClasses: inventory.notReadyTargetClasses,
       ),
+      allowEmulatorAsAndroidPhysical:
+          processEnvironment['SIMS_ALLOW_EMULATOR_AS_ANDROID_PHYSICAL'] == '1',
     );
     if (reservedIds.isNotEmpty) {
       final ordered = reservedIds.toList()..sort();

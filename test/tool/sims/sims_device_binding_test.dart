@@ -11,6 +11,58 @@ import '../../../tool/sims/planner.dart';
 import '../../../tool/sims/verdict.dart';
 
 void main() {
+  group('emulator-as-physical opt-in', () {
+    final consumer = _consumer().copyWith(
+      resources: <ResourceLock>[
+        for (final role in <String>['android-physical', 'android-emulator'])
+          ResourceLock(name: 'device:$role', access: ResourceAccess.exclusive),
+      ],
+    );
+    final emulatorPair = _inventory(<SimsLiveDeviceTarget>[
+      _androidTarget('emulator-5554', SimsLiveDeviceKind.emulator),
+      _androidTarget('emulator-5556', SimsLiveDeviceKind.emulator),
+    ]);
+    Map<String, String> environment({required bool optIn, bool pin = true}) =>
+        <String, String>{
+          'SIMS_PROTECTED_DEVICE_ASSIGNMENTS_JSON': jsonEncode(<String, String>{
+            if (pin) 'android-physical': 'emulator-5556',
+            'android-emulator': 'emulator-5554',
+          }),
+          if (optIn) 'SIMS_ALLOW_EMULATOR_AS_ANDROID_PHYSICAL': '1',
+        };
+
+    test('a pinned emulator fills android-physical only when opted in', () {
+      final allowed = SimsDevicePlanBinding.bind(
+        _plan(<CapabilitySpec>[consumer]),
+        emulatorPair,
+        processEnvironment: environment(optIn: true),
+      );
+      expect(allowed.preflightVerdicts, isEmpty);
+      expect(allowed.assignments, <String, String>{
+        'device:android-emulator': 'emulator-5554',
+        'device:android-physical': 'emulator-5556',
+      });
+
+      final defaultPolicy = SimsDevicePlanBinding.bind(
+        _plan(<CapabilitySpec>[consumer]),
+        emulatorPair,
+        processEnvironment: environment(optIn: false),
+      );
+      expect(defaultPolicy.assignments, isEmpty);
+      expect(defaultPolicy.preflightVerdicts['android.fixture'], isNotNull);
+    });
+
+    test('the opt-in never substitutes an unpinned emulator', () {
+      final binding = SimsDevicePlanBinding.bind(
+        _plan(<CapabilitySpec>[consumer]),
+        emulatorPair,
+        processEnvironment: environment(optIn: true, pin: false),
+      );
+      expect(binding.assignments, isEmpty);
+      expect(binding.preflightVerdicts['android.fixture'], isNotNull);
+    });
+  });
+
   group('explicit device reservations', () {
     final pins = <String, String>{
       'android-physical': 'usb',

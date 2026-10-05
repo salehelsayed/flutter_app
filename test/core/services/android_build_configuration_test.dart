@@ -84,7 +84,9 @@ void main() {
       expect(appBuild, contains('gradleProperty("simsAndroidAbi")'));
       expect(
         appBuild,
-        contains('simsAndroidAbi must be exactly arm64-v8a when supplied.'),
+        contains(
+          'simsAndroidAbi must be exactly arm64-v8a or x86_64 when supplied.',
+        ),
       );
       expect(appBuild, contains('getByName("debug")'));
       expect(appBuild, contains('abiFilters.clear()'));

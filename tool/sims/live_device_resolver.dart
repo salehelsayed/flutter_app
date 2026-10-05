@@ -482,9 +482,17 @@ final class SimsDeviceResolution {
 /// artifact, relay, and build failures are executor blockers and can never be
 /// upgraded to policy N/A by this resolver.
 final class SimsLiveDeviceResolver {
-  const SimsLiveDeviceResolver(this.inventory);
+  const SimsLiveDeviceResolver(
+    this.inventory, {
+    this.allowEmulatorAsAndroidPhysical = false,
+  });
 
   final SimsLiveDeviceInventory inventory;
+
+  /// Opt-in, lower-fidelity mode: an explicitly pinned Android emulator may
+  /// fill the android-physical role. Never used for unpinned discovery, so a
+  /// default run cannot silently substitute an emulator for the phone.
+  final bool allowEmulatorAsAndroidPhysical;
 
   SimsDeviceResolution resolveLocks(
     Iterable<ResourceLock> locks, {
@@ -670,7 +678,10 @@ final class SimsLiveDeviceResolver {
       return switch (role) {
         _DeviceRole.androidPhysical =>
           target.platform == SimsLiveDevicePlatform.android &&
-              target.kind == SimsLiveDeviceKind.physical,
+              (target.kind == SimsLiveDeviceKind.physical ||
+                  (allowEmulatorAsAndroidPhysical &&
+                      requiredTargetId != null &&
+                      target.isAndroidEmulator)),
         _DeviceRole.androidEmulator ||
         _DeviceRole.androidEmulatorSecond ||
         _DeviceRole.androidEmulatorThird => target.isAndroidEmulator,

@@ -7,6 +7,7 @@ import 'production_android_journey.dart';
 import 'production_ios_simulator_journey.dart';
 import 'production_journey.dart';
 import 'production_catalog_session.dart';
+import 'production_sims_result.dart';
 
 /// Runs one catalog journey: proof directory, journey and session setup,
 /// the watched original texts, the case's [steps], final snapshots of all
@@ -78,7 +79,7 @@ Future<void> runProductionCatalogJourney({
   }
   final passed = evidence != null;
   stdout.writeln(
-    'SIMS_RESULT_JSON=${jsonEncode({'status': passed ? 'PASS' : 'FAIL', 'assertionsAttempted': attempted, 'artifactPresent': passed, 'printOnly': false, 'exitCode': passed ? 0 : 1, 'detail': passed ? 'production $scenario passed' : 'production $scenario failed', if (evidence != null) 'artifactEvidence': evidence.toJson()})}',
+    'SIMS_RESULT_JSON=${jsonEncode(withProductionFailureBlocker({'status': passed ? 'PASS' : 'FAIL', 'assertionsAttempted': attempted, 'artifactPresent': passed, 'printOnly': false, 'exitCode': passed ? 0 : 1, 'detail': passed ? 'production $scenario passed' : 'production $scenario failed', if (evidence != null) 'artifactEvidence': evidence.toJson()}))}',
   );
   exitCode = passed ? 0 : 1;
 }
