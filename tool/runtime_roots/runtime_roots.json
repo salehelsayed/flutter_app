@@ -204,6 +204,19 @@
       ]
     },
     {
+      "path": "integration_test/notification_lock_fixture.dart",
+      "owner": "QA / notifications",
+      "reason": "Isolated physical-device notification-lock fixture; scripts/test/prepare_notification_lock_fixture.py builds it as its own app and Appium/Maestro drive it.",
+      "condition": "Remove or reclassify only after its caller and replacement proof are reviewed.",
+      "seedsTooling": false,
+      "evidence": [
+        {
+          "kind": "dart-main",
+          "source": "integration_test/notification_lock_fixture.dart"
+        }
+      ]
+    },
+    {
       "path": "integration_test/notification_open_during_other_chat_harness.dart",
       "owner": "QA / release",
       "reason": "Non-convention Dart main remains visible pending exact invocation ownership.",

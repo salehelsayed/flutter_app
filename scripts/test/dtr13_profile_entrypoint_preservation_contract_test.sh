@@ -164,9 +164,43 @@ expected_profiles = [
         },
         "declaredException": False,
     },
+    # Added by the production bootstrap Wave 3 snapshot (c4b38285f, 2026-09-30).
+    {
+        "id": "ios.simulator.app",
+        "platform": "ios",
+        "artifactKind": "simulator-runner-app",
+        "buildRequired": True,
+        "compileDefines": {
+            "E2E_TEST_MODE": "true"
+        },
+        "declaredException": False
+    },
+    {
+        "id": "android.e2e.performance_relay",
+        "platform": "android",
+        "artifactKind": "universal-debug-apk",
+        "buildRequired": True,
+        "compileDefines": {
+            "E2E_TEST_MODE": "true",
+            "DISABLE_LOCAL_DISCOVERY": "true"
+        },
+        "declaredException": False
+    },
+    {
+        "id": "android.production_fcm.journey",
+        "platform": "android",
+        "artifactKind": "provider-configured-debug-apk",
+        "buildRequired": True,
+        "compileDefines": {
+            "E2E_TEST_MODE": "true",
+            "PRODUCTION_FCM": "true",
+            "MKNOON_EMIT_WAKE_TOKEN": "true"
+        },
+        "declaredException": False
+    },
 ]
 assert actual_profiles == expected_profiles, (
-    "DTR-13 must preserve the exact ordered thirteen-row Sims build-profile table"
+    "DTR-13 must preserve the exact ordered sixteen-row Sims build-profile table"
 )
 
 orchestrator = read("tool/sims/build_orchestrator.dart")
