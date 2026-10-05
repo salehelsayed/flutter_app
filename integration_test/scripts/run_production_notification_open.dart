@@ -250,9 +250,12 @@ Future<void> main(List<String> arguments) async {
     evidence = writeSimsArtifactEvidenceSync(
       directory: output,
       capabilityId: scenario,
+      // SIMS requires exactly the manifest's validator; the latency run also
+      // applied the open journey's checks above.
       validatorIds: [
-        'validateProductionNotificationOpen',
-        if (measure) 'validateProductionNotificationTapLatency',
+        measure
+            ? 'validateProductionNotificationTapLatency'
+            : 'validateProductionNotificationOpen',
       ],
       payload: {
         ...journey.provenance(),
