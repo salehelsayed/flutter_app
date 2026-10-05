@@ -719,10 +719,6 @@ classify_path() {
       record "support" "$path" "support" "typed notification facade/campaign: Android and prebuilt physical-iOS APNs/NSE campaigns are automation-ready; live iOS credentials and dedicated-device teardown remain typed BLOCKED prerequisites; manifest owns execution"
       return
       ;;
-    integration_test/notification_lock_fixture.dart)
-      record "support" "$path" "support" "isolated notification lock callback controls and observable production state; Appium lifecycle and retained Maestro flow own device assertions, not a Dart simulation runner"
-      return
-      ;;
     integration_test/scripts/ios_notification_provider_adapter.md|\
     integration_test/scripts/ios_notification_provider_adapter.py|\
     integration_test/scripts/ios_notification_relay_fixture.md|\

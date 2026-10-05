@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'notification_lock_transaction.dart';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
@@ -160,10 +159,7 @@ final class DurableConversationNotificationIdRegistry
     }
 
     try {
-      await NotificationLockTransaction.io(() {
-        directory.createSync(recursive: true);
-        return directory;
-      }, () => directory.create(recursive: true));
+      await directory.create(recursive: true);
       final lock = File(
         '${directory.path}${Platform.pathSeparator}'
         '$coordinationLockFileName',
@@ -179,9 +175,7 @@ final class DurableConversationNotificationIdRegistry
 
           late final Iterable<Object?> activeValues;
           try {
-            activeValues = await NotificationLockTransaction.outside(
-              activeNotificationIds,
-            );
+            activeValues = await activeNotificationIds();
           } catch (error) {
             throw NotificationIdAllocationException(
               operation: 'active_notification_query',
@@ -240,12 +234,7 @@ final class DurableConversationNotificationIdRegistry
         'must not be empty',
       );
     }
-    if (!await NotificationLockTransaction.io(
-      directory.existsSync,
-      directory.exists,
-    )) {
-      return null;
-    }
+    if (!await directory.exists()) return null;
 
     try {
       final owner = sha256.convert(utf8.encode(normalized)).toString();
@@ -254,12 +243,7 @@ final class DurableConversationNotificationIdRegistry
       return _preferredExistingId(normalized, snapshot.ownerIds);
     } on FileSystemException catch (error) {
       // A concurrent support-directory teardown is equivalent to no mapping.
-      if (!await NotificationLockTransaction.io(
-        directory.existsSync,
-        directory.exists,
-      )) {
-        return null;
-      }
+      if (!await directory.exists()) return null;
       throw NotificationIdAllocationException(
         operation: 'registry_lookup',
         errorType: error.runtimeType.toString(),
@@ -283,10 +267,7 @@ final class DurableConversationNotificationIdRegistry
   }) async {
     final normalized = _normalizedConversationKey(conversationKey);
     final id = _requiredNotificationId(notificationId);
-    await NotificationLockTransaction.io(() {
-      directory.createSync(recursive: true);
-      return directory;
-    }, () => directory.create(recursive: true));
+    await directory.create(recursive: true);
     final lock = _coordinationLockFile();
     return _serializeInIsolate(lock.path, () {
       return _withCoordinationLock(lock, () async {
@@ -302,28 +283,13 @@ final class DurableConversationNotificationIdRegistry
           // stable id in place. Publish first so a rejected or failed owner
           // cannot erase the only visible card. The registry lock keeps read,
           // reaction and tap CAS operations behind this native update.
-          await NotificationLockTransaction.outside(replace);
-          await _requireExactOwner(id, normalized);
-          if (await _readContentMetadataFile(id) != current) {
-            throw const NotificationIdAllocationException(
-              operation: 'content_generation_changed',
-              errorType: 'StateError',
-            );
-          }
+          await replace();
           await _activatePreparedContentMetadataFile(id, prepared);
           return ConversationNotificationContentReplacementResult
               .shownAndRecorded;
         } finally {
           try {
-            if (await NotificationLockTransaction.io(
-              prepared.existsSync,
-              prepared.exists,
-            )) {
-              await NotificationLockTransaction.io(
-                prepared.deleteSync,
-                prepared.delete,
-              );
-            }
+            if (await prepared.exists()) await prepared.delete();
           } on FileSystemException {
             // Hidden prepared files are ignored and can be retried.
           }
@@ -350,12 +316,7 @@ final class DurableConversationNotificationIdRegistry
       );
     }
     final id = _requiredNotificationId(notificationId);
-    if (!await NotificationLockTransaction.io(
-      directory.existsSync,
-      directory.exists,
-    )) {
-      return false;
-    }
+    if (!await directory.exists()) return false;
     if (!await _hasExactOwner(id, normalized)) return false;
     final snapshot = await _readContentMetadataFile(id);
     if (snapshot?.generation != generation) return false;
@@ -366,24 +327,12 @@ final class DurableConversationNotificationIdRegistry
         if (await _readContentMetadataFile(id) != snapshot) return false;
         final prepared = await _prepareContentMetadataFile(id, metadata);
         try {
-          await NotificationLockTransaction.outside(replace);
-          if (!await _hasExactOwner(id, normalized) ||
-              await _readContentMetadataFile(id) != snapshot) {
-            return false;
-          }
+          await replace();
           await _activatePreparedContentMetadataFile(id, prepared);
           return true;
         } finally {
           try {
-            if (await NotificationLockTransaction.io(
-              prepared.existsSync,
-              prepared.exists,
-            )) {
-              await NotificationLockTransaction.io(
-                prepared.deleteSync,
-                prepared.delete,
-              );
-            }
+            if (await prepared.exists()) await prepared.delete();
           } on FileSystemException {
             // Hidden prepared files are ignored and can be retried.
           }
@@ -402,12 +351,7 @@ final class DurableConversationNotificationIdRegistry
   }) async {
     final normalized = _normalizedConversationKey(conversationKey);
     final id = _requiredNotificationId(notificationId);
-    if (!await NotificationLockTransaction.io(
-      directory.existsSync,
-      directory.exists,
-    )) {
-      return false;
-    }
+    if (!await directory.exists()) return false;
     if (!await _hasExactOwner(id, normalized)) return false;
     final snapshot = await _readContentMetadataFile(id);
     if (snapshot?.kind != kind) return false;
@@ -423,11 +367,7 @@ final class DurableConversationNotificationIdRegistry
         // message-to-message ABA races without creating a cross-store lock
         // ordering dependency.
         if (await _readContentMetadataFile(id) != snapshot) return false;
-        await NotificationLockTransaction.outside(cancel);
-        if (!await _hasExactOwner(id, normalized) ||
-            await _readContentMetadataFile(id) != snapshot) {
-          return false;
-        }
+        await cancel();
         await _deleteContentKindFile(id);
         return true;
       });
@@ -447,12 +387,7 @@ final class DurableConversationNotificationIdRegistry
       throw ArgumentError.value(generation, 'generation', 'must not be empty');
     }
     final id = _requiredNotificationId(notificationId);
-    if (!await NotificationLockTransaction.io(
-      directory.existsSync,
-      directory.exists,
-    )) {
-      return false;
-    }
+    if (!await directory.exists()) return false;
     if (!await _hasExactOwner(id, normalized)) return false;
     final snapshot = await _readContentMetadataFile(id);
     if (snapshot?.generation != expectedGeneration) return false;
@@ -461,11 +396,7 @@ final class DurableConversationNotificationIdRegistry
       return _withCoordinationLock(lock, () async {
         if (!await _hasExactOwner(id, normalized)) return false;
         if (await _readContentMetadataFile(id) != snapshot) return false;
-        await NotificationLockTransaction.outside(cancel);
-        if (!await _hasExactOwner(id, normalized) ||
-            await _readContentMetadataFile(id) != snapshot) {
-          return false;
-        }
+        await cancel();
         await _deleteContentKindFile(id);
         return true;
       });
@@ -480,10 +411,7 @@ final class DurableConversationNotificationIdRegistry
   }) async {
     final normalized = _normalizedConversationKey(conversationKey);
     final id = _requiredNotificationId(notificationId);
-    await NotificationLockTransaction.io(() {
-      directory.createSync(recursive: true);
-      return directory;
-    }, () => directory.create(recursive: true));
+    await directory.create(recursive: true);
     final lock = _coordinationLockFile();
     await _serializeInIsolate(lock.path, () {
       return _withCoordinationLock(lock, () async {
@@ -501,10 +429,7 @@ final class DurableConversationNotificationIdRegistry
   }) async {
     final normalized = _normalizedConversationKey(conversationKey);
     final id = _requiredNotificationId(notificationId);
-    await NotificationLockTransaction.io(() {
-      directory.createSync(recursive: true);
-      return directory;
-    }, () => directory.create(recursive: true));
+    await directory.create(recursive: true);
     final lock = _coordinationLockFile();
     await _serializeInIsolate(lock.path, () {
       return _withCoordinationLock(lock, () async {
@@ -524,12 +449,7 @@ final class DurableConversationNotificationIdRegistry
   }) async {
     final normalized = _normalizedConversationKey(conversationKey);
     final id = _requiredNotificationId(notificationId);
-    if (!await NotificationLockTransaction.io(
-      directory.existsSync,
-      directory.exists,
-    )) {
-      return null;
-    }
+    if (!await directory.exists()) return null;
     if (!await _hasExactOwner(id, normalized)) return null;
     return _readContentMetadataFile(id);
   }
@@ -541,12 +461,7 @@ final class DurableConversationNotificationIdRegistry
   }) async {
     final normalized = _normalizedConversationKey(conversationKey);
     final id = _requiredNotificationId(notificationId);
-    if (!await NotificationLockTransaction.io(
-      directory.existsSync,
-      directory.exists,
-    )) {
-      return null;
-    }
+    if (!await directory.exists()) return null;
     if (!await _hasExactOwner(id, normalized)) return null;
     return (await _readContentMetadataFile(id))?.kind;
   }
@@ -558,12 +473,7 @@ final class DurableConversationNotificationIdRegistry
   }) async {
     final normalized = _normalizedConversationKey(conversationKey);
     final id = _requiredNotificationId(notificationId);
-    if (!await NotificationLockTransaction.io(
-      directory.existsSync,
-      directory.exists,
-    )) {
-      return;
-    }
+    if (!await directory.exists()) return;
     final lock = _coordinationLockFile();
     await _serializeInIsolate(lock.path, () {
       return _withCoordinationLock(lock, () async {
@@ -589,10 +499,7 @@ final class DurableConversationNotificationIdRegistry
   }) async {
     final normalized = _normalizedConversationKey(conversationKey);
     final id = _requiredNotificationId(notificationId);
-    await NotificationLockTransaction.io(() {
-      directory.createSync(recursive: true);
-      return directory;
-    }, () => directory.create(recursive: true));
+    await directory.create(recursive: true);
     final lock = _coordinationLockFile();
     return _serializeInIsolate(lock.path, () {
       return _withCoordinationLock(lock, () async {
@@ -647,15 +554,7 @@ final class DurableConversationNotificationIdRegistry
           final exactPrepared = prepared;
           if (exactPrepared != null) {
             try {
-              if (await NotificationLockTransaction.io(
-                exactPrepared.existsSync,
-                exactPrepared.exists,
-              )) {
-                await NotificationLockTransaction.io(
-                  exactPrepared.deleteSync,
-                  exactPrepared.delete,
-                );
-              }
+              if (await exactPrepared.exists()) await exactPrepared.delete();
             } on FileSystemException {
               // Hidden prepared files are ignored and can be retried.
             }
@@ -671,12 +570,7 @@ final class DurableConversationNotificationIdRegistry
     required String eventCorrelation,
     required int expectedRevision,
   }) async {
-    if (!await NotificationLockTransaction.io(
-      directory.existsSync,
-      directory.exists,
-    )) {
-      return null;
-    }
+    if (!await directory.exists()) return null;
     final lock = _coordinationLockFile();
     return _serializeInIsolate(lock.path, () {
       return _withCoordinationLock(
@@ -698,12 +592,7 @@ final class DurableConversationNotificationIdRegistry
     required int notificationId,
     required String contentGeneration,
   }) async {
-    if (!await NotificationLockTransaction.io(
-      directory.existsSync,
-      directory.exists,
-    )) {
-      return null;
-    }
+    if (!await directory.exists()) return null;
     final lock = _coordinationLockFile();
     return _serializeInIsolate(lock.path, () {
       return _withCoordinationLock(
@@ -723,10 +612,7 @@ final class DurableConversationNotificationIdRegistry
   Future<List<LocalNotificationRecordV1>> listSqlReadyEffectTerminals({
     required String currentOpaqueBinding,
   }) async {
-    if (!await NotificationLockTransaction.io(
-      directory.existsSync,
-      directory.exists,
-    )) {
+    if (!await directory.exists()) {
       throw const NotificationIdAllocationException(
         operation: 'ledger_terminal_list',
         errorType: 'StateError',
@@ -750,12 +636,7 @@ final class DurableConversationNotificationIdRegistry
     required String eventCorrelation,
     required int expectedRevision,
   }) async {
-    if (!await NotificationLockTransaction.io(
-      directory.existsSync,
-      directory.exists,
-    )) {
-      return null;
-    }
+    if (!await directory.exists()) return null;
     final lock = _coordinationLockFile();
     return _serializeInIsolate(lock.path, () {
       return _withCoordinationLock(
@@ -773,11 +654,7 @@ final class DurableConversationNotificationIdRegistry
   Future<_RegistrySnapshot> _readSnapshot(String requestedOwner) async {
     final occupiedIds = <int>{};
     final ownerIds = <int>[];
-    final entities = await NotificationLockTransaction.io(
-      () => directory.listSync(followLinks: false),
-      () => directory.list(followLinks: false).toList(),
-    );
-    for (final entity in entities) {
+    await for (final entity in directory.list(followLinks: false)) {
       if (entity is! File) continue;
       final name = entity.uri.pathSegments.last;
       final match = _ownerFilePattern.firstMatch(name);
@@ -787,11 +664,7 @@ final class DurableConversationNotificationIdRegistry
       if (validId == null) continue;
       occupiedIds.add(validId);
       try {
-        if ((await NotificationLockTransaction.io(
-              entity.readAsStringSync,
-              entity.readAsString,
-            )).trim() ==
-            requestedOwner) {
+        if ((await entity.readAsString()).trim() == requestedOwner) {
           ownerIds.add(validId);
         }
       } on FileSystemException {
@@ -810,12 +683,7 @@ final class DurableConversationNotificationIdRegistry
     final target = File(
       '${directory.path}${Platform.pathSeparator}$id$ownerFileSuffix',
     );
-    if (await NotificationLockTransaction.io(
-      target.existsSync,
-      target.exists,
-    )) {
-      return;
-    }
+    if (await target.exists()) return;
 
     final random = Random.secure();
     final token = List<int>.generate(12, (_) => random.nextInt(256));
@@ -824,33 +692,16 @@ final class DurableConversationNotificationIdRegistry
       '${directory.path}${Platform.pathSeparator}.$id-$suffix.tmp',
     );
     try {
-      await NotificationLockTransaction.io(
-        () => temporary.writeAsStringSync(owner, flush: true),
-        () => temporary.writeAsString(owner, flush: true),
-      );
+      await temporary.writeAsString(owner, flush: true);
       // Publication is one atomic rename while the cross-process lock is held.
       // A crash before rename leaves only an ignored hidden temp file; a crash
       // after rename leaves a complete owner or opaque tombstone.
-      if (!await NotificationLockTransaction.io(
-        target.existsSync,
-        target.exists,
-      )) {
-        await NotificationLockTransaction.io(
-          () => temporary.renameSync(target.path),
-          () => temporary.rename(target.path),
-        );
+      if (!await target.exists()) {
+        await temporary.rename(target.path);
       }
     } finally {
       try {
-        if (await NotificationLockTransaction.io(
-          temporary.existsSync,
-          temporary.exists,
-        )) {
-          await NotificationLockTransaction.io(
-            temporary.deleteSync,
-            temporary.delete,
-          );
-        }
+        if (await temporary.exists()) await temporary.delete();
       } on FileSystemException {
         // Hidden leftovers are ignored by snapshot parsing and can be retried.
       }
@@ -899,13 +750,8 @@ final class DurableConversationNotificationIdRegistry
   ) async {
     final file = _contentKindFile(id);
     try {
-      if (!await NotificationLockTransaction.io(file.existsSync, file.exists)) {
-        return null;
-      }
-      final encoded = (await NotificationLockTransaction.io(
-        file.readAsStringSync,
-        file.readAsString,
-      )).trim();
+      if (!await file.exists()) return null;
+      final encoded = (await file.readAsString()).trim();
       try {
         final decoded = ConversationNotificationContentMetadata.fromJson(
           jsonDecode(encoded),
@@ -927,8 +773,8 @@ final class DurableConversationNotificationIdRegistry
 
   Future<void> _deleteContentKindFile(int id) async {
     final file = _contentKindFile(id);
-    if (await NotificationLockTransaction.io(file.existsSync, file.exists)) {
-      await NotificationLockTransaction.io(file.deleteSync, file.delete);
+    if (await file.exists()) {
+      await file.delete();
       BoundedPosixFlock.syncDirectory(directory);
     }
   }
@@ -936,16 +782,9 @@ final class DurableConversationNotificationIdRegistry
   Future<_ContentActivationIntent?> _readContentActivationIntent(int id) async {
     final file = _contentActivationIntentFile(id);
     try {
-      if (!await NotificationLockTransaction.io(file.existsSync, file.exists)) {
-        return null;
-      }
+      if (!await file.exists()) return null;
       return _ContentActivationIntent.tryFromJson(
-        jsonDecode(
-          await NotificationLockTransaction.io(
-            file.readAsStringSync,
-            file.readAsString,
-          ),
-        ),
+        jsonDecode(await file.readAsString()),
       );
     } on Object {
       return null;
@@ -958,10 +797,7 @@ final class DurableConversationNotificationIdRegistry
     String currentOpaqueBinding,
   ) async {
     final existingFile = _contentActivationIntentFile(id);
-    if (await NotificationLockTransaction.io(
-      existingFile.existsSync,
-      existingFile.exists,
-    )) {
+    if (await existingFile.exists()) {
       final existing = await _readContentActivationIntent(id);
       if (existing != null &&
           existing.opaqueBinding == currentOpaqueBinding &&
@@ -985,29 +821,12 @@ final class DurableConversationNotificationIdRegistry
       '${_randomFileSuffix()}.tmp',
     );
     try {
-      await NotificationLockTransaction.io(
-        () => temporary.writeAsStringSync(
-          jsonEncode(intent.toJson()),
-          flush: true,
-        ),
-        () => temporary.writeAsString(jsonEncode(intent.toJson()), flush: true),
-      );
-      await NotificationLockTransaction.io(
-        () => temporary.renameSync(existingFile.path),
-        () => temporary.rename(existingFile.path),
-      );
+      await temporary.writeAsString(jsonEncode(intent.toJson()), flush: true);
+      await temporary.rename(existingFile.path);
       BoundedPosixFlock.syncDirectory(directory);
     } finally {
       try {
-        if (await NotificationLockTransaction.io(
-          temporary.existsSync,
-          temporary.exists,
-        )) {
-          await NotificationLockTransaction.io(
-            temporary.deleteSync,
-            temporary.delete,
-          );
-        }
+        if (await temporary.exists()) await temporary.delete();
       } on FileSystemException {
         // Hidden complete intent files are never authoritative.
       }
@@ -1040,15 +859,7 @@ final class DurableConversationNotificationIdRegistry
     } finally {
       if (prepared == null) {
         try {
-          if (await NotificationLockTransaction.io(
-            exactPrepared.existsSync,
-            exactPrepared.exists,
-          )) {
-            await NotificationLockTransaction.io(
-              exactPrepared.deleteSync,
-              exactPrepared.delete,
-            );
-          }
+          if (await exactPrepared.exists()) await exactPrepared.delete();
         } on FileSystemException {
           // The durable intent remains available for another exact retry.
         }
@@ -1073,10 +884,8 @@ final class DurableConversationNotificationIdRegistry
 
   Future<void> _deleteContentActivationIntent(int id) async {
     final file = _contentActivationIntentFile(id);
-    if (!await NotificationLockTransaction.io(file.existsSync, file.exists)) {
-      return;
-    }
-    await NotificationLockTransaction.io(file.deleteSync, file.delete);
+    if (!await file.exists()) return;
+    await file.delete();
     BoundedPosixFlock.syncDirectory(directory);
   }
 
@@ -1085,20 +894,11 @@ final class DurableConversationNotificationIdRegistry
       '${directory.path}${Platform.pathSeparator}$id$ownerFileSuffix',
     );
     try {
-      if (!await NotificationLockTransaction.io(
-        ownerFile.existsSync,
-        ownerFile.exists,
-      )) {
-        return false;
-      }
+      if (!await ownerFile.exists()) return false;
       final expectedOwner = sha256
           .convert(utf8.encode(normalizedConversationKey))
           .toString();
-      return (await NotificationLockTransaction.io(
-            ownerFile.readAsStringSync,
-            ownerFile.readAsString,
-          )).trim() ==
-          expectedOwner;
+      return (await ownerFile.readAsString()).trim() == expectedOwner;
     } on FileSystemException {
       return false;
     }
@@ -1124,15 +924,7 @@ final class DurableConversationNotificationIdRegistry
       await _activatePreparedContentMetadataFile(id, prepared);
     } finally {
       try {
-        if (await NotificationLockTransaction.io(
-          prepared.existsSync,
-          prepared.exists,
-        )) {
-          await NotificationLockTransaction.io(
-            prepared.deleteSync,
-            prepared.delete,
-          );
-        }
+        if (await prepared.exists()) await prepared.delete();
       } on FileSystemException {
         // Hidden leftovers are ignored by content-metadata lookup.
       }
@@ -1144,9 +936,9 @@ final class DurableConversationNotificationIdRegistry
     ConversationNotificationContentMetadata metadata,
   ) async {
     final target = _contentKindFile(id);
-    final targetType = await NotificationLockTransaction.io(
-      () => FileSystemEntity.typeSync(target.path, followLinks: false),
-      () => FileSystemEntity.type(target.path, followLinks: false),
+    final targetType = await FileSystemEntity.type(
+      target.path,
+      followLinks: false,
     );
     if (targetType != FileSystemEntityType.notFound &&
         targetType != FileSystemEntityType.file) {
@@ -1162,26 +954,11 @@ final class DurableConversationNotificationIdRegistry
       '${directory.path}${Platform.pathSeparator}.$id-kind-$suffix.tmp',
     );
     try {
-      await NotificationLockTransaction.io(
-        () => temporary.writeAsStringSync(
-          jsonEncode(metadata.toJson()),
-          flush: true,
-        ),
-        () =>
-            temporary.writeAsString(jsonEncode(metadata.toJson()), flush: true),
-      );
+      await temporary.writeAsString(jsonEncode(metadata.toJson()), flush: true);
       return temporary;
     } catch (_) {
       try {
-        if (await NotificationLockTransaction.io(
-          temporary.existsSync,
-          temporary.exists,
-        )) {
-          await NotificationLockTransaction.io(
-            temporary.deleteSync,
-            temporary.delete,
-          );
-        }
+        if (await temporary.exists()) await temporary.delete();
       } on FileSystemException {
         // Hidden leftovers are ignored by content-metadata lookup.
       }
@@ -1203,10 +980,7 @@ final class DurableConversationNotificationIdRegistry
     // POSIX rename replaces the old regular file atomically. Android/iOS and
     // this project's host test matrix are POSIX, so readers see old or new
     // metadata and never an absent delete/rename gap.
-    await NotificationLockTransaction.io(
-      () => prepared.renameSync(target.path),
-      () => prepared.rename(target.path),
-    );
+    await prepared.rename(target.path);
     BoundedPosixFlock.syncDirectory(directory);
   }
 
@@ -1356,7 +1130,7 @@ final class _NotificationIdFlock {
     Future<T> Function() action,
   ) async {
     try {
-      return await BoundedPosixFlock.withNotificationTransaction(file, action);
+      return await BoundedPosixFlock.withExclusive(file, action);
     } on BoundedPosixFlockUnavailableException catch (error) {
       throw NotificationIdAllocationException(
         operation: 'registry_lock_unavailable',

@@ -10,7 +10,6 @@ import 'package:path_provider/path_provider.dart';
 import 'package:flutter_app/core/debug/group_media_ios_disposable_profile.dart';
 import 'package:flutter_app/core/notifications/app_group_path_channel.dart';
 import 'package:flutter_app/core/notifications/bounded_posix_flock.dart';
-import 'notification_lock_transaction.dart';
 import 'package:flutter_app/core/notifications/recent_remote_gate_ios_wiring.dart';
 
 /// A first-wins reservation for one logical message notification.
@@ -442,10 +441,7 @@ class DurableNotificationToneLease {
   Future<bool> claimEvent(String eventIdentity) async {
     final normalized = _normalize(eventIdentity, 'eventIdentity');
     final eventDir = Directory('${directory.path}/$eventClaimsDirectoryName');
-    await NotificationLockTransaction.io(
-      () => eventDir.createSync(recursive: true),
-      () => eventDir.create(recursive: true),
-    );
+    await eventDir.create(recursive: true);
     try {
       return await _withEventCoordinationLock(() async {
         await _prune(eventDir, ttl: eventTtl, maxEntries: maxEventClaims);
@@ -523,20 +519,14 @@ class DurableNotificationToneLease {
     required String eventIdentity,
   }) async {
     final eventDir = Directory('${directory.path}/$eventClaimsDirectoryName');
-    await NotificationLockTransaction.io(
-      () => eventDir.createSync(recursive: true),
-      () => eventDir.create(recursive: true),
-    );
+    await eventDir.create(recursive: true);
     try {
       return await _withEventCoordinationLock(() async {
         await _prune(eventDir, ttl: eventTtl, maxEntries: maxEventClaims);
         final file = File(
           '${eventDir.path}/${messageEventClaimFileName(type: type, eventIdentity: eventIdentity)}',
         );
-        if (await NotificationLockTransaction.io(
-          () => file.existsSync(),
-          () => file.exists(),
-        )) {
+        if (await file.exists()) {
           final existing = await _ownedMessageClaimRecord(file);
           if (existing == null) {
             return const _MessageClaimAttempt.unavailable();
@@ -561,10 +551,7 @@ class DurableNotificationToneLease {
             // The event flock makes this an atomic compare/read/delete/replace
             // sequence for Dart producers. Only a parsed stale pending record is
             // reclaimed; committed, NSE, legacy, and malformed files survive.
-            await NotificationLockTransaction.io(
-              () => file.deleteSync(),
-              () => file.delete(),
-            );
+            await file.delete();
           } catch (error, stackTrace) {
             Error.throwWithStackTrace(
               DurableNotificationStorageException(
@@ -615,21 +602,12 @@ class DurableNotificationToneLease {
   Future<bool> _commitMessageClaim(DurableNotificationEventClaim claim) {
     return _mutateOwnedMessageClaim(
       claim,
-      (file) => NotificationLockTransaction.io(
-        () => file.writeAsStringSync(
-          jsonEncode(<String, Object>{
-            'state': 'committed',
-            'committedAtMs': now().toUtc().millisecondsSinceEpoch,
-          }),
-          flush: true,
-        ),
-        () => file.writeAsString(
-          jsonEncode(<String, Object>{
-            'state': 'committed',
-            'committedAtMs': now().toUtc().millisecondsSinceEpoch,
-          }),
-          flush: true,
-        ),
+      (file) => file.writeAsString(
+        jsonEncode(<String, Object>{
+          'state': 'committed',
+          'committedAtMs': now().toUtc().millisecondsSinceEpoch,
+        }),
+        flush: true,
       ),
       ownerCompletion: true,
     );
@@ -702,21 +680,12 @@ class DurableNotificationToneLease {
   ) {
     return _mutateOwnedMessageClaim(
       claim,
-      (file) => NotificationLockTransaction.io(
-        () => file.writeAsStringSync(
-          jsonEncode(<String, Object>{
-            'state': 'committed',
-            'committedAtMs': now().toUtc().millisecondsSinceEpoch,
-          }),
-          flush: true,
-        ),
-        () => file.writeAsString(
-          jsonEncode(<String, Object>{
-            'state': 'committed',
-            'committedAtMs': now().toUtc().millisecondsSinceEpoch,
-          }),
-          flush: true,
-        ),
+      (file) => file.writeAsString(
+        jsonEncode(<String, Object>{
+          'state': 'committed',
+          'committedAtMs': now().toUtc().millisecondsSinceEpoch,
+        }),
+        flush: true,
       ),
     );
   }
@@ -725,10 +694,7 @@ class DurableNotificationToneLease {
     DurableNotificationEventClaim claim,
   ) => _mutateOwnedMessageClaim(
     claim,
-    (file) => NotificationLockTransaction.io(
-      () => file.deleteSync(),
-      () => file.delete(),
-    ),
+    (file) => file.delete(),
     allowedStates: const <String>{'publishing'},
   );
 
@@ -744,25 +710,14 @@ class DurableNotificationToneLease {
           return false;
         }
         try {
-          await NotificationLockTransaction.io(
-            () => claim._file.writeAsStringSync(
-              jsonEncode(<String, Object>{
-                'state': 'publishing',
-                'token': claim.token,
-                'createdAtMs': record.createdAtMs,
-                'publishingAtMs': now().toUtc().millisecondsSinceEpoch,
-              }),
-              flush: true,
-            ),
-            () => claim._file.writeAsString(
-              jsonEncode(<String, Object>{
-                'state': 'publishing',
-                'token': claim.token,
-                'createdAtMs': record.createdAtMs,
-                'publishingAtMs': now().toUtc().millisecondsSinceEpoch,
-              }),
-              flush: true,
-            ),
+          await claim._file.writeAsString(
+            jsonEncode(<String, Object>{
+              'state': 'publishing',
+              'token': claim.token,
+              'createdAtMs': record.createdAtMs,
+              'publishingAtMs': now().toUtc().millisecondsSinceEpoch,
+            }),
+            flush: true,
           );
           return true;
         } on FileSystemException {
@@ -777,10 +732,7 @@ class DurableNotificationToneLease {
   Future<bool> _releaseMessageClaim(DurableNotificationEventClaim claim) {
     return _mutateOwnedMessageClaim(
       claim,
-      (file) => NotificationLockTransaction.io(
-        () => file.deleteSync(),
-        () => file.delete(),
-      ),
+      (file) => file.delete(),
       allowedStates: const <String>{'pending'},
     );
   }
@@ -847,18 +799,8 @@ class DurableNotificationToneLease {
 
   Future<_MessageClaimRecord?> _ownedMessageClaimRecord(File file) async {
     try {
-      if (!await NotificationLockTransaction.io(
-        () => file.existsSync(),
-        () => file.exists(),
-      )) {
-        return null;
-      }
-      final decoded = jsonDecode(
-        await NotificationLockTransaction.io(
-          () => file.readAsStringSync(),
-          () => file.readAsString(),
-        ),
-      );
+      if (!await file.exists()) return null;
+      final decoded = jsonDecode(await file.readAsString());
       if (decoded is! Map) return null;
       final state = decoded['state'];
       final token = decoded['token'];
@@ -979,10 +921,7 @@ class DurableNotificationToneLease {
         final nowMs = now().toUtc().millisecondsSinceEpoch;
         await _prune(toneDir, ttl: eventTtl, maxEntries: maxToneLeases);
 
-        if (await NotificationLockTransaction.io(
-          () => pendingFile.existsSync(),
-          () => pendingFile.exists(),
-        )) {
+        if (await pendingFile.exists()) {
           final record = await _readToneReservationRecord(pendingFile);
           if (platform != TargetPlatform.android) {
             // Keep the pre-Plan-334 Apple sidecar protocol byte-for-behavior.
@@ -1069,10 +1008,7 @@ class DurableNotificationToneLease {
           }
         }
 
-        if (await NotificationLockTransaction.io(
-          () => file.existsSync(),
-          () => file.exists(),
-        )) {
+        if (await file.exists()) {
           final recordedAt = await _readToneTimestampMs(file);
           if (recordedAt != null &&
               nowMs - recordedAt < toneWindow.inMilliseconds) {
@@ -1084,25 +1020,14 @@ class DurableNotificationToneLease {
         if (hook != null) await hook();
 
         final token = _normalize(_claimTokenFactory(), 'token');
-        await NotificationLockTransaction.io(
-          () => pendingFile.writeAsStringSync(
-            jsonEncode(<String, Object>{
-              'state': 'pending',
-              'token': token,
-              'reservedAtMs': nowMs,
-              'createdAtMs': nowMs,
-            }),
-            flush: true,
-          ),
-          () => pendingFile.writeAsString(
-            jsonEncode(<String, Object>{
-              'state': 'pending',
-              'token': token,
-              'reservedAtMs': nowMs,
-              'createdAtMs': nowMs,
-            }),
-            flush: true,
-          ),
+        await pendingFile.writeAsString(
+          jsonEncode(<String, Object>{
+            'state': 'pending',
+            'token': token,
+            'reservedAtMs': nowMs,
+            'createdAtMs': nowMs,
+          }),
+          flush: true,
         );
         try {
           await _writeToneTimestamp(file, nowMs);
@@ -1354,18 +1279,8 @@ class DurableNotificationToneLease {
 
   Future<_ToneReservationRecord?> _readToneReservationRecord(File file) async {
     try {
-      if (!await NotificationLockTransaction.io(
-        () => file.existsSync(),
-        () => file.exists(),
-      )) {
-        return null;
-      }
-      final decoded = jsonDecode(
-        await NotificationLockTransaction.io(
-          () => file.readAsStringSync(),
-          () => file.readAsString(),
-        ),
-      );
+      if (!await file.exists()) return null;
+      final decoded = jsonDecode(await file.readAsString());
       if (decoded is! Map) return null;
       final state = decoded['state'];
       final token = decoded['token'];
@@ -1490,12 +1405,7 @@ class DurableNotificationToneLease {
 
   Future<int?> _readTonePostShowTimestampMs(File file) async {
     try {
-      final decoded = jsonDecode(
-        await NotificationLockTransaction.io(
-          () => file.readAsStringSync(),
-          () => file.readAsString(),
-        ),
-      );
+      final decoded = jsonDecode(await file.readAsString());
       if (decoded is! Map) return null;
       final timestamps = <int>[
         if (decoded['publishingAtMs'] is int) decoded['publishingAtMs'] as int,
@@ -1516,33 +1426,19 @@ class DurableNotificationToneLease {
     if (platform == TargetPlatform.android) {
       return _writeAtomicRecord(file, contents);
     }
-    return NotificationLockTransaction.io(
-      () => file.writeAsStringSync(contents, flush: true),
-      () => file.writeAsString(contents, flush: true),
-    );
+    return file.writeAsString(contents, flush: true);
   }
 
   Future<void> _writeToneReservationRecord(File file, String contents) {
     if (platform == TargetPlatform.android) {
       return _writeAtomicRecord(file, contents);
     }
-    return NotificationLockTransaction.io(
-      () => file.writeAsStringSync(contents, flush: true),
-      () => file.writeAsString(contents, flush: true),
-    );
+    return file.writeAsString(contents, flush: true);
   }
 
   Future<bool> _deleteIfExists(File file) async {
     try {
-      if (await NotificationLockTransaction.io(
-        () => file.existsSync(),
-        () => file.exists(),
-      )) {
-        await NotificationLockTransaction.io(
-          () => file.deleteSync(),
-          () => file.delete(),
-        );
-      }
+      if (await file.exists()) await file.delete();
       return true;
     } on FileSystemException {
       return false;
@@ -1554,10 +1450,7 @@ class DurableNotificationToneLease {
     Future<T> Function() action, {
     bool ownerCompletion = false,
   }) async {
-    await NotificationLockTransaction.io(
-      () => toneDir.createSync(recursive: true),
-      () => toneDir.create(recursive: true),
-    );
+    await toneDir.create(recursive: true);
     final coordination = File('${toneDir.path}/$toneCoordinationLockFileName');
     Future<T> guarded() => ownerCompletion
         ? _PosixFlock.withExclusiveOwnerCompletion(coordination, action)
@@ -1594,10 +1487,7 @@ class DurableNotificationToneLease {
 
   Future<bool> _createExclusive(File file, {String? contents}) async {
     try {
-      await NotificationLockTransaction.io(
-        () => file.parent.createSync(recursive: true),
-        () => file.parent.create(recursive: true),
-      );
+      await file.parent.create(recursive: true);
     } catch (error, stackTrace) {
       Error.throwWithStackTrace(
         DurableNotificationStorageException(
@@ -1609,18 +1499,10 @@ class DurableNotificationToneLease {
     }
 
     try {
-      await NotificationLockTransaction.io(
-        () => file.createSync(exclusive: true),
-        () => file.create(exclusive: true),
-      );
+      await file.create(exclusive: true);
     } catch (error, stackTrace) {
       try {
-        if (await NotificationLockTransaction.io(
-          () => file.existsSync(),
-          () => file.exists(),
-        )) {
-          return false;
-        }
+        if (await file.exists()) return false;
       } catch (_) {
         // Fall through to the typed storage failure below.
       }
@@ -1644,15 +1526,7 @@ class DurableNotificationToneLease {
       // allowed to remove the file. The event flock remains held by the caller;
       // an existing owner's collision is never deleted here.
       try {
-        if (await NotificationLockTransaction.io(
-          () => file.existsSync(),
-          () => file.exists(),
-        )) {
-          await NotificationLockTransaction.io(
-            () => file.deleteSync(),
-            () => file.delete(),
-          );
-        }
+        if (await file.exists()) await file.delete();
       } catch (_) {
         // Preserve the original typed write failure; a later storage recovery
         // can handle an undeletable filesystem residue.
@@ -1670,36 +1544,19 @@ class DurableNotificationToneLease {
   static Future<void> _writeExclusiveClaimContents(
     File file,
     String contents,
-  ) => NotificationLockTransaction.io(
-    () => file.writeAsStringSync(contents, flush: true),
-    () => file.writeAsString(contents, flush: true),
-  );
+  ) => file.writeAsString(contents, flush: true);
 
   static Future<void> _writeAtomicRecord(File target, String contents) async {
     final temporary = File('${target.path}.replacement.tmp');
     try {
-      await NotificationLockTransaction.io(
-        () => temporary.writeAsStringSync(contents, flush: true),
-        () => temporary.writeAsString(contents, flush: true),
-      );
+      await temporary.writeAsString(contents, flush: true);
       // POSIX rename replaces the old regular file atomically. A crash before
       // this line leaves the previous fail-closed record intact; after it, the
       // replacement is complete and parseable.
-      await NotificationLockTransaction.io(
-        () => temporary.renameSync(target.path),
-        () => temporary.rename(target.path),
-      );
+      await temporary.rename(target.path);
     } finally {
       try {
-        if (await NotificationLockTransaction.io(
-          () => temporary.existsSync(),
-          () => temporary.exists(),
-        )) {
-          await NotificationLockTransaction.io(
-            () => temporary.deleteSync(),
-            () => temporary.delete(),
-          );
-        }
+        if (await temporary.exists()) await temporary.delete();
       } catch (_) {
         // Hidden crash debris is ignored by exact-name readers and pruned later.
       }
@@ -1712,16 +1569,10 @@ class DurableNotificationToneLease {
     required int maxEntries,
     File? protecting,
   }) async {
-    await NotificationLockTransaction.io(
-      () => target.createSync(recursive: true),
-      () => target.create(recursive: true),
-    );
+    await target.create(recursive: true);
     final cutoff = now().toUtc().millisecondsSinceEpoch - ttl.inMilliseconds;
     final fresh = <({File file, int timestamp})>[];
-    for (final entity in await NotificationLockTransaction.io(
-      () => target.listSync(),
-      () => target.list().toList(),
-    )) {
+    await for (final entity in target.list()) {
       if (entity is! File) continue;
       if (protecting != null && entity.path == protecting.path) continue;
       if (entity.path.endsWith(
@@ -1742,22 +1593,14 @@ class DurableNotificationToneLease {
           );
           // A live provisional lease is bounded by its own short recovery TTL,
           // not by capacity pruning intended for committed lease history.
-          if (await NotificationLockTransaction.io(
-            () => pendingFile.existsSync(),
-            () => pendingFile.exists(),
-          )) {
-            continue;
-          }
+          if (await pendingFile.exists()) continue;
         }
         final ownedMessageClaim = await _ownedMessageClaimRecord(entity);
         if (ownedMessageClaim != null) {
           final nowMs = now().toUtc().millisecondsSinceEpoch;
           if (ownedMessageClaim.state == 'pending' &&
               _messageClaimIsStale(ownedMessageClaim, nowMs)) {
-            await NotificationLockTransaction.io(
-              () => entity.deleteSync(),
-              () => entity.delete(),
-            );
+            await entity.delete();
           } else if (ownedMessageClaim.state == 'publishing' &&
               _messagePublicationIsStale(ownedMessageClaim, nowMs)) {
             final finalized = await _finalizeUnknownMessagePublication(
@@ -1775,10 +1618,7 @@ class DurableNotificationToneLease {
             await _readTimestamp(entity) ??
             (await entity.lastModified()).toUtc().millisecondsSinceEpoch;
         if (timestamp < cutoff) {
-          await NotificationLockTransaction.io(
-            () => entity.deleteSync(),
-            () => entity.delete(),
-          );
+          await entity.delete();
         } else {
           fresh.add((file: entity, timestamp: timestamp));
         }
@@ -1792,10 +1632,7 @@ class DurableNotificationToneLease {
     if (overflow <= 0) return;
     for (final entry in fresh.take(overflow)) {
       try {
-        await NotificationLockTransaction.io(
-          () => entry.file.deleteSync(),
-          () => entry.file.delete(),
-        );
+        await entry.file.delete();
       } on FileSystemException {
         // Best-effort bounded pruning; a later call retries.
       }
@@ -1804,12 +1641,7 @@ class DurableNotificationToneLease {
 
   Future<int?> _readTimestamp(File file) async {
     try {
-      return int.tryParse(
-        (await NotificationLockTransaction.io(
-          () => file.readAsStringSync(),
-          () => file.readAsString(),
-        )).trim(),
-      );
+      return int.tryParse((await file.readAsString()).trim());
     } catch (_) {
       // Swift/NSE and legacy claim files are allowed to be empty or otherwise
       // non-numeric. Even invalid external bytes must fall back to mtime so a
@@ -1820,12 +1652,7 @@ class DurableNotificationToneLease {
 
   Future<int?> _readToneTimestampMs(File file) async {
     try {
-      final value = double.tryParse(
-        (await NotificationLockTransaction.io(
-          () => file.readAsStringSync(),
-          () => file.readAsString(),
-        )).trim(),
-      );
+      final value = double.tryParse((await file.readAsString()).trim());
       if (value == null || !value.isFinite) return null;
       // Swift stores TimeInterval seconds. Accept the prior Dart millisecond
       // representation during upgrade so an existing lease remains safe.

@@ -173,9 +173,6 @@ final class IosLocalNotificationFinalEffect {
       return .genericFallback
     }
 
-    guard IosNotificationAsyncOwner.permitsNativeEntry(directory: directory)
-    else { return .genericFallback }
-
     return runLockHeld(
       candidate: candidate,
       lease: lease,
