@@ -309,7 +309,8 @@ final class ProductionIosSimulatorJourney implements ProductionJourney {
   Future<void> killOwnedProcess(ProductionJourneyPeer p) async {
     final pid = await _appPid(p);
     if (pid == null) throw StateError('app process not running');
-    await p.simctl(['spawn', p.device, 'kill', '-9', pid]);
+    // A bare 'kill' is not on the simulator's spawn path; /bin/kill is.
+    await p.simctl(['spawn', p.device, '/bin/kill', '-9', pid]);
     await waitForProductionObservation(
       'owned process death',
       const Duration(seconds: 10),
