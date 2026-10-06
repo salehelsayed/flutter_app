@@ -117,7 +117,8 @@ if [[ "$scenario" == "process-recreation" && ! -f "$process_recreation_driver" ]
 fi
 
 actual_sha256="$(shasum -a 256 "$fixture" | awk '{print $1}')"
-actual_bytes="$(stat -f '%z' "$fixture" 2>/dev/null || stat -c '%s' "$fixture")"
+# GNU stat first: on Linux, stat -f prints filesystem status even when it fails.
+actual_bytes="$(stat -c '%s' "$fixture" 2>/dev/null || stat -f '%z' "$fixture")"
 if [[ "$actual_sha256" != "$fixture_sha256" || "$actual_bytes" != "$fixture_bytes" ]]; then
   echo "Reviewed PiP fixture hash/size mismatch." >&2
   exit 1
@@ -623,8 +624,8 @@ select_and_tap_pip_system_ui_control() {
     echo "Selector did not create one regular structured result file." >&2
     return 1
   fi
-  selection_link_count="$(stat -f '%l' "$selection_json" 2>/dev/null || \
-    stat -c '%h' "$selection_json")"
+  selection_link_count="$(stat -c '%h' "$selection_json" 2>/dev/null || \
+    stat -f '%l' "$selection_json")"
   if [[ "$selection_link_count" != 1 ]]; then
     echo "Selector result must be a single-link regular file." >&2
     return 1
