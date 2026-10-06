@@ -1,6 +1,13 @@
 appId: ${APP_ID}
 name: production_private_open
 ---
+# A tile clipped under the app bar takes no tap; bring all of it into view.
+- scrollUntilVisible:
+    element:
+      id: conversation.private.${MESSAGE_ID}
+    direction: UP
+    centerElement: true
+    timeout: 20000
 - tapOn:
     id: conversation.private.${MESSAGE_ID}
 - assertVisible:

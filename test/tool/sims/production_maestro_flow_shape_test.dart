@@ -48,4 +48,38 @@ void main() {
       greaterThan(scroll),
     );
   });
+
+  test('private open flow brings the whole message tile into view before '
+      'tapping it', () {
+    final steps =
+        (loadYamlDocuments(
+                  File(
+                    'integration_test/maestro/production_private_open.yaml',
+                  ).readAsStringSync(),
+                ).last.contents
+                as YamlList)
+            .toList();
+    const tile = r'conversation.private.${MESSAGE_ID}';
+    final scroll = steps.indexWhere(
+      (step) =>
+          step is YamlMap &&
+          step['scrollUntilVisible'] is YamlMap &&
+          (step['scrollUntilVisible'] as YamlMap)['element'] is YamlMap &&
+          ((step['scrollUntilVisible'] as YamlMap)['element']
+                  as YamlMap)['id'] ==
+              tile,
+    );
+    expect(scroll, isNonNegative);
+    expect(
+      (steps[scroll] as YamlMap)['scrollUntilVisible']['centerElement'],
+      isTrue,
+    );
+    final tap = steps.indexWhere(
+      (step) =>
+          step is YamlMap &&
+          step['tapOn'] is YamlMap &&
+          (step['tapOn'] as YamlMap)['id'] == tile,
+    );
+    expect(tap, greaterThan(scroll));
+  });
 }
