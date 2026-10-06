@@ -175,18 +175,18 @@ final class ProductionJourneyFlowRunner {
         throw const _DriverNeverStarted();
       }
       // Maestro's console omits the cause; its debug log names a device
-      // server that died while reading device info, before any UI step.
+      // server that died or failed while reading device info, before any UI
+      // step.
       final debug = Directory('${destination.path}/debug');
       if (debug.existsSync() &&
           debug
               .listSync(recursive: true)
               .whereType<File>()
               .where((file) => file.path.endsWith('/maestro.log'))
-              .any(
-                (file) => file.readAsStringSync().contains(
-                  "Device server died during 'deviceInfo'",
-                ),
-              )) {
+              .any((file) {
+                final text = file.readAsStringSync();
+                return _deviceInfoFailed.any(text.contains);
+              })) {
         throw const _DriverNeverStarted();
       }
       throw StateError('$label Maestro flow failed');
@@ -211,6 +211,13 @@ const _driverNeverStarted = [
   'driver not ready in time',
   'DeviceServerDiedException',
   'Unable to launch',
+];
+
+// Maestro debug-log causes of a flow that failed while fetching device
+// information, which it does before the first step.
+const _deviceInfoFailed = [
+  "Device server died during 'deviceInfo'",
+  "'deviceInfo' failed:",
 ];
 
 bool _isSimulator(String device) => RegExp(
