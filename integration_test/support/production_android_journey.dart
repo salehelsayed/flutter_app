@@ -174,6 +174,21 @@ final class ProductionJourneyFlowRunner {
           _driverNeverStarted.any(log.readAsStringSync().contains)) {
         throw const _DriverNeverStarted();
       }
+      // Maestro's console omits the cause; its debug log names a device
+      // server that died while reading device info, before any UI step.
+      final debug = Directory('${destination.path}/debug');
+      if (debug.existsSync() &&
+          debug
+              .listSync(recursive: true)
+              .whereType<File>()
+              .where((file) => file.path.endsWith('/maestro.log'))
+              .any(
+                (file) => file.readAsStringSync().contains(
+                  "Device server died during 'deviceInfo'",
+                ),
+              )) {
+        throw const _DriverNeverStarted();
+      }
       throw StateError('$label Maestro flow failed');
     }
     final receipt = File('${destination.path}/result.json');
