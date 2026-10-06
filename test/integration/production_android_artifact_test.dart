@@ -73,7 +73,7 @@ void main() {
   });
 
   test('stale input and swapped profile attestations are rejected', () {
-    final artifact = prepare(profileId: 'android.e2e.main');
+    final artifact = prepare(profileId: 'android.e2e.production');
     final values = environment(artifact);
     expect(
       () => ProductionAndroidArtifact.fromEnvironment(

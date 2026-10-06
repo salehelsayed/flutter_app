@@ -11,7 +11,7 @@
   "device_roles": ["android_physical", "android_emulator"],
   "resources": ["device:android-physical", "device:android-emulator"],
   "target_capabilities": ["android.physical", "android.emulator"],
-  "build_profile": "android.e2e.main",
+  "build_profile": "android.e2e.production",
   "artifact_validator": "validateProductionTransportCensus",
   "ui_driver_reason": "No UI: the original census is a protocol-level sender loop. A production-owned control drives the production send use case with the original cold lever; read-only receiver storage binds delivery.",
   "maestro_flows": [],

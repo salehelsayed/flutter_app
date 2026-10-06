@@ -31,7 +31,7 @@ void main() {
   final at = DateTime.utc(2026, 9, 28);
   const invocation = SimsRuntimeInvocation(
     schema: simsRuntimeConfigSchema,
-    profileId: 'android.e2e.main',
+    profileId: 'android.e2e.production',
     scenarioId: groupCatalogMediaReactionJourney,
     role: 'alice',
     runId: 'run',

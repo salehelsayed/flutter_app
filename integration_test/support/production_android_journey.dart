@@ -9,7 +9,7 @@ import 'production_android_artifact.dart';
 import 'production_journey.dart';
 import 'production_journey_peer.dart';
 
-const productionJourneyAndroidProfile = 'android.e2e.main';
+const productionJourneyAndroidProfile = 'android.e2e.production';
 const productionPerformanceAndroidProfile = 'android.e2e.performance_relay';
 const productionJourneyAndroidPackage = 'com.mknoon.sims.connectivity';
 const productionNotificationAndroidProfile = 'android.production_fcm.journey';

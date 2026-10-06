@@ -22,7 +22,7 @@ void main() {
           jsonEncode(
             SimsRuntimeInvocation(
               schema: simsRuntimeConfigSchema,
-              profileId: 'android.e2e.main',
+              profileId: 'android.e2e.production',
               scenarioId: groupInviteJourney,
               role: role,
               runId: 'fixture-run',
@@ -36,7 +36,7 @@ void main() {
               stateDirectory: directory,
               isDebugMode: true,
               e2eTestMode: true,
-              profileId: 'android.e2e.main',
+              profileId: 'android.e2e.production',
             );
         if (role == 'sender') {
           expect(activate, throwsStateError);

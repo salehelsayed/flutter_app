@@ -27,7 +27,7 @@
     "android.physical",
     "android.emulator"
   ],
-  "build_profile": "android.e2e.main",
+  "build_profile": "android.e2e.production",
   "artifact_validator": "validateProductionNotificationTapLatency",
   "ui_driver_reason": "Maestro drives all ordinary UI and native notification taps. Narrow production observers establish exact route counts, already-active guard, unread state and database row identity; verified owned-UID process death preserves the native card for cold-tap startup, which force-stop cannot establish. Existing state guard verifies restoration.",
   "maestro_flows": [

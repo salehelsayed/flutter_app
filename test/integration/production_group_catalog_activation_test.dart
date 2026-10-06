@@ -20,7 +20,7 @@ void main() {
         jsonEncode(
           SimsRuntimeInvocation(
             schema: simsRuntimeConfigSchema,
-            profileId: 'android.e2e.main',
+            profileId: 'android.e2e.production',
             scenarioId: groupCatalogCreateJourney,
             role: role,
             runId: 'fixture-run',
@@ -34,7 +34,7 @@ void main() {
             stateDirectory: directory,
             isDebugMode: true,
             e2eTestMode: true,
-            profileId: 'android.e2e.main',
+            profileId: 'android.e2e.production',
           );
       if (!{'alice', 'bob', 'charlie'}.contains(role)) {
         expect(activate, throwsStateError);

@@ -43,7 +43,7 @@ void main() {
       );
       const invocation = SimsRuntimeInvocation(
         schema: simsRuntimeConfigSchema,
-        profileId: 'android.e2e.main',
+        profileId: 'android.e2e.production',
         scenarioId: groupInviteJourney,
         role: 'alice',
         runId: 'run',

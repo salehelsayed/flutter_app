@@ -10,8 +10,8 @@ void main() {
   test('other-chat fixture belongs only to the production Bob receiver', () {
     for (final (profile, role, accepted) in [
       ('android.production_fcm.journey', 'bob', true),
-      ('android.e2e.main', 'alice', false),
-      ('android.e2e.main', 'bob', false),
+      ('android.e2e.production', 'alice', false),
+      ('android.e2e.production', 'bob', false),
       ('android.production_fcm.journey', 'alice', false),
     ]) {
       final controller = ProductionJourneyController(
@@ -47,7 +47,7 @@ void main() {
           jsonEncode(
             SimsRuntimeInvocation(
               schema: simsRuntimeConfigSchema,
-              profileId: 'android.e2e.main',
+              profileId: 'android.e2e.production',
               scenarioId: notificationOpenJourney,
               role: role,
               runId: 'fixture-run',
@@ -61,7 +61,7 @@ void main() {
               stateDirectory: directory,
               isDebugMode: true,
               e2eTestMode: true,
-              profileId: 'android.e2e.main',
+              profileId: 'android.e2e.production',
             );
         if (role == 'sender') {
           expect(activate, throwsStateError);

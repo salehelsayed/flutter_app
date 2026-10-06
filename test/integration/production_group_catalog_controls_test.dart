@@ -72,7 +72,7 @@ void main() {
         );
         final invocation = SimsRuntimeInvocation(
           schema: simsRuntimeConfigSchema,
-          profileId: 'android.e2e.main',
+          profileId: 'android.e2e.production',
           scenarioId: scenario,
           role: 'alice',
           runId: 'run',

@@ -22,7 +22,12 @@ const String _androidGroupMedia269ApplicationId =
 const _androidNonProviderDisposablePackages = <String, String>{
   'android.e2e.main': 'com.mknoon.sims.connectivity',
   'android.e2e.performance_relay': 'com.mknoon.sims.connectivity',
+  'android.e2e.production': 'com.mknoon.sims.connectivity',
   'android.e2e.direct_media_custody': 'com.mknoon.sims.directmedia',
+};
+const _androidDisposableOnlyProfiles = <String>{
+  'android.e2e.performance_relay',
+  'android.e2e.production',
 };
 const String simsIosDeviceProductValidatorInputName =
     'ios-device-product-validator.schema';
@@ -1278,6 +1283,11 @@ String effectiveSimsApplicationId(
   // Sender/disposable and original provider profiles retain their own policy.
   if (profile.id == 'android.production_fcm.journey') {
     return 'com.mknoon.app';
+  }
+  // Production journeys always install the disposable sender package, so one
+  // full SIMS run can build them next to the legacy `android.e2e.main` app.
+  if (_androidDisposableOnlyProfiles.contains(profile.id)) {
+    return _androidNonProviderDisposablePackages[profile.id]!;
   }
   if (profile.id == _iosDeviceGroupMedia269ProfileId) {
     return _iosDeviceGroupMedia269BundleId;

@@ -13,7 +13,7 @@ void main() {
   late ProductionJourneyController controller;
   const invocation = SimsRuntimeInvocation(
     schema: simsRuntimeConfigSchema,
-    profileId: 'android.e2e.main',
+    profileId: 'android.e2e.production',
     scenarioId: foregroundGroupPushJourney,
     role: 'bob',
     runId: 'run-1',
@@ -124,7 +124,7 @@ void main() {
       ProductionJourneyController? create({
         bool debug = true,
         bool e2e = true,
-        String profile = 'android.e2e.main',
+        String profile = 'android.e2e.production',
       }) => ProductionJourneyController.forInstalledProfile(
         stateDirectory: directory,
         isDebugMode: debug,

@@ -194,7 +194,7 @@ final class ProductionJourneyController {
     if (!isDebugMode ||
         !e2eTestMode ||
         !{
-          'android.e2e.main',
+          'android.e2e.production',
           'android.e2e.performance_relay',
           'android.production_fcm.journey',
           'ios.simulator.app',

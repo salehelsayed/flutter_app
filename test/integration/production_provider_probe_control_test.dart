@@ -72,7 +72,7 @@ void main() {
   });
 
   for (final invalid in [
-    receiver.copyWith(profileId: 'android.e2e.main'),
+    receiver.copyWith(profileId: 'android.e2e.production'),
     receiver.copyWith(role: 'alice'),
     receiver.copyWith(scenarioId: routingSmokeJourney),
   ]) {

@@ -11,7 +11,7 @@
   "device_roles": ["android_physical", "android_emulator"],
   "resources": ["device:android-physical", "device:android-emulator"],
   "target_capabilities": ["android.physical", "android.emulator"],
-  "build_profile": "android.e2e.main",
+  "build_profile": "android.e2e.production",
   "artifact_validator": "validateProductionMessageLatency",
   "ui_driver_reason": "No UI: the originals are protocol-level send sequences. Production-owned controls call the production send use cases (with the recipient ML-KEM key) and the receiver's rendezvous and node operations; every send returns the production timing event it emitted.",
   "maestro_flows": [],

@@ -198,9 +198,19 @@ expected_profiles = [
         },
         "declaredException": False
     },
+    # Wave 5 (2026-10-06): production journeys build their disposable sender
+    # package on their own profile, so legacy android.e2e.main stays unchanged.
+    {
+        "id": "android.e2e.production",
+        "platform": "android",
+        "artifactKind": "universal-debug-apk",
+        "buildRequired": True,
+        "compileDefines": {"E2E_TEST_MODE": "true"},
+        "declaredException": False
+    },
 ]
 assert actual_profiles == expected_profiles, (
-    "DTR-13 must preserve the exact ordered sixteen-row Sims build-profile table"
+    "DTR-13 must preserve the exact ordered seventeen-row Sims build-profile table"
 )
 
 orchestrator = read("tool/sims/build_orchestrator.dart")

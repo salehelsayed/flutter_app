@@ -17,7 +17,7 @@ void main() {
       final performance = manifest.buildProfileById(
         'android.e2e.performance_relay',
       )!;
-      final ordinary = manifest.buildProfileById('android.e2e.main')!;
+      final ordinary = manifest.buildProfileById('android.e2e.production')!;
       const environment = {'SIMS_APP_ID': 'com.mknoon.sims.connectivity'};
       expect(
         effectiveSimsBuildArguments(performance, environment: environment),
@@ -89,6 +89,57 @@ void main() {
         effectiveSimsCompileDefines(original, environment: environment),
         containsPair('MKNOON_KEY_ROTATION_GRACE_PERIOD_MS', '1500'),
       );
+    },
+  );
+
+  test(
+    'production journeys build the disposable sender without campaign environment',
+    () {
+      final manifest = SimsManifest.loadSync(
+        File('tool/sims/critical_features.json'),
+      );
+      for (final id in [
+        'android.e2e.production',
+        'android.e2e.performance_relay',
+      ]) {
+        final profile = manifest.buildProfileById(id)!;
+        expect(
+          effectiveSimsApplicationId(profile, environment: const {}),
+          'com.mknoon.sims.connectivity',
+          reason: id,
+        );
+        expect(
+          effectiveSimsBuildArguments(profile, environment: const {}),
+          containsAll([
+            '--dart-define=SIMS_BUILD_PROFILE_ID=$id',
+            '--android-project-arg=disableGoogleServicesForDisposableProof=true',
+          ]),
+          reason: id,
+        );
+      }
+      // The legacy main profile keeps resolving its package from the
+      // environment, so its four original routes are unchanged.
+      final main = manifest.buildProfileById('android.e2e.main')!;
+      expect(
+        effectiveSimsApplicationId(
+          main,
+          environment: const {'SIMS_APP_ID': 'com.mknoon.app'},
+        ),
+        'com.mknoon.app',
+      );
+      for (final capability in manifest.capabilities) {
+        if (!capability.id.startsWith('production.')) continue;
+        expect(
+          capability.buildProfileId,
+          isNot('android.e2e.main'),
+          reason: capability.id,
+        );
+        expect(
+          capability.dependencies,
+          isNot(contains('build.android.e2e.main')),
+          reason: capability.id,
+        );
+      }
     },
   );
 

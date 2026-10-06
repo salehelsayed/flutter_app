@@ -179,6 +179,16 @@
         "MKNOON_EMIT_WAKE_TOKEN": "true"
       },
       "declaredException": false
+    },
+    {
+      "id": "android.e2e.production",
+      "platform": "android",
+      "artifactKind": "universal-debug-apk",
+      "buildRequired": true,
+      "compileDefines": {
+        "E2E_TEST_MODE": "true"
+      },
+      "declaredException": false
     }
   ],
   "capabilities": [
@@ -2801,13 +2811,13 @@
         "run",
         "integration_test/scripts/run_production_foreground_group_push.dart"
       ],
-      "buildProfile": "android.e2e.main",
+      "buildProfile": "android.e2e.production",
       "dependencies": [
-        "build.android.e2e.main"
+        "build.android.e2e.production"
       ],
       "resources": [
         {
-          "name": "build:android.e2e.main",
+          "name": "build:android.e2e.production",
           "access": "read"
         },
         {
@@ -2858,14 +2868,14 @@
         "run",
         "integration_test/scripts/run_production_notification_open.dart"
       ],
-      "buildProfile": "android.e2e.main",
+      "buildProfile": "android.e2e.production",
       "dependencies": [
-        "build.android.e2e.main",
+        "build.android.e2e.production",
         "build.android.production_fcm.journey"
       ],
       "resources": [
         {
-          "name": "build:android.e2e.main",
+          "name": "build:android.e2e.production",
           "access": "read"
         },
         {
@@ -2935,14 +2945,14 @@
         "run",
         "integration_test/scripts/run_production_notification_sound.dart"
       ],
-      "buildProfile": "android.e2e.main",
+      "buildProfile": "android.e2e.production",
       "dependencies": [
-        "build.android.e2e.main",
+        "build.android.e2e.production",
         "build.android.production_fcm.journey"
       ],
       "resources": [
         {
-          "name": "build:android.e2e.main",
+          "name": "build:android.e2e.production",
           "access": "read"
         },
         {
@@ -3021,13 +3031,13 @@
         "run",
         "integration_test/scripts/run_production_routing.dart"
       ],
-      "buildProfile": "android.e2e.main",
+      "buildProfile": "android.e2e.production",
       "dependencies": [
-        "build.android.e2e.main"
+        "build.android.e2e.production"
       ],
       "resources": [
         {
-          "name": "build:android.e2e.main",
+          "name": "build:android.e2e.production",
           "access": "read"
         },
         {
@@ -3078,13 +3088,13 @@
         "run",
         "integration_test/scripts/run_production_private_media_local.dart"
       ],
-      "buildProfile": "android.e2e.main",
+      "buildProfile": "android.e2e.production",
       "dependencies": [
-        "build.android.e2e.main"
+        "build.android.e2e.production"
       ],
       "resources": [
         {
-          "name": "build:android.e2e.main",
+          "name": "build:android.e2e.production",
           "access": "read"
         },
         {
@@ -3134,13 +3144,13 @@
         "run",
         "integration_test/scripts/run_production_group_invite_reliability.dart"
       ],
-      "buildProfile": "android.e2e.main",
+      "buildProfile": "android.e2e.production",
       "dependencies": [
-        "build.android.e2e.main"
+        "build.android.e2e.production"
       ],
       "resources": [
         {
-          "name": "build:android.e2e.main",
+          "name": "build:android.e2e.production",
           "access": "read"
         },
         {
@@ -3294,13 +3304,13 @@
         "run",
         "integration_test/scripts/run_production_group_create.dart"
       ],
-      "buildProfile": "android.e2e.main",
+      "buildProfile": "android.e2e.production",
       "dependencies": [
-        "build.android.e2e.main"
+        "build.android.e2e.production"
       ],
       "resources": [
         {
-          "name": "build:android.e2e.main",
+          "name": "build:android.e2e.production",
           "access": "read"
         },
         {
@@ -3355,13 +3365,13 @@
         "run",
         "integration_test/scripts/run_production_group_reaction.dart"
       ],
-      "buildProfile": "android.e2e.main",
+      "buildProfile": "android.e2e.production",
       "dependencies": [
-        "build.android.e2e.main"
+        "build.android.e2e.production"
       ],
       "resources": [
         {
-          "name": "build:android.e2e.main",
+          "name": "build:android.e2e.production",
           "access": "read"
         },
         {
@@ -3417,13 +3427,13 @@
         "run",
         "integration_test/scripts/run_production_group_reaction_toggle.dart"
       ],
-      "buildProfile": "android.e2e.main",
+      "buildProfile": "android.e2e.production",
       "dependencies": [
-        "build.android.e2e.main"
+        "build.android.e2e.production"
       ],
       "resources": [
         {
-          "name": "build:android.e2e.main",
+          "name": "build:android.e2e.production",
           "access": "read"
         },
         {
@@ -3479,13 +3489,13 @@
         "run",
         "integration_test/scripts/run_production_group_removed_reaction.dart"
       ],
-      "buildProfile": "android.e2e.main",
+      "buildProfile": "android.e2e.production",
       "dependencies": [
-        "build.android.e2e.main"
+        "build.android.e2e.production"
       ],
       "resources": [
         {
-          "name": "build:android.e2e.main",
+          "name": "build:android.e2e.production",
           "access": "read"
         },
         {
@@ -3577,13 +3587,13 @@
         "run",
         "integration_test/scripts/run_production_group_invite_status_matrix.dart"
       ],
-      "buildProfile": "android.e2e.main",
+      "buildProfile": "android.e2e.production",
       "dependencies": [
-        "build.android.e2e.main"
+        "build.android.e2e.production"
       ],
       "resources": [
         {
-          "name": "build:android.e2e.main",
+          "name": "build:android.e2e.production",
           "access": "read"
         },
         {
@@ -3635,13 +3645,13 @@
         "run",
         "integration_test/scripts/run_production_group_delete_preserves_friends.dart"
       ],
-      "buildProfile": "android.e2e.main",
+      "buildProfile": "android.e2e.production",
       "dependencies": [
-        "build.android.e2e.main"
+        "build.android.e2e.production"
       ],
       "resources": [
         {
-          "name": "build:android.e2e.main",
+          "name": "build:android.e2e.production",
           "access": "read"
         },
         {
@@ -3697,13 +3707,13 @@
         "run",
         "integration_test/scripts/run_production_group_invite_accept_spinner.dart"
       ],
-      "buildProfile": "android.e2e.main",
+      "buildProfile": "android.e2e.production",
       "dependencies": [
-        "build.android.e2e.main"
+        "build.android.e2e.production"
       ],
       "resources": [
         {
-          "name": "build:android.e2e.main",
+          "name": "build:android.e2e.production",
           "access": "read"
         },
         {
@@ -3754,13 +3764,13 @@
         "run",
         "integration_test/scripts/run_production_group_new_member_media.dart"
       ],
-      "buildProfile": "android.e2e.main",
+      "buildProfile": "android.e2e.production",
       "dependencies": [
-        "build.android.e2e.main"
+        "build.android.e2e.production"
       ],
       "resources": [
         {
-          "name": "build:android.e2e.main",
+          "name": "build:android.e2e.production",
           "access": "read"
         },
         {
@@ -3812,13 +3822,13 @@
         "run",
         "integration_test/scripts/run_production_group_online_remove.dart"
       ],
-      "buildProfile": "android.e2e.main",
+      "buildProfile": "android.e2e.production",
       "dependencies": [
-        "build.android.e2e.main"
+        "build.android.e2e.production"
       ],
       "resources": [
         {
-          "name": "build:android.e2e.main",
+          "name": "build:android.e2e.production",
           "access": "read"
         },
         {
@@ -3873,13 +3883,13 @@
         "run",
         "integration_test/scripts/run_production_group_relay_only.dart"
       ],
-      "buildProfile": "android.e2e.main",
+      "buildProfile": "android.e2e.production",
       "dependencies": [
-        "build.android.e2e.main"
+        "build.android.e2e.production"
       ],
       "resources": [
         {
-          "name": "build:android.e2e.main",
+          "name": "build:android.e2e.production",
           "access": "read"
         },
         {
@@ -3935,13 +3945,13 @@
         "run",
         "integration_test/scripts/run_production_group_process_death.dart"
       ],
-      "buildProfile": "android.e2e.main",
+      "buildProfile": "android.e2e.production",
       "dependencies": [
-        "build.android.e2e.main"
+        "build.android.e2e.production"
       ],
       "resources": [
         {
-          "name": "build:android.e2e.main",
+          "name": "build:android.e2e.production",
           "access": "read"
         },
         {
@@ -3996,13 +4006,13 @@
         "run",
         "integration_test/scripts/run_production_group_gm004.dart"
       ],
-      "buildProfile": "android.e2e.main",
+      "buildProfile": "android.e2e.production",
       "dependencies": [
-        "build.android.e2e.main"
+        "build.android.e2e.production"
       ],
       "resources": [
         {
-          "name": "build:android.e2e.main",
+          "name": "build:android.e2e.production",
           "access": "read"
         },
         {
@@ -4057,13 +4067,13 @@
         "run",
         "integration_test/scripts/run_production_group_gm005.dart"
       ],
-      "buildProfile": "android.e2e.main",
+      "buildProfile": "android.e2e.production",
       "dependencies": [
-        "build.android.e2e.main"
+        "build.android.e2e.production"
       ],
       "resources": [
         {
-          "name": "build:android.e2e.main",
+          "name": "build:android.e2e.production",
           "access": "read"
         },
         {
@@ -4118,13 +4128,13 @@
         "run",
         "integration_test/scripts/run_production_group_offline_remove.dart"
       ],
-      "buildProfile": "android.e2e.main",
+      "buildProfile": "android.e2e.production",
       "dependencies": [
-        "build.android.e2e.main"
+        "build.android.e2e.production"
       ],
       "resources": [
         {
-          "name": "build:android.e2e.main",
+          "name": "build:android.e2e.production",
           "access": "read"
         },
         {
@@ -4179,13 +4189,13 @@
         "run",
         "integration_test/scripts/run_production_group_gm006.dart"
       ],
-      "buildProfile": "android.e2e.main",
+      "buildProfile": "android.e2e.production",
       "dependencies": [
-        "build.android.e2e.main"
+        "build.android.e2e.production"
       ],
       "resources": [
         {
-          "name": "build:android.e2e.main",
+          "name": "build:android.e2e.production",
           "access": "read"
         },
         {
@@ -4240,13 +4250,13 @@
         "run",
         "integration_test/scripts/run_production_group_offline_readd.dart"
       ],
-      "buildProfile": "android.e2e.main",
+      "buildProfile": "android.e2e.production",
       "dependencies": [
-        "build.android.e2e.main"
+        "build.android.e2e.production"
       ],
       "resources": [
         {
-          "name": "build:android.e2e.main",
+          "name": "build:android.e2e.production",
           "access": "read"
         },
         {
@@ -4299,13 +4309,13 @@
         "run",
         "integration_test/scripts/run_production_group_gm001.dart"
       ],
-      "buildProfile": "android.e2e.main",
+      "buildProfile": "android.e2e.production",
       "dependencies": [
-        "build.android.e2e.main"
+        "build.android.e2e.production"
       ],
       "resources": [
         {
-          "name": "build:android.e2e.main",
+          "name": "build:android.e2e.production",
           "access": "read"
         },
         {
@@ -4358,13 +4368,13 @@
         "run",
         "integration_test/scripts/run_production_group_ge001.dart"
       ],
-      "buildProfile": "android.e2e.main",
+      "buildProfile": "android.e2e.production",
       "dependencies": [
-        "build.android.e2e.main"
+        "build.android.e2e.production"
       ],
       "resources": [
         {
-          "name": "build:android.e2e.main",
+          "name": "build:android.e2e.production",
           "access": "read"
         },
         {
@@ -4417,13 +4427,13 @@
         "run",
         "integration_test/scripts/run_production_group_de003.dart"
       ],
-      "buildProfile": "android.e2e.main",
+      "buildProfile": "android.e2e.production",
       "dependencies": [
-        "build.android.e2e.main"
+        "build.android.e2e.production"
       ],
       "resources": [
         {
-          "name": "build:android.e2e.main",
+          "name": "build:android.e2e.production",
           "access": "read"
         },
         {
@@ -4478,13 +4488,13 @@
         "run",
         "integration_test/scripts/run_production_group_ge002.dart"
       ],
-      "buildProfile": "android.e2e.main",
+      "buildProfile": "android.e2e.production",
       "dependencies": [
-        "build.android.e2e.main"
+        "build.android.e2e.production"
       ],
       "resources": [
         {
-          "name": "build:android.e2e.main",
+          "name": "build:android.e2e.production",
           "access": "read"
         },
         {
@@ -4539,13 +4549,13 @@
         "run",
         "integration_test/scripts/run_production_group_ge003.dart"
       ],
-      "buildProfile": "android.e2e.main",
+      "buildProfile": "android.e2e.production",
       "dependencies": [
-        "build.android.e2e.main"
+        "build.android.e2e.production"
       ],
       "resources": [
         {
-          "name": "build:android.e2e.main",
+          "name": "build:android.e2e.production",
           "access": "read"
         },
         {
@@ -4600,13 +4610,13 @@
         "run",
         "integration_test/scripts/run_production_group_gm020.dart"
       ],
-      "buildProfile": "android.e2e.main",
+      "buildProfile": "android.e2e.production",
       "dependencies": [
-        "build.android.e2e.main"
+        "build.android.e2e.production"
       ],
       "resources": [
         {
-          "name": "build:android.e2e.main",
+          "name": "build:android.e2e.production",
           "access": "read"
         },
         {
@@ -4661,13 +4671,13 @@
         "run",
         "integration_test/scripts/run_production_group_gm034.dart"
       ],
-      "buildProfile": "android.e2e.main",
+      "buildProfile": "android.e2e.production",
       "dependencies": [
-        "build.android.e2e.main"
+        "build.android.e2e.production"
       ],
       "resources": [
         {
-          "name": "build:android.e2e.main",
+          "name": "build:android.e2e.production",
           "access": "read"
         },
         {
@@ -4722,13 +4732,13 @@
         "run",
         "integration_test/scripts/run_production_group_gm016.dart"
       ],
-      "buildProfile": "android.e2e.main",
+      "buildProfile": "android.e2e.production",
       "dependencies": [
-        "build.android.e2e.main"
+        "build.android.e2e.production"
       ],
       "resources": [
         {
-          "name": "build:android.e2e.main",
+          "name": "build:android.e2e.production",
           "access": "read"
         },
         {
@@ -4782,13 +4792,13 @@
         "run",
         "integration_test/scripts/run_production_group_ge004.dart"
       ],
-      "buildProfile": "android.e2e.main",
+      "buildProfile": "android.e2e.production",
       "dependencies": [
-        "build.android.e2e.main"
+        "build.android.e2e.production"
       ],
       "resources": [
         {
-          "name": "build:android.e2e.main",
+          "name": "build:android.e2e.production",
           "access": "read"
         },
         {
@@ -4842,13 +4852,13 @@
         "run",
         "integration_test/scripts/run_production_group_gm007.dart"
       ],
-      "buildProfile": "android.e2e.main",
+      "buildProfile": "android.e2e.production",
       "dependencies": [
-        "build.android.e2e.main"
+        "build.android.e2e.production"
       ],
       "resources": [
         {
-          "name": "build:android.e2e.main",
+          "name": "build:android.e2e.production",
           "access": "read"
         },
         {
@@ -4902,13 +4912,13 @@
         "run",
         "integration_test/scripts/run_production_group_gm019.dart"
       ],
-      "buildProfile": "android.e2e.main",
+      "buildProfile": "android.e2e.production",
       "dependencies": [
-        "build.android.e2e.main"
+        "build.android.e2e.production"
       ],
       "resources": [
         {
-          "name": "build:android.e2e.main",
+          "name": "build:android.e2e.production",
           "access": "read"
         },
         {
@@ -4962,13 +4972,13 @@
         "run",
         "integration_test/scripts/run_production_group_ge009.dart"
       ],
-      "buildProfile": "android.e2e.main",
+      "buildProfile": "android.e2e.production",
       "dependencies": [
-        "build.android.e2e.main"
+        "build.android.e2e.production"
       ],
       "resources": [
         {
-          "name": "build:android.e2e.main",
+          "name": "build:android.e2e.production",
           "access": "read"
         },
         {
@@ -5022,13 +5032,13 @@
         "run",
         "integration_test/scripts/run_production_group_rapid_readd.dart"
       ],
-      "buildProfile": "android.e2e.main",
+      "buildProfile": "android.e2e.production",
       "dependencies": [
-        "build.android.e2e.main"
+        "build.android.e2e.production"
       ],
       "resources": [
         {
-          "name": "build:android.e2e.main",
+          "name": "build:android.e2e.production",
           "access": "read"
         },
         {
@@ -5082,13 +5092,13 @@
         "run",
         "integration_test/scripts/run_production_group_ir001.dart"
       ],
-      "buildProfile": "android.e2e.main",
+      "buildProfile": "android.e2e.production",
       "dependencies": [
-        "build.android.e2e.main"
+        "build.android.e2e.production"
       ],
       "resources": [
         {
-          "name": "build:android.e2e.main",
+          "name": "build:android.e2e.production",
           "access": "read"
         },
         {
@@ -5142,13 +5152,13 @@
         "run",
         "integration_test/scripts/run_production_group_gm008.dart"
       ],
-      "buildProfile": "android.e2e.main",
+      "buildProfile": "android.e2e.production",
       "dependencies": [
-        "build.android.e2e.main"
+        "build.android.e2e.production"
       ],
       "resources": [
         {
-          "name": "build:android.e2e.main",
+          "name": "build:android.e2e.production",
           "access": "read"
         },
         {
@@ -5202,13 +5212,13 @@
         "run",
         "integration_test/scripts/run_production_group_ge007.dart"
       ],
-      "buildProfile": "android.e2e.main",
+      "buildProfile": "android.e2e.production",
       "dependencies": [
-        "build.android.e2e.main"
+        "build.android.e2e.production"
       ],
       "resources": [
         {
-          "name": "build:android.e2e.main",
+          "name": "build:android.e2e.production",
           "access": "read"
         },
         {
@@ -5262,13 +5272,13 @@
         "run",
         "integration_test/scripts/run_production_group_ge008.dart"
       ],
-      "buildProfile": "android.e2e.main",
+      "buildProfile": "android.e2e.production",
       "dependencies": [
-        "build.android.e2e.main"
+        "build.android.e2e.production"
       ],
       "resources": [
         {
-          "name": "build:android.e2e.main",
+          "name": "build:android.e2e.production",
           "access": "read"
         },
         {
@@ -5322,13 +5332,13 @@
         "run",
         "integration_test/scripts/run_production_group_ge005.dart"
       ],
-      "buildProfile": "android.e2e.main",
+      "buildProfile": "android.e2e.production",
       "dependencies": [
-        "build.android.e2e.main"
+        "build.android.e2e.production"
       ],
       "resources": [
         {
-          "name": "build:android.e2e.main",
+          "name": "build:android.e2e.production",
           "access": "read"
         },
         {
@@ -5382,13 +5392,13 @@
         "run",
         "integration_test/scripts/run_production_group_readd_cycles.dart"
       ],
-      "buildProfile": "android.e2e.main",
+      "buildProfile": "android.e2e.production",
       "dependencies": [
-        "build.android.e2e.main"
+        "build.android.e2e.production"
       ],
       "resources": [
         {
-          "name": "build:android.e2e.main",
+          "name": "build:android.e2e.production",
           "access": "read"
         },
         {
@@ -5442,13 +5452,13 @@
         "run",
         "integration_test/scripts/run_production_group_ge010.dart"
       ],
-      "buildProfile": "android.e2e.main",
+      "buildProfile": "android.e2e.production",
       "dependencies": [
-        "build.android.e2e.main"
+        "build.android.e2e.production"
       ],
       "resources": [
         {
-          "name": "build:android.e2e.main",
+          "name": "build:android.e2e.production",
           "access": "read"
         },
         {
@@ -5502,13 +5512,13 @@
         "run",
         "integration_test/scripts/run_production_group_go001.dart"
       ],
-      "buildProfile": "android.e2e.main",
+      "buildProfile": "android.e2e.production",
       "dependencies": [
-        "build.android.e2e.main"
+        "build.android.e2e.production"
       ],
       "resources": [
         {
-          "name": "build:android.e2e.main",
+          "name": "build:android.e2e.production",
           "access": "read"
         },
         {
@@ -5562,13 +5572,13 @@
         "run",
         "integration_test/scripts/run_production_group_ge011.dart"
       ],
-      "buildProfile": "android.e2e.main",
+      "buildProfile": "android.e2e.production",
       "dependencies": [
-        "build.android.e2e.main"
+        "build.android.e2e.production"
       ],
       "resources": [
         {
-          "name": "build:android.e2e.main",
+          "name": "build:android.e2e.production",
           "access": "read"
         },
         {
@@ -5622,13 +5632,13 @@
         "run",
         "integration_test/scripts/run_production_group_full_mesh.dart"
       ],
-      "buildProfile": "android.e2e.main",
+      "buildProfile": "android.e2e.production",
       "dependencies": [
-        "build.android.e2e.main"
+        "build.android.e2e.production"
       ],
       "resources": [
         {
-          "name": "build:android.e2e.main",
+          "name": "build:android.e2e.production",
           "access": "read"
         },
         {
@@ -5682,13 +5692,13 @@
         "run",
         "integration_test/scripts/run_production_group_de002.dart"
       ],
-      "buildProfile": "android.e2e.main",
+      "buildProfile": "android.e2e.production",
       "dependencies": [
-        "build.android.e2e.main"
+        "build.android.e2e.production"
       ],
       "resources": [
         {
-          "name": "build:android.e2e.main",
+          "name": "build:android.e2e.production",
           "access": "read"
         },
         {
@@ -5742,13 +5752,13 @@
         "run",
         "integration_test/scripts/run_production_group_ge006.dart"
       ],
-      "buildProfile": "android.e2e.main",
+      "buildProfile": "android.e2e.production",
       "dependencies": [
-        "build.android.e2e.main"
+        "build.android.e2e.production"
       ],
       "resources": [
         {
-          "name": "build:android.e2e.main",
+          "name": "build:android.e2e.production",
           "access": "read"
         },
         {
@@ -5802,13 +5812,13 @@
         "run",
         "integration_test/scripts/run_production_group_de007.dart"
       ],
-      "buildProfile": "android.e2e.main",
+      "buildProfile": "android.e2e.production",
       "dependencies": [
-        "build.android.e2e.main"
+        "build.android.e2e.production"
       ],
       "resources": [
         {
-          "name": "build:android.e2e.main",
+          "name": "build:android.e2e.production",
           "access": "read"
         },
         {
@@ -5862,13 +5872,13 @@
         "run",
         "integration_test/scripts/run_production_group_voluntary_leave.dart"
       ],
-      "buildProfile": "android.e2e.main",
+      "buildProfile": "android.e2e.production",
       "dependencies": [
-        "build.android.e2e.main"
+        "build.android.e2e.production"
       ],
       "resources": [
         {
-          "name": "build:android.e2e.main",
+          "name": "build:android.e2e.production",
           "access": "read"
         },
         {
@@ -5922,13 +5932,13 @@
         "run",
         "integration_test/scripts/run_production_group_gm015.dart"
       ],
-      "buildProfile": "android.e2e.main",
+      "buildProfile": "android.e2e.production",
       "dependencies": [
-        "build.android.e2e.main"
+        "build.android.e2e.production"
       ],
       "resources": [
         {
-          "name": "build:android.e2e.main",
+          "name": "build:android.e2e.production",
           "access": "read"
         },
         {
@@ -5982,13 +5992,13 @@
         "run",
         "integration_test/scripts/run_production_group_ge024.dart"
       ],
-      "buildProfile": "android.e2e.main",
+      "buildProfile": "android.e2e.production",
       "dependencies": [
-        "build.android.e2e.main"
+        "build.android.e2e.production"
       ],
       "resources": [
         {
-          "name": "build:android.e2e.main",
+          "name": "build:android.e2e.production",
           "access": "read"
         },
         {
@@ -6043,13 +6053,13 @@
         "run",
         "integration_test/scripts/run_production_group_media_reaction.dart"
       ],
-      "buildProfile": "android.e2e.main",
+      "buildProfile": "android.e2e.production",
       "dependencies": [
-        "build.android.e2e.main"
+        "build.android.e2e.production"
       ],
       "resources": [
         {
-          "name": "build:android.e2e.main",
+          "name": "build:android.e2e.production",
           "access": "read"
         },
         {
@@ -6102,13 +6112,13 @@
         "run",
         "integration_test/scripts/run_production_group_gm002.dart"
       ],
-      "buildProfile": "android.e2e.main",
+      "buildProfile": "android.e2e.production",
       "dependencies": [
-        "build.android.e2e.main"
+        "build.android.e2e.production"
       ],
       "resources": [
         {
-          "name": "build:android.e2e.main",
+          "name": "build:android.e2e.production",
           "access": "read"
         },
         {
@@ -6166,13 +6176,13 @@
         "run",
         "integration_test/scripts/run_production_group_ml002.dart"
       ],
-      "buildProfile": "android.e2e.main",
+      "buildProfile": "android.e2e.production",
       "dependencies": [
-        "build.android.e2e.main"
+        "build.android.e2e.production"
       ],
       "resources": [
         {
-          "name": "build:android.e2e.main",
+          "name": "build:android.e2e.production",
           "access": "read"
         },
         {
@@ -6229,13 +6239,13 @@
         "run",
         "integration_test/scripts/run_production_group_gm003.dart"
       ],
-      "buildProfile": "android.e2e.main",
+      "buildProfile": "android.e2e.production",
       "dependencies": [
-        "build.android.e2e.main"
+        "build.android.e2e.production"
       ],
       "resources": [
         {
-          "name": "build:android.e2e.main",
+          "name": "build:android.e2e.production",
           "access": "read"
         },
         {
@@ -6293,13 +6303,13 @@
         "run",
         "integration_test/scripts/run_production_group_ml003.dart"
       ],
-      "buildProfile": "android.e2e.main",
+      "buildProfile": "android.e2e.production",
       "dependencies": [
-        "build.android.e2e.main"
+        "build.android.e2e.production"
       ],
       "resources": [
         {
-          "name": "build:android.e2e.main",
+          "name": "build:android.e2e.production",
           "access": "read"
         },
         {
@@ -6630,13 +6640,13 @@
         "run",
         "integration_test/scripts/run_production_group_up012.dart"
       ],
-      "buildProfile": "android.e2e.main",
+      "buildProfile": "android.e2e.production",
       "dependencies": [
-        "build.android.e2e.main"
+        "build.android.e2e.production"
       ],
       "resources": [
         {
-          "name": "build:android.e2e.main",
+          "name": "build:android.e2e.production",
           "access": "read"
         },
         {
@@ -6691,13 +6701,13 @@
         "run",
         "integration_test/scripts/run_production_transport_census.dart"
       ],
-      "buildProfile": "android.e2e.main",
+      "buildProfile": "android.e2e.production",
       "dependencies": [
-        "build.android.e2e.main"
+        "build.android.e2e.production"
       ],
       "resources": [
         {
-          "name": "build:android.e2e.main",
+          "name": "build:android.e2e.production",
           "access": "read"
         },
         {
@@ -6803,13 +6813,13 @@
         "run",
         "integration_test/scripts/run_production_message_latency.dart"
       ],
-      "buildProfile": "android.e2e.main",
+      "buildProfile": "android.e2e.production",
       "dependencies": [
-        "build.android.e2e.main"
+        "build.android.e2e.production"
       ],
       "resources": [
         {
-          "name": "build:android.e2e.main",
+          "name": "build:android.e2e.production",
           "access": "read"
         },
         {
@@ -6861,14 +6871,14 @@
         "integration_test/scripts/run_production_notification_open.dart",
         "--measure-tap-latency"
       ],
-      "buildProfile": "android.e2e.main",
+      "buildProfile": "android.e2e.production",
       "dependencies": [
-        "build.android.e2e.main",
+        "build.android.e2e.production",
         "build.android.production_fcm.journey"
       ],
       "resources": [
         {
-          "name": "build:android.e2e.main",
+          "name": "build:android.e2e.production",
           "access": "read"
         },
         {
@@ -6896,6 +6906,45 @@
       "artifactRequired": true,
       "artifactValidator": "validateProductionNotificationTapLatency",
       "automationReady": true,
+      "active": true,
+      "declaredBuildException": false
+    },
+    {
+      "id": "build.android.e2e.production",
+      "owner": "sims-build-cache",
+      "proofBoundary": "build.android.e2e.production.attested",
+      "assertions": [
+        "build.input_and_artifact_hash_attested"
+      ],
+      "lane": "reliability",
+      "modes": [
+        "major",
+        "full"
+      ],
+      "families": [
+        "1to1",
+        "groups",
+        "notifications"
+      ],
+      "required": true,
+      "command": [
+        "@prepare-build",
+        "android.e2e.production"
+      ],
+      "buildProfile": "android.e2e.production",
+      "dependencies": [],
+      "resources": [
+        {
+          "name": "build:android.e2e.production",
+          "access": "write"
+        }
+      ],
+      "targetCapabilities": [
+        "host.android-sdk"
+      ],
+      "allowedNaReason": "target_unavailable_by_project_policy",
+      "artifactRequired": true,
+      "artifactValidator": "sha256-attestation",
       "active": true,
       "declaredBuildException": false
     }

@@ -48,7 +48,7 @@ final class _Guard implements ProductionAndroidInstallGuard {
 void main() {
   late Directory temporary;
   late Directory cache;
-  const primary = 'android.e2e.main';
+  const primary = 'android.e2e.production';
   const receiver = 'android.production_fcm.journey';
   const physical = '21071FDF600CSC';
   const emulator = 'emulator-5556';
@@ -84,7 +84,7 @@ void main() {
     final (bob, bobDigest) = prepared(receiver);
     return {
       'SIMS_CACHE_DIR': cache.path,
-      'SIMS_ARTIFACT_ANDROID_E2E_MAIN': sender.path,
+      'SIMS_ARTIFACT_ANDROID_E2E_PRODUCTION': sender.path,
       'SIMS_ARTIFACT_INPUT_DIGEST': input,
       'SIMS_ARTIFACT_SHA256': senderDigest,
       'SIMS_ARTIFACT_ANDROID_PRODUCTION_FCM_JOURNEY': bob.path,

@@ -12,7 +12,7 @@ import '../../tool/sims/production_foreground_push_criteria.dart';
 import '../support/android_app_state_guard.dart';
 
 const _scenario = 'production.foreground_group_push';
-const _profile = 'android.e2e.main';
+const _profile = 'android.e2e.production';
 const _package = 'com.mknoon.sims.connectivity';
 const _validator = 'validateProductionForegroundPush';
 
@@ -72,7 +72,9 @@ final class _Campaign {
       return value;
     }
 
-    final artifact = File(required('SIMS_ARTIFACT_ANDROID_E2E_MAIN')).absolute;
+    final artifact = File(
+      required('SIMS_ARTIFACT_ANDROID_E2E_PRODUCTION'),
+    ).absolute;
     final input = required('SIMS_ARTIFACT_INPUT_DIGEST');
     final digest = required('SIMS_ARTIFACT_SHA256');
     final attestation = BuildAttestation.fromJson(

@@ -9,7 +9,7 @@ SimsRuntimeInvocation invocation({
   String fixture = 'run',
 }) => SimsRuntimeInvocation(
   schema: simsRuntimeConfigSchema,
-  profileId: 'android.e2e.main',
+  profileId: 'android.e2e.production',
   scenarioId: scenario,
   role: role,
   runId: 'run',

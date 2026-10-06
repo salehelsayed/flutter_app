@@ -139,7 +139,7 @@ void main() {
   });
   final mutations = <String, void Function(Map<String, Object?>)>{
     'wrong production variant': (p) =>
-        (p['cold'] as List)[0]['profileId'] = 'android.e2e.main',
+        (p['cold'] as List)[0]['profileId'] = 'android.e2e.production',
     'LAN topology enabled': (p) =>
         (p['cold'] as List)[0]['localDiscoveryDisabled'] = false,
     'malformed events': (p) => (p['cold'] as List)[0]['events'][0] = 'bad',

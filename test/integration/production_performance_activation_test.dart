@@ -8,7 +8,7 @@ import 'package:flutter_test/flutter_test.dart';
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   for (final (profile, scenario) in [
-    ('android.e2e.main', performanceJourney),
+    ('android.e2e.production', performanceJourney),
     ('android.e2e.performance_relay', foregroundGroupPushJourney),
   ]) {
     test('rejects profile/scenario mismatch $profile $scenario', () async {
