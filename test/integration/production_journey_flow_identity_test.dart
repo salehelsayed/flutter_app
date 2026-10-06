@@ -111,6 +111,17 @@ void main() {
       );
     },
   );
+  test(
+    'a failed device-info call before the first UI step reruns once',
+    () async {
+      adapter.serverDeaths.add(
+        "maestro.android.DeviceCallFailedException: 'deviceInfo' failed: "
+        'INTERNAL - error in frame handler\n',
+      );
+      await run();
+      expect(adapter.destinations, hasLength(2));
+    },
+  );
   test('a device server that dies mid-flow is not replayed', () async {
     adapter.serverDeaths.add(
       'Running flow production_reopen_seeded\n'
