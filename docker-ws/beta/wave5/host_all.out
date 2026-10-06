@@ -1,0 +1,62 @@
+start 06:17:46 9203012e9 status_lines=0
+2026/10/06 08:38:26 [INBOX] Incoming stream
+2026/10/06 08:38:26 [INBOX] Stream closed
+2026/10/06 08:38:26 [INBOX] stream handled in 28µs
+2026/10/06 08:38:26 [INBOX] Incoming stream
+2026/10/06 08:38:26 [INBOX] Stream closed
+2026/10/06 08:38:26 [INBOX] stream handled in 717.708µs
+2026/10/06 08:38:26 [INBOX] Incoming stream
+2026/10/06 08:38:26 [INBOX] Stream closed
+2026/10/06 08:38:26 [INBOX] stream handled in 216.542µs
+2026/10/06 08:38:26 [PUSH] outcome=provider_init_failed stage=messaging_client
+2026/10/06 08:38:26 [PUSH] outcome=provider_init_failed stage=messaging_client
+2026/10/06 08:38:26 [PUSH] outcome=success attempt=1 total_attempts=1
+2026/10/06 08:38:26 [PUSH] outcome=success attempt=1 total_attempts=1
+2026/10/06 08:38:26 [PUSH] outcome=failed attempts=1
+2026/10/06 08:38:26 [PUSH] outcome=invalid_token reason=literal_legacy_not_registered
+2026/10/06 08:38:26 [PUSH] outcome=invalid_token reason=literal_legacy_not_registered
+2026/10/06 08:38:26 [PUSH] provider unavailable outcome=provider_unavailable
+2026/10/06 08:38:26 [PUSH] outcome=success attempt=1 total_attempts=1
+2026/10/06 08:38:26 [INBOX] Stored message for recipient from sender
+2026/10/06 08:38:26 [PUSH] outcome=success attempt=1 total_attempts=3
+2026/10/06 08:38:26 [WAKE_AUTH] outcome=lookup_failed
+2026/10/06 08:38:26 [WAKE_AUTH] outcome=lookup_failed
+2026/10/06 08:38:26 [WAKE_AUTH] outcome=lookup_failed
+2026/10/06 08:38:26 [WAKE_AUTH] outcome=lookup_failed
+2026/10/06 08:38:26 [WAKE_AUTH] outcome=lookup_failed
+2026/10/06 08:38:26 [WAKE_AUTH] outcome=lookup_failed
+2026/10/06 08:38:26 [WAKE_AUTH] outcome=lookup_failed
+2026/10/06 08:38:26 [WAKE_AUTH] outcome=lookup_failed
+2026/10/06 08:38:26 [WAKE_AUTH] outcome=lookup_failed
+2026/10/06 08:38:26 [WAKE_AUTH] outcome=lookup_failed
+2026/10/06 08:38:26 [WAKE_AUTH] outcome=lookup_failed
+2026/10/06 08:38:26 [WAKE_AUTH] outcome=lookup_failed
+2026/10/06 08:38:26 [WAKE_AUTH] outcome=lookup_failed
+2026/10/06 08:38:26 [WAKE_AUTH] outcome=lookup_failed
+2026/10/06 08:38:26 [WAKE_AUTH] outcome=lookup_failed
+2026/10/06 08:38:26 [WAKE_AUTH] outcome=lookup_failed
+2026/10/06 08:38:26 [WAKE_AUTH] outcome=lookup_failed
+2026/10/06 08:38:26 [WAKE_AUTH] outcome=lookup_failed
+2026/10/06 08:38:26 [INBOX] Incoming stream
+2026/10/06 08:38:26 [WAKE_AUTH] outcome=registration_failed
+2026/10/06 08:38:26 [INBOX] Stream closed
+2026/10/06 08:38:26 [INBOX] stream handled in 59.291µs
+2026/10/06 08:38:26 [WAKE_AUTH] outcome=lookup_failed
+2026/10/06 08:38:26 [WAKE_AUTH] outcome=lookup_failed
+2026/10/06 08:38:26 [INBOX] Incoming stream
+2026/10/06 08:38:26 [PUSH] outcome=unregistered
+2026/10/06 08:38:26 [WAKE_AUTH] outcome=deletion_failed
+2026/10/06 08:38:26 [INBOX] Stream closed
+2026/10/06 08:38:26 [INBOX] stream handled in 56.708µs
+2026/10/06 08:38:26 [INBOX] Incoming stream
+2026/10/06 08:38:26 [INBOX] Stream closed
+2026/10/06 08:38:26 [INBOX] stream handled in 300.75µs
+2026/10/06 08:38:26 [INBOX] Stored message for peer-recipient from peer-alice
+2026/10/06 08:38:26 [WAKE_AUTH] outcome=lookup_failed
+2026/10/06 08:38:26 [INBOX] Stored message for peer-recipient from peer-alice
+2026/10/06 08:38:26 [WAKE_AUTH] outcome=lookup_failed
+FAIL
+FAIL	github.com/mknoon/relay-server	126.962s
+FAIL
+FAIL: #1635 scripts/test/run_relay_all_go_309.sh exited with 1
+end rc=1 06:38:26

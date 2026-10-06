@@ -9857,7 +9857,9 @@
           "integration_test/scripts/run_production_notification_sound.dart",
           "integration_test/maestro/production_group_open.yaml",
           "integration_test/maestro/production_conversation_back.yaml",
-          "integration_test/maestro/production_sound_two_messages.yaml"
+          "integration_test/maestro/production_sound_two_messages.yaml",
+          "integration_test/maestro/production_group_open_readonly.yaml",
+          "integration_test/maestro/production_conversation_back_readonly.yaml"
         ],
         "reason": "Additive production-composed sound cases preserve all original cases, intermediate tone evidence, group control and original native disposition assertions; original campaign remains intact."
       },
@@ -9876,7 +9878,8 @@
           "integration_test/scripts/run_production_transport_census.dart",
           "integration_test/maestro/production_direct_delete.yaml",
           "integration_test/maestro/production_resume.yaml",
-          "integration_test/maestro/production_all_chats.yaml"
+          "integration_test/maestro/production_all_chats.yaml",
+          "integration_test/maestro/production_direct_send_batch5.yaml"
         ],
         "reason": "Additive production-composed routing preserves all 27 original cases and their per-role/intermediate receipt requirements; original harness and selectors remain intact."
       },
@@ -10376,7 +10379,8 @@
         "owner": "full-sims-major",
         "capability": "production.startup_resume_performance",
         "patterns": [
-          "integration_test/scripts/run_production_startup_resume_performance.dart"
+          "integration_test/scripts/run_production_startup_resume_performance.dart",
+          "integration_test/maestro/production_healthy_resume.yaml"
         ],
         "reason": "Additive production B/M/BR timing and OS lifecycle measurement; original benchmark dispatches and thresholds remain intact."
       },
