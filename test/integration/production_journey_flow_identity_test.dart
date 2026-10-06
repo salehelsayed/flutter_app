@@ -9,14 +9,31 @@ class _Adapter implements AndroidHostProcessRunner {
   var fail = false;
   var missing = false;
   var wrongFlow = false;
+  // Debug-log lines for leading failed Maestro runs; process.log only reports
+  // the failed flow, as Maestro's own console output does.
+  final serverDeaths = <String>[];
   final destinations = <String>[];
+  final adbCalls = <List<String>>[];
   @override
   Future<ProcessResult> run(String executable, List<String> args) async {
+    if (executable == 'adb') {
+      adbCalls.add(args);
+      return ProcessResult(1, 0, '', '');
+    }
     final output = args[args.indexOf('--output') + 1];
     destinations.add(output);
     final directory = Directory(output);
     if (directory.existsSync()) return ProcessResult(1, 1, '', 'output exists');
     directory.createSync();
+    if (serverDeaths.isNotEmpty) {
+      File('$output/process.log').writeAsStringSync(
+        '[Failed] production_reopen_seeded (182ms)\n1/1 Flow Failed\n',
+      );
+      File('$output/debug/.maestro/tests/2026-10-06_124903/maestro.log')
+        ..createSync(recursive: true)
+        ..writeAsStringSync(serverDeaths.removeAt(0));
+      return ProcessResult(1, 1, '', '');
+    }
     if (!missing) {
       File('$output/result.json').writeAsStringSync(
         jsonEncode({
@@ -77,5 +94,31 @@ void main() {
   test('receipt from a different flow cannot pass', () async {
     adapter.wrongFlow = true;
     await expectLater(run(), throwsStateError);
+  });
+  test(
+    'a device server that dies before the first UI step reruns once',
+    () async {
+      adapter.serverDeaths.add(
+        'maestro.android.DeviceServerDiedException: Device server died '
+        "during 'deviceInfo' on pinned (1423ms since last byte)\n",
+      );
+      final receipt = await run();
+      expect(adapter.destinations, hasLength(2));
+      expect(receipt, startsWith(Directory(adapter.destinations.last).path));
+      expect(
+        adapter.adbCalls.map((call) => call.last),
+        containsAll(['dev.mobile.maestro', 'dev.mobile.maestro.test']),
+      );
+    },
+  );
+  test('a device server that dies mid-flow is not replayed', () async {
+    adapter.serverDeaths.add(
+      'Running flow production_reopen_seeded\n'
+      'maestro.android.DeviceServerDiedException: Device server died '
+      "during 'tapOn' on pinned\n",
+    );
+    await expectLater(run(), throwsStateError);
+    expect(adapter.destinations, hasLength(1));
+    expect(adapter.adbCalls, isEmpty);
   });
 }
