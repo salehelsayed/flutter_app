@@ -7843,7 +7843,7 @@
             "scripts/test/run_android_headless_recovery_native_374.sh"
           ],
           "format": "marker",
-          "marker": "PASS: Plan 374/375/393 Android native suite selected 9 classes / 73 methods;"
+          "marker": "PASS: Plan 374/375/393 Android native suite selected 9 classes / 75 methods;"
         }
       ],
       "boundary": "Exact source-owned proof adapter",

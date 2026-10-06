@@ -1,4 +1,4 @@
-start 06:20:22 9203012e9 out=/Volumes/CrucialX9/flutter_app/docker-ws/beta/wave5/full-plan-20261006T062022Z
-Planned 79 checks; 3768 obligations; 12 coverage gaps
-Full plan: /Volumes/CrucialX9/flutter_app/docker-ws/beta/wave5/full-plan-20261006T062022Z/plan.json
-end rc=2 06:21:03
+start 06:45:06 aae0d855e out=/Volumes/CrucialX9/flutter_app/docker-ws/beta/wave5/full-plan-20261006T064506Z
+Planned 79 checks; 3768 obligations; 8 coverage gaps
+Full plan: /Volumes/CrucialX9/flutter_app/docker-ws/beta/wave5/full-plan-20261006T064506Z/plan.json
+end rc=2 06:45:37

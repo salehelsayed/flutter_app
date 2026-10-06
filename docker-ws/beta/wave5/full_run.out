@@ -1,0 +1,87 @@
+start 07:24:18 aae0d855e status_lines=0 out=/Volumes/CrucialX9/flutter_app/.claude/worktrees/wave3-next/.codex-test-logs/production-bootstrap-migration-20260930/wave5-full-20261006T072418Z
+BLOCKED full.group-reaction.ios_announcement_reaction_recipient
+BLOCKED full.group-reaction.ios_chat_group_message_and_reaction_recipient
+BLOCKED full.reaction.android_background_crypto_preflight
+BLOCKED full.reaction.android_durable_reaction_background_connected
+BLOCKED full.reaction.android_first_wake_profile_aot
+BLOCKED full.reaction.android_message_unread_lifecycle
+BLOCKED full.reaction.android_physical_recipient
+BLOCKED full.reaction.head_provenance
+BLOCKED full.reaction.ios_physical_recipient
+BLOCKED full.xctest.notificationtapuitests.testairplanetogglestatedecodercontract
+BLOCKED full.xctest.notificationtapuitests.testautomatelocalnetworkpermission
+BLOCKED full.xctest.notificationtapuitests.testreactionnotificationtap
+BLOCKED full.xctest.vc205calllifecycleuitests.testansweralreadypresentedsystemcall
+BLOCKED full.xctest.vc205calllifecycleuitests.testbootstraptrustedcontactfromqr
+BLOCKED full.xctest.vc205calllifecycleuitests.testtapstartvoicecallonalreadyrunningapp
+PASS full-provider-schema
+PASS full-turn-path-probe
+PASS full-diagnostics-python
+PASS full-native-turn-tls-operations
+PASS full-workflow
+FAIL full.auto.go.27e9d492a8
+PASS full.auto.go.335a950145
+PASS full.auto.go.4d6a81cd3d
+FAIL full.auto.go.6441ffcc42
+FAIL full.auto.go.8e8f99b991
+PASS full.auto.python_unittest.1f819c9178.31e6277f77
+PASS full.auto.python_unittest.1f819c9178.35f637a247
+PASS full.auto.python_unittest.1f819c9178.4f92b2aaf7
+BLOCKED full.auto.python_unittest.1f819c9178.531bd3e357
+PASS full.auto.python_unittest.1f819c9178.53643e5bdb
+PASS full.auto.python_unittest.1f819c9178.5ca68540a1
+PASS full.auto.python_unittest.1f819c9178.607d356d91
+PASS full.auto.python_unittest.1f819c9178.73b552ebf2
+BLOCKED full.auto.python_unittest.1f819c9178.7c0f417884
+PASS full.auto.python_unittest.1f819c9178.7ddfe9e571
+PASS full.auto.python_unittest.1f819c9178.7fc33f3ff6
+PASS full.auto.python_unittest.1f819c9178.8ff6c1c4e4
+PASS full.auto.python_unittest.1f819c9178.b10023377d
+PASS full.auto.python_unittest.1f819c9178.b808c8d418
+PASS full.auto.python_unittest.1f819c9178.b954ce6d9d
+PASS full.auto.python_unittest.1f819c9178.c188055da5
+PASS full.auto.python_unittest.1f819c9178.c219593c73
+BLOCKED full.auto.python_unittest.1f819c9178.c239df7aee
+NOT RUN full.auto.python_unittest.1f819c9178.c2b2e64186
+NOT RUN full.auto.python_unittest.1f819c9178.d089c5850c
+NOT RUN full.auto.python_unittest.1f819c9178.d4d6e8d68d
+NOT RUN full.auto.python_unittest.1f819c9178.e88289f782
+NOT RUN full.auto.python_unittest.1f819c9178.f4d6d9f20e
+NOT RUN full.auto.python_unittest.1f819c9178.fbc2501d82
+PASS full.contract.ios_receiver_bootstrap
+PASS full.contract.ios_sender_projection_fixture
+PASS full.go-send-wrapper
+BLOCKED full.native.374
+PASS full.native.background-push-crypto
+PASS full.wake_token.emission_rollback
+NOT RUN full-device-audio
+NOT RUN full-device-media
+NOT RUN full-notification-recovery
+NOT RUN full-sims
+NOT RUN full-sims-major
+NOT RUN full-legacy
+NOT RUN full.benchmark.peer-suite
+NOT RUN full.benchmark.run_group_publish_benchmark
+NOT RUN full.benchmark.run_timeout_accuracy_benchmark
+NOT RUN full.media-stable-id.ios
+NOT RUN full.native.371
+NOT RUN full.native.373
+NOT RUN full.native.app-visibility
+NOT RUN full.native.pb266-release
+NOT RUN full.native.vc204
+NOT RUN full.performance.conversation
+NOT RUN full.performance.conversation_sub
+NOT RUN full.performance.feed_init
+NOT RUN full.performance.feed_orbit_offscreen
+NOT RUN full.performance.orbit
+NOT RUN full.performance.shell_switch
+NOT RUN full.xctest.notificationtapuitests.testcoldnotificationtap
+NOT RUN full.xctest.notificationtapuitests.testnotificationtap
+NOT RUN full.xctest.notificationtapuitests.testtapexistingnotification
+Automated: FAIL; overall: FAIL
+Mode: full; revision: aae0d855e27d11705b5c67549592be7a4e8e7454
+Source: e254c3314d61c72fcee3f085ae32f27b02977702d44e40e5023a00d4fb7cad8e
+Baseline: 10d2dbcaa7a7a953b90ff9b7d52b2f3e4c49429e; rules: dd631a738601c84f3129d761de3f661f30818d53885a2e118ec088aaf5ecb714
+Wall time: 1222.668s (includes selection, discovery and setup)
+Report: /Volumes/CrucialX9/flutter_app/.claude/worktrees/wave3-next/.codex-test-logs/production-bootstrap-migration-20260930/wave5-full-20261006T072418Z/summary.txt
+end rc=1 07:44:41
