@@ -9,8 +9,11 @@ name: production_home_tabs
     commands:
       - tapOn:
           id: orbit.view.all_chats
-- runFlow:
-    when:
+# A composer that still has focus takes the first back press; press again
+# only while the home tabs are still not shown.
+- repeat:
+    times: 2
+    while:
       notVisible: '(?s)^Intros.*$'
     commands:
       # The first Back can only close the keyboard left open by a send.
