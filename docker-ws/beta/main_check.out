@@ -1,9 +1,9 @@
 == changed:        1 dart files
 == format
-Formatted test/core/bootstrap/production_application_bootstrap_phase_contract_test.dart
-Formatted 1 file (1 changed) in 0.04 seconds.
+Formatted test/integration/production_journey_composition_guard_test.dart
+Formatted 1 file (1 changed) in 0.03 seconds.
 == analyze
-Analyzing production_application_bootstrap_phase_contract_test.dart...
+Analyzing production_journey_composition_guard_test.dart...
 No issues found!
 == dart tests
-00:02 +22: All tests passed!
+00:00 +18: All tests passed!

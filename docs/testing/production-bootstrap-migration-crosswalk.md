@@ -2712,3 +2712,228 @@ dispatchers stay; the shared-XCTest adapter has a real caller.
   `production.notification_tap_latency` PASS (one earlier attempt on the
   same head timed out waiting 30 s for the backgrounded receiver's message;
   the re-run passed).
+
+## 2026-10-06 Wave 5 steps 1 to 3: additive accounting, guard and build reuse
+
+Scope: Wave 5 steps 1 to 3 of the
+[proposed waves](production-bootstrap-migration-proposed-waves.md) (additive
+accounting with every original retained, the replacement guard, build reuse).
+Steps 4 (final host gate and canonical full run) and 5 (retirement proposal)
+are not started. No original route, selector or profile changed. Source
+commit for all checks below: `10d2dbcaa`.
+
+### Step 1: obligations accounted for
+
+**Original preservation.** All 40 harness files were hashed against the
+"Preserved source SHA-256" values in the dispositions above. 38 match
+byte for byte. The 2 that differ (`benchmark_1_1_send_harness.dart`,
+`benchmark_routing_paths_harness.dart`) were changed only by `6e2d74816`, the
+ML-KEM recipient-key fix the user approved on 2026-10-05. No other commit
+since 2026-09-26 touched them.
+
+**The 40 original harnesses.** "Replaced" means a production capability ran
+PASS on devices; the original still runs and is unchanged. Line numbers refer
+to this document.
+
+| Harness | Outcome | Production owner | Evidence (lines) | Open |
+|---|---|---|---|---|
+| `apns_provider_probe_harness.dart` | retained, manual | none | 20, 577 | external provider driver still required |
+| `benchmark_1_1_send_harness.dart` | replaced (A) | `message_latency` | 2625, 2637 | fixed original not executed (2703) |
+| `benchmark_ack_harness.dart` | retained, component | none | 2569 | |
+| `benchmark_background_resume_harness.dart` | replaced (BR) | `startup_resume_performance` | 2562, 2623 | |
+| `benchmark_bridge_crossing_harness.dart` | retained, component | none | 2570 | |
+| `benchmark_connection_reuse_harness.dart` | retained, component | none | 2571 | |
+| `benchmark_encryption_harness.dart` | retained, component | none | 2572 | |
+| `benchmark_event_queue_harness.dart` | retained, component | none | 2573 | |
+| `benchmark_group_publish_harness.dart` | replaced (GP) | `message_latency` | 2625, 2641 | |
+| `benchmark_harness.dart` | retained, dispatcher | none | 2584 | |
+| `benchmark_inbox_harness.dart` | retained, component | none | 2574 | |
+| `benchmark_media_harness.dart` | retained, component | none | 2575 | |
+| `benchmark_node_startup_harness.dart` | replaced (B) | `startup_resume_performance` | 2560, 2623 | |
+| `benchmark_notification_tap_harness.dart` | replaced (N) | `notification_tap_latency` | 2626, 2711 | same-peer tap has no timing (2645) |
+| `benchmark_relay_recovery_harness.dart` | replaced (C) | `startup_resume_performance` | 2563, 2630 | |
+| `benchmark_routing_paths_harness.dart` | partly replaced (R) | `message_latency` | 2625 | R-Sim-6, R-Sim-8 not reproduced (2671); fixed original not executed |
+| `benchmark_time_to_online_harness.dart` | replaced (M) | `startup_resume_performance` | 2561, 2623 | |
+| `benchmark_timeout_accuracy_harness.dart` | retained, component | none | 2576 | |
+| `benchmark_voice_harness.dart` | retained, component | none | 2577 | |
+| `conversation_wired_performance_harness.dart` | retained, component (reclassified) | none | 2578, 2588 | |
+| `conversation_wired_subscription_performance_harness.dart` | retained, component (reclassified) | none | 2579 | |
+| `diagnostics_reconnect_isolation_harness.dart` | retained, component (reclassified) | none | 2582 | |
+| `direct_private_media_device_local_journey_harness.dart` | replaced | `private_media_local` | 1242, 1407 | no remote-consumption claim (758) |
+| `feed_wired_init_performance_harness.dart` | retained, component (reclassified) | none | 2580 | |
+| `foreground_group_push_simulator_harness.dart` | replaced | `foreground_group_push` | 1446, 1426 | original iOS simulator comparison not repeated (1464) |
+| `group_invite_status_matrix_harness.dart` | replaced | `group_invite_status_matrix` | 1544, 1548 | |
+| `group_lifecycle_simulator_harness.dart` | retained dispatcher, 3 children replaced | `group_delete_preserves_friends`, `group_invite_accept_spinner`, `group_new_member_media` | 1588, 1617, 1662 | ADMIN_METADATA child has no production owner (313) |
+| `group_multi_device_real_harness.dart` | retained shared setup; invite journey replaced | `group_invite_reliability` (F, C, D) | 820, 1492 | still the setup library of 6 retained originals (322) |
+| `group_multi_party_device_real_android_harness.dart` | retained, dispatcher | none | 328 | its cases are counted in the catalog below |
+| `group_multi_party_device_real_harness.dart` | partly replaced | 51 `group_catalog.*` capabilities | catalog below | 58 cases not portable |
+| `group_smoke_harness.dart` | replaced | `routing_smoke` | 1243, 1554 | |
+| `inbox_replay_before_ack_custody_harness.dart` | retained, component | none | 361 | |
+| `notif_push_payload_persist_harness.dart` | retained, component | none | 372 | the Wave 2 lifecycle journey named at 372 was never added |
+| `notification_open_during_other_chat_harness.dart` | replaced | `notification_open` | 1241, 2711 | |
+| `notification_sound_smoke_harness.dart` | replaced | `notification_sound` | 1268, 1331 | S16 hearing unverified by user decision (1333) |
+| `orbit_performance_harness.dart` | retained, component (reclassified) | none | 2581 | |
+| `performance_harness.dart` | retained, dispatcher | none | 2584 | |
+| `relay_recovery_diagnostics_harness.dart` | retained, component (reclassified) | none | 2583 | |
+| `routing_smoke_harness.dart` | replaced | `routing_smoke` | 1243, 1123 | |
+| `transport_census_harness.dart` | replaced | `transport_census` | 2624, 2635 | forced-relay condition not done (2683) |
+
+Totals: 15 replaced, 3 partly replaced (`benchmark_routing_paths`,
+`group_multi_party_device_real`, `group_multi_device_real`), 1 dispatcher with
+3 replaced children, 17 retained as component evidence, 3 retained
+dispatchers, 1 retained manual capture.
+
+**Multi-party catalog (109 rows above).** 51 run on a production capability
+and 58 stay on the original harness as not portable; there is no overlap and
+no row is missing. The census sentence at the end of "2026-10-04 Wave 3
+batches 10 to 13" ("107 = 51 + 56") is out of date: the two not-portable
+tables hold 45 + 13 = 58 rows and the role table holds 109. 7 of the 51
+passed only after a product fix (ge009, ge005, de007, ge006,
+private_readd_cycles, private_partition_readd_heal,
+private_background_resume_group_delivery). The capabilities also prove 31
+catalog row ids that are not scenario names in the table (for example ML-020,
+NW-010, UP-012).
+
+Passes and probes recorded only in proof folders (no line above), checked on
+2026-10-06 (each PASS attempt has `oracle.json` with zero failures and no
+`first-failure.txt`):
+
+| Case | PASS attempt | Negative probe attempt |
+|---|---|---|
+| ge005 | `attempt-nXt88X` (2026-10-03) | line 2180 |
+| ge010 | `attempt-ZkWFhN` | `attempt-Svt4jP`, fails at the original oracle |
+| go001 | `attempt-LAGg5o` | `attempt-8R15zr`, fails at the original oracle |
+| ge011 | `attempt-a7Axlk` | `attempt-3KiE27`, fails at the original oracle |
+| private_full_mesh_online | `attempt-nABgFl` | `attempt-Wc9D6W`, weak: fails at flow order and a malformed proof, not at the oracle |
+| de002 | `attempt-XhwvR6` | `attempt-FGTPfw` (flow order), then the strengthened `attempt-YzhmK4` fails at the oracle (2335) |
+| ge009 | `docs/testing/handover-ge009-pending-readd-gaps.md` run T133639Z | line 2131 |
+
+**The 66 production capabilities.** All are required and active, and all 66
+have a device PASS. 55 have a device negative probe that failed at the
+intended step. 11 have none on device: `foreground_group_push`,
+`notification_open`, `notification_sound`, `routing_smoke`,
+`private_media_local` and `group_invite_reliability` (Waves 1 and 2 used
+host-side oracle and causal probes), `group_catalog.private_abc_create` and
+the three reaction cases, and `shared_xctest` (a probe is not applicable,
+2627; its provenance rejections are host-proven).
+
+**The 9 reconciliation gaps.** `docker-ws/alltests_go_test.sh` is owned by
+`full.go-send-wrapper` (`tool/testing/selection.json`, see the baseline
+section). The other 8 stay MANUAL: `apns_provider_probe_harness.dart` and the
+7 `signed-*` release selectors. They need signed candidates and people, and
+remain outside automated coverage.
+
+**Cross-cutting cases (plan section 4).** Host tests cover 7 of 10 fully:
+wrong profile, role, nonce or missing configuration
+(`production_journey_runtime_test.dart`, `sims_runtime_dispatch_test.dart`);
+cleanup (`sims_runtime_dispatch_test.dart`,
+`production_android_journey_guard_test.dart`); runtime parameters reuse and
+source changes invalidate (`sims_build_cache_test.dart`); missing artifacts
+cannot trigger hidden builds (`sims_executor_test.dart`); missing, duplicate
+or skipped child receipts (`production_shared_xctest_test.dart`,
+`mknoon_full_legacy_binding_test.py`); no test controllers in normal startup
+(`production_journey_runtime_test.dart`, the composition guard); fault
+injection (`production_journey_runtime_test.dart`). Partly covered: a failed
+production bootstrap (readiness and failed actions are tested, the bootstrap
+failure itself is not); headless independence (criteria level only, no cold
+headless start without an earlier foreground start); original preservation
+(no standing byte test; the hash check above is a one-off audit).
+
+Open items carried forward: R-Sim-6 and R-Sim-8 not reproduced; the
+forced-relay census condition; the fixed A and R originals not executed (the
+`run_benchmark_suite.dart` simulator route hangs); ADMIN_METADATA without a
+production owner; the unnamed `notif_push_payload_persist` lifecycle journey;
+the weak `private_full_mesh_online` probe; the cause of the gm006 and ge004
+probe failures (1941, 2127) and of Bob's dropped live removal in ML-008
+(2310). Finding 001 of
+`Test-Flight-Improv/Production-Flow-Audits/findings/group-key-rotation-authority-2026-10-05.md`
+(line 2499) is fixed and device-proven (ML-020 rotated to epoch 2).
+
+### Step 2: replacement composition guard
+
+`test/integration/production_journey_composition_guard_test.dart` already
+rejected graph construction and the two group harness imports. It now also
+allows a replacement module (every `lib/debug/production_journeys/` file, every
+production capability command and every `production_` support or tool file)
+to import test or tool code only from other `production_` modules or from 7
+named files: the two unchanged oracles
+(`group_multi_party_device_criteria.dart`, `routing_smoke_group_criteria.dart`)
+and five SIMS helpers (`android_app_state_guard.dart`,
+`ios_xctestrun_relocator.dart`, `artifact_evidence.dart`, `build_cache.dart`,
+`build_orchestrator.dart`). Any original harness, benchmark helper, legacy
+stack or `test/` helper import now fails. Nine new cases prove the rule
+(five rejected imports, four allowed). The rule does not apply to the
+retained originals or component tests. Result: 18 of 18 pass.
+
+### Step 3: build reuse and honest build costs
+
+**Controlled reuse proof (2026-10-06, `10d2dbcaa`, clean `wave3-next`
+worktree).** `docker-ws/beta/wave5/prepare_builds_pair.sh` ran SIMS build-only
+(`full --only <capability> --prepare-builds --list`: no device preparation,
+no tests) for one capability per replacement build profile, twice, on the
+unchanged tree. Reports: `docker-ws/beta/wave5/builds/`.
+
+| Capability | Profiles | Pass 1 (cold) | Pass 2 (warm) |
+|---|---|---|---|
+| `production.notification_open` | `android.e2e.main`, `android.production_fcm.journey` | 2 built, 4m14.8s | 0 built, 2 attested hits, 8.7 s |
+| `production.startup_resume_performance` | `android.e2e.performance_relay` | 1 built, 35.7 s | 0 built, 1 hit, 4.1 s |
+| `production.group_catalog.private_partition_readd_heal` | `ios.simulator.app` | 1 built, 12m33.3s | 0 built, 1 hit, 11.2 s |
+| `production.shared_xctest` | `ios.device.production` | 1 built, 10m12.6s | 0 built, 1 hit, 20.5 s |
+
+Pass 1 missed with reason `unattested` (no attestation for that input yet):
+a direct SIMS call has no campaign `SIMS_APP_ID`, so the Android build drops
+`disableGoogleServicesForDisposableProof` and is a different input identity
+from the campaign artifacts, as intended. The `ios.simulator.app` time
+includes about 5 minutes of waiting after `Runner.app` was written, on
+orphaned `flutter build ios` helpers (landmine recorded for Wave 3; cleared
+with `docker-ws/beta/r78_kill_build_orphans.sh`). Pass 2 rebuilt nothing.
+Xcode rewrote the tracked root `info.plist` (an Xcode workspace record, not a
+build input); it was restored.
+
+**All recorded migration runs (Waves 1 to 4).** 248 SIMS reports in the
+migration log folders of the main checkout and the worktree
+(`docker-ws/beta/wave5/build_ledger.py` for one folder): 265 profile
+preparations, 83 builds, 182 attested cache hits, 0 failed builds, 0
+declared build exceptions, 0 build-ledger validation errors. Every one of the
+71 invalidations is `unattested`, and the other 12 builds filled an empty
+profile cache; no report shows `wrongInput` or `wrongArtifact`, so no input
+was ever built twice. Build minutes: `android.e2e.main` 70 builds, 100.8 min
+(its source changed often during Waves 1 to 3); `android.production_fcm.journey`
+5, 4.2 min; `android.e2e.performance_relay` 2, 3.1 min; `ios.simulator.app` 4,
+10.9 min; `ios.device.production` 2, 16.6 min. One cost to note: on
+2026-10-04 two different `android.e2e.main` input identities (`095912f1`,
+`0105de45`) produced the identical APK (`ddc76e53`), so the input closure
+includes some files that do not change the APK; that cost one extra build.
+
+**No hidden child builds.** Test execution runs with
+`SIMS_CHILD_BUILDS_FORBIDDEN=1`; `sims_executor_test.dart` proves an
+undeclared child `flutter build` or `xcodebuild` overrides a forged PASS; the
+shared-XCTest proof records `childBuildCount: 0`; SIMS rejects a report whose
+builds exceed its cache misses (none did).
+
+**Aggregate cost while the originals still run.** Replacements need 5 cached
+profiles: one cold build per changed input, zero when unchanged. The retained
+originals in the canonical full run add:
+
+- `reliability.full.cleaned_legacy`: 67 uncached `flutter test` / `dart run`
+  commands, each compiling its own app. 7 of them run migration originals:
+  `group_lifecycle_simulator_harness.dart` 4 (DELETE_PRESERVES_FRIENDS,
+  INVITE_ACCEPT_SPINNER and NEW_MEMBER_MEDIA have production replacements;
+  ADMIN_METADATA has none) and `run_invite_reliability_multi_device.dart` 3
+  (`invite_send_latency`, `direct_linked_device_addressing`,
+  `direct_linked_device_event_blob_fanout`: no production replacement; the
+  replaced F, C, D slices are its default `invite_reliability` scenario, which
+  this list does not run). The other 60 are outside this migration.
+- `full.performance.*`: 6 uncached macOS compiles of `performance_harness.dart`.
+- `groups.multi_party_release`: the cached `ios.simulator.e2e` profile.
+- 9 build profiles used only by legacy SIMS capabilities, all cached.
+- The benchmark originals have no full-run owner (run by hand through
+  `run_benchmark_suite.dart`).
+
+So in the canonical full run only 3 uncached compiles (the three replaced
+lifecycle scenarios) belong to originals that have a production replacement;
+the other 10 migration-original compiles (ADMIN_METADATA, the three invite
+scenarios, the six `performance_harness.dart` targets) have none. The other
+replaced originals run under their own existing owners (the multi-party
+catalog under `groups.multi_party_release` on its cached profile; the
+benchmarks by hand). Step 5 will count each route and its owner exactly.

@@ -53,6 +53,43 @@ final class _GraphConstructionVisitor extends RecursiveAstVisitor<void> {
   }
 }
 
+// Test and tool code a replacement journey may import besides other
+// `production_` modules: the unchanged original oracles and the SIMS artifact,
+// build and device-state helpers. Any other harness, legacy stack or test
+// helper must stay with the original route.
+const _allowedSupportImports = {
+  'integration_test/scripts/group_multi_party_device_criteria.dart',
+  'integration_test/scripts/routing_smoke_group_criteria.dart',
+  'integration_test/support/android_app_state_guard.dart',
+  'integration_test/support/ios_xctestrun_relocator.dart',
+  'tool/sims/artifact_evidence.dart',
+  'tool/sims/build_cache.dart',
+  'tool/sims/build_orchestrator.dart',
+};
+
+/// The repository path a relative import of [from] resolves to, or null for
+/// `dart:` and `package:` imports.
+String? _resolvedImport(String from, String uri) {
+  if (uri.startsWith('dart:') || uri.startsWith('package:')) return null;
+  return Uri.file(from).resolve(uri).toFilePath();
+}
+
+/// Why importing [uri] from the replacement module [from] is forbidden, or
+/// null when the import is allowed.
+String? _legacyImportViolation(String from, String uri) {
+  final target = _resolvedImport(from, uri);
+  if (target == null) return null;
+  if (!['integration_test/', 'test/', 'tool/'].any(target.startsWith)) {
+    return null;
+  }
+  final name = target.split('/').last;
+  if (name.startsWith('production_') || name.startsWith('run_production_')) {
+    return null;
+  }
+  if (_allowedSupportImports.contains(target)) return null;
+  return '$from imports $target';
+}
+
 void main() {
   test('ordinary startup retains the production invitation delivery owner', () {
     final source = File('lib/app/application_root.dart').readAsStringSync();
@@ -125,10 +162,55 @@ void main() {
             isNot(contains('group_multi_party_device_real_harness')),
             reason: file.path,
           );
+          expect(_legacyImportViolation(path, uri), isNull);
         }
       }
     },
   );
+
+  for (final (from, uri) in [
+    (
+      'integration_test/scripts/run_production_x.dart',
+      '../benchmark_helpers.dart',
+    ),
+    (
+      'integration_test/scripts/run_production_x.dart',
+      '../performance_harness.dart',
+    ),
+    (
+      'integration_test/support/production_x.dart',
+      'group_multi_device_test_stack.dart',
+    ),
+    ('tool/sims/production_x.dart', '../../test/helpers/fake_bridge.dart'),
+    (
+      'tool/sims/production_x.dart',
+      '../../integration_test/scripts/group_multi_party_device_real_harness.dart',
+    ),
+  ]) {
+    test('import guard rejects $uri from $from', () {
+      expect(_legacyImportViolation(from, uri), isNotNull);
+    });
+  }
+
+  for (final (from, uri) in [
+    (
+      'tool/sims/production_x.dart',
+      '../../integration_test/scripts/group_multi_party_device_criteria.dart',
+    ),
+    (
+      'integration_test/scripts/run_production_x.dart',
+      '../../tool/sims/production_y.dart',
+    ),
+    (
+      'integration_test/scripts/run_production_x.dart',
+      'package:flutter_app/main.dart',
+    ),
+    ('lib/debug/production_journeys/x.dart', 'production_y.dart'),
+  ]) {
+    test('import guard allows $uri from $from', () {
+      expect(_legacyImportViolation(from, uri), isNull);
+    });
+  }
 
   for (final source in [
     'final value = GroupMessageListener();',
