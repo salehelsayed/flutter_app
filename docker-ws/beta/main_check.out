@@ -1,9 +1,8 @@
-== changed:        1 dart files
+== changed:        3 dart files
 == format
-Formatted test/integration/production_journey_composition_guard_test.dart
-Formatted 1 file (1 changed) in 0.03 seconds.
+Formatted 3 files (0 changed) in 0.03 seconds.
 == analyze
-Analyzing production_journey_composition_guard_test.dart...
+Analyzing received_media_action_transport_boundary_test.dart, conversation_controller_composition_contract_test.dart, dtr18_layering_relocation_contract_test.dart...
 No issues found!
 == dart tests
-00:00 +18: All tests passed!
+00:05 +8: All tests passed!

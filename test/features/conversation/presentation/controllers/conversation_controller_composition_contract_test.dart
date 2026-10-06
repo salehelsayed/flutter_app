@@ -105,7 +105,10 @@ const _expectedGroupApiFingerprint = '3ffab64f';
 // capability exists but is unavailable, so an explicit tap can be recorded
 // before the call owner rejects it. The wired widget regression proves that
 // this unavailable tap neither probes the endpoint nor places a call.
-const _expectedDirectHandoffFingerprint = 'cfa5d939';
+// caff0f087 (re-pinned 2026-10-06, user approved): the undelivered-messages
+// banner and its attention count/Retry handoff are removed; stuck inbox rows
+// now retry in the background. No other handoff changes.
+const _expectedDirectHandoffFingerprint = '675a7b3f';
 // R2-3: the group handoff adds review send/discard callbacks for a voice note
 // stopped by call Answer. The callbacks delegate to the wired capture owner.
 const _expectedGroupHandoffFingerprint = '060099cf';

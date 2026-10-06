@@ -184,7 +184,8 @@ void main() {
     // Save/Share/Info remain local-only Plan 231 actions. These exact counts
     // keep the exceptions bounded and prevent an unreviewed delivery seam.
     const wiredTransportBaseline = <String, int>{
-      'widget.p2pService': 24,
+      // caff0f087 removed the banner's inbox-attention read (24 to 23).
+      'widget.p2pService': 23,
       'widget.bridge': 36,
       'widget.sendChatMessageFn(': 1,
       'widget.sendPrivateMediaFanoutChatMessageFn(': 1,

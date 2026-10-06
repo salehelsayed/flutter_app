@@ -342,13 +342,19 @@ const _productionBootstrapNormalizedSha256 =
     // FCM token reader (chat and call registration read one generation), the
     // inbox-staging recovery query and the debug-only production-journey
     // hooks; that commit's pin never matched its own bootstrap.
-    '4196305a7f1b26f992db88e285a6f585a071a32b907400e0307c66e53faec455';
+    // Re-pinned 2026-10-06 (user approved): caff0f087 passes the existing
+    // inbox-staging maintenance query (retry, give up, delete stuck rows) to
+    // the existing inbox coordinator at this composition. No owner, lifecycle
+    // or relocation URI changes.
+    '0c6830109c1b3999d2cb84ee5238056548d040d73d511bcf6aaad41550d83678';
 
 // The P269 strict-custody proof forwards two optional debug download hooks
 // at the existing media owner; no application or notification owner moves.
 // Re-pinned 2026-10-01 for the same c4b38285f bootstrap additions.
+// Re-pinned 2026-10-06 (user approved) for the same caff0f087 inbox-staging
+// maintenance callback.
 const _productionBootstrapWithoutHistoricalNotificationSha256 =
-    '3407d8ecfadf1ad3210cb5d287790dd9555a18fd05fc60d3cc69756b2c480c1a';
+    '24bef7cf65d1c3fc637afbc0981231a6594e7b022e35d720b63571158bb26fc9';
 
 const _reviewedResumeExceptionTargets = <String>{
   'lib/features/account_migration/application/'
