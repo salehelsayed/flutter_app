@@ -6348,6 +6348,93 @@ void main() {
     );
   });
 
+  group('relay outage closed by a relay state push', () {
+    test('a self-healed outage emits one recovered timing and the next outage '
+        'is timed from its own detection', () async {
+      bridge.whenCommand(
+        'node:start',
+        (_) => jsonEncode({
+          'ok': true,
+          'peerId': 'test-peer',
+          'isStarted': true,
+          'listenAddresses': [],
+          'circuitAddresses': [],
+          'connections': [],
+          'relayState': 'starting',
+        }),
+      );
+      bridge.whenCommand(
+        'inbox:retrieve',
+        (_) => jsonEncode({'ok': true, 'messages': [], 'hasMore': false}),
+      );
+      // The node heals itself: polls see the relay state the node last
+      // pushed, so no app-driven reconnect runs.
+      var relayOnline = true;
+      bridge.whenCommand(
+        'node:status',
+        (_) => jsonEncode({
+          'ok': true,
+          'peerId': 'test-peer',
+          'isStarted': true,
+          'listenAddresses': [],
+          'circuitAddresses': relayOnline ? ['/p2p-circuit/relay1'] : [],
+          'connections': [],
+          'relayState': relayOnline ? 'online' : 'degraded',
+          'healthyRelayCount': relayOnline ? 1 : 0,
+          'watchdogRestartCount': 0,
+        }),
+      );
+      bridge.whenCommand(
+        'relay:reconnect',
+        (_) => jsonEncode({'ok': false, 'error': 'not expected'}),
+      );
+      await service.startNodeCore('cHJpdmF0ZWtleXRlc3Q=', 'test-peer');
+      bridge.onRelayStateChanged?.call({
+        'relayState': 'online',
+        'healthyRelayCount': 1,
+      });
+
+      Future<void> outage(Duration length) async {
+        relayOnline = false;
+        bridge.onRelayStateChanged?.call({
+          'relayState': 'degraded',
+          'healthyRelayCount': 0,
+        });
+        await Future<void>.delayed(length);
+        relayOnline = true;
+        bridge.onRelayStateChanged?.call({
+          'relayState': 'online',
+          'healthyRelayCount': 1,
+        });
+        await Future<void>.delayed(const Duration(milliseconds: 20));
+      }
+
+      final events = await _captureFlowEvents(() async {
+        await outage(const Duration(milliseconds: 120));
+        await Future<void>.delayed(const Duration(milliseconds: 300));
+        await outage(const Duration(milliseconds: 40));
+      });
+
+      final recovered = events
+          .where(
+            (e) =>
+                e['event'] == 'RELAY_OUTAGE_TIMING' &&
+                (e['details'] as Map)['phase'] == 'recovered',
+          )
+          .map((e) => e['details'] as Map<String, dynamic>)
+          .toList();
+      expect(recovered, hasLength(2));
+      expect(recovered.first['recoveryMode'], 'node_self_healed');
+      expect(recovered.first['totalOutageMs'], greaterThanOrEqualTo(120));
+      expect(recovered.last['totalOutageMs'], greaterThanOrEqualTo(40));
+      expect(
+        recovered.last['totalOutageMs'],
+        lessThan(300),
+        reason: 'the second outage must not inherit the first start',
+      );
+    });
+  });
+
   group('Phase 6 readiness proof windows', () {
     test(
       'retrieve_pending ok:false does not record inbox proof success',

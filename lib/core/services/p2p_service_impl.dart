@@ -2268,6 +2268,31 @@ class P2PServiceImpl
 
     final nowOnline = _stateHasHealthyRelay(_currentState);
     final nowSendable = _currentState.usabilityReady;
+
+    // The node can heal a relay outage itself (seen by a relay:state push or
+    // a health-check poll) without an app-driven reconnect. Close the outage
+    // here so its timing is reported and the next outage does not inherit
+    // this start; an in-flight reconnect reports its own recovery.
+    final outageStartedAt = _outageDetectedAt;
+    if (nowOnline &&
+        !wasOnline &&
+        outageStartedAt != null &&
+        _activeRecoverySource == null) {
+      _outageDetectedAt = null;
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'RELAY_OUTAGE_TIMING',
+        details: {
+          'phase': 'recovered',
+          'totalOutageMs': DateTime.now()
+              .difference(outageStartedAt)
+              .inMilliseconds,
+          'recoveryMode': 'node_self_healed',
+          'recoverySource': source ?? 'unknown',
+          'recoveryTriggerSource': source ?? 'unknown',
+        },
+      );
+    }
     final nowRelayReadyBadge =
         _currentState.badgeReadinessState == BadgeReadinessState.onlineDotted;
 
