@@ -1,142 +1,104 @@
-start 14:59:42 d2019885b
-+18504 ~2 -1: /Volumes/CrucialX9/flutter_app/.claude/worktrees/wave3-next/test/shared/widgets/media/full_screen_typed_media_viewer_test.dart: compact overflow lists localized image actions in order and targets the current item
-[FLOW] {"ts":"2026-10-05T15:12:45.101368Z","milestone":"M1_IDENTITY_INIT","layer":"UI","event":"MEDIA_VIEWER_ACTION","details":{"attachmentId":"compact-","action":"info","outcome":"success","owner":"direct"}}
-+18505 ~2 -1: /Volumes/CrucialX9/flutter_app/.claude/worktrees/wave3-next/test/shared/widgets/media/media_grid_cell_test.dart: missing-file done video is unavailable, not fallback
-[FLOW] {"ts":"2026-10-05T15:12:45.122960Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"MEDIA_RENDER_GATE_UNAVAILABLE","details":{"attachmentId":"missing-","rawLocalPathKind":"other","resolvedPathKind":"other","existsAtResolved":false,"cacheSeeded":true,"downloadStatus":"done"}}
-+18509 ~2 -1: /Volumes/CrucialX9/flutter_app/.claude/worktrees/wave3-next/test/shared/widgets/media/full_screen_typed_media_viewer_test.dart: compact overflow lists localized image actions in order and targets the current item
-[FLOW] {"ts":"2026-10-05T15:12:45.194399Z","milestone":"M1_IDENTITY_INIT","layer":"UI","event":"MEDIA_VIEWER_ACTION","details":{"attachmentId":"compact-","action":"info","outcome":"success","owner":"direct"}}
-+18512 ~2 -1: /Volumes/CrucialX9/flutter_app/.claude/worktrees/wave3-next/test/shared/widgets/media/full_screen_typed_media_viewer_test.dart: compact actions remain capability gated and single dispatch while pending
-[FLOW] {"ts":"2026-10-05T15:12:45.245558Z","milestone":"M1_IDENTITY_INIT","layer":"UI","event":"MEDIA_VIEWER_ACTION","details":{"attachmentId":"compact-","action":"save","outcome":"success","owner":"direct"}}
-[FLOW] {"ts":"2026-10-05T15:12:45.296105Z","milestone":"M1_IDENTITY_INIT","layer":"UI","event":"MEDIA_VIEWER_ACTION","details":{"attachmentId":"compact-","action":"forward","outcome":"success","owner":"direct"}}
-+18514 ~2 -1: /Volumes/CrucialX9/flutter_app/.claude/worktrees/wave3-next/test/shared/widgets/media/full_screen_typed_media_viewer_test.dart: compact video overflow lists and dispatches every authorized media action
-[FLOW] {"ts":"2026-10-05T15:12:45.482199Z","milestone":"M1_IDENTITY_INIT","layer":"UI","event":"MEDIA_VIEWER_ACTION","details":{"attachmentId":"compact-","action":"save","outcome":"success","owner":"direct"}}
-[FLOW] {"ts":"2026-10-05T15:12:45.527497Z","milestone":"M1_IDENTITY_INIT","layer":"UI","event":"MEDIA_VIEWER_ACTION","details":{"attachmentId":"compact-","action":"share","outcome":"success","owner":"direct"}}
-[FLOW] {"ts":"2026-10-05T15:12:45.572978Z","milestone":"M1_IDENTITY_INIT","layer":"UI","event":"MEDIA_VIEWER_ACTION","details":{"attachmentId":"compact-","action":"info","outcome":"success","owner":"direct"}}
-[FLOW] {"ts":"2026-10-05T15:12:45.616068Z","milestone":"M1_IDENTITY_INIT","layer":"UI","event":"MEDIA_VIEWER_ACTION","details":{"attachmentId":"compact-","action":"reply","outcome":"success","owner":"direct"}}
-[FLOW] {"ts":"2026-10-05T15:12:45.659230Z","milestone":"M1_IDENTITY_INIT","layer":"UI","event":"MEDIA_VIEWER_ACTION","details":{"attachmentId":"compact-","action":"forward","outcome":"success","owner":"direct"}}
-[FLOW] {"ts":"2026-10-05T15:12:45.707343Z","milestone":"M1_IDENTITY_INIT","layer":"UI","event":"MEDIA_VIEWER_ACTION","details":{"attachmentId":"compact-","action":"delete","outcome":"success","owner":"direct"}}
-[FLOW] {"ts":"2026-10-05T15:12:45.817575Z","milestone":"M1_IDENTITY_INIT","layer":"UI","event":"MEDIA_VIEWER_ACTION","details":{"attachmentId":"compact-","action":"save","outcome":"success","owner":"direct"}}
-[FLOW] {"ts":"2026-10-05T15:12:45.876580Z","milestone":"M1_IDENTITY_INIT","layer":"UI","event":"MEDIA_VIEWER_ACTION","details":{"attachmentId":"compact-","action":"share","outcome":"success","owner":"direct"}}
-[FLOW] {"ts":"2026-10-05T15:12:45.918920Z","milestone":"M1_IDENTITY_INIT","layer":"UI","event":"MEDIA_VIEWER_ACTION","details":{"attachmentId":"compact-","action":"info","outcome":"success","owner":"direct"}}
-[FLOW] {"ts":"2026-10-05T15:12:45.958713Z","milestone":"M1_IDENTITY_INIT","layer":"UI","event":"MEDIA_VIEWER_ACTION","details":{"attachmentId":"compact-","action":"reply","outcome":"success","owner":"direct"}}
-[FLOW] {"ts":"2026-10-05T15:12:46.006762Z","milestone":"M1_IDENTITY_INIT","layer":"UI","event":"MEDIA_VIEWER_ACTION","details":{"attachmentId":"compact-","action":"forward","outcome":"success","owner":"direct"}}
-[FLOW] {"ts":"2026-10-05T15:12:46.064464Z","milestone":"M1_IDENTITY_INIT","layer":"UI","event":"MEDIA_VIEWER_ACTION","details":{"attachmentId":"compact-","action":"delete","outcome":"success","owner":"direct"}}
-[FLOW] {"ts":"2026-10-05T15:12:46.172274Z","milestone":"M1_IDENTITY_INIT","layer":"UI","event":"MEDIA_VIEWER_ACTION","details":{"attachmentId":"compact-","action":"save","outcome":"success","owner":"direct"}}
-[FLOW] {"ts":"2026-10-05T15:12:46.212257Z","milestone":"M1_IDENTITY_INIT","layer":"UI","event":"MEDIA_VIEWER_ACTION","details":{"attachmentId":"compact-","action":"share","outcome":"success","owner":"direct"}}
-[FLOW] {"ts":"2026-10-05T15:12:46.252070Z","milestone":"M1_IDENTITY_INIT","layer":"UI","event":"MEDIA_VIEWER_ACTION","details":{"attachmentId":"compact-","action":"info","outcome":"success","owner":"direct"}}
-[FLOW] {"ts":"2026-10-05T15:12:46.293787Z","milestone":"M1_IDENTITY_INIT","layer":"UI","event":"MEDIA_VIEWER_ACTION","details":{"attachmentId":"compact-","action":"reply","outcome":"success","owner":"direct"}}
-+18515 ~2 -1: /Volumes/CrucialX9/flutter_app/.claude/worktrees/wave3-next/test/shared/widgets/media/full_screen_typed_media_viewer_test.dart: compact video overflow lists and dispatches every authorized media action
-[FLOW] {"ts":"2026-10-05T15:12:46.334087Z","milestone":"M1_IDENTITY_INIT","layer":"UI","event":"MEDIA_VIEWER_ACTION","details":{"attachmentId":"compact-","action":"forward","outcome":"success","owner":"direct"}}
-+18516 ~2 -1: /Volumes/CrucialX9/flutter_app/.claude/worktrees/wave3-next/test/shared/widgets/media/full_screen_typed_media_viewer_test.dart: compact video overflow lists and dispatches every authorized media action
-[FLOW] {"ts":"2026-10-05T15:12:46.372663Z","milestone":"M1_IDENTITY_INIT","layer":"UI","event":"MEDIA_VIEWER_ACTION","details":{"attachmentId":"compact-","action":"delete","outcome":"success","owner":"direct"}}
-+18518 ~2 -1: /Volumes/CrucialX9/flutter_app/.claude/worktrees/wave3-next/test/shared/widgets/media/full_screen_typed_media_viewer_test.dart: compact video overflow lists and dispatches every authorized media action
-[FLOW] {"ts":"2026-10-05T15:12:46.422654Z","milestone":"M1_IDENTITY_INIT","layer":"UI","event":"MEDIA_VIEWER_ACTION","details":{"attachmentId":"compact-","action":"save","outcome":"success","owner":"direct"}}
-+18529 ~2 -1: /Volumes/CrucialX9/flutter_app/.claude/worktrees/wave3-next/test/shared/widgets/media/full_screen_typed_media_viewer_test.dart: metadata detail visibility follows current item while captions and actions remain
-[FLOW] {"ts":"2026-10-05T15:12:46.665049Z","milestone":"M1_IDENTITY_INIT","layer":"UI","event":"MEDIA_VIEWER_ACTION","details":{"attachmentId":"hidden-c","action":"share","outcome":"success","owner":"direct"}}
-+18533 ~2 -1: /Volumes/CrucialX9/flutter_app/.claude/worktrees/wave3-next/test/shared/widgets/media/media_grid_test.dart: MediaGrid renders generated thumbnail for downloaded video attachments
-[FLOW] {"ts":"2026-10-05T15:12:46.720854Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"MEDIA_RESOLVE_SYNC_NO_CACHE","details":{}}
-+18586 ~2 -1: /Volumes/CrucialX9/flutter_app/.claude/worktrees/wave3-next/test/shared/widgets/media/media_thumbnail_image_test.dart: ignores cacheWidth/cacheHeight for GIF paths
-[FLOW] {"ts":"2026-10-05T15:12:48.886282Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"MEDIA_RESOLVE_SYNC_NO_CACHE","details":{}}
-+18598 ~2 -1: /Volumes/CrucialX9/flutter_app/.claude/worktrees/wave3-next/test/integration/rapid_lock_unlock_integration_test.dart: Rapid lock-unlock integration 3. a delivered row survives pause/resume and is not re-delivered
-[FLOW] {"ts":"2026-10-05T15:12:49.485713Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"GROUP_RECOVERY_GATE_ACQUIRED","details":{"caller":"pending_message_retrier.dart:783","waitedMs":0,"depth":1}}
-[FLOW] {"ts":"2026-10-05T15:12:49.486152Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"GROUP_RECOVERY_GATE_RELEASED","details":{"caller":"pending_message_retrier.dart:783","heldMs":0,"queued":0}}
-[FLOW] {"ts":"2026-10-05T15:12:49.486347Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"RETRY_FAILED_MESSAGES_START","details":{}}
-[FLOW] {"ts":"2026-10-05T15:12:49.486605Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"RETRY_FAILED_MESSAGES_NONE","details":{}}
-[FLOW] {"ts":"2026-10-05T15:12:49.486914Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"RETRY_FAILED_MESSAGES_TIMING","details":{"elapsedMs":0,"outcome":"none","total":0,"succeeded":0}}
-[FLOW] {"ts":"2026-10-05T15:12:49.487066Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"RETRY_UNACKED_MESSAGES_START","details":{}}
-[FLOW] {"ts":"2026-10-05T15:12:49.487195Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"RETRY_UNACKED_MESSAGES_NONE","details":{}}
-[FLOW] {"ts":"2026-10-05T15:12:49.487399Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"RETRY_UNACKED_MESSAGES_TIMING","details":{"elapsedMs":0,"outcome":"none","total":0,"delivered":0}}
-+18599 ~2 -1: /Volumes/CrucialX9/flutter_app/.claude/worktrees/wave3-next/test/integration/relay_down_degradation_integration_test.dart: Relay-down degradation 2. pause -> reconnect -> retrier delivers the original row exactly once
-[FLOW] {"ts":"2026-10-05T15:12:49.865084Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"GROUP_RECOVERY_GATE_ACQUIRED","details":{"caller":"pending_message_retrier.dart:783","waitedMs":0,"depth":1}}
-[FLOW] {"ts":"2026-10-05T15:12:49.865500Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"GROUP_RECOVERY_GATE_RELEASED","details":{"caller":"pending_message_retrier.dart:783","heldMs":0,"queued":0}}
-[FLOW] {"ts":"2026-10-05T15:12:49.865647Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"RETRY_FAILED_MESSAGES_START","details":{}}
-[FLOW] {"ts":"2026-10-05T15:12:49.865827Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"RETRY_FAILED_MESSAGES_FOUND","details":{"count":1}}
-[FLOW] {"ts":"2026-10-05T15:12:49.867934Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"RETRY_FAILED_MESSAGE_SKIP_LEGACY_WIRE_ENVELOPE","details":{"id":"relay-do"}}
-[FLOW] {"ts":"2026-10-05T15:12:49.868326Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CHAT_MSG_SEND_START","details":{"targetPeerId":"peer-bob"}}
+start 22:22:54 6e2d74816
+[FLOW] {"ts":"2026-10-05T22:36:02.762289Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"GROUP_RECOVERY_GATE_RELEASED","details":{"caller":"pending_message_retrier.dart:783","heldMs":0,"queued":0}}
+[FLOW] {"ts":"2026-10-05T22:36:02.762472Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"RETRY_FAILED_MESSAGES_START","details":{}}
+[FLOW] {"ts":"2026-10-05T22:36:02.762609Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"RETRY_FAILED_MESSAGES_NONE","details":{}}
+[FLOW] {"ts":"2026-10-05T22:36:02.762942Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"RETRY_FAILED_MESSAGES_TIMING","details":{"elapsedMs":0,"outcome":"none","total":0,"succeeded":0}}
+[FLOW] {"ts":"2026-10-05T22:36:02.763077Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"RETRY_UNACKED_MESSAGES_START","details":{}}
+[FLOW] {"ts":"2026-10-05T22:36:02.763195Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"RETRY_UNACKED_MESSAGES_NONE","details":{}}
+[FLOW] {"ts":"2026-10-05T22:36:02.763316Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"RETRY_UNACKED_MESSAGES_TIMING","details":{"elapsedMs":0,"outcome":"none","total":0,"delivered":0}}
++18684 ~2 -4: /Volumes/CrucialX9/flutter_app/.claude/worktrees/wave3-next/test/integration/relay_down_degradation_integration_test.dart: Relay-down degradation 2. pause -> reconnect -> retrier delivers the original row exactly once
+[FLOW] {"ts":"2026-10-05T22:36:03.099012Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"GROUP_RECOVERY_GATE_ACQUIRED","details":{"caller":"pending_message_retrier.dart:783","waitedMs":0,"depth":1}}
+[FLOW] {"ts":"2026-10-05T22:36:03.100225Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"GROUP_RECOVERY_GATE_RELEASED","details":{"caller":"pending_message_retrier.dart:783","heldMs":1,"queued":0}}
+[FLOW] {"ts":"2026-10-05T22:36:03.100549Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"RETRY_FAILED_MESSAGES_START","details":{}}
+[FLOW] {"ts":"2026-10-05T22:36:03.100914Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"RETRY_FAILED_MESSAGES_FOUND","details":{"count":1}}
+[FLOW] {"ts":"2026-10-05T22:36:03.103788Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"RETRY_FAILED_MESSAGE_SKIP_LEGACY_WIRE_ENVELOPE","details":{"id":"relay-do"}}
+[FLOW] {"ts":"2026-10-05T22:36:03.104327Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CHAT_MSG_SEND_START","details":{"targetPeerId":"peer-bob"}}
 [CHAT_OUT] id=relay-do to=peer-bob status=queued text="Recover me"
-[FLOW] {"ts":"2026-10-05T15:12:49.868744Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"MLKEM_FL_BRIDGE_ENCRYPT_REQUEST","details":{"plaintextLength":"[redacted]","correlationId":"1791213169868705"}}
-[FLOW] {"ts":"2026-10-05T15:12:49.868980Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"MLKEM_FL_BRIDGE_ENCRYPT_RESPONSE","details":{"ok":true,"correlationId":"1791213169868705"}}
+[FLOW] {"ts":"2026-10-05T22:36:03.104885Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"MLKEM_FL_BRIDGE_ENCRYPT_REQUEST","details":{"plaintextLength":"[redacted]","correlationId":"1791239763104841"}}
+[FLOW] {"ts":"2026-10-05T22:36:03.105148Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"MLKEM_FL_BRIDGE_ENCRYPT_RESPONSE","details":{"ok":true,"correlationId":"1791239763104841"}}
 [CHAT_WIRE_OUT] id=relay-do wireChars=162
-[FLOW] {"ts":"2026-10-05T15:12:49.870761Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CHAT_MSG_SEND_CONCURRENT_INBOX_BEGIN","details":{"id":"relay-do","targetPeerId":"peer-bob"}}
-[FLOW] {"ts":"2026-10-05T15:12:49.871969Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CHAT_MSG_SEND_CUSTODY_CONFIRMED","details":{"id":"relay-do","targetPeerId":"peer-bob"}}
-[FLOW] {"ts":"2026-10-05T15:12:49.872142Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CHAT_MSG_SEND_RACE_ALL_FAILED","details":{"reason":"peer_not_found"}}
-[FLOW] {"ts":"2026-10-05T15:12:49.872283Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CHAT_MSG_SEND_CONCURRENT_INBOX_CUSTODY","details":{"id":"relay-do","reason":"peer_not_found"}}
-[FLOW] {"ts":"2026-10-05T15:12:49.872760Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CHAT_MSG_SEND_SUCCESS","details":{"id":"relay-do","status":"inboxed","via":"inbox"}}
+[FLOW] {"ts":"2026-10-05T22:36:03.106879Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CHAT_MSG_SEND_CONCURRENT_INBOX_BEGIN","details":{"id":"relay-do","targetPeerId":"peer-bob"}}
+[FLOW] {"ts":"2026-10-05T22:36:03.108129Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CHAT_MSG_SEND_CUSTODY_CONFIRMED","details":{"id":"relay-do","targetPeerId":"peer-bob"}}
+[FLOW] {"ts":"2026-10-05T22:36:03.108295Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CHAT_MSG_SEND_RACE_ALL_FAILED","details":{"reason":"peer_not_found"}}
+[FLOW] {"ts":"2026-10-05T22:36:03.108437Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CHAT_MSG_SEND_CONCURRENT_INBOX_CUSTODY","details":{"id":"relay-do","reason":"peer_not_found"}}
+[FLOW] {"ts":"2026-10-05T22:36:03.108744Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CHAT_MSG_SEND_SUCCESS","details":{"id":"relay-do","status":"inboxed","via":"inbox"}}
 [CHAT_OUT] id=relay-do to=peer-bob status=inboxed text="Recover me"
-[FLOW] {"ts":"2026-10-05T15:12:49.873753Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"RETRY_FAILED_MESSAGE_SUCCESS","details":{"id":"relay-do","action":"send"}}
-[FLOW] {"ts":"2026-10-05T15:12:49.873958Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"RETRY_FAILED_MESSAGES_COMPLETE","details":{"total":1,"succeeded":1}}
-[FLOW] {"ts":"2026-10-05T15:12:49.874099Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"RETRY_FAILED_MESSAGES_TIMING","details":{"elapsedMs":8,"outcome":"complete","total":1,"succeeded":1}}
-[FLOW] {"ts":"2026-10-05T15:12:49.874354Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"PENDING_RETRIER_RETRIED","details":{"count":1}}
-[FLOW] {"ts":"2026-10-05T15:12:49.874456Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"RETRY_UNACKED_MESSAGES_START","details":{}}
-[FLOW] {"ts":"2026-10-05T15:12:49.874576Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"RETRY_UNACKED_MESSAGES_NONE","details":{}}
-[FLOW] {"ts":"2026-10-05T15:12:49.874705Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"RETRY_UNACKED_MESSAGES_TIMING","details":{"elapsedMs":0,"outcome":"none","total":0,"delivered":0}}
-[FLOW] {"ts":"2026-10-05T15:12:49.875060Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CHAT_MSG_PRESENCE_EMPHASIS","details":{"id":"relay-do","targetPeerId":"peer-bob","presence":"unknown"}}
-+18607 ~2 -1: /Volumes/CrucialX9/flutter_app/.claude/worktrees/wave3-next/test/integration/rapid_lock_unlock_integration_test.dart: Rapid lock-unlock integration 3. a delivered row survives pause/resume and is not re-delivered
-[FLOW] {"ts":"2026-10-05T15:12:50.485085Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"PENDING_RETRIER_DISPOSE","details":{}}
-+18608 ~2 -1: /Volumes/CrucialX9/flutter_app/.claude/worktrees/wave3-next/test/integration/relay_down_degradation_integration_test.dart: Relay-down degradation 2. pause -> reconnect -> retrier delivers the original row exactly once
-[FLOW] {"ts":"2026-10-05T15:12:50.864501Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"PENDING_RETRIER_DISPOSE","details":{}}
-+18609 ~2 -1: /Volumes/CrucialX9/flutter_app/.claude/worktrees/wave3-next/test/integration/relay_down_degradation_integration_test.dart: Relay-down degradation 3. pause -> reconnect while both paths stay down leaves the original row failed
+[FLOW] {"ts":"2026-10-05T22:36:03.110089Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"RETRY_FAILED_MESSAGE_SUCCESS","details":{"id":"relay-do","action":"send"}}
+[FLOW] {"ts":"2026-10-05T22:36:03.110572Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"RETRY_FAILED_MESSAGES_COMPLETE","details":{"total":1,"succeeded":1}}
+[FLOW] {"ts":"2026-10-05T22:36:03.110777Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"RETRY_FAILED_MESSAGES_TIMING","details":{"elapsedMs":10,"outcome":"complete","total":1,"succeeded":1}}
+[FLOW] {"ts":"2026-10-05T22:36:03.110927Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"PENDING_RETRIER_RETRIED","details":{"count":1}}
+[FLOW] {"ts":"2026-10-05T22:36:03.111026Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"RETRY_UNACKED_MESSAGES_START","details":{}}
+[FLOW] {"ts":"2026-10-05T22:36:03.111153Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"RETRY_UNACKED_MESSAGES_NONE","details":{}}
+[FLOW] {"ts":"2026-10-05T22:36:03.111511Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"RETRY_UNACKED_MESSAGES_TIMING","details":{"elapsedMs":0,"outcome":"none","total":0,"delivered":0}}
+[FLOW] {"ts":"2026-10-05T22:36:03.112183Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CHAT_MSG_PRESENCE_EMPHASIS","details":{"id":"relay-do","targetPeerId":"peer-bob","presence":"unknown"}}
++18685 ~2 -4: /Volumes/CrucialX9/flutter_app/.claude/worktrees/wave3-next/test/integration/rapid_lock_unlock_integration_test.dart: Rapid lock-unlock integration 3. a delivered row survives pause/resume and is not re-delivered
+[FLOW] {"ts":"2026-10-05T22:36:03.762161Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"PENDING_RETRIER_DISPOSE","details":{}}
++18686 ~2 -4: /Volumes/CrucialX9/flutter_app/.claude/worktrees/wave3-next/test/integration/relay_down_degradation_integration_test.dart: Relay-down degradation 2. pause -> reconnect -> retrier delivers the original row exactly once
+[FLOW] {"ts":"2026-10-05T22:36:04.097718Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"PENDING_RETRIER_DISPOSE","details":{}}
++18687 ~2 -4: /Volumes/CrucialX9/flutter_app/.claude/worktrees/wave3-next/test/integration/relay_down_degradation_integration_test.dart: Relay-down degradation 3. pause -> reconnect while both paths stay down leaves the original row failed
 [PAUSE] ====== APP PAUSE BEGIN ======
-[FLOW] {"ts":"2026-10-05T15:12:50.866653Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"APP_LIFECYCLE_PAUSE_BEGIN","details":{}}
+[FLOW] {"ts":"2026-10-05T22:36:04.099877Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"APP_LIFECYCLE_PAUSE_BEGIN","details":{}}
 [PAUSE] Found 1 sending messages
-[FLOW] {"ts":"2026-10-05T15:12:50.867060Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"APP_LIFECYCLE_PAUSE_TRANSITION","details":{"id":"relay-do","hasWireEnvelope":true}}
+[FLOW] {"ts":"2026-10-05T22:36:04.100191Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"APP_LIFECYCLE_PAUSE_TRANSITION","details":{"id":"relay-do","hasWireEnvelope":true}}
 [PAUSE] ====== APP PAUSE COMPLETE ====== transitioned=1 groupTransitioned=0
-[FLOW] {"ts":"2026-10-05T15:12:50.867326Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"APP_LIFECYCLE_PAUSE_COMPLETE","details":{"transitionedCount":1,"groupTransitionedCount":0}}
-[FLOW] {"ts":"2026-10-05T15:12:50.867441Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"PENDING_RETRIER_START","details":{}}
-+18609 ~2 -1: /Volumes/CrucialX9/flutter_app/.claude/worktrees/wave3-next/test/shared/widgets/media/media_viewer_boundary_test.dart: viewer remains callback-only transport-free and diagnostics are redacted
-[FLOW] {"ts":"2026-10-05T15:12:50.919798Z","milestone":"M1_IDENTITY_INIT","layer":"UI","event":"MEDIA_VIEWER_ACTION","details":{"attachmentId":"ATTACHME","action":"save","outcome":"success","owner":"direct"}}
-[FLOW] {"ts":"2026-10-05T15:12:51.044613Z","milestone":"M1_IDENTITY_INIT","layer":"UI","event":"MEDIA_VIEWER_ACTION","details":{"attachmentId":"ATTACHME","action":"save","outcome":"success","owner":"direct"}}
-+18805 ~2 -1: /Volumes/CrucialX9/flutter_app/.claude/worktrees/wave3-next/test/integration/relay_down_degradation_integration_test.dart: Relay-down degradation 3. pause -> reconnect while both paths stay down leaves the original row failed
-[FLOW] {"ts":"2026-10-05T15:12:55.870103Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"GROUP_RECOVERY_GATE_ACQUIRED","details":{"caller":"pending_message_retrier.dart:783","waitedMs":0,"depth":1}}
-[FLOW] {"ts":"2026-10-05T15:12:55.870524Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"GROUP_RECOVERY_GATE_RELEASED","details":{"caller":"pending_message_retrier.dart:783","heldMs":0,"queued":0}}
-[FLOW] {"ts":"2026-10-05T15:12:55.870667Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"RETRY_FAILED_MESSAGES_START","details":{}}
-[FLOW] {"ts":"2026-10-05T15:12:55.870788Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"RETRY_FAILED_MESSAGES_FOUND","details":{"count":1}}
-[FLOW] {"ts":"2026-10-05T15:12:55.871053Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"RETRY_FAILED_MESSAGE_SKIP_LEGACY_WIRE_ENVELOPE","details":{"id":"relay-do"}}
-[FLOW] {"ts":"2026-10-05T15:12:55.871222Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CHAT_MSG_SEND_START","details":{"targetPeerId":"peer-bob"}}
+[FLOW] {"ts":"2026-10-05T22:36:04.100495Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"APP_LIFECYCLE_PAUSE_COMPLETE","details":{"transitionedCount":1,"groupTransitionedCount":0}}
+[FLOW] {"ts":"2026-10-05T22:36:04.100608Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"PENDING_RETRIER_START","details":{}}
++18695 ~2 -4: /Volumes/CrucialX9/flutter_app/.claude/worktrees/wave3-next/test/shared/widgets/media/media_viewer_boundary_test.dart: viewer remains callback-only transport-free and diagnostics are redacted
+[FLOW] {"ts":"2026-10-05T22:36:04.775010Z","milestone":"M1_IDENTITY_INIT","layer":"UI","event":"MEDIA_VIEWER_ACTION","details":{"attachmentId":"ATTACHME","action":"save","outcome":"success","owner":"direct"}}
+[FLOW] {"ts":"2026-10-05T22:36:04.895787Z","milestone":"M1_IDENTITY_INIT","layer":"UI","event":"MEDIA_VIEWER_ACTION","details":{"attachmentId":"ATTACHME","action":"save","outcome":"success","owner":"direct"}}
++18830 ~2 -4: /Volumes/CrucialX9/flutter_app/.claude/worktrees/wave3-next/test/integration/relay_down_degradation_integration_test.dart: Relay-down degradation 3. pause -> reconnect while both paths stay down leaves the original row failed
+[FLOW] {"ts":"2026-10-05T22:36:09.104271Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"GROUP_RECOVERY_GATE_ACQUIRED","details":{"caller":"pending_message_retrier.dart:783","waitedMs":0,"depth":1}}
+[FLOW] {"ts":"2026-10-05T22:36:09.104787Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"GROUP_RECOVERY_GATE_RELEASED","details":{"caller":"pending_message_retrier.dart:783","heldMs":0,"queued":0}}
+[FLOW] {"ts":"2026-10-05T22:36:09.104996Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"RETRY_FAILED_MESSAGES_START","details":{}}
+[FLOW] {"ts":"2026-10-05T22:36:09.105140Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"RETRY_FAILED_MESSAGES_FOUND","details":{"count":1}}
+[FLOW] {"ts":"2026-10-05T22:36:09.105421Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"RETRY_FAILED_MESSAGE_SKIP_LEGACY_WIRE_ENVELOPE","details":{"id":"relay-do"}}
+[FLOW] {"ts":"2026-10-05T22:36:09.105634Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CHAT_MSG_SEND_START","details":{"targetPeerId":"peer-bob"}}
 [CHAT_OUT] id=relay-do to=peer-bob status=queued text="Still failing"
-[FLOW] {"ts":"2026-10-05T15:12:55.871693Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"MLKEM_FL_BRIDGE_ENCRYPT_REQUEST","details":{"plaintextLength":"[redacted]","correlationId":"1791213175871635"}}
-[FLOW] {"ts":"2026-10-05T15:12:55.872060Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"MLKEM_FL_BRIDGE_ENCRYPT_RESPONSE","details":{"ok":true,"correlationId":"1791213175871635"}}
+[FLOW] {"ts":"2026-10-05T22:36:09.106049Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"MLKEM_FL_BRIDGE_ENCRYPT_REQUEST","details":{"plaintextLength":"[redacted]","correlationId":"1791239769106012"}}
+[FLOW] {"ts":"2026-10-05T22:36:09.106278Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"MLKEM_FL_BRIDGE_ENCRYPT_RESPONSE","details":{"ok":true,"correlationId":"1791239769106012"}}
 [CHAT_WIRE_OUT] id=relay-do wireChars=162
-[FLOW] {"ts":"2026-10-05T15:12:55.872551Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CHAT_MSG_SEND_CONCURRENT_INBOX_BEGIN","details":{"id":"relay-do","targetPeerId":"peer-bob"}}
-[FLOW] {"ts":"2026-10-05T15:12:55.872912Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CHAT_MSG_SEND_RACE_ALL_FAILED","details":{"reason":"peer_not_found"}}
-[FLOW] {"ts":"2026-10-05T15:12:55.873174Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CHAT_MSG_SEND_CONCURRENT_INBOX_BEGIN","details":{"id":"relay-do","targetPeerId":"peer-bob"}}
-[FLOW] {"ts":"2026-10-05T15:12:55.873404Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CHAT_MSG_SEND_FAILED","details":{"id":"relay-do","reason":"peer_not_found"}}
+[FLOW] {"ts":"2026-10-05T22:36:09.106701Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CHAT_MSG_SEND_CONCURRENT_INBOX_BEGIN","details":{"id":"relay-do","targetPeerId":"peer-bob"}}
+[FLOW] {"ts":"2026-10-05T22:36:09.107011Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CHAT_MSG_SEND_RACE_ALL_FAILED","details":{"reason":"peer_not_found"}}
+[FLOW] {"ts":"2026-10-05T22:36:09.107169Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CHAT_MSG_SEND_CONCURRENT_INBOX_BEGIN","details":{"id":"relay-do","targetPeerId":"peer-bob"}}
+[FLOW] {"ts":"2026-10-05T22:36:09.107426Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CHAT_MSG_SEND_FAILED","details":{"id":"relay-do","reason":"peer_not_found"}}
 [CHAT_OUT] id=relay-do to=peer-bob status=failed text="Still failing"
-[FLOW] {"ts":"2026-10-05T15:12:55.873636Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"RETRY_FAILED_MESSAGE_STILL_FAILED","details":{"id":"relay-do","reason":"peerNotFound","action":"send"}}
-[FLOW] {"ts":"2026-10-05T15:12:55.873769Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"RETRY_FAILED_MESSAGES_COMPLETE","details":{"total":1,"succeeded":0}}
-[FLOW] {"ts":"2026-10-05T15:12:55.873878Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"RETRY_FAILED_MESSAGES_TIMING","details":{"elapsedMs":3,"outcome":"complete","total":1,"succeeded":0}}
-[FLOW] {"ts":"2026-10-05T15:12:55.873954Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"RETRY_UNACKED_MESSAGES_START","details":{}}
-[FLOW] {"ts":"2026-10-05T15:12:55.874039Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"RETRY_UNACKED_MESSAGES_NONE","details":{}}
-[FLOW] {"ts":"2026-10-05T15:12:55.874181Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"RETRY_UNACKED_MESSAGES_TIMING","details":{"elapsedMs":0,"outcome":"none","total":0,"delivered":0}}
-[FLOW] {"ts":"2026-10-05T15:12:55.874442Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CHAT_MSG_PRESENCE_EMPHASIS","details":{"id":"relay-do","targetPeerId":"peer-bob","presence":"unknown"}}
-+18850 ~2 -1: /Volumes/CrucialX9/flutter_app/.claude/worktrees/wave3-next/test/integration/relay_down_degradation_integration_test.dart: Relay-down degradation 3. pause -> reconnect while both paths stay down leaves the original row failed
-[FLOW] {"ts":"2026-10-05T15:12:56.870085Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"PENDING_RETRIER_DISPOSE","details":{}}
-+18851 ~2 -1: /Volumes/CrucialX9/flutter_app/.claude/worktrees/wave3-next/test/integration/relay_down_degradation_integration_test.dart: Relay-down degradation 4. cold-start already online sweeps immediately and still preserves exact-once delivery
-[FLOW] {"ts":"2026-10-05T15:12:56.871760Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"PENDING_RETRIER_START","details":{}}
+[FLOW] {"ts":"2026-10-05T22:36:09.107669Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"RETRY_FAILED_MESSAGE_STILL_FAILED","details":{"id":"relay-do","reason":"peerNotFound","action":"send"}}
+[FLOW] {"ts":"2026-10-05T22:36:09.107794Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"RETRY_FAILED_MESSAGES_COMPLETE","details":{"total":1,"succeeded":0}}
+[FLOW] {"ts":"2026-10-05T22:36:09.107906Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"RETRY_FAILED_MESSAGES_TIMING","details":{"elapsedMs":2,"outcome":"complete","total":1,"succeeded":0}}
+[FLOW] {"ts":"2026-10-05T22:36:09.107989Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"RETRY_UNACKED_MESSAGES_START","details":{}}
+[FLOW] {"ts":"2026-10-05T22:36:09.108079Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"RETRY_UNACKED_MESSAGES_NONE","details":{}}
+[FLOW] {"ts":"2026-10-05T22:36:09.108186Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"RETRY_UNACKED_MESSAGES_TIMING","details":{"elapsedMs":0,"outcome":"none","total":0,"delivered":0}}
+[FLOW] {"ts":"2026-10-05T22:36:09.108547Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CHAT_MSG_PRESENCE_EMPHASIS","details":{"id":"relay-do","targetPeerId":"peer-bob","presence":"unknown"}}
++18887 ~2 -4: /Volumes/CrucialX9/flutter_app/.claude/worktrees/wave3-next/test/integration/relay_down_degradation_integration_test.dart: Relay-down degradation 3. pause -> reconnect while both paths stay down leaves the original row failed
+[FLOW] {"ts":"2026-10-05T22:36:10.104283Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"PENDING_RETRIER_DISPOSE","details":{}}
++18888 ~2 -4: /Volumes/CrucialX9/flutter_app/.claude/worktrees/wave3-next/test/integration/relay_down_degradation_integration_test.dart: Relay-down degradation 4. cold-start already online sweeps immediately and still preserves exact-once delivery
+[FLOW] {"ts":"2026-10-05T22:36:10.106153Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"PENDING_RETRIER_START","details":{}}
 Shell: PASS: serial and simultaneous plans select the same 2 capabilities and locks.
 Shell: Usage: dart tool/analyzer_guard/analyzer_suppression_ratchet.dart check
 Shell: Usage: dart tool/analyzer_guard/analyzer_suppression_ratchet.dart check
 Shell: Usage: dart tool/analyzer_guard/analyzer_suppression_ratchet.dart check
 Shell: Usage: dart tool/analyzer_guard/analyzer_suppression_ratchet.dart check
 Shell: Usage: dart tool/analyzer_guard/analyzer_suppression_ratchet.dart check
++18946 ~2 -4: /Volumes/CrucialX9/flutter_app/.claude/worktrees/wave3-next/test/integration/relay_down_degradation_integration_test.dart: Relay-down degradation 4. cold-start already online sweeps immediately and still preserves exact-once delivery
+[FLOW] {"ts":"2026-10-05T22:36:15.109702Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"GROUP_RECOVERY_GATE_ACQUIRED","details":{"caller":"pending_message_retrier.dart:783","waitedMs":0,"depth":1}}
+[FLOW] {"ts":"2026-10-05T22:36:15.111111Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"GROUP_RECOVERY_GATE_RELEASED","details":{"caller":"pending_message_retrier.dart:783","heldMs":0,"queued":0}}
+[FLOW] {"ts":"2026-10-05T22:36:15.111328Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"RETRY_FAILED_MESSAGES_START","details":{}}
+[FLOW] {"ts":"2026-10-05T22:36:15.111549Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"RETRY_FAILED_MESSAGES_FOUND","details":{"count":1}}
+[FLOW] {"ts":"2026-10-05T22:36:15.112296Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"RETRY_FAILED_MESSAGE_SUCCESS","details":{"id":"relay-do","via":"wire_envelope"}}
+[FLOW] {"ts":"2026-10-05T22:36:15.112493Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"RETRY_FAILED_MESSAGES_COMPLETE","details":{"total":1,"succeeded":1}}
+[FLOW] {"ts":"2026-10-05T22:36:15.112643Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"RETRY_FAILED_MESSAGES_TIMING","details":{"elapsedMs":1,"outcome":"complete","total":1,"succeeded":1}}
+[FLOW] {"ts":"2026-10-05T22:36:15.112742Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"PENDING_RETRIER_RETRIED","details":{"count":1}}
+[FLOW] {"ts":"2026-10-05T22:36:15.113166Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"RETRY_UNACKED_MESSAGES_START","details":{}}
+[FLOW] {"ts":"2026-10-05T22:36:15.113259Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"RETRY_UNACKED_MESSAGES_NONE","details":{}}
+[FLOW] {"ts":"2026-10-05T22:36:15.113546Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"RETRY_UNACKED_MESSAGES_TIMING","details":{"elapsedMs":0,"outcome":"none","total":0,"delivered":0}}
 Shell: PASS: serial and simultaneous execution reports reconcile 1 capabilities, verdicts, and traces.
 Shell: Non-equivalent sims schedules:
 Shell: execution verdict differs between schedules: analyzer.flutter
-Shell: PASS: verified 109 typed sims plan rows.
+Shell: PASS: verified 113 typed sims plan rows.
 Shell: Invalid sims plan:
 Shell: plan does not exactly match the canonical current selection
-+18862 ~2 -1: /Volumes/CrucialX9/flutter_app/.claude/worktrees/wave3-next/test/integration/relay_down_degradation_integration_test.dart: Relay-down degradation 4. cold-start already online sweeps immediately and still preserves exact-once delivery
-[FLOW] {"ts":"2026-10-05T15:13:01.873330Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"GROUP_RECOVERY_GATE_ACQUIRED","details":{"caller":"pending_message_retrier.dart:783","waitedMs":0,"depth":1}}
-[FLOW] {"ts":"2026-10-05T15:13:01.874622Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"GROUP_RECOVERY_GATE_RELEASED","details":{"caller":"pending_message_retrier.dart:783","heldMs":0,"queued":0}}
-[FLOW] {"ts":"2026-10-05T15:13:01.874848Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"RETRY_FAILED_MESSAGES_START","details":{}}
-[FLOW] {"ts":"2026-10-05T15:13:01.875055Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"RETRY_FAILED_MESSAGES_FOUND","details":{"count":1}}
-[FLOW] {"ts":"2026-10-05T15:13:01.875802Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"RETRY_FAILED_MESSAGE_SUCCESS","details":{"id":"relay-do","via":"wire_envelope"}}
-[FLOW] {"ts":"2026-10-05T15:13:01.876015Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"RETRY_FAILED_MESSAGES_COMPLETE","details":{"total":1,"succeeded":1}}
-[FLOW] {"ts":"2026-10-05T15:13:01.876152Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"RETRY_FAILED_MESSAGES_TIMING","details":{"elapsedMs":1,"outcome":"complete","total":1,"succeeded":1}}
-[FLOW] {"ts":"2026-10-05T15:13:01.876243Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"PENDING_RETRIER_RETRIED","details":{"count":1}}
-[FLOW] {"ts":"2026-10-05T15:13:01.876315Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"RETRY_UNACKED_MESSAGES_START","details":{}}
-[FLOW] {"ts":"2026-10-05T15:13:01.876802Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"RETRY_UNACKED_MESSAGES_NONE","details":{}}
-[FLOW] {"ts":"2026-10-05T15:13:01.876950Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"RETRY_UNACKED_MESSAGES_TIMING","details":{"elapsedMs":0,"outcome":"none","total":0,"delivered":0}}
++18947 ~2 -4: /Volumes/CrucialX9/flutter_app/.claude/worktrees/wave3-next/test/integration/relay_down_degradation_integration_test.dart: Relay-down degradation 4. cold-start already online sweeps immediately and still preserves exact-once delivery
+[FLOW] {"ts":"2026-10-05T22:36:16.110072Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"PENDING_RETRIER_DISPOSE","details":{}}
 Shell: PASS: independently verified report with 1 capabilities.
 Shell: Invalid sims report:
 Shell: serialized assessment reasons differ from reconstructed result
@@ -145,8 +107,46 @@ Shell: Invalid sims report:
 Shell: report sourceDigest is required
 Shell: Invalid sims report:
 Shell: report source digest does not match current source
-+18865 ~2 -1: /Volumes/CrucialX9/flutter_app/.claude/worktrees/wave3-next/test/integration/relay_down_degradation_integration_test.dart: Relay-down degradation 4. cold-start already online sweeps immediately and still preserves exact-once delivery
-[FLOW] {"ts":"2026-10-05T15:13:02.874513Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"PENDING_RETRIER_DISPOSE","details":{}}
-+18914 ~2 -1: Some tests failed.
++18955 ~2 -5: /Volumes/CrucialX9/flutter_app/.claude/worktrees/wave3-next/test/unit/dtr18_layering_relocation_contract_test.dart: DTR-18 historical notification proof preserves the reviewed bootstrap outside its scoped database callback [E]
+  Expected: '3407d8ecfadf1ad3210cb5d287790dd9555a18fd05fc60d3cc69756b2c480c1a'
+    Actual: '24bef7cf65d1c3fc637afbc0981231a6594e7b022e35d720b63571158bb26fc9'
+     Which: is different.
+            Expected: 3407d8ecfa ...
+              Actual: 24bef7cf65 ...
+                      ^
+             Differ at offset 0
+  only the existing app-owned database proof injection may differ from the reviewed remainder; its P2P ownership is AST-checked by TC-295-02
+  
+  package:matcher                                               expect
+  package:flutter_test/src/widget_tester.dart 473:18            expect
+  test/unit/dtr18_layering_relocation_contract_test.dart 515:5  main.<fn>
+  
++18960 ~2 -6: /Volumes/CrucialX9/flutter_app/.claude/worktrees/wave3-next/test/unit/dtr18_layering_relocation_contract_test.dart: DTR-18 relocates resume orchestration to app without a core shim [E]
+  Expected: '4196305a7f1b26f992db88e285a6f585a071a32b907400e0307c66e53faec455'
+    Actual: '0c6830109c1b3999d2cb84ee5238056548d040d73d511bcf6aaad41550d83678'
+     Which: is different.
+            Expected: 4196305a7f ...
+              Actual: 0c6830109c ...
+                      ^
+             Differ at offset 0
+  
+  package:matcher                                               expect
+  package:flutter_test/src/widget_tester.dart 473:18            expect
+  test/unit/dtr18_layering_relocation_contract_test.dart 565:5  main.<fn>
+  
++18986 ~2 -7: /Volumes/CrucialX9/flutter_app/.claude/worktrees/wave3-next/test/unit/dtr18_layering_relocation_contract_test.dart: DTR-18 relocates the two Posts Phase-3 adapters to data [E]
+  Expected: '4196305a7f1b26f992db88e285a6f585a071a32b907400e0307c66e53faec455'
+    Actual: '0c6830109c1b3999d2cb84ee5238056548d040d73d511bcf6aaad41550d83678'
+     Which: is different.
+            Expected: 4196305a7f ...
+              Actual: 0c6830109c ...
+                      ^
+             Differ at offset 0
+  
+  package:matcher                                               expect
+  package:flutter_test/src/widget_tester.dart 473:18            expect
+  test/unit/dtr18_layering_relocation_contract_test.dart 598:5  main.<fn>
+  
++18997 ~2 -7: Some tests failed.
 FAIL: Flutter batch exited with 1
-end rc=1 15:13:47
+end rc=1 22:37:01

@@ -1,8 +1,8 @@
-== changed:        2 dart files
+== changed:        3 dart files
 == format
-Formatted 2 files (0 changed) in 0.14 seconds.
+Formatted integration_test/benchmark_helpers.dart
+Formatted integration_test/benchmark_routing_paths_harness.dart
+Formatted 3 files (3 changed) in 0.02 seconds.
 == analyze
-Analyzing drain_group_offline_inbox_use_case.dart, drain_group_offline_inbox_use_case_test.dart...
+Analyzing benchmark_1_1_send_harness.dart, benchmark_helpers.dart, benchmark_routing_paths_harness.dart...
 No issues found!
-== dart tests
-00:19 +335: All tests passed!

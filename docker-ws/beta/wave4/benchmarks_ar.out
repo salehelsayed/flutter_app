@@ -1,0 +1,42 @@
+start 21:55:54 6e2d74816
+
+testpeer built
+Running build hooks...Running build hooks...
+════════════════════════════════════════════════════════════
+  mknoon Benchmark Suite
+  Device: 674DFFF6-5F38-4235-93F6-AF7FBF86AE65
+  Scenarios: A, R
+  Fixture dir: /tmp/benchmark_fixtures
+════════════════════════════════════════════════════════════
+
+
+─── Two-node scenarios: A, R ───
+
+[PEER] Starting Go CLI test peer...
+[PEER-ERR] 23:57:47.406234 [testpeer] started — reading commands from stdin
+[PEER-ERR] 23:57:47.406592 [testpeer] cmd=generate_identity
+[PEER] CLI peer ID: 12D3KooWBqEVTshxbaSNt4yM...
+[PEER-ERR] 23:57:47.409201 [testpeer] cmd=mlkem_keygen
+[PEER] ML-KEM keys generated
+[PEER-ERR] 23:57:47.410068 [testpeer] cmd=start
+[PEER-ERR] 23:57:47.414879 [NODE] Announcing 3 addresses (loopback/link-local filtered out)
+[PEER-ERR] 23:57:47.414889 [NODE]   /ip4/192.168.0.60/tcp/58152/ws
+[PEER-ERR] 23:57:47.414891 [NODE]   /ip4/192.168.0.60/tcp/58153
+[PEER-ERR] 23:57:47.414892 [NODE]   /ip4/192.168.0.60/udp/59896/quic-v1
+[PEER] Waiting for relay...
+[PEER-ERR] 23:57:47.416015 [testpeer] cmd=wait_relay
+[PEER-ERR] 23:57:47.980760 [NODE] Warmed relay connection: 12D3KooWGMYMmN1RGUYj
+[PEER] Relay connected
+[PEER] Waiting for circuit address...
+[PEER-ERR] 23:57:47.981892 [testpeer] cmd=wait_circuit
+[PEER-ERR] 23:57:48.036936 [RELAY_SESSION] Reservation opened for 12D3KooWGMYMmN1RGUYj
+[PEER] Circuit address obtained — peer is discoverable
+[PEER] Fixture written to /tmp/benchmark_fixtures/cli_peer_fixture.json
+
+▶ Scenario A: BENCHMARK=ONE_TO_ONE_SEND
+  flutter test BENCHMARK=ONE_TO_ONE_SEND device=674DFFF6-5F38-4235-93F6-AF7FBF86AE65
+[PEER-ERR] 23:57:48.271345 [RENDEZVOUS] Registered ns=mknoon:chat:12D3KooWBqEVTshxbaSNt4yM7LW69F4j5FVGiLA1q6z5zpxckwsc
+[PEER-ERR] 23:57:48.271381 [NODE] personal rendezvous refresh started: ns=mknoon:chat:12D3KooWBqEVTshxbaSNt4yM7LW69F4j5FVGiLA1q6z5zpxckwsc interval=30m0s
+docker-ws/beta/wave4/run_benchmarks_ar.sh: line 26: 20730 Terminated: 15          dart run integration_test/scripts/run_benchmark_suite.dart -d "$SIM" --scenarios A,R 2>&1
+suite rc=143
+end 22:05:39

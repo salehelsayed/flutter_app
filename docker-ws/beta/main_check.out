@@ -1,0 +1,9 @@
+== changed:        1 dart files
+== format
+Formatted test/core/bootstrap/production_application_bootstrap_phase_contract_test.dart
+Formatted 1 file (1 changed) in 0.04 seconds.
+== analyze
+Analyzing production_application_bootstrap_phase_contract_test.dart...
+No issues found!
+== dart tests
+00:02 +22: All tests passed!

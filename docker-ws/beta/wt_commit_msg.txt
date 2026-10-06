@@ -1,6 +1,11 @@
-chore(wave3): keep the Wave 3 device-run tools
+fix(benchmarks): A and R sends carry the recipient ML-KEM key (user approved)
 
-The worktree helpers, the device queue with its watchdog, the probe specs
-and the iOS simulator diagnostics the Wave 3 handover points to.
+benchmark_1_1_send_harness and benchmark_routing_paths_harness called
+sendChatMessage without recipientMlKemPublicKey, so every send returned
+encryption_required before any transport ran and the timings measured that
+rejection. benchmarkRecipientMlKemKey (benchmark_helpers.dart) supplies the
+CLI peer's key from the orchestrator fixture, or a real key generated once
+by the node's bridge for made-up peer ids (inbox-fallback cases). Additions
+only; no other harness line changes. Crosswalk notes this and the revert.
 
 Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
