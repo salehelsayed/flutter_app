@@ -51,6 +51,7 @@ void applyPlaygroundSettings() {
   OrbitDepthTuning.bubblesWhenFlat = true;
   OrbitDepthTuning.thoughtsInDepth = OrbitDepthThoughts.dots;
   OrbitDepthTuning.friendsPerOrbit = 7;
+  OrbitDepthTuning.postCards = OrbitPostCards.universe;
 }
 
 class OrbitDepthPrototypeApp extends StatelessWidget {

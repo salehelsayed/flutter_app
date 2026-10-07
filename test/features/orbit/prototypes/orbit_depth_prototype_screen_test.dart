@@ -179,6 +179,75 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('in the universe look a post floats without a card', (
+    tester,
+  ) async {
+    OrbitDepthTuning.postCards = OrbitPostCards.universe;
+    addTearDown(() => OrbitDepthTuning.postCards = OrbitPostCards.framed);
+    await pumpPrototype(tester);
+    await swipe(tester, const Offset(0, -200));
+    final card = find.byKey(const ValueKey('text-post-nour'));
+    expect(card, findsOneWidget);
+    final box = tester
+        .widgetList<Container>(
+          find.descendant(of: card, matching: find.byType(Container)),
+        )
+        .first;
+    expect(box.decoration, isNull);
+    expect(
+      find.text('I land at 5:40 and can share the fare into the city.'),
+      findsOneWidget,
+    );
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('in the universe look photos float under the words', (
+    tester,
+  ) async {
+    OrbitDepthTuning.postCards = OrbitPostCards.universe;
+    addTearDown(() => OrbitDepthTuning.postCards = OrbitPostCards.framed);
+    await pumpPrototype(tester);
+    await swipe(tester, const Offset(0, -200));
+    // One seat the other way brings layla and her six photos to the front.
+    final gesture = await tester.startGesture(const Offset(195, 300));
+    for (var i = 0; i < 14; i++) {
+      await gesture.moveBy(const Offset(5, 0));
+      await tester.pump(const Duration(milliseconds: 16));
+    }
+    await tester.pump(const Duration(milliseconds: 300));
+    await gesture.up();
+    await settle(tester);
+
+    final media = find.byKey(const ValueKey('universe-media-layla'));
+    expect(media, findsOneWidget);
+    expect(find.byKey(const ValueKey('carousel-layla')), findsNothing);
+    expect(
+      find.text('weekend up north. still can’t feel my legs'),
+      findsOneWidget,
+    );
+    expect(find.text('Reply to photo 1…'), findsOneWidget);
+
+    // Swiping the photos re-aims the dock, as the framed carousel does.
+    await tester.flingFrom(
+      tester.getCenter(media),
+      const Offset(-200, 0),
+      800,
+    );
+    await settle(tester);
+    expect(find.text('Reply to photo 2…'), findsOneWidget);
+
+    // Back to the first photo: the prototype remembers each friend's slide
+    // for the whole run, and later tests start layla on photo 1.
+    await tester.flingFrom(
+      tester.getCenter(media),
+      const Offset(200, 0),
+      800,
+    );
+    await settle(tester);
+    expect(find.text('Reply to photo 1…'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('tapping a post card opens it full screen to reply', (
     tester,
   ) async {

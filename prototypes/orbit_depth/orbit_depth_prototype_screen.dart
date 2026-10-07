@@ -382,7 +382,15 @@ class OrbitDepthTuning {
   static double cardScale = 1;
   static double maxPhotoHeight = 168;
   static double beamStrength = 1;
+
+  /// How text posts sit on the stage: in a framed card, or straight on the
+  /// night sky, as if from the universe.
+  static OrbitPostCards postCards = OrbitPostCards.framed;
 }
+
+/// Framed: a dark card with an outline. Universe: no card at all; the words
+/// float on the background.
+enum OrbitPostCards { framed, universe }
 
 /// Classic: a fixed-width box. Notes: hugs its text, soft fill, a thought tail
 /// of two little dots towards the friend (like Instagram Notes).
@@ -2252,6 +2260,22 @@ class _PostStackState extends State<_PostStack>
         onSpace: space == null ? null : () => _openSpace(context, name, space),
       );
     }
+    // In the universe look, media posts float on the sky too.
+    if (i == 0 &&
+        expand >= 0.5 &&
+        OrbitDepthTuning.postCards == OrbitPostCards.universe) {
+      final hint = _posts.length - 1 > 0 ? 48 * widget.k : 0.0;
+      return _UniverseMediaCard(
+        key: ValueKey('universe-media-card-$name'),
+        friend: widget.friend,
+        maxHeight: widget.maxHeight - hint,
+        expand: expand,
+        k: widget.k,
+        alpha: widget.alpha,
+        onOpen: () => _openPost(context, _livePost(widget.friend)),
+        onWorld: widget.onWorld,
+      );
+    }
     if (i == 0 && expand >= 0.5) {
       return _CarouselCard(
         key: ValueKey('carousel-card-${widget.friend.name}'),
@@ -2293,9 +2317,12 @@ class _PostStackState extends State<_PostStack>
           final layers = <Widget>[];
 
           // Edges of the posts underneath; they step up as the top one
-          // leaves.
+          // leaves. Without a card to hide behind they would show through
+          // the words, so the universe look leaves them out.
+          final peeks =
+              OrbitDepthTuning.postCards == OrbitPostCards.framed;
           for (var j = 2; j >= 1; j--) {
-            if (_index + j >= _posts.length || open <= 0) continue;
+            if (!peeks || _index + j >= _posts.length || open <= 0) continue;
             final depth = j - t;
             layers.add(
               Positioned.fill(

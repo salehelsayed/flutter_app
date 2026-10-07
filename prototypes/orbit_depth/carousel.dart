@@ -451,6 +451,11 @@ class _PostCard extends StatelessWidget {
   static const int _collapsedLines = 8;
   static const int _minLines = 3;
 
+  /// Keeps words legible where they sit straight on the sky.
+  static const List<Shadow> _lift = [
+    Shadow(color: Color(0xB3000000), blurRadius: 10),
+  ];
+
   final _Post post;
   final double maxHeight;
   final double expand;
@@ -480,6 +485,10 @@ class _PostCard extends StatelessWidget {
     this.front = true,
   });
 
+  bool get _universe => OrbitDepthTuning.postCards == OrbitPostCards.universe;
+
+  List<Shadow>? get _shadows => _universe ? _lift : null;
+
   @override
   Widget build(BuildContext context) {
     final u = k / OrbitDepthTuning.cardScale;
@@ -499,13 +508,15 @@ class _PostCard extends StatelessWidget {
             constraints: BoxConstraints(maxHeight: maxHeight),
             child: Container(
               padding: EdgeInsets.fromLTRB(16 * u, 13 * u, 16 * u, 2 * u),
-              decoration: BoxDecoration(
-                color: _postFill,
-                borderRadius: BorderRadius.circular(22 * u),
-                border: front
-                    ? Border.all(color: _accent, width: 2)
-                    : Border.all(color: _chat.border),
-              ),
+              decoration: _universe
+                  ? null
+                  : BoxDecoration(
+                      color: _postFill,
+                      borderRadius: BorderRadius.circular(22 * u),
+                      border: front
+                          ? Border.all(color: _accent, width: 2)
+                          : Border.all(color: _chat.border),
+                    ),
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -515,7 +526,11 @@ class _PostCard extends StatelessWidget {
                       padding: EdgeInsets.only(bottom: 6 * u),
                       child: Text(
                         header,
-                        style: TextStyle(color: _muted, fontSize: 12.5 * u),
+                        style: TextStyle(
+                          color: _muted,
+                          fontSize: 12.5 * u,
+                          shadows: _shadows,
+                        ),
                       ),
                     ),
                   // Words and attachments share what the actions leave: the
@@ -557,7 +572,12 @@ class _PostCard extends StatelessWidget {
                       ),
                     ),
                   ),
-                  _actions(u),
+                  _PostActions(
+                    post: post,
+                    u: u,
+                    shadows: _shadows,
+                    onWorld: onWorld,
+                  ),
                 ],
               ),
             ),
@@ -596,11 +616,13 @@ class _PostCard extends StatelessWidget {
       color: _chat.textPrimary,
       fontSize: 16 * u,
       height: 1.38,
+      shadows: _shadows,
     );
     final moreStyle = TextStyle(
       color: _accent,
       fontSize: 15 * u,
       fontWeight: FontWeight.w600,
+      shadows: _shadows,
     );
     final scaler = MediaQuery.textScalerOf(context);
     final gap = 10 * u;
@@ -672,9 +694,36 @@ class _PostCard extends StatelessWidget {
     );
   }
 
-  Widget _actions(double u) {
-    final muted = TextStyle(color: _muted, fontSize: 13 * u);
+}
+
+/// The row under a post: replies, likes, its age (or what you sent), and
+/// the link to the friend's world.
+class _PostActions extends StatelessWidget {
+  final _Post post;
+  final double u;
+  final List<Shadow>? shadows;
+  final VoidCallback? onWorld;
+
+  /// Overrides [_Post.sentKey], for a carousel aimed at one of its slides.
+  final String? sentKey;
+
+  const _PostActions({
+    required this.post,
+    required this.u,
+    this.shadows,
+    this.onWorld,
+    this.sentKey,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final muted = TextStyle(
+      color: _muted,
+      fontSize: 13 * u,
+      shadows: shadows,
+    );
     final world = onWorld;
+    final key = sentKey ?? post.sentKey;
     return Padding(
       padding: EdgeInsets.only(top: 6 * u),
       child: Row(
@@ -687,9 +736,9 @@ class _PostCard extends StatelessWidget {
               child: ValueListenableBuilder<int>(
                 valueListenable: _slideTick,
                 builder: (context, tick, child) {
-                  final sent = post.sentKey == null
+                  final sent = key == null
                       ? const <String>[]
-                      : _sent[post.sentKey] ?? const <String>[];
+                      : _sent[key] ?? const <String>[];
                   return Row(
                     children: [
                       _PostCount(
@@ -732,6 +781,7 @@ class _PostCard extends StatelessWidget {
                     color: _chatSecondary,
                     fontSize: 12.5 * u,
                     fontWeight: FontWeight.w600,
+                    shadows: shadows,
                   ),
                 ),
               ),
@@ -786,12 +836,19 @@ class _PostAttachment extends StatelessWidget {
   Widget build(BuildContext context) {
     switch (slide.kind) {
       case _SlideKind.voice:
+        // Outlined in a card; in the universe look it floats on the sky.
+        final framed = OrbitDepthTuning.postCards == OrbitPostCards.framed;
         return Container(
-          padding: EdgeInsets.symmetric(horizontal: 10 * u, vertical: 8 * u),
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(14 * u),
-            border: Border.all(color: _chat.border),
+          padding: EdgeInsets.symmetric(
+            horizontal: framed ? 10 * u : 0,
+            vertical: 8 * u,
           ),
+          decoration: framed
+              ? BoxDecoration(
+                  borderRadius: BorderRadius.circular(14 * u),
+                  border: Border.all(color: _chat.border),
+                )
+              : null,
           child: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -881,6 +938,257 @@ class _SpaceChip extends StatelessWidget {
       ),
     ),
   );
+}
+
+/// A live thought that leads with photos, videos or voice notes, in the
+/// universe look: its words float on the sky, the media below them swipes
+/// sideways without a frame, and the same row of actions closes it. Swiping
+/// re-aims the dock, as the framed carousel does.
+class _UniverseMediaCard extends StatefulWidget {
+  final _ProtoFriend friend;
+  final double maxHeight;
+  final double expand;
+  final double k;
+  final double alpha;
+  final VoidCallback onOpen;
+  final VoidCallback onWorld;
+
+  const _UniverseMediaCard({
+    super.key,
+    required this.friend,
+    required this.maxHeight,
+    required this.expand,
+    required this.k,
+    required this.alpha,
+    required this.onOpen,
+    required this.onWorld,
+  });
+
+  @override
+  State<_UniverseMediaCard> createState() => _UniverseMediaCardState();
+}
+
+class _UniverseMediaCardState extends State<_UniverseMediaCard> {
+  static const int _maxLines = 3;
+
+  late final List<_Slide> _all = _slidesOf(widget.friend);
+
+  /// Where in [_all] each media slide sits; text slides join the words.
+  late final List<int> _media = [
+    for (var i = 0; i < _all.length; i++)
+      if (_all[i].kind != _SlideKind.text) i,
+  ];
+  late int _page = math.max(
+    0,
+    _media.indexOf(_slideAt[widget.friend.name] ?? _media.first),
+  );
+  late final PageController _pages = PageController(initialPage: _page);
+
+  @override
+  void dispose() {
+    _pages.dispose();
+    super.dispose();
+  }
+
+  void _onPage(int page) {
+    HapticFeedback.selectionClick();
+    setState(() => _page = page);
+    _slideAt[widget.friend.name] = _media[page];
+    _slideTick.value++;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final friend = widget.friend;
+    final u = widget.k / OrbitDepthTuning.cardScale;
+    final t = _interval(widget.expand, 0.5, 1);
+    final words = [
+      if (friend.thought != null) friend.thought!,
+      for (final s in _all)
+        if (s.kind == _SlideKind.text && s.text != null) s.text!,
+    ].join('\n');
+    final style = TextStyle(
+      color: _chat.textPrimary,
+      fontSize: 16 * u,
+      height: 1.38,
+      shadows: _PostCard._lift,
+    );
+
+    return Opacity(
+      opacity: (widget.alpha * t).clamp(0.0, 1.0),
+      child: Transform.scale(
+        scale: _lerp(0.92, 1, t),
+        alignment: Alignment.topCenter,
+        child: ConstrainedBox(
+          constraints: BoxConstraints(maxHeight: widget.maxHeight),
+          child: LayoutBuilder(
+            builder: (context, box) {
+              final painter = TextPainter(
+                text: TextSpan(text: words, style: style),
+                textDirection: TextDirection.ltr,
+                textScaler: MediaQuery.textScalerOf(context),
+                maxLines: _maxLines,
+                ellipsis: '…',
+              )..layout(maxWidth: math.max(0.0, box.maxWidth - 32 * u));
+              final wordsHeight = painter.height;
+              final cut = painter.didExceedMaxLines;
+              painter.dispose();
+              // The media takes what the words, dots and actions leave.
+              final mediaHeight =
+                  (widget.maxHeight -
+                          15 * u -
+                          wordsHeight -
+                          (cut ? 26 * u : 0) -
+                          12 * u -
+                          (_media.length > 1 ? 18 * u : 0) -
+                          44 * u)
+                      .clamp(120 * u, 320 * u);
+              return SingleChildScrollView(
+                physics: const NeverScrollableScrollPhysics(),
+                child: Padding(
+                  padding: EdgeInsets.fromLTRB(16 * u, 13 * u, 16 * u, 2 * u),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      GestureDetector(
+                        behavior: HitTestBehavior.opaque,
+                        onTap: widget.onOpen,
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              words,
+                              maxLines: _maxLines,
+                              overflow: TextOverflow.ellipsis,
+                              style: style,
+                            ),
+                            if (cut)
+                              Padding(
+                                padding: EdgeInsets.only(top: 4 * u),
+                                child: Text(
+                                  'Show more',
+                                  style: TextStyle(
+                                    color: _accent,
+                                    fontSize: 15 * u,
+                                    fontWeight: FontWeight.w600,
+                                    shadows: _PostCard._lift,
+                                  ),
+                                ),
+                              ),
+                          ],
+                        ),
+                      ),
+                      SizedBox(height: 12 * u),
+                      SizedBox(
+                        height: mediaHeight,
+                        child: ClipRRect(
+                          borderRadius: BorderRadius.circular(18 * u),
+                          child: PageView.builder(
+                            key: ValueKey('universe-media-${friend.name}'),
+                            controller: _pages,
+                            itemCount: _media.length,
+                            onPageChanged: _onPage,
+                            itemBuilder: (context, page) => _slide(
+                              _all[_media[page]],
+                              u,
+                              active: page == _page && widget.expand > 0.9,
+                            ),
+                          ),
+                        ),
+                      ),
+                      if (_media.length > 1)
+                        Padding(
+                          padding: EdgeInsets.only(top: 9 * u),
+                          child: Row(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              for (var p = 0; p < _media.length; p++)
+                                Container(
+                                  width: (p == _page ? 7 : 6) * u,
+                                  height: (p == _page ? 7 : 6) * u,
+                                  margin: EdgeInsets.symmetric(
+                                    horizontal: 2.5 * u,
+                                  ),
+                                  decoration: BoxDecoration(
+                                    shape: BoxShape.circle,
+                                    color: p == _page
+                                        ? _ink
+                                        : _ink.withValues(alpha: 0.35),
+                                  ),
+                                ),
+                            ],
+                          ),
+                        ),
+                      _PostActions(
+                        post: _livePost(friend),
+                        u: u,
+                        shadows: _PostCard._lift,
+                        onWorld: widget.onWorld,
+                        sentKey: '${friend.name}#${_media[_page]}',
+                      ),
+                    ],
+                  ),
+                ),
+              );
+            },
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _slide(_Slide slide, double u, {required bool active}) {
+    switch (slide.kind) {
+      case _SlideKind.photo:
+        return Image(
+          image: _photo(slide.photo!),
+          fit: BoxFit.cover,
+          gaplessPlayback: true,
+        );
+      case _SlideKind.video:
+        return _VideoSlide(slide: slide, k: u, active: active);
+      case _SlideKind.voice:
+        // No backdrop and no outline: the player floats on the sky, in the
+        // same space a photo would take.
+        return SizedBox.expand(
+          child: Center(
+            child: Padding(
+              padding: EdgeInsets.symmetric(horizontal: 18 * u),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(
+                        Icons.graphic_eq,
+                        size: 18 * u,
+                        color: widget.friend.hue.color,
+                      ),
+                      SizedBox(width: 6 * u),
+                      Text(
+                        slide.text ?? 'voice note',
+                        style: TextStyle(
+                          color: _chatSecondary,
+                          fontSize: 14 * u,
+                          fontWeight: FontWeight.w600,
+                          shadows: _PostCard._lift,
+                        ),
+                      ),
+                    ],
+                  ),
+                  SizedBox(height: 14 * u),
+                  _VoicePlayer(seconds: slide.seconds, k: u * 1.1, active: active),
+                ],
+              ),
+            ),
+          ),
+        );
+      case _SlideKind.text:
+        return const SizedBox.shrink();
+    }
+  }
 }
 
 /// A post opened full screen: who wrote it, all of its words and
