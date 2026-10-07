@@ -5089,7 +5089,11 @@ visible and cannot become an ordinary first-attempt PASS.
   Preserve these first failures and report unexecuted selections explicitly.
   A normal debug APK also needs the existing Gradle property
   `enableAndroidNativeCalls=true` alongside Dart call defines; the first local
-  Pixel build omitted it and correctly rejected native capability setup. Its
+  Pixel build omitted it and correctly rejected native capability setup. The
+  composition now logs that case as `CALL_SIGNALING_START_RESULT`
+  `stage=listenerInstallation`, `errorType=AndroidCallLifecycleException`. A
+  debug build also prints `AndroidCallLifecycleException(nativeFailure)` from
+  `setCapabilityEnabled`; before, the caught error was dropped entirely. Its
   replacement was built/installed with that property, preserving both artifacts
   and the existing identity. Do not classify that setup failure as APNs loss.
   The physical September 14 repeat set used the existing isolated Pixel 6 caller
