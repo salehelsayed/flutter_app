@@ -1,6 +1,9 @@
 import 'package:flutter_app/features/call/application/locked_call_presentation.dart';
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
+
 import '../../core/permissions/mic_permission_gateway.dart';
 import '../../core/utils/flow_event_emitter.dart';
 import '../../features/call/diagnostics/call_diagnostics.dart';
@@ -576,6 +579,8 @@ final class CallSignalingComposition
     final graph = _graph;
     if (!isEnabled || _terminal || !_started || graph == null) return;
     var outcome = 'failed';
+    Object? failure;
+    StackTrace? failureStack;
     try {
       if (!await graph.advertiseCapability()) {
         if (_hasLiveForegroundCall) {
@@ -595,7 +600,9 @@ final class CallSignalingComposition
         return;
       }
       outcome = _terminal ? 'terminal' : 'graph_replaced';
-    } catch (_) {
+    } catch (error, stackTrace) {
+      failure = error;
+      failureStack = stackTrace;
       if (_hasLiveForegroundCall) {
         outcome = 'reconcile_failed_live_call_retained';
         return;
@@ -605,6 +612,8 @@ final class CallSignalingComposition
       _emitLifecycleResult(
         event: 'CALL_SIGNALING_RECONCILE_RESULT',
         outcome: outcome,
+        error: failure,
+        stackTrace: failureStack,
       );
     }
   }
@@ -628,6 +637,8 @@ final class CallSignalingComposition
     var outcome = 'failed';
     String? diagnosticOutcome;
     var stage = _CallSignalingStartStage.previousGraphWithdrawal;
+    Object? failure;
+    StackTrace? failureStack;
     try {
       // Native EventChannel cancellation and detach are engine-wide. A new
       // graph must not attach until the previous graph has fully released them.
@@ -697,7 +708,9 @@ final class CallSignalingComposition
         _foregroundGeneration,
       );
       stage = _CallSignalingStartStage.complete;
-    } catch (error) {
+    } catch (error, stackTrace) {
+      failure = error;
+      failureStack = stackTrace;
       // The P2P startup wait is the only readiness step that times out.
       if (stage == _CallSignalingStartStage.signalingReadiness &&
           error is TimeoutException) {
@@ -711,6 +724,8 @@ final class CallSignalingComposition
         event: 'CALL_SIGNALING_START_RESULT',
         outcome: outcome,
         startStage: stage,
+        error: failure,
+        stackTrace: failureStack,
       );
     }
   }
@@ -722,6 +737,8 @@ final class CallSignalingComposition
   /// call exists on the Dart side before the user answers from the lock screen.
   Future<void> onCallWake() async {
     var outcome = 'failed';
+    Object? failure;
+    StackTrace? failureStack;
     try {
       if (!isEnabled) {
         outcome = 'disabled';
@@ -746,12 +763,16 @@ final class CallSignalingComposition
       }
       await drain.drainCallMailbox();
       outcome = identical(_graph, graph) ? 'drained' : 'graph_replaced';
-    } catch (_) {
+    } catch (error, stackTrace) {
       // Best effort: the next resume or relay recovery drains again.
+      failure = error;
+      failureStack = stackTrace;
     } finally {
       _emitLifecycleResult(
         event: 'CALL_SIGNALING_WAKE_RESULT',
         outcome: outcome,
+        error: failure,
+        stackTrace: failureStack,
       );
     }
   }
@@ -760,6 +781,8 @@ final class CallSignalingComposition
   /// of chat inbox/outbox/retrier resume work.
   Future<void> onResume() async {
     var outcome = 'failed';
+    Object? failure;
+    StackTrace? failureStack;
     try {
       if (!isEnabled) {
         outcome = 'disabled';
@@ -821,7 +844,9 @@ final class CallSignalingComposition
           return;
         }
         outcome = _terminal ? 'terminal' : 'graph_replaced';
-      } catch (_) {
+      } catch (error, stackTrace) {
+        failure = error;
+        failureStack = stackTrace;
         if (_hasLiveForegroundCall) {
           outcome = 'resume_failed_live_call_retained';
           return;
@@ -833,6 +858,8 @@ final class CallSignalingComposition
       _emitLifecycleResult(
         event: 'CALL_SIGNALING_RESUME_RESULT',
         outcome: outcome,
+        error: failure,
+        stackTrace: failureStack,
       );
     }
   }
@@ -868,12 +895,23 @@ final class CallSignalingComposition
     return attempt;
   }
 
+  /// A caught [error] is reported by type (and platform error code) only:
+  /// its message can carry peer or device detail. Debug builds also print it.
   void _emitLifecycleResult({
     required String event,
     required String outcome,
     _CallSignalingStartStage? startStage,
+    Object? error,
+    StackTrace? stackTrace,
   }) {
     try {
+      if (error != null && kDebugMode) {
+        debugPrint(
+          '[CALL_SIGNALING] $event $outcome'
+          '${startStage == null ? '' : ' at ${startStage.diagnosticValue}'}: '
+          '$error\n$stackTrace',
+        );
+      }
       emitFlowEvent(
         layer: 'CALL_SIGNALING_COMPOSITION',
         event: event,
@@ -884,6 +922,8 @@ final class CallSignalingComposition
           'graphPresent': _graph != null,
           'outgoingAvailable': isOutgoingCallAvailable,
           if (startStage != null) 'stage': startStage.diagnosticValue,
+          if (error != null) 'errorType': error.runtimeType.toString(),
+          if (error is PlatformException) 'errorCode': error.code,
         },
       );
     } catch (_) {
