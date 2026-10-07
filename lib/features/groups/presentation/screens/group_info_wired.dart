@@ -78,6 +78,7 @@ import 'package:flutter_app/features/groups/presentation/screens/group_shared_me
 import 'package:flutter_app/features/groups/presentation/widgets/group_avatar.dart';
 import 'package:flutter_app/features/groups/presentation/widgets/group_exit_recovery_sheet.dart';
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
+import 'package:flutter_app/features/orbit/presentation/widgets/confirmation_dialog.dart';
 import 'package:flutter_app/features/qr_code/application/direct_linked_device_qr.dart';
 import 'package:flutter_app/features/qr_code/presentation/screens/qr_scanner_screen.dart';
 import 'package:flutter_app/features/settings/application/helpers/avatar_normalization_helper.dart';
@@ -556,6 +557,18 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
     if (snapshot.disposition == GroupExitDisposition.noOp) {
       await _loadGroupInfo();
       return;
+    }
+    // Leaving deletes the group and its history from this device; confirm it
+    // here as Orbit does, rather than on a single tap.
+    if (snapshot.disposition == GroupExitDisposition.leave) {
+      final l10n = AppLocalizations.of(context)!;
+      final confirmed = await showConfirmationDialog(
+        context: context,
+        title: l10n.orbit_leave_group,
+        description: l10n.orbit_leave_group_body,
+        confirmLabel: l10n.orbit_leave_group_action,
+      );
+      if (!confirmed || !mounted) return;
     }
 
     final result = await requestGroupExitIntentLeave(_group.id);
