@@ -2489,6 +2489,77 @@ void main() {
     );
   });
 
+  testWidgets('dismissing the keyboard releases the composer focus', (
+    tester,
+  ) async {
+    // Android Back hides the IME but leaves the field focused; closing any
+    // overlay or route then restored that focus and reopened the keyboard
+    // (after a reaction, the photo viewer, an incoming message).
+    addTearDown(tester.view.resetViewInsets);
+    await tester.pumpWidget(
+      buildTestWidget(
+        initialLoadDone: true,
+        messages: [makeMessage(text: 'Earlier message')],
+      ),
+    );
+    await tester.pump();
+
+    await tester.tap(find.byType(TextField));
+    await tester.pump();
+    tester.view.viewInsets = const FakeViewPadding(bottom: 600);
+    await tester.pump();
+    final field = tester.widget<TextField>(find.byType(TextField));
+    expect(field.focusNode!.hasFocus, isTrue);
+
+    // The user closes the keyboard (Android Back): the inset drops to zero.
+    tester.view.resetViewInsets();
+    await tester.pump();
+    expect(field.focusNode!.hasFocus, isFalse);
+
+    // A route over the chat (the photo viewer) opens and closes.
+    tester.testTextInput.hide();
+    final navigator = tester.state<NavigatorState>(find.byType(Navigator));
+    navigator.push(
+      MaterialPageRoute<void>(
+        builder: (_) => const Scaffold(body: Text('Viewer')),
+      ),
+    );
+    for (var i = 0; i < 20; i++) {
+      await tester.pump(const Duration(milliseconds: 50));
+    }
+    navigator.pop();
+    for (var i = 0; i < 20; i++) {
+      await tester.pump(const Duration(milliseconds: 50));
+    }
+
+    expect(field.focusNode!.hasFocus, isFalse);
+    expect(tester.testTextInput.isVisible, isFalse);
+  });
+
+  testWidgets(
+    'a floating keyboard without an inset keeps the composer focused',
+    (tester) async {
+      await tester.pumpWidget(
+        buildTestWidget(
+          initialLoadDone: true,
+          messages: [makeMessage(text: 'Earlier message')],
+        ),
+      );
+      await tester.pump();
+
+      await tester.tap(find.byType(TextField));
+      await tester.pump();
+      // Metrics change without the inset ever opening (floating IME, rotation).
+      tester.view.devicePixelRatio = tester.view.devicePixelRatio;
+      tester.view.physicalSize = tester.view.physicalSize + const Offset(0, 1);
+      addTearDown(tester.view.resetPhysicalSize);
+      await tester.pump();
+
+      final field = tester.widget<TextField>(find.byType(TextField));
+      expect(field.focusNode!.hasFocus, isTrue);
+    },
+  );
+
   testWidgets('landscape keyboard keeps quoted composer usable', (
     tester,
   ) async {
