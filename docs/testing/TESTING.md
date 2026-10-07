@@ -465,6 +465,46 @@ authorization-state change is unknown; do not attribute it to a signing repair.
 This receipt establishes automation readiness only. At that point the main
 `com.mknoon.app` package was absent and required candidate installation.
 
+A Linux host without Xcode can drive a USB iPhone through Appium MCP when an
+earlier Mac session already installed the signed
+`com.facebook.WebDriverAgentRunner.xctrunner`. It cannot build, sign or install
+Mknoon, WDA or the iOS UI tests. Prerequisites are the Arch `usbmuxd` package
+(started by its udev rule on replug), a trusted pairing, Developer Mode, and
+`pymobiledevice3` in a user venv. Start the existing runner with
+`pymobiledevice3 developer dvt xcuitest --udid <udid> --userspace
+com.facebook.WebDriverAgentRunner.xctrunner`, then forward the port with
+`pymobiledevice3 usbmux forward --serial <udid> 8100 8100`. Wait for
+`http://127.0.0.1:8100/status` to report `ready`. Create the MCP session with
+`appium:webDriverAgentUrl=http://127.0.0.1:8100` and do not request a WDA
+rebuild. The same "Enable UI Automation" passcode gate applies. On Linux it
+appears as `initializationForUITestingDidFailWithError` with a
+`PasscodeViewController` in the runner's `--output-log`. The device owner must
+unlock the phone once, then the runner restarts cleanly. On iOS 26.5, the MCP
+`HOME` key left Mknoon frontmost; WDA's `POST /wda/homescreen` backgrounded it.
+`/wda/activeAppInfo` and `wda/apps/state` confirm app state. Screenshots and app
+launches use the no-root `--userspace` tunnel. The personalized developer disk
+image was already mounted. `idevicesyslog` captures about 30 MB per minute;
+stop it promptly because `/tmp` is tmpfs on this host.
+On 2026-10-07 this path proved one push check on iPhone 13 / iOS 26.5. The
+installed build was a 2026-10-05 development build (`261005193155`) using APNs
+sandbox. The sender was a current-source Android debug build on an emulator.
+The contact was paired by decoding the iPhone QR screenshot with `zbarimg` and
+using the emulator's Paste QR Data. A backgrounded app and a terminated app
+each showed a mutated alert with sound within about one and three seconds.
+Tapping each opened the sender's chat; the terminated case used a new
+process. The push's content-available flag had already relaunched and
+suspended the app before the tap, so this is not a pure cold start. It is
+neither signed-release nor production-APNs evidence. Evidence:
+`.codex-test-logs/iphone-push-check-20261007/`.
+The same setup ran the direct-reaction check recorded above (R1–R4). Swift
+policy XCTests can run on this host: install a user-level toolchain with
+`swiftly init -n -y --platform ubuntu24.04`, then provide private
+`libncurses.so.6` -> `/usr/lib/libncursesw.so.6` and `libxml2.so.2` ->
+`/usr/lib/libxml2.so.16` symlinks through `LD_LIBRARY_PATH`. SwiftPM helper
+tools drop that path, so compile with `swiftc -enable-testing` and a small
+`XCTMain` runner. This covers pure Foundation logic only, not the app build.
+Evidence: `.codex-test-logs/iphone-reaction-check-20261007/`.
+
 A separate CoreDevice installation stall can occur after XCTest has already
 enabled automation. In `ios-group-deployed-006/`, the first selector waited for
 Xcode to complete Mknoon's launch. A clean WDA rebuild then stalled at install,
