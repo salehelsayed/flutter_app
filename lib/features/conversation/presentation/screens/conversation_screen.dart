@@ -244,6 +244,13 @@ class ConversationComposerViewState {
 ///
 /// Displays header, conversation body (empty state or letter cards),
 /// and compose area. No business logic — all data passed via props.
+/// Below this height (keyboard open) the header, banners and attachment
+/// chrome collapse so history and the input row keep room.
+const double _compactKeyboardHeight = 260;
+
+/// The private-media selector row in [ComposeArea], bottom padding included.
+const double _privateMediaSelectorHeight = 66;
+
 class ConversationScreen extends StatefulWidget {
   static const editModeBannerKey = ValueKey('conversation-edit-mode-banner');
   static const cancelEditKey = ValueKey('conversation-cancel-edit-action');
@@ -524,15 +531,69 @@ class _ConversationScreenState extends State<ConversationScreen>
         amplitudeValues: widget.amplitudeValues,
       );
 
+  ConversationComposerViewState get _currentComposerState =>
+      widget.composerStateListenable?.value ?? _legacyComposerState;
+
+  /// Height the full composer needs above its input row: the photo strip and
+  /// the private-media selector. Compact keyboard mode hides both, so the
+  /// cut-off grows by this much while they are shown.
+  double _composerExtraHeight = 0;
+
+  double _composerExtraHeightFor(ConversationComposerViewState state) {
+    var extra = 0.0;
+    if (state.pendingAttachments.isNotEmpty || state.isProcessing) {
+      extra += AttachmentPreviewStrip.thumbnailRowHeight;
+    }
+    if (state.privateMediaEligibility.allowsNewPrivateMedia &&
+        widget.onPrivateMediaPolicyChanged != null) {
+      extra += _privateMediaSelectorHeight;
+    }
+    return extra;
+  }
+
+  /// Height the last layout pass offered the conversation column.
+  double _lastLayoutHeight = double.infinity;
+
+  bool _isCompactFor(double height, double composerExtra) =>
+      height < _compactKeyboardHeight + composerExtra;
+
+  /// The composer rebuilds itself for every state change (recording ticks
+  /// included). The header and history rebuild only when the new budget flips
+  /// compact mode at the current height; otherwise the next layout uses it.
+  void _onComposerStateChanged() {
+    final extra = _composerExtraHeightFor(_currentComposerState);
+    if (extra == _composerExtraHeight) return;
+    final flips =
+        _isCompactFor(_lastLayoutHeight, extra) !=
+        _isCompactFor(_lastLayoutHeight, _composerExtraHeight);
+    if (mounted && flips) {
+      setState(() => _composerExtraHeight = extra);
+    } else {
+      _composerExtraHeight = extra;
+    }
+  }
+
   @override
   void initState() {
     super.initState();
     _syncProtectedThumbnailProtection();
+    widget.composerStateListenable?.addListener(_onComposerStateChanged);
+    _composerExtraHeight = _composerExtraHeightFor(_currentComposerState);
   }
 
   @override
   void didUpdateWidget(ConversationScreen oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (!identical(
+      oldWidget.composerStateListenable,
+      widget.composerStateListenable,
+    )) {
+      oldWidget.composerStateListenable?.removeListener(
+        _onComposerStateChanged,
+      );
+      widget.composerStateListenable?.addListener(_onComposerStateChanged);
+    }
+    _composerExtraHeight = _composerExtraHeightFor(_currentComposerState);
     if (oldWidget.contactPeerId != widget.contactPeerId) {
       _messageEntranceIds.clear();
       _pendingMessageEntranceIds.clear();
@@ -748,6 +809,7 @@ class _ConversationScreenState extends State<ConversationScreen>
 
   @override
   void dispose() {
+    widget.composerStateListenable?.removeListener(_onComposerStateChanged);
     _releaseProtectedThumbnailProtection();
     _privateMediaRouteObserver?.unsubscribe(this);
     _privateMediaRouteObserver = null;
@@ -764,7 +826,11 @@ class _ConversationScreenState extends State<ConversationScreen>
         builder: (context, constraints) {
           // Scaffold has already consumed the keyboard inset before this
           // LayoutBuilder, so the remaining height is the reliable signal.
-          final compactForKeyboard = constraints.maxHeight < 260;
+          _lastLayoutHeight = constraints.maxHeight;
+          final compactForKeyboard = _isCompactFor(
+            constraints.maxHeight,
+            _composerExtraHeight,
+          );
           final content = Column(
             children: [
               // Header

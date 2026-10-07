@@ -3381,6 +3381,15 @@ visible and cannot become an ordinary first-attempt PASS.
   retention for a quoted group composer. The compact layout hides secondary
   banners and previews only while height is below 260 logical pixels; their
   state remains mounted in the owning screen and they return at normal height.
+  The direct-chat cut-off also includes the composer chrome it would hide. It
+  adds the 88 px photo strip while attachments are pending or processing, and
+  the 66 px private-media selector while it is shown. A staged photo on a
+  720x1600, density-320 Android with a top banner and the IME open left about
+  280 px. That cleared 260, but header 64 plus strip 88 plus composer 190
+  overflowed by 62-79 px. The screen rebuilds header and history only when that
+  extra flips compact mode at the last height, preserving the composer-only
+  rebuild test. `group_conversation_screen.dart` still uses a plain 260
+  threshold with the same strip, so it is a likely follow-up, untested on device.
   `app_diagnostic_error_handlers_test.dart` checks the fixed, content-free
   debug log marker for future RenderFlex overflows. Host layout tests establish
   Flutter constraints, not a rebuilt Android device screenshot.

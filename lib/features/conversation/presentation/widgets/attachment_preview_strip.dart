@@ -11,6 +11,9 @@ import 'package:flutter_app/shared/widgets/media/media_thumbnail_image.dart';
 /// Each thumbnail is 72x72 with a small X button to remove it.
 /// During upload, a dark scrim + spinner overlays each thumbnail.
 class AttachmentPreviewStrip extends StatelessWidget {
+  /// Height of the thumbnail row; the conversation layout budgets for it.
+  static const double thumbnailRowHeight = 88;
+
   final List<File> attachments;
   final bool isUploading;
   final bool isProcessing;
@@ -50,7 +53,7 @@ class AttachmentPreviewStrip extends StatelessWidget {
   Widget build(BuildContext context) {
     final totalCount = attachments.length + (isProcessing ? 1 : 0);
     final list = SizedBox(
-      height: 88,
+      height: thumbnailRowHeight,
       child: ListView.separated(
         scrollDirection: Axis.horizontal,
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
