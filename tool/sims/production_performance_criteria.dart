@@ -337,8 +337,11 @@ List<String> validateProductionPerformance(Map<String, Object?> proof) {
           '$name connected relay fault',
         );
         if (name == 'degraded') {
+          // An outage closes either by an app-driven reconnect (`recovered`)
+          // or by the node healing the relay itself (`self_healed`).
           require(
-            metric(es, 'RELAY_OUTAGE_TIMING', 'recovered').isNotEmpty,
+            metric(es, 'RELAY_OUTAGE_TIMING', 'recovered').isNotEmpty ||
+                metric(es, 'RELAY_OUTAGE_TIMING', 'self_healed').isNotEmpty,
             'degraded recovered outage timing',
           );
         }

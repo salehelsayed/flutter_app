@@ -247,6 +247,42 @@ void main() {
     degraded['relayLossObserved'] = true;
     expect(validateProductionPerformance(proof), isEmpty);
   });
+  // Rewrites the degraded window's outage-closing event: `phase` replaces
+  // `recovered`, or null removes the event.
+  void closeDegradedOutageAs(Map<String, Object?> proof, String? phase) {
+    for (final snapshot in (proof['degraded'] as Map).values) {
+      if (snapshot is! Map || snapshot['events'] is! List) continue;
+      final events = snapshot['events'] as List;
+      events.removeWhere(
+        (e) =>
+            e is Map &&
+            e['event'] == 'RELAY_OUTAGE_TIMING' &&
+            (e['details'] as Map)['phase'] == 'recovered' &&
+            phase == null,
+      );
+      for (final e in events) {
+        if (e is Map &&
+            e['event'] == 'RELAY_OUTAGE_TIMING' &&
+            (e['details'] as Map)['phase'] == 'recovered') {
+          e['details'] = {...(e['details'] as Map), 'phase': phase};
+        }
+      }
+    }
+  }
+
+  test('accepts a degraded outage the node healed itself', () {
+    final proof = _fixture();
+    closeDegradedOutageAs(proof, 'self_healed');
+    expect(validateProductionPerformance(proof), isEmpty);
+  });
+  test('rejects a degraded outage that was never closed', () {
+    final proof = _fixture();
+    closeDegradedOutageAs(proof, null);
+    expect(
+      validateProductionPerformance(proof),
+      contains(contains('degraded recovered outage timing')),
+    );
+  });
   test('does not invent the optional original online/native events', () {
     final proof = _fixture();
     final es = (proof['cold'] as List)[0]['events'] as List;

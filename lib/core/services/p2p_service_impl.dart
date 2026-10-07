@@ -2229,7 +2229,34 @@ class P2PServiceImpl
       // Relay still unreachable — will retry on next health check.
     } finally {
       _clearRecoveryInstrumentation();
+      // The node may have healed the relay while this reconnect was in
+      // flight and then reported failure; close that outage too.
+      if (_stateHasHealthyRelay(_currentState)) {
+        _closeSelfHealedOutage(recoverySource);
+      }
     }
+  }
+
+  /// Closes an open relay outage that ended without a successful app-driven
+  /// reconnect. Uses its own phase, `self_healed`: a `recovered` event always
+  /// carries the reconnect's measurements (relayRefreshMs, relayWarmMs, ...),
+  /// which the relay-recovery benchmarks read.
+  void _closeSelfHealedOutage(String source) {
+    final outageStartedAt = _outageDetectedAt;
+    if (outageStartedAt == null) return;
+    _outageDetectedAt = null;
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'RELAY_OUTAGE_TIMING',
+      details: {
+        'phase': 'self_healed',
+        'totalOutageMs': DateTime.now()
+            .difference(outageStartedAt)
+            .inMilliseconds,
+        'recoveryMode': 'node_self_healed',
+        'recoverySource': source,
+      },
+    );
   }
 
   /// Safely update [_currentState] and emit to [_stateController].
@@ -2271,27 +2298,10 @@ class P2PServiceImpl
 
     // The node can heal a relay outage itself (seen by a relay:state push or
     // a health-check poll) without an app-driven reconnect. Close the outage
-    // here so its timing is reported and the next outage does not inherit
-    // this start; an in-flight reconnect reports its own recovery.
-    final outageStartedAt = _outageDetectedAt;
-    if (nowOnline &&
-        !wasOnline &&
-        outageStartedAt != null &&
-        _activeRecoverySource == null) {
-      _outageDetectedAt = null;
-      emitFlowEvent(
-        layer: 'FL',
-        event: 'RELAY_OUTAGE_TIMING',
-        details: {
-          'phase': 'recovered',
-          'totalOutageMs': DateTime.now()
-              .difference(outageStartedAt)
-              .inMilliseconds,
-          'recoveryMode': 'node_self_healed',
-          'recoverySource': source ?? 'unknown',
-          'recoveryTriggerSource': source ?? 'unknown',
-        },
-      );
+    // here so the next outage does not inherit this start; an in-flight
+    // reconnect reports its own recovery.
+    if (nowOnline && !wasOnline && _activeRecoverySource == null) {
+      _closeSelfHealedOutage(source ?? 'unknown');
     }
     final nowRelayReadyBadge =
         _currentState.badgeReadinessState == BadgeReadinessState.onlineDotted;

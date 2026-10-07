@@ -6419,10 +6419,20 @@ void main() {
           .where(
             (e) =>
                 e['event'] == 'RELAY_OUTAGE_TIMING' &&
-                (e['details'] as Map)['phase'] == 'recovered',
+                (e['details'] as Map)['phase'] == 'self_healed',
           )
           .map((e) => e['details'] as Map<String, dynamic>)
           .toList();
+      // `recovered` stays reserved for app-driven reconnects, whose
+      // measurements the relay-recovery benchmarks read.
+      expect(
+        events.where(
+          (e) =>
+              e['event'] == 'RELAY_OUTAGE_TIMING' &&
+              (e['details'] as Map)['phase'] == 'recovered',
+        ),
+        isEmpty,
+      );
       expect(recovered, hasLength(2));
       expect(recovered.first['recoveryMode'], 'node_self_healed');
       expect(recovered.first['totalOutageMs'], greaterThanOrEqualTo(120));
@@ -6432,6 +6442,79 @@ void main() {
         lessThan(300),
         reason: 'the second outage must not inherit the first start',
       );
+    });
+  });
+
+  group('relay outage closed after a failed in-flight reconnect', () {
+    test('an outage the node heals during a failed reconnect is closed as '
+        'self_healed', () async {
+      bridge.whenCommand(
+        'node:start',
+        (_) => jsonEncode({
+          'ok': true,
+          'peerId': 'test-peer',
+          'isStarted': true,
+          'listenAddresses': [],
+          'circuitAddresses': ['/p2p-circuit/relay1'],
+          'connections': [],
+          'relayState': 'online',
+          'healthyRelayCount': 1,
+          'watchdogRestartCount': 0,
+        }),
+      );
+      bridge.whenCommand(
+        'inbox:retrieve',
+        (_) => jsonEncode({'ok': true, 'messages': [], 'hasMore': false}),
+      );
+      var relayOnline = true;
+      bridge.whenCommand(
+        'node:status',
+        (_) => jsonEncode({
+          'ok': true,
+          'peerId': 'test-peer',
+          'isStarted': true,
+          'listenAddresses': [],
+          'circuitAddresses': relayOnline ? ['/p2p-circuit/relay1'] : [],
+          'connections': [],
+          'relayState': relayOnline ? 'online' : 'degraded',
+          'healthyRelayCount': relayOnline ? 1 : 0,
+          'watchdogRestartCount': 0,
+        }),
+      );
+      // The node heals the relay while the app's reconnect is in flight,
+      // and the reconnect itself still reports failure.
+      bridge.whenCommand('relay:reconnect', (_) {
+        relayOnline = true;
+        bridge.onRelayStateChanged?.call({
+          'relayState': 'online',
+          'healthyRelayCount': 1,
+        });
+        return jsonEncode({'ok': true, 'success': false});
+      });
+      await service.startNodeCore('cHJpdmF0ZWtleXRlc3Q=', 'test-peer');
+      bridge.calledCommands.clear();
+
+      final events = await _captureFlowEvents(() async {
+        relayOnline = false;
+        bridge.onRelayStateChanged?.call({
+          'relayState': 'degraded',
+          'healthyRelayCount': 0,
+          'watchdogRestartCount': 0,
+          'reason': 'relay_disconnected',
+        });
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+      });
+
+      expect(bridge.calledCommands, contains('relay:reconnect'));
+      final timings = events
+          .where((e) => e['event'] == 'RELAY_OUTAGE_TIMING')
+          .map((e) => e['details'] as Map<String, dynamic>)
+          .toList();
+      expect(timings.map((d) => d['phase']), containsAllInOrder(['detected']));
+      expect(timings.where((d) => d['phase'] == 'recovered'), isEmpty);
+      final healed = timings.where((d) => d['phase'] == 'self_healed').toList();
+      expect(healed, hasLength(1));
+      expect(healed.single['recoveryMode'], 'node_self_healed');
     });
   });
 
