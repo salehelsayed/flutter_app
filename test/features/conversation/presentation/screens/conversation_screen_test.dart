@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_app/core/media/private_media_policy.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/core/theme/background_readable_colors.dart';
@@ -70,6 +71,7 @@ void main() {
     ConversationMediaViewerBuilder? mediaViewerBuilder,
     BackgroundPreference backgroundPreference =
         BackgroundPreference.defaultBackground,
+    ValueChanged<PrivateMediaPolicy>? onPrivateMediaPolicyChanged,
   }) {
     return MaterialApp(
       locale: locale,
@@ -114,6 +116,7 @@ void main() {
           onRetryUnavailableMedia: onRetryUnavailableMedia,
           mediaViewerBuilder: mediaViewerBuilder,
           backgroundPreference: backgroundPreference,
+          onPrivateMediaPolicyChanged: onPrivateMediaPolicyChanged,
         ),
       ),
     );
@@ -2377,6 +2380,113 @@ void main() {
       'Unsent landscape draft',
     );
     expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('a staged photo and the keyboard still fit a short viewport', (
+    tester,
+  ) async {
+    // 720x1600 emulator (density 320) with a top banner and the IME open:
+    // about 280 logical pixels remain, above the 260 compact cut-off. The
+    // header, photo strip, privacy selector and input row overflowed.
+    tester.view.devicePixelRatio = 2.0;
+    tester.view.physicalSize = const Size(720, 1140);
+    tester.view.viewInsets = const FakeViewPadding(bottom: 580);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetViewInsets);
+
+    final photo = (await tester.runAsync(() async {
+      final dir = await Directory.systemTemp.createTemp('conv_short_view_');
+      final file = File('${dir.path}/photo.jpg');
+      await file.writeAsBytes([0xFF, 0xD8, 0xFF, 0xE0]);
+      return file;
+    }))!;
+    addTearDown(() => photo.parent.deleteSync(recursive: true));
+    final composer = ValueNotifier(
+      ConversationComposerViewState(
+        pendingAttachments: [photo],
+        privateMediaEligibility: const PrivateMediaEligibility(
+          attachmentCount: 1,
+          attachmentKind: PrivateMediaAttachmentKind.image,
+        ),
+      ),
+    );
+    addTearDown(composer.dispose);
+
+    await tester.pumpWidget(
+      buildTestWidget(
+        initialLoadDone: true,
+        messages: [makeMessage(text: 'Earlier message')],
+        onAttach: () {},
+        onRemoveAttachment: (_) {},
+        composerStateListenable: composer,
+        onPrivateMediaPolicyChanged: (_) {},
+      ),
+    );
+    await tester.pump();
+
+    expect(tester.takeException(), isNull);
+    expect(find.byType(TextField), findsOneWidget);
+    expect(
+      tester.getSize(find.byKey(const ValueKey('messages'))).height,
+      greaterThan(40),
+    );
+  });
+
+  testWidgets('attaching a photo with the keyboard open collapses the chrome', (
+    tester,
+  ) async {
+    tester.view.devicePixelRatio = 2.0;
+    tester.view.physicalSize = const Size(720, 1140);
+    tester.view.viewInsets = const FakeViewPadding(bottom: 580);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetViewInsets);
+
+    final photo = (await tester.runAsync(() async {
+      final dir = await Directory.systemTemp.createTemp('conv_attach_open_');
+      final file = File('${dir.path}/photo.jpg');
+      await file.writeAsBytes([0xFF, 0xD8, 0xFF, 0xE0]);
+      return file;
+    }))!;
+    addTearDown(() => photo.parent.deleteSync(recursive: true));
+    final composer = ValueNotifier(const ConversationComposerViewState());
+    addTearDown(composer.dispose);
+
+    await tester.pumpWidget(
+      buildTestWidget(
+        initialLoadDone: true,
+        messages: [makeMessage(text: 'Earlier message')],
+        onAttach: () {},
+        onRemoveAttachment: (_) {},
+        composerStateListenable: composer,
+        onPrivateMediaPolicyChanged: (_) {},
+      ),
+    );
+    await tester.pump();
+    expect(find.byType(ConversationHeader), findsOneWidget);
+
+    composer.value = ConversationComposerViewState(
+      pendingAttachments: [photo],
+      privateMediaEligibility: const PrivateMediaEligibility(
+        attachmentCount: 1,
+        attachmentKind: PrivateMediaAttachmentKind.image,
+      ),
+    );
+    await tester.pump();
+
+    expect(tester.takeException(), isNull);
+    expect(find.byType(ConversationHeader), findsNothing);
+    expect(find.byType(TextField), findsOneWidget);
+
+    tester.view.resetViewInsets();
+    await tester.pump();
+    expect(find.byType(ConversationHeader), findsOneWidget);
+    expect(find.byType(AttachmentPreviewStrip), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('private-media-selector')),
+      findsOneWidget,
+    );
   });
 
   testWidgets('landscape keyboard keeps quoted composer usable', (
