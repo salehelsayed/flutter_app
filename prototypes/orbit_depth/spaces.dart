@@ -500,7 +500,8 @@ Route<void> _diveRoute(Widget page, {bool animateIn = true}) {
         ? const Duration(milliseconds: 520)
         : Duration.zero,
     reverseTransitionDuration: const Duration(milliseconds: 380),
-    pageBuilder: (context, animation, secondary) => page,
+    pageBuilder: (context, animation, secondary) =>
+        CosmicBackgroundMirrored(child: page),
     transitionsBuilder: (context, animation, secondary, child) {
       final arrive = CurvedAnimation(
         parent: animation,
@@ -589,7 +590,7 @@ class _WorldScreen extends StatelessWidget {
     final spaces = _spacesFor(owner);
     final title = owner == 'you' ? 'your world' : "$owner's world";
     return Scaffold(
-      backgroundColor: _ground,
+      backgroundColor: Colors.transparent,
       body: SafeArea(
         child: Column(
           children: [
@@ -677,7 +678,7 @@ class _SpaceTile extends StatelessWidget {
       alignment: Alignment.bottomCenter,
       child: DecoratedBox(
         decoration: BoxDecoration(
-          color: const Color(0xFF111714),
+          color: _chat.surfaceRaised,
           borderRadius: BorderRadius.circular(size * 0.28),
           border: Border.all(
             color: space.hue.withValues(
@@ -837,7 +838,7 @@ class _SpaceCard extends StatelessWidget {
             '“${latest.note}”',
             maxLines: 2,
             overflow: TextOverflow.ellipsis,
-            style: const TextStyle(color: Color(0xFFB4C0B9), fontSize: 13),
+            style: const TextStyle(color: _chatSecondary, fontSize: 13),
           ),
         ];
       case _SpaceKind.challenge:
@@ -859,7 +860,7 @@ class _SpaceCard extends StatelessWidget {
           Text(
             'A reading list, a challenge, movies you watched, anything you '
             'keep doing. Your friends dive in like this.',
-            style: TextStyle(color: Color(0xFFB4C0B9), fontSize: 13),
+            style: TextStyle(color: _chatSecondary, fontSize: 13),
           ),
         ];
     }
@@ -880,7 +881,7 @@ class _SpaceScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     final world = owner == 'you' ? 'your world' : owner;
     return Scaffold(
-      backgroundColor: _ground,
+      backgroundColor: Colors.transparent,
       body: SafeArea(
         child: Column(
           children: [
@@ -941,15 +942,24 @@ class _SpaceScreen extends StatelessWidget {
       colorOf: (i) => thoughts[i].live ? _accent : const Color(0xFF6B7A72),
       itemBuilder: (context, i, size, highlight) =>
           _ThoughtTile(thought: thoughts[i], size: size, highlight: highlight),
-      cardBuilder: (context, i, maxHeight) => _PastThoughtCard(
-        owner: owner,
-        thought: thoughts[i],
-        onOpenSpace: thoughts[i].space == null
-            ? null
-            : () => _openSpace(context, owner, thoughts[i].space!),
-        onReply: () => _openReplySheet(context, owner, thoughts[i]),
-      ),
-      onDive: (i) => _openReplySheet(context, owner, thoughts[i]),
+      cardBuilder: (context, i, maxHeight) {
+        final post = _pastPost(owner, thoughts[i], header: true);
+        final space = post.space;
+        return _PostCard(
+          post: post,
+          maxHeight: maxHeight,
+          expand: 1,
+          k: OrbitDepthTuning.cardScale,
+          alpha: 1,
+          front: false,
+          onOpen: () => _openPost(context, post),
+          onSpace: space == null
+              ? null
+              : () => _openSpace(context, owner, space),
+        );
+      },
+      onDive: (i) =>
+          _openPost(context, _pastPost(owner, thoughts[i], header: true)),
       onBack: () => Navigator.of(context).maybePop(),
     );
   }
@@ -1001,7 +1011,7 @@ class _ThoughtTile extends StatelessWidget {
       alignment: Alignment.bottomCenter,
       child: Container(
         decoration: BoxDecoration(
-          color: const Color(0xFF111714),
+          color: _chat.surfaceRaised,
           shape: BoxShape.circle,
           border: Border.all(color: color.withValues(alpha: 0.5)),
           boxShadow: [
@@ -1035,171 +1045,6 @@ class _ThoughtTile extends StatelessWidget {
       ),
     );
   }
-}
-
-class _PastThoughtCard extends StatelessWidget {
-  final String owner;
-  final _PastThought thought;
-  final VoidCallback? onOpenSpace;
-  final VoidCallback onReply;
-
-  const _PastThoughtCard({
-    required this.owner,
-    required this.thought,
-    required this.onReply,
-    this.onOpenSpace,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final more = thought.more;
-    final photo = thought.photo;
-    final space = thought.space;
-    final openSpace = onOpenSpace;
-    return _CardShell(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Text(
-            thought.live
-                ? '${thought.age} ago · on the orbit now'
-                : '${thought.age} ago',
-            style: const TextStyle(color: _muted, fontSize: 12.5),
-          ),
-          const SizedBox(height: 6),
-          Text(
-            thought.text,
-            style: const TextStyle(
-              color: _ink,
-              fontSize: 17,
-              fontWeight: FontWeight.w600,
-              height: 1.3,
-            ),
-          ),
-          if (more != null) ...[
-            const SizedBox(height: 6),
-            Text(
-              more,
-              style: const TextStyle(
-                color: Color(0xFFB4C0B9),
-                fontSize: 14,
-                height: 1.35,
-              ),
-            ),
-          ],
-          if (photo != null) ...[
-            const SizedBox(height: 10),
-            ClipRRect(
-              borderRadius: BorderRadius.circular(12),
-              child: SizedBox(
-                height: 130,
-                width: double.infinity,
-                child: Image(image: _photo(photo), fit: BoxFit.cover),
-              ),
-            ),
-          ],
-          if (thought.kind == _ThoughtKind.voice) ...[
-            const SizedBox(height: 10),
-            _VoicePlayer(seconds: thought.seconds, k: 1),
-          ],
-          if (space != null && openSpace != null) ...[
-            const SizedBox(height: 12),
-            GestureDetector(
-              onTap: openSpace,
-              child: Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 10,
-                  vertical: 6,
-                ),
-                decoration: BoxDecoration(
-                  color: const Color(0xFF161D1A),
-                  borderRadius: BorderRadius.circular(10),
-                ),
-                child: Text(
-                  'from $space  ›',
-                  style: const TextStyle(
-                    color: Color(0xFFB4C0B9),
-                    fontSize: 12.5,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-              ),
-            ),
-          ],
-          const SizedBox(height: 12),
-          Row(
-            children: [
-              const Icon(Icons.chat_bubble_outline, size: 15, color: _muted),
-              const SizedBox(width: 6),
-              Expanded(
-                child: Text(
-                  '${thought.comments} comments',
-                  style: const TextStyle(color: _muted, fontSize: 12.5),
-                ),
-              ),
-              _AccentButton(label: 'Reply', onTap: onReply),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-void _openReplySheet(BuildContext context, String owner, _PastThought thought) {
-  HapticFeedback.selectionClick();
-  showModalBottomSheet<void>(
-    context: context,
-    backgroundColor: const Color(0xFF0B100E),
-    showDragHandle: true,
-    isScrollControlled: true,
-    builder: (context) => Padding(
-      padding: EdgeInsets.only(bottom: MediaQuery.viewInsetsOf(context).bottom),
-      child: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  _personPhoto(owner, 30),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Text(
-                      '“${thought.text}”',
-                      style: const TextStyle(
-                        color: _ink,
-                        fontSize: 15,
-                        height: 1.4,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 16),
-              TextField(
-                style: const TextStyle(color: _ink),
-                decoration: InputDecoration(
-                  hintText: 'Reply to $owner',
-                  hintStyle: const TextStyle(color: Color(0xFF78837C)),
-                  filled: true,
-                  fillColor: const Color(0xFF0E1311),
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(23),
-                    borderSide: const BorderSide(color: Color(0xFF1C2420)),
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    ),
-  );
 }
 
 /// A book or movie cover, set in type like a real edition.
@@ -1541,7 +1386,7 @@ class _DayCardState extends State<_DayCard> {
           const SizedBox(height: 14),
           Text(
             widget.space.goal,
-            style: const TextStyle(color: Color(0xFFB4C0B9), fontSize: 13),
+            style: const TextStyle(color: _chatSecondary, fontSize: 13),
           ),
           const SizedBox(height: 14),
           Row(
@@ -1615,9 +1460,9 @@ class _CardShell extends StatelessWidget {
       child: Container(
         padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
         decoration: BoxDecoration(
-          color: const Color(0xFF0E1311),
+          color: _chat.surfaceRaised,
           borderRadius: BorderRadius.circular(20),
-          border: Border.all(color: const Color(0xFF1F2A25)),
+          border: Border.all(color: _chat.border),
         ),
         child: child,
       ),
@@ -1673,7 +1518,7 @@ class _StatusChip extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
       decoration: BoxDecoration(
-        color: now ? const Color(0xFF12301F) : const Color(0xFF161D1A),
+        color: now ? const Color(0xFF12301F) : _chat.surfaceSubtle,
         borderRadius: BorderRadius.circular(8),
       ),
       child: Text(
@@ -1724,7 +1569,7 @@ void _openItemSheet(
   ].where((c) => c.$1 != owner).toList();
   showModalBottomSheet<void>(
     context: context,
-    backgroundColor: const Color(0xFF0B100E),
+    backgroundColor: _sheet,
     showDragHandle: true,
     isScrollControlled: true,
     builder: (context) => Padding(
@@ -1838,7 +1683,7 @@ void _openItemSheet(
                   hintText: 'Say something about ${item.title}',
                   hintStyle: const TextStyle(color: Color(0xFF78837C)),
                   filled: true,
-                  fillColor: const Color(0xFF0E1311),
+                  fillColor: _chat.surfaceSubtle,
                   border: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(23),
                     borderSide: const BorderSide(color: Color(0xFF1C2420)),
@@ -1874,7 +1719,7 @@ void _openNewSpaceSheet(BuildContext context) {
   ];
   showModalBottomSheet<void>(
     context: context,
-    backgroundColor: const Color(0xFF0B100E),
+    backgroundColor: _sheet,
     showDragHandle: true,
     builder: (context) => SafeArea(
       child: Padding(
@@ -1900,9 +1745,9 @@ void _openNewSpaceSheet(BuildContext context) {
                   child: Container(
                     padding: const EdgeInsets.all(14),
                     decoration: BoxDecoration(
-                      color: const Color(0xFF0E1311),
+                      color: _chat.surfaceRaised,
                       borderRadius: BorderRadius.circular(16),
-                      border: Border.all(color: const Color(0xFF1F2A25)),
+                      border: Border.all(color: _chat.border),
                     ),
                     child: Row(
                       children: [

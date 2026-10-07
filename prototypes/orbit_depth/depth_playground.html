@@ -14,6 +14,12 @@
     --muted: #9aa59f;
     --faint: #66736c;
     --accent: #1db954;
+    /* The chat room's colours (BackgroundReadableColors.dark in the app). */
+    --chat-fill: rgba(24, 26, 32, 0.86);
+    --chat-fill-subtle: rgba(16, 18, 24, 0.75);
+    --chat-border: rgba(255, 255, 255, 0.5);
+    --chat-text: #f8fafc;
+    --chat-text-2: rgba(229, 231, 235, 0.87);
   }
   * { box-sizing: border-box; }
   html, body { margin: 0; height: 100%; background: var(--bg); color: var(--ink);
@@ -25,7 +31,14 @@
   .stage-wrap { display: flex; align-items: center; justify-content: center; padding: 20px; min-height: 0; overflow: hidden; }
   .phone-box { position: relative; flex: none; }
   .phone-scale { position: absolute; left: 0; top: 0; width: 390px; transform-origin: 0 0; }
-  .phone { position: relative; width: 390px; height: 844px; background: #040605; border-radius: 48px;
+  .phone { position: relative; width: 390px; height: 844px; border-radius: 48px;
+    /* The app's default background (CosmicBackgroundMirrored): navy radial base
+       lit from the bottom left, with teal, indigo and pink glows. */
+    background:
+      radial-gradient(ellipse 60% 48% at 20% 90%, rgba(129,230,217,.18), rgba(129,230,217,0) 60%),
+      radial-gradient(ellipse 70% 55% at 85% 10%, rgba(129,140,248,.22), rgba(129,140,248,0) 70%),
+      radial-gradient(ellipse 40% 32% at 70% 60%, rgba(244,114,182,.07), rgba(244,114,182,0) 60%),
+      radial-gradient(circle 390px at 15% 85%, #0A1124 0%, #050714 45%, #02030A 100%);
     box-shadow: 0 0 0 10px #151a18, 0 0 0 11px #2a332f, 0 30px 80px rgba(0,0,0,.6); overflow: hidden; user-select: none; touch-action: none; }
   .safe-top { height: 47px; }
   .header { height: 56px; display: flex; align-items: center; padding: 0 16px 0 20px; gap: 6px; }
@@ -50,7 +63,7 @@
   .card { --cs: 1; position: absolute; border-radius: calc(20px * var(--cs)); padding: calc(12px * var(--cs)) calc(14px * var(--cs)); pointer-events: none; }
   .card .age { color: var(--muted); font-size: calc(12px * var(--cs)); text-align: center; margin-bottom: calc(6px * var(--cs)); }
   .card .title { font-size: calc(16.5px * var(--cs)); font-weight: 600; text-align: center; line-height: 1.3; }
-  .card .more { color: #b4c0b9; font-size: calc(14px * var(--cs)); text-align: center; margin-top: calc(6px * var(--cs)); line-height: 1.35; }
+  .card .more { color: var(--chat-text-2); font-size: calc(14px * var(--cs)); text-align: center; margin-top: calc(6px * var(--cs)); line-height: 1.35; }
   .card .photo { margin-top: calc(10px * var(--cs)); border-radius: calc(12px * var(--cs)); overflow: hidden; }
   .card .photo img { width: 100%; height: 100%; object-fit: cover; display: block; }
   .card .voice { display: flex; align-items: center; gap: calc(10px * var(--cs)); margin-top: calc(10px * var(--cs)); }
@@ -59,21 +72,22 @@
   .card .wave i { flex: 1; background: #3a4741; border-radius: 2px; }
   .card .foot { display: flex; align-items: center; gap: 8px; margin-top: calc(10px * var(--cs)); font-size: calc(12.5px * var(--cs)); }
   .card .foot .c { color: var(--muted); flex: 1; }
-  .card .foot .w { color: #b4c0b9; font-weight: 600; }
+  .card .foot .w { color: var(--chat-text-2); font-weight: 600; }
   .card .foot .r { color: var(--accent); font-weight: 600; margin-left: 10px; }
-  .edge { position: absolute; border-radius: 20px; background: #0d1a12; pointer-events: none; }
+  .edge { position: absolute; border-radius: 20px; background: var(--chat-fill-subtle); pointer-events: none; }
   .ndot { position: absolute; border-radius: 50%; pointer-events: none; }
 
-  /* Notes-style bubble: hugs its text, soft fill, a thought tail of two
-     little dots towards the friend's photo. --bs scales it with depth. */
-  .bubble.notes { --bs: 1; --bb: #2a2d2c; width: max-content; background: var(--bb); color: #f3f5f4; font-weight: 600;
-    line-height: 1.25; border: 0; box-shadow: 0 calc(6px * var(--bs)) calc(16px * var(--bs)) rgba(0,0,0,.45); }
+  /* Notes-style bubble, like Instagram's: a soft solid bubble (the chat
+     bubble's colour, no outline) with a thought tail of two dots trailing
+     diagonally towards the friend. --bs scales it with depth. */
+  .bubble.notes { --bs: 1; --bb: #181a20; width: max-content; background: var(--bb); color: var(--chat-text); font-weight: 600;
+    line-height: 1.25; letter-spacing: .1px; border: 0; box-shadow: 0 calc(5px * var(--bs)) calc(14px * var(--bs)) rgba(0,0,0,.4); }
   .bubble.notes span { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
   .bubble.notes::before, .bubble.notes::after { content: ''; position: absolute; left: 50%; border-radius: 50%; background: var(--bb);
-    box-shadow: 0 calc(3px * var(--bs)) calc(8px * var(--bs)) rgba(0,0,0,.35); }
-  .bubble.notes::before { width: calc(11px * var(--bs)); height: calc(11px * var(--bs)); margin-left: calc(-9px * var(--bs)); top: calc(100% + 3px * var(--bs)); }
-  .bubble.notes::after { width: calc(6px * var(--bs)); height: calc(6px * var(--bs)); margin-left: calc(-1px * var(--bs)); top: calc(100% + 16px * var(--bs)); }
-  .bubble.notes.up::before { top: auto; bottom: calc(100% + 3px * var(--bs)); }
+    box-shadow: 0 calc(5px * var(--bs)) calc(14px * var(--bs)) rgba(0,0,0,.4); }
+  .bubble.notes::before { width: calc(13px * var(--bs)); height: calc(13px * var(--bs)); margin-left: calc(-16.5px * var(--bs)); top: calc(100% + 1.5px * var(--bs)); }
+  .bubble.notes::after { width: calc(7px * var(--bs)); height: calc(7px * var(--bs)); margin-left: calc(-20.5px * var(--bs)); top: calc(100% + 16px * var(--bs)); }
+  .bubble.notes.up::before { top: auto; bottom: calc(100% + 1.5px * var(--bs)); }
   .bubble.notes.up::after { top: auto; bottom: calc(100% + 16px * var(--bs)); }
   .bubble.notes .new { position: absolute; top: calc(-2px * var(--bs)); right: calc(-2px * var(--bs)); width: calc(10px * var(--bs)); height: calc(10px * var(--bs));
     border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 calc(2px * var(--bs)) #040605; }
@@ -86,6 +100,8 @@
   h1 { font-size: 17px; margin: 0 0 4px; }
   .sub { color: var(--muted); margin: 0 0 14px; font-size: 13px; }
   .presets { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+  .templates { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; margin-bottom: 14px; }
+  .templates button { min-height: 44px; font-weight: 600; font-size: 14px; }
   button { font: inherit; color: var(--ink); background: var(--panel-2); border: 1px solid var(--line); border-radius: 10px; padding: 7px 12px; cursor: pointer; min-height: 36px; }
   button:hover { border-color: #33413a; }
   button.on { background: #12301f; border-color: var(--accent); color: #5be38a; }
@@ -127,6 +143,7 @@
   </div>
 
   <aside class="panel" aria-label="Depth settings">
+    <div class="templates" id="templates"></div>
     <h1>Orbit depth playground</h1>
     <p class="sub">Same layout maths as the phone prototype. Drag the phone to turn the orbit; every change is live.</p>
     <div class="presets" id="presets"></div>
@@ -171,7 +188,8 @@ const COMMON = { progress: 1, perOrbit: 7, orbitHeight: 0.34, platformSize: 1.35
   bubbleMax: 1.6, bubbleFont: 11.5, neighbours: 'auto', spotLift: 0.08, nameSize: 14,
   cardWidth: 1, cardScale: 1, photoMax: 168,
   bubbleStyle: 'notes', bubbleTint: 0.18, unreadDot: true, depthThoughts: 'dots',
-  youPlatform: 1.55, platformFlat: 1, hover: 2, youHover: -10 };
+  youPlatform: 1.55, platformFlat: 1, hover: 2, youHover: -10,
+  flatHeight: 0.5, flatRadius: 140, flatAvatar: 52, flatYou: 76 };
 const PRESETS = {
   'Now': { tilt: 52, radius: 150, avatar: 52, you: 76, perspective: false, depthScale: 0.30, camera: 3, backDim: 0.45, bubbleDepth: 0 },
   'A · Steeper': { tilt: 62, radius: 158, avatar: 52, you: 58, perspective: false, depthScale: 0.42, camera: 3, backDim: 0.55, bubbleDepth: 0.30 },
@@ -183,18 +201,60 @@ const PRESETS = {
 };
 const START = 'A+ · Cleaner';
 
+// Whole looks to flip between (Template-3 is below Template-2). Template-1 is what is on the phone now
+// (prototypes/orbit_depth/main.dart); Template-2 is the 390 x 844 spec:
+// flat circle r146 centred at (195, 300), tilted 62.58° to a 304 x 140
+// oval, six friends sized 44 far / 50 side / 56 near / 60 selected, You 48,
+// avatars centred on the ring, 304-wide card starting at y = 440.
+const TEMPLATES = {
+  'Template-1': { tilt: 54, radius: 166, avatar: 36, you: 40, perspective: false, depthScale: 0.8, camera: 3,
+    backDim: 0.55, bubbleDepth: 0.8, orbitHeight: 0.21, platformSize: 0.74, youPlatform: 0.6, platformFlat: 0.3,
+    hover: 7, youHover: 2, bubbleWidth: 99, farScale: 0.14, farY: 15, farOpacity: 0.45, farTilt: 49, cardGap: 22,
+    beam: 0.05, neighbours: 'small', bubbleMax: 1.6, bubbleFont: 11, spotLift: 0.12, nameSize: 10, cardWidth: 1,
+    cardScale: 1.3, photoMax: 202, bubbleStyle: 'notes', bubbleTint: 0.05, unreadDot: true, flatBubbles: true,
+    depthThoughts: 'dots', perOrbit: 7, flatHeight: 0.5, flatRadius: 140, flatAvatar: 52, flatYou: 76 },
+  'Template-2': { tilt: 62.58, radius: 152, avatar: 50, you: 48, perspective: false, depthScale: 0.1351, camera: 3,
+    backDim: 0.55, bubbleDepth: 0.8, orbitHeight: 0.2786, platformSize: 0.74, youPlatform: 0.6, platformFlat: 0.3,
+    hover: -26, youHover: -24, bubbleWidth: 99, farScale: 0.14, farY: 15, farOpacity: 0.45, farTilt: 49, cardGap: 24,
+    beam: 0.05, neighbours: 'small', bubbleMax: 1.6, bubbleFont: 11, spotLift: 0.0714, nameSize: 11, cardWidth: 0.84,
+    cardScale: 1, photoMax: 202, bubbleStyle: 'notes', bubbleTint: 0.05, unreadDot: true, flatBubbles: true,
+    depthThoughts: 'dots', perOrbit: 6, flatHeight: 0.2786, flatRadius: 146, flatAvatar: 52, flatYou: 48 },
+  // Template-2 with the two fixes: the flat orbit back near the middle so
+  // its bubbles clear the header, and a little more depth once tilted
+  // (39 far / 44 and 52 sides / 57 near / 60 selected, back a bit dimmer).
+  'Template-3': { tilt: 62.58, radius: 152, avatar: 48, you: 48, perspective: false, depthScale: 0.2111, camera: 3,
+    backDim: 0.65, bubbleDepth: 0.8, orbitHeight: 0.2786, platformSize: 0.74, youPlatform: 0.6, platformFlat: 0.3,
+    hover: -26, youHover: -24, bubbleWidth: 99, farScale: 0.14, farY: 15, farOpacity: 0.45, farTilt: 49, cardGap: 24,
+    beam: 0.05, neighbours: 'small', bubbleMax: 1.6, bubbleFont: 11, spotLift: 0.0526, nameSize: 11, cardWidth: 0.84,
+    cardScale: 1, photoMax: 202, bubbleStyle: 'notes', bubbleTint: 0.05, unreadDot: true, flatBubbles: true,
+    depthThoughts: 'dots', perOrbit: 6, flatHeight: 0.46, flatRadius: 146, flatAvatar: 52, flatYou: 48 },
+};
+function applyTemplate(name) {
+  // Keep where you are in the swipe, so the two compare in the same view.
+  const progress = P.progress;
+  P = Object.assign({}, COMMON, PRESETS[START], showDefaults(), TEMPLATES[name], { preset: name, progress });
+  const n = P.perOrbit; settleOn(frontIndex(n) % n);
+  syncControls(); save();
+}
+
 const CONTROLS = [
   ['Orbit', [
-    ['tilt', 'Tilt', 0, 85, 1, '°', 'How far your orbit leans back. The far orbit has its own tilt below.'],
+    ['tilt', 'Tilt', 0, 85, 0.01, '°', 'How far your orbit leans back. The far orbit has its own tilt below.'],
     ['radius', 'Orbit radius', 100, 190, 1, 'pt', 'Spreads the friends further apart.'],
     ['perOrbit', 'Friends per orbit', 5, 9, 1, '', 'Fewer = more space between avatars.'],
-    ['orbitHeight', 'Orbit height on screen', 0.12, 0.5, 0.005, '', 'Where the orbit centre sits. Or drag up/down on the phone.'],
+    ['orbitHeight', 'Orbit height on screen', 0.12, 0.5, 0.0005, '', 'Where the orbit centre sits. Or drag up/down on the phone.'],
     ['progress', 'Flat → tilted', 0, 1, 0.01, '', 'Scrub the swipe-up transition.'],
+  ]],
+  ['Flat orbit (2D)', [
+    ['flatHeight', 'Flat orbit height on screen', 0.12, 0.6, 0.0005, '', 'Where the flat circle\u2019s centre sits.'],
+    ['flatRadius', 'Flat orbit radius', 100, 190, 1, 'pt'],
+    ['flatAvatar', 'Flat friend avatar size', 36, 76, 1, 'pt'],
+    ['flatYou', 'Flat: your avatar size', 36, 90, 1, 'pt'],
   ]],
   ['Avatars', [
     ['avatar', 'Friend avatar size', 36, 76, 1, 'pt'],
     ['you', 'Your avatar size', 40, 90, 1, 'pt'],
-    ['depthScale', 'Depth scaling (linear)', 0, 0.8, 0.01, '', 'Front grows and back shrinks by this much.'],
+    ['depthScale', 'Depth scaling (linear)', 0, 0.8, 0.0001, '', 'Front grows and back shrinks by this much.'],
     ['camera', 'Camera distance (perspective)', 1.5, 6, 0.1, 'r', 'Closer camera = stronger perspective.'],
     ['backDim', 'Back fade', 0, 0.9, 0.01, ''],
     ['platformSize', 'Friends\u2019 platform size', 0.6, 2.5, 0.01, '×'],
@@ -202,7 +262,7 @@ const CONTROLS = [
     ['platformFlat', 'Platform flatness', 0.3, 1.5, 0.01, '×', '1 = lies flat on the orbit\u2019s tilt, like the ring.'],
     ['hover', 'Hover above platform', -20, 40, 1, 'pt', 'Gap between each friend and their platform. Negative sinks into it.'],
     ['youHover', 'Your hover above platform', -40, 40, 1, 'pt', 'The same for your avatar in the middle.'],
-    ['spotLift', 'Front friend lift', 0, 0.3, 0.01, '×', 'How much bigger the friend at the front gets.'],
+    ['spotLift', 'Front friend lift', 0, 0.3, 0.0001, '×', 'How much bigger the friend at the front gets.'],
     ['nameSize', 'Front friend name size', 10, 20, 0.5, 'pt'],
   ]],
   ['Bubbles', [
@@ -457,8 +517,8 @@ function frame(now) {
 function render() {
   const tc = clamp(P.progress, 0, 1);
   const tilt = tc * P.tilt * Math.PI / 180, c = Math.cos(tilt), s = Math.sin(tilt);
-  const cx = W / 2, cy = H * lerp(0.5, P.orbitHeight, tc);
-  const ringBase = K * lerp(140, P.radius, tc);
+  const cx = W / 2, cy = H * lerp(P.flatHeight, P.orbitHeight, tc);
+  const ringBase = K * lerp(P.flatRadius, P.radius, tc);
   const appear = interval(tc, 0.55, 0.9);
 
   bgx.clearRect(0, 0, W, H); fxx.clearRect(0, 0, W, H);
@@ -489,7 +549,7 @@ function render() {
       const p = lv.people[i];
       const theta = angleOf(i, lv.n) + lv.offset + rot, d = Math.sin(theta);
       const rx = cx + ringBase * lv.scale * Math.cos(theta), ry = lv.cy + ringBase * lv.scale * Math.sin(theta) * lv.c;
-      const base = lerp(52, P.avatar, tc) * K * lv.scale;
+      const base = lerp(P.flatAvatar, P.avatar, tc) * K * lv.scale;
       const size = base * depthScale(d, lv.s);
       const lift = (size / 2 + P.hover * K * lv.scale) * tc;
       const pf = P.platformSize;
@@ -508,7 +568,7 @@ function render() {
 
   // Platforms.
   const reveal = 1 - Math.pow(1 - tc, 2);
-  const youSize = lerp(76, P.you, tc) * K;
+  const youSize = lerp(P.flatYou, P.you, tc) * K;
   const youRing = { x: cx, y: cy };
   platform(bgx, youRing.x, youRing.y, lerp(youSize * 0.9, youSize * P.youPlatform, tc),
     lerp(youSize * 0.9, Math.max(4, youSize * P.youPlatform * Math.min(1, c * P.platformFlat)), tc), ACCENT, 1, reveal, youSize, 0);
@@ -522,7 +582,7 @@ function render() {
     if (st.p.ring) {
       const data = drawRingAvatar(el, st.p.ring, sz);
       el.style.boxShadow = `0 0 ${sz * 0.35}px ${sz * 0.05}px hsla(${data.hue},70%,50%,${0.35 + 0.2 * h})`;
-      el.style.background = '#040605';
+      el.style.background = 'transparent';
     } else {
       el.style.width = el.style.height = sz + 'px';
       el.style.boxShadow = `0 4px 10px rgba(0,0,0,.45)` + (h > 0.01 ? `, 0 0 22px 1px ${rgba(st.p.hue, 0.45 * h)}` : '');
@@ -539,7 +599,7 @@ function render() {
   youEl.style.boxShadow = `0 0 ${lerp(12, 36, tc)}px ${lerp(1, 8, tc)}px rgba(29,185,84,${lerp(0.12, 0.32, tc)})`;
 
   // The front friend's name.
-  const nameTop = st => st.ry + lerp(st.size / 2, st.pedH * 0.55 + 4 * K * st.lv.scale, tc);
+  const nameTop = st => Math.max(st.ry + lerp(st.size / 2, st.pedH * 0.55 + 4 * K * st.lv.scale, tc), st.ay + st.size / 2 + 4 * K * st.lv.scale);
   if (spot && highlight > 0.01) {
     nameEl.style.display = 'block'; nameEl.textContent = spot.p.name;
     nameEl.style.fontSize = P.nameSize * K + 'px'; nameEl.style.color = '#e8ece9';
@@ -607,19 +667,19 @@ function render() {
       if (notes) {
         el.innerHTML = `<span>${esc(st.p.thought)}</span>` + (st.p.fresh && P.unreadDot ? '<i class="new"></i>' : '');
         el.style.setProperty('--bs', bs);
-        el.style.setProperty('--bb', mix('#2A2D2C', st.p.hue, P.bubbleTint));
+        el.style.setProperty('--bb', mix('#181A20', st.p.hue, P.bubbleTint));
         // Wider and rounder than the classic box, so most thoughts sit on
         // one or two lines like a note rather than a block of text.
         el.style.width = ''; el.style.maxWidth = w * 1.35 + 'px';
-        el.style.padding = `${8 * K * bs}px ${13 * K * bs}px`; el.style.borderRadius = 20 * K * bs + 'px';
+        el.style.padding = `${8 * K * bs}px ${12 * K * bs}px`; el.style.borderRadius = 18 * K * bs + 'px';
         el.style.background = ''; el.style.border = ''; el.style.color = '';
       } else {
         el.textContent = st.p.thought;
         el.style.width = w + 'px'; el.style.maxWidth = '';
         el.style.padding = `${6 * K * bs}px ${9 * K * bs}px`; el.style.borderRadius = 14 * K * bs + 'px';
-        el.style.background = st.p.fresh ? '#0F1F15' : '#141A18';
-        el.style.border = st.p.fresh ? '1.5px solid ' + ACCENT : '1px solid #26322D';
-        el.style.color = st.p.fresh ? '#E8ECE9' : '#B4C0B9';
+        el.style.background = 'var(--chat-fill)';
+        el.style.border = '1px solid var(--chat-border)';
+        el.style.color = 'var(--chat-text)';
       }
       const bw = el.offsetWidth, bh = el.offsetHeight;
       const l = clamp(st.rx - bw / 2, 6 * K, Math.max(6 * K, W - bw - 6 * K));
@@ -648,7 +708,7 @@ function render() {
     if (cardFor !== key) { buildCard(spot.p, H - top - 8); cardFor = key; }
     cardEl.style.setProperty('--cs', P.cardScale);
     Object.assign(cardEl.style, { display: 'block', left: left + 'px', top: top + 'px', width: width + 'px', opacity: cardFocus,
-      background: spot.p.fresh ? '#0F1F15' : '#141A18', border: spot.p.fresh ? '1.5px solid ' + ACCENT : '1px solid #26322D' });
+      background: 'var(--chat-fill)', border: '1px solid var(--chat-border)' });
     const ch = cardEl.offsetHeight;
     const more = spot.p.posts || 0;
     edgeEls.forEach((e, j) => {
@@ -656,7 +716,7 @@ function render() {
       if (depth > more || cardFocus < 0.85) { e.style.display = 'none'; return; }
       Object.assign(e.style, { display: 'block', left: left + 'px', top: top + 'px', width: width + 'px', height: ch + 'px',
         transform: `translateY(${depth * 12 * K}px) scale(${1 - 0.05 * depth})`, transformOrigin: '50% 100%',
-        border: '1px solid ' + rgba(spot.p.fresh ? ACCENT : '#26322D', 0.55), opacity: (1 - 0.3 * depth) * interval(cardFocus, 0.85, 1) });
+        border: '1px solid rgba(255,255,255,0.18)', opacity: (1 - 0.3 * depth) * interval(cardFocus, 0.85, 1) });
     });
     if (more > 0 && cardFocus > 0.85) {
       stackLabel.style.display = 'block'; stackLabel.style.top = (top + ch + 24 * K + 10) + 'px';
@@ -695,7 +755,7 @@ function beam(ctx, x1, x2, y1, x3, x4, y2, color, strength) {
 }
 
 function buildCard(p, maxH) {
-  let html = `<div class="age">${esc(p.age)} ago</div><div class="title" style="color:${p.fresh ? '#E8ECE9' : '#B4C0B9'}">${esc(p.thought)}</div>`;
+  let html = `<div class="age">${esc(p.age)} ago</div><div class="title" style="color:var(--chat-text)">${esc(p.thought)}</div>`;
   if (p.more) html += `<div class="more">${esc(p.more)}</div>`;
   if (p.kind === 'photo' && p.cardPhoto) html += `<div class="photo" style="height:${clamp(maxH - 150 * P.cardScale, 60, P.photoMax)}px"><img alt="" src="${PHOTOS[p.cardPhoto]}"></div>`;
   if (p.kind === 'voice') {
@@ -772,6 +832,11 @@ for (const [key, label] of TOGGLES) {
   const cb = l.querySelector('input'); cb.addEventListener('change', () => { P[key] = cb.checked; P.preset = 'Custom'; save(); writeExport(); });
   inputs['show-' + key] = { cb }; togglesEl.appendChild(l);
 }
+const templatesEl = document.getElementById('templates');
+for (const name of Object.keys(TEMPLATES)) {
+  const b = document.createElement('button'); b.type = 'button'; b.textContent = name; b.dataset.preset = name;
+  b.addEventListener('click', () => applyTemplate(name)); templatesEl.appendChild(b);
+}
 const presetsEl = document.getElementById('presets');
 for (const name of Object.keys(PRESETS)) {
   const b = document.createElement('button'); b.type = 'button'; b.textContent = name; b.dataset.preset = name;
@@ -783,7 +848,11 @@ document.getElementById('depthBtn').addEventListener('click', () => tiltTo(1));
 document.getElementById('tiltBtn').addEventListener('click', () => tiltTo(P.progress >= 0.5 ? 0 : 1));
 document.getElementById('tiltBtn').addEventListener('pointerdown', e => e.stopPropagation());
 
-function fmt(v, step) { return step >= 1 ? String(Math.round(v)) : Number(v).toFixed(step >= 0.1 ? 1 : 2); }
+function fmt(v, step) {
+  if (step >= 1) return String(Math.round(v));
+  const d = step >= 0.1 ? 1 : step >= 0.01 ? 2 : 4;
+  return Number(v).toFixed(d).replace(/(\.\d*?)0+$/, '$1').replace(/\.$/, '');
+}
 function syncControls(moveSliders = true) {
   for (const [key, o] of Object.entries(inputs)) {
     if (o.cb) { o.cb.checked = !!P[key.slice(5)]; continue; }
@@ -797,6 +866,7 @@ function syncControls(moveSliders = true) {
   inputs.depthScale.input.disabled = !!P.perspective;
   inputs.camera.input.disabled = !P.perspective;
   presetsEl.querySelectorAll('button').forEach(b => b.classList.toggle('on', b.dataset.preset === P.preset));
+  templatesEl.querySelectorAll('button').forEach(b => b.classList.toggle('on', b.dataset.preset === P.preset));
   document.getElementById('count').textContent = P.perOrbit;
   const dots = document.getElementById('dots'); dots.innerHTML = '';
   for (let i = 0; i < 6; i++) { const d = document.createElement('span'); d.className = 'dot' + (i === 0 ? ' on' : ''); dots.appendChild(d); }
@@ -818,6 +888,7 @@ const EXPORT = [
   ['spotLift', 'frontFriendLift'], ['nameSize', 'frontNameSize'],
   ['cardGap', 'cardGap'], ['cardWidth', 'cardWidth'], ['cardScale', 'cardScale'], ['photoMax', 'maxPhotoHeight'],
   ['beam', 'beamStrength'],
+  ['flatHeight', 'flatOrbitHeight'], ['flatRadius', 'flatRingRadius'], ['flatAvatar', 'flatAvatarSize'], ['flatYou', 'flatYouSize'],
   ['stars', 'showStars', 'bool'], ['ring', 'showRing', 'bool'], ['far', 'showFarOrbit', 'bool'],
   ['beamOn', 'showBeam', 'bool'], ['card', 'showCard', 'bool'], ['bubbles', 'showBubbles', 'bool'],
 ];
@@ -879,6 +950,14 @@ function fit() {
 window.addEventListener('resize', fit);
 
 if (!load()) applyPreset(START); else syncControls();
+// depth_playground.html#Template-2 opens straight on a template (#…-flat for the 2D view).
+{
+  const [name, view] = decodeURIComponent(location.hash.slice(1)).split('-flat');
+  if (TEMPLATES[name]) {
+    P.progress = view === undefined ? 1 : 0;
+    applyTemplate(name);
+  }
+}
 settleOn(3);
 fit();
 requestAnimationFrame(frame);

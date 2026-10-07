@@ -68,7 +68,7 @@ void main() {
 
   testWidgets('bubbles over the flat orbit, dots once tilted', (tester) async {
     const thoughts = {
-      'layla': 'roof sunrise again. who’s up?',
+      'layla': 'weekend up north. still can’t feel my legs',
       'omar': 'exam at 9. wish me luck',
       'tarek': 'who has a drill I can borrow?',
       'nour': 'airport at 6. taxi anyone?',
@@ -120,7 +120,7 @@ void main() {
     await pumpPrototype(tester);
     await swipe(tester, const Offset(0, -200));
     expect(find.text(nourMore), findsOneWidget);
-    expect(find.text('3 comments'), findsOneWidget);
+    expect(find.textContaining('3 replies'), findsOneWidget);
 
     // A slow drag of one seat lands the next friend at the front; nour's
     // card folds back into a bubble.
@@ -138,6 +138,68 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('a long text post folds behind Show more', (tester) async {
+    const lastLine =
+        'also, if anyone knows how to find the studs in an old plaster wall '
+        'without drilling ten test holes, please tell me before I do exactly '
+        'that.';
+    await pumpPrototype(tester);
+    await swipe(tester, const Offset(0, -200));
+    // tarek sits one seat round from nour.
+    final gesture = await tester.startGesture(const Offset(195, 300));
+    for (var i = 0; i < 12; i++) {
+      await gesture.moveBy(const Offset(-5, 0));
+      await tester.pump(const Duration(milliseconds: 16));
+    }
+    await tester.pump(const Duration(milliseconds: 300));
+    await gesture.up();
+    await settle(tester);
+
+    expect(find.byKey(const ValueKey('text-post-tarek')), findsOneWidget);
+    expect(find.text('who has a drill I can borrow?'), findsOneWidget);
+    expect(find.text(lastLine), findsNothing);
+
+    // Show more opens the whole post full screen.
+    await tester.tap(find.text('Show more'));
+    await settle(tester);
+    expect(find.byKey(const ValueKey('post-screen')), findsOneWidget);
+    await tester.scrollUntilVisible(
+      find.text(lastLine),
+      120,
+      scrollable: find.descendant(
+        of: find.byKey(const ValueKey('post-screen')),
+        matching: find.byType(Scrollable),
+      ),
+    );
+    expect(find.text(lastLine), findsOneWidget);
+    await tester.tap(find.byTooltip('Close post'));
+    await settle(tester);
+    expect(find.byKey(const ValueKey('post-screen')), findsNothing);
+    expect(find.byKey(const ValueKey('text-post-tarek')), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('tapping a post card opens it full screen to reply', (
+    tester,
+  ) async {
+    await pumpPrototype(tester);
+    await swipe(tester, const Offset(0, -200));
+    await tester.tap(find.text('I land at 5:40 and can share the fare into the city.'));
+    await settle(tester);
+    expect(find.byKey(const ValueKey('post-screen')), findsOneWidget);
+    // Full screen names who wrote it, since the orbit is out of sight.
+    expect(find.text('20 min ago'), findsOneWidget);
+
+    await tester.enterText(find.byType(TextField).last, 'I can share!');
+    await tester.tap(find.byTooltip('Send reply'));
+    await tester.pump();
+    expect(find.text('I can share!'), findsOneWidget);
+    await tester.tap(find.byTooltip('Close post'));
+    await settle(tester);
+    expect(find.byKey(const ValueKey('post-screen')), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('a voice thought plays from its card', (tester) async {
     await pumpPrototype(tester);
     await swipe(tester, const Offset(0, -200));
@@ -152,7 +214,7 @@ void main() {
       await gesture.up();
       await settle(tester);
     }
-    expect(find.text('35 min ago'), findsOneWidget);
+    expect(find.textContaining('35 min ago'), findsOneWidget);
     await tester.tap(find.byTooltip('Play voice note'));
     await tester.pump();
     await tester.pump(const Duration(seconds: 2));
@@ -376,7 +438,7 @@ void main() {
     expect(flatHint, findsNothing);
   });
 
-  testWidgets('reduced motion toggles instantly and opens a thought', (
+  testWidgets('reduced motion toggles instantly and aims the dock', (
     tester,
   ) async {
     await pumpPrototype(tester, disableAnimations: true);
@@ -384,8 +446,49 @@ void main() {
     await tester.pumpAndSettle();
     expect(depthHint, findsOneWidget);
 
-    await tester.tap(find.text('airport at 6. taxi anyone?'));
-    await tester.pumpAndSettle();
-    expect(find.text('nour · 20 min ago'), findsOneWidget);
+    // nour's thought is text only, so the dock answers the thought itself.
+    expect(find.text('Reply to nour’s thought…'), findsOneWidget);
+    // The field says what it answers; no extra chip above the dock.
+    expect(find.byKey(const ValueKey('dock-target')), findsNothing);
+  });
+
+  testWidgets('swiping the carousel re-aims the dock and reactions land', (
+    tester,
+  ) async {
+    await pumpPrototype(tester);
+    await swipe(tester, const Offset(0, -200));
+    // One seat the other way brings layla and her six photos to the front.
+    final gesture = await tester.startGesture(const Offset(195, 300));
+    for (var i = 0; i < 14; i++) {
+      await gesture.moveBy(const Offset(5, 0));
+      await tester.pump(const Duration(milliseconds: 16));
+    }
+    await tester.pump(const Duration(milliseconds: 300));
+    await gesture.up();
+    await settle(tester);
+    final carousel = find.byKey(const ValueKey('carousel-layla'));
+    expect(carousel, findsOneWidget);
+    expect(find.text('1/6'), findsOneWidget);
+    expect(find.text('Reply to photo 1…'), findsOneWidget);
+
+    // Swipe the card, not the orbit: the next photo, and the dock follows.
+    await tester.flingFrom(
+      tester.getCenter(carousel),
+      const Offset(-200, 0),
+      800,
+    );
+    await settle(tester);
+    expect(find.text('2/6'), findsOneWidget);
+    expect(find.text('Reply to photo 2…'), findsOneWidget);
+    expect(find.byKey(const ValueKey('carousel-layla')), findsOneWidget);
+
+    await tester.tap(find.byTooltip('React'));
+    await tester.pump();
+    await tester.tap(find.text('\u{1F60D}'));
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(find.text('you: \u{1F60D}'), findsOneWidget);
+    expect(find.text('\u{1F60D} sent to photo 2'), findsOneWidget);
+    await settle(tester);
+    expect(tester.takeException(), isNull);
   });
 }

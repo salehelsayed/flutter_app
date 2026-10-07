@@ -4,10 +4,14 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter/physics.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/core/utils/ring_avatar_generator.dart';
 import 'package:flutter_app/features/home/presentation/widgets/ring_avatar.dart';
+import 'package:flutter_app/features/identity/presentation/widgets/cosmic_background_mirrored.dart';
 
+part 'carousel.dart';
 part 'photos.dart';
+part 'post_photos.dart';
 part 'spaces.dart';
 
 /// Standalone visual prototype: the Orbit inner circle tilting from today's
@@ -87,6 +91,14 @@ const _ink = Color(0xFFE8ECE9);
 const _muted = Color(0xFF9AA59F);
 const _accent = Color(0xFF1DB954);
 
+/// The chat room's colours (the app's dark BackgroundReadableColors): cards,
+/// bubbles and sheets use the same fill, border and text as chat bubbles.
+const _chat = BackgroundReadableColors.dark;
+const _sheet = Color(0xFF181A20);
+
+/// BackgroundReadableColors.dark.textSecondary, usable in const contexts.
+const _chatSecondary = Color(0xDDE5E7EB);
+
 /// One orbit per layer. Layer 0 is the people you talk to most; each deeper
 /// layer holds people you talked to less recently.
 const _layerNames = [
@@ -107,7 +119,7 @@ const _people = <(String, _Hue, String?, bool)>[
   ('yousef', _yellow, null, false),
   ('tarek', _cyan, 'who has a drill I can borrow?', true),
   ('nour', _purple, 'airport at 6. taxi anyone?', true),
-  ('layla', _pink, 'roof sunrise again. who\u2019s up?', true),
+  ('layla', _pink, 'weekend up north. still can\u2019t feel my legs', true),
   ('sara', _orange, 'we adopted her! meet luna', false),
   ('karim', _red, null, false),
   ('dina', _green, null, false),
@@ -256,7 +268,7 @@ final Map<String, MemoryImage> _photoCache = {};
 /// A friend's profile photo (by name), 'you', or a post photo.
 ImageProvider _photo(String key) => _photoCache.putIfAbsent(
   key,
-  () => MemoryImage(base64Decode(_photoData[key]!)),
+  () => MemoryImage(base64Decode(_photoData[key] ?? _postPhotoData[key]!)),
 );
 
 _ThoughtDetail _detailFor(_ProtoFriend friend) =>
@@ -313,6 +325,13 @@ class OrbitDepthTuning {
 
   /// Where the tilted orbit's centre sits, as a share of the screen height.
   static double orbitHeight = 0.34;
+
+  /// The flat (2D) orbit before tilting: where its centre sits (share of the
+  /// screen height), its radius, and the friends' and your avatar sizes.
+  static double flatOrbitHeight = 0.5;
+  static double flatRingRadius = 140;
+  static double flatAvatarSize = 52;
+  static double flatYouSize = 76;
 
   /// Platform width as a multiple of the avatar.
   static double platformSize = 1.35;
@@ -465,7 +484,7 @@ class _OrbitHomeState extends State<_OrbitHome> with TickerProviderStateMixin {
     super.didChangeDependencies();
     if (!_photosWarm) {
       _photosWarm = true;
-      for (final key in _photoData.keys) {
+      for (final key in [..._photoData.keys, ..._postPhotoData.keys]) {
         precacheImage(_photo(key), context);
       }
     }
@@ -623,15 +642,49 @@ class _OrbitHomeState extends State<_OrbitHome> with TickerProviderStateMixin {
     }
   }
 
+  /// The friend at the front of the orbit you are on, once tilted.
+  _ProtoFriend? get _frontFriend {
+    if (_tilt < 0.5) return null;
+    _ProtoFriend? best;
+    var bestGap = double.infinity;
+    for (final f in _friends) {
+      if (f.layer != _layer) continue;
+      var gap =
+          (f.angleDeg * math.pi / 180 + _rot.value - math.pi / 2) %
+          (2 * math.pi);
+      if (gap > math.pi) gap -= 2 * math.pi;
+      if (gap.abs() < bestGap) {
+        bestGap = gap.abs();
+        best = f;
+      }
+    }
+    return best;
+  }
+
+  /// The dock answers the slide showing on the front friend's live thought,
+  /// or the older post you swiped up to.
+  _DockTarget? get _dockTarget {
+    final f = _frontFriend;
+    if (f == null || f.thought == null) return null;
+    final onLive = (_postIndex[f.name] ?? 0) == 0;
+    return _DockTarget(f, onLive ? (_slideAt[f.name] ?? 0) : null);
+  }
+
   void _openWorld(String owner) {
     HapticFeedback.selectionClick();
     Navigator.of(context).push(_diveRoute(_WorldScreen(owner: owner)));
   }
 
   void _openThought(_ProtoFriend friend) {
+    // A thought opens full screen; a friend without one gets a note saying
+    // so.
+    if (friend.thought != null) {
+      _openPost(context, _livePost(friend));
+      return;
+    }
     showModalBottomSheet<void>(
       context: context,
-      backgroundColor: const Color(0xFF0B100E),
+      backgroundColor: _sheet,
       showDragHandle: true,
       isScrollControlled: true,
       builder: (context) => Padding(
@@ -646,7 +699,9 @@ class _OrbitHomeState extends State<_OrbitHome> with TickerProviderStateMixin {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: _ground,
+      backgroundColor: Colors.transparent,
+      // The dock rides the keyboard itself; the orbit stays put.
+      resizeToAvoidBottomInset: false,
       body: SafeArea(
         child: Column(
           children: [
@@ -689,32 +744,72 @@ class _OrbitHomeState extends State<_OrbitHome> with TickerProviderStateMixin {
               ),
             ),
             Expanded(
-              child: GestureDetector(
-                behavior: HitTestBehavior.opaque,
-                onPanStart: _onPanStart,
-                onPanUpdate: _onPanUpdate,
-                onPanEnd: _onPanEnd,
-                onPanCancel: _onPanCancel,
-                child: LayoutBuilder(
-                  builder: (context, box) {
-                    _k = math.min(box.maxWidth / 390, box.maxHeight / 640);
-                    return AnimatedBuilder(
-                      animation: Listenable.merge([_v, _rot, _float, _duck]),
-                      builder: (context, _) => _OrbitStage(
-                        t: _tilt,
-                        camera: _camera,
-                        rotation: _rot.value,
-                        floatPhase: _reduceMotion
-                            ? 0
-                            : _float.value * 2 * math.pi,
-                        duck: _duck.value,
-                        size: box.biggest,
-                        onFriendTap: _openThought,
-                        onDive: _openWorld,
+              child: Stack(
+                children: [
+                  Positioned.fill(
+                    child: GestureDetector(
+                      behavior: HitTestBehavior.opaque,
+                      onPanStart: _onPanStart,
+                      onPanUpdate: _onPanUpdate,
+                      onPanEnd: _onPanEnd,
+                      onPanCancel: _onPanCancel,
+                      child: LayoutBuilder(
+                        builder: (context, box) {
+                          _k = math.min(
+                            box.maxWidth / 390,
+                            box.maxHeight / 640,
+                          );
+                          return AnimatedBuilder(
+                            animation: Listenable.merge([
+                              _v,
+                              _rot,
+                              _float,
+                              _duck,
+                            ]),
+                            builder: (context, _) => _OrbitStage(
+                              t: _tilt,
+                              camera: _camera,
+                              rotation: _rot.value,
+                              floatPhase: _reduceMotion
+                                  ? 0
+                                  : _float.value * 2 * math.pi,
+                              duck: _duck.value,
+                              size: box.biggest,
+                              onFriendTap: _openThought,
+                              onDive: _openWorld,
+                            ),
+                          );
+                        },
                       ),
-                    );
-                  },
-                ),
+                    ),
+                  ),
+                  // One reply dock for the whole screen, aimed at whatever
+                  // the front card is showing.
+                  Positioned.fill(
+                    child: AnimatedBuilder(
+                      animation: Listenable.merge([
+                        _v,
+                        _rot,
+                        _duck,
+                        _slideTick,
+                      ]),
+                      builder: (context, _) {
+                        final target = _dockTarget;
+                        final show = target == null
+                            ? 0.0
+                            : _interval(_tilt, 0.6, 1) *
+                                  (1 - _duck.value * 0.5);
+                        if (target == null || show <= 0.01) {
+                          return const SizedBox.shrink();
+                        }
+                        return Opacity(
+                          opacity: show,
+                          child: _ReplyDock(target: target, k: _k),
+                        );
+                      },
+                    ),
+                  ),
+                ],
               ),
             ),
           ],
@@ -850,12 +945,20 @@ class _OrbitStage extends StatelessWidget {
     // Flat, the orbit sits in the middle of the screen. Tilting lifts it, so
     // the front friend's card gets the lower part of the screen, while the far
     // orbit stays visible just under the layer meter.
-    final cy = size.height * _lerp(0.5, OrbitDepthTuning.orbitHeight, tc);
+    final cy =
+        size.height *
+        _lerp(
+          OrbitDepthTuning.flatOrbitHeight,
+          OrbitDepthTuning.orbitHeight,
+          tc,
+        );
     final farCy = OrbitDepthTuning.farOrbitY * k;
     final tilt =
         t.clamp(-0.05, 1.0) * OrbitDepthTuning.tiltDegrees * math.pi / 180;
     final c = math.cos(tilt);
-    final ringBase = k * _lerp(140, OrbitDepthTuning.ringRadius, tc);
+    final ringBase =
+        k *
+        _lerp(OrbitDepthTuning.flatRingRadius, OrbitDepthTuning.ringRadius, tc);
 
     final layers = <int, _LayerView>{};
     for (var layer = 0; layer < _layerCount; layer++) {
@@ -906,7 +1009,14 @@ class _OrbitStage extends StatelessWidget {
       final lv = layers[f.layer];
       if (lv == null) continue;
       final radius = ringBase * lv.scale;
-      final base = _lerp(52, OrbitDepthTuning.avatarSize, tc) * k * lv.scale;
+      final base =
+          _lerp(
+            OrbitDepthTuning.flatAvatarSize,
+            OrbitDepthTuning.avatarSize,
+            tc,
+          ) *
+          k *
+          lv.scale;
       final theta = f.angleDeg * math.pi / 180 + rotation;
       final d = math.sin(theta);
       final ring = Offset(
@@ -972,7 +1082,9 @@ class _OrbitStage extends StatelessWidget {
 
     final home = layers[0];
     final youSize =
-        _lerp(76, OrbitDepthTuning.youSize, tc) * k * (home?.scale ?? 1);
+        _lerp(OrbitDepthTuning.flatYouSize, OrbitDepthTuning.youSize, tc) *
+        k *
+        (home?.scale ?? 1);
     final youRing = Offset(cx, home?.cy ?? cy);
     final youCenter = youRing.translate(
       0,
@@ -1147,13 +1259,17 @@ class _OrbitStage extends StatelessWidget {
     return Rect.fromLTWH(left, top, width, 0);
   }
 
-  double _nameTop(_Seat seat, double k, double tc) =>
-      seat.ringPoint.dy +
-      _lerp(
-        seat.size / 2,
-        seat.pedestal.height * 0.55 + 4 * k * seat.layer.scale,
-        tc,
-      );
+  /// Below the platform, and always below the avatar itself, which can sit
+  /// low on its ring point when the hover is negative.
+  double _nameTop(_Seat seat, double k, double tc) => math.max(
+    seat.ringPoint.dy +
+        _lerp(
+          seat.size / 2,
+          seat.pedestal.height * 0.55 + 4 * k * seat.layer.scale,
+          tc,
+        ),
+    seat.avatarCenter.dy + seat.size / 2 + 4 * k * seat.layer.scale,
+  );
 
   /// Thought bubbles never disappear while the orbit turns. Friends at the
   /// back carry theirs above the head, friends at the front below the name;
@@ -1200,7 +1316,11 @@ class _OrbitStage extends StatelessWidget {
       final cardAlpha = appear * near;
       if (isSpotlight) {
         final card = _cardRect(seat, focus, k, tc);
-        final maxHeight = math.max(0.0, size.height - card.top - 8 * k);
+        // Leave the bottom of the screen to the reply dock.
+        final maxHeight = math.max(
+          0.0,
+          size.height - card.top - 8 * k - _dockInset * k,
+        );
         widgets.add(
           Positioned(
             key: ValueKey('card-${seat.friend.name}'),
@@ -1515,7 +1635,6 @@ extension on _FriendAvatar {
             child: DecoratedBox(
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
-                color: const Color(0xFF040605),
                 boxShadow: [
                   BoxShadow(
                     color: glow.withValues(alpha: 0.35 + 0.2 * highlight),
@@ -1664,18 +1783,15 @@ class _ThoughtBubble extends StatelessWidget {
     return Container(
       padding: EdgeInsets.symmetric(horizontal: 9 * k, vertical: 6 * k),
       decoration: BoxDecoration(
-        color: fresh ? const Color(0xFF0F1F15) : const Color(0xFF141A18),
+        color: _chat.surfaceRaised,
         borderRadius: BorderRadius.circular(14 * k),
-        border: Border.all(
-          color: fresh ? _accent : const Color(0xFF26322D),
-          width: fresh ? 1.5 : 1,
-        ),
+        border: Border.all(color: _chat.border, width: 1),
       ),
       child: Text(
         text,
         textAlign: TextAlign.center,
         style: TextStyle(
-          color: fresh ? _ink : const Color(0xFFB4C0B9),
+          color: _chat.textPrimary,
           fontSize: OrbitDepthTuning.bubbleTextSize * k,
           fontWeight: FontWeight.w500,
           height: 1.3,
@@ -1686,12 +1802,20 @@ class _ThoughtBubble extends StatelessWidget {
 
   /// Like Instagram Notes: hugs its text, soft tinted fill, and a tail of two
   /// little dots pointing at the friend (down above them, up below them).
+  /// Like Instagram Notes: a soft solid bubble (the chat bubble's colour, no
+  /// outline) with a thought tail of two dots trailing diagonally towards the
+  /// friend: a bigger one touching the bubble, a smaller one beyond it.
   Widget _notes() {
     final fill = Color.lerp(
-      const Color(0xFF2A2D2C),
+      const Color(0xFF181A20),
       hue,
       OrbitDepthTuning.bubbleTint,
     )!;
+    final shadow = BoxShadow(
+      color: const Color(0x66000000),
+      blurRadius: 14 * k,
+      offset: Offset(0, 5 * k),
+    );
     Widget dot(double d, double dx) => Transform.translate(
       offset: Offset(dx * k, 0),
       child: Container(
@@ -1700,13 +1824,7 @@ class _ThoughtBubble extends StatelessWidget {
         decoration: BoxDecoration(
           color: fill,
           shape: BoxShape.circle,
-          boxShadow: [
-            BoxShadow(
-              color: const Color(0x59000000),
-              blurRadius: 8 * k,
-              offset: Offset(0, 3 * k),
-            ),
-          ],
+          boxShadow: [shadow],
         ),
       ),
     );
@@ -1714,17 +1832,11 @@ class _ThoughtBubble extends StatelessWidget {
       clipBehavior: Clip.none,
       children: [
         Container(
-          padding: EdgeInsets.symmetric(horizontal: 13 * k, vertical: 8 * k),
+          padding: EdgeInsets.symmetric(horizontal: 12 * k, vertical: 8 * k),
           decoration: BoxDecoration(
             color: fill,
-            borderRadius: BorderRadius.circular(20 * k),
-            boxShadow: [
-              BoxShadow(
-                color: const Color(0x73000000),
-                blurRadius: 16 * k,
-                offset: Offset(0, 6 * k),
-              ),
-            ],
+            borderRadius: BorderRadius.circular(18 * k),
+            boxShadow: [shadow],
           ),
           child: Text(
             text,
@@ -1732,10 +1844,11 @@ class _ThoughtBubble extends StatelessWidget {
             maxLines: 3,
             overflow: TextOverflow.ellipsis,
             style: TextStyle(
-              color: const Color(0xFFF3F5F4),
+              color: _chat.textPrimary,
               fontSize: OrbitDepthTuning.bubbleTextSize * k,
               fontWeight: FontWeight.w600,
               height: 1.25,
+              letterSpacing: 0.1,
             ),
           ),
         ),
@@ -1755,11 +1868,12 @@ class _ThoughtBubble extends StatelessWidget {
           ),
       ],
     );
+    // The tail runs from the bubble down and to the left, like a thought.
     final tail = <Widget>[
-      SizedBox(height: 3 * k),
-      dot(11, -3.5),
-      SizedBox(height: 2 * k),
-      dot(6, 2),
+      SizedBox(height: 1.5 * k),
+      dot(13, -10),
+      SizedBox(height: 1.5 * k),
+      dot(7, -17),
     ];
     return Column(
       mainAxisSize: MainAxisSize.min,
@@ -1810,10 +1924,7 @@ class _ThoughtCardState extends State<_ThoughtCard> {
   Widget build(BuildContext context) {
     final e = widget.expand;
     final k = widget.k;
-    final friend = widget.friend;
     final extra = _interval(e, 0.45, 1);
-    // Older posts you have not seen yet count as fresh.
-    final fresh = widget.post == null ? friend.fresh : true;
 
     Widget reveal(Widget child) => ClipRect(
       child: Align(
@@ -1833,12 +1944,9 @@ class _ThoughtCardState extends State<_ThoughtCard> {
             vertical: _lerp(6, 12, e) * k,
           ),
           decoration: BoxDecoration(
-            color: fresh ? const Color(0xFF0F1F15) : const Color(0xFF141A18),
+            color: _chat.surfaceRaised,
             borderRadius: BorderRadius.circular(_lerp(14, 20, e) * k),
-            border: Border.all(
-              color: fresh ? _accent : const Color(0xFF26322D),
-              width: fresh ? 1.5 : 1,
-            ),
+            border: Border.all(color: _chat.border, width: 1),
           ),
           child: Column(
             mainAxisSize: MainAxisSize.min,
@@ -1865,7 +1973,7 @@ class _ThoughtCardState extends State<_ThoughtCard> {
                 maxLines: e < 0.5 ? 2 : 4,
                 overflow: TextOverflow.ellipsis,
                 style: TextStyle(
-                  color: fresh ? _ink : const Color(0xFFB4C0B9),
+                  color: _chat.textPrimary,
                   fontSize: _lerp(11.5, 16.5, e) * k,
                   fontWeight: FontWeight.w500,
                   height: 1.3,
@@ -1894,7 +2002,7 @@ class _ThoughtCardState extends State<_ThoughtCard> {
               more,
               textAlign: TextAlign.center,
               style: TextStyle(
-                color: const Color(0xFFB4C0B9),
+                color: _chatSecondary,
                 fontSize: 14 * k,
                 height: 1.35,
               ),
@@ -1949,13 +2057,13 @@ class _ThoughtCardState extends State<_ThoughtCard> {
                     vertical: 5 * k,
                   ),
                   decoration: BoxDecoration(
-                    color: const Color(0xFF161D1A),
+                    color: _chat.surfaceSubtle,
                     borderRadius: BorderRadius.circular(10 * k),
                   ),
                   child: Text(
                     'from ${detail.space}  ›',
                     style: TextStyle(
-                      color: const Color(0xFFB4C0B9),
+                      color: _chatSecondary,
                       fontSize: 12.5 * k,
                       fontWeight: FontWeight.w600,
                     ),
@@ -1990,7 +2098,7 @@ class _ThoughtCardState extends State<_ThoughtCard> {
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(
-                        color: const Color(0xFFB4C0B9),
+                        color: _chatSecondary,
                         fontSize: 12.5 * k,
                         fontWeight: FontWeight.w600,
                       ),
@@ -2122,7 +2230,43 @@ class _PostStackState extends State<_PostStack>
     }
   }
 
-  Widget _card(int i, {required double expand}) => _ThoughtCard(
+  Widget _card(int i, {required double expand}) {
+    // A live thought that leads with photos opens as a carousel; every other
+    // post opens as a post card. Both fold back to the plain bubble while
+    // the orbit turns.
+    final name = widget.friend.name;
+    if (expand >= 0.5 && (i > 0 || _textLed(widget.friend))) {
+      final post = i == 0 ? _livePost(widget.friend) : _pastPost(name, _posts[i]);
+      final space = post.space;
+      // The "more from" hint only needs its room when there is more.
+      final hint = _posts.length - 1 - i > 0 ? 48 * widget.k : 0.0;
+      return _PostCard(
+        key: ValueKey(i == 0 ? 'text-post-$name' : 'post-$name-$i'),
+        post: post,
+        maxHeight: widget.maxHeight - hint,
+        expand: expand,
+        k: widget.k,
+        alpha: widget.alpha,
+        onOpen: () => _openPost(context, post),
+        onWorld: widget.onWorld,
+        onSpace: space == null ? null : () => _openSpace(context, name, space),
+      );
+    }
+    if (i == 0 && expand >= 0.5) {
+      return _CarouselCard(
+        key: ValueKey('carousel-card-${widget.friend.name}'),
+        friend: widget.friend,
+        maxHeight: widget.maxHeight - 48 * widget.k,
+        expand: expand,
+        k: widget.k,
+        alpha: widget.alpha,
+        onWorld: widget.onWorld,
+      );
+    }
+    return _thoughtCard(i, expand: expand);
+  }
+
+  Widget _thoughtCard(int i, {required double expand}) => _ThoughtCard(
     key: ValueKey('post-${widget.friend.name}-$i'),
     friend: widget.friend,
     post: i == 0 ? null : _posts[i],
@@ -2146,7 +2290,6 @@ class _PostStackState extends State<_PostStack>
           final t = (-_drag.value / _fly).clamp(0.0, 1.0);
           final peek = 12 * k;
           final open = _interval(widget.expand, 0.85, 1);
-          final fresh = widget.friend.fresh;
           final layers = <Widget>[];
 
           // Edges of the posts underneath; they step up as the top one
@@ -2166,11 +2309,10 @@ class _PostStackState extends State<_PostStack>
                         alignment: Alignment.bottomCenter,
                         child: DecoratedBox(
                           decoration: BoxDecoration(
-                            color: const Color(0xFF0D1A12),
+                            color: _chat.surfaceSubtle,
                             borderRadius: BorderRadius.circular(20 * k),
                             border: Border.all(
-                              color: (fresh ? _accent : const Color(0xFF26322D))
-                                  .withValues(alpha: 0.55),
+                              color: _chat.border.withValues(alpha: 0.35),
                             ),
                           ),
                         ),
@@ -2696,9 +2838,9 @@ class _ThoughtSheet extends StatelessWidget {
                   vertical: 12,
                 ),
                 decoration: BoxDecoration(
-                  color: const Color(0xFF0F1F15),
+                  color: _chat.surfaceRaised,
                   borderRadius: BorderRadius.circular(22),
-                  border: Border.all(color: _accent, width: 1.5),
+                  border: Border.all(color: _chat.border),
                 ),
                 child: Text(
                   thought,
@@ -2725,7 +2867,7 @@ class _ThoughtSheet extends StatelessWidget {
                   hintText: 'Comment on ${friend.name}’s thought',
                   hintStyle: const TextStyle(color: Color(0xFF78837C)),
                   filled: true,
-                  fillColor: const Color(0xFF0E1311),
+                  fillColor: _chat.surfaceSubtle,
                   border: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(23),
                     borderSide: const BorderSide(color: Color(0xFF1C2420)),
