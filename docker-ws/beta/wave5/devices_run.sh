@@ -23,5 +23,5 @@ D=/Volumes/CrucialX9/flutter_app/docker-ws/beta/wave5
 echo "$OUT" > "$D/devices_run.dir"
 { echo "start $(date -u +%T) $(git log -1 --format=%h) status_lines=$(git status --short | wc -l | tr -d ' ') checks=$(echo "$ONLY" | tr ',' '\n' | wc -l | tr -d ' ') out=$OUT"
   python3 scripts/mknoon_checks.py full --base main --device-config "$CFGDIR/$CFGNAME" \
-    --jobs 3 --flutter-workers 4 --sims-jobs 2 --only "$ONLY" --output "$OUT" 2>&1 | tail -150
+    --jobs ${W5_JOBS:-1} --flutter-workers 4 --sims-jobs ${W5_SIMS_JOBS:-1} --only "$ONLY" --output "$OUT" 2>&1 | tail -150
   echo "end rc=${PIPESTATUS[0]} $(date -u +%T)"; } > "$D/devices_run.out" 2>&1

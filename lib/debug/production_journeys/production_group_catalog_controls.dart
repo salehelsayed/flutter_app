@@ -157,6 +157,10 @@ void bindProductionGroupCatalogInviteObservations({
   }
   final name = productionCatalogGroupName(controller);
   String? boundInviteId;
+  // The last bound invitation stays reportable after it leaves the pending
+  // list, so a runner can still read its consumption record; a re-add
+  // invitation replaces it when it binds.
+  String? lastBoundInviteId;
   controller.bindAction('catalog_pending_snapshot', (_) async {
     final pending = (await pendingRepository.getPendingInvites())
         .where((i) => i.groupName == name)
@@ -170,6 +174,8 @@ void bindProductionGroupCatalogInviteObservations({
       throw StateError('ambiguous or replaced catalog invitation');
     }
     boundInviteId ??= pending.singleOrNull?.inviteId;
+    if (boundInviteId != null) lastBoundInviteId = boundInviteId;
+    final consumedInviteId = boundInviteId ?? lastBoundInviteId;
     return {
       'runId': controller.invocation.runId,
       'role': controller.invocation.role,
@@ -192,10 +198,10 @@ void bindProductionGroupCatalogInviteObservations({
               },
           },
       ],
-      'consumed': boundInviteId == null
+      'consumed': consumedInviteId == null
           ? null
           : (await pendingRepository.getConsumedInvite(
-              boundInviteId!,
+              consumedInviteId,
             ))?.toMap(),
     };
   });

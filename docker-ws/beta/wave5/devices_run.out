@@ -1,4 +1,4 @@
-start 08:04:41 a8caa1890 status_lines=0 checks=16 out=/Volumes/CrucialX9/flutter_app/.claude/worktrees/wave3-next/.codex-test-logs/production-bootstrap-migration-20260930/wave5-runA-20261006T080441Z
+start 12:37:18 0941aa31f status_lines=0 checks=1 out=/Volumes/CrucialX9/flutter_app/.claude/worktrees/wave3-next/.codex-test-logs/production-bootstrap-migration-20260930/wave5-runA4b-20261006T123718Z
 NOT RUN full-diagnostics-python
 NOT RUN full-native-turn-tls-operations
 NOT RUN full-provider-schema
@@ -44,8 +44,23 @@ NOT RUN full-device-media
 NOT RUN full-legacy
 NOT RUN full-notification-recovery
 NOT RUN full-sims
+NOT RUN full.benchmark.peer-suite
+NOT RUN full.benchmark.run_group_publish_benchmark
+NOT RUN full.benchmark.run_timeout_accuracy_benchmark
 NOT RUN full.group-reaction.ios_announcement_reaction_recipient
 NOT RUN full.group-reaction.ios_chat_group_message_and_reaction_recipient
+NOT RUN full.media-stable-id.ios
+NOT RUN full.native.371
+NOT RUN full.native.373
+NOT RUN full.native.app-visibility
+NOT RUN full.native.pb266-release
+NOT RUN full.native.vc204
+NOT RUN full.performance.conversation
+NOT RUN full.performance.conversation_sub
+NOT RUN full.performance.feed_init
+NOT RUN full.performance.feed_orbit_offscreen
+NOT RUN full.performance.orbit
+NOT RUN full.performance.shell_switch
 NOT RUN full.reaction.android_background_crypto_preflight
 NOT RUN full.reaction.android_durable_reaction_background_connected
 NOT RUN full.reaction.android_first_wake_profile_aot
@@ -63,18 +78,3 @@ NOT RUN full.xctest.vc205calllifecycleuitests.testansweralreadypresentedsystemca
 NOT RUN full.xctest.vc205calllifecycleuitests.testbootstraptrustedcontactfromqr
 NOT RUN full.xctest.vc205calllifecycleuitests.testtapstartvoicecallonalreadyrunningapp
 BLOCKED full-sims-major
-NOT RUN full.benchmark.peer-suite
-NOT RUN full.benchmark.run_group_publish_benchmark
-NOT RUN full.benchmark.run_timeout_accuracy_benchmark
-NOT RUN full.media-stable-id.ios
-NOT RUN full.native.371
-NOT RUN full.native.373
-NOT RUN full.native.app-visibility
-NOT RUN full.native.pb266-release
-NOT RUN full.native.vc204
-NOT RUN full.performance.conversation
-NOT RUN full.performance.conversation_sub
-NOT RUN full.performance.feed_init
-NOT RUN full.performance.feed_orbit_offscreen
-NOT RUN full.performance.orbit
-NOT RUN full.performance.shell_switch

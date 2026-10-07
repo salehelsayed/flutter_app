@@ -5,6 +5,9 @@ import 'package:flutter_app/debug/production_journeys/production_group_fixture_c
 import 'package:flutter_app/debug/production_journeys/production_group_invite_controls.dart';
 import 'package:flutter_app/debug/production_journeys/production_journey_controller.dart';
 import 'package:flutter_app/debug/production_journeys/sims_runtime_protocol.dart';
+import 'package:flutter_app/features/groups/domain/models/group_invite_consumption.dart';
+import 'package:flutter_app/features/groups/domain/models/group_model.dart';
+import 'package:flutter_app/features/groups/domain/models/pending_group_invite.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_invite_delivery_attempt_repository.dart';
 import '../core/bridge/fake_bridge.dart';
 import '../core/services/fake_p2p_service.dart';
@@ -149,4 +152,92 @@ void main() {
       },
     );
   }
+
+  test(
+    'catalog pending snapshot keeps reporting the consumed invitation after it leaves the pending list',
+    () async {
+      final directory = await Directory.systemTemp.createTemp(
+        'catalog-consumed-',
+      );
+      final invocation = SimsRuntimeInvocation(
+        schema: simsRuntimeConfigSchema,
+        profileId: 'android.e2e.production',
+        scenarioId: 'production.group_catalog.private_abc_create',
+        role: 'bob',
+        runId: 'run',
+        nonce: 'nonce',
+        values: {},
+      );
+      final controller = ProductionJourneyController(
+        directory: directory,
+        profileId: invocation.profileId,
+        invocation: invocation,
+      );
+      addTearDown(() async {
+        controller.dispose();
+        await directory.delete(recursive: true);
+      });
+      final pending = InMemoryPendingGroupInviteRepository();
+      bindProductionGroupCatalogInviteObservations(
+        controller: controller,
+        pendingRepository: pending,
+      );
+      controller.foregroundPush.bind((_) async {});
+      controller.markRuntimeReady();
+      await controller.start();
+      var sequence = 0;
+      Future<Map<String, Object?>> snapshot() => controller.execute({
+        'invocation': invocation.toJson(),
+        'sequence': ++sequence,
+        'operation': 'catalog_pending_snapshot',
+        'arguments': <String, Object?>{},
+      });
+      final now = DateTime.utc(2026, 10, 6);
+      PendingGroupInvite invite(String id, String group) => PendingGroupInvite(
+        groupId: group,
+        inviteId: id,
+        payloadJson: '{}',
+        groupName: productionCatalogGroupName(controller),
+        groupType: GroupType.values.first,
+        senderPeerId: 'alice',
+        senderUsername: 'Alice',
+        createdBy: 'alice',
+        createdAt: now,
+        receivedAt: now,
+        expiresAt: now.add(const Duration(days: 1)),
+      );
+      Future<void> consume(String id, String group) async {
+        await pending.deletePendingInvite(group);
+        await pending.saveConsumedInvite(
+          GroupInviteConsumption(
+            inviteId: id,
+            groupId: group,
+            consumedAt: now,
+            expiresAt: now.add(const Duration(days: 1)),
+          ),
+        );
+      }
+
+      await pending.savePendingInvite(invite('invite-1', 'group-1'));
+      final before = await snapshot();
+      expect(before['pending'], hasLength(1));
+      expect(before['consumed'], isNull);
+
+      await consume('invite-1', 'group-1');
+      for (var i = 0; i < 2; i++) {
+        final after = await snapshot();
+        expect(after['pending'], isEmpty);
+        expect(after['consumed'], isA<Map>(), reason: 'poll $i');
+        expect((after['consumed']! as Map)['invite_id'], 'invite-1');
+      }
+
+      // A re-add invitation binds afresh and replaces the reported record.
+      await pending.savePendingInvite(invite('invite-2', 'group-1'));
+      final readd = await snapshot();
+      expect(readd['pending'], hasLength(1));
+      expect(readd['consumed'], isNull);
+      await consume('invite-2', 'group-1');
+      expect(((await snapshot())['consumed']! as Map)['invite_id'], 'invite-2');
+    },
+  );
 }

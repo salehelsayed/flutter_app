@@ -1,0 +1,37 @@
+flutter artifacts -> /Volumes/CrucialX9/mac-development/flutter-3.47.2-engine-artifacts
+removed broken iPhone14,5 DeviceSupport link
+removed broken DerivedData link
+huggingface -> /Volumes/CrucialX9/mac-development/huggingface-cache
+precache start 21:22:06
+  ├─ [1/8] darwin-x64/framework                                  1,603ms
+  ├─ [2/8] darwin-x64/gen_snapshot                               1,050ms
+  ├─ [3/8] darwin-x64-profile/framework                          1,172ms
+  ├─ [4/8] darwin-x64-profile                                      363ms
+  ├─ [5/8] darwin-x64-profile/gen_snapshot                       1,031ms
+  ├─ [6/8] darwin-x64-release/framework                             4.8s
+  ├─ [7/8] darwin-x64-release                                      646ms
+  └─ [8/8] darwin-x64-release/gen_snapshot                         953ms
+[8/14] iOS USB Artifact: libimobiledevice                           50ms
+[9/14] iOS USB Artifact: libusbmuxd                                 28ms
+[10/14] iOS USB Artifact: libplist                                  30ms
+[11/14] iOS USB Artifact: openssl                                   85ms
+[12/14] iOS USB Artifact: libimobiledeviceglue                      28ms
+[13/14] iOS USB Artifact: ios-deploy                                35ms
+[14/14] darwin-arm64/font-subset                                   502ms
+precache rc=0 21:25:28
+Flutter 3.47.2 • channel stable • https://github.com/flutter/flutter.git
+Framework • revision d3b14c8769 (6 weeks ago) • 2026-08-26 16:07:51 -0700
+[
+  {
+    "name": "Pixel 6",
+    "id": "21071FDF600CSC",
+    "isSupported": true,
+    "targetPlatform": "android-arm64",
+    "emulator": false,
+    "sdk": "Android 17 (API 37)",
+    "capabilities": {
+      "hotReload": true,
+      "hotRestart": true,
+      "screenshot": true,
+      "flutterExit": tr
+end
