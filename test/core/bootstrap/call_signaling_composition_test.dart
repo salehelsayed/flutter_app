@@ -3341,6 +3341,60 @@ void main() {
   );
 
   test(
+    'failed start diagnostic names the error type without its message',
+    () async {
+      // A swallowed start failure used to leave only `outcome: failed` and
+      // the stage, so a device failure at listenerInstallation was opaque.
+      final flow = <Map<String, dynamic>>[];
+      debugSetFlowEventSink(flow.add);
+      addTearDown(() => debugSetFlowEventSink(null));
+
+      final failures = <({Object error, Map<String, dynamic> expected})>[
+        (
+          error: StateError('private listener detail'),
+          expected: <String, dynamic>{'errorType': 'StateError'},
+        ),
+        (
+          error: PlatformException(
+            code: 'call_native_unavailable',
+            message: 'private native detail',
+          ),
+          expected: <String, dynamic>{
+            'errorType': 'PlatformException',
+            'errorCode': 'call_native_unavailable',
+          },
+        ),
+      ];
+      for (final failure in failures) {
+        final composition = CallSignalingComposition(
+          featureFlags: _enabledFlags(),
+          platform: CallEndpointPlatform.android,
+          awaitReadiness: () async {},
+          buildGraph: () async =>
+              _Graph(<String>[], onStart: () async => throw failure.error),
+        );
+        await composition.start();
+
+        final details =
+            flow.lastWhere(
+                  (event) => event['event'] == 'CALL_SIGNALING_START_RESULT',
+                )['details']!
+                as Map<String, dynamic>;
+        expect(details['outcome'], 'failed');
+        expect(details['stage'], 'listenerInstallation');
+        expect(
+          details,
+          containsPair('errorType', failure.expected['errorType']),
+        );
+        expect(details['errorCode'], failure.expected['errorCode']);
+        expect(details.keys, isNot(contains('error')));
+        expect(details.values, isNot(contains(contains('private'))));
+        await composition.shutdown();
+      }
+    },
+  );
+
+  test(
     'failed resume diagnostic reports post-withdrawal graph state',
     () async {
       final flow = <Map<String, dynamic>>[];
