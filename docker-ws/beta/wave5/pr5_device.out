@@ -1,0 +1,32 @@
+start 11:05:57 0ae068a99
+NOT RUN production-group-nw003
+NOT RUN production-group-nw006
+NOT RUN production-group-nw010
+NOT RUN production-group-offline-readd
+NOT RUN production-group-offline-remove
+NOT RUN production-group-online-remove
+NOT RUN production-group-process-death
+NOT RUN production-group-rapid-readd
+NOT RUN production-group-reaction
+NOT RUN production-group-reaction-toggle
+NOT RUN production-group-readd-cycles
+NOT RUN production-group-relay-only
+NOT RUN production-group-removed-reaction
+NOT RUN production-group-up012
+NOT RUN production-group-voluntary-leave
+NOT RUN production-message-latency
+NOT RUN production-notification-open
+NOT RUN production-notification-sound
+NOT RUN production-notification-tap-latency
+NOT RUN production-private-media
+NOT RUN production-routing
+NOT RUN production-shared-xctest
+NOT RUN production-transport-census
+PASS production-startup-resume-performance
+Automated: NOT RUN; overall: BLOCKED
+Mode: change; revision: 0ae068a99847c0e0371d1bbf293c404e70aeb020
+Source: d05340b1b14ca59d7f232fbe17f57481158c25d1efd2131cb3184de287cfbc4a
+Baseline: bca7a2b5d08e0464ce5714d8588f10538cfdf99f; rules: 2f1e442cc80cdaba52327a56ae953c04b78b8da513d3d36084bc9b0f06a0776a
+Wall time: 712.450s (includes selection, discovery and setup)
+Report: /Volumes/CrucialX9/flutter_app/.claude/worktrees/wave3-next/.codex-test-logs/production-bootstrap-migration-20260930/wave3-run-20261007T110557Z/summary.txt
+end 11:17:50
