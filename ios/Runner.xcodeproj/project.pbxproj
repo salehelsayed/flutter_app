@@ -54,6 +54,8 @@
 		F10C6A2E0B4C44E2A0C0A001 /* GoBridgeCriticalTaskTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F10C6A2E0B4C44E2A0C0A002 /* GoBridgeCriticalTaskTests.swift */; };
 		F191A00173A0000000000001 /* ForegroundPushForwardPolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = F191A00173A0000000000002 /* ForegroundPushForwardPolicy.swift */; };
 		F191B00173A0000000000001 /* ForegroundPushForwardPolicyTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F191B00173A0000000000002 /* ForegroundPushForwardPolicyTests.swift */; };
+		E7D1A00173A0000000000001 /* IosNotificationOpenRouteShape.swift in Sources */ = {isa = PBXBuildFile; fileRef = E7D1A00173A0000000000002 /* IosNotificationOpenRouteShape.swift */; };
+		E7D1B00173A0000000000001 /* IosNotificationOpenRouteShapeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E7D1B00173A0000000000002 /* IosNotificationOpenRouteShapeTests.swift */; };
 		F25011010000000000000001 /* VoipPayloadParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = F25010010000000000000001 /* VoipPayloadParser.swift */; };
 		F25011020000000000000002 /* PendingNativeCallStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = F25010020000000000000002 /* PendingNativeCallStore.swift */; };
 		F25011030000000000000003 /* OpaqueCallContactResolver.swift in Sources */ = {isa = PBXBuildFile; fileRef = F25010030000000000000003 /* OpaqueCallContactResolver.swift */; };
@@ -198,6 +200,8 @@
 		F10C6A2E0B4C44E2A0C0A002 /* GoBridgeCriticalTaskTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GoBridgeCriticalTaskTests.swift; sourceTree = "<group>"; };
 		F191A00173A0000000000002 /* ForegroundPushForwardPolicy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForegroundPushForwardPolicy.swift; sourceTree = "<group>"; };
 		F191B00173A0000000000002 /* ForegroundPushForwardPolicyTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForegroundPushForwardPolicyTests.swift; sourceTree = "<group>"; };
+		E7D1A00173A0000000000002 /* IosNotificationOpenRouteShape.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IosNotificationOpenRouteShape.swift; sourceTree = "<group>"; };
+		E7D1B00173A0000000000002 /* IosNotificationOpenRouteShapeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IosNotificationOpenRouteShapeTests.swift; sourceTree = "<group>"; };
 		F25010010000000000000001 /* VoipPayloadParser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoipPayloadParser.swift; sourceTree = "<group>"; };
 		F25010020000000000000002 /* PendingNativeCallStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PendingNativeCallStore.swift; sourceTree = "<group>"; };
 		F25010030000000000000003 /* OpaqueCallContactResolver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OpaqueCallContactResolver.swift; sourceTree = "<group>"; };
@@ -336,6 +340,7 @@
 				6F73C00273A0000000000002 /* NotificationPreviewResolver.swift */,
 				6F73C00173A0000000000002 /* NotificationPreviewResolverTests.swift */,
 				F191B00173A0000000000002 /* ForegroundPushForwardPolicyTests.swift */,
+				E7D1B00173A0000000000002 /* IosNotificationOpenRouteShapeTests.swift */,
 				F10C6A2E0B4C44E2A0C0A002 /* GoBridgeCriticalTaskTests.swift */,
 				6F73A00173A0000000000002 /* NotificationServiceConfigurationTests.swift */,
 				331C807B294A618700263BE5 /* RunnerTests.swift */,
@@ -440,6 +445,7 @@
 				1498D2331E8E89220040F4C2 /* GeneratedPluginRegistrant.m */,
 				74858FAE1ED2DC5600515810 /* AppDelegate.swift */,
 				F191A00173A0000000000002 /* ForegroundPushForwardPolicy.swift */,
+				E7D1A00173A0000000000002 /* IosNotificationOpenRouteShape.swift */,
 				A1B2C3D400000001GOBRIDGE /* GoBridge.swift */,
 				74858FAD1ED2DC5600515810 /* Runner-Bridging-Header.h */,
 			);
@@ -835,6 +841,7 @@
 				E227B00173A0000000000001 /* ReceivedMediaEgressCoordinatorTests.swift in Sources */,
 				F10C6A2E0B4C44E2A0C0A001 /* GoBridgeCriticalTaskTests.swift in Sources */,
 				F191B00173A0000000000001 /* ForegroundPushForwardPolicyTests.swift in Sources */,
+				E7D1B00173A0000000000001 /* IosNotificationOpenRouteShapeTests.swift in Sources */,
 				6F73C00273A0000000000001 /* NotificationPreviewResolver.swift in Sources */,
 				6F73C00173A0000000000001 /* NotificationPreviewResolverTests.swift in Sources */,
 				6F73A00173A0000000000001 /* NotificationServiceConfigurationTests.swift in Sources */,
@@ -889,6 +896,7 @@
 				E227A00173A0000000000001 /* ReceivedMediaEgressCoordinator.swift in Sources */,
 				74858FAF1ED2DC5600515810 /* AppDelegate.swift in Sources */,
 				F191A00173A0000000000001 /* ForegroundPushForwardPolicy.swift in Sources */,
+				E7D1A00173A0000000000001 /* IosNotificationOpenRouteShape.swift in Sources */,
 				A1B2C3D400000000GOBRIDGE /* GoBridge.swift in Sources */,
 				1498D2341E8E89220040F4C2 /* GeneratedPluginRegistrant.m in Sources */,
 			);

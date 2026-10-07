@@ -364,6 +364,23 @@ authorization is genuinely required. A failed prerequisite never authorizes
 killing a foreign process, changing credentials, broadening network access, or
 weakening a test. Prior approvals apply only within their actual scope.
 
+A tapped direct-reaction notification (`message_reaction`) must route to the
+reacted conversation. On an iPhone 13 / iOS 26.5 with a 2026-10-05
+development build (APNs sandbox), every reaction push showed
+"<sender> — Reacted <emoji> to your message" within about a second. Three
+taps after the app was terminated (R2–R4) opened Orbit instead. The app logged
+no tap or route event, only UIKit's uncalled-completion warning. A tap from the
+background landed on the chat already shown, so it proves no routing. The
+payload type is inferred, because native payload logging is redacted on the
+device. Cause: the native open gate, now `IosNotificationOpenRouteShape`, had
+no `message_reaction` case. Taps were skipped as `not_route_shaped`, although
+Dart's `fromRemoteMessageData` routes the type to the conversation. The host
+test `test/core/notifications/ios_notification_open_route_shape_contract_test.dart`
+pins Swift/Dart type parity. `IosNotificationOpenRouteShapeTests` passed outside
+Xcode with Swift 6.4, and its two positive cases fail without the fix. An Xcode
+RunnerTests run and an iPhone tap rerun on a fixed build remain pending.
+Evidence: `.codex-test-logs/iphone-reaction-check-20261007/`.
+
 On the available iPhone 11 / iOS 26.5 with Xcode 27, the pinned Appium MCP
 runtime created an XCUITest session and read device information and UI elements
 with `appium:xcodeOrgId=397R9Q4WMX`, `appium:xcodeSigningId=Apple Development`,

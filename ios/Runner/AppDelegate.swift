@@ -2542,7 +2542,7 @@ final class IosSetupReadinessEntryCoordinator {
 
   private func forwardIosNotificationOpenIfNeeded(userInfo: [AnyHashable: Any]) {
     let payload = copiedNotificationUserInfo(userInfo)
-    guard isRouteShapedApnsNotificationOpenPayload(payload) else {
+    guard IosNotificationOpenRouteShape.isRouteShaped(payload) else {
       NSLog("[PUSH_DIAG] ios_notification_open_skipped reason=not_route_shaped")
       return
     }
@@ -2590,51 +2590,6 @@ final class IosSetupReadinessEntryCoordinator {
 
   private func isFlnNotificationOpenPayload(_ payload: [String: Any]) -> Bool {
     return payload["NotificationId"] != nil || payload["payload"] != nil
-  }
-
-  private func isRouteShapedApnsNotificationOpenPayload(_ payload: [String: Any]) -> Bool {
-    guard let type = trimmedString(payload["type"]) else {
-      return false
-    }
-
-    switch type {
-    case "new_message":
-      return trimmedString(payload["sender_id"]) != nil ||
-        trimmedString(payload["from"]) != nil
-    case "contact_request":
-      return trimmedString(payload["sender_id"]) != nil ||
-        trimmedString(payload["peer_id"]) != nil ||
-        trimmedString(payload["peerId"]) != nil ||
-        trimmedString(payload["from"]) != nil ||
-        trimmedString(payload["ns"]) != nil
-    case "group_message":
-      return trimmedString(payload["groupId"]) != nil
-    case "group_reaction":
-      let groupId = trimmedString(payload["groupId"])
-      let eventId = trimmedString(payload["event_id"])
-      let targetMessageId = trimmedString(payload["target_message_id"])
-      let reactorPeerId = trimmedString(payload["reactor_peer_id"])
-      return groupId != nil &&
-        eventId != nil &&
-        targetMessageId != nil &&
-        reactorPeerId != nil &&
-        trimmedString(payload["action"]) == "add"
-    case "group_invite":
-      return trimmedString(payload["groupId"]) != nil
-    case "intros":
-      return true
-    case "post_create", "post_reaction", "post_comment_reaction":
-      return trimmedString(payload["postId"]) != nil ||
-        trimmedString(payload["post_id"]) != nil
-    case "post_comment":
-      let postId = trimmedString(payload["postId"]) ??
-        trimmedString(payload["post_id"])
-      let commentId = trimmedString(payload["commentId"]) ??
-        trimmedString(payload["comment_id"])
-      return postId != nil && commentId != nil
-    default:
-      return false
-    }
   }
 
   private func trimmedString(_ value: Any?) -> String? {
