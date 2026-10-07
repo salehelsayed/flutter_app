@@ -238,6 +238,21 @@ All 40 intro-runner preservation tests, 240 workflow tests and five provider
 contracts passed. Original evidence: `friends-folded-readiness-failure-001/`.
 Full owning checks remain pending.
 
+`QRScannerScreen` reports a code and pops its route without awaiting the
+handler. `QRScannerWired` must therefore not use that route's context after
+asynchronous work. It used to, and parsing awaits `payload.verify`, so the
+handler stopped at `context.mounted` whenever the route was gone first. That
+dropped the contact, the request and the "Added to your circle!" hand-off with
+no log or UI. It also left a first-time scanner on the empty-circle screen until
+an app restart. Android emulators with animation scales of 0 (the
+`ge`-harness setup) unmount the route at once, so the loss is near-deterministic
+there. With normal animations it needs verification slower than the ~300 ms exit
+transition. The handler now uses the navigator's context.
+`qr_scanner_wired_test.dart` holds `payload.verify` until the pushed route has
+closed, and it fails without the fix. After a successful scan, two request sends
+are expected: the scanner's own, then the key-exchange retry coordinator's about
+one second later. Evidence: `.codex-test-logs/beta-test-android-20261007/`.
+
 The group multi-party integration harness must register `testWidgets` before
 awaiting platform runtime configuration; put asynchronous configuration in
 `setUpAll` and keep registration-time names independent of late runtime fields.
