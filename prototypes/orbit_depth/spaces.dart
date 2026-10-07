@@ -952,14 +952,13 @@ class _SpaceScreen extends StatelessWidget {
           k: OrbitDepthTuning.cardScale,
           alpha: 1,
           front: false,
-          onOpen: () => _openPost(context, post),
+          onOpen: () => _openThread(context, owner, target: i),
           onSpace: space == null
               ? null
               : () => _openSpace(context, owner, space),
         );
       },
-      onDive: (i) =>
-          _openPost(context, _pastPost(owner, thoughts[i], header: true)),
+      onDive: (i) => _openThread(context, owner, target: i),
       onBack: () => Navigator.of(context).maybePop(),
     );
   }

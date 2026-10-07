@@ -13,6 +13,8 @@ part 'carousel.dart';
 part 'photos.dart';
 part 'post_photos.dart';
 part 'spaces.dart';
+part 'private.dart';
+part 'thread.dart';
 
 /// Standalone visual prototype: the Orbit inner circle tilting from today's
 /// flat rings into a "depth" view where friends' thoughts appear, and a way
@@ -392,6 +394,14 @@ class OrbitDepthTuning {
 /// float on the background.
 enum OrbitPostCards { framed, universe }
 
+/// Notes bubbles over the flat orbit: a little narrower than the classic
+/// box's width times this, and never more than [_notesLines] lines.
+const double _notesWidth = 1.12;
+const int _notesLines = 2;
+
+/// The furthest a friend slides along the flat orbit to clear a bubble.
+const double _maxShift = 15 * math.pi / 180;
+
 /// Classic: a fixed-width box. Notes: hugs its text, soft fill, a thought tail
 /// of two little dots towards the friend (like Instagram Notes).
 enum OrbitBubbleStyle { classic, notes }
@@ -484,6 +494,7 @@ class _OrbitHomeState extends State<_OrbitHome> with TickerProviderStateMixin {
   @override
   void initState() {
     super.initState();
+    _seenTick.addListener(_onSeen);
     _rot.value = _snapRotation(0, 0);
   }
 
@@ -504,8 +515,14 @@ class _OrbitHomeState extends State<_OrbitHome> with TickerProviderStateMixin {
     }
   }
 
+  // A thread was read: its friend's new-thought dot goes.
+  void _onSeen() {
+    if (mounted) setState(() {});
+  }
+
   @override
   void dispose() {
+    _seenTick.removeListener(_onSeen);
     _v.dispose();
     _rot.dispose();
     _float.dispose();
@@ -687,7 +704,7 @@ class _OrbitHomeState extends State<_OrbitHome> with TickerProviderStateMixin {
     // A thought opens full screen; a friend without one gets a note saying
     // so.
     if (friend.thought != null) {
-      _openPost(context, _livePost(friend));
+      _openThread(context, friend.name);
       return;
     }
     showModalBottomSheet<void>(
@@ -1011,6 +1028,15 @@ class _OrbitStage extends StatelessWidget {
       );
     }
 
+    // Over the flat orbit, friends a bubble would cover slide a little along
+    // the ring until they are clear; the slide fades out as the orbit tilts.
+    final flatWeight = OrbitDepthTuning.bubblesWhenFlat
+        ? 1 - _interval(tc, 0.05, 0.45)
+        : 0.0;
+    final shifts = flatWeight > 0
+        ? _flatShifts(k, cx, cy, ringBase, c, tc)
+        : const <int, double>{};
+
     final seats = <_Seat>[];
     for (var i = 0; i < _friends.length; i++) {
       final f = _friends[i];
@@ -1025,7 +1051,8 @@ class _OrbitStage extends StatelessWidget {
           ) *
           k *
           lv.scale;
-      final theta = f.angleDeg * math.pi / 180 + rotation;
+      final theta =
+          f.angleDeg * math.pi / 180 + rotation + (shifts[i] ?? 0) * flatWeight;
       final d = math.sin(theta);
       final ring = Offset(
         cx + radius * math.cos(theta),
@@ -1112,6 +1139,15 @@ class _OrbitStage extends StatelessWidget {
       ),
     );
 
+    // The front friend's card (and the beam to it) when they shared a thought.
+    final cardFocus = OrbitDepthTuning.showCard
+        ? (spotlight?.friend.thought == null ? 0.0 : highlight) * (1 - duck)
+        : 0.0;
+    // Thought bubbles over the flat orbit tuck under the faces, so a face is
+    // never covered; the card and the dots stay on top.
+    final underFaces = <Widget>[];
+    final overFaces = _bubbles(seats, k, tc, spotlight, cardFocus, underFaces);
+
     final children = <Widget>[
       Positioned.fill(
         child: CustomPaint(
@@ -1136,6 +1172,8 @@ class _OrbitStage extends StatelessWidget {
         ),
       ),
     ];
+
+    children.addAll(underFaces);
 
     var youPlaced = home == null;
     void placeYou() {
@@ -1183,9 +1221,6 @@ class _OrbitStage extends StatelessWidget {
     if (!youPlaced) placeYou();
 
     // The beam from the front friend to their card.
-    final cardFocus = OrbitDepthTuning.showCard
-        ? (spotlight?.friend.thought == null ? 0.0 : highlight) * (1 - duck)
-        : 0.0;
     final beamSeat = spotlight;
     if (beamSeat != null && cardFocus > 0.01) {
       final card = _cardRect(beamSeat, cardFocus, k, tc);
@@ -1242,9 +1277,124 @@ class _OrbitStage extends StatelessWidget {
       );
     }
 
-    children.addAll(_bubbles(seats, k, tc, spotlight, cardFocus));
+    children.addAll(overFaces);
 
     return Stack(clipBehavior: Clip.none, children: children);
+  }
+
+  /// How far (radians) each friend on the flat orbit slides along the ring so
+  /// that no one else's thought bubble covers their face: a few degrees at a
+  /// time, never more than [_maxShift], and never into a neighbour.
+  Map<int, double> _flatShifts(
+    double k,
+    double cx,
+    double cy,
+    double ringBase,
+    double squash,
+    double tc,
+  ) {
+    const step = 2.5 * math.pi / 180;
+    final ids = [
+      for (var i = 0; i < _friends.length; i++)
+        if (_friends[i].layer == 0) i,
+    ];
+    if (ids.isEmpty) return const {};
+    final avatar =
+        _lerp(OrbitDepthTuning.flatAvatarSize, OrbitDepthTuning.avatarSize, tc) *
+        k;
+    final base = {
+      for (final i in ids)
+        i: _friends[i].angleDeg * math.pi / 180 + rotation,
+    };
+    final shift = {for (final i in ids) i: 0.0};
+    // Two faces may not come closer than this along the ring.
+    final minGap = 2 * math.asin(((avatar + 6 * k) / (2 * ringBase)).clamp(0, 1));
+
+    Offset at(double theta) => Offset(
+      cx + ringBase * math.cos(theta),
+      cy + ringBase * math.sin(theta) * squash,
+    );
+
+    for (var pass = 0; pass < 14; pass++) {
+      final rects = <int, Rect>{
+        for (final i in ids)
+          if (_friends[i].thought != null)
+            i: _flatBubbleRect(
+              at(base[i]! + shift[i]!),
+              avatar,
+              _friends[i].thought!,
+              math.sin(base[i]! + shift[i]!),
+              k,
+            ),
+      };
+      var moved = false;
+      for (final j in ids) {
+        final theta = base[j]! + shift[j]!;
+        final face = at(theta);
+        final reach = avatar / 2 + 3 * k;
+        for (final entry in rects.entries) {
+          if (entry.key == j) continue;
+          final r = entry.value;
+          final nearest = Offset(
+            face.dx.clamp(r.left, r.right),
+            face.dy.clamp(r.top, r.bottom),
+          );
+          if ((face - nearest).distance >= reach) continue;
+          // Slide along the ring, away from the bubble.
+          final tangent = Offset(-math.sin(theta), math.cos(theta));
+          final away = face - r.center;
+          final dir = away.dx * tangent.dx + away.dy * tangent.dy >= 0 ? 1 : -1;
+          final next = shift[j]! + dir * step;
+          if (next.abs() > _maxShift) break;
+          final crowded = ids.any((o) {
+            if (o == j) return false;
+            var gap = (base[j]! + next - base[o]! - shift[o]!).abs() %
+                (2 * math.pi);
+            if (gap > math.pi) gap = 2 * math.pi - gap;
+            return gap < minGap;
+          });
+          if (crowded) break;
+          shift[j] = next;
+          moved = true;
+          break;
+        }
+      }
+      if (!moved) break;
+    }
+    return shift;
+  }
+
+  /// Where a flat orbit's thought bubble lands for a face at [ring]: above
+  /// it, or below it for the friend at the very bottom (as [_bubbles] does).
+  Rect _flatBubbleRect(
+    Offset ring,
+    double avatar,
+    String text,
+    double depth,
+    double k,
+  ) {
+    final notes = OrbitDepthTuning.bubbleStyle == OrbitBubbleStyle.notes;
+    final font = OrbitDepthTuning.bubbleTextSize * k;
+    final width = OrbitDepthTuning.bubbleWidth * k;
+    final boxWidth = notes ? width * _notesWidth : width;
+    // Erring tall: anything beyond a short phrase is taken to fill both lines.
+    final lines = text.length > 14 ? _notesLines : 1;
+    final boxHeight = notes
+        ? lines * font * 1.25 + 16 * k + 22 * k
+        : (text.length > 16 ? 42 : 27) * k;
+    final left = (ring.dx - boxWidth / 2)
+        .clamp(6 * k, math.max(6 * k, size.width - boxWidth - 6 * k))
+        .toDouble();
+    if (_smoothstep(0.75, 0.92, depth) > 0.5) {
+      return Rect.fromLTWH(
+        left,
+        ring.dy + avatar / 2 + 8 * k,
+        boxWidth,
+        boxHeight,
+      );
+    }
+    final bottom = ring.dy - avatar / 2 - (notes ? 2 : 6) * k;
+    return Rect.fromLTWH(left, bottom - boxHeight, boxWidth, boxHeight);
   }
 
   /// Where things under an avatar start: just below the front edge of its
@@ -1290,6 +1440,7 @@ class _OrbitStage extends StatelessWidget {
     double tc,
     _Seat? spotlight,
     double cardFocus,
+    List<Widget> underFaces,
   ) {
     final candidates =
         seats
@@ -1370,7 +1521,7 @@ class _OrbitStage extends StatelessWidget {
                 opacity: (dotAlpha * near * seat.opacity).clamp(0.0, 1.0),
                 child: DecoratedBox(
                   decoration: BoxDecoration(
-                    color: seat.friend.fresh
+                    color: _isNew(seat.friend)
                         ? _accent
                         : const Color(0xFF9AA59F),
                     shape: BoxShape.circle,
@@ -1422,7 +1573,7 @@ class _OrbitStage extends StatelessWidget {
                     opacity: (focus * appear).clamp(0.0, 1.0),
                     child: DecoratedBox(
                       decoration: BoxDecoration(
-                        color: seat.friend.fresh
+                        color: _isNew(seat.friend)
                             ? _accent
                             : const Color(0xFF6B7A72),
                         shape: BoxShape.circle,
@@ -1442,12 +1593,12 @@ class _OrbitStage extends StatelessWidget {
       final width = OrbitDepthTuning.bubbleWidth * k * bubbleScale;
       // Notes bubbles are wider (so most thoughts fit on one or two lines) and
       // carry a tail of two dots; estimate their height for stacking.
-      final boxWidth = notes ? width * 1.35 : width;
+      final boxWidth = notes ? width * _notesWidth : width;
       final tail = notes ? 22 * k * bubbleScale : 0.0;
       final lines = notes
           ? ((text.length * font * 0.55) / (boxWidth - 26 * k * bubbleScale))
                 .ceil()
-                .clamp(1, 3)
+                .clamp(1, _notesLines)
           : 0;
       final boxHeight = notes
           ? lines * font * 1.25 + 16 * k * bubbleScale + tail
@@ -1478,8 +1629,9 @@ class _OrbitStage extends StatelessWidget {
 
       Widget bubble(double alpha, {required bool growFromTop}) =>
           _ThoughtBubble(
+            name: seat.friend.name,
             text: text,
-            fresh: seat.friend.fresh,
+            fresh: _isNew(seat.friend),
             hue: seat.friend.hue.color,
             k: k * bubbleScale,
             appear: alpha,
@@ -1493,7 +1645,7 @@ class _OrbitStage extends StatelessWidget {
           takenAbove,
           down: false,
         );
-        widgets.add(
+        (tc < 0.5 ? underFaces : widgets).add(
           Positioned(
             left: left,
             bottom: size.height - rect.bottom,
@@ -1513,7 +1665,7 @@ class _OrbitStage extends StatelessWidget {
           takenBelow,
           down: true,
         );
-        widgets.add(
+        (tc < 0.5 ? underFaces : widgets).add(
           Positioned(
             left: left,
             top: rect.top,
@@ -1750,7 +1902,10 @@ class _YouAvatar extends StatelessWidget {
 }
 
 class _ThoughtBubble extends StatelessWidget {
+  final String name;
   final String text;
+
+  /// New since you last opened this friend's thread.
   final bool fresh;
 
   /// The friend's colour, for the Notes tint.
@@ -1761,6 +1916,7 @@ class _ThoughtBubble extends StatelessWidget {
   final VoidCallback onTap;
 
   const _ThoughtBubble({
+    required this.name,
     required this.text,
     required this.fresh,
     required this.hue,
@@ -1849,7 +2005,7 @@ class _ThoughtBubble extends StatelessWidget {
           child: Text(
             text,
             textAlign: TextAlign.center,
-            maxLines: 3,
+            maxLines: _notesLines,
             overflow: TextOverflow.ellipsis,
             style: TextStyle(
               color: _chat.textPrimary,
@@ -1862,6 +2018,7 @@ class _ThoughtBubble extends StatelessWidget {
         ),
         if (fresh && OrbitDepthTuning.unreadDot)
           Positioned(
+            key: ValueKey('new-thought-$name'),
             top: -2 * k,
             right: -2 * k,
             child: Container(
@@ -2255,8 +2412,7 @@ class _PostStackState extends State<_PostStack>
         expand: expand,
         k: widget.k,
         alpha: widget.alpha,
-        onOpen: () => _openPost(context, post),
-        onWorld: widget.onWorld,
+        onOpen: () => _openThread(context, name, target: i),
         onSpace: space == null ? null : () => _openSpace(context, name, space),
       );
     }
@@ -2272,8 +2428,7 @@ class _PostStackState extends State<_PostStack>
         expand: expand,
         k: widget.k,
         alpha: widget.alpha,
-        onOpen: () => _openPost(context, _livePost(widget.friend)),
-        onWorld: widget.onWorld,
+        onOpen: () => _openThread(context, name),
       );
     }
     if (i == 0 && expand >= 0.5) {
@@ -2284,7 +2439,6 @@ class _PostStackState extends State<_PostStack>
         expand: expand,
         k: widget.k,
         alpha: widget.alpha,
-        onWorld: widget.onWorld,
       );
     }
     return _thoughtCard(i, expand: expand);
@@ -2304,9 +2458,12 @@ class _PostStackState extends State<_PostStack>
 
   @override
   Widget build(BuildContext context) {
+    // On the sky the post only shows the latest thought: every swipe over it
+    // belongs to the orbit, and older posts wait in the thread.
+    final universe = OrbitDepthTuning.postCards == OrbitPostCards.universe;
     return GestureDetector(
-      onVerticalDragUpdate: _onUpdate,
-      onVerticalDragEnd: _onEnd,
+      onVerticalDragUpdate: universe ? null : _onUpdate,
+      onVerticalDragEnd: universe ? null : _onEnd,
       child: AnimatedBuilder(
         animation: _drag,
         builder: (context, _) {
@@ -2388,7 +2545,9 @@ class _PostStackState extends State<_PostStack>
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               Stack(clipBehavior: Clip.none, children: layers),
-              if (remaining > 0 && open > 0)
+              if (remaining > 0 &&
+                  open > 0 &&
+                  OrbitDepthTuning.postCards == OrbitPostCards.framed)
                 Padding(
                   padding: EdgeInsets.only(top: peek * 2 + 10 * k),
                   child: Opacity(

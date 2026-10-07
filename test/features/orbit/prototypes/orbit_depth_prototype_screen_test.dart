@@ -66,6 +66,68 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('over the flat orbit no thought covers someone else’s face', (
+    tester,
+  ) async {
+    const thoughts = {
+      'layla': 'weekend up north. still can’t feel my legs',
+      'omar': 'exam at 9. wish me luck',
+      'tarek': 'who has a drill I can borrow?',
+      'nour': 'airport at 6. taxi anyone?',
+      'sara': 'we adopted her! meet luna',
+    };
+    const everyone = [
+      'omar',
+      'yousef',
+      'tarek',
+      'nour',
+      'layla',
+      'sara',
+      'karim',
+    ];
+    // The phone's bubbles: Notes, two lines at most.
+    OrbitDepthTuning.bubbleStyle = OrbitBubbleStyle.notes;
+    addTearDown(() => OrbitDepthTuning.bubbleStyle = OrbitBubbleStyle.classic);
+    await pumpPrototype(tester);
+    await settle(tester);
+    for (final MapEntry(key: owner, value: text) in thoughts.entries) {
+      final words = tester.getRect(find.text(text));
+      for (final name in everyone) {
+        if (name == owner) continue;
+        final face = tester.getRect(find.byKey(ValueKey('avatar-$name')));
+        expect(
+          words.overlaps(face.deflate(4)),
+          isFalse,
+          reason: "$owner's thought covers $name",
+        );
+      }
+    }
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('a new thought’s dot goes once you read the thread', (
+    tester,
+  ) async {
+    // The phone's bubbles: Notes, with the dot on new thoughts.
+    OrbitDepthTuning.bubbleStyle = OrbitBubbleStyle.notes;
+    addTearDown(() => OrbitDepthTuning.bubbleStyle = OrbitBubbleStyle.classic);
+    await pumpPrototype(tester);
+    await settle(tester);
+    expect(find.byKey(const ValueKey('new-thought-nour')), findsOneWidget);
+    expect(find.byKey(const ValueKey('new-thought-omar')), findsOneWidget);
+    // sara's thought is not new.
+    expect(find.byKey(const ValueKey('new-thought-sara')), findsNothing);
+
+    await tester.tap(find.text('airport at 6. taxi anyone?'));
+    await settle(tester);
+    expect(find.byKey(const ValueKey('thread-screen')), findsOneWidget);
+    await tester.tap(find.byTooltip('Close thread'));
+    await settle(tester);
+    expect(find.byKey(const ValueKey('new-thought-nour')), findsNothing);
+    expect(find.byKey(const ValueKey('new-thought-omar')), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('bubbles over the flat orbit, dots once tilted', (tester) async {
     const thoughts = {
       'layla': 'weekend up north. still can’t feel my legs',
@@ -120,7 +182,9 @@ void main() {
     await pumpPrototype(tester);
     await swipe(tester, const Offset(0, -200));
     expect(find.text(nourMore), findsOneWidget);
-    expect(find.textContaining('3 replies'), findsOneWidget);
+    // The card carries the words only; counts wait for the full post.
+    expect(find.textContaining('3 replies'), findsNothing);
+    expect(find.text("nour's world ›"), findsNothing);
 
     // A slow drag of one seat lands the next friend at the front; nour's
     // card folds back into a bubble.
@@ -159,22 +223,14 @@ void main() {
     expect(find.text('who has a drill I can borrow?'), findsOneWidget);
     expect(find.text(lastLine), findsNothing);
 
-    // Show more opens the whole post full screen.
+    // Show more opens tarek's thread, where the whole post is.
     await tester.tap(find.text('Show more'));
     await settle(tester);
-    expect(find.byKey(const ValueKey('post-screen')), findsOneWidget);
-    await tester.scrollUntilVisible(
-      find.text(lastLine),
-      120,
-      scrollable: find.descendant(
-        of: find.byKey(const ValueKey('post-screen')),
-        matching: find.byType(Scrollable),
-      ),
-    );
+    expect(find.byKey(const ValueKey('thread-screen')), findsOneWidget);
     expect(find.text(lastLine), findsOneWidget);
-    await tester.tap(find.byTooltip('Close post'));
+    await tester.tap(find.byTooltip('Close thread'));
     await settle(tester);
-    expect(find.byKey(const ValueKey('post-screen')), findsNothing);
+    expect(find.byKey(const ValueKey('thread-screen')), findsNothing);
     expect(find.byKey(const ValueKey('text-post-tarek')), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
@@ -198,10 +254,18 @@ void main() {
       find.text('I land at 5:40 and can share the fare into the city.'),
       findsOneWidget,
     );
+    // Only the latest post shows: nothing counts the older ones.
+    expect(find.textContaining('swipe up'), findsNothing);
+    expect(find.textContaining('more from nour'), findsNothing);
+
+    // A swipe that starts on the post still moves the orbit.
+    await tester.flingFrom(tester.getCenter(card), const Offset(0, -200), 1500);
+    await settle(tester);
+    expect(middleHint, findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('in the universe look photos float under the words', (
+  testWidgets('in the universe look photos show as one cover', (
     tester,
   ) async {
     OrbitDepthTuning.postCards = OrbitPostCards.universe;
@@ -218,54 +282,115 @@ void main() {
     await gesture.up();
     await settle(tester);
 
-    final media = find.byKey(const ValueKey('universe-media-layla'));
-    expect(media, findsOneWidget);
+    final cover = find.byKey(const ValueKey('universe-media-layla'));
+    expect(cover, findsOneWidget);
+    expect(find.text('+5'), findsOneWidget);
     expect(find.byKey(const ValueKey('carousel-layla')), findsNothing);
     expect(
       find.text('weekend up north. still can’t feel my legs'),
       findsOneWidget,
     );
-    expect(find.text('Reply to photo 1…'), findsOneWidget);
+    expect(find.text('Reply to layla’s post…'), findsOneWidget);
 
-    // Swiping the photos re-aims the dock, as the framed carousel does.
-    await tester.flingFrom(
-      tester.getCenter(media),
-      const Offset(-200, 0),
-      800,
-    );
+    // Sideways over the cover turns the orbit, not the photos.
+    await tester.flingFrom(tester.getCenter(cover), const Offset(-200, 0), 800);
     await settle(tester);
-    expect(find.text('Reply to photo 2…'), findsOneWidget);
-
-    // Back to the first photo: the prototype remembers each friend's slide
-    // for the whole run, and later tests start layla on photo 1.
-    await tester.flingFrom(
-      tester.getCenter(media),
-      const Offset(200, 0),
-      800,
-    );
-    await settle(tester);
-    expect(find.text('Reply to photo 1…'), findsOneWidget);
+    expect(find.byKey(const ValueKey('universe-media-layla')), findsNothing);
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('tapping a post card opens it full screen to reply', (
+  testWidgets('photos are big in the thread and open full screen', (
+    tester,
+  ) async {
+    OrbitDepthTuning.postCards = OrbitPostCards.universe;
+    addTearDown(() => OrbitDepthTuning.postCards = OrbitPostCards.framed);
+    await pumpPrototype(tester);
+    await swipe(tester, const Offset(0, -200));
+    // One seat the other way brings layla and her six photos to the front.
+    final gesture = await tester.startGesture(const Offset(195, 300));
+    for (var i = 0; i < 14; i++) {
+      await gesture.moveBy(const Offset(5, 0));
+      await tester.pump(const Duration(milliseconds: 16));
+    }
+    await tester.pump(const Duration(milliseconds: 300));
+    await gesture.up();
+    await settle(tester);
+
+    await tester.tap(find.byKey(const ValueKey('universe-media-layla')));
+    await settle(tester);
+    final gallery = find.byKey(const ValueKey('thread-gallery'));
+    expect(gallery, findsOneWidget);
+    expect(find.text('1/6'), findsOneWidget);
+    // Tall: most of the way to a 4:5 frame.
+    expect(tester.getSize(gallery).height, greaterThan(300));
+
+    await tester.tap(gallery);
+    await settle(tester);
+    expect(find.byKey(const ValueKey('photo-viewer')), findsOneWidget);
+    expect(find.text('1 / 6'), findsOneWidget);
+    await tester.fling(
+      find.byKey(const ValueKey('photo-viewer')),
+      const Offset(-300, 0),
+      1000,
+    );
+    await settle(tester);
+    expect(find.text('2 / 6'), findsOneWidget);
+    await tester.tap(find.byTooltip('Close photo'));
+    await settle(tester);
+    expect(find.byKey(const ValueKey('photo-viewer')), findsNothing);
+    expect(find.byKey(const ValueKey('thread-screen')), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('a tap opens the thread; the reply follows the chosen post', (
     tester,
   ) async {
     await pumpPrototype(tester);
     await swipe(tester, const Offset(0, -200));
-    await tester.tap(find.text('I land at 5:40 and can share the fare into the city.'));
+    await tester.tap(
+      find.text('I land at 5:40 and can share the fare into the city.'),
+    );
     await settle(tester);
-    expect(find.byKey(const ValueKey('post-screen')), findsOneWidget);
-    // Full screen names who wrote it, since the orbit is out of sight.
+    expect(find.byKey(const ValueKey('thread-screen')), findsOneWidget);
     expect(find.text('20 min ago'), findsOneWidget);
+    expect(find.textContaining('replies'), findsNothing);
+    // The newest post sits by the field and is the one a reply goes to.
+    expect(find.text('Reply to “airport at 6. taxi anyone?”'), findsOneWidget);
 
-    await tester.enterText(find.byType(TextField).last, 'I can share!');
+    // Tapping the older post makes it the target instead.
+    await tester.tap(find.text('wadjda tonight, anyone?'));
+    await tester.pump();
+    expect(find.text('Reply to “wadjda tonight, anyone?”'), findsOneWidget);
+
+    // Typing quotes the target; sending lands the reply under it.
+    await tester.enterText(find.byType(TextField).last, 'count me in');
+    await tester.pump();
+    expect(find.text('Replying to nour'), findsOneWidget);
     await tester.tap(find.byTooltip('Send reply'));
     await tester.pump();
-    expect(find.text('I can share!'), findsOneWidget);
-    await tester.tap(find.byTooltip('Close post'));
+    expect(find.text('Replying to nour'), findsNothing);
+    // Replies are private: the post shows only a link to your chat with nour.
+    expect(find.text('count me in'), findsNothing);
+    expect(find.text('1 message with nour  ›'), findsOneWidget);
+
+    // A tap on empty sky puts the keyboard away.
+    expect(tester.testTextInput.isVisible, isTrue);
+    await tester.tapAt(const Offset(360, 28));
+    await tester.pump();
+    expect(tester.testTextInput.isVisible, isFalse);
+
+    await tester.tap(find.text('1 message with nour  ›'));
     await settle(tester);
-    expect(find.byKey(const ValueKey('post-screen')), findsNothing);
+    expect(find.byKey(const ValueKey('private-chat')), findsOneWidget);
+    expect(find.text('Only you and nour see this'), findsOneWidget);
+    expect(find.text('count me in'), findsOneWidget);
+    await tester.tapAt(const Offset(200, 60));
+    await settle(tester);
+    expect(find.byKey(const ValueKey('private-chat')), findsNothing);
+
+    await tester.tap(find.byTooltip('Close thread'));
+    await settle(tester);
+    expect(find.byKey(const ValueKey('thread-screen')), findsNothing);
     expect(tester.takeException(), isNull);
   });
 
@@ -283,7 +408,7 @@ void main() {
       await gesture.up();
       await settle(tester);
     }
-    expect(find.textContaining('35 min ago'), findsOneWidget);
+    expect(find.byKey(const ValueKey('carousel-omar')), findsOneWidget);
     await tester.tap(find.byTooltip('Play voice note'));
     await tester.pump();
     await tester.pump(const Duration(seconds: 2));
@@ -379,6 +504,34 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('your own post shows who reacted and who wrote to you', (
+    tester,
+  ) async {
+    await pumpPrototype(tester);
+    await swipe(tester, const Offset(0, -200));
+    await tester.tap(find.bySemanticsLabel('You'));
+    await settle(tester);
+    await tester.tap(find.text('Dive in'));
+    await settle(tester);
+    await tester.tap(find.text('ran 5k in 28:55. slowly getting there'));
+    await settle(tester);
+    expect(find.byKey(const ValueKey('thread-screen')), findsOneWidget);
+    // Friends write to you; your own thread takes no reply field.
+    expect(find.byTooltip('Send reply'), findsNothing);
+
+    await tester.tap(find.text('😍 👏 🔥  10  ·  3 replies  ›'));
+    await settle(tester);
+    expect(find.byKey(const ValueKey('post-activity')), findsOneWidget);
+    expect(find.text('Replies · each one is a private chat'), findsOneWidget);
+    expect(find.text('that pace is great. sunday run?'), findsOneWidget);
+
+    await tester.tap(find.text('that pace is great. sunday run?'));
+    await settle(tester);
+    expect(find.byKey(const ValueKey('private-chat')), findsOneWidget);
+    expect(find.text('Only you and omar see this'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('your own world has a new-space tile', (tester) async {
     await pumpPrototype(tester);
     await swipe(tester, const Offset(0, -200));
@@ -395,8 +548,8 @@ void main() {
     await pumpPrototype(tester);
     await swipe(tester, const Offset(0, -200));
 
-    // The front thought card links to nour's world.
-    await tester.tap(find.text("nour's world ›"));
+    // Tapping nour's photo dives into her world.
+    await tester.tap(find.byKey(const ValueKey('avatar-nour')));
     await settle(tester);
     expect(find.text("nour's world"), findsOneWidget);
     expect(find.text('Thoughts · 2, newest 20 min ago'), findsOneWidget);

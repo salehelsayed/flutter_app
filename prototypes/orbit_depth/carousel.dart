@@ -121,7 +121,6 @@ class _CarouselCard extends StatefulWidget {
   final double expand;
   final double k;
   final double alpha;
-  final VoidCallback onWorld;
 
   const _CarouselCard({
     super.key,
@@ -130,7 +129,6 @@ class _CarouselCard extends StatefulWidget {
     required this.expand,
     required this.k,
     required this.alpha,
-    required this.onWorld,
   });
 
   @override
@@ -176,7 +174,6 @@ class _CarouselCardState extends State<_CarouselCard> {
     final u = widget.k / OrbitDepthTuning.cardScale;
     final t = _interval(widget.expand, 0.5, 1);
     final height = math.min(widget.maxHeight, 330 * u);
-    final d = _detailFor(friend);
     final slide = _list[_index];
     final many = _list.length > 1;
     final sent = _sent['${friend.name}#$_index'] ?? const [];
@@ -290,37 +287,6 @@ class _CarouselCardState extends State<_CarouselCard> {
                             ),
                           ),
                         ),
-                      SizedBox(height: 6 * u),
-                      Row(
-                        children: [
-                          Expanded(
-                            child: Text(
-                              '${d.age} ago · ❤ ${d.comments * 2 + 3}'
-                              ' · ${d.comments == 1 ? '1 reply' : '${d.comments} replies'}',
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: TextStyle(
-                                color: Colors.white.withValues(alpha: 0.8),
-                                fontSize: 12.5 * u,
-                              ),
-                            ),
-                          ),
-                          GestureDetector(
-                            onTap: widget.onWorld,
-                            child: Padding(
-                              padding: EdgeInsets.symmetric(vertical: 4 * u),
-                              child: Text(
-                                "${friend.name}'s world ›",
-                                style: TextStyle(
-                                  color: Colors.white,
-                                  fontSize: 12.5 * u,
-                                  fontWeight: FontWeight.w600,
-                                ),
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
                     ],
                   ),
                 ),
@@ -414,33 +380,6 @@ _Post _pastPost(String owner, _PastThought thought, {bool header = false}) {
   );
 }
 
-/// Opens [post] full screen.
-void _openPost(BuildContext context, _Post post) {
-  Navigator.of(context).push(
-    PageRouteBuilder<void>(
-      transitionDuration: const Duration(milliseconds: 260),
-      reverseTransitionDuration: const Duration(milliseconds: 200),
-      pageBuilder: (context, animation, _) => _PostScreen(post: post),
-      transitionsBuilder: (context, animation, _, child) {
-        final curved = CurvedAnimation(
-          parent: animation,
-          curve: Curves.easeOutCubic,
-        );
-        return FadeTransition(
-          opacity: curved,
-          child: SlideTransition(
-            position: Tween(
-              begin: const Offset(0, 0.04),
-              end: Offset.zero,
-            ).animate(curved),
-            child: child,
-          ),
-        );
-      },
-    ),
-  );
-}
-
 const _postFill = Color(0xFF0B0D0E);
 
 /// A post laid out like one on X. On the orbit the friend's photo and name
@@ -463,9 +402,6 @@ class _PostCard extends StatelessWidget {
   final double alpha;
   final VoidCallback onOpen;
 
-  /// The link to the friend's world; null where the card already is there.
-  final VoidCallback? onWorld;
-
   /// Opens the Space the post came from, if it came from one.
   final VoidCallback? onSpace;
 
@@ -480,7 +416,6 @@ class _PostCard extends StatelessWidget {
     required this.k,
     required this.alpha,
     required this.onOpen,
-    this.onWorld,
     this.onSpace,
     this.front = true,
   });
@@ -572,12 +507,7 @@ class _PostCard extends StatelessWidget {
                       ),
                     ),
                   ),
-                  _PostActions(
-                    post: post,
-                    u: u,
-                    shadows: _shadows,
-                    onWorld: onWorld,
-                  ),
+                  SizedBox(height: 8 * u),
                 ],
               ),
             ),
@@ -694,128 +624,6 @@ class _PostCard extends StatelessWidget {
     );
   }
 
-}
-
-/// The row under a post: replies, likes, its age (or what you sent), and
-/// the link to the friend's world.
-class _PostActions extends StatelessWidget {
-  final _Post post;
-  final double u;
-  final List<Shadow>? shadows;
-  final VoidCallback? onWorld;
-
-  /// Overrides [_Post.sentKey], for a carousel aimed at one of its slides.
-  final String? sentKey;
-
-  const _PostActions({
-    required this.post,
-    required this.u,
-    this.shadows,
-    this.onWorld,
-    this.sentKey,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final muted = TextStyle(
-      color: _muted,
-      fontSize: 13 * u,
-      shadows: shadows,
-    );
-    final world = onWorld;
-    final key = sentKey ?? post.sentKey;
-    return Padding(
-      padding: EdgeInsets.only(top: 6 * u),
-      child: Row(
-        children: [
-          // Counts shrink before the world link does.
-          Expanded(
-            child: FittedBox(
-              fit: BoxFit.scaleDown,
-              alignment: Alignment.centerLeft,
-              child: ValueListenableBuilder<int>(
-                valueListenable: _slideTick,
-                builder: (context, tick, child) {
-                  final sent = key == null
-                      ? const <String>[]
-                      : _sent[key] ?? const <String>[];
-                  return Row(
-                    children: [
-                      _PostCount(
-                        icon: Icons.chat_bubble_outline,
-                        label: post.comments == 1
-                            ? '1 reply'
-                            : '${post.comments} replies',
-                        style: muted,
-                        u: u,
-                      ),
-                      SizedBox(width: 16 * u),
-                      _PostCount(
-                        icon: Icons.favorite_border,
-                        label: '${post.likes}',
-                        style: muted,
-                        u: u,
-                      ),
-                      if (sent.isNotEmpty || post.header == null) ...[
-                        SizedBox(width: 16 * u),
-                        Text(
-                          sent.isEmpty ? post.age : 'you: ${sent.join(' ')}',
-                          style: muted,
-                        ),
-                      ],
-                    ],
-                  );
-                },
-              ),
-            ),
-          ),
-          if (world != null) ...[
-            SizedBox(width: 10 * u),
-            GestureDetector(
-              onTap: world,
-              child: Padding(
-                padding: EdgeInsets.symmetric(vertical: 10 * u),
-                child: Text(
-                  "${post.owner}'s world ›",
-                  style: TextStyle(
-                    color: _chatSecondary,
-                    fontSize: 12.5 * u,
-                    fontWeight: FontWeight.w600,
-                    shadows: shadows,
-                  ),
-                ),
-              ),
-            ),
-          ] else
-            SizedBox(height: 36 * u),
-        ],
-      ),
-    );
-  }
-}
-
-class _PostCount extends StatelessWidget {
-  final IconData icon;
-  final String label;
-  final TextStyle style;
-  final double u;
-
-  const _PostCount({
-    required this.icon,
-    required this.label,
-    required this.style,
-    required this.u,
-  });
-
-  @override
-  Widget build(BuildContext context) => Row(
-    mainAxisSize: MainAxisSize.min,
-    children: [
-      Icon(icon, size: 16 * u, color: _muted),
-      SizedBox(width: 5 * u),
-      Text(label, style: style),
-    ],
-  );
 }
 
 /// A voice note, photo or video attached to a post.
@@ -951,7 +759,6 @@ class _UniverseMediaCard extends StatefulWidget {
   final double k;
   final double alpha;
   final VoidCallback onOpen;
-  final VoidCallback onWorld;
 
   const _UniverseMediaCard({
     super.key,
@@ -961,7 +768,6 @@ class _UniverseMediaCard extends StatefulWidget {
     required this.k,
     required this.alpha,
     required this.onOpen,
-    required this.onWorld,
   });
 
   @override
@@ -978,25 +784,6 @@ class _UniverseMediaCardState extends State<_UniverseMediaCard> {
     for (var i = 0; i < _all.length; i++)
       if (_all[i].kind != _SlideKind.text) i,
   ];
-  late int _page = math.max(
-    0,
-    _media.indexOf(_slideAt[widget.friend.name] ?? _media.first),
-  );
-  late final PageController _pages = PageController(initialPage: _page);
-
-  @override
-  void dispose() {
-    _pages.dispose();
-    super.dispose();
-  }
-
-  void _onPage(int page) {
-    HapticFeedback.selectionClick();
-    setState(() => _page = page);
-    _slideAt[widget.friend.name] = _media[page];
-    _slideTick.value++;
-  }
-
   @override
   Widget build(BuildContext context) {
     final friend = widget.friend;
@@ -1033,15 +820,14 @@ class _UniverseMediaCardState extends State<_UniverseMediaCard> {
               final wordsHeight = painter.height;
               final cut = painter.didExceedMaxLines;
               painter.dispose();
-              // The media takes what the words, dots and actions leave.
+              // The cover takes what the words leave.
               final mediaHeight =
                   (widget.maxHeight -
                           15 * u -
                           wordsHeight -
                           (cut ? 26 * u : 0) -
                           12 * u -
-                          (_media.length > 1 ? 18 * u : 0) -
-                          44 * u)
+                          8 * u)
                       .clamp(120 * u, 320 * u);
               return SingleChildScrollView(
                 physics: const NeverScrollableScrollPhysics(),
@@ -1080,59 +866,67 @@ class _UniverseMediaCardState extends State<_UniverseMediaCard> {
                         ),
                       ),
                       SizedBox(height: 12 * u),
-                      SizedBox(
-                        height: mediaHeight,
-                        child: ClipRRect(
-                          borderRadius: BorderRadius.circular(18 * u),
-                          child: PageView.builder(
-                            key: ValueKey('universe-media-${friend.name}'),
-                            controller: _pages,
-                            itemCount: _media.length,
-                            onPageChanged: _onPage,
-                            itemBuilder: (context, page) => _slide(
-                              _all[_media[page]],
-                              u,
-                              active: page == _page && widget.expand > 0.9,
-                            ),
-                          ),
-                        ),
-                      ),
-                      if (_media.length > 1)
-                        Padding(
-                          padding: EdgeInsets.only(top: 9 * u),
-                          child: Row(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              for (var p = 0; p < _media.length; p++)
-                                Container(
-                                  width: (p == _page ? 7 : 6) * u,
-                                  height: (p == _page ? 7 : 6) * u,
-                                  margin: EdgeInsets.symmetric(
-                                    horizontal: 2.5 * u,
-                                  ),
-                                  decoration: BoxDecoration(
-                                    shape: BoxShape.circle,
-                                    color: p == _page
-                                        ? _ink
-                                        : _ink.withValues(alpha: 0.35),
-                                  ),
-                                ),
-                            ],
-                          ),
-                        ),
-                      _PostActions(
-                        post: _livePost(friend),
-                        u: u,
-                        shadows: _PostCard._lift,
-                        onWorld: widget.onWorld,
-                        sentKey: '${friend.name}#${_media[_page]}',
-                      ),
+                      SizedBox(height: mediaHeight, child: _cover(u)),
                     ],
                   ),
                 ),
               );
             },
           ),
+        ),
+      ),
+    );
+  }
+
+  /// The first photo or video as a still cover, with how many more there
+  /// are; a voice note stays playable. Nothing here swipes: sideways is the
+  /// orbit's, and the thread holds the rest.
+  Widget _cover(double u) {
+    final first = _all[_media.first];
+    final extra = _media.length - 1;
+    if (first.kind == _SlideKind.voice) {
+      return _slide(first, u, active: widget.expand > 0.9);
+    }
+    return GestureDetector(
+      key: ValueKey('universe-media-${widget.friend.name}'),
+      onTap: widget.onOpen,
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(18 * u),
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            Image(
+              image: _photo(first.photo!),
+              fit: BoxFit.cover,
+              gaplessPlayback: true,
+            ),
+            if (first.kind == _SlideKind.video)
+              Center(
+                child: Container(
+                  width: 52 * u,
+                  height: 52 * u,
+                  decoration: BoxDecoration(
+                    color: Colors.black.withValues(alpha: 0.45),
+                    shape: BoxShape.circle,
+                    border: Border.all(
+                      color: Colors.white.withValues(alpha: 0.75),
+                      width: 1.5,
+                    ),
+                  ),
+                  child: Icon(
+                    Icons.play_arrow_rounded,
+                    color: Colors.white,
+                    size: 32 * u,
+                  ),
+                ),
+              ),
+            if (extra > 0)
+              Positioned(
+                right: 10 * u,
+                bottom: 10 * u,
+                child: _Pill(text: '+$extra', k: u),
+              ),
+          ],
         ),
       ),
     );
@@ -1188,234 +982,6 @@ class _UniverseMediaCardState extends State<_UniverseMediaCard> {
       case _SlideKind.text:
         return const SizedBox.shrink();
     }
-  }
-}
-
-/// A post opened full screen: who wrote it, all of its words and
-/// attachments, and a place to reply.
-class _PostScreen extends StatefulWidget {
-  final _Post post;
-
-  const _PostScreen({required this.post});
-
-  @override
-  State<_PostScreen> createState() => _PostScreenState();
-}
-
-class _PostScreenState extends State<_PostScreen> {
-  final List<String> _replies = [];
-  final TextEditingController _field = TextEditingController();
-
-  @override
-  void dispose() {
-    _field.dispose();
-    super.dispose();
-  }
-
-  void _send() {
-    final text = _field.text.trim();
-    if (text.isEmpty) return;
-    setState(() {
-      _replies.add(text);
-      _field.clear();
-    });
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final post = widget.post;
-    final space = post.space;
-    const body = TextStyle(color: _ink, fontSize: 18, height: 1.42);
-    final sent = post.sentKey == null
-        ? const <String>[]
-        : _sent[post.sentKey] ?? const <String>[];
-    return Scaffold(
-      backgroundColor: _ground,
-      body: SafeArea(
-        // The reply bar runs under the home indicator itself.
-        bottom: false,
-        child: Column(
-          children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(4, 4, 16, 0),
-              child: Row(
-                children: [
-                  IconButton(
-                    tooltip: 'Close post',
-                    icon: const Icon(Icons.arrow_back, color: _ink),
-                    onPressed: () => Navigator.of(context).maybePop(),
-                  ),
-                  const Text(
-                    'Post',
-                    style: TextStyle(
-                      color: _ink,
-                      fontSize: 17,
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            Expanded(
-              child: ListView(
-                key: const ValueKey('post-screen'),
-                padding: const EdgeInsets.fromLTRB(20, 12, 20, 24),
-                children: [
-                  Row(
-                    children: [
-                      _personPhoto(post.owner, 44),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              post.owner,
-                              style: const TextStyle(
-                                color: _ink,
-                                fontSize: 16,
-                                fontWeight: FontWeight.w700,
-                              ),
-                            ),
-                            Text(
-                              '${post.age} ago',
-                              style: const TextStyle(
-                                color: _muted,
-                                fontSize: 13,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 16),
-                  for (var i = 0; i < post.paragraphs.length; i++)
-                    Padding(
-                      padding: EdgeInsets.only(top: i == 0 ? 0 : 14),
-                      child: Text(post.paragraphs[i], style: body),
-                    ),
-                  for (final slide in post.attachments)
-                    Padding(
-                      padding: const EdgeInsets.only(top: 14),
-                      child: _PostAttachment(
-                        slide: slide,
-                        u: 1,
-                        active: true,
-                        photoHeight: 280,
-                      ),
-                    ),
-                  if (space != null)
-                    Padding(
-                      padding: const EdgeInsets.only(top: 14),
-                      child: Align(
-                        alignment: Alignment.centerLeft,
-                        child: _SpaceChip(
-                          space: space,
-                          u: 1,
-                          onTap: () => _openSpace(context, post.owner, space),
-                        ),
-                      ),
-                    ),
-                  const SizedBox(height: 16),
-                  Divider(color: _chat.border, height: 1),
-                  Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 12),
-                    child: Text(
-                      '${post.comments == 1 ? '1 reply' : '${post.comments} replies'}'
-                      '  ·  ${post.likes} likes',
-                      style: const TextStyle(color: _muted, fontSize: 14),
-                    ),
-                  ),
-                  Divider(color: _chat.border, height: 1),
-                  for (final reply in [...sent, ..._replies])
-                    Padding(
-                      padding: const EdgeInsets.only(top: 14),
-                      child: Row(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          _personPhoto('you', 32),
-                          const SizedBox(width: 10),
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                const Text(
-                                  'you',
-                                  style: TextStyle(
-                                    color: _ink,
-                                    fontSize: 14,
-                                    fontWeight: FontWeight.w700,
-                                  ),
-                                ),
-                                const SizedBox(height: 2),
-                                Text(
-                                  reply,
-                                  style: const TextStyle(
-                                    color: _ink,
-                                    fontSize: 15,
-                                    height: 1.35,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                ],
-              ),
-            ),
-            Container(
-              padding: EdgeInsets.fromLTRB(
-                12,
-                8,
-                8,
-                MediaQuery.viewInsetsOf(context).bottom > 0
-                    ? 8
-                    : 8 + MediaQuery.paddingOf(context).bottom,
-              ),
-              decoration: BoxDecoration(
-                color: _sheet,
-                border: Border(top: BorderSide(color: _chat.border)),
-              ),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: TextField(
-                      controller: _field,
-                      style: const TextStyle(color: _ink),
-                      textInputAction: TextInputAction.send,
-                      onSubmitted: (_) => _send(),
-                      decoration: InputDecoration(
-                        hintText: 'Reply to ${post.owner}…',
-                        hintStyle: const TextStyle(color: Color(0xFF78837C)),
-                        filled: true,
-                        fillColor: _chat.surfaceSubtle,
-                        isDense: true,
-                        contentPadding: const EdgeInsets.symmetric(
-                          horizontal: 16,
-                          vertical: 12,
-                        ),
-                        border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(22),
-                          borderSide: BorderSide.none,
-                        ),
-                      ),
-                    ),
-                  ),
-                  IconButton(
-                    tooltip: 'Send reply',
-                    icon: const Icon(Icons.send_rounded, color: _accent),
-                    onPressed: _send,
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
   }
 }
 
@@ -1706,7 +1272,9 @@ class _DockTarget {
   const _DockTarget(this.friend, this.slide);
 
   String get label =>
-      slide == null ? '${friend.name}’s post' : _slideLabel(friend, slide!);
+      slide == null || OrbitDepthTuning.postCards == OrbitPostCards.universe
+      ? '${friend.name}’s post'
+      : _slideLabel(friend, slide!);
 
   _Slide? get _slide {
     final i = slide;
