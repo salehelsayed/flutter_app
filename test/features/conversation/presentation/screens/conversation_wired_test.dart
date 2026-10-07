@@ -12675,6 +12675,132 @@ void main() {
       expect(saved.quotedMessageId, 'incoming-voice-1');
     });
 
+    // Regression: the sender could not play their own voice message right
+    // after sending it. The send use case returns the attachment with its
+    // stored relative path (`media/<peer>/<id>.m4a`, the database truth), and
+    // the success branch painted it as-is, so just_audio got a path it could
+    // not open (ENOENT) and the play button silently did nothing until the
+    // chat was reopened. The bubble must show the resolved absolute path.
+    testWidgets('own voice message is playable right after a successful send', (
+      tester,
+    ) async {
+      final tempDir = Directory.systemTemp.createTempSync('voice_playable_');
+      addTearDown(() {
+        if (tempDir.existsSync()) tempDir.deleteSync(recursive: true);
+      });
+      final identityRepo = FakeIdentityRepository(makeIdentity());
+      final messageRepo = FakeMessageRepository();
+      final chatListener = ChatMessageListener(
+        chatMessageStream: const Stream.empty(),
+        messageRepo: messageRepo,
+        contactRepo: FakeContactRepository(),
+      );
+      final recorder = FakeAudioRecorderService()
+        ..fakeDurationMs = 1200
+        ..fakeOutputPath = '${tempDir.path}/recorder_voice.m4a';
+      final manager = TrackingDurableConversationMediaFileManager(tempDir);
+      late String storedRelativePath;
+
+      Future<(SendVoiceMessageResult, ConversationMessage?)> sendVoiceFn({
+        required P2PService p2pService,
+        required MessageRepository messageRepo,
+        required String targetPeerId,
+        required String senderPeerId,
+        required String senderUsername,
+        required AudioRecording recording,
+        required Bridge bridge,
+        String? recipientMlKemPublicKey,
+        MediaAttachmentRepository? mediaAttachmentRepo,
+        MediaFileManager? mediaFileManager,
+        String? text,
+        String? quotedMessageId,
+        List<double>? waveform,
+        String? messageId,
+        String? timestamp,
+        String? blobId,
+        preparedArtifact,
+        mediaAdmission,
+      }) async {
+        // Like the real use case: the durable copy lives under the app's
+        // media root and the returned attachment carries the stored
+        // RELATIVE path with downloadStatus 'done'.
+        storedRelativePath = 'media/$targetPeerId/$blobId.m4a';
+        File('${tempDir.path}/$storedRelativePath')
+          ..createSync(recursive: true)
+          ..writeAsBytesSync(const <int>[0, 1, 2, 3]);
+        final delivered = ConversationMessage(
+          id: messageId!,
+          contactPeerId: targetPeerId,
+          senderPeerId: senderPeerId,
+          text: text ?? '',
+          timestamp: timestamp!,
+          status: 'sent',
+          isIncoming: false,
+          createdAt: timestamp,
+          media: [
+            MediaAttachment(
+              id: blobId!,
+              messageId: messageId,
+              mime: 'audio/mp4',
+              size: 4,
+              mediaType: 'audio',
+              durationMs: 1200,
+              localPath: storedRelativePath,
+              downloadStatus: 'done',
+              createdAt: timestamp,
+            ),
+          ],
+        );
+        await messageRepo.saveMessage(delivered);
+        return (SendVoiceMessageResult.success, delivered);
+      }
+
+      await pumpScreen(
+        tester,
+        identityRepo: identityRepo,
+        messageRepo: messageRepo,
+        chatListener: chatListener,
+        sendFn: _instantSuccessSendFn,
+        bridge: FakeBridge(),
+        p2pService: FakeP2PService(localPeer: true, localMediaResult: true),
+        audioRecorderService: recorder,
+        sendVoiceMessageFn: sendVoiceFn,
+        mediaFileManager: manager,
+      );
+
+      final screen = tester.widget<ConversationScreen>(
+        find.byType(ConversationScreen),
+      );
+      final startRecording = screen.onRecordStart! as Future<void> Function();
+      await startRecording();
+      await tester.pump(const Duration(milliseconds: 100));
+      final recordingScreen = tester.widget<ConversationScreen>(
+        find.byType(ConversationScreen),
+      );
+      final stopRecording =
+          recordingScreen.onRecordStop! as Future<void> Function();
+      var stopped = false;
+      final stopFuture = stopRecording().whenComplete(() => stopped = true);
+      // Display resolution checks the real file: alternate real I/O and
+      // fake-clock pumps until the send settles.
+      await pumpUntilAsyncIo(tester, () => stopped);
+      await stopFuture;
+      await tester.pump();
+
+      final painted = tester
+          .widget<ConversationScreen>(find.byType(ConversationScreen))
+          .messages
+          .singleWhere((message) => !message.isIncoming);
+      final attachment = painted.media.single;
+      expect(attachment.downloadStatus, 'done');
+      expect(
+        attachment.localPath,
+        '${tempDir.path}/$storedRelativePath',
+        reason: 'the player needs an absolute path it can open',
+      );
+      expect(File(attachment.localPath!).existsSync(), isTrue);
+    });
+
     // 117 Session 3: the 5-minute auto-stop must NOT silently discard the
     // captured recording. It holds the clip for review (send/discard) with a
     // SnackBar — no silent loss, no surprise auto-send.

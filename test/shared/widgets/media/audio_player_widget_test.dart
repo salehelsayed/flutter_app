@@ -3,10 +3,12 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:audio_session/audio_session.dart';
 import 'package:flutter_app/core/constants/retry_constants.dart';
 import 'package:flutter_app/core/media/group_media_integrity_policy.dart';
+import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/shared/widgets/media/audio_player_widget.dart';
 import 'package:flutter_app/shared/widgets/media/waveform_seek_bar.dart';
@@ -498,6 +500,40 @@ void main() {
     tearDown(() async {
       await fakePlatform.disposeAllPlayers(DisposeAllPlayersRequest());
       JustAudioPlatform.instance = originalPlatform;
+    });
+
+    // Regression: a sender's own voice message got a relative stored path the
+    // platform player could not open, and the load failure was swallowed, so
+    // the play button silently did nothing with no trace in the logs.
+    testWidgets('logs a failed source load instead of failing silently', (
+      tester,
+    ) async {
+      final events = <Map<String, dynamic>>[];
+      debugSetFlowEventSink(events.add);
+      addTearDown(() => debugSetFlowEventSink(null));
+      fakePlatform.enqueueLoadFailure(
+        PlatformException(code: '0', message: 'Source error'),
+      );
+
+      await tester.pumpWidget(
+        buildApp(
+          availableAttachment(
+            id: 'unopenable',
+            localPath: 'media/peer/unopenable.m4a',
+            durationMs: 4000,
+          ),
+        ),
+      );
+      await settleCompletedLoad(tester);
+
+      final failures = events
+          .where((event) => event['event'] == 'AUDIO_PLAYER_LOAD_FAILED')
+          .toList();
+      expect(failures, hasLength(1));
+      final details = failures.single['details'] as Map<String, dynamic>;
+      expect(details['attachmentId'], 'unopenable');
+      expect(details['pathIsAbsolute'], isFalse);
+      expect(tester.takeException(), isNull);
     });
 
     testWidgets('twenty disposed rows tolerate late source load completion', (

@@ -25,6 +25,13 @@ class FakeJustAudioPlatform extends JustAudioPlatform {
     return barrier;
   }
 
+  /// Queues one load that fails like a platform source error, for example
+  /// ExoPlayer's `FileNotFoundException` for a path it cannot open. Unlike the
+  /// real platforms, unqueued loads accept any path, missing or not.
+  void enqueueLoadFailure(Object error) {
+    _queuedLoads.add(FakeAudioLoadBarrier._failing(error));
+  }
+
   @override
   Future<AudioPlayerPlatform> init(InitRequest request) async {
     final player = _FakeAudioPlayer(
@@ -70,9 +77,16 @@ class FakeJustAudioPlatform extends JustAudioPlatform {
 
 /// A deterministic observation and completion gate for one platform load.
 class FakeAudioLoadBarrier {
-  FakeAudioLoadBarrier({required this.reportedDuration});
+  FakeAudioLoadBarrier({required this.reportedDuration}) : _error = null;
+
+  FakeAudioLoadBarrier._failing(Object error)
+    : reportedDuration = Duration.zero,
+      _error = error {
+    _completion.complete();
+  }
 
   final Duration reportedDuration;
+  final Object? _error;
   final Completer<void> _started = Completer<void>();
   final Completer<void> _completion = Completer<void>();
 
@@ -91,6 +105,8 @@ class FakeAudioLoadBarrier {
       _started.complete();
     }
     await _completion.future;
+    final error = _error;
+    if (error != null) throw error;
     return reportedDuration;
   }
 }

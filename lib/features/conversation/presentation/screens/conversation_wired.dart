@@ -6253,9 +6253,18 @@ class _ConversationWiredState extends State<ConversationWired>
           // when the send use case returns it and falling back to local playback
           // metadata for older/fake send paths.
           // DB already has correct data from sendChatMessage's saveMessage call.
+          // The returned media carries the stored RELATIVE path; resolve it
+          // like every hydrated message, or the player cannot open the file
+          // and the sender's play button silently does nothing.
+          final resolvedVoiceMedia = <MediaAttachment>[];
+          for (final attachment in voiceMessage.media) {
+            resolvedVoiceMedia.add(
+              await _resolveAttachmentForDisplay(attachment),
+            );
+          }
           final messageWithMedia = voiceMessage.copyWith(
-            media: voiceMessage.media.isNotEmpty
-                ? voiceMessage.media
+            media: resolvedVoiceMedia.isNotEmpty
+                ? resolvedVoiceMedia
                 : optimisticMessage.media,
           );
           if (mounted) {

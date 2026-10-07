@@ -359,9 +359,21 @@ class _AudioPlayerWidgetState extends State<AudioPlayerWidget>
           _position = Duration.zero;
         });
       }
-    } catch (_) {
+    } catch (error) {
       // File may be corrupted or missing — stay in disabled state
       if (!mounted || loadVersion != _loadVersion) return;
+      // Never fail silently: a dead play button must leave a trace. A
+      // relative path here means the caller skipped stored-path resolution.
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'AUDIO_PLAYER_LOAD_FAILED',
+        details: {
+          'attachmentId': widget.attachment.id,
+          'messageId': widget.attachment.messageId,
+          'pathIsAbsolute': path.startsWith('/'),
+          'errorType': error.runtimeType.toString(),
+        },
+      );
       if (mounted) {
         setState(() {
           _isLoaded = false;
