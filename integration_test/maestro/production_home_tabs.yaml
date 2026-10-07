@@ -13,11 +13,17 @@ name: production_home_tabs
     when:
       notVisible: '(?s)^Intros.*$'
     commands:
+      # The first Back can only close the keyboard left open by a send.
       - runFlow:
           when:
             platform: Android
           commands:
-            - back
+            - repeat:
+                times: 3
+                while:
+                  notVisible: '(?s)^Intros.*$'
+                commands:
+                  - back
       - runFlow:
           when:
             platform: iOS
