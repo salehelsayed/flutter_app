@@ -307,6 +307,7 @@ HarnessLaunchSpec buildHarnessLaunchSpec({
   String? restoreIdentityPath,
   bool reuseExistingIdentity = false,
   bool requireAndroidRuntimeConfig = false,
+  bool keepAndroidAppInstalled = false,
 }) {
   final runtimeConfig = GroupMultiPartyRuntimeConfig(
     sharedDir: runtimeSharedDir ?? sharedDir.path,
@@ -331,7 +332,14 @@ HarnessLaunchSpec buildHarnessLaunchSpec({
       '--no-pub',
       '--no-build',
       '--use-application-binary=${resolveGroupMultiPartyIosRunnerAppPath()}',
-    ] else ...<String>['test', '--no-pub', harnessPath],
+    ] else ...<String>[
+      'test',
+      '--no-pub',
+      // A seed role's app must survive its own exit so its signals stay
+      // readable and its relaunch keeps the app installed.
+      if (keepAndroidAppInstalled) '--no-uninstall',
+      harnessPath,
+    ],
     ..._stableDartDefines(relayAddresses),
     '-d',
     deviceId,
@@ -561,6 +569,7 @@ Future<Process> _startHarnessRole({
   String? restoreMnemonic,
   String? restoreIdentityPath,
   bool reuseExistingIdentity = false,
+  bool keepAndroidAppInstalled = false,
 }) async {
   final launchSpec = buildHarnessLaunchSpec(
     scenario: scenario,
@@ -575,6 +584,7 @@ Future<Process> _startHarnessRole({
     restoreIdentityPath: restoreIdentityPath,
     reuseExistingIdentity: reuseExistingIdentity,
     requireAndroidRuntimeConfig: androidFileTransport != null,
+    keepAndroidAppInstalled: keepAndroidAppInstalled,
   );
   final displayArgs = launchSpec.args.join(' ');
   final isStatefulRelaunch =
@@ -2759,10 +2769,44 @@ Future<void> _runGe007Scenario({
   final processes = <String, Process>{};
   final logs = <String, IOSink>{};
   final logPaths = <String, String>{};
+  // Broker devices in launch order: a pass stops at the first device whose
+  // app is not installed yet, and Bob starts only after Charlie's identity.
+  final roleDeviceIds = <String>[
+    for (final role in const <String>['alice', 'charlie', 'bob'])
+      roleDevices[role]!,
+  ];
+  final useAndroidSignalBroker = await _usesAndroidSignalBroker(roleDeviceIds);
+  final androidFileTransport = useAndroidSignalBroker
+      ? AdbRunAsAppFileTransport(appPackage: resolveAndroidAppPackage())
+      : null;
+  final androidSignalDirectory = useAndroidSignalBroker
+      ? groupMultiPartyAndroidSignalDirectory(scenario: scenario, runId: runId)
+      : null;
+  final signalBroker = useAndroidSignalBroker
+      ? AndroidAppSignalBroker(
+          transport: androidFileTransport!,
+          deviceIds: roleDeviceIds,
+          hostDirectory: sharedDir,
+          remoteDirectory: androidSignalDirectory!,
+          filePrefix: 'gmp_${runId}_',
+          log: (message) => _log('SYNC', '$scenario $message'),
+        )
+      : null;
+  final signalBrokerRun = signalBroker?.run();
+  final signalBrokerOutcome = signalBrokerRun == null
+      ? null
+      : _captureSignalBrokerOutcome(signalBrokerRun);
 
   _log('ORCH', '$scenario shared dir: ${sharedDir.path}');
   _log('ORCH', '$scenario run id: $runId');
   _log('ORCH', '$scenario ${deviceCheck.detail}');
+  if (signalBroker != null) {
+    _log(
+      'ORCH',
+      '$scenario Android target-local signal dir: '
+          '$androidSignalDirectory; three-device host broker enabled',
+    );
+  }
   final signals = _signalsFor(sharedDir, runId, role: scenario);
 
   Future<Process> launchRole(
@@ -2770,6 +2814,7 @@ Future<void> _runGe007Scenario({
     String mode = 'proof',
     String? restoreMnemonic,
     String? logLabel,
+    bool keepAndroidAppInstalled = false,
   }) async {
     final label = logLabel ?? role;
     final logPath = '${sharedDir.path}/$label.log';
@@ -2783,12 +2828,22 @@ Future<void> _runGe007Scenario({
       sharedDir: sharedDir,
       runId: runId,
       relayAddresses: relayAddresses,
+      androidFileTransport: androidFileTransport,
+      androidRuntimeSharedDirectory: androidSignalDirectory,
+      onProcessStarted: (startedProcess) {
+        processes[label] = startedProcess;
+        _pipeOutput(startedProcess.stdout, label.toUpperCase(), logSink);
+        _pipeOutput(
+          startedProcess.stderr,
+          '${label.toUpperCase()}-ERR',
+          logSink,
+        );
+      },
       mode: mode,
       restoreMnemonic: restoreMnemonic,
+      keepAndroidAppInstalled: keepAndroidAppInstalled,
     );
     processes[label] = process;
-    _pipeOutput(process.stdout, label.toUpperCase(), logSink);
-    _pipeOutput(process.stderr, '${label.toUpperCase()}-ERR', logSink);
     return process;
   }
 
@@ -2801,6 +2856,7 @@ Future<void> _runGe007Scenario({
         name: '${role}_identity.json',
         role: role,
         logPath: logPaths[role]!,
+        signalBrokerOutcome: signalBrokerOutcome,
       );
       _log('ORCH', '$scenario/$role identity ready');
     }
@@ -2809,6 +2865,7 @@ Future<void> _runGe007Scenario({
       'bob',
       mode: 'seedOffline',
       logLabel: 'bob_seed',
+      keepAndroidAppInstalled: true,
     );
     final bobIdentity = await _waitForIdentityOrExit(
       process: bobSeed,
@@ -2816,6 +2873,7 @@ Future<void> _runGe007Scenario({
       name: 'bob_identity.json',
       role: 'bob',
       logPath: logPaths['bob_seed']!,
+      signalBrokerOutcome: signalBrokerOutcome,
     );
     final bobMnemonic = (bobIdentity['mnemonic12'] as String?)?.trim();
     if (bobMnemonic == null || bobMnemonic.isEmpty) {
@@ -2852,20 +2910,64 @@ Future<void> _runGe007Scenario({
       name: 'bob_identity.json',
       role: 'bob',
       logPath: logPaths['bob']!,
+      signalBrokerOutcome: signalBrokerOutcome,
     );
     _log('ORCH', '$scenario/bob reconnect identity ready');
 
-    final verdicts = await Future.wait<Map<String, dynamic>>(
-      roles.map(
-        (role) => _waitForVerdictOrExit(
-          process: processes[role]!,
-          signals: signals,
-          name: '${role}_verdict.json',
-          role: role,
-          logPath: logPaths[role]!,
-        ),
-      ),
-    );
+    final verdicts =
+        await captureGroupMultiPartyVerdictsAtTerminalBarrier<
+          Map<String, dynamic>
+        >(
+          roles: roles,
+          acknowledgeHostCapture: signalBroker != null,
+          captureVerdict: (role) => _waitForVerdictOrExit(
+            process: processes[role]!,
+            signals: signals,
+            name: '${role}_verdict.json',
+            role: role,
+            logPath: logPaths[role]!,
+            androidSignalBroker: signalBroker,
+            signalSourceDeviceId: roleDevices[role],
+            signalBrokerOutcome: signalBrokerOutcome,
+          ),
+          synchronizeHeldRoles: () => signalBroker!.synchronizeOnce(),
+          stopSignalBroker: () async {
+            signalBroker!.stop();
+            final finalBrokerOutcome = await signalBrokerOutcome!;
+            if (finalBrokerOutcome is _SignalBrokerFailure) {
+              Error.throwWithStackTrace(
+                StateError(
+                  'Android signal broker failed before terminal '
+                  'acknowledgements: ${finalBrokerOutcome.error}',
+                ),
+                finalBrokerOutcome.stackTrace,
+              );
+            }
+          },
+          deliverAcknowledgement: (role, signalName) =>
+              signalBroker!.deliverTerminalHostSignalToDevice(
+                deviceId: roleDevices[role]!,
+                name: groupMultiPartyBrokerSignalFileName(
+                  signals: signals,
+                  logicalName: signalName,
+                ),
+                bytes: utf8.encode('ok'),
+              ),
+          awaitRoleExit: (role) async {
+            final exitCode = await processes[role]!.exitCode.timeout(
+              const Duration(minutes: 5),
+              onTimeout: () {
+                processes[role]!.kill();
+                return -1;
+              },
+            );
+            if (exitCode != 0) {
+              throw StateError(
+                '$scenario/$role flutter process exitCode=$exitCode',
+              );
+            }
+          },
+        );
 
     final criterion = evaluateGroupMultiPartyVerdicts(
       scenario: scenario,
@@ -2892,19 +2994,6 @@ Future<void> _runGe007Scenario({
       );
     }
 
-    for (final role in roles) {
-      final exitCode = await processes[role]!.exitCode.timeout(
-        const Duration(minutes: 5),
-        onTimeout: () {
-          processes[role]!.kill();
-          return -1;
-        },
-      );
-      if (exitCode != 0) {
-        throw StateError('$scenario/$role flutter process exitCode=$exitCode');
-      }
-    }
-
     _log('ORCH', '$scenario proof passed: ${criterion.detail}');
     _log('ORCH', '$scenario logs and verdicts: ${sharedDir.path}');
     for (final role in roles) {
@@ -2912,6 +3001,7 @@ Future<void> _runGe007Scenario({
       _log('ORCH', '$role verdict: ${signals.path('${role}_verdict.json')}');
     }
   } finally {
+    signalBroker?.stop();
     for (final entry in processes.entries) {
       await _stopHarnessProcess(entry.value, '$scenario/${entry.key}');
     }
@@ -2920,6 +3010,16 @@ Future<void> _runGe007Scenario({
     }
     for (final sink in logs.values) {
       await sink.close();
+    }
+    if (signalBrokerOutcome != null) {
+      final cleanupBrokerOutcome = await signalBrokerOutcome;
+      if (cleanupBrokerOutcome is _SignalBrokerFailure) {
+        _log(
+          'SYNC',
+          '$scenario broker cleanup retained failure: '
+              '${cleanupBrokerOutcome.error}',
+        );
+      }
     }
   }
 }

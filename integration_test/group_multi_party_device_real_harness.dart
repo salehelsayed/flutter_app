@@ -11805,10 +11805,15 @@ Future<void> _runGe005Alice(
 
   for (var cycle = 1; cycle <= _ge005CycleCount; cycle++) {
     final tag = _ge005CycleTag(cycle);
+    // Like the app, keep the removal replayable for the remaining member, so
+    // Bob recovers it from the inbox if the live publish misses him.
     await _removeCharlieAndPublish(
       stack: stack,
       groupId: groupId,
       charlieIdentity: charlieIdentity,
+      additionalReplayRecipientPeerIds: <String>[
+        identities['bob']!['peerId'] as String,
+      ],
     );
     await waitForSharedSignal(
       _signalName('bob_ge005_removed_$tag'),

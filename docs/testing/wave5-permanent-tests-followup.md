@@ -46,6 +46,13 @@ comparison, then write step 5.
    - `ge004`, `ge005`: role logs end with "end of failure 1"; not yet read.
    - The role logs were in the Mac's `$TMPDIR/group_multi_party_<case>_*`
      folders; rerun to get fresh ones.
+   - 2026-10-07, Linux, three Android emulators: the old harness had decayed.
+     Its out-of-band re-add hit the Plan 263 self-removal rule. With the
+     harness fixed, GE-004 and GE-007 pass. GE-005 also passes (twice) after it
+     stores the removal replay for Bob, as the app does for remaining members.
+     Before that, Bob had no inbox recovery when a live removal missed him.
+     Details: `TESTING.md`, "The original multi-party harness re-adds a member
+     out of band".
 3. **Skip repeat runs of the retirable originals** (the 51
    replaced catalog cases, the 15 replaced harnesses, the replaced lifecycle
    scenarios). Their replacements already passed on devices.

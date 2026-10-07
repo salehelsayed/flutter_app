@@ -2739,6 +2739,23 @@ Map<String, dynamic> buildGroupFixture({
   };
 }
 
+/// A fixture import is this harness's out-of-band re-add: the inviter hands
+/// the re-added member its new group row, roster and key directly instead of
+/// a signed invite. Saving a group row keeps a local self-removal mark (only
+/// accepted signed re-entry clears it), so clear the mark here, as importing
+/// the fixture row did before that rule.
+Future<void> _clearLocalSelfRemovalForFixtureReadd(
+  sqlcipher.Database db,
+  String groupId,
+) async {
+  await db.update(
+    'groups',
+    <String, Object?>{'self_removed_at': null},
+    where: 'id = ? AND self_removed_at IS NOT NULL',
+    whereArgs: <Object?>[groupId],
+  );
+}
+
 Future<String> importJoinedGroupFixture({
   required GroupMultiDeviceTestStack stack,
   required Map<String, dynamic> fixture,
@@ -2772,6 +2789,7 @@ Future<String> importJoinedGroupFixture({
               ? GroupRole.admin
               : GroupRole.member,
         );
+  await _clearLocalSelfRemovalForFixtureReadd(stack.db, group.id);
   await stack.groupRepo.saveGroup(importedGroup);
   for (final member in members) {
     await stack.groupRepo.saveMember(member);

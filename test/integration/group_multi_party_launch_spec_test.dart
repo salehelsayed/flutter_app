@@ -681,6 +681,26 @@ void main() {
       expect(joinedArgs, isNot(contains('--dart-define=E2E_SHARED_DIR=')));
     });
 
+    test('keeps an Android seed role installed only when asked', () {
+      HarnessLaunchSpec androidSpec({required bool keep}) =>
+          buildHarnessLaunchSpec(
+            scenario: 'ge007',
+            role: 'bob',
+            deviceId: 'emulator-5556',
+            sharedDir: Directory('/tmp/gmp-ge007'),
+            runId: 'sweep-001',
+            relayAddresses: '127.0.0.1:4001',
+            mode: 'seedOffline',
+            requireAndroidRuntimeConfig: true,
+            keepAndroidAppInstalled: keep,
+          );
+
+      final seed = androidSpec(keep: true).args;
+      expect(seed.take(3), <String>['test', '--no-pub', '--no-uninstall']);
+      expect(seed, contains(endsWith('_android_harness.dart')));
+      expect(androidSpec(keep: false).args, isNot(contains('--no-uninstall')));
+    });
+
     test('carries per-run values through a Documents-file runtime config', () {
       final spec = buildHarnessLaunchSpec(
         scenario: 'ge014',

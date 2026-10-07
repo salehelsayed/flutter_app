@@ -251,6 +251,33 @@ any role log; the complete owning group sweep remains pending. Evidence: `.codex
 `restart-checkpoint-016-major-source039/group-sweep-first-failures/` and
 `source040-host-group-repair/`.
 
+The original multi-party harness re-adds a member out of band by importing a
+group fixture (`importJoinedGroupFixture`). Saving a group row keeps a local
+`self_removed_at` (Plan 263; only signed accepted re-entry clears it), so a
+re-added member that had seen its own removal threw `Group is absent or has
+been locally self-removed` in `saveMember`. GE-004/GE-005 failed this way on
+three Android API 36 emulators. The same import gates GE-007's
+`charlie_ge007_readded`, which is consistent with its earlier iOS timeout, but
+GE-007 did not run on Android before the fix, so that iOS cause is inferred.
+The importer now clears the mark first; it is harness-only. About 29 scenarios
+share this re-add import. GE-007's bespoke runner also gained the Android
+signal broker. Its broker devices follow launch order (Alice, Charlie, Bob)
+because a pass stops at the first device without the app. Bob's seed run uses
+`flutter test --no-uninstall` so his app survives until the relaunch.
+After the fix, GE-004 and GE-007 passed on the emulators. GE-005 then failed
+twice in a remove/re-add cycle (8, then 12 of 20). Bob missed the live
+`member_removed`, then timed out in `_waitForMemberExclusion`. He could not
+recover it from the inbox because `_removeCharlieAndPublish` stores its replay
+copy for Charlie only, unless the caller adds
+`additionalReplayRecipientPeerIds`. ML-008 and NW-010 add them; GE-005 did not.
+The app stores a removal's replay copy for the removed member and every
+remaining member (`group_info_wired.dart`). GE-005 now adds Bob the same way.
+It then passed twice, and Bob recovered 3 and 2 of 20 removals from the inbox
+after missing them live. The live misses are unexplained: harness system
+publishes log no topic-peer details. The repeated one-message inbox reads are
+by design: the drain stores an inclusive since-timestamp cursor at the end of
+the inbox. Evidence: `.codex-test-logs/wave5-ge-original-harness-20261007/`.
+
 Muted-group header targeting must prefer the localized accessible info-button
 label. The retained physical Android tree exposes `content-desc="Group
 information"`; selecting only unlabeled buttons returned null before the mute
