@@ -2937,3 +2937,91 @@ scenarios, the six `performance_harness.dart` targets) have none. The other
 replaced originals run under their own existing owners (the multi-party
 catalog under `groups.multi_party_release` on its cached profile; the
 benchmarks by hand). Step 5 will count each route and its owner exactly.
+
+## 2026-10-07 Wave 5 step 4: final host gate and full run
+
+Status: the 66 production capabilities all PASS on devices; the canonical
+full run could not certify the whole suite in this environment, and the
+legacy routes it gates are mostly not run. Details below. All run receipts
+are under `.claude/worktrees/wave3-next/.codex-test-logs/production-bootstrap-migration-20260930/`
+(`wave5-full-*`, `wave5-runA*`, `wave3-run-<stamp>`), queue logs in
+`docker-ws/beta/wave5/`.
+
+**Host gate.** `host-all` on `9203012e9` and again on `0941aa31f`: Flutter
+19,013 and 19,014 pass, 0 fail. The only failures are 4 live relay smoke
+tests in `go-relay-server` (`TestQUICSmokeIdentify`, `TestTCPSmokeIdentify`,
+`TestQUICSmokeRelayReservation`, `TestAllTransportsSmokeCompare`): this
+Mac's corporate network (egress 165.1.187.194) drops UDP to the relay and
+cuts raw TCP 4005 after the Noise handshake (relay-side packet capture);
+WSS passes. The relay itself was healthy throughout.
+
+**Canonical full run (`mknoon_checks.py full`, no `--only`).** Three
+attempts on `aae0d855e`/`a8caa1890` (79 checks, 3,768 obligations, 8 manual
+gaps). The full runner starts device campaigns only after every host check
+passes, and these host checks cannot pass here: the Go relay suites above,
+`tool/call_audio_oracle` (needs a disposable coturn fixture and credentials),
+the graph-tool hook test (runs container-path hooks) and the project-memory
+Q8 recall pin (live memory drift; fails in the container too). So no device
+campaign ran inside the canonical run. The device checks were then run as
+diagnostic `--only` subsets and, for the production capabilities, through
+the per-capability campaign queue (user decision 2026-10-06).
+
+**Defects step 4 found and fixed** (each with a test or device proof):
+
+| Commit | Defect |
+|---|---|
+| `9203012e9` | `caff0f087` left DTR-18 bootstrap digests, the TC-294-09 handoff fingerprint and the received-media call-site count stale (user approved re-pins) |
+| `aae0d855e` | four production Maestro flows used by runners were unmapped in `selection.json` (full plan gaps 12 to 8) |
+| `a8caa1890` | `full.native.374` marker expected 73 methods; the suite runs 75 |
+| `0941aa31f` | `full-sims-major` built `android.e2e.main` without the disposable app ID, so every Android production journey failed at capture; new profile `android.e2e.production` (user approved), disposable ID fixed for it and `performance_relay`, DTR-13 pins 17 profiles |
+| `2fcdb7151` | catalog `catalog_pending_snapshot` cleared the bound invitation before reading its consumption record (`c66544d28`, 10-01), so create and the three reaction runners could not pass; regression test fails on the old code |
+| `a2dc2ec39` | `production_home_tabs` pressed Back once; after a send the keyboard took that Back (`up012`) |
+
+**Production capabilities: 66 of 66 PASS** (one PASS receipt each; the
+passes span `0941aa31f`, `2fcdb7151` and `a2dc2ec39`, whose differences are
+test controls and one Maestro flow, no app code). Measurements ran one at a
+time. First-attempt failures kept in the receipts: 4 runs blocked by the
+two defects above, 7 by an emulator that lost DNS, 4 by a throttled fresh
+emulator, 40 by device discovery after my disk cleanup broke the Flutter
+SDK (artifacts were symlinked into a deleted log folder; repaired), 4 iOS
+cases by a config role mismatch, `shared_xctest` by iOS automation mode
+(passed after the user unlocked the iPhone 11), and single failures of
+`ge005`, `ge011`, `notification_open` that passed on rerun.
+
+| Capability, PASS run (MMDD-HHMM UTC) | | |
+|---|---|---|
+| `foreground_group_push` 1006-1536 | `notification_open` 1006-1543 | `notification_sound` 1006-1551 |
+| `routing_smoke` 1006-1611 | `private_media_local` 1006-1649 | `group_invite_reliability` 1006-1658 |
+| `startup_resume_performance` 1006-1704 | `catalog.private_abc_create` 1007-0652 | `catalog.private_reaction_roundtrip` 1007-0700 |
+| `catalog.private_reaction_toggle_convergence` 1007-0708 | `catalog.private_removed_reaction_rejected` 1007-0716 | `group_invite_status_matrix` 1006-1840 |
+| `group_delete_preserves_friends` 1006-1845 | `group_invite_accept_spinner` 1006-1858 | `group_new_member_media` 1006-1903 |
+| `catalog.private_online_remove` 1006-1909 | `catalog.private_relay_only_delivery` 1006-1917 | `catalog.private_process_death_matrix` 1006-1926 |
+| `catalog.gm004` 1006-1939 | `catalog.gm005` 1006-1947 | `catalog.private_offline_remove` 1006-1959 |
+| `catalog.gm006` 1006-2010 | `catalog.private_offline_readd` 1006-2021 | `catalog.gm001` 1006-2032 |
+| `catalog.ge001` 1006-2039 | `catalog.de003` 1006-2047 | `catalog.ge002` 1006-2206 |
+| `catalog.ge003` 1006-2218 | `catalog.gm020` 1006-2229 | `catalog.gm034` 1006-2238 |
+| `catalog.gm016` 1006-2247 | `catalog.ge004` 1006-2256 | `catalog.gm007` 1006-2307 |
+| `catalog.gm019` 1006-2318 | `catalog.ge009` 1006-2329 | `catalog.private_rapid_readd` 1006-2341 |
+| `catalog.ir001` 1006-2351 | `catalog.gm008` 1007-0001 | `catalog.ge007` 1007-0012 |
+| `catalog.ge008` 1007-0024 | `catalog.ge005` 1007-0724 | `catalog.private_readd_cycles` 1007-0126 |
+| `catalog.ge010` 1007-0252 | `catalog.go001` 1007-0303 | `catalog.ge011` 1007-0834 |
+| `catalog.private_full_mesh_online` 1007-0321 | `catalog.de002` 1007-0330 | `catalog.ge006` 1007-0416 |
+| `catalog.de007` 1007-0428 | `catalog.private_voluntary_leave_convergence` 1007-0435 | `catalog.gm015` 1007-0442 |
+| `catalog.ge024` 1007-0451 | `catalog.private_media_reaction_roundtrip` 1007-0504 | `catalog.gm002` 1007-0512 |
+| `catalog.private_online_add` 1007-0523 | `catalog.gm003` 1007-0534 | `catalog.private_offline_add` 1007-0546 |
+| `catalog.private_peer_disconnect_not_removal` 1007-1007 | `catalog.private_admin_role_transfer_delivery` 1007-0904 | `catalog.private_partition_readd_heal` 1007-0928 |
+| `catalog.private_background_resume_group_delivery` 1007-0943 | `catalog.private_removed_notification_privacy` 1007-0956 | `transport_census` 1007-0611 |
+| `message_latency` 1007-0629 | `notification_tap_latency` 1007-0634 | `shared_xctest` 1007-0853 |
+
+**Not run or not certified in step 4** (retained originals and fixtures):
+the legacy 109-case multi-party catalog (`groups.multi_party_release`;
+7 cases ran before the user chose production first: ge001-ge003, ge006 pass,
+ge004, ge005, ge007 fail on the original harness), the other legacy SIMS
+capabilities after the first ~24, `full-legacy` and `full-sims` (legacy
+reliability inventory), native 371/373/app-visibility/pb266/vc204, the six
+macOS performance targets, `full.media-stable-id.ios`, the three
+`run_benchmark_suite.dart` benchmarks (still hang), the Android notification
+recovery proof, the 9 reaction checks and 5 iOS UI XCTests that need
+staging/capture/UI fixture files, and the 8 manual gaps. One host flake was
+seen under load (`live_direct_notification_simulation_test.dart`, 3 of 3
+pass alone).

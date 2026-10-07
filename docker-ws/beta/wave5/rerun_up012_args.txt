@@ -1,0 +1,1 @@
+run:production-group-up012:production.group_catalog.private_removed_notification_privacy
