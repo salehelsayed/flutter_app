@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:collection';
 import 'dart:convert';
 
@@ -438,6 +439,65 @@ void main() {
     },
   );
 
+  testWidgets('a scan finishes after the scanner route has already closed', (
+    tester,
+  ) async {
+    // The scanner pops itself as soon as it reports a code. Signature
+    // verification can outlast that close (always, with system animations
+    // off); the contact, its request and the "added" hand-off must survive.
+    suppressShellRenderErrors();
+    p2pService.emitState(const NodeState(isStarted: true, peerId: ownPeerId));
+    p2pService.storeInInboxResult = true;
+    final gatedBridge = _VerifyGatedBridge()
+      ..responses.addAll(bridge.responses);
+    bridge = gatedBridge;
+    final scanner = (buildScanner() as MaterialApp).home!;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        locale: const Locale('en'),
+        localizationsDelegates: AppLocalizations.localizationsDelegates,
+        supportedLocales: AppLocalizations.supportedLocales,
+        home: Builder(
+          builder: (context) => Scaffold(
+            body: Center(
+              child: ElevatedButton(
+                onPressed: () => Navigator.of(
+                  context,
+                ).push(MaterialPageRoute<void>(builder: (_) => scanner)),
+                child: const Text('Open scanner'),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.tap(find.text('Open scanner'));
+    await pumpFrames(tester);
+
+    await tester.tap(find.text('Paste QR Data'));
+    await pumpFrames(tester);
+    await tester.enterText(
+      find.byType(TextField).last,
+      _buildValidQrData(peerId: 'late-peer-12345', username: 'Bob'),
+    );
+    await tester.tap(find.text('Submit'));
+    await pumpFrames(tester, count: 20);
+    expect(find.byType(QRScannerScreen), findsNothing);
+    expect(gatedBridge.verifyRequested, isTrue);
+
+    gatedBridge.releaseVerify();
+    await pumpFrames(tester);
+
+    expect(await contactRepository.getContact('late-peer-12345'), isNotNull);
+    expect(find.text('Added to your circle!'), findsOneWidget);
+    await tester.tap(find.text('OK'));
+    await pumpFrames(tester, count: 20);
+    expect(find.byType(FeedWired), findsOneWidget);
+    expect(gatedBridge.commandLog, contains('contactrequest.encrypt'));
+    expect(p2pService.lastStoreInInboxPeerId, 'late-peer-12345');
+  });
+
   testWidgets('contact QR success forwards Move Account runner into feed', (
     tester,
   ) async {
@@ -554,6 +614,25 @@ String _buildMigrationQrData({
     'expiresAt': expiresAt,
     'newPhoneEphemeralPublicKey': 'new-phone-mlkem-public',
   });
+}
+
+/// Holds `payload.verify` until [releaseVerify], so a test can close the
+/// scanner route while the scan is still being processed.
+class _VerifyGatedBridge extends FakeBridge {
+  final _verifyGate = Completer<void>();
+  bool verifyRequested = false;
+
+  void releaseVerify() => _verifyGate.complete();
+
+  @override
+  Future<String> send(String message) async {
+    final cmd = (jsonDecode(message) as Map<String, dynamic>)['cmd'];
+    if (cmd == 'payload.verify') {
+      verifyRequested = true;
+      await _verifyGate.future;
+    }
+    return super.send(message);
+  }
 }
 
 String _buildValidQrData({

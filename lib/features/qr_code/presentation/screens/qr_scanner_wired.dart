@@ -174,7 +174,13 @@ class QRScannerWired extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return QRScannerScreen(
-      onScanned: (qrData) => _handleScanned(context, qrData),
+      // The scanner pops its route as soon as it reports a code, and the
+      // handling below awaits the bridge. Use the navigator's context, which
+      // outlives the route: with this route's context, a scan that finished
+      // after the pop (always, with system animations off) silently dropped
+      // the contact, its request and the "added" hand-off to the feed.
+      onScanned: (qrData) =>
+          _handleScanned(Navigator.of(context).context, qrData),
     );
   }
 
