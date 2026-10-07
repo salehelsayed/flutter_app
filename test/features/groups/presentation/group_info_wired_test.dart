@@ -870,7 +870,25 @@ Future<void> tapLeaveGroupButton(
     scrollable: find.byType(Scrollable).first,
   );
   await tester.tap(leaveButton);
+  await confirmLeaveIfAsked(tester);
   await pumpFrames(tester, count: settleFrameCount);
+}
+
+/// A normal leave asks "Leave & delete group?" first; other exits do not.
+/// The exit snapshot may resolve on real async work (durable harness), so
+/// wait in real time as well before deciding no dialog is coming.
+Future<void> confirmLeaveIfAsked(WidgetTester tester) async {
+  final confirm = find.text('Leave & Delete');
+  for (var attempt = 0; attempt < 40; attempt++) {
+    await tester.pump(const Duration(milliseconds: 50));
+    if (confirm.evaluate().isNotEmpty) {
+      await tester.tap(confirm);
+      return;
+    }
+    await tester.runAsync(
+      () => Future<void>.delayed(const Duration(milliseconds: 10)),
+    );
+  }
 }
 
 Future<void> scrollToDissolveGroupButton(WidgetTester tester) async {
@@ -5957,6 +5975,7 @@ void main() {
         });
         harness.install();
         await tester.tap(leaveButton);
+        await confirmLeaveIfAsked(tester);
         await pumpDurableGroupExitUntil(
           tester,
           () => harness.requestLeaveCompletions >= 1,
@@ -6010,6 +6029,7 @@ void main() {
         // A fresh action resolves the SQLite row and renders the durable
         // queued stage, rather than reusing the prior sheet's widget state.
         await tester.tap(leaveButton);
+        await confirmLeaveIfAsked(tester);
         await pumpDurableGroupExitUntil(
           tester,
           () => harness.requestLeaveCompletions >= 2,
@@ -6021,6 +6041,166 @@ void main() {
         );
       },
     );
+
+    testWidgets('Group Info asks before leaving and Cancel keeps the group', (
+      tester,
+    ) async {
+      final groupRepo = InMemoryGroupRepository();
+      final msgRepo = InMemoryGroupMessageRepository();
+      final group = makeAdminGroup();
+      await groupRepo.saveGroup(group);
+      await _saveGroupReplayKey(groupRepo);
+      await groupRepo.saveMember(
+        makeMember(
+          peerId: testIdentity.peerId,
+          username: testIdentity.username,
+          role: MemberRole.admin,
+          publicKey: testIdentity.publicKey,
+          mlKemPublicKey: testIdentity.mlKemPublicKey,
+        ),
+      );
+      await groupRepo.saveMember(
+        makeMember(
+          peerId: 'peer-alice',
+          username: 'Alice',
+          role: MemberRole.admin,
+          publicKey: 'pk-alice',
+          mlKemPublicKey: 'mlkem-pk-alice',
+        ),
+      );
+      await msgRepo.saveMessage(
+        GroupMessage(
+          id: 'msg-left-group',
+          groupId: group.id,
+          senderPeerId: 'peer-admin',
+          senderUsername: 'Admin',
+          text: 'local history to remove',
+          timestamp: DateTime.utc(2026, 5, 23, 10),
+          createdAt: DateTime.utc(2026, 5, 23, 10),
+          isIncoming: false,
+          status: 'sent',
+        ),
+      );
+      await msgRepo.saveMessage(
+        GroupMessage(
+          id: 'msg-other-group',
+          groupId: 'group-other',
+          senderPeerId: 'peer-other',
+          senderUsername: 'Other',
+          text: 'local history to keep',
+          timestamp: DateTime.utc(2026, 5, 23, 11),
+          createdAt: DateTime.utc(2026, 5, 23, 11),
+          isIncoming: true,
+          status: 'delivered',
+        ),
+      );
+
+      final bridge = FakeBridge(
+        initialResponses: {
+          'group:generateNextKey': {
+            'ok': true,
+            'groupKey': 'rotated-group-key',
+            'keyEpoch': 2,
+          },
+        },
+      );
+      final identityRepo = FakeIdentityRepository(identity: testIdentity);
+      final p2pService = FakeP2PService();
+      final exitHarness = (await tester.runAsync(
+        () => DurableGroupExitSurfaceHarness.createForSurface(
+          groupId: group.id,
+          bridge: bridge,
+          groupRepository: groupRepo,
+          messageRepository: msgRepo,
+          identityRepository: identityRepo,
+          sendP2PMessage: p2pService.sendMessage,
+          storeP2PMessageInInbox: p2pService.storeInInbox,
+        ),
+      ))!;
+      addTearDown(() async {
+        await tester.runAsync(exitHarness.close);
+      });
+      expect(
+        exitHarness.coordinator.groupRepository,
+        isA<GroupRepositoryImpl>(),
+      );
+      exitHarness.install();
+
+      // Use a Navigator stack to verify popUntil(isFirst)
+      await tester.pumpWidget(
+        _localizedMaterialApp(
+          home: Builder(
+            builder: (context) => Scaffold(
+              body: ElevatedButton(
+                onPressed: () {
+                  Navigator.of(context).push(
+                    MaterialPageRoute(
+                      builder: (_) => GroupInfoWired(
+                        group: group,
+                        groupRepo: groupRepo,
+                        msgRepo: msgRepo,
+                        contactRepo: InMemoryContactRepository(),
+                        bridge: bridge,
+                        identityRepo: identityRepo,
+                        p2pService: p2pService,
+                      ),
+                    ),
+                  );
+                },
+                child: const Text('Open Info'),
+              ),
+            ),
+          ),
+        ),
+      );
+
+      // Navigate to group info
+      await tester.tap(find.text('Open Info'));
+      await pumpFrames(tester, count: 20);
+
+      // Verify info screen is showing
+      expect(find.byType(GroupInfoScreen), findsOneWidget);
+
+      final leaveButton = find.byKey(const ValueKey('group-leave-button'));
+      await tester.scrollUntilVisible(
+        leaveButton,
+        200,
+        scrollable: find.byType(Scrollable).first,
+      );
+      final dialogTitle = find.text('Leave & delete group?');
+
+      // One tap only asks; nothing has left yet.
+      await tester.tap(leaveButton);
+      await pumpDurableGroupExitUntil(
+        tester,
+        () => dialogTitle.evaluate().isNotEmpty,
+      );
+      expect(exitHarness.requestLeaveCompletions, 0);
+
+      await tester.tap(find.text('Cancel'));
+      await pumpFrames(tester, count: 20);
+      expect(dialogTitle, findsNothing);
+      expect(find.byType(GroupInfoScreen), findsOneWidget);
+      expect(exitHarness.requestLeaveCompletions, 0);
+      expect(bridge.commandLog, isNot(contains('group:leave')));
+      expect(await groupRepo.getGroup(group.id), isNotNull);
+      expect(await msgRepo.getMessage('msg-left-group'), isNotNull);
+
+      // Confirming leaves as before.
+      await tester.tap(leaveButton);
+      await pumpDurableGroupExitUntil(
+        tester,
+        () => dialogTitle.evaluate().isNotEmpty,
+      );
+      await tester.tap(find.text('Leave & Delete'));
+      await pumpDurableGroupExitUntil(
+        tester,
+        () => exitHarness.requestLeaveCompletions >= 1,
+      );
+      await pumpFrames(tester);
+      expect(await groupRepo.getGroup(group.id), isNull);
+      expect(find.byType(GroupInfoScreen), findsNothing);
+    });
 
     testWidgets(
       'GCA-009 leave group deletes local messages and pops to first route',
