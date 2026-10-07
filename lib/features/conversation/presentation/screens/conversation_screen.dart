@@ -240,10 +240,6 @@ class ConversationComposerViewState {
       invalidAttachmentIndices.isNotEmpty || hasTotalSizeOverflow;
 }
 
-/// Pure UI conversation screen.
-///
-/// Displays header, conversation body (empty state or letter cards),
-/// and compose area. No business logic — all data passed via props.
 /// Below this height (keyboard open) the header, banners and attachment
 /// chrome collapse so history and the input row keep room.
 const double _compactKeyboardHeight = 260;
@@ -251,6 +247,10 @@ const double _compactKeyboardHeight = 260;
 /// The private-media selector row in [ComposeArea], bottom padding included.
 const double _privateMediaSelectorHeight = 66;
 
+/// Pure UI conversation screen.
+///
+/// Displays header, conversation body (empty state or letter cards),
+/// and compose area. No business logic — all data passed via props.
 class ConversationScreen extends StatefulWidget {
   static const editModeBannerKey = ValueKey('conversation-edit-mode-banner');
   static const cancelEditKey = ValueKey('conversation-cancel-edit-action');
