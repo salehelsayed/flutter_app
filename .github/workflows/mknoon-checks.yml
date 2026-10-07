@@ -32,6 +32,10 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
+      # Host test discovery (scripts/run_host_test_gates.sh) needs ripgrep;
+      # the GitHub-hosted image does not ship it.
+      - name: Install ripgrep
+        run: sudo apt-get update && sudo apt-get install -y ripgrep
       - name: Validate rules and workflow contracts
         run: |
           python3 scripts/mknoon_checks.py validate
