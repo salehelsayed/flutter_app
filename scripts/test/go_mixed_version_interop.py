@@ -19,6 +19,7 @@ with --new-toolchain. Every pair OLD->NEW, NEW->OLD, NEW->NEW and OLD->OLD
 Exits non-zero on any failure and prints relay, pair and row. Peers and the
 relay run on loopback only. One relay runs at a time (fixed metrics port).
 Relays use the memory backend unless --redis-url is given (production shape).
+--relay-addr runs every pair against one already-running remote relay instead.
 """
 
 import argparse
@@ -120,6 +121,22 @@ class Relay:
         except subprocess.TimeoutExpired:
             self.proc.kill()
         self.log_file.close()
+
+
+class RemoteRelay:
+    """A relay someone else runs (e.g. the Hetzner test relay): never started
+    or stopped here."""
+
+    def __init__(self, addr):
+        self.addr = addr
+        self.peer_id = addr.rsplit("/p2p/", 1)[1]
+        self.version = "remote"
+
+    def alive(self):
+        return True
+
+    def stop(self):
+        pass
 
 
 class Peer:
@@ -395,6 +412,8 @@ def main():
         os.path.dirname(os.path.abspath(__file__)))))
     ap.add_argument("--git-dir-repo", help="repo path to run git archive in (default --repo)")
     ap.add_argument("--workdir")
+    ap.add_argument("--relay-addr", help="use this already-running remote relay "
+                    "(full /p2p/ multiaddr) instead of the local OLD and NEW relays")
     ap.add_argument("--redis-url", help="run the relays on redis with ack-custody admission "
                     "on, like production (default: memory backend, admission off)")
     args = ap.parse_args()
@@ -420,11 +439,14 @@ def main():
     build(args.repo, builds["new"], args.new_toolchain, "new")
 
     results = []
-    for relay_ver in ("old", "new"):
-        relay_dir = os.path.join(workdir, f"relay-{relay_ver}")
-        os.makedirs(relay_dir, exist_ok=True)
-        relay = Relay(os.path.join(builds[relay_ver], "relay"), relay_dir, args.redis_url)
-        relay.version = relay_ver
+    for relay_ver in (("remote",) if args.relay_addr else ("old", "new")):
+        if args.relay_addr:
+            relay = RemoteRelay(args.relay_addr)
+        else:
+            relay_dir = os.path.join(workdir, f"relay-{relay_ver}")
+            os.makedirs(relay_dir, exist_ok=True)
+            relay = Relay(os.path.join(builds[relay_ver], "relay"), relay_dir, args.redis_url)
+            relay.version = relay_ver
         log(f"[interop] {relay_ver} relay {relay.peer_id}")
         try:
             for a_ver, b_ver in (("old", "new"), ("new", "old"), ("new", "new"), ("old", "old")):
