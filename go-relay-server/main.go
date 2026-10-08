@@ -22,7 +22,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
-const version = "1.10.9"
+const version = "1.11.0"
 
 func main() {
 	// Handle subcommands
