@@ -1586,7 +1586,7 @@ flutter:
         orbitTestPath: occurrences(orbitTest, durableFactoryCall),
       };
       const expectedDurableFactoryCounts = <String, int>{
-        'test/features/groups/presentation/group_info_wired_test.dart': 7,
+        'test/features/groups/presentation/group_info_wired_test.dart': 8,
         'test/features/orbit/presentation/screens/orbit_wired_test.dart': 4,
       };
       for (final entry in expectedDurableFactoryCounts.entries) {
@@ -1601,7 +1601,7 @@ flutter:
             0,
             (sum, count) => sum + count,
           ) !=
-          11) {
+          12) {
         violations.add('durable-factory-total:${durableFactoryCounts.values}');
       }
 
