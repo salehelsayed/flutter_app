@@ -1,6 +1,6 @@
 # Plan 406 — Upgrade Go and libp2p while old and new app versions keep talking
 
-Status: DONE 2026-10-08 — merged to main; store build 1.0.1+123 ready (upload pending); production relay v1.11.0 deployed 2026-10-08T16:59:41Z. Open: 24 h relay watch, store rollout. Findings in section 9.
+Status: DONE 2026-10-08 — merged to main; 1.0.1+123 (Go 1.27.1) released to TestFlight and Google Play by the user; production relay v1.11.0 deployed 2026-10-08T16:59:41Z. Open: 24 h relay watch (2026-10-09). Findings in section 9.
 Origin: user request 2026-10-08 — "upgrade to the latest Go while allowing users with multiple versions to talk to one another".
 
 ## 1. Problem
