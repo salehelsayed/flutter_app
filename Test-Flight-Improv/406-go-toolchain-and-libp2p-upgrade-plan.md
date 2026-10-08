@@ -1,6 +1,6 @@
 # Plan 406 — Upgrade Go and libp2p while old and new app versions keep talking
 
-Status: IN PROGRESS 2026-10-08 — branch `feat/go-1.27-libp2p-0.50`. Findings so far in section 9.
+Status: CODE + DEVICE PROOF DONE 2026-10-08 — branch `feat/go-1.27-libp2p-0.50` (local). Open: push/merge, store release, relay deploy (Step 7). Findings in section 9.
 Origin: user request 2026-10-08 — "upgrade to the latest Go while allowing users with multiple versions to talk to one another".
 
 ## 1. Problem
@@ -180,6 +180,15 @@ LAN soak: `go.mod:17` says to re-run the FDC-S6 soak on any libp2p bump (decisio
 9. **Environment-only reds** (same on the old code): relay `TestProductionAudioCallDeviceFixture_*` needs Docker; relay `TestRedisAckCustodySurvivesRelayProcessHandoff*` needs git inside the test. Run both on the Mac.
 10. **Relay connection rate limit (D3) done.** `go-relay-server/conn_admission.go`: the relay builds libp2p's default resource manager with only the connection rate limiter replaced (IPv4 /32: 20/s, burst 200; IPv6 /56: 20/s, burst 200; /48: 50/s, burst 1000; loopback unlimited) and counts refusals in `relay_conn_admission_rejected_total{reason=rate_limit|per_ip_limit|other}`. Mutation: with libp2p's default limiter the 17th quick connection from one address is refused. Note: the separate cap of 8 open connections per IPv4 address is NOT new (v0.38.2 has it too) and is unchanged.
 11. **Mixed-version interop: 56/56 passed** (2026-10-08, container, memory backend). `scripts/test/go_mixed_version_interop.sh`: OLD = `df0490fc5` on go1.25.0, NEW = this branch on go1.27.1; pairs OLD→NEW, NEW→OLD, NEW→NEW, OLD→OLD; each against the OLD and the NEW relay; rows circuit, 1:1 message, relay inbox, group (both directions), media, TCP, QUIC twice. The circuit and TCP rows each start on a fresh pair (a dialer that already knows QUIC addresses reconnects over QUIC). The test relay announces a public-looking IP (finding 4). `--redis-url` runs the relays like production (redis + ack-custody admission); no redis in the container, so that variant is still to run.
+13. **Device proof, 2026-10-08 (all passed).** OLD = main `f3ee4cb30` (store 1.0.1+122 code, libgojni go1.25.0) on emulator Pixel_7 "AliceOld"; NEW = `005884b44` (libgojni go1.27.1) on emulator Pixel_8 "BobNew" and on the iPhone 13 (release build `261008164231`, installed over the existing app, identity kept). Driven by Maestro (emulators) and Appium (iPhone); evidence in `docker-ws/beta/wave5/g406/` and `artifacts/beta-20260928/r2o-shots/g406_*`.
+    - Contact add: OLD↔NEW Android via the E2E contact-add seed; the iPhone (NEW) scanned both emulators' QR codes (the path that crashed on Go 1.26) — connected on all sides.
+    - 1:1 text both ways: OLD↔NEW Android; iPhone↔AliceOld and iPhone↔BobNew ("received via direct connection").
+    - Groups: "G406 Mixed" created on OLD with NEW; "G406 iPhone" created on the iPhone with OLD + NEW — invites accepted, every member saw every message.
+    - Voice calls: iPhone (NEW) → AliceOld (OLD) and BobNew (NEW) → AliceOld (OLD) — connected both sides, ended cleanly.
+    - Media: voice note AliceOld (OLD) → iPhone (NEW) through the relay, played on the iPhone.
+    - Killed app: BobNew (NEW) app killed; AliceOld's text woke it via FCM and posted the notification within ~2 s.
+    - No Mknoon crash on any device. (Pixel_8's `android.hardware…` service crash loop is the emulator image, not the app.)
+    - Not run: an iPhone with the app killed; one phone on real cellular (the iPhone 13 and emulators were on Wi-Fi). The relay path itself was exercised by the voice note.
 12. **Not covered by the interop test:** DCUtR (relay→direct upgrade) needs real NAT; covered by the in-process hole-punch tests on the new build and by the device run.
 
 ## Appendix — files that pin Go 1.25.0
