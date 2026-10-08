@@ -290,7 +290,7 @@ raise SystemExit('runtime producer invocation belongs to the outer driver')
             """#!/usr/bin/env python3
 import sys
 assert sys.argv[1:3] == ['version', '-m']
-print(sys.argv[3] + ': go1.25.0')
+print(sys.argv[3] + ': go1.27.1')
 """,
         )
         self.sender_driver = root / "fake-receiver-bootstrap.py"

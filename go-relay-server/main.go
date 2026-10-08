@@ -62,9 +62,15 @@ func main() {
 		log.Fatalf("Invalid relay address configuration: %v", err)
 	}
 
+	resourceManager, err := newRelayResourceManager()
+	if err != nil {
+		log.Fatalf("Failed to create resource manager: %v", err)
+	}
+
 	// Create the libp2p host
 	h, err := libp2p.New(
 		libp2p.Identity(privKey),
+		libp2p.ResourceManager(resourceManager),
 		libp2p.ListenAddrs(addressPlan.listen...),
 		libp2p.AddrsFactory(addressPlan.advertisedAddresses),
 		libp2p.EnableRelayService(

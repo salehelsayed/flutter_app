@@ -4,4 +4,4 @@
 # its own module) with the pinned toolchain, mirroring run_test_gates.sh:1041.
 set -euo pipefail
 cd "$(dirname "$0")/../../go-relay-server"
-GOTOOLCHAIN=go1.25.0 go test . -run '^TestRelayNotificationClosure_' -count=1 -v 2>&1 | tail -60
+GOTOOLCHAIN=go1.27.1 go test . -run '^TestRelayNotificationClosure_' -count=1 -v 2>&1 | tail -60

@@ -707,8 +707,8 @@ The application emits structured events via `emitFlowEvent()` at every layer for
 ### Prerequisites
 
 - Flutter SDK (3.x, Dart SDK ^3.9.0)
-- Go (1.22+)
-- gomobile: `go install golang.org/x/mobile/cmd/gomobile@latest && gomobile init`
+- Go: any version; `GOTOOLCHAIN=go1.27.1` (set by `go-mknoon/Makefile` and the `scripts/ensure_go_*_bindings.sh` scripts) downloads the exact one
+- gomobile: none to install. `scripts/ensure_go_*_bindings.sh` runs `make -C go-mknoon gomobile-tools`, which installs the gomobile/gobind that `go-mknoon/go.mod` pins into `go-mknoon/bin/tools`
 - Xcode (for iOS builds)
 - Android Studio + NDK (for Android builds)
 - CocoaPods (for iOS dependency management)
@@ -759,7 +759,6 @@ flutter test integration_test/smoke_test.dart
 
 - Android build requires Go < 1.25 or a patched `wlynxg/anet` (known gomobile issue).
 - gomobile symbols use the Go package prefix (`Bridge*`), not the framework name (`GoMknoon*`).
-- The `go-mknoon/stub/gosigar/` stub is required because iOS cannot use `libproc.h`.
 - Always run `make all` + `pod install` after modifying Go code.
 
 ---

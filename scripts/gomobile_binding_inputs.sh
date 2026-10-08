@@ -35,7 +35,7 @@ gomobile_effective_binary() {
   fi
   if [[ -n "$go_binary" ]]; then
     local gopath
-    gopath="$(GOTOOLCHAIN=go1.25.0 "$go_binary" env GOPATH 2>/dev/null || true)"
+    gopath="$(GOTOOLCHAIN=go1.27.1 "$go_binary" env GOPATH 2>/dev/null || true)"
     gopath="${gopath%%:*}"
     candidate="$gopath/bin/gomobile"
     if [[ -n "$gopath" && -f "$candidate" ]]; then
@@ -101,7 +101,7 @@ gomobile_binding_input_digest() {
     if [[ -n "$go_binary" && -f "$go_binary" ]]; then
       printf 'go.binary=%s\n' "$(gomobile_sha256_file "$go_binary")"
       printf 'go.version=%s\n' \
-        "$(GOTOOLCHAIN=go1.25.0 "$go_binary" version 2>&1 || true)"
+        "$(GOTOOLCHAIN=go1.27.1 "$go_binary" version 2>&1 || true)"
     else
       printf 'go=<missing>\n'
     fi
@@ -109,7 +109,7 @@ gomobile_binding_input_digest() {
       printf 'gomobile.binary=%s\n' \
         "$(gomobile_sha256_file "$gomobile_binary")"
       printf 'gomobile.version=%s\n' \
-        "$(GOTOOLCHAIN=go1.25.0 "$gomobile_binary" version 2>&1 || true)"
+        "$(GOTOOLCHAIN=go1.27.1 "$gomobile_binary" version 2>&1 || true)"
     else
       printf 'gomobile=<missing>\n'
     fi

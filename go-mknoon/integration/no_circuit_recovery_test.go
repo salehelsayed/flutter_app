@@ -13,7 +13,6 @@ package integration_test
 
 import (
 	"context"
-	"fmt"
 	"testing"
 	"time"
 
@@ -158,13 +157,22 @@ func TestNoCircuitCyclesDoNotChurnGroupsOrRestartUnbounded(t *testing.T) {
 	}
 }
 
-// relayDNS4Addr returns the local relay's multiaddr in /dns4 form. autorelay
-// v0.39.1's cleanupAddressSet (addrsplosion.go:12-36) keeps ONLY public or DNS
-// relay addresses when building the published /p2p-circuit set — a loopback
-// 127.0.0.1 relay addr is silently dropped, so the publish guard below must
-// reach the relay the way production does (DNS, like /dns/mknoun.xyz/…).
-func relayDNS4Addr(relay *localRelayServer) string {
-	return fmt.Sprintf("/dns4/localhost/tcp/%d/p2p/%s", relay.tcpPort, relay.peerID)
+// relayAnnouncingPublicIP starts a local relay that also announces a public
+// IPv4 address, the way the production relay announces RELAY_SERVER_IP.
+// autorelay's cleanupAddressSet (addrsplosion.go) builds the published
+// /p2p-circuit set ONLY from public relay addresses: a loopback relay addr is
+// silently dropped, and since go-libp2p v0.50 so is a /dns relay addr (v0.39.1
+// kept DNS, which this test used to rely on; plan 406). 190.190.190.190 is
+// manet-public and never dialed.
+func relayAnnouncingPublicIP(t *testing.T) *localRelayServer {
+	t.Helper()
+	relay := newLocalRelayServer(t, newLocalRelaySharedState())
+	relay.announcePublicIP = "190.190.190.190"
+	relay.start()
+	t.Cleanup(func() {
+		relay.stop()
+	})
+	return relay
 }
 
 // TC-189-41 (integration half; unit half lives in
@@ -174,8 +182,8 @@ func relayDNS4Addr(relay *localRelayServer) string {
 // coupling (EnableDcutrUpgrade → ForceReachabilityPublic) from silently
 // re-creating the NO_CIRCUIT wedge for everyone.
 func TestDefaultFlagsKeepPrivateReachability_CircuitPublished(t *testing.T) {
-	relay := startSingleLocalRelay(t)
-	n, _ := startNodeWithRelays(t, []string{relayDNS4Addr(relay)}, nil, nil)
+	relay := relayAnnouncingPublicIP(t)
+	n, _ := startNodeWithRelays(t, []string{relay.addr()}, nil, nil)
 
 	waitForNodeStatus(t, n, 30*time.Second, func(status map[string]interface{}) bool {
 		addrs, _ := status["circuitAddresses"].([]string)

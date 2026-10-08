@@ -1692,7 +1692,7 @@ Calls:
   );
 
   test(
-    'adapter pins every fixture and central build child to Go 1.25.0',
+    'adapter pins every fixture and central build child to Go 1.27.1',
     () async {
       Map<String, String>? fixtureEnvironment;
       final centralEnvironments = <Map<String, String>>[];

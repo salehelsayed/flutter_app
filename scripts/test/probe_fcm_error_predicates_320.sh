@@ -10,9 +10,9 @@ grep -E 'firebase.google.com/go' go.mod
 
 echo
 echo "=== exported Is* predicates in messaging ==="
-GOTOOLCHAIN=go1.25.0 go doc firebase.google.com/go/v4/messaging 2>/dev/null | grep -E '^func Is' || echo "(go doc returned nothing)"
+GOTOOLCHAIN=go1.27.1 go doc firebase.google.com/go/v4/messaging 2>/dev/null | grep -E '^func Is' || echo "(go doc returned nothing)"
 
-MODCACHE=$(GOTOOLCHAIN=go1.25.0 go env GOMODCACHE 2>/dev/null)
+MODCACHE=$(GOTOOLCHAIN=go1.27.1 go env GOMODCACHE 2>/dev/null)
 VER=$(grep -oE 'firebase\.google\.com/go/v4 v[0-9.]+' go.mod | awk '{print $2}')
 SRC="$MODCACHE/firebase.google.com/go/v4@$VER/messaging"
 echo

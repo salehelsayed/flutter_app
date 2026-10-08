@@ -10,9 +10,9 @@ package node
 // s2WaitIdentify in quic_identify_revalidation_test.go) and the holepunch
 // firstDirectConn helper.
 //
-// Run under GOTOOLCHAIN=go1.25.0 (the QUIC two-host tests panic on Go 1.26.x —
-// quic-go v0.49.0 vs Go 1.26.x crypto/tls). Concurrency lock T10 needs -race:
-//   GOTOOLCHAIN=go1.25.0 go test -race ./node/... -run TestHandleLANPeerFound
+// Run under the pinned GOTOOLCHAIN (go1.27.1 since plan 406). Concurrency lock
+// T10 needs -race:
+//   GOTOOLCHAIN=go1.27.1 go test -race ./node/... -run TestHandleLANPeerFound
 
 import (
 	"context"

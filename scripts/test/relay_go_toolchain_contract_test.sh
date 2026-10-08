@@ -40,8 +40,8 @@ GOTOOLCHAIN=local \
 
 [ "$(grep -c '^CALL$' "$go_log" || true)" -eq 3 ] ||
   fail 'expected build plus two test Go invocations'
-[ "$(grep -c $'^ENV\tgo1.25.0$' "$go_log" || true)" -eq 3 ] ||
-  fail 'one or more relay build/test recipes lost GOTOOLCHAIN=go1.25.0'
+[ "$(grep -c $'^ENV\tgo1.27.1$' "$go_log" || true)" -eq 3 ] ||
+  fail 'one or more relay build/test recipes lost GOTOOLCHAIN=go1.27.1'
 [ "$(grep -c $'^ARG\tbuild$' "$go_log" || true)" -eq 1 ] ||
   fail 'relay build recipe did not invoke go build exactly once'
 [ "$(grep -c $'^ARG\ttest$' "$go_log" || true)" -eq 2 ] ||

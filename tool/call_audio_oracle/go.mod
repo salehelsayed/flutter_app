@@ -1,6 +1,6 @@
 module mknoon.local/tool/call_audio_oracle
 
-go 1.25.0
+go 1.27.1
 
 require (
 	github.com/pion/logging v0.2.4

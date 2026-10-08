@@ -10,7 +10,7 @@ package node
 // loopback conn is not constructible host-side; see Accepted Differences in the
 // plan). The live two-phone transfer is the device-only closure gate (D1).
 //
-// Run under GOTOOLCHAIN=go1.25.0 (quic-go panics under Go 1.26.x).
+// Run under the pinned GOTOOLCHAIN (go1.27.1 since plan 406).
 
 import (
 	"context"

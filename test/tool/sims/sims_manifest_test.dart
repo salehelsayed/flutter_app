@@ -668,7 +668,7 @@ void main() {
         'android.emulator',
         'android.microphone',
         'host.docker',
-        'host.go1.25',
+        'host.go1.27',
       ]);
       expect(capability.allowedNaReason, targetUnavailableNaReason);
       expect(capability.artifactRequired, isTrue);

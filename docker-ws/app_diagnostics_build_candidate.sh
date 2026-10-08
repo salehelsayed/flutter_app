@@ -14,12 +14,12 @@ PY
 )"
 (
  cd "$repo_root/go-relay-server"
- GOTOOLCHAIN=go1.25.0 CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags "-s -w -X main.callDiagnosticBuild=$source_digest" -o "$candidate_dir/relay-server" .
+ GOTOOLCHAIN=go1.27.1 CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags "-s -w -X main.callDiagnosticBuild=$source_digest" -o "$candidate_dir/relay-server" .
 )
 python3 - "$repo_root" "$source_digest" <<'PY'
 import datetime,hashlib,json,pathlib,sys
 root=pathlib.Path(sys.argv[1]);out=root/'build/app-diagnostics';binary=out/'relay-server'
-m={'createdAt':datetime.datetime.now(datetime.timezone.utc).isoformat(),'toolchain':'go1.25.0','goos':'linux','goarch':'amd64','cgoEnabled':False,'sourceDigest':sys.argv[2],'buildStampField':'main.callDiagnosticBuild','binary':str(binary.relative_to(root)),'sha256':hashlib.sha256(binary.read_bytes()).hexdigest(),'bytes':binary.stat().st_size,'deploymentPerformed':False,'operator':{}}
+m={'createdAt':datetime.datetime.now(datetime.timezone.utc).isoformat(),'toolchain':'go1.27.1','goos':'linux','goarch':'amd64','cgoEnabled':False,'sourceDigest':sys.argv[2],'buildStampField':'main.callDiagnosticBuild','binary':str(binary.relative_to(root)),'sha256':hashlib.sha256(binary.read_bytes()).hexdigest(),'bytes':binary.stat().st_size,'deploymentPerformed':False,'operator':{}}
 for name in ['app_diagnostics.py','app_diagnostics_schema_v1.json','app_diagnostics_install.sh','app_diagnostics_monitor.py']:
  p=root/'docker-ws'/name;m['operator'][name]=hashlib.sha256(p.read_bytes()).hexdigest()
 (out/'relay-candidate.json').write_text(json.dumps(m,indent=2)+'\n');print(json.dumps(m,indent=2))

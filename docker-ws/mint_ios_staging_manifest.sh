@@ -59,7 +59,7 @@ echo "app rev  : $APP_REV"
 echo
 
 echo "=== building the payload producer (Go 1.25) ==="
-(cd go-mknoon && GOTOOLCHAIN=go1.25.0 go build -o "$PRODUCER" ./cmd/iospayloadproducer)
+(cd go-mknoon && GOTOOLCHAIN=go1.27.1 go build -o "$PRODUCER" ./cmd/iospayloadproducer)
 chmod 700 "$PRODUCER"
 
 echo "=== writing the provider request ==="

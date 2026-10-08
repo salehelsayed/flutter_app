@@ -28,17 +28,19 @@ import (
 	"bytes"
 	"context"
 	"errors"
-	"io"
+	"log/slog"
 	"net"
+	"os"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
-	logging "github.com/ipfs/go-log/v2"
 	"github.com/libp2p/go-libp2p/core/event"
 	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/libp2p/go-libp2p/core/peerstore"
+	"github.com/libp2p/go-libp2p/gologshim"
 	relayclient "github.com/libp2p/go-libp2p/p2p/protocol/circuitv2/client"
 	ma "github.com/multiformats/go-multiaddr"
 	manet "github.com/multiformats/go-multiaddr/net"
@@ -196,21 +198,45 @@ func avMachinePrivateIPv4() string {
 	return ""
 }
 
-// avCaptureLogs runs fn while draining all go-log output, returning the text.
+// go-libp2p v0.50 logs through log/slog (gologshim), not go-log, and each
+// logger binds its handler once, on its first log line. So one process-wide
+// handler is installed before any test runs: it writes to stderr at the
+// default ERROR level, exactly like libp2p's fallback, and tees to an active
+// avCaptureLogs buffer.
+type avLogTeeWriter struct {
+	mu      sync.Mutex
+	capture *bytes.Buffer
+}
+
+func (w *avLogTeeWriter) Write(p []byte) (int, error) {
+	w.mu.Lock()
+	if w.capture != nil {
+		w.capture.Write(p)
+	}
+	w.mu.Unlock()
+	return os.Stderr.Write(p)
+}
+
+var avLogTee = &avLogTeeWriter{}
+
+func init() {
+	gologshim.SetDefaultHandler(slog.NewTextHandler(avLogTee, &slog.HandlerOptions{Level: slog.LevelError}))
+}
+
+// avCaptureLogs runs fn while capturing all libp2p log output, returning the text.
 func avCaptureLogs(t *testing.T, fn func()) string {
 	t.Helper()
-	pr := logging.NewPipeReader(logging.PipeFormat(logging.PlaintextOutput))
 	var buf bytes.Buffer
-	done := make(chan struct{})
-	go func() {
-		_, _ = io.Copy(&buf, pr)
-		close(done)
-	}()
+	avLogTee.mu.Lock()
+	avLogTee.capture = &buf
+	avLogTee.mu.Unlock()
 	fn()
 	time.Sleep(100 * time.Millisecond) // let synchronous construction logs flush
-	_ = pr.Close()
-	<-done
-	return buf.String()
+	avLogTee.mu.Lock()
+	avLogTee.capture = nil
+	out := buf.String()
+	avLogTee.mu.Unlock()
+	return out
 }
 
 // ---------------------------------------------------------------------------
@@ -384,8 +410,12 @@ func TestInterfaceChangeUpdatesAnnouncedSet_NoStaleAddr(t *testing.T) {
 		return avIPNetAddrs(avMarkerPrivateIP2), nil
 	})
 
-	// basichost re-enumerates on its unexported ~5s ticker (do NOT override it).
-	deadline := time.Now().Add(16 * time.Second)
+	// basichost recomputes addrs on its unexported 5s ticker, but since go-libp2p
+	// v0.50 it re-reads the interface set at most once per interfaceAddrsCacheTTL
+	// (1 min, addrs_manager.go:792). So a network switch reaches the announced
+	// set within ~1 min + one tick (plan 406; was ~5s on v0.39). Do NOT override
+	// either timer.
+	deadline := time.Now().Add(75 * time.Second)
 	for time.Now().Before(deadline) {
 		addrs := n.Host().Addrs()
 		if avAddrsContain(addrs, avMarkerPrivateIP2) && !avAddrsContain(addrs, avMarkerPrivateIP) {
@@ -492,10 +522,10 @@ func TestOtherBasichostErrorsNotSuppressed(t *testing.T) {
 		// A node start is where the forbidden SetLogLevel("basichost", FATAL)
 		// mutation would live; run it so the mutation would take effect here.
 		_ = avStartLocalNode(t)
-		logging.Logger("basichost").Errorw(probe, "k", "v")
+		gologshim.Logger("basichost").Error(probe, "k", "v")
 	})
 	if !strings.Contains(logs, probe) {
-		t.Fatalf("a basichost Errorw did not reach the sink — over-suppression regression? got:\n%s", logs)
+		t.Fatalf("a basichost Error did not reach the sink — over-suppression regression? got:\n%s", logs)
 	}
 }
 

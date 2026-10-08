@@ -17,6 +17,7 @@ import (
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/libp2p/go-msgio"
 	"github.com/multiformats/go-varint"
+	"google.golang.org/protobuf/proto"
 
 	pb "github.com/libp2p/go-libp2p-pubsub/pb"
 )
@@ -41,11 +42,15 @@ func init() {
 }
 
 func TestBasicSeqnoValidator1(t *testing.T) {
-	testBasicSeqnoValidator(t, time.Minute)
+	synctestTest(t, func(t *testing.T) {
+		testBasicSeqnoValidator(t, time.Minute)
+	})
 }
 
 func TestBasicSeqnoValidator2(t *testing.T) {
-	testBasicSeqnoValidator(t, time.Nanosecond)
+	synctestTest(t, func(t *testing.T) {
+		testBasicSeqnoValidator(t, time.Nanosecond)
+	})
 }
 
 func testBasicSeqnoValidator(t *testing.T, ttl time.Duration) {
@@ -77,8 +82,8 @@ func testBasicSeqnoValidator(t *testing.T, ttl time.Duration) {
 
 	time.Sleep(time.Millisecond * 100)
 
-	for i := 0; i < 100; i++ {
-		msg := []byte(fmt.Sprintf("%d the flooooooood %d", i, i))
+	for i := range 100 {
+		msg := fmt.Appendf(nil, "%d the flooooooood %d", i, i)
 
 		owner := rng.Intn(len(psubs))
 
@@ -97,55 +102,57 @@ func testBasicSeqnoValidator(t *testing.T, ttl time.Duration) {
 }
 
 func TestBasicSeqnoValidatorReplay(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	synctestTest(t, func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
 
-	hosts := getDefaultHosts(t, 20)
-	psubs := getPubsubsWithOptionC(ctx, hosts[:19],
-		func(i int) Option {
-			return WithDefaultValidator(NewBasicSeqnoValidator(newMockPeerMetadataStore(), slog.Default()))
-		},
-		func(i int) Option {
-			return WithSeenMessagesTTL(time.Nanosecond)
-		},
-	)
-	_ = newReplayActor(t, ctx, hosts[19])
+		hosts := getDefaultHosts(t, 20)
+		psubs := getPubsubsWithOptionC(ctx, hosts[:19],
+			func(i int) Option {
+				return WithDefaultValidator(NewBasicSeqnoValidator(newMockPeerMetadataStore(), slog.Default()))
+			},
+			func(i int) Option {
+				return WithSeenMessagesTTL(time.Nanosecond)
+			},
+		)
+		_ = newReplayActor(t, ctx, hosts[19])
 
-	var msgs []*Subscription
-	for _, ps := range psubs {
-		subch, err := ps.Subscribe("foobar")
-		if err != nil {
-			t.Fatal(err)
+		var msgs []*Subscription
+		for _, ps := range psubs {
+			subch, err := ps.Subscribe("foobar")
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			msgs = append(msgs, subch)
 		}
 
-		msgs = append(msgs, subch)
-	}
+		sparseConnect(t, hosts)
 
-	sparseConnect(t, hosts)
+		time.Sleep(time.Millisecond * 100)
 
-	time.Sleep(time.Millisecond * 100)
+		for i := range 10 {
+			msg := fmt.Appendf(nil, "%d the flooooooood %d", i, i)
 
-	for i := 0; i < 10; i++ {
-		msg := []byte(fmt.Sprintf("%d the flooooooood %d", i, i))
+			owner := rng.Intn(len(psubs))
 
-		owner := rng.Intn(len(psubs))
+			psubs[owner].Publish("foobar", msg)
 
-		psubs[owner].Publish("foobar", msg)
+			for _, sub := range msgs {
+				got, err := sub.Next(ctx)
+				if err != nil {
+					t.Fatal(sub.err)
+				}
+				if !bytes.Equal(msg, got.Data) {
+					t.Fatal("got wrong message!")
+				}
+			}
+		}
 
 		for _, sub := range msgs {
-			got, err := sub.Next(ctx)
-			if err != nil {
-				t.Fatal(sub.err)
-			}
-			if !bytes.Equal(msg, got.Data) {
-				t.Fatal("got wrong message!")
-			}
+			assertNeverReceives(t, sub, time.Second)
 		}
-	}
-
-	for _, sub := range msgs {
-		assertNeverReceives(t, sub, time.Second)
-	}
+	})
 }
 
 type mockPeerMetadataStore struct {
@@ -171,18 +178,31 @@ func (m *mockPeerMetadataStore) Put(ctx context.Context, p peer.ID, v []byte) er
 	return nil
 }
 
+// chanMutex is a channel-based mutual exclusion lock that is compatible with
+// testing/synctest. Unlike sync.Mutex, a goroutine blocked while acquiring it is
+// durably blocked, so the synctest fake clock can keep advancing while another
+// goroutine holds the lock across a clock-driven blocking call (e.g. a stream
+// write). With sync.Mutex the contended acquire is not a durable block, which
+// freezes the bubble's clock and can deadlock the test.
+type chanMutex chan struct{}
+
+func newChanMutex() chanMutex { return make(chanMutex, 1) }
+
+func (m chanMutex) Lock()   { m <- struct{}{} }
+func (m chanMutex) Unlock() { <-m }
+
 type replayActor struct {
 	t *testing.T
 
 	ctx context.Context
 	h   host.Host
 
-	mx  sync.Mutex
+	mx  chanMutex
 	out map[peer.ID]network.Stream
 }
 
 func newReplayActor(t *testing.T, ctx context.Context, h host.Host) *replayActor {
-	replay := &replayActor{t: t, ctx: ctx, h: h, out: make(map[peer.ID]network.Stream)}
+	replay := &replayActor{t: t, ctx: ctx, h: h, mx: newChanMutex(), out: make(map[peer.ID]network.Stream)}
 	h.SetStreamHandler(FloodSubID, replay.handleStream)
 	h.Network().Notify(&network.NotifyBundle{ConnectedF: replay.connected})
 	return replay
@@ -203,7 +223,7 @@ func (r *replayActor) handleStream(s network.Stream) {
 		}
 
 		rpc := new(pb.RPC)
-		err = rpc.Unmarshal(msgbytes)
+		err = proto.Unmarshal(msgbytes, rpc)
 		rd.ReleaseMsg(msgbytes)
 		if err != nil {
 			s.Reset()
@@ -233,20 +253,20 @@ func (r *replayActor) send(p peer.ID, rpc *pb.RPC) {
 		return
 	}
 
-	size := uint64(rpc.Size())
+	size := uint64(proto.Size(rpc))
 
 	buf := pool.Get(varint.UvarintSize(size) + int(size))
 	defer pool.Put(buf)
 
 	n := binary.PutUvarint(buf, size)
 
-	_, err := rpc.MarshalTo(buf[n:])
+	out, err := proto.MarshalOptions{}.MarshalAppend(buf[:n], rpc)
 	if err != nil {
 		r.t.Logf("replay: error marshalling message: %s", err)
 		return
 	}
 
-	_, err = s.Write(buf)
+	_, err = s.Write(out)
 	if err != nil {
 		r.t.Logf("replay: error sending message: %s", err)
 	}
@@ -254,7 +274,7 @@ func (r *replayActor) send(p peer.ID, rpc *pb.RPC) {
 
 func (r *replayActor) replay(msg *pb.Message) {
 	// replay the message 10 times to a random subset of peers
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		delay := time.Duration(1+rng.Intn(20)) * time.Millisecond
 		time.Sleep(delay)
 

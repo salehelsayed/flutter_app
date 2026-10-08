@@ -21,6 +21,7 @@ import (
 	"github.com/libp2p/go-libp2p/core/record"
 	"github.com/libp2p/go-msgio"
 	"github.com/mknoon/go-mknoon/node"
+	ma "github.com/multiformats/go-multiaddr"
 	"google.golang.org/protobuf/encoding/protowire"
 )
 
@@ -156,14 +157,18 @@ func (s *localRelaySharedState) retrieveInbox(peerID string, limit int) ([]local
 }
 
 type localRelayServer struct {
-	t         *testing.T
-	state     *localRelaySharedState
-	privKey   crypto.PrivKey
-	peerID    peer.ID
-	tcpPort   int
-	host      host.Host
-	started   bool
-	startStop sync.Mutex
+	t       *testing.T
+	state   *localRelaySharedState
+	privKey crypto.PrivKey
+	peerID  peer.ID
+	tcpPort int
+	// announcePublicIP, when set, adds /ip4/<ip>/tcp/<tcpPort> to the relay's
+	// announced addrs, like the production relay announcing RELAY_SERVER_IP.
+	// The address is never dialed: peers already hold the loopback connection.
+	announcePublicIP string
+	host             host.Host
+	started          bool
+	startStop        sync.Mutex
 }
 
 func newLocalRelayServer(t *testing.T, state *localRelaySharedState) *localRelayServer {
@@ -197,12 +202,19 @@ func (s *localRelayServer) start() {
 		return
 	}
 
-	h, err := libp2p.New(
+	opts := []libp2p.Option{
 		libp2p.Identity(s.privKey),
 		libp2p.ListenAddrStrings(fmt.Sprintf("/ip4/127.0.0.1/tcp/%d", s.tcpPort)),
 		libp2p.EnableRelayService(),
 		libp2p.ForceReachabilityPublic(),
-	)
+	}
+	if s.announcePublicIP != "" {
+		public := ma.StringCast(fmt.Sprintf("/ip4/%s/tcp/%d", s.announcePublicIP, s.tcpPort))
+		opts = append(opts, libp2p.AddrsFactory(func(addrs []ma.Multiaddr) []ma.Multiaddr {
+			return append(addrs, public)
+		}))
+	}
+	h, err := libp2p.New(opts...)
 	if err != nil {
 		s.t.Fatalf("libp2p.New(relay %s): %v", s.peerID, err)
 	}

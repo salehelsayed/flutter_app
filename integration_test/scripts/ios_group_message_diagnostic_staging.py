@@ -1379,7 +1379,7 @@ class Transaction:
             "CGO_ENABLED": "0",
             "GOOS": "linux",
             "GOARCH": "amd64",
-            "GOTOOLCHAIN": "go1.25.0",
+            "GOTOOLCHAIN": "go1.27.1",
         }
         _run_command(
             [

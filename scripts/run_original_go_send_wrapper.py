@@ -29,7 +29,7 @@ def verify_completion(listing, output, returncode):
 
 def main():
     root = Path(__file__).resolve().parents[1]
-    env = dict(os.environ, GOTOOLCHAIN='go1.25.0')
+    env = dict(os.environ, GOTOOLCHAIN='go1.27.1')
     listing = subprocess.run(
         ['go', 'test', './node/', '-list', 'Send'],
         cwd=root / 'go-mknoon', env=env, capture_output=True,

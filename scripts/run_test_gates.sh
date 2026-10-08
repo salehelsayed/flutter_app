@@ -1342,8 +1342,8 @@ array_contains() {
 # sentinels. Wired into BOTH the `groups` and `all` gates.
 run_group_forwarding_go_bridge_gate() {
   echo "=== Group Forwarding / Private Media Go Bridge Gate ==="
-  (cd go-mknoon && GOTOOLCHAIN=go1.25.0 go test ./bridge -run '^TestGMF11ForwardedMarkerMapsToPublishOptions$' -count=1)
-  (cd go-mknoon && GOTOOLCHAIN=go1.25.0 go test ./bridge ./node -run 'GPL12|GK030|TC3410|TC363|TC364|TC365' -count=1)
+  (cd go-mknoon && GOTOOLCHAIN=go1.27.1 go test ./bridge -run '^TestGMF11ForwardedMarkerMapsToPublishOptions$' -count=1)
+  (cd go-mknoon && GOTOOLCHAIN=go1.27.1 go test ./bridge ./node -run 'GPL12|GK030|TC3410|TC363|TC364|TC365' -count=1)
 }
 
 # Notification relay closure: curated 1:1 and group gates run only the focused
@@ -1357,7 +1357,7 @@ run_relay_toolchain_contract_gate() {
 run_relay_notification_go_gate() {
   echo "=== Relay Notification Go Gate ==="
   run_relay_toolchain_contract_gate
-  (cd go-relay-server && GOTOOLCHAIN=go1.25.0 go test ./... -run '^TestRelayNotificationClosure_' -count=1)
+  (cd go-relay-server && GOTOOLCHAIN=go1.27.1 go test ./... -run '^TestRelayNotificationClosure_' -count=1)
 }
 
 # Plan 344: the protected direct-inbox lane crosses the relay process, native
@@ -1368,74 +1368,74 @@ run_ack_custody_go_gate() {
   echo "=== Direct Inbox ACK-Custody Go Gate ==="
 
   (cd go-relay-server && \
-    GOTOOLCHAIN=go1.25.0 go test . \
+    GOTOOLCHAIN=go1.27.1 go test . \
       -list '^TestRelayNotificationClosure_DirectMediaEnvelopeExpiryCeiling$' | \
       rg -x 'TestRelayNotificationClosure_DirectMediaEnvelopeExpiryCeiling')
   (cd go-relay-server && \
-    GOTOOLCHAIN=go1.25.0 go test . \
+    GOTOOLCHAIN=go1.27.1 go test . \
       -list '^TestRelayNotificationClosure_DirectMutationCustody$' | \
       rg -x 'TestRelayNotificationClosure_DirectMutationCustody')
   (cd go-relay-server && \
-    GOTOOLCHAIN=go1.25.0 go test . \
+    GOTOOLCHAIN=go1.27.1 go test . \
       -run '^TestRelayNotificationClosure_DirectMediaEnvelopeExpiryCeiling$' \
       -count=1 -v | \
       rg '^--- PASS: TestRelayNotificationClosure_DirectMediaEnvelopeExpiryCeiling \(')
   (cd go-relay-server && \
-    GOTOOLCHAIN=go1.25.0 go test . \
+    GOTOOLCHAIN=go1.27.1 go test . \
       -run '^TestRelayNotificationClosure_DirectMutationCustody$' \
       -count=1 -v | \
       rg '^--- PASS: TestRelayNotificationClosure_DirectMutationCustody \(')
 
   (cd go-relay-server && \
-    GOTOOLCHAIN=go1.25.0 go test -tags integration ./... \
+    GOTOOLCHAIN=go1.27.1 go test -tags integration ./... \
       -list '^TestRedisAckCustodySurvivesRelayProcessHandoffKillSwitchAndLegacyNamespace$' | \
       rg -x 'TestRedisAckCustodySurvivesRelayProcessHandoffKillSwitchAndLegacyNamespace')
   (cd go-relay-server && \
-    GOTOOLCHAIN=go1.25.0 go test -tags integration ./... \
+    GOTOOLCHAIN=go1.27.1 go test -tags integration ./... \
       -run '^TestRedisAckCustodySurvivesRelayProcessHandoffKillSwitchAndLegacyNamespace$' \
       -count=1 -v | \
       rg '^--- PASS: TestRedisAckCustodySurvivesRelayProcessHandoffKillSwitchAndLegacyNamespace \(')
 
   (cd go-mknoon && \
-    GOTOOLCHAIN=go1.25.0 go test ./node \
+    GOTOOLCHAIN=go1.27.1 go test ./node \
       -list '^TestInboxAckCustodyMixedRelayAndProofContract$' | \
       rg -x 'TestInboxAckCustodyMixedRelayAndProofContract')
   (cd go-mknoon && \
-    GOTOOLCHAIN=go1.25.0 go test ./node \
+    GOTOOLCHAIN=go1.27.1 go test ./node \
       -list '^TestInboxAckCustodyReceiveFanoutContract$' | \
       rg -x 'TestInboxAckCustodyReceiveFanoutContract')
   (cd go-mknoon && \
-    GOTOOLCHAIN=go1.25.0 go test ./node \
+    GOTOOLCHAIN=go1.27.1 go test ./node \
       -list '^TestInboxAckCustodyMediaExpiryCeiling$' | \
       rg -x 'TestInboxAckCustodyMediaExpiryCeiling')
   (cd go-mknoon && \
-    GOTOOLCHAIN=go1.25.0 go test ./node \
+    GOTOOLCHAIN=go1.27.1 go test ./node \
       -run '^TestInboxAckCustody((MixedRelayAndProof|ReceiveFanout)Contract|MediaExpiryCeiling)$' \
       -count=1 -v | \
       rg '^--- PASS: TestInboxAckCustody' | \
       awk 'END { exit NR == 3 ? 0 : 1 }')
 
   (cd go-mknoon && \
-    GOTOOLCHAIN=go1.25.0 go test ./bridge \
+    GOTOOLCHAIN=go1.27.1 go test ./bridge \
       -list '^TestDispatchInboxAckCustodyContract$' | \
       rg -x 'TestDispatchInboxAckCustodyContract')
   (cd go-mknoon && \
-    GOTOOLCHAIN=go1.25.0 go test ./bridge \
+    GOTOOLCHAIN=go1.27.1 go test ./bridge \
       -list '^TestInboxStoreMediaExpiryCeilingBridgeContract$' | \
       rg -x 'TestInboxStoreMediaExpiryCeilingBridgeContract')
   (cd go-mknoon && \
-    GOTOOLCHAIN=go1.25.0 go test ./bridge \
+    GOTOOLCHAIN=go1.27.1 go test ./bridge \
       -run '^(TestDispatchInboxAckCustodyContract|TestInboxStoreMediaExpiryCeilingBridgeContract)$' \
       -count=1 -v | \
       rg '^--- PASS: (TestDispatchInboxAckCustodyContract|TestInboxStoreMediaExpiryCeilingBridgeContract) \(' | \
       awk 'END { exit NR == 2 ? 0 : 1 }')
 
   (cd go-mknoon && \
-    GOTOOLCHAIN=go1.25.0 go test -tags integration ./integration \
+    GOTOOLCHAIN=go1.27.1 go test -tags integration ./integration \
       -list '^TestAckCustodyMixedVersionMatrix$' | \
       rg -x 'TestAckCustodyMixedVersionMatrix')
   (cd go-mknoon && \
-    GOTOOLCHAIN=go1.25.0 go test -tags integration ./integration \
+    GOTOOLCHAIN=go1.27.1 go test -tags integration ./integration \
       -run '^TestAckCustodyMixedVersionMatrix$' -count=1 -v | \
       rg '^--- PASS: TestAckCustodyMixedVersionMatrix \(')
 
@@ -1453,54 +1453,54 @@ run_media_custody_go_gate() {
   # 362: the recipient-fanout isolation test raises the curated prefix count
   # from 11 to 12.
   (cd go-relay-server && \
-    GOTOOLCHAIN=go1.25.0 go test . \
+    GOTOOLCHAIN=go1.27.1 go test . \
       -list '^TestRelayNotificationClosure_DirectMediaBlobCustody' | \
       rg '^TestRelayNotificationClosure_DirectMediaBlobCustody' | \
       awk 'END { exit NR == 12 ? 0 : 1 }')
   (cd go-relay-server && \
-    GOTOOLCHAIN=go1.25.0 go test -race . \
+    GOTOOLCHAIN=go1.27.1 go test -race . \
       -run '^TestRelayNotificationClosure_DirectMediaBlobCustody' \
       -count=1 -v | \
       rg '^--- PASS: TestRelayNotificationClosure_DirectMediaBlobCustody' | \
       awk 'END { exit NR == 12 ? 0 : 1 }')
 
   (cd go-relay-server && \
-    GOTOOLCHAIN=go1.25.0 go test -tags integration ./... \
+    GOTOOLCHAIN=go1.27.1 go test -tags integration ./... \
       -list '^TestDirectMediaBlobCustodySurvivesRelayProcessHandoff$' | \
       rg -x 'TestDirectMediaBlobCustodySurvivesRelayProcessHandoff')
   (cd go-relay-server && \
-    GOTOOLCHAIN=go1.25.0 go test -tags integration ./... \
+    GOTOOLCHAIN=go1.27.1 go test -tags integration ./... \
       -run '^TestDirectMediaBlobCustodySurvivesRelayProcessHandoff$' \
       -count=1 -v | \
       rg '^--- PASS: TestDirectMediaBlobCustodySurvivesRelayProcessHandoff \(')
 
   (cd go-mknoon && \
-    GOTOOLCHAIN=go1.25.0 go test ./node \
+    GOTOOLCHAIN=go1.27.1 go test ./node \
       -list '^TestMediaCustody(UploadPhaseAwareRelaySelection|StrictDownloadSelectsExactProof|AckPinsSourceRelayAndRequiresExactProof)$' | \
       rg '^TestMediaCustody' | \
       awk 'END { exit NR == 3 ? 0 : 1 }')
   (cd go-mknoon && \
-    GOTOOLCHAIN=go1.25.0 go test ./node \
+    GOTOOLCHAIN=go1.27.1 go test ./node \
       -run '^TestMediaCustody(UploadPhaseAwareRelaySelection|StrictDownloadSelectsExactProof|AckPinsSourceRelayAndRequiresExactProof)$' \
       -count=1 -v | \
       rg '^--- PASS: TestMediaCustody' | \
       awk 'END { exit NR == 3 ? 0 : 1 }')
 
   (cd go-mknoon && \
-    GOTOOLCHAIN=go1.25.0 go test ./bridge \
+    GOTOOLCHAIN=go1.27.1 go test ./bridge \
       -list '^TestDispatchMediaCustodyContract$' | \
       rg -x 'TestDispatchMediaCustodyContract')
   (cd go-mknoon && \
-    GOTOOLCHAIN=go1.25.0 go test ./bridge \
+    GOTOOLCHAIN=go1.27.1 go test ./bridge \
       -run '^TestDispatchMediaCustodyContract$' -count=1 -v | \
       rg '^--- PASS: TestDispatchMediaCustodyContract \(')
 
   (cd go-mknoon && \
-    GOTOOLCHAIN=go1.25.0 go test -tags integration ./integration \
+    GOTOOLCHAIN=go1.27.1 go test -tags integration ./integration \
       -list '^TestMediaCustodyMixedRelayMatrix$' | \
       rg -x 'TestMediaCustodyMixedRelayMatrix')
   (cd go-mknoon && \
-    GOTOOLCHAIN=go1.25.0 go test -tags integration ./integration \
+    GOTOOLCHAIN=go1.27.1 go test -tags integration ./integration \
       -run '^TestMediaCustodyMixedRelayMatrix$' -count=1 -v | \
       rg '^--- PASS: TestMediaCustodyMixedRelayMatrix \(')
 
@@ -1510,7 +1510,7 @@ run_media_custody_go_gate() {
 run_relay_all_go_gate() {
   echo "=== Relay Full Go Gate ==="
   run_relay_toolchain_contract_gate
-  (cd go-relay-server && GOTOOLCHAIN=go1.25.0 go test ./... -count=1)
+  (cd go-relay-server && GOTOOLCHAIN=go1.27.1 go test ./... -count=1)
 }
 
 classify_path() {

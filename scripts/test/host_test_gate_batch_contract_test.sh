@@ -354,7 +354,7 @@ grep -Fxq $'ARG\t--concurrency=4' "$flutter_log" ||
 grep -Fxq $'ARG\t--reporter=failures-only' "$flutter_log" ||
   fail 'batch Flutter call did not receive --reporter=failures-only'
 
-[ "$(grep -c $'^ENV\tgo1.25.0$' "$go_log" || true)" -eq 17 ] ||
+[ "$(grep -c $'^ENV\tgo1.27.1$' "$go_log" || true)" -eq 17 ] ||
   fail 'one or more Go legs lost the pinned GOTOOLCHAIN'
 [ "$(grep -c $'^ARG\ttest$' "$go_log" || true)" -eq 17 ] ||
   fail 'the thirteen Go-backed synthetic rows did not retain their seventeen separate go test invocations'
@@ -491,7 +491,7 @@ expected_relay_all_args="$(printf 'test\n./...\n-count=1')"
 actual_relay_all_args="$(awk -F '\t' '$1 == "ARG" { print $2 }' "$go_log")"
 [ "$actual_relay_all_args" = "$expected_relay_all_args" ] ||
   fail 'relay-all batch selection changed the exact unfiltered Go command'
-[ "$(grep -c $'^ENV\tgo1.25.0$' "$go_log" || true)" -eq 1 ] ||
+[ "$(grep -c $'^ENV\tgo1.27.1$' "$go_log" || true)" -eq 1 ] ||
   fail 'relay-all batch selection lost the pinned GOTOOLCHAIN'
 
 # RED/GREEN 5: a failed Flutter batch remains fail-fast by default and

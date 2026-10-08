@@ -21,8 +21,8 @@ printf 'host debug keystore\n' >"${tmp_dir}/host-home/.android/debug.keystore"
 
 grep -Fxq 'FROM node:22-bookworm' "${DOCKERFILE}" ||
   fail 'Claude Code image must use Node 22 or newer'
-grep -Fxq 'FROM golang:1.25.0-bookworm AS go' "${DOCKERFILE}" ||
-  fail 'Claude Code image must include a Go 1.25 toolchain stage for relay/FCM tests'
+grep -Fxq 'FROM golang:1.27.1-bookworm AS go' "${DOCKERFILE}" ||
+  fail 'Claude Code image must include a Go 1.27 toolchain stage for relay/FCM tests'
 grep -Fxq 'COPY --from=go /usr/local/go /usr/local/go' "${DOCKERFILE}" ||
   fail 'Claude Code image must copy the Go toolchain into the runtime image'
 grep -Fq 'GOMODCACHE=/claude-home/go/pkg/mod' "${DOCKERFILE}" ||

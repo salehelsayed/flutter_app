@@ -17,9 +17,7 @@ import (
 	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/libp2p/go-libp2p/core/peerstore"
-
-	//lint:ignore SA1019 "github.com/libp2p/go-msgio/protoio" is deprecated
-	"github.com/libp2p/go-msgio/protoio"
+	"github.com/libp2p/go-msgio/pbio"
 )
 
 func testWithTracer(t *testing.T, tracer EventTracer) {
@@ -98,11 +96,11 @@ func testWithTracer(t *testing.T, tracer EventTracer) {
 	time.Sleep(5 * time.Second)
 
 	// publish some messages
-	for i := 0; i < 20; i++ {
+	for i := range 20 {
 		if i%7 == 0 {
 			psubs[i].Publish("test", []byte("invalid!"))
 		} else {
-			msg := []byte(fmt.Sprintf("message %d", i))
+			msg := fmt.Appendf(nil, "message %d", i)
 			psubs[i].Publish("test", msg)
 		}
 	}
@@ -134,9 +132,9 @@ func (t *traceStats) process(evt *pb.TraceEvent) {
 		t.duplicate++
 	case pb.TraceEvent_DELIVER_MESSAGE:
 		t.deliver++
-	case pb.TraceEvent_ADD_PEER:
+	case pb.TraceEvent_ON_NEW_OUTBOUND_STREAM:
 		t.add++
-	case pb.TraceEvent_REMOVE_PEER:
+	case pb.TraceEvent_ON_CLOSED_OUTBOUND_STREAM:
 		t.remove++
 	case pb.TraceEvent_RECV_RPC:
 		t.recv++
@@ -192,69 +190,73 @@ func (ts *traceStats) check(t *testing.T) {
 }
 
 func TestJSONTracer(t *testing.T) {
-	tracer, err := NewJSONTracer("/tmp/trace.out.json")
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	testWithTracer(t, tracer)
-	time.Sleep(time.Second)
-	tracer.Close()
-
-	var stats traceStats
-	var evt pb.TraceEvent
-
-	f, err := os.Open("/tmp/trace.out.json")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer f.Close()
-
-	dec := json.NewDecoder(f)
-	for {
-		evt.Reset()
-		err := dec.Decode(&evt)
+	synctestTest(t, func(t *testing.T) {
+		tracer, err := NewJSONTracer("/tmp/trace.out.json")
 		if err != nil {
-			break
+			t.Fatal(err)
 		}
 
-		stats.process(&evt)
-	}
+		testWithTracer(t, tracer)
+		time.Sleep(time.Second)
+		tracer.Close()
 
-	stats.check(t)
+		var stats traceStats
+		var evt pb.TraceEvent
+
+		f, err := os.Open("/tmp/trace.out.json")
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer f.Close()
+
+		dec := json.NewDecoder(f)
+		for {
+			evt.Reset()
+			err := dec.Decode(&evt)
+			if err != nil {
+				break
+			}
+
+			stats.process(&evt)
+		}
+
+		stats.check(t)
+	})
 }
 
 func TestPBTracer(t *testing.T) {
-	tracer, err := NewPBTracer("/tmp/trace.out.pb")
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	testWithTracer(t, tracer)
-	time.Sleep(time.Second)
-	tracer.Close()
-
-	var stats traceStats
-	var evt pb.TraceEvent
-
-	f, err := os.Open("/tmp/trace.out.pb")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer f.Close()
-
-	r := protoio.NewDelimitedReader(f, 1<<20)
-	for {
-		evt.Reset()
-		err := r.ReadMsg(&evt)
+	synctestTest(t, func(t *testing.T) {
+		tracer, err := NewPBTracer("/tmp/trace.out.pb")
 		if err != nil {
-			break
+			t.Fatal(err)
 		}
 
-		stats.process(&evt)
-	}
+		testWithTracer(t, tracer)
+		time.Sleep(time.Second)
+		tracer.Close()
 
-	stats.check(t)
+		var stats traceStats
+		var evt pb.TraceEvent
+
+		f, err := os.Open("/tmp/trace.out.pb")
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer f.Close()
+
+		r := pbio.NewDelimitedReader(f, 1<<20)
+		for {
+			evt.Reset()
+			err := r.ReadMsg(&evt)
+			if err != nil {
+				break
+			}
+
+			stats.process(&evt)
+		}
+
+		stats.check(t)
+	})
 }
 
 type mockRemoteTracer struct {
@@ -270,7 +272,7 @@ func (mrt *mockRemoteTracer) handleStream(s network.Stream) {
 		panic(err)
 	}
 
-	r := protoio.NewDelimitedReader(gzr, 1<<24)
+	r := pbio.NewDelimitedReader(gzr, 1<<24)
 
 	var batch pb.TraceEventBatch
 	for {
@@ -298,24 +300,28 @@ func (mrt *mockRemoteTracer) check(t *testing.T) {
 }
 
 func TestRemoteTracer(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	synctestTest(t, func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
 
-	hosts := getDefaultHosts(t, 2)
-	h1 := hosts[0]
-	h2 := hosts[1]
+		hosts := getDefaultHosts(t, 2)
+		h1 := hosts[0]
+		h2 := hosts[1]
 
-	mrt := &mockRemoteTracer{}
-	h1.SetStreamHandler(RemoteTracerProtoID, mrt.handleStream)
+		mrt := &mockRemoteTracer{}
+		h1.SetStreamHandler(RemoteTracerProtoID, mrt.handleStream)
 
-	tracer, err := NewRemoteTracer(ctx, h2, peer.AddrInfo{ID: h1.ID(), Addrs: h1.Addrs()}, slog.Default())
-	if err != nil {
-		t.Fatal(err)
-	}
+		tracer, err := NewRemoteTracer(ctx, h2, peer.AddrInfo{ID: h1.ID(), Addrs: h1.Addrs()}, slog.Default())
+		if err != nil {
+			t.Fatal(err)
+		}
 
-	testWithTracer(t, tracer)
-	time.Sleep(time.Second)
-	tracer.Close()
+		testWithTracer(t, tracer)
+		time.Sleep(time.Second)
+		tracer.Close()
+		// Allow the doWrite goroutine to complete its sleep loop and exit
+		time.Sleep(2 * time.Second)
 
-	mrt.check(t)
+		mrt.check(t)
+	})
 }

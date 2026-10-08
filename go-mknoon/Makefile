@@ -1,14 +1,18 @@
-.PHONY: ios nse-ios android macos all clean test testpeer lint verify-bindings
+.PHONY: ios nse-ios android macos all clean test testpeer lint verify-bindings gomobile-tools
 
 MODULE := github.com/mknoon/go-mknoon
 BIND_PKG := $(MODULE)/bridge
 
-# Pin the Go toolchain for EVERY recipe (ios/macos/android/test/lint). go1.26.x's
-# crypto/tls panics with quic-go v0.49.0 ("where's my session ticket?") on the
-# server side of a QUIC handshake -> SIGABRTs the receiver of a direct QUIC dial.
+# Pin the Go toolchain for EVERY recipe (ios/macos/android/test/lint) so every
+# machine builds the bindings with the same Go. Plan 406 moved it from go1.25.0
+# (go1.26+ crypto/tls crashed the old quic-go v0.49.0) to go1.27.1.
 # `:=` overrides any inherited GOTOOLCHAIN (incl. a stray "local"); a deliberate
 # `GOTOOLCHAIN=... make <t>` on the command line still wins when you need it.
-export GOTOOLCHAIN := go1.25.0
+export GOTOOLCHAIN := go1.27.1
+
+# gomobile and gobind from `make gomobile-tools`; first on PATH for every recipe.
+TOOLS_BIN := $(CURDIR)/bin/tools
+export PATH := $(TOOLS_BIN):$(PATH)
 
 # Output paths relative to the Flutter project
 IOS_OUT := ../ios/Runner/GoMknoon.xcframework
@@ -32,6 +36,13 @@ ifndef ANDROID_NDK_HOME
 endif
 
 all: ios android
+
+# Install gomobile and gobind at the exact golang.org/x/mobile version that
+# go.mod pins (the `tool` directives) into this checkout's bin/tools, so every
+# machine binds with the same generator and other checkouts keep their own.
+# Cheap when already installed.
+gomobile-tools:
+	GOBIN=$(TOOLS_BIN) go install golang.org/x/mobile/cmd/gomobile golang.org/x/mobile/cmd/gobind
 
 ios: nse-ios
 	gomobile bind -target=ios -o $(IOS_OUT) $(BIND_PKG)

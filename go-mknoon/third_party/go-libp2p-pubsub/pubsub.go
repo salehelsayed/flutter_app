@@ -23,10 +23,15 @@ import (
 	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/libp2p/go-libp2p/core/protocol"
+	"google.golang.org/protobuf/proto"
 )
 
-// DefaultMaximumMessageSize is 1mb.
-const DefaultMaxMessageSize = 1 << 20
+const (
+	// DefaultMaximumMessageSize is 1MiB.
+	DefaultMaxMessageSize = 1 << 20
+	// DefaultMaxControlMessageSize is 512KiB.
+	DefaultMaxControlMessageSize = 512 << 10
+)
 
 var (
 	// TimeCacheDuration specifies how long a message ID will be remembered as seen.
@@ -43,6 +48,17 @@ var (
 )
 
 type ProtocolMatchFn = func(protocol.ID) func(protocol.ID) bool
+
+type peerTopicState struct {
+	requestsPartial bool
+	supportsPartial bool
+}
+
+type peerOutgoingStream struct {
+	network.Stream
+	FirstMessage chan *RPC
+	Cancel       context.CancelFunc
+}
 
 // PubSub is the implementation of the pubsub system.
 type PubSub struct {
@@ -73,11 +89,14 @@ type PubSub struct {
 	// topics.
 	maxMessageSize int
 
+	// maxControlMessageSize is the maximum size for control messages.
+	maxControlMessageSize int
+
 	// size of the outbound message channel that we maintain for each peer
 	peerOutboundQueueSize int
 
 	// incoming messages from other peers
-	incoming chan *RPC
+	incoming chan incomingUnion
 
 	// addSub is a control channel for us to add and remove subscriptions
 	addSub chan *addSubReq
@@ -110,7 +129,7 @@ type PubSub struct {
 	newPeersPend   map[peer.ID]struct{}
 
 	// a notification channel for new outoging peer streams
-	newPeerStream chan network.Stream
+	newPeerStream chan peerOutgoingStream
 
 	// a notification channel for errors opening new peer streams
 	newPeerError chan peer.ID
@@ -133,7 +152,7 @@ type PubSub struct {
 	myTopics map[string]*Topic
 
 	// topics tracks which topics each of our peers are subscribed to
-	topics map[string]map[peer.ID]struct{}
+	topics map[string]map[peer.ID]peerTopicState
 
 	// sendMsg handles messages that have been validated
 	sendMsg chan *Message
@@ -157,11 +176,16 @@ type PubSub struct {
 	peers map[peer.ID]*rpcQueue
 
 	inboundStreamsMx sync.Mutex
-	inboundStreams   map[peer.ID]network.Stream
+	inboundStreams   map[peer.ID]inboundHandler
 
 	seenMessages    timecache.TimeCache
 	seenMsgTTL      time.Duration
 	seenMsgStrategy timecache.Strategy
+
+	// deliveredMessages tracks messages delivered to subscribers and routed to peers.
+	// It deduplicates publishes of already-delivered messages, while still allowing
+	// republishes of messages that were only seen (e.g. ValidationIgnore).
+	deliveredMessages timecache.TimeCache
 
 	// generator used to compute the ID for a message
 	idGen *msgIDGenerator
@@ -196,13 +220,15 @@ type PubSubRouter interface {
 	// Attach is invoked by the PubSub constructor to attach the router to a
 	// freshly initialized PubSub instance.
 	Attach(*PubSub)
-	// AddPeer notifies the router that a new peer has been connected. It
-	// includes a reference to the initial RPC that will be sent to the peer.
+	// OnNewOutboundStream notifies the router that a new outbound stream has been opened.
+	// It includes a reference to the initial RPC that will be sent to the peer.
 	// Routers may add messages to the RPC to try to have them sent in the
 	// initial packet. This is also referred to as the "hello packet."
-	AddPeer(peer.ID, protocol.ID, *RPC) *RPC
-	// RemovePeer notifies the router that a peer has been disconnected.
-	RemovePeer(peer.ID)
+	OnNewOutboundStream(peer.ID, protocol.ID, *RPC) *RPC
+	// OnClosedOutboundStream notifies the router that an outbound stream has been closed.
+	OnClosedOutboundStream(peer.ID)
+	OnNewIncomingStream(peer.ID, protocol.ID)
+	OnClosedIncomingStream(peer.ID, protocol.ID)
 	// EnoughPeers returns whether the router needs more peers before it's ready to publish new records.
 	// Suggested (if greater than 0) is a suggested number of peers that the router should need.
 	EnoughPeers(topic string, suggested int) bool
@@ -247,12 +273,37 @@ type Message struct {
 	*pb.Message
 	ID            string
 	ReceivedFrom  peer.ID
-	ValidatorData interface{}
+	ValidatorData any
 	Local         bool
 }
 
 func (m *Message) GetFrom() peer.ID {
 	return peer.ID(m.Message.GetFrom())
+}
+
+// inboundHandler tracks an active inbound stream handler. The done channel is
+// closed when the handler exits, allowing successive handlers for the same peer
+// to serialize their newStream/closedStream notifications.
+type inboundHandler struct {
+	s    network.Stream
+	done chan struct{}
+}
+
+type incomingKind uint8
+
+const (
+	incomingKindRPC = iota
+	incomingKindNewStream
+	incomingKindClosedStream
+)
+
+// incomingUnion wraps the different messages the incoming stream handler can
+// send. We want these kinds of messages to be serialized.
+type incomingUnion struct {
+	rpc *RPC // only set when kind == RPC
+	// s is only set when kind == NewStream or kind == ClosedStream
+	s    network.Stream
+	kind incomingKind
 }
 
 type RPC struct {
@@ -262,12 +313,47 @@ type RPC struct {
 	from peer.ID
 }
 
-// split splits the given RPC If a sub RPC is too large and can't be split
-// further (e.g. Message data is bigger than the RPC limit), then it will be
-// returned as an oversized RPC. The caller should filter out oversized RPCs.
-func (rpc *RPC) split(limit int) iter.Seq[RPC] {
-	return func(yield func(RPC) bool) {
-		nextRPC := RPC{from: rpc.from}
+func (rpc *RPC) From() peer.ID {
+	return rpc.from
+}
+
+// LogValue implements slog.LogValuer.
+func (rpc *RPC) LogValue() slog.Value {
+	// Messages
+	msgs := make([]any, 0, len(rpc.Publish))
+	for _, msg := range rpc.Publish {
+		msgs = append(msgs, slog.Group(
+			"message",
+			slog.String("topic", msg.GetTopic()),
+			slog.Any("dataPrefix", msg.Data[0:min(len(msg.Data), 32)]),
+			slog.Any("dataLen", len(msg.Data)),
+		))
+	}
+
+	fields := make([]slog.Attr, 0, len(msgs)+3)
+	if len(msgs) > 0 {
+		fields = append(fields, slog.Group("publish", msgs...))
+	}
+	if rpc.Control != nil {
+		fields = append(fields, slog.Any("control", rpc.Control))
+	}
+	if rpc.Subscriptions != nil {
+		fields = append(fields, slog.Any("subscriptions", rpc.Subscriptions))
+	}
+	if rpc.Partial != nil {
+		fields = append(fields, slog.Any("Partial", rpc.Partial))
+	}
+	return slog.GroupValue(fields...)
+}
+
+// split splits the given RPC. If a sub RPC is too large and can't be split
+// further (e.g. Message data is bigger than the RPC limit, or a single
+// non-publish/non-partial message entry is bigger than the control limit), then
+// it will be returned as an oversized RPC. The caller should filter out
+// oversized RPCs.
+func (rpc *RPC) split(limit, controlLimit int) iter.Seq[*RPC] {
+	return func(yield func(*RPC) bool) {
+		nextRPC := &RPC{from: rpc.from}
 
 		{
 			nextRPCSize := 0
@@ -280,7 +366,7 @@ func (rpc *RPC) split(limit int) iter.Seq[RPC] {
 			// splitting a message.
 			for _, msg := range rpc.Publish {
 				// We know the message field number is <15 so this is safe.
-				incrementalSize := pbFieldNumberLT15Size + sizeOfEmbeddedMsg(msg.Size())
+				incrementalSize := pbFieldNumberLT15Size + sizeOfEmbeddedMsg(proto.Size(msg))
 				if nextRPCSize+incrementalSize > limit {
 					// The message doesn't fit. Let's set the messages that did fit
 					// into this RPC, yield it, then make a new one
@@ -290,7 +376,7 @@ func (rpc *RPC) split(limit int) iter.Seq[RPC] {
 						return
 					}
 
-					nextRPC = RPC{from: rpc.from}
+					nextRPC = &RPC{from: rpc.from}
 					nextRPCSize = 0
 					messagesInNextRPC = 0
 				}
@@ -300,38 +386,44 @@ func (rpc *RPC) split(limit int) iter.Seq[RPC] {
 
 			if nextRPCSize > 0 {
 				// yield the message here for simplicity. We aren't optimally
-				// packing this RPC, but we avoid successively calling .Size()
+				// packing this RPC, but we avoid successively calling proto.Size
 				// on the messages for the next parts.
 				nextRPC.Publish = messageSlice[:messagesInNextRPC]
 				if !yield(nextRPC) {
 					return
 				}
-				nextRPC = RPC{from: rpc.from}
 			}
 		}
 
 		// Fast path check. It's possible the original RPC is now small enough
 		// without the messages to publish
-		nextRPC = *rpc
-		nextRPC.Publish = nil
-		if s := nextRPC.Size(); s < limit {
+		originalPublishSlice := rpc.Publish
+		rpc.Publish = nil
+		defer func() {
+			// Restore the original message before returning
+			rpc.Publish = originalPublishSlice
+		}()
+		if s := proto.Size(&rpc.RPC); s <= limit && controlRPCSize(rpc) <= controlLimit {
 			if s != 0 {
+				nextRPC = &RPC{from: rpc.from}
+				proto.Merge(&nextRPC.RPC, &rpc.RPC)
 				yield(nextRPC)
 			}
 			return
 		}
+
 		// We have to split the RPC into multiple parts
-		nextRPC = RPC{from: rpc.from}
+		nextRPC = &RPC{from: rpc.from}
 
 		// Merge/Append Subscriptions
 		for _, sub := range rpc.Subscriptions {
-			if nextRPC.Subscriptions = append(nextRPC.Subscriptions, sub); nextRPC.Size() > limit {
+			if nextRPC.Subscriptions = append(nextRPC.Subscriptions, sub); nextRPC.exceedsSizeLimits(limit, controlLimit) {
 				nextRPC.Subscriptions = nextRPC.Subscriptions[:len(nextRPC.Subscriptions)-1]
 				if !yield(nextRPC) {
 					return
 				}
 
-				nextRPC = RPC{from: rpc.from}
+				nextRPC = &RPC{from: rpc.from}
 				nextRPC.Subscriptions = append(nextRPC.Subscriptions, sub)
 			}
 		}
@@ -340,33 +432,46 @@ func (rpc *RPC) split(limit int) iter.Seq[RPC] {
 		if ctl := rpc.Control; ctl != nil {
 			if nextRPC.Control == nil {
 				nextRPC.Control = &pb.ControlMessage{}
-				if nextRPC.Size() > limit {
+				if nextRPC.exceedsSizeLimits(limit, controlLimit) {
 					nextRPC.Control = nil
 					if !yield(nextRPC) {
 						return
 					}
-					nextRPC = RPC{RPC: pb.RPC{Control: &pb.ControlMessage{}}, from: rpc.from}
+					nextRPC = &RPC{RPC: pb.RPC{Control: &pb.ControlMessage{}}, from: rpc.from}
+				}
+			}
+
+			if extensions := ctl.GetExtensions(); extensions != nil {
+				if nextRPC.Control.Extensions = extensions; nextRPC.exceedsSizeLimits(limit, controlLimit) {
+					nextRPC.Control.Extensions = nil
+					if !yield(nextRPC) {
+						return
+					}
+
+					nextRPC = &RPC{RPC: pb.RPC{Control: &pb.ControlMessage{
+						Extensions: extensions,
+					}}, from: rpc.from}
 				}
 			}
 
 			for _, graft := range ctl.GetGraft() {
-				if nextRPC.Control.Graft = append(nextRPC.Control.Graft, graft); nextRPC.Size() > limit {
+				if nextRPC.Control.Graft = append(nextRPC.Control.Graft, graft); nextRPC.exceedsSizeLimits(limit, controlLimit) {
 					nextRPC.Control.Graft = nextRPC.Control.Graft[:len(nextRPC.Control.Graft)-1]
 					if !yield(nextRPC) {
 						return
 					}
-					nextRPC = RPC{RPC: pb.RPC{Control: &pb.ControlMessage{}}, from: rpc.from}
+					nextRPC = &RPC{RPC: pb.RPC{Control: &pb.ControlMessage{}}, from: rpc.from}
 					nextRPC.Control.Graft = append(nextRPC.Control.Graft, graft)
 				}
 			}
 
 			for _, prune := range ctl.GetPrune() {
-				if nextRPC.Control.Prune = append(nextRPC.Control.Prune, prune); nextRPC.Size() > limit {
+				if nextRPC.Control.Prune = append(nextRPC.Control.Prune, prune); nextRPC.exceedsSizeLimits(limit, controlLimit) {
 					nextRPC.Control.Prune = nextRPC.Control.Prune[:len(nextRPC.Control.Prune)-1]
 					if !yield(nextRPC) {
 						return
 					}
-					nextRPC = RPC{RPC: pb.RPC{Control: &pb.ControlMessage{}}, from: rpc.from}
+					nextRPC = &RPC{RPC: pb.RPC{Control: &pb.ControlMessage{}}, from: rpc.from}
 					nextRPC.Control.Prune = append(nextRPC.Control.Prune, prune)
 				}
 			}
@@ -377,24 +482,50 @@ func (rpc *RPC) split(limit int) iter.Seq[RPC] {
 					// For IWANTs we don't need more than a single one,
 					// since there are no topic IDs here.
 					newIWant := &pb.ControlIWant{}
-					if nextRPC.Control.Iwant = append(nextRPC.Control.Iwant, newIWant); nextRPC.Size() > limit {
+					if nextRPC.Control.Iwant = append(nextRPC.Control.Iwant, newIWant); nextRPC.exceedsSizeLimits(limit, controlLimit) {
 						nextRPC.Control.Iwant = nextRPC.Control.Iwant[:len(nextRPC.Control.Iwant)-1]
 						if !yield(nextRPC) {
 							return
 						}
-						nextRPC = RPC{RPC: pb.RPC{Control: &pb.ControlMessage{
+						nextRPC = &RPC{RPC: pb.RPC{Control: &pb.ControlMessage{
 							Iwant: []*pb.ControlIWant{newIWant},
 						}}, from: rpc.from}
 					}
 				}
 				for _, msgID := range iwant.GetMessageIDs() {
-					if nextRPC.Control.Iwant[0].MessageIDs = append(nextRPC.Control.Iwant[0].MessageIDs, msgID); nextRPC.Size() > limit {
+					if nextRPC.Control.Iwant[0].MessageIDs = append(nextRPC.Control.Iwant[0].MessageIDs, msgID); nextRPC.exceedsSizeLimits(limit, controlLimit) {
 						nextRPC.Control.Iwant[0].MessageIDs = nextRPC.Control.Iwant[0].MessageIDs[:len(nextRPC.Control.Iwant[0].MessageIDs)-1]
 						if !yield(nextRPC) {
 							return
 						}
-						nextRPC = RPC{RPC: pb.RPC{Control: &pb.ControlMessage{
+						nextRPC = &RPC{RPC: pb.RPC{Control: &pb.ControlMessage{
 							Iwant: []*pb.ControlIWant{{MessageIDs: []string{msgID}}},
+						}}, from: rpc.from}
+					}
+				}
+			}
+
+			for _, idontwant := range ctl.GetIdontwant() {
+				if len(nextRPC.Control.Idontwant) == 0 {
+					newIDontWant := &pb.ControlIDontWant{}
+					if nextRPC.Control.Idontwant = append(nextRPC.Control.Idontwant, newIDontWant); nextRPC.exceedsSizeLimits(limit, controlLimit) {
+						nextRPC.Control.Idontwant = nextRPC.Control.Idontwant[:len(nextRPC.Control.Idontwant)-1]
+						if !yield(nextRPC) {
+							return
+						}
+						nextRPC = &RPC{RPC: pb.RPC{Control: &pb.ControlMessage{
+							Idontwant: []*pb.ControlIDontWant{newIDontWant},
+						}}, from: rpc.from}
+					}
+				}
+				for _, msgID := range idontwant.GetMessageIDs() {
+					if nextRPC.Control.Idontwant[0].MessageIDs = append(nextRPC.Control.Idontwant[0].MessageIDs, msgID); nextRPC.exceedsSizeLimits(limit, controlLimit) {
+						nextRPC.Control.Idontwant[0].MessageIDs = nextRPC.Control.Idontwant[0].MessageIDs[:len(nextRPC.Control.Idontwant[0].MessageIDs)-1]
+						if !yield(nextRPC) {
+							return
+						}
+						nextRPC = &RPC{RPC: pb.RPC{Control: &pb.ControlMessage{
+							Idontwant: []*pb.ControlIDontWant{{MessageIDs: []string{msgID}}},
 						}}, from: rpc.from}
 					}
 				}
@@ -405,24 +536,24 @@ func (rpc *RPC) split(limit int) iter.Seq[RPC] {
 					nextRPC.Control.Ihave[len(nextRPC.Control.Ihave)-1].TopicID != ihave.TopicID {
 					// Start a new IHAVE if we are referencing a new topic ID
 					newIhave := &pb.ControlIHave{TopicID: ihave.TopicID}
-					if nextRPC.Control.Ihave = append(nextRPC.Control.Ihave, newIhave); nextRPC.Size() > limit {
+					if nextRPC.Control.Ihave = append(nextRPC.Control.Ihave, newIhave); nextRPC.exceedsSizeLimits(limit, controlLimit) {
 						nextRPC.Control.Ihave = nextRPC.Control.Ihave[:len(nextRPC.Control.Ihave)-1]
 						if !yield(nextRPC) {
 							return
 						}
-						nextRPC = RPC{RPC: pb.RPC{Control: &pb.ControlMessage{
+						nextRPC = &RPC{RPC: pb.RPC{Control: &pb.ControlMessage{
 							Ihave: []*pb.ControlIHave{newIhave},
 						}}, from: rpc.from}
 					}
 				}
 				for _, msgID := range ihave.GetMessageIDs() {
 					lastIHave := nextRPC.Control.Ihave[len(nextRPC.Control.Ihave)-1]
-					if lastIHave.MessageIDs = append(lastIHave.MessageIDs, msgID); nextRPC.Size() > limit {
+					if lastIHave.MessageIDs = append(lastIHave.MessageIDs, msgID); nextRPC.exceedsSizeLimits(limit, controlLimit) {
 						lastIHave.MessageIDs = lastIHave.MessageIDs[:len(lastIHave.MessageIDs)-1]
 						if !yield(nextRPC) {
 							return
 						}
-						nextRPC = RPC{RPC: pb.RPC{Control: &pb.ControlMessage{
+						nextRPC = &RPC{RPC: pb.RPC{Control: &pb.ControlMessage{
 							Ihave: []*pb.ControlIHave{{TopicID: ihave.TopicID, MessageIDs: []string{msgID}}},
 						}}, from: rpc.from}
 					}
@@ -430,12 +561,36 @@ func (rpc *RPC) split(limit int) iter.Seq[RPC] {
 			}
 		}
 
-		if nextRPC.Size() > 0 {
+		if proto.Size(&nextRPC.RPC) > 0 {
 			if !yield(nextRPC) {
 				return
 			}
 		}
 	}
+}
+
+func (rpc *RPC) exceedsSizeLimits(limit, controlLimit int) bool {
+	return proto.Size(&rpc.RPC) > limit || controlRPCSize(rpc) > controlLimit
+}
+
+func controlRPCSize(rpc *RPC) int {
+	if rpc == nil {
+		return 0
+	}
+	// Compute the encoded size of an RPC containing only the Subscriptions and
+	// Control fields, without allocating a temporary pb.RPC. Calling proto.Size
+	// on the existing sub-message pointers doesn't allocate, whereas building a
+	// throwaway pb.RPC{Subscriptions, Control} escapes to the heap.
+	var size int
+	// Subscriptions are field 1 in pb.RPC (field number < 16).
+	for _, sub := range rpc.Subscriptions {
+		size += pbFieldNumberLT15Size + sizeOfEmbeddedMsg(proto.Size(sub))
+	}
+	// Control is field 3 in pb.RPC (field number < 16).
+	if rpc.Control != nil {
+		size += pbFieldNumberLT15Size + sizeOfEmbeddedMsg(proto.Size(rpc.Control))
+	}
+	return size
 }
 
 // pbFieldNumberLT15Size is the number of bytes required to encode a protobuf
@@ -444,7 +599,7 @@ func (rpc *RPC) split(limit int) iter.Seq[RPC] {
 // fieldNumber << 3 | wireType
 // Refer to https://protobuf.dev/programming-guides/encoding/#structure
 // for more details on the encoding of messages. You may also reference the
-// concrete implementation of pb.RPC.Size()
+// concrete implementation of proto.Size(&pb.RPC{})
 const pbFieldNumberLT15Size = 1
 
 func sovRpc(x uint64) (n int) {
@@ -473,14 +628,15 @@ func NewPubSub(ctx context.Context, h host.Host, rt PubSubRouter, opts ...Option
 		peerFilter:            DefaultPeerFilter,
 		disc:                  &discover{},
 		maxMessageSize:        DefaultMaxMessageSize,
+		maxControlMessageSize: DefaultMaxControlMessageSize,
 		peerOutboundQueueSize: 32,
 		signID:                h.ID(),
 		signKey:               nil,
 		signPolicy:            StrictSign,
-		incoming:              make(chan *RPC, 32),
+		incoming:              make(chan incomingUnion, 32),
 		newPeers:              make(chan struct{}, 1),
 		newPeersPend:          make(map[peer.ID]struct{}),
-		newPeerStream:         make(chan network.Stream),
+		newPeerStream:         make(chan peerOutgoingStream),
 		newPeerError:          make(chan peer.ID),
 		peerDead:              make(chan struct{}, 1),
 		peerDeadPend:          make(map[peer.ID]struct{}),
@@ -501,9 +657,9 @@ func NewPubSub(ctx context.Context, h host.Host, rt PubSubRouter, opts ...Option
 		myTopics:              make(map[string]*Topic),
 		mySubs:                make(map[string]map[*Subscription]struct{}),
 		myRelays:              make(map[string]int),
-		topics:                make(map[string]map[peer.ID]struct{}),
+		topics:                make(map[string]map[peer.ID]peerTopicState),
 		peers:                 make(map[peer.ID]*rpcQueue),
-		inboundStreams:        make(map[peer.ID]network.Stream),
+		inboundStreams:        make(map[peer.ID]inboundHandler),
 		blacklist:             NewMapBlacklist(),
 		blacklistPeer:         make(chan peer.ID),
 		seenMsgTTL:            TimeCacheDuration,
@@ -534,6 +690,7 @@ func NewPubSub(ctx context.Context, h host.Host, rt PubSubRouter, opts ...Option
 	}
 
 	ps.seenMessages = timecache.NewTimeCacheWithStrategy(ps.seenMsgStrategy, ps.seenMsgTTL)
+	ps.deliveredMessages = timecache.NewTimeCacheWithStrategy(ps.seenMsgStrategy, ps.seenMsgTTL)
 
 	if err := ps.disc.Start(ps); err != nil {
 		return nil, err
@@ -754,6 +911,15 @@ func WithMaxMessageSize(maxMessageSize int) Option {
 	}
 }
 
+// WithMaxControlMessageSize sets the maximum size for pubsub control messages.
+// The default value is 512KiB (DefaultMaxControlMessageSize).
+func WithMaxControlMessageSize(maxControlMessageSize int) Option {
+	return func(ps *PubSub) error {
+		ps.maxControlMessageSize = maxControlMessageSize
+		return nil
+	}
+}
+
 // WithProtocolMatchFn sets a custom matching function for protocol selection to
 // be used by the protocol handler on the Host's Mux. Should be combined with
 // WithGossipSubProtocols feature function for checking if certain protocol features
@@ -802,6 +968,7 @@ func (p *PubSub) processLoop(ctx context.Context) {
 		p.peers = nil
 		p.topics = nil
 		p.seenMessages.Done()
+		p.deliveredMessages.Done()
 	}()
 
 	for {
@@ -815,6 +982,7 @@ func (p *PubSub) processLoop(ctx context.Context) {
 			q, ok := p.peers[pid]
 			if !ok {
 				p.logger.Warn("new stream for unknown peer", "peer", pid)
+				s.Cancel()
 				s.Reset()
 				continue
 			}
@@ -823,13 +991,14 @@ func (p *PubSub) processLoop(ctx context.Context) {
 				p.logger.Warn("closing stream for blacklisted peer", "peer", pid)
 				q.Close()
 				delete(p.peers, pid)
+				s.Cancel()
 				s.Reset()
 				continue
 			}
 
 			helloPacket := p.getHelloPacket()
-			helloPacket = p.rt.AddPeer(pid, s.Protocol(), helloPacket)
-			q.Push(helloPacket, true)
+			helloPacket = p.rt.OnNewOutboundStream(pid, s.Protocol(), helloPacket)
+			s.FirstMessage <- helloPacket
 
 		case pid := <-p.newPeerError:
 			delete(p.peers, pid)
@@ -872,9 +1041,17 @@ func (p *PubSub) processLoop(ctx context.Context) {
 				peers = append(peers, p)
 			}
 			preq.resp <- peers
-		case rpc := <-p.incoming:
-			p.handleIncomingRPC(rpc)
-
+		case in := <-p.incoming:
+			switch in.kind {
+			case incomingKindRPC:
+				p.handleIncomingRPC(in.rpc)
+			case incomingKindNewStream:
+				p.rt.OnNewIncomingStream(
+					in.s.Conn().RemotePeer(), in.s.Protocol())
+			case incomingKindClosedStream:
+				p.onClosedIncomingStream(
+					in.s.Conn().RemotePeer(), in.s.Protocol())
+			}
 		case msg := <-p.sendMsg:
 			p.publishMessage(msg)
 
@@ -898,13 +1075,8 @@ func (p *PubSub) processLoop(ctx context.Context) {
 			if ok {
 				q.Close()
 				delete(p.peers, pid)
-				for t, tmap := range p.topics {
-					if _, ok := tmap[pid]; ok {
-						delete(tmap, pid)
-						p.notifyLeave(t, pid)
-					}
-				}
-				p.rt.RemovePeer(pid)
+				p.clearPeerFromTopicsState(pid)
+				p.rt.OnClosedOutboundStream(pid)
 			}
 
 		case <-ctx.Done():
@@ -949,6 +1121,25 @@ func (p *PubSub) handlePendingPeers() {
 	}
 }
 
+func (p *PubSub) onClosedIncomingStream(pid peer.ID, proto protocol.ID) {
+	// This topic state is made when a peer sends us messages. If they close the
+	// incoming stream, we must clear their state or risk leaking memory.
+	p.clearPeerFromTopicsState(pid)
+	p.rt.OnClosedIncomingStream(pid, proto)
+}
+
+func (p *PubSub) clearPeerFromTopicsState(pid peer.ID) {
+	for t, tmap := range p.topics {
+		if _, ok := tmap[pid]; ok {
+			delete(tmap, pid)
+			if len(tmap) == 0 {
+				delete(p.topics, t)
+			}
+			p.notifyLeave(t, pid)
+		}
+	}
+}
+
 func (p *PubSub) handleDeadPeers() {
 	p.peerDeadPrioLk.Lock()
 
@@ -970,14 +1161,8 @@ func (p *PubSub) handleDeadPeers() {
 		q.Close()
 		delete(p.peers, pid)
 
-		for t, tmap := range p.topics {
-			if _, ok := tmap[pid]; ok {
-				delete(tmap, pid)
-				p.notifyLeave(t, pid)
-			}
-		}
-
-		p.rt.RemovePeer(pid)
+		p.clearPeerFromTopicsState(pid)
+		p.rt.OnClosedOutboundStream(pid)
 
 		if connectednessSupportsPubSub(p.host.Network().Connectedness(pid)) {
 			backoffDelay, err := p.deadPeerBackoff.updateAndGet(pid)
@@ -1054,8 +1239,12 @@ func (p *PubSub) handleRemoveSubscription(sub *Subscription) {
 		// stop announcing only if there are no more subs and relays
 		if p.myRelays[sub.topic] == 0 {
 			p.disc.StopAdvertise(sub.topic)
-			p.announce(sub.topic, false)
-			p.rt.Leave(sub.topic)
+			// skip mesh unsubscription for fanout-only topics since we never joined
+			topic := p.myTopics[sub.topic]
+			if topic == nil || !topic.fanoutOnly {
+				p.announce(sub.topic, false)
+				p.rt.Leave(sub.topic)
+			}
 		}
 	}
 }
@@ -1071,8 +1260,13 @@ func (p *PubSub) handleAddSubscription(req *addSubReq) {
 	// announce we want this topic if neither subs nor relays exist so far
 	if len(subs) == 0 && p.myRelays[sub.topic] == 0 {
 		p.disc.Advertise(sub.topic)
-		p.announce(sub.topic, true)
-		p.rt.Join(sub.topic)
+		// skip mesh subscription for fanout-only topics;
+		// discovery/advertising is still needed to find peers for fanout publishing
+		topic := p.myTopics[sub.topic]
+		if topic == nil || !topic.fanoutOnly {
+			p.announce(sub.topic, true)
+			p.rt.Join(sub.topic)
+		}
 	}
 
 	// make new if not there
@@ -1148,9 +1342,19 @@ func (p *PubSub) handleRemoveRelay(topic string) {
 // announce announces whether or not this node is interested in a given topic
 // Only called from processLoop.
 func (p *PubSub) announce(topic string, sub bool) {
+	var requestPartialMessages bool
+	var supportsPartialMessages bool
+	if sub {
+		if t, ok := p.myTopics[topic]; ok {
+			requestPartialMessages = t.requestPartialMessages
+			supportsPartialMessages = t.supportsPartialMessages
+		}
+	}
 	subopt := &pb.RPC_SubOpts{
-		Topicid:   &topic,
-		Subscribe: &sub,
+		Topicid:                &topic,
+		Subscribe:              &sub,
+		RequestsPartial:        &requestPartialMessages,
+		SupportsSendingPartial: &supportsPartialMessages,
 	}
 
 	out := rpcWithSubs(subopt)
@@ -1192,9 +1396,19 @@ func (p *PubSub) doAnnounceRetry(pid peer.ID, topic string, sub bool) {
 		return
 	}
 
+	var requestPartialMessages bool
+	var supportsPartialMessages bool
+	if sub {
+		if t, ok := p.myTopics[topic]; ok {
+			requestPartialMessages = t.requestPartialMessages
+			supportsPartialMessages = t.supportsPartialMessages
+		}
+	}
 	subopt := &pb.RPC_SubOpts{
-		Topicid:   &topic,
-		Subscribe: &sub,
+		Topicid:                &topic,
+		Subscribe:              &sub,
+		RequestsPartial:        &requestPartialMessages,
+		SupportsSendingPartial: &supportsPartialMessages,
 	}
 
 	out := rpcWithSubs(subopt)
@@ -1211,9 +1425,14 @@ func (p *PubSub) doAnnounceRetry(pid peer.ID, topic string, sub bool) {
 // notifySubs sends a given message to all corresponding subscribers.
 // Only called from processLoop.
 func (p *PubSub) notifySubs(msg *Message) {
+	p.tracer.DeliverMessage(msg)
+
 	topic := msg.GetTopic()
 	subs := p.mySubs[topic]
 	for f := range subs {
+		if f.filter != nil && !f.filter(msg) {
+			continue
+		}
 		select {
 		case f.ch <- msg:
 		default:
@@ -1232,6 +1451,12 @@ func (p *PubSub) seenMessage(id string) bool {
 // returns true if the message was freshly marked
 func (p *PubSub) markSeen(id string) bool {
 	return p.seenMessages.Add(id)
+}
+
+// markDelivered marks a message as delivered to subscribers and routed to peers.
+// returns true if the message was freshly marked
+func (p *PubSub) markDelivered(id string) bool {
+	return p.deliveredMessages.Add(id)
 }
 
 // subscribedToMessage returns whether we are subscribed to one of the topics
@@ -1294,12 +1519,18 @@ func (p *PubSub) handleIncomingRPC(rpc *RPC) {
 		if subopt.GetSubscribe() {
 			tmap, ok := p.topics[t]
 			if !ok {
-				tmap = make(map[peer.ID]struct{})
+				tmap = make(map[peer.ID]peerTopicState)
 				p.topics[t] = tmap
 			}
 
-			if _, ok = tmap[rpc.from]; !ok {
-				tmap[rpc.from] = struct{}{}
+			pts := peerTopicState{
+				requestsPartial: subopt.GetRequestsPartial(),
+				// If the peer requested partial, they support it by default
+				supportsPartial: subopt.GetRequestsPartial() || subopt.GetSupportsSendingPartial(),
+			}
+			_, seenBefore := tmap[rpc.from]
+			tmap[rpc.from] = pts
+			if !seenBefore {
 				if topic, ok := p.myTopics[t]; ok {
 					peer := rpc.from
 					topic.sendNotification(PeerEvent{PeerJoin, peer})
@@ -1310,9 +1541,11 @@ func (p *PubSub) handleIncomingRPC(rpc *RPC) {
 			if !ok {
 				continue
 			}
-
 			if _, ok := tmap[rpc.from]; ok {
 				delete(tmap, rpc.from)
+				if len(tmap) == 0 {
+					delete(p.topics, t)
+				}
 				p.notifyLeave(t, rpc.from)
 			}
 		}
@@ -1338,7 +1571,7 @@ func (p *PubSub) handleIncomingRPC(rpc *RPC) {
 				continue
 			}
 
-			msg := &Message{pmsg, "", rpc.from, nil, false}
+			msg := &Message{Message: pmsg, ID: "", ReceivedFrom: rpc.from, ValidatorData: nil, Local: false}
 			if p.shouldPush(msg) {
 				toPush = append(toPush, msg)
 			}
@@ -1451,7 +1684,9 @@ func (p *PubSub) checkSigningPolicy(msg *Message) error {
 }
 
 func (p *PubSub) publishMessage(msg *Message) {
-	p.tracer.DeliverMessage(msg)
+	if !p.markDelivered(p.idGen.ID(msg)) {
+		return
+	}
 	p.notifySubs(msg)
 	if !msg.Local {
 		p.rt.Publish(msg)
@@ -1459,12 +1694,17 @@ func (p *PubSub) publishMessage(msg *Message) {
 }
 
 func (p *PubSub) publishMessageBatch(batchAndOpts messageBatchAndPublishOptions) {
+	msgs := batchAndOpts.messages[:0]
 	for _, msg := range batchAndOpts.messages {
-		p.tracer.DeliverMessage(msg)
+		if !p.markDelivered(p.idGen.ID(msg)) {
+			continue
+		}
 		p.notifySubs(msg)
+		msgs = append(msgs, msg)
 	}
+
 	// We type checked when pushing the batch to the channel
-	p.rt.(BatchPublisher).PublishBatch(batchAndOpts.messages, batchAndOpts.opts)
+	p.rt.(BatchPublisher).PublishBatch(msgs, batchAndOpts.opts)
 }
 
 type addTopicReq struct {
@@ -1477,9 +1717,60 @@ type rmTopicReq struct {
 	resp  chan error
 }
 
-type TopicOptions struct{}
+// RequestPartialMessages requests that peers, if they support it, send us
+// partial messages on this topic.
+//
+// If a peer does not support partial messages, this has no effect, and the peer
+// will continue sending us full messages.
+//
+// It is an error to use this option if partial messages are not enabled.
+// This option implies `SupportsPartialMessages`.
+func RequestPartialMessages() TopicOpt {
+	return func(t *Topic) error {
+		gs, ok := t.p.rt.(*GossipSubRouter)
+		if !ok {
+			return errors.New("partial messages only supported by gossipsub")
+		}
+
+		if !gs.extensions.myExtensions.PartialMessages {
+			return errors.New("partial messages are not enabled")
+		}
+		t.requestPartialMessages = true
+		t.supportsPartialMessages = true
+		return nil
+	}
+}
+
+// SupportsPartialMessages signals to other peers that you will send partial
+// message metadata and fulfill their partial message request, but you will not
+// request partial messages.
+func SupportsPartialMessages() TopicOpt {
+	return func(t *Topic) error {
+		gs, ok := t.p.rt.(*GossipSubRouter)
+		if !ok {
+			return errors.New("partial messages only supported by gossipsub")
+		}
+
+		if !gs.extensions.myExtensions.PartialMessages {
+			return errors.New("partial messages are not enabled")
+		}
+		t.supportsPartialMessages = true
+		return nil
+	}
+}
 
 type TopicOpt func(t *Topic) error
+
+// FanoutOnly enforces fanout-only mode for the topic. In this mode, the node can publish
+// messages to the topic but will never subscribe to the p2p mesh, even if Topic.Subscribe
+// is called. Subscribers will only receive locally published messages via Topic.Publish.
+// Calling Topic.Relay on a fanout-only topic will return ErrFanoutOnlyTopic.
+func FanoutOnly() TopicOpt {
+	return func(t *Topic) error {
+		t.fanoutOnly = true
+		return nil
+	}
+}
 
 // WithTopicMessageIdFn sets custom MsgIdFunction for a Topic, enabling topics to have own msg id generation rules.
 func WithTopicMessageIdFn(msgId MsgIdFunction) TopicOpt {
@@ -1576,6 +1867,18 @@ func WithBufferSize(size int) SubOpt {
 	}
 }
 
+// WithMessageFilter sets a filter function for the subscription.
+// Messages for which the filter function returns false are dropped
+// before entering the subscription's channel buffer.
+// This filtering happens in notifySubs, so filtered messages never
+// consume buffer capacity.
+func WithMessageFilter(filter func(*Message) bool) SubOpt {
+	return func(sub *Subscription) error {
+		sub.filter = filter
+		return nil
+	}
+}
+
 type topicReq struct {
 	resp chan []string
 }
@@ -1602,6 +1905,36 @@ func (p *PubSub) Publish(topic string, data []byte, opts ...PubOpt) error {
 	}
 
 	return t.Publish(context.TODO(), data, opts...)
+}
+
+type PeerFeedbackKind int
+
+const (
+	PeerFeedbackUsefulMessage PeerFeedbackKind = iota
+	PeerFeedbackInvalidMessage
+)
+
+// PeerFeedback lets applications inform GossipSub's peer scorer about the
+// performance of a peer's message. This is useful if the application is using
+// partial messages, because the application handles merging parts.
+func (p *PubSub) PeerFeedback(topic string, peer peer.ID, kind PeerFeedbackKind) error {
+	gs, ok := p.rt.(*GossipSubRouter)
+	if !ok {
+		return errors.New("peer feedback is only supported by GossipSub")
+	}
+	return p.syncEval(func() {
+		if gs.score == nil {
+			return
+		}
+		gs.score.Lock()
+		defer gs.score.Unlock()
+		switch kind {
+		case PeerFeedbackUsefulMessage:
+			gs.score.markFirstMessageDelivery(peer, topic)
+		case PeerFeedbackInvalidMessage:
+			gs.score.markInvalidMessageDelivery(peer, topic)
+		}
+	})
 }
 
 // PublishBatch publishes a batch of messages. This only works for routers that
@@ -1673,7 +2006,7 @@ func (p *PubSub) BlacklistPeer(pid peer.ID) {
 // By default validators are asynchronous, which means they will run in a separate goroutine.
 // The number of active goroutines is controlled by global and per topic validator
 // throttles; if it exceeds the throttle threshold, messages will be dropped.
-func (p *PubSub) RegisterTopicValidator(topic string, val interface{}, opts ...ValidatorOpt) error {
+func (p *PubSub) RegisterTopicValidator(topic string, val any, opts ...ValidatorOpt) error {
 	addVal := &addValReq{
 		topic:    topic,
 		validate: val,
@@ -1716,4 +2049,45 @@ type RelayCancelFunc func()
 type addRelayReq struct {
 	topic string
 	resp  chan RelayCancelFunc
+}
+
+func (p *PubSub) syncEval(f func()) error {
+	done := make(chan struct{})
+	syncFn := func() {
+		defer close(done)
+		f()
+	}
+	select {
+	case p.eval <- syncFn:
+		select {
+		case <-done:
+		case <-p.ctx.Done():
+			return p.ctx.Err()
+		}
+	case <-p.ctx.Done():
+		return p.ctx.Err()
+	}
+	return nil
+}
+
+// AddDirectPeer tags the peer as a direct peer at the internal router
+func (p *PubSub) AddDirectPeer(pInfo peer.AddrInfo) error {
+	gs, ok := p.rt.(*GossipSubRouter)
+	if !ok {
+		return errors.New("add direct peer only supported by gossipsub")
+	}
+	return p.syncEval(func() {
+		gs.AddDirectPeer(pInfo)
+	})
+}
+
+// RemoveDirectPeer un-tags the peer from being direct peer at the internal router
+func (p *PubSub) RemoveDirectPeer(pid peer.ID) error {
+	gs, ok := p.rt.(*GossipSubRouter)
+	if !ok {
+		return errors.New("remove direct peer only supported by gossipsub")
+	}
+	return p.syncEval(func() {
+		gs.RemoveDirectPeer(pid)
+	})
 }

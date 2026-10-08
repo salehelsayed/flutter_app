@@ -798,39 +798,39 @@ readonly GO_NODE_ADDR_VISIBILITY_RUN='AnnouncedAddrsSurvive|SignedPeerRecord|Ide
 print_command_for_path() {
   local path="$1"
   if is_go_bridge_connected_peer_test "$path"; then
-    printf '(cd go-mknoon && GOTOOLCHAIN=go1.25.0 go test ./bridge -run TestGroupSendReliable_ReportsConnectedTopicPeerCount -count=1)'
+    printf '(cd go-mknoon && GOTOOLCHAIN=go1.27.1 go test ./bridge -run TestGroupSendReliable_ReportsConnectedTopicPeerCount -count=1)'
     return
   fi
   if is_go_node_keyrotation_test "$path"; then
-    printf "(cd go-mknoon && GOTOOLCHAIN=go1.25.0 go test ./node -run 'UDME|EmitGroupDecryptionFailed|GroupTopicValidator|HandleGroupSubscription|GroupKey|DecryptGroupEnvelopePayload|KeyRotation' -count=1)"
+    printf "(cd go-mknoon && GOTOOLCHAIN=go1.27.1 go test ./node -run 'UDME|EmitGroupDecryptionFailed|GroupTopicValidator|HandleGroupSubscription|GroupKey|DecryptGroupEnvelopePayload|KeyRotation' -count=1)"
     return
   fi
   if is_go_node_addr_visibility_test "$path"; then
-    printf "(cd go-mknoon && GOTOOLCHAIN=go1.25.0 go test ./node/ -run '%s' -count=1)" "$GO_NODE_ADDR_VISIBILITY_RUN"
+    printf "(cd go-mknoon && GOTOOLCHAIN=go1.27.1 go test ./node/ -run '%s' -count=1)" "$GO_NODE_ADDR_VISIBILITY_RUN"
     return
   fi
   if is_go_node_featureflags_test "$path"; then
-    printf "(cd go-mknoon && GOTOOLCHAIN=go1.25.0 go test ./node -run '%s' -count=1)" "$GO_NODE_FEATUREFLAGS_RUN"
+    printf "(cd go-mknoon && GOTOOLCHAIN=go1.27.1 go test ./node -run '%s' -count=1)" "$GO_NODE_FEATUREFLAGS_RUN"
     return
   fi
   if is_go_bridge_featureflags_test "$path"; then
-    printf "(cd go-mknoon && GOTOOLCHAIN=go1.25.0 go test ./bridge -run '%s' -count=1)" "$GO_BRIDGE_FEATUREFLAGS_RUN"
+    printf "(cd go-mknoon && GOTOOLCHAIN=go1.27.1 go test ./bridge -run '%s' -count=1)" "$GO_BRIDGE_FEATUREFLAGS_RUN"
     return
   fi
   if is_go_node_waketoken_test "$path"; then
-    printf "(cd go-mknoon && GOTOOLCHAIN=go1.25.0 go test ./node -run '%s' -count=1)" "$GO_NODE_WAKETOKEN_RUN"
+    printf "(cd go-mknoon && GOTOOLCHAIN=go1.27.1 go test ./node -run '%s' -count=1)" "$GO_NODE_WAKETOKEN_RUN"
     return
   fi
   if is_go_node_libp2p_refactor_test "$path"; then
-    printf "(cd go-mknoon && GOTOOLCHAIN=go1.25.0 go test ./node -run '%s' -count=1)" "$GO_NODE_LIBP2P_REFACTOR_RUN"
+    printf "(cd go-mknoon && GOTOOLCHAIN=go1.27.1 go test ./node -run '%s' -count=1)" "$GO_NODE_LIBP2P_REFACTOR_RUN"
     return
   fi
   if is_go_bridge_entrypoint_refactor_test "$path"; then
-    printf "(cd go-mknoon && GOTOOLCHAIN=go1.25.0 go test ./bridge -run '%s' -count=1)" "$GO_BRIDGE_ENTRYPOINT_REFACTOR_RUN"
+    printf "(cd go-mknoon && GOTOOLCHAIN=go1.27.1 go test ./bridge -run '%s' -count=1)" "$GO_BRIDGE_ENTRYPOINT_REFACTOR_RUN"
     return
   fi
   if is_go_node_wake_outcome_test "$path"; then
-    printf "(set -euo pipefail; cd go-mknoon; plan370_node_log=\"\$(mktemp /tmp/plan370-node.XXXXXX)\"; trap 'rm -f \"\$plan370_node_log\"' EXIT; GOTOOLCHAIN=go1.25.0 go test ./node -list '%s' | rg -x '%s'; GOTOOLCHAIN=go1.25.0 go test ./node -run '%s' -count=1 -v | tee \"\$plan370_node_log\"; test \"\$(rg -c '^--- PASS: %s ' \"\$plan370_node_log\")\" -eq 1; ! rg -q '^[[:space:]]*--- SKIP: %s' \"\$plan370_node_log\")" \
+    printf "(set -euo pipefail; cd go-mknoon; plan370_node_log=\"\$(mktemp /tmp/plan370-node.XXXXXX)\"; trap 'rm -f \"\$plan370_node_log\"' EXIT; GOTOOLCHAIN=go1.27.1 go test ./node -list '%s' | rg -x '%s'; GOTOOLCHAIN=go1.27.1 go test ./node -run '%s' -count=1 -v | tee \"\$plan370_node_log\"; test \"\$(rg -c '^--- PASS: %s ' \"\$plan370_node_log\")\" -eq 1; ! rg -q '^[[:space:]]*--- SKIP: %s' \"\$plan370_node_log\")" \
       "$GO_NODE_WAKE_OUTCOME_RUN" \
       "$GO_NODE_WAKE_OUTCOME_NAME" \
       "$GO_NODE_WAKE_OUTCOME_RUN" \
@@ -839,7 +839,7 @@ print_command_for_path() {
     return
   fi
   if is_go_bridge_wake_outcome_test "$path"; then
-    printf "(set -euo pipefail; cd go-mknoon; plan370_bridge_log=\"\$(mktemp /tmp/plan370-bridge.XXXXXX)\"; trap 'rm -f \"\$plan370_bridge_log\"' EXIT; GOTOOLCHAIN=go1.25.0 go test ./bridge -list '%s' | rg -x '%s'; GOTOOLCHAIN=go1.25.0 go test ./bridge -run '%s' -count=1 -v | tee \"\$plan370_bridge_log\"; test \"\$(rg -c '^--- PASS: %s ' \"\$plan370_bridge_log\")\" -eq 1; ! rg -q '^[[:space:]]*--- SKIP: %s' \"\$plan370_bridge_log\")" \
+    printf "(set -euo pipefail; cd go-mknoon; plan370_bridge_log=\"\$(mktemp /tmp/plan370-bridge.XXXXXX)\"; trap 'rm -f \"\$plan370_bridge_log\"' EXIT; GOTOOLCHAIN=go1.27.1 go test ./bridge -list '%s' | rg -x '%s'; GOTOOLCHAIN=go1.27.1 go test ./bridge -run '%s' -count=1 -v | tee \"\$plan370_bridge_log\"; test \"\$(rg -c '^--- PASS: %s ' \"\$plan370_bridge_log\")\" -eq 1; ! rg -q '^[[:space:]]*--- SKIP: %s' \"\$plan370_bridge_log\")" \
       "$GO_BRIDGE_WAKE_OUTCOME_RUN" \
       "$GO_BRIDGE_WAKE_OUTCOME_NAME" \
       "$GO_BRIDGE_WAKE_OUTCOME_RUN" \
@@ -848,7 +848,7 @@ print_command_for_path() {
     return
   fi
   if is_go_relay_push_vault_process_test "$path"; then
-    printf "(set -euo pipefail; cd go-relay-server; plan367_process_log=\"\$(mktemp /tmp/plan367-process.XXXXXX)\"; trap 'rm -f \"\$plan367_process_log\"' EXIT; GOTOOLCHAIN=go1.25.0 go test -tags integration . -list '%s' | rg -x '%s'; GOTOOLCHAIN=go1.25.0 go test -tags integration . -run '%s' -count=1 -v | tee \"\$plan367_process_log\"; test \"\$(rg -c '^--- PASS: %s ' \"\$plan367_process_log\")\" -eq 1; ! rg -q '^[[:space:]]*--- SKIP: %s' \"\$plan367_process_log\")" \
+    printf "(set -euo pipefail; cd go-relay-server; plan367_process_log=\"\$(mktemp /tmp/plan367-process.XXXXXX)\"; trap 'rm -f \"\$plan367_process_log\"' EXIT; GOTOOLCHAIN=go1.27.1 go test -tags integration . -list '%s' | rg -x '%s'; GOTOOLCHAIN=go1.27.1 go test -tags integration . -run '%s' -count=1 -v | tee \"\$plan367_process_log\"; test \"\$(rg -c '^--- PASS: %s ' \"\$plan367_process_log\")\" -eq 1; ! rg -q '^[[:space:]]*--- SKIP: %s' \"\$plan367_process_log\")" \
       "$GO_RELAY_PUSH_VAULT_PROCESS_RUN" \
       "$GO_RELAY_PUSH_VAULT_PROCESS_NAME" \
       "$GO_RELAY_PUSH_VAULT_PROCESS_RUN" \
@@ -857,7 +857,7 @@ print_command_for_path() {
     return
   fi
   if is_go_relay_wake_outcome_process_test "$path"; then
-    printf "(set -euo pipefail; cd go-relay-server; plan370_process_log=\"\$(mktemp /tmp/plan370-process.XXXXXX)\"; trap 'rm -f \"\$plan370_process_log\"' EXIT; GOTOOLCHAIN=go1.25.0 go test -tags integration . -list '%s' | rg -x '%s'; GOTOOLCHAIN=go1.25.0 go test -tags integration . -run '%s' -count=1 -v | tee \"\$plan370_process_log\"; test \"\$(rg -c '^--- PASS: %s ' \"\$plan370_process_log\")\" -eq 1; ! rg -q '^[[:space:]]*--- SKIP: %s' \"\$plan370_process_log\")" \
+    printf "(set -euo pipefail; cd go-relay-server; plan370_process_log=\"\$(mktemp /tmp/plan370-process.XXXXXX)\"; trap 'rm -f \"\$plan370_process_log\"' EXIT; GOTOOLCHAIN=go1.27.1 go test -tags integration . -list '%s' | rg -x '%s'; GOTOOLCHAIN=go1.27.1 go test -tags integration . -run '%s' -count=1 -v | tee \"\$plan370_process_log\"; test \"\$(rg -c '^--- PASS: %s ' \"\$plan370_process_log\")\" -eq 1; ! rg -q '^[[:space:]]*--- SKIP: %s' \"\$plan370_process_log\")" \
       "$GO_RELAY_WAKE_OUTCOME_PROCESS_RUN" \
       "$GO_RELAY_WAKE_OUTCOME_PROCESS_NAME" \
       "$GO_RELAY_WAKE_OUTCOME_PROCESS_RUN" \
@@ -895,35 +895,35 @@ print_command_for_path() {
 run_path() {
   local path="$1"
   if is_go_bridge_connected_peer_test "$path"; then
-    (cd go-mknoon && GOTOOLCHAIN=go1.25.0 go test ./bridge -run TestGroupSendReliable_ReportsConnectedTopicPeerCount -count=1)
+    (cd go-mknoon && GOTOOLCHAIN=go1.27.1 go test ./bridge -run TestGroupSendReliable_ReportsConnectedTopicPeerCount -count=1)
     return
   fi
   if is_go_node_keyrotation_test "$path"; then
-    (cd go-mknoon && GOTOOLCHAIN=go1.25.0 go test ./node -run 'UDME|EmitGroupDecryptionFailed|GroupTopicValidator|HandleGroupSubscription|GroupKey|DecryptGroupEnvelopePayload|KeyRotation' -count=1)
+    (cd go-mknoon && GOTOOLCHAIN=go1.27.1 go test ./node -run 'UDME|EmitGroupDecryptionFailed|GroupTopicValidator|HandleGroupSubscription|GroupKey|DecryptGroupEnvelopePayload|KeyRotation' -count=1)
     return
   fi
   if is_go_node_addr_visibility_test "$path"; then
-    (cd go-mknoon && GOTOOLCHAIN=go1.25.0 go test ./node/ -run "$GO_NODE_ADDR_VISIBILITY_RUN" -count=1)
+    (cd go-mknoon && GOTOOLCHAIN=go1.27.1 go test ./node/ -run "$GO_NODE_ADDR_VISIBILITY_RUN" -count=1)
     return
   fi
   if is_go_node_featureflags_test "$path"; then
-    (cd go-mknoon && GOTOOLCHAIN=go1.25.0 go test ./node -run "$GO_NODE_FEATUREFLAGS_RUN" -count=1)
+    (cd go-mknoon && GOTOOLCHAIN=go1.27.1 go test ./node -run "$GO_NODE_FEATUREFLAGS_RUN" -count=1)
     return
   fi
   if is_go_bridge_featureflags_test "$path"; then
-    (cd go-mknoon && GOTOOLCHAIN=go1.25.0 go test ./bridge -run "$GO_BRIDGE_FEATUREFLAGS_RUN" -count=1)
+    (cd go-mknoon && GOTOOLCHAIN=go1.27.1 go test ./bridge -run "$GO_BRIDGE_FEATUREFLAGS_RUN" -count=1)
     return
   fi
   if is_go_node_waketoken_test "$path"; then
-    (cd go-mknoon && GOTOOLCHAIN=go1.25.0 go test ./node -run "$GO_NODE_WAKETOKEN_RUN" -count=1)
+    (cd go-mknoon && GOTOOLCHAIN=go1.27.1 go test ./node -run "$GO_NODE_WAKETOKEN_RUN" -count=1)
     return
   fi
   if is_go_node_libp2p_refactor_test "$path"; then
-    (cd go-mknoon && GOTOOLCHAIN=go1.25.0 go test ./node -run "$GO_NODE_LIBP2P_REFACTOR_RUN" -count=1)
+    (cd go-mknoon && GOTOOLCHAIN=go1.27.1 go test ./node -run "$GO_NODE_LIBP2P_REFACTOR_RUN" -count=1)
     return
   fi
   if is_go_bridge_entrypoint_refactor_test "$path"; then
-    (cd go-mknoon && GOTOOLCHAIN=go1.25.0 go test ./bridge -run "$GO_BRIDGE_ENTRYPOINT_REFACTOR_RUN" -count=1)
+    (cd go-mknoon && GOTOOLCHAIN=go1.27.1 go test ./bridge -run "$GO_BRIDGE_ENTRYPOINT_REFACTOR_RUN" -count=1)
     return
   fi
   if is_go_node_wake_outcome_test "$path"; then
@@ -932,9 +932,9 @@ run_path() {
       cd go-mknoon
       plan370_node_log="$(mktemp /tmp/plan370-node.XXXXXX)"
       trap 'rm -f "$plan370_node_log"' EXIT
-      GOTOOLCHAIN=go1.25.0 go test ./node -list "$GO_NODE_WAKE_OUTCOME_RUN" |
+      GOTOOLCHAIN=go1.27.1 go test ./node -list "$GO_NODE_WAKE_OUTCOME_RUN" |
         rg -x "$GO_NODE_WAKE_OUTCOME_NAME"
-      GOTOOLCHAIN=go1.25.0 go test ./node -run "$GO_NODE_WAKE_OUTCOME_RUN" \
+      GOTOOLCHAIN=go1.27.1 go test ./node -run "$GO_NODE_WAKE_OUTCOME_RUN" \
         -count=1 -v | tee "$plan370_node_log"
       test "$(rg -c "^--- PASS: $GO_NODE_WAKE_OUTCOME_NAME " "$plan370_node_log")" -eq 1
       ! rg -q "^[[:space:]]*--- SKIP: $GO_NODE_WAKE_OUTCOME_NAME" "$plan370_node_log"
@@ -947,9 +947,9 @@ run_path() {
       cd go-mknoon
       plan370_bridge_log="$(mktemp /tmp/plan370-bridge.XXXXXX)"
       trap 'rm -f "$plan370_bridge_log"' EXIT
-      GOTOOLCHAIN=go1.25.0 go test ./bridge -list "$GO_BRIDGE_WAKE_OUTCOME_RUN" |
+      GOTOOLCHAIN=go1.27.1 go test ./bridge -list "$GO_BRIDGE_WAKE_OUTCOME_RUN" |
         rg -x "$GO_BRIDGE_WAKE_OUTCOME_NAME"
-      GOTOOLCHAIN=go1.25.0 go test ./bridge -run "$GO_BRIDGE_WAKE_OUTCOME_RUN" \
+      GOTOOLCHAIN=go1.27.1 go test ./bridge -run "$GO_BRIDGE_WAKE_OUTCOME_RUN" \
         -count=1 -v | tee "$plan370_bridge_log"
       test "$(rg -c "^--- PASS: $GO_BRIDGE_WAKE_OUTCOME_NAME " "$plan370_bridge_log")" -eq 1
       ! rg -q "^[[:space:]]*--- SKIP: $GO_BRIDGE_WAKE_OUTCOME_NAME" "$plan370_bridge_log"
@@ -962,10 +962,10 @@ run_path() {
       cd go-relay-server
       plan367_process_log="$(mktemp /tmp/plan367-process.XXXXXX)"
       trap 'rm -f "$plan367_process_log"' EXIT
-      GOTOOLCHAIN=go1.25.0 go test -tags integration . \
+      GOTOOLCHAIN=go1.27.1 go test -tags integration . \
         -list "$GO_RELAY_PUSH_VAULT_PROCESS_RUN" |
         rg -x "$GO_RELAY_PUSH_VAULT_PROCESS_NAME"
-      GOTOOLCHAIN=go1.25.0 go test -tags integration . \
+      GOTOOLCHAIN=go1.27.1 go test -tags integration . \
         -run "$GO_RELAY_PUSH_VAULT_PROCESS_RUN" \
         -count=1 -v | tee "$plan367_process_log"
       test "$(rg -c "^--- PASS: $GO_RELAY_PUSH_VAULT_PROCESS_NAME " "$plan367_process_log")" -eq 1
@@ -979,10 +979,10 @@ run_path() {
       cd go-relay-server
       plan370_process_log="$(mktemp /tmp/plan370-process.XXXXXX)"
       trap 'rm -f "$plan370_process_log"' EXIT
-      GOTOOLCHAIN=go1.25.0 go test -tags integration . \
+      GOTOOLCHAIN=go1.27.1 go test -tags integration . \
         -list "$GO_RELAY_WAKE_OUTCOME_PROCESS_RUN" |
         rg -x "$GO_RELAY_WAKE_OUTCOME_PROCESS_NAME"
-      GOTOOLCHAIN=go1.25.0 go test -tags integration . \
+      GOTOOLCHAIN=go1.27.1 go test -tags integration . \
         -run "$GO_RELAY_WAKE_OUTCOME_PROCESS_RUN" \
         -count=1 -v | tee "$plan370_process_log"
       test "$(rg -c "^--- PASS: $GO_RELAY_WAKE_OUTCOME_PROCESS_NAME " "$plan370_process_log")" -eq 1

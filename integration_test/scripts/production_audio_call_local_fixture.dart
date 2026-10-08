@@ -4,7 +4,7 @@ import 'dart:io';
 
 import 'package:crypto/crypto.dart';
 
-const String productionAudioCallFixtureGoToolchain = 'go1.25.0';
+const String productionAudioCallFixtureGoToolchain = 'go1.27.1';
 const String _fixtureProcessMode =
     'MKNOON_PRODUCTION_AUDIO_CALL_DEVICE_FIXTURE_PROCESS';
 const String _fixtureHostEnvironment =
@@ -402,7 +402,7 @@ final class ProductionAudioCallLocalFixtureLease {
       workingDirectory: 'tool/call_audio_oracle',
       environment: <String, String>{
         ..._childEnvironment,
-        'GOTOOLCHAIN': 'go1.25.0',
+        'GOTOOLCHAIN': 'go1.27.1',
         _oracleCredentialFileEnvironment: _readiness.oracleCredentialsFile,
         _oracleResultFileEnvironment: _readiness.oracleResultFile,
       },

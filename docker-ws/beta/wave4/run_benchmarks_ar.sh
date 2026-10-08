@@ -18,7 +18,7 @@ export MKNOON_RELAY_ADDRESSES="/dns4/mknoun.xyz/tcp/4001/wss/p2p/12D3KooWGMYMmN1
   echo "start $(date -u +%T) $(git log -1 --format=%h)"
   xcrun simctl boot "$SIM" 2>&1 | tail -1
   xcrun simctl bootstatus "$SIM" -b 2>&1 | tail -1
-  (cd go-mknoon && GOTOOLCHAIN=go1.25.0 go build -o bin/testpeer ./cmd/testpeer/) && echo "testpeer built"
+  (cd go-mknoon && GOTOOLCHAIN=go1.27.1 go build -o bin/testpeer ./cmd/testpeer/) && echo "testpeer built"
   dart run integration_test/scripts/run_benchmark_suite.dart -d "$SIM" --scenarios A,R 2>&1
   echo "suite rc=$?"
   xcrun simctl shutdown "$SIM" 2>&1 | tail -1

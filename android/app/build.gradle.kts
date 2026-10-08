@@ -470,9 +470,8 @@ tasks.register<Exec>("buildGoAar") {
             aar.delete()
             throw GradleException(
                 "GoMknoon.aar missing or invalid after ensuring Android gomobile bindings.\n" +
-                "Ensure Go and gomobile are installed:\n" +
-                "  go install golang.org/x/mobile/cmd/gomobile@latest\n" +
-                "  gomobile init"
+                "Ensure Go and the Android NDK are installed; the ensure script\n" +
+                "installs the pinned gomobile itself (make -C go-mknoon gomobile-tools)."
             )
         }
     }

@@ -16,6 +16,9 @@ import (
 // ErrTopicClosed is returned if a Topic is utilized after it has been closed
 var ErrTopicClosed = errors.New("this Topic is closed, try opening a new one")
 
+// ErrFanoutOnlyTopic is returned if a relay is requested on a fanout-only topic
+var ErrFanoutOnlyTopic = errors.New("cannot relay on a fanout-only topic")
+
 // ErrNilSignKey is returned if a nil private key was provided
 var ErrNilSignKey = errors.New("nil sign key")
 
@@ -32,6 +35,11 @@ type Topic struct {
 
 	mux    sync.RWMutex
 	closed bool
+
+	fanoutOnly bool
+
+	requestPartialMessages  bool
+	supportsPartialMessages bool
 }
 
 // String returns the topic associated with t
@@ -189,6 +197,9 @@ func (t *Topic) Relay() (RelayCancelFunc, error) {
 	if t.closed {
 		return nil, ErrTopicClosed
 	}
+	if t.fanoutOnly {
+		return nil, ErrFanoutOnlyTopic
+	}
 
 	out := make(chan RelayCancelFunc, 1)
 
@@ -236,11 +247,6 @@ func setDefaultBatchPublishOptions(opts *BatchPublishOptions) {
 func (t *Topic) Publish(ctx context.Context, data []byte, opts ...PubOpt) error {
 	msg, err := t.validate(ctx, data, opts...)
 	if err != nil {
-		if errors.Is(err, dupeErr{}) {
-			// If it was a duplicate, we return nil to indicate success.
-			// Semantically the message was published by us or someone else.
-			return nil
-		}
 		return err
 	}
 	return t.p.val.sendMsgBlocking(msg)
@@ -249,12 +255,6 @@ func (t *Topic) Publish(ctx context.Context, data []byte, opts ...PubOpt) error 
 func (t *Topic) AddToBatch(ctx context.Context, batch *MessageBatch, data []byte, opts ...PubOpt) error {
 	msg, err := t.validate(ctx, data, opts...)
 	if err != nil {
-		if errors.Is(err, dupeErr{}) {
-			// If it was a duplicate, we return nil to indicate success.
-			// Semantically the message was published by us or someone else.
-			// We won't add it to the batch. Since it's already been published.
-			return nil
-		}
 		return err
 	}
 	batch.add(msg)
@@ -348,7 +348,14 @@ func (t *Topic) validate(ctx context.Context, data []byte, opts ...PubOpt) (*Mes
 		}
 	}
 
-	msg := &Message{m, "", t.p.host.ID(), pub.validatorData, pub.local}
+	msg := &Message{
+		Message:       m,
+		ID:            "",
+		ReceivedFrom:  t.p.host.ID(),
+		ValidatorData: pub.validatorData,
+		Local:         pub.local,
+	}
+
 	select {
 	case t.p.eval <- func() {
 		t.p.rt.Preprocess(t.p.host.ID(), []*Message{msg})

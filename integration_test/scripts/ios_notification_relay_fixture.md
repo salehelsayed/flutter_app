@@ -16,7 +16,7 @@ Example producer build (before the no-child-build campaign starts):
 
 ```sh
 cd go-mknoon
-GOTOOLCHAIN=go1.25.0 go build -o ../build/sims/private/iospayloadproducer ./cmd/iospayloadproducer
+GOTOOLCHAIN=go1.27.1 go build -o ../build/sims/private/iospayloadproducer ./cmd/iospayloadproducer
 chmod 0700 ../build/sims/private/iospayloadproducer
 ```
 
@@ -60,5 +60,5 @@ Focused local tests (no relay, APNs, or device access):
 
 ```sh
 python3 -m unittest scripts.test.ios_notification_relay_fixture_driver_test
-cd go-mknoon && GOTOOLCHAIN=go1.25.0 go test ./cmd/iospayloadproducer
+cd go-mknoon && GOTOOLCHAIN=go1.27.1 go test ./cmd/iospayloadproducer
 ```

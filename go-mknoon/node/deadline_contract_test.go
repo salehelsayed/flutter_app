@@ -85,6 +85,8 @@ func (s *r3ScriptedStream) Reset() error {
 	return nil
 }
 
+func (s *r3ScriptedStream) ResetWithError(network.StreamErrorCode) error { return s.Reset() }
+
 func (s *r3ScriptedStream) SetDeadline(deadline time.Time) error {
 	s.events = append(s.events, "deadline")
 	index := len(s.deadlines)

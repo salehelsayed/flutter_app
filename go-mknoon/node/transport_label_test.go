@@ -177,8 +177,10 @@ type stubStreamConn struct {
 	remoteMultiaddr ma.Multiaddr
 }
 
-func (c *stubStreamConn) Close() error { return nil }
-func (c *stubStreamConn) ID() string   { return "stub-conn" }
+func (c *stubStreamConn) Close() error                               { return nil }
+func (c *stubStreamConn) CloseWithError(network.ConnErrorCode) error { return c.Close() }
+func (c *stubStreamConn) As(any) bool                                { return false }
+func (c *stubStreamConn) ID() string                                 { return "stub-conn" }
 func (c *stubStreamConn) NewStream(context.Context) (network.Stream, error) {
 	return nil, nil
 }
@@ -255,7 +257,8 @@ func (s *stubTransportStream) Reset() error {
 	s.resetCount++
 	return nil
 }
-func (s *stubTransportStream) SetDeadline(time.Time) error { return nil }
+func (s *stubTransportStream) ResetWithError(network.StreamErrorCode) error { return s.Reset() }
+func (s *stubTransportStream) SetDeadline(time.Time) error                  { return nil }
 func (s *stubTransportStream) SetReadDeadline(time.Time) error {
 	return nil
 }

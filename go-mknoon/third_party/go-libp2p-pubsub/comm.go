@@ -6,9 +6,9 @@ import (
 	"io"
 	"time"
 
-	"github.com/gogo/protobuf/proto"
 	pool "github.com/libp2p/go-buffer-pool"
 	"github.com/multiformats/go-varint"
+	"google.golang.org/protobuf/proto"
 
 	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
@@ -24,6 +24,10 @@ func (p *PubSub) getHelloPacket() *RPC {
 	subscriptions := make(map[string]bool)
 
 	for t := range p.mySubs {
+		// don't announce fanout-only topics
+		if topic := p.myTopics[t]; topic != nil && topic.fanoutOnly {
+			continue
+		}
 		subscriptions[t] = true
 	}
 
@@ -32,9 +36,16 @@ func (p *PubSub) getHelloPacket() *RPC {
 	}
 
 	for t := range subscriptions {
+		var requestPartial, supportsPartialMessages bool
+		if ts, ok := p.myTopics[t]; ok {
+			requestPartial = ts.requestPartialMessages
+			supportsPartialMessages = ts.supportsPartialMessages
+		}
 		as := &pb.RPC_SubOpts{
-			Topicid:   proto.String(t),
-			Subscribe: proto.Bool(true),
+			Topicid:                proto.String(t),
+			Subscribe:              proto.Bool(true),
+			RequestsPartial:        &requestPartial,
+			SupportsSendingPartial: &supportsPartialMessages,
 		}
 		rpc.Subscriptions = append(rpc.Subscriptions, as)
 	}
@@ -43,23 +54,49 @@ func (p *PubSub) getHelloPacket() *RPC {
 
 func (p *PubSub) handleNewStream(s network.Stream) {
 	peer := s.Conn().RemotePeer()
-
-	p.inboundStreamsMx.Lock()
-	other, dup := p.inboundStreams[peer]
-	if dup {
-		p.logger.Debug("duplicate inbound stream from; resetting other stream", "peer", peer)
-		other.Reset()
-	}
-	p.inboundStreams[peer] = s
-	p.inboundStreamsMx.Unlock()
+	done := make(chan struct{})
+	sentNewStream := false
 
 	defer func() {
 		p.inboundStreamsMx.Lock()
-		if p.inboundStreams[peer] == s {
+		if p.inboundStreams[peer].s == s {
 			delete(p.inboundStreams, peer)
 		}
 		p.inboundStreamsMx.Unlock()
+
+		if sentNewStream {
+			select {
+			case p.incoming <- incomingUnion{kind: incomingKindClosedStream, s: s}:
+			case <-p.ctx.Done():
+			}
+		}
+
+		close(done)
 	}()
+
+	p.inboundStreamsMx.Lock()
+	prev, hasPrev := p.inboundStreams[peer]
+	p.inboundStreams[peer] = inboundHandler{s: s, done: done}
+	p.inboundStreamsMx.Unlock()
+
+	if hasPrev {
+		p.logger.Debug("duplicate inbound stream; replacing handler", "peer", peer)
+		prev.s.Reset()
+		select {
+		case <-prev.done:
+		case <-p.ctx.Done():
+			return
+		}
+	}
+
+	select {
+	case p.incoming <- incomingUnion{kind: incomingKindNewStream, s: s}:
+		sentNewStream = true
+	case <-p.ctx.Done():
+		// Close is useless because the other side isn't reading.
+		s.Reset()
+		return
+	}
 
 	r := msgio.NewVarintReaderSize(s, p.maxMessageSize)
 	for {
@@ -85,8 +122,17 @@ func (p *PubSub) handleNewStream(s network.Stream) {
 			continue
 		}
 
+		err = pb.ValidateRawRPCControlMessageSize(msgbytes, p.maxControlMessageSize)
+		if err != nil {
+			r.ReleaseMsg(msgbytes)
+			s.Reset()
+
+			p.rpcLogger.Warn("RPC's control message is too large. Disconnecting. If this is a mistake, you should increase `WithMaxControlMessageSize`", "peer", s.Conn().RemotePeer(), "err", err)
+			return
+		}
+
 		rpc := new(RPC)
-		err = rpc.Unmarshal(msgbytes)
+		err = proto.Unmarshal(msgbytes, &rpc.RPC)
 		r.ReleaseMsg(msgbytes)
 		if err != nil {
 			s.Reset()
@@ -100,7 +146,10 @@ func (p *PubSub) handleNewStream(s network.Stream) {
 
 		rpc.from = peer
 		select {
-		case p.incoming <- rpc:
+		case p.incoming <- incomingUnion{
+			kind: incomingKindRPC,
+			rpc:  rpc,
+		}:
 		case <-p.ctx.Done():
 			// Close is useless because the other side isn't reading.
 			s.Reset()
@@ -123,7 +172,7 @@ func (p *PubSub) notifyPeerDead(pid peer.ID) {
 }
 
 func (p *PubSub) handleNewPeer(ctx context.Context, pid peer.ID, outgoing *rpcQueue) {
-	s, err := p.host.NewStream(withLimitedConn(p.ctx), pid, p.rt.Protocols()...)
+	s, err := p.host.NewStream(withLimitedConn(ctx), pid, p.rt.Protocols()...)
 	if err != nil {
 		p.logger.Debug("error opening new stream to peer", "err", err, "peer", pid)
 
@@ -135,11 +184,14 @@ func (p *PubSub) handleNewPeer(ctx context.Context, pid peer.ID, outgoing *rpcQu
 		return
 	}
 
-	go p.handleSendingMessages(ctx, s, outgoing)
+	firstMessage := make(chan *RPC, 1)
+	sCtx, cancel := context.WithCancel(ctx)
+	go p.handleSendingMessages(sCtx, s, outgoing, firstMessage)
 	go p.handlePeerDead(s)
 	select {
-	case p.newPeerStream <- s:
+	case p.newPeerStream <- peerOutgoingStream{Stream: s, FirstMessage: firstMessage, Cancel: cancel}:
 	case <-ctx.Done():
+		cancel()
 	}
 }
 
@@ -164,26 +216,46 @@ func (p *PubSub) handlePeerDead(s network.Stream) {
 	p.notifyPeerDead(pid)
 }
 
-func (p *PubSub) handleSendingMessages(ctx context.Context, s network.Stream, outgoing *rpcQueue) {
+func (p *PubSub) handleSendingMessages(ctx context.Context, s network.Stream, outgoing *rpcQueue, firstMessage chan *RPC) {
 	writeRpc := func(rpc *RPC) error {
-		size := uint64(rpc.Size())
+		size := uint64(proto.Size(&rpc.RPC))
 
 		buf := pool.Get(varint.UvarintSize(size) + int(size))
 		defer pool.Put(buf)
 
 		n := binary.PutUvarint(buf, size)
-		_, err := rpc.MarshalTo(buf[n:])
+		out, err := proto.MarshalOptions{}.MarshalAppend(buf[:n], &rpc.RPC)
 		if err != nil {
 			return err
 		}
 
-		_, err = s.Write(buf)
+		if err := s.SetWriteDeadline(time.Now().Add(time.Second * 30)); err != nil {
+			p.rpcLogger.Debug("failed to set write deadline", "peer", s.Conn().RemotePeer(), "err", err)
+			return err
+		}
+
+		_, err = s.Write(out)
 		if err != nil {
 			p.rpcLogger.Debug("failed to send message", "peer", s.Conn().RemotePeer(), "rpc", rpc, "err", err)
 			return err
 		}
 		p.rpcLogger.Debug("sent", "peer", s.Conn().RemotePeer(), "rpc", rpc)
 		return nil
+	}
+
+	select {
+	case rpc := <-firstMessage:
+		if proto.Size(&rpc.RPC) > 0 {
+			err := writeRpc(rpc)
+			if err != nil {
+				s.Reset()
+				p.logger.Debug("error writing message to peer", "peer", s.Conn().RemotePeer(), "err", err)
+				return
+			}
+		}
+	case <-ctx.Done():
+		s.Reset()
+		return
 	}
 
 	defer s.Close()
@@ -233,14 +305,4 @@ func rpcWithControl(msgs []*pb.Message,
 			},
 		},
 	}
-}
-
-func copyRPC(rpc *RPC) *RPC {
-	res := new(RPC)
-	*res = *rpc
-	if rpc.Control != nil {
-		res.Control = new(pb.ControlMessage)
-		*res.Control = *rpc.Control
-	}
-	return res
 }

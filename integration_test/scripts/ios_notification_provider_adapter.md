@@ -22,7 +22,7 @@ export SIMS_IOS_APNS_AUTH_KEY_PATH='/private/AuthKey_KEYID.p8'
 export SIMS_IOS_APNS_KEY_ID='ABCDEFGHIJ'
 export SIMS_IOS_APNS_TEAM_ID='397R9Q4WMX'
 
-(cd go-mknoon && GOTOOLCHAIN=go1.25.0 go build \
+(cd go-mknoon && GOTOOLCHAIN=go1.27.1 go build \
   -o '/private/iospayloadproducer' ./cmd/iospayloadproducer)
 
 integration_test/scripts/ios_notification_provider_adapter.py \

@@ -24,8 +24,8 @@ package node
 //   M1 — peer↔peer direct LAN QUIC/TCP identify, N iters, private+public. host-runnable, HEADLINE
 //   M2 — cross-version skew: dial the prod relay (v0.38.2) over QUIC.      network-gated (skips offline)
 //
-// Run (Go 1.26.x panics on quic-go session ticket — pin the declared toolchain):
-//   cd go-mknoon && GOTOOLCHAIN=go1.25.0 go test ./node \
+// Run (pin the declared toolchain):
+//   cd go-mknoon && GOTOOLCHAIN=go1.27.1 go test ./node \
 //       -run TestQuicIdentifyRevalidation -count=1 -v
 //   (FDC_S2_ITERS overrides N for M1; default 100. -short skips all three.)
 

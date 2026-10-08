@@ -24,6 +24,7 @@ import (
 	"github.com/libp2p/go-libp2p/p2p/host/peerstore/pstoremem"
 	ma "github.com/multiformats/go-multiaddr"
 	manet "github.com/multiformats/go-multiaddr/net"
+	"google.golang.org/protobuf/proto"
 )
 
 const (
@@ -533,7 +534,10 @@ func WithDirectPeers(pis []peer.AddrInfo) Option {
 		gs.direct = direct
 
 		if gs.tagTracer != nil {
-			gs.tagTracer.direct = direct
+			gs.tagTracer.isDirect = func(p peer.ID) bool {
+				_, ok := gs.direct[p]
+				return ok
+			}
 		}
 
 		return nil
@@ -701,7 +705,7 @@ func (gs *GossipSubRouter) Attach(p *PubSub) {
 }
 
 func (gs *GossipSubRouter) manageAddrBook() {
-	sub, err := gs.p.host.EventBus().Subscribe([]interface{}{
+	sub, err := gs.p.host.EventBus().Subscribe([]any{
 		&event.EvtPeerIdentificationCompleted{},
 		&event.EvtPeerConnectednessChanged{},
 	})
@@ -747,9 +751,20 @@ func (gs *GossipSubRouter) manageAddrBook() {
 	}
 }
 
-func (gs *GossipSubRouter) AddPeer(p peer.ID, proto protocol.ID, helloPacket *RPC) *RPC {
+func (gs *GossipSubRouter) OnNewIncomingStream(peer.ID, protocol.ID) {}
+
+func (gs *GossipSubRouter) OnClosedIncomingStream(pid peer.ID, proto protocol.ID) {
+	if gs.gate != nil {
+		gs.gate.OnClosedIncomingStream(pid, proto)
+	}
+	if gs.feature(GossipSubFeatureExtensions, proto) {
+		gs.extensions.OnClosedIncomingStream(pid, proto)
+	}
+}
+
+func (gs *GossipSubRouter) OnNewOutboundStream(p peer.ID, proto protocol.ID, helloPacket *RPC) *RPC {
 	gs.logger.Debug("PEERUP: Add new peer using protocol", "peer", p, "protocol", proto)
-	gs.tracer.AddPeer(p, proto)
+	gs.tracer.OnNewOutboundStream(p, proto)
 	gs.peers[p] = proto
 
 	// track the connection direction
@@ -775,16 +790,16 @@ loop:
 	}
 	gs.outbound[p] = outbound
 	if gs.feature(GossipSubFeatureExtensions, proto) {
-		helloPacket = gs.extensions.AddPeer(p, helloPacket)
+		helloPacket = gs.extensions.OnNewOutboundStream(p, helloPacket)
 	}
 	return helloPacket
 }
 
-func (gs *GossipSubRouter) RemovePeer(p peer.ID) {
+func (gs *GossipSubRouter) OnClosedOutboundStream(p peer.ID) {
 	gs.logger.Debug("PEERDOWN: Remove disconnected peer", "peer", p)
-	gs.tracer.RemovePeer(p)
+	gs.tracer.OnClosedOutboundStream(p)
 	if gs.feature(GossipSubFeatureExtensions, gs.peers[p]) {
-		gs.extensions.RemovePeer(p)
+		gs.extensions.OnClosedOutboundStream(p)
 	}
 	delete(gs.peers, p)
 	for _, peers := range gs.mesh {
@@ -796,6 +811,7 @@ func (gs *GossipSubRouter) RemovePeer(p peer.ID) {
 	delete(gs.gossip, p)
 	delete(gs.control, p)
 	delete(gs.outbound, p)
+	delete(gs.unwanted, p)
 }
 
 func (gs *GossipSubRouter) EnoughPeers(topic string, suggested int) bool {
@@ -825,6 +841,20 @@ func (gs *GossipSubRouter) EnoughPeers(topic string, suggested int) bool {
 	}
 
 	return false
+}
+
+func (gs *GossipSubRouter) AddDirectPeer(pi peer.AddrInfo) {
+	if gs.direct == nil {
+		gs.direct = make(map[peer.ID]struct{})
+	}
+	gs.direct[pi.ID] = struct{}{}
+	gs.p.host.Peerstore().AddAddrs(pi.ID, pi.Addrs, peerstore.PermanentAddrTTL)
+	gs.tagTracer.protectDirect(pi.ID)
+}
+
+func (gs *GossipSubRouter) RemoveDirectPeer(p peer.ID) {
+	delete(gs.direct, p)
+	gs.tagTracer.unprotectDirect(p)
 }
 
 func (gs *GossipSubRouter) AcceptFrom(p peer.ID) AcceptStatus {
@@ -864,6 +894,12 @@ func (gs *GossipSubRouter) Preprocess(from peer.ID, msgs []*Message) {
 				// We don't send IDONTWANT to the peer that sent us the messages
 				continue
 			}
+			if gs.iRequestPartial(topic) && gs.peerSupportsSendingPartial(p, topic) {
+				// Don't send IDONTWANT to peers that are using partial messages
+				// for this topic
+				continue
+			}
+
 			// send to only peers that support IDONTWANT
 			if gs.feature(GossipSubFeatureIdontwant, gs.peers[p]) {
 				idontwant := []*pb.ControlIDontWant{{MessageIDs: mids}}
@@ -875,7 +911,10 @@ func (gs *GossipSubRouter) Preprocess(from peer.ID, msgs []*Message) {
 }
 
 func (gs *GossipSubRouter) HandleRPC(rpc *RPC) {
-	gs.extensions.HandleRPC(rpc)
+	err := gs.extensions.HandleRPC(rpc)
+	if err != nil {
+		gs.logger.Debug("error in handling RPC", "from", rpc.from, "err", err)
+	}
 
 	ctl := rpc.GetControl()
 	if ctl == nil {
@@ -883,16 +922,16 @@ func (gs *GossipSubRouter) HandleRPC(rpc *RPC) {
 	}
 
 	iwant := gs.handleIHave(rpc.from, ctl)
-	ihave := gs.handleIWant(rpc.from, ctl)
+	iWantResponses := gs.handleIWant(rpc.from, ctl)
 	prune := gs.handleGraft(rpc.from, ctl)
 	gs.handlePrune(rpc.from, ctl)
 	gs.handleIDontWant(rpc.from, ctl)
 
-	if len(iwant) == 0 && len(ihave) == 0 && len(prune) == 0 {
+	if len(iwant) == 0 && len(iWantResponses) == 0 && len(prune) == 0 {
 		return
 	}
 
-	out := rpcWithControl(ihave, nil, iwant, nil, prune, nil)
+	out := rpcWithControl(iWantResponses, nil, iwant, nil, prune, nil)
 	gs.sendRPC(rpc.from, out, false)
 }
 
@@ -1151,8 +1190,9 @@ func (gs *GossipSubRouter) handlePrune(p peer.ID, ctl *pb.ControlMessage) {
 }
 
 func (gs *GossipSubRouter) handleIDontWant(p peer.ID, ctl *pb.ControlMessage) {
-	if gs.unwanted[p] == nil {
-		gs.unwanted[p] = make(map[checksum]int)
+	idontwants := ctl.GetIdontwant()
+	if len(idontwants) == 0 {
+		return
 	}
 
 	// IDONTWANT flood protection
@@ -1164,8 +1204,9 @@ func (gs *GossipSubRouter) handleIDontWant(p peer.ID, ctl *pb.ControlMessage) {
 
 	totalUnwantedIds := 0
 	// Remember all the unwanted message ids
+	var unwanted map[checksum]int
 mainIDWLoop:
-	for _, idontwant := range ctl.GetIdontwant() {
+	for _, idontwant := range idontwants {
 		for _, mid := range idontwant.GetMessageIDs() {
 			// IDONTWANT flood protection
 			if totalUnwantedIds >= gs.params.MaxIDontWantLength {
@@ -1174,7 +1215,14 @@ mainIDWLoop:
 			}
 
 			totalUnwantedIds++
-			gs.unwanted[p][computeChecksum(mid)] = gs.params.IDontWantMessageTTL
+			if unwanted == nil {
+				unwanted = gs.unwanted[p]
+				if unwanted == nil {
+					unwanted = make(map[checksum]int)
+					gs.unwanted[p] = unwanted
+				}
+			}
+			unwanted[computeChecksum(mid)] = gs.params.IDontWantMessageTTL
 		}
 	}
 }
@@ -1343,20 +1391,7 @@ func (gs *GossipSubRouter) rpcs(msg *Message) iter.Seq2[peer.ID, *RPC] {
 			gmap, ok := gs.mesh[topic]
 			if !ok {
 				// we are not in the mesh for topic, use fanout peers
-				gmap, ok = gs.fanout[topic]
-				if !ok || len(gmap) == 0 {
-					// we don't have any, pick some with score above the publish threshold
-					peers := gs.getPeers(topic, gs.params.D, func(p peer.ID) bool {
-						_, direct := gs.direct[p]
-						return !direct && gs.score.Score(p) >= gs.publishThreshold
-					})
-
-					if len(peers) > 0 {
-						gmap = peerListToMap(peers)
-						gs.fanout[topic] = gmap
-					}
-				}
-				gs.lastpub[topic] = time.Now().UnixNano()
+				gmap = gs.getFanoutPeersForPublishing(topic)
 			}
 
 			csum := computeChecksum(gs.p.idGen.ID(msg))
@@ -1375,12 +1410,36 @@ func (gs *GossipSubRouter) rpcs(msg *Message) iter.Seq2[peer.ID, *RPC] {
 			if pid == from || pid == peer.ID(msg.GetFrom()) {
 				continue
 			}
+			if gs.iSupportSendingPartial(topic) && gs.peerRequestsPartial(pid, topic) {
+				// The peer requested partial messages. We'll skip sending them full messages
+				continue
+			}
 
 			if !yield(pid, out) {
 				return
 			}
 		}
 	}
+}
+
+func (gs *GossipSubRouter) peerSupportsSendingPartial(p peer.ID, topic string) bool {
+	peerStates, ok := gs.p.topics[topic]
+	return ok && gs.extensions.myExtensions.PartialMessages && peerStates[p].supportsPartial
+}
+
+func (gs *GossipSubRouter) peerRequestsPartial(p peer.ID, topic string) bool {
+	peerStates, ok := gs.p.topics[topic]
+	return ok && gs.extensions.myExtensions.PartialMessages && peerStates[p].requestsPartial
+}
+
+func (gs *GossipSubRouter) iSupportSendingPartial(topic string) bool {
+	myTopicState := gs.p.myTopics[topic]
+	return myTopicState != nil && myTopicState.supportsPartialMessages
+}
+
+func (gs *GossipSubRouter) iRequestPartial(topic string) bool {
+	myTopicState := gs.p.myTopics[topic]
+	return myTopicState != nil && myTopicState.requestPartialMessages
 }
 
 func (gs *GossipSubRouter) Join(topic string) {
@@ -1475,48 +1534,61 @@ func (gs *GossipSubRouter) sendPrune(p peer.ID, topic string, isUnsubscribe bool
 }
 
 func (gs *GossipSubRouter) sendRPC(p peer.ID, out *RPC, urgent bool) {
-	// do we own the RPC?
-	own := false
-
-	// piggyback control message retries
-	ctl, ok := gs.control[p]
-	if ok {
-		out = copyRPC(out)
-		own = true
-		gs.piggybackControl(p, out, ctl)
-		delete(gs.control, p)
-	}
-
-	// piggyback gossip
-	ihave, ok := gs.gossip[p]
-	if ok {
-		if !own {
-			out = copyRPC(out)
-			own = true
-		}
-		gs.piggybackGossip(p, out, ihave)
-		delete(gs.gossip, p)
-	}
-
 	q, ok := gs.p.peers[p]
 	if !ok {
+		// No queue to send to this peer. Nothing to do.
+		gs.doDropRPC(out, p, "No send queue for peer. Can't send RPC")
 		return
 	}
 
+	// Any pending control messages?
+	var controlMessage RPC
+	ctl, ok := gs.control[p]
+	if ok {
+		gs.piggybackControl(p, &controlMessage, ctl)
+		delete(gs.control, p)
+	}
+	ihave, ok := gs.gossip[p]
+	if ok {
+		gs.piggybackGossip(p, &controlMessage, ihave)
+		delete(gs.gossip, p)
+	}
+
+	controlSize := proto.Size(&controlMessage.RPC)
+	dropIfOversized := func(rpc *RPC) bool {
+		if !rpc.exceedsSizeLimits(gs.p.maxMessageSize, gs.p.maxControlMessageSize) {
+			return false
+		}
+		size := proto.Size(&rpc.RPC)
+		controlSize := controlRPCSize(rpc)
+		gs.doDropRPC(rpc, p, fmt.Sprintf("Dropping oversized RPC. Size: %d, limit: %d. Control size: %d, control limit: %d", size, gs.p.maxMessageSize, controlSize, gs.p.maxControlMessageSize))
+		return true
+	}
+	if controlSize > 0 {
+		if !controlMessage.exceedsSizeLimits(gs.p.maxMessageSize, gs.p.maxControlMessageSize) {
+			gs.doSendRPC(&controlMessage, p, q, urgent)
+		} else {
+			for rpc := range controlMessage.split(gs.p.maxMessageSize, gs.p.maxControlMessageSize) {
+				if dropIfOversized(rpc) {
+					continue
+				}
+				gs.doSendRPC(rpc, p, q, urgent)
+			}
+		}
+	}
+
 	// If we're below the max message size, go ahead and send
-	if out.Size() < gs.p.maxMessageSize {
+	if !out.exceedsSizeLimits(gs.p.maxMessageSize, gs.p.maxControlMessageSize) {
 		gs.doSendRPC(out, p, q, urgent)
 		return
 	}
 
 	// Potentially split the RPC into multiple RPCs that are below the max message size
-	for rpc := range out.split(gs.p.maxMessageSize) {
-		if rpc.Size() > gs.p.maxMessageSize {
-			// This should only happen if a single message/control is above the maxMessageSize.
-			gs.doDropRPC(out, p, fmt.Sprintf("Dropping oversized RPC. Size: %d, limit: %d. (Over by %d bytes)", rpc.Size(), gs.p.maxMessageSize, rpc.Size()-gs.p.maxMessageSize))
+	for rpc := range out.split(gs.p.maxMessageSize, gs.p.maxControlMessageSize) {
+		if dropIfOversized(rpc) {
 			continue
 		}
-		gs.doSendRPC(&rpc, p, q, urgent)
+		gs.doSendRPC(rpc, p, q, urgent)
 	}
 }
 
@@ -1545,7 +1617,11 @@ func (gs *GossipSubRouter) doSendRPC(rpc *RPC, p peer.ID, q *rpcQueue, urgent bo
 }
 
 func (gs *GossipSubRouter) heartbeatTimer() {
-	time.Sleep(gs.params.HeartbeatInitialDelay)
+	select {
+	case <-time.After(gs.params.HeartbeatInitialDelay):
+	case <-gs.p.ctx.Done():
+		return
+	}
 	select {
 	case gs.p.eval <- gs.heartbeat:
 	case <-gs.p.ctx.Done():
@@ -1833,6 +1909,8 @@ func (gs *GossipSubRouter) heartbeat() {
 
 	// advance the message history window
 	gs.mcache.Shift()
+
+	gs.extensions.Heartbeat()
 }
 
 func (gs *GossipSubRouter) clearIHaveCounters() {
@@ -1854,12 +1932,15 @@ func (gs *GossipSubRouter) clearIDontWantCounters() {
 	}
 
 	// decrement TTLs of all the IDONTWANTs and delete it from the cache when it reaches zero
-	for _, mids := range gs.unwanted {
+	for p, mids := range gs.unwanted {
 		for mid := range mids {
 			mids[mid]--
-			if mids[mid] == 0 {
+			if mids[mid] <= 0 {
 				delete(mids, mid)
 			}
+		}
+		if len(mids) == 0 {
+			delete(gs.unwanted, p)
 		}
 	}
 }
@@ -1957,18 +2038,6 @@ func (gs *GossipSubRouter) sendGraftPrune(tograft, toprune map[peer.ID][]string,
 // of this topic.
 func (gs *GossipSubRouter) emitGossip(topic string, exclude map[peer.ID]struct{}) {
 	mids := gs.mcache.GetGossipIDs(topic)
-	if len(mids) == 0 {
-		return
-	}
-
-	// shuffle to emit in random order
-	shuffleStrings(mids)
-
-	// if we are emitting more than GossipSubMaxIHaveLength mids, truncate the list
-	if len(mids) > gs.params.MaxIHaveLength {
-		// we do the truncation (with shuffling) per peer below
-		gs.logger.Debug("too many messages for gossip; will truncate IHAVE list", "messageCount", len(mids))
-	}
 
 	// Send gossip to GossipFactor peers above threshold, with a minimum of D_lazy.
 	// First we collect the peers above gossipThreshold that are not in the exclude set
@@ -1978,6 +2047,7 @@ func (gs *GossipSubRouter) emitGossip(topic string, exclude map[peer.ID]struct{}
 	for p := range gs.p.topics[topic] {
 		_, inExclude := exclude[p]
 		_, direct := gs.direct[p]
+
 		if !inExclude && !direct && gs.feature(GossipSubFeatureMesh, gs.peers[p]) && gs.score.Score(p) >= gs.gossipThreshold {
 			peers = append(peers, p)
 		}
@@ -1996,18 +2066,44 @@ func (gs *GossipSubRouter) emitGossip(topic string, exclude map[peer.ID]struct{}
 	}
 	peers = peers[:target]
 
-	// Emit the IHAVE gossip to the selected peers.
-	for _, p := range peers {
-		peerMids := mids
-		if len(mids) > gs.params.MaxIHaveLength {
-			// we do this per peer so that we emit a different set for each peer.
-			// we have enough redundancy in the system that this will significantly increase the message
-			// coverage when we do truncate.
-			peerMids = make([]string, gs.params.MaxIHaveLength)
-			shuffleStrings(mids)
-			copy(peerMids, mids)
+	nextPartial := 0
+	iSupportPartial := gs.iSupportSendingPartial(topic)
+	// split peers inplace into partial and non partial.
+	for i, p := range peers {
+		if iSupportPartial && gs.peerRequestsPartial(p, topic) {
+			peers[i], peers[nextPartial] = peers[nextPartial], peers[i]
+			nextPartial++
 		}
-		gs.enqueueGossip(p, &pb.ControlIHave{TopicID: &topic, MessageIDs: peerMids})
+	}
+	partialMessagePeers := peers[:nextPartial]
+	peers = peers[nextPartial:]
+
+	// Emit the IHAVE gossip to the selected peers.
+	if len(peers) > 0 && len(mids) > 0 {
+		// shuffle to emit in random order
+		shuffleStrings(mids)
+
+		// truncation is done after shuffling per peer below
+		if len(mids) > gs.params.MaxIHaveLength {
+			gs.logger.Debug("too many messages for gossip; will truncate IHAVE list", "messageCount", len(mids))
+		}
+
+		for _, p := range peers {
+			peerMids := mids
+			if len(mids) > gs.params.MaxIHaveLength {
+				// we do this per peer so that we emit a different set for each peer.
+				// we have enough redundancy in the system that this will significantly increase the message
+				// coverage when we do truncate.
+				peerMids = make([]string, gs.params.MaxIHaveLength)
+				shuffleStrings(mids)
+				copy(peerMids, mids)
+			}
+			gs.enqueueGossip(p, &pb.ControlIHave{TopicID: &topic, MessageIDs: peerMids})
+		}
+	}
+
+	if len(partialMessagePeers) > 0 {
+		gs.extensions.partialMessagesExtension.EmitGossip(topic, partialMessagePeers)
 	}
 }
 
@@ -2131,6 +2227,24 @@ func (gs *GossipSubRouter) makePrune(p peer.ID, topic string, doPX bool, isUnsub
 	}
 
 	return &pb.ControlPrune{TopicID: &topic, Peers: px, Backoff: &backoff}
+}
+
+// getFanoutPeersForPublishing returns fanout peers for a topic, initializing them if needed,
+// and updates lastpub to keep the fanout alive.
+func (gs *GossipSubRouter) getFanoutPeersForPublishing(topic string) map[peer.ID]struct{} {
+	peers := gs.fanout[topic]
+	if len(peers) == 0 {
+		peerSlice := gs.getPeers(topic, gs.params.D, func(p peer.ID) bool {
+			_, direct := gs.direct[p]
+			return !direct && gs.score.Score(p) >= gs.publishThreshold
+		})
+		if len(peerSlice) > 0 {
+			peers = peerListToMap(peerSlice)
+			gs.fanout[topic] = peers
+		}
+	}
+	gs.lastpub[topic] = time.Now().UnixNano()
+	return peers
 }
 
 func (gs *GossipSubRouter) getPeers(topic string, count int, filter func(peer.ID) bool) []peer.ID {

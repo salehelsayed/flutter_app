@@ -31,11 +31,10 @@ import (
 // of this spike, and -race also proves there is no data race on the shared node
 // state across concurrent send/dial:
 //
-//	cd go-mknoon && GOTOOLCHAIN=go1.25.0 go test ./node \
+//	cd go-mknoon && GOTOOLCHAIN=go1.27.1 go test ./node \
 //	  -run 'TestConcurrentSendDialNoSerialize|TestStartEmitsColdStartLockWindow' -race
 //
-// (GOTOOLCHAIN=go1.25.0 avoids the Go 1.26.x quic-go/crypto-tls session-ticket
-// panic that affects this package — see project memory.)
+// (GOTOOLCHAIN pins the repository toolchain, go1.27.1 since plan 406.)
 
 // deadDialListener is a loopback TCP listener that accepts connections and holds
 // them open without ever speaking libp2p. A dial to it completes the TCP connect

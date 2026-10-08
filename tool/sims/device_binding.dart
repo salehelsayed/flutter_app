@@ -613,7 +613,7 @@ List<_PreflightIssue> _iosNotificationPreflightIssues(
       const _PreflightIssue(
         SimsBlockerKind.missingDriver,
         'SIMS_IOS_NOTIFICATION_PAYLOAD_PRODUCER must be the executable '
-        'Go 1.25 producer fingerprinted by the staging attestation.',
+        'Go 1.27 producer fingerprinted by the staging attestation.',
       ),
     );
   }

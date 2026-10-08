@@ -6,7 +6,7 @@
 set -uo pipefail
 cd "$(dirname "$0")/../../go-relay-server"
 
-MODCACHE=$(GOTOOLCHAIN=go1.25.0 go env GOMODCACHE 2>/dev/null)
+MODCACHE=$(GOTOOLCHAIN=go1.27.1 go env GOMODCACHE 2>/dev/null)
 VER=$(grep -oE 'firebase\.google\.com/go/v4 v[0-9.]+' go.mod | awk '{print $2}')
 SRC="$MODCACHE/firebase.google.com/go/v4@$VER"
 

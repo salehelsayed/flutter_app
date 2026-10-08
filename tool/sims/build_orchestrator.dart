@@ -682,7 +682,7 @@ final class SimsBuildOrchestrator {
       fingerprints['go'] = _commandVersionDigest(
         'go',
         const <String>['version'],
-        environmentOverrides: const <String, String>{'GOTOOLCHAIN': 'go1.25.0'},
+        environmentOverrides: const <String, String>{'GOTOOLCHAIN': 'go1.27.1'},
         includeBinaryDigest: true,
       );
       fingerprints['gomobile'] = _gomobileToolchainDigest();
@@ -863,7 +863,7 @@ final class SimsBuildOrchestrator {
   }
 
   String _gomobileToolchainDigest() {
-    const pinned = <String, String>{'GOTOOLCHAIN': 'go1.25.0'};
+    const pinned = <String, String>{'GOTOOLCHAIN': 'go1.27.1'};
     var resolved = _resolveExecutable('gomobile', environment);
     if (resolved == null) {
       final go = _resolveExecutable('go', environment);

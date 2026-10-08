@@ -1493,7 +1493,7 @@ final class _IosPayloadDriver {
       throw const _DriverBlocked(
         'missingDriver',
         'SIMS_IOS_NOTIFICATION_PAYLOAD_PRODUCER must name the prebuilt '
-            'attested Go 1.25 payload producer.',
+            'attested Go 1.27 payload producer.',
       );
     }
     if (!_regularFile(options.providerRequest) ||
@@ -1763,7 +1763,7 @@ final class _IosPayloadDriver {
     );
     if (result.exitCode != 0 || type != FileSystemEntityType.file) {
       throw _DriverFailure(
-        'The prebuilt Go 1.25 producer did not create the private APNs payload.',
+        'The prebuilt Go 1.27 producer did not create the private APNs payload.',
         _assertionsAttempted,
       );
     }

@@ -344,7 +344,7 @@
       "command": [
         "bash",
         "-lc",
-        "cd go-mknoon && GOTOOLCHAIN=go1.25.0 go test ./... -count=1 -timeout=20m"
+        "cd go-mknoon && GOTOOLCHAIN=go1.27.1 go test ./... -count=1 -timeout=20m"
       ],
       "buildProfile": "host.process",
       "dependencies": [],
@@ -355,7 +355,7 @@
         }
       ],
       "targetCapabilities": [
-        "host.go1.25"
+        "host.go1.27"
       ],
       "artifactRequired": false,
       "active": true,
@@ -382,7 +382,7 @@
       "command": [
         "bash",
         "-lc",
-        "cd go-relay-server && GOTOOLCHAIN=go1.25.0 go test ./... -count=1"
+        "cd go-relay-server && GOTOOLCHAIN=go1.27.1 go test ./... -count=1"
       ],
       "buildProfile": "host.process",
       "dependencies": [],
@@ -393,7 +393,7 @@
         }
       ],
       "targetCapabilities": [
-        "host.go1.25"
+        "host.go1.27"
       ],
       "artifactRequired": false,
       "active": true,
@@ -2709,7 +2709,7 @@
         "android.emulator",
         "android.microphone",
         "host.docker",
-        "host.go1.25"
+        "host.go1.27"
       ],
       "allowedNaReason": "target_unavailable_by_project_policy",
       "artifactRequired": true,

@@ -5,7 +5,7 @@ REPO="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$REPO/go-relay-server"
 PATTERN="${1:-}"
 if [ -n "$PATTERN" ]; then
-  GOTOOLCHAIN=go1.25.0 go test ./... -run "$PATTERN" -count=1 2>&1
+  GOTOOLCHAIN=go1.27.1 go test ./... -run "$PATTERN" -count=1 2>&1
 else
-  GOTOOLCHAIN=go1.25.0 go test ./... -count=1 2>&1
+  GOTOOLCHAIN=go1.27.1 go test ./... -count=1 2>&1
 fi

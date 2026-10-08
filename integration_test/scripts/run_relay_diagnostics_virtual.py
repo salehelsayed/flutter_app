@@ -180,7 +180,7 @@ def main() -> int:
     if args.relay_addresses:
         invocation.append("--dart-define=MKNOON_RELAY_ADDRESSES=" + args.relay_addresses)
     environment = dict(os.environ)
-    environment["GOTOOLCHAIN"] = "go1.25.0"
+    environment["GOTOOLCHAIN"] = "go1.27.1"
     if "/" in flutter:
         environment["PATH"] = str(Path(flutter).parent) + os.pathsep + environment["PATH"]
     (output / "command.json").write_text(json.dumps(invocation, indent=2) + "\n")

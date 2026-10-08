@@ -263,7 +263,7 @@ jq -e '
     {"name": "relay-mutation:production-call-pion-known-opus-oracle", "access": "exclusive"},
     {"name": "artifact:production-1to1-audio-call", "access": "write"}
   ] and
-  .[0].targetCapabilities == ["android.physical", "android.emulator", "android.microphone", "host.docker", "host.go1.25"] and
+  .[0].targetCapabilities == ["android.physical", "android.emulator", "android.microphone", "host.docker", "host.go1.27"] and
   .[0].allowedNaReason == "target_unavailable_by_project_policy" and
   .[0].artifactRequired == true and
   .[0].artifactValidator == "validateAndroidProductionAudioCallArtifact" and

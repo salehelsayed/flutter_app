@@ -1254,8 +1254,8 @@ def _require_go125_binary(executable: Path) -> None:
     build_info = (result.stdout + b"\n" + result.stderr).decode(
         "utf-8", errors="replace"
     )
-    if result.returncode != 0 or re.search(r"\bgo1\.25(?:\.[0-9]+)?\b", build_info) is None:
-        raise AdapterBlocked("payload producer is not a prebuilt Go 1.25 binary")
+    if result.returncode != 0 or re.search(r"\bgo1\.27(?:\.[0-9]+)?\b", build_info) is None:
+        raise AdapterBlocked("payload producer is not a prebuilt Go 1.27 binary")
 
 
 def _probe(args: argparse.Namespace) -> None:

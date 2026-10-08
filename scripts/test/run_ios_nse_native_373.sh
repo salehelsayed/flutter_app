@@ -204,7 +204,7 @@ assert_unique_exact_count 28 "${XCODE_TESTS[@]}"
 run_go_test() {
   (
     cd "$GO_ROOT"
-    GOTOOLCHAIN=go1.25.0 go test "$@"
+    GOTOOLCHAIN=go1.27.1 go test "$@"
   )
 }
 

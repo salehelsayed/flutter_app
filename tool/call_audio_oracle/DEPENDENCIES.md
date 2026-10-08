@@ -2,7 +2,7 @@
 
 This Go module is a host-test tool. It is not imported by, linked into, or
 packaged with the Flutter application. Every Go command for this module must
-set `GOTOOLCHAIN=go1.25.0`; `go.mod` declares `go 1.25.0`.
+set `GOTOOLCHAIN=go1.27.1`; `go.mod` declares `go 1.27.1`.
 
 ## Direct Go dependencies
 
@@ -52,7 +52,7 @@ From this directory:
 ```sh
 CALL_AUDIO_ORACLE_CREDENTIALS_FILE=/private/mode-0600/credentials.json \
 CALL_AUDIO_ORACLE_RESULT_FILE=/private/mode-0700/result.json \
-GOTOOLCHAIN=go1.25.0 \
+GOTOOLCHAIN=go1.27.1 \
 go test -tags=integration ./... \
   -run '^TestKnownOpusBothDirectionsOverRestAuthenticatedCoturn$' \
   -count=1 -v -timeout=10m

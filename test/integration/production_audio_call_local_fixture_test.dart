@@ -197,7 +197,7 @@ Future<void> main() async {
         final childCalls = await childLog.readAsLines();
         expect(childCalls, hasLength(2));
         expect(
-          childCalls.every((line) => line.contains('toolchain=go1.25.0')),
+          childCalls.every((line) => line.contains('toolchain=go1.27.1')),
           isTrue,
         );
         expect(childCalls.join('\n'), isNot(contains('must-not-propagate')));
@@ -277,7 +277,7 @@ Future<Directory> _prepareRealFixtureTools() async {
           workingDirectory: '$root/${build.module}',
           environment: <String, String>{
             ...Platform.environment,
-            'GOTOOLCHAIN': 'go1.25.0',
+            'GOTOOLCHAIN': 'go1.27.1',
           },
         );
         if (result.exitCode != 0) {

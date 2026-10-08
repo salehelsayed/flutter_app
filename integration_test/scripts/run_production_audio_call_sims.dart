@@ -17,7 +17,7 @@ const String _turnAuthorityDigestEnvironment =
     'PLAN399_LOCAL_TURN_AUTHORITY_SHA256';
 const String _coturnInstanceDigestEnvironment =
     'PLAN399_LOCAL_COTURN_INSTANCE_SHA256';
-const String androidProductionAudioCallGoToolchain = 'go1.25.0';
+const String androidProductionAudioCallGoToolchain = 'go1.27.1';
 
 Future<void> main(List<String> arguments) async {
   try {
@@ -168,7 +168,7 @@ final class AndroidProductionAudioCallSimsAdapterDependencies {
 }
 
 /// Runs the production-call adapter through injectable process boundaries.
-/// Both boundaries receive the exact Go 1.25.0 pin in their effective child
+/// Both boundaries receive the exact Go 1.27.1 pin in their effective child
 /// environment, including the central Sims process that owns APK build work.
 Future<int> runAndroidProductionAudioCallSimsAdapter({
   required String mode,
@@ -310,7 +310,7 @@ Future<int> _runCentralSims({
 void _requirePinnedGoToolchain(Map<String, String> environment) {
   if (environment['GOTOOLCHAIN'] != androidProductionAudioCallGoToolchain) {
     throw StateError(
-      'Every production audio-call child requires GOTOOLCHAIN=go1.25.0.',
+      'Every production audio-call child requires GOTOOLCHAIN=go1.27.1.',
     );
   }
 }

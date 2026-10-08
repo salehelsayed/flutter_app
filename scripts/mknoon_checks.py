@@ -1000,7 +1000,7 @@ def execute_plan(args, root, rules, plan, files, device_config, matrix, director
                             env['MKNOON_HOST_FLUTTER_WORKERS'] = str(getattr(args, 'flutter_workers', 1))
                             env['SIMS_MAX_PARALLEL'] = str(getattr(args, 'sims_jobs', 1))
                             env['SIMS_HOST_CONCURRENCY'] = str(getattr(args, 'flutter_workers', 1))
-                            env['GOTOOLCHAIN'] = 'go1.25.0'
+                            env['GOTOOLCHAIN'] = 'go1.27.1'
                             if per_route_legacy(c):
                                 env['MKNOON_LEGACY_CLEANUP_PENDING'] = '1' if device_cleanup_pending else '0'
                             if c['kind'] != 'full_adapter': env.update(c.get('environment', {}))

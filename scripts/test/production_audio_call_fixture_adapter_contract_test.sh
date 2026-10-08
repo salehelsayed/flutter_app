@@ -35,7 +35,7 @@ assert probe == {
     "coturn": "digest-pinned",
     "mediaOracle": "pion-known-opus",
     "centralPreparation": True,
-    "goToolchain": "go1.25.0",
+    "goToolchain": "go1.27.1",
 }
 PY
 
@@ -56,7 +56,7 @@ done
 for fragment in \
   'ProductionAudioCallLocalFixtureLease' \
   'resolveProductionAudioCallLocalFixtureHostIp' \
-  "'GOTOOLCHAIN': 'go1.25.0'" \
+  "'GOTOOLCHAIN': 'go1.27.1'" \
   'verifyAndroidPairAndReachability' \
   'runAudioOracle' \
   'expectedFixtureInstanceSha256' \

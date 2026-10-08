@@ -2,16 +2,18 @@
 
 set -euo pipefail
 
-# Pin the Go toolchain: go1.26.x's crypto/tls panics with quic-go v0.49.0
-# ("where's my session ticket?") on the server side of a QUIC handshake, which
-# SIGABRTs the receiver of a direct peer-to-peer QUIC connection. This is the
-# Xcode build-phase auto-rebuild path, so it must not silently use a newer
-# machine default. (The Makefile also exports this; set here too for the verify
-# step and any direct `go` use.)
-export GOTOOLCHAIN=go1.25.0
+# Pin the Go toolchain so this Xcode build-phase auto-rebuild path never
+# silently uses a newer machine default. Plan 406 moved it from go1.25.0 (Go
+# 1.26+ crypto/tls crashed the old quic-go) to go1.27.1. (The Makefile also
+# exports this; set here too for the verify step and any direct `go` use.)
+export GOTOOLCHAIN=go1.27.1
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 go_root="$repo_root/go-mknoon"
+# gomobile/gobind at the version go.mod pins, installed into this checkout
+# (go-mknoon/bin/tools) before the input digest reads the gomobile binary.
+export PATH="$go_root/bin/tools:$PATH"
+(cd "$go_root" && make -s gomobile-tools)
 framework_root="$repo_root/macos/Runner/GoMknoon.xcframework"
 framework_info="$framework_root/Info.plist"
 header="$framework_root/macos-arm64_x86_64/GoMknoon.framework/Headers/Bridge.objc.h"

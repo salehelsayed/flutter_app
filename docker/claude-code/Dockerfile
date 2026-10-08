@@ -1,4 +1,4 @@
-FROM golang:1.25.0-bookworm AS go
+FROM golang:1.27.1-bookworm AS go
 
 FROM node:22-bookworm
 
