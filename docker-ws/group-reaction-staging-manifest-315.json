@@ -7,8 +7,8 @@
   "providerProbeSucceeded": true,
   "productionDeploymentPerformed": false,
   "allowAppDataReset": true,
-  "candidateRelayRevision": "1.10.9",
-  "candidateRelaySha256": "535d30e65da24d1d797e71dce08a7a1fa375d05dbf646e4fa9cf70c29eaec7db",
+  "candidateRelayRevision": "1.11.0",
+  "candidateRelaySha256": "79488697d5d1db58b0393555c6f90b175e463efeee2da8339302bca8cc8961c0",
   "provider": "fcm",
   "relayAddresses": [
     "/dns4/mknoun.xyz/tcp/4001/wss/p2p/12D3KooWGMYMmN1RGUYjWaSV6P3XtnBjwnosnJGNMnttfVCRnd6g",

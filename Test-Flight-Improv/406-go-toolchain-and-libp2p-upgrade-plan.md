@@ -1,6 +1,6 @@
 # Plan 406 — Upgrade Go and libp2p while old and new app versions keep talking
 
-Status: CODE + DEVICE PROOF DONE 2026-10-08 — branch `feat/go-1.27-libp2p-0.50` (local). Open: push/merge, store release, relay deploy (Step 7). Findings in section 9.
+Status: DONE 2026-10-08 — merged to main; store build 1.0.1+123 ready (upload pending); production relay v1.11.0 deployed 2026-10-08T16:59:41Z. Open: 24 h relay watch, store rollout. Findings in section 9.
 Origin: user request 2026-10-08 — "upgrade to the latest Go while allowing users with multiple versions to talk to one another".
 
 ## 1. Problem
@@ -195,6 +195,7 @@ LAN soak: `go.mod:17` says to re-run the FDC-S6 soak on any libp2p bump (decisio
     - Android killed-app push through it, both directions (FCM): notification within ~2 s.
     - iPhone 13 (test-relay release build): contact add with AliceH through the test relay (the QR still advertises the production relay as rendezvous; it did not matter), killed-app message push shown on the lock screen, killed-app VoIP call rang via CallKit and connected.
     - One unexplained miss: the first VoIP call attempt did not ring although the relay sent the APNs VoIP push (Apple accepted it); the app was in an unclear background state after a UI swipe, and the relay logged one `call_token_revoke_v1` from the iPhone at that time. The clean retry (app foregrounded, then terminated) rang. Not reproduced.
+15. **Production relay v1.11.0 deployed 2026-10-08T16:59:41Z** (user-approved; ahead of the planned week, because the new relay was already proven with old and new clients on the Hetzner test relay). sha `79488697…`, go1.27.1, backup `/usr/local/bin/relay-server.pre-1.11.0-20261008T165940Z` (= v1.10.9 `535d30e6…`), record `docker-ws/deploy_relay_v1110.sh` + `_result.txt`. Checks: active, 0 restarts, 0 panics; push, APNs VoIP, TURN, redis custody admission all enabled; test clients over WSS (circuit, 1:1, inbox, group, media) and QUIC (circuit) passed; a real installed Pixel 6 build (go1.25 bindings) reconnected; `relay_conn_admission_rejected_total` 0. Startup takes ~27 s, spent loading the app-diagnostics store (not the upgrade).
 12. **Not covered by the interop test:** DCUtR (relay→direct upgrade) needs real NAT; covered by the in-process hole-punch tests on the new build and by the device run.
 
 ## Appendix — files that pin Go 1.25.0
