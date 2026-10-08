@@ -189,6 +189,12 @@ LAN soak: `go.mod:17` says to re-run the FDC-S6 soak on any libp2p bump (decisio
     - Killed app: BobNew (NEW) app killed; AliceOld's text woke it via FCM and posted the notification within ~2 s.
     - No Mknoon crash on any device. (Pixel_8's `android.hardware…` service crash loop is the emulator image, not the app.)
     - Not run: an iPhone with the app killed; one phone on real cellular (the iPhone 13 and emulators were on Wi-Fi). The relay path itself was exercised by the voice note.
+14. **Hetzner test relay checks, 2026-10-08 (all passed).** New relay (go1.27.1, v0.50.0) on 2.29.62.121 / `2-29-62-121.sslip.io`, production shape (redis, ack-custody admission, TURN, Firebase + APNs VoIP credentials copied from production).
+    - Old/new interop against it: 28/28 (`go_mixed_version_interop.sh --relay-addr ...`).
+    - Docker/git relay integration tests on the Mac: both PASS (the container reds in finding 9 were environment-only).
+    - Android killed-app push through it, both directions (FCM): notification within ~2 s.
+    - iPhone 13 (test-relay release build): contact add with AliceH through the test relay (the QR still advertises the production relay as rendezvous; it did not matter), killed-app message push shown on the lock screen, killed-app VoIP call rang via CallKit and connected.
+    - One unexplained miss: the first VoIP call attempt did not ring although the relay sent the APNs VoIP push (Apple accepted it); the app was in an unclear background state after a UI swipe, and the relay logged one `call_token_revoke_v1` from the iPhone at that time. The clean retry (app foregrounded, then terminated) rang. Not reproduced.
 12. **Not covered by the interop test:** DCUtR (relay→direct upgrade) needs real NAT; covered by the in-process hole-punch tests on the new build and by the device run.
 
 ## Appendix — files that pin Go 1.25.0
