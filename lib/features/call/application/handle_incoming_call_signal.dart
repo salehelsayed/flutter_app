@@ -181,7 +181,8 @@ final class IncomingCallPresentation {
   String toString() => 'IncomingCallPresentation(redacted)';
 }
 
-/// A valid invite cannot be surfaced in this runtime configuration.
+/// A valid invite cannot be surfaced right now: the app is not in the
+/// foreground and has no native call UI. The call ends as unanswered.
 final class IncomingCallPresentationUnavailable implements Exception {
   const IncomingCallPresentationUnavailable();
 }
@@ -699,9 +700,11 @@ final class HandleIncomingCallSignal {
             remoteAccountPeerId: signal.senderAccountPeerId,
             remoteDeviceId: signal.senderDevicePeerId,
             // A refused or failed native surface does not establish that
-            // microphone permission was denied.
+            // microphone permission was denied. An app that cannot ring right
+            // now (O1: backgrounded, no native call UI) is a missed call for
+            // both sides, not a failure.
             endReason: presentationUnavailable
-                ? CallEndReason.unsupported
+                ? CallEndReason.noAnswer
                 : CallEndReason.signalingFailed,
           ),
         );

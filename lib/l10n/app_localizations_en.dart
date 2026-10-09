@@ -498,6 +498,11 @@ class AppLocalizationsEn extends AppLocalizations {
   }
 
   @override
+  String orbit_node_open_chat(String name) {
+    return 'Open chat with $name';
+  }
+
+  @override
   String orbit_node_unread_open_chat(String name, int count) {
     String _temp0 = intl.Intl.pluralLogic(
       count,
@@ -3681,6 +3686,19 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String get push_registration_health_permission_denied =>
       'Notifications are turned off for Mknoon on this device.';
+
+  @override
+  String get call_full_screen_access_title => 'Show calls on your lock screen';
+
+  @override
+  String get call_full_screen_access_body =>
+      'A call came in but your screen stayed off. Allow full-screen notifications for Mknoon so you can see and answer calls.';
+
+  @override
+  String get call_full_screen_access_open => 'Open settings';
+
+  @override
+  String get call_full_screen_access_dismiss => 'Not now';
 
   @override
   String get push_registration_health_no_token =>

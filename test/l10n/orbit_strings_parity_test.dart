@@ -389,6 +389,12 @@ void main() {
           en.orbit_node_unread_open_chat('Alice', 5),
           'Open chat with Alice, 5 unread messages',
         );
+        // Beta O12 (2026-10-08): the read-state label was hard-coded English.
+        expect(en.orbit_node_open_chat('Alice'), 'Open chat with Alice');
+        expect(
+          AppLocalizationsAr().orbit_node_open_chat('Alice'),
+          'افتح المحادثة مع Alice',
+        );
         expect(en.orbit_my_qr, 'My QR');
         expect(en.orbit_scan, 'Scan');
         // 198 English baselines.

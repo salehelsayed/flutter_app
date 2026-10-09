@@ -186,6 +186,31 @@ class MknoonCallNotificationFactoryTest {
     }
 
     @Test
+    @Config(sdk = [34], shadows = [IncomingNotificationPermissionShadow::class])
+    fun `a ringing call without full-screen access is recorded for the in-app prompt`() {
+        // O4 (beta 2026-10-08): the app asks for the access only after a call
+        // was affected; allowed calls leave no record.
+        context.getSharedPreferences("mknoon_full_screen_call_access", Context.MODE_PRIVATE).edit().clear().commit()
+        val callId = UUID.fromString(CALL_ID)
+        val productionFactory = MknoonCallNotificationFactory(context)
+        IncomingNotificationPermissionShadow.allowed = true
+        productionFactory.createIncoming(callId)
+        var state = FullScreenCallAccess.read(context)
+        assertEquals(true, state["supported"])
+        assertEquals(true, state["allowed"])
+        assertNull(state["deniedCallAtMs"])
+
+        IncomingNotificationPermissionShadow.allowed = false
+        productionFactory.createIncoming(callId)
+        state = FullScreenCallAccess.read(context)
+        assertEquals(false, state["allowed"])
+        assertNotNull(state["deniedCallAtMs"])
+        assertNull(state["dismissedAtMs"])
+        assertTrue(FullScreenCallAccess.dismiss(context, nowMs = 42L))
+        assertEquals(42L, FullScreenCallAccess.read(context)["dismissedAtMs"])
+    }
+
+    @Test
     fun `ringtone player is the only incoming call sound owner`() {
         factory.createIncoming(
             nativeCallId = UUID.fromString(CALL_ID),

@@ -6,6 +6,7 @@ import android.os.Handler
 import android.os.Looper
 import android.os.StatFs
 import android.util.Log
+import com.mknoon.app.call.FullScreenCallAccess
 import com.mknoon.app.call.MknoonCallBridgeTeardown
 import com.mknoon.app.call.MknoonCallNativeBridge
 import com.mknoon.app.call.MknoonCallRuntime
@@ -26,6 +27,7 @@ class MainActivity : FlutterActivity() {
         private const val CANONICAL_RUNTIME_SHUTDOWN_RETRY_MS = 500L
         private const val CANONICAL_RUNTIME_SHUTDOWN_MAX_ATTEMPTS = 3
         private const val APP_VISIBILITY_CHANNEL = "mknoon/app_visibility"
+        private const val LAUNCH_INTENT_CHANNEL = "mknoon/launch_intent"
         private val privateMediaProtectionRegistry =
             PrivateMediaProtectionHandlerRegistry()
         private var retainedCanonicalRuntimeEngine: FlutterEngine? = null
@@ -166,6 +168,17 @@ class MainActivity : FlutterActivity() {
             flutterEngine.dartExecutor.binaryMessenger,
             CANONICAL_RUNTIME_SHUTDOWN_CHANNEL,
         )
+        // O6: lets Dart draw a first frame at once for a call launch, so the
+        // native incoming-call surface is not held back by startup.
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, LAUNCH_INTENT_CHANNEL)
+            .setMethodCallHandler { call, result ->
+                when (call.method) {
+                    "isIncomingCallLaunch" -> result.success(
+                        MknoonIncomingCallPresentation.isIncomingCallLaunch(intent),
+                    )
+                    else -> result.notImplemented()
+                }
+            }
         pushNotificationSettingsChannel = MethodChannel(
             flutterEngine.dartExecutor.binaryMessenger,
             PushNotificationSettingsLauncher.METHOD_CHANNEL,
@@ -174,6 +187,15 @@ class MainActivity : FlutterActivity() {
                 when (call.method) {
                     PushNotificationSettingsLauncher.OPEN_METHOD -> result.success(
                         PushNotificationSettingsLauncher.open(applicationContext),
+                    )
+                    FullScreenCallAccess.READ_METHOD -> result.success(
+                        FullScreenCallAccess.read(applicationContext),
+                    )
+                    FullScreenCallAccess.OPEN_METHOD -> result.success(
+                        FullScreenCallAccess.openSettings(this),
+                    )
+                    FullScreenCallAccess.DISMISS_METHOD -> result.success(
+                        FullScreenCallAccess.dismiss(applicationContext),
                     )
                     else -> result.notImplemented()
                 }

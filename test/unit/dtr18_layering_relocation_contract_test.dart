@@ -209,8 +209,10 @@ const _privacySha256 =
 // its coordinator future through the health notifier; no lifecycle owner moves.
 // Strict async analysis now keeps read-acknowledgement failures inside their
 // existing catch; the sole additional normalized-source change is `return await`.
+// Beta O4 (2026-10-08): the app shell also wraps its child in
+// FullScreenCallAccessSurface (one import, one wrapper); no lifecycle owner moves.
 const _applicationRootNormalizedSha256 =
-    'd1c0e19ab0911136f65208488a88e122c8c01475b570a48e3a987db977983d29';
+    '9a3b0b8cc7222248ddcd142370b6682d0db9f209b644ff5158375c1360d1348d';
 // Plan 358 forwards the strict local-path commit's `nowMs` sample through the
 // same already-wired delegate and relocates nothing. Plan 360 additionally
 // constructs the role-aware deferred-runtime-start owner over the SAME

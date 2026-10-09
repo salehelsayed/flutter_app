@@ -1107,7 +1107,9 @@ void main() {
     );
   });
 
-  test('foreground-only background presentation reports unsupported', () async {
+  // O1 (beta 2026-10-08): a backgrounded app without a native call UI ends
+  // the invite as unanswered; the caller saw "Call could not connect".
+  test('foreground-only background presentation ends as no answer', () async {
     final effects = _Effects();
     final coordinator = _coordinator(effects);
     addTearDown(coordinator.dispose);
@@ -1123,7 +1125,7 @@ void main() {
       IncomingCallSignalOutcome.rejected,
     );
     expect(coordinator.activeSession, isNull);
-    expect(coordinator.lastSnapshot?.endReason, CallEndReason.unsupported);
+    expect(coordinator.lastSnapshot?.endReason, CallEndReason.noAnswer);
     expect(effects.effects, contains(CallEffectType.sendTerminate));
     expect(effects.effects, isNot(contains(CallEffectType.sendRinging)));
   });

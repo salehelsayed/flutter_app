@@ -39,6 +39,19 @@ final class _FakeHost implements ApplicationHost {
   }
 }
 
+final class _CallLaunchHost extends _FakeHost
+    implements IncomingCallLaunchHost {
+  _CallLaunchHost(super.trace, {required this.incomingCall});
+
+  final bool incomingCall;
+
+  @override
+  Future<void> showIncomingCallLaunchFrame() async {
+    trace.add('call-frame?');
+    if (incomingCall) launch(incomingCallLaunchFrame);
+  }
+}
+
 final class _FakeBootstrap implements ApplicationBootstrap {
   _FakeBootstrap(this.trace, this.prepared, {this.failure});
 
@@ -134,6 +147,37 @@ void main() {
       expect(trace.where((event) => event == 'post'), hasLength(1));
     },
   );
+
+  test('a call launch draws its frame before preparation starts', () async {
+    // O6 (beta 2026-10-08): the native incoming-call surface cannot draw
+    // until Flutter's first frame, which otherwise waits for prepare().
+    final trace = <String>[];
+    const root = SizedBox(key: ValueKey('root'));
+    final host = _CallLaunchHost(trace, incomingCall: true);
+    await runApplicationBootstrap(
+      bootstrapFactory: () => _FakeBootstrap(trace, _FakePrepared(trace, root)),
+      host: host,
+    );
+    expect(trace, [
+      'binding',
+      'call-frame?',
+      'launch',
+      'prepare',
+      'build:start',
+      'build:end',
+      'launch',
+      'post',
+    ]);
+    expect(identical(host.launchedRoot, root), isTrue);
+
+    final ordinary = <String>[];
+    await runApplicationBootstrap(
+      bootstrapFactory: () =>
+          _FakeBootstrap(ordinary, _FakePrepared(ordinary, root)),
+      host: _CallLaunchHost(ordinary, incomingCall: false),
+    );
+    expect(ordinary.where((event) => event == 'launch'), hasLength(1));
+  });
 
   test('intentional startup cancellation launches no completed app', () async {
     final trace = <String>[];

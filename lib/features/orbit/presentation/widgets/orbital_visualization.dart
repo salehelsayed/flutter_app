@@ -523,7 +523,7 @@ class OrbitalVisualization extends StatelessWidget {
                   friend.username,
                   friend.unreadCount,
                 )
-              : 'Open chat with ${friend.username}',
+              : l10n.orbit_node_open_chat(friend.username),
           unreadCount: friend.unreadCount,
           unreadMotionEnabled: unreadMotionEnabled,
           entranceDelayMs: entranceDelayMs,

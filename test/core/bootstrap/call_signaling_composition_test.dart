@@ -2923,6 +2923,15 @@ void main() {
 
       await composition.dismiss(presentation);
       expect(composition.current, isNull);
+
+      // O1 (beta 2026-10-08): after onBackgrounded the app cannot ring;
+      // this must read as unavailable, not as a failed presentation.
+      await composition.onBackgrounded();
+      graph.emitForeground(validated);
+      await expectLater(
+        composition.present(presentation),
+        throwsA(isA<IncomingCallPresentationUnavailable>()),
+      );
       expect(emitted.last, isNull);
 
       expect(
@@ -3812,6 +3821,7 @@ void main() {
       );
       final callWakeStores = _newCallWakeStores();
       final tokenOutcomes = <String>[];
+      final tokenRead = Completer<String>();
       final composition = createProductionCallSignalingComposition(
         secureKeyStore: FakeSecureKeyStore(),
         featureFlags: _enabledFlags(),
@@ -3856,7 +3866,7 @@ void main() {
             }) => AndroidCallTokenCoordinator(
               authorityClient: authorityClient,
               clock: clock,
-              readToken: () async => 'fcm-token-fixture',
+              readToken: () => tokenRead.future,
               tokenRefreshes: const Stream<String>.empty(),
               publicationAllowed: publicationAllowed,
               onResult: tokenOutcomes.add,
@@ -3869,13 +3879,30 @@ void main() {
       expect(bridge.commands, isEmpty, reason: 'nothing before P2P starts');
 
       p2p.state = const NodeState(peerId: 'local-account', isStarted: true);
-      await composition.onResume();
+      final resumed = composition.onResume();
+
+      // Beta O6 (2026-10-08): the slow token publication (about 2 s on a
+      // cold start) must not hold back the mailbox drain that delivers a
+      // pending invite.
+      for (
+        var i = 0;
+        i < 50 && !bridge.commands.contains('call_retrieve_v1');
+        i++
+      ) {
+        await Future<void>.delayed(Duration.zero);
+      }
+      expect(bridge.commands, contains('call_retrieve_v1'));
+      expect(bridge.commands, isNot(contains('call_token_set_v1')));
+      expect(bridge.commands, isNot(contains('call_endpoint_set_v1')));
+
+      tokenRead.complete('fcm-token-fixture');
+      await resumed;
 
       expect(
         bridge.commands,
         containsAllInOrder(<String>[
-          'call_token_set_v1',
           'call_retrieve_v1',
+          'call_token_set_v1',
           'payload.sign',
           'call_endpoint_set_v1',
         ]),

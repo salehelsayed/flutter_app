@@ -204,6 +204,7 @@
   "orbit_chip_provenance_ring": "حلقة {ring}",
   "orbit_chip_provenance_arc": "قوس {arc}",
   "orbit_chip_open": "فتح {name}",
+  "orbit_node_open_chat": "افتح المحادثة مع {name}",
   "orbit_node_unread_open_chat": "{count, plural, =1{افتح المحادثة مع {name}، رسالة واحدة غير مقروءة} =2{افتح المحادثة مع {name}، رسالتان غير مقروءتان} few{افتح المحادثة مع {name}، {count} رسائل غير مقروءة} many{افتح المحادثة مع {name}، {count} رسالة غير مقروءة} other{افتح المحادثة مع {name}، {count} رسالة غير مقروءة}}",
   "@orbit_node_unread_open_chat": {
     "placeholders": {
@@ -1763,6 +1764,10 @@
   "direct_batch_forward_close": "إغلاق",
   "push_registration_health_warning_title": "تحتاج الإشعارات إلى انتباهك",
   "push_registration_health_permission_denied": "إشعارات مكنون متوقفة على هذا الجهاز.",
+  "call_full_screen_access_title": "اعرض المكالمات على شاشة القفل",
+  "call_full_screen_access_body": "وصلتك مكالمة لكن الشاشة بقيت مطفأة. اسمح لمكنون بإشعارات ملء الشاشة لترى المكالمات وترد عليها.",
+  "call_full_screen_access_open": "فتح الإعدادات",
+  "call_full_screen_access_dismiss": "ليس الآن",
   "push_registration_health_no_token": "لم يتلقَّ هذا الجهاز رمز إشعارات بعد.",
   "push_registration_health_registration_failed": "تعذّر تسجيل هذا الجهاز لاستلام إشعارات مكنون.",
   "push_registration_health_temporary_problem": "حدثت مشكلة مؤقتة أثناء إعداد الإشعارات.",

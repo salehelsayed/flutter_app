@@ -80,6 +80,59 @@ class MknoonIncomingCallPresentationTest {
     }
 
     @Test
+    fun `unlocked cold start shows the native call surface until Flutter adopts the call`() {
+        // O6 (beta 2026-10-08): with no keyguard, a cold start showed the
+        // splash and then the chat list for about 9 s before any call UI.
+        locked = false
+        source.uiAdopted = false
+        presentation.onIntent(openIntent(), answerFromIntent = false)
+
+        assertCovered()
+        assertWindowEnabled(false, expectedWake = true)
+        assertNotNull(button(R.string.call_notification_answer))
+        assertNotNull(button(R.string.call_notification_decline))
+
+        source.uiAdopted = true
+        tick()
+        assertNull(cover())
+        assertWindowEnabled(false, expectedWake = true)
+    }
+
+    @Test
+    fun `only an exact incoming call intent counts as a call launch`() {
+        assertTrue(MknoonIncomingCallPresentation.isIncomingCallLaunch(openIntent()))
+        assertTrue(
+            MknoonIncomingCallPresentation.isIncomingCallLaunch(
+                Intent(MknoonCallActionReceiver.ACTION_ANSWER)
+                    .putExtra(MknoonCallActionReceiver.EXTRA_NATIVE_CALL_ID, CALL_ID.toString()),
+            ),
+        )
+        assertFalse(MknoonIncomingCallPresentation.isIncomingCallLaunch(Intent(Intent.ACTION_MAIN)))
+        assertFalse(MknoonIncomingCallPresentation.isIncomingCallLaunch(null))
+        assertFalse(
+            MknoonIncomingCallPresentation.isIncomingCallLaunch(
+                Intent(AndroidMknoonCallPendingIntentFactory.ACTION_OPEN_INCOMING_CALL)
+                    .putExtra(MknoonCallActionReceiver.EXTRA_NATIVE_CALL_ID, "not-a-call-id"),
+            ),
+        )
+    }
+
+    @Test
+    fun `unlocked answer before Flutter adopts keeps the native accepted surface`() {
+        locked = false
+        source.uiAdopted = false
+        presentation.onIntent(openIntent(), answerFromIntent = false)
+        requireNotNull(button(R.string.call_notification_answer)).performClick()
+        source.current = source.current!!.copy(answerRequested = true)
+        tick()
+
+        assertCovered()
+        assertEquals(listOf(CALL_ID), source.answers)
+        assertNotNull(button(R.string.call_notification_end))
+        assertWindowEnabled(false, expectedWake = false)
+    }
+
+    @Test
     fun `initial and warm call launch cover private routes and expose explicit answer and decline`() {
         presentation.onIntent(openIntent(), answerFromIntent = true)
 
@@ -1139,6 +1192,8 @@ class MknoonIncomingCallPresentationTest {
         override fun route(nativeCallId: UUID, route: String): Boolean { routes += nativeCallId to route; return true }
         var cleanup = false
         var audioActive = false
+        var uiAdopted = true
+        override fun isUiAdopted(nativeCallId: UUID) = uiAdopted
         var failRead = false
         val answers = mutableListOf<UUID>()
         val terminals = mutableListOf<Pair<UUID, PendingNativeCallEventType>>()

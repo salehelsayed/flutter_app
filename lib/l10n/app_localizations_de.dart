@@ -507,6 +507,11 @@ class AppLocalizationsDe extends AppLocalizations {
   }
 
   @override
+  String orbit_node_open_chat(String name) {
+    return 'Chat mit $name öffnen';
+  }
+
+  @override
   String orbit_node_unread_open_chat(String name, int count) {
     String _temp0 = intl.Intl.pluralLogic(
       count,
@@ -3767,6 +3772,20 @@ class AppLocalizationsDe extends AppLocalizations {
   @override
   String get push_registration_health_permission_denied =>
       'Benachrichtigungen für Mknoon sind auf diesem Gerät deaktiviert.';
+
+  @override
+  String get call_full_screen_access_title =>
+      'Anrufe auf dem Sperrbildschirm anzeigen';
+
+  @override
+  String get call_full_screen_access_body =>
+      'Ein Anruf kam an, aber dein Bildschirm blieb aus. Erlaube Mknoon Vollbild-Benachrichtigungen, damit du Anrufe sehen und annehmen kannst.';
+
+  @override
+  String get call_full_screen_access_open => 'Einstellungen öffnen';
+
+  @override
+  String get call_full_screen_access_dismiss => 'Nicht jetzt';
 
   @override
   String get push_registration_health_no_token =>

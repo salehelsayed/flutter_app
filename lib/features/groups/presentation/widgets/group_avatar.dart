@@ -92,8 +92,8 @@ class _GroupAvatarState extends State<GroupAvatar> {
         ? 'group-avatar-image-${widget.groupId}-memory'
         : 'group-avatar-image-${widget.groupId}-memory-${widget.cacheBustKey}';
     // 156 QW-4: decode at the on-screen pixel size, not full resolution.
-    final cacheSize =
-        (widget.size * MediaQuery.devicePixelRatioOf(context)).round();
+    final cacheSize = (widget.size * MediaQuery.devicePixelRatioOf(context))
+        .round();
 
     return Container(
       width: widget.size,
@@ -147,6 +147,10 @@ class _GroupAvatarState extends State<GroupAvatar> {
       color: readableColors.surfaceRaised,
       child: Text(
         _initials(widget.name),
+        // Sized from the avatar, not the user's text size: at the largest
+        // accessibility sizes the letters were cut off by the circle (beta
+        // O12 h, 2026-10-09). The group name stays in the node's label.
+        textScaler: TextScaler.noScaling,
         style: TextStyle(
           fontSize: widget.size * 0.32,
           fontWeight: FontWeight.w700,

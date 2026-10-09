@@ -512,6 +512,11 @@ class AppLocalizationsAr extends AppLocalizations {
   }
 
   @override
+  String orbit_node_open_chat(String name) {
+    return 'افتح المحادثة مع $name';
+  }
+
+  @override
   String orbit_node_unread_open_chat(String name, int count) {
     String _temp0 = intl.Intl.pluralLogic(
       count,
@@ -3737,6 +3742,19 @@ class AppLocalizationsAr extends AppLocalizations {
   @override
   String get push_registration_health_permission_denied =>
       'إشعارات مكنون متوقفة على هذا الجهاز.';
+
+  @override
+  String get call_full_screen_access_title => 'اعرض المكالمات على شاشة القفل';
+
+  @override
+  String get call_full_screen_access_body =>
+      'وصلتك مكالمة لكن الشاشة بقيت مطفأة. اسمح لمكنون بإشعارات ملء الشاشة لترى المكالمات وترد عليها.';
+
+  @override
+  String get call_full_screen_access_open => 'فتح الإعدادات';
+
+  @override
+  String get call_full_screen_access_dismiss => 'ليس الآن';
 
   @override
   String get push_registration_health_no_token =>

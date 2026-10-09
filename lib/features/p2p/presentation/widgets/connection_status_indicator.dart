@@ -86,6 +86,9 @@ String _semanticsLabelForBadgeState(
 /// - "Online." (also relay-reserved)
 /// - "Online ✦" (FDC-14: also directly reachable)
 class ConnectionStatusIndicator extends StatefulWidget {
+  /// Largest text scale the pill follows; see the build method.
+  static const double maxTextScaleFactor = 1.5;
+
   final P2PService? p2pService;
   final BadgeReadinessState? previewState;
   final int previewConnectionCount;
@@ -270,34 +273,43 @@ class _ConnectionStatusIndicatorState extends State<ConnectionStatusIndicator> {
       ],
     );
 
-    return Semantics(
-      container: true,
-      label: semanticsLabel,
-      child: ExcludeSemantics(
-        child: plain
-            ? Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 5),
-                child: contents,
-              )
-            : Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 10,
-                  vertical: 5,
-                ),
-                decoration: BoxDecoration(
-                  color: baseColor.withValues(
-                    alpha: isLightSurface ? 0.12 : 0.2,
+    // Beta O12 h (2026-10-09): Orbit gives the pill a fixed 40 pt slot beside
+    // the FAB. At iOS's largest accessibility sizes (about 3x) the text was
+    // cut off; 1.5x still fits. The full status stays in [semanticsLabel].
+    return MediaQuery.withClampedTextScaling(
+      maxScaleFactor: ConnectionStatusIndicator.maxTextScaleFactor,
+      child: Semantics(
+        container: true,
+        label: semanticsLabel,
+        child: ExcludeSemantics(
+          child: plain
+              ? Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 4,
+                    vertical: 5,
                   ),
-                  borderRadius: BorderRadius.circular(16),
-                  border: Border.all(
+                  child: contents,
+                )
+              : Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 5,
+                  ),
+                  decoration: BoxDecoration(
                     color: baseColor.withValues(
-                      alpha: isLightSurface ? 0.32 : 0.4,
+                      alpha: isLightSurface ? 0.12 : 0.2,
                     ),
-                    width: 1,
+                    borderRadius: BorderRadius.circular(16),
+                    border: Border.all(
+                      color: baseColor.withValues(
+                        alpha: isLightSurface ? 0.32 : 0.4,
+                      ),
+                      width: 1,
+                    ),
                   ),
+                  child: contents,
                 ),
-                child: contents,
-              ),
+        ),
       ),
     );
   }

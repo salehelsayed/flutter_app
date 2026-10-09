@@ -32,6 +32,8 @@ internal interface MknoonIncomingCallPresentationSource : MknoonCallActionHandle
     fun presentation(nativeCallId: UUID): MknoonLockedCallMetadata? = null
     fun mute(nativeCallId: UUID, muted: Boolean): Boolean = false
     fun route(nativeCallId: UUID, route: String): Boolean = false
+    /** Whether the activity's Flutter call UI already owns this call (O6). */
+    fun isUiAdopted(nativeCallId: UUID): Boolean = true
 }
 
 /**
@@ -178,6 +180,14 @@ internal class MknoonIncomingCallPresentation(
             render(descriptor)
             // Never grant visibility before private Flutter content is covered.
             setWindowEnabled(true)
+        } else if (!uiAdopted(descriptor.nativeCallId)) {
+            // O6: no keyguard, but Flutter has not taken the call yet (a cold
+            // start shows the splash and then the chat list for several
+            // seconds). Show the native call surface until it does; it needs
+            // no keyguard visibility.
+            setWindowEnabled(false)
+            ensureCover(descriptor.nativeCallId)
+            render(descriptor)
         } else {
             setWindowEnabled(false)
             removeCover()
@@ -185,6 +195,9 @@ internal class MknoonIncomingCallPresentation(
         setScreenWakeEnabled(locked || !descriptor.answerRequested)
         handler.postDelayed(observation, OBSERVE_MS)
     }
+
+    private fun uiAdopted(nativeCallId: UUID): Boolean =
+        runCatching { source.isUiAdopted(nativeCallId) }.getOrDefault(true)
 
     private fun answer(expectedCallId: UUID) {
         if (nativeCallId != expectedCallId) return
@@ -547,6 +560,9 @@ internal class MknoonIncomingCallPresentation(
             debugSplash("listener_installed", activity, "scope=activityCreate")
         }
 
+        /** O6: the activity was opened to show or answer an incoming call. */
+        internal fun isIncomingCallLaunch(intent: Intent?): Boolean = callId(intent) != null
+
         private fun intentAction(intent: Intent?): String = when (intent?.action) {
             AndroidMknoonCallPendingIntentFactory.ACTION_OPEN_INCOMING_CALL -> "openIncoming"
             MknoonCallActionReceiver.ACTION_ANSWER -> "answer"
@@ -579,6 +595,7 @@ internal class MknoonIncomingCallPresentation(
                 override fun snapshot() = controller.snapshot()
                 override fun isCleanupPending(nativeCallId: UUID) =
                     controller.isCleanupPending(nativeCallId)
+                override fun isUiAdopted(nativeCallId: UUID) = controller.isUiAdopted(nativeCallId)
                 override fun isAudioActive(nativeCallId: UUID) =
                     controller.audioState(nativeCallId)?.active == true
                 override fun presentation(nativeCallId: UUID) = controller.presentation(nativeCallId)

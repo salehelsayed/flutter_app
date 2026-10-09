@@ -904,6 +904,12 @@ abstract class AppLocalizations {
   /// **'Open {name}'**
   String orbit_chip_open(String name);
 
+  /// No description provided for @orbit_node_open_chat.
+  ///
+  /// In en, this message translates to:
+  /// **'Open chat with {name}'**
+  String orbit_node_open_chat(String name);
+
   /// No description provided for @orbit_node_unread_open_chat.
   ///
   /// In en, this message translates to:
@@ -6145,6 +6151,30 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Notifications are turned off for Mknoon on this device.'**
   String get push_registration_health_permission_denied;
+
+  /// No description provided for @call_full_screen_access_title.
+  ///
+  /// In en, this message translates to:
+  /// **'Show calls on your lock screen'**
+  String get call_full_screen_access_title;
+
+  /// No description provided for @call_full_screen_access_body.
+  ///
+  /// In en, this message translates to:
+  /// **'A call came in but your screen stayed off. Allow full-screen notifications for Mknoon so you can see and answer calls.'**
+  String get call_full_screen_access_body;
+
+  /// No description provided for @call_full_screen_access_open.
+  ///
+  /// In en, this message translates to:
+  /// **'Open settings'**
+  String get call_full_screen_access_open;
+
+  /// No description provided for @call_full_screen_access_dismiss.
+  ///
+  /// In en, this message translates to:
+  /// **'Not now'**
+  String get call_full_screen_access_dismiss;
 
   /// No description provided for @push_registration_health_no_token.
   ///

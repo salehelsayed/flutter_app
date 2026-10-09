@@ -232,8 +232,8 @@ internal class MknoonCallNativeBridge(
             "attach" -> attach(call.arguments, result)
             "detach" -> detach(call.arguments, result)
             "acknowledge" -> acknowledge(call.arguments, result)
-            "markAdopted" -> withLegacyCallId(call.arguments, result, controller::markAdopted)
-            "adopt" -> withDartCallHandle(call.arguments, result, controller::markAdopted)
+            "markAdopted" -> withLegacyCallId(call.arguments, result, ::adopt)
+            "adopt" -> withDartCallHandle(call.arguments, result, ::adopt)
             "answer" -> withDartCallHandle(call.arguments, result, controller::answer, awaitTelecom = true)
             "activateAudio" -> withEitherCallIdentity(
                 call.arguments,
@@ -516,13 +516,27 @@ internal class MknoonCallNativeBridge(
                 descriptor.callHandle == callHandle &&
                 descriptor.expiresAtMs == expiresAtMs &&
                 descriptor.terminalEvent == null
-        if (alreadyPresented) return result.success(true)
+        if (alreadyPresented) {
+            controller.markUiAdopted(descriptor!!.nativeCallId)
+            return result.success(true)
+        }
         dispatchRegistration(result) {
-            if (display != null && authenticatedDisplayPresenter != null) {
+            val presented = if (display != null && authenticatedDisplayPresenter != null) {
                 authenticatedDisplayPresenter.invoke(callHandle, expiresAtMs, display)
             } else authenticatedPresenter?.invoke(callHandle, expiresAtMs) == true
+            if (presented) {
+                controller.snapshot()?.takeIf { it.callHandle == callHandle }
+                    ?.let { controller.markUiAdopted(it.nativeCallId) }
+            }
+            presented
         }
     }
+
+    // Only MainActivity creates this bridge, so a call adopted or presented
+    // here is owned by the activity's Flutter call UI (O6). The headless
+    // admission engine has no bridge and never reaches these paths.
+    private fun adopt(nativeCallId: UUID): Boolean =
+        controller.markAdopted(nativeCallId).also { if (it) controller.markUiAdopted(nativeCallId) }
 
     private fun captureAdmissionSettlement(arguments: Any?, result: MethodChannel.Result) {
         val fields = arguments as? Map<*, *> ?: return badArguments(result)

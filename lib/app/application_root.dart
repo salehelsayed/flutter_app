@@ -147,6 +147,7 @@ import 'package:flutter_app/features/push/application/push_registration_health_n
 import 'package:flutter_app/features/push/application/prepare_notification_route_target_use_case.dart';
 import 'package:flutter_app/features/push/application/resolve_group_notification_route_target_use_case.dart';
 import 'package:flutter_app/features/push/application/set_presence_use_case.dart';
+import 'package:flutter_app/features/call/presentation/full_screen_call_access_surface.dart';
 import 'package:flutter_app/features/push/presentation/widgets/push_registration_health_surface.dart';
 import 'package:flutter_app/core/services/active_peer_keepalive_use_case.dart';
 import 'package:flutter_app/features/posts/application/pending_post_target_store.dart';
@@ -3394,14 +3395,16 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
             child: child ?? const SizedBox.shrink(),
           );
           final healthNotifier = widget.pushRegistrationHealthNotifier;
-          final appChild = healthNotifier == null
-              ? routedChild
-              : PushRegistrationHealthSurface(
-                  healthListenable: healthNotifier,
-                  onRetry: _retryPushRegistration,
-                  onOpenNotificationSettings: _openPushNotificationSettings,
-                  child: routedChild,
-                );
+          final appChild = FullScreenCallAccessSurface(
+            child: healthNotifier == null
+                ? routedChild
+                : PushRegistrationHealthSurface(
+                    healthListenable: healthNotifier,
+                    onRetry: _retryPushRegistration,
+                    onOpenNotificationSettings: _openPushNotificationSettings,
+                    child: routedChild,
+                  ),
+          );
           final callSurface = ForegroundCallOverlay(
             capability: widget.foregroundCallCapability,
             onAttached: widget.onForegroundCallPresentationReady,

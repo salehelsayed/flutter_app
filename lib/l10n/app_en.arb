@@ -246,6 +246,14 @@
       }
     }
   },
+  "orbit_node_open_chat": "Open chat with {name}",
+  "@orbit_node_open_chat": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
   "orbit_node_unread_open_chat": "{count, plural, =1{Open chat with {name}, 1 unread message} other{Open chat with {name}, {count} unread messages}}",
   "@orbit_node_unread_open_chat": {
     "placeholders": {
@@ -1901,6 +1909,10 @@
   "direct_batch_forward_close": "Close",
   "push_registration_health_warning_title": "Notifications need attention",
   "push_registration_health_permission_denied": "Notifications are turned off for Mknoon on this device.",
+  "call_full_screen_access_title": "Show calls on your lock screen",
+  "call_full_screen_access_body": "A call came in but your screen stayed off. Allow full-screen notifications for Mknoon so you can see and answer calls.",
+  "call_full_screen_access_open": "Open settings",
+  "call_full_screen_access_dismiss": "Not now",
   "push_registration_health_no_token": "This device has not received a notification token yet.",
   "push_registration_health_registration_failed": "Mknoon could not register this device for notifications.",
   "push_registration_health_temporary_problem": "Notification setup hit a temporary problem.",

@@ -48,6 +48,33 @@ class MknoonCallNativeBridgeTest {
         assertEquals("bad_args", malformed.errorCode)
     }
 
+    @Test
+    fun `adopt and authenticated presentation mark the call as owned by the activity call UI`() {
+        // O6: only MainActivity creates this bridge. A headless presentation
+        // alone must leave the native call surface in charge.
+        val rig = LifecycleRig()
+        assertEquals(MknoonCallPresentationResult.PRESENTED, rig.controller.present(rig.payload))
+        assertFalse(rig.controller.isUiAdopted(rig.payload.nativeCallId))
+        val bridge = MknoonCallNativeBridge(rig.controller, messenger = null)
+        assertBridgeSuccess(bridge, "adopt", mapOf("version" to 1, "callHandle" to rig.payload.callHandle), true)
+        assertTrue(rig.controller.isUiAdopted(rig.payload.nativeCallId))
+
+        val other = LifecycleRig()
+        val presenting = MknoonCallNativeBridge(
+            controller = other.controller, messenger = null,
+            authenticatedPresenter = { _, _ ->
+                other.controller.present(other.payload) == MknoonCallPresentationResult.PRESENTED
+            },
+        )
+        assertFalse(other.controller.isUiAdopted(other.payload.nativeCallId))
+        assertBridgeSuccess(
+            presenting, "presentAuthenticated",
+            mapOf("version" to 1, "callHandle" to other.payload.callHandle, "expiresAtMs" to other.payload.expiresAtMs),
+            true,
+        )
+        assertTrue(other.controller.isUiAdopted(other.payload.nativeCallId))
+    }
+
     @Test fun `admission settlement does not block main behind Telecom and checks owner at execution`() {
         val rig = LifecycleRig()
         val relay = MknoonCallEventRelay()

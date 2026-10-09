@@ -304,8 +304,14 @@ final class ProductionCallSignalingGraph
   Future<bool> start() async {
     await _nativeCallLifecycleAdapter?.start();
     await iosVoipTokenCoordinator?.start();
-    await androidCallTokenCoordinator?.start();
-    return runtime.start();
+    // Beta O6 (2026-10-08): publishing the FCM call token is a relay round
+    // trip of about 2 s on a cold start. The runtime's mailbox drain is what
+    // delivers a pending invite, so it must not wait behind it. The token
+    // never gates signaling; start still settles only after both.
+    final androidToken = androidCallTokenCoordinator?.start();
+    final started = await runtime.start();
+    await androidToken;
+    return started;
   }
 
   @override

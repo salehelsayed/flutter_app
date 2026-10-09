@@ -1102,7 +1102,6 @@ final class CallSignalingComposition
     if (graph == null ||
         foreground == null ||
         _terminal ||
-        !_foregroundAllowed ||
         _featureFlags['voice_call_incoming_enabled'] != true ||
         !_foregroundChanges.hasListener ||
         !presentation.expiresAt.isAfter(_clock().toUtc())) {
@@ -1119,7 +1118,9 @@ final class CallSignalingComposition
         !session.incomingValidated) {
       return false;
     }
-    if (!_isForeground()) {
+    // O1 (beta 2026-10-08): without a native call UI a backgrounded app
+    // cannot ring. Report it as unavailable, never as a failed presentation.
+    if (!_foregroundAllowed || !_isForeground()) {
       throw const IncomingCallPresentationUnavailable();
     }
     _presentedIncomingCallId = presentation.callId;

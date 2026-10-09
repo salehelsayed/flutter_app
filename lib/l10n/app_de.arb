@@ -204,6 +204,7 @@
   "orbit_chip_provenance_ring": "Ring {ring}",
   "orbit_chip_provenance_arc": "Bogen {arc}",
   "orbit_chip_open": "{name} öffnen",
+  "orbit_node_open_chat": "Chat mit {name} öffnen",
   "orbit_node_unread_open_chat": "{count, plural, =1{Chat mit {name} öffnen, 1 ungelesene Nachricht} other{Chat mit {name} öffnen, {count} ungelesene Nachrichten}}",
   "@orbit_node_unread_open_chat": {
     "placeholders": {
@@ -1763,6 +1764,10 @@
   "direct_batch_forward_close": "Schließen",
   "push_registration_health_warning_title": "Benachrichtigungen prüfen",
   "push_registration_health_permission_denied": "Benachrichtigungen für Mknoon sind auf diesem Gerät deaktiviert.",
+  "call_full_screen_access_title": "Anrufe auf dem Sperrbildschirm anzeigen",
+  "call_full_screen_access_body": "Ein Anruf kam an, aber dein Bildschirm blieb aus. Erlaube Mknoon Vollbild-Benachrichtigungen, damit du Anrufe sehen und annehmen kannst.",
+  "call_full_screen_access_open": "Einstellungen öffnen",
+  "call_full_screen_access_dismiss": "Nicht jetzt",
   "push_registration_health_no_token": "Dieses Gerät hat noch kein Benachrichtigungs-Token erhalten.",
   "push_registration_health_registration_failed": "Mknoon konnte dieses Gerät nicht für Benachrichtigungen registrieren.",
   "push_registration_health_temporary_problem": "Beim Einrichten der Benachrichtigungen ist ein vorübergehendes Problem aufgetreten.",

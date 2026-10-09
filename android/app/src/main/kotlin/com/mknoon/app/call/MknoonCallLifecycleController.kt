@@ -169,6 +169,9 @@ internal class MknoonCallLifecycleController(
     private val lock = Any()
     private var attached = false
     private var adoptedCallId: UUID? = null
+    // O6: the call the activity's own Flutter engine has taken (adopted or
+    // presented). Call ids are unique, so a stale value never matches.
+    @Volatile private var uiAdoptedCallId: UUID? = null
     private var adoptedState: AdoptedLifecycle? = null
     private var answerRequestedCallId: UUID? = null
     private var telecomActiveCallId: UUID? = null
@@ -1161,6 +1164,13 @@ internal class MknoonCallLifecycleController(
     fun hasTerminalLifecycle(nativeCallId: UUID): Boolean = synchronized(lock) {
         hasTerminalLifecycleLocked(nativeCallId)
     }
+
+    /** The activity's Flutter call UI owns [nativeCallId] from now on (O6). */
+    fun markUiAdopted(nativeCallId: UUID) {
+        uiAdoptedCallId = nativeCallId
+    }
+
+    fun isUiAdopted(nativeCallId: UUID): Boolean = uiAdoptedCallId == nativeCallId
 
     fun isCleanupPending(nativeCallId: UUID): Boolean = synchronized(lock) {
         cleanupState?.nativeCallId == nativeCallId

@@ -156,6 +156,9 @@ internal class MknoonCallNotificationFactory(
         // Android 14 uses it to show the expanded, actionable heads-up on the
         // locked/off screen for 60 seconds instead of launching the activity.
         builder.setFullScreenIntent(openIncoming, true)
+        // O4: remember that this call could not turn the screen on, so the
+        // app can ask for full-screen access the next time it is open.
+        if (!canPresentFullScreen()) FullScreenCallAccess.recordDeniedCall(applicationContext)
         return builder.build()
     }
 

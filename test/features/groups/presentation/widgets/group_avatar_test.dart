@@ -29,6 +29,22 @@ void main() {
     }
   });
 
+  // Beta O12 h (2026-10-09): at iOS's largest accessibility text size the
+  // initials were cut off by the avatar circle on Orbit.
+  testWidgets('initials keep the avatar size at the largest text sizes', (
+    tester,
+  ) async {
+    tester.platformDispatcher.textScaleFactorTestValue = 3.1;
+    addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+    await tester.pumpWidget(
+      _wrap(const GroupAvatar(groupId: 'g1', name: 'Group One', size: 40)),
+    );
+    final initials = tester.renderObject<RenderBox>(find.text('GO'));
+    expect(initials.size.height, lessThanOrEqualTo(40));
+    final text = tester.widget<Text>(find.text('GO'));
+    expect(text.textScaler, TextScaler.noScaling);
+  });
+
   testWidgets(
     'TC-08: Image.memory sets cacheWidth/cacheHeight to round(size*dpr)',
     (tester) async {

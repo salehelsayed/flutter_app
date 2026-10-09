@@ -342,7 +342,8 @@ void main() {
         geometry: OrbitGeometryPrefs.defaults,
         mirrored: true,
       ).seats[13];
-      final off = nodeOffset(tester, 'Open chat with friend13');
+      // Arabic locale: the label is localized (beta O12, 2026-10-08).
+      final off = nodeOffset(tester, 'افتح المحادثة مع friend13');
       expect(off.dx, closeTo(seat13.dx, 1.0)); // mirrored dx
       expect(off.dy, closeTo(seat13.dy, 1.0));
     });
