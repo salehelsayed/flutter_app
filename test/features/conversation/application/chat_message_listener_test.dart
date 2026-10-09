@@ -2950,6 +2950,101 @@ void main() {
       },
     );
   });
+
+  // R2-11 (beta round 2): a contact without a profile picture made every
+  // incoming message start another relay download, several at once in a burst.
+  group('ChatMessageListener avatar download retries', () {
+    late _FakeMessageRepository messageRepo;
+    late _FakeContactRepository contactRepo;
+    late DateTime now;
+    late List<String> attempts;
+    late List<Completer<ContactModel?>> pending;
+
+    setUp(() {
+      messageRepo = _FakeMessageRepository();
+      contactRepo = _FakeContactRepository();
+      now = DateTime.utc(2026, 10, 8, 12);
+      attempts = [];
+      pending = [];
+    });
+
+    ChatMessageListener createListener() => ChatMessageListener(
+      chatMessageStream: const Stream<ChatMessage>.empty(),
+      messageRepo: messageRepo,
+      contactRepo: contactRepo,
+      bridge: _FakeBridge(),
+      clock: () => now,
+      downloadProfilePictureFn:
+          ({
+            required Bridge bridge,
+            required ContactRepository contactRepo,
+            required String ownerPeerId,
+            required String avatarVersion,
+          }) {
+            attempts.add(ownerPeerId);
+            final completer = Completer<ContactModel?>();
+            pending.add(completer);
+            return completer.future;
+          },
+    );
+
+    Future<void> receive(ChatMessageListener listener, String id) async {
+      await listener.processIncomingMessage(
+        _makeChatMessage(from: 'sender-avatar', id: id),
+      );
+    }
+
+    test('one download at a time, then a cooldown after a failure', () async {
+      contactRepo.seedContact(_makeContact('sender-avatar'));
+      final listener = createListener();
+
+      await receive(listener, 'msg-avatar-001');
+      await receive(listener, 'msg-avatar-002');
+      await receive(listener, 'msg-avatar-003');
+      expect(attempts, ['sender-avatar']);
+
+      pending.single.complete(null); // relay: not found
+      await pumpEventQueue();
+
+      now = now.add(const Duration(minutes: 14));
+      await receive(listener, 'msg-avatar-004');
+      expect(attempts, hasLength(1));
+
+      now = now.add(const Duration(minutes: 2));
+      await receive(listener, 'msg-avatar-005');
+      expect(attempts, hasLength(2));
+    });
+
+    test('a thrown download error also starts the cooldown', () async {
+      contactRepo.seedContact(_makeContact('sender-avatar'));
+      final listener = createListener();
+
+      await receive(listener, 'msg-avatar-001');
+      pending.single.completeError(StateError('relay down'));
+      await pumpEventQueue();
+
+      await receive(listener, 'msg-avatar-002');
+      expect(attempts, hasLength(1));
+    });
+
+    test('a successful download clears the cooldown', () async {
+      final contact = _makeContact('sender-avatar');
+      contactRepo.seedContact(contact);
+      final listener = createListener();
+
+      await receive(listener, 'msg-avatar-001');
+      pending.single.complete(null);
+      await pumpEventQueue();
+      now = now.add(const Duration(minutes: 16));
+      await receive(listener, 'msg-avatar-002');
+      pending.last.complete(contact);
+      await pumpEventQueue();
+
+      // No file on disk in tests, so the next message may try again at once.
+      await receive(listener, 'msg-avatar-003');
+      expect(attempts, hasLength(3));
+    });
+  });
 }
 
 class _FakeTransportAuthority implements DirectTransportAuthorityResolver {

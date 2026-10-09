@@ -108,6 +108,12 @@ class ChatMessageListener {
   final Future<DurableNotificationToneLease> Function()
   _durableNotificationCoordinatorResolver;
   final DownloadProfilePictureFn? downloadProfilePictureFn;
+
+  /// After a failed avatar download (the contact has no picture on the relay,
+  /// or the relay is unreachable), wait this long before trying that contact
+  /// again. Without it every incoming message started another download.
+  final Duration avatarRetryCooldown;
+  final DateTime Function() _clock;
   final RecentRemoteNotificationGate? remoteNotificationGate;
   final Duration backgroundNotificationDuplicateGuardDelay;
   final AccountMigrationNetworkGate accountMigrationNetworkGate;
@@ -138,6 +144,8 @@ class ChatMessageListener {
   Future<DurableNotificationToneLease?>? _durableNotificationCoordinatorFuture;
   final _messageController = StreamController<ConversationMessage>.broadcast();
   final _contactUpdatedController = StreamController<ContactModel>.broadcast();
+  final Set<String> _avatarDownloadsInFlight = {};
+  final Map<String, DateTime> _avatarRetryNotBefore = {};
 
   ChatMessageListener({
     required this.chatMessageStream,
@@ -155,6 +163,8 @@ class ChatMessageListener {
     Future<DurableNotificationToneLease> Function()?
     durableNotificationCoordinatorResolver,
     this.downloadProfilePictureFn,
+    this.avatarRetryCooldown = const Duration(minutes: 15),
+    DateTime Function()? clock,
     this.remoteNotificationGate,
     this.backgroundNotificationDuplicateGuardDelay = const Duration(seconds: 2),
     this.accountMigrationNetworkGate = allowAccountMigrationNetworkSideEffects,
@@ -163,7 +173,8 @@ class ChatMessageListener {
     this.stageNotificationDisplayCustody,
     this.promoteNotificationDisplayCustody,
     this.retryNotificationDisplays,
-  }) : _durableNotificationCoordinatorResolver =
+  }) : _clock = clock ?? DateTime.now,
+       _durableNotificationCoordinatorResolver =
            durableNotificationCoordinatorResolver ??
            DurableNotificationToneLease.openMobileDefault;
 
@@ -341,35 +352,51 @@ class ChatMessageListener {
   }
 
   /// Checks if a contact's avatar file exists on disk. If not, triggers
-  /// a fire-and-forget download from the relay. Naturally retries on each
-  /// incoming message until the avatar is successfully downloaded.
+  /// a fire-and-forget download from the relay. Retries on a later incoming
+  /// message, at most one download per contact at a time and none within
+  /// [avatarRetryCooldown] of a failed attempt.
   void _ensureAvatarDownloaded(ContactModel contact) {
     if (bridge == null) return;
+    final peerId = contact.peerId;
 
     final docsDir = UserAvatar.documentsDir;
     if (docsDir != null) {
-      final file = File('$docsDir/media/avatars/${contact.peerId}.jpg');
+      final file = File('$docsDir/media/avatars/$peerId.jpg');
       if (file.existsSync()) return;
     }
 
+    if (_avatarDownloadsInFlight.contains(peerId)) return;
+    final notBefore = _avatarRetryNotBefore[peerId];
+    if (notBefore != null && _clock().isBefore(notBefore)) return;
+    _avatarDownloadsInFlight.add(peerId);
+
     () async {
+      var downloaded = false;
       try {
         final dlFn = downloadProfilePictureFn ?? downloadProfilePicture;
         final updated = await dlFn(
           bridge: bridge!,
           contactRepo: contactRepo,
-          ownerPeerId: contact.peerId,
+          ownerPeerId: peerId,
           avatarVersion: 'initial',
         );
         if (updated != null) {
+          downloaded = true;
           emitContactUpdate(updated);
         }
       } catch (e) {
         emitFlowEvent(
           layer: 'FL',
           event: 'CHAT_LISTENER_AVATAR_RETRY_ERROR',
-          details: {'peerId': contact.peerId, 'error': e.toString()},
+          details: {'peerId': peerId, 'error': e.toString()},
         );
+      } finally {
+        _avatarDownloadsInFlight.remove(peerId);
+        if (downloaded) {
+          _avatarRetryNotBefore.remove(peerId);
+        } else {
+          _avatarRetryNotBefore[peerId] = _clock().add(avatarRetryCooldown);
+        }
       }
     }();
   }
