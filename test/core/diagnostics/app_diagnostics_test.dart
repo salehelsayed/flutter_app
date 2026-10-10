@@ -916,6 +916,37 @@ void main() {
   );
 
   test(
+    'flushes skip the native inbox drain until the app is resumed',
+    () async {
+      final calls = <String>[];
+      final diagnostics = await install(
+        bridge: DiagnosticBridge(),
+        native: (method, data) async {
+          calls.add(method);
+          if (method == 'drain') {
+            return {'version': 1, 'events': [], 'droppedEvents': 0};
+          }
+          return true;
+        },
+      );
+      expect(calls, contains('drain'));
+      for (final state in [
+        AppLifecycleState.inactive,
+        AppLifecycleState.hidden,
+        AppLifecycleState.paused,
+      ]) {
+        diagnostics.didChangeAppLifecycleState(state);
+        calls.clear();
+        await diagnostics.flush();
+        expect(calls, isNot(contains('drain')), reason: '$state');
+      }
+      diagnostics.didChangeAppLifecycleState(AppLifecycleState.resumed);
+      await diagnostics.flush();
+      expect(calls, contains('drain'));
+    },
+  );
+
+  test(
     'account network denial retains evidence without any relay request',
     () async {
       var allowed = false;

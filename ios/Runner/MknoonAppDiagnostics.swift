@@ -6,6 +6,7 @@ import Flutter
 #endif
 #if os(iOS)
 import MetricKit
+import UIKit
 #endif
 
 internal protocol MknoonAppDiagnosticBackend {
@@ -308,16 +309,38 @@ internal final class MknoonAppDiagnostics: NSObject {
       }
     }
   }
-  private func importExtensionEvents() -> Int64? {
+  private func importExtensionEvents(_ inboxAllowed: () -> Bool) -> Int64? {
     if sharedInbox == nil { sharedInbox = MknoonNseAppDiagnosticInbox.production() }
-    guard let sharedInbox, let page = sharedInbox.drain() else { return nil }
+    guard inboxAllowed(), let sharedInbox, let page = sharedInbox.drain() else { return nil }
     if !page.events.isEmpty, spool?.enabled == true {
-      guard let ids = spool?.importEvents(page.events), sharedInbox.ack(ids) else { return nil }
+      guard inboxAllowed(), let ids = spool?.importEvents(page.events), sharedInbox.ack(ids) else { return nil }
     }
     return page.dropped
   }
+#if os(iOS)
+  private static let sharedInboxMethods: Set<String> = ["configure", "drain", "clear"]
+  private static let sharedInboxMinimumSeconds: TimeInterval = 5
+  /// The shared inbox holds an App Group flock. iOS kills a process suspended
+  /// while holding one (RUNNINGBOARD 0xdead10cc, TestFlight 1.0.1 (123)), so
+  /// inbox work runs only inside a live background grant. Called on main.
+  private static func beginSharedInboxGrant() -> UIBackgroundTaskIdentifier? {
+    let registry = CriticalTaskRegistry.shared
+    guard let grant = registry.beginIfLive(withName: "mknoon.appDiagnosticsInbox") else { return nil }
+    guard registry.backgroundTimeRemaining >= sharedInboxMinimumSeconds else { registry.end(grant); return nil }
+    return grant
+  }
+#endif
   func command(_ method: String, _ raw: Any?, completion: @escaping (Any) -> Void) {
+#if os(iOS)
+    let grant = Self.sharedInboxMethods.contains(method) ? Self.beginSharedInboxGrant() : nil
+    let inboxAllowed = { grant.map { CriticalTaskRegistry.shared.isLive($0) } ?? false }
+#else
+    let inboxAllowed = { true }
+#endif
     queue.async { [weak self] in
+#if os(iOS)
+      defer { if let grant { CriticalTaskRegistry.shared.end(grant) } }
+#endif
       guard let self else { DispatchQueue.main.async { completion(false) }; return }
       if self.spool == nil, let backend = try? MknoonAppDiagnosticFileBackend() { self.spool = MknoonAppDiagnosticSpool(backend: backend, installedBuild: Self.installedBuild) }
       var result: Any = false
@@ -331,20 +354,20 @@ internal final class MknoonAppDiagnostics: NSObject {
             // OFF reaches both sinks even if either write fails. A false result
             // exposes incomplete durable consent synchronization to Dart.
             let localAccepted = self.spool?.configure(value.boolValue, consentEpoch: epoch) ?? false
-            let sharedAccepted = (epoch != nil && (localAccepted || !value.boolValue))
+            let sharedAccepted = (epoch != nil && (localAccepted || !value.boolValue) && inboxAllowed())
               ? self.sharedInbox?.configure(value.boolValue, epoch: epoch!) ?? false : false
             result = localAccepted && sharedAccepted
             if localAccepted && value.boolValue { self.spool?.append("startup", "bridge", "ok", "bootstrap") }
           }
         case "drain":
-          if let sharedDropped = self.importExtensionEvents(), var page = self.spool?.drain(args["limit"] as? Int ?? 64) {
+          if let sharedDropped = self.importExtensionEvents(inboxAllowed), var page = self.spool?.drain(args["limit"] as? Int ?? 64) {
             page["droppedEvents"] = (MknoonAppDiagnosticSpool.integer(page["droppedEvents"]) ?? 0) + sharedDropped
             result = page
           }
         case "ack": result = (args["eventIds"] as? [String]).map { self.spool?.ack($0) ?? false } ?? false
         case "clear":
           if self.sharedInbox == nil { self.sharedInbox = MknoonNseAppDiagnosticInbox.production() }
-          let local = self.spool?.clear() ?? false, shared = self.sharedInbox?.clear() ?? false
+          let local = self.spool?.clear() ?? false, shared = inboxAllowed() ? self.sharedInbox?.clear() ?? false : false
           result = local && shared
         default: break
         }
