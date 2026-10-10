@@ -1633,3 +1633,34 @@ func TestHotfixCorrectionS4AppCachedExpiry(t *testing.T) {
 		}
 	})
 }
+
+func TestCallDiagnosticsGlobalLimitFromEnvironment(t *testing.T) {
+	for _, tc := range []struct {
+		name, raw string
+		quota     int
+	}{
+		{"unset keeps default", "", 64 << 20},
+		{"raised", "268435456", 256 << 20},
+		{"ceiling", "536870912", 512 << 20},
+		{"above ceiling keeps default", "536870913", 64 << 20},
+		{"below floor keeps default", "1024", 64 << 20},
+		{"not a number keeps default", "lots", 64 << 20},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("CALL_DIAGNOSTICS_DIR", t.TempDir())
+			t.Setenv("CALL_DIAGNOSTICS_MAX_BYTES", tc.raw)
+			t.Setenv("CALL_DIAGNOSTICS_OWNER_MAX_BYTES", "10485760")
+			s := initCallDiagnosticsFromEnvironment()
+			if s == nil {
+				t.Fatal("store must stay enabled")
+			}
+			defer s.close()
+			if s.quota != tc.quota || s.ownerQuota != 10<<20 {
+				t.Fatalf("quota=%d owner=%d", s.quota, s.ownerQuota)
+			}
+			if testutil.ToFloat64(diagnosticGlobalLimit.WithLabelValues("call")) != float64(tc.quota) {
+				t.Fatal("global limit metric not effective value")
+			}
+		})
+	}
+}

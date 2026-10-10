@@ -21,6 +21,11 @@ import (
 
 const callDiagnosticRetention = 14 * 24 * time.Hour
 const callDiagnosticGlobalBytes = 64 << 20
+
+// callDiagnosticMaxGlobalBytes bounds CALL_DIAGNOSTICS_MAX_BYTES. The default
+// store filled in production and then refused every ordinary event, keeping
+// only terminal and first-media records.
+const callDiagnosticMaxGlobalBytes = 512 << 20
 const callDiagnosticOwnerBytes = 5 << 20
 
 // A joined trace includes two independently bounded endpoint spools plus relay stages.
@@ -1158,12 +1163,27 @@ func (s *callDiagnosticStore) lastAuthority(target string) callDiagnosticAuthori
 	return change
 }
 
+// callDiagnosticQuotaFromEnvironment keeps the store enabled on a bad value:
+// losing every call record is worse than keeping the default ceiling.
+func callDiagnosticQuotaFromEnvironment() int {
+	raw := os.Getenv("CALL_DIAGNOSTICS_MAX_BYTES")
+	if raw == "" {
+		return callDiagnosticGlobalBytes
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil || n < 1<<20 || n > callDiagnosticMaxGlobalBytes {
+		log.Print("call_diagnostics global_limit=invalid_default_used")
+		return callDiagnosticGlobalBytes
+	}
+	return n
+}
+
 func initCallDiagnosticsFromEnvironment() *callDiagnosticStore {
 	dir := os.Getenv("CALL_DIAGNOSTICS_DIR")
 	if dir == "" {
 		return nil
 	}
-	s, err := newCallDiagnosticStore(dir, callDiagnosticGlobalBytes, time.Now)
+	s, err := newCallDiagnosticStore(dir, callDiagnosticQuotaFromEnvironment(), time.Now)
 	if err != nil {
 		log.Print("call_diagnostics storage=unavailable")
 		return nil
@@ -1172,7 +1192,7 @@ func initCallDiagnosticsFromEnvironment() *callDiagnosticStore {
 		os.Getenv("APNS_VOIP_CAPTURE_OWNER_SHA256"),
 		os.Getenv("APNS_VOIP_CAPTURE_UNTIL"), time.Now(),
 	)
-	s.ownerQuota = diagnosticOwnerQuota("CALL_DIAGNOSTICS_OWNER_MAX_BYTES", callDiagnosticOwnerBytes, callDiagnosticGlobalBytes)
+	s.ownerQuota = diagnosticOwnerQuota("CALL_DIAGNOSTICS_OWNER_MAX_BYTES", callDiagnosticOwnerBytes, s.quota)
 	diagnosticOwnerLimit.WithLabelValues("call").Set(float64(s.ownerQuota))
 	diagnosticGlobalLimit.WithLabelValues("call").Set(float64(s.quota))
 	callDiagnosticStorageReady.Set(1)
