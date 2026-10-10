@@ -410,6 +410,19 @@ that child before handing the device to another campaign. The receipt at
 `.codex-test-logs/all-tests-y227gs8x/appium-mcp-transport-001/readiness.json`
 proves automation readiness, not Mknoon behavior or a signed candidate.
 
+For the October 10 iPhone 11 / Pixel_8 emulator call probe, the emulator's
+virtual Wi-Fi path lost provisioning in two attempts, including after a cold
+boot. Both attempts first verified inbound and outbound RTP, then lost media;
+Android logged `LOST_PROVISIONING` for the virtual gateway. Disabling emulator
+Wi-Fi and using its available `eth0` path produced a call with repeated RTP
+progress on both peers, ended manually after approximately 53 connected seconds.
+Preserve the failed attempts when using this setup workaround. The emulator
+desktop camera tutorial is a Qt host overlay outside Appium's Android hierarchy;
+it was dismissed through macOS accessibility using its `Got It` button. Evidence:
+`.codex-test-logs/call-repro-20261010/`. This exploratory mixed-build result does
+not reproduce or explain the original recipient's pre-answer `media_failed`,
+and does not certify a signed release candidate.
+
 The user authorizes unlocking the connected test iPhone through actual Appium
 MCP when needed. Read `IPHONE_PIN` locally from the ignored repository `.env`;
 never copy its value into tracked code, command arguments, reports, screenshots,
@@ -5095,6 +5108,36 @@ visible and cannot become an ordinary first-attempt PASS.
   intervening unpinned Go 1.27 diagnostic rerun
   panicked in `crypto/tls` and is not a substitute for the pinned toolchain.
   Preserve these first failures and report unexecuted selections explicitly.
+  The October 10 QUIC investigation isolated the current Mac-only timeout from
+  relay availability: a probe using the pinned libp2p v0.50.0 / quic-go v0.62.0
+  connected and reserved the deployed EC2 relay over UDP 4002 from Hetzner in
+  135 ms over IPv4 and 51 ms over IPv6. The same probe timed out on the Mac;
+  its qlog recorded ten Initial packets and no responses, while a correlated
+  EC2 capture received no IPv4 QUIC packets. Marked and random UDP controls of
+  up to 1,300 bytes reached the same EC2 port from the Mac. Disabling ECN for
+  one diagnostic attempt did not change the failure. The Mac routed this
+  traffic through a VPN tunnel; these results are consistent with selective
+  QUIC filtering on that host/network path, but do not identify the exact
+  filtering component or rule. Current AWS ingress/egress and subnet ACLs
+  allowed UDP 4002 over both families. A combined QUIC/WSS address probe
+  connected and reserved through WSS 4001 in 1,261 ms, confirming transport
+  fallback for this probe, not a live app call or audible media. Relay and
+  coturn services, port configuration and VPN/security policy were unchanged
+  during that first investigation. Keep the failed Mac QUIC checks visible; a
+  QUIC-only failure on this path is not by itself evidence of relay failure.
+  After the user disabled the VPN, the same Mac routed through `en0` and the
+  unchanged probe completed three IPv4 QUIC reservations in 153/165/205 ms.
+  The combined address probe selected IPv6 QUIC and reserved in 157 ms.
+  The previously failing `TestQUICSmokeIdentify`,
+  `TestQUICSmokeRelayReservation` and `TestAllTransportsSmokeCompare` all passed
+  with Go 1.27.1, `-count=1` and live-test skipping unset; TCP, WSS and QUIC
+  comparison subtests also passed. This supersedes the unresolved Mac timeout
+  for the VPN-off path and ties the observed failure to the VPN path, without
+  identifying its exact filter/rule or requiring an app/relay/port change.
+  It does not establish QUIC availability with the VPN re-enabled or audio
+  quality in a two-user call. The original VPN-on failures remain preserved.
+  The bounded conclusion, source probe and raw evidence are retained under
+  `.codex-test-logs/quic-debug-20261010/diagnosis.json`.
   A normal debug APK also needs the existing Gradle property
   `enableAndroidNativeCalls=true` alongside Dart call defines; the first local
   Pixel build omitted it and correctly rejected native capability setup. Its
@@ -6608,6 +6651,45 @@ visible and cannot become an ordinary first-attempt PASS.
   and [runtime/focus regressions](../../.codex-test-logs/audio-call-review-20261010/app-lease-focus-tests.log),
   plus [final readiness/negotiation regressions](../../.codex-test-logs/audio-call-review-20261010/app-final-recovery-tests.log),
   are host proofs, not live-device audio or deployed-relay certification.
+  **Incoming-lane interruption (fixed):** an ICE frame previously held the
+  runtime's serial lane while awaiting an admitted offer's media work, keeping
+  a later authenticated terminate from reaching preparation interruption. The
+  original isolated
+  [ICE-before-hangup probe](../../.codex-test-logs/audio-review-deploy-20261010T1740Z/runtime-probe.log)
+  reproduces a still-negotiating session; its
+  [control without the intervening ICE frame](../../.codex-test-logs/audio-review-deploy-20261010T1740Z/runtime-control.log)
+  terminates promptly with otherwise identical inputs. Ingress now yields
+  after the coordinator owns an event queued behind interruptible media work.
+  The original handler retains replay/material settlement and mailbox ACK;
+  yielded operations count against the pending bound until completion, and
+  shutdown waits for them after interrupting media preparation. Mailbox drains
+  can advance to later rows/pages and later resumes without acknowledging a
+  pending copy twice. A valid terminal still awaits cleanup before completion.
+  The permanent runtime regressions cover direct, same-page/next-page mailbox,
+  both mixed delivery directions, invalid signatures, late media completion,
+  pending ACK ownership and the bounded pending lane. The
+  [runtime checks](../../.codex-test-logs/audio-fixes-20261010/runtime-regressions-v2.log)
+  pass 55 tests; the [curated wrapper results](../../.codex-test-logs/audio-fixes-20261010/call-checks/results.json)
+  retain 1,163 call-feature, 656 signaling and 124 lifecycle-host passes (these
+  selections overlap). The full dirty-tree wrapper remains scoped/incomplete
+  for unrelated changes and device/release obligations. The original red probe
+  and first cleanup-ordering regression remain preserved. These are host
+  queue/custody proofs, not audible-media or signed-device certification.
+  **CallKit/WebRTC external audio ownership:** the native controller forwards
+  every CallKit activation/deactivation callback to `RTCAudioSession`, before
+  descriptor guards. This keeps WebRTC's external activation balanced when the
+  terminal descriptor has already been removed and lets CallKit reactivation
+  reach WebRTC without an interruption-ended notification. CallKit still owns
+  actual activation; the bridge does not call `setActive` or change manual-audio
+  policy. The existing lifecycle, native bridge and journal XCTest selection
+  passed all 96 tests on the available iPhone 17 Pro simulator, including a test
+  of the production notifier against WebRTC's real activation counter and
+  interruption/terminal/unlatched callback regressions. The first build's
+  missing shared-fixture argument is preserved separately from the corrected
+  [native results](../../.codex-test-logs/audio-fixes-20261010/ios-lifecycle-v2.xcresult)
+  and [summary](../../.codex-test-logs/audio-fixes-20261010/ios-test-summary.json).
+  These prove native integration and ownership, not a locked physical-device
+  call or audible interruption recovery.
   A reconnect episode has its own local generation: timestamps and native ICE
   generation can remain unchanged across separate interruptions. Scope restart
   deduplication to that episode, and carry it through queued media readiness,
