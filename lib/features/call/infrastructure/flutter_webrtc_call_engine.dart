@@ -1062,11 +1062,6 @@ final class FlutterWebRtcCallEngine
   bool _localAudioEnabled = false;
   int _iceGeneration = 0;
 
-  /// Reconnect episodes per call. TURN credentials are refreshed on each
-  /// restart, so a long call may recover from more than one network change.
-  static const int maxIceRestarts = 8;
-
-  int _restartCount = 0;
   CallTransportPolicy? _transportPolicy;
   CallSessionDescription? _createdOffer;
   CallSessionDescription? _createdAnswer;
@@ -1353,9 +1348,9 @@ final class FlutterWebRtcCallEngine
     List<CallIceServer> iceServers = const <CallIceServer>[],
   }) async {
     _requireConnectionCreated();
-    if (_restartCount >= maxIceRestarts) {
-      throw const CallEngineException(CallEngineErrorCode.restartLimitReached);
-    }
+    // The coordinator bounds each recovery episode with its original deadline
+    // and the executor permits one restart per episode. Successful recoveries
+    // must not consume a lifetime allowance on a long-running conversation.
     if (!_validIceServers(iceServers)) {
       throw const CallEngineException(
         CallEngineErrorCode.configurationRejected,
@@ -1374,7 +1369,6 @@ final class FlutterWebRtcCallEngine
     _ensureOpen();
     await _adapter.restartIce();
     _ensureOpen();
-    _restartCount += 1;
     _iceGeneration += 1;
     _deferredCandidates.clear();
     _resetDescriptions();

@@ -1,5 +1,7 @@
 import 'dart:async';
 
+import 'package:fake_async/fake_async.dart';
+
 import 'package:flutter_app/features/call/application/call_audio_controller.dart';
 import 'package:flutter_app/features/call/application/call_audio_interruption_coordinator.dart';
 import 'package:flutter_app/features/call/domain/call_engine.dart';
@@ -54,6 +56,67 @@ Future<void> _flush() async {
 
 void main() {
   test(
+    'audio-only recovery retries readiness without a native state callback',
+    () {
+      fakeAsync((async) {
+        final intents = StreamController<CallAudioInterruptionIntent>.broadcast(
+          sync: true,
+        );
+        final session = _session(
+          CallState.reconnecting,
+        ).copyWith(transportRecoveryRequired: false);
+        var ready = false;
+        final events = <CallEvent>[];
+        final bridge = CallAudioInterruptionCoordinator(
+          intents: intents.stream,
+          readActiveSession: () => session,
+          readMediaSnapshot: () async => _media(ready: ready),
+          dispatchEvent: (event, {canApply}) async => events.add(event),
+          clock: () => _now,
+        );
+        intents.add(CallAudioInterruptionIntent.recover);
+        async.flushMicrotasks();
+        expect(events, isEmpty);
+        ready = true;
+        async.elapse(const Duration(milliseconds: 100));
+        expect(events.map((e) => e.type), [CallEventType.mediaRecovered]);
+        unawaited(bridge.close());
+        unawaited(intents.close());
+        async.flushMicrotasks();
+        expect(async.pendingTimers, isEmpty);
+      });
+    },
+  );
+
+  test('transport upgrade fences a queued audio-only recovery', () async {
+    final intents = StreamController<CallAudioInterruptionIntent>.broadcast(
+      sync: true,
+    );
+    var session = _session(
+      CallState.reconnecting,
+    ).copyWith(transportRecoveryRequired: false);
+    final dispatched = Completer<bool Function()?>();
+    final bridge = CallAudioInterruptionCoordinator(
+      intents: intents.stream,
+      readActiveSession: () => session,
+      readMediaSnapshot: () async => _media(ready: true),
+      dispatchEvent: (event, {canApply}) async {
+        dispatched.complete(canApply);
+      },
+      clock: () => _now,
+    );
+    addTearDown(() async {
+      await bridge.close();
+      await intents.close();
+    });
+    intents.add(CallAudioInterruptionIntent.recover);
+    final canApply = (await dispatched.future)!;
+    expect(canApply(), isTrue);
+    session = session.copyWith(transportRecoveryRequired: true);
+    expect(canApply(), isFalse);
+  });
+
+  test(
     'focus loss and ready recovery use canonical reconnect events',
     () async {
       final intents = StreamController<CallAudioInterruptionIntent>.broadcast(
@@ -82,7 +145,7 @@ void main() {
       await _flush();
 
       expect(events.map((event) => event.type), <CallEventType>[
-        CallEventType.mediaLost,
+        CallEventType.audioInterrupted,
         CallEventType.mediaRecovered,
       ]);
     },

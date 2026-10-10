@@ -971,6 +971,32 @@ ui=<node text="a=ice-pwd&#58;encodedPassword399" />
     expect(sanitized, contains('<redacted-private-line>'));
   });
 
+  test(
+    'diagnostic sanitizer removes complete IPv4 and IPv6 multiaddresses',
+    () {
+      const raw = '''
+route=/ip6/fe80::1234/udp/54321/quic-v1
+route=/ip6/::1/tcp/54322/p2p/12D3KooWExamplePeer
+route=/ip4/192.168.0.44/tcp/54323
+address=/ip4/192.168.0.45
+safe lifecycle marker
+''';
+      final sanitized = sanitizeAndroidProductionAudioCallDiagnosticText(raw);
+      expect(sanitized, contains('safe lifecycle marker'));
+      expect('<multiaddr>'.allMatches(sanitized), hasLength(4));
+      for (final residue in [
+        '/ip4/',
+        '/ip6/',
+        'fe80',
+        '54321',
+        '54322',
+        '54323',
+      ]) {
+        expect(sanitized, isNot(contains(residue)));
+      }
+    },
+  );
+
   test('diagnostic sanitizer removes RTP identifier-only stats lines', () {
     const raw = '''
 stats={ssrc:123456}

@@ -39,10 +39,13 @@ final class CallAudioInterruptionCoordinator {
   Future<void>? _closeFuture;
   int _eventSequence = 0;
   int _interruptionRevision = 0;
+  Timer? _readinessRetry;
   bool _closed = false;
 
   void _onIntent(CallAudioInterruptionIntent intent) {
     if (_closed) return;
+    _readinessRetry?.cancel();
+    _readinessRetry = null;
     // Invalidate an outstanding readiness read at ingress. The serialized
     // handler for this loss can otherwise sit behind that read while its stale
     // result incorrectly reconnects a call whose audio focus was lost again.
@@ -63,17 +66,28 @@ final class CallAudioInterruptionCoordinator {
     switch (intent) {
       case CallAudioInterruptionIntent.pausedReconnect:
         if (session.state == CallState.connected) {
-          type = CallEventType.mediaLost;
+          type = CallEventType.audioInterrupted;
         }
       case CallAudioInterruptionIntent.recover:
         if (revision != _interruptionRevision) return;
         CallConnectionSnapshot media;
         try {
           media = await _readMediaSnapshot();
+        } on CallEngineException catch (error) {
+          if (error.code == CallEngineErrorCode.observationUnavailable ||
+              error.code == CallEngineErrorCode.notReady) {
+            _retryReadiness(session, revision);
+          }
+          return;
         } catch (_) {
           return;
         }
-        if (!_canRecover(session, revision) || !media.isMediaReady) {
+        if (!_canRecover(session, revision)) return;
+        if (!media.isMediaReady) {
+          // Focus can return before native audio readiness catches up. There
+          // is no ICE restart/connected callback for an audio-only recovery,
+          // so retry under the same episode and original canonical deadline.
+          _retryReadiness(session, revision);
           return;
         }
         type = switch (session.state) {
@@ -105,11 +119,30 @@ final class CallAudioInterruptionCoordinator {
     final current = _readActiveSession();
     return current?.callId == session.callId &&
         current?.state == session.state &&
+        current?.transportRecoveryRequired ==
+            session.transportRecoveryRequired &&
         current?.reconnectGeneration == session.reconnectGeneration;
+  }
+
+  void _retryReadiness(CallSessionSnapshot session, int revision) {
+    if (!_canRecover(session, revision) ||
+        (session.state != CallState.reconnecting &&
+            session.state != CallState.negotiating)) {
+      return;
+    }
+    _readinessRetry?.cancel();
+    _readinessRetry = Timer(const Duration(milliseconds: 100), () {
+      _readinessRetry = null;
+      if (_canRecover(session, revision)) {
+        _onIntent(CallAudioInterruptionIntent.recover);
+      }
+    });
   }
 
   Future<void> close() {
     _closed = true;
+    _readinessRetry?.cancel();
+    _readinessRetry = null;
     return _closeFuture ??= _closeOnce();
   }
 

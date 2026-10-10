@@ -19,6 +19,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:just_audio_platform_interface/just_audio_platform_interface.dart';
 import 'package:flutter_app/core/config/direct_media_blob_custody_client_flag.dart';
 import 'package:flutter_app/core/constants/retry_constants.dart';
 import 'package:flutter_app/core/database/outgoing_transport_mutation.dart';
@@ -105,6 +106,7 @@ import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:image_picker/image_picker.dart';
 import '../../../../core/bridge/fake_bridge.dart';
 import '../../../../shared/fakes/fake_audio_recorder_service.dart';
+import '../../../../shared/fakes/fake_just_audio.dart';
 import '../../../../shared/fakes/fake_mic_permission_gateway.dart';
 import '../../../../shared/fakes/fake_media_file_manager.dart';
 import '../../../../shared/helpers/legacy_upload_media_fn.dart';
@@ -1748,6 +1750,7 @@ void main() {
   late FakeUploadWakeLockDriver wakeLockDriver;
 
   setUp(() {
+    installFakeJustAudioPlatform();
     wakeLockDriver = FakeUploadWakeLockDriver();
     UploadWakeLockController.debugReset(driver: wakeLockDriver);
   });
@@ -2439,7 +2442,12 @@ void main() {
     (tester) async {
       late CallDiagnostics diagnostics;
       await tester.runAsync(() async {
-        diagnostics = await CallDiagnostics.installForTesting();
+        // These widget tests assert event semantics; archive I/O has its own
+        // tests. Keep persistence in the fake clock so eventsForTesting does
+        // not join an isolate completion stranded in the widget test zone.
+        diagnostics = await CallDiagnostics.installForTesting(
+          persist: (_, _) async {},
+        );
       });
       addTearDown(() async {
         await diagnostics.setEnabled(false);
@@ -2702,7 +2710,12 @@ void main() {
     (tester) async {
       late CallDiagnostics diagnostics;
       await tester.runAsync(() async {
-        diagnostics = await CallDiagnostics.installForTesting();
+        // These widget tests assert event semantics; archive I/O has its own
+        // tests. Keep persistence in the fake clock so eventsForTesting does
+        // not join an isolate completion stranded in the widget test zone.
+        diagnostics = await CallDiagnostics.installForTesting(
+          persist: (_, _) async {},
+        );
       });
       addTearDown(() async {
         await diagnostics.setEnabled(false);
@@ -12684,6 +12697,7 @@ void main() {
     testWidgets('own voice message is playable right after a successful send', (
       tester,
     ) async {
+      final audioPlatform = JustAudioPlatform.instance as FakeJustAudioPlatform;
       final tempDir = Directory.systemTemp.createTempSync('voice_playable_');
       addTearDown(() {
         if (tempDir.existsSync()) tempDir.deleteSync(recursive: true);
@@ -12799,6 +12813,17 @@ void main() {
         reason: 'the player needs an absolute path it can open',
       );
       expect(File(attachment.localPath!).existsSync(), isTrue);
+      // File resolution and just_audio initialization complete asynchronously.
+      // Join the actual player source load before disposing the voice bubble.
+      final expectedUri = Uri.file(attachment.localPath!).toString();
+      await pumpUntilAsyncIo(
+        tester,
+        () => audioPlatform.loadedUris.contains(expectedUri),
+      );
+      expect(audioPlatform.loadedUris, contains(expectedUri));
+      await tester.pump();
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pumpAndSettle();
     });
 
     // 117 Session 3: the 5-minute auto-stop must NOT silently discard the

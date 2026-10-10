@@ -42,6 +42,20 @@ func startLocalNodeForMultiRelayTestWithCollector(t *testing.T, collector *testE
 	return n
 }
 
+// These warm-cadence tests inject late loopback addresses and use real direct
+// topic delivery. Their relay-ready receipt must have a local control-plane
+// fixture too: an empty node relay list otherwise falls back to production.
+func stubLocalGroupDiscoveryRelay(n *Node) {
+	n.dialPeerViaRelayHook = func(string) error {
+		return errors.New("local fixture has no relay circuit")
+	}
+	n.rendezvousRegisterHook = func(string, []string) error { return nil }
+	n.rendezvousDiscoverHook = func(string, []string) ([]peer.AddrInfo, error) {
+		return nil, nil
+	}
+	n.rendezvousUnregisterHook = func(string, []string) error { return nil }
+}
+
 func startNW002LocalCircuitRelay(t *testing.T) (host.Host, string) {
 	t.Helper()
 	privKey, _, err := libp2pcrypto.GenerateEd25519Key(rand.Reader)
@@ -77,10 +91,16 @@ func startNW002RelayNode(
 	t.Helper()
 	hexKey := generateTestKey(t)
 	n := New(collector)
+	n.hermeticLocalNetworkForTests = true
+	// Keep Identify and hole-punch address exchange from upgrading this
+	// explicitly circuit-only fixture to a direct connection.
+	flags := DefaultFeatureFlags()
+	flags.DebugAdvertiseRelayOnly = true
 	_, err := n.Start(NodeConfig{
 		PrivateKeyHex:  hexKey,
 		RelayAddresses: []string{relayAddr},
 		AutoRegister:   false,
+		FeatureFlags:   &flags,
 	})
 	if err != nil {
 		t.Fatalf("Start with local circuit relay: %v", err)
@@ -547,6 +567,17 @@ func TestGP007ZeroPeerPublishUsesBoundedSettleWait(t *testing.T) {
 
 	capture := &testEventCollector{}
 	n := startLocalNodeForMultiRelayTestWithCollector(t, capture)
+	// A slow relay must not extend the foreground promotion window. Keep this
+	// causal and local instead of depending on the production relay's latency.
+	releaseDial := make(chan struct{})
+	defer close(releaseDial)
+	n.dialPeerViaRelayHook = func(string) error {
+		select {
+		case <-releaseDial:
+		case <-time.After(2 * time.Second):
+		}
+		return errors.New("local slow relay fixture")
+	}
 	groupID := "gp007-zero-peer-bounded-publish"
 	senderPeerID := n.PeerId()
 	remotePeerID := generatePeerIDStr(t)
@@ -1718,6 +1749,7 @@ func TestNW002RelayOnlyOrCircuitRoutedPeerReceivesGroupMessages(t *testing.T) {
 			t.Fatalf("%s circuit dial to %s: %v", pair.from.PeerId(), pair.to.PeerId(), err)
 		}
 		assertNW002LimitedCircuitConn(t, pair.from, pair.to)
+		assertNW002LimitedCircuitConn(t, pair.to, pair.from)
 	}
 
 	for _, n := range []*Node{nodeA, nodeB, nodeC} {
@@ -6553,6 +6585,7 @@ func TestGroupPeerDiscoveryLoop_RetriesMissingThirdPeerDuringWarmWindow(t *testi
 	}
 
 	nodeA := startLocalNodeForMultiRelayTest(t)
+	stubLocalGroupDiscoveryRelay(nodeA)
 	nodeBCapture := &testEventCollector{}
 	nodeCCapture := &testEventCollector{}
 	nodeB := startLocalNodeForMultiRelayTestWithCollector(t, nodeBCapture)
@@ -6838,6 +6871,7 @@ func TestGroupPeerDiscoveryLoop_UsesWarmRetryImmediatelyAfterPartialInitialRecov
 	nodeBCapture := &testEventCollector{}
 	nodeCCapture := &testEventCollector{}
 	nodeA := startLocalNodeForMultiRelayTestWithCollector(t, nodeACapture)
+	stubLocalGroupDiscoveryRelay(nodeA)
 	nodeB := startLocalNodeForMultiRelayTestWithCollector(t, nodeBCapture)
 	nodeC := startLocalNodeForMultiRelayTestWithCollector(t, nodeCCapture)
 

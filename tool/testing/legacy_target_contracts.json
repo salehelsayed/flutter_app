@@ -73,7 +73,7 @@
       "environment": {},
       "config": [],
       "sources": {
-        "scripts/run_test_gates.sh": "3e259a527028c3a32a3cf0877287761a651174126a17ab1e025a73ac1c5168ad"
+        "scripts/run_test_gates.sh": "af06d76de576141942b5f7b0d5a0593f644684f004a0a6c70725fed42f0067c8"
       },
       "audit": "Static path classification; no target execution.",
       "owns": [
@@ -131,10 +131,10 @@
         "relay_addresses"
       ],
       "sources": {
-        "scripts/run_test_gates.sh": "3e259a527028c3a32a3cf0877287761a651174126a17ab1e025a73ac1c5168ad",
+        "scripts/run_test_gates.sh": "af06d76de576141942b5f7b0d5a0593f644684f004a0a6c70725fed42f0067c8",
         "scripts/test/go_binding_staleness_contract_test.sh": "c3ad58ce2f006ed1bdebb931dcffed3eaea38af3f6f874b992ac74db1e29ee5b",
-        "scripts/test/relay_ack_custody_rollout_contract_test.sh": "432ea8ce27838167fbcf3bb2b3859bda4cea37ac321511fd5338b205bd52c431",
-        "scripts/test/relay_go_toolchain_contract_test.sh": "23b662f10a3306267dc6954e36a1111a2634893d5b49f0856886f66c4e69a9ea",
+        "scripts/test/relay_ack_custody_rollout_contract_test.sh": "6b1bac5bc535253d3737d43eb09a66087e7cdeb11729e9b58949d43142f275e1",
+        "scripts/test/relay_go_toolchain_contract_test.sh": "95244e9b918b0b94eb3bb6692f941065714073449a6888e3082d85d1fcc0d927",
         "scripts/test/relay_media_custody_contract_test.sh": "96476128fbce1731c40d7dd349670d2d086b291b6bbe5df2197807d516921361"
       },
       "audit": "run_gate_command sends each integration file to FLUTTER_DEVICE_ID; Go/host leaves have no device.",

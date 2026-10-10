@@ -2067,6 +2067,8 @@ CallSignalingComposition createProductionCallSignalingComposition({
         signalingContextObserver: signalingContextStore,
       );
       final runtime = CallSignalingRuntime(
+        readCallHandle: (callId) =>
+            signalingContextStore.read(callId)?.callHandle,
         directCallSignalStream: messageRouter.callSignalStream,
         mailboxClient: mailbox,
         handleIncoming: handler.handle,

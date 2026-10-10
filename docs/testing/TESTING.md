@@ -862,6 +862,14 @@ Do not fabricate evidence merely to fill the schema.
 
 ## Full regression and CI
 
+Protected legacy contracts hash each nested command owner. The Go 1.27.1
+toolchain upgrade changed `run_test_gates.sh` and both relay toolchain/custody
+contract scripts without refreshing their recorded hashes. Audit the owner
+diffs and refresh all affected entries together; do not remove the checksum
+guard or replace it with an existence check. The original checksum failures
+and focused rechecks are retained under
+`.codex-test-logs/audio-validation-fixes-20261010/`.
+
 The full inventory routes direct-media custody, production one-to-one audio,
 and fixed-wake recovery through their existing outer fixture adapters. These
 adapters start the local service before compiling the relay address into the
@@ -5524,6 +5532,19 @@ visible and cannot become an ordinary first-attempt PASS.
   assertions otherwise compete for Android's UiAutomation connection. Treat a
   missing-file message from `adb exec-out cat` as an unavailable capture even
   when its host exit code is zero; it never proves that a control is absent.
+  Keep source fixed from campaign launch through `verify-report`, including
+  host-test edits: a passing 27-assertion journey is still blocked when its
+  source digest differs at verification. The retained October 10 first journey
+  passed native Answer, bidirectional TURN/UDP RTP, the known-Opus oracle,
+  controls and cleanup, but concurrent host-test repairs invalidated closure
+  (`.codex-test-logs/audio-validation-fixes-20261010/audio-native-device/`).
+  Diagnostic capture must remove whole IPv4 and IPv6 multiaddresses, including
+  address-only forms, before token redaction. IPv4-only redaction left `/ip6/`
+  residue and correctly tripped the fail-closed privacy scan during the next
+  device run. Keep that residue scan; the new synthetic address regression
+  reproduces the blocker, and all 56 campaign host tests pass with both address
+  families removed. Evidence is in `audio-sanitizer-red.log`,
+  `audio-campaign-host.log`, and `audio-device-final/` under the same directory.
   The September 20 Start-voice-call timeout also retained an emulator screenshot
   with a System UI ANR dialog covering the conversation. A later Appium MCP
   capture confirmed the dialog was still present; selecting its Wait action
@@ -6561,6 +6582,32 @@ visible and cannot become an ordinary first-attempt PASS.
   Recovery readiness sampling must also start after successful current offer
   or answer SDP, with call, phase, generation and epoch fences. Start it outside
   the coordinator-owned effect's awaited dispatch chain to avoid self-wait.
+  An established native `iceConnectionFailed` is recoverable even without a
+  preceding disconnected callback; unclassified transport and non-ICE failures
+  retain their fatal classification. Audio-focus loss enters an audio-only
+  reconnect episode without refreshing TURN or restarting ICE. A subsequent
+  transport loss upgrades that same episode once, preserving its original 15s
+  deadline. Successful recovery episodes have no lifetime restart quota; the
+  executor's per-episode deduplication and canonical deadline bound retries.
+  This supersedes the earlier eight-restart lifetime cap and focus-triggered
+  ICE restarts. Focus-readiness admission also fences an upgrade to transport
+  recovery within the same episode. If focus returns before native media is
+  ready, bounded readiness retries continue within that original deadline
+  without requiring a new native connected callback.
+  The relay distinguishes short encrypted-payload expiry from active routing.
+  An exact authenticated recipient retrieve renews an acknowledged call's
+  routing lease for 45s. The runtime performs this read only for the current
+  connected/reconnecting call and continues general invite drains. General
+  drains, other recipients, unacknowledged calls and expired/canceled leases
+  cannot renew it. Payload expiry, pending-slot release, wake suppression and
+  sender/contact authority remain independent; a late expired ACK cannot
+  retire a live routing lease. Retrying an acknowledged event returns its
+  duplicate receipt even when other calls fill the pending slots; fresh
+  events must reacquire a slot. Both updated app and relay are required for this
+  behavior. The [relay lease regressions](../../.codex-test-logs/audio-call-review-20261010/relay-idempotence-final.log)
+  and [runtime/focus regressions](../../.codex-test-logs/audio-call-review-20261010/app-lease-focus-tests.log),
+  plus [final readiness/negotiation regressions](../../.codex-test-logs/audio-call-review-20261010/app-final-recovery-tests.log),
+  are host proofs, not live-device audio or deployed-relay certification.
   A reconnect episode has its own local generation: timestamps and native ICE
   generation can remain unchanged across separate interruptions. Scope restart
   deduplication to that episode, and carry it through queued media readiness,
@@ -6999,6 +7046,46 @@ State an investigation area separately from a proven root cause.
   attribution of that original exception. The updated exact affected-groups
   lane passed all 3,195 cases with no skips. Keep both results under
   `.codex-test-logs/failure-fixes-20260920/`.
+- **Bounded group publish promotion and local discovery fixtures:** the
+  foreground peer-promotion window must include time spent dialing. Waiting
+  synchronously for relay dialing before the 150 ms zero-peer settle wait
+  produced a five-second publish delay. Recovery now uses nonblocking admission
+  to the existing cross-group concurrency limiter and continues independently
+  of the foreground settle window. A locally delayed relay reproduces the
+  failure without WAN timing. Warm-retry tests that inject relay readiness must
+  also supply local registration/discovery and unavailable-circuit fixtures:
+  an empty node relay list intentionally falls back to production in the relay
+  selector. Keep real loopback topic delivery and the original peer/deadline
+  assertions. Causal red/green evidence is under
+  `.codex-test-logs/audio-validation-fixes-20261010/group-local-red.log` and
+  `group-focused-green.log`; these focused results do not certify WAN behavior.
+  The NW-002 circuit-only fixture must advertise only circuit addresses;
+  Identify otherwise permits direct upgrades and makes its limited-connection
+  assertion intermittent. Preserve the directed-pair matrix and assert the
+  circuit connection at both endpoints after each dial.
+  The original full-suite and isolated failures remain in `go-core-full.log`
+  and `nw002-original.log`; ten isolated passes are in `nw002-isolated.log`.
+- **Outgoing-call diagnostic widget clocks:** conversation widget tests use
+  the existing diagnostic persistence hook for event-semantic assertions.
+  Archive isolate I/O started in the widget fake-clock zone can strand a later
+  `runAsync(eventsForTesting)` join. Archive persistence remains covered by its
+  dedicated diagnostics tests. Inject a stalled contact recheck after initial
+  screen readiness, and prove deadline boundaries with fake-clock pumps;
+  `Stopwatch` diagnostic durations use real elapsed time and cannot assert a
+  ten-second fake-clock advance. The repaired whole conversation widget file
+  passed 192 tests; the original hang and focused fixture failure remain under
+  `.codex-test-logs/audio-validation-fixes-20261010/conversation-*.log`.
+  This file also builds voice bubbles, so install the shared fake just_audio
+  platform before each case. Otherwise asynchronous player initialization can
+  intermittently reach an unimplemented host plugin (`disposeAllPlayers` or
+  `init`), as retained in `conversation-final.log`; real file-path assertions
+  remain intact. Join the fake player's exact resolved URI load and dispose
+  the widget before draining timers: asynchronous file resolution can otherwise
+  leave the fake player's zero-delay ready event pending at teardown. Settling
+  the entire live conversation first can wait indefinitely on unrelated UI
+  animation. The original pending-timer failure is in `conversation-verified.log`.
+  With both fixture repairs, the exact affected-conversation selection passed
+  2,645 tests with no skips (`conversation-complete.log`).
 - **Standalone diagnostic harness discovery:** the PiP native-contract suite
   inventories every integration harness and driver, including files named
   `_harness.dart`. Adding the relay/diagnostics harnesses without explicit

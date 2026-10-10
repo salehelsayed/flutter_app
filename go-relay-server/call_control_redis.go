@@ -41,6 +41,13 @@ type redisCallMeta struct {
 	// AckedEvents counts events the recipient acknowledged on this call. Old
 	// records decode as zero, which never marks a recipient attached.
 	AckedEvents int `json:"ackedEvents,omitempty"`
+	// Only exact, authenticated recipient reads renew this routing lease.
+	// Encrypted event payloads retain their independent, short expiry.
+	ActiveUntilMs int64 `json:"activeUntilMs,omitempty"`
+}
+
+func (m *redisCallMeta) routingExpiryMs() int64 {
+	return max(m.ExpiresAtMs, m.ActiveUntilMs)
 }
 
 type redisCallTombstone struct {
@@ -129,7 +136,8 @@ func (s *redisCallControlStore) Store(
 		if err != nil {
 			return err
 		}
-		if tombstone != nil && (tombstone.State != "pending" || tombstone.ExpiresAtMs <= nowMs) {
+		if tombstone != nil && (tombstone.State != "pending" ||
+			(tombstone.ExpiresAtMs <= nowMs && (meta == nil || meta.ActiveUntilMs <= nowMs))) {
 			return ErrCallReplay
 		}
 		if tombstone != nil && meta == nil {
@@ -159,10 +167,6 @@ func (s *redisCallControlStore) Store(
 		if newHandle && len(reservations) >= callMaxTerminalTombstonesPerRecipient {
 			return ErrCallRecipientCapacity
 		}
-		if newHandle && len(liveHandles) >= CallMaxPendingHandles {
-			return ErrCallRecipientCapacity
-		}
-
 		if meta != nil {
 			if meta.SenderPeerID != sender || meta.RecipientDevicePeerID != request.RecipientDevicePeerID ||
 				meta.CallHandle != request.CallHandle {
@@ -180,7 +184,7 @@ func (s *redisCallControlStore) Store(
 				}
 				_, err = tx.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
 					pipe.HSet(ctx, keys.meta, "record", metaRaw)
-					pipe.PExpireAt(ctx, keys.meta, time.UnixMilli(meta.ExpiresAtMs))
+					pipe.PExpireAt(ctx, keys.meta, time.UnixMilli(meta.routingExpiryMs()))
 					return nil
 				})
 				if err != nil {
@@ -192,12 +196,22 @@ func (s *redisCallControlStore) Store(
 			case !errors.Is(err, redis.Nil):
 				return err
 			}
+			if meta.ExpiresAtMs <= nowMs {
+				// The payload keys have expired while the recipient kept routing
+				// alive. Expired events no longer consume pending capacity.
+				meta.EventCount = 0
+				meta.TotalBytes = 0
+			}
 			if meta.EventCount >= CallMaxEventsPerCall {
 				return ErrCallEventCapacity
 			}
 			if meta.TotalBytes+len(request.Envelope) > CallMaxBytesPerCall {
 				return ErrCallByteCapacity
 			}
+		}
+		// An idempotent retry above adds no payload and needs no pending slot.
+		if !slices.Contains(liveHandles, request.CallHandle) && len(liveHandles) >= CallMaxPendingHandles {
+			return ErrCallRecipientCapacity
 		}
 
 		rate, err := tx.Get(ctx, rateKey).Int()
@@ -251,7 +265,8 @@ func (s *redisCallControlStore) Store(
 			}
 		}
 		payloadExpiry := time.UnixMilli(meta.ExpiresAtMs)
-		tombExpiry := payloadExpiry.Add(CallReplayTombstoneTTL)
+		routingExpiry := time.UnixMilli(meta.routingExpiryMs())
+		tombExpiry := routingExpiry.Add(CallReplayTombstoneTTL)
 		_, err = tx.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
 			pipe.ZRemRangeByScore(ctx, keys.handles, "-inf", strconv.FormatInt(nowMs, 10))
 			pipe.ZAdd(ctx, keys.handles, redis.Z{Score: float64(meta.ExpiresAtMs), Member: request.CallHandle})
@@ -263,9 +278,10 @@ func (s *redisCallControlStore) Store(
 			pipe.ZRemRangeByScore(ctx, keys.replays, "-inf", strconv.FormatInt(nowMs, 10))
 			pipe.ZAdd(ctx, keys.replays, redis.Z{Score: float64(tombExpiry.UnixMilli()), Member: replayMember})
 			pipe.Expire(ctx, keys.replays, CallReplayTombstoneTTL+CallMaxPreconnectTTL)
-			for _, key := range []string{keys.meta, keys.events, keys.ids, keys.claims} {
+			for _, key := range []string{keys.events, keys.ids, keys.claims} {
 				pipe.PExpireAt(ctx, key, payloadExpiry)
 			}
+			pipe.PExpireAt(ctx, keys.meta, routingExpiry)
 			pipe.PExpireAt(ctx, keys.tombstone, tombExpiry)
 			if rate == 0 {
 				pipe.Set(ctx, rateKey, 1, callStoreRateWindow)
@@ -317,7 +333,7 @@ func (s *redisCallControlStore) Retrieve(
 			result.HasMore = true
 			break
 		}
-		events, expiresAt, hasMore, err := s.retrieveOne(ctx, recipient, handle, remaining, now)
+		events, expiresAt, hasMore, err := s.retrieveOne(ctx, recipient, handle, remaining, now, callHandle != "")
 		if err != nil {
 			return CallRetrieveResult{}, err
 		}
@@ -336,6 +352,7 @@ func (s *redisCallControlStore) retrieveOne(
 	recipient, handle string,
 	limit int,
 	now time.Time,
+	renewActiveLease bool,
 ) ([]CallMailboxEvent, int64, bool, error) {
 	keys := s.callKeys(recipient, handle)
 	var (
@@ -353,8 +370,11 @@ func (s *redisCallControlStore) retrieveOne(
 		if meta == nil || meta.RecipientDevicePeerID != recipient {
 			return nil
 		}
-		if meta.ExpiresAtMs <= now.UnixMilli() {
+		if meta.routingExpiryMs() <= now.UnixMilli() {
 			return s.terminalizeTx(ctx, tx, keys, meta, "expired", now)
+		}
+		if renewActiveLease && meta.AckedEvents > 0 {
+			meta.ActiveUntilMs = now.Add(CallMaxPreconnectTTL).UnixMilli()
 		}
 		rows, err := tx.LRange(ctx, keys.events, 0, int64(limit)).Result()
 		if err != nil && !errors.Is(err, redis.Nil) {
@@ -383,6 +403,21 @@ func (s *redisCallControlStore) retrieveOne(
 		}
 		_, err = tx.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
 			pipe.HSet(ctx, keys.meta, "lastRetrieveAtMs", now.UnixMilli())
+			if renewActiveLease && meta.AckedEvents > 0 {
+				metaRaw, err := marshalCallRecord(*meta)
+				if err != nil {
+					return err
+				}
+				pipe.HSet(ctx, keys.meta, "record", metaRaw)
+				routingExpiry := time.UnixMilli(meta.routingExpiryMs())
+				tombExpiry := routingExpiry.Add(CallReplayTombstoneTTL)
+				pipe.PExpireAt(ctx, keys.meta, routingExpiry)
+				// No envelope, event ID or wake claim gets an extended TTL.
+				pipe.PExpireAt(ctx, keys.tombstone, tombExpiry)
+				pipe.ZRemRangeByScore(ctx, keys.replays, "-inf", strconv.FormatInt(now.UnixMilli(), 10))
+				pipe.ZAdd(ctx, keys.replays, redis.Z{Score: float64(tombExpiry.UnixMilli()), Member: redisCallReplayDirectoryMember(handle)})
+				pipe.Expire(ctx, keys.replays, CallReplayTombstoneTTL+CallMaxPreconnectTTL)
+			}
 			return nil
 		})
 		if err != nil {
@@ -421,6 +456,11 @@ func (s *redisCallControlStore) Ack(
 			return ErrCallUnauthorized
 		}
 		if meta.ExpiresAtMs <= now.UnixMilli() {
+			if meta.ActiveUntilMs > now.UnixMilli() {
+				// A late ACK of an expired event cannot retire the separately
+				// renewed active call. There is no remaining payload to ACK.
+				return nil
+			}
 			return s.terminalizeTx(ctx, tx, keys, meta, "expired", now)
 		}
 		rows, err := tx.LRange(ctx, keys.events, 0, -1).Result()

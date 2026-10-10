@@ -624,7 +624,8 @@ final class CallReducer {
             ],
           );
         }
-        if (event.type == CallEventType.mediaLost) {
+        if (event.type == CallEventType.mediaLost ||
+            event.type == CallEventType.audioInterrupted) {
           // The caller owns ICE restarts so two simultaneous restarts can
           // never collide. The callee asks the caller to restart instead.
           return _transition(
@@ -638,11 +639,12 @@ final class CallReducer {
                 CallEffectType.scheduleReconnectTimeout,
                 delay: policy.reconnectTimeout,
               ),
-              CallEffect(
-                snapshot.direction == CallDirection.incoming
-                    ? CallEffectType.requestIceRestart
-                    : CallEffectType.restartIce,
-              ),
+              if (event.type == CallEventType.mediaLost)
+                CallEffect(
+                  snapshot.direction == CallDirection.incoming
+                      ? CallEffectType.requestIceRestart
+                      : CallEffectType.restartIce,
+                ),
             ],
           );
         }
@@ -664,10 +666,25 @@ final class CallReducer {
         }
         return _stateMismatch(snapshot);
       case CallState.reconnecting:
+        if (event.type == CallEventType.mediaLost &&
+            !snapshot.transportRecoveryRequired) {
+          // Upgrade an audio-only episode without resetting its deadline.
+          return _apply(
+            snapshot.copyWith(transportRecoveryRequired: true),
+            event,
+            effects: <CallEffect>[
+              CallEffect(
+                snapshot.direction == CallDirection.incoming
+                    ? CallEffectType.requestIceRestart
+                    : CallEffectType.restartIce,
+              ),
+            ],
+          );
+        }
         if (event.type == CallEventType.remoteOffer ||
             event.type == CallEventType.remoteAnswer) {
           return _apply(
-            snapshot,
+            snapshot.copyWith(transportRecoveryRequired: true),
             event,
             effects: <CallEffect>[
               CallEffect(
@@ -680,7 +697,7 @@ final class CallReducer {
         }
         if (event.type == CallEventType.remoteIceRestart) {
           return _apply(
-            snapshot,
+            snapshot.copyWith(transportRecoveryRequired: true),
             event,
             effects: const <CallEffect>[CallEffect(CallEffectType.restartIce)],
           );
@@ -799,6 +816,9 @@ final class CallReducer {
     return _withEffects(
       snapshot.copyWith(
         state: state,
+        transportRecoveryRequired:
+            state == CallState.reconnecting &&
+            event.type != CallEventType.audioInterrupted,
         reconnectGeneration:
             state == CallState.reconnecting &&
                 snapshot.state != CallState.reconnecting

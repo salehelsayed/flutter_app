@@ -11,6 +11,7 @@ import '../application/call_network_gate.dart';
 import '../application/handle_incoming_call_signal.dart';
 import '../domain/call_id.dart';
 import '../domain/call_session_snapshot.dart';
+import '../domain/call_state.dart';
 import 'call_mailbox_client.dart';
 
 typedef HandleCallSignalFrame =
@@ -46,6 +47,7 @@ final class CallSignalingRuntime {
     PrepareCallMailboxSettlement? prepareMailboxSettlement,
     required CallCoordinator coordinator,
     required CallNetworkEffectsAllowed networkEffectsAllowed,
+    String? Function(CallId callId)? readCallHandle,
     this.maxMailboxPagesPerDrain = 8,
     this.maxPendingOperations = 64,
   }) : _directCallSignalStream = directCallSignalStream,
@@ -55,6 +57,7 @@ final class CallSignalingRuntime {
        _handleMailboxIncoming = handleMailboxIncoming,
        _prepareMailboxSettlement = prepareMailboxSettlement,
        _coordinator = coordinator,
+       _readCallHandle = readCallHandle,
        _networkEffectsAllowed = networkEffectsAllowed {
     if (maxMailboxPagesPerDrain < 1 || maxMailboxPagesPerDrain > 32) {
       throw ArgumentError.value(
@@ -74,6 +77,7 @@ final class CallSignalingRuntime {
   final HandleMailboxCallSignalFrame? _handleMailboxIncoming;
   final PrepareCallMailboxSettlement? _prepareMailboxSettlement;
   final CallCoordinator _coordinator;
+  final String? Function(CallId callId)? _readCallHandle;
   final CallNetworkEffectsAllowed _networkEffectsAllowed;
   final int maxMailboxPagesPerDrain;
   final int maxPendingOperations;
@@ -194,6 +198,21 @@ final class CallSignalingRuntime {
       );
 
   Future<void> _drainMailbox() async {
+    final session = _coordinator.activeSession;
+    if (session?.callId != null &&
+        (session!.state == CallState.connected ||
+            session.state == CallState.reconnecting)) {
+      final handle = _readCallHandle?.call(session.callId!);
+      if (handle != null) {
+        // Exact recipient reads keep acknowledged routing alive after the
+        // pending index is drained. They never extend encrypted payload TTLs.
+        await _drainMailboxFor(callHandle: handle);
+      }
+    }
+    if (!_disposed && !_shuttingDown) await _drainMailboxFor();
+  }
+
+  Future<void> _drainMailboxFor({String? callHandle}) async {
     for (
       var pageIndex = 0;
       pageIndex < maxMailboxPagesPerDrain && !_disposed;
@@ -201,7 +220,7 @@ final class CallSignalingRuntime {
     ) {
       late final CallMailboxRetrieveResult page;
       try {
-        page = await _mailboxClient.retrieve();
+        page = await _mailboxClient.retrieve(callHandle: callHandle);
       } catch (_) {
         return;
       }

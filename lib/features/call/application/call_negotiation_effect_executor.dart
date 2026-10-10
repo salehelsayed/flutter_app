@@ -167,7 +167,7 @@ final class CallNegotiationEffectExecutor implements CallEffectExecutor {
       ListQueue<_PendingLocalCandidate>();
   final ListQueue<CallIceCandidate> _pendingRemoteCandidates =
       ListQueue<CallIceCandidate>();
-  final Set<int> _announcedLocalDescriptionGenerations = <int>{};
+  int? _announcedLocalDescriptionGeneration;
   int? _remoteDescriptionGeneration;
 
   bool _candidateDrainInFlight = false;
@@ -746,7 +746,8 @@ final class CallNegotiationEffectExecutor implements CallEffectExecutor {
   }
 
   void _announceLocalDescription(int generation) {
-    _announcedLocalDescriptionGenerations.add(generation);
+    if (generation != engine.iceGeneration) return;
+    _announcedLocalDescriptionGeneration = generation;
     _ensureCandidateDrain();
   }
 
@@ -915,9 +916,8 @@ final class CallNegotiationEffectExecutor implements CallEffectExecutor {
         _candidateRetryCount > 0) {
       return;
     }
-    if (!_announcedLocalDescriptionGenerations.contains(
-      _pendingLocalCandidates.first.candidate.iceGeneration,
-    )) {
+    if (_announcedLocalDescriptionGeneration !=
+        _pendingLocalCandidates.first.candidate.iceGeneration) {
       return;
     }
     _candidateDrainInFlight = true;
@@ -930,9 +930,8 @@ final class CallNegotiationEffectExecutor implements CallEffectExecutor {
           !_candidateEgressFailed &&
           _pendingLocalCandidates.isNotEmpty) {
         final first = _pendingLocalCandidates.first;
-        if (!_announcedLocalDescriptionGenerations.contains(
-          first.candidate.iceGeneration,
-        )) {
+        if (_announcedLocalDescriptionGeneration !=
+            first.candidate.iceGeneration) {
           return;
         }
         _pendingLocalCandidates.removeFirst();
@@ -1010,13 +1009,13 @@ final class CallNegotiationEffectExecutor implements CallEffectExecutor {
     if (_closed) return;
     final session = _readSnapshotSafely();
     if (session == null || session.callId == null || session.isTerminal) return;
-    if (event.connectionState == CallConnectionState.disconnected &&
-        !_isFailureEngineEvent(event) &&
-        session.state == CallState.connected) {
+    final needsRecovery = _needsTransportRecovery(event, session);
+    if (needsRecovery) {
       _pendingMediaLossCallId = session.callId;
     }
     final isTerminalFailure =
         _isFailureEngineEvent(event) &&
+        !needsRecovery &&
         !_isProvisionalIceChecklistFailure(event, session);
     if (_isFailureEngineEvent(event)) {
       _observeFailure(session.callId!, event.failureReason, isTerminalFailure);
@@ -1039,7 +1038,8 @@ final class CallNegotiationEffectExecutor implements CallEffectExecutor {
         isTerminalFailure: isTerminalFailure,
         disconnect: isTerminalFailure
             ? null
-            : event.connectionState == CallConnectionState.disconnected
+            : needsRecovery ||
+                  event.connectionState == CallConnectionState.disconnected
             ? event
             : pending?.session.callId == session.callId
             ? pending?.disconnect
@@ -1100,6 +1100,20 @@ final class CallNegotiationEffectExecutor implements CallEffectExecutor {
     }
     _trackedCallIds.add(session.callId!);
 
+    if (_needsTransportRecovery(event, session)) {
+      _closedMediaReadinessPhases.remove((
+        session.callId!,
+        CallEventType.mediaRecovered,
+      ));
+      try {
+        await _dispatchCanonical(_followUp(CallEventType.mediaLost, session));
+      } finally {
+        if (_pendingMediaLossCallId == session.callId) {
+          _pendingMediaLossCallId = null;
+        }
+      }
+      return;
+    }
     if (_isFailureEngineEvent(event)) {
       if (_isProvisionalIceChecklistFailure(event, session)) {
         // A TURN permission rejection for an early private host candidate can
@@ -1112,25 +1126,7 @@ final class CallNegotiationEffectExecutor implements CallEffectExecutor {
       await _dispatchFailureForSession(session);
       return;
     }
-    if (event.connectionState == CallConnectionState.disconnected) {
-      if (session.state == CallState.connected) {
-        // The reducer gives the next reconnect its own restart budget.
-        _closedMediaReadinessPhases.remove((
-          session.callId!,
-          CallEventType.mediaRecovered,
-        ));
-        try {
-          await _dispatchCanonical(_followUp(CallEventType.mediaLost, session));
-        } finally {
-          // The reducer now owns recovery (or terminated). This receipt is
-          // only for the dispatch boundary, never a later healthy episode.
-          if (_pendingMediaLossCallId == session.callId) {
-            _pendingMediaLossCallId = null;
-          }
-        }
-      }
-      return;
-    }
+    if (event.connectionState == CallConnectionState.disconnected) return;
     if (event.connectionState != CallConnectionState.connected) return;
 
     final type = _mediaReadinessTypeFor(session.state);
@@ -1557,6 +1553,19 @@ final class CallNegotiationEffectExecutor implements CallEffectExecutor {
       event.connectionState == CallConnectionState.failed ||
       event.connectionState == CallConnectionState.closed ||
       event.failureReason != CallFailureReason.none;
+
+  static bool _needsTransportRecovery(
+    CallEngineEvent event,
+    CallSessionSnapshot session,
+  ) =>
+      (session.state == CallState.connected ||
+          (session.state == CallState.reconnecting &&
+              !session.transportRecoveryRequired)) &&
+      event.type == CallEngineEventType.state &&
+      ((event.connectionState == CallConnectionState.disconnected &&
+              event.failureReason == CallFailureReason.none) ||
+          (event.connectionState == CallConnectionState.failed &&
+              event.failureReason == CallFailureReason.iceConnectionFailed));
 
   static bool _isInitialIceChecklistFailure(
     CallEngineEvent event,

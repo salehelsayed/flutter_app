@@ -2831,7 +2831,7 @@ String sanitizeAndroidProductionAudioCallDiagnosticText(String value) {
         '<turn-url>',
       )
       .replaceAll(
-        RegExp(r'/ip4/[^/\s]+/(?:tcp|udp)/\d+(?:/p2p/[^/\s]+)?'),
+        RegExp(r'/ip[46]/[^\s,\]\"]+', caseSensitive: false),
         '<multiaddr>',
       )
       .replaceAll(RegExp(r'12D3KooW[A-Za-z0-9]+'), '<peer>')

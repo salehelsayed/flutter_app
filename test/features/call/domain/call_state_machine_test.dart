@@ -46,6 +46,59 @@ CallSessionSnapshot _reduce(List<CallEvent> events) {
 }
 
 void main() {
+  for (final direction in CallDirection.values) {
+    test(
+      'audio interruption upgrades once to transport recovery for ${direction.name}',
+      () {
+        const reducer = CallReducer();
+        final connected = CallSessionSnapshot.active(
+          callId: _callA,
+          contactPeerId: 'contact',
+          direction: direction,
+          state: CallState.connected,
+          callerAccountPeerId: 'local',
+          callerDeviceId: 'device',
+          startedAt: _t0,
+          acceptedAt: _t0,
+          connectedAt: _t0,
+        );
+        final interrupted = reducer.reduce(
+          connected,
+          _event(CallEventType.audioInterrupted),
+        );
+        expect(interrupted.snapshot.state, CallState.reconnecting);
+        expect(interrupted.snapshot.transportRecoveryRequired, isFalse);
+        expect(interrupted.effects.map((e) => e.type), [
+          CallEffectType.scheduleReconnectTimeout,
+        ]);
+        final lost = reducer.reduce(
+          interrupted.snapshot,
+          _event(CallEventType.mediaLost),
+        );
+        expect(
+          lost.snapshot.reconnectGeneration,
+          interrupted.snapshot.reconnectGeneration,
+        );
+        expect(lost.snapshot.transportRecoveryRequired, isTrue);
+        expect(lost.effects.map((e) => e.type), [
+          direction == CallDirection.outgoing
+              ? CallEffectType.restartIce
+              : CallEffectType.requestIceRestart,
+        ]);
+        final repeated = reducer.reduce(
+          lost.snapshot,
+          _event(CallEventType.mediaLost, eventId: 'repeat'),
+        );
+        expect(repeated.effects, isEmpty);
+        final expired = reducer.reduce(
+          lost.snapshot,
+          _event(CallEventType.timeout, timeoutKind: CallTimeoutKind.reconnect),
+        );
+        expect(expired.snapshot.endReason, CallEndReason.reconnectFailed);
+      },
+    );
+  }
+
   group('VC2-02 pure reducer causal matrix', () {
     final cases =
         <

@@ -88,6 +88,7 @@ final class _PendingMediaEffects implements CallEffectExecutor {
 final class _Mailbox implements CallMailboxClient {
   final List<CallMailboxRetrieveResult> pages = <CallMailboxRetrieveResult>[];
   int retrieves = 0;
+  final retrievedHandles = <String?>[];
   int acks = 0;
   int ackAttempts = 0;
   bool failAcks = false;
@@ -102,6 +103,7 @@ final class _Mailbox implements CallMailboxClient {
     int limit = 64,
   }) async {
     retrieves++;
+    retrievedHandles.add(callHandle);
     await retrieveBarrier;
     if (pages.isNotEmpty) return pages.removeAt(0);
     return CallMailboxRetrieveResult(
@@ -479,6 +481,63 @@ void _queueEvent(_Mailbox mailbox, CallMailboxEvent event) => mailbox.pages.add(
 );
 
 void main() {
+  test(
+    'active call renews exact mailbox routing and still drains new invites',
+    () async {
+      final stream = StreamController<ChatMessage>.broadcast();
+      final mailbox = _Mailbox();
+      final coordinator = _coordinator();
+      final callId = CallId.parse('11111111-1111-4111-8111-111111111111');
+      const handle = '33333333-3333-4333-8333-333333333333';
+      final runtime = CallSignalingRuntime(
+        directCallSignalStream: stream.stream,
+        mailboxClient: mailbox,
+        handleIncoming: (_) async => IncomingCallSignalOutcome.accepted,
+        coordinator: coordinator,
+        networkEffectsAllowed: () => true,
+        readCallHandle: (id) => id == callId ? handle : null,
+      );
+      addTearDown(() async {
+        await runtime.dispose();
+        await stream.close();
+      });
+      await runtime.start();
+      Future<void> event(CallEventType type) async {
+        await coordinator.dispatch(
+          CallEvent(
+            type: type,
+            eventId: type.name,
+            occurredAt: _runtimeNow,
+            callId: callId,
+            contactPeerId: 'contact',
+            localAccountPeerId: 'local',
+            localDeviceId: 'device',
+          ),
+        );
+      }
+
+      await event(CallEventType.place);
+      await event(CallEventType.outgoingInviteReady);
+      await runtime.onResume();
+      expect(mailbox.retrievedHandles, everyElement(isNull));
+      await event(CallEventType.remoteAccept);
+      await event(CallEventType.negotiationReady);
+      await event(CallEventType.mediaConnected);
+      expect(coordinator.activeSession?.state, CallState.connected);
+      mailbox.retrievedHandles.clear();
+      await runtime.onResume();
+      expect(mailbox.retrievedHandles, [handle, null]);
+      await event(CallEventType.mediaLost);
+      mailbox.retrievedHandles.clear();
+      await runtime.onResume();
+      expect(mailbox.retrievedHandles, [handle, null]);
+      await event(CallEventType.end);
+      mailbox.retrievedHandles.clear();
+      await runtime.onResume();
+      expect(mailbox.retrievedHandles, [null]);
+    },
+  );
+
   for (final variant in <String>[
     'terminate',
     'reject',
