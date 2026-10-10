@@ -51,6 +51,13 @@ cat_make="$tmp_dir/bin/make"
 printf '%s\n' \
   '#!/usr/bin/env bash' \
   'set -euo pipefail' \
+  '# Skip make flags (the ensure scripts call `make -s gomobile-tools`).' \
+  'while [ "${1:-}" != "${1#-}" ]; do shift; done' \
+  'if [ "${1:-}" = "gomobile-tools" ]; then' \
+  '  # Tool install step (plan 406): never a binding rebuild, logged apart.' \
+  '  printf "%s\n" "$1" >>"${TEST_BUILD_LOG:?}.tools"' \
+  '  exit 0' \
+  'fi' \
   'printf "%s\n" "$1" >>"${TEST_BUILD_LOG:?}"' \
   'case "$1" in' \
   '  android)' \
@@ -209,5 +216,9 @@ run_ios
   fail 'NDK identity change did not rebuild Android exactly once'
 [ "$(grep -c '^ios$' "$build_log" || true)" -eq 0 ] ||
   fail 'Android NDK identity change rebuilt the iOS binding'
+
+# Both ensure scripts install the pinned gomobile/gobind before the digest.
+[ "$(grep -c '^gomobile-tools$' "$build_log.tools")" -ge 2 ] ||
+  fail 'ensure scripts no longer install the pinned gomobile tools first'
 
 printf 'PASS: gomobile deterministic stamp tracks content/toolchains once\n'
