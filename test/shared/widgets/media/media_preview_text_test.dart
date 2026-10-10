@@ -7,6 +7,7 @@ MediaAttachment _makeAttachment({
   required String mediaType,
   String mime = 'application/octet-stream',
   int? durationMs,
+  String? fileName,
 }) {
   return MediaAttachment(
     id: 'id-${DateTime.now().microsecondsSinceEpoch}',
@@ -15,6 +16,7 @@ MediaAttachment _makeAttachment({
     size: 1024,
     mediaType: mediaType,
     durationMs: durationMs,
+    fileName: fileName,
     downloadStatus: 'done',
     createdAt: DateTime.now().toIso8601String(),
   );
@@ -23,7 +25,9 @@ MediaAttachment _makeAttachment({
 void main() {
   group('mediaPreviewText', () {
     test('returns "Photo" for single image', () {
-      final result = mediaPreviewText([_makeAttachment(mediaType: 'image', mime: 'image/jpeg')]);
+      final result = mediaPreviewText([
+        _makeAttachment(mediaType: 'image', mime: 'image/jpeg'),
+      ]);
       expect(result, 'Photo');
     });
 
@@ -37,7 +41,9 @@ void main() {
     });
 
     test('returns "Video" for single video', () {
-      final result = mediaPreviewText([_makeAttachment(mediaType: 'video', mime: 'video/mp4')]);
+      final result = mediaPreviewText([
+        _makeAttachment(mediaType: 'video', mime: 'video/mp4'),
+      ]);
       expect(result, 'Video');
     });
 
@@ -75,8 +81,35 @@ void main() {
 
   group('mediaPreviewIcon', () {
     test('returns camera icon for images', () {
-      final result = mediaPreviewIcon([_makeAttachment(mediaType: 'image', mime: 'image/jpeg')]);
+      final result = mediaPreviewIcon([
+        _makeAttachment(mediaType: 'image', mime: 'image/jpeg'),
+      ]);
       expect(result, Icons.camera_alt_outlined);
+    });
+  });
+
+  group('documents (414)', () {
+    test('one named PDF shows its name and a document icon', () {
+      final media = [
+        _makeAttachment(
+          mediaType: 'file',
+          mime: 'application/pdf',
+          fileName: 'Invoice.pdf',
+        ),
+      ];
+      expect(mediaPreviewText(media), 'Invoice.pdf');
+      expect(mediaPreviewIcon(media), Icons.insert_drive_file_outlined);
+    });
+
+    test('an unnamed or plural file keeps the old text', () {
+      expect(mediaPreviewText([_makeAttachment(mediaType: 'file')]), 'File');
+      expect(
+        mediaPreviewText([
+          _makeAttachment(mediaType: 'file', fileName: 'a.pdf'),
+          _makeAttachment(mediaType: 'file', fileName: 'b.pdf'),
+        ]),
+        '2 files',
+      );
     });
   });
 }

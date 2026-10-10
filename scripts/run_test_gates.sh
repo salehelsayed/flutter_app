@@ -504,6 +504,16 @@ readonly ONE_TO_ONE_TESTS=(
   "test/core/notifications/ios_app_visibility_privacy_manifest_contract_test.dart"
   "test/core/notifications/app_root_notification_open_test.dart"
   "test/features/push/application/set_presence_use_case_test.dart"
+  # 414: PDF document attachments.
+  "test/core/media/media_mime_test.dart"
+  "test/core/media/attachment_file_name_test.dart"
+  "test/core/media/document_file_check_test.dart"
+  "test/core/media/group_media_mime_policy_test.dart"
+  "test/core/media/received_media_egress_channel_test.dart"
+  "test/core/media/received_media_egress_service_test.dart"
+  "test/core/database/migrations/120_media_attachment_file_name_test.dart"
+  "test/features/conversation/domain/models/media_attachment_test.dart"
+  "test/shared/widgets/media/document_attachment_tile_test.dart"
 )
 
 readonly FEED_TESTS=(
@@ -1002,6 +1012,17 @@ readonly GROUP_TESTS=(
   "test/features/groups/integration/group_notification_visibility_staging_test.dart"
   "test/core/debug/group_media_reliability_sender_test.dart"
   "test/unit/dtr18_layering_relocation_contract_test.dart"
+  # 414: PDF document attachments.
+  "test/core/media/media_mime_test.dart"
+  "test/core/media/attachment_file_name_test.dart"
+  "test/core/media/document_file_check_test.dart"
+  "test/core/media/group_media_mime_policy_test.dart"
+  "test/core/media/received_media_egress_channel_test.dart"
+  "test/core/media/received_media_egress_service_test.dart"
+  "test/core/database/migrations/120_media_attachment_file_name_test.dart"
+  "test/features/conversation/domain/models/media_attachment_test.dart"
+  "test/shared/widgets/media/document_attachment_tile_test.dart"
+  "test/features/groups/application/protected_group_media_manifest_file_name_test.dart"
 )
 
 readonly POSTS_TESTS=(

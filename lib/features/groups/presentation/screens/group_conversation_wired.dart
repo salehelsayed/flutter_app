@@ -6,6 +6,10 @@ import 'package:image_picker/image_picker.dart';
 import 'package:uuid/uuid.dart';
 
 import 'package:flutter_app/core/bridge/bridge.dart';
+import 'package:flutter_app/core/config/document_attachments_flag.dart';
+import 'package:flutter_app/core/media/attachment_file_name.dart';
+import 'package:flutter_app/core/media/document_file_check.dart';
+import 'package:flutter_app/core/media/media_mime.dart';
 import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/core/device/upload_wake_lock.dart';
 import 'package:flutter_app/core/media/app_owned_media_path_authority.dart';
@@ -309,6 +313,11 @@ class GroupConversationWired extends StatefulWidget {
   /// unambiguously (the two sheets are duplicated per surface).
   static const attachSheetCancelKey = ValueKey('group-attach-cancel-action');
 
+  /// 414: the attach sheet's "Document" (PDF) row.
+  static const attachSheetDocumentKey = ValueKey(
+    'group-attach-document-action',
+  );
+
   /// 159 (TC-159-05): a test-only counter incremented once per actual group
   /// display-items recompute on the wired State (the group memo is hoisted here
   /// because [GroupConversationScreen] is a StatelessWidget). Tests reset it.
@@ -334,6 +343,10 @@ class GroupConversationWired extends StatefulWidget {
   final MediaFileManager? mediaFileManager;
   final ImageProcessor? imageProcessor;
   final MediaPicker? mediaPicker;
+
+  /// 414 (D3): shows the attach sheet's "Document" (PDF) row. Defaults to the
+  /// `MKNOON_ENABLE_DOCUMENT_ATTACHMENTS` build define.
+  final bool documentAttachmentsEnabled;
   final ImageQualityPreference qualityPreference;
   final ImageQualityPreference videoQualityPreference;
   final AudioRecorderService? audioRecorderService;
@@ -436,6 +449,7 @@ class GroupConversationWired extends StatefulWidget {
     this.mediaFileManager,
     this.imageProcessor,
     this.mediaPicker,
+    this.documentAttachmentsEnabled = kDocumentAttachmentsEnabled,
     this.qualityPreference = ImageQualityPreference.compressed,
     this.videoQualityPreference = ImageQualityPreference.compressed,
     this.audioRecorderService,
@@ -2458,7 +2472,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
         return const [];
       }
       final pending = mediaToUpload[index];
-      final mime = _mimeFromPath(pending.file.path);
+      final mime = mimeFromPath(pending.file.path);
       final validation = await GroupMediaMimePolicy.validateFile(
         path: pending.file.path,
         mime: mime,
@@ -2525,6 +2539,10 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
         downloadRetryCount: 0,
         contentHash: contentHash,
         ownerLane: MediaOwnerLane.group,
+        fileName: documentFileNameForPath(
+          pending.file.path,
+          mediaType: MediaAttachment.mediaTypeFromMime(mime),
+        ),
       );
       emitFlowEvent(
         layer: 'FL',
@@ -2649,6 +2667,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
             durationMs: plan.source.durationMs,
             allowedPeers: allowedPeers,
             blobId: plan.pendingAttachment.id,
+            fileName: plan.pendingAttachment.fileName,
           ),
           buildCompleted: (uploaded) => _buildStableUploadedAttachmentFromPlan(
             lane: lane,
@@ -2869,7 +2888,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
     if (mediaToUpload.isNotEmpty) {
       final createdAt = now.toIso8601String();
       optimisticMedia = mediaToUpload.map((m) {
-        final mime = _mimeFromPath(m.file.path);
+        final mime = mimeFromPath(m.file.path);
         return MediaAttachment(
           id: _uuid.v4(),
           messageId: messageId,
@@ -2882,6 +2901,10 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
           localPath: m.file.path,
           downloadStatus: 'done',
           createdAt: createdAt,
+          fileName: documentFileNameForPath(
+            m.file.path,
+            mediaType: MediaAttachment.mediaTypeFromMime(mime),
+          ),
         );
       }).toList();
       uploadLease = mediaUploadInFlightTracker.tryClaimAll(
@@ -3173,7 +3196,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
                   return;
                 }
                 final pending = mediaToUpload[index];
-                final mime = _mimeFromPath(pending.file.path);
+                final mime = mimeFromPath(pending.file.path);
                 final attachmentId = optimisticMedia[index].id;
                 final fileSize = File(pending.file.path).lengthSync();
                 if (!relayTrackingStarted) {
@@ -3202,6 +3225,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
                   durationMs: pending.durationMs,
                   allowedPeers: allowedPeers,
                   blobId: attachmentId,
+                  fileName: optimisticMedia[index].fileName,
                 );
                 if (!_canContinueSendOperation(
                   sendLane,
@@ -4718,6 +4742,22 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
                   _pickVideoFromCamera();
                 },
               ),
+              if (widget.documentAttachmentsEnabled)
+                ListTile(
+                  key: GroupConversationWired.attachSheetDocumentKey,
+                  leading: Icon(
+                    Icons.picture_as_pdf_outlined,
+                    color: sheetColors.iconPrimary,
+                  ),
+                  title: Text(
+                    AppLocalizations.of(context)!.picker_document,
+                    style: TextStyle(color: sheetColors.textPrimary),
+                  ),
+                  onTap: () {
+                    Navigator.pop(ctx);
+                    _pickDocuments();
+                  },
+                ),
               // 204 (BUG-1): explicit Cancel to go back to the chat. Dismisses
               // the sheet ONLY — never picks, never touches staged media.
               ListTile(
@@ -4738,6 +4778,56 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
         );
       },
     );
+  }
+
+  /// 414: PDF documents. The picker filters by extension; the bytes decide.
+  Future<void> _pickDocuments() async {
+    try {
+      final remaining =
+          _maxAttachments - _composerController.pendingAttachments.length;
+      if (remaining <= 0) return;
+      final picked = await _mediaPicker.pickDocuments();
+      if (picked.isEmpty || !mounted) return;
+      final media = <PendingComposerMedia>[];
+      var refused = false;
+      for (final xf in picked.take(remaining)) {
+        final rejection = await documentFileRejection(
+          path: xf.path,
+          mime: mimeFromPath(xf.path),
+        );
+        if (rejection != null) {
+          refused = true;
+          continue;
+        }
+        final file = File(xf.path);
+        media.add(
+          PendingComposerMedia(file: file, budgetBytes: await file.length()),
+        );
+      }
+      if (!mounted) return;
+      if (refused) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              AppLocalizations.of(context)!.media_document_only_pdf,
+            ),
+          ),
+        );
+      }
+      if (media.isNotEmpty) await _attemptAddPendingMedia(media);
+    } catch (e) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'GROUP_CONV_FL_PICK_DOCUMENT_ERROR',
+        details: {'errorType': e.runtimeType.toString()},
+      );
+      if (mounted) {
+        showVideoProcessingNotice(
+          context,
+          message: AppLocalizations.of(context)!.media_unavailable,
+        );
+      }
+    }
   }
 
   Future<void> _pickFromGallery() async {
@@ -5015,7 +5105,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
       } else {
         final rejections = collectPendingMediaSizeRejections(
           effectivePendingAttachments,
-          _mimeFromPath,
+          mimeFromPath,
         );
         nextInvalidIndices = rejections.map((r) => r.index).toSet();
         nextInvalidReasons = {
@@ -6825,6 +6915,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
       case MediaEgressOutcome.permissionDenied:
       case MediaEgressOutcome.rejected:
       case MediaEgressOutcome.platformFailure:
+      case MediaEgressOutcome.noViewer:
         return MediaViewerActionResult.failure;
     }
   }
@@ -7715,32 +7806,11 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
     await _loadSecurityStatus();
   }
 
-  static String _mimeFromPath(String path) {
-    final ext = path.split('.').last.toLowerCase();
-    const map = {
-      'jpg': 'image/jpeg',
-      'jpeg': 'image/jpeg',
-      'png': 'image/png',
-      'gif': 'image/gif',
-      'webp': 'image/webp',
-      'heic': 'image/heic',
-      'heif': 'image/heic',
-      'mp4': 'video/mp4',
-      'mov': 'video/quicktime',
-      'avi': 'video/x-msvideo',
-      'mkv': 'video/x-matroska',
-      'm4v': 'video/x-m4v',
-      'm4a': 'audio/mp4',
-      'aac': 'audio/aac',
-    };
-    return map[ext] ?? 'application/octet-stream';
-  }
-
   bool _validatePendingGroupMediaDescriptors(List<PendingComposerMedia> media) {
     // Unsupported-MIME is a hard reject of a never-displayable file → it stays a
     // snackbar (out of the per-chip size/GIF scope, 149).
     for (final pending in media) {
-      final mime = _mimeFromPath(pending.file.path);
+      final mime = mimeFromPath(pending.file.path);
       final validation = GroupMediaMimePolicy.validateDescriptor(
         mime: mime,
         mediaType: GroupMediaMimePolicy.mediaTypeForMime(mime),
@@ -7763,7 +7833,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
     // reason (149), so this path is snackbar-free.
     final sizeRejections = collectPendingMediaSizeRejections(
       media,
-      _mimeFromPath,
+      mimeFromPath,
     );
     if (sizeRejections.isNotEmpty) {
       for (final rejection in sizeRejections) {

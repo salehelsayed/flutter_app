@@ -6,6 +6,9 @@ import 'package:crypto/crypto.dart';
 import 'package:uuid/uuid.dart';
 
 import 'package:flutter_app/core/bridge/bridge.dart';
+import 'package:flutter_app/core/media/attachment_file_name.dart';
+import 'package:flutter_app/core/media/document_file_check.dart';
+import 'package:flutter_app/core/media/media_mime.dart';
 import 'package:flutter_app/features/conversation/application/direct_media_fanout_admission.dart';
 import 'package:flutter_app/features/conversation/application/direct_event_fanout_coordinator.dart';
 import 'package:flutter_app/core/config/direct_media_blob_custody_client_flag.dart';
@@ -1525,6 +1528,7 @@ class DefaultShareBatchDeliveryCoordinator
     final processed = <PendingComposerMedia>[];
     var skippedOversizedGifCount = 0;
     var skippedStalledVideoCount = 0;
+    var skippedUnsupportedFileCount = 0;
     for (final path in shareIntent.filePaths) {
       PendingComposerMedia prepared;
       try {
@@ -1568,9 +1572,21 @@ class DefaultShareBatchDeliveryCoordinator
       // is skipped per-file and surfaced via the batch summary; since images and
       // video are compressed before this point, GIF is the dominant survivor of
       // an oversize, so the summary copy stays GIF-worded.
+      // 414 (D4): a shared file that is not image, video or audio must be a
+      // real PDF. Anything else used to arrive as an empty bubble.
+      final preparedMime = mimeFromPath(prepared.file.path);
+      if (MediaAttachment.mediaTypeFromMime(preparedMime) == 'file' &&
+          await documentFileRejection(
+                path: prepared.file.path,
+                mime: preparedMime,
+              ) !=
+              null) {
+        skippedUnsupportedFileCount++;
+        continue;
+      }
       final sizeValidation = GroupMediaSizePolicy.validateSize(
         sizeBytes: prepared.budgetBytes,
-        mime: _mimeFromPath(prepared.file.path),
+        mime: preparedMime,
       );
       if (!sizeValidation.isValid) {
         skippedOversizedGifCount++;
@@ -1579,6 +1595,20 @@ class DefaultShareBatchDeliveryCoordinator
       processed.add(prepared);
     }
 
+    if (skippedUnsupportedFileCount > 0) {
+      return ProcessedShareMediaBatch(
+        processedMedia: processed,
+        skippedOversizedGifCount:
+            skippedOversizedGifCount +
+            skippedStalledVideoCount +
+            skippedUnsupportedFileCount,
+        skippedOversizedGifReason:
+            skippedOversizedGifCount + skippedStalledVideoCount > 0
+            ? 'Only photos, videos, audio and PDF files can be shared. '
+                  'Some attachments were skipped.'
+            : 'Only photos, videos, audio and PDF files can be shared.',
+      );
+    }
     return ProcessedShareMediaBatch(
       processedMedia: processed,
       skippedOversizedGifCount:
@@ -1646,7 +1676,7 @@ class DefaultShareBatchDeliveryCoordinator
       for (var index = 0; index < processedMedia.length; index++) {
         final media = processedMedia[index];
         final attachmentId = attachmentIds[index];
-        final mime = _mimeFromPath(media.file.path);
+        final mime = mimeFromPath(media.file.path);
         final size = await media.file.length();
         if (size <= 0) {
           return ShareBatchTargetResult(
@@ -1673,6 +1703,10 @@ class DefaultShareBatchDeliveryCoordinator
           downloadStatus: 'upload_pending',
           createdAt: timestamp,
           ownerLane: MediaOwnerLane.direct,
+          fileName: documentFileNameForPath(
+            media.file.path,
+            mediaType: MediaAttachment.mediaTypeFromMime(mime),
+          ),
         );
         expectedAttachments.add(attachment);
         sources.add(
@@ -2173,7 +2207,7 @@ class DefaultShareBatchDeliveryCoordinator
     final attachments = <MediaAttachment>[];
 
     for (final media in processedMedia) {
-      final mime = _mimeFromPath(media.file.path);
+      final mime = mimeFromPath(media.file.path);
       final attachmentId = _shareBatchUuid.v4();
       // LAN best-effort first, but the relay upload below ALWAYS runs
       // (composer semantics): it is the durable recovery copy AND the
@@ -2221,6 +2255,10 @@ class DefaultShareBatchDeliveryCoordinator
           durationMs: media.durationMs,
           blobId: attachmentId,
           preparedArtifact: preparedArtifact,
+          fileName: documentFileNameForPath(
+            media.file.path,
+            mediaType: MediaAttachment.mediaTypeFromMime(mime),
+          ),
         );
         uploaded = outcome.attachmentOrNull;
       } finally {
@@ -2382,7 +2420,7 @@ class DefaultShareBatchDeliveryCoordinator
         final sources = <PreparedGroupMediaBlobSource>[];
         for (final media in processedMedia) {
           final attachmentId = _shareBatchUuid.v4();
-          final mime = _mimeFromPath(media.file.path);
+          final mime = mimeFromPath(media.file.path);
           final size = await media.file.length();
           uploadHooks.started(
             blobId: attachmentId,
@@ -2403,6 +2441,10 @@ class DefaultShareBatchDeliveryCoordinator
                 downloadStatus: 'upload_pending',
                 createdAt: now.toUtc().toIso8601String(),
                 ownerLane: MediaOwnerLane.group,
+                fileName: documentFileNameForPath(
+                  media.file.path,
+                  mediaType: MediaAttachment.mediaTypeFromMime(mime),
+                ),
               ),
               plaintextPath: media.file.path,
             ),
@@ -2515,7 +2557,7 @@ class DefaultShareBatchDeliveryCoordinator
                     uploadMediaFn: uploadMedia,
                     bridge: bridge,
                     localFilePath: media.file.path,
-                    mime: _mimeFromPath(media.file.path),
+                    mime: mimeFromPath(media.file.path),
                     recipientPeerId: resolvedGroup.id,
                     mediaFileManager: mediaFileManager,
                     width: media.width,
@@ -2525,6 +2567,12 @@ class DefaultShareBatchDeliveryCoordinator
                       currentAuthority.members,
                     ),
                     blobId: attachmentId,
+                    fileName: documentFileNameForPath(
+                      media.file.path,
+                      mediaType: MediaAttachment.mediaTypeFromMime(
+                        mimeFromPath(media.file.path),
+                      ),
+                    ),
                   );
                   uploaded = outcome.attachmentOrNull;
                 } finally {
@@ -2722,24 +2770,4 @@ class _ShareBatchProgressTracker {
       // authority into a picker-owned `failed` result and duplicate work.
     }
   }
-}
-
-String _mimeFromPath(String path) {
-  final ext = path.split('.').last.toLowerCase();
-  const map = {
-    'jpg': 'image/jpeg',
-    'jpeg': 'image/jpeg',
-    'png': 'image/png',
-    'gif': 'image/gif',
-    'webp': 'image/webp',
-    'heic': 'image/heic',
-    'mp4': 'video/mp4',
-    'mov': 'video/quicktime',
-    'avi': 'video/x-msvideo',
-    'mkv': 'video/x-matroska',
-    'm4v': 'video/x-m4v',
-    'm4a': 'audio/mp4',
-    'aac': 'audio/aac',
-  };
-  return map[ext] ?? 'application/octet-stream';
 }

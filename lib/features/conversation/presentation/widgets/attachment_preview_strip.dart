@@ -1,5 +1,6 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:flutter_app/core/media/media_mime.dart';
 import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/core/media/video_thumbnail_cache.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
@@ -97,7 +98,9 @@ class AttachmentPreviewStrip extends StatelessWidget {
               const SizedBox(width: 6),
               Expanded(
                 child: Text(
-                  AppLocalizations.of(context)!.media_attachments_too_large_note,
+                  AppLocalizations.of(
+                    context,
+                  )!.media_attachments_too_large_note,
                   style: const TextStyle(
                     color: Color(0xFFFF8A80),
                     fontSize: 12,
@@ -149,6 +152,8 @@ class _Thumbnail extends StatelessWidget {
   Widget build(BuildContext context) {
     final readableColors = context.backgroundReadableColors;
     final mediaType = isLikelyVideoPath(file.path) ? 'video' : 'image';
+    // 414: a pending PDF has no picture to decode; show a document icon.
+    final isDocument = mimeFromPath(file.path) == kPdfMime;
     final showsInvalid = isInvalid && !isUploading;
     final showsGifBadge =
         !isUploading &&
@@ -164,29 +169,43 @@ class _Thumbnail extends StatelessWidget {
           // Thumbnail image
           ClipRRect(
             borderRadius: BorderRadius.circular(10),
-            child: MediaThumbnailImage(
-              mediaPath: file.path,
-              mediaType: mediaType,
-              fit: BoxFit.cover,
-              cacheWidth: 200,
-              placeholder: Container(
-                width: 72,
-                height: 72,
-                color: readableColors.surfaceSubtle,
-              ),
-              error: Container(
-                width: 72,
-                height: 72,
-                color: readableColors.surfaceSubtle,
-                child: Center(
-                  child: Icon(
-                    Icons.broken_image_outlined,
-                    size: 18,
-                    color: readableColors.iconMuted,
+            child: isDocument
+                ? Container(
+                    key: ValueKey('pending-document-$index'),
+                    width: 72,
+                    height: 72,
+                    color: readableColors.surfaceSubtle,
+                    child: Center(
+                      child: Icon(
+                        Icons.picture_as_pdf_outlined,
+                        size: 28,
+                        color: readableColors.iconPrimary,
+                      ),
+                    ),
+                  )
+                : MediaThumbnailImage(
+                    mediaPath: file.path,
+                    mediaType: mediaType,
+                    fit: BoxFit.cover,
+                    cacheWidth: 200,
+                    placeholder: Container(
+                      width: 72,
+                      height: 72,
+                      color: readableColors.surfaceSubtle,
+                    ),
+                    error: Container(
+                      width: 72,
+                      height: 72,
+                      color: readableColors.surfaceSubtle,
+                      child: Center(
+                        child: Icon(
+                          Icons.broken_image_outlined,
+                          size: 18,
+                          color: readableColors.iconMuted,
+                        ),
+                      ),
+                    ),
                   ),
-                ),
-              ),
-            ),
           ),
           // Upload overlay
           if (isUploading)

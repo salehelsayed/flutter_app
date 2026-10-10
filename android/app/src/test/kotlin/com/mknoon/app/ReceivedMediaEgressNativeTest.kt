@@ -294,6 +294,86 @@ class ReceivedMediaEgressNativeTest {
         root.deleteRecursively()
     }
 
+    @Test
+    fun `414 parser accepts one PDF to open and refuses PDF to photos`() {
+        fun args(destination: String, mime: String, count: Int = 1) = mapOf(
+            "requestId" to "doc_1",
+            "destination" to destination,
+            "items" to (0 until count).map { index ->
+                mapOf("attachmentId" to "d$index", "sourcePath" to "/d$index", "mime" to mime, "displayName" to "Invoice $index.pdf")
+            },
+        )
+        assertNotNull(ReceivedMediaEgressContracts.parse(args("open", "application/pdf")))
+        assertNotNull(ReceivedMediaEgressContracts.parse(args("files", "application/pdf")))
+        assertNotNull(ReceivedMediaEgressContracts.parse(args("share", "application/pdf")))
+        assertNull(ReceivedMediaEgressContracts.parse(args("photos", "application/pdf")))
+        assertNull(ReceivedMediaEgressContracts.parse(args("open", "image/jpeg")))
+        assertNull(ReceivedMediaEgressContracts.parse(args("open", "application/pdf", count = 2)))
+        val busy = ReceivedMediaEgressContracts.busyEnvelope(ReceivedMediaEgressContracts.parse(args("open", "application/pdf"))!!)
+        assertEquals(emptyList<Any>(), busy["items"])
+    }
+
+    @Test
+    fun `414 provider types PDF and the view intent grants read only`() {
+        val context: Context = RuntimeEnvironment.getApplication()
+        val source = providerSource(context, "doc.pdf")
+        val uri = ReceivedMediaEgressProvider.uriForFile(context, source)
+        assertEquals("application/pdf", context.contentResolver.getType(uri))
+        val intent = ReceivedMediaEgressContracts.buildViewIntent(uri, "application/pdf")
+        assertEquals(Intent.ACTION_VIEW, intent.action)
+        assertEquals(uri, intent.data)
+        assertEquals("application/pdf", intent.type)
+        assertTrue(intent.flags and Intent.FLAG_GRANT_READ_URI_PERMISSION != 0)
+        assertTrue(intent.flags and Intent.FLAG_GRANT_WRITE_URI_PERMISSION == 0)
+    }
+
+    @Test
+    fun `414 open presents once, holds busy until resume, and reports no viewer`() {
+        val activity = Robolectric.buildActivity(Activity::class.java).setup().get()
+        val source = providerSource(activity, "open.pdf")
+        fun openArgs(id: String) = mapOf(
+            "requestId" to id,
+            "destination" to "open",
+            "items" to listOf(
+                mapOf("attachmentId" to "d", "sourcePath" to source.path, "mime" to "application/pdf", "displayName" to "open.pdf"),
+            ),
+        )
+        var views = 0
+        val handler = ReceivedMediaEgressHandler(
+            activity = activity,
+            messenger = null,
+            sdkInt = 34,
+            presentView = { views++ },
+            operationExecutor = { it() },
+            mainExecutor = { it() },
+        )
+        val first = CapturingResult()
+        handler.onMethodCall(MethodCall("perform", openArgs("open_one")), first)
+        assertEquals("presented", (first.value as Map<*, *>)["outcome"])
+        assertEquals(emptyList<Any>(), (first.value as Map<*, *>)["items"])
+        val second = CapturingResult()
+        handler.onMethodCall(MethodCall("perform", openArgs("open_two")), second)
+        assertEquals("busy", (second.value as Map<*, *>)["outcome"])
+        assertEquals(1, views)
+        handler.onResume()
+
+        val noViewer = ReceivedMediaEgressHandler(
+            activity = activity,
+            messenger = null,
+            sdkInt = 34,
+            presentView = { throw android.content.ActivityNotFoundException() },
+            operationExecutor = { it() },
+            mainExecutor = { it() },
+        )
+        val missing = CapturingResult()
+        noViewer.onMethodCall(MethodCall("perform", openArgs("open_three")), missing)
+        assertEquals("noViewer", (missing.value as Map<*, *>)["outcome"])
+        // The gate is released, so a later attempt is not reported busy.
+        val again = CapturingResult()
+        noViewer.onMethodCall(MethodCall("perform", openArgs("open_four")), again)
+        assertEquals("noViewer", (again.value as Map<*, *>)["outcome"])
+    }
+
     private fun providerSource(context: Context, name: String): File {
         val root = File(ReceivedMediaEgressProvider.documentsDirectory(context), "media").apply {
             deleteRecursively()

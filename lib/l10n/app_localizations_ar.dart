@@ -4257,4 +4257,23 @@ class AppLocalizationsAr extends AppLocalizations {
 
   @override
   String get call_audio_output_failed => 'تعذر تغيير مخرج الصوت';
+
+  @override
+  String get picker_document => 'مستند';
+
+  @override
+  String get media_document_unsupported => 'ملف غير مدعوم';
+
+  @override
+  String get media_document_open_failed => 'تعذّر فتح الملف.';
+
+  @override
+  String get media_document_no_viewer =>
+      'لا يوجد تطبيق على هذا الهاتف يمكنه فتح هذا الملف.';
+
+  @override
+  String get media_document_only_pdf => 'يمكن إرسال ملفات PDF فقط.';
+
+  @override
+  String get media_document_open => 'فتح المستند';
 }

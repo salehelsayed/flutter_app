@@ -1963,6 +1963,7 @@ void main() {
     MicPermissionGateway? micPermissionGateway,
     ImageProcessor? imageProcessor,
     MediaPicker? mediaPicker,
+    bool documentAttachmentsEnabled = false,
     DownloadMediaFn? downloadMediaFn,
     String? initialText,
     List<File>? initialAttachments,
@@ -2038,6 +2039,7 @@ void main() {
               micPermissionGateway ?? FakeMicPermissionGateway(),
           imageProcessor: imageProcessor,
           mediaPicker: mediaPicker,
+          documentAttachmentsEnabled: documentAttachmentsEnabled,
           downloadMediaFn: downloadMediaFn ?? downloadMedia,
           qualityPreference: qualityPreference,
           videoQualityPreference: videoQualityPreference,
@@ -9950,6 +9952,72 @@ void main() {
         expect(find.byType(AttachmentPreviewStrip), findsOneWidget);
       },
     );
+
+    group('documents (414)', () {
+      Future<void> pumpDocumentScreen(
+        WidgetTester tester, {
+        required bool enabled,
+        FakeMediaPicker? mediaPicker,
+      }) async {
+        final messageRepo = FakeMessageRepository();
+        await pumpScreen(
+          tester,
+          identityRepo: FakeIdentityRepository(makeIdentity()),
+          messageRepo: messageRepo,
+          chatListener: ChatMessageListener(
+            chatMessageStream: const Stream.empty(),
+            messageRepo: messageRepo,
+            contactRepo: FakeContactRepository(),
+          ),
+          sendFn: _instantSuccessSendFn,
+          mediaPicker: mediaPicker,
+          documentAttachmentsEnabled: enabled,
+        );
+        await tester.tap(find.byIcon(Icons.add_rounded));
+        await tester.pump(const Duration(milliseconds: 500));
+      }
+
+      testWidgets('the Document row is hidden while the switch is off', (
+        tester,
+      ) async {
+        await pumpDocumentScreen(tester, enabled: false);
+        expect(find.text('Media Library'), findsOneWidget);
+        expect(
+          find.byKey(ConversationWired.attachSheetDocumentKey),
+          findsNothing,
+        );
+      });
+
+      testWidgets('a picked PDF is staged and a fake PDF is refused', (
+        tester,
+      ) async {
+        final tempDir = Directory.systemTemp.createTempSync('doc_pick_');
+        addTearDown(() => tempDir.deleteSync(recursive: true));
+        final real = File('${tempDir.path}/Invoice.pdf')
+          ..writeAsStringSync('%PDF-1.7\n');
+        final fake = File('${tempDir.path}/fake.pdf')
+          ..writeAsStringSync('<html>');
+        final picker = FakeMediaPicker()
+          ..documentsResult = [XFile(real.path), XFile(fake.path)];
+
+        await pumpDocumentScreen(tester, enabled: true, mediaPicker: picker);
+        final row = find.byKey(ConversationWired.attachSheetDocumentKey);
+        expect(row, findsOneWidget);
+        await tester.runAsync(() async {
+          tester.widget<ListTile>(row).onTap!();
+          await Future<void>.delayed(const Duration(milliseconds: 300));
+        });
+        await tester.pump(const Duration(milliseconds: 500));
+
+        expect(picker.pickDocumentsCalls, 1);
+        expect(
+          find.byKey(const ValueKey('pending-document-0')),
+          findsOneWidget,
+        );
+        expect(find.byKey(const ValueKey('pending-document-1')), findsNothing);
+        expect(find.text('Only PDF files can be sent.'), findsOneWidget);
+      });
+    });
 
     testWidgets('does not show AttachmentPreviewStrip initially', (
       tester,

@@ -70,6 +70,7 @@ class ReceivedMediaEgressProvider : ContentProvider() {
         "mp4" -> "video/mp4"
         "mov" -> "video/quicktime"
         "webm" -> "video/webm"
+        "pdf" -> "application/pdf"
         else -> null
     }
 

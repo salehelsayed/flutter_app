@@ -2,6 +2,7 @@ package com.mknoon.app
 
 import android.Manifest
 import android.app.Activity
+import android.content.ActivityNotFoundException
 import android.content.ClipData
 import android.content.ContentValues
 import android.content.Intent
@@ -165,7 +166,9 @@ internal object ReceivedMediaEgressContracts {
     private val allowedMimes = setOf(
         "image/jpeg", "image/png", "image/gif", "image/webp", "image/heic",
         "video/mp4", "video/quicktime", "video/webm",
+        "application/pdf",
     )
+    private const val pdfMime = "application/pdf"
     enum class StorageBand { LEGACY, SCOPED }
 
     fun isValidRequestId(value: String) = requestId.matches(value)
@@ -192,13 +195,23 @@ internal object ReceivedMediaEgressContracts {
         return intent
     }
 
+    fun isPresentation(destination: String) = destination == "share" || destination == "open"
+
+    /** 414: show one PDF in whatever viewer app the user has. */
+    fun buildViewIntent(uri: Uri, mime: String): Intent =
+        Intent(Intent.ACTION_VIEW).apply {
+            setDataAndType(uri, mime)
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+
     fun parse(arguments: Any?): NativeEgressRequest? {
         val map = arguments as? Map<*, *> ?: return null
         if (map.keys != setOf("requestId", "destination", "items")) return null
         val requestId = map["requestId"] as? String ?: return null
         val destination = map["destination"] as? String ?: return null
         val rawItems = map["items"] as? List<*> ?: return null
-        if (!isValidRequestId(requestId) || destination !in setOf("photos", "files", "share") || rawItems.isEmpty() || rawItems.size > 10) return null
+        if (!isValidRequestId(requestId) || destination !in setOf("photos", "files", "share", "open") || rawItems.isEmpty() || rawItems.size > 10) return null
+        if (destination == "open" && rawItems.size != 1) return null
         val ids = mutableSetOf<String>()
         val items = rawItems.map { raw ->
             val item = raw as? Map<*, *> ?: return null
@@ -208,7 +221,10 @@ internal object ReceivedMediaEgressContracts {
             val mime = item["mime"] as? String ?: return null
             val display = item["displayName"] as? String ?: return null
             if (id.isBlank() || !ids.add(id) || source.isBlank() || mime !in allowedMimes ||
-                display.isBlank() || display.contains('/') || display.contains('\\')) return null
+                display.isBlank() || display.contains('/') || display.contains('\\') ||
+                // 414: a PDF never goes to Photos; `open` takes PDFs only.
+                (destination == "photos" && mime == pdfMime) ||
+                (destination == "open" && mime != pdfMime)) return null
             NativeEgressItem(id, source, mime, display)
         }
         return NativeEgressRequest(requestId, destination, items)
@@ -217,7 +233,7 @@ internal object ReceivedMediaEgressContracts {
     fun busyEnvelope(request: NativeEgressRequest): Map<String, Any> = mapOf(
         "requestId" to request.requestId,
         "outcome" to "busy",
-        "items" to if (request.destination == "share") emptyList<Map<String, Any>>() else request.items.map {
+        "items" to if (isPresentation(request.destination)) emptyList<Map<String, Any>>() else request.items.map {
             mapOf<String, Any>("attachmentId" to it.attachmentId, "outcome" to "busy")
         },
     )
@@ -247,6 +263,7 @@ internal class ReceivedMediaEgressHandler(
         activity.requestPermissions(arrayOf(Manifest.permission.WRITE_EXTERNAL_STORAGE), permissionCode)
     },
     private val presentShare: (Intent) -> Unit = { intent -> activity.startActivity(Intent.createChooser(intent, null)) },
+    private val presentView: (Intent) -> Unit = { intent -> activity.startActivity(intent) },
     scopedStore: ReceivedMediaScopedStore = AndroidReceivedMediaScopedStore(activity),
     legacyStore: ReceivedMediaLegacyStore = ReceivedMediaLegacyStore(
         publish = { file -> activity.sendBroadcast(Intent(Intent.ACTION_MEDIA_SCANNER_SCAN_FILE, Uri.fromFile(file))) },
@@ -291,6 +308,7 @@ internal class ReceivedMediaEgressHandler(
         }
         when (request.destination) {
             "share" -> share(request, result)
+            "open" -> open(request, result)
             "photos", "files" -> {
                 if (ReceivedMediaEgressContracts.needsLegacyPermission(sdkInt) &&
                     !legacyPermissionGranted()
@@ -331,6 +349,22 @@ internal class ReceivedMediaEgressHandler(
             presentShare(intent)
             waitingForShareResume = true
             result.success(envelope(request.requestId, "presented", emptyList()))
+        } catch (_: Exception) {
+            busyGate.end()
+            result.success(envelope(request.requestId, "platformFailure", emptyList()))
+        }
+    }
+
+    private fun open(request: NativeEgressRequest, result: MethodChannel.Result) {
+        try {
+            val item = request.items.single()
+            val uri = ReceivedMediaEgressProvider.uriForFile(activity, File(item.sourcePath))
+            presentView(ReceivedMediaEgressContracts.buildViewIntent(uri, item.mime))
+            waitingForShareResume = true
+            result.success(envelope(request.requestId, "presented", emptyList()))
+        } catch (_: ActivityNotFoundException) {
+            busyGate.end()
+            result.success(envelope(request.requestId, "noViewer", emptyList()))
         } catch (_: Exception) {
             busyGate.end()
             result.success(envelope(request.requestId, "platformFailure", emptyList()))

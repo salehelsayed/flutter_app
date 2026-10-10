@@ -2096,5 +2096,11 @@
   "call_unknown_contact": "Unknown contact",
   "call_mute_unavailable": "Microphone controls are unavailable until audio is ready",
   "call_speaker_unavailable": "Speaker is unavailable for the current audio route",
-  "call_audio_output_failed": "Audio output could not be changed"
+  "call_audio_output_failed": "Audio output could not be changed",
+  "picker_document": "Document",
+  "media_document_unsupported": "Unsupported file",
+  "media_document_open_failed": "Could not open the file.",
+  "media_document_no_viewer": "No app on this phone can open this file.",
+  "media_document_only_pdf": "Only PDF files can be sent.",
+  "media_document_open": "Open document"
 }

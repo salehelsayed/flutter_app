@@ -3661,8 +3661,9 @@ void main() {
           _pendingAttachment(
             id: 'pending-dangerous',
             messageId: 'msg-dangerous-mime',
-            localPath: 'pending_uploads/msg-dangerous-mime/payload.pdf',
-            mime: 'application/pdf',
+            // 414: PDF is allowed now; zip stays a dangerous group MIME.
+            localPath: 'pending_uploads/msg-dangerous-mime/payload.zip',
+            mime: 'application/zip',
           ),
           owner: MediaOwnerLane.group,
         );

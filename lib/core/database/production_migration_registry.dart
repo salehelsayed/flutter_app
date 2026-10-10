@@ -119,6 +119,7 @@ import 'migrations/116_notification_completed_outcome_outbox.dart';
 import 'migrations/117_call_history.dart';
 import 'migrations/118_call_history_read_state.dart';
 import 'migrations/119_quiet_message_recovery.dart';
+import 'migrations/120_media_attachment_file_name.dart';
 
 /// One ordered production migration step: the schema version it belongs to,
 /// its migration-file stem, and the migration function itself.
@@ -687,6 +688,11 @@ productionCreateMigrations = List.unmodifiable(<ProductionMigrationEntry>[
     '119_quiet_message_recovery',
     runQuietMessageRecoveryMigration,
   ),
+  ProductionMigrationEntry(
+    120,
+    '120_media_attachment_file_name',
+    runMediaAttachmentFileNameMigration,
+  ),
 ]);
 
 /// The EXACT ordered upgrade (onUpgrade) guard sequence from main.dart.
@@ -1244,6 +1250,11 @@ productionUpgradeMigrations = List.unmodifiable(<ProductionMigrationEntry>[
     119,
     '119_quiet_message_recovery',
     runQuietMessageRecoveryMigration,
+  ),
+  ProductionMigrationEntry(
+    120,
+    '120_media_attachment_file_name',
+    runMediaAttachmentFileNameMigration,
   ),
 ]);
 

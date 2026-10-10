@@ -1,0 +1,23 @@
+00:00 +0: loading /Volumes/CrucialX9/flutter_app/.claude/worktrees/pdf-407/test/features/conversation/presentation/controllers/conversation_controller_composition_contract_test.dart
+00:00 +0: DTR-15 transfers exact owners without a shared State hierarchy
+00:00 +1: TC-294-09 freezes public Wired APIs and screen handoffs
+00:00 +1 -1: TC-294-09 freezes public Wired APIs and screen handoffs [E]
+  Expected: '3ffab64f'
+    Actual: 'fe1ac6ec'
+     Which: is different.
+            Expected: 3ffab64f
+              Actual: fe1ac6ec
+                      ^
+             Differ at offset 0
+  GroupConversationWired public API fingerprint: fe1ac6ec
+  
+  package:matcher                                                                                                   expect
+  package:flutter_test/src/widget_tester.dart 473:18                                                                expect
+  test/features/conversation/presentation/controllers/conversation_controller_composition_contract_test.dart 826:5  main.<fn>
+  
+00:00 +1 -1: TC-294-11 gives DTR-15 tests exact curated gate membership
+00:00 +2 -1: Some tests failed.
+
+Failing tests:
+  /Volumes/CrucialX9/flutter_app/.claude/worktrees/pdf-407/test/features/conversation/presentation/controllers/conversation_controller_composition_contract_test.dart: TC-294-09 freezes public Wired APIs and screen handoffs
+EXIT=1

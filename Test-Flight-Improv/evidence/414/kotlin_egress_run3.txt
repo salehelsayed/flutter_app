@@ -1,0 +1,3 @@
+> Task :app:testDebugUnitTest
+BUILD SUCCESSFUL in 42s
+gradle exit: 0

@@ -43,6 +43,9 @@ String mediaPreviewText(List<MediaAttachment> media) {
   }
 
   if (segments.isEmpty) {
+    // 414: a single named document (PDF) shows its own name.
+    final name = media.length == 1 ? media.single.fileName : null;
+    if (name != null && media.single.mediaType == 'file') return name;
     // Fallback for file-type attachments
     return media.length == 1 ? 'File' : '${media.length} files';
   }
@@ -57,6 +60,10 @@ IconData mediaPreviewIcon(List<MediaAttachment> media) {
   final hasImage = media.any((a) => a.mediaType == 'image');
   final hasVideo = media.any((a) => a.mediaType == 'video');
   final hasAudio = media.any((a) => a.mediaType == 'audio');
+  // 414: documents only.
+  if (media.every((a) => a.mediaType == 'file')) {
+    return Icons.insert_drive_file_outlined;
+  }
 
   if (hasImage && !hasVideo && !hasAudio) return Icons.camera_alt_outlined;
   if (hasVideo && !hasImage && !hasAudio) return Icons.videocam_outlined;

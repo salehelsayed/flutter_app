@@ -6,6 +6,10 @@ import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:uuid/uuid.dart';
 import 'package:intl/intl.dart' as intl;
+import 'package:flutter_app/core/config/document_attachments_flag.dart';
+import 'package:flutter_app/core/media/attachment_file_name.dart';
+import 'package:flutter_app/core/media/document_file_check.dart';
+import 'package:flutter_app/core/media/media_mime.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/features/conversation/application/direct_media_fanout_admission.dart';
 import 'package:flutter_app/core/config/direct_linked_event_fanout_flag.dart';
@@ -422,6 +426,11 @@ class ConversationWired extends StatefulWidget {
     'conversation-attach-cancel-action',
   );
 
+  /// 414: the attach sheet's "Document" (PDF) row.
+  static const attachSheetDocumentKey = ValueKey(
+    'conversation-attach-document-action',
+  );
+
   /// 159 (TC-159-06): a test-only counter incremented once per
   /// [_ConversationWiredState._sortMessagesForDisplay] call. A relay-drain burst
   /// of M messageChanges events runs M synchronous sorts on HEAD; the per-frame
@@ -449,6 +458,10 @@ class ConversationWired extends StatefulWidget {
   final String? initialText;
   final ImageProcessor? imageProcessor;
   final MediaPicker? mediaPicker;
+
+  /// 414 (D3): shows the attach sheet's "Document" (PDF) row. Defaults to the
+  /// `MKNOON_ENABLE_DOCUMENT_ATTACHMENTS` build define.
+  final bool documentAttachmentsEnabled;
   final ImageQualityPreference qualityPreference;
   final ImageQualityPreference videoQualityPreference;
   final int maxAttachmentBudgetBytes;
@@ -586,6 +599,7 @@ class ConversationWired extends StatefulWidget {
     this.initialText,
     this.imageProcessor,
     this.mediaPicker,
+    this.documentAttachmentsEnabled = kDocumentAttachmentsEnabled,
     this.qualityPreference = ImageQualityPreference.compressed,
     this.videoQualityPreference = ImageQualityPreference.compressed,
     this.maxAttachmentBudgetBytes = kGeneralMediaAttachmentBudgetBytes,
@@ -1990,7 +2004,7 @@ class _ConversationWiredState extends State<ConversationWired>
   List<MediaRejection> _validatePendingMediaSizes(
     List<PendingComposerMedia> media,
   ) {
-    return collectPendingMediaSizeRejections(media, _mimeFromPath);
+    return collectPendingMediaSizeRejections(media, mimeFromPath);
   }
 
   Future<void> _checkIntroBanner() async {
@@ -3883,7 +3897,7 @@ class _ConversationWiredState extends State<ConversationWired>
         final now = DateTime.now().toUtc().toIso8601String();
         optimisticMedia = mediaToUpload.indexed.map((entry) {
           final (index, m) = entry;
-          final mime = _mimeFromPath(m.file.path);
+          final mime = mimeFromPath(m.file.path);
           return MediaAttachment(
             id: index == 0 && _privateMediaOutboxE2ENextAttachmentId != null
                 ? _privateMediaOutboxE2ENextAttachmentId!
@@ -3898,6 +3912,10 @@ class _ConversationWiredState extends State<ConversationWired>
             localPath: m.file.path,
             downloadStatus: 'done',
             createdAt: now,
+            fileName: documentFileNameForPath(
+              m.file.path,
+              mediaType: MediaAttachment.mediaTypeFromMime(mime),
+            ),
           );
         }).toList();
         // 127-Bug-B: own these blobs from the EARLIEST point — BEFORE durable
@@ -4632,7 +4650,7 @@ class _ConversationWiredState extends State<ConversationWired>
                     : null;
                 final mime =
                     preparedUpload?.pendingAttachment.mime ??
-                    _mimeFromPath(media.file.path);
+                    mimeFromPath(media.file.path);
                 final mediaId =
                     preparedUpload?.pendingAttachment.id ??
                     optimisticMedia?[index].id ??
@@ -4696,6 +4714,12 @@ class _ConversationWiredState extends State<ConversationWired>
                   recipientPeerId: _contact.peerId,
                   mediaFileManager: widget.mediaFileManager,
                   blobId: mediaId,
+                  fileName:
+                      preparedUpload?.pendingAttachment.fileName ??
+                      documentFileNameForPath(
+                        media.file.path,
+                        mediaType: MediaAttachment.mediaTypeFromMime(mime),
+                      ),
                   width: preparedUpload?.source.width ?? media.width,
                   height: preparedUpload?.source.height ?? media.height,
                   durationMs:
@@ -5545,26 +5569,6 @@ class _ConversationWiredState extends State<ConversationWired>
     _restoredFailedQuotedMessageId = null;
   }
 
-  static String _mimeFromPath(String path) {
-    final ext = path.split('.').last.toLowerCase();
-    const map = {
-      'jpg': 'image/jpeg',
-      'jpeg': 'image/jpeg',
-      'png': 'image/png',
-      'gif': 'image/gif',
-      'webp': 'image/webp',
-      'heic': 'image/heic',
-      'mp4': 'video/mp4',
-      'mov': 'video/quicktime',
-      'avi': 'video/x-msvideo',
-      'mkv': 'video/x-matroska',
-      'm4v': 'video/x-m4v',
-      'm4a': 'audio/mp4',
-      'aac': 'audio/aac',
-    };
-    return map[ext] ?? 'application/octet-stream';
-  }
-
   void _onAttach() {
     // 361: the restricted linked role authors blob-free events only.
     if (!widget.modalityGate.allowsMediaAuthoring) {
@@ -5642,6 +5646,22 @@ class _ConversationWiredState extends State<ConversationWired>
                   _pickVideoFromCamera();
                 },
               ),
+              if (widget.documentAttachmentsEnabled)
+                ListTile(
+                  key: ConversationWired.attachSheetDocumentKey,
+                  leading: Icon(
+                    Icons.picture_as_pdf_outlined,
+                    color: sheetColors.iconPrimary,
+                  ),
+                  title: Text(
+                    AppLocalizations.of(context)!.picker_document,
+                    style: TextStyle(color: sheetColors.textPrimary),
+                  ),
+                  onTap: () {
+                    Navigator.pop(ctx);
+                    _pickDocuments();
+                  },
+                ),
               // 204 (BUG-1): explicit Cancel to go back to the chat. Dismisses
               // the sheet ONLY — never picks, never touches staged media.
               ListTile(
@@ -5662,6 +5682,56 @@ class _ConversationWiredState extends State<ConversationWired>
         );
       },
     );
+  }
+
+  /// 414: PDF documents. The picker filters by extension; the bytes decide.
+  Future<void> _pickDocuments() async {
+    try {
+      final remaining =
+          _maxAttachments - _composerController.pendingAttachments.length;
+      if (remaining <= 0) return;
+      final picked = await _mediaPicker.pickDocuments();
+      if (picked.isEmpty || !mounted) return;
+      final media = <PendingComposerMedia>[];
+      var refused = false;
+      for (final xf in picked.take(remaining)) {
+        final rejection = await documentFileRejection(
+          path: xf.path,
+          mime: mimeFromPath(xf.path),
+        );
+        if (rejection != null) {
+          refused = true;
+          continue;
+        }
+        final file = File(xf.path);
+        media.add(
+          PendingComposerMedia(file: file, budgetBytes: await file.length()),
+        );
+      }
+      if (!mounted) return;
+      if (refused) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              AppLocalizations.of(context)!.media_document_only_pdf,
+            ),
+          ),
+        );
+      }
+      if (media.isNotEmpty) await _attemptAddPendingMedia(media);
+    } catch (e) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'CONV_FL_PICK_DOCUMENT_ERROR',
+        details: {'errorType': e.runtimeType.toString()},
+      );
+      if (mounted) {
+        showVideoProcessingNotice(
+          context,
+          message: AppLocalizations.of(context)!.media_unavailable,
+        );
+      }
+    }
   }
 
   Future<void> _pickFromGallery() async {
@@ -6656,7 +6726,7 @@ class _ConversationWiredState extends State<ConversationWired>
         pendingAttachments ?? _composerController.pendingAttachments;
     var kind = PrivateMediaAttachmentKind.unknown;
     if (effectivePendingAttachments.length == 1) {
-      final mime = _mimeFromPath(
+      final mime = mimeFromPath(
         effectivePendingAttachments.single.file.path,
       ).toLowerCase();
       if (mime == 'image/gif') {

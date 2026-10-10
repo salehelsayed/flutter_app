@@ -1,0 +1,7 @@
+success DTR-15 transfers exact owners without a shared State hierarchy
+success TC-294-09 freezes public Wired APIs and screen handoffs
+success TC-294-11 gives DTR-15 tests exact curated gate membership
+success sender encrypts, key rides the v2 envelope, receiver decrypts to byte-identical media
+success legacy plaintext message from old sender still round-trips
+success voice round trip: encrypted m4a decrypts byte-identical
+success share-built attachment round-trips through the same decrypt path

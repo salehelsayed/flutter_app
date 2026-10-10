@@ -77,4 +77,6 @@
 // v119 retains quiet recovery intent through inbox staging and canonical
 // message storage, independently of unread and delivery state. Existing rows
 // default to normal notification policy.
-const int currentIdentityDatabaseVersion = 119;
+// 414: DB v120 adds nullable `media_attachments.file_name`, the display name
+// of a document (PDF) attachment. No default and no backfill.
+const int currentIdentityDatabaseVersion = 120;

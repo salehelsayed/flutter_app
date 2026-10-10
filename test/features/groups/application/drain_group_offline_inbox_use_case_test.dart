@@ -11373,7 +11373,8 @@ void main() {
         'media': [
           {
             'id': 'blob-dangerous-1',
-            'mime': 'application/pdf',
+            // 414: PDF is allowed now; zip stays a dangerous group MIME.
+            'mime': 'application/zip',
             'size': 8910,
             'mediaType': 'file',
             'downloadStatus': 'pending',

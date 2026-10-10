@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:crypto/crypto.dart';
 import 'package:sqflite_sqlcipher/sqflite.dart';
 
+import '../../media/attachment_file_name.dart';
 import '../../media/group_media_blob_custody.dart';
 import '../../notifications/deterministic_notification_id.dart';
 import '../../services/protected_group_content_contract.dart';
@@ -2502,6 +2503,7 @@ final class _ProtectedGroupMediaAttachmentProjection {
     required this.encryptionKeyBase64,
     required this.encryptionNonce,
     required this.caption,
+    required this.fileName,
     required this.targets,
   });
 
@@ -2519,6 +2521,7 @@ final class _ProtectedGroupMediaAttachmentProjection {
   final String encryptionKeyBase64;
   final String encryptionNonce;
   final String? caption;
+  final String? fileName;
   final List<_ProtectedGroupMediaTargetProjection> targets;
 
   Map<String, Object?> toJson() => <String, Object?>{
@@ -2536,6 +2539,7 @@ final class _ProtectedGroupMediaAttachmentProjection {
     'encryptionKeyBase64': encryptionKeyBase64,
     'encryptionNonce': encryptionNonce,
     if (caption != null) 'caption': caption,
+    if (fileName != null) 'fileName': fileName,
     'expiresAtMs': targets.map((target) => target.expiresAtMs).toList(),
   };
 }
@@ -2593,6 +2597,7 @@ const Set<String> _protectedGroupMediaAttachmentAllowedKeys = <String>{
   'durationMs',
   'waveform',
   'caption',
+  'fileName',
 };
 final RegExp _protectedGroupMediaSha256 = RegExp(r'^[0-9a-f]{64}$');
 final RegExp _protectedGroupMediaBlobId = RegExp(r'^[A-Za-z0-9_-]{1,128}$');
@@ -2677,6 +2682,7 @@ _ProtectedGroupMediaProjection? _parseProtectedGroupMediaProjection({
       final durationMs = attachment['durationMs'];
       final rawWaveform = attachment['waveform'];
       final caption = attachment['caption'];
+      final fileName = attachment['fileName'];
       final rawExpiries = attachment['expiresAtMs'];
       if (attachmentId == null ||
           custodyBlobId == null ||
@@ -2695,6 +2701,9 @@ _ProtectedGroupMediaProjection? _parseProtectedGroupMediaProjection({
           (height != null && (height is! int || height <= 0)) ||
           (durationMs != null && (durationMs is! int || durationMs < 0)) ||
           (caption != null && _protectedMediaString(caption) == null) ||
+          (fileName != null &&
+              (fileName is! String ||
+                  sanitizeAttachmentFileName(fileName) != fileName)) ||
           (rawWaveform != null && rawWaveform is! List) ||
           rawExpiries is! List ||
           rawExpiries.length != targetRecipients.length ||
@@ -2743,6 +2752,7 @@ _ProtectedGroupMediaProjection? _parseProtectedGroupMediaProjection({
           encryptionKeyBase64: encryptionKeyBase64,
           encryptionNonce: encryptionNonce,
           caption: caption as String?,
+          fileName: fileName as String?,
           targets: List<_ProtectedGroupMediaTargetProjection>.unmodifiable(
             targets,
           ),

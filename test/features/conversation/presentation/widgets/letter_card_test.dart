@@ -7,6 +7,7 @@ import 'package:flutter_app/features/conversation/presentation/widgets/letter_ca
 import 'package:flutter_app/features/home/presentation/widgets/user_avatar.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/shared/widgets/linkable_text.dart';
+import 'package:flutter_app/shared/widgets/media/document_attachment_tile.dart';
 
 import '../../../../shared/helpers/readability_test_helpers.dart';
 
@@ -302,78 +303,80 @@ void main() {
         },
       );
 
-      testWidgets('queued media uses a waiting note without an upload spinner', (
-        tester,
-      ) async {
-        await tester.pumpWidget(
-          buildTestWidget(
-            isIncoming: false,
-            status: 'sending',
-            text: '',
-            media: const [
-              MediaAttachment(
-                id: 'sending-media',
-                messageId: 'sending-message',
-                mime: 'image/jpeg',
-                size: 1024,
-                mediaType: 'image',
-                localPath: '/tmp/sending.jpg',
-                downloadStatus: 'upload_pending',
-                createdAt: '2026-02-27T10:00:00.000Z',
-              ),
-            ],
-          ),
-        );
-
-        expect(find.text('Media pending upload'), findsWidgets);
-        expect(find.text('Uploading media'), findsNothing);
-        expect(find.byIcon(Icons.schedule_rounded), findsWidgets);
-        expect(
-          find.byKey(const ValueKey('message-media-pending-note')),
-          findsOneWidget,
-        );
-        expect(
-          find.descendant(
-            of: find.byKey(const ValueKey('message-media-pending-note')),
-            matching: find.byType(CircularProgressIndicator),
-          ),
-          findsNothing,
-        );
-        expect(
-          find.descendant(
-            of: find.byKey(const ValueKey('message-media-pending-note')),
-            matching: find.text(
-              'Recipients will receive this after the upload finishes.',
+      testWidgets(
+        'queued media uses a waiting note without an upload spinner',
+        (tester) async {
+          await tester.pumpWidget(
+            buildTestWidget(
+              isIncoming: false,
+              status: 'sending',
+              text: '',
+              media: const [
+                MediaAttachment(
+                  id: 'sending-media',
+                  messageId: 'sending-message',
+                  mime: 'image/jpeg',
+                  size: 1024,
+                  mediaType: 'image',
+                  localPath: '/tmp/sending.jpg',
+                  downloadStatus: 'upload_pending',
+                  createdAt: '2026-02-27T10:00:00.000Z',
+                ),
+              ],
             ),
-          ),
-          findsOneWidget,
-        );
-      });
+          );
 
-      testWidgets('uploaded media waiting for its message does not claim upload activity', (
-        tester,
-      ) async {
-        await tester.pumpWidget(
-          buildTestWidget(
-            isIncoming: false,
-            status: 'sending',
-            text: '',
-            media: const [
-              MediaAttachment(
-                id: 'uploaded-media',
-                messageId: 'sending-message',
-                mime: 'image/jpeg',
-                size: 1024,
-                mediaType: 'image',
-                downloadStatus: 'done',
-                createdAt: '2026-02-27T10:00:00.000Z',
+          expect(find.text('Media pending upload'), findsWidgets);
+          expect(find.text('Uploading media'), findsNothing);
+          expect(find.byIcon(Icons.schedule_rounded), findsWidgets);
+          expect(
+            find.byKey(const ValueKey('message-media-pending-note')),
+            findsOneWidget,
+          );
+          expect(
+            find.descendant(
+              of: find.byKey(const ValueKey('message-media-pending-note')),
+              matching: find.byType(CircularProgressIndicator),
+            ),
+            findsNothing,
+          );
+          expect(
+            find.descendant(
+              of: find.byKey(const ValueKey('message-media-pending-note')),
+              matching: find.text(
+                'Recipients will receive this after the upload finishes.',
               ),
-            ],
-          ),
-        );
-        expect(find.text('Uploading media'), findsNothing);
-        expect(find.text('Media pending upload'), findsNothing);
-      });
+            ),
+            findsOneWidget,
+          );
+        },
+      );
+
+      testWidgets(
+        'uploaded media waiting for its message does not claim upload activity',
+        (tester) async {
+          await tester.pumpWidget(
+            buildTestWidget(
+              isIncoming: false,
+              status: 'sending',
+              text: '',
+              media: const [
+                MediaAttachment(
+                  id: 'uploaded-media',
+                  messageId: 'sending-message',
+                  mime: 'image/jpeg',
+                  size: 1024,
+                  mediaType: 'image',
+                  downloadStatus: 'done',
+                  createdAt: '2026-02-27T10:00:00.000Z',
+                ),
+              ],
+            ),
+          );
+          expect(find.text('Uploading media'), findsNothing);
+          expect(find.text('Media pending upload'), findsNothing);
+        },
+      );
 
       // 155: a message that reached the inbox reads as a good "in the inbox"
       // state — the inbox glyph, NEVER the two-tick done_all (retired from the
@@ -2963,4 +2966,53 @@ void main() {
       expect(light.surfaceRaised, isNot(light.surfaceSubtle));
     },
   );
+
+  group('documents (414)', () {
+    testWidgets(
+      'a PDF attachment renders the document tile, not an empty gap',
+      (tester) async {
+        await tester.pumpWidget(
+          buildTestWidget(
+            text: '',
+            media: const [
+              MediaAttachment(
+                id: 'doc-1',
+                messageId: 'msg-1',
+                mime: 'application/pdf',
+                size: 4096,
+                mediaType: 'file',
+                localPath: '/tmp/doc-1.pdf',
+                downloadStatus: 'done',
+                createdAt: '2026-10-10T10:00:00.000Z',
+                fileName: 'Invoice.pdf',
+              ),
+            ],
+          ),
+        );
+        expect(find.byType(DocumentAttachmentTile), findsOneWidget);
+        expect(find.text('Invoice.pdf'), findsOneWidget);
+      },
+    );
+
+    testWidgets('a non-PDF file attachment renders as unsupported', (
+      tester,
+    ) async {
+      await tester.pumpWidget(
+        buildTestWidget(
+          media: const [
+            MediaAttachment(
+              id: 'bin-1',
+              messageId: 'msg-1',
+              mime: 'application/octet-stream',
+              size: 10,
+              mediaType: 'file',
+              downloadStatus: 'done',
+              createdAt: '2026-10-10T10:00:00.000Z',
+            ),
+          ],
+        ),
+      );
+      expect(find.text('Unsupported file'), findsOneWidget);
+    });
+  });
 }

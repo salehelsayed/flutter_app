@@ -1,0 +1,6 @@
+Analyzing 3 items...                                            
+
+   info • 'pipelineOwner' is deprecated and shouldn't be used. Interact with the pipelineOwner tree rooted at RendererBinding.rootPipelineOwner instead. Or instead of accessing the SemanticsOwner of any PipelineOwner interact with the SemanticsBinding directly. This feature was deprecated after v3.10.0-12.0.pre. Try replacing the use of the deprecated member with the replacement • test/shared/widgets/linkable_text_test.dart:67:22 • deprecated_member_use
+
+1 issue found. (ran in 60.2s)
+ANALYZE_EXIT=1

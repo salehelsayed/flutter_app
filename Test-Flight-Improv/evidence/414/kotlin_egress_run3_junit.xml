@@ -1,0 +1,77 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="com.mknoon.app.ReceivedMediaEgressNativeTest" tests="14" skipped="0" failures="0" errors="0" timestamp="2026-10-10T13:15:43.742Z" hostname="J3L23D1Q5D" time="3.973">
+  <properties/>
+  <testcase name="provider opens real Flutter Documents media and rejects sibling or write access" classname="com.mknoon.app.ReceivedMediaEgressNativeTest" time="3.0"/>
+  <testcase name="actual handler retains share busy until resume and presents once per operation" classname="com.mknoon.app.ReceivedMediaEgressNativeTest" time="0.747"/>
+  <testcase name="api bands select scoped or legacy storage without broad permission" classname="com.mknoon.app.ReceivedMediaEgressNativeTest" time="0.01"/>
+  <testcase name="414 parser accepts one PDF to open and refuses PDF to photos" classname="com.mknoon.app.ReceivedMediaEgressNativeTest" time="0.009"/>
+  <testcase name="actual handler preserves successful sibling when a later save rolls back" classname="com.mknoon.app.ReceivedMediaEgressNativeTest" time="0.036"/>
+  <testcase name="busy gate permits one operation and ignores late release" classname="com.mknoon.app.ReceivedMediaEgressNativeTest" time="0.009"/>
+  <testcase name="414 provider types PDF and the view intent grants read only" classname="com.mknoon.app.ReceivedMediaEgressNativeTest" time="0.014"/>
+  <testcase name="share intent is ordered read-only and truthful for one and many" classname="com.mknoon.app.ReceivedMediaEgressNativeTest" time="0.01"/>
+  <testcase name="parser rejects malformed envelopes and busy is ordered per input" classname="com.mknoon.app.ReceivedMediaEgressNativeTest" time="0.008"/>
+  <testcase name="provider rejects a symlinked literal root when creating and opening URI" classname="com.mknoon.app.ReceivedMediaEgressNativeTest" time="0.014"/>
+  <testcase name="414 open presents once, holds busy until resume, and reports no viewer" classname="com.mknoon.app.ReceivedMediaEgressNativeTest" time="0.034"/>
+  <testcase name="fresh actual handler sweeps only exact legacy staging markers" classname="com.mknoon.app.ReceivedMediaEgressNativeTest" time="0.033"/>
+  <testcase name="partial rollback publication and restart sweep are causally invocation scoped" classname="com.mknoon.app.ReceivedMediaEgressNativeTest" time="0.012"/>
+  <testcase name="actual handler drives api28 permission busy and one shot completion" classname="com.mknoon.app.ReceivedMediaEgressNativeTest" time="0.036"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[System.logW: A resource was acquired at attached stack trace but never released. See java.io.Closeable for information on avoiding resource leaks.
+java.lang.Throwable: Explicit termination method 'close' not called
+	at dalvik.system.CloseGuard.$$robo$$dalvik_system_CloseGuard$openWithCallSite(CloseGuard.java:288)
+	at dalvik.system.CloseGuard.openWithCallSite(CloseGuard.java)
+	at dalvik.system.CloseGuard.$$robo$$dalvik_system_CloseGuard$open(CloseGuard.java:257)
+	at java.base/jdk.internal.reflect.NativeMethodAccessorImpl.invoke0(Native Method)
+	at java.base/jdk.internal.reflect.NativeMethodAccessorImpl.invoke(NativeMethodAccessorImpl.java:77)
+	at java.base/jdk.internal.reflect.DelegatingMethodAccessorImpl.invoke(DelegatingMethodAccessorImpl.java:43)
+	at java.base/java.lang.reflect.Method.invoke(Method.java:569)
+	at org.robolectric.shadows.ShadowCloseGuard$CloseGuardReflector$$Reflector15.open(Unknown Source)
+	at org.robolectric.shadows.ShadowCloseGuard.open(ShadowCloseGuard.java:38)
+	at dalvik.system.CloseGuard.open(CloseGuard.java)
+	at android.os.ParcelFileDescriptor.$$robo$$android_os_ParcelFileDescriptor$__constructor__(ParcelFileDescriptor.java:207)
+	at android.os.ParcelFileDescriptor.<init>(ParcelFileDescriptor.java:194)
+	at android.os.ParcelFileDescriptor.<init>(ParcelFileDescriptor.java:190)
+	at org.robolectric.shadows.ShadowParcelFileDescriptor.newParcelFileDescriptor(ShadowParcelFileDescriptor.java:116)
+	at org.robolectric.shadows.ShadowParcelFileDescriptor.open(ShadowParcelFileDescriptor.java:121)
+	at android.os.ParcelFileDescriptor.open(ParcelFileDescriptor.java)
+	at com.mknoon.app.ReceivedMediaEgressProvider.openFile(ReceivedMediaEgressProvider.kt:61)
+	at android.content.ContentProvider.$$robo$$android_content_ContentProvider$openAssetFile(ContentProvider.java:2239)
+	at android.content.ContentProvider.openAssetFile(ContentProvider.java)
+	at android.content.ContentProvider.$$robo$$android_content_ContentProvider$openTypedAssetFile(ContentProvider.java:2417)
+	at android.content.ContentProvider.openTypedAssetFile(ContentProvider.java)
+	at android.content.ContentProvider.$$robo$$android_content_ContentProvider$openTypedAssetFile(ContentProvider.java:2484)
+	at android.content.ContentProvider.openTypedAssetFile(ContentProvider.java)
+	at android.content.ContentProvider$Transport.$$robo$$android_content_ContentProvider_Transport$openTypedAssetFile(ContentProvider.java:667)
+	at android.content.ContentProvider$Transport.openTypedAssetFile(ContentProvider.java)
+	at android.content.ContentResolver.$$robo$$android_content_ContentResolver$openTypedAssetFileDescriptor(ContentResolver.java:2043)
+	at android.content.ContentResolver.openTypedAssetFileDescriptor(ContentResolver.java)
+	at android.content.ContentResolver.$$robo$$android_content_ContentResolver$openAssetFileDescriptor(ContentResolver.java:1858)
+	at android.content.ContentResolver.openAssetFileDescriptor(ContentResolver.java)
+	at android.content.ContentResolver.$$robo$$android_content_ContentResolver$openInputStream(ContentResolver.java:1528)
+	at java.base/jdk.internal.reflect.NativeMethodAccessorImpl.invoke0(Native Method)
+	at java.base/jdk.internal.reflect.NativeMethodAccessorImpl.invoke(NativeMethodAccessorImpl.java:77)
+	at java.base/jdk.internal.reflect.DelegatingMethodAccessorImpl.invoke(DelegatingMethodAccessorImpl.java:43)
+	at java.base/java.lang.reflect.Method.invoke(Method.java:569)
+	at org.robolectric.shadows.ShadowContentResolver$ContentResolverReflector$$Reflector13.openInputStream(Unknown Source)
+	at org.robolectric.shadows.ShadowContentResolver.openInputStream(ShadowContentResolver.java:194)
+	at android.content.ContentResolver.openInputStream(ContentResolver.java)
+	at com.mknoon.app.ReceivedMediaEgressNativeTest.provider opens real Flutter Documents media and rejects sibling or write access(ReceivedMediaEgressNativeTest.kt:68)
+	at java.base/jdk.internal.reflect.NativeMethodAccessorImpl.invoke0(Native Method)
+	at java.base/jdk.internal.reflect.NativeMethodAccessorImpl.invoke(NativeMethodAccessorImpl.java:77)
+	at java.base/jdk.internal.reflect.DelegatingMethodAccessorImpl.invoke(DelegatingMethodAccessorImpl.java:43)
+	at java.base/java.lang.reflect.Method.invoke(Method.java:569)
+	at org.junit.runners.model.FrameworkMethod$1.runReflectiveCall(FrameworkMethod.java:59)
+	at org.junit.internal.runners.model.ReflectiveCallable.run(ReflectiveCallable.java:12)
+	at org.junit.runners.model.FrameworkMethod.invokeExplosively(FrameworkMethod.java:56)
+	at org.junit.internal.runners.statements.InvokeMethod.evaluate(InvokeMethod.java:17)
+	at org.junit.runners.ParentRunner$3.evaluate(ParentRunner.java:306)
+	at org.robolectric.RobolectricTestRunner$HelperTestRunner$1.evaluate(RobolectricTestRunner.java:489)
+	at org.robolectric.internal.SandboxTestRunner$2.lambda$evaluate$2(SandboxTestRunner.java:291)
+	at org.robolectric.internal.bytecode.Sandbox.lambda$runOnMainThread$0(Sandbox.java:104)
+	at java.base/java.util.concurrent.FutureTask.run(FutureTask.java:264)
+	at java.base/java.util.concurrent.ThreadPoolExecutor.runWorker(ThreadPoolExecutor.java:1136)
+	at java.base/java.util.concurrent.ThreadPoolExecutor$Worker.run(ThreadPoolExecutor.java:635)
+	at java.base/java.lang.Thread.run(Thread.java:840)
+
+]]></system-err>
+</testsuite>

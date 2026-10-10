@@ -9,6 +9,7 @@ import 'package:uuid/uuid.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/bridge/p2p_bridge_client.dart';
 import 'package:flutter_app/core/media/app_owned_media_delete_telemetry.dart';
+import 'package:flutter_app/core/media/document_file_check.dart';
 import 'package:flutter_app/core/media/group_media_integrity_policy.dart';
 import 'package:flutter_app/core/media/group_media_mime_policy.dart';
 import 'package:flutter_app/core/media/group_media_size_policy.dart';
@@ -250,9 +251,12 @@ Future<UploadMediaOutcome> runUploadMedia({
   String? blobId,
   bool deleteSourceWhenDone = false,
   EncryptedMediaArtifact? preparedArtifact,
+  // 414: display name of a document. Stamped on the uploaded attachment so it
+  // reaches the wire; uploadMediaFn itself never sees it.
+  String? fileName,
 }) async {
   try {
-    return await uploadMediaFn(
+    final outcome = await uploadMediaFn(
       bridge: bridge,
       localFilePath: localFilePath,
       mime: mime,
@@ -267,6 +271,9 @@ Future<UploadMediaOutcome> runUploadMedia({
       deleteSourceWhenDone: deleteSourceWhenDone,
       preparedArtifact: preparedArtifact,
     );
+    return fileName != null && outcome is UploadMediaSucceeded
+        ? UploadMediaSucceeded(outcome.attachment.copyWith(fileName: fileName))
+        : outcome;
   } catch (error) {
     emitFlowEvent(
       layer: 'FL',
@@ -534,6 +541,37 @@ Future<UploadMediaOutcome> uploadMedia({
             validation.reason == 'missing_file' ||
             validation.reason == 'unreadable_file';
         return isLocalSourceFailure
+            ? const UploadMediaFailed(
+                stage: UploadMediaStage.localSource,
+                disposition: UploadMediaDisposition.terminal,
+                errorCode: 'LOCAL_SOURCE_UNREADABLE',
+              )
+            : const UploadMediaFailed(
+                stage: UploadMediaStage.validation,
+                disposition: UploadMediaDisposition.terminal,
+                errorCode: 'INVALID_MIME',
+              );
+      }
+    } else if (MediaAttachment.mediaTypeFromMime(effectiveMime) == 'file') {
+      // 414: a 1:1 document must be a PDF whose bytes say so. Group media
+      // gets the same rule from GroupMediaMimePolicy above.
+      stage = UploadMediaStage.localSource;
+      final rejection = await documentFileRejection(
+        path: localFilePath,
+        mime: effectiveMime,
+      );
+      if (rejection != null) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'MEDIA_UPLOAD_REJECTED_INVALID_DOCUMENT',
+          details: {
+            'blobId': _uploadMediaShortId(effectiveBlobId),
+            'mime': effectiveMime,
+            'reason': rejection,
+          },
+        );
+        emitUploadTiming(outcome: 'rejected', details: {'reason': rejection});
+        return rejection == 'missing_file' || rejection == 'unreadable_file'
             ? const UploadMediaFailed(
                 stage: UploadMediaStage.localSource,
                 disposition: UploadMediaDisposition.terminal,

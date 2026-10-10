@@ -3028,6 +3028,7 @@ class MediaAttachmentRepositoryImpl
       ownerLane: MediaOwnerLane.direct,
       isBookmarked: incoming.isBookmarked,
       lastPlaybackPositionMs: incoming.lastPlaybackPositionMs,
+      fileName: stored.fileName,
     );
   }
 

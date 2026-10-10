@@ -1,5 +1,6 @@
 import 'dart:io';
 
+import 'package:flutter_app/core/media/media_mime.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 
 class GroupMediaValidationResult {
@@ -24,6 +25,10 @@ class GroupMediaMimePolicy {
     'audio/aac': 'audio',
     'audio/mpeg': 'audio',
     'audio/ogg': 'audio',
+    // 414: PDF is the one document type. Its bytes must carry the PDF
+    // signature (validateFile); a PDF signature under any other MIME stays
+    // dangerous_signature.
+    kPdfMime: 'file',
   };
 
   static String? normalizeMime(String? mime) {
@@ -128,9 +133,14 @@ class GroupMediaMimePolicy {
     final detected = _detectKnownSignature(bytes);
     if (detected == _DetectedSignature.unknown) {
       final declaredMediaType = allowedMimeToMediaType[normalizedMime];
-      if (declaredMediaType == 'image' || declaredMediaType == 'video') {
+      if (declaredMediaType == 'image' ||
+          declaredMediaType == 'video' ||
+          declaredMediaType == 'file') {
         return const GroupMediaValidationResult.invalid('unknown_signature');
       }
+      return const GroupMediaValidationResult.valid();
+    }
+    if (detected == _DetectedSignature.pdf && normalizedMime == kPdfMime) {
       return const GroupMediaValidationResult.valid();
     }
     if (detected == _DetectedSignature.html ||

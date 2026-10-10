@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import 'package:flutter_app/core/media/attachment_file_name.dart';
 import 'package:flutter_app/core/media/direct_media_blob_custody.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
 
@@ -109,6 +110,11 @@ class MediaAttachment {
   /// (0 = start/completed). Never serialized onto wire JSON.
   final int lastPlaybackPositionMs;
 
+  /// Display name of a document attachment (414), e.g. `Invoice.pdf`.
+  /// Sender-supplied, so it is cleaned on receive and never used to build a
+  /// disk path. Null for image/video/audio and for legacy rows.
+  final String? fileName;
+
   const MediaAttachment({
     required this.id,
     required this.messageId,
@@ -135,6 +141,7 @@ class MediaAttachment {
     this.ownerLane,
     this.isBookmarked = false,
     this.lastPlaybackPositionMs = 0,
+    this.fileName,
   });
 
   bool get isAnimated => mime == 'image/gif';
@@ -206,6 +213,7 @@ class MediaAttachment {
       isBookmarked: ((map['is_bookmarked'] as num?)?.toInt() ?? 0) != 0,
       lastPlaybackPositionMs:
           (map['last_playback_position_ms'] as num?)?.toInt() ?? 0,
+      fileName: map['file_name'] as String?,
     );
   }
 
@@ -242,6 +250,8 @@ class MediaAttachment {
       'owner_lane': ownerLane?.dbValue ?? kMediaOwnerLaneUnresolved,
       'is_bookmarked': isBookmarked ? 1 : 0,
       'last_playback_position_ms': lastPlaybackPositionMs,
+      // 414: written only when set, so rows without a name never need v120.
+      if (fileName != null) 'file_name': fileName,
     };
   }
 
@@ -278,6 +288,7 @@ class MediaAttachment {
       blobCustody: json.containsKey('blobCustody')
           ? DirectMediaBlobCustodyCommitment.fromJson(json['blobCustody'])
           : null,
+      fileName: sanitizeAttachmentFileName(json['fileName']),
     );
   }
 
@@ -299,6 +310,7 @@ class MediaAttachment {
       if (encryptionNonce != null) 'encryptionNonce': encryptionNonce,
       if (encryptionScheme != null) 'encryptionScheme': encryptionScheme,
       if (blobCustody != null) 'blobCustody': blobCustody!.toJson(),
+      if (fileName != null) 'fileName': fileName,
     };
   }
 
@@ -341,6 +353,7 @@ class MediaAttachment {
     MediaOwnerLane? ownerLane,
     bool? isBookmarked,
     int? lastPlaybackPositionMs,
+    String? fileName,
   }) {
     return MediaAttachment(
       id: id ?? this.id,
@@ -383,6 +396,7 @@ class MediaAttachment {
       isBookmarked: isBookmarked ?? this.isBookmarked,
       lastPlaybackPositionMs:
           lastPlaybackPositionMs ?? this.lastPlaybackPositionMs,
+      fileName: fileName ?? this.fileName,
     );
   }
 

@@ -2183,10 +2183,7 @@ void main() {
           timestamp: DateTime.utc(2026, 8, 16, 23, 2),
         );
       });
-      expect(
-        staleLegacyResult.$1,
-        SendGroupMessageResult.authorityUnavailable,
-      );
+      expect(staleLegacyResult.$1, SendGroupMessageResult.authorityUnavailable);
       expect(staleLegacyResult.$2, isNull);
       expect(staleLegacyBridge.commandLog, isEmpty);
       expect(await staleLegacyRepo.getMessage('msg-tc377-04b'), isNull);
@@ -5100,137 +5097,141 @@ void main() {
     },
   );
 
-  test('preserves explicit empty recipient lists when no remote member is deliverable', () async {
-    final joinedAt = DateTime.utc(2026, 6, 4, 8);
-    // Charlie has no deliverable identity (no devices, no public key), so the
-    // send has no remote recipient; his pending invite row plays no part.
-    const charliePeerId = 'peer-undeliverable-charlie';
-    final attemptRepo = _InMemoryInviteDeliveryAttemptRepository();
-    final attemptAt = joinedAt.add(const Duration(minutes: 1));
+  test(
+    'preserves explicit empty recipient lists when no remote member is deliverable',
+    () async {
+      final joinedAt = DateTime.utc(2026, 6, 4, 8);
+      // Charlie has no deliverable identity (no devices, no public key), so the
+      // send has no remote recipient; his pending invite row plays no part.
+      const charliePeerId = 'peer-undeliverable-charlie';
+      final attemptRepo = _InMemoryInviteDeliveryAttemptRepository();
+      final attemptAt = joinedAt.add(const Duration(minutes: 1));
 
-    await groupRepo.saveGroup(
-      testGroup.copyWith(
-        createdAt: joinedAt.subtract(const Duration(minutes: 1)),
-      ),
-    );
-    await groupRepo.saveMember(
-      GroupMember(
+      await groupRepo.saveGroup(
+        testGroup.copyWith(
+          createdAt: joinedAt.subtract(const Duration(minutes: 1)),
+        ),
+      );
+      await groupRepo.saveMember(
+        GroupMember(
+          groupId: 'group-1',
+          peerId: charliePeerId,
+          username: 'Charlie',
+          role: MemberRole.writer,
+          publicKey: '',
+          joinedAt: joinedAt,
+        ),
+      );
+      await attemptRepo.saveAttempt(
+        GroupInviteDeliveryAttempt(
+          groupId: 'group-1',
+          peerId: charliePeerId,
+          username: 'Charlie',
+          status: GroupInviteDeliveryStatus.sent,
+          attemptedAt: attemptAt,
+          updatedAt: attemptAt,
+        ),
+      );
+
+      final nativeBridge = FakeBridge();
+      nativeBridge.responses['group:sendReliable'] = {
+        'ok': true,
+        'messageId': 'inv106-empty-native',
+        'topicPeerCount': 0,
+        'expectedRecipientCount': 0,
+        'recipientPeerIds': <String>[],
+        'inboxStored': false,
+        'publishSucceeded': true,
+        'deliveryMode': 'live_only',
+        'envelope': '{"kind":"native-reliable-envelope"}',
+      };
+
+      final (nativeResult, nativeMessage) = await sendGroupMessage(
+        bridge: nativeBridge,
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
         groupId: 'group-1',
-        peerId: charliePeerId,
-        username: 'Charlie',
-        role: MemberRole.writer,
-        publicKey: '',
-        joinedAt: joinedAt,
-      ),
-    );
-    await attemptRepo.saveAttempt(
-      GroupInviteDeliveryAttempt(
+        text: 'INV-106 no accepted remotes native',
+        senderPeerId: 'peer-1',
+        senderPublicKey: 'pk-1',
+        senderPrivateKey: 'sk-1',
+        senderUsername: 'Alice',
+        messageId: 'inv106-empty-native',
+        timestamp: joinedAt.add(const Duration(minutes: 2)),
+        inviteDeliveryAttemptRepo: attemptRepo,
+      );
+
+      expect(nativeResult, SendGroupMessageResult.success);
+      expect(nativeMessage, isNotNull);
+      final nativeReliablePayload = _groupSendReliablePayloadForMessage(
+        nativeBridge,
+        'inv106-empty-native',
+      );
+      expect(nativeReliablePayload.containsKey('recipientPeerIds'), isTrue);
+      expect(
+        (nativeReliablePayload['recipientPeerIds'] as List<dynamic>)
+            .cast<String>(),
+        <String>[],
+      );
+      expect(nativeReliablePayload['preserveRecipientPeerIds'], isTrue);
+      expect(
+        nativeReliablePayload['recipientPeerIds'],
+        isNot(contains(charliePeerId)),
+      );
+      final nativeRetryPayload =
+          jsonDecode(nativeMessage!.inboxRetryPayload!) as Map<String, dynamic>;
+      expect(nativeRetryPayload.containsKey('recipientPeerIds'), isTrue);
+      expect(
+        (nativeRetryPayload['recipientPeerIds'] as List<dynamic>)
+            .cast<String>(),
+        <String>[],
+      );
+
+      final fallbackBridge = FakeBridge();
+      fallbackBridge.responses['group:sendReliable'] = {
+        'ok': false,
+        'errorCode': 'UNKNOWN_COMMAND',
+      };
+      fallbackBridge.responses['group:publish'] = {
+        'ok': true,
+        'messageId': 'inv106-empty-fallback',
+        'topicPeers': 0,
+      };
+
+      final (fallbackResult, fallbackMessage) = await sendGroupMessage(
+        bridge: fallbackBridge,
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
         groupId: 'group-1',
-        peerId: charliePeerId,
-        username: 'Charlie',
-        status: GroupInviteDeliveryStatus.sent,
-        attemptedAt: attemptAt,
-        updatedAt: attemptAt,
-      ),
-    );
+        text: 'INV-106 no accepted remotes fallback',
+        senderPeerId: 'peer-1',
+        senderPublicKey: 'pk-1',
+        senderPrivateKey: 'sk-1',
+        senderUsername: 'Alice',
+        messageId: 'inv106-empty-fallback',
+        timestamp: joinedAt.add(const Duration(minutes: 3)),
+        inviteDeliveryAttemptRepo: attemptRepo,
+      );
 
-    final nativeBridge = FakeBridge();
-    nativeBridge.responses['group:sendReliable'] = {
-      'ok': true,
-      'messageId': 'inv106-empty-native',
-      'topicPeerCount': 0,
-      'expectedRecipientCount': 0,
-      'recipientPeerIds': <String>[],
-      'inboxStored': false,
-      'publishSucceeded': true,
-      'deliveryMode': 'live_only',
-      'envelope': '{"kind":"native-reliable-envelope"}',
-    };
+      expect(fallbackResult, SendGroupMessageResult.successNoPeers);
+      expect(fallbackMessage, isNotNull);
+      final fallbackReliablePayload = _groupSendReliablePayloadForMessage(
+        fallbackBridge,
+        'inv106-empty-fallback',
+      );
+      expect(fallbackReliablePayload['recipientPeerIds'], <String>[]);
+      expect(fallbackReliablePayload['preserveRecipientPeerIds'], isTrue);
 
-    final (nativeResult, nativeMessage) = await sendGroupMessage(
-      bridge: nativeBridge,
-      groupRepo: groupRepo,
-      msgRepo: msgRepo,
-      groupId: 'group-1',
-      text: 'INV-106 no accepted remotes native',
-      senderPeerId: 'peer-1',
-      senderPublicKey: 'pk-1',
-      senderPrivateKey: 'sk-1',
-      senderUsername: 'Alice',
-      messageId: 'inv106-empty-native',
-      timestamp: joinedAt.add(const Duration(minutes: 2)),
-      inviteDeliveryAttemptRepo: attemptRepo,
-    );
-
-    expect(nativeResult, SendGroupMessageResult.success);
-    expect(nativeMessage, isNotNull);
-    final nativeReliablePayload = _groupSendReliablePayloadForMessage(
-      nativeBridge,
-      'inv106-empty-native',
-    );
-    expect(nativeReliablePayload.containsKey('recipientPeerIds'), isTrue);
-    expect(
-      (nativeReliablePayload['recipientPeerIds'] as List<dynamic>)
-          .cast<String>(),
-      <String>[],
-    );
-    expect(nativeReliablePayload['preserveRecipientPeerIds'], isTrue);
-    expect(
-      nativeReliablePayload['recipientPeerIds'],
-      isNot(contains(charliePeerId)),
-    );
-    final nativeRetryPayload =
-        jsonDecode(nativeMessage!.inboxRetryPayload!) as Map<String, dynamic>;
-    expect(nativeRetryPayload.containsKey('recipientPeerIds'), isTrue);
-    expect(
-      (nativeRetryPayload['recipientPeerIds'] as List<dynamic>).cast<String>(),
-      <String>[],
-    );
-
-    final fallbackBridge = FakeBridge();
-    fallbackBridge.responses['group:sendReliable'] = {
-      'ok': false,
-      'errorCode': 'UNKNOWN_COMMAND',
-    };
-    fallbackBridge.responses['group:publish'] = {
-      'ok': true,
-      'messageId': 'inv106-empty-fallback',
-      'topicPeers': 0,
-    };
-
-    final (fallbackResult, fallbackMessage) = await sendGroupMessage(
-      bridge: fallbackBridge,
-      groupRepo: groupRepo,
-      msgRepo: msgRepo,
-      groupId: 'group-1',
-      text: 'INV-106 no accepted remotes fallback',
-      senderPeerId: 'peer-1',
-      senderPublicKey: 'pk-1',
-      senderPrivateKey: 'sk-1',
-      senderUsername: 'Alice',
-      messageId: 'inv106-empty-fallback',
-      timestamp: joinedAt.add(const Duration(minutes: 3)),
-      inviteDeliveryAttemptRepo: attemptRepo,
-    );
-
-    expect(fallbackResult, SendGroupMessageResult.successNoPeers);
-    expect(fallbackMessage, isNotNull);
-    final fallbackReliablePayload = _groupSendReliablePayloadForMessage(
-      fallbackBridge,
-      'inv106-empty-fallback',
-    );
-    expect(fallbackReliablePayload['recipientPeerIds'], <String>[]);
-    expect(fallbackReliablePayload['preserveRecipientPeerIds'], isTrue);
-
-    final inboxPayload = _lastGroupInboxStorePayload(fallbackBridge);
-    expect(inboxPayload.containsKey('recipientPeerIds'), isTrue);
-    expect(
-      (inboxPayload['recipientPeerIds'] as List<dynamic>).cast<String>(),
-      <String>[],
-    );
-    expect(inboxPayload['preserveRecipientPeerIds'], isTrue);
-    expect(inboxPayload['recipientPeerIds'], isNot(contains(charliePeerId)));
-  });
+      final inboxPayload = _lastGroupInboxStorePayload(fallbackBridge);
+      expect(inboxPayload.containsKey('recipientPeerIds'), isTrue);
+      expect(
+        (inboxPayload['recipientPeerIds'] as List<dynamic>).cast<String>(),
+        <String>[],
+      );
+      expect(inboxPayload['preserveRecipientPeerIds'], isTrue);
+      expect(inboxPayload['recipientPeerIds'], isNot(contains(charliePeerId)));
+    },
+  );
 
   test(
     'UP-012 post-removal sends exclude removed members from durable notification recipients',
@@ -6966,11 +6967,9 @@ void main() {
       expect(result, SendGroupMessageResult.success);
       expect(message, isNotNull);
       expect(recordedLanes, isNotEmpty);
-      expect(
-        recordedLanes.toSet(),
-        {MediaOwnerLane.group},
-        reason: 'every group outgoing media save must pass the group lane',
-      );
+      expect(recordedLanes.toSet(), {
+        MediaOwnerLane.group,
+      }, reason: 'every group outgoing media save must pass the group lane');
       final savedAttachment = await mediaRepo.getAttachmentById('att-1');
       expect(savedAttachment, isNotNull);
       expect(savedAttachment!.ownerLane, MediaOwnerLane.group);
@@ -7035,9 +7034,10 @@ void main() {
       () async {
         final dangerousAttachment = testAttachment.copyWith(
           id: 'bad-att-1',
-          mime: 'application/pdf',
+          // 414: PDF is allowed now; zip stays a dangerous group MIME.
+          mime: 'application/zip',
           mediaType: 'file',
-          localPath: '/tmp/bad.pdf',
+          localPath: '/tmp/bad.zip',
         );
 
         final (result, message) = await sendGroupMessage(

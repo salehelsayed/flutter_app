@@ -1,12 +1,25 @@
 import 'dart:convert';
 
 import 'package:crypto/crypto.dart';
+import 'package:flutter_app/core/media/attachment_file_name.dart';
 
 const int kMaxMediaEgressItems = 10;
 
 final RegExp _requestIdPattern = RegExp(r'^[A-Za-z0-9_-]{1,64}$');
 
-enum MediaEgressDestination { photos, files, share }
+enum MediaEgressDestination {
+  photos,
+  files,
+  share,
+
+  /// 414: show one PDF in the system viewer (iOS Quick Look, Android
+  /// ACTION_VIEW). Like [share], it reports presentation, not per-item saves.
+  open;
+
+  /// True for destinations whose native result is a presentation outcome with
+  /// no per-item results.
+  bool get isPresentation => this == share || this == open;
+}
 
 enum MediaEgressOutcome {
   saved,
@@ -17,6 +30,9 @@ enum MediaEgressOutcome {
   rejected,
   platformFailure,
   presented,
+
+  /// 414: no installed app can view the document (Android `open` only).
+  noViewer,
 }
 
 enum MediaEgressItemOutcome {
@@ -36,11 +52,15 @@ class ReceivedMediaEgressCandidate {
     required this.attachmentId,
     required this.storedPath,
     required this.mime,
+    this.fileName,
   });
 
   final String attachmentId;
   final String storedPath;
   final String mime;
+
+  /// 414: the document's display name, used for the exported file name.
+  final String? fileName;
 }
 
 class MediaEgressItem {
@@ -73,7 +93,9 @@ class MediaEgressRequest {
     if (!isValidMediaEgressRequestId(requestId)) {
       throw ArgumentError.value(requestId, 'requestId', 'invalid request ID');
     }
-    if (items.isEmpty || items.length > kMaxMediaEgressItems) {
+    if (items.isEmpty ||
+        items.length > kMaxMediaEgressItems ||
+        (destination == MediaEgressDestination.open && items.length != 1)) {
       throw ArgumentError.value(items.length, 'items', 'invalid item count');
     }
     final ids = <String>{};
@@ -82,7 +104,8 @@ class MediaEgressRequest {
           !ids.add(item.attachmentId) ||
           item.sourcePath.isEmpty ||
           item.displayName.isEmpty ||
-          !isSupportedMediaEgressMime(item.mime)) {
+          !isSupportedMediaEgressMime(item.mime) ||
+          !isMediaEgressMimeAllowedFor(destination, item.mime)) {
         throw ArgumentError('invalid media item');
       }
     }
@@ -127,6 +150,20 @@ bool isValidMediaEgressRequestId(String value) =>
 bool isSupportedMediaEgressMime(String mime) =>
     mediaEgressExtensionForMime(mime) != null;
 
+/// 414: a PDF can be saved to Files, shared or opened, never saved to Photos.
+/// `open` takes PDFs only.
+bool isMediaEgressMimeAllowedFor(
+  MediaEgressDestination destination,
+  String mime,
+) {
+  final isPdf = mime.toLowerCase() == 'application/pdf';
+  return switch (destination) {
+    MediaEgressDestination.photos => !isPdf,
+    MediaEgressDestination.open => isPdf,
+    MediaEgressDestination.files || MediaEgressDestination.share => true,
+  };
+}
+
 String? mediaEgressExtensionForMime(String mime) =>
     switch (mime.toLowerCase()) {
       'image/jpeg' => '.jpg',
@@ -137,11 +174,24 @@ String? mediaEgressExtensionForMime(String mime) =>
       'video/mp4' => '.mp4',
       'video/quicktime' => '.mov',
       'video/webm' => '.webm',
+      'application/pdf' => '.pdf',
       _ => null,
     };
 
-String mediaEgressDisplayName(String attachmentId, String mime) {
+String mediaEgressDisplayName(
+  String attachmentId,
+  String mime, {
+  String? preferredName,
+}) {
   final extension = mediaEgressExtensionForMime(mime)!;
+  // 414: a document keeps its own clean name, always with the right
+  // extension so the receiving app knows the type.
+  final preferred = sanitizeAttachmentFileName(preferredName);
+  if (preferred != null) {
+    return preferred.toLowerCase().endsWith(extension)
+        ? preferred
+        : sanitizeAttachmentFileName('$preferred$extension')!;
+  }
   var safe = attachmentId.replaceAll(RegExp('[^A-Za-z0-9_-]'), '_');
   safe = safe.replaceAll(RegExp('_+'), '_');
   if (safe.isEmpty) safe = 'attachment';

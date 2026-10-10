@@ -7021,6 +7021,42 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Audio output could not be changed'**
   String get call_audio_output_failed;
+
+  /// No description provided for @picker_document.
+  ///
+  /// In en, this message translates to:
+  /// **'Document'**
+  String get picker_document;
+
+  /// No description provided for @media_document_unsupported.
+  ///
+  /// In en, this message translates to:
+  /// **'Unsupported file'**
+  String get media_document_unsupported;
+
+  /// No description provided for @media_document_open_failed.
+  ///
+  /// In en, this message translates to:
+  /// **'Could not open the file.'**
+  String get media_document_open_failed;
+
+  /// No description provided for @media_document_no_viewer.
+  ///
+  /// In en, this message translates to:
+  /// **'No app on this phone can open this file.'**
+  String get media_document_no_viewer;
+
+  /// No description provided for @media_document_only_pdf.
+  ///
+  /// In en, this message translates to:
+  /// **'Only PDF files can be sent.'**
+  String get media_document_only_pdf;
+
+  /// No description provided for @media_document_open.
+  ///
+  /// In en, this message translates to:
+  /// **'Open document'**
+  String get media_document_open;
 }
 
 class _AppLocalizationsDelegate

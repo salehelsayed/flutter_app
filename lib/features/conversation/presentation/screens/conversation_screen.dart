@@ -2530,6 +2530,8 @@ class _ConversationScreenState extends State<ConversationScreen>
             : l10n.media_egress_result_unavailable;
       case MediaEgressOutcome.busy:
       case MediaEgressOutcome.platformFailure:
+      // 414: only the document `open` action reports noViewer.
+      case MediaEgressOutcome.noViewer:
         return l10n.media_egress_result_failed;
     }
   }
@@ -2551,6 +2553,7 @@ class _ConversationScreenState extends State<ConversationScreen>
       case MediaEgressOutcome.permissionDenied:
       case MediaEgressOutcome.rejected:
       case MediaEgressOutcome.platformFailure:
+      case MediaEgressOutcome.noViewer:
         return MediaViewerActionResult.failure;
     }
   }

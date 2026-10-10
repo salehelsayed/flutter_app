@@ -73,6 +73,13 @@ subprojects {
     }
 
     plugins.withId("com.android.library") {
+        if (name == "file_picker") {
+            // 414: file_picker 11 skips the Kotlin plugin on AGP 9 and relies
+            // on built-in Kotlin, which gradle.properties keeps off
+            // (android.builtInKotlin=false). Without this its Kotlin sources
+            // never compile and FilePickerPlugin is missing at app compile.
+            pluginManager.apply("org.jetbrains.kotlin.android")
+        }
         if (name == "bonsoir_android") {
             // Bonsoir 5.x pins SDK 33, below its AndroidX dependencies' SDK 34
             // minimum. AGP 8.13 checks this for library modules as well.

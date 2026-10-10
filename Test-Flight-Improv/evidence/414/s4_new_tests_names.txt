@@ -1,0 +1,162 @@
+success perform channel schema correlation and outcome precedence are exact
+success 414: open decodes presented and noViewer with no items
+success 414: share cannot claim noViewer
+success 414: requests refuse PDF to photos and anything but one PDF to open
+success DocumentAttachmentTile (414) shows name and size; tap on a ready PDF opens it
+success DocumentAttachmentTile (414) no viewer shows the message
+success qualified selection builds one canonical bounded egress request
+success DocumentAttachmentTile (414) menu saves to Files and shares
+success ownership escapes fail closed before native egress
+success a symlinked approved root is not an ownership authority
+success failure busy and late completion preserve source without staging
+success DocumentAttachmentTile (414) a pending download shows progress and cannot be opened
+success native busy wins over merged structural rejects
+success DocumentAttachmentTile (414) a failed download offers retry
+success egress delegates canonical ownership to shared path authority
+success DocumentAttachmentTile (414) a non-PDF file is shown as unsupported and never opens
+success shared path authority exception fails closed before native
+success PDF documents (414) open sends one real PDF under its own clean name
+success PDF documents (414) a file labelled PDF without PDF bytes never leaves the app
+success PDF documents (414) a PDF is never saved to Photos and open takes PDFs only
+success strict group media commitment fileName (414) a document name round-trips through the signed JSON
+success strict group media commitment fileName (414) image commitments keep the exact pre-414 key set
+success strict group media commitment fileName (414) an unclean name fails closed on both sides
+success documentFileRejection (414) a real PDF passes
+success documentFileRejection (414) non-PDF bytes under application/pdf are refused
+success documentFileRejection (414) other MIMEs are unsupported even with PDF bytes
+success documentFileRejection (414) a missing file is reported
+success LetterBubble — fill / border / glow per role TC-11 incoming resting: surfaceSubtle fill + borderSoft, and a BackdropFilter is present
+success LetterBubble — fill / border / glow per role TC-12 incoming focused: surfaceRaised + teal400 border + a teal-derived glow BoxShadow
+success LetterBubble — fill / border / glow per role TC-13 outgoing: greenFill15 fill + green500 border, right-aligned
+success LetterBubble — fill / border / glow per role TC-14 system: greenFill15 fill + green500 border, left-aligned
+success LetterBubble — chrome / geometry TC-15 no chrome: no time text, no status-tick icon
+success LetterBubble — chrome / geometry TC-15b max width: content ConstrainedBox is MediaQuery width * 0.76
+success LetterBubble — chrome / geometry corner radius is radiusFull (16) via ClipRRect
+success LetterBubble — BiDi (ported from message_bubble_test.dart) TC-07 Arabic text drives RTL on body Text
+success LetterBubble — BiDi (ported from message_bubble_test.dart) TC-07 Arabic-first mixed text drives RTL on body Text
+success LetterBubble — BiDi (ported from message_bubble_test.dart) TC-07 LTR control stays LTR
+success LetterBubble — BiDi (ported from message_bubble_test.dart) TC-07 English-first mixed text stays LTR
+success LetterCard direct forwarded marker is attribution-free and legacy rows stay unmarked
+success LetterCard received (incoming) card shows sender name
+success LetterBubble — media (parity with the 1:1 / group chat) renders a MediaGrid for an image, with the text pill as caption and onTap wired
+success LetterCard received (incoming) card uses representative light readable roles for content
+success LetterBubble — media (parity with the 1:1 / group chat) a caption-less image renders the grid and NO empty text pill
+success LetterCard received (incoming) card shows message text
+success LetterCard received (incoming) card renders a long message body without throwing
+success LetterCard received (incoming) card shows time
+success LetterCard received (incoming) card shows edited indicator when the row is edited
+success LetterCard received (incoming) card shows deleted placeholder styling when the row is deleted
+success LetterBubble — media (parity with the 1:1 / group chat) renders an inline AudioPlayerWidget for a voice attachment
+success LetterCard received (incoming) card does not show delivery note
+success LetterBubble — media (parity with the 1:1 / group chat) group bubble forwards requireVerifiedContentHash + ownedMediaPeerId to MediaGrid
+success LetterCard sent (outgoing) card shows sender name (You)
+success LetterCard sent (outgoing) card shows message body
+success LetterCard sent (outgoing) card shows one tick when status is sending
+success 414: a PDF letter renders the document tile
+success LetterCard sent (outgoing) card shows one tick when status is sent
+success LetterCard sent (outgoing) card status 'queued_offline' renders a clock (schedule) glyph, not a tick
+success LetterCard sent (outgoing) card 'sending' and 'pending' still render a single tick, never the clock (210 guard)
+success LetterCard sent (outgoing) card queued media uses a waiting note without an upload spinner
+success LetterCard sent (outgoing) card uploaded media waiting for its message does not claim upload activity
+success LetterCard sent (outgoing) card status 'delivered' renders the inbox glyph and never the two-tick
+success LetterCard sent (outgoing) card legacy status 'queued' renders the inbox glyph and never the two-tick
+success LetterCard sent (outgoing) card shows failed icon when status is failed
+success LetterCard sent (outgoing) card status 'send_failed' still renders the error icon, never the inbox glyph
+success LetterCard sent (outgoing) card shows pending icon, color, and semantics when status is pending (single tick, never the inbox glyph or two-tick)
+success LetterCard sent (outgoing) card status 'inboxed' renders the inbox glyph, never schedule, never done_all
+success LetterCard sent (outgoing) card done_all (two-tick) is never rendered for ANY outgoing status
+success LetterCard sent (outgoing) card inboxed/delivered carry the 'delivered to inbox' a11y label
+success LetterCard sent (outgoing) card inboxed/delivered use the neutral status color; pending stays amber
+success LetterCard sent (outgoing) card no delivery note when status is null
+success LetterCard renders RingAvatar with 32px size
+success LetterCard transport icons shows wifi icon when transport is wifi
+success LetterCard transport icons shows wifi icon when transport is local
+success LetterCard transport icons shows relay icon when transport is relay
+success LetterCard transport icons shows direct icon when transport is direct
+success LetterCard transport icons shows direct icon when transport is legacy reuse fallback
+success LetterCard transport icons shows inbox icon when transport is inbox
+success LetterCard transport icons shows no transport icon when transport is null
+success LetterCard transport icons unrecognized transport shows help_outline icon
+success LetterCard transport icons shows upgrade icon when transport is upgraded
+success LetterCard URL links URL in message body renders as tappable link
+success LetterCard URL links Arabic-first mixed text drives RTL on body RichText
+success LetterCard URL links English-first mixed text drives LTR on body RichText
+success LetterCard URL links Arabic text drives RTL on body RichText
+success LetterCard URL links English text drives LTR on body RichText
+success LetterCard URL links URL has underline decoration
+success LetterCard URL links plain text without URLs still renders
+success LetterCard BiDi text direction Arabic quote text drives RTL on quote bar
+success LetterCard BiDi text direction English quote text drives LTR on quote bar
+success LetterCard BiDi text direction Arabic-first mixed quoted text drives RTL on quote bar
+success LetterCard reactions fires onLongPress on long-press
+success LetterCard reactions fires onReactionTap when chip tapped
+success LetterCard inline reactions reactions and timestamp share the same Row
+success LetterCard inline reactions no reactions still right-aligns timestamp in footer Row
+success LetterCard inline reactions reactions render inline in the footer
+success LetterCard inline reactions multiple reaction emojis render inline with counts
+success LetterCard inline reactions own reaction chip has teal border inline
+success LetterCard inline reactions sent message with reactions and delivery status renders inline
+success LetterCard inline reactions timestamp appears in footer row, not in header
+success LetterCard failed media actions shows retry and delete controls when callbacks are wired
+success LetterCard failed media actions hides failed media controls when callbacks are absent
+success LetterCard failed media actions MD-012 unavailable media actions are separate from failed-message resend
+success LetterCard failed text actions shows retry control when callback is wired
+success LetterCard failed text actions GFR-003 disables retry control when row retry is in flight
+success bubble layout (136 Phase 2) renders a solid-fill bubble with NO BackdropFilter
+success bubble layout (136 Phase 2) aligns incoming left and outgoing right
+success bubble layout (136 Phase 2) constrains bubble max width to ~78% of available width
+success bubble layout (136 Phase 2) corner radii stack by first/middle/last per side
+success bubble layout (136 Phase 2) showAvatar=false & showSenderName=false hides header and grows body top padding
+success bubble layout (136 Phase 2) continuation incoming balloon has NO ~42px leading avatar gutter
+success bubble layout (136 Phase 2) bubble balloon still fires onLongPress
+success bubble layout (136 Phase 2) bubble balloon still fires onReactionTap for its message
+success bubble layout (136 Phase 2) chrome-hidden bubble exposes a continuation Semantics label naming the sender
+success bubble layout (136 Phase 2) TC-A1 incoming first and continuation balloons share the same left edge
+success bubble layout (136 Phase 2) TC-W1 group first-in-run headered bubble hugs short text
+success bubble layout (136 Phase 2) TC-W2 continuation incoming bubble hugs short text
+success bubble layout (136 Phase 2) TC-W3 outgoing bubble hugs short text and stays right-aligned
+success bubble layout (136 Phase 2) TC-T1 timestamp renders inline within the body text (incoming)
+success bubble layout (136 Phase 2) TC-T2 outgoing inline timestamp keeps the status tick in the body
+success bubble layout (136 Phase 2) TC-W4 short bubble with reactions still hugs
+success bubble layout (136 Phase 2) TC-T5 empty-text bubble keeps the footer timestamp
+success bubble layout (136 Phase 2) TC-T3 long text wraps the inline timestamp without overflow
+success bubble layout (136 Phase 2) TC-T4 deleted bubble keeps the footer timestamp
+success bubble layout (136 Phase 2) TC-AV1 avatarOutsideBubble renders the avatar outside the bubble
+success bubble layout (136 Phase 2) TC-AV2 avatarOutsideBubble keeps run balloons aligned past the gutter
+success bubble layout (136 Phase 2) TC-AV3 default keeps the avatar inside the bubble header
+success bubble layout (136 Phase 2) TC-AV4 avatar stays on the physical-left of the incoming bubble under RTL
+success bubble layout (136 Phase 2) TC-AV5 sender name renders above the bubble, not inside it
+success bubble layout (136 Phase 2) TC-H1 group avatar-outside bubble body is vertically compact
+success bubble layout (136 Phase 2) TC-AV6 name-above bubble stays flush to the gutter under RTL
+success bubble layout preservation (TC-13) default (no new flags) renders unchanged full-width card
+success bubble layout preservation (TC-13) TC-P1 legacy full-width card still fills width & keeps footer time
+success terminal send_failed status (Finding 05 Phase 4) renders the same failed error indicator as a failed row
+success terminal send_failed status (Finding 05 Phase 4) offers a working manual retry affordance
+success terminal send_failed status (Finding 05 Phase 4) send_failed with failedReasonText renders reason + Delete and no Retry
+success terminal send_failed status (Finding 05 Phase 4) failedReasonText suppresses Retry even when a retry callback is supplied
+success 155 transport status glyph (1:1) TC-01 outgoing reached via relay → cell_tower (not inbox_rounded, not done_all)
+success 155 transport status glyph (1:1) TC-02 outgoing direct → device_hub
+success 155 transport status glyph (1:1) TC-03 outgoing wifi → wifi
+success 155 transport status glyph (1:1) outgoing inboxed/delivered via inbox → stable inbox glyph and transport semantics, never done_all
+success 155 transport status glyph (1:1) TC-05 outgoing reached + null transport → single-check fallback
+success 155 transport status glyph (1:1) TC-06 outgoing in-flight (pending/sending) → single tick, never transport glyph or two-tick
+success 155 transport status glyph (1:1) TC-07 outgoing failed/send_failed → error, never transport glyph
+success 155 transport status glyph (1:1) done_all never renders for any 1:1 outgoing status
+success 155 transport status glyph (1:1) TC-08 incoming via inbox → inbox glyph (arrived-while-away)
+success 155 transport status glyph (1:1) TC-09 incoming direct → device_hub
+success 155 transport status glyph (1:1) TC-10 incoming relay → cell_tower
+success 155 transport status glyph (1:1) TC-11 incoming wifi → wifi
+success 155 transport status glyph (1:1) TC-12 incoming null transport → no transport glyph
+success 155 transport status glyph (1:1) TC-13 incoming unknown transport → no glyph (not help_outline)
+success 155 transport status glyph (1:1) TC-14 incoming system transport → no glyph
+success 155 transport status glyph (1:1) TC-15 incoming deleted row → no transport glyph
+success 155 transport status glyph (1:1) TC-16 incoming transport glyph renders in BOTH inline and footer variants
+success 155 transport status glyph (1:1) TC-17 incoming uses "received via" a11y label; outgoing uses "sent via" — distinct, never the v1 status-inbox label
+success 155 transport status glyph (1:1) TC-18 flag false keeps v1 — outgoing reached→inbox_rounded (not transport glyph); incoming→nothing
+success 155 transport status glyph (1:1) TC-19 outgoing reached via upgraded → upgrade icon (not device_hub, not inbox)
+success 155 transport status glyph (1:1) TC-20 outgoing upgraded a11y → message_sent_via_upgraded (not via_direct)
+success 155 transport status glyph (1:1) TC-21 incoming via upgraded shows the incoming upgrade glyph
+success 155 transport status glyph (1:1) TC-22 incoming upgraded a11y → message_received_via_upgraded (not via_direct)
+success Signal incoming ivory and outgoing lavender bubbles use decorative borders and readable metadata
+success documents (414) a PDF attachment renders the document tile, not an empty gap
+success documents (414) a non-PDF file attachment renders as unsupported

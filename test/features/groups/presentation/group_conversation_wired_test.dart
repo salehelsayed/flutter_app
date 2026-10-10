@@ -1928,6 +1928,7 @@ void main() {
       FakeAudioRecorderService? audioRecorderService,
       MicPermissionGateway? micPermissionGateway,
       MediaPicker? mediaPicker,
+      bool documentAttachmentsEnabled = false,
       MediaFileManager? mediaFileManager,
       LegacyTestUploadMediaFn? uploadMediaFn,
       List<File>? initialAttachments,
@@ -1995,6 +1996,7 @@ void main() {
           micPermissionGateway:
               micPermissionGateway ?? FakeMicPermissionGateway(),
           mediaPicker: mediaPicker,
+          documentAttachmentsEnabled: documentAttachmentsEnabled,
           qualityPreference: qualityPreference,
           videoQualityPreference: videoQualityPreference,
           uploadMediaFn: uploadMediaFn == null
@@ -3747,6 +3749,57 @@ void main() {
         expect(mediaPicker.pickMultipleMediaCalls, 0);
         // STAGED_INTACT: the previously staged attachment survives.
         expect(find.byType(AttachmentPreviewStrip), findsOneWidget);
+      },
+    );
+
+    testWidgets(
+      '414: the group Document row follows the switch and stages a PDF',
+      (tester) async {
+        final group = makeChatGroup();
+        await groupRepo.saveGroup(group);
+        final tempDir = Directory.systemTemp.createTempSync('group_doc_pick_');
+        addTearDown(() => tempDir.deleteSync(recursive: true));
+        final real = File('${tempDir.path}/Minutes.pdf')
+          ..writeAsStringSync('%PDF-1.7\n');
+        final picker = FakeMediaPicker()..documentsResult = [XFile(real.path)];
+
+        await tester.pumpWidget(buildWidget(group: group));
+        await pumpFrames(tester, count: 20);
+        await tester.tap(find.byIcon(Icons.add_rounded));
+        await tester.pump(const Duration(milliseconds: 500));
+        expect(
+          find.byKey(GroupConversationWired.attachSheetDocumentKey),
+          findsNothing,
+        );
+        tester
+            .widget<ListTile>(
+              find.byKey(GroupConversationWired.attachSheetCancelKey),
+            )
+            .onTap!();
+        await tester.pump(const Duration(milliseconds: 500));
+
+        await tester.pumpWidget(
+          buildWidget(
+            group: group,
+            mediaPicker: picker,
+            documentAttachmentsEnabled: true,
+          ),
+        );
+        await pumpFrames(tester, count: 20);
+        await tester.tap(find.byIcon(Icons.add_rounded));
+        await tester.pump(const Duration(milliseconds: 500));
+        final row = find.byKey(GroupConversationWired.attachSheetDocumentKey);
+        expect(row, findsOneWidget);
+        await tester.runAsync(() async {
+          tester.widget<ListTile>(row).onTap!();
+          await Future<void>.delayed(const Duration(milliseconds: 300));
+        });
+        await tester.pump(const Duration(milliseconds: 500));
+        expect(picker.pickDocumentsCalls, 1);
+        expect(
+          find.byKey(const ValueKey('pending-document-0')),
+          findsOneWidget,
+        );
       },
     );
 

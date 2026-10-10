@@ -8,6 +8,7 @@ import 'package:flutter_app/features/home/presentation/widgets/user_avatar.dart'
 import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/shared/widgets/linkable_text.dart';
 import 'package:flutter_app/shared/widgets/media/audio_player_widget.dart';
+import 'package:flutter_app/shared/widgets/media/document_attachment_tile.dart';
 import 'package:flutter_app/shared/widgets/media/media_grid.dart';
 
 /// Fully-rounded outer corner radius for a bubble (136 Phase 2).
@@ -192,6 +193,9 @@ class LetterCard extends StatelessWidget {
       .toList();
   List<MediaAttachment> get _audioMedia =>
       media.where((a) => a.mediaType == 'audio').toList();
+  // 414: documents (PDF) and any other `file` attachment.
+  List<MediaAttachment> get _documentMedia =>
+      media.where((a) => a.mediaType == 'file').toList();
   bool get _showsOutgoingMediaPendingNote =>
       !isIncoming &&
       !isDeleted &&
@@ -466,6 +470,22 @@ class LetterCard extends StatelessWidget {
                 : null,
             requireVerifiedContentHash: requireVerifiedContentHash,
             renderedSemanticsLabel: mediaRenderedSemanticsLabels[audio.id],
+          ),
+        ),
+      // Documents (414)
+      for (final document
+          in privateContentSlot == null
+              ? _documentMedia
+              : const <MediaAttachment>[])
+        Padding(
+          padding: const EdgeInsets.fromLTRB(12, 4, 12, 4),
+          child: DocumentAttachmentTile(
+            key: ValueKey('letter-document-${document.id}'),
+            attachment: document,
+            onRetryUnavailableMedia: onRetryUnavailableMedia != null
+                ? () => onRetryUnavailableMedia!(document.id)
+                : null,
+            requireVerifiedContentHash: requireVerifiedContentHash,
           ),
         ),
       // Body text (only if non-empty)

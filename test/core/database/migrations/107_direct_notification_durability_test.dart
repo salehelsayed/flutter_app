@@ -119,7 +119,7 @@ void main() {
         if (db.isOpen) await db.close();
       });
 
-      expect(currentIdentityDatabaseVersion, 119);
+      expect(currentIdentityDatabaseVersion, 120);
       expect(await _userVersion(db), currentIdentityDatabaseVersion);
       for (final registry in <List<ProductionMigrationEntry>>[
         productionCreateMigrations,
@@ -133,8 +133,8 @@ void main() {
           same(runDirectNotificationDurabilityMigration),
         );
         expect(registry.last.version, currentIdentityDatabaseVersion);
-        expect(registry.last.name, '119_quiet_message_recovery');
-        expect(registry[registry.length - 8].version, 112);
+        expect(registry.last.name, '120_media_attachment_file_name');
+        expect(registry[registry.length - 9].version, 112);
       }
 
       expect(await _columns(db, 'direct_notification_display_outbox'), <String>[

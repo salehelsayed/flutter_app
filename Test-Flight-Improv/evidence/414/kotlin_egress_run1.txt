@@ -1,0 +1,3 @@
+> Task :app:compileFlutterBuildDebug FAILED
+BUILD FAILED in 2m 6s
+gradle exit: 1

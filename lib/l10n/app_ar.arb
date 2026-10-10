@@ -1947,5 +1947,11 @@
   "call_unknown_contact": "جهة اتصال غير معروفة",
   "call_mute_unavailable": "التحكم بالميكروفون غير متاح حتى يصبح الصوت جاهزًا",
   "call_speaker_unavailable": "مكبر الصوت غير متاح لمسار الصوت الحالي",
-  "call_audio_output_failed": "تعذر تغيير مخرج الصوت"
+  "call_audio_output_failed": "تعذر تغيير مخرج الصوت",
+  "picker_document": "مستند",
+  "media_document_unsupported": "ملف غير مدعوم",
+  "media_document_open_failed": "تعذّر فتح الملف.",
+  "media_document_no_viewer": "لا يوجد تطبيق على هذا الهاتف يمكنه فتح هذا الملف.",
+  "media_document_only_pdf": "يمكن إرسال ملفات PDF فقط.",
+  "media_document_open": "فتح المستند"
 }

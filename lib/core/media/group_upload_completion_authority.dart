@@ -33,5 +33,6 @@ MediaAttachment applyGroupUploadCompletionAuthority({
     ownerLane: expectedAttachment.ownerLane,
     isBookmarked: expectedAttachment.isBookmarked,
     lastPlaybackPositionMs: expectedAttachment.lastPlaybackPositionMs,
+    fileName: expectedAttachment.fileName,
   );
 }

@@ -1947,5 +1947,11 @@
   "call_unknown_contact": "Unbekannter Kontakt",
   "call_mute_unavailable": "Die Mikrofonsteuerung ist erst verfügbar, wenn das Audio bereit ist",
   "call_speaker_unavailable": "Der Lautsprecher ist für die aktuelle Audioverbindung nicht verfügbar",
-  "call_audio_output_failed": "Die Audioausgabe konnte nicht geändert werden"
+  "call_audio_output_failed": "Die Audioausgabe konnte nicht geändert werden",
+  "picker_document": "Dokument",
+  "media_document_unsupported": "Nicht unterstützte Datei",
+  "media_document_open_failed": "Die Datei konnte nicht geöffnet werden.",
+  "media_document_no_viewer": "Keine App auf diesem Telefon kann diese Datei öffnen.",
+  "media_document_only_pdf": "Nur PDF-Dateien können gesendet werden.",
+  "media_document_open": "Dokument öffnen"
 }

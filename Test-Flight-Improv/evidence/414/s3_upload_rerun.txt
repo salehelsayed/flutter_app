@@ -1,0 +1,46 @@
+00:00 +0: loading /Volumes/CrucialX9/flutter_app/.claude/worktrees/pdf-407/test/features/conversation/application/upload_media_use_case_test.dart
+00:00 +0: UploadMedia failure contract classifies every transport error family without relay state
+00:00 +1: UploadMedia failure contract normalizes an injected throw at the shared consumer boundary
+00:00 +2: UploadMedia failure contract classifies local, encryption, and transport throws by stage
+00:00 +3: UploadMedia failure contract MEDIA_ENCRYPTION_PREPARED exposes only safe attachment correlation
+00:00 +4: UploadMedia failure contract issued upload start follows encryption preparation
+00:00 +5: uploadMedia returns MediaAttachment on success
+00:00 +6: uploadMedia sends correct command to bridge
+00:00 +7: uploadMedia distinct key, nonce, and contentHash per 1:1 object
+00:00 +8: uploadMedia 1:1 encrypted upload advertises opaque mime to the transport
+00:00 +9: uploadMedia group upload still advertises the real mime to the relay
+00:00 +10: uploadMedia P269 explicit empty group ACL fails closed before encryption or bridge upload
+00:00 +11: uploadMedia 1:1 upload skips group mime/size policy
+00:00 +12: uploadMedia 1:1 documents (414) a file that is not a real PDF is refused before upload
+00:00 +13: uploadMedia 1:1 documents (414) an unknown file type is refused before upload
+00:00 +14: uploadMedia encrypted temp deleted after successful 1:1 upload; plaintext durable copy retained
+00:00 +15: uploadMedia transient source file deleted after durable copy and successful upload when deleteSourceWhenDone
+00:00 +16: uploadMedia deleteSourceWhenDone without durable copy keeps the source
+00:00 +17: uploadMedia 1:1 upload fails closed when blob keygen/encrypt fails
+00:00 +18: uploadMedia returns null when bridge returns error
+00:00 +19: uploadMedia returns null when file does not exist
+00:00 +20: uploadMedia returns null when bridge throws exception
+00:00 +21: uploadMedia emits MEDIA_UPLOAD_TIMING with blob, mime, and size metadata
+00:00 +22: uploadMedia copies successful uploads into owned media storage with durability telemetry
+00:00 +23: uploadMedia group durable copy emits delayed post-commit existence probe
+00:00 +24: uploadMedia infers mediaType from mime
+00:00 +25: uploadMedia passes optional dimensions and duration
+00:00 +26: uploadMedia uploads GIF with mime image/gif and preserves animated metadata
+00:00 +27: uploadMedia rejects dangerous group MIME before bridge upload
+00:00 +28: uploadMedia group upload computes content hash for uploaded bytes
+00:00 +29: uploadMedia group uploads encrypt each media object with distinct object metadata
+00:00 +30: uploadMedia rejects spoofed group media bytes before bridge upload
+00:00 +31: uploadMedia rejects oversized group upload before bridge upload
+00:00 +32: uploadMedia null dimensions when not provided
+00:00 +33: uploadMedia with mediaFileManager returns relative path in localPath for DB storage
+00:00 +34: uploadMedia with mediaFileManager copies file to persistent absolute path
+00:00 +35: uploadMedia with mediaFileManager without mediaFileManager returns original absolute path
+00:00 +36: uploadMedia TC-347-02b prepared LAN and strict relay bytes are identical
+00:00 +37: uploadMedia TC-347-03 strict prepared direct upload accepts exact relay proof
+00:00 +38: uploadMedia TC-347-08e disabled and excluded callers preserve legacy bytes
+00:00 +39: uploadMedia TC-366-00a Dart group manifest scheme matches the relay validator
+00:00 +40: uploadMedia TC-365-02a strict group upload stores exact recipient custody without allowedPeers
+00:00 +41: uploadMedia TC-365-02a strict group authoring preserves GIF video audio and voice descriptors across discussion and admin policy
+00:01 +42: uploadMedia TC-365-02a initialized private group media refuses before preprocessing
+00:01 +43: All tests passed!
+EXIT=0

@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:flutter_app/core/media/app_owned_media_path_authority.dart';
+import 'package:flutter_app/core/media/document_file_check.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/core/media/received_media_egress.dart';
 import 'package:flutter_app/core/media/received_media_egress_gateway.dart';
@@ -30,7 +31,9 @@ class ReceivedMediaEgressService {
     required MediaEgressDestination destination,
     required List<ReceivedMediaEgressCandidate> selection,
   }) async {
-    if (!isValidMediaEgressRequestId(requestId) || selection.isEmpty) {
+    if (!isValidMediaEgressRequestId(requestId) ||
+        selection.isEmpty ||
+        (destination == MediaEgressDestination.open && selection.length != 1)) {
       return MediaEgressResult(
         requestId: requestId,
         outcome: MediaEgressOutcome.rejected,
@@ -69,7 +72,8 @@ class ReceivedMediaEgressService {
         );
         continue;
       }
-      if (!isSupportedMediaEgressMime(candidate.mime)) {
+      if (!isSupportedMediaEgressMime(candidate.mime) ||
+          !isMediaEgressMimeAllowedFor(destination, candidate.mime)) {
         structural[entry.key] = MediaEgressItemResult(
           attachmentId: entry.key,
           outcome: MediaEgressItemOutcome.unsupportedType,
@@ -113,17 +117,32 @@ class ReceivedMediaEgressService {
         );
         continue;
       }
+      // 414: a PDF leaves the app only when its bytes really are a PDF. The
+      // sender's MIME label alone is not trusted.
+      if (candidate.mime.toLowerCase() == 'application/pdf' &&
+          await documentFileRejection(path: canonical, mime: candidate.mime) !=
+              null) {
+        structural[entry.key] = MediaEgressItemResult(
+          attachmentId: entry.key,
+          outcome: MediaEgressItemOutcome.unsupportedType,
+        );
+        continue;
+      }
       nativeItems.add(
         MediaEgressItem(
           attachmentId: entry.key,
           sourcePath: canonical,
           mime: candidate.mime.toLowerCase(),
-          displayName: mediaEgressDisplayName(entry.key, candidate.mime),
+          displayName: mediaEgressDisplayName(
+            entry.key,
+            candidate.mime,
+            preferredName: candidate.fileName,
+          ),
         ),
       );
     }
 
-    if (destination == MediaEgressDestination.share && structural.isNotEmpty) {
+    if (destination.isPresentation && structural.isNotEmpty) {
       return MediaEgressResult(
         requestId: requestId,
         outcome: MediaEgressOutcome.rejected,
@@ -148,7 +167,7 @@ class ReceivedMediaEgressService {
         items: nativeItems,
       ),
     );
-    if (destination == MediaEgressDestination.share) return nativeResult;
+    if (destination.isPresentation) return nativeResult;
     final nativeById = {
       for (final item in nativeResult.items) item.attachmentId: item,
     };

@@ -158,7 +158,7 @@ void main() {
       if (db.isOpen) await db.close();
     });
 
-    expect(currentIdentityDatabaseVersion, 119);
+    expect(currentIdentityDatabaseVersion, 120);
     expect(await _userVersion(db), 114);
 
     // Registered exactly once in both registries, immediately after v113;

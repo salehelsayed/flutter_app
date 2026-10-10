@@ -1,0 +1,10 @@
+success mediaPreviewText returns "Photo" for single image
+success mediaPreviewText returns "3 photos" for multiple images
+success mediaPreviewText returns "Video" for single video
+success mediaPreviewText returns "GIF" for a single GIF attachment
+success mediaPreviewText returns "2 GIFs" for multiple GIF attachments
+success mediaPreviewText returns "GIF · Photo" for GIF + photo media
+success mediaPreviewText returns "GIF · Video" for GIF + video media
+success mediaPreviewIcon returns camera icon for images
+success documents (414) one named PDF shows its name and a document icon
+success documents (414) an unnamed or plural file keeps the old text

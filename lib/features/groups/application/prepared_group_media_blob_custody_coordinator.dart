@@ -903,6 +903,7 @@ final class PreparedGroupMediaBlobCustodyCoordinator {
           height: attachment.height,
           durationMs: attachment.durationMs,
           waveform: attachment.waveform,
+          fileName: attachment.fileName,
           encryptionKeyBase64: attachment.encryptionKeyBase64!,
           encryptionNonce: attachment.encryptionNonce!,
           encryptionScheme: attachment.encryptionScheme!,

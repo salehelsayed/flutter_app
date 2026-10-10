@@ -780,9 +780,12 @@ void main() {
     test('1:1 upload skips group mime/size policy', () async {
       // Green pin guarding the crypto-block hoist: encryption became
       // unconditional but GroupMediaMimePolicy/GroupMediaSizePolicy stay
-      // group-gated (application/pdf is group-rejected, 1:1-allowed).
+      // group-gated: the 512-byte group cap below does not apply to 1:1.
       final pdfFile = File('${tempDir.path}/doc.pdf');
-      await pdfFile.writeAsBytes(List<int>.filled(2048, 0x25));
+      await pdfFile.writeAsBytes([
+        ...'%PDF-1.7\n'.codeUnits,
+        ...List<int>.filled(2048, 0x25),
+      ]);
 
       final result = await _legacyUploadMedia(
         bridge: bridge,
@@ -794,6 +797,42 @@ void main() {
 
       expect(result, isNotNull);
       expect(result!.mediaType, 'file');
+    });
+
+    group('1:1 documents (414)', () {
+      test('a file that is not a real PDF is refused before upload', () async {
+        final fake = File('${tempDir.path}/fake.pdf');
+        await fake.writeAsString('<html><script>alert(1)</script>');
+        final outcome = await uploadMedia(
+          bridge: bridge,
+          localFilePath: fake.path,
+          mime: 'application/pdf',
+          recipientPeerId: 'contact-A',
+        );
+        expect(outcome, isA<UploadMediaFailed>());
+        expect((outcome as UploadMediaFailed).errorCode, 'INVALID_MIME');
+        expect(
+          bridge.requests.map((r) => r['cmd']),
+          isNot(contains('media:upload')),
+        );
+      });
+
+      test('an unknown file type is refused before upload', () async {
+        final zip = File('${tempDir.path}/archive.bin');
+        await zip.writeAsBytes(const [0x50, 0x4b, 0x03, 0x04, 0x00]);
+        final outcome = await uploadMedia(
+          bridge: bridge,
+          localFilePath: zip.path,
+          mime: 'application/octet-stream',
+          recipientPeerId: 'contact-A',
+        );
+        expect(outcome, isA<UploadMediaFailed>());
+        expect((outcome as UploadMediaFailed).errorCode, 'INVALID_MIME');
+        expect(
+          bridge.requests.map((r) => r['cmd']),
+          isNot(contains('media:upload')),
+        );
+      });
     });
 
     test(
@@ -1073,10 +1112,13 @@ void main() {
         'image/png': 'image',
       };
 
+      // 414: a 1:1 document must carry real PDF bytes.
+      final pdfFile = File('${tempFile.parent.path}/infer.pdf')
+        ..writeAsStringSync('%PDF-1.7\n');
       for (final entry in cases.entries) {
         final result = await _legacyUploadMedia(
           bridge: bridge,
-          localFilePath: tempFile.path,
+          localFilePath: entry.value == 'file' ? pdfFile.path : tempFile.path,
           mime: entry.key,
           recipientPeerId: 'recipient',
         );

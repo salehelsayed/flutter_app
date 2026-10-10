@@ -213,6 +213,7 @@ MediaAttachment? completeDirectMediaCustodyRetryAttachment({
     ownerLane: MediaOwnerLane.direct,
     isBookmarked: prepared.isBookmarked,
     lastPlaybackPositionMs: prepared.lastPlaybackPositionMs,
+    fileName: prepared.fileName,
   );
   return _isExactCompletedDirectMediaRetryAttachment(
         completed,

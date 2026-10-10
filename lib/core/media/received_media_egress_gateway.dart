@@ -45,12 +45,15 @@ class ReceivedMediaEgressChannel implements ReceivedMediaEgressGateway {
     }
     final outcome = _aggregateOutcomes[outcomeName];
     if (outcome == null) return _failure(request);
-    if (request.destination == MediaEgressDestination.share) {
+    if (request.destination.isPresentation) {
       if (itemMaps.isNotEmpty ||
-          !const {
+          !{
             MediaEgressOutcome.presented,
             MediaEgressOutcome.busy,
             MediaEgressOutcome.platformFailure,
+            // Only `open` can find no viewer.
+            if (request.destination == MediaEgressDestination.open)
+              MediaEgressOutcome.noViewer,
           }.contains(outcome)) {
         return _failure(request);
       }
@@ -110,7 +113,7 @@ class ReceivedMediaEgressChannel implements ReceivedMediaEgressGateway {
   MediaEgressResult _failure(MediaEgressRequest request) => MediaEgressResult(
     requestId: request.requestId,
     outcome: MediaEgressOutcome.platformFailure,
-    items: request.destination == MediaEgressDestination.share
+    items: request.destination.isPresentation
         ? const []
         : request.items
               .map(
@@ -132,6 +135,7 @@ const _aggregateOutcomes = <String, MediaEgressOutcome>{
   'rejected': MediaEgressOutcome.rejected,
   'platformFailure': MediaEgressOutcome.platformFailure,
   'presented': MediaEgressOutcome.presented,
+  'noViewer': MediaEgressOutcome.noViewer,
 };
 
 const _itemOutcomes = <String, MediaEgressItemOutcome>{

@@ -5,6 +5,7 @@ import 'package:flutter_app/core/theme/feed_tokens.dart';
 import 'package:flutter_app/core/utils/text_direction_utils.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/shared/widgets/media/audio_player_widget.dart';
+import 'package:flutter_app/shared/widgets/media/document_attachment_tile.dart';
 import 'package:flutter_app/shared/widgets/media/full_screen_image_viewer.dart';
 import 'package:flutter_app/shared/widgets/media/media_grid.dart';
 
@@ -74,6 +75,10 @@ class LetterBubble extends StatelessWidget {
   List<MediaAttachment> get _audioMedia =>
       media.where((a) => a.mediaType == 'audio').toList();
 
+  // 414: documents (PDF) and any other `file` attachment.
+  List<MediaAttachment> get _documentMedia =>
+      media.where((a) => a.mediaType == 'file').toList();
+
   @override
   Widget build(BuildContext context) {
     final tokens = context.feedTokens;
@@ -123,6 +128,23 @@ class LetterBubble extends StatelessWidget {
       );
     }
 
+    // Documents (414) — tap opens the system viewer.
+    for (final attachment in _documentMedia) {
+      if (children.isNotEmpty) {
+        children.add(SizedBox(height: tokens.space3 * 0.5));
+      }
+      children.add(
+        ConstrainedBox(
+          constraints: BoxConstraints(maxWidth: maxWidth),
+          child: DocumentAttachmentTile(
+            key: ValueKey('feed-document-${attachment.id}'),
+            attachment: attachment,
+            requireVerifiedContentHash: requireVerifiedContentHash,
+          ),
+        ),
+      );
+    }
+
     // Body text pill — only when there is text (a caption-less media message
     // renders no empty bubble). When the line has no media AND no text we still
     // render an (empty) pill to preserve the prior layout contract.
@@ -143,7 +165,11 @@ class LetterBubble extends StatelessWidget {
     );
   }
 
-  Widget _buildTextPill(BuildContext context, FeedTokens tokens, double maxWidth) {
+  Widget _buildTextPill(
+    BuildContext context,
+    FeedTokens tokens,
+    double maxWidth,
+  ) {
     final radius = BorderRadius.circular(tokens.radiusFull);
     return ClipRRect(
       borderRadius: radius,

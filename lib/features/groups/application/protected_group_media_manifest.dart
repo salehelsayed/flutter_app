@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:crypto/crypto.dart';
+import 'package:flutter_app/core/media/attachment_file_name.dart';
 import 'package:flutter_app/features/groups/domain/models/group_membership_limit_policy.dart';
 
 const String protectedGroupMediaManifestSchema = 'group_media_manifest_v1';
@@ -132,6 +133,7 @@ final class ProtectedGroupMediaAttachmentCommitment {
     this.durationMs,
     List<double>? waveform,
     String? caption,
+    String? fileName,
     required Iterable<GroupMediaBlobTargetCommitment> targets,
   }) : attachmentId = _canonicalString(attachmentId, 'attachmentId'),
        custodyBlobId = _canonicalString(custodyBlobId, 'custodyBlobId'),
@@ -152,6 +154,7 @@ final class ProtectedGroupMediaAttachmentCommitment {
        ),
        waveform = List<double>.unmodifiable(waveform ?? const <double>[]),
        caption = _nullableCanonicalString(caption, 'caption'),
+       fileName = fileName == null ? null : _canonicalFileName(fileName),
        targets = _canonicalTargets(targets) {
     if (!_groupMediaBlobId.hasMatch(this.custodyBlobId) ||
         !_groupMediaSha256.hasMatch(this.ciphertextSha256) ||
@@ -190,6 +193,7 @@ final class ProtectedGroupMediaAttachmentCommitment {
         'encryptionKeyBase64',
         'encryptionNonce',
         'caption',
+        'fileName',
         'expiresAtMs',
       },
       required: const <String>{
@@ -242,6 +246,7 @@ final class ProtectedGroupMediaAttachmentCommitment {
       encryptionKeyBase64: map['encryptionKeyBase64'] as String,
       encryptionNonce: map['encryptionNonce'] as String,
       caption: map['caption'] as String?,
+      fileName: map['fileName'] as String?,
       targets: List<GroupMediaBlobTargetCommitment>.generate(
         recipientPeerIds.length,
         (index) => GroupMediaBlobTargetCommitment(
@@ -269,6 +274,10 @@ final class ProtectedGroupMediaAttachmentCommitment {
   final String encryptionKeyBase64;
   final String encryptionNonce;
   final String? caption;
+
+  /// 414: display name of a document attachment. Sent only for documents, so
+  /// image/video/audio manifests keep the exact pre-414 key set.
+  final String? fileName;
   final List<GroupMediaBlobTargetCommitment> targets;
 
   Set<String> get recipientPeerIds =>
@@ -296,6 +305,7 @@ final class ProtectedGroupMediaAttachmentCommitment {
     'encryptionKeyBase64': encryptionKeyBase64,
     'encryptionNonce': encryptionNonce,
     if (caption != null) 'caption': caption,
+    if (fileName != null) 'fileName': fileName,
     'expiresAtMs': targets.map((target) => target.expiresAtMs).toList(),
   };
 }
@@ -585,3 +595,12 @@ bool _strictlySorted(List<String> values) {
 
 bool _sameStrings(Set<String> left, Set<String> right) =>
     left.length == right.length && left.containsAll(right);
+
+/// A commitment carries only an already-clean name. A name that cleaning
+/// would change is malformed, so the manifest fails closed.
+String _canonicalFileName(String value) {
+  if (sanitizeAttachmentFileName(value) != value) {
+    throw ArgumentError.value(value, 'fileName', 'must be a clean file name');
+  }
+  return value;
+}

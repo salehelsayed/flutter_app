@@ -667,6 +667,7 @@ _buildIncomingProtectedGroupMediaProjection({
       encryptionScheme: commitment.encryptionScheme,
       groupMediaBlobCustodyFingerprint: custodyFingerprint,
       ownerLane: MediaOwnerLane.group,
+      fileName: commitment.fileName,
     );
     attachmentRows.add(attachment.toMap());
     custodyRows.add(

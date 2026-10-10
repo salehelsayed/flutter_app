@@ -8,6 +8,7 @@ import 'package:flutter_app/features/conversation/domain/models/media_attachment
 import 'package:flutter_app/features/feed/presentation/widgets/letter_bubble.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/shared/widgets/media/audio_player_widget.dart';
+import 'package:flutter_app/shared/widgets/media/document_attachment_tile.dart';
 import 'package:flutter_app/shared/widgets/media/media_grid.dart';
 
 void main() {
@@ -140,10 +141,12 @@ void main() {
     testWidgets('TC-14 system: greenFill15 fill + green500 border, '
         'left-aligned', (tester) async {
       await tester.pumpWidget(
-        wrap(const LetterBubble(
-          text: 'system note',
-          role: LetterBubbleRole.system,
-        )),
+        wrap(
+          const LetterBubble(
+            text: 'system note',
+            role: LetterBubbleRole.system,
+          ),
+        ),
       );
       await tester.pump();
 
@@ -172,12 +175,14 @@ void main() {
       tester,
     ) async {
       await tester.pumpWidget(
-        wrap(const LetterBubble(
-          // body deliberately contains a colon to prove the time-pattern
-          // matcher only fires on real HH:MM, not arbitrary text.
-          text: 'meeting notes: bring slides',
-          role: LetterBubbleRole.outgoing,
-        )),
+        wrap(
+          const LetterBubble(
+            // body deliberately contains a colon to prove the time-pattern
+            // matcher only fires on real HH:MM, not arbitrary text.
+            text: 'meeting notes: bring slides',
+            role: LetterBubbleRole.outgoing,
+          ),
+        ),
       );
       await tester.pump();
 
@@ -219,7 +224,8 @@ void main() {
       expect(
         match,
         isNotEmpty,
-        reason: 'a ConstrainedBox should cap content at width * 0.76 '
+        reason:
+            'a ConstrainedBox should cap content at width * 0.76 '
             '(expected ~$expected)',
       );
       expect(match.first.constraints.maxWidth, closeTo(expected, 0.5));
@@ -235,10 +241,7 @@ void main() {
 
       final tokens = tokensOf(tester);
       final clip = tester.widget<ClipRRect>(find.byType(ClipRRect).first);
-      expect(
-        clip.borderRadius,
-        BorderRadius.circular(tokens.radiusFull),
-      );
+      expect(clip.borderRadius, BorderRadius.circular(tokens.radiusFull));
     });
   });
 
@@ -269,10 +272,9 @@ void main() {
     testWidgets('TC-07 LTR control stays LTR', (tester) async {
       const english = 'Hello world';
       await tester.pumpWidget(
-        wrap(const LetterBubble(
-          text: english,
-          role: LetterBubbleRole.outgoing,
-        )),
+        wrap(
+          const LetterBubble(text: english, role: LetterBubbleRole.outgoing),
+        ),
       );
       await tester.pump();
 
@@ -411,5 +413,38 @@ void main() {
     // LetterBubble widget test leaves an async image/route stream pending that
     // hangs the test harness at teardown. The onTap WIRING is locked above
     // (`expect(grid.onTap, isNotNull)`).
+  });
+
+  testWidgets('414: a PDF letter renders the document tile', (tester) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: AppTheme.darkTheme,
+        localizationsDelegates: AppLocalizations.localizationsDelegates,
+        supportedLocales: AppLocalizations.supportedLocales,
+        home: const Scaffold(
+          body: Center(
+            child: LetterBubble(
+              text: '',
+              role: LetterBubbleRole.incoming,
+              media: [
+                MediaAttachment(
+                  id: 'doc-1',
+                  messageId: 'msg-1',
+                  mime: 'application/pdf',
+                  size: 4096,
+                  mediaType: 'file',
+                  localPath: '/tmp/doc-1.pdf',
+                  downloadStatus: 'done',
+                  createdAt: '2026-10-10T10:00:00.000Z',
+                  fileName: 'Invoice.pdf',
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+    expect(find.byType(DocumentAttachmentTile), findsOneWidget);
+    expect(find.text('Invoice.pdf'), findsOneWidget);
   });
 }

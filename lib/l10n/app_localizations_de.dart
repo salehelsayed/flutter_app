@@ -4293,4 +4293,25 @@ class AppLocalizationsDe extends AppLocalizations {
   @override
   String get call_audio_output_failed =>
       'Die Audioausgabe konnte nicht geändert werden';
+
+  @override
+  String get picker_document => 'Dokument';
+
+  @override
+  String get media_document_unsupported => 'Nicht unterstützte Datei';
+
+  @override
+  String get media_document_open_failed =>
+      'Die Datei konnte nicht geöffnet werden.';
+
+  @override
+  String get media_document_no_viewer =>
+      'Keine App auf diesem Telefon kann diese Datei öffnen.';
+
+  @override
+  String get media_document_only_pdf =>
+      'Nur PDF-Dateien können gesendet werden.';
+
+  @override
+  String get media_document_open => 'Dokument öffnen';
 }

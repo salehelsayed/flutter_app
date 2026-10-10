@@ -5,10 +5,12 @@ class FakeMediaPicker implements MediaPicker {
   List<XFile> multipleMediaResult = const [];
   XFile? imageResult;
   XFile? videoResult;
+  List<XFile> documentsResult = const [];
 
   int pickMultipleMediaCalls = 0;
   int pickImageCalls = 0;
   int pickVideoCalls = 0;
+  int pickDocumentsCalls = 0;
 
   @override
   Future<List<XFile>> pickMultipleMedia() async {
@@ -26,5 +28,11 @@ class FakeMediaPicker implements MediaPicker {
   Future<XFile?> pickVideo({required ImageSource source}) async {
     pickVideoCalls++;
     return videoResult;
+  }
+
+  @override
+  Future<List<XFile>> pickDocuments() async {
+    pickDocumentsCalls++;
+    return documentsResult;
   }
 }

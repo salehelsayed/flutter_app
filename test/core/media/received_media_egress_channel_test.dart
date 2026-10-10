@@ -188,4 +188,114 @@ void main() {
       );
     },
   );
+
+  test('414: open decodes presented and noViewer with no items', () async {
+    final gateway = ReceivedMediaEgressChannel(channel: channel);
+    final request = MediaEgressRequest(
+      requestId: 'open_1',
+      destination: MediaEgressDestination.open,
+      items: const [
+        MediaEgressItem(
+          attachmentId: 'd',
+          sourcePath: '/private/d.pdf',
+          mime: 'application/pdf',
+          displayName: 'Invoice.pdf',
+        ),
+      ],
+    );
+    for (final outcome in ['presented', 'noViewer', 'busy']) {
+      messenger.setMockMethodCallHandler(channel, (call) async {
+        expect((call.arguments as Map)['destination'], 'open');
+        return {'requestId': 'open_1', 'outcome': outcome, 'items': []};
+      });
+      final result = await gateway.perform(request);
+      expect(result.outcome.name, outcome);
+      expect(result.items, isEmpty);
+    }
+    // A save-shaped reply to `open` is contradictory.
+    messenger.setMockMethodCallHandler(channel, (call) async {
+      return {
+        'requestId': 'open_1',
+        'outcome': 'saved',
+        'items': [
+          {'attachmentId': 'd', 'outcome': 'saved'},
+        ],
+      };
+    });
+    expect(
+      (await gateway.perform(request)).outcome,
+      MediaEgressOutcome.platformFailure,
+    );
+  });
+
+  test('414: share cannot claim noViewer', () async {
+    final gateway = ReceivedMediaEgressChannel(channel: channel);
+    messenger.setMockMethodCallHandler(channel, (call) async {
+      return {'requestId': 's_1', 'outcome': 'noViewer', 'items': []};
+    });
+    final result = await gateway.perform(
+      MediaEgressRequest(
+        requestId: 's_1',
+        destination: MediaEgressDestination.share,
+        items: const [
+          MediaEgressItem(
+            attachmentId: 'd',
+            sourcePath: '/private/d.pdf',
+            mime: 'application/pdf',
+            displayName: 'd.pdf',
+          ),
+        ],
+      ),
+    );
+    expect(result.outcome, MediaEgressOutcome.platformFailure);
+  });
+
+  test(
+    '414: requests refuse PDF to photos and anything but one PDF to open',
+    () {
+      MediaEgressItem item(String id, String mime) => MediaEgressItem(
+        attachmentId: id,
+        sourcePath: '/private/$id',
+        mime: mime,
+        displayName: '$id.bin',
+      );
+      expect(
+        () => MediaEgressRequest(
+          requestId: 'r',
+          destination: MediaEgressDestination.photos,
+          items: [item('a', 'application/pdf')],
+        ),
+        throwsArgumentError,
+      );
+      expect(
+        () => MediaEgressRequest(
+          requestId: 'r',
+          destination: MediaEgressDestination.open,
+          items: [item('a', 'image/jpeg')],
+        ),
+        throwsArgumentError,
+      );
+      expect(
+        () => MediaEgressRequest(
+          requestId: 'r',
+          destination: MediaEgressDestination.open,
+          items: [item('a', 'application/pdf'), item('b', 'application/pdf')],
+        ),
+        throwsArgumentError,
+      );
+      expect(
+        mediaEgressDisplayName(
+          'id',
+          'application/pdf',
+          preferredName: 'a/b.PDF',
+        ),
+        'b.PDF',
+      );
+      expect(
+        mediaEgressDisplayName('id', 'application/pdf', preferredName: 'notes'),
+        'notes.pdf',
+      );
+      expect(mediaEgressDisplayName('id', 'application/pdf'), 'id.pdf');
+    },
+  );
 }

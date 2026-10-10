@@ -2009,6 +2009,75 @@ void main() {
   });
 
   test(
+    '414: a shared non-PDF document is skipped and a real PDF is kept',
+    () async {
+      final identityRepository = FakeIdentityRepository()
+        ..seed(_makeIdentity());
+      final tempDir = await Directory.systemTemp.createTemp(
+        'share_batch_documents_',
+      );
+      addTearDown(() async {
+        if (await tempDir.exists()) {
+          await tempDir.delete(recursive: true);
+        }
+      });
+      final docx = File('${tempDir.path}/notes.docx')
+        ..writeAsBytesSync(const [0x50, 0x4b, 0x03, 0x04, 0x00]);
+      final fakePdf = File('${tempDir.path}/fake.pdf')
+        ..writeAsStringSync('<html>');
+      final pdf = File('${tempDir.path}/Invoice.pdf')
+        ..writeAsStringSync('%PDF-1.7\n');
+
+      List<PendingComposerMedia>? deliveredMedia;
+      final coordinator = DefaultShareBatchDeliveryCoordinator(
+        identityRepository: identityRepository,
+        contactRepository: InMemoryContactRepository(),
+        messageRepository: InMemoryMessageRepository(),
+        mediaAttachmentRepository: InMemoryMediaAttachmentRepository(),
+        groupRepository: InMemoryGroupRepository(),
+        groupMessageRepository: InMemoryGroupMessageRepository(),
+        bridge: FakeBridge(),
+        p2pService: FakeP2PService(),
+        mediaFileManager: FakeMediaFileManager(),
+        imageProcessor: _imageProcessor(),
+        sendToContactFn:
+            ({
+              required identity,
+              required shareIntent,
+              required contact,
+              required processedMedia,
+              required uploadHooks,
+            }) async {
+              deliveredMedia = processedMedia;
+              return ShareBatchTargetResult(
+                target: ShareTargetSelection.contact(contact),
+                status: ShareBatchTargetStatus.sent,
+                detail: 'Sent.',
+              );
+            },
+      );
+
+      final result = await coordinator.deliver(
+        shareIntent: ShareIntent(
+          type: ShareIntentType.files,
+          filePaths: [docx.path, fakePdf.path, pdf.path],
+        ),
+        targets: [
+          ShareTargetSelection.contact(_makeContact('peer-alice', 'Alice')),
+        ],
+      );
+
+      expect(result.skippedOversizedGifCount, 2);
+      expect(
+        result.skippedOversizedGifReason,
+        'Only photos, videos, audio and PDF files can be shared.',
+      );
+      expect(deliveredMedia, hasLength(1));
+      expect(deliveredMedia!.single.file.path, pdf.path);
+    },
+  );
+
+  test(
     'mixed share skips oversized GIFs while keeping valid sibling media',
     () async {
       final identityRepository = FakeIdentityRepository()

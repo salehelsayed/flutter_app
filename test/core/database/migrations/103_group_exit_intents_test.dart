@@ -104,7 +104,7 @@ void main() {
         if (db.isOpen) await db.close();
       });
 
-      expect(currentIdentityDatabaseVersion, 119);
+      expect(currentIdentityDatabaseVersion, 120);
       expect(
         productionCreateMigrations.last.version,
         currentIdentityDatabaseVersion,
@@ -114,12 +114,12 @@ void main() {
         currentIdentityDatabaseVersion,
       );
       expect(
-        productionCreateMigrations[productionCreateMigrations.length - 8]
+        productionCreateMigrations[productionCreateMigrations.length - 9]
             .version,
         112,
       );
       expect(
-        productionUpgradeMigrations[productionUpgradeMigrations.length - 8]
+        productionUpgradeMigrations[productionUpgradeMigrations.length - 9]
             .version,
         112,
       );
@@ -137,7 +137,7 @@ void main() {
       );
       expect(
         productionUpgradeMigrations.last.name,
-        '119_quiet_message_recovery',
+        '120_media_attachment_file_name',
       );
       expect(await db.query('group_exit_intents'), isEmpty);
       expect(await db.query('groups'), legacyGroupsBefore);

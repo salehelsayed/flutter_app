@@ -21,6 +21,7 @@ void main() {
         'audio/aac': 'audio',
         'audio/mpeg': 'audio',
         'audio/ogg': 'audio',
+        'application/pdf': 'file',
       };
 
       for (final entry in expected.entries) {
@@ -48,7 +49,7 @@ void main() {
         'image/*',
         '*/jpeg',
         'image/jpeg; charset=utf-8',
-        'application/pdf',
+        'application/pdf; x=1',
         'text/html',
         'image/svg+xml',
         'application/zip',
@@ -170,6 +171,82 @@ void main() {
         );
       },
     );
+
+    group('PDF (414)', () {
+      late Directory dir;
+      setUp(() async {
+        dir = await Directory.systemTemp.createTemp('group_mime_pdf_');
+      });
+      tearDown(() async {
+        if (await dir.exists()) await dir.delete(recursive: true);
+      });
+
+      test('application/pdf with %PDF- bytes is a valid file', () async {
+        final pdf = File('${dir.path}/doc.pdf')
+          ..writeAsStringSync('%PDF-1.7\n%\n1 0 obj');
+        final result = await GroupMediaMimePolicy.validateFile(
+          path: pdf.path,
+          mime: 'application/pdf',
+          mediaType: 'file',
+        );
+        expect(result.isValid, isTrue);
+        expect(
+          GroupMediaMimePolicy.mediaTypeForMime('application/pdf'),
+          'file',
+        );
+      });
+
+      test('PDF bytes under an image MIME stay dangerous_signature', () async {
+        final pdf = File('${dir.path}/spoof.jpg')
+          ..writeAsStringSync('%PDF-1.7\n');
+        expect(
+          (await GroupMediaMimePolicy.validateFile(
+            path: pdf.path,
+            mime: 'image/jpeg',
+            mediaType: 'image',
+          )).reason,
+          'dangerous_signature',
+        );
+      });
+
+      test('application/pdf without PDF bytes is refused', () async {
+        final plain = File('${dir.path}/plain.pdf')
+          ..writeAsStringSync('not a pdf at all');
+        final zip = File('${dir.path}/zip.pdf')
+          ..writeAsBytesSync(const <int>[0x50, 0x4b, 0x03, 0x04, 0x00]);
+        final html = File('${dir.path}/page.pdf')
+          ..writeAsStringSync('<html><script>');
+        expect(
+          (await GroupMediaMimePolicy.validateFile(
+            path: plain.path,
+            mime: 'application/pdf',
+            mediaType: 'file',
+          )).reason,
+          'unknown_signature',
+        );
+        for (final file in [zip, html]) {
+          expect(
+            (await GroupMediaMimePolicy.validateFile(
+              path: file.path,
+              mime: 'application/pdf',
+              mediaType: 'file',
+            )).reason,
+            'dangerous_signature',
+            reason: file.path,
+          );
+        }
+      });
+
+      test('a PDF declared as another media type is a mismatch', () {
+        expect(
+          GroupMediaMimePolicy.validateDescriptor(
+            mime: 'application/pdf',
+            mediaType: 'image',
+          ).reason,
+          'media_type_mismatch',
+        );
+      });
+    });
 
     test(
       'rejects known content signatures that disagree with declared MIME',

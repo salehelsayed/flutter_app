@@ -452,7 +452,11 @@ void main() {
       // Pin (Phase 2.4): the share coordinator's attachments come from the
       // same uploadMedia and decrypt through the same receiver path —
       // including arbitrary shared-file mimes.
-      final sharedBytes = List<int>.generate(640, (index) => (index * 3) % 251);
+      // 414: a 1:1 document must carry real PDF bytes to be uploaded.
+      final sharedBytes = [
+        ...'%PDF-1.7\n'.codeUnits,
+        ...List<int>.generate(640, (index) => (index * 3) % 251),
+      ];
       final sharedFile = File('${tempDir.path}/shared.pdf');
       await sharedFile.writeAsBytes(sharedBytes, flush: true);
 

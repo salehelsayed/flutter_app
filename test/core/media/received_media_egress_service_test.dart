@@ -339,6 +339,104 @@ void main() {
     );
     expect(gateway.requests, isEmpty);
   });
+
+  group('PDF documents (414)', () {
+    Future<ReceivedMediaEgressCandidate> pdf(
+      String id,
+      List<int> bytes, {
+      String? fileName,
+    }) async {
+      final path = p.join(media.path, '$id.pdf');
+      await File(path).writeAsBytes(bytes);
+      return ReceivedMediaEgressCandidate(
+        attachmentId: id,
+        storedPath: p.relative(path, from: temp.path),
+        mime: 'application/pdf',
+        fileName: fileName,
+      );
+    }
+
+    test('open sends one real PDF under its own clean name', () async {
+      final candidate = await pdf(
+        'doc_1',
+        '%PDF-1.7\n'.codeUnits,
+        fileName: 'Invoice',
+      );
+      final result = await service.perform(
+        requestId: 'open_1',
+        destination: MediaEgressDestination.open,
+        selection: [candidate],
+      );
+      expect(result.outcome, MediaEgressOutcome.presented);
+      final item = gateway.requests.single.items.single;
+      expect(gateway.requests.single.destination, MediaEgressDestination.open);
+      expect(item.mime, 'application/pdf');
+      expect(item.displayName, 'Invoice.pdf');
+    });
+
+    test(
+      'a file labelled PDF without PDF bytes never leaves the app',
+      () async {
+        final candidate = await pdf('doc_2', '<html>'.codeUnits);
+        for (final destination in [
+          MediaEgressDestination.open,
+          MediaEgressDestination.share,
+        ]) {
+          final result = await service.perform(
+            requestId: 'fake_${destination.name}',
+            destination: destination,
+            selection: [candidate],
+          );
+          expect(result.outcome, MediaEgressOutcome.rejected);
+        }
+        final saved = await service.perform(
+          requestId: 'fake_files',
+          destination: MediaEgressDestination.files,
+          selection: [candidate],
+        );
+        expect(
+          saved.items.single.outcome,
+          MediaEgressItemOutcome.unsupportedType,
+        );
+        expect(gateway.requests, isEmpty);
+      },
+    );
+
+    test('a PDF is never saved to Photos and open takes PDFs only', () async {
+      final candidate = await pdf('doc_3', '%PDF-1.4'.codeUnits);
+      final photos = await service.perform(
+        requestId: 'photos_pdf',
+        destination: MediaEgressDestination.photos,
+        selection: [candidate],
+      );
+      expect(
+        photos.items.single.outcome,
+        MediaEgressItemOutcome.unsupportedType,
+      );
+
+      final jpgPath = p.join(media.path, 'x.jpg');
+      await File(jpgPath).writeAsBytes(const [0xff, 0xd8, 0xff]);
+      final openImage = await service.perform(
+        requestId: 'open_jpg',
+        destination: MediaEgressDestination.open,
+        selection: [
+          ReceivedMediaEgressCandidate(
+            attachmentId: 'img',
+            storedPath: p.relative(jpgPath, from: temp.path),
+            mime: 'image/jpeg',
+          ),
+        ],
+      );
+      expect(openImage.outcome, MediaEgressOutcome.rejected);
+      final two = await service.perform(
+        requestId: 'open_two',
+        destination: MediaEgressDestination.open,
+        selection: [candidate, await pdf('doc_4', '%PDF-1.4'.codeUnits)],
+      );
+      expect(two.outcome, MediaEgressOutcome.rejected);
+      expect(gateway.requests, isEmpty);
+    });
+  });
 }
 
 class _RecordingAuthority implements AppOwnedMediaPathAuthority {
@@ -365,10 +463,10 @@ class _Gateway implements ReceivedMediaEgressGateway {
     if (response != null) return response!;
     return MediaEgressResult(
       requestId: request.requestId,
-      outcome: request.destination == MediaEgressDestination.share
+      outcome: request.destination.isPresentation
           ? MediaEgressOutcome.presented
           : MediaEgressOutcome.saved,
-      items: request.destination == MediaEgressDestination.share
+      items: request.destination.isPresentation
           ? const []
           : request.items
                 .map(

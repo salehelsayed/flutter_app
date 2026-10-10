@@ -1,5 +1,6 @@
 import Flutter
 import Photos
+import QuickLook
 import UIKit
 
 enum ReceivedMediaEgressPhotosAuthorizationMode { case addAttempt, addOnly }
@@ -97,6 +98,12 @@ protocol ReceivedMediaEgressControllerFactory {
   func makeShare(urls: [URL]) -> UIActivityViewController
 }
 
+// 414: Quick Look for the `open` destination. A default keeps existing
+// factories (and test fakes) source compatible.
+extension ReceivedMediaEgressControllerFactory {
+  func makePreview() -> QLPreviewController { QLPreviewController() }
+}
+
 final class ReceivedMediaEgressSystemControllerFactory: ReceivedMediaEgressControllerFactory {
   func makeFiles(urls: [URL], mode: ReceivedMediaEgressFilesExportMode) -> UIDocumentPickerViewController {
     switch mode {
@@ -166,8 +173,12 @@ enum ReceivedMediaEgressPolicy {
     ]
   }
 
+  static func isPresentation(_ destination: String) -> Bool {
+    destination == "share" || destination == "open"
+  }
+
   static func busyEnvelope(_ request: ReceivedMediaEgressRequest) -> [String: Any] {
-    request.destination == "share"
+    isPresentation(request.destination)
       ? ["requestId": request.requestId, "outcome": "busy", "items": []]
       : saveEnvelope(request, outcome: "busy")
   }
@@ -200,13 +211,16 @@ struct ReceivedMediaEgressRequest {
   let items: [ReceivedMediaEgressItem]
 }
 
-final class ReceivedMediaEgressCoordinator: NSObject, UIDocumentPickerDelegate, UIAdaptivePresentationControllerDelegate {
+final class ReceivedMediaEgressCoordinator: NSObject, UIDocumentPickerDelegate, UIAdaptivePresentationControllerDelegate,
+  QLPreviewControllerDataSource, QLPreviewControllerDelegate {
   private static let channelName = "mknoon/received_media_egress"
   private static let requestPattern = try! NSRegularExpression(pattern: "^[A-Za-z0-9_-]{1,64}$")
   private static let allowedMimes: Set<String> = [
     "image/jpeg", "image/png", "image/gif", "image/webp", "image/heic",
     "video/mp4", "video/quicktime", "video/webm",
+    "application/pdf",
   ]
+  private static let pdfMime = "application/pdf"
 
   private struct Pending {
     let request: ReceivedMediaEgressRequest
@@ -223,6 +237,8 @@ final class ReceivedMediaEgressCoordinator: NSObject, UIDocumentPickerDelegate, 
   private let presentController: (UIViewController, UIViewController, (() -> Void)?) -> Void
   private var pending: Pending?
   private var retainedController: UIViewController?
+  // 414: the named temporary copy Quick Look shows; removed on dismiss.
+  private var previewURL: URL?
 
   init(
     messenger: FlutterBinaryMessenger,
@@ -273,6 +289,7 @@ final class ReceivedMediaEgressCoordinator: NSObject, UIDocumentPickerDelegate, 
     case "photos": savePhotos(value)
     case "files": presentFiles(value, from: presenter)
     case "share": presentShare(value, from: presenter)
+    case "open": presentPreview(value, from: presenter)
     default: finish(value, outcome: "platformFailure", items: failureItems(value.request))
     }
   }
@@ -326,6 +343,52 @@ final class ReceivedMediaEgressCoordinator: NSObject, UIDocumentPickerDelegate, 
     }
   }
 
+  /// 414: Quick Look shows the PDF inside its own out-of-process view
+  /// service. The copy carries the document's display name for the title bar.
+  private func presentPreview(_ value: Pending, from presenter: UIViewController) {
+    guard let item = value.request.items.first else {
+      finish(value, outcome: "platformFailure", items: [])
+      return
+    }
+    let directory = FileManager.default.temporaryDirectory
+      .appendingPathComponent("mknoon-preview-\(value.request.requestId)", isDirectory: true)
+    let copy = directory.appendingPathComponent(item.displayName)
+    do {
+      try? FileManager.default.removeItem(at: directory)
+      try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+      try FileManager.default.copyItem(at: item.url, to: copy)
+    } catch {
+      try? FileManager.default.removeItem(at: directory)
+      finish(value, outcome: "platformFailure", items: [])
+      return
+    }
+    previewURL = copy
+    let controller = controllerFactory.makePreview()
+    controller.dataSource = self
+    controller.delegate = self
+    retainedController = controller
+    presentController(presenter, controller) { [weak self] in
+      self?.returnPresented(value)
+    }
+  }
+
+  func numberOfPreviewItems(in controller: QLPreviewController) -> Int {
+    previewURL == nil ? 0 : 1
+  }
+
+  func previewController(_ controller: QLPreviewController, previewItemAt index: Int) -> QLPreviewItem {
+    (previewURL ?? URL(fileURLWithPath: "/dev/null")) as NSURL
+  }
+
+  func previewControllerDidDismiss(_ controller: QLPreviewController) {
+    if let url = previewURL {
+      try? FileManager.default.removeItem(at: url.deletingLastPathComponent())
+    }
+    previewURL = nil
+    retainedController = nil
+    pending = nil
+  }
+
   private func returnPresented(_ value: Pending) {
     guard value.latch.claim() else { return }
     value.result(envelope(value.request.requestId, "presented", []))
@@ -358,14 +421,15 @@ final class ReceivedMediaEgressCoordinator: NSObject, UIDocumentPickerDelegate, 
   }
 
   private func failureItems(_ request: ReceivedMediaEgressRequest) -> [[String: Any]] {
-    request.destination == "share" ? [] : request.items.map { item($0.attachmentId, "platformFailure") }
+    ReceivedMediaEgressPolicy.isPresentation(request.destination) ? [] : request.items.map { item($0.attachmentId, "platformFailure") }
   }
 
   static func parse(_ arguments: Any?) -> ReceivedMediaEgressRequest? {
     guard let map = arguments as? [String: Any], Set(map.keys) == ["requestId", "destination", "items"],
           let requestId = map["requestId"] as? String, validRequestId(requestId),
-          let destination = map["destination"] as? String, ["photos", "files", "share"].contains(destination),
-          let rawItems = map["items"] as? [[String: Any]], !rawItems.isEmpty, rawItems.count <= 10 else { return nil }
+          let destination = map["destination"] as? String, ["photos", "files", "share", "open"].contains(destination),
+          let rawItems = map["items"] as? [[String: Any]], !rawItems.isEmpty, rawItems.count <= 10,
+          destination != "open" || rawItems.count == 1 else { return nil }
     var ids = Set<String>()
     var items: [ReceivedMediaEgressItem] = []
     for raw in rawItems {
@@ -374,7 +438,10 @@ final class ReceivedMediaEgressCoordinator: NSObject, UIDocumentPickerDelegate, 
             let source = raw["sourcePath"] as? String, !source.isEmpty,
             let mime = raw["mime"] as? String, Self.allowedMimes.contains(mime),
             let display = raw["displayName"] as? String, !display.isEmpty,
-            !display.contains("/"), !display.contains("\\") else { return nil }
+            !display.contains("/"), !display.contains("\\"),
+            // 414: a PDF never goes to Photos; `open` takes PDFs only.
+            !(destination == "photos" && mime == Self.pdfMime),
+            destination != "open" || mime == Self.pdfMime else { return nil }
       items.append(ReceivedMediaEgressItem(attachmentId: id, sourcePath: source, mime: mime, displayName: display))
     }
     return ReceivedMediaEgressRequest(requestId: requestId, destination: destination, items: items)

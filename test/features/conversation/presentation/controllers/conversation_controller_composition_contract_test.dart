@@ -81,8 +81,13 @@ const _controllerTestPaths = <String>[
 // `callTimelineSource`. It only READS the local terminal call-history
 // projection for this contact; it owns no call state, sends nothing, and a
 // null source keeps the conversation message-only.
-const _expectedDirectApiFingerprint = '84e5424e';
-const _expectedGroupApiFingerprint = '3ffab64f';
+// 414: ConversationWired gained `documentAttachmentsEnabled` (the build
+// switch for the attach sheet's PDF row, injectable for tests) and the public
+// `attachSheetDocumentKey`. Neither changes an existing handoff.
+const _expectedDirectApiFingerprint = '51d33eef';
+// 414: GroupConversationWired gained the same `documentAttachmentsEnabled`
+// switch and public `attachSheetDocumentKey`.
+const _expectedGroupApiFingerprint = 'fe1ac6ec';
 // 301: the direct handoff gained the reviewed `protectionCoordinator`
 // pass-through (the Session-05-qualified shared screenshot-protection
 // coordinator for protected thumbnail bubbles).
