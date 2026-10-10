@@ -174,6 +174,12 @@ final class CallCoordinator {
   CallSessionSnapshot? get lastSnapshot => _last;
   int get internalFailureCount => _internalFailureCount;
 
+  /// An interruptible effect owns the coordinator lane. Ingress may queue
+  /// further authenticated signals without waiting for that effect.
+  bool get hasPendingMediaPreparation =>
+      _preparationInterruption != null &&
+      !_preparationInterruption!.requested.isCompleted;
+
   bool terminalCleanupAckReady(CallId callId) =>
       _terminalCleanupReports[callId]?.terminalAckReady == true;
 
