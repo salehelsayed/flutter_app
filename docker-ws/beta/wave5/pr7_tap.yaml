@@ -1,0 +1,22 @@
+appId: ${APP_ID}
+name: pr7_notification_tap
+---
+# production_notification_tap.yaml plus screenshots for the evidence folder.
+- swipe:
+    start: 10%, 1%
+    end: 10%, 85%
+- takeScreenshot: 2_notification_center
+- assertVisible: ${MESSAGE_PATTERN}
+- tapOn: ${MESSAGE_PATTERN}
+# On the simulator lock-screen list a tap can slide the banner and reveal
+# "Open" instead of opening it; press it like a user would.
+- runFlow:
+    when:
+      visible: '^Open$'
+    commands:
+      - tapOn: '^Open$'
+- waitForAnimationToEnd:
+    timeout: 8000
+- takeScreenshot: 3_after_tap
+- assertVisible:
+    id: chat_composer

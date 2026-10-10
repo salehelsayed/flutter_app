@@ -1,0 +1,22 @@
+appId: com.mknoon.app
+name: g406_start_call
+---
+- launchApp:
+    stopApp: true
+- extendedWaitUntil:
+    visible:
+      id: orbit_create_group_fab
+    timeout: 30000
+- runFlow:
+    when:
+      visible:
+        id: orbit.view.all_chats
+    commands:
+      - tapOn:
+          id: orbit.view.all_chats
+- tapOn:
+    id: orbit.contact.${PEER_ID}
+- tapOn:
+    id: chat_call_button
+- waitForAnimationToEnd:
+    timeout: 3000

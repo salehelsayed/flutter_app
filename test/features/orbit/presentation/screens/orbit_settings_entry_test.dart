@@ -102,7 +102,7 @@ class _EmptyGroupExitDiagnosticRepository
 }
 
 void main() {
-  const centerKey = ValueKey('orbit-center-self-avatar');
+  const settingsKey = ValueKey('orbit-settings-button');
 
   late FakeIdentityRepository identityRepo;
   late FakeContactRepository contactRepo;
@@ -257,11 +257,14 @@ void main() {
     }
   }
 
-  Finder centerAvatar() => find.byKey(centerKey);
-
-  UserAvatar centerUserAvatar(WidgetTester tester) => tester.widget<UserAvatar>(
-    find.descendant(of: centerAvatar(), matching: find.byType(UserAvatar)),
+  // The center self-avatar: the UserAvatar drawn for the user's own peer id.
+  Finder centerAvatar() => find.byWidgetPredicate(
+    (widget) => widget is UserAvatar && widget.peerId == 'my-peer-id-12345',
   );
+  Finder settingsButton() => find.byKey(settingsKey);
+
+  UserAvatar centerUserAvatar(WidgetTester tester) =>
+      tester.widget<UserAvatar>(centerAvatar());
 
   AppShellController freshController() {
     final controller = AppShellController(initialTab: AppShellTab.orbit);
@@ -270,11 +273,11 @@ void main() {
   }
 
   Future<void> openSettings(WidgetTester tester) async {
-    await tester.tap(centerAvatar());
+    await tester.tap(settingsButton());
     await pumpFrames(tester);
   }
 
-  testWidgets('TC-206-01 idle center tap opens Settings via slide-up', (
+  testWidgets('TC-206-01 settings button opens Settings via slide-up', (
     tester,
   ) async {
     setLargeSurface(tester);
@@ -284,7 +287,7 @@ void main() {
     await tester.pumpWidget(buildOrbit(appShellController: freshController()));
     await pumpFrames(tester);
 
-    expect(centerAvatar(), findsOneWidget);
+    expect(settingsButton(), findsOneWidget);
     await openSettings(tester);
 
     expect(find.byType(SettingsWired), findsOneWidget);
@@ -325,8 +328,8 @@ void main() {
     await pumpFrames(tester);
 
     expect(find.byType(SettingsWired), findsNothing);
-    // Back on the orbit surface: the center avatar (idle, no edit banner).
-    expect(centerAvatar(), findsOneWidget);
+    // Back on the orbit surface: the settings button (idle, no edit banner).
+    expect(settingsButton(), findsOneWidget);
     expect(find.byKey(const ValueKey('orbit-edit-banner')), findsNothing);
   });
 
@@ -335,7 +338,8 @@ void main() {
   ) async {
     setLargeSurface(tester);
     suppressOverflowErrors();
-    // Null avatar bytes → the placeholder ring avatar renders, still tappable.
+    // Null avatar bytes → the placeholder ring avatar renders; the button is
+    // independent of the photo.
     identityRepo.seed(identityWith(avatarBlob: null));
 
     await tester.pumpWidget(buildOrbit(appShellController: freshController()));
@@ -357,8 +361,8 @@ void main() {
     await pumpFrames(tester);
 
     // Two immediate taps with no settle between them (double-tap cadence).
-    await tester.tap(centerAvatar());
-    await tester.tap(centerAvatar());
+    await tester.tap(settingsButton());
+    await tester.tap(settingsButton());
     await pumpFrames(tester);
 
     // Single-flight latch: exactly one Settings route, not two stacked.
@@ -367,81 +371,85 @@ void main() {
     await tester.tap(find.byIcon(Icons.chevron_left));
     await pumpFrames(tester);
     expect(find.byType(SettingsWired), findsNothing);
+    expect(settingsButton(), findsOneWidget);
+  });
+
+  testWidgets('center avatar tap and long-press open nothing', (tester) async {
+    setLargeSurface(tester);
+    suppressOverflowErrors();
+    identityRepo.seed(identityWith());
+
+    await tester.pumpWidget(buildOrbit(appShellController: freshController()));
+    await pumpFrames(tester);
+
+    // The center avatar is no longer a settings entry: no button detector.
     expect(centerAvatar(), findsOneWidget);
-  });
+    expect(
+      find.byKey(const ValueKey('orbit-center-self-avatar')),
+      findsNothing,
+    );
 
-  testWidgets('TC-206-07 long-press center enters edit, no Settings', (
-    tester,
-  ) async {
-    setLargeSurface(tester);
-    suppressOverflowErrors();
-    identityRepo.seed(identityWith());
-
-    await tester.pumpWidget(buildOrbit(appShellController: freshController()));
+    await tester.tap(centerAvatar(), warnIfMissed: false);
     await pumpFrames(tester);
-
-    final gesture = await tester.startGesture(tester.getCenter(centerAvatar()));
-    await tester.pump(const Duration(milliseconds: 620)); // past long-press
-    await gesture.up();
-    await pumpFrames(tester);
-
-    expect(find.byKey(const ValueKey('orbit-edit-banner')), findsOneWidget);
     expect(find.byType(SettingsWired), findsNothing);
-  });
 
-  testWidgets('TC-206-08 mid-edit center tap ends edit, no Settings', (
-    tester,
-  ) async {
-    setLargeSurface(tester);
-    suppressOverflowErrors();
-    identityRepo.seed(identityWith());
-
-    await tester.pumpWidget(buildOrbit(appShellController: freshController()));
-    await pumpFrames(tester);
-
-    // Enter edit via a center long-press (sculpt-entry uniformity, TC-206-07).
-    final edit = await tester.startGesture(tester.getCenter(centerAvatar()));
+    final hold = await tester.startGesture(tester.getCenter(centerAvatar()));
     await tester.pump(const Duration(milliseconds: 620));
-    await edit.up();
+    await hold.up();
     await pumpFrames(tester);
-    expect(find.byKey(const ValueKey('orbit-edit-banner')), findsOneWidget);
-
-    // Mid-edit center tap dismisses edit and does NOT open Settings.
-    await tester.tap(centerAvatar());
-    await pumpFrames(tester);
-
-    expect(find.byKey(const ValueKey('orbit-edit-banner')), findsNothing);
     expect(find.byType(SettingsWired), findsNothing);
   });
 
-  testWidgets(
-    'TC-206-09 find-open center tap closes find; next tap opens Settings',
-    (tester) async {
-      setLargeSurface(tester);
-      suppressOverflowErrors();
-      identityRepo.seed(identityWith());
+  testWidgets('settings button sits in the bottom-left corner', (tester) async {
+    setLargeSurface(tester);
+    suppressOverflowErrors();
+    identityRepo.seed(identityWith());
 
-      await tester.pumpWidget(
-        buildOrbit(appShellController: freshController()),
-      );
-      await pumpFrames(tester);
+    await tester.pumpWidget(buildOrbit(appShellController: freshController()));
+    await pumpFrames(tester);
 
-      // Open the find pill.
-      await tester.tap(find.byKey(const ValueKey('orbit-find-pill')));
-      await pumpFrames(tester);
-      expect(find.byKey(const ValueKey('orbit-find-pill')), findsOneWidget);
+    final screen = tester.view.physicalSize / tester.view.devicePixelRatio;
+    final button = tester.getCenter(settingsButton());
+    expect(button.dx, lessThan(screen.width / 4));
+    expect(button.dy, greaterThan(screen.height * 3 / 4));
+    expect(find.bySemanticsLabel('Open settings'), findsOneWidget);
+  });
 
-      // Center tap while find is open: closes find, does NOT open Settings.
-      await tester.tap(centerAvatar());
-      await pumpFrames(tester);
-      expect(find.byType(SettingsWired), findsNothing);
+  testWidgets('settings button hides while find is open', (tester) async {
+    setLargeSurface(tester);
+    suppressOverflowErrors();
+    identityRepo.seed(identityWith());
 
-      // A subsequent idle center tap DOES open Settings.
-      await tester.tap(centerAvatar());
-      await pumpFrames(tester);
-      expect(find.byType(SettingsWired), findsOneWidget);
-    },
-  );
+    await tester.pumpWidget(buildOrbit(appShellController: freshController()));
+    await pumpFrames(tester);
+    expect(settingsButton(), findsOneWidget);
+
+    await tester.tap(find.byKey(const ValueKey('orbit-find-pill')));
+    await pumpFrames(tester);
+    expect(settingsButton(), findsNothing);
+  });
+
+  testWidgets('settings button hides during the sculpt edit session', (
+    tester,
+  ) async {
+    setLargeSurface(tester);
+    suppressOverflowErrors();
+    identityRepo.seed(identityWith());
+
+    await tester.pumpWidget(buildOrbit(appShellController: freshController()));
+    await pumpFrames(tester);
+    expect(settingsButton(), findsOneWidget);
+
+    // Long-press empty background left of the circle column → edit.
+    final screen = tester.view.physicalSize / tester.view.devicePixelRatio;
+    final hold = await tester.startGesture(Offset(12, screen.height / 2));
+    await tester.pump(const Duration(milliseconds: 620));
+    await hold.up();
+    await pumpFrames(tester);
+
+    expect(find.byKey(const ValueKey('orbit-edit-banner')), findsOneWidget);
+    expect(settingsButton(), findsNothing);
+  });
 
   testWidgets('TC-206-18 identity change-kind refreshes center avatar bytes', (
     tester,
@@ -564,8 +572,8 @@ void main() {
   });
 
   testWidgets(
-    'TC-226-16 swipe-right on Settings returns to orbit intact and center '
-    'tap reopens Settings',
+    'TC-226-16 swipe-right on Settings returns to orbit intact and the '
+    'settings button reopens Settings',
     (tester) async {
       setLargeSurface(tester);
       suppressOverflowErrors();
@@ -587,7 +595,7 @@ void main() {
       await pumpFrames(tester);
 
       expect(find.byType(SettingsWired), findsNothing);
-      expect(centerAvatar(), findsOneWidget);
+      expect(settingsButton(), findsOneWidget);
 
       await openSettings(tester);
       expect(find.byType(SettingsWired), findsOneWidget);

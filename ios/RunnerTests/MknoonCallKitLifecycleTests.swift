@@ -2,6 +2,7 @@ import AVFoundation
 import CallKit
 import Foundation
 import XCTest
+import WebRTC
 
 @testable import Runner
 
@@ -1277,6 +1278,7 @@ final class MknoonCallKitLifecycleTests: XCTestCase {
       nowMs: clock
     )
     let audio = FakeCallAudio()
+    let webRTCAudioSession = FakeWebRTCAudioSession()
     let ringback = FakeCallRingback()
     let capability = MemoryCallCapability(enabled: true)
     let notificationCenter = NotificationCenter()
@@ -1289,7 +1291,8 @@ final class MknoonCallKitLifecycleTests: XCTestCase {
       capability: capability,
       nowMs: clock,
       notificationCenter: notificationCenter,
-      ringback: ringback
+      ringback: ringback,
+      webRTCAudioSession: webRTCAudioSession
     )
     return CallKitRig(
       controller: controller,
@@ -1301,11 +1304,85 @@ final class MknoonCallKitLifecycleTests: XCTestCase {
       audio: audio,
       capability: capability,
       notificationCenter: notificationCenter,
-      ringback: ringback
+      ringback: ringback,
+      webRTCAudioSession: webRTCAudioSession
     )
   }
 
   // MARK: - Call audio session configuration
+
+  func testProductionAudioNotifierBalancesRealWebRTCActivationCount() {
+    let rig = makeRig()
+    let controller = MknoonCallKitController(
+      provider: FakeCallProvider(),
+      transactionRequester: rig.transactions,
+      store: rig.store,
+      contacts: rig.contacts,
+      audio: rig.audio,
+      capability: rig.capability,
+      notificationCenter: rig.notificationCenter,
+      ringback: rig.ringback
+    )
+    let provider = CXProvider(configuration: CXProviderConfiguration())
+    let session = AVAudioSession.sharedInstance()
+    let rtcSession = RTCAudioSession.sharedInstance()
+    let count = rtcSession.activationCount
+    controller.provider(provider, didActivate: session)
+    XCTAssertEqual(rtcSession.activationCount, count + 1)
+    controller.provider(provider, didDeactivate: session)
+    XCTAssertEqual(rtcSession.activationCount, count)
+  }
+
+  func testCallKitReactivationReachesWebRTCWithoutInterruptionEndedNotification() {
+    let rig = makeRig()
+    let provider = CXProvider(configuration: CXProviderConfiguration())
+    let session = AVAudioSession.sharedInstance()
+    XCTAssertEqual(present(rig, payload(callA)), .presented)
+    XCTAssertTrue(rig.controller.handleAnswer(callA))
+    rig.controller.provider(provider, didActivate: session)
+    XCTAssertTrue(rig.controller.audioState(callA)?.active ?? false)
+
+    rig.notificationCenter.post(
+      name: AVAudioSession.interruptionNotification,
+      object: session,
+      userInfo: [AVAudioSessionInterruptionTypeKey: AVAudioSession.InterruptionType.began.rawValue]
+    )
+    rig.controller.provider(provider, didDeactivate: session)
+    XCTAssertFalse(rig.controller.audioState(callA)?.active ?? true)
+    // CallKit may reactivate without the ordinary interruption-ended event.
+    rig.controller.provider(provider, didActivate: session)
+    XCTAssertTrue(rig.controller.audioState(callA)?.active ?? false)
+    XCTAssertEqual(rig.webRTCAudioSession.events, ["activate", "deactivate", "activate"])
+    XCTAssertTrue(rig.webRTCAudioSession.sessions.allSatisfy { $0 === session })
+  }
+
+  func testCallKitDeactivationReachesWebRTCAfterTerminalDescriptorIsRemoved() {
+    let rig = makeRig()
+    let provider = CXProvider(configuration: CXProviderConfiguration())
+    let session = AVAudioSession.sharedInstance()
+    XCTAssertEqual(present(rig, payload(callA)), .presented)
+    XCTAssertTrue(rig.controller.handleAnswer(callA))
+    rig.controller.provider(provider, didActivate: session)
+    XCTAssertTrue(rig.controller.handleSystemEnd(callA))
+    let sequence = rig.store.snapshot()!.events.last!.sequence
+    XCTAssertTrue(rig.controller.acknowledge(callA, through: sequence, disposition: .terminal))
+    XCTAssertNil(rig.store.snapshot())
+
+    rig.controller.provider(provider, didDeactivate: session)
+    XCTAssertEqual(rig.webRTCAudioSession.events, ["activate", "deactivate"])
+    XCTAssertTrue(rig.webRTCAudioSession.sessions.allSatisfy { $0 === session })
+  }
+
+  func testUnlatchedCallKitAudioStillBalancesWebRTCExternalActivation() {
+    let rig = makeRig()
+    let provider = CXProvider(configuration: CXProviderConfiguration())
+    let session = AVAudioSession.sharedInstance()
+    rig.controller.provider(provider, didActivate: session)
+    rig.controller.provider(provider, didDeactivate: session)
+    XCTAssertEqual(rig.webRTCAudioSession.events, ["activate", "deactivate"])
+    XCTAssertNil(rig.store.snapshot())
+    XCTAssertEqual(rig.audio.prepareCount, 0)
+  }
 
   func testAnswerConfiguresTheCallAudioSessionBeforeFulfilment() {
     let rig = makeRig()
@@ -1566,6 +1643,20 @@ struct CallKitRig {
   let capability: MemoryCallCapability
   let notificationCenter: NotificationCenter
   let ringback: FakeCallRingback
+  let webRTCAudioSession: FakeWebRTCAudioSession
+}
+
+final class FakeWebRTCAudioSession: MknoonWebRTCAudioSessionNotifying {
+  var events: [String] = []
+  var sessions: [AVAudioSession] = []
+  func audioSessionDidActivate(_ audioSession: AVAudioSession) {
+    events.append("activate")
+    sessions.append(audioSession)
+  }
+  func audioSessionDidDeactivate(_ audioSession: AVAudioSession) {
+    events.append("deactivate")
+    sessions.append(audioSession)
+  }
 }
 
 final class FakeCallProvider: MknoonCallProviding {

@@ -19,6 +19,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:just_audio_platform_interface/just_audio_platform_interface.dart';
 import 'package:flutter_app/core/config/direct_media_blob_custody_client_flag.dart';
 import 'package:flutter_app/core/constants/retry_constants.dart';
 import 'package:flutter_app/core/database/outgoing_transport_mutation.dart';
@@ -105,6 +106,7 @@ import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:image_picker/image_picker.dart';
 import '../../../../core/bridge/fake_bridge.dart';
 import '../../../../shared/fakes/fake_audio_recorder_service.dart';
+import '../../../../shared/fakes/fake_just_audio.dart';
 import '../../../../shared/fakes/fake_mic_permission_gateway.dart';
 import '../../../../shared/fakes/fake_media_file_manager.dart';
 import '../../../../shared/helpers/legacy_upload_media_fn.dart';
@@ -1670,14 +1672,23 @@ final class _CallContactUpdateListener extends ChatMessageListener {
 }
 
 final class _RecordingOutgoingCallCapability
-    implements OutgoingCallCapability, OutgoingCallReadinessRecovery {
+    implements
+        OutgoingCallCapability,
+        OutgoingCallReadinessRecovery,
+        OutgoingCallStartDiagnostics {
   _RecordingOutgoingCallCapability({
     required this.isOutgoingCallAvailable,
     required this.result,
     this.contactOutgoingAvailable = true,
     this.error,
     this.onRecover,
+    this.startDiagnostics = const <String, Object?>{},
   });
+
+  final Map<String, Object?> startDiagnostics;
+
+  @override
+  Map<String, Object?> outgoingCallStartDiagnostics() => startDiagnostics;
 
   @override
   bool isOutgoingCallAvailable;
@@ -1748,6 +1759,7 @@ void main() {
   late FakeUploadWakeLockDriver wakeLockDriver;
 
   setUp(() {
+    installFakeJustAudioPlatform();
     wakeLockDriver = FakeUploadWakeLockDriver();
     UploadWakeLockController.debugReset(driver: wakeLockDriver);
   });
@@ -2441,7 +2453,12 @@ void main() {
     (tester) async {
       late CallDiagnostics diagnostics;
       await tester.runAsync(() async {
-        diagnostics = await CallDiagnostics.installForTesting();
+        // These widget tests assert event semantics; archive I/O has its own
+        // tests. Keep persistence in the fake clock so eventsForTesting does
+        // not join an isolate completion stranded in the widget test zone.
+        diagnostics = await CallDiagnostics.installForTesting(
+          persist: (_, _) async {},
+        );
       });
       addTearDown(() async {
         await diagnostics.setEnabled(false);
@@ -2490,6 +2507,192 @@ void main() {
       );
     },
   );
+
+  group('preflight failure diagnostics name the step that failed', () {
+    const transportTimeout = <String, Object?>{
+      'startStage': 'signaling_readiness',
+      'startOutcome': 'transport_startup_timeout',
+      'withdrawalFailed': false,
+      'foreground': true,
+      'transportStarted': false,
+    };
+    const advertisementFailed = <String, Object?>{
+      'startStage': 'capability_advertisement',
+      'startOutcome': 'advertisement_unavailable',
+      'withdrawalFailed': false,
+      'foreground': true,
+      'transportStarted': true,
+    };
+
+    Future<Map<String, Object?>> terminalAfterTap(
+      WidgetTester tester, {
+      required _RecordingOutgoingCallCapability capability,
+      required String tooltip,
+      Duration wait = Duration.zero,
+      void Function()? beforeTap,
+    }) async {
+      late CallDiagnostics diagnostics;
+      await tester.runAsync(() async {
+        // These widget tests assert event semantics; archive I/O has its own
+        // tests. Keep persistence in the fake clock so eventsForTesting does
+        // not join an isolate completion stranded in the widget test zone.
+        diagnostics = await CallDiagnostics.installForTesting(
+          persist: (_, _) async {},
+        );
+      });
+      addTearDown(() async {
+        await diagnostics.setEnabled(false);
+        await diagnostics.dispose();
+      });
+      addTearDown(capability.close);
+      final messageRepo = FakeMessageRepository();
+      await pumpScreen(
+        tester,
+        identityRepo: FakeIdentityRepository(makeIdentity()),
+        messageRepo: messageRepo,
+        chatListener: ChatMessageListener(
+          chatMessageStream: const Stream.empty(),
+          messageRepo: messageRepo,
+          contactRepo: FakeContactRepository(),
+        ),
+        sendFn: _instantSuccessSendFn,
+        outgoingCallCapability: capability,
+      );
+      beforeTap?.call();
+      await tester.tap(find.byTooltip(tooltip));
+      await tester.pump();
+      if (wait > const Duration(seconds: 2)) {
+        await tester.pump(wait - const Duration(seconds: 2));
+        final pending = await tester.runAsync(diagnostics.eventsForTesting);
+        expect(
+          pending!.where((event) => event['stage'] == 'terminal'),
+          isEmpty,
+        );
+        await tester.pump(const Duration(seconds: 2));
+      } else {
+        await tester.pump(wait);
+      }
+      await tester.pump();
+      final events = await tester.runAsync(diagnostics.eventsForTesting);
+      final terminal = events!
+          .where((event) => event['stage'] == 'terminal')
+          .toList();
+      expect(terminal, hasLength(1));
+      expect(CallDiagnostics.validateEvent(terminal.single), isNotNull);
+      return terminal.single;
+    }
+
+    testWidgets('a P2P startup timeout is named, with start details', (
+      tester,
+    ) async {
+      final terminal = await terminalAfterTap(
+        tester,
+        capability: _RecordingOutgoingCallCapability(
+          isOutgoingCallAvailable: false,
+          result: OutgoingCallStartResult.started,
+          startDiagnostics: transportTimeout,
+        ),
+        tooltip: 'Voice calling is unavailable right now',
+      );
+      expect(terminal['outcome'], 'preflight_failed');
+      expect(terminal['reason'], 'transport_startup_timeout');
+      expect(
+        terminal['values'],
+        containsPair('startStage', 'signaling_readiness'),
+      );
+      expect(terminal['values'], containsPair('transportStarted', false));
+      expect(terminal['values'], containsPair('withdrawalFailed', false));
+    });
+
+    testWidgets('graph_unavailable carries the failed start stage', (
+      tester,
+    ) async {
+      final terminal = await terminalAfterTap(
+        tester,
+        capability: _RecordingOutgoingCallCapability(
+          isOutgoingCallAvailable: false,
+          result: OutgoingCallStartResult.started,
+          startDiagnostics: advertisementFailed,
+        ),
+        tooltip: 'Voice calling is unavailable right now',
+      );
+      expect(terminal['reason'], 'graph_unavailable');
+      expect(
+        terminal['values'],
+        containsPair('startStage', 'capability_advertisement'),
+      );
+      expect(
+        terminal['values'],
+        containsPair('startOutcome', 'advertisement_unavailable'),
+      );
+    });
+
+    testWidgets('a readiness recovery that hangs is readiness_timeout', (
+      tester,
+    ) async {
+      final terminal = await terminalAfterTap(
+        tester,
+        capability: _RecordingOutgoingCallCapability(
+          isOutgoingCallAvailable: false,
+          result: OutgoingCallStartResult.started,
+          onRecover: () => Completer<bool>().future,
+          startDiagnostics: const <String, Object?>{
+            'startStage': 'signaling_readiness',
+            'startOutcome': 'in_flight',
+          },
+        ),
+        tooltip: 'Voice calling is unavailable right now',
+        wait: const Duration(seconds: 11),
+      );
+      expect(terminal['reason'], 'readiness_timeout');
+      expect(terminal['values'], containsPair('startOutcome', 'in_flight'));
+    });
+
+    testWidgets('a contact check that hangs is contact_check_timeout', (
+      tester,
+    ) async {
+      final capability = _RecordingOutgoingCallCapability(
+        isOutgoingCallAvailable: true,
+        contactOutgoingAvailable: false,
+        result: OutgoingCallStartResult.started,
+      );
+      final terminal = await terminalAfterTap(
+        tester,
+        capability: capability,
+        tooltip: 'Voice calling is unavailable right now',
+        beforeTap: () =>
+            capability.nextAvailabilityCompleter = Completer<bool>(),
+        wait: const Duration(seconds: 11),
+      );
+      expect(terminal['reason'], 'contact_check_timeout');
+      expect((terminal['values'] as Map)['durationMs'], isNonNegative);
+    });
+
+    testWidgets(
+      'a call start that outlives the preflight is preflight_timeout',
+      (tester) async {
+        final pending = Completer<OutgoingCallStartResult>();
+        final capability = _RecordingOutgoingCallCapability(
+          isOutgoingCallAvailable: true,
+          result: OutgoingCallStartResult.started,
+          startDiagnostics: const <String, Object?>{
+            'startStage': 'complete',
+            'startOutcome': 'ready',
+          },
+        )..startCompleter = pending;
+        final terminal = await terminalAfterTap(
+          tester,
+          capability: capability,
+          tooltip: 'Start voice call',
+          wait: const Duration(seconds: 31),
+        );
+        expect(terminal['reason'], 'preflight_timeout');
+        expect(terminal['values'], containsPair('startOutcome', 'ready'));
+        pending.complete(OutgoingCallStartResult.canceled);
+        await tester.pump();
+      },
+    );
+  });
 
   testWidgets(
     'VC2-03 retries cached unavailable endpoint on the next explicit call tap',
@@ -2704,7 +2907,12 @@ void main() {
     (tester) async {
       late CallDiagnostics diagnostics;
       await tester.runAsync(() async {
-        diagnostics = await CallDiagnostics.installForTesting();
+        // These widget tests assert event semantics; archive I/O has its own
+        // tests. Keep persistence in the fake clock so eventsForTesting does
+        // not join an isolate completion stranded in the widget test zone.
+        diagnostics = await CallDiagnostics.installForTesting(
+          persist: (_, _) async {},
+        );
       });
       addTearDown(() async {
         await diagnostics.setEnabled(false);
@@ -12752,6 +12960,7 @@ void main() {
     testWidgets('own voice message is playable right after a successful send', (
       tester,
     ) async {
+      final audioPlatform = JustAudioPlatform.instance as FakeJustAudioPlatform;
       final tempDir = Directory.systemTemp.createTempSync('voice_playable_');
       addTearDown(() {
         if (tempDir.existsSync()) tempDir.deleteSync(recursive: true);
@@ -12867,6 +13076,17 @@ void main() {
         reason: 'the player needs an absolute path it can open',
       );
       expect(File(attachment.localPath!).existsSync(), isTrue);
+      // File resolution and just_audio initialization complete asynchronously.
+      // Join the actual player source load before disposing the voice bubble.
+      final expectedUri = Uri.file(attachment.localPath!).toString();
+      await pumpUntilAsyncIo(
+        tester,
+        () => audioPlatform.loadedUris.contains(expectedUri),
+      );
+      expect(audioPlatform.loadedUris, contains(expectedUri));
+      await tester.pump();
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pumpAndSettle();
     });
 
     // 117 Session 3: the 5-minute auto-stop must NOT silently discard the

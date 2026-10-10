@@ -72,6 +72,28 @@ Future<void> _flushAsync([int turns = 8]) async {
 
 void main() {
   test(
+    'connected ICE failure without disconnected initiates recovery',
+    () async {
+      final h = _Harness(snapshot: _snapshot(CallState.connected));
+      addTearDown(h.executor.close);
+      h.engine.emitEvent(
+        _engineEvent(
+          CallConnectionState.failed,
+          failureReason: CallFailureReason.iceConnectionFailed,
+        ),
+      );
+      await _flushAsync();
+      expect(
+        h.dispatched.map((e) => e.type),
+        contains(CallEventType.mediaLost),
+      );
+      expect(
+        h.dispatched.map((e) => e.type),
+        isNot(contains(CallEventType.negotiationFailed)),
+      );
+    },
+  );
+  test(
     'queued fatal retry result cannot terminate a newer reconnect episode',
     () async {
       final timers = _ReadinessTimerScheduler();
@@ -2574,7 +2596,7 @@ void main() {
     test(
       queuedRecovery
           ? 'queued old recovery cannot connect a newer reconnect episode'
-          : 'each audio-focus reconnect owns one restart after focus-driven recovery',
+          : 'twelve audio-focus recoveries do not restart a healthy transport',
       () async {
         final calls = <String>[];
         final engine = _FakeEngine(calls);
@@ -2702,8 +2724,7 @@ void main() {
           return;
         }
 
-        for (var generation = 1; generation <= 2; generation++) {
-          engine.restartGeneration = generation;
+        for (var generation = 1; generation <= 12; generation++) {
           engine.connectionSnapshot = _connectionSnapshot(
             state: CallConnectionState.connected,
             ready: false,
@@ -2711,25 +2732,9 @@ void main() {
           intents.add(CallAudioInterruptionIntent.pausedReconnect);
           await _flushAsync();
           expect(coordinator.activeSession?.state, CallState.reconnecting);
-          expect(engine.restartCalls, generation);
+          expect(engine.restartCalls, 0);
           final deadline = timers.active.single;
           expect(deadline.delay, const Duration(seconds: 15));
-
-          // Repeated requests during this episode cannot spend a second restart
-          // or postpone its original deadline.
-          await coordinator.dispatch(
-            CallEvent(
-              type: CallEventType.remoteIceRestart,
-              eventId: 'repeated-request-$generation',
-              occurredAt: _now,
-              callId: _callId,
-            ),
-          );
-          expect(engine.restartCalls, generation);
-          expect(timers.active, <_CausalScheduled>[deadline]);
-
-          // Audio focus can recover with the native connection still CONNECTED,
-          // so no new engine state event resets the executor's restart budget.
           engine.connectionSnapshot = _connectionSnapshot(
             state: CallConnectionState.connected,
             ready: true,
@@ -2739,7 +2744,7 @@ void main() {
           expect(coordinator.activeSession?.state, CallState.connected);
           expect(deadline.canceled, isTrue);
         }
-        expect(signaling.restartGenerations, <int>[1, 2]);
+        expect(signaling.restartGenerations, isEmpty);
       },
     );
   }

@@ -146,6 +146,7 @@ final class IncomingCallSignalFrame {
     this.expectedExpiresAtMs,
     this.expectedRecipientDevicePeerId,
     this.terminalFollows = false,
+    this.onQueuedBehindMediaPreparation,
   });
 
   final String envelopeJson;
@@ -159,6 +160,11 @@ final class IncomingCallSignalFrame {
   /// A terminal signal for the same call sits behind this frame in the same
   /// mailbox page: the caller already ended the call this invite announces.
   final bool terminalFollows;
+
+  /// Releases only the runtime's admission lane after the coordinator owns an
+  /// event queued behind media work. The handling future still owns material,
+  /// replay settlement and (for mailbox frames) acknowledgement.
+  final void Function()? onQueuedBehindMediaPreparation;
 
   @override
   String toString() => 'IncomingCallSignalFrame(redacted)';
@@ -517,6 +523,12 @@ final class HandleIncomingCallSignal {
         _toCoordinatorEvent(signal, frame.route),
         onApplied: admission?.complete,
       );
+      // A valid terminal dispatch requests interruption synchronously; keep
+      // waiting for its cleanup. Other queued work must free admission so that
+      // such a terminal can reach the coordinator in the first place.
+      if (_coordinator.hasPendingMediaPreparation) {
+        frame.onQueuedBehindMediaPreparation?.call();
+      }
       final reduction = await (admission == null
           ? dispatch
           : Future.any<CallReduction>(<Future<CallReduction>>[

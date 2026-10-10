@@ -1,0 +1,23 @@
+appId: com.mknoon.app
+name: g406_send_in_open_chat
+---
+- runFlow:
+    when:
+      visible: Maybe later
+    commands:
+      - tapOn: Maybe later
+- tapOn:
+    id: chat_composer
+- runFlow:
+    when:
+      visible: Try out your stylus
+    commands:
+      - tapOn: Cancel
+      - tapOn:
+          id: chat_composer
+- inputText: ${TEXT}
+- tapOn:
+    id: chat_send
+- waitForAnimationToEnd:
+    timeout: 3000
+- takeScreenshot: sent

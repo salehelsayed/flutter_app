@@ -2990,20 +2990,35 @@ func groupPeerDialBackoff(failureCount int) time.Duration {
 	return backoff
 }
 
-func (n *Node) acquireGroupRecoverySlot(ctx context.Context) (func(), error) {
+func (n *Node) groupRecoverySemaphore() chan struct{} {
 	n.mu.Lock()
+	defer n.mu.Unlock()
 	sem := n.groupRecoverySem
 	if sem == nil {
 		sem = make(chan struct{}, GroupDiscoveryConcurrency)
 		n.groupRecoverySem = sem
 	}
-	n.mu.Unlock()
+	return sem
+}
+
+func (n *Node) acquireGroupRecoverySlot(ctx context.Context) (func(), error) {
+	sem := n.groupRecoverySemaphore()
 
 	select {
 	case sem <- struct{}{}:
 		return func() { <-sem }, nil
 	case <-ctx.Done():
 		return nil, ctx.Err()
+	}
+}
+
+func (n *Node) tryAcquireGroupRecoverySlot() func() {
+	sem := n.groupRecoverySemaphore()
+	select {
+	case sem <- struct{}{}:
+		return func() { <-sem }
+	default:
+		return nil
 	}
 }
 
@@ -3133,7 +3148,15 @@ func (n *Node) ensureGroupTopicPeersBeforePublish(
 		settleWait = GroupPublishZeroPeerSettleWait
 	}
 
-	n.dialKnownGroupMembers(groupId, true)
+	// Dials can outlast the foreground promotion budget. Let bounded recovery
+	// continue independently; a saturated recovery lane must not queue one more
+	// goroutine per send or delay durable delivery behind a slow relay.
+	if release := n.tryAcquireGroupRecoverySlot(); release != nil {
+		go func() {
+			defer release()
+			n.dialKnownGroupMembers(groupId, true)
+		}()
+	}
 	peerCount := waitForTopicPeerCount(
 		topic,
 		initialPeers,

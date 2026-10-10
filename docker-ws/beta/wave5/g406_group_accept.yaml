@@ -1,0 +1,37 @@
+appId: com.mknoon.app
+name: g406_accept_read_reply
+---
+- launchApp:
+    stopApp: true
+- extendedWaitUntil:
+    visible:
+      id: orbit_create_group_fab
+    timeout: 30000
+- runFlow:
+    when:
+      visible:
+        id: orbit.view.all_chats
+    commands:
+      - tapOn:
+          id: orbit.view.all_chats
+- tapOn: '(?s)^Intros.*$'
+- extendedWaitUntil:
+    visible: '(?s)^G406 Mixed\nInvited by .*'
+    timeout: 90000
+- tapOn: Accept
+- extendedWaitUntil:
+    visible:
+      id: chat_composer
+    timeout: 30000
+- extendedWaitUntil:
+    visible: '.*group-from-old.*'
+    timeout: 60000
+- takeScreenshot: joined_read
+- tapOn:
+    id: chat_composer
+- inputText: group-from-new
+- tapOn:
+    id: chat_send
+- waitForAnimationToEnd:
+    timeout: 3000
+- takeScreenshot: replied

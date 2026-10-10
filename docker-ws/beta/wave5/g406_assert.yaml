@@ -1,0 +1,23 @@
+appId: com.mknoon.app
+name: g406_assert_text
+---
+- launchApp:
+    stopApp: true
+- extendedWaitUntil:
+    visible:
+      id: orbit_create_group_fab
+    timeout: 30000
+- runFlow:
+    when:
+      visible:
+        id: orbit.view.all_chats
+    commands:
+      - tapOn:
+          id: orbit.view.all_chats
+- tapOn:
+    id: orbit.contact.${PEER_ID}
+- extendedWaitUntil:
+    visible: '.*${TEXT}.*'
+    timeout: 30000
+- takeScreenshot: received
+- back

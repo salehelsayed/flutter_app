@@ -1,0 +1,47 @@
+appId: com.mknoon.app
+name: voice_send_then_play2
+---
+- runFlow:
+    when:
+      notVisible:
+        id: chat_composer
+    commands:
+      - runFlow:
+          when:
+            visible:
+              id: orbit.view.all_chats
+          commands:
+            - tapOn:
+                id: orbit.view.all_chats
+      - tapOn:
+          id: orbit.contact.${PEER_ID}
+- assertVisible:
+    id: chat_composer
+- takeScreenshot: 1_chat_open
+- tapOn:
+    id: chat_record_voice
+- waitForAnimationToEnd:
+    timeout: 1000
+- swipe:            # idle wait ~4 s of recording (harmless swipe on the header area)
+    start: 50%, 15%
+    end: 51%, 15%
+    duration: 4000
+- takeScreenshot: 2_recording
+- tapOn:
+    id: chat_record_voice
+- waitForAnimationToEnd:
+    timeout: 3000
+- takeScreenshot: 3_after_stop
+- takeScreenshot: 4_before_play
+- tapOn:
+    point: 32%, 78%
+- swipe:
+    start: 50%, 15%
+    end: 51%, 15%
+    duration: 1500
+- takeScreenshot: 5_play_plus_1s
+- swipe:
+    start: 50%, 15%
+    end: 51%, 15%
+    duration: 2500
+- takeScreenshot: 6_play_plus_4s

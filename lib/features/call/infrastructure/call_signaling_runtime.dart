@@ -11,6 +11,7 @@ import '../application/call_network_gate.dart';
 import '../application/handle_incoming_call_signal.dart';
 import '../domain/call_id.dart';
 import '../domain/call_session_snapshot.dart';
+import '../domain/call_state.dart';
 import 'call_mailbox_client.dart';
 
 typedef HandleCallSignalFrame =
@@ -46,6 +47,7 @@ final class CallSignalingRuntime {
     PrepareCallMailboxSettlement? prepareMailboxSettlement,
     required CallCoordinator coordinator,
     required CallNetworkEffectsAllowed networkEffectsAllowed,
+    String? Function(CallId callId)? readCallHandle,
     this.maxMailboxPagesPerDrain = 8,
     this.maxPendingOperations = 64,
   }) : _directCallSignalStream = directCallSignalStream,
@@ -55,6 +57,7 @@ final class CallSignalingRuntime {
        _handleMailboxIncoming = handleMailboxIncoming,
        _prepareMailboxSettlement = prepareMailboxSettlement,
        _coordinator = coordinator,
+       _readCallHandle = readCallHandle,
        _networkEffectsAllowed = networkEffectsAllowed {
     if (maxMailboxPagesPerDrain < 1 || maxMailboxPagesPerDrain > 32) {
       throw ArgumentError.value(
@@ -74,6 +77,7 @@ final class CallSignalingRuntime {
   final HandleMailboxCallSignalFrame? _handleMailboxIncoming;
   final PrepareCallMailboxSettlement? _prepareMailboxSettlement;
   final CallCoordinator _coordinator;
+  final String? Function(CallId callId)? _readCallHandle;
   final CallNetworkEffectsAllowed _networkEffectsAllowed;
   final int maxMailboxPagesPerDrain;
   final int maxPendingOperations;
@@ -81,6 +85,8 @@ final class CallSignalingRuntime {
   StreamSubscription<ChatMessage>? _directSubscription;
   Future<bool>? _startInFlight;
   Future<void> _serialTail = Future<void>.value();
+  final Set<Future<void>> _pendingWork = {};
+  final Set<String> _pendingMailboxFrames = {};
   int _pendingOperations = 0;
   bool _disposed = false;
   bool _shuttingDown = false;
@@ -130,7 +136,7 @@ final class CallSignalingRuntime {
             }
             return;
           }
-          unawaited(_enqueue(() => _handleDirect(message)));
+          unawaited(_enqueue((release) => _handleDirect(message, release)));
         },
         onError: (_, _) {
           // The shared router owns stream recovery. Call runtime diagnostics
@@ -157,7 +163,10 @@ final class CallSignalingRuntime {
     await _enqueue(_drainMailbox);
   }
 
-  Future<void> _handleDirect(ChatMessage message) async {
+  Future<void> _handleDirect(
+    ChatMessage message,
+    void Function() releaseAdmission,
+  ) async {
     if (!message.isIncoming) return;
     if (_disposed) {
       _recordDroppedDirect(message, IncomingCallSignalRefusal.runtimeDisposed);
@@ -176,6 +185,7 @@ final class CallSignalingRuntime {
           envelopeJson: message.content,
           authenticatedTransportPeerId: message.from,
           route: _directRoute(message.transport),
+          onQueuedBehindMediaPreparation: releaseAdmission,
         ),
       );
     } catch (_) {
@@ -193,7 +203,34 @@ final class CallSignalingRuntime {
         reason: reason,
       );
 
-  Future<void> _drainMailbox() async {
+  Future<void> _drainMailbox(void Function() releaseAdmission) async {
+    final pending = <Future<bool>>[];
+    try {
+      final session = _coordinator.activeSession;
+      if (session?.callId != null &&
+          (session!.state == CallState.connected ||
+              session.state == CallState.reconnecting)) {
+        final handle = _readCallHandle?.call(session.callId!);
+        if (handle != null) {
+          // Exact recipient reads keep acknowledged routing alive after the
+          // pending index is drained. They never extend encrypted payload TTLs.
+          await _drainMailboxFor(pending, callHandle: handle);
+        }
+      }
+      if (!_disposed && !_shuttingDown) await _drainMailboxFor(pending);
+    } finally {
+      // Rows already admitted to the coordinator retain their own completion
+      // and ACK. A subsequent drain must be able to retrieve a remote terminal
+      // even when an earlier page ended with ICE waiting for media preparation.
+      releaseAdmission();
+      await Future.wait(pending);
+    }
+  }
+
+  Future<void> _drainMailboxFor(
+    List<Future<bool>> pending, {
+    String? callHandle,
+  }) async {
     for (
       var pageIndex = 0;
       pageIndex < maxMailboxPagesPerDrain && !_disposed;
@@ -201,7 +238,7 @@ final class CallSignalingRuntime {
     ) {
       late final CallMailboxRetrieveResult page;
       try {
-        page = await _mailboxClient.retrieve();
+        page = await _mailboxClient.retrieve(callHandle: callHandle);
       } catch (_) {
         return;
       }
@@ -209,100 +246,118 @@ final class CallSignalingRuntime {
       for (var index = 0; index < page.events.length; index++) {
         final event = page.events[index];
         if (_disposed || _shuttingDown) return;
+        final rowKey = _settlementFingerprint(event);
+        // A resume may retrieve the same unacknowledged row while its original
+        // handler still owns replay custody. Never ACK that in-flight copy as a
+        // duplicate or prepare a second native settlement for it.
+        if (_pendingMailboxFrames.contains(rowKey)) continue;
+        if (_pendingMailboxFrames.length >= maxPendingOperations) return;
+        _pendingMailboxFrames.add(rowKey);
+        final queued = Completer<bool>();
         final frame = _frameFor(
           event,
           terminalFollows: superseded.contains(index),
+          onQueuedBehindMediaPreparation: () {
+            if (!queued.isCompleted) queued.complete(true);
+          },
         );
-        final prepare = _prepareMailboxSettlement;
-        final fingerprint = prepare == null
-            ? null
-            : _settlementFingerprint(event);
-        var pending = fingerprint == null
-            ? null
-            : _terminalSettlements[fingerprint];
-        CommitCallMailboxSettlement? commit = pending?.commit;
-        if (commit == null && prepare != null) {
-          try {
-            commit = await prepare(frame);
-          } catch (_) {
-            // Ordinary handling keeps custody when native capture is unavailable.
-          }
-          if (_disposed || _shuttingDown) return;
-        }
-        late final IncomingCallSignalOutcome outcome;
-        AuthenticatedIncomingCallTerminal? terminal;
-        try {
-          final handleMailbox = _handleMailboxIncoming;
-          if (handleMailbox == null) {
-            outcome = await _handleIncoming(frame);
-          } else {
-            final handled = await handleMailbox(frame);
-            outcome = handled.outcome;
-            terminal = handled.authenticatedTerminal;
-          }
-        } catch (_) {
-          // Transient application/authority failure retains mailbox custody.
-          emitIncomingCallSignalNotAccepted(
-            route: CallRouteClass.ephemeralMailbox,
-            outcome: IncomingCallSignalOutcome.deferred,
-            reason: IncomingCallSignalRefusal.handlerException,
-          );
-          return;
-        }
-        if (outcome == IncomingCallSignalOutcome.deferred) {
-          return;
-        }
-        if (_disposed || _shuttingDown) return;
-        if (fingerprint != null) {
-          if (terminal != null && commit != null) {
-            pending = _PendingMailboxTerminalSettlement(terminal, commit);
-            _terminalSettlements[fingerprint] = pending;
-            while (_terminalSettlements.length >
-                maxPendingTerminalSettlements) {
-              _terminalSettlements.remove(_terminalSettlements.keys.first);
-            }
-            _settlementDiagnostic('authenticated', terminal.signal.event.name);
-          } else if (outcome != IncomingCallSignalOutcome.duplicate) {
-            // A retained proof may cover only its byte-identical replay. A
-            // newly rejected row cannot borrow prior authenticated authority.
-            _terminalSettlements.remove(fingerprint);
-            pending = null;
-          }
-        }
-        try {
-          final acked = await _mailboxClient.ack(
-            callHandle: event.callHandle,
-            messageIds: <String>[event.messageId],
-          );
-          if (acked != 1) return;
-        } catch (_) {
-          // Custody remains at the call mailbox and will replay on next resume.
-          return;
-        }
-        if (fingerprint != null) _terminalSettlements.remove(fingerprint);
-        if (pending != null && !_disposed && !_shuttingDown) {
-          _settlementDiagnostic(
-            'acknowledged',
-            pending.terminal.signal.event.name,
-          );
-          try {
-            await pending.commit(
-              pending.terminal,
-              canApply: () => !_disposed && !_shuttingDown,
-            );
-          } catch (_) {
-            // The durable ACK remains complete; native custody fails closed.
-            _settlementDiagnostic('failed', pending.terminal.signal.event.name);
-          }
-        }
+        final handled = _handleMailboxEvent(event, frame).whenComplete(() {
+          _pendingMailboxFrames.remove(rowKey);
+        });
+        pending.add(handled);
+        if (!await Future.any<bool>([handled, queued.future])) return;
       }
       if (!page.hasMore) return;
     }
   }
 
+  Future<bool> _handleMailboxEvent(
+    CallMailboxEvent event,
+    IncomingCallSignalFrame frame,
+  ) async {
+    final prepare = _prepareMailboxSettlement;
+    final fingerprint = prepare == null ? null : _settlementFingerprint(event);
+    var pending = fingerprint == null
+        ? null
+        : _terminalSettlements[fingerprint];
+    CommitCallMailboxSettlement? commit = pending?.commit;
+    if (commit == null && prepare != null) {
+      try {
+        commit = await prepare(frame);
+      } catch (_) {
+        // Ordinary handling keeps custody when native capture is unavailable.
+      }
+      if (_disposed || _shuttingDown) return false;
+    }
+    late final IncomingCallSignalOutcome outcome;
+    AuthenticatedIncomingCallTerminal? terminal;
+    try {
+      final handleMailbox = _handleMailboxIncoming;
+      if (handleMailbox == null) {
+        outcome = await _handleIncoming(frame);
+      } else {
+        final handled = await handleMailbox(frame);
+        outcome = handled.outcome;
+        terminal = handled.authenticatedTerminal;
+      }
+    } catch (_) {
+      // Transient application/authority failure retains mailbox custody.
+      emitIncomingCallSignalNotAccepted(
+        route: CallRouteClass.ephemeralMailbox,
+        outcome: IncomingCallSignalOutcome.deferred,
+        reason: IncomingCallSignalRefusal.handlerException,
+      );
+      return false;
+    }
+    if (outcome == IncomingCallSignalOutcome.deferred) {
+      return false;
+    }
+    if (_disposed || _shuttingDown) return false;
+    if (fingerprint != null) {
+      if (terminal != null && commit != null) {
+        pending = _PendingMailboxTerminalSettlement(terminal, commit);
+        _terminalSettlements[fingerprint] = pending;
+        while (_terminalSettlements.length > maxPendingTerminalSettlements) {
+          _terminalSettlements.remove(_terminalSettlements.keys.first);
+        }
+        _settlementDiagnostic('authenticated', terminal.signal.event.name);
+      } else if (outcome != IncomingCallSignalOutcome.duplicate) {
+        // A retained proof may cover only its byte-identical replay. A
+        // newly rejected row cannot borrow prior authenticated authority.
+        _terminalSettlements.remove(fingerprint);
+        pending = null;
+      }
+    }
+    try {
+      final acked = await _mailboxClient.ack(
+        callHandle: event.callHandle,
+        messageIds: <String>[event.messageId],
+      );
+      if (acked != 1) return false;
+    } catch (_) {
+      // Custody remains at the call mailbox and will replay on next resume.
+      return false;
+    }
+    if (fingerprint != null) _terminalSettlements.remove(fingerprint);
+    if (pending != null && !_disposed && !_shuttingDown) {
+      _settlementDiagnostic('acknowledged', pending.terminal.signal.event.name);
+      try {
+        await pending.commit(
+          pending.terminal,
+          canApply: () => !_disposed && !_shuttingDown,
+        );
+      } catch (_) {
+        // The durable ACK remains complete; native custody fails closed.
+        _settlementDiagnostic('failed', pending.terminal.signal.event.name);
+      }
+    }
+    return true;
+  }
+
   IncomingCallSignalFrame _frameFor(
     CallMailboxEvent event, {
     bool terminalFollows = false,
+    void Function()? onQueuedBehindMediaPreparation,
   }) => IncomingCallSignalFrame(
     envelopeJson: event.envelopeJson,
     authenticatedTransportPeerId: event.authenticatedSenderDevicePeerId,
@@ -312,6 +367,7 @@ final class CallSignalingRuntime {
     expectedExpiresAtMs: event.expiresAtMs,
     expectedRecipientDevicePeerId: event.recipientDevicePeerId,
     terminalFollows: terminalFollows,
+    onQueuedBehindMediaPreparation: onQueuedBehindMediaPreparation,
   );
 
   /// Indexes of invites in [events] whose call also has a terminal signal in
@@ -345,20 +401,39 @@ final class CallSignalingRuntime {
     return superseded;
   }
 
-  Future<void> settle() => _serialTail;
+  Future<void> settle() async {
+    while (_pendingWork.isNotEmpty) {
+      await Future.wait(_pendingWork.toList());
+    }
+  }
 
-  Future<void> _enqueue(Future<void> Function() operation) {
+  Future<void> _enqueue(
+    Future<void> Function(void Function() releaseAdmission) operation,
+  ) {
     if (_disposed || _pendingOperations >= maxPendingOperations) {
       return Future<void>.value();
     }
     _pendingOperations++;
-    final scheduled = _serialTail.then<void>((_) => operation());
+    final admitted = Completer<void>();
+    void releaseAdmission() {
+      if (!admitted.isCompleted) admitted.complete();
+    }
+
+    final scheduled = _serialTail.then<void>(
+      (_) => operation(releaseAdmission),
+    );
     final guarded = scheduled.catchError((_) {
       // Fail closed without logging event payloads or transport identities.
     });
-    final completion = guarded.whenComplete(() => _pendingOperations--);
-    _serialTail = completion;
-    return completion;
+    late final Future<void> completion;
+    completion = guarded.whenComplete(() {
+      releaseAdmission();
+      _pendingOperations--;
+      _pendingWork.remove(completion);
+    });
+    _pendingWork.add(completion);
+    _serialTail = admitted.future;
+    return admitted.future;
   }
 
   Future<void> shutdown() async {
@@ -374,7 +449,7 @@ final class CallSignalingRuntime {
       // whose coordinator dispatch may itself be waiting for that work.
       await _coordinator.dispose();
       try {
-        await _serialTail;
+        await settle();
       } catch (_) {
         // Already-dispatched work cannot prevent coordinator shutdown.
       }

@@ -1526,6 +1526,7 @@ CallSignalingComposition createProductionCallSignalingComposition({
         () =>
             WidgetsBinding.instance.lifecycleState == AppLifecycleState.resumed,
     clock: callClock,
+    isTransportStarted: () => p2pService.currentState.isStarted,
     requestOutgoingMicrophonePermission: resolvedMicrophonePermission.request,
     ensureOutgoingCallWakeAuthority: ensureOutgoingCallWakeAuthority,
     awaitReadiness: () async {
@@ -2067,6 +2068,8 @@ CallSignalingComposition createProductionCallSignalingComposition({
         signalingContextObserver: signalingContextStore,
       );
       final runtime = CallSignalingRuntime(
+        readCallHandle: (callId) =>
+            signalingContextStore.read(callId)?.callHandle,
         directCallSignalStream: messageRouter.callSignalStream,
         mailboxClient: mailbox,
         handleIncoming: handler.handle,

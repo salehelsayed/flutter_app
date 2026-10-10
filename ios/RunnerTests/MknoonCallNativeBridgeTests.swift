@@ -406,6 +406,7 @@ final class MknoonCallNativeBridgeTests: XCTestCase {
       nowMs: { self.now }
     )
     let audio = FakeCallAudio()
+    let webRTCAudioSession = FakeWebRTCAudioSession()
     let ringback = FakeCallRingback()
     let capability = MemoryCallCapability(enabled: true)
     let notificationCenter = NotificationCenter()
@@ -418,7 +419,8 @@ final class MknoonCallNativeBridgeTests: XCTestCase {
       capability: capability,
       nowMs: clock,
       notificationCenter: notificationCenter,
-      ringback: ringback
+      ringback: ringback,
+      webRTCAudioSession: webRTCAudioSession
     )
     return CallKitRig(
       controller: controller,
@@ -430,7 +432,8 @@ final class MknoonCallNativeBridgeTests: XCTestCase {
       audio: audio,
       capability: capability,
       notificationCenter: notificationCenter,
-      ringback: ringback
+      ringback: ringback,
+      webRTCAudioSession: webRTCAudioSession
     )
   }
 

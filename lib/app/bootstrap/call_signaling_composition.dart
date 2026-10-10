@@ -23,18 +23,33 @@ typedef BuildCallSignalingGraph =
     Future<CallSignalingGraphLifecycle> Function();
 
 enum _CallSignalingStartStage {
-  previousGraphWithdrawal('previousGraphWithdrawal'),
-  foregroundPresentationReadiness('foregroundPresentationReadiness'),
-  signalingReadiness('signalingReadiness'),
-  graphConstruction('graphConstruction'),
-  foregroundBinding('foregroundBinding'),
-  listenerInstallation('listenerInstallation'),
-  capabilityAdvertisement('capabilityAdvertisement'),
-  complete('complete');
+  previousGraphWithdrawal(
+    'previousGraphWithdrawal',
+    'previous_graph_withdrawal',
+  ),
+  foregroundPresentationReadiness(
+    'foregroundPresentationReadiness',
+    'foreground_presentation_readiness',
+  ),
+  signalingReadiness('signalingReadiness', 'signaling_readiness'),
+  graphConstruction('graphConstruction', 'graph_construction'),
+  foregroundBinding('foregroundBinding', 'foreground_binding'),
+  listenerInstallation('listenerInstallation', 'listener_installation'),
+  capabilityAdvertisement(
+    'capabilityAdvertisement',
+    'capability_advertisement',
+  ),
+  complete('complete', 'complete');
 
-  const _CallSignalingStartStage(this.diagnosticValue);
+  const _CallSignalingStartStage(
+    this.diagnosticValue,
+    this.callDiagnosticValue,
+  );
 
   final String diagnosticValue;
+
+  /// Value of the closed `startStage` call diagnostic enum.
+  final String callDiagnosticValue;
 }
 
 /// The narrow process-owned lifecycle exposed by the production call graph.
@@ -120,6 +135,7 @@ final class CallSignalingComposition
     implements
         OutgoingCallCapability,
         OutgoingCallReadinessRecovery,
+        OutgoingCallStartDiagnostics,
         ForegroundCallCapability,
         LockedCallPresentationPort,
         IncomingCallPresenter {
@@ -132,6 +148,7 @@ final class CallSignalingComposition
     EnsureOutgoingCallWakeAuthority? ensureOutgoingCallWakeAuthority,
     AwaitCallSignalingReadiness? awaitForegroundPresentationReadiness,
     bool Function()? isForeground,
+    bool Function()? isTransportStarted,
     DateTime Function()? clock,
   }) : _featureFlags = Map<String, bool>.unmodifiable(featureFlags),
        _platform = platform,
@@ -145,6 +162,7 @@ final class CallSignalingComposition
            ensureOutgoingCallWakeAuthority ?? _allowOutgoingCallWakeAuthority,
        _buildGraph = buildGraph,
        _isForeground = isForeground ?? _defaultForegroundState,
+       _isTransportStarted = isTransportStarted,
        _clock = clock ?? DateTime.now;
 
   final Map<String, bool> _featureFlags;
@@ -156,6 +174,7 @@ final class CallSignalingComposition
   final EnsureOutgoingCallWakeAuthority _ensureOutgoingCallWakeAuthority;
   final BuildCallSignalingGraph _buildGraph;
   final bool Function() _isForeground;
+  final bool Function()? _isTransportStarted;
   final DateTime Function() _clock;
 
   CallSignalingGraphLifecycle? _graph;
@@ -179,6 +198,8 @@ final class CallSignalingComposition
   int _foregroundGeneration = 0;
   Future<void>? _startInFlight;
   Future<void>? _withdrawalInFlight;
+  _CallSignalingStartStage? _lastStartStage;
+  String? _lastStartOutcome;
   // Weak keys retain exactly-once retirement without retaining old graphs.
   final Expando<Future<void>> _graphWithdrawals = Expando<Future<void>>();
   bool _withdrawalFailed = false;
@@ -259,6 +280,20 @@ final class CallSignalingComposition
     });
     _outgoingReadinessRecoveryInFlight = attempt;
     return attempt;
+  }
+
+  @override
+  Map<String, Object?> outgoingCallStartDiagnostics() {
+    final transportStarted = _isTransportStarted;
+    return <String, Object?>{
+      'startStage': _lastStartStage?.callDiagnosticValue ?? 'not_started',
+      'startOutcome': _startInFlight != null
+          ? 'in_flight'
+          : _lastStartOutcome ?? 'not_started',
+      'withdrawalFailed': _withdrawalFailed,
+      'foreground': _isForeground(),
+      if (transportStarted != null) 'transportStarted': transportStarted(),
+    };
   }
 
   Future<bool> _recoverOutgoingCallReadiness(int generation) async {
@@ -589,6 +624,7 @@ final class CallSignalingComposition
   Future<void> _startInternal() async {
     CallSignalingGraphLifecycle? graph;
     var outcome = 'failed';
+    String? diagnosticOutcome;
     var stage = _CallSignalingStartStage.previousGraphWithdrawal;
     try {
       // Native EventChannel cancellation and detach are engine-wide. A new
@@ -659,9 +695,16 @@ final class CallSignalingComposition
         _foregroundGeneration,
       );
       stage = _CallSignalingStartStage.complete;
-    } catch (_) {
+    } catch (error) {
+      // The P2P startup wait is the only readiness step that times out.
+      if (stage == _CallSignalingStartStage.signalingReadiness &&
+          error is TimeoutException) {
+        diagnosticOutcome = 'transport_startup_timeout';
+      }
       if (graph != null) await _withdrawGraph(graph);
     } finally {
+      _lastStartStage = stage;
+      _lastStartOutcome = diagnosticOutcome ?? outcome;
       _emitLifecycleResult(
         event: 'CALL_SIGNALING_START_RESULT',
         outcome: outcome,

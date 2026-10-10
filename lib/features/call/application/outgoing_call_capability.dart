@@ -50,6 +50,13 @@ abstract interface class OutgoingCallReadinessRecovery {
   Future<bool> recoverOutgoingCallReadiness();
 }
 
+/// Closed-vocabulary call diagnostic values that explain why the outgoing
+/// call graph is not ready: the last start stage and outcome, whether the P2P
+/// transport is started, and whether a failed withdrawal blocks restarts.
+abstract interface class OutgoingCallStartDiagnostics {
+  Map<String, Object?> outgoingCallStartDiagnostics();
+}
+
 /// Presentation-neutral access to the one process-owned outgoing call graph.
 ///
 /// Availability is read at use time because the underlying graph may be

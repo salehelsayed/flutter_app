@@ -1,0 +1,21 @@
+appId: com.mknoon.app
+name: g406_voice_to_iphone
+---
+- launchApp:
+    stopApp: true
+- extendedWaitUntil:
+    visible:
+      id: orbit_create_group_fab
+    timeout: 30000
+- tapOn: Open chat with iphone-13
+- tapOn:
+    id: chat_record_voice
+- swipe:
+    start: 50%, 15%
+    end: 51%, 15%
+    duration: 4000
+- tapOn:
+    id: chat_record_voice
+- waitForAnimationToEnd:
+    timeout: 4000
+- takeScreenshot: voice_sent

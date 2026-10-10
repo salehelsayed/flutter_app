@@ -1131,6 +1131,138 @@ void main() {
     });
   }
 
+  group('outgoing start diagnostics', () {
+    test('report not_started before any start', () {
+      final composition = CallSignalingComposition(
+        featureFlags: _enabledFlags(),
+        platform: CallEndpointPlatform.android,
+        awaitReadiness: () async {},
+        buildGraph: () async => _Graph(<String>[]),
+        isForeground: () => true,
+        isTransportStarted: () => false,
+      );
+      addTearDown(composition.shutdown);
+      expect(composition.outgoingCallStartDiagnostics(), <String, Object?>{
+        'startStage': 'not_started',
+        'startOutcome': 'not_started',
+        'withdrawalFailed': false,
+        'foreground': true,
+        'transportStarted': false,
+      });
+    });
+
+    test('name a P2P startup timeout during signaling readiness', () async {
+      final composition = CallSignalingComposition(
+        featureFlags: _enabledFlags(),
+        platform: CallEndpointPlatform.android,
+        awaitReadiness: () async =>
+            throw TimeoutException('p2p', const Duration(seconds: 8)),
+        buildGraph: () async => throw StateError('must not construct'),
+        isForeground: () => true,
+        isTransportStarted: () => false,
+      );
+      addTearDown(composition.shutdown);
+      await composition.start();
+      final values = composition.outgoingCallStartDiagnostics();
+      expect(values['startStage'], 'signaling_readiness');
+      expect(values['startOutcome'], 'transport_startup_timeout');
+      expect(values['transportStarted'], isFalse);
+    });
+
+    test('keep other readiness failures as failed', () async {
+      final composition = CallSignalingComposition(
+        featureFlags: _enabledFlags(),
+        platform: CallEndpointPlatform.android,
+        awaitReadiness: () async => throw StateError('identity'),
+        buildGraph: () async => throw StateError('must not construct'),
+        isForeground: () => true,
+      );
+      addTearDown(composition.shutdown);
+      await composition.start();
+      final values = composition.outgoingCallStartDiagnostics();
+      expect(values['startStage'], 'signaling_readiness');
+      expect(values['startOutcome'], 'failed');
+      expect(values.containsKey('transportStarted'), isFalse);
+    });
+
+    test('name a failed capability advertisement', () async {
+      final composition = CallSignalingComposition(
+        featureFlags: _enabledFlags(),
+        platform: CallEndpointPlatform.android,
+        awaitReadiness: () async {},
+        buildGraph: () async =>
+            _Graph(<String>[], advertisementResults: const <bool>[false]),
+        isForeground: () => true,
+      );
+      addTearDown(composition.shutdown);
+      await composition.start();
+      final values = composition.outgoingCallStartDiagnostics();
+      expect(values['startStage'], 'capability_advertisement');
+      expect(values['startOutcome'], 'advertisement_unavailable');
+    });
+
+    test('report in_flight while a start is running, then ready', () async {
+      final readiness = Completer<void>();
+      final composition = CallSignalingComposition(
+        featureFlags: _enabledFlags(),
+        platform: CallEndpointPlatform.android,
+        awaitReadiness: () => readiness.future,
+        buildGraph: () async => _Graph(<String>[]),
+        isForeground: () => true,
+      );
+      addTearDown(composition.shutdown);
+      final start = composition.start();
+      expect(
+        composition.outgoingCallStartDiagnostics()['startOutcome'],
+        'in_flight',
+      );
+      readiness.complete();
+      await start;
+      final values = composition.outgoingCallStartDiagnostics();
+      expect(values['startStage'], 'complete');
+      expect(values['startOutcome'], 'ready');
+    });
+
+    test('every value passes the closed call diagnostic schema', () async {
+      final diagnostics = await CallDiagnostics.installForTesting();
+      addTearDown(() async {
+        await diagnostics.setEnabled(false);
+        await diagnostics.dispose();
+      });
+      final composition = CallSignalingComposition(
+        featureFlags: _enabledFlags(),
+        platform: CallEndpointPlatform.android,
+        awaitReadiness: () async =>
+            throw TimeoutException('p2p', const Duration(seconds: 8)),
+        buildGraph: () async => throw StateError('must not construct'),
+        isForeground: () => true,
+        isTransportStarted: () => false,
+      );
+      addTearDown(composition.shutdown);
+      await composition.start();
+      final traceId = diagnostics.beginAttempt();
+      diagnostics.finishAttempt(
+        traceId: traceId,
+        outcome: 'preflight_failed',
+        reason: 'transport_startup_timeout',
+        values: composition.outgoingCallStartDiagnostics(),
+      );
+      final terminal = (await diagnostics.eventsForTesting()).singleWhere(
+        (event) => event['stage'] == 'terminal',
+      );
+      expect(terminal['reason'], 'transport_startup_timeout');
+      expect(terminal['values'], <String, Object?>{
+        'startStage': 'signaling_readiness',
+        'startOutcome': 'transport_startup_timeout',
+        'withdrawalFailed': false,
+        'foreground': true,
+        'transportStarted': false,
+        'terminal': true,
+      });
+      expect(CallDiagnostics.validateEvent(terminal), isNotNull);
+    });
+  });
+
   test(
     'diagnostics capture unavailable attempt before any graph or network exists',
     () async {

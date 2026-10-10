@@ -1,0 +1,16 @@
+appId: com.mknoon.app
+name: g406_show_my_qr
+---
+- launchApp:
+    stopApp: true
+- extendedWaitUntil:
+    visible:
+      id: orbit_create_group_fab
+    timeout: 30000
+- tapOn: Open settings
+- waitForAnimationToEnd:
+    timeout: 2000
+- tapOn: '(?i).*My QR.*'
+- waitForAnimationToEnd:
+    timeout: 2000
+- takeScreenshot: my_qr

@@ -1,0 +1,18 @@
+appId: com.mknoon.app
+name: pr10_alice_create_group
+---
+- extendedWaitUntil:
+    visible:
+      id: orbit_create_group_fab
+    timeout: 30000
+- tapOn:
+    id: orbit_create_group_fab
+- tapOn: New Group
+- tapOn: '(?s)^Bob\n.*$'
+- tapOn: 'Group name \(optional\)'
+- inputText: Leave Test
+- hideKeyboard
+- tapOn: Start group chat
+- assertVisible:
+    id: chat_composer
+- takeScreenshot: a1_group_created

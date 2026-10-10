@@ -43,6 +43,7 @@ final class CallSessionSnapshot {
     required this.incomingValidated,
     required this.mailboxCustodyConfirmed,
     required this.reconnectGeneration,
+    required this.transportRecoveryRequired,
     required List<String> recentEventIds,
     required List<String> pendingCandidateIds,
     required List<String> recentCandidateIds,
@@ -69,6 +70,7 @@ final class CallSessionSnapshot {
         incomingValidated: false,
         mailboxCustodyConfirmed: false,
         reconnectGeneration: 0,
+        transportRecoveryRequired: false,
         recentEventIds: const <String>[],
         pendingCandidateIds: const <String>[],
         recentCandidateIds: const <String>[],
@@ -92,6 +94,7 @@ final class CallSessionSnapshot {
     bool incomingValidated = false,
     bool mailboxCustodyConfirmed = false,
     int reconnectGeneration = 0,
+    bool transportRecoveryRequired = true,
     List<String> recentEventIds = const <String>[],
     List<String> pendingCandidateIds = const <String>[],
     List<String> recentCandidateIds = const <String>[],
@@ -125,6 +128,8 @@ final class CallSessionSnapshot {
       incomingValidated: incomingValidated,
       mailboxCustodyConfirmed: mailboxCustodyConfirmed,
       reconnectGeneration: reconnectGeneration,
+      transportRecoveryRequired:
+          state == CallState.reconnecting && transportRecoveryRequired,
       recentEventIds: recentEventIds,
       pendingCandidateIds: pendingCandidateIds,
       recentCandidateIds: recentCandidateIds,
@@ -151,6 +156,10 @@ final class CallSessionSnapshot {
   /// Local recovery episode, independent of ICE generation and wall-clock time.
   /// Only a canonical transition into reconnecting advances this counter.
   final int reconnectGeneration;
+
+  /// An audio-only interruption can recover without renegotiating ICE. A
+  /// transport loss during that same episode upgrades recovery in place.
+  final bool transportRecoveryRequired;
   final List<String> recentEventIds;
 
   /// Candidates awaiting handoff to the bounded media executor.
@@ -181,6 +190,7 @@ final class CallSessionSnapshot {
     bool? incomingValidated,
     bool? mailboxCustodyConfirmed,
     int? reconnectGeneration,
+    bool? transportRecoveryRequired,
     List<String>? recentEventIds,
     List<String>? pendingCandidateIds,
     List<String>? recentCandidateIds,
@@ -215,6 +225,8 @@ final class CallSessionSnapshot {
     mailboxCustodyConfirmed:
         mailboxCustodyConfirmed ?? this.mailboxCustodyConfirmed,
     reconnectGeneration: reconnectGeneration ?? this.reconnectGeneration,
+    transportRecoveryRequired:
+        transportRecoveryRequired ?? this.transportRecoveryRequired,
     recentEventIds: recentEventIds ?? this.recentEventIds,
     pendingCandidateIds: pendingCandidateIds ?? this.pendingCandidateIds,
     recentCandidateIds: recentCandidateIds ?? this.recentCandidateIds,

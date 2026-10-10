@@ -1,0 +1,30 @@
+appId: com.mknoon.app
+name: pr10_bob_leave_from_dialog
+---
+- assertVisible: '(?s).*Leave & delete group\?.*'
+- takeScreenshot: b2_dialog
+# 2. Cancel keeps the group and Group Info.
+- tapOn: '^Cancel$'
+- assertNotVisible: '(?s).*Leave & delete group\?.*'
+- assertVisible: Group Info
+- takeScreenshot: b3_after_cancel
+- back
+- assertVisible:
+    id: chat_composer
+- takeScreenshot: b4_chat_still_there
+# 3. Leave again and confirm.
+- tapOn: Group information
+- scrollUntilVisible:
+    element: '^Leave Group$'
+    direction: DOWN
+- tapOn: '^Leave Group$'
+- extendedWaitUntil:
+    visible: '(?s).*Leave & delete group\?.*'
+    timeout: 15000
+- tapOn: '^Leave & Delete$'
+- extendedWaitUntil:
+    notVisible: Group Info
+    timeout: 30000
+- waitForAnimationToEnd:
+    timeout: 3000
+- takeScreenshot: b5_after_leave

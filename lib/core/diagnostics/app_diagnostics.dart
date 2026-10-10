@@ -763,7 +763,10 @@ final class AppDiagnostics with WidgetsBindingObserver {
     try {
       await _syncNative();
       if (epoch != _epoch) return;
-      if (enabled) await _drainNative(epoch);
+      // The native drain locks an App Group file. iOS kills an app suspended
+      // while holding one (0xdead10cc), so the 10 s timer never drains in the
+      // background. The NSE inbox waits for the flush on the next resume.
+      if (enabled && !_notificationLockInactive) await _drainNative(epoch);
       _prune();
       await _persist();
       if (epoch != _epoch || !_storageHealthy) return;

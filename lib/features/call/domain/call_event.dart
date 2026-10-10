@@ -35,6 +35,7 @@ enum CallEventType {
   negotiationFailed,
   mediaConnected,
   mediaLost,
+  audioInterrupted,
   mediaRecovered,
   glareLost,
 }

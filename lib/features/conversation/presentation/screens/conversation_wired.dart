@@ -8256,7 +8256,8 @@ class _ConversationWiredState extends State<ConversationWired>
                     diagnostics.finishAttempt(
                       traceId: traceId,
                       outcome: 'preflight_failed',
-                      reason: 'timeout',
+                      reason: 'readiness_timeout',
+                      values: _outgoingCallStartDiagnostics(capability),
                     );
                     return false;
                   },
@@ -8275,10 +8276,14 @@ class _ConversationWiredState extends State<ConversationWired>
           return;
         }
         if (!recovered || !capability.isOutgoingCallAvailable) {
+          final startValues = _outgoingCallStartDiagnostics(capability);
           diagnostics.finishAttempt(
             traceId: traceId,
             outcome: 'preflight_failed',
-            reason: 'graph_unavailable',
+            reason: startValues['startOutcome'] == 'transport_startup_timeout'
+                ? 'transport_startup_timeout'
+                : 'graph_unavailable',
+            values: startValues,
           );
           _showOutgoingCallMessage('Voice calling is unavailable right now');
           return;
@@ -8293,7 +8298,10 @@ class _ConversationWiredState extends State<ConversationWired>
               diagnostics.finishAttempt(
                 traceId: traceId,
                 outcome: 'preflight_failed',
-                reason: 'timeout',
+                reason: 'contact_check_timeout',
+                values: <String, Object?>{
+                  'durationMs': contactElapsed.elapsedMilliseconds,
+                },
               );
               return false;
             },
@@ -8319,6 +8327,9 @@ class _ConversationWiredState extends State<ConversationWired>
           reason: capability.isOutgoingCallAvailable
               ? 'endpoint_not_found'
               : 'graph_unavailable',
+          values: capability.isOutgoingCallAvailable
+              ? const <String, Object?>{}
+              : _outgoingCallStartDiagnostics(capability),
         );
         if (_outgoingCallContactAvailable) {
           setState(() => _outgoingCallContactAvailable = false);
@@ -8388,10 +8399,28 @@ class _ConversationWiredState extends State<ConversationWired>
     CallDiagnostics.instance.finishAttempt(
       traceId: _outgoingDiagnosticTraceId,
       outcome: timedOut ? 'preflight_failed' : 'canceled',
-      reason: timedOut ? 'timeout' : 'user_action',
+      reason: timedOut ? 'preflight_timeout' : 'user_action',
+      values: timedOut
+          ? _outgoingCallStartDiagnostics(widget.outgoingCallCapability)
+          : const <String, Object?>{},
     );
     if (timedOut) {
       _showOutgoingCallMessage("Couldn't start voice call. Please try again.");
+    }
+  }
+
+  static Map<String, Object?> _outgoingCallStartDiagnostics(
+    OutgoingCallCapability? capability,
+  ) {
+    if (capability is! OutgoingCallStartDiagnostics) {
+      return const <String, Object?>{};
+    }
+    try {
+      return (capability as OutgoingCallStartDiagnostics)
+          .outgoingCallStartDiagnostics();
+    } catch (_) {
+      // Diagnostics never change the call failure the user sees.
+      return const <String, Object?>{};
     }
   }
 

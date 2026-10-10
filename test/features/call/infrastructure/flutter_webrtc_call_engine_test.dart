@@ -1721,7 +1721,7 @@ void main() {
     );
 
     test(
-      'allows bounded ICE restarts, drops stale and rejects future generations',
+      'allows successive ICE episodes beyond eight, drops stale and rejects future generations',
       () async {
         await _createAudioConnection(engine);
         expect(engine.iceGeneration, 0);
@@ -1741,19 +1741,10 @@ void main() {
           _throwsCallEngineCode(CallEngineErrorCode.futureIceGeneration),
         );
 
-        for (
-          var restart = 2;
-          restart <= FlutterWebRtcCallEngine.maxIceRestarts;
-          restart++
-        ) {
+        for (var restart = 2; restart <= 12; restart++) {
           expect(await engine.restartIce(), restart);
         }
-        await expectLater(
-          () => engine.restartIce(),
-          _throwsCallEngineCode(CallEngineErrorCode.restartLimitReached),
-        );
-
-        expect(adapter.restartIceCalls, FlutterWebRtcCallEngine.maxIceRestarts);
+        expect(adapter.restartIceCalls, 12);
         expect(adapter.addedCandidateBatches, isEmpty);
       },
     );

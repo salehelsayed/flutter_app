@@ -103,6 +103,169 @@ func callTestService(
 	return service, server
 }
 
+func TestVC202ActiveMailboxLeasePreservesFreshSignalsAndPayloadExpiry(t *testing.T) {
+	now := time.Now().UTC()
+	service, server := callTestService(t, now, nil)
+	server.SetTime(now)
+	service.now = func() time.Time { return now }
+	ctx := context.Background()
+	sender, recipient := callTestPeerID(t), callTestPeerID(t)
+	authorizeIOSCallFixture(t, service, now, sender, recipient)
+	request := CallStoreRequest{RecipientDevicePeerID: recipient, CallHandle: callTestHandleA,
+		MessageID: callTestMessageA, Envelope: []byte("initial"),
+		ExpiresAtMs: now.Add(40 * time.Second).UnixMilli(), WakeHandle: callTestWake}
+	if _, err := service.Store(ctx, sender, request); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.Ack(ctx, recipient, CallAckRequest{CallHandle: request.CallHandle, MessageIDs: []string{request.MessageID}}); err != nil {
+		t.Fatal(err)
+	}
+	// Leave an unacknowledged event behind. Keeping routing alive must never
+	// extend custody of its encrypted payload or consume a pending slot forever.
+	request.MessageID = callTestMessageB
+	if _, err := service.Store(ctx, sender, request); err != nil {
+		t.Fatal(err)
+	}
+	keys := service.backend.callKeys(recipient, request.CallHandle)
+	for i := 0; i < 36; i++ {
+		now = now.Add(20 * time.Second)
+		server.FastForward(20 * time.Second)
+		page, err := service.Retrieve(ctx, recipient, CallRetrieveRequest{CallHandle: request.CallHandle})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if i >= 1 {
+			if len(page.Events) != 0 {
+				t.Fatal("expired payload returned by lease renewal")
+			}
+			if server.Exists(keys.events) {
+				t.Fatal("lease retained expired encrypted payload")
+			}
+		}
+	}
+	if acked, err := service.Ack(ctx, recipient, CallAckRequest{CallHandle: request.CallHandle, MessageIDs: []string{callTestMessageB}}); err != nil || acked != 0 {
+		t.Fatalf("late expired ACK = %d %v", acked, err)
+	}
+	request.MessageID = callTestMessageC
+	request.Envelope = []byte("fresh ICE restart after twelve quiet minutes")
+	request.ExpiresAtMs = now.Add(40 * time.Second).UnixMilli()
+	// A retained routing lease must reacquire a bounded pending slot.
+	for _, handle := range []string{callTestHandleB, callTestHandleC} {
+		other := request
+		other.CallHandle = handle
+		if _, err := service.Store(ctx, sender, other); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := service.Store(ctx, sender, request); !errors.Is(err, ErrCallRecipientCapacity) {
+		t.Fatalf("active routing bypassed pending-slot capacity: %v", err)
+	}
+	if err := service.Cancel(ctx, sender, CallCancelRequest{RecipientDevicePeerID: recipient, CallHandle: callTestHandleB}); err != nil {
+		t.Fatal(err)
+	}
+	receipt, err := service.Store(ctx, sender, request)
+	if err != nil {
+		t.Fatalf("fresh signal for ongoing call: %v", err)
+	}
+	if receipt.EventCount != 1 {
+		t.Fatalf("expired event retained capacity: %d", receipt.EventCount)
+	}
+	if route, allowed, err := service.backend.ClaimWake(ctx, sender, request, now); err != nil || allowed || route != nil {
+		t.Fatalf("active call rewoke recipient: %v %v %v", route, allowed, err)
+	}
+	if err := service.Cancel(ctx, sender, CallCancelRequest{RecipientDevicePeerID: recipient, CallHandle: request.CallHandle}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.Retrieve(ctx, recipient, CallRetrieveRequest{CallHandle: request.CallHandle}); err != nil {
+		t.Fatal(err)
+	}
+	request.MessageID = callTestMessageA
+	if _, err := service.Store(ctx, sender, request); !errors.Is(err, ErrCallReplay) {
+		t.Fatalf("renewal resurrected canceled call: %v", err)
+	}
+}
+
+func TestVC202DrainedMailboxDuplicateDoesNotReacquirePendingSlot(t *testing.T) {
+	now := time.Now().UTC()
+	service, _ := callTestService(t, now, nil)
+	ctx := context.Background()
+	sender, recipient := callTestPeerID(t), callTestPeerID(t)
+	authorizeIOSCallFixture(t, service, now, sender, recipient)
+	request := CallStoreRequest{RecipientDevicePeerID: recipient, CallHandle: callTestHandleA,
+		MessageID: callTestMessageA, Envelope: []byte("already delivered"),
+		ExpiresAtMs: now.Add(40 * time.Second).UnixMilli(), WakeHandle: callTestWake}
+	if _, err := service.Store(ctx, sender, request); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.Ack(ctx, recipient, CallAckRequest{CallHandle: request.CallHandle, MessageIDs: []string{request.MessageID}}); err != nil {
+		t.Fatal(err)
+	}
+	for _, handle := range []string{callTestHandleB, callTestHandleC} {
+		other := request
+		other.CallHandle = handle
+		if _, err := service.Store(ctx, sender, other); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if receipt, err := service.Store(ctx, sender, request); err != nil || receipt.StoreStatus != CallStoreStatusDuplicate || receipt.EventCount != 0 {
+		t.Fatalf("duplicate of drained call with full pending slots = %#v, %v", receipt, err)
+	}
+	request.MessageID = callTestMessageB
+	if _, err := service.Store(ctx, sender, request); !errors.Is(err, ErrCallRecipientCapacity) {
+		t.Fatalf("fresh event did not require a pending slot: %v", err)
+	}
+}
+
+func TestVC202MailboxLeaseRequiresAcknowledgedRecipientAndLiveAuthority(t *testing.T) {
+	for _, mode := range []string{"unacknowledged", "general-drain", "wrong-recipient", "stopped-polling"} {
+		t.Run(mode, func(t *testing.T) {
+			now := time.Now().UTC()
+			service, server := callTestService(t, now, nil)
+			server.SetTime(now)
+			service.now = func() time.Time { return now }
+			ctx := context.Background()
+			sender, recipient := callTestPeerID(t), callTestPeerID(t)
+			authorizeCallFixture(t, service, now, sender, recipient)
+			r := CallStoreRequest{RecipientDevicePeerID: recipient, CallHandle: callTestHandleA,
+				MessageID: callTestMessageA, Envelope: []byte("initial"),
+				ExpiresAtMs: now.Add(40 * time.Second).UnixMilli(), WakeHandle: callTestWake}
+			if _, err := service.Store(ctx, sender, r); err != nil {
+				t.Fatal(err)
+			}
+			if mode != "unacknowledged" {
+				if _, err := service.Ack(ctx, recipient, CallAckRequest{CallHandle: r.CallHandle, MessageIDs: []string{r.MessageID}}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			reader, handle := recipient, r.CallHandle
+			if mode == "general-drain" {
+				handle = ""
+			}
+			if mode == "wrong-recipient" {
+				reader = sender
+			}
+			for i := 0; i < 4; i++ {
+				now = now.Add(20 * time.Second)
+				server.FastForward(20 * time.Second)
+				if mode != "stopped-polling" || i == 0 {
+					if _, err := service.Retrieve(ctx, reader, CallRetrieveRequest{CallHandle: handle}); err != nil {
+						t.Fatal(err)
+					}
+				}
+			}
+			// A late exact retrieve cannot reopen an expired lease.
+			if _, err := service.Retrieve(ctx, recipient, CallRetrieveRequest{CallHandle: r.CallHandle}); err != nil {
+				t.Fatal(err)
+			}
+			r.MessageID = callTestMessageB
+			r.ExpiresAtMs = now.Add(40 * time.Second).UnixMilli()
+			if _, err := service.Store(ctx, sender, r); !errors.Is(err, ErrCallReplay) {
+				t.Fatalf("expired call reopened: %v", err)
+			}
+		})
+	}
+}
+
 func authorizeCallFixture(
 	t *testing.T,
 	service *CallControlService,

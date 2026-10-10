@@ -751,13 +751,13 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
     _videoQualityPreference = pref;
   }
 
-  // 206 — the center self-avatar opens the FULL Settings screen (functionally
-  // equivalent to the removed Feed-header entry): the SAME shared
-  // AppShellController + posts-privacy repo + the orbit-threaded nearby service.
-  // A tap-only detector fires onTap twice on a double-tap and once on a
-  // long-press release, so a single-flight latch (released on any pop path via
-  // whenComplete) guards against stacked Settings routes.
-  void _onSelfAvatarTap() {
+  // The bottom-left settings button opens the FULL Settings screen (it replaced
+  // the 206 center self-avatar entry; the center avatar is not wired to
+  // anything now): the SAME shared AppShellController + posts-privacy repo +
+  // the orbit-threaded nearby service. A double-tap fires onTap twice, so a
+  // single-flight latch (released on any pop path via whenComplete) guards
+  // against stacked Settings routes.
+  void _onOpenSettings() {
     final shell = widget.appShellController;
     final privacy = widget.postsPrivacySettingsRepository;
     if (shell == null || privacy == null || _settingsRouteActive) return;
@@ -3186,7 +3186,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
       secureKeyStore: widget.secureKeyStore,
       onInnerCircleEditSessionChanged: widget.onEditSessionActiveChanged,
       innerCircleResetListenable: _innerCircleResetTick,
-      onSelfAvatarTap: _onSelfAvatarTap,
+      onOpenSettings: _onOpenSettings,
       p2pService: widget.p2pService,
     );
   }

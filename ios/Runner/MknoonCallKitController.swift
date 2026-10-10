@@ -2,6 +2,7 @@ import AVFoundation
 import CallKit
 import Foundation
 import os.log
+import WebRTC
 
 /// CallKit diagnostics carry only fixed wire names and outcomes (never a
 /// handle, token or contact), so they are logged public: NSLog lines from a
@@ -62,6 +63,13 @@ internal protocol MknoonCallAudioManaging: AnyObject {
   func routeState() -> (route: String, available: [String])
   func requestRoute(_ route: String) -> Bool
 }
+
+internal protocol MknoonWebRTCAudioSessionNotifying: AnyObject {
+  func audioSessionDidActivate(_ audioSession: AVAudioSession)
+  func audioSessionDidDeactivate(_ audioSession: AVAudioSession)
+}
+
+extension RTCAudioSession: MknoonWebRTCAudioSessionNotifying {}
 
 /// Ringback: the tone the caller hears while the far end rings. The
 /// controller decides when it may play; the player only makes sound.
@@ -380,6 +388,7 @@ internal final class MknoonCallKitController: NSObject, CXProviderDelegate {
   private let store: PendingNativeCallStore
   private let contacts: OpaqueCallContactResolver
   private let audio: MknoonCallAudioManaging
+  private let webRTCAudioSession: MknoonWebRTCAudioSessionNotifying
   private let capability: NativeCallCapabilityPersisting
   private var capabilityDisabledInProcess = false
   private let nowMs: () -> Int64
@@ -413,7 +422,8 @@ internal final class MknoonCallKitController: NSObject, CXProviderDelegate {
     nowMs: @escaping () -> Int64 = { Int64(Date().timeIntervalSince1970 * 1_000) },
     notificationCenter: NotificationCenter = .default,
     delegateQueue: DispatchQueue? = nil,
-    ringback: MknoonCallRingbackPlaying = MknoonCallRingbackTonePlayer()
+    ringback: MknoonCallRingbackPlaying = MknoonCallRingbackTonePlayer(),
+    webRTCAudioSession: MknoonWebRTCAudioSessionNotifying = RTCAudioSession.sharedInstance()
   ) {
     self.ringback = ringback
     self.provider = provider
@@ -421,6 +431,7 @@ internal final class MknoonCallKitController: NSObject, CXProviderDelegate {
     self.store = store
     self.contacts = contacts
     self.audio = audio
+    self.webRTCAudioSession = webRTCAudioSession
     self.capability = capability
     self.nowMs = nowMs
     self.notificationCenter = notificationCenter
@@ -1112,6 +1123,10 @@ internal final class MknoonCallKitController: NSObject, CXProviderDelegate {
 
   func provider(_ provider: CXProvider, didActivate audioSession: AVAudioSession) {
     synchronized {
+      // CallKit owns activation. WebRTC must observe the external activation
+      // even if our descriptor has ended, and after an interruption without
+      // an AVAudioSession interruption-ended notification.
+      webRTCAudioSession.audioSessionDidActivate(audioSession)
       guard callsEnabled, let descriptor = store.snapshot(), descriptor.terminalEvent == nil,
             canLatchCallKitAudio(for: descriptor)
       else {
@@ -1135,6 +1150,9 @@ internal final class MknoonCallKitController: NSObject, CXProviderDelegate {
 
   func provider(_ provider: CXProvider, didDeactivate audioSession: AVAudioSession) {
     synchronized {
+      // The terminal descriptor may already have been acknowledged/removed.
+      // Always balance WebRTC's external activation before checking call state.
+      webRTCAudioSession.audioSessionDidDeactivate(audioSession)
       guard let descriptor = store.snapshot(), descriptor.terminalEvent == nil else { return }
       pauseRingbackLocked()
       audio.releaseAfterCallKitDeactivation()
