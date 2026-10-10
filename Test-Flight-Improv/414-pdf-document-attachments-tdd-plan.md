@@ -1,6 +1,6 @@
 # Plan 414 — PDF attachments in 1:1 and group chats (TDD)
 
-Status: IMPLEMENTED 2026-10-10 on branch `pdf-attachments-407` (worktree `.claude/worktrees/pdf-407`). Lanes green. Device proof partial: iPhone UI steps blocked. Decisions D1-D5 confirmed by the user 2026-10-10.
+Status: IMPLEMENTED 2026-10-10 on branch `pdf-attachments-407` (worktree `.claude/worktrees/pdf-407`). Lanes green. Device proof done on Pixel 6 and iPhone 13 (share sheet: tests only). Decisions D1-D5 confirmed by the user 2026-10-10.
 Origin: user request 2026-10-10. "The app shares images, videos and audio, but not PDF."
 Scope: PDF only (`application/pdf`). Other document types (docx, xlsx, zip and so on) are out of scope.
 
@@ -205,4 +205,5 @@ Full table: `evidence/414/e2e/E2E_RESULTS.md`.
 - Findings F1 (viewer title), F2 (share plugin crash on unreadable URIs) and F3 (share-sheet text) were fixed the same day; see `E2E_RESULTS.md`. F1 and F2 are proven on the Pixel.
 
 Status: implementation done and lane-green; device proof partial (iPhone UI steps pending).
+- 2026-10-10 15:15-15:27Z: with the user at the iPhone to start WDA, the iPhone UI steps passed (tile, Quick Look, Save to Files, iPhone-to-Pixel send). F4 (iOS Save to Files / Share used the blob name) was found and fixed the same session.
 

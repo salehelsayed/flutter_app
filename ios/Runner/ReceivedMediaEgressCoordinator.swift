@@ -239,6 +239,8 @@ final class ReceivedMediaEgressCoordinator: NSObject, UIDocumentPickerDelegate, 
   private var retainedController: UIViewController?
   // 414: the named temporary copy Quick Look shows; removed on dismiss.
   private var previewURL: URL?
+  // 414: named copies handed to Files export and Share; removed when done.
+  private var exportDirectory: URL?
 
   init(
     messenger: FlutterBinaryMessenger,
@@ -317,8 +319,43 @@ final class ReceivedMediaEgressCoordinator: NSObject, UIDocumentPickerDelegate, 
     }
   }
 
+  /// 414: exported files carry the document's display name (for example
+  /// "Invoice.pdf") instead of the stored blob id. Items whose stored name
+  /// already matches are passed as is; on any copy failure the stored files
+  /// are used, so export never fails because of naming.
+  private func exportURLs(_ request: ReceivedMediaEgressRequest) -> [URL] {
+    let renamed = request.items.contains { $0.url.lastPathComponent != $0.displayName }
+    guard renamed else { return request.items.map(\.url) }
+    let directory = FileManager.default.temporaryDirectory
+      .appendingPathComponent("mknoon-export-\(request.requestId)", isDirectory: true)
+    do {
+      try? FileManager.default.removeItem(at: directory)
+      var urls: [URL] = []
+      for (index, item) in request.items.enumerated() {
+        // One folder per item keeps two equal display names apart.
+        let folder = directory.appendingPathComponent("\(index)", isDirectory: true)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let copy = folder.appendingPathComponent(item.displayName)
+        try FileManager.default.copyItem(at: item.url, to: copy)
+        urls.append(copy)
+      }
+      exportDirectory = directory
+      return urls
+    } catch {
+      try? FileManager.default.removeItem(at: directory)
+      return request.items.map(\.url)
+    }
+  }
+
+  private func removeExportCopies() {
+    if let directory = exportDirectory {
+      try? FileManager.default.removeItem(at: directory)
+    }
+    exportDirectory = nil
+  }
+
   private func presentFiles(_ value: Pending, from presenter: UIViewController) {
-    let urls = value.request.items.map(\.url)
+    let urls = exportURLs(value.request)
     let mode = ReceivedMediaEgressPolicy.filesExportMode(majorVersion: majorVersion)
     let picker = controllerFactory.makeFiles(urls: urls, mode: mode)
     picker.delegate = self
@@ -328,12 +365,13 @@ final class ReceivedMediaEgressCoordinator: NSObject, UIDocumentPickerDelegate, 
   }
 
   private func presentShare(_ value: Pending, from presenter: UIViewController) {
-    let controller = controllerFactory.makeShare(urls: value.request.items.map(\.url))
+    let controller = controllerFactory.makeShare(urls: exportURLs(value.request))
     if let popover = controller.popoverPresentationController {
       popover.sourceView = presenter.view
       popover.sourceRect = CGRect(x: presenter.view.bounds.midX, y: presenter.view.bounds.midY, width: 1, height: 1)
     }
     controller.completionWithItemsHandler = { [weak self] _, _, _, _ in
+      self?.removeExportCopies()
       self?.retainedController = nil
       self?.pending = nil
     }
@@ -415,6 +453,8 @@ final class ReceivedMediaEgressCoordinator: NSObject, UIDocumentPickerDelegate, 
     DispatchQueue.main.async { [weak self] in
       guard value.latch.claim() else { return }
       value.result(self?.envelope(value.request.requestId, outcome, items))
+      // Files export has copied (or been cancelled) by now.
+      if value.request.destination == "files" { self?.removeExportCopies() }
       self?.retainedController = nil
       self?.pending = nil
     }

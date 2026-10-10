@@ -32,3 +32,21 @@ Findings:
 - Tests: Dart 357/357 (`findings_dart_names.txt`), Android JVM 22/22 (egress 15, guard 5, MainActivity onNewIntent 2).
 - Not changed: iOS Save to Files and Share still export the stored file name; only Quick Look uses the document name. The iPhone UI steps stay blocked (automation mode).
 
+## iPhone UI steps (2026-10-10 15:15-15:22Z, user at the phone to start WDA)
+
+WDA started once the user was at the iPhone 13 (session `cd8be159`). After that no help was needed.
+
+| # | Case | Result |
+|---|---|---|
+| I1 | Old-build PDF (received 15:49 under the 10-09 build) shows as a tile | PASS: "PDF · 599 B · Received via cellular relay" (no stored name, as expected for R2) |
+| I2 | Tap opens Quick Look | PASS: `QLPreviewControllerView`, page "Plan 414 Pixel to iPhone" (`shots/i2_quicklook_13.png`); the temporary copy under `tmp/mknoon-preview-*` existed while open and was gone after Done |
+| I3 | New PDF from the Pixel (both new builds) | PASS: tile "Minutes-414.pdf · PDF · 594 B"; Quick Look title "Minutes-414" (`shots/i3_quicklook_named_13.png`) |
+| I4 | Tile menu → Save to Files → On My iPhone | PASS: "Saved"; file present in On My iPhone. GAP: the proposed name was the blob id `5b9ae209-….pdf` (F4) |
+| I5 | iPhone Attach → Document → pick the saved PDF → Open → Send | PASS: "Sent via direct connection" |
+| I6 | Pixel receives the iPhone PDF and opens it | PASS: "Received via direct connection"; Drive PDF Viewer shows page "Plan 414 group test" |
+
+- F4 (iOS side of F1): Save to Files and Share exported the stored blob name. Fixed in `ReceivedMediaEgressCoordinator.swift`: both now export a temporary copy named with the document's display name (one folder per item), removed when the export or share ends; on any copy error the stored file is used.
+- F4 VERIFIED on the iPhone 13 (build `1.0.025295.33.414.261010172207`): Save to Files proposes "Minutes-414" (`shots/i7_save_named_13.png`); the export used `tmp/mknoon-export-<request>/0/Minutes-414.pdf`, which was removed after "Saved".
+
+All planned device steps are now proven on both phones, except the share sheet on the device (unit and widget tests only).
+
