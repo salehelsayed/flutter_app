@@ -8,3 +8,4 @@ Plan 414 lane results (worktree .claude/worktrees/pdf-407, 2026-10-10). Full log
 Run 1 (before fixes): 1to1 5201 passed / 2 failed, groups 5385 / 1 failed; both causes fixed (PDF fixture bytes, public API fingerprints).
 Run 4 (after the F1-F3 fixes, commit fbd25e295): 1to1 Flutter 5204/5204 (1 skip) plus macOS integration and relay Go gates, then the same pre-existing exit 64; groups 5387/5387; feed 339/339.
 The iOS export-name fix (acc5c17d9) is Swift only; it was proven on the iPhone 13, no Dart lane change.
+Run 6 (after 4f89ab7a9): 1to1 LANE_EXIT=0 — Flutter 5206/5206 (1 skip), macOS integration 2/2, relay and Go custody gates, binding staleness contract PASS, and the media ACK-or-expiry custody gate (never reached before) PASS.
