@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:flutter_app/app/bootstrap/call_wake_contact_key_backfill.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
+import 'package:flutter_app/features/call/diagnostics/call_diagnostics.dart';
 import 'package:flutter_app/features/call/domain/call_wake_handle_grant.dart';
 import 'package:flutter_app/features/call/domain/issued_call_wake_handle_store.dart';
 import 'package:flutter_app/features/call/domain/received_call_wake_handle_store.dart';
@@ -656,6 +657,89 @@ void main() {
       }
     },
   );
+
+  group('received wake recovery records its request in the call trace', () {
+    late CallDiagnostics diagnostics;
+    setUp(() async {
+      diagnostics = await CallDiagnostics.installForTesting();
+    });
+    tearDown(() async {
+      await diagnostics.setEnabled(false);
+      await diagnostics.dispose();
+    });
+
+    Future<List<Map<String, Object?>>> recoverEvents(String traceId) async =>
+        (await diagnostics.eventsForTesting())
+            .where(
+              (event) =>
+                  event['traceId'] == traceId &&
+                  event['stage'] == 'authority' &&
+                  event['action'] == 'recover',
+            )
+            .toList();
+
+    for (final testCase in <({String name, bool grantArrives, bool throws})>[
+      (name: 'grant arrives', grantArrives: true, throws: false),
+      (name: 'no grant', grantArrives: false, throws: false),
+      (name: 'request fails', grantArrives: false, throws: true),
+    ]) {
+      test(testCase.name, () async {
+        final store = _MemoryReceivedCallWakeHandleStore();
+        final coordinator = ReceivedCallWakeHandleRecoveryCoordinator(
+          receivedCallWakeHandleStore: store,
+          nowMs: () => _validNowMs,
+          requestRecovery: ({required contactAccountPeerId}) async {
+            if (testCase.throws) throw StateError('offline');
+            if (testCase.grantArrives) {
+              store.grants[contactAccountPeerId] = _receivedGrant();
+            }
+          },
+        );
+        final traceId = diagnostics.beginAttempt();
+        final ready = await diagnostics.runWithTrace(
+          traceId,
+          () => coordinator.ensureCurrentGrantFor(_contactAccountPeerId),
+        );
+        expect(ready, testCase.grantArrives);
+
+        final events = await recoverEvents(traceId!);
+        expect(events.map((event) => event['outcome']), <String>[
+          'started',
+          testCase.throws
+              ? 'failed'
+              : testCase.grantArrives
+              ? 'ok'
+              : 'not_found',
+        ]);
+        final finished = events.last['values'] as Map;
+        expect(finished['authorityKind'], 'wake_grant');
+        expect(finished['found'], testCase.grantArrives);
+        expect(finished['durationMs'], isNonNegative);
+        for (final event in events) {
+          expect(CallDiagnostics.validateEvent(event), isNotNull);
+        }
+      });
+    }
+
+    test('a current grant records nothing', () async {
+      final store = _MemoryReceivedCallWakeHandleStore(
+        grants: <String, CallWakeHandleGrant>{
+          _contactAccountPeerId: _receivedGrant(),
+        },
+      );
+      final coordinator = ReceivedCallWakeHandleRecoveryCoordinator(
+        receivedCallWakeHandleStore: store,
+        nowMs: () => _validNowMs,
+        requestRecovery: ({required contactAccountPeerId}) async {},
+      );
+      final traceId = diagnostics.beginAttempt();
+      await diagnostics.runWithTrace(
+        traceId,
+        () => coordinator.ensureCurrentGrantFor(_contactAccountPeerId),
+      );
+      expect(await recoverEvents(traceId!), isEmpty);
+    });
+  });
 
   test(
     'received wake recovery coalesces concurrent work per contact',

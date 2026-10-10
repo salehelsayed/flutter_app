@@ -1526,6 +1526,7 @@ CallSignalingComposition createProductionCallSignalingComposition({
         () =>
             WidgetsBinding.instance.lifecycleState == AppLifecycleState.resumed,
     clock: callClock,
+    isTransportStarted: () => p2pService.currentState.isStarted,
     requestOutgoingMicrophonePermission: resolvedMicrophonePermission.request,
     ensureOutgoingCallWakeAuthority: ensureOutgoingCallWakeAuthority,
     awaitReadiness: () async {

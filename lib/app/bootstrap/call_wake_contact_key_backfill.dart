@@ -1,4 +1,5 @@
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
+import 'package:flutter_app/features/call/diagnostics/call_diagnostics.dart';
 import 'package:flutter_app/features/call/domain/call_wake_handle_grant.dart';
 import 'package:flutter_app/features/call/domain/issued_call_wake_handle_store.dart';
 import 'package:flutter_app/features/call/domain/received_call_wake_handle_store.dart';
@@ -72,6 +73,8 @@ final class ReceivedCallWakeHandleRecoveryCoordinator {
   }
 
   Future<bool> _requestAndRecheck(String contactAccountPeerId) async {
+    final diagnostics = CallDiagnostics.instance;
+    Stopwatch? requestElapsed;
     try {
       if (_isCurrentReceivedGrant(
         await _receivedCallWakeHandleStore.readForIssuer(contactAccountPeerId),
@@ -79,12 +82,46 @@ final class ReceivedCallWakeHandleRecoveryCoordinator {
       )) {
         return true;
       }
+      // Inside an outgoing call attempt these events join its trace, so a
+      // preflight timeout shows whether it was spent waiting on the contact.
+      diagnostics.record(
+        stage: 'authority',
+        action: 'recover',
+        outcome: 'started',
+        values: const <String, Object?>{'authorityKind': 'wake_grant'},
+      );
+      requestElapsed = Stopwatch()..start();
       await _requestRecovery(contactAccountPeerId: contactAccountPeerId);
-      return _isCurrentReceivedGrant(
+      final found = _isCurrentReceivedGrant(
         await _receivedCallWakeHandleStore.readForIssuer(contactAccountPeerId),
         nowMs: _nowMs(),
       );
+      diagnostics.record(
+        stage: 'authority',
+        action: 'recover',
+        outcome: found ? 'ok' : 'not_found',
+        reason: found ? 'none' : 'wake_authority_missing',
+        values: <String, Object?>{
+          'authorityKind': 'wake_grant',
+          'found': found,
+          'durationMs': requestElapsed.elapsedMilliseconds,
+        },
+      );
+      return found;
     } catch (_) {
+      if (requestElapsed != null) {
+        diagnostics.record(
+          stage: 'authority',
+          action: 'recover',
+          outcome: 'failed',
+          reason: 'authority_unreachable',
+          values: <String, Object?>{
+            'authorityKind': 'wake_grant',
+            'found': false,
+            'durationMs': requestElapsed.elapsedMilliseconds,
+          },
+        );
+      }
       return false;
     }
   }
