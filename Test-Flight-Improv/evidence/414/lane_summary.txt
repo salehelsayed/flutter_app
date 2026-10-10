@@ -6,3 +6,5 @@ Plan 414 lane results (worktree .claude/worktrees/pdf-407, 2026-10-10). Full log
 == runtime-roots: LANE_EXIT=0 | 00:22 +20: All tests passed!
 1to1 note: every Flutter test passed (unit 5203/5203 with 1 skip, integration on macOS 2/2) and the relay Go gates passed. The lane exits 64 in scripts/test/go_binding_staleness_contract_test.sh, which also exits 64 in the main checkout at 0b61b27c1 (pre-existing; no Go change in plan 414). The media-custody Go step after it did not run.
 Run 1 (before fixes): 1to1 5201 passed / 2 failed, groups 5385 / 1 failed; both causes fixed (PDF fixture bytes, public API fingerprints).
+Run 4 (after the F1-F3 fixes, commit fbd25e295): 1to1 Flutter 5204/5204 (1 skip) plus macOS integration and relay Go gates, then the same pre-existing exit 64; groups 5387/5387; feed 339/339.
+The iOS export-name fix (acc5c17d9) is Swift only; it was proven on the iPhone 13, no Dart lane change.
