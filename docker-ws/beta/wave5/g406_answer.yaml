@@ -1,0 +1,7 @@
+appId: com.mknoon.app
+name: g406_answer_call
+---
+- tapOn:
+    id: call_answer
+- waitForAnimationToEnd:
+    timeout: 3000

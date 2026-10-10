@@ -1,0 +1,15 @@
+appId: ${APP_ID}
+name: pr7_allow_notifications
+---
+# Scratch copy of production_ios_allow_notifications.yaml with a longer wait:
+# the app asks only after its push runtime is ready.
+- extendedWaitUntil:
+    visible: '^Allow$'
+    timeout: 90000
+    optional: true
+- runFlow:
+    when:
+      visible: '^Allow$'
+    commands:
+      - tapOn: '^Allow$'
+- takeScreenshot: 1_seeded

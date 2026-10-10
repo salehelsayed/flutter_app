@@ -1,0 +1,20 @@
+appId: com.mknoon.app
+name: pr10_bob_accept_invite
+---
+- runFlow:
+    when:
+      visible:
+        id: orbit.view.all_chats
+    commands:
+      - tapOn:
+          id: orbit.view.all_chats
+- tapOn: '(?s)^Intros.*$'
+- extendedWaitUntil:
+    visible: '(?s)^Leave Test\nInvited by .*'
+    timeout: 90000
+- tapOn: Accept
+- extendedWaitUntil:
+    visible:
+      id: chat_composer
+    timeout: 30000
+- takeScreenshot: b1_joined

@@ -1,4 +1,4 @@
-PROVENANCE version=1.0.1+120 name=1.0.1 build=120 sha=fbe1ae45f branch=main dirty_files=349 date=2026-09-27 17:21:16
-WARNING dirty tree (349 files) — store artifacts will not match any commit exactly
-PLAY OK build/app/outputs/bundle/release/app-release.aab (200 MB) versionName=1.0.1 versionCode=120
-IOS OK build/ios/ipa/mknoon.ipa (59 MB) version=1.0.1 build=120 bridge-linked (go-runtime=yes, stripped-symbol-names=0)
+PROVENANCE version=1.0.1+123 name=1.0.1 build=123 sha=e47809769 branch=wave3-baseline-20260930 dirty_files=107 date=2026-10-08 17:53:26
+WARNING dirty tree (107 files) — store artifacts will not match any commit exactly
+PLAY OK build/app/outputs/bundle/release/app-release.aab (198 MB) versionName=1.0.1 versionCode=123
+IOS OK build/ios/ipa/mknoon.ipa (59 MB) version=1.0.1 build=123 bridge-linked (go-runtime=yes, stripped-symbol-names=0)

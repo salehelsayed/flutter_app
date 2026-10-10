@@ -1,0 +1,8 @@
+appId: com.mknoon.app
+name: pr10_alice_look
+---
+- extendedWaitUntil:
+    visible: "(?s).*Bob left.*"
+    timeout: 60000
+    optional: true
+- takeScreenshot: a2_alice_after_bob_left

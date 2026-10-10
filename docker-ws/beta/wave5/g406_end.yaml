@@ -1,0 +1,5 @@
+appId: com.mknoon.app
+name: g406_end_call
+---
+- tapOn:
+    id: call_end

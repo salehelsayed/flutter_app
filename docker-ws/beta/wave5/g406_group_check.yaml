@@ -1,0 +1,7 @@
+appId: com.mknoon.app
+name: g406_group_check_reply
+---
+- extendedWaitUntil:
+    visible: '.*group-from-new.*'
+    timeout: 60000
+- takeScreenshot: reply_seen

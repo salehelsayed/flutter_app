@@ -1,0 +1,27 @@
+appId: com.mknoon.app
+name: g406_create_group_and_send
+---
+- launchApp:
+    stopApp: true
+- extendedWaitUntil:
+    visible:
+      id: orbit_create_group_fab
+    timeout: 30000
+- tapOn:
+    id: orbit_create_group_fab
+- tapOn: New Group
+- tapOn: '(?s)^BobNew\n.*$'
+- tapOn: 'Group name \(optional\)'
+- inputText: G406 Mixed
+- hideKeyboard
+- tapOn: Start group chat
+- assertVisible:
+    id: chat_composer
+- tapOn:
+    id: chat_composer
+- inputText: group-from-old
+- tapOn:
+    id: chat_send
+- waitForAnimationToEnd:
+    timeout: 3000
+- takeScreenshot: created_sent

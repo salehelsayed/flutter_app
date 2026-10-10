@@ -1,0 +1,44 @@
+appId: com.mknoon.app
+name: g406_accept_read_reply_param
+---
+- launchApp:
+    stopApp: true
+- extendedWaitUntil:
+    visible:
+      id: orbit_create_group_fab
+    timeout: 30000
+- runFlow:
+    when:
+      visible:
+        id: orbit.view.all_chats
+    commands:
+      - tapOn:
+          id: orbit.view.all_chats
+- tapOn: '(?s)^Intros.*$'
+- extendedWaitUntil:
+    visible: '(?s)^${GROUP}\nInvited by .*'
+    timeout: 90000
+- tapOn: Accept
+- extendedWaitUntil:
+    visible:
+      id: chat_composer
+    timeout: 30000
+- extendedWaitUntil:
+    visible: '.*${EXPECT}.*'
+    timeout: 60000
+- takeScreenshot: joined_read
+- tapOn:
+    id: chat_composer
+- runFlow:
+    when:
+      visible: Try out your stylus
+    commands:
+      - tapOn: Cancel
+      - tapOn:
+          id: chat_composer
+- inputText: ${REPLY}
+- tapOn:
+    id: chat_send
+- waitForAnimationToEnd:
+    timeout: 3000
+- takeScreenshot: replied
