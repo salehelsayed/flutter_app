@@ -103,6 +103,9 @@ type CallStoreReceipt struct {
 	TotalBytes     int
 	PendingHandles int
 	WakeStatus     CallWakeStatus
+	// Log-only: fixed platform and failure class of a failed wake.
+	wakePlatform     string
+	wakeFailureClass string
 }
 
 type CallMailboxEvent struct {
@@ -417,6 +420,8 @@ func (s *CallControlService) Store(
 		receipt.WakeStatus = CallWakeStatusDispatched
 	} else {
 		receipt.WakeStatus = CallWakeStatusFailed
+		receipt.wakePlatform = route.Platform
+		receipt.wakeFailureClass = callFailureClass(dispatchErr)
 	}
 	if err := s.backend.CompleteWake(bookkeepingCtx, authenticatedSender, request, wakeOwner); err != nil {
 		// The provider has returned, so this owner can no longer enter it even

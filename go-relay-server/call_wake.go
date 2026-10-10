@@ -66,11 +66,11 @@ func (d pushServiceCallWakeDispatcher) DispatchCallWake(
 		if sendErr == nil {
 			return nil
 		}
-		if permanentPushErrorReason(sendErr) != "" {
-			return ErrCallTokenInvalid
+		if reason := permanentPushErrorReason(sendErr); reason != "" {
+			return callFailure{class: "fcm_" + reason, err: ErrCallTokenInvalid}
 		}
 		if attempt == len(delays) || !waitForRetryDelay(ctx, delays[attempt]) {
-			return ErrCallBackendUnavailable
+			return callFailure{class: fcmCallWakeFailureClass(ctx, sendErr), err: ErrCallBackendUnavailable}
 		}
 	}
 	return ErrCallBackendUnavailable

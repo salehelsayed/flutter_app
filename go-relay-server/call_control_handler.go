@@ -82,6 +82,9 @@ type callControlWireEndpoint struct {
 }
 
 type callControlWireResponse struct {
+	// Log-only fixed class for CALL_BACKEND_UNAVAILABLE; unexported, so it
+	// never reaches the wire.
+	failureClass    string
 	Status          string                   `json:"status"`
 	ErrorCode       string                   `json:"errorCode,omitempty"`
 	Schema          string                   `json:"schema,omitempty"`
@@ -126,7 +129,8 @@ func handleCallControlRequest(
 	response := callControlErrorResponse(ErrCallBackendUnavailable)
 	var action string
 	var wakeStatus CallWakeStatus
-	defer func() { recordCallControlRequest(action, response, wakeStatus) }()
+	var wakeDetail callWakeFailureDetail
+	defer func() { recordCallControlRequest(action, response, wakeStatus, wakeDetail) }()
 	request, err := decodeCallControlRequest(raw)
 	if err == nil {
 		action = request.Action
@@ -163,6 +167,7 @@ func handleCallControlRequest(
 		// Observe wake delivery even for clients that did not opt in to the
 		// additional wire receipt field.
 		wakeStatus = receipt.WakeStatus
+		wakeDetail = callWakeFailureDetail{platform: receipt.wakePlatform, class: receipt.wakeFailureClass}
 		if callErr != nil {
 			response = callControlErrorResponse(callErr)
 			break
@@ -484,7 +489,11 @@ func callControlErrorResponse(err error) callControlWireResponse {
 	case errors.Is(err, ErrCallStaleEpoch):
 		code = "CALL_STALE_EPOCH"
 	}
-	return callControlWireResponse{Status: "ERROR", ErrorCode: code}
+	response := callControlWireResponse{Status: "ERROR", ErrorCode: code}
+	if code == "CALL_BACKEND_UNAVAILABLE" {
+		response.failureClass = callFailureClass(err)
+	}
+	return response
 }
 
 func writeCallControlResponse(s network.Stream, response callControlWireResponse) error {

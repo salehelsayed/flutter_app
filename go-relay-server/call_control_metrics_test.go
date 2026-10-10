@@ -89,8 +89,11 @@ func TestCallControlMetricsStoreWakeAckCancelAndReplay(t *testing.T) {
 		t.Fatalf("legacy store receipt changed: %#v", response)
 	}
 	assertOneCallMetric(t, before, callStoreAction+"|stored|failed")
-	if len(callDiagnosticLines(output)) != 1 {
+	if lines := callDiagnosticLines(output); len(lines) != 1 {
 		t.Fatal("failed wake must emit one bounded diagnostic even on an OK store receipt")
+	} else if !strings.HasSuffix(lines[0], "wake=failed wake_platform=android wake_reason=other") ||
+		strings.Contains(lines[0], "private") {
+		t.Fatalf("failed wake diagnostic must carry only the fixed platform and class: %q", lines[0])
 	}
 	dispatcher.err = nil
 	before = callMetricsSnapshot(t)
@@ -183,7 +186,7 @@ func TestCallControlMetricsUnknownValuesHaveBoundedLabels(t *testing.T) {
 		{callStoreAction, callControlWireResponse{Status: "OK", StoreStatus: "private-store-status"}, "private-wake", callStoreAction + "|unknown|unknown"},
 	} {
 		before := callMetricsSnapshot(t)
-		recordCallControlRequest(tc.action, tc.response, tc.wake)
+		recordCallControlRequest(tc.action, tc.response, tc.wake, callWakeFailureDetail{})
 		assertOneCallMetric(t, before, tc.key)
 	}
 	for labels := range callMetricsSnapshot(t) {

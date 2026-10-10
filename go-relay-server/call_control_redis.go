@@ -445,7 +445,7 @@ func (s *redisCallControlStore) Ack(
 						return decodeErr
 					}
 					if redisCallWakeClaimBlocksTerminal(claim, now.UnixMilli()) {
-						return ErrCallBackendUnavailable
+						return errCallWakeInFlight
 					}
 				case errors.Is(claimErr, redis.Nil):
 				case claimErr != nil:
@@ -1744,7 +1744,7 @@ func (s *redisCallControlStore) terminalizeTx(
 			return err
 		}
 		if meta.ExpiresAtMs > now.UnixMilli() && redisCallWakeClaimBlocksTerminal(claim, now.UnixMilli()) {
-			return ErrCallBackendUnavailable
+			return errCallWakeInFlight
 		}
 	}
 	tombstone := redisCallTombstone{
@@ -1835,5 +1835,5 @@ func callRedisError(err error) error {
 			return sentinel
 		}
 	}
-	return ErrCallBackendUnavailable
+	return callFailure{class: callFailureClass(err), err: ErrCallBackendUnavailable}
 }

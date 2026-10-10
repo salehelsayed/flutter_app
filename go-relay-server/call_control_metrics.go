@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"log"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -12,9 +13,20 @@ var callControlRequestsCounter = promauto.NewCounterVec(prometheus.CounterOpts{
 	Help: "Call-control handler results by fixed action, outcome and wake status; not media connection or response delivery outcomes.",
 }, []string{"action", "outcome", "wake"})
 
+// callWakeFailureDetail is the fixed platform and class of a failed wake.
+type callWakeFailureDetail struct {
+	platform string
+	class    string
+}
+
 // Observation uses only fixed classifications. Never pass request bodies,
 // identities, handles, token material or provider error text to telemetry.
-func recordCallControlRequest(action string, response callControlWireResponse, wakeStatus CallWakeStatus) {
+func recordCallControlRequest(
+	action string,
+	response callControlWireResponse,
+	wakeStatus CallWakeStatus,
+	wakeDetail callWakeFailureDetail,
+) {
 	if !isCallControlAction(action) {
 		action = "unknown"
 	}
@@ -38,7 +50,15 @@ func recordCallControlRequest(action string, response callControlWireResponse, w
 	if response.Status != "OK" || wake == "failed" ||
 		action == callCancelAction || action == callEndpointRevokeAction ||
 		action == callTokenRevokeAction || action == callWakeHandleRevokeAction {
-		log.Printf("call_control action=%s outcome=%s wake=%s", action, outcome, wake)
+		line := fmt.Sprintf("call_control action=%s outcome=%s wake=%s", action, outcome, wake)
+		if outcome == "CALL_BACKEND_UNAVAILABLE" {
+			line += " reason=" + boundedCallFailureClass(response.failureClass)
+		}
+		if wake == "failed" {
+			line += " wake_platform=" + boundedCallWakePlatform(wakeDetail.platform) +
+				" wake_reason=" + boundedCallFailureClass(wakeDetail.class)
+		}
+		log.Print(line)
 	}
 }
 
@@ -91,6 +111,33 @@ func callControlMetricOutcome(action string, response callControlWireResponse) s
 		return "not_found"
 	case callEndpointSetAction, callWakeHandleSetAction, callTokenSetAction:
 		return "ok"
+	default:
+		return "unknown"
+	}
+}
+
+// boundedCallFailureClass keeps the journal to a fixed vocabulary even if a
+// future caller passes something unexpected.
+func boundedCallFailureClass(class string) string {
+	switch class {
+	case callFailureWakeInFlight, callFailureDeadline, callFailureCanceled, callFailureTxConflict,
+		callFailureTokenInvalid, callFailureInvalidRequest, callFailureUnavailable, callFailureOther,
+		"fcm_unavailable", "fcm_internal", "fcm_quota", "fcm_auth", "fcm_invalid_argument", "fcm_other",
+		"fcm_typed_unregistered", "fcm_typed_sender_mismatch", "fcm_literal_legacy_not_registered",
+		"fcm_literal_legacy_invalid_token", "fcm_literal_notregistered", "fcm_literal_entity_not_found",
+		"fcm_literal_sender_mismatch":
+		return class
+	case "":
+		return "unclassified"
+	default:
+		return callFailureOther
+	}
+}
+
+func boundedCallWakePlatform(platform string) string {
+	switch platform {
+	case "android", "ios":
+		return platform
 	default:
 		return "unknown"
 	}
