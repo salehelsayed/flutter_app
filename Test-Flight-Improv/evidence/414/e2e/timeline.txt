@@ -1,0 +1,6 @@
+[13:47:48] E2E start, Pixel build 1.0.0-44d01720b.d11.pdf414.t261010154455
+[13:49:38] E1 send Invoice-414.pdf Pixel->iPhone13
+[13:55:35] E3 group send Minutes-414.pdf to group test
+[14:23:17] E4 share sheet: Invoice-414.pdf + fake-414.pdf into Mknoon
+[14:24:47] E4 real share sheet: fake-414.pdf + Invoice-414.pdf into MKnoon
+[14:26:20] E4 share real Invoice-414.pdf to iphone-13 via share intent

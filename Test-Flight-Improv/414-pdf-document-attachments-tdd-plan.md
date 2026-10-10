@@ -1,6 +1,6 @@
 # Plan 414 — PDF attachments in 1:1 and group chats (TDD)
 
-Status: OPEN 2026-10-10. Not started. Decisions D1-D5 confirmed by the user 2026-10-10.
+Status: IMPLEMENTED 2026-10-10 on branch `pdf-attachments-407` (worktree `.claude/worktrees/pdf-407`). Lanes green. Device proof partial: iPhone UI steps blocked. Decisions D1-D5 confirmed by the user 2026-10-10.
 Origin: user request 2026-10-10. "The app shares images, videos and audio, but not PDF."
 Scope: PDF only (`application/pdf`). Other document types (docx, xlsx, zip and so on) are out of scope.
 
@@ -193,4 +193,16 @@ The plan was first numbered 407. That number, and 408 to 413, were already used 
 - `lane_summary.txt`: groups 5386/5386, feed 339/339, completeness PASS, runtime-roots PASS, 1:1 Flutter 5203/5203 plus macOS integration 2/2. The 1:1 lane still exits 64 in `go_binding_staleness_contract_test.sh`, which fails the same way in the main checkout (pre-existing, no Go change here).
 - Lanes run with `FLUTTER_DEVICE_ID=macos` (`docker-ws/pdf414_lane.sh`), so integration tests never install debug builds on the phones.
 - Swift (`ReceivedMediaEgressCoordinator.swift`, Quick Look) is not compiled by any of the above; the iOS device build is its first check.
+
+## Device proof (2026-10-10) — partial
+
+Full table: `evidence/414/e2e/E2E_RESULTS.md`.
+
+- PASS on the Pixel 6: "Document" row, fake PDF refused, 1:1 PDF send, opening the PDF in Drive PDF Viewer, group PDF send.
+- PASS on the iPhone 13 (file level): both PDFs downloaded and decrypted, byte-equal to the originals; the release build with the Quick Look Swift code compiles and installs.
+- BLOCKED: iPhone UI steps (tile, Quick Look, Save to Files, iPhone-to-Pixel send). XCUITest could not enable automation mode on three attempts.
+- NOT RUN: share sheet on the device (shell shares cannot grant URI access; the chooser lists five "MKnoon" test builds).
+- Follow-ups: F1 viewer title shows the stored file name; F2 pre-existing share plugin crash on unreadable URIs; F3 share-sheet text for refused documents.
+
+Status: implementation done and lane-green; device proof partial (iPhone UI steps pending).
 
