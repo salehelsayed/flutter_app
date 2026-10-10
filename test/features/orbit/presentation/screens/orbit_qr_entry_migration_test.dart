@@ -56,14 +56,13 @@ import '../../../identity/domain/repositories/fake_identity_repository.dart';
 /// pumps only; QR screens carry infinite animations, NEVER pumpAndSettle).
 const _myQrChromeKey = ValueKey('orbit-my-qr-button');
 const _scanChromeKey = ValueKey('orbit-scan-button');
-const _centerAvatarKey = ValueKey('orbit-center-self-avatar');
+const _settingsButtonKey = ValueKey('orbit-settings-button');
 const _myQrTileKey = ValueKey('settings-my-qr-tile');
 const _scanTileKey = ValueKey('settings-scan-tile');
 
 /// T10 — identity repo whose first load can be held open, so the pre-identity
-/// surface state is observable (206/209: the Settings entry is the center
-/// self-avatar, which mounts only once identity resolves — the defined
-/// pre-identity state is "no entry yet", not a crashing scanner).
+/// surface state is observable (the bottom-left settings button mounts before
+/// identity resolves; the scanner must not crash once it does).
 class _GateableIdentityRepository extends FakeIdentityRepository {
   Completer<void>? gate;
 
@@ -300,7 +299,7 @@ void main() {
   }
 
   Future<void> openSettings(WidgetTester tester) async {
-    await tester.tap(find.byKey(_centerAvatarKey));
+    await tester.tap(find.byKey(_settingsButtonKey));
     await pumpOrbitFrames(tester, count: 6);
     expect(find.byType(SettingsWired), findsOneWidget);
   }
@@ -437,7 +436,7 @@ void main() {
       expect(tester.takeException(), isNull);
     });
 
-    testWidgets('T6 PROD-CRITICAL: center avatar -> Settings tiles -> Scan -> '
+    testWidgets('T6 PROD-CRITICAL: settings entry -> Settings tiles -> Scan -> '
         'valid QR -> success -> fresh FeedWired with forwarded runner', (
       tester,
     ) async {
@@ -587,8 +586,8 @@ void main() {
       setLargeTestSurface(tester);
       suppressOverflowErrors();
       suppressNavAssetErrors();
-      // Identity must exist to reach Settings (the center avatar is the
-      // identity-gated entry); it is then cleared so the display resolves to
+      // Identity is seeded to reach Settings; it is then cleared so the
+      // display resolves to
       // its noIdentity state — the INV-196-7 error contract at the new host.
       identityRepo.seed(testIdentity);
 
@@ -627,10 +626,9 @@ void main() {
       );
       await pumpOrbitFrames(tester, count: 2);
 
-      // Before identity resolves the center-avatar Settings entry is absent —
-      // the defined pre-identity state (196's chrome was identity-independent;
-      // the 206/209 entry is identity-gated by design). No crash.
-      expect(find.byKey(_centerAvatarKey), findsNothing);
+      // Before identity resolves the bottom-left Settings entry is already
+      // mounted (it does not depend on identity). No crash.
+      expect(find.byKey(_settingsButtonKey), findsOneWidget);
       expect(tester.takeException(), isNull);
 
       gateableRepo.gate!.complete();

@@ -308,6 +308,10 @@ class OrbitScreen extends StatefulWidget {
   /// open Settings. Threaded down to [InnerCircleInteractiveSurface].
   final VoidCallback? onSelfAvatarTap;
 
+  /// Non-null when the host wires the bottom-left settings button. Null ⇒ no
+  /// button (bare-`OrbitScreen` pumps stay unaffected).
+  final VoidCallback? onOpenSettings;
+
   /// 211 — non-null when the host wires the connection-status pill (migrated
   /// from the Feed header) into the top-right chrome next to the "+". Null ⇒
   /// no pill (bare-`OrbitScreen` pumps stay unaffected).
@@ -377,6 +381,7 @@ class OrbitScreen extends StatefulWidget {
     this.onInnerCircleEditSessionChanged,
     this.innerCircleResetListenable,
     this.onSelfAvatarTap,
+    this.onOpenSettings,
     this.p2pService,
     this.hideShellNav = false,
     this.visualTreatment = OrbitVisualTreatment.current,
@@ -481,6 +486,7 @@ class _OrbitScreenState extends State<OrbitScreen> {
     secureKeyStore: widget.secureKeyStore,
     innerCircleResetListenable: widget.innerCircleResetListenable,
     onSelfAvatarTap: widget.onSelfAvatarTap,
+    onOpenSettings: widget.onOpenSettings,
     p2pService: widget.p2pService,
     visualTreatment: widget.visualTreatment,
     orbitalQuietLightOverride: widget.orbitalQuietLightOverride,
@@ -547,6 +553,7 @@ class _OrbitScreenView extends StatelessWidget {
   final SecureKeyStore? secureKeyStore;
   final Listenable? innerCircleResetListenable;
   final VoidCallback? onSelfAvatarTap;
+  final VoidCallback? onOpenSettings;
 
   /// 211 — connection-status pill source (see [OrbitScreen.p2pService]).
   final P2PService? p2pService;
@@ -626,6 +633,7 @@ class _OrbitScreenView extends StatelessWidget {
     required this.secureKeyStore,
     required this.innerCircleResetListenable,
     this.onSelfAvatarTap,
+    this.onOpenSettings,
     this.p2pService,
     required this.visualTreatment,
     required this.orbitalQuietLightOverride,
@@ -682,6 +690,32 @@ class _OrbitScreenView extends StatelessWidget {
 
     final reservedHeight = _persistentNavReservedHeight(context);
     return projection.searchActive ? reservedHeight + 220 : reservedHeight + 96;
+  }
+
+  /// The settings button hides with the bottom-row search affordance: on the
+  /// list it fades with the search trigger while the search dock is up; on the
+  /// circle it hides while the expanded find bar is open.
+  Widget _buildSettingsButton() {
+    final button = _OrbitSettingsButton(onTap: onOpenSettings!);
+    if (viewMode == OrbitViewMode.allChats) {
+      return AnimatedBuilder(
+        animation: searchTriggerAnimation,
+        builder: (context, child) {
+          final t = searchTriggerAnimation.value;
+          return Opacity(
+            opacity: t,
+            child: IgnorePointer(ignoring: t < 0.5, child: child),
+          );
+        },
+        child: button,
+      );
+    }
+    return ValueListenableBuilder<bool>(
+      valueListenable: ringsFindOpenListenable,
+      builder: (context, findOpen, child) =>
+          findOpen ? const SizedBox.shrink() : child!,
+      child: button,
+    );
   }
 
   Widget _buildNavigationBar() {
@@ -744,7 +778,7 @@ class _OrbitScreenView extends StatelessWidget {
 
           // (209: Layer 1c — the twin My QR / Scan chrome pair — retired.
           // The entries live as labeled tiles on the Settings page, reached
-          // via the 206 center self-avatar.)
+          // via the bottom-left settings button.)
 
           // Layer 2: Close button — standalone mode only. When the
           // persistent Feed/Orbit nav is shown, the Feed tab is the way back,
@@ -755,6 +789,12 @@ class _OrbitScreenView extends StatelessWidget {
               right: 16,
               child: OrbitCloseButton(onTap: onClose),
             ),
+
+          // Layer 2b: settings button — bottom-left, mirroring the bottom-right
+          // search/close affordances. Standalone mode seats it here; persistent
+          // mode seats it on the nav line (nav band below).
+          if (!_showsPersistentNav && onOpenSettings != null && !innerEditing)
+            Positioned(bottom: 36, left: 16, child: _buildSettingsButton()),
 
           // Layer 3: Search trigger — standalone mode floats above the close
           // button. In persistent mode the trigger rides the nav line
@@ -845,6 +885,11 @@ class _OrbitScreenView extends StatelessWidget {
                         child: _buildNavigationBar(),
                       ),
                     ),
+
+                    // Settings button — rides the nav line at the physical
+                    // left edge, opposite the search / find affordance.
+                    if (onOpenSettings != null && !innerEditing)
+                      Positioned(left: 0, child: _buildSettingsButton()),
 
                     // Search trigger — rides the nav line at the physical
                     // right edge (Positioned, not directional → RTL-safe),
@@ -1816,6 +1861,50 @@ class _RingsFindPill extends StatelessWidget {
             ],
           ),
           child: Icon(Icons.search, size: 24, color: colors.iconPrimary),
+        ),
+      ),
+    );
+  }
+}
+
+/// Bottom-left settings entry. Same glass circle as [_RingsFindPill] so the
+/// two bottom corners read as one pair.
+class _OrbitSettingsButton extends StatelessWidget {
+  final VoidCallback onTap;
+
+  const _OrbitSettingsButton({required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = context.backgroundReadableColors;
+    return Semantics(
+      container: true,
+      button: true,
+      label: AppLocalizations.of(context)!.orbit_open_settings,
+      child: GestureDetector(
+        key: const ValueKey('orbit-settings-button'),
+        behavior: HitTestBehavior.opaque,
+        onTap: onTap,
+        child: Container(
+          width: 52,
+          height: 52,
+          decoration: BoxDecoration(
+            color: colors.glassSurface,
+            shape: BoxShape.circle,
+            border: Border.all(color: colors.glassBorder),
+            boxShadow: const [
+              BoxShadow(
+                color: Color(0x59000000),
+                blurRadius: 18,
+                offset: Offset(0, 6),
+              ),
+            ],
+          ),
+          child: Icon(
+            Icons.settings_outlined,
+            size: 24,
+            color: colors.iconPrimary,
+          ),
         ),
       ),
     );

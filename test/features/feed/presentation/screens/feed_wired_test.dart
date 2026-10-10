@@ -417,11 +417,11 @@ void main() {
     });
 
     testWidgets(
-      'opens Settings from the orbit center avatar and reflects background '
+      'opens Settings from the orbit settings button and reflects background '
       'change on Feed',
       (tester) async {
         // 206 B row 15 (PROD-CRITICAL full chain): FeedWired → embedded
-        // OrbitWired → center avatar → SettingsWired → shared-controller
+        // OrbitWired → settings button → SettingsWired → shared-controller
         // background propagation back onto the Feed. Replaces the old
         // Feed-header-avatar entry (that avatar is removed).
         identityRepo.seed(testIdentity);
@@ -432,13 +432,11 @@ void main() {
         expect(find.byType(CosmicBackground), findsNothing);
 
         // Mount + reveal the embedded orbit host, then open Settings from its
-        // center self-avatar.
+        // bottom-left settings button.
         appShellController.switchTo('orbit');
         await pumpFeedFrames(tester, count: 10);
 
-        await tester.tap(
-          find.byKey(const ValueKey('orbit-center-self-avatar')),
-        );
+        await tester.tap(find.byKey(const ValueKey('orbit-settings-button')));
         await pumpFeedFrames(tester, count: 10);
 
         expect(find.text('Settings'), findsOneWidget);
