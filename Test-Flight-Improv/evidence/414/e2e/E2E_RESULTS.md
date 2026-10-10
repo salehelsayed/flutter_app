@@ -23,3 +23,12 @@ Findings:
 - F1 (minor UX): Android viewer title shows the stored name (`53d26568-….pdf`), not "Invoice-414.pdf". The provider's DISPLAY_NAME is the file name on disk. Fix: pass the display name through the open request.
 - F2 (pre-existing, not PDF-specific): `receive_sharing_intent` crashes the app (SecurityException in `FileDirectory.getDataColumn`) when a shared content URI is not readable. A PNG shared the same way fails the same way. Real shares grant access, so normal users should not hit it.
 - F3 (UX): share-sheet feedback for a refused document is "Failed for 1 target." (all files refused) or "Skipped N oversized attachments" (mixed). It should say only PDF documents can be shared.
+
+## Findings fixed (2026-10-10, Pixel build `1.0.0-f0de1f5d2.d35.pdf414.t261010170103`)
+
+- F1 FIXED: the read-only provider now reports the document's clean name (`displayName` query parameter, accepted only when it keeps the stored file's extension and has no path, control or bidi characters). Device: Drive PDF Viewer title is "Invoice-414.pdf" (`ui/f1_viewer2.xml`). Android share uses the same name.
+- F2 FIXED: `ShareIntentReadabilityGuard` drops shared files the app cannot read before `receive_sharing_intent` sees the intent (onCreate and onNewIntent). An unreadable share becomes a plain launch, or a text share when it carries text. Device: the share that crashed before now opens the app normally, no FATAL in logcat (`logs/f2_pixel.txt`).
+- F3 FIXED (unit and widget tests; no device route): refused documents have their own count (`skippedUnsupportedDocumentCount`) and text "Skipped 1 file. Only photos, videos, audio and PDF files can be shared." When every file is refused and there is no text, no target is attempted, so nothing reads "Failed".
+- Tests: Dart 357/357 (`findings_dart_names.txt`), Android JVM 22/22 (egress 15, guard 5, MainActivity onNewIntent 2).
+- Not changed: iOS Save to Files and Share still export the stored file name; only Quick Look uses the document name. The iPhone UI steps stay blocked (automation mode).
+

@@ -2649,6 +2649,19 @@ class AppLocalizationsDe extends AppLocalizations {
   }
 
   @override
+  String share_summary_skipped_documents(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other:
+          '$count Dateien übersprungen. Nur Fotos, Videos, Audio und PDF-Dateien können geteilt werden.',
+      one:
+          '1 Datei übersprungen. Nur Fotos, Videos, Audio und PDF-Dateien können geteilt werden.',
+    );
+    return '$_temp0';
+  }
+
+  @override
   String get time_just_now => 'gerade eben';
 
   @override

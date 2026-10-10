@@ -34,7 +34,25 @@ class ReceivedMediaEgressProvider : ContentProvider() {
             return canonical
         }
 
-        internal fun uriForFile(context: Context, file: File): Uri {
+        private const val displayNameParameter = "displayName"
+        private val unsafeDisplayNameCharacters =
+            Regex("[\\u0000-\\u001F\\u007F-\\u009F\\u061C\\u200E\\u200F\\u202A-\\u202E\\u2066-\\u2069/\\\\]")
+
+        /**
+         * 414: the name a receiving app shows (e.g. a PDF viewer's title). Only a
+         * short, clean name that keeps the stored file's extension is accepted,
+         * so the label can never claim a different file type.
+         */
+        internal fun safeDisplayName(file: File, displayName: String?): String? {
+            val name = displayName?.trim() ?: return null
+            if (name.isEmpty() || name.length > 255 || unsafeDisplayNameCharacters.containsMatchIn(name)) return null
+            if (name == "." || name == "..") return null
+            val ext = file.extension
+            if (ext.isEmpty() || !name.lowercase().endsWith("." + ext.lowercase())) return null
+            return name
+        }
+
+        internal fun uriForFile(context: Context, file: File, displayName: String? = null): Uri {
             val candidate = file.canonicalFile
             val root = rootNames.asSequence()
                 .mapNotNull { name -> runCatching { literalRoot(context, name) }.getOrNull() }
@@ -47,6 +65,9 @@ class ReceivedMediaEgressProvider : ContentProvider() {
                 .authority("${context.packageName}.received-media")
                 .appendPath(root.name)
                 .apply { relative.split('/').forEach(::appendPath) }
+                .apply {
+                    safeDisplayName(candidate, displayName)?.let { appendQueryParameter(displayNameParameter, it) }
+                }
                 .build()
         }
 
@@ -86,7 +107,8 @@ class ReceivedMediaEgressProvider : ContentProvider() {
         val cursor = MatrixCursor(columns)
         cursor.addRow(columns.map { column ->
             when (column) {
-                OpenableColumns.DISPLAY_NAME -> file.name
+                OpenableColumns.DISPLAY_NAME ->
+                    safeDisplayName(file, uri.getQueryParameter(displayNameParameter)) ?: file.name
                 OpenableColumns.SIZE -> file.length()
                 else -> null
             }

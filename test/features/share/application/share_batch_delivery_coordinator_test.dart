@@ -2067,13 +2067,71 @@ void main() {
         ],
       );
 
-      expect(result.skippedOversizedGifCount, 2);
-      expect(
-        result.skippedOversizedGifReason,
-        'Only photos, videos, audio and PDF files can be shared.',
-      );
+      expect(result.skippedUnsupportedDocumentCount, 2);
+      expect(result.skippedOversizedGifCount, 0);
       expect(deliveredMedia, hasLength(1));
       expect(deliveredMedia!.single.file.path, pdf.path);
+    },
+  );
+
+  test(
+    '414: when every shared file is refused nothing is sent and no target fails',
+    () async {
+      final identityRepository = FakeIdentityRepository()
+        ..seed(_makeIdentity());
+      final tempDir = await Directory.systemTemp.createTemp(
+        'share_batch_documents_none_',
+      );
+      addTearDown(() async {
+        if (await tempDir.exists()) {
+          await tempDir.delete(recursive: true);
+        }
+      });
+      final fakePdf = File('${tempDir.path}/fake.pdf')
+        ..writeAsStringSync('<html>');
+      var sendCalls = 0;
+      final coordinator = DefaultShareBatchDeliveryCoordinator(
+        identityRepository: identityRepository,
+        contactRepository: InMemoryContactRepository(),
+        messageRepository: InMemoryMessageRepository(),
+        mediaAttachmentRepository: InMemoryMediaAttachmentRepository(),
+        groupRepository: InMemoryGroupRepository(),
+        groupMessageRepository: InMemoryGroupMessageRepository(),
+        bridge: FakeBridge(),
+        p2pService: FakeP2PService(),
+        mediaFileManager: FakeMediaFileManager(),
+        imageProcessor: _imageProcessor(),
+        sendToContactFn:
+            ({
+              required identity,
+              required shareIntent,
+              required contact,
+              required processedMedia,
+              required uploadHooks,
+            }) async {
+              sendCalls++;
+              return ShareBatchTargetResult(
+                target: ShareTargetSelection.contact(contact),
+                status: ShareBatchTargetStatus.sent,
+                detail: 'Sent.',
+              );
+            },
+      );
+
+      final result = await coordinator.deliver(
+        shareIntent: ShareIntent(
+          type: ShareIntentType.files,
+          filePaths: [fakePdf.path],
+        ),
+        targets: [
+          ShareTargetSelection.contact(_makeContact('peer-alice', 'Alice')),
+        ],
+      );
+
+      expect(sendCalls, 0);
+      expect(result.results, isEmpty);
+      expect(result.hasFailures, isFalse);
+      expect(result.skippedUnsupportedDocumentCount, 1);
     },
   );
 

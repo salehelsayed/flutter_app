@@ -1,0 +1,357 @@
+success does nothing when no targets are selected
+success direct picker authority fails all targets before preprocessing or send after parent delete/private transition
+success direct snapshot final parent authority rejects delete hidden private and terminal drift with zero delivery side effects
+success internal forwards reject missing blocked archived and keyless contacts before preprocessing or send
+success internal forwards reject missing archived dissolved and keyless groups before preprocessing or send
+success TC-365-02a group share admission precedes preprocessing and excludes forwarded private or quoted media
+success TC-366-03b all-strict group forward reaches source verification and preparation
+success TC-377-10 authority-unavailable group share fails without the permission copy
+success TC-366-03b admitted strict group forward preserves provenance through dispatch
+success processes shared media once before fanout across target kinds
+success external batch progress clamps cumulative bytes and rejects unrelated or late upload ids
+success external batch progress uses the production media upload stream by default
+success reports sent queued and failed results truthfully
+success 414: a shared non-PDF document is skipped and a real PDF is kept
+success 414: when every shared file is refused nothing is sent and no target fails
+success mixed share skips oversized GIFs while keeping valid sibling media
+success share-batch applies per-type size caps to non-GIF media (OQ-2)
+success stalled shared video is skipped without sending its raw source
+success Video processing is unavailable until the native job ends never shares the raw video
+success Video processing failed never shares the raw video
+success text-only group share wraps publish in a background task and stays sent on durable success
+success group share queued offline reports queued with the back-online copy
+success group share treats live publish as sent while retaining inbox retry custody
+success share media encryption TC-348-01 external direct media follows production selector and publishes authority before network
+success platform splash exit is registered before Flutter creates content
+success MainActivity.kt overrides onNewIntent and calls setIntent(intent)
+success share media encryption TC-348-04 external fanout preserves progress and authority truth
+success egress sources stay behind service and import no transport or database writers
+success preparePendingComposerMedia uses raw bytes for original-quality images
+success preparePendingComposerMedia uses processed bytes for compressed-quality images
+success 2j, 2q, 2r, 2s: loads only active contacts and writable groups
+success MediaStorageManager clear holds one lifecycle lock through claim delete and finalize
+success internal direct forward hides blocked contacts while external share preserves its picker semantics
+success MediaFileManager group forward snapshot ownership and recovery delete retries and remains idempotent after success
+success MediaFileManager group forward snapshot ownership and recovery failed delete is reclaimed by the next scavenger operation
+success MediaStorageManager clear local copy claims exact owner path before delete and preserves sibling state
+success share media encryption TC-348-05 external strict adopter decision table is exact
+success internal direct forward rechecks a selected contact after readiness drift
+success MediaFileManager group forward snapshot ownership and recovery scavenger deletes only stale owned children and startup reclaims fresh orphans
+success UP-014 filters removed pending and dissolved groups from share targets
+success first tap selects a contact without navigating
+success MediaFileManager group forward snapshot ownership and recovery scavenger work is bounded per pass
+success MediaFileManager localPathForAttachment returns path with correct structure
+success MediaFileManager localPathForAttachment creates media directory if it does not exist
+success MediaStorageManager eviction failures remain retryable and reconcile after restart
+success MediaFileManager localPathForAttachment maps image/jpeg to .jpg
+success MediaFileManager localPathForAttachment maps image/png to .png
+success send invokes the coordinator exactly once with selected targets
+success MediaFileManager localPathForAttachment maps image/gif to .gif
+success MediaFileManager localPathForAttachment maps image/webp to .webp
+success MediaFileManager localPathForAttachment maps image/heic to .heic
+success MediaFileManager localPathForAttachment maps video/mp4 to .mp4
+success MediaFileManager localPathForAttachment maps video/quicktime to .mov
+success share media encryption TC-366-01a four direct media entries share one artifact across exact linked targets
+success MediaFileManager localPathForAttachment maps audio/aac to .aac
+success MediaFileManager localPathForAttachment maps audio/mpeg to .mp3
+success MediaFileManager localPathForAttachment maps audio/mp4 to .m4a
+success MediaFileManager localPathForAttachment maps audio/ogg to .ogg
+success MediaFileManager localPathForAttachment maps application/pdf to .pdf
+success UP-014 stale removed group selection is dropped before delivery
+success MediaFileManager localPathForAttachment unknown MIME gets no extension
+success MediaFileManager deleteMediaForContact deletes contact media directory
+success TC-347-02 durable ciphertext candidate is immutable and identity scoped
+success MediaFileManager deleteMediaForContact emits caller and reason telemetry for directory cleanup
+success MediaFileManager deleteMediaForContact does not throw when directory does not exist
+success MediaFileManager relativePathForAttachment returns relative path without leading slash
+success TC-347-02 artifact publication fails closed on hash mismatch
+success MediaFileManager relativePathForAttachment maps MIME types correctly
+success MediaFileManager relativePathForAttachment unknown MIME gets no extension
+success MediaFileManager resolveStoredPath resolves relative path to absolute
+success MediaFileManager resolveStoredPath resolves legacy absolute path with /media/ segment
+success MediaFileManager resolveStoredPath resolves migrated local_media relative path to absolute
+success MediaFileManager resolveStoredPath rebases legacy absolute path with /local_media/ segment
+success MediaFileManager resolveStoredPath returns unknown absolute path as-is
+success MediaFileManager resolveStoredPathSync (127 round-3 render-boundary resolver) returns the path unchanged when the cache is unseeded
+success MediaFileManager resolveStoredPathSync (127 round-3 render-boundary resolver) resolves a relative path against the cached documents dir
+success MediaFileManager resolveStoredPathSync (127 round-3 render-boundary resolver) rebases a stale legacy absolute /media/ path onto the cached dir
+success MediaFileManager resolveStoredPathSync (127 round-3 render-boundary resolver) is idempotent on an already-correct absolute path
+success TC-347-07 cleanup reaps only unreferenced identity-scoped artifacts
+success share media encryption TC-366-01a external linked admission refuses contact drift before legacy effects
+success send waits for runtime readiness before delivery
+success MediaFileManager resolveStoredPathSync (127 round-3 render-boundary resolver) returns an unknown absolute path as-is
+success MediaFileManager resolveStoredPathSync (127 round-3 render-boundary resolver) matches the async resolveStoredPath for relative media paths
+success share media encryption TC-362-02a external share direct forward and group-to-contact forward all admit before source work
+success share media encryption TC-362-06g fileless direct share consumes blob-free fanout authority instead of demoting
+success MediaFileManager resolveStoredPathSync (127 round-3 render-boundary resolver) 128: emits MEDIA_RESOLVE_SYNC_NO_CACHE once when cache is unseeded
+success MediaStorageManager clear rejects noncanonical wrong scope and misleading legacy paths
+success MediaFileManager resolveStoredPathSync (127 round-3 render-boundary resolver) 128: no MEDIA_RESOLVE_SYNC_NO_CACHE when the cache is seeded
+success MediaFileManager deleteFile private cleanup telemetry redacts paths and ids on start success and error
+success MediaFileManager deleteFile deletes an existing file
+success MediaFileManager deleteFile emits caller and reason telemetry when deleting a file
+success MediaFileManager deleteFile does not throw when file does not exist
+success MediaFileManager deleteOwnedPendingUploadFilesForMessage deletes only app-owned pending_upload paths for the target message
+success edited caption is sent from the recipient picker
+success MediaFileManager deleteOwnedPendingUploadFilesForMessage preserves arbitrary stored source paths on disk
+success successful send dismisses the picker
+success successful media send closes after progress without a snackbar
+success finalized M4A duration defines sent metadata without altering audio
+success wake lock on start/stop start() acquires the wake lock after recorder start succeeds
+success wake lock on start/stop stop() releases the wake lock
+success wake lock on start/stop stop() when never started does not release an external hold
+success wake lock on cancel/dispose cancel() releases the wake lock
+success wake lock on cancel/dispose dispose() while recording releases the wake lock
+success wake lock on cancel/dispose stop() then cancel() then dispose() releases exactly once
+success wake lock on failure paths start() failure does not acquire the wake lock
+success wake lock on failure paths stop() releases even when the plugin stop throws
+success wake lock on failure paths cancel() releases even when the plugin stop throws
+success wake lock on failure paths start() rolls back fully when the wake-lock driver enable throws
+success wake lock on failure paths second start() failing after force-stop leaves no held lock
+success partial and skipped external share outcomes stay inline snackbar free and retry safe
+success wake lock on auto-stop auto-stop at max duration releases the wake lock
+success auto-stop notification auto-stop invokes onAutoStopped with the stop result
+success qualified selection builds one canonical bounded egress request
+success reads finalized version 0 duration past the audio data
+success ownership escapes fail closed before native egress
+success reads finalized version 1 duration past the audio data
+success a symlinked approved root is not an ownership authority
+success failure busy and late completion preserve source without staging
+success rejects truncated atoms, zero clocks and unfinished durations
+success native busy wins over merged structural rejects
+success egress delegates canonical ownership to shared path authority
+success shared path authority exception fails closed before native
+success PDF documents (414) open sends one real PDF under its own clean name
+success PDF documents (414) a file labelled PDF without PDF bytes never leaves the app
+success PDF documents (414) a PDF is never saved to Photos and open takes PDFs only
+success external media send keeps route and wake lock until delivery settles
+success partial failure keeps only failed targets selected
+success MediaStorageManager all media inventory exhausts owner scoped pages for exact totals
+success internal forward keeps operation identity for failed-only retry
+success auto-stop notification auto-stop yields a non-null recording for a full-length capture
+success auto-stop notification manual stop() does not invoke onAutoStopped
+success auto-stop notification cancel() does not invoke onAutoStopped
+success wake lock on rapid restart start() while already recording keeps exactly one hold
+success wake lock on rapid restart rapid start/stop/start/stop ends at zero holds
+success GMF-05 picker retries failed only and leaves queued forward to durable retry
+success share media encryption TC-350-04 internal forward custody decision table varies one authority at a time
+success private route protection enter exit and capture events settle exactly once
+success nested duplicate late and dispose ownership restores ordinary routes fail closed
+success channel payloads diagnostics and failures expose no private metadata
+success enter and exit require exact result envelopes with no missing or extra fields
+success capture during enter balances the unpublished owner and a later enter recovers
+success unpublished balance validates its invocation snapshot while a published owner exits
+success successful send with skipped oversized GIF surfaces warning text
+success overlapping unpublished enters serialize native ownership before balance
+success overlapping exits validate the native state at their invocation boundary
+success overlapping pending enters keep cover sticky and dispose awaits balanced late ownership
+success 2p: cancel pops back to the previous screen
+success normalizeAmplitude -60 dBFS maps to 0.0
+success normalizeAmplitude 0 dBFS maps to 1.0
+success normalizeAmplitude -30 dBFS maps to ~0.66 (power curve lifts midrange)
+success normalizeAmplitude clamps positive values to 1.0
+success normalizeAmplitude clamps values below -60 to 0.0
+success normalizeAmplitude -15 dBFS maps to high value (loud speech)
+success normalizeAmplitude -45 dBFS maps to low-mid value (quiet speech)
+success normalizeAmplitude -5 dBFS maps to near-max (very loud)
+success VideoProcessResult stores path correctly
+success share media encryption TC-350-03a internal authority reread distinguishes precommit commit ambiguity and drift
+success typed PiP session maps native lifecycle exactly once and ignores stale events
+success VideoProcessResult stores width, height, durationMs when provided
+success iOS and other hosts are hidden without touching native channels
+success VideoProcessResult has null metadata when not provided
+success real factory creates and subscribes no platform channels off Android
+success unsupported and channel-failure Android capability is hidden
+success malformed active-session event fails closed exactly once
+success generation failure emits a FLOW event and returns null (not silent)
+success successful generation does not emit the failure event
+success non-video path returns null without invoking the generator
+success share media encryption TC-350-03b postcommit progress observer cannot replace durable result
+success GroupMediaMimePolicy allows exact group media MIME values and maps mediaType
+success GroupMediaMimePolicy rejects missing, wildcard, dangerous, and unsupported MIME
+success GroupMediaMimePolicy rejects mediaType mismatches
+success GroupMediaMimePolicy rejects spoofed local bytes with dangerous signatures
+success GroupMediaMimePolicy rejects unknown visual signatures while preserving allowed audio fallback
+success GroupMediaMimePolicy PDF (414) application/pdf with %PDF- bytes is a valid file
+success GroupMediaMimePolicy PDF (414) PDF bytes under an image MIME stay dangerous_signature
+success GroupMediaMimePolicy PDF (414) application/pdf without PDF bytes is refused
+success GroupMediaMimePolicy PDF (414) a PDF declared as another media type is a mismatch
+success GroupMediaMimePolicy rejects known content signatures that disagree with declared MIME
+success MediaUploadInFlightTracker token ownership claim marks attachments and owner release clears the whole lease
+success MediaUploadInFlightTracker token ownership multi-attachment claim is all-or-none
+success MediaUploadInFlightTracker token ownership foreign tracker release cannot clear the winning owner
+success MediaUploadInFlightTracker token ownership stale lease cannot clear a later reclaim
+success MediaUploadInFlightTracker token ownership empty claims and empty attachment IDs are rejected
+success MediaUploadInFlightTracker token ownership claim telemetry contains only source and lowercase SHA-256
+success MediaUploadInFlightTracker token ownership the process-wide singleton instance exists
+success share media encryption TC-350-01a source-gated received and group-origin forwards publish custody before network
+success share media encryption TC-345-05b fresh direct media share enters insert-fresh custody without preparation token
+success isProcessableImage returns true for .jpg, .jpeg, .png, .webp, .heic
+success isProcessableImage returns false for .mp4, .mov, .pdf, .aac
+success isProcessableImage returns false for .gif to preserve animation
+success processImage returns original path unchanged for non-image file (.mp4)
+success processImage calls compress with quality 85 when preference is compressed
+success processImage calls compress with quality 100 when preference is original
+success processImage always passes keepExif: false (compressed)
+success processImage always passes keepExif: false (original)
+success processImage returns original path when compress returns null (graceful fallback)
+success processImage returns original path unchanged for .gif files
+success processAvatar calls compress with quality 80, minWidth 512, minHeight 512
+success processAvatar always passes keepExif: false
+success processAvatar returns original path when compress returns null
+success share media encryption production contact leg remints identity and persists forward provenance per target
+success share media encryption multi-target media forward preprocesses once and encrypts/uploads separately per contact
+success share media encryption share to a LAN peer still relay-uploads and the attachment carries encryption metadata
+success share media encryption share LAN send streams the encrypted artifact, never the raw shared file
+success share media encryption TC-347-08d external share remains legacy
+success GMF-03O existing group owner persistence remains local and collision safe
+success P269 external group share rejects dissolve between snapshot and first upload with zero external effects
+success P269 external group share yields between upload leaves so dissolve blocks later upload and publish
+success P269 external group media share uses active transport ACL and never account or device IDs
+success processAvatar TC-200-11: crops a decodable non-square compress output to 512x512 (NEW file) while leaving the 512-min args unchanged
+success processAvatar TC-200-15: unwritten (missing) compress output passes through unchanged
+success processAvatar TC-200-15: undecodable compress output returns compress path byte-identical
+success isProcessableVideo returns true for .mp4, .mov, .avi, .mkv, .m4v
+success isProcessableVideo returns true for uppercase .MP4
+success isProcessableVideo returns false for .jpg, .png, .pdf, .aac
+success isProcessableVideo returns false for .mp3 (audio, not video)
+success GMF-03 group origin forward reencrypts independently and keeps provenance local
+success mimeFromPath (414) pdf maps to application/pdf in any case
+success mimeFromPath (414) every extension the old private copies knew maps the same
+success mimeFromPath (414) unknown extensions and paths without one stay octet-stream
+success isSupportedDocumentMime (414 D1) accepts only application/pdf
+success hasPdfSignature matches %PDF- only
+success GMF-03D JPEG group origin reaches two direct targets from one source processing pass
+success processVideo stalled compression cancels and late progress cannot revive it
+success GMF-03D MP4 group origin reaches two direct targets from one source processing pass
+success GMF-03E target exceptions are isolated without aborting later forwards
+success direct batch strict mode requires exactly one input and processed media item
+success direct batch strict mode fails vanished and oversized media without caption-only send
+success direct batch strict mode performs a second exact active contact read and continues valid contacts
+success default direct delivery retains stale fallback unless strict mode is explicitly selected
+success RecordAudioRecorderService smoke records audio and produces a valid .m4a file
+success RecordAudioRecorderService smoke cancel discards the recording file
+success isManualUploadRetryAttachmentSetEligible accepts completed envelopes and complete retryable source sets
+success isManualUploadRetryAttachmentSetEligible fails closed for empty, partial, missing, and over-limit sets
+success processVideo advancing progress resets the stall deadline
+success deterministic group artifact staging adopts only exact bytes and cleans only unreferenced files
+success TC-365-02b identity cleanup retains exact references and deletes group artifacts
+success TC-365-02b identity cleanup bounds regular blob and temp deletion
+success TC-365-02b identity cleanup ignores links malformed roots and non-artifacts
+success TC-365-02b identity cleanup rejects malformed or foreign reference inventories
+success processVideo repeated unchanged progress does not keep a stuck job alive
+success processVideo a hung cancel call cannot keep the caller blocked
+success processVideo overall deadline ends a job even while progress advances
+success processVideo default compressor requests native cancellation on a stall
+success processVideo an unsettled native stall refuses another video until it settles
+success processVideo a missing native channel releases the compressor for a later video
+success processVideo returns original path unchanged for non-video file (.jpg)
+success processVideo calls compressVideo with compress: true when preference is compressed
+success processVideo calls compressVideo with compress: false when preference is original
+success processVideo returns processed path from CompressVideoFn result
+success processVideo returns width, height, durationMs from CompressVideoFn result
+success processVideo returns null metadata when CompressVideoFn provides null metadata
+success processVideo does not attach the source when video compression fails
+success processVideo passes onProgress to CompressVideoFn
+success processVideo processVideo watches progress without a caller callback
+success SystemUI close uses a session fenced monotonic checkpoint when terminal position is zero
+success downsampleWaveform empty input returns empty output
+success downsampleWaveform empty input with positive target returns zeros
+success downsampleWaveform input shorter than target pads with zeros on the left
+success MediaAttachmentLifecycleLock same attachment acquisition is reentrant across awaits
+success downsampleWaveform input exactly target size returns a copy
+success MediaAttachmentLifecycleLock same attachment contenders remain serialized
+success downsampleWaveform input longer than target averages buckets evenly
+success MediaAttachmentLifecycleLock an action error releases exact attachment authority
+success downsampleWaveform always returns exactly targetSize values
+success downsampleWaveform values stay in [0.0, 1.0] range
+success MediaAttachmentLifecycleLock an escaped zone cannot reuse a released reentrant lease
+success downsampleWaveform uneven bucket sizes are handled correctly
+success MediaAttachmentLifecycleLock exclusive mutation waits for all attachment holders and bars later work
+success downsampleWaveform single sample input with target 1 returns that sample
+success MediaAttachmentLifecycleLock an exclusive action error releases queued shared work
+success MediaAttachmentLifecycleLock queued reader runs before exclusive writers that arrived later
+success MediaAttachmentLifecycleLock multi-attachment locking accepts ascending order and rejects inversion
+success PiP source and channel schema contain no messaging or secret fields
+success MediaAttachmentLifecycleLock exclusive upgrade fails fast instead of deadlocking
+success extra or mistyped native response fields fail closed
+success Kotlin PlatformException codes retain exact typed Dart reasons
+success AmplitudeBuffer initializes with all zeros
+success AmplitudeBuffer push() adds to end, shifts oldest out when full
+success AmplitudeBuffer values returns a copy (not reference)
+success AmplitudeBuffer reset() fills with zeros
+success AmplitudeBuffer push() clamps input to [0.0, 1.0]
+success AmplitudeBuffer partially filled buffer has zeros then values
+success sanitizeAttachmentFileName (414) keeps a normal name
+success sanitizeAttachmentFileName (414) drops path parts on both separators
+success sanitizeAttachmentFileName (414) removes bidi and control characters
+success sanitizeAttachmentFileName (414) caps a long name and keeps the extension
+success sanitizeAttachmentFileName (414) never ends on half a surrogate pair
+success sanitizeAttachmentFileName (414) returns null when nothing usable is left
+success Flutter engine detach stops native once and process recreation is empty
+success runner preserves pre-existing app and seeds canonical documents path
+success interruption proof is a gated separate test APK with causal focus evidence
+success engine-detach proof build checker proves default absence and disposable-only presence
+success interruption proof build checker fences helper to disposable test APK
+success API 36 installed helper identity does not require unfiltered Activity resolver rows
+success SystemUI PiP action keeps validated geometry but reacquires a live menu under a strict budget
+success AudioRecorderService contract (via Fake) start() sets isRecording to true
+success AudioRecorderService contract (via Fake) stop() returns AudioRecording with correct duration
+success AudioRecorderService contract (via Fake) stop() sets isRecording to false
+success AudioRecorderService contract (via Fake) cancel() sets isRecording to false and returns no recording
+success AudioRecorderService contract (via Fake) cancel() records the deleted path
+success AudioRecorderService contract (via Fake) durationStream emits elapsed durations while recording
+success AudioRecorderService contract (via Fake) cannot start() while already recording
+success AudioRecorderService contract (via Fake) stop() returns null if duration < 500ms
+success AudioRecorderService contract (via Fake) amplitudeStream emits values when emitAmplitude() called
+success AudioRecorderService contract (via Fake) triggerAutoStop() stops recording and notifies onAutoStopped
+success AudioRecorderService contract (via Fake) triggerAutoStop() when idle does not notify onAutoStopped
+success AudioRecorderService contract (via Fake) amplitudeStream is a broadcast stream (multi-listener safe)
+success computes canonical SHA-256 for a file
+success validates required lowercase SHA-256 content hash
+success compares downloaded file hash against descriptor digest
+success display eligibility requires done status, local path, hash, and encryption metadata
+success canonical local plaintext authority accepts exact relative current absolute and stale iOS canonical paths
+success canonical local plaintext authority rejects unsafe identifiers before constructing any path
+success canonical local plaintext authority rejects traversal arbitrary absolute and resolver-derived authority
+success canonical local plaintext authority rejects a symlinked owner directory that escapes the root
+success thumbnail hash is optional unless a remote thumbnail exists
+success MD-012 status helpers separate quarantine, download retry, and upload retry owners
+success GIRD-005 treats verified done media without a local path as resolving while unsafe states stay unavailable
+success bounded download retries failed is retryable only while under the retry ceiling (INV-DL-1)
+success bounded download retries download_failed is terminal: not retryable, and unavailable
+success Android renderer fallback is application scoped and preserves media/PiP
+success profile manifest does not override the production renderer policy
+success Path 3 keeps iOS PiP hidden unsupported and native-owner free
+success GroupMediaSizePolicy accepts per-media and total exact boundary values
+success GroupMediaSizePolicy rejects one byte over the per-media limit
+success GroupMediaSizePolicy rejects one byte over the total message media limit
+success GroupMediaSizePolicy rejects missing, zero, negative, and non-integer remote sizes
+success GroupMediaSizePolicy rejects large totals before accepting unsafe sums
+success GroupMediaSizePolicy preserves the GIF-specific cap below the general media cap
+success GroupMediaSizePolicy does not replace MIME validation
+success GroupMediaSizePolicy groupMediaPerTypeLimitBytes resolves the cap for each media type
+success GroupMediaSizePolicy validateSize derives per-type caps with type-aware reasons
+success GroupMediaSizePolicy enforces the total-message cap on per-type-valid attachments
+success GroupMediaSizePolicy explicit perMediaLimitBytes override wins over the per-type table
+success documentFileRejection (414) a real PDF passes
+success documentFileRejection (414) non-PDF bytes under application/pdf are refused
+success documentFileRejection (414) other MIMEs are unsupported even with PDF bytes
+success documentFileRejection (414) a missing file is reported
+success runner dry-run emits Flutter-supported Gradle environment syntax
+success process recreation dry-run keeps the exact drive app installed for relaunch
+success MediaFilePathConvention.extensionFromMime maps audio/mp4 (recorder default) to .m4a, never .bin/empty
+success MediaFilePathConvention.extensionFromMime maps re-encode-fallback video containers to playable extensions
+success MediaFilePathConvention.extensionFromMime preserves the existing canonical mappings
+success MediaFilePathConvention.extensionFromMime returns empty string only for genuinely unknown mimes
+success perform channel schema correlation and outcome precedence are exact
+success 414: open decodes presented and noViewer with no items
+success 414: share cannot claim noViewer
+success 414: requests refuse PDF to photos and anything but one PDF to open
+success DocumentAttachmentTile (414) shows name and size; tap on a ready PDF opens it
+success DocumentAttachmentTile (414) no viewer shows the message
+success DocumentAttachmentTile (414) menu saves to Files and shares
+success DocumentAttachmentTile (414) a pending download shows progress and cannot be opened
+success DocumentAttachmentTile (414) a failed download offers retry
+success DocumentAttachmentTile (414) a non-PDF file is shown as unsupported and never opens
+success PiP proof discovery paths have exact classifications
+success full regression PiP retries preserve prior proof artifacts

@@ -1257,6 +1257,14 @@
       }
     }
   },
+  "share_summary_skipped_documents": "{count, plural, =1{تم تخطي ملف واحد. يمكن مشاركة الصور والفيديو والصوت وملفات PDF فقط.} =2{تم تخطي ملفين. يمكن مشاركة الصور والفيديو والصوت وملفات PDF فقط.} few{تم تخطي {count} ملفات. يمكن مشاركة الصور والفيديو والصوت وملفات PDF فقط.} many{تم تخطي {count} ملفًا. يمكن مشاركة الصور والفيديو والصوت وملفات PDF فقط.} other{تم تخطي {count} ملف. يمكن مشاركة الصور والفيديو والصوت وملفات PDF فقط.}}",
+  "@share_summary_skipped_documents": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
   "time_just_now": "الآن",
   "time_min_ago": "{count, plural, =1{قبل دقيقة} =2{قبل دقيقتين} few{قبل {count} دقائق} many{قبل {count} دقيقة} other{قبل {count} دقيقة}}",
   "@time_min_ago": {

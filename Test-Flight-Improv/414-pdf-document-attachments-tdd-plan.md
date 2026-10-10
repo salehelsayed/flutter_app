@@ -202,7 +202,7 @@ Full table: `evidence/414/e2e/E2E_RESULTS.md`.
 - PASS on the iPhone 13 (file level): both PDFs downloaded and decrypted, byte-equal to the originals; the release build with the Quick Look Swift code compiles and installs.
 - BLOCKED: iPhone UI steps (tile, Quick Look, Save to Files, iPhone-to-Pixel send). XCUITest could not enable automation mode on three attempts.
 - NOT RUN: share sheet on the device (shell shares cannot grant URI access; the chooser lists five "MKnoon" test builds).
-- Follow-ups: F1 viewer title shows the stored file name; F2 pre-existing share plugin crash on unreadable URIs; F3 share-sheet text for refused documents.
+- Findings F1 (viewer title), F2 (share plugin crash on unreadable URIs) and F3 (share-sheet text) were fixed the same day; see `E2E_RESULTS.md`. F1 and F2 are proven on the Pixel.
 
 Status: implementation done and lane-green; device proof partial (iPhone UI steps pending).
 

@@ -74,6 +74,11 @@ class MainActivity : FlutterActivity() {
         // one process-scoped store; lifecycle startup itself must stay total.
         visibilityLifecycleCoordinator().onLaunch()
         CanonicalRuntimeProbeDiagnostics.recordMainActivityLaunch()
+        // 414 (F2): the share plugin reads this intent during super.onCreate
+        // and crashes on a shared file the app cannot read. Drop those first.
+        intent = ShareIntentReadabilityGuard.sanitize(intent) {
+            ShareIntentReadabilityGuard.canRead(contentResolver, it)
+        }
         super.onCreate(savedInstanceState)
         // A recreated activity receives the original intent again. Restore its
         // safe call surface, but only a fresh launch may request Answer.
@@ -316,6 +321,10 @@ class MainActivity : FlutterActivity() {
      */
     override fun onNewIntent(intent: Intent) {
         incomingCallPresentation?.onIntent(intent, answerFromIntent = true)
+        // 414 (F2): same guard as onCreate, before the share plugin's listener.
+        ShareIntentReadabilityGuard.sanitize(intent) {
+            ShareIntentReadabilityGuard.canRead(contentResolver, it)
+        }
         super.onNewIntent(intent)
         setIntent(intent)
         droppedPushRecoveryBridge?.onWarmIntent(intent)

@@ -343,7 +343,7 @@ internal class ReceivedMediaEgressHandler(
     private fun share(request: NativeEgressRequest, result: MethodChannel.Result) {
         try {
             val uris = request.items.map {
-                ReceivedMediaEgressProvider.uriForFile(activity, File(it.sourcePath))
+                ReceivedMediaEgressProvider.uriForFile(activity, File(it.sourcePath), it.displayName)
             }
             val intent = ReceivedMediaEgressContracts.buildShareIntent(uris, request.items.map { it.mime })
             presentShare(intent)
@@ -358,7 +358,7 @@ internal class ReceivedMediaEgressHandler(
     private fun open(request: NativeEgressRequest, result: MethodChannel.Result) {
         try {
             val item = request.items.single()
-            val uri = ReceivedMediaEgressProvider.uriForFile(activity, File(item.sourcePath))
+            val uri = ReceivedMediaEgressProvider.uriForFile(activity, File(item.sourcePath), item.displayName)
             presentView(ReceivedMediaEgressContracts.buildViewIntent(uri, item.mime))
             waitingForShareResume = true
             result.success(envelope(request.requestId, "presented", emptyList()))

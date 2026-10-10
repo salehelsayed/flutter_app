@@ -374,6 +374,28 @@ class ReceivedMediaEgressNativeTest {
         assertEquals("noViewer", (again.value as Map<*, *>)["outcome"])
     }
 
+    @Test
+    fun `414 provider reports the clean display name and falls back to the file name`() {
+        val context: Context = RuntimeEnvironment.getApplication()
+        val source = providerSource(context, "53d26568-blob.pdf")
+        fun nameFor(displayName: String?): String {
+            val uri = ReceivedMediaEgressProvider.uriForFile(context, source, displayName)
+            context.contentResolver.query(uri, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME), null, null, null)!!.use {
+                it.moveToFirst()
+                return it.getString(0)
+            }
+        }
+        assertEquals("Invoice 2026.pdf", nameFor("Invoice 2026.pdf"))
+        assertEquals("53d26568-blob.pdf", nameFor(null))
+        // A label may never claim another type, carry path parts or bidi tricks.
+        assertEquals("53d26568-blob.pdf", nameFor("Invoice.exe"))
+        assertEquals("53d26568-blob.pdf", nameFor("../x.pdf"))
+        assertEquals("53d26568-blob.pdf", nameFor("in\u202Efdp.pdf"))
+        // The name is a label only: the bytes still come from the stored file.
+        val uri = ReceivedMediaEgressProvider.uriForFile(context, source, "Invoice.pdf")
+        assertArrayEquals(byteArrayOf(1, 2, 3), context.contentResolver.openInputStream(uri)!!.readBytes())
+    }
+
     private fun providerSource(context: Context, name: String): File {
         val root = File(ReceivedMediaEgressProvider.documentsDirectory(context), "media").apply {
             deleteRecursively()

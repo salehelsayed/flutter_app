@@ -4400,6 +4400,12 @@ abstract class AppLocalizations {
   /// **'{count, plural, =1{Skipped 1 oversized attachment.} other{Skipped {count} oversized attachments.}}'**
   String share_summary_skipped_gifs(int count);
 
+  /// No description provided for @share_summary_skipped_documents.
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, =1{Skipped 1 file. Only photos, videos, audio and PDF files can be shared.} other{Skipped {count} files. Only photos, videos, audio and PDF files can be shared.}}'**
+  String share_summary_skipped_documents(int count);
+
   /// No description provided for @time_just_now.
   ///
   /// In en, this message translates to:

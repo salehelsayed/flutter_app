@@ -1324,6 +1324,14 @@
       }
     }
   },
+  "share_summary_skipped_documents": "{count, plural, =1{Skipped 1 file. Only photos, videos, audio and PDF files can be shared.} other{Skipped {count} files. Only photos, videos, audio and PDF files can be shared.}}",
+  "@share_summary_skipped_documents": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
   "time_just_now": "just now",
   "time_min_ago": "{count, plural, =1{1 min ago} other{{count} min ago}}",
   "@time_min_ago": {

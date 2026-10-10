@@ -902,6 +902,47 @@ void main() {
       expect(find.text('Send'), findsNothing);
       expect(find.byType(SnackBar), findsNothing);
 
+      // 414: refused documents are named as such, not as oversized media or
+      // as failed targets.
+      final documentHarness = _buildHarness();
+      documentHarness.contactRepository.addTestContact(activeContact);
+      await pumpPicker(
+        tester,
+        contactRepository: documentHarness.contactRepository,
+        groupRepository: documentHarness.groupRepository,
+        messageRepository: documentHarness.messageRepository,
+        mediaAttachmentRepository: documentHarness.mediaAttachmentRepository,
+        identityRepository: documentHarness.identityRepository,
+        chatMessageListener: documentHarness.chatMessageListener,
+        groupMessageRepository: documentHarness.groupMessageRepository,
+        groupMessageListener: documentHarness.groupMessageListener,
+        shareIntent: const ShareIntent(
+          type: ShareIntentType.files,
+          filePaths: ['/tmp/notes.docx'],
+        ),
+        batchShareCoordinator: _ControlledBatchCoordinator(
+          result: const ShareBatchDeliveryResult(
+            results: [],
+            skippedUnsupportedDocumentCount: 1,
+          ),
+        ),
+      );
+      await tester.tap(
+        find.byKey(ValueKey('share-contact-${activeContact.peerId}')),
+      );
+      await tester.pump();
+      await tester.tap(find.text('Send'));
+      await tester.pump();
+      expect(
+        find.text(
+          'Skipped 1 file. Only photos, videos, audio and PDF files can be '
+          'shared.',
+        ),
+        findsOneWidget,
+      );
+      expect(find.textContaining('failed'), findsNothing);
+      expect(find.textContaining('oversized'), findsNothing);
+
       final exceptionHarness = _buildHarness();
       exceptionHarness.contactRepository.addTestContact(activeContact);
       await pumpPicker(

@@ -257,10 +257,15 @@ class ShareBatchDeliveryResult {
   final int skippedOversizedGifCount;
   final String? skippedOversizedGifReason;
 
+  /// 414: shared files that are not photos, videos, audio or real PDFs.
+  /// They are never sent.
+  final int skippedUnsupportedDocumentCount;
+
   const ShareBatchDeliveryResult({
     required this.results,
     this.skippedOversizedGifCount = 0,
     this.skippedOversizedGifReason,
+    this.skippedUnsupportedDocumentCount = 0,
   });
 
   int get sentCount => results
@@ -280,6 +285,9 @@ class ShareBatchDeliveryResult {
   bool get hasCompletions => sentCount + queuedCount > 0;
 
   bool get hasSkippedOversizedGifs => skippedOversizedGifCount > 0;
+
+  bool get hasSkippedUnsupportedDocuments =>
+      skippedUnsupportedDocumentCount > 0;
 
   Set<String> get failedTargetKeys => results
       .where((result) => result.status == ShareBatchTargetStatus.failed)
@@ -315,10 +323,14 @@ class ProcessedShareMediaBatch {
   final int skippedOversizedGifCount;
   final String? skippedOversizedGifReason;
 
+  /// 414: see [ShareBatchDeliveryResult.skippedUnsupportedDocumentCount].
+  final int skippedUnsupportedDocumentCount;
+
   const ProcessedShareMediaBatch({
     required this.processedMedia,
     this.skippedOversizedGifCount = 0,
     this.skippedOversizedGifReason,
+    this.skippedUnsupportedDocumentCount = 0,
   });
 }
 
@@ -761,6 +773,19 @@ class DefaultShareBatchDeliveryCoordinator
       shareIntent,
     );
     final processedMedia = processedBatch.processedMedia;
+    // 414: every shared file was refused and there is no text. Nothing is
+    // sent, so no target "fails"; the summary names the refused files.
+    if (processedMedia.isEmpty &&
+        processedBatch.skippedUnsupportedDocumentCount > 0 &&
+        (shareIntent.text?.trim() ?? '').isEmpty) {
+      return ShareBatchDeliveryResult(
+        results: const [],
+        skippedOversizedGifCount: processedBatch.skippedOversizedGifCount,
+        skippedOversizedGifReason: processedBatch.skippedOversizedGifReason,
+        skippedUnsupportedDocumentCount:
+            processedBatch.skippedUnsupportedDocumentCount,
+      );
+    }
     final results = <ShareBatchTargetResult>[];
 
     var bytesPerTarget = 0;
@@ -906,6 +931,8 @@ class DefaultShareBatchDeliveryCoordinator
       results: results,
       skippedOversizedGifCount: processedBatch.skippedOversizedGifCount,
       skippedOversizedGifReason: processedBatch.skippedOversizedGifReason,
+      skippedUnsupportedDocumentCount:
+          processedBatch.skippedUnsupportedDocumentCount,
     );
   }
 
@@ -1155,6 +1182,8 @@ class DefaultShareBatchDeliveryCoordinator
       results: results,
       skippedOversizedGifCount: processedBatch.skippedOversizedGifCount,
       skippedOversizedGifReason: processedBatch.skippedOversizedGifReason,
+      skippedUnsupportedDocumentCount:
+          processedBatch.skippedUnsupportedDocumentCount,
     );
   }
 
@@ -1331,6 +1360,8 @@ class DefaultShareBatchDeliveryCoordinator
         results: results,
         skippedOversizedGifCount: processedBatch.skippedOversizedGifCount,
         skippedOversizedGifReason: processedBatch.skippedOversizedGifReason,
+        skippedUnsupportedDocumentCount:
+            processedBatch.skippedUnsupportedDocumentCount,
       );
     } finally {
       await snapshot.dispose();
@@ -1595,22 +1626,9 @@ class DefaultShareBatchDeliveryCoordinator
       processed.add(prepared);
     }
 
-    if (skippedUnsupportedFileCount > 0) {
-      return ProcessedShareMediaBatch(
-        processedMedia: processed,
-        skippedOversizedGifCount:
-            skippedOversizedGifCount +
-            skippedStalledVideoCount +
-            skippedUnsupportedFileCount,
-        skippedOversizedGifReason:
-            skippedOversizedGifCount + skippedStalledVideoCount > 0
-            ? 'Only photos, videos, audio and PDF files can be shared. '
-                  'Some attachments were skipped.'
-            : 'Only photos, videos, audio and PDF files can be shared.',
-      );
-    }
     return ProcessedShareMediaBatch(
       processedMedia: processed,
+      skippedUnsupportedDocumentCount: skippedUnsupportedFileCount,
       skippedOversizedGifCount:
           skippedOversizedGifCount + skippedStalledVideoCount,
       // Media-agnostic: the per-type gate skips ANY oversized type (image,

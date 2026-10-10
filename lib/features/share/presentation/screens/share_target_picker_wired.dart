@@ -446,7 +446,8 @@ class _ShareTargetPickerWiredState extends State<ShareTargetPickerWired> {
       return;
     }
 
-    if (result.hasSkippedOversizedGifs) {
+    if (result.hasSkippedOversizedGifs ||
+        result.hasSkippedUnsupportedDocuments) {
       setState(() {
         _selectedContactPeerIds.clear();
         _selectedGroupIds.clear();
@@ -596,7 +597,9 @@ class _ShareTargetPickerWiredState extends State<ShareTargetPickerWired> {
         l10n.share_summary_failed(_formatTargetCount(result.failureCount)),
       );
     }
-    if (parts.isEmpty && !result.hasSkippedOversizedGifs) {
+    if (parts.isEmpty &&
+        !result.hasSkippedOversizedGifs &&
+        !result.hasSkippedUnsupportedDocuments) {
       return l10n.share_summary_nothing;
     }
     final summary = <String>[];
@@ -607,6 +610,13 @@ class _ShareTargetPickerWiredState extends State<ShareTargetPickerWired> {
     if (result.hasSkippedOversizedGifs) {
       summary.add(
         l10n.share_summary_skipped_gifs(result.skippedOversizedGifCount),
+      );
+    }
+    if (result.hasSkippedUnsupportedDocuments) {
+      summary.add(
+        l10n.share_summary_skipped_documents(
+          result.skippedUnsupportedDocumentCount,
+        ),
       );
     }
     return summary.join(' ');

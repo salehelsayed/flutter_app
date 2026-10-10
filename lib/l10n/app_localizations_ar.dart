@@ -2626,6 +2626,24 @@ class AppLocalizationsAr extends AppLocalizations {
   }
 
   @override
+  String share_summary_skipped_documents(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other:
+          'تم تخطي $count ملف. يمكن مشاركة الصور والفيديو والصوت وملفات PDF فقط.',
+      many:
+          'تم تخطي $count ملفًا. يمكن مشاركة الصور والفيديو والصوت وملفات PDF فقط.',
+      few:
+          'تم تخطي $count ملفات. يمكن مشاركة الصور والفيديو والصوت وملفات PDF فقط.',
+      two: 'تم تخطي ملفين. يمكن مشاركة الصور والفيديو والصوت وملفات PDF فقط.',
+      one:
+          'تم تخطي ملف واحد. يمكن مشاركة الصور والفيديو والصوت وملفات PDF فقط.',
+    );
+    return '$_temp0';
+  }
+
+  @override
   String get time_just_now => 'الآن';
 
   @override

@@ -1257,6 +1257,14 @@
       }
     }
   },
+  "share_summary_skipped_documents": "{count, plural, =1{1 Datei übersprungen. Nur Fotos, Videos, Audio und PDF-Dateien können geteilt werden.} other{{count} Dateien übersprungen. Nur Fotos, Videos, Audio und PDF-Dateien können geteilt werden.}}",
+  "@share_summary_skipped_documents": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
   "time_just_now": "gerade eben",
   "time_min_ago": "{count, plural, =1{vor 1 Min.} other{vor {count} Min.}}",
   "@time_min_ago": {

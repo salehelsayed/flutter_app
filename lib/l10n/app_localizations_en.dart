@@ -2593,6 +2593,19 @@ class AppLocalizationsEn extends AppLocalizations {
   }
 
   @override
+  String share_summary_skipped_documents(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other:
+          'Skipped $count files. Only photos, videos, audio and PDF files can be shared.',
+      one:
+          'Skipped 1 file. Only photos, videos, audio and PDF files can be shared.',
+    );
+    return '$_temp0';
+  }
+
+  @override
   String get time_just_now => 'just now';
 
   @override
