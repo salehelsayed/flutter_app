@@ -4294,4 +4294,7 @@ class AppLocalizationsAr extends AppLocalizations {
 
   @override
   String get media_document_open => 'فتح المستند';
+
+  @override
+  String get media_download => 'تنزيل';
 }

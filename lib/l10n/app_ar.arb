@@ -1961,5 +1961,6 @@
   "media_document_open_failed": "تعذّر فتح الملف.",
   "media_document_no_viewer": "لا يوجد تطبيق على هذا الهاتف يمكنه فتح هذا الملف.",
   "media_document_only_pdf": "يمكن إرسال ملفات PDF فقط.",
-  "media_document_open": "فتح المستند"
+  "media_document_open": "فتح المستند",
+  "media_download": "تنزيل"
 }

@@ -50,3 +50,9 @@ WDA started once the user was at the iPhone 13 (session `cd8be159`). After that 
 
 All planned device steps are now proven on both phones, except the share sheet on the device (unit and widget tests only).
 
+## Review fixes (2026-10-10, Pixel build `1.0.0-076f43276.d42.pdf414.t261010175711`)
+
+- R-P1 (share sheet bypassed the send switch): `DefaultShareBatchDeliveryCoordinator.documentAttachmentsEnabled` (default `kDocumentAttachmentsEnabled`) is checked in `_processSharedMedia`, which serves OS shares, direct Forward and group Forward. Switch off: every shared PDF is refused like other unsupported files. Tests: switch off and on (`share_batch_delivery_coordinator_test.dart`). Not run on a device: both phones carry switch-on builds.
+- R-P2 (no manual download when auto-download is off): a `pending` received photo, video, voice message or PDF now shows a Download button wired to the existing explicit retry/download callback; `downloading` keeps the loader; no callback keeps the old look. Tests in the grid cell, audio player and document tile suites. Device: with the Pixel's direct-chat Files auto-download set Off, a PDF from the iPhone arrived as "Minutes-414.pdf" with a Download button; one tap downloaded it (`MEDIA_DOWNLOAD_START`) and the tile became "Open document, Minutes-414.pdf". The setting was restored to "Wi-Fi + cellular".
+- Lanes after the fixes: 1:1 Flutter 5206/5206, groups 5391/5391, feed 339/339.
+

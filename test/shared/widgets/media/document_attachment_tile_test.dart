@@ -136,6 +136,37 @@ void main() {
       expect(find.byKey(DocumentAttachmentTile.menuKey('doc-1')), findsNothing);
     });
 
+    testWidgets('a pending PDF offers Download when a download owner exists', (
+      tester,
+    ) async {
+      var downloads = 0;
+      await tester.pumpWidget(
+        _wrap(
+          DocumentAttachmentTile(
+            attachment: _pdf(status: 'pending', localPath: null),
+            onRetryUnavailableMedia: () => downloads++,
+          ),
+        ),
+      );
+      expect(find.byType(CircularProgressIndicator), findsNothing);
+      await tester.tap(find.byKey(DocumentAttachmentTile.downloadKey('doc-1')));
+      expect(downloads, 1);
+
+      await tester.pumpWidget(
+        _wrap(
+          DocumentAttachmentTile(
+            attachment: _pdf(status: 'downloading', localPath: null),
+            onRetryUnavailableMedia: () => downloads++,
+          ),
+        ),
+      );
+      expect(find.byType(CircularProgressIndicator), findsOneWidget);
+      expect(
+        find.byKey(DocumentAttachmentTile.downloadKey('doc-1')),
+        findsNothing,
+      );
+    });
+
     testWidgets('a failed download offers retry', (tester) async {
       var retried = 0;
       await tester.pumpWidget(

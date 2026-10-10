@@ -41,6 +41,8 @@ class DocumentAttachmentTile extends StatelessWidget {
       ValueKey('document-attachment-menu-$attachmentId');
   static Key retryKey(String attachmentId) =>
       ValueKey('document-attachment-retry-$attachmentId');
+  static Key downloadKey(String attachmentId) =>
+      ValueKey('document-attachment-download-$attachmentId');
 
   bool get _isSupported => isSupportedDocumentMime(attachment.mime);
 
@@ -60,7 +62,15 @@ class DocumentAttachmentTile extends StatelessWidget {
         requireVerifiedContentHash: requireVerifiedContentHash,
       );
 
-  bool get _isInProgress => _isSupported && !_isReady && !_isUnavailable;
+  /// Automatic download refused by the user's settings (or not started yet):
+  /// offer an explicit Download. `downloading` keeps the progress indicator.
+  bool get _canDownloadManually =>
+      _isSupported &&
+      onRetryUnavailableMedia != null &&
+      attachment.downloadStatus == kMediaDownloadStatusPending;
+
+  bool get _isInProgress =>
+      _isSupported && !_isReady && !_isUnavailable && !_canDownloadManually;
 
   @override
   Widget build(BuildContext context) {
@@ -80,6 +90,13 @@ class DocumentAttachmentTile extends StatelessWidget {
         key: retryKey(attachment.id),
         icon: const Icon(Icons.refresh),
         tooltip: l10n.media_retry_unavailable,
+        onPressed: onRetryUnavailableMedia,
+      );
+    } else if (_canDownloadManually) {
+      trailing = IconButton(
+        key: downloadKey(attachment.id),
+        icon: const Icon(Icons.download_rounded),
+        tooltip: l10n.media_download,
         onPressed: onRetryUnavailableMedia,
       );
     } else if (_isInProgress) {

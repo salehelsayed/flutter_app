@@ -1017,10 +1017,14 @@ void main() {
     expect(tapped, isFalse);
   });
 
-  testWidgets('pending video remains loading without retry or play', (
+  // 414: a pending item now offers an explicit Download (the automatic
+  // download may be refused by the user's settings). It is still neither a
+  // retry nor playable, and the cell itself does not open.
+  testWidgets('pending video offers Download without retry or play', (
     tester,
   ) async {
     var tapped = false;
+    var downloads = 0;
 
     await tester.pumpWidget(
       wrap(
@@ -1036,20 +1040,31 @@ void main() {
               localPath: null,
             ),
             onTap: () => tapped = true,
-            onRetryUnavailableMedia: () {},
+            onRetryUnavailableMedia: () => downloads++,
           ),
         ),
       ),
     );
     await tester.pump();
 
-    expect(find.byType(CircularProgressIndicator), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('pending-media-download-msg-1-pending-video')),
+      findsOneWidget,
+    );
     expect(find.text('Media unavailable'), findsNothing);
     expect(find.byType(MediaThumbnailImage), findsNothing);
     expect(find.byType(VideoThumbnailOverlay), findsNothing);
     expect(find.bySemanticsLabel('Retry unavailable media'), findsNothing);
 
-    await tester.tap(find.byType(MediaGridCell));
+    await tester.tapAt(
+      tester.getTopLeft(find.byType(MediaGridCell)) + const Offset(4, 4),
+    );
+    expect(tapped, isFalse);
+    expect(downloads, 0);
+    await tester.tap(
+      find.byKey(const ValueKey('pending-media-download-msg-1-pending-video')),
+    );
+    expect(downloads, 1);
     expect(tapped, isFalse);
   });
 
@@ -1245,6 +1260,56 @@ void main() {
       find.byType(MediaThumbnailImage),
     );
     expect(mti.placeholder, isNotNull);
+  });
+
+  testWidgets('414: pending image and video offer an explicit Download', (
+    tester,
+  ) async {
+    for (final spec in const [
+      (id: 'pending-image', mime: 'image/jpeg', mediaType: 'image'),
+      (id: 'pending-video', mime: 'video/mp4', mediaType: 'video'),
+    ]) {
+      var downloads = 0;
+      final attachment = _attachment(
+        id: spec.id,
+        mime: spec.mime,
+        mediaType: spec.mediaType,
+        downloadStatus: kMediaDownloadStatusPending,
+        localPath: null,
+      );
+      await tester.pumpWidget(
+        wrap(
+          MediaGridCell(
+            attachment: attachment,
+            onRetryUnavailableMedia: () => downloads++,
+          ),
+        ),
+      );
+      await tester.pump();
+      final key = ValueKey('pending-media-download-msg-1-${spec.id}');
+      expect(find.byKey(key), findsOneWidget, reason: spec.id);
+      expect(find.byType(CircularProgressIndicator), findsNothing);
+      await tester.tap(find.byKey(key));
+      expect(downloads, 1, reason: spec.id);
+
+      // `downloading` keeps the loader; no owner keeps the loader too.
+      await tester.pumpWidget(
+        wrap(
+          MediaGridCell(
+            attachment: attachment.copyWith(
+              downloadStatus: kMediaDownloadStatusDownloading,
+            ),
+            onRetryUnavailableMedia: () => downloads++,
+          ),
+        ),
+      );
+      await tester.pump();
+      expect(find.byKey(key), findsNothing);
+      expect(find.byType(CircularProgressIndicator), findsOneWidget);
+      await tester.pumpWidget(wrap(MediaGridCell(attachment: attachment)));
+      await tester.pump();
+      expect(find.byKey(key), findsNothing);
+    }
   });
 
   testWidgets(

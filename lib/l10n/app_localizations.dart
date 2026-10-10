@@ -7063,6 +7063,12 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Open document'**
   String get media_document_open;
+
+  /// No description provided for @media_download.
+  ///
+  /// In en, this message translates to:
+  /// **'Download'**
+  String get media_download;
 }
 
 class _AppLocalizationsDelegate

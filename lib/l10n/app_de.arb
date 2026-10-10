@@ -1961,5 +1961,6 @@
   "media_document_open_failed": "Die Datei konnte nicht geöffnet werden.",
   "media_document_no_viewer": "Keine App auf diesem Telefon kann diese Datei öffnen.",
   "media_document_only_pdf": "Nur PDF-Dateien können gesendet werden.",
-  "media_document_open": "Dokument öffnen"
+  "media_document_open": "Dokument öffnen",
+  "media_download": "Herunterladen"
 }

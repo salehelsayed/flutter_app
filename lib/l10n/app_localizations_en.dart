@@ -4226,4 +4226,7 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get media_document_open => 'Open document';
+
+  @override
+  String get media_download => 'Download';
 }

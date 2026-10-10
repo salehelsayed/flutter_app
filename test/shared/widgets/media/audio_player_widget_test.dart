@@ -994,6 +994,52 @@ void main() {
       await tester.pump();
       expect(retryCount, 1);
     });
+
+    testWidgets('414: pending audio offers an explicit Download', (
+      tester,
+    ) async {
+      var downloads = 0;
+      final attachment = baseAttachment.copyWith(
+        downloadStatus: kMediaDownloadStatusPending,
+        clearLocalPath: true,
+        durationMs: 4200,
+      );
+      await tester.pumpWidget(
+        buildApp(attachment, onRetryUnavailableMedia: () => downloads++),
+      );
+      await tester.pump();
+      const key = ValueKey('pending-media-download-msg-001-att-audio-001');
+      expect(find.byKey(key), findsOneWidget);
+      expect(find.byType(WaveformSeekBar), findsNothing);
+      expect(downloads, 0);
+      await tester.tap(find.byKey(key));
+      await tester.pump();
+      expect(downloads, 1);
+
+      // Without a download owner the disabled player stays as before.
+      await tester.pumpWidget(buildApp(attachment));
+      await tester.pump();
+      expect(find.byKey(key), findsNothing);
+    });
+
+    testWidgets('414: downloading audio shows no Download button', (
+      tester,
+    ) async {
+      final attachment = baseAttachment.copyWith(
+        downloadStatus: kMediaDownloadStatusDownloading,
+        clearLocalPath: true,
+      );
+      await tester.pumpWidget(
+        buildApp(attachment, onRetryUnavailableMedia: () {}),
+      );
+      await tester.pump();
+      expect(
+        find.byKey(
+          const ValueKey('pending-media-download-msg-001-att-audio-001'),
+        ),
+        findsNothing,
+      );
+    });
   });
 }
 

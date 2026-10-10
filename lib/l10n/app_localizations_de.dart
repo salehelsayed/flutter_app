@@ -4327,4 +4327,7 @@ class AppLocalizationsDe extends AppLocalizations {
 
   @override
   String get media_document_open => 'Dokument öffnen';
+
+  @override
+  String get media_download => 'Herunterladen';
 }

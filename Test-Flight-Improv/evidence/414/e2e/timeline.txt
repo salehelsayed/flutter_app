@@ -7,3 +7,6 @@
 [15:02:04] F2 recheck: ungranted content share
 [15:18:48] S1 Pixel sends Minutes-414.pdf 1:1 to iphone-13 (both new builds)
 [15:21:09] I4 iPhone sends saved PDF to Pixel
+[16:00:07] D: Pixel direct Files auto-download set Off (was Wi-Fi + cellular)
+[16:01:18] D: tap Download on pending Minutes-414.pdf
+[16:02:06] D: Pixel direct Files auto-download restored to Wi-Fi + cellular

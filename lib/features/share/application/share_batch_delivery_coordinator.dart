@@ -6,6 +6,7 @@ import 'package:crypto/crypto.dart';
 import 'package:uuid/uuid.dart';
 
 import 'package:flutter_app/core/bridge/bridge.dart';
+import 'package:flutter_app/core/config/document_attachments_flag.dart';
 import 'package:flutter_app/core/media/attachment_file_name.dart';
 import 'package:flutter_app/core/media/document_file_check.dart';
 import 'package:flutter_app/core/media/media_mime.dart';
@@ -374,6 +375,11 @@ class DefaultShareBatchDeliveryCoordinator
   final Stream<Map<String, dynamic>>? mediaUploadProgressEvents;
   final String shareStoredOfflinePromise;
   final bool directMediaBlobCustodyClientEnabled;
+
+  /// 414 (D3): sending PDFs is behind `MKNOON_ENABLE_DOCUMENT_ATTACHMENTS`.
+  /// The OS share sheet and in-app Forward obey the same switch as the
+  /// composers; when it is off, shared PDFs are refused like other files.
+  final bool documentAttachmentsEnabled;
   final DirectEventFanoutAuthoring? Function()? directEventFanoutResolver;
   final PreparedGroupMediaBlobCustodyCoordinator?
   preparedGroupMediaBlobCustodyCoordinator;
@@ -399,6 +405,7 @@ class DefaultShareBatchDeliveryCoordinator
     this.sendToGroupFn,
     this.mediaUploadProgressEvents,
     bool? directMediaBlobCustodyClientEnabled,
+    this.documentAttachmentsEnabled = kDocumentAttachmentsEnabled,
     this.directEventFanoutResolver,
     this.preparedGroupMediaBlobCustodyCoordinator,
     String? shareStoredOfflinePromise,
@@ -1607,11 +1614,12 @@ class DefaultShareBatchDeliveryCoordinator
       // real PDF. Anything else used to arrive as an empty bubble.
       final preparedMime = mimeFromPath(prepared.file.path);
       if (MediaAttachment.mediaTypeFromMime(preparedMime) == 'file' &&
-          await documentFileRejection(
-                path: prepared.file.path,
-                mime: preparedMime,
-              ) !=
-              null) {
+          (!documentAttachmentsEnabled ||
+              await documentFileRejection(
+                    path: prepared.file.path,
+                    mime: preparedMime,
+                  ) !=
+                  null)) {
         skippedUnsupportedFileCount++;
         continue;
       }

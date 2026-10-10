@@ -2040,6 +2040,7 @@ void main() {
         p2pService: FakeP2PService(),
         mediaFileManager: FakeMediaFileManager(),
         imageProcessor: _imageProcessor(),
+        documentAttachmentsEnabled: true,
         sendToContactFn:
             ({
               required identity,
@@ -2073,6 +2074,68 @@ void main() {
       expect(deliveredMedia!.single.file.path, pdf.path);
     },
   );
+
+  test('414: with the send switch off even a real PDF is not shared', () async {
+    final identityRepository = FakeIdentityRepository()..seed(_makeIdentity());
+    final tempDir = await Directory.systemTemp.createTemp(
+      'share_batch_documents_',
+    );
+    addTearDown(() async {
+      if (await tempDir.exists()) {
+        await tempDir.delete(recursive: true);
+      }
+    });
+    final docx = File('${tempDir.path}/notes.docx')
+      ..writeAsBytesSync(const [0x50, 0x4b, 0x03, 0x04, 0x00]);
+    final fakePdf = File('${tempDir.path}/fake.pdf')
+      ..writeAsStringSync('<html>');
+    final pdf = File('${tempDir.path}/Invoice.pdf')
+      ..writeAsStringSync('%PDF-1.7\n');
+
+    List<PendingComposerMedia>? deliveredMedia;
+    final coordinator = DefaultShareBatchDeliveryCoordinator(
+      identityRepository: identityRepository,
+      contactRepository: InMemoryContactRepository(),
+      messageRepository: InMemoryMessageRepository(),
+      mediaAttachmentRepository: InMemoryMediaAttachmentRepository(),
+      groupRepository: InMemoryGroupRepository(),
+      groupMessageRepository: InMemoryGroupMessageRepository(),
+      bridge: FakeBridge(),
+      p2pService: FakeP2PService(),
+      mediaFileManager: FakeMediaFileManager(),
+      imageProcessor: _imageProcessor(),
+      documentAttachmentsEnabled: false,
+      sendToContactFn:
+          ({
+            required identity,
+            required shareIntent,
+            required contact,
+            required processedMedia,
+            required uploadHooks,
+          }) async {
+            deliveredMedia = processedMedia;
+            return ShareBatchTargetResult(
+              target: ShareTargetSelection.contact(contact),
+              status: ShareBatchTargetStatus.sent,
+              detail: 'Sent.',
+            );
+          },
+    );
+
+    final result = await coordinator.deliver(
+      shareIntent: ShareIntent(
+        type: ShareIntentType.files,
+        filePaths: [docx.path, fakePdf.path, pdf.path],
+      ),
+      targets: [
+        ShareTargetSelection.contact(_makeContact('peer-alice', 'Alice')),
+      ],
+    );
+
+    expect(result.skippedUnsupportedDocumentCount, 3);
+    expect(deliveredMedia, isNull);
+    expect(result.results, isEmpty);
+  });
 
   test(
     '414: when every shared file is refused nothing is sent and no target fails',

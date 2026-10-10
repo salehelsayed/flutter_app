@@ -535,6 +535,12 @@ class _AudioPlayerWidgetState extends State<AudioPlayerWidget>
     if (_showsUnavailableMedia) {
       return _buildUnavailableAudio();
     }
+    // 414: a voice message whose automatic download was refused (or has not
+    // started) offers an explicit Download instead of a disabled player.
+    if (widget.onRetryUnavailableMedia != null &&
+        widget.attachment.downloadStatus == kMediaDownloadStatusPending) {
+      return _buildDownloadableAudio();
+    }
 
     final totalMs = _duration.inMilliseconds > 0
         ? _duration.inMilliseconds
@@ -634,6 +640,55 @@ class _AudioPlayerWidgetState extends State<AudioPlayerWidget>
   /// gated by the bounded auto-retry budget or the auto-download
   /// preference) and settles truthfully — done, or terminal unavailable
   /// once the relay copy has expired.
+  Widget _buildDownloadableAudio() {
+    final l10n = AppLocalizations.of(context)!;
+    final durationMs = widget.attachment.durationMs ?? 0;
+    return Container(
+      key: ValueKey('pending-media-audio-${widget.attachment.id}'),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+      decoration: BoxDecoration(
+        color: const Color.fromRGBO(255, 255, 255, 0.04),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: const Color.fromRGBO(255, 255, 255, 0.08)),
+      ),
+      child: Row(
+        children: [
+          Semantics(
+            container: true,
+            label: l10n.media_download,
+            button: true,
+            child: IconButton(
+              key: ValueKey(
+                'pending-media-download-${widget.attachment.messageId}-${widget.attachment.id}',
+              ),
+              visualDensity: VisualDensity.compact,
+              iconSize: 22,
+              padding: EdgeInsets.zero,
+              constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
+              color: const Color(0xFF4ecdc4),
+              onPressed: widget.onRetryUnavailableMedia,
+              tooltip: l10n.media_download,
+              icon: const Icon(Icons.download_rounded),
+            ),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              durationMs > 0
+                  ? '${l10n.media_download} · ${formatDurationMs(durationMs)}'
+                  : l10n.media_download,
+              style: const TextStyle(
+                color: Color.fromRGBO(255, 255, 255, 0.66),
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildEvictedAudio() {
     final l10n = AppLocalizations.of(context)!;
     return Container(

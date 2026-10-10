@@ -210,6 +210,13 @@ class MediaGridCell extends StatelessWidget {
   bool get _isEvicted =>
       attachment.downloadStatus == kMediaDownloadStatusEvicted;
 
+  /// 414: a received item still `pending` (automatic download refused by the
+  /// user's settings, or not started yet) offers an explicit Download
+  /// instead of an endless loader. `downloading` keeps the loader.
+  bool get _canDownloadManually =>
+      onRetryUnavailableMedia != null &&
+      attachment.downloadStatus == kMediaDownloadStatusPending;
+
   Widget _buildContent(BuildContext context) {
     final isImage = attachment.mediaType == 'image';
     final isVideo = attachment.mediaType == 'video';
@@ -225,6 +232,10 @@ class MediaGridCell extends StatelessWidget {
 
     if (_showsUnavailableMedia) {
       return _buildUnavailablePlaceholder(context);
+    }
+
+    if ((isImage || isVideo) && _canDownloadManually) {
+      return _buildDownloadPlaceholder(context);
     }
 
     if ((isImage || isVideo) && !isDone) {
@@ -457,6 +468,30 @@ class MediaGridCell extends StatelessWidget {
   /// bounded time only, so the copy makes no cloud-style re-download
   /// promise — Retry attempts a transfer that settles truthfully (done or
   /// terminal unavailable).
+  Widget _buildDownloadPlaceholder(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
+    return Container(
+      color: const Color.fromRGBO(255, 255, 255, 0.03),
+      child: Center(
+        child: Semantics(
+          container: true,
+          label: l10n.media_download,
+          button: true,
+          child: IconButton(
+            key: ValueKey(
+              'pending-media-download-${attachment.messageId}-${attachment.id}',
+            ),
+            iconSize: 28,
+            color: const Color(0xFF4ecdc4),
+            onPressed: onRetryUnavailableMedia,
+            tooltip: l10n.media_download,
+            icon: const Icon(Icons.download_rounded),
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _buildEvictedPlaceholder(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
     return Container(

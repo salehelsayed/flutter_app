@@ -2110,5 +2110,6 @@
   "media_document_open_failed": "Could not open the file.",
   "media_document_no_viewer": "No app on this phone can open this file.",
   "media_document_only_pdf": "Only PDF files can be sent.",
-  "media_document_open": "Open document"
+  "media_document_open": "Open document",
+  "media_download": "Download"
 }
