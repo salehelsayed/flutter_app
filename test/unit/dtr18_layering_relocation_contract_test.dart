@@ -211,8 +211,12 @@ const _privacySha256 =
 // existing catch; the sole additional normalized-source change is `return await`.
 // Beta O4 (2026-10-08): the app shell also wraps its child in
 // FullScreenCallAccessSurface (one import, one wrapper); no lifecycle owner moves.
+// SE-41 T2a (2026-10-11): the builder wraps appChild in UpdateRequiredGate
+// inside ForegroundCallOverlay; MyApp gains an optional updateCheckController
+// and attaches an UpdateRequiredBackGuard after the call guard. Resume dispatch
+// to _onResumed is unchanged; the gate observes resume itself.
 const _applicationRootNormalizedSha256 =
-    '9a3b0b8cc7222248ddcd142370b6682d0db9f209b644ff5158375c1360d1348d';
+    '0618108eae41fc82a31ba6480eefab932990bd818bfc247cb52c79ae2336a15a';
 // Plan 358 forwards the strict local-path commit's `nowMs` sample through the
 // same already-wired delegate and relocates nothing. Plan 360 additionally
 // constructs the role-aware deferred-runtime-start owner over the SAME

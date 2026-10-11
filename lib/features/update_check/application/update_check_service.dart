@@ -55,6 +55,12 @@ class UpdateCheckService {
 
   bool get isEnabled => _switch.enabled && _platform != null;
 
+  /// The platform whose section this app reads, or null off iOS and Android.
+  UpdatePlatform? get platform => _platform;
+
+  /// The installed build number, shown on the hard overlay.
+  Future<String> installedBuildNumber() => _installedBuildNumber();
+
   /// Downloads, verifies and stores the version file, then decides.
   /// Concurrent calls share one run.
   Future<UpdateDecision> check() =>

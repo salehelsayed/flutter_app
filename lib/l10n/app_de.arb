@@ -1962,5 +1962,71 @@
   "media_document_no_viewer": "Keine App auf diesem Telefon kann diese Datei öffnen.",
   "media_document_only_pdf": "Nur PDF-Dateien können gesendet werden.",
   "media_document_open": "Dokument öffnen",
-  "media_download": "Herunterladen"
+  "media_download": "Herunterladen",
+  "update_required_title": "Update erforderlich",
+  "@update_required_title": {
+    "description": "TODO(SE-41 O3): placeholder copy; Rawi supplies the final DE text."
+  },
+  "update_required_body_general": "Diese Version von Mknoon wird nicht mehr unterstützt. Aktualisiere die App, um sie weiter zu nutzen.",
+  "@update_required_body_general": {
+    "description": "TODO(SE-41 O3): placeholder copy; Rawi supplies the final DE text."
+  },
+  "update_required_body_security": "Diese Version hat ein Sicherheitsproblem. Aktualisiere die App, um deine Chats zu schützen.",
+  "@update_required_body_security": {
+    "description": "TODO(SE-41 O3): placeholder copy; Rawi supplies the final DE text."
+  },
+  "update_required_body_protocol_change": "Mknoon verbindet sich jetzt anders mit deinen Kontakten. Aktualisiere die App, um weiter Nachrichten zu senden und zu empfangen.",
+  "@update_required_body_protocol_change": {
+    "description": "TODO(SE-41 O3): placeholder copy; Rawi supplies the final DE text."
+  },
+  "update_required_body_critical_fix": "Diese Version hat ein ernstes Problem, das die neue Version behebt. Aktualisiere die App, um Mknoon weiter zu nutzen.",
+  "@update_required_body_critical_fix": {
+    "description": "TODO(SE-41 O3): placeholder copy; Rawi supplies the final DE text."
+  },
+  "update_required_installed_build": "Deine Version: Build {build}",
+  "@update_required_installed_build": {
+    "description": "TODO(SE-41 O3): placeholder copy; Rawi supplies the final DE text.",
+    "placeholders": {
+      "build": {
+        "type": "String"
+      }
+    }
+  },
+  "update_required_minimum_build": "Erforderlich: Build {build} oder neuer",
+  "@update_required_minimum_build": {
+    "description": "TODO(SE-41 O3): placeholder copy; Rawi supplies the final DE text.",
+    "placeholders": {
+      "build": {
+        "type": "String"
+      }
+    }
+  },
+  "update_required_button": "Jetzt aktualisieren",
+  "@update_required_button": {
+    "description": "TODO(SE-41 O3): placeholder copy; Rawi supplies the final DE text."
+  },
+  "update_available_general": "Eine neue Version von Mknoon ist verfügbar.",
+  "@update_available_general": {
+    "description": "TODO(SE-41 O3): placeholder copy; Rawi supplies the final DE text."
+  },
+  "update_available_security": "Ein Sicherheitsupdate für Mknoon ist verfügbar.",
+  "@update_available_security": {
+    "description": "TODO(SE-41 O3): placeholder copy; Rawi supplies the final DE text."
+  },
+  "update_available_protocol_change": "Eine neue Version von Mknoon verbessert die Verbindung zu deinen Kontakten.",
+  "@update_available_protocol_change": {
+    "description": "TODO(SE-41 O3): placeholder copy; Rawi supplies the final DE text."
+  },
+  "update_available_critical_fix": "Eine neue Version von Mknoon behebt ein wichtiges Problem.",
+  "@update_available_critical_fix": {
+    "description": "TODO(SE-41 O3): placeholder copy; Rawi supplies the final DE text."
+  },
+  "update_available_action": "Aktualisieren",
+  "@update_available_action": {
+    "description": "TODO(SE-41 O3): placeholder copy; Rawi supplies the final DE text."
+  },
+  "update_available_dismiss": "Schließen",
+  "@update_available_dismiss": {
+    "description": "TODO(SE-41 O3): placeholder copy; Rawi supplies the final DE text."
+  }
 }

@@ -7069,6 +7069,90 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Download'**
   String get media_download;
+
+  /// TODO(SE-41 O3): placeholder copy; Rawi supplies the final EN text.
+  ///
+  /// In en, this message translates to:
+  /// **'Update required'**
+  String get update_required_title;
+
+  /// TODO(SE-41 O3): placeholder copy; Rawi supplies the final EN text.
+  ///
+  /// In en, this message translates to:
+  /// **'This version of Mknoon is no longer supported. Update the app to keep using it.'**
+  String get update_required_body_general;
+
+  /// TODO(SE-41 O3): placeholder copy; Rawi supplies the final EN text.
+  ///
+  /// In en, this message translates to:
+  /// **'This version has a security problem. Update the app to keep your chats safe.'**
+  String get update_required_body_security;
+
+  /// TODO(SE-41 O3): placeholder copy; Rawi supplies the final EN text.
+  ///
+  /// In en, this message translates to:
+  /// **'Mknoon now connects to your contacts in a new way. Update the app to keep sending and receiving messages.'**
+  String get update_required_body_protocol_change;
+
+  /// TODO(SE-41 O3): placeholder copy; Rawi supplies the final EN text.
+  ///
+  /// In en, this message translates to:
+  /// **'This version has a serious problem that the new version fixes. Update the app to keep using Mknoon.'**
+  String get update_required_body_critical_fix;
+
+  /// TODO(SE-41 O3): placeholder copy; Rawi supplies the final EN text.
+  ///
+  /// In en, this message translates to:
+  /// **'Your version: build {build}'**
+  String update_required_installed_build(String build);
+
+  /// TODO(SE-41 O3): placeholder copy; Rawi supplies the final EN text.
+  ///
+  /// In en, this message translates to:
+  /// **'Required: build {build} or newer'**
+  String update_required_minimum_build(String build);
+
+  /// TODO(SE-41 O3): placeholder copy; Rawi supplies the final EN text.
+  ///
+  /// In en, this message translates to:
+  /// **'Update now'**
+  String get update_required_button;
+
+  /// TODO(SE-41 O3): placeholder copy; Rawi supplies the final EN text.
+  ///
+  /// In en, this message translates to:
+  /// **'A new version of Mknoon is available.'**
+  String get update_available_general;
+
+  /// TODO(SE-41 O3): placeholder copy; Rawi supplies the final EN text.
+  ///
+  /// In en, this message translates to:
+  /// **'A security update for Mknoon is available.'**
+  String get update_available_security;
+
+  /// TODO(SE-41 O3): placeholder copy; Rawi supplies the final EN text.
+  ///
+  /// In en, this message translates to:
+  /// **'A new version of Mknoon improves how it connects to your contacts.'**
+  String get update_available_protocol_change;
+
+  /// TODO(SE-41 O3): placeholder copy; Rawi supplies the final EN text.
+  ///
+  /// In en, this message translates to:
+  /// **'A new version of Mknoon fixes an important problem.'**
+  String get update_available_critical_fix;
+
+  /// TODO(SE-41 O3): placeholder copy; Rawi supplies the final EN text.
+  ///
+  /// In en, this message translates to:
+  /// **'Update'**
+  String get update_available_action;
+
+  /// TODO(SE-41 O3): placeholder copy; Rawi supplies the final EN text.
+  ///
+  /// In en, this message translates to:
+  /// **'Dismiss'**
+  String get update_available_dismiss;
 }
 
 class _AppLocalizationsDelegate

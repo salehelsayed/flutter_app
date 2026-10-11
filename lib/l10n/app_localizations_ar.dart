@@ -4297,4 +4297,56 @@ class AppLocalizationsAr extends AppLocalizations {
 
   @override
   String get media_download => 'تنزيل';
+
+  @override
+  String get update_required_title => 'يلزم تحديث مكنون';
+
+  @override
+  String get update_required_body_general =>
+      'لم يعد هذا الإصدار من مكنون مدعومًا. حدّث التطبيق لتواصل استخدامه.';
+
+  @override
+  String get update_required_body_security =>
+      'في هذا الإصدار مشكلة أمنية. حدّث التطبيق لتبقى محادثاتك آمنة.';
+
+  @override
+  String get update_required_body_protocol_change =>
+      'يتصل مكنون الآن بجهات اتصالك بطريقة جديدة. حدّث التطبيق لتواصل إرسال الرسائل واستلامها.';
+
+  @override
+  String get update_required_body_critical_fix =>
+      'في هذا الإصدار مشكلة مهمة أصلحناها في الإصدار الجديد. حدّث التطبيق لتواصل استخدام مكنون.';
+
+  @override
+  String update_required_installed_build(String build) {
+    return 'إصدارك الحالي: $build';
+  }
+
+  @override
+  String update_required_minimum_build(String build) {
+    return 'الإصدار المطلوب: $build أو أحدث';
+  }
+
+  @override
+  String get update_required_button => 'حدّث الآن';
+
+  @override
+  String get update_available_general => 'يتوفر إصدار جديد من مكنون.';
+
+  @override
+  String get update_available_security => 'يتوفر تحديث أمني لمكنون.';
+
+  @override
+  String get update_available_protocol_change =>
+      'يتوفر إصدار جديد من مكنون يحسّن اتصاله بجهات اتصالك.';
+
+  @override
+  String get update_available_critical_fix =>
+      'يتوفر إصدار جديد من مكنون يصلح مشكلة مهمة.';
+
+  @override
+  String get update_available_action => 'تحديث';
+
+  @override
+  String get update_available_dismiss => 'إغلاق';
 }

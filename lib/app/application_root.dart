@@ -5,6 +5,10 @@ import 'package:flutter_app/features/call/application/foreground_call_capability
 import 'package:flutter_app/features/call/application/outgoing_call_capability.dart';
 import 'package:flutter_app/features/call/presentation/foreground_call_back_guard.dart';
 import 'package:flutter_app/features/call/presentation/foreground_call_overlay.dart';
+import 'package:flutter_app/features/update_check/application/update_check_controller.dart';
+import 'package:flutter_app/features/update_check/application/update_check_service.dart';
+import 'package:flutter_app/features/update_check/presentation/update_required_back_guard.dart';
+import 'package:flutter_app/features/update_check/presentation/update_required_gate.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_app/core/services/share_intent_model.dart';
 import 'package:flutter_app/core/services/share_intent_service.dart';
@@ -438,6 +442,10 @@ class MyApp extends StatefulWidget {
   /// and actual audio state without changing the retained navigation stack.
   final ForegroundCallCapability? foregroundCallCapability;
 
+  /// SE-41: the update check behind the hard overlay and the Orbit banner.
+  /// When null, the app builds one with the real defaults.
+  final UpdateCheckController? updateCheckController;
+
   /// 361: the restricted linked outbox drain (exact v113 rows only).
   final Future<int> Function()? drainDirectBlobFreeLinkedOutboxes;
 
@@ -634,6 +642,7 @@ class MyApp extends StatefulWidget {
     this.callTimelineSource,
     this.orbitCallActivitySource,
     this.foregroundCallCapability,
+    this.updateCheckController,
     this.drainDirectBlobFreeLinkedOutboxes,
     this.drainLinkedDirectMediaBlobCustody,
     this.drainLinkedGroupBootstrap,
@@ -758,6 +767,13 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
   // observer, so a live call surface is asked about Back first.
   final ForegroundCallBackGuard _foregroundCallBackGuard =
       ForegroundCallBackGuard();
+  // SE-41: attached right after the call guard, for the same reason. A live
+  // call hides the update overlay, so the two never block Back together.
+  final UpdateRequiredBackGuard _updateRequiredBackGuard =
+      UpdateRequiredBackGuard();
+  late final UpdateCheckController _updateCheckController =
+      widget.updateCheckController ??
+      UpdateCheckController(service: UpdateCheckService());
   late final AppVisibilityAuthority _appVisibilityAuthority;
   late final AppVisibilityRouteRegistry _appVisibilityRouteRegistry;
   // 362: the ONE linked-device authority bundle, threaded to every shell that
@@ -848,6 +864,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
   void initState() {
     super.initState();
     _foregroundCallBackGuard.attach();
+    _updateRequiredBackGuard.attach();
     assert(
       (widget.appVisibilityAuthority == null) ==
           (widget.appVisibilityRouteRegistry == null),
@@ -2292,6 +2309,10 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
     _appVisibilityAuthority.dispose();
     WidgetsBinding.instance.removeObserver(this);
     _foregroundCallBackGuard.detach();
+    _updateRequiredBackGuard.detach();
+    if (widget.updateCheckController == null) {
+      _updateCheckController.dispose();
+    }
     widget.disposePrivateMediaExpiryScheduler?.call();
 
     // Orderly teardown: retriers → listeners → router → service → bridge
@@ -3405,13 +3426,21 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
                     child: routedChild,
                   ),
           );
+          // SE-41 T2a: the hard update overlay covers every route, and sits
+          // inside the call overlay so a call surface stays on top of it.
+          final updateGate = UpdateRequiredGate(
+            controller: _updateCheckController,
+            callCapability: widget.foregroundCallCapability,
+            backGuard: _updateRequiredBackGuard,
+            child: appChild,
+          );
           final callSurface = ForegroundCallOverlay(
             capability: widget.foregroundCallCapability,
             onAttached: widget.onForegroundCallPresentationReady,
             backGuard: _foregroundCallBackGuard,
             loadContactDisplayName: (peerId) async =>
                 (await widget.contactRepository.getContact(peerId))?.username,
-            child: appChild,
+            child: updateGate,
           );
           return widget.debugE2EOverlayBuilder?.call(callSurface) ??
               callSurface;

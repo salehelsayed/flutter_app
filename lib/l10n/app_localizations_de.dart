@@ -4330,4 +4330,58 @@ class AppLocalizationsDe extends AppLocalizations {
 
   @override
   String get media_download => 'Herunterladen';
+
+  @override
+  String get update_required_title => 'Update erforderlich';
+
+  @override
+  String get update_required_body_general =>
+      'Diese Version von Mknoon wird nicht mehr unterstützt. Aktualisiere die App, um sie weiter zu nutzen.';
+
+  @override
+  String get update_required_body_security =>
+      'Diese Version hat ein Sicherheitsproblem. Aktualisiere die App, um deine Chats zu schützen.';
+
+  @override
+  String get update_required_body_protocol_change =>
+      'Mknoon verbindet sich jetzt anders mit deinen Kontakten. Aktualisiere die App, um weiter Nachrichten zu senden und zu empfangen.';
+
+  @override
+  String get update_required_body_critical_fix =>
+      'Diese Version hat ein ernstes Problem, das die neue Version behebt. Aktualisiere die App, um Mknoon weiter zu nutzen.';
+
+  @override
+  String update_required_installed_build(String build) {
+    return 'Deine Version: Build $build';
+  }
+
+  @override
+  String update_required_minimum_build(String build) {
+    return 'Erforderlich: Build $build oder neuer';
+  }
+
+  @override
+  String get update_required_button => 'Jetzt aktualisieren';
+
+  @override
+  String get update_available_general =>
+      'Eine neue Version von Mknoon ist verfügbar.';
+
+  @override
+  String get update_available_security =>
+      'Ein Sicherheitsupdate für Mknoon ist verfügbar.';
+
+  @override
+  String get update_available_protocol_change =>
+      'Eine neue Version von Mknoon verbessert die Verbindung zu deinen Kontakten.';
+
+  @override
+  String get update_available_critical_fix =>
+      'Eine neue Version von Mknoon behebt ein wichtiges Problem.';
+
+  @override
+  String get update_available_action => 'Aktualisieren';
+
+  @override
+  String get update_available_dismiss => 'Schließen';
 }

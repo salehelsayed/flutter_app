@@ -34,6 +34,7 @@ import 'package:flutter_app/features/orbit/presentation/widgets/orbit_intro_dock
 import 'package:flutter_app/features/orbit/presentation/widgets/friends_filter_toggle.dart';
 import 'package:flutter_app/features/orbit/presentation/widgets/swipeable_friend_row.dart';
 import 'package:flutter_app/features/orbit/presentation/widgets/archived_empty_state.dart';
+import 'package:flutter_app/features/update_check/presentation/update_available_banner.dart';
 
 @immutable
 class OrbitIntrosViewData {
@@ -752,7 +753,7 @@ class _OrbitScreenView extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final scaffold = Scaffold(
+    final orbitScaffold = Scaffold(
       backgroundColor: Colors.transparent,
       resizeToAvoidBottomInset: false,
       body: Stack(
@@ -1038,6 +1039,8 @@ class _OrbitScreenView extends StatelessWidget {
         ],
       ),
     );
+    // SE-41 T2b (O6): the soft update banner is a thin strip at the top.
+    final scaffold = UpdateAvailableBannerHost(child: orbitScaffold);
     final surface = visualTreatment == OrbitVisualTreatment.current
         ? AmbientBackground(
             preference: backgroundPreference,
