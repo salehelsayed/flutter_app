@@ -20,6 +20,12 @@ VERSION_NAME="${VERSION%%+*}"
 BUILD_NUMBER="${VERSION##*+}"
 note "PROVENANCE version=$VERSION name=$VERSION_NAME build=$BUILD_NUMBER sha=$(git rev-parse --short HEAD) branch=$(git rev-parse --abbrev-ref HEAD) dirty_files=$(git status --porcelain | wc -l | tr -d ' ') date=$(date '+%Y-%m-%d %H:%M:%S')"
 
+# SE-41: a store build must never ship with the update check turned off.
+if ! python3 scripts/check_update_check_release_defines.py \
+    --dart-define-from-file=tool/build/voice_call_release_defines.json; then
+  note "PLAY FAILED(release-guard: MKNOON_UPDATE_CHECK=off)"; exit 1
+fi
+
 AAB=build/app/outputs/bundle/release/app-release.aab
 rm -f "$AAB"
 FRESH_MARK=$(mktemp)

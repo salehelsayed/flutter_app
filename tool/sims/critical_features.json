@@ -7041,6 +7041,11 @@
       "critical": true
     },
     {
+      "path": "lib/features/update_check",
+      "capability": "host.dart.all",
+      "critical": true
+    },
+    {
       "path": "lib/core/bridge",
       "capability": "go.node.all",
       "critical": true

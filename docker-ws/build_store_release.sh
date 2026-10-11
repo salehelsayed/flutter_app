@@ -26,6 +26,12 @@ GIT_DIRTY=$(git status --porcelain | wc -l | tr -d ' ')
 FRESH_MARK=$(mktemp)
 
 note "PROVENANCE version=$VERSION name=$VERSION_NAME build=$BUILD_NUMBER sha=$GIT_SHA branch=$GIT_BRANCH dirty_files=$GIT_DIRTY date=$(date '+%Y-%m-%d %H:%M:%S')"
+# SE-41: a store build must never ship with the update check turned off.
+# (The iOS step repeats this check inside scripts/build_ios_appstore_ipa.sh.)
+if ! python3 scripts/check_update_check_release_defines.py \
+    --dart-define-from-file=tool/build/voice_call_release_defines.json; then
+  note "STORE FAILED(release-guard: MKNOON_UPDATE_CHECK=off)"; exit 1
+fi
 if [ "$GIT_DIRTY" != "0" ]; then
   note "WARNING dirty tree ($GIT_DIRTY files) — store artifacts will not match any commit exactly"
 fi

@@ -26,6 +26,8 @@ printf 'Building App Store Connect IPA with %s\n' "$EXPORT_PLIST"
 # Reserve a unique evidence directory before Flutter can overwrite shared output.
 # Argument values are hashed by the helper, so defines cannot leak into metadata.
 set -- --release --export-options-plist="$EXPORT_PLIST" --dart-define-from-file="$ROOT_DIR/tool/build/voice_call_release_defines.json" "$@"
+# SE-41: a store archive must never ship with the update check turned off.
+python3 "$ROOT_DIR/scripts/check_update_check_release_defines.py" "$@"
 capture_dir="$(python3 "$ROOT_DIR/scripts/ios_build_provenance.py" begin --root "$ROOT_DIR" -- "$@")"
 (
   cd "$ROOT_DIR"

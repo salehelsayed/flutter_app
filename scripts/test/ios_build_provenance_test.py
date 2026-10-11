@@ -305,6 +305,11 @@ class IosBuildProvenanceTest(unittest.TestCase):
         scripts.mkdir()
         entrypoint = scripts / "build_ios_appstore_ipa.sh"
         entrypoint.write_bytes((Path(__file__).resolve().parents[1] / entrypoint.name).read_bytes())
+        # SE-41 release guard: the entrypoint runs it before any build step.
+        guard = scripts / "check_update_check_release_defines.py"
+        guard.write_bytes((Path(__file__).resolve().parents[1] / guard.name).read_bytes())
+        (self.root / "tool/build").mkdir(parents=True)
+        (self.root / "tool/build/voice_call_release_defines.json").write_text("{}")
         (self.root / "ios").mkdir()
         (self.root / "ios/ExportOptions-AppStore.plist").write_bytes(plistlib.dumps({"method": "app-store-connect"}))
         helper = scripts / "ios_build_provenance.py"

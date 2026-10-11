@@ -2150,7 +2150,7 @@
     "production-notification-sound": {
       "kind": "sims",
       "capability": "production.notification_sound",
-      "boundary": "Production S1\u2013S16 sound request, real visibility, encrypted media projection and native OS disposition with S15 control",
+      "boundary": "Production S1–S16 sound request, real visibility, encrypted media projection and native OS disposition with S15 control",
       "timeout_seconds": 7200,
       "estimated_seconds": null,
       "requirements": [
@@ -4674,6 +4674,44 @@
         "integration_test/maestro/production_catalog_remove_charlie.yaml"
       ],
       "host_preflight": "production-group-removed-reaction"
+    },
+    "update-check": {
+      "kind": "flutter",
+      "paths": [
+        "test/features/update_check/"
+      ],
+      "boundary": "SE-41 update check core: Ed25519 envelope verification (RFC 8032 vectors), payload rules, sequence and key-rank ratchet, decision, schedule, kill switch, atomic state file, HTTPS fetch limits against a local TLS server, and the signing CLI round trip",
+      "limitations": "Host only with test-only keys and a self-signed localhost certificate; no real version-file host, no production keys, no UI (T2) and no device or signed build",
+      "timeout_seconds": 900,
+      "estimated_seconds": null,
+      "requirements": [
+        "flutter"
+      ],
+      "investigate": [
+        "lib/features/update_check/",
+        "tool/sign_version_file.dart"
+      ],
+      "inspected": true
+    },
+    "update-check-release-guard": {
+      "kind": "python",
+      "paths": [
+        "scripts/test/check_update_check_release_defines_test.py"
+      ],
+      "boundary": "Store build scripts refuse MKNOON_UPDATE_CHECK=off from --dart-define, define files or the environment",
+      "limitations": "Runs the guard on synthetic arguments and checks that the release scripts call it; does not build an IPA or AAB",
+      "timeout_seconds": 120,
+      "estimated_seconds": null,
+      "requirements": [
+        "python3"
+      ],
+      "investigate": [
+        "scripts/check_update_check_release_defines.py",
+        "scripts/build_ios_appstore_ipa.sh",
+        "docker-ws/build_store_release.sh",
+        "docker-ws/build_play_aab.sh"
+      ],
+      "inspected": true
     }
   },
   "areas": [
@@ -6199,6 +6237,24 @@
         "production-audio-harness-contract"
       ],
       "why": "Shared prepared XCTest consumers must reject incompatible source/configuration/artifact identities, incomplete exact method receipts and fixture reuse; original fresh-build routes remain retained."
+    },
+    {
+      "id": "update-check",
+      "patterns": [
+        "lib/features/update_check/*",
+        "test/features/update_check/*",
+        "tool/sign_version_file.dart",
+        "scripts/check_update_check_release_defines.py",
+        "scripts/test/check_update_check_release_defines_test.py",
+        "scripts/build_ios_appstore_ipa.sh",
+        "docker-ws/build_store_release.sh",
+        "docker-ws/build_play_aab.sh"
+      ],
+      "checks": [
+        "update-check",
+        "update-check-release-guard"
+      ],
+      "why": "SE-41 in-app update check: the verifier is shared by the app and the signing CLI, and the store build scripts must keep the kill switch on"
     }
   ],
   "documentation_only": [
