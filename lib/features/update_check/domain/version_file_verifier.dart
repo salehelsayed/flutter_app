@@ -276,7 +276,8 @@ Uint8List encodeVersionEnvelope({
 
 /// What step 7 does with a verified file.
 enum VersionFileRatchet {
-  /// Store it: new highest rank, or a higher sequence in the same rank.
+  /// Store it: new highest rank, a higher sequence in the same rank, or the
+  /// same rank and sequence when no envelope is stored.
   accept,
 
   /// Same rank, same sequence, byte-identical payload: only lastCheckAt moves.
@@ -301,6 +302,11 @@ VersionFileRatchet decideVersionFileRatchet({
   }
   final sequence = candidate.payload.sequence;
   if (sequence > storedSequence) return VersionFileRatchet.accept;
+  // The stored envelope was dropped (a retired key, corrupt bytes) but its rank
+  // and sequence stay. The same rank and sequence is no rollback: take it.
+  if (sequence == storedSequence && storedPayloadBytes == null) {
+    return VersionFileRatchet.accept;
+  }
   if (sequence == storedSequence &&
       storedPayloadBytes != null &&
       _bytesEqual(candidate.payloadBytes, storedPayloadBytes)) {

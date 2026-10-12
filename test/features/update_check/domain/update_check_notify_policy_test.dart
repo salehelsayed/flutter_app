@@ -71,6 +71,43 @@ void main() {
     expect(state.hardReminderCount, 12);
   });
 
+  test('F1: a lowered minBuild stays in the episode and keeps the schedule', () {
+    // 12 reminders already sent for minBuild 118; the publisher lowers it.
+    var state = UpdateCheckState(
+      notifiedHardMinBuild: 118,
+      hardReminderCount: 12,
+      lastHardNotifyAt: t0,
+    );
+    const lowered = UpdateDecisionHard(
+      minBuild: 115,
+      reasonCode: UpdateReasonCode.general,
+    );
+    final posted = <int>[];
+    for (var hour = 1; hour <= 24 * 30; hour++) {
+      final now = t0.add(Duration(hours: hour));
+      final result = plan(lowered, state, now);
+      if (result is UpdateNotifyPlanPost) {
+        // The store keeps the higher tuple; the record must win against it.
+        state = UpdateCheckState.merge(state, result.record(state));
+        posted.add(hour ~/ 24);
+      }
+    }
+    expect(posted, [7, 14, 21, 28], reason: 'weekly, not every run');
+    expect(state.notifiedHardMinBuild, 118);
+    // A higher minBuild still starts over at once.
+    expect(
+      plan(
+        const UpdateDecisionHard(
+          minBuild: 120,
+          reasonCode: UpdateReasonCode.general,
+        ),
+        state,
+        t0.add(const Duration(days: 28, hours: 1)),
+      ),
+      isA<UpdateNotifyPlanPost>(),
+    );
+  });
+
   test('hard: a clock that went back is due', () {
     final state = UpdateCheckState(
       notifiedHardMinBuild: 115,

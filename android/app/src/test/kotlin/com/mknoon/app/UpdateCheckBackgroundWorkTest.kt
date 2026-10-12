@@ -90,6 +90,64 @@ class UpdateCheckBackgroundWorkTest {
     }
 
     @Test
+    fun `F3 a claimed headless engine defers even before it takes the lease`() {
+        val released = snapshot(CanonicalRuntimeLeaseBroker.State.RELEASED)
+        assertEquals(
+            UpdateCheckRoute.DEFER,
+            routeUpdateCheckRun(released, null, headlessEngineClaimed = true),
+        )
+        assertEquals(
+            UpdateCheckRoute.MINIMAL_ENGINE,
+            routeUpdateCheckRun(released, null, headlessEngineClaimed = false),
+        )
+        assertFalse(isHeadlessEngineClaimed())
+    }
+
+    @Test
+    fun `F3 the minimal engine re-checks everything right before posting`() {
+        val released = snapshot(CanonicalRuntimeLeaseBroker.State.RELEASED)
+        assertTrue(minimalEngineMayPost(released, null, headlessEngineClaimed = false, inCall = false))
+        // A call started during the run.
+        assertFalse(minimalEngineMayPost(released, null, headlessEngineClaimed = false, inCall = true))
+        // A headless call engine appeared.
+        assertFalse(minimalEngineMayPost(released, null, headlessEngineClaimed = true, inCall = false))
+        // The user opened the app: a main engine registered and/or took the lease.
+        assertFalse(
+            minimalEngineMayPost(released, FakeHandoff("foreground-1", emptyMap()), false, false),
+        )
+        assertFalse(
+            minimalEngineMayPost(
+                snapshot(
+                    CanonicalRuntimeLeaseBroker.State.ACTIVE,
+                    "foreground-1",
+                    CanonicalRuntimeLeaseBroker.Role.FOREGROUND,
+                ),
+                null,
+                false,
+                false,
+            ),
+        )
+        val source = File("src/main/kotlin/com/mknoon/app/UpdateCheckBackgroundWork.kt").readText()
+        val runner = source.substringAfter("private class FlutterUpdateCheckMinimalEngineRunner")
+        assertTrue(runner.contains("mayPost && postFromArguments("))
+    }
+
+    @Test
+    fun `F3 a claimed headless engine defers the whole run`() = runBlocking {
+        var ran = false
+        val execution = UpdateCheckWorkExecution(
+            leaseSnapshot = { snapshot(CanonicalRuntimeLeaseBroker.State.RELEASED) },
+            registeredMainEngine = { null },
+            headlessEngineClaimed = { true },
+            handoffRunner = { error("no handoff expected") },
+            minimalEngineRunner = { UpdateCheckRunner { ran = true; null } },
+            scheduler = UpdateCheckWorkScheduler(RecordingEnqueuer()),
+        )
+        assertEquals(UpdateCheckWorkOutcome.DEFERRED, execution.execute(request))
+        assertFalse(ran)
+    }
+
+    @Test
     fun `switch on schedules one unique periodic work, switch off only cancels`() {
         val enqueuer = RecordingEnqueuer()
         val scheduler = UpdateCheckWorkScheduler(enqueuer)
@@ -152,6 +210,7 @@ class UpdateCheckBackgroundWorkTest {
         val execution = UpdateCheckWorkExecution(
             leaseSnapshot = { broker.snapshot() },
             registeredMainEngine = { null },
+            headlessEngineClaimed = { false },
             handoffRunner = { error("no handoff expected") },
             minimalEngineRunner = {
                 UpdateCheckRunner { mapOf("outcome" to "notified", "enabled" to true) }
@@ -279,6 +338,7 @@ class UpdateCheckBackgroundWorkTest {
     ) = UpdateCheckWorkExecution(
         leaseSnapshot = { lease },
         registeredMainEngine = { mainEngine },
+        headlessEngineClaimed = { false },
         handoffRunner = { handoff ->
             UpdateCheckRunner { req ->
                 val reply = CompletableDeferred<Map<*, *>?>()

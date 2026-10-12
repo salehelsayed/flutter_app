@@ -69,7 +69,12 @@ internal enum class UpdateCheckRoute {
 internal fun routeUpdateCheckRun(
     lease: CanonicalRuntimeLeaseBroker.Snapshot,
     registeredMainEngineOwnerId: String?,
+    headlessEngineClaimed: Boolean = false,
 ): UpdateCheckRoute {
+    // A headless call-admission or recovery engine exists, maybe before it
+    // takes the lease (T4a review F3): never a third engine, never a post
+    // while a call may be ringing.
+    if (headlessEngineClaimed) return UpdateCheckRoute.DEFER
     if (
         lease.state == CanonicalRuntimeLeaseBroker.State.ACTIVE &&
         lease.role == CanonicalRuntimeLeaseBroker.Role.FOREGROUND &&
@@ -217,6 +222,7 @@ internal enum class UpdateCheckWorkOutcome {
 internal class UpdateCheckWorkExecution(
     private val leaseSnapshot: () -> CanonicalRuntimeLeaseBroker.Snapshot,
     private val registeredMainEngine: () -> UpdateCheckMainEngineHandoff?,
+    private val headlessEngineClaimed: () -> Boolean,
     private val handoffRunner: (UpdateCheckMainEngineHandoff) -> UpdateCheckRunner,
     private val minimalEngineRunner: () -> UpdateCheckRunner,
     private val scheduler: UpdateCheckWorkScheduler,
@@ -224,7 +230,12 @@ internal class UpdateCheckWorkExecution(
 ) {
     suspend fun execute(request: UpdateCheckRunRequest): UpdateCheckWorkOutcome {
         val mainEngine = registeredMainEngine()
-        val runner = when (routeUpdateCheckRun(leaseSnapshot(), mainEngine?.ownerId)) {
+        val route = routeUpdateCheckRun(
+            leaseSnapshot(),
+            mainEngine?.ownerId,
+            headlessEngineClaimed(),
+        )
+        val runner = when (route) {
             UpdateCheckRoute.HANDOFF -> handoffRunner(mainEngine!!)
             UpdateCheckRoute.MINIMAL_ENGINE -> minimalEngineRunner()
             UpdateCheckRoute.DEFER -> return UpdateCheckWorkOutcome.DEFERRED
@@ -247,6 +258,7 @@ internal class UpdateCheckWorker(
         val execution = UpdateCheckWorkExecution(
             leaseSnapshot = { ProcessCanonicalRuntimeLease.broker.snapshot() },
             registeredMainEngine = { UpdateCheckMainEngineRegistry.current() },
+            headlessEngineClaimed = ::isHeadlessEngineClaimed,
             handoffRunner = { handoff -> MainEngineUpdateCheckRunner(handoff) },
             minimalEngineRunner = { FlutterUpdateCheckMinimalEngineRunner(applicationContext) },
             scheduler = UpdateCheckWorkScheduler(applicationContext),
@@ -266,6 +278,26 @@ internal class UpdateCheckWorker(
         }
     }
 }
+
+internal fun isHeadlessEngineClaimed(): Boolean =
+    com.mknoon.app.call.isHeadlessCallAdmissionEngineClaimed() ||
+        isHeadlessCanonicalRecoveryEngineClaimed()
+
+/**
+ * The minimal engine posts only if, right now, it is still alone: lease free,
+ * no main engine (so not in the foreground), no headless engine, no call.
+ * Checked again at post time because the run lasts up to 20 s (T4a F3).
+ */
+internal fun minimalEngineMayPost(
+    lease: CanonicalRuntimeLeaseBroker.Snapshot,
+    registeredMainEngine: UpdateCheckMainEngineHandoff?,
+    headlessEngineClaimed: Boolean,
+    inCall: Boolean,
+): Boolean =
+    lease.state == CanonicalRuntimeLeaseBroker.State.RELEASED &&
+        registeredMainEngine == null &&
+        !headlessEngineClaimed &&
+        !inCall
 
 /** The same number package_info_plus reports as the build number. */
 internal fun installedBuildNumber(context: Context): String = runCatching {
@@ -392,7 +424,17 @@ private class FlutterUpdateCheckMinimalEngineRunner(
                     UpdateCheckBackgroundWork.CHANNEL_NAME,
                 ).setMethodCallHandler { call, result ->
                     when (call.method) {
-                        "notify" -> result.success(postFromArguments(applicationContext, call.arguments))
+                        "notify" -> {
+                            val mayPost = minimalEngineMayPost(
+                                lease = ProcessCanonicalRuntimeLease.broker.snapshot(),
+                                registeredMainEngine = UpdateCheckMainEngineRegistry.current(),
+                                headlessEngineClaimed = isHeadlessEngineClaimed(),
+                                inCall = isDeviceInCall(applicationContext),
+                            )
+                            result.success(
+                                mayPost && postFromArguments(applicationContext, call.arguments),
+                            )
+                        }
                         "complete" -> {
                             result.success(null)
                             completion.complete(call.arguments as? Map<*, *>)

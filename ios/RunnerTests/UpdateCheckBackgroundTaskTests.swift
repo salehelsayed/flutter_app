@@ -18,6 +18,7 @@ final class UpdateCheckBackgroundTaskTests: XCTestCase {
     var handler: ((UpdateCheckRefreshTask) -> Void)?
     var submitted: [(String, Date)] = []
     var cancelled: [String] = []
+    var pending = false
 
     func register(identifier: String, handler: @escaping (UpdateCheckRefreshTask) -> Void) -> Bool {
       self.handler = handler
@@ -31,6 +32,17 @@ final class UpdateCheckBackgroundTaskTests: XCTestCase {
     func cancel(identifier: String) {
       cancelled.append(identifier)
     }
+
+    func hasPendingRequest(identifier: String, completion: @escaping (Bool) -> Void) {
+      completion(pending)
+    }
+  }
+
+  /// configure(true) submits on the main queue after the pending check.
+  private func drainMain() {
+    let done = expectation(description: "main")
+    DispatchQueue.main.async { done.fulfill() }
+    wait(for: [done], timeout: 2)
   }
 
   private var defaults: UserDefaults!
@@ -50,6 +62,7 @@ final class UpdateCheckBackgroundTaskTests: XCTestCase {
   private func coordinator(
     scheduler: FakeScheduler,
     budget: TimeInterval = 5,
+    engineWait: TimeInterval = 5,
     inCall: Bool = false
   ) -> UpdateCheckBackgroundCoordinator {
     UpdateCheckBackgroundCoordinator(
@@ -57,6 +70,7 @@ final class UpdateCheckBackgroundTaskTests: XCTestCase {
       defaults: defaults,
       isInCall: { inCall },
       budget: budget,
+      engineWait: engineWait,
       queue: .main,
       now: { Date(timeIntervalSince1970: 1_000_000) }
     )
@@ -77,6 +91,7 @@ final class UpdateCheckBackgroundTaskTests: XCTestCase {
     let subject = coordinator(scheduler: scheduler)
     XCTAssertTrue(subject.registerLaunchHandler())
     subject.configure(enabled: true)
+    drainMain()
     XCTAssertEqual(scheduler.submitted.map(\.0), ["com.mknoon.app.update-check"])
     XCTAssertEqual(
       scheduler.submitted[0].1,
@@ -137,6 +152,40 @@ final class UpdateCheckBackgroundTaskTests: XCTestCase {
     XCTAssertEqual(sent?["inCall"] as? Bool, true)
     XCTAssertEqual(sent?["budgetMs"] as? Int, 22_000)
     XCTAssertEqual(task.completions, [true])
+  }
+
+  func testF6ConfigureDoesNotPushAPendingRequestBack() {
+    let scheduler = FakeScheduler()
+    let subject = coordinator(scheduler: scheduler)
+    scheduler.pending = true
+    // A daily user: every launch calls configure(true).
+    for _ in 0..<5 { subject.configure(enabled: true) }
+    drainMain()
+    XCTAssertTrue(scheduler.submitted.isEmpty, "a pending request keeps its date")
+
+    scheduler.pending = false
+    subject.configure(enabled: true)
+    drainMain()
+    XCTAssertEqual(scheduler.submitted.count, 1)
+  }
+
+  func testF7NoEngineCompletesFalseEarlyAndDropsTheQueuedRun() throws {
+    let scheduler = FakeScheduler()
+    let subject = coordinator(scheduler: scheduler, budget: 5, engineWait: 0.05)
+    subject.registerLaunchHandler()
+    let task = FakeTask()
+    try XCTUnwrap(scheduler.handler)(task)
+
+    let waited = expectation(description: "engine wait")
+    DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { waited.fulfill() }
+    wait(for: [waited], timeout: 2)
+    XCTAssertEqual(task.completions, [false], "completed early, once")
+
+    // The engine comes up later: the dropped run must not fire.
+    var calls: [String] = []
+    subject.attach { method, _, _ in calls.append(method) }
+    XCTAssertTrue(calls.isEmpty)
+    XCTAssertEqual(task.completions, [false])
   }
 
   func testKillSwitchOffCancelsAndStopsRescheduling() throws {

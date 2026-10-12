@@ -83,8 +83,8 @@ UpdateNotifyCopy updateNotifyCopyFor(UpdateReasonCode code) =>
     : UpdateNotifyCopy.general;
 
 /// Soft (installed < latestBuild): once per latestBuild.
-/// Hard (installed < minBuild): once, then daily x7, then weekly; a higher
-/// minBuild starts over. A clock that went back (now < lastHardNotifyAt)
+/// Hard (installed < minBuild): once, then daily x7, then weekly; only a
+/// higher minBuild starts over. A clock that went back (now < lastHardNotifyAt)
 /// makes the reminder due. Never in the foreground or during a call.
 UpdateNotifyPlan planUpdateNotification({
   required UpdateDecision decision,
@@ -112,7 +112,12 @@ UpdateNotifyPlan planUpdateNotification({
         record: (s) => s.copyWith(notifiedSoftLatestBuild: latestBuild),
       );
     case UpdateDecisionHard(:final minBuild, :final reasonCode):
-      final sameEpisode = state.notifiedHardMinBuild == minBuild;
+      // Only a HIGHER minBuild starts a new episode. A lowered minBuild stays
+      // in the stored episode: the store merges the hard fields by max, so a
+      // record for a lower minBuild would be dropped and every run would post.
+      final notified = state.notifiedHardMinBuild;
+      final sameEpisode = notified != null && notified >= minBuild;
+      final episode = sameEpisode ? notified : minBuild;
       final count = sameEpisode ? state.hardReminderCount : 0;
       final last = sameEpisode ? state.lastHardNotifyAt : null;
       if (count > 0 && last != null && !_hardReminderDue(count, last, now)) {
@@ -122,7 +127,7 @@ UpdateNotifyPlan planUpdateNotification({
         kind: UpdateNotifyKind.hard,
         copy: updateNotifyCopyFor(reasonCode),
         record: (s) => s.copyWith(
-          notifiedHardMinBuild: minBuild,
+          notifiedHardMinBuild: episode,
           hardReminderCount: count + 1,
           lastHardNotifyAt: now,
         ),

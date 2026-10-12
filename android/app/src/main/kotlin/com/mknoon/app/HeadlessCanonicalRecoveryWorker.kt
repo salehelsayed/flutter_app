@@ -559,9 +559,14 @@ internal class HeadlessCanonicalRecoveryWorker(
 }
 
 /** Prevents a timeout retry from constructing a second engine over a retained owner. */
+/** SE-41 T4a: the update-check worker defers while this engine exists. */
+internal fun isHeadlessCanonicalRecoveryEngineClaimed(): Boolean = ProcessHeadlessCanonicalRecoveryEngine.isClaimed()
+
 private object ProcessHeadlessCanonicalRecoveryEngine {
     private val lock = Any()
     private var owner: FlutterHeadlessCanonicalRecoveryEngineRunner? = null
+
+    fun isClaimed(): Boolean = synchronized(lock) { owner != null }
 
     fun claim(candidate: FlutterHeadlessCanonicalRecoveryEngineRunner): Boolean =
         synchronized(lock) {

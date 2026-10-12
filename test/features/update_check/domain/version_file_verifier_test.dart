@@ -332,6 +332,30 @@ void main() {
       );
     });
 
+    test('F2: same rank and sequence with no stored envelope is accepted', () {
+      // The envelope was dropped (retired key, corrupt bytes); rank and
+      // sequence stayed. Re-downloading that same file must restore the gate.
+      expect(
+        decideVersionFileRatchet(
+          candidate: file(5, latest: 130),
+          highestAcceptedRank: 1,
+          storedSequence: 5,
+          storedPayloadBytes: null,
+        ),
+        VersionFileRatchet.accept,
+      );
+      // A lower sequence is still a rollback.
+      expect(
+        decideVersionFileRatchet(
+          candidate: file(4),
+          highestAcceptedRank: 1,
+          storedSequence: 5,
+          storedPayloadBytes: null,
+        ),
+        VersionFileRatchet.ignore,
+      );
+    });
+
     test('a higher rank accepts any sequence (fresh start)', () {
       expect(
         decideVersionFileRatchet(

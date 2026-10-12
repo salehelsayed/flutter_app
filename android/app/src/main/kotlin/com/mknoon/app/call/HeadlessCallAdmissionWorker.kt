@@ -801,9 +801,14 @@ internal class HeadlessCallAdmissionWorker(
 }
 
 /** One retained owner prevents a timeout from starting a successor engine. */
+/** SE-41 T4a: the update-check worker defers while this engine exists. */
+internal fun isHeadlessCallAdmissionEngineClaimed(): Boolean = ProcessHeadlessCallAdmissionEngine.isClaimed()
+
 private object ProcessHeadlessCallAdmissionEngine {
     private val lock = Any()
     private var owner: FlutterHeadlessCallAdmissionEngineRunner? = null
+
+    fun isClaimed(): Boolean = synchronized(lock) { owner != null }
 
     fun claim(candidate: FlutterHeadlessCallAdmissionEngineRunner): Boolean =
         synchronized(lock) {

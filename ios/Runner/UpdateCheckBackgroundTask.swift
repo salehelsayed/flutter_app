@@ -3,6 +3,7 @@ import CallKit
 import Flutter
 import Foundation
 import UserNotifications
+import os.log
 
 /// SE-41 T4a: calls a BG task's completion exactly once, whichever comes
 /// first: the Dart reply, the expiration handler or the native budget.
@@ -48,6 +49,7 @@ protocol UpdateCheckTaskScheduling {
   func register(identifier: String, handler: @escaping (UpdateCheckRefreshTask) -> Void) -> Bool
   func submit(identifier: String, earliestBeginDate: Date) throws
   func cancel(identifier: String)
+  func hasPendingRequest(identifier: String, completion: @escaping (Bool) -> Void)
 }
 
 struct SystemUpdateCheckTaskScheduler: UpdateCheckTaskScheduling {
@@ -69,6 +71,12 @@ struct SystemUpdateCheckTaskScheduler: UpdateCheckTaskScheduling {
 
   func cancel(identifier: String) {
     BGTaskScheduler.shared.cancel(taskRequestWithIdentifier: identifier)
+  }
+
+  func hasPendingRequest(identifier: String, completion: @escaping (Bool) -> Void) {
+    BGTaskScheduler.shared.getPendingTaskRequests { requests in
+      completion(requests.contains { $0.identifier == identifier })
+    }
   }
 }
 
@@ -94,6 +102,10 @@ final class UpdateCheckBackgroundCoordinator {
   static let refreshInterval: TimeInterval = 12 * 60 * 60
   static let nativeBudget: TimeInterval = 25
   static let dartBudgetMs = 22_000
+  /// A run asked for before the Flutter engine exists waits this long, then
+  /// completes false (T4a F7): under UIScene a background launch may never
+  /// create the engine.
+  static let engineWait: TimeInterval = 5
   static let enabledDefaultsKey = "se41.updateCheck.backgroundEnabled"
   static let notificationKindKey = "mknoon_update_check"
 
@@ -103,17 +115,19 @@ final class UpdateCheckBackgroundCoordinator {
   private let defaults: UserDefaults
   private let isInCall: () -> Bool
   private let budget: TimeInterval
+  private let engineWait: TimeInterval
   private let queue: DispatchQueue
   private let now: () -> Date
   private var channel: FlutterMethodChannel?
   private var invoker: DartInvoker?
-  private var pending: [(DartInvoker) -> Void] = []
+  private var pending: [(id: UUID, work: (DartInvoker) -> Void)] = []
 
   init(
     scheduler: UpdateCheckTaskScheduling = SystemUpdateCheckTaskScheduler(),
     defaults: UserDefaults = .standard,
     isInCall: @escaping () -> Bool = UpdateCheckBackgroundCoordinator.systemHasCall,
     budget: TimeInterval = UpdateCheckBackgroundCoordinator.nativeBudget,
+    engineWait: TimeInterval = UpdateCheckBackgroundCoordinator.engineWait,
     queue: DispatchQueue = .main,
     now: @escaping () -> Date = Date.init
   ) {
@@ -121,6 +135,7 @@ final class UpdateCheckBackgroundCoordinator {
     self.defaults = defaults
     self.isInCall = isInCall
     self.budget = budget
+    self.engineWait = engineWait
     self.queue = queue
     self.now = now
   }
@@ -157,7 +172,7 @@ final class UpdateCheckBackgroundCoordinator {
     self.invoker = invoker
     let waiting = pending
     pending.removeAll()
-    waiting.forEach { $0(invoker) }
+    waiting.forEach { $0.work(invoker) }
   }
 
   func handle(task: UpdateCheckRefreshTask) {
@@ -166,30 +181,40 @@ final class UpdateCheckBackgroundCoordinator {
       task.setTaskCompleted(success: success)
     }
     task.expirationHandler = {
-      NSLog("[SE41_UPDATE_CHECK] bg_task expired")
+      Self.log("bg_task expired")
       gate.finish(success: false)
     }
     queue.asyncAfter(deadline: .now() + budget) {
       if gate.finish(success: false) {
-        NSLog("[SE41_UPDATE_CHECK] bg_task budget_exhausted")
+        Self.log("bg_task budget_exhausted")
       }
     }
-    NSLog("[SE41_UPDATE_CHECK] bg_task started")
-    runInDart(reason: "ios_bg_app_refresh") { result in
+    Self.log("bg_task started")
+    let queuedId = runInDart(reason: "ios_bg_app_refresh") { result in
       let outcome = result?["outcome"] as? String ?? "no_reply"
       if gate.finish(success: result != nil) {
-        NSLog("[SE41_UPDATE_CHECK] bg_task completed outcome=%@", outcome)
+        Self.log("bg_task completed outcome=\(outcome)")
       }
+    }
+    guard let queuedId else { return }
+    queue.asyncAfter(deadline: .now() + engineWait) { [weak self] in
+      guard let self, self.invoker == nil else { return }
+      // Drop the queued run so it cannot fire later, after the task ended.
+      self.pending.removeAll { $0.id == queuedId }
+      Self.log("update-check: no engine")
+      gate.finish(success: false)
     }
   }
 
-  func runInDart(reason: String, completion: @escaping ([String: Any]?) -> Void) {
+  /// Returns the id of the queued work when no engine is attached yet.
+  @discardableResult
+  func runInDart(reason: String, completion: @escaping ([String: Any]?) -> Void) -> UUID? {
     let arguments: [String: Any] = [
       "reason": reason,
       "budgetMs": Self.dartBudgetMs,
       "inCall": isInCall(),
     ]
-    withInvoker { invoke in
+    return withInvoker { invoke in
       invoke("run", arguments) { [weak self] reply in
         let result = reply as? [String: Any]
         if result?["enabled"] as? Bool == false { self?.configure(enabled: false) }
@@ -203,7 +228,14 @@ final class UpdateCheckBackgroundCoordinator {
   func configure(enabled: Bool) {
     defaults.set(enabled, forKey: Self.enabledDefaultsKey)
     if enabled {
-      scheduleNext()
+      // Every launch calls configure. Re-submitting would move the earliest
+      // begin date 12 h ahead each time, so a daily user would never get a
+      // run (T4a F6). Submit only when nothing is pending; each run still
+      // reschedules itself at its start.
+      scheduler.hasPendingRequest(identifier: Self.taskIdentifier) { [weak self] pending in
+        guard !pending else { return }
+        DispatchQueue.main.async { self?.scheduleNext() }
+      }
     } else {
       scheduler.cancel(identifier: Self.taskIdentifier)
     }
@@ -217,7 +249,7 @@ final class UpdateCheckBackgroundCoordinator {
       )
     } catch {
       // Simulator, Background App Refresh off, or too many pending requests.
-      NSLog("[SE41_UPDATE_CHECK] bg_task submit_failed %@", String(describing: error))
+      Self.log("bg_task submit_failed \(error.localizedDescription)")
     }
   }
 
@@ -235,12 +267,15 @@ final class UpdateCheckBackgroundCoordinator {
     }
   }
 
-  private func withInvoker(_ work: @escaping (DartInvoker) -> Void) {
+  @discardableResult
+  private func withInvoker(_ work: @escaping (DartInvoker) -> Void) -> UUID? {
     if let invoker {
       work(invoker)
-    } else {
-      pending.append(work)
+      return nil
     }
+    let id = UUID()
+    pending.append((id: id, work: work))
+    return id
   }
 
   private func handle(call: FlutterMethodCall, result: @escaping FlutterResult) {
@@ -293,6 +328,12 @@ final class UpdateCheckBackgroundCoordinator {
       let request = UNNotificationRequest(identifier: identifier, content: content, trigger: nil)
       center.add(request) { error in completion(error == nil) }
     }
+  }
+
+  /// Public os_log: a release build hides NSLog text on the device. The text
+  /// carries no user data, only the step and the outcome.
+  static func log(_ message: String) {
+    os_log("%{public}@", log: .default, type: .default, "[SE41_UPDATE_CHECK] \(message)")
   }
 
   /// Never asks: only an existing grant counts.

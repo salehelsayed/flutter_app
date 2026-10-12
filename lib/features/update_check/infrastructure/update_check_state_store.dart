@@ -39,8 +39,12 @@ class UpdateCheckStateStore {
   UpdateCheckStateStore({
     Future<Directory> Function()? directoryProvider,
     Future<void> Function()? beforeRenameForTest,
+    Duration? lockStaleAfterForTest,
+    Duration? lockAcquireTimeoutForTest,
   }) : _directoryProvider = directoryProvider ?? getApplicationSupportDirectory,
-       _beforeRename = beforeRenameForTest;
+       _beforeRename = beforeRenameForTest,
+       _lockStaleAfter = lockStaleAfterForTest,
+       _lockAcquireTimeout = lockAcquireTimeoutForTest;
 
   static const String fileName = 'se41_update_check_state.json';
   static const String rankFloorPrefix = 'se41_rank_floor_';
@@ -50,6 +54,8 @@ class UpdateCheckStateStore {
 
   final Future<Directory> Function() _directoryProvider;
   final Future<void> Function()? _beforeRename;
+  final Duration? _lockStaleAfter;
+  final Duration? _lockAcquireTimeout;
 
   Future<File> _file() async =>
       File('${(await _directoryProvider()).path}/$fileName');
@@ -68,7 +74,26 @@ class UpdateCheckStateStore {
   Future<UpdateCheckState> save(UpdateCheckState state) async {
     final file = await _file();
     await file.parent.create(recursive: true);
-    final lock = UpdateCheckStateLock(File('${file.path}.lock'));
+    final lockFile = File('${file.path}.lock');
+    final lock = UpdateCheckStateLock(
+      lockFile,
+      staleAfter: _lockStaleAfter ?? UpdateCheckStateLock.defaultStaleAfter,
+      acquireTimeout:
+          _lockAcquireTimeout ?? UpdateCheckStateLock.defaultAcquireTimeout,
+    );
+    try {
+      return await _saveLocked(lock, file, state);
+    } on FileSystemException catch (error) {
+      // The lock file could not be created for a reason other than "busy".
+      throw UpdateCheckStateUnavailable(error.message);
+    }
+  }
+
+  Future<UpdateCheckState> _saveLocked(
+    UpdateCheckStateLock lock,
+    File file,
+    UpdateCheckState state,
+  ) {
     return lock.synchronized(() async {
       final floor = await _rankFloor(file.parent);
       final disk = _applyFloor(await _readOrEmpty(file), floor);

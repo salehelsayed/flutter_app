@@ -163,6 +163,20 @@ void main() {
       expect(await run(), UpdateCheckBackgroundOutcome.notified);
     });
 
+    test('F1: a lowered minBuild does not post on every run', () async {
+      fetcher.responses.addAll([file(1, min: 118), file(2, min: 115)]);
+      expect(await run(), UpdateCheckBackgroundOutcome.notified);
+      // Every 6 h for 3 days with the lowered file stored.
+      final start = now;
+      for (var step = 1; step <= 12; step++) {
+        now = start.add(Duration(hours: 6 * step));
+        await run();
+      }
+      // First post, then one daily reminder per day: days 1, 2 and 3.
+      expect(poster.posts.length, 4);
+      expect((await temp.load()).notifiedHardMinBuild, 118);
+    });
+
     test('a higher minBuild starts the reminders over', () async {
       fetcher.responses.addAll([file(1, min: 115), file(2, min: 118)]);
       expect(await run(), UpdateCheckBackgroundOutcome.notified);

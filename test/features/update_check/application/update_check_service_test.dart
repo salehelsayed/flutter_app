@@ -214,6 +214,26 @@ void main() {
       },
     );
 
+    test(
+      'F2: after the envelope is dropped, the same file restores the hard gate',
+      () async {
+        fetcher.responses.add(k1(3, min: 200));
+        expect(await service().check(), isA<UpdateDecisionHard>());
+        // Corrupt the stored envelope bytes: the next load drops it but keeps
+        // rank 1 and sequence 3.
+        final json =
+            jsonDecode(await temp.file.readAsString()) as Map<String, Object?>;
+        json['lastEnvelope'] = base64.encode(utf8.encode('{"v":1}'));
+        await temp.file.writeAsString(jsonEncode(json));
+        // The publisher has not bumped the sequence: the same file comes back.
+        fetcher.responses.add(k1(3, min: 200));
+        expect(await service().check(), isA<UpdateDecisionHard>());
+        final state = await temp.load();
+        expect((state.highestAcceptedRank, state.sequence), (1, 3));
+        expect(state.lastEnvelope, isNotNull);
+      },
+    );
+
     test('(e) the k2 sequence starts fresh when the rank rises', () async {
       fetcher.responses.addAll([k1(1000), k2(1), k2(2)]);
       await service().check();

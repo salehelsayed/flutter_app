@@ -4,6 +4,7 @@ import 'dart:isolate';
 import 'dart:typed_data';
 
 import 'package:flutter_app/features/update_check/domain/update_check_state.dart';
+import 'package:flutter_app/features/update_check/infrastructure/update_check_state_lock.dart';
 import 'package:flutter_app/features/update_check/infrastructure/update_check_state_store.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -262,6 +263,70 @@ void main() {
         dir.listSync().map((e) => e.uri.pathSegments.last),
         [UpdateCheckStateStore.fileName],
       );
+    });
+  });
+
+  group('lock fixes (T4a review F4, F5)', () {
+    test('F4a: a lock stamped in the future (clock went back) goes stale', () async {
+      File('${stateFile().path}.lock')
+        ..createSync()
+        ..setLastModifiedSync(DateTime.now().add(const Duration(hours: 1)));
+      await store.save(verified(1, 2));
+      expect((await store.load()).sequence, 2);
+    });
+
+    test('F4b: a writer deletes only its own lock', () async {
+      final lock = UpdateCheckStateLock(
+        File('${stateFile().path}.lock'),
+      );
+      await lock.synchronized(() async {
+        // Another waiter took the lock over meanwhile.
+        File('${stateFile().path}.lock').writeAsStringSync('someone-else');
+      });
+      expect(
+        File('${stateFile().path}.lock').readAsStringSync(),
+        'someone-else',
+        reason: 'our release must not delete a lock we no longer own',
+      );
+    });
+
+    test('F4c: a create failure other than "exists" fails fast', () async {
+      final locked = Directory('${dir.path}/locked')..createSync();
+      await Process.run('chmod', ['555', locked.path]);
+      addTearDown(() => Process.run('chmod', ['755', locked.path]));
+      final lock = UpdateCheckStateLock(
+        File('${locked.path}/state.lock'),
+        acquireTimeout: const Duration(seconds: 5),
+      );
+      final stopwatch = Stopwatch()..start();
+      await expectLater(
+        lock.synchronized(() async {}),
+        throwsA(isA<FileSystemException>()),
+      );
+      expect(stopwatch.elapsed, lessThan(const Duration(seconds: 2)));
+      final lockedStore = UpdateCheckStateStore(
+        directoryProvider: () async => locked,
+      );
+      await expectLater(
+        lockedStore.save(verified(1, 1)),
+        throwsA(isA<UpdateCheckStateUnavailable>()),
+      );
+    });
+
+    test('F5: a dismissal waits out a dead writer\'s lock and is saved', () async {
+      expect(
+        UpdateCheckStateLock.defaultAcquireTimeout,
+        greaterThan(UpdateCheckStateLock.defaultStaleAfter),
+      );
+      // A writer killed while holding the lock: a fresh lock nobody releases.
+      File('${stateFile().path}.lock').writeAsStringSync('killed-writer');
+      final foreground = UpdateCheckStateStore(
+        directoryProvider: () async => dir,
+        lockStaleAfterForTest: const Duration(milliseconds: 300),
+        lockAcquireTimeoutForTest: const Duration(seconds: 3),
+      );
+      await foreground.save(const UpdateCheckState(dismissedLatestBuild: 120));
+      expect((await store.load()).dismissedLatestBuild, 120);
     });
   });
 
