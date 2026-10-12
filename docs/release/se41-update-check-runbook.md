@@ -244,6 +244,26 @@ Exit code 2 with a reason otherwise.
   the provider rejects gives its slot back, so it can be retried at once.
 - The app also limits itself to one push-triggered check per hour.
 
+### What the app does
+
+- It joins the FCM topic `update_check` while the kill switch is on and
+  leaves it when the switch is off. Only builds with T4b join, so older
+  builds never get the push.
+- Android: `MknoonFirebaseMessagingService` matches only the exact data
+  `{"type":"update_check"}` with no notification block. It then queues the
+  T4a worker once (unique work `mknoon-se41-update-check-push`, KEEP, needs a
+  network) and shows nothing. Any other shape goes on to the normal push
+  handling unchanged.
+- iOS: `didReceiveRemoteNotification` sends the exact payload to the same
+  Dart check as the background task and calls the completion handler
+  exactly once within 25 s. An `--ios-alert` push also shows the fixed
+  sentence from `Localizable.strings` (EN, DE, AR). Tapping it only opens
+  the app.
+- In both cases a notice appears only if the signed file says so (T2/T4a).
+- To check on a device: iOS logs `[SE41_UPDATE_CHECK] push started` and
+  `push completed outcome=<outcome>` (public os_log). Android runs the
+  worker with reason `android_push`.
+
 ### Deploy (needs owner approval; not done yet)
 
 The subcommand ships in the relay binary. Deploying it follows the normal

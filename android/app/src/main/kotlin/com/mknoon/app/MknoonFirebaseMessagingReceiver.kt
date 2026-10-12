@@ -26,7 +26,8 @@ open class MknoonFirebaseMessagingReceiver : FlutterFirebaseMessagingReceiver() 
             runCatching {
                 val message = RemoteMessage(extras)
                 MknoonFirebaseMessagingService.isExactFixedOpaqueWake(message) ||
-                    MknoonFirebaseMessagingService.isExactQuietRecoveryWake(message)
+                    MknoonFirebaseMessagingService.isExactQuietRecoveryWake(message) ||
+                    MknoonFirebaseMessagingService.isExactUpdateCheckWake(message)
             }.getOrDefault(false)
         } ?: false
         if (fixedWake) return

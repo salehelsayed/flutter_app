@@ -1,0 +1,4 @@
+/* SE-41 T4b: the optional check-now alert (relay update-check-push --ios-alert).
+   The push carries only these keys, never text. Owner-approved copy (SE-41 comment 01a130c5). */
+"UPDATE_CHECK_ALERT_TITLE" = "Is Mknoon up to date?";
+"UPDATE_CHECK_ALERT_BODY" = "Older versions can lose their connection. Tap to open Mknoon and check.";

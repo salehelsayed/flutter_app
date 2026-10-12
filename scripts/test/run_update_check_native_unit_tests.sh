@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # SE-41 T4a: runs the Android JVM unit tests for the background update check
 # (worker routing, scheduler, budget abort, notification poster) plus the
-# MainActivity tests, because MainActivity registers the main-engine bridge.
+# MainActivity tests, because MainActivity registers the main-engine bridge,
+# and (T4b) the FCM service tests for the check-now push match.
 # Host-only: the Gradle wrapper needs the Mac toolchain. Run via host-run.
 set -euo pipefail
 
@@ -19,6 +20,7 @@ set +e
   :app:testDebugUnitTest \
   --tests 'com.mknoon.app.UpdateCheckBackgroundWorkTest' \
   --tests 'com.mknoon.app.UpdateCheckNotificationPosterTest' \
+  --tests 'com.mknoon.app.MknoonFirebaseMessagingServiceTest' \
   --tests 'com.mknoon.app.MainActivityOnNewIntentTest' \
   --tests 'com.mknoon.app.MainActivityAppVisibilityTest' \
   --tests 'com.mknoon.app.CanonicalRuntimeLeaseTest' \

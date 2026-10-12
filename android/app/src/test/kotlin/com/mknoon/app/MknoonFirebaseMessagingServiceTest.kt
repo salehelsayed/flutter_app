@@ -75,6 +75,59 @@ class MknoonFirebaseMessagingServiceTest {
 
     @Test
     @Config(sdk = [33])
+    fun `T4b exact update_check push runs the worker and never delegates or recovers`() {
+        val store = DroppedPushRecoveryStore(context)
+        store.setCurrentBinding("installation-a/account-a", recoveryWorkEnabled = true)
+        val delegated = mutableListOf<RemoteMessage>()
+        val fixedSchedules = mutableListOf<DroppedPushRecoveryStore.PendingRecovery>()
+        val deletedSchedules = mutableListOf<DroppedPushRecoveryStore.PendingRecovery>()
+        val service = classifierService(delegated, fixedSchedules, deletedSchedules)
+        val manager = context.getSystemService(NotificationManager::class.java)
+
+        service.onMessageReceived(dataMessage(mapOf("type" to "update_check")))
+        assertEquals(1, service.updateCheckEnqueues)
+        assertTrue(delegated.isEmpty())
+        assertNull(store.pendingGeneration())
+        assertTrue(fixedSchedules.isEmpty())
+        assertTrue(manager.activeNotifications.isEmpty())
+
+        // Anything that is not exactly {type: update_check} falls through to
+        // the existing branches unchanged.
+        val fallThrough = listOf(
+            dataMessage(mapOf("type" to "update_check", "x" to "1")),
+            dataMessage(mapOf("type" to "update_check", "url" to "https://evil.example")),
+            dataMessage(mapOf("type" to "update_check ")),
+            dataMessage(mapOf("type" to "Update_check")),
+            dataMessage(mapOf("kind" to "update_check")),
+            notificationBearingMessage(mapOf("type" to "update_check")),
+        )
+        for ((index, message) in fallThrough.withIndex()) {
+            service.onMessageReceived(message)
+            assertEquals("shape $index must delegate", index + 1, delegated.size)
+        }
+        assertEquals(1, service.updateCheckEnqueues)
+
+        // Quiet recovery and the fixed wake are not swallowed.
+        service.onMessageReceived(dataMessage(mapOf("v" to "1", "w" to "1", "quietRecovery" to "1")))
+        service.onMessageReceived(dataMessage(mapOf("v" to "1", "w" to "1")))
+        assertEquals(2, fixedSchedules.size)
+        assertEquals(1, service.updateCheckEnqueues)
+
+        // A call wake (even a malformed one) stays in its own namespace.
+        service.onMessageReceived(dataMessage(mapOf("w" to "call", "type" to "update_check")))
+        assertEquals(1, service.updateCheckEnqueues)
+        assertEquals(fallThrough.size, delegated.size)
+
+        // The FlutterFire receiver suppresses only the exact shape.
+        val receiver = RecordingFirebaseMessagingReceiver()
+        receiver.onReceive(context, messageIntent(mapOf("type" to "update_check")))
+        assertTrue(receiver.delegated.isEmpty())
+        receiver.onReceive(context, messageIntent(mapOf("type" to "update_check", "x" to "1")))
+        assertEquals(1, receiver.delegated.size)
+    }
+
+    @Test
+    @Config(sdk = [33])
     fun testTC37501ExactFixedWakeInterceptsAndAllOtherShapesDelegateOnce() {
         shadowOf(context as android.app.Application)
             .grantPermissions(Manifest.permission.POST_NOTIFICATIONS)
@@ -593,6 +646,12 @@ private class RecordingFirebaseMessagingService : MknoonFirebaseMessagingService
     ) {
         check(snapshot == DroppedPushRecoveryStore(this).pendingRecovery())
         observedFixed += snapshot
+    }
+
+    var updateCheckEnqueues = 0
+
+    override fun enqueueUpdateCheckFromPush() {
+        updateCheckEnqueues++
     }
 
     override fun delegateRichMessageToFlutterFire(message: RemoteMessage) {

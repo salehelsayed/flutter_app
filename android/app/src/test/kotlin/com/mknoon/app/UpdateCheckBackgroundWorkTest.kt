@@ -2,7 +2,9 @@ package com.mknoon.app
 
 import android.app.Application
 import androidx.work.ExistingPeriodicWorkPolicy
+import androidx.work.ExistingWorkPolicy
 import androidx.work.NetworkType
+import androidx.work.OneTimeWorkRequest
 import androidx.work.PeriodicWorkRequest
 import io.flutter.plugin.common.BinaryMessenger
 import io.flutter.plugin.common.MethodCall
@@ -141,16 +143,57 @@ class UpdateCheckBackgroundWorkTest {
             headlessEngineClaimed = { true },
             handoffRunner = { error("no handoff expected") },
             minimalEngineRunner = { UpdateCheckRunner { ran = true; null } },
-            scheduler = UpdateCheckWorkScheduler(RecordingEnqueuer()),
+            scheduler = UpdateCheckWorkScheduler(RecordingEnqueuer(), { }),
         )
         assertEquals(UpdateCheckWorkOutcome.DEFERRED, execution.execute(request))
         assertFalse(ran)
     }
 
     @Test
+    fun `T4b the kill switch drives the update_check topic and both works`() {
+        val enqueuer = RecordingEnqueuer()
+        val topic = mutableListOf<Boolean>()
+        val scheduler = UpdateCheckWorkScheduler(enqueuer, { topic.add(it) })
+        scheduler.apply(true)
+        scheduler.apply(false)
+        assertEquals(listOf(true, false), topic)
+        assertEquals(
+            listOf("mknoon-se41-update-check", "mknoon-se41-update-check-push"),
+            enqueuer.cancelled,
+        )
+    }
+
+    @Test
+    fun `T4b a check-now push enqueues the T4a worker once, unique and KEEP, at most hourly`() {
+        val enqueuer = RecordingEnqueuer()
+        var slotFree = true
+        val scheduler = UpdateCheckWorkScheduler(enqueuer, { }, { slotFree })
+        assertTrue(scheduler.enqueuePushTriggered())
+        val (name, policy, work) = enqueuer.oneTime.single()
+        assertEquals("mknoon-se41-update-check-push", name)
+        assertEquals(ExistingWorkPolicy.KEEP, policy)
+        assertEquals(UpdateCheckWorker::class.java.name, work.workSpec.workerClassName)
+        assertEquals(NetworkType.CONNECTED, work.workSpec.constraints.requiredNetworkType)
+        assertEquals("android_push", work.workSpec.input.getString("reason"))
+        slotFree = false
+        assertFalse(scheduler.enqueuePushTriggered())
+        assertEquals(1, enqueuer.oneTime.size)
+    }
+
+    @Test
+    fun `T4b the hourly push slot frees after an hour or when the clock went back`() {
+        val application: Application = RuntimeEnvironment.getApplication()
+        val t0 = 1_800_000_000_000L
+        assertTrue(UpdateCheckBackgroundWork.takePushSlot(application, t0))
+        assertFalse(UpdateCheckBackgroundWork.takePushSlot(application, t0 + 59 * 60_000L))
+        assertTrue(UpdateCheckBackgroundWork.takePushSlot(application, t0 + 60 * 60_000L))
+        assertTrue(UpdateCheckBackgroundWork.takePushSlot(application, t0 - 1_000L))
+    }
+
+    @Test
     fun `switch on schedules one unique periodic work, switch off only cancels`() {
         val enqueuer = RecordingEnqueuer()
-        val scheduler = UpdateCheckWorkScheduler(enqueuer)
+        val scheduler = UpdateCheckWorkScheduler(enqueuer, { })
 
         scheduler.apply(true)
         assertEquals(1, enqueuer.periodic.size)
@@ -163,9 +206,13 @@ class UpdateCheckBackgroundWorkTest {
         assertTrue(enqueuer.cancelled.isEmpty())
 
         val off = RecordingEnqueuer()
-        UpdateCheckWorkScheduler(off).apply(false)
+        UpdateCheckWorkScheduler(off, { }).apply(false)
         assertTrue(off.periodic.isEmpty())
-        assertEquals(listOf("mknoon-se41-update-check"), off.cancelled)
+        assertTrue(off.oneTime.isEmpty())
+        assertEquals(
+            listOf("mknoon-se41-update-check", "mknoon-se41-update-check-push"),
+            off.cancelled,
+        )
     }
 
     @Test
@@ -215,7 +262,7 @@ class UpdateCheckBackgroundWorkTest {
             minimalEngineRunner = {
                 UpdateCheckRunner { mapOf("outcome" to "notified", "enabled" to true) }
             },
-            scheduler = UpdateCheckWorkScheduler(RecordingEnqueuer()),
+            scheduler = UpdateCheckWorkScheduler(RecordingEnqueuer(), { }),
         )
 
         assertEquals(UpdateCheckWorkOutcome.COMPLETED, execution.execute(request))
@@ -277,7 +324,10 @@ class UpdateCheckBackgroundWorkTest {
         )
 
         assertEquals(UpdateCheckWorkOutcome.DISABLED, execution.execute(request))
-        assertEquals(listOf("mknoon-se41-update-check"), enqueuer.cancelled)
+        assertEquals(
+            listOf("mknoon-se41-update-check", "mknoon-se41-update-check-push"),
+            enqueuer.cancelled,
+        )
         assertTrue(enqueuer.periodic.isEmpty())
     }
 
@@ -290,7 +340,7 @@ class UpdateCheckBackgroundWorkTest {
             context = application,
             messenger = messenger,
             ownerId = "foreground-7",
-            scheduler = UpdateCheckWorkScheduler(enqueuer),
+            scheduler = UpdateCheckWorkScheduler(enqueuer, { }),
         )
         assertEquals(bridge, UpdateCheckMainEngineRegistry.current())
 
@@ -311,7 +361,10 @@ class UpdateCheckBackgroundWorkTest {
         for (enabled in listOf(false, true)) {
             bridge.onMethodCall(MethodCall("configure", mapOf("enabled" to enabled)), result)
         }
-        assertEquals(listOf("mknoon-se41-update-check"), enqueuer.cancelled)
+        assertEquals(
+            listOf("mknoon-se41-update-check", "mknoon-se41-update-check-push"),
+            enqueuer.cancelled,
+        )
         assertEquals(1, enqueuer.periodic.size)
         bridge.onMethodCall(MethodCall("configure", null), result)
         assertEquals("error:bad_args", replies.last())
@@ -347,7 +400,7 @@ class UpdateCheckBackgroundWorkTest {
             }
         },
         minimalEngineRunner = { minimal },
-        scheduler = UpdateCheckWorkScheduler(enqueuer),
+        scheduler = UpdateCheckWorkScheduler(enqueuer, { }),
         timeoutMillis = timeoutMillis,
     )
 
@@ -365,7 +418,16 @@ class UpdateCheckBackgroundWorkTest {
 
     private class RecordingEnqueuer : UpdateCheckWorkEnqueuer {
         val periodic = mutableListOf<Triple<String, ExistingPeriodicWorkPolicy, PeriodicWorkRequest>>()
+        val oneTime = mutableListOf<Triple<String, ExistingWorkPolicy, OneTimeWorkRequest>>()
         val cancelled = mutableListOf<String>()
+
+        override fun enqueueUniqueOneTime(
+            uniqueName: String,
+            policy: ExistingWorkPolicy,
+            request: OneTimeWorkRequest,
+        ) {
+            oneTime.add(Triple(uniqueName, policy, request))
+        }
 
         override fun enqueueUniquePeriodic(
             uniqueName: String,

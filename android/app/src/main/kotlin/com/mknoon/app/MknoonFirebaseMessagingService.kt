@@ -50,6 +50,14 @@ open class MknoonFirebaseMessagingService : FlutterFirebaseMessagingService() {
             return data.size == 2 && data["v"] == "1" && data["w"] == "1"
         }
 
+        /**
+         * SE-41 T4b check-now push: exactly {"type":"update_check"}, data only.
+         * Anything else (an extra field, a notification block) falls through.
+         */
+        internal fun isExactUpdateCheckWake(message: RemoteMessage): Boolean =
+            message.notification == null && message.data.size == 1 &&
+                message.data["type"] == UpdateCheckBackgroundWork.PUSH_PAYLOAD_TYPE
+
         internal fun isExactQuietRecoveryWake(message: RemoteMessage): Boolean =
             message.notification == null && message.data.size == 3 &&
                 message.data["v"] == "1" && message.data["w"] == "1" &&
@@ -143,6 +151,12 @@ open class MknoonFirebaseMessagingService : FlutterFirebaseMessagingService() {
             committed?.let { signalWarmRuntimeRecovery(it.generation) }
             return
         }
+        if (isExactUpdateCheckWake(message)) {
+            // Never shows relay text and never calls super: it only runs the
+            // signed update check through the T4a worker.
+            enqueueUpdateCheckFromPush()
+            return
+        }
         if (!isExactFixedOpaqueWake(message)) {
             appDiagnostics.record("push", "process", "started", traceId = appTrace)
             delegateRichMessageToFlutterFire(message)
@@ -215,6 +229,10 @@ open class MknoonFirebaseMessagingService : FlutterFirebaseMessagingService() {
     }
 
     internal open fun callWakeNowMs(): Long = System.currentTimeMillis()
+
+    internal open fun enqueueUpdateCheckFromPush() {
+        runCatching { UpdateCheckWorkScheduler(applicationContext).enqueuePushTriggered() }
+    }
 
     internal open fun signalWarmCallWake() {
         ProcessAndroidCallWakeSignals.registry.signal()

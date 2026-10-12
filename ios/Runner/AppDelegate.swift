@@ -1082,6 +1082,23 @@ final class IosSetupReadinessEntryCoordinator {
     )
   }
 
+  override func application(
+    _ application: UIApplication,
+    didReceiveRemoteNotification userInfo: [AnyHashable: Any],
+    fetchCompletionHandler completionHandler: @escaping (UIBackgroundFetchResult) -> Void
+  ) {
+    // SE-41 T4b: the exact check-now push only runs the signed update check;
+    // the coordinator completes it exactly once. Everything else is unchanged.
+    if updateCheckBackground.handleRemotePush(userInfo: userInfo, completion: completionHandler) {
+      return
+    }
+    super.application(
+      application,
+      didReceiveRemoteNotification: userInfo,
+      fetchCompletionHandler: completionHandler
+    )
+  }
+
   override func userNotificationCenter(
     _ center: UNUserNotificationCenter,
     didReceive response: UNNotificationResponse,

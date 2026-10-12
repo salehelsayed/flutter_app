@@ -7,8 +7,12 @@ import android.os.Handler
 import android.os.Looper
 import androidx.work.BackoffPolicy
 import androidx.work.Constraints
+import androidx.work.Data
 import androidx.work.ExistingPeriodicWorkPolicy
+import androidx.work.ExistingWorkPolicy
 import androidx.work.NetworkType
+import androidx.work.OneTimeWorkRequest
+import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.PeriodicWorkRequest
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
@@ -51,6 +55,28 @@ import kotlinx.coroutines.withTimeoutOrNull
 internal object UpdateCheckBackgroundWork {
     const val CHANNEL_NAME = "mknoon/update_check_background"
     const val UNIQUE_WORK_NAME = "mknoon-se41-update-check"
+    const val PUSH_WORK_NAME = "mknoon-se41-update-check-push"
+    const val PUSH_TOPIC = "update_check"
+    const val PUSH_PAYLOAD_TYPE = "update_check"
+    const val INPUT_REASON = "reason"
+    const val REASON_PERIODIC = "android_periodic"
+
+    /** T4b: one push-triggered check per hour at most. */
+    const val REASON_PUSH = "android_push"
+    const val PUSH_MIN_INTERVAL_MILLIS = 60 * 60 * 1000L
+    private const val PUSH_GATE_PREFS = "se41_update_check_push_gate"
+    private const val PUSH_GATE_LAST_MS = "last_push_check_ms"
+
+    /** Takes the hourly slot if free. A clock that went back frees it. */
+    fun takePushSlot(context: Context, nowMs: Long = System.currentTimeMillis()): Boolean {
+        val prefs = context.getSharedPreferences(PUSH_GATE_PREFS, Context.MODE_PRIVATE)
+        synchronized(this) {
+            val last = prefs.getLong(PUSH_GATE_LAST_MS, Long.MIN_VALUE)
+            val free = last == Long.MIN_VALUE || nowMs < last || nowMs - last >= PUSH_MIN_INTERVAL_MILLIS
+            if (free) prefs.edit().putLong(PUSH_GATE_LAST_MS, nowMs).commit()
+            return free
+        }
+    }
     const val MINIMAL_ENTRYPOINT = "androidUpdateCheckMinimalMain"
     const val REPEAT_HOURS = 12L
     const val BACKOFF_MINUTES = 30L
@@ -143,6 +169,12 @@ internal object UpdateCheckMainEngineRegistry {
 }
 
 internal interface UpdateCheckWorkEnqueuer {
+    fun enqueueUniqueOneTime(
+        uniqueName: String,
+        policy: ExistingWorkPolicy,
+        request: OneTimeWorkRequest,
+    )
+
     fun enqueueUniquePeriodic(
         uniqueName: String,
         policy: ExistingPeriodicWorkPolicy,
@@ -164,20 +196,55 @@ private class AndroidXUpdateCheckWorkEnqueuer(context: Context) : UpdateCheckWor
             .enqueueUniquePeriodicWork(uniqueName, policy, request)
     }
 
+    override fun enqueueUniqueOneTime(
+        uniqueName: String,
+        policy: ExistingWorkPolicy,
+        request: OneTimeWorkRequest,
+    ) {
+        WorkManager.getInstance(applicationContext).enqueueUniqueWork(uniqueName, policy, request)
+    }
+
     override fun cancelUniqueWork(uniqueName: String) {
         WorkManager.getInstance(applicationContext).cancelUniqueWork(uniqueName)
     }
 }
 
-/** Kill switch on: one unique periodic work (KEEP). Off: cancel it. */
+/** FCM topic membership for the T4b check-now push. */
+internal fun interface UpdateCheckTopicMembership {
+    fun set(subscribed: Boolean)
+}
+
+private object FirebaseUpdateCheckTopicMembership : UpdateCheckTopicMembership {
+    override fun set(subscribed: Boolean) {
+        val messaging = com.google.firebase.messaging.FirebaseMessaging.getInstance()
+        if (subscribed) {
+            messaging.subscribeToTopic(UpdateCheckBackgroundWork.PUSH_TOPIC)
+        } else {
+            messaging.unsubscribeFromTopic(UpdateCheckBackgroundWork.PUSH_TOPIC)
+        }
+    }
+}
+
+/**
+ * Kill switch on: one unique periodic work (KEEP) and the update_check topic.
+ * Off: cancel all work and leave the topic.
+ */
 internal class UpdateCheckWorkScheduler(
     private val enqueuer: UpdateCheckWorkEnqueuer,
+    private val topic: UpdateCheckTopicMembership = FirebaseUpdateCheckTopicMembership,
+    private val takePushSlot: () -> Boolean = { true },
 ) {
-    constructor(context: Context) : this(AndroidXUpdateCheckWorkEnqueuer(context))
+    constructor(context: Context) : this(
+        AndroidXUpdateCheckWorkEnqueuer(context),
+        FirebaseUpdateCheckTopicMembership,
+        { UpdateCheckBackgroundWork.takePushSlot(context.applicationContext) },
+    )
 
     fun apply(enabled: Boolean) {
+        runCatching { topic.set(enabled) }
         if (!enabled) {
             enqueuer.cancelUniqueWork(UpdateCheckBackgroundWork.UNIQUE_WORK_NAME)
+            enqueuer.cancelUniqueWork(UpdateCheckBackgroundWork.PUSH_WORK_NAME)
             return
         }
         enqueuer.enqueueUniquePeriodic(
@@ -186,6 +253,34 @@ internal class UpdateCheckWorkScheduler(
             buildRequest(),
         )
     }
+
+    /**
+     * T4b: a check-now push runs the same worker once (unique, KEEP), at most
+     * once per hour. Returns false when the hourly slot is taken.
+     */
+    fun enqueuePushTriggered(): Boolean {
+        if (!takePushSlot()) return false
+        enqueuer.enqueueUniqueOneTime(
+            UpdateCheckBackgroundWork.PUSH_WORK_NAME,
+            ExistingWorkPolicy.KEEP,
+            buildPushRequest(),
+        )
+        return true
+    }
+
+    internal fun buildPushRequest(): OneTimeWorkRequest =
+        OneTimeWorkRequestBuilder<UpdateCheckWorker>()
+            .setConstraints(
+                Constraints.Builder()
+                    .setRequiredNetworkType(NetworkType.CONNECTED)
+                    .build(),
+            )
+            .setInputData(
+                Data.Builder()
+                    .putString(UpdateCheckBackgroundWork.INPUT_REASON, UpdateCheckBackgroundWork.REASON_PUSH)
+                    .build(),
+            )
+            .build()
 
     internal fun buildRequest(): PeriodicWorkRequest =
         PeriodicWorkRequestBuilder<UpdateCheckWorker>(
@@ -264,7 +359,9 @@ internal class UpdateCheckWorker(
             scheduler = UpdateCheckWorkScheduler(applicationContext),
         )
         val request = UpdateCheckRunRequest(
-            reason = "android_periodic",
+            reason = inputData.getString(UpdateCheckBackgroundWork.INPUT_REASON)
+                ?.takeIf { it == UpdateCheckBackgroundWork.REASON_PUSH }
+                ?: UpdateCheckBackgroundWork.REASON_PERIODIC,
             budgetMillis = UpdateCheckBackgroundWork.DART_BUDGET_MILLIS,
             installedBuildNumber = installedBuildNumber(applicationContext),
             inCall = isDeviceInCall(applicationContext),

@@ -1,7 +1,9 @@
 import BackgroundTasks
 import CallKit
+import FirebaseMessaging
 import Flutter
 import Foundation
+import UIKit
 import UserNotifications
 import os.log
 
@@ -94,6 +96,13 @@ struct SystemUpdateCheckTaskScheduler: UpdateCheckTaskScheduling {
 /// - A tap on the reminder calls Dart `openStore`, which opens the built-in
 ///   App Store page. Nothing from the notification reaches the URL.
 ///
+/// T4b check-now push: while the kill switch is on the app is subscribed to
+/// the FCM topic `update_check`. An exact `{"type":"update_check"}` push runs
+/// the same Dart trigger (reason `ios_push`) at most once per hour and calls
+/// the fetch completion handler exactly once within the native budget. It
+/// shows nothing; an `--ios-alert` push is drawn by iOS from the fixed
+/// Localizable.strings keys.
+///
 /// Limits (docs/release/se41-update-check-background.md): iOS runs the task
 /// at its own discretion and never after the user force-quits the app.
 final class UpdateCheckBackgroundCoordinator {
@@ -108,6 +117,10 @@ final class UpdateCheckBackgroundCoordinator {
   static let engineWait: TimeInterval = 5
   static let enabledDefaultsKey = "se41.updateCheck.backgroundEnabled"
   static let notificationKindKey = "mknoon_update_check"
+  static let pushTopic = "update_check"
+  static let pushPayloadType = "update_check"
+  static let pushMinInterval: TimeInterval = 60 * 60
+  static let lastPushCheckDefaultsKey = "se41.updateCheck.lastPushCheckAt"
 
   typealias DartInvoker = (_ method: String, _ arguments: Any?, _ reply: @escaping (Any?) -> Void) -> Void
 
@@ -118,6 +131,7 @@ final class UpdateCheckBackgroundCoordinator {
   private let engineWait: TimeInterval
   private let queue: DispatchQueue
   private let now: () -> Date
+  private let setTopicSubscribed: (Bool) -> Void
   private var channel: FlutterMethodChannel?
   private var invoker: DartInvoker?
   private var pending: [(id: UUID, work: (DartInvoker) -> Void)] = []
@@ -129,7 +143,8 @@ final class UpdateCheckBackgroundCoordinator {
     budget: TimeInterval = UpdateCheckBackgroundCoordinator.nativeBudget,
     engineWait: TimeInterval = UpdateCheckBackgroundCoordinator.engineWait,
     queue: DispatchQueue = .main,
-    now: @escaping () -> Date = Date.init
+    now: @escaping () -> Date = Date.init,
+    setTopicSubscribed: @escaping (Bool) -> Void = UpdateCheckBackgroundCoordinator.setFirebaseTopic
   ) {
     self.scheduler = scheduler
     self.defaults = defaults
@@ -138,6 +153,15 @@ final class UpdateCheckBackgroundCoordinator {
     self.engineWait = engineWait
     self.queue = queue
     self.now = now
+    self.setTopicSubscribed = setTopicSubscribed
+  }
+
+  static func setFirebaseTopic(_ subscribed: Bool) {
+    if subscribed {
+      Messaging.messaging().subscribe(toTopic: pushTopic)
+    } else {
+      Messaging.messaging().unsubscribe(fromTopic: pushTopic)
+    }
   }
 
   /// Any call on the device, ringing or active (CallKit covers ours too).
@@ -190,10 +214,68 @@ final class UpdateCheckBackgroundCoordinator {
       }
     }
     Self.log("bg_task started")
-    let queuedId = runInDart(reason: "ios_bg_app_refresh") { result in
+    runGated(reason: "ios_bg_app_refresh", label: "bg_task", gate: gate)
+  }
+
+  /// T4b: true when [userInfo] is the exact check-now push; the completion
+  /// handler is then called exactly once (within the native budget) and the
+  /// caller must not forward the push. Anything else returns false untouched.
+  func handleRemotePush(
+    userInfo: [AnyHashable: Any],
+    completion: @escaping (UIBackgroundFetchResult) -> Void
+  ) -> Bool {
+    guard Self.isExactUpdateCheckPush(userInfo) else { return false }
+    guard isEnabled, takePushSlot() else {
+      Self.log("push skipped enabled=\(isEnabled)")
+      completion(.noData)
+      return true
+    }
+    let gate = UpdateCheckTaskCompletionGate { success in
+      completion(success ? .newData : .failed)
+    }
+    queue.asyncAfter(deadline: .now() + budget) {
+      if gate.finish(success: false) {
+        Self.log("push budget_exhausted")
+      }
+    }
+    Self.log("push started")
+    runGated(reason: "ios_push", label: "push", gate: gate)
+    return true
+  }
+
+  /// Exactly `{"type":"update_check"}` plus the keys APNs and FCM add
+  /// (`aps`, `gcm.*`, `google.*`, `from`, `collapse_key`), with
+  /// `content-available: 1`. An extra app field means it is not ours.
+  static func isExactUpdateCheckPush(_ userInfo: [AnyHashable: Any]) -> Bool {
+    guard
+      let aps = userInfo["aps"] as? [String: Any],
+      (aps["content-available"] as? NSNumber)?.intValue == 1
+    else { return false }
+    let keys = userInfo.keys.compactMap { $0 as? String }
+    guard keys.count == userInfo.count else { return false }
+    let appKeys = keys.filter { key in
+      !(key == "aps" || key == "from" || key == "collapse_key"
+        || key.hasPrefix("gcm.") || key.hasPrefix("google."))
+    }
+    return appKeys == ["type"] && userInfo["type"] as? String == pushPayloadType
+  }
+
+  /// Takes the hourly push slot if free. A clock that went back frees it.
+  func takePushSlot() -> Bool {
+    let nowSeconds = now().timeIntervalSince1970
+    if let last = defaults.object(forKey: Self.lastPushCheckDefaultsKey) as? Double,
+      nowSeconds >= last, nowSeconds - last < Self.pushMinInterval {
+      return false
+    }
+    defaults.set(nowSeconds, forKey: Self.lastPushCheckDefaultsKey)
+    return true
+  }
+
+  private func runGated(reason: String, label: String, gate: UpdateCheckTaskCompletionGate) {
+    let queuedId = runInDart(reason: reason) { result in
       let outcome = result?["outcome"] as? String ?? "no_reply"
       if gate.finish(success: result != nil) {
-        Self.log("bg_task completed outcome=\(outcome)")
+        Self.log("\(label) completed outcome=\(outcome)")
       }
     }
     guard let queuedId else { return }
@@ -227,6 +309,7 @@ final class UpdateCheckBackgroundCoordinator {
 
   func configure(enabled: Bool) {
     defaults.set(enabled, forKey: Self.enabledDefaultsKey)
+    setTopicSubscribed(enabled)
     if enabled {
       // Every launch calls configure. Re-submitting would move the earliest
       // begin date 12 h ahead each time, so a daily user would never get a

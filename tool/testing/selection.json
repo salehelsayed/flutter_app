@@ -4731,11 +4731,12 @@
         "scripts/test/run_update_check_native_unit_tests.sh",
         "android/app/src/test/kotlin/com/mknoon/app/UpdateCheckBackgroundWorkTest.kt",
         "android/app/src/test/kotlin/com/mknoon/app/UpdateCheckNotificationPosterTest.kt",
+        "android/app/src/test/kotlin/com/mknoon/app/MknoonFirebaseMessagingServiceTest.kt",
         "android/app/src/test/kotlin/com/mknoon/app/MainActivityOnNewIntentTest.kt",
         "android/app/src/test/kotlin/com/mknoon/app/MainActivityAppVisibilityTest.kt",
         "android/app/src/test/kotlin/com/mknoon/app/CanonicalRuntimeLeaseTest.kt"
       ],
-      "boundary": "SE-41 T4a Android background update check: lease routing (handoff, minimal engine, defer), unique periodic work with the kill switch, budget abort, the minimal engine's plugin set, the main-engine bridge, and the update notification (own channel, no prompt, fixed tag and id, direct Play intent)",
+      "boundary": "SE-41 T4a Android background update check: lease routing (handoff, minimal engine, defer), unique periodic work with the kill switch, budget abort, the minimal engine's plugin set, the main-engine bridge, and the update notification (own channel, no prompt, fixed tag and id, direct Play intent); T4b check-now push: exact {type:update_check} match before the opaque and rich branches, topic membership with the kill switch, unique KEEP one-time work and the hourly app-side limit",
       "limitations": "Robolectric/JVM tests do not run WorkManager on a device, Doze or OEM battery savers, or a real Flutter engine. Run with the repository Flutter/JDK toolchain on the Mac (host-run).",
       "inspected": true
     }
@@ -6280,7 +6281,10 @@
         "android/app/src/test/kotlin/com/mknoon/app/UpdateCheck*",
         "scripts/test/run_update_check_native_unit_tests.sh",
         "ios/Runner/UpdateCheckBackgroundTask.swift",
-        "ios/RunnerTests/UpdateCheckBackgroundTaskTests.swift"
+        "ios/RunnerTests/UpdateCheckBackgroundTaskTests.swift",
+        "android/app/src/main/kotlin/com/mknoon/app/MknoonFirebaseMessaging*",
+        "android/app/src/test/kotlin/com/mknoon/app/MknoonFirebaseMessagingServiceTest.kt",
+        "ios/Runner/*.lproj/Localizable.strings"
       ],
       "checks": [
         "update-check",
