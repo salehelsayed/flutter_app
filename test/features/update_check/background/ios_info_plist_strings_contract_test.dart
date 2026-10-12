@@ -8,6 +8,16 @@ import 'package:flutter_test/flutter_test.dart';
 
 const _languages = ['en', 'de', 'ar'];
 
+const _usageKeys = {
+  'NSCameraUsageDescription',
+  'NSLocalNetworkUsageDescription',
+  'NSLocationAlwaysAndWhenInUseUsageDescription',
+  'NSLocationWhenInUseUsageDescription',
+  'NSMicrophoneUsageDescription',
+  'NSPhotoLibraryAddUsageDescription',
+  'NSPhotoLibraryUsageDescription',
+};
+
 final _entry = RegExp(
   r'^"?([A-Za-z]+)"? = "((?:[^"\\]|\\.)*)";$',
   multiLine: true,
@@ -38,13 +48,20 @@ Map<String, String> _usageDescriptions() {
 }
 
 void main() {
-  test('every key is a usage description in Info.plist', () {
-    final usage = _usageDescriptions().keys.toSet();
-    expect(usage, isNotEmpty);
+  test('each language has exactly the 7 Info.plist usage keys', () {
+    expect(_usageDescriptions().keys.toSet(), _usageKeys);
     for (final language in _languages) {
-      final keys = _strings(language).keys.toSet();
-      expect(keys, isNotEmpty, reason: language);
-      expect(keys.difference(usage), isEmpty, reason: language);
+      final strings = _strings(language);
+      expect(strings.keys.toSet(), _usageKeys, reason: language);
+      for (final MapEntry(:key, :value) in strings.entries) {
+        expect(value.trim(), isNotEmpty, reason: '$language $key');
+      }
+    }
+  });
+
+  test('the Arabic prompts are Arabic', () {
+    for (final MapEntry(:key, :value) in _strings('ar').entries) {
+      expect(RegExp('[\u0600-\u06FF]').hasMatch(value), isTrue, reason: key);
     }
   });
 

@@ -1,5 +1,8 @@
-NSCameraUsageDescription = "Diese App benötigt Kamerazugriff, um QR-Codes zu scannen und Fotos aufzunehmen";
-NSPhotoLibraryUsageDescription = "Diese App benötigt Zugriff auf deine Fotomediathek, um Bilder zu teilen";
-NSMicrophoneUsageDescription = "Diese App benötigt Mikrofonzugriff, um Sprachnachrichten aufzunehmen";
-NSLocationWhenInUseUsageDescription = "Diese App benötigt Standortzugriff, damit du Beiträge mit direkten Freunden in deiner Nähe teilen kannst";
-NSLocalNetworkUsageDescription = "mknoon sucht deine Freunde im selben WLAN, um Nachrichten direkt an ihr Handy zu senden. Das ist schneller, privater und wir sammeln niemals deine Daten.";
+/* German permission prompts (owner-approved 2026-10-12). */
+NSCameraUsageDescription = "Diese App braucht Zugriff auf die Kamera, um dein Profilfoto aufzunehmen und QR-Codes zu scannen, damit du Freunde hinzufügen kannst.";
+NSPhotoLibraryUsageDescription = "Mknoon nutzt deine Fotomediathek, damit du Fotos und Videos mit Freunden teilen kannst.";
+NSPhotoLibraryAddUsageDescription = "Speichere Fotos und Videos, die du auswählst, in deiner Mediathek.";
+NSMicrophoneUsageDescription = "Erlaube den Zugriff auf das Mikrofon für Sprachanrufe und Sprachnachrichten.";
+NSLocationWhenInUseUsageDescription = "Diese App braucht Zugriff auf deinen Standort, um Beiträge in deiner Nähe mit deinen direkten Freunden zu teilen.";
+NSLocationAlwaysAndWhenInUseUsageDescription = "Diese App braucht Zugriff auf deinen Standort, um Beiträge in deiner Nähe mit deinen direkten Freunden zu teilen.";
+NSLocalNetworkUsageDescription = "Mknoon sucht deine Freunde im selben WLAN, um Nachrichten direkt an ihr Handy zu senden.";

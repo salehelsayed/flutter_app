@@ -1,5 +1,8 @@
-NSCameraUsageDescription = "يحتاج هذا التطبيق إلى الوصول إلى الكاميرا لمسح رموز QR والتقاط الصور";
-NSPhotoLibraryUsageDescription = "يحتاج هذا التطبيق إلى الوصول إلى مكتبة الصور لمشاركة الصور";
-NSMicrophoneUsageDescription = "يحتاج هذا التطبيق إلى الوصول إلى الميكروفون لتسجيل الرسائل الصوتية";
-NSLocationWhenInUseUsageDescription = "يحتاج هذا التطبيق إلى الوصول إلى الموقع لمشاركة المنشورات القريبة مع أصدقائك المباشرين";
-NSLocalNetworkUsageDescription = "يبحث mknoon عن أصدقائك على نفس شبكة Wi‑Fi لإرسال الرسائل مباشرة إلى هواتفهم. هذا أسرع وأكثر خصوصية، ونحن لا نجمع بياناتك أبدًا.";
+/* Arabic permission prompts (owner-approved 2026-10-12). */
+NSCameraUsageDescription = "يحتاج هذا التطبيق إلى الوصول إلى الكاميرا لالتقاط صورة ملفك الشخصي ومسح رموز QR لإضافة أصدقاء.";
+NSPhotoLibraryUsageDescription = "يستخدم مكنون مكتبة الصور لديك لتتمكن من مشاركة الصور ومقاطع الفيديو مع أصدقائك.";
+NSPhotoLibraryAddUsageDescription = "احفظ الصور ومقاطع الفيديو التي تختارها في مكتبة الصور.";
+NSMicrophoneUsageDescription = "اسمح بالوصول إلى الميكروفون لإجراء مكالمات صوتية وإرسال رسائل صوتية.";
+NSLocationWhenInUseUsageDescription = "يحتاج هذا التطبيق إلى الوصول إلى موقعك لمشاركة المنشورات القريبة مع أصدقائك المباشرين.";
+NSLocationAlwaysAndWhenInUseUsageDescription = "يحتاج هذا التطبيق إلى الوصول إلى موقعك لمشاركة المنشورات القريبة مع أصدقائك المباشرين.";
+NSLocalNetworkUsageDescription = "يبحث مكنون عن أصدقائك على شبكة الواي فاي نفسها لإرسال الرسائل مباشرة إلى هواتفهم.";
