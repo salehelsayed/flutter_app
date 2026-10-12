@@ -231,7 +231,11 @@ open class MknoonFirebaseMessagingService : FlutterFirebaseMessagingService() {
     internal open fun callWakeNowMs(): Long = System.currentTimeMillis()
 
     internal open fun enqueueUpdateCheckFromPush() {
-        runCatching { UpdateCheckWorkScheduler(applicationContext).enqueuePushTriggered() }
+        val enqueued = runCatching { UpdateCheckWorkScheduler(applicationContext).enqueuePushTriggered() }
+        android.util.Log.i(
+            UpdateCheckBackgroundWork.LOG_TAG,
+            "push received enqueued=${enqueued.getOrNull()}",
+        )
     }
 
     internal open fun signalWarmCallWake() {

@@ -5,6 +5,7 @@ import android.media.AudioManager
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import android.util.Log
 import androidx.work.BackoffPolicy
 import androidx.work.Constraints
 import androidx.work.Data
@@ -90,6 +91,9 @@ internal object UpdateCheckBackgroundWork {
         context.getSharedPreferences(SWITCH_PREFS, Context.MODE_PRIVATE)
             .edit().putBoolean(SWITCH_ENABLED, enabled).commit()
     }
+
+    /** Logcat tag for the proof lines; the text carries no user data. */
+    const val LOG_TAG = "SE41_UPDATE_CHECK"
 
     const val MINIMAL_ENTRYPOINT = "androidUpdateCheckMinimalMain"
     const val REPEAT_HOURS = 12L
@@ -399,7 +403,10 @@ internal class UpdateCheckWorker(
             installedBuildNumber = installedBuildNumber(applicationContext),
             inCall = isDeviceInCall(applicationContext),
         )
-        when (execution.execute(request)) {
+        Log.i(UpdateCheckBackgroundWork.LOG_TAG, "worker started reason=${request.reason}")
+        val outcome = execution.execute(request)
+        Log.i(UpdateCheckBackgroundWork.LOG_TAG, "worker completed reason=${request.reason} outcome=$outcome")
+        when (outcome) {
             UpdateCheckWorkOutcome.DEFERRED -> Result.retry()
             UpdateCheckWorkOutcome.COMPLETED,
             UpdateCheckWorkOutcome.DISABLED,
