@@ -372,4 +372,31 @@ final class UpdateCheckBackgroundTaskTests: XCTestCase {
     )
     XCTAssertFalse(names.contains("value-must-not-appear"))
   }
+
+  /// T4b device proof: iOS only calls the silent-push method when the app
+  /// delegate says it responds to it. FlutterAppDelegate decides that for
+  /// "dynamically added" selectors from its plugin lifecycle delegates.
+  func testT4bAppDelegateRespondsToTheSilentPushSelector() throws {
+    let delegate = try XCTUnwrap(UIApplication.shared.delegate as? NSObject)
+    let selector = #selector(
+      UIApplicationDelegate.application(_:didReceiveRemoteNotification:fetchCompletionHandler:)
+    )
+    XCTAssertTrue(delegate.responds(to: selector), "\(type(of: delegate))")
+  }
+
+  /// A push our code does not claim still completes exactly once, so iOS
+  /// never waits on the app (no plugin handles it under the implicit engine).
+  func testT4bUnclaimedRemotePushCompletesOnce() throws {
+    let delegate = try XCTUnwrap(UIApplication.shared.delegate)
+    var results: [UIBackgroundFetchResult] = []
+    delegate.application?(
+      UIApplication.shared,
+      didReceiveRemoteNotification: ["v": "1", "aps": ["content-available": 1]],
+      fetchCompletionHandler: { results.append($0) }
+    )
+    let done = expectation(description: "completion")
+    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { done.fulfill() }
+    wait(for: [done], timeout: 2)
+    XCTAssertEqual(results.count, 1)
+  }
 }

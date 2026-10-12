@@ -1099,11 +1099,32 @@ final class IosSetupReadinessEntryCoordinator {
     if updateCheckBackground.handleRemotePush(userInfo: userInfo, completion: completionHandler) {
       return
     }
-    super.application(
-      application,
-      didReceiveRemoteNotification: userInfo,
-      fetchCompletionHandler: completionHandler
-    )
+    // Forward only when FlutterAppDelegate itself would have claimed the
+    // selector (a plugin on its lifecycle delegate handles it). Otherwise
+    // nothing would call the completion handler, so complete it here.
+    if super.responds(to: Self.remotePushSelector) {
+      super.application(
+        application,
+        didReceiveRemoteNotification: userInfo,
+        fetchCompletionHandler: completionHandler
+      )
+    } else {
+      completionHandler(.noData)
+    }
+  }
+
+  private static let remotePushSelector = #selector(
+    UIApplicationDelegate.application(_:didReceiveRemoteNotification:fetchCompletionHandler:)
+  )
+
+  // SE-41 T4b: FlutterAppDelegate answers respondsToSelector: for this
+  // selector only when a plugin registered on its lifecycle delegate
+  // implements it. Under the UIScene implicit engine none does, so iOS
+  // believed the delegate did not implement it and never delivered silent
+  // pushes (seen on the iPhone 13 device proof, 2026-10-12). We do.
+  override func responds(to aSelector: Selector!) -> Bool {
+    if aSelector == Self.remotePushSelector { return true }
+    return super.responds(to: aSelector)
   }
 
   override func userNotificationCenter(
