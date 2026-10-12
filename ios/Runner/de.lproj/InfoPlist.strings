@@ -1,5 +1,5 @@
 /* German permission prompts (owner-approved 2026-10-12). */
-NSCameraUsageDescription = "Diese App braucht Zugriff auf die Kamera, um dein Profilfoto aufzunehmen und QR-Codes zu scannen, damit du Freunde hinzufügen kannst.";
+NSCameraUsageDescription = "Diese App braucht Zugriff auf die Kamera, um in deinen Chats Fotos und Videos aufzunehmen, dein Profilfoto zu machen und QR-Codes zu scannen, damit du Freunde hinzufügen kannst.";
 NSPhotoLibraryUsageDescription = "Mknoon nutzt deine Fotomediathek, damit du Fotos und Videos mit Freunden teilen kannst.";
 NSPhotoLibraryAddUsageDescription = "Speichere Fotos und Videos, die du auswählst, in deiner Mediathek.";
 NSMicrophoneUsageDescription = "Erlaube den Zugriff auf das Mikrofon für Sprachanrufe und Sprachnachrichten.";

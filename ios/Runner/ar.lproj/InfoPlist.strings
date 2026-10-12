@@ -1,5 +1,5 @@
 /* Arabic permission prompts (owner-approved 2026-10-12). */
-NSCameraUsageDescription = "يحتاج هذا التطبيق إلى الوصول إلى الكاميرا لالتقاط صورة ملفك الشخصي ومسح رموز QR لإضافة أصدقاء.";
+NSCameraUsageDescription = "يحتاج هذا التطبيق إلى الوصول إلى الكاميرا لالتقاط الصور ومقاطع الفيديو في محادثاتك، وصورة ملفك الشخصي، ومسح رموز QR لإضافة أصدقاء.";
 NSPhotoLibraryUsageDescription = "يستخدم مكنون مكتبة الصور لديك لتتمكن من مشاركة الصور ومقاطع الفيديو مع أصدقائك.";
 NSPhotoLibraryAddUsageDescription = "احفظ الصور ومقاطع الفيديو التي تختارها في مكتبة الصور.";
 NSMicrophoneUsageDescription = "اسمح بالوصول إلى الميكروفون لإجراء مكالمات صوتية وإرسال رسائل صوتية.";

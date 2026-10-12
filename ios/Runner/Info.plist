@@ -52,7 +52,7 @@
 		<string>_mknoon._tcp</string>
 	</array>
 	<key>NSCameraUsageDescription</key>
-	<string>This app needs camera access to take your profile photo and scan QR codes to add friends</string>
+	<string>This app needs camera access to take photos and videos in your chats, set your profile photo and scan QR codes to add friends</string>
 	<key>NSFileProtectionType</key>
 	<string>NSFileProtectionComplete</string>
 	<key>NSLocalNetworkUsageDescription</key>
