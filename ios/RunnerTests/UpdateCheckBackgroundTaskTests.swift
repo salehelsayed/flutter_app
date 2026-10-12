@@ -361,4 +361,15 @@ final class UpdateCheckBackgroundTaskTests: XCTestCase {
     wait(for: [done], timeout: 2)
     XCTAssertEqual(results, [.failed])
   }
+
+  func testT4bDiagnosticKeyNamesNeverIncludeValues() {
+    let names = UpdateCheckBackgroundCoordinator.keyNames(
+      pushUserInfo(["secret": "value-must-not-appear"])
+    )
+    XCTAssertEqual(
+      names,
+      "[aps,from,gcm.message_id,google.c.sender.id,secret,type] aps=[content-available]"
+    )
+    XCTAssertFalse(names.contains("value-must-not-appear"))
+  }
 }

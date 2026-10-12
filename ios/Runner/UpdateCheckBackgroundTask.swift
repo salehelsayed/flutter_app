@@ -224,7 +224,13 @@ final class UpdateCheckBackgroundCoordinator {
     userInfo: [AnyHashable: Any],
     completion: @escaping (UIBackgroundFetchResult) -> Void
   ) -> Bool {
-    guard Self.isExactUpdateCheckPush(userInfo) else { return false }
+    guard Self.isExactUpdateCheckPush(userInfo) else {
+      if userInfo["type"] != nil || Self.isContentAvailable(userInfo) {
+        // Key names only, never values: shows why a push was not claimed.
+        Self.log("push not matched keys=\(Self.keyNames(userInfo))")
+      }
+      return false
+    }
     guard isEnabled, takePushSlot() else {
       Self.log("push skipped enabled=\(isEnabled)")
       completion(.noData)
@@ -258,6 +264,17 @@ final class UpdateCheckBackgroundCoordinator {
         || key.hasPrefix("gcm.") || key.hasPrefix("google."))
     }
     return appKeys == ["type"] && userInfo["type"] as? String == pushPayloadType
+  }
+
+  static func isContentAvailable(_ userInfo: [AnyHashable: Any]) -> Bool {
+    ((userInfo["aps"] as? [String: Any])?["content-available"] as? NSNumber)?.intValue == 1
+  }
+
+  /// Sorted top-level key names plus the aps key names, for diagnostics.
+  static func keyNames(_ userInfo: [AnyHashable: Any]) -> String {
+    let top = userInfo.keys.map { String(describing: $0) }.sorted()
+    let aps = (userInfo["aps"] as? [String: Any])?.keys.sorted() ?? []
+    return "[\(top.joined(separator: ","))] aps=[\(aps.joined(separator: ","))]"
   }
 
   /// Takes the hourly push slot if free. A clock that went back frees it.
