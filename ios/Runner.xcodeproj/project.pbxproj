@@ -39,6 +39,7 @@
 		D23405010000000000000011 /* PrivateMediaProtectionCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = D23405010000000000000012 /* PrivateMediaProtectionCoordinator.swift */; };
 		D371A00173A7000000000001 /* IosAppVisibilitySnapshot.swift in Sources */ = {isa = PBXBuildFile; fileRef = D371B00173A7000000000001 /* IosAppVisibilitySnapshot.swift */; };
 		D371A00273A7000000000001 /* IosAppVisibilityCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = D371B00273A7000000000001 /* IosAppVisibilityCoordinator.swift */; };
+		5E41A0140000000000000001 /* InfoPlist.strings in Resources */ = {isa = PBXBuildFile; fileRef = 5E41A0130000000000000001 /* InfoPlist.strings */; };
 		5E41A0110000000000000001 /* Localizable.strings in Resources */ = {isa = PBXBuildFile; fileRef = 5E41A0100000000000000001 /* Localizable.strings */; };
 		5E41A0020000000000000001 /* UpdateCheckBackgroundTask.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5E41A0010000000000000001 /* UpdateCheckBackgroundTask.swift */; };
 		5E41A0040000000000000001 /* UpdateCheckBackgroundTaskTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5E41A0030000000000000001 /* UpdateCheckBackgroundTaskTests.swift */; };
@@ -186,6 +187,9 @@
 		D23405010000000000000012 /* PrivateMediaProtectionCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PrivateMediaProtectionCoordinator.swift; sourceTree = "<group>"; };
 		D371B00173A7000000000001 /* IosAppVisibilitySnapshot.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = IosAppVisibilitySnapshot.swift; path = ../NotificationService/IosAppVisibilitySnapshot.swift; sourceTree = "<group>"; };
 		D371B00273A7000000000001 /* IosAppVisibilityCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IosAppVisibilityCoordinator.swift; sourceTree = "<group>"; };
+		5E41A0150000000000000001 /* en */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = en; path = en.lproj/InfoPlist.strings; sourceTree = "<group>"; };
+		5E41A0150000000000000002 /* de */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = de; path = de.lproj/InfoPlist.strings; sourceTree = "<group>"; };
+		5E41A0150000000000000003 /* ar */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = ar; path = ar.lproj/InfoPlist.strings; sourceTree = "<group>"; };
 		5E41A0120000000000000001 /* en */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = en; path = en.lproj/Localizable.strings; sourceTree = "<group>"; };
 		5E41A0120000000000000002 /* de */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = de; path = de.lproj/Localizable.strings; sourceTree = "<group>"; };
 		5E41A0120000000000000003 /* ar */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = ar; path = ar.lproj/Localizable.strings; sourceTree = "<group>"; };
@@ -447,6 +451,7 @@
 				6990BBC32F6AFE8D00B1FF97 /* GoogleService-Info.plist */,
 				698216E42F5E3D0700B87A6B /* Runner.entitlements */,
 				D371B00473A7000000000001 /* PrivacyInfo.xcprivacy */,
+				5E41A0130000000000000001 /* InfoPlist.strings */,
 				5E41A0100000000000000001 /* Localizable.strings */,
 				97C146FA1CF9000F007C117D /* Main.storyboard */,
 				97C146FD1CF9000F007C117D /* Assets.xcassets */,
@@ -685,6 +690,7 @@
 				97C146FE1CF9000F007C117D /* Assets.xcassets in Resources */,
 				97C146FC1CF9000F007C117D /* Main.storyboard in Resources */,
 				5E41A0110000000000000001 /* Localizable.strings in Resources */,
+				5E41A0140000000000000001 /* InfoPlist.strings in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -966,6 +972,16 @@
 				5E41A0120000000000000003 /* ar */,
 			);
 			name = Localizable.strings;
+			sourceTree = "<group>";
+		};
+		5E41A0130000000000000001 /* InfoPlist.strings */ = {
+			isa = PBXVariantGroup;
+			children = (
+				5E41A0150000000000000001 /* en */,
+				5E41A0150000000000000002 /* de */,
+				5E41A0150000000000000003 /* ar */,
+			);
+			name = InfoPlist.strings;
 			sourceTree = "<group>";
 		};
 /* End PBXVariantGroup section */

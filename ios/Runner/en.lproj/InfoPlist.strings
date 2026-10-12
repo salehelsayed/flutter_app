@@ -1,5 +1,9 @@
-NSCameraUsageDescription = "This app needs camera access to scan QR codes and take photos";
-NSPhotoLibraryUsageDescription = "This app needs access to your photo library to share images";
-NSMicrophoneUsageDescription = "This app needs microphone access to record voice messages";
+/* English permission prompts. Keep these identical to the values in
+   Info.plist (a contract test checks it), so English never drifts. */
+NSCameraUsageDescription = "This app needs camera access to take your profile photo and scan QR codes to add friends";
+NSPhotoLibraryUsageDescription = "To share photos and videos";
+NSPhotoLibraryAddUsageDescription = "Save photos and videos you choose to your library";
+NSMicrophoneUsageDescription = "Allow microphone access for private voice calls and voice messages.";
 NSLocationWhenInUseUsageDescription = "This app needs location access to share nearby posts with your direct friends";
+NSLocationAlwaysAndWhenInUseUsageDescription = "This app needs location access to share nearby posts with your direct friends";
 NSLocalNetworkUsageDescription = "mknoon looks for your friends on the same WiFi to send messages directly to their phone. It's faster, more private, and we never collect your data.";

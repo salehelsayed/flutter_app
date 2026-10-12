@@ -6284,7 +6284,8 @@
         "ios/RunnerTests/UpdateCheckBackgroundTaskTests.swift",
         "android/app/src/main/kotlin/com/mknoon/app/MknoonFirebaseMessaging*",
         "android/app/src/test/kotlin/com/mknoon/app/MknoonFirebaseMessagingServiceTest.kt",
-        "ios/Runner/*.lproj/Localizable.strings"
+        "ios/Runner/*.lproj/Localizable.strings",
+        "ios/Runner/*.lproj/InfoPlist.strings"
       ],
       "checks": [
         "update-check",
