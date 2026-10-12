@@ -1089,6 +1089,13 @@ final class IosSetupReadinessEntryCoordinator {
   ) {
     // SE-41 T4b: the exact check-now push only runs the signed update check;
     // the coordinator completes it exactly once. Everything else is unchanged.
+    // Entry log (key names only, never values) tells "not called" apart from
+    // "match rejected" on a device.
+    if userInfo["type"] != nil || userInfo["gcm.message_id"] != nil || userInfo["aps"] != nil {
+      UpdateCheckBackgroundCoordinator.log(
+        "remote entry keys=\(UpdateCheckBackgroundCoordinator.keyNames(userInfo))"
+      )
+    }
     if updateCheckBackground.handleRemotePush(userInfo: userInfo, completion: completionHandler) {
       return
     }
