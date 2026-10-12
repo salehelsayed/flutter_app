@@ -6,7 +6,10 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
+	"strconv"
+	"strings"
 	"time"
 
 	"firebase.google.com/go/v4/messaging"
@@ -194,16 +197,47 @@ func sendUpdateCheckPush(
 
 // updateCheckKeptSlotHint names the keys this run reserved and how to clear
 // them by hand, for when the owner is sure the failed send never arrived.
-func updateCheckKeptSlotHint(limiter *redisUpdateCheckSendLimiter, iosAlert bool) string {
+// The relay's REDIS_URL password is URL-encoded, so `redis-cli -u` fails
+// there: the command decodes it from the service env into REDISCLI_AUTH and
+// passes host, port and db separately. The password is never printed.
+func updateCheckKeptSlotHint(limiter *redisUpdateCheckSendLimiter, iosAlert bool, redisURL string) string {
 	sendKey, alertKey := limiter.keys()
 	keys := sendKey
 	if iosAlert {
 		keys += " " + alertKey
 	}
+	host, port, db, tls := "localhost", "6379", "", false
+	if parsed, err := url.Parse(redisURL); err == nil {
+		if h := parsed.Hostname(); h != "" {
+			host = h
+		}
+		if p := parsed.Port(); p != "" {
+			port = p
+		}
+		if n := strings.Trim(parsed.Path, "/"); n != "" && n != "0" {
+			if _, err := strconv.Atoi(n); err == nil {
+				db = n
+			}
+		}
+		tls = parsed.Scheme == "rediss"
+	}
+	target := "-h " + host + " -p " + port
+	if db != "" {
+		target += " -n " + db
+	}
+	if tls {
+		target += " --tls"
+	}
 	return "the send failed but may have reached FCM, so its limit slot is kept (" + keys + ").\n" +
 		"Only if you are sure nothing was delivered, clear it on the relay host with:\n" +
-		"  sudo bash -c 'set -a; . /etc/mknoon/relay-server.env; set +a; redis-cli -u \"$REDIS_URL\" DEL " + keys + "'"
+		"  sudo bash -c 'set -a; . /etc/mknoon/relay-server.env; set +a; " +
+		updateCheckRedisAuthExport + " redis-cli --no-auth-warning " + target + " DEL " + keys + "'"
 }
+
+// updateCheckRedisAuthExport decodes the password from REDIS_URL at run time
+// (inside the hint's single-quoted bash), so it is never printed.
+const updateCheckRedisAuthExport = `export REDISCLI_AUTH="$(python3 -c "import os, urllib.parse as u; ` +
+	`print(u.unquote(u.urlsplit(os.environ[\"REDIS_URL\"]).password or \"\"))")";`
 
 func runUpdateCheckPushCLI(args []string) error {
 	iosAlert := false
@@ -238,7 +272,7 @@ func runUpdateCheckPushCLI(args []string) error {
 	name, slotKept, err := sendUpdateCheckPush(ctx, limiter, push.send, iosAlert)
 	if err != nil {
 		if slotKept {
-			fmt.Fprintln(os.Stderr, "update-check-push: "+updateCheckKeptSlotHint(limiter, iosAlert))
+			fmt.Fprintln(os.Stderr, "update-check-push: "+updateCheckKeptSlotHint(limiter, iosAlert, config.RedisURL))
 		}
 		return err
 	}

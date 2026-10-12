@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"os/exec"
 	"strings"
 	"testing"
 	"time"
@@ -257,15 +258,74 @@ func TestUpdateCheckPushProviderErrorIsVerbatim(t *testing.T) {
 	}
 }
 
+// The relay's real REDIS_URL shape: the password is URL-encoded (it has a
+// "/"), which is why `redis-cli -u` fails there.
+const updateCheckHintRedisURL = "redis://:s3cr%2Ft%40pw@127.0.0.1:6380/2"
+
 func TestUpdateCheckKeptSlotHintNamesOnlyThisRunsKeys(t *testing.T) {
 	limiter := newRedisUpdateCheckSendLimiter(nil, "relay:")
-	silent := updateCheckKeptSlotHint(limiter, false)
-	if !strings.Contains(silent, "DEL relay:se41:update_check_push:any'") || strings.Contains(silent, ":alert") {
+	silent := updateCheckKeptSlotHint(limiter, false, updateCheckHintRedisURL)
+	if !strings.Contains(silent, " DEL relay:se41:update_check_push:any'") || strings.Contains(silent, ":alert") {
 		t.Fatalf("silent hint: %s", silent)
 	}
-	alert := updateCheckKeptSlotHint(limiter, true)
-	if !strings.Contains(alert, "DEL relay:se41:update_check_push:any relay:se41:update_check_push:alert'") {
+	alert := updateCheckKeptSlotHint(limiter, true, updateCheckHintRedisURL)
+	if !strings.Contains(alert, " DEL relay:se41:update_check_push:any relay:se41:update_check_push:alert'") {
 		t.Fatalf("alert hint: %s", alert)
+	}
+}
+
+func TestUpdateCheckKeptSlotHintNeverContainsThePassword(t *testing.T) {
+	limiter := newRedisUpdateCheckSendLimiter(nil, "relay:")
+	hint := updateCheckKeptSlotHint(limiter, true, updateCheckHintRedisURL)
+	for _, secret := range []string{"s3cr", "%2Ft", "t@pw", updateCheckHintRedisURL} {
+		if strings.Contains(hint, secret) {
+			t.Fatalf("hint leaks %q: %s", secret, hint)
+		}
+	}
+	if strings.Contains(hint, "redis-cli -u") || strings.Contains(hint, " -a ") {
+		t.Fatalf("hint must not pass the password on the command line: %s", hint)
+	}
+	if !strings.Contains(hint, "redis-cli --no-auth-warning -h 127.0.0.1 -p 6380 -n 2 DEL ") {
+		t.Fatalf("hint target: %s", hint)
+	}
+	if got := updateCheckKeptSlotHint(limiter, false, "rediss://:x@cache.internal:6390"); !strings.Contains(got, "-h cache.internal -p 6390 --tls DEL") {
+		t.Fatalf("tls hint: %s", got)
+	}
+}
+
+// Runs the hint's command (minus sudo and the env file) against a stub
+// redis-cli, so the decoding is checked in a real shell.
+func TestUpdateCheckKeptSlotHintDecodesThePasswordAtRunTime(t *testing.T) {
+	for _, tool := range []string{"bash", "python3"} {
+		if _, err := exec.LookPath(tool); err != nil {
+			t.Skipf("%s not available", tool)
+		}
+	}
+	hint := updateCheckKeptSlotHint(newRedisUpdateCheckSendLimiter(nil, "relay:"), false, updateCheckHintRedisURL)
+	start := strings.Index(hint, "set +a; ")
+	if start < 0 || !strings.HasSuffix(hint, "'") {
+		t.Fatalf("unexpected hint shape: %s", hint)
+	}
+	command := hint[start+len("set +a; ") : len(hint)-1]
+
+	dir := t.TempDir()
+	out := dir + "/seen"
+	stub := "#!/bin/sh\nprintf '%s\\n' \"$REDISCLI_AUTH\" \"$*\" > " + out + "\n"
+	if err := os.WriteFile(dir+"/redis-cli", []byte(stub), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command("bash", "-c", command)
+	cmd.Env = append(os.Environ(), "PATH="+dir+":"+os.Getenv("PATH"), "REDIS_URL="+updateCheckHintRedisURL)
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("hint command failed: %v %s", err, output)
+	}
+	seen, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "s3cr/t@pw\n--no-auth-warning -h 127.0.0.1 -p 6380 -n 2 DEL relay:se41:update_check_push:any\n"
+	if string(seen) != want {
+		t.Fatalf("stub saw %q, want %q", seen, want)
 	}
 }
 

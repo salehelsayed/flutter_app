@@ -249,8 +249,12 @@ Exit code 2 with a reason otherwise.
 - Any other failure (a timeout, a network error, an FCM server error) keeps
   the slot, because FCM may already have accepted the message: a retried
   `--ios-alert` must not alert twice in a day. The command then prints the
-  Redis keys it reserved and the `redis-cli ... DEL` command that clears
-  them. Run that only if you are sure nothing was delivered.
+  Redis keys it reserved and the command that clears them. Run that only if
+  you are sure nothing was delivered. It does not use `redis-cli -u`: the
+  password in `REDIS_URL` is URL-encoded, which `-u` gets wrong (WRONGPASS).
+  It decodes the password from the service env into `REDISCLI_AUTH` and
+  passes `-h`/`-p` separately, so the password never appears on screen or
+  in `ps`.
 - The app also limits itself to one push-triggered check per hour.
 
 ### What the app does
