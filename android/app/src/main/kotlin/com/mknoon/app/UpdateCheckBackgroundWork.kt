@@ -77,6 +77,20 @@ internal object UpdateCheckBackgroundWork {
             return free
         }
     }
+
+    private const val SWITCH_PREFS = "se41_update_check_switch"
+    private const val SWITCH_ENABLED = "enabled"
+
+    /** The kill switch as Dart last configured it; false until it has. */
+    fun isSwitchEnabled(context: Context): Boolean =
+        context.getSharedPreferences(SWITCH_PREFS, Context.MODE_PRIVATE)
+            .getBoolean(SWITCH_ENABLED, false)
+
+    fun storeSwitchEnabled(context: Context, enabled: Boolean) {
+        context.getSharedPreferences(SWITCH_PREFS, Context.MODE_PRIVATE)
+            .edit().putBoolean(SWITCH_ENABLED, enabled).commit()
+    }
+
     const val MINIMAL_ENTRYPOINT = "androidUpdateCheckMinimalMain"
     const val REPEAT_HOURS = 12L
     const val BACKOFF_MINUTES = 30L
@@ -225,22 +239,39 @@ private object FirebaseUpdateCheckTopicMembership : UpdateCheckTopicMembership {
     }
 }
 
+/** The stored kill switch, so a push can be checked without Dart. */
+internal interface UpdateCheckSwitchState {
+    var enabled: Boolean
+}
+
+internal class InMemoryUpdateCheckSwitchState(override var enabled: Boolean = false) : UpdateCheckSwitchState
+
+private class PrefsUpdateCheckSwitchState(private val context: Context) : UpdateCheckSwitchState {
+    override var enabled: Boolean
+        get() = UpdateCheckBackgroundWork.isSwitchEnabled(context)
+        set(value) = UpdateCheckBackgroundWork.storeSwitchEnabled(context, value)
+}
+
 /**
  * Kill switch on: one unique periodic work (KEEP) and the update_check topic.
- * Off: cancel all work and leave the topic.
+ * Off: cancel all work and leave the topic. The switch is stored, so a push
+ * that still arrives (stale topic membership) is ignored while it is off.
  */
 internal class UpdateCheckWorkScheduler(
     private val enqueuer: UpdateCheckWorkEnqueuer,
     private val topic: UpdateCheckTopicMembership = FirebaseUpdateCheckTopicMembership,
     private val takePushSlot: () -> Boolean = { true },
+    private val switchState: UpdateCheckSwitchState = InMemoryUpdateCheckSwitchState(),
 ) {
     constructor(context: Context) : this(
         AndroidXUpdateCheckWorkEnqueuer(context),
         FirebaseUpdateCheckTopicMembership,
         { UpdateCheckBackgroundWork.takePushSlot(context.applicationContext) },
+        PrefsUpdateCheckSwitchState(context.applicationContext),
     )
 
     fun apply(enabled: Boolean) {
+        runCatching { switchState.enabled = enabled }
         runCatching { topic.set(enabled) }
         if (!enabled) {
             enqueuer.cancelUniqueWork(UpdateCheckBackgroundWork.UNIQUE_WORK_NAME)
@@ -256,9 +287,11 @@ internal class UpdateCheckWorkScheduler(
 
     /**
      * T4b: a check-now push runs the same worker once (unique, KEEP), at most
-     * once per hour. Returns false when the hourly slot is taken.
+     * once per hour. Returns false when the kill switch is off (checked
+     * first, so it takes no slot) or the hourly slot is taken.
      */
     fun enqueuePushTriggered(): Boolean {
+        if (!switchState.enabled) return false
         if (!takePushSlot()) return false
         enqueuer.enqueueUniqueOneTime(
             UpdateCheckBackgroundWork.PUSH_WORK_NAME,

@@ -158,25 +158,51 @@ func randomUpdateCheckToken() (string, error) {
 	return hex.EncodeToString(buf), nil
 }
 
-// sendUpdateCheckPush reserves a slot, sends once, and gives the slot back
-// only when the provider refused the send. The provider error is returned
-// verbatim (PushService.send never wraps it).
+// updateCheckPushRejected is true only for provider answers that clearly
+// mean FCM did not accept the message. A deadline, a network error or a
+// server error may come after FCM accepted it, so those keep the slot.
+func updateCheckPushRejected(err error) bool {
+	return messaging.IsInvalidArgument(err) ||
+		messaging.IsThirdPartyAuthError(err) ||
+		messaging.IsSenderIDMismatch(err)
+}
+
+// sendUpdateCheckPush reserves a slot and sends once. A failed send gives
+// the slot back only when the provider clearly rejected it; otherwise
+// slotKept is true, so a retried --ios-alert cannot alert twice in a day.
+// The provider error is returned verbatim (PushService.send never wraps it).
 func sendUpdateCheckPush(
 	ctx context.Context,
 	limiter updateCheckSendLimiter,
 	send func(context.Context, *messaging.Message) (string, error),
 	iosAlert bool,
-) (string, error) {
+) (name string, slotKept bool, err error) {
 	release, err := limiter.Reserve(ctx, iosAlert)
 	if err != nil {
-		return "", err
+		return "", false, err
 	}
 	name, sendErr := send(ctx, buildUpdateCheckTopicMessage(iosAlert))
 	if sendErr != nil {
-		_ = release(ctx)
-		return "", sendErr
+		if updateCheckPushRejected(sendErr) {
+			_ = release(ctx)
+			return "", false, sendErr
+		}
+		return "", true, sendErr
 	}
-	return name, nil
+	return name, false, nil
+}
+
+// updateCheckKeptSlotHint names the keys this run reserved and how to clear
+// them by hand, for when the owner is sure the failed send never arrived.
+func updateCheckKeptSlotHint(limiter *redisUpdateCheckSendLimiter, iosAlert bool) string {
+	sendKey, alertKey := limiter.keys()
+	keys := sendKey
+	if iosAlert {
+		keys += " " + alertKey
+	}
+	return "the send failed but may have reached FCM, so its limit slot is kept (" + keys + ").\n" +
+		"Only if you are sure nothing was delivered, clear it on the relay host with:\n" +
+		"  sudo bash -c 'set -a; . /etc/mknoon/relay-server.env; set +a; redis-cli -u \"$REDIS_URL\" DEL " + keys + "'"
 }
 
 func runUpdateCheckPushCLI(args []string) error {
@@ -208,13 +234,12 @@ func runUpdateCheckPushCLI(args []string) error {
 	if push.client == nil {
 		return errors.New("firebase messaging is unavailable")
 	}
-	name, err := sendUpdateCheckPush(
-		ctx,
-		newRedisUpdateCheckSendLimiter(client, config.RedisPrefix),
-		push.send,
-		iosAlert,
-	)
+	limiter := newRedisUpdateCheckSendLimiter(client, config.RedisPrefix)
+	name, slotKept, err := sendUpdateCheckPush(ctx, limiter, push.send, iosAlert)
 	if err != nil {
+		if slotKept {
+			fmt.Fprintln(os.Stderr, "update-check-push: "+updateCheckKeptSlotHint(limiter, iosAlert))
+		}
 		return err
 	}
 	mode := "silent"

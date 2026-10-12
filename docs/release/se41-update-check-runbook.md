@@ -226,7 +226,9 @@ Exit code 2 with a reason otherwise.
 ### What it sends (one FCM topic send to `update_check`)
 
 - Data payload, exactly: `{"type":"update_check"}`. No notification block.
-- Android: high-priority data message.
+- Android: high-priority data message. It shows no notification. FCM may
+  lower the priority of apps that send many high-priority messages that show
+  nothing; at most 1 per 6 h is fine, so do not raise the limit.
 - iOS silent (default): `aps.content-available: 1`, headers
   `apns-priority: 5`, `apns-push-type: background`.
 - iOS `--ios-alert`: also `aps.alert` with ONLY
@@ -240,8 +242,15 @@ Exit code 2 with a reason otherwise.
 - One send per 6 h in any mode (`<prefix>se41:update_check_push:any`).
 - Alert mode at most once per 24 h (`<prefix>se41:update_check_push:alert`);
   an alert also counts toward the 6 h limit.
-- A refused send prints `rate limited: limit_6h` or `limit_24h_alert`. A send
-  the provider rejects gives its slot back, so it can be retried at once.
+- A refused send prints `rate limited: limit_6h` or `limit_24h_alert`.
+- A send that FCM clearly rejects (invalid argument, APNs/third-party auth
+  error, sender ID mismatch) gives its slot back, so it can be retried at
+  once after the fix.
+- Any other failure (a timeout, a network error, an FCM server error) keeps
+  the slot, because FCM may already have accepted the message: a retried
+  `--ios-alert` must not alert twice in a day. The command then prints the
+  Redis keys it reserved and the `redis-cli ... DEL` command that clears
+  them. Run that only if you are sure nothing was delivered.
 - The app also limits itself to one push-triggered check per hour.
 
 ### What the app does
@@ -259,6 +268,10 @@ Exit code 2 with a reason otherwise.
   exactly once within 25 s. An `--ios-alert` push also shows the fixed
   sentence from `Localizable.strings` (EN, DE, AR). Tapping it only opens
   the app.
+- A push-started check always downloads the file: it skips the app's
+  6 h gate (the 1 h app limit and the relay's 6 h limit bound the traffic).
+- The app ignores the push while its kill switch is off, even if it is
+  still in the topic.
 - In both cases a notice appears only if the signed file says so (T2/T4a).
 - To check on a device: iOS logs `[SE41_UPDATE_CHECK] push started` and
   `push completed outcome=<outcome>` (public os_log). Android runs the

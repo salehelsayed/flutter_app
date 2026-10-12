@@ -48,13 +48,19 @@ final class UpdateCheckBackgroundResult {
   };
 }
 
+/// Reasons sent by the T4b check-now push (Android worker, iOS
+/// didReceiveRemoteNotification). These runs skip the 6 h gate: the native
+/// 1 h slot and the relay's 6 h send limit already bound the traffic.
+const updateCheckPushReasons = {'android_push', 'ios_push'};
+
 /// The one Dart entry of the T4a background check, for the iOS BG task, the
 /// Android main-engine handoff and the Android minimal engine.
 ///
 /// Authority: only [UpdateCheckService.check] and the signed file decide. The
 /// run needs no first frame and never awaits the Go bridge, SQLCipher or the
 /// app bootstrap. It reads the state, runs the check when one is due (the
-/// same 6 h gate as the foreground, failed downloads included), then applies
+/// same 6 h gate as the foreground, failed downloads included; a check-now
+/// push in [updateCheckPushReasons] always checks), then applies
 /// [planUpdateNotification].
 class UpdateCheckBackgroundRunner {
   UpdateCheckBackgroundRunner({
@@ -95,7 +101,10 @@ class UpdateCheckBackgroundRunner {
     }
     var expired = false;
     try {
-      return await _run(() => expired).timeout(
+      return await _run(
+        () => expired,
+        force: updateCheckPushReasons.contains(reason),
+      ).timeout(
         budget,
         onTimeout: () {
           expired = true;
@@ -111,7 +120,10 @@ class UpdateCheckBackgroundRunner {
     }
   }
 
-  Future<UpdateCheckBackgroundResult> _run(bool Function() expired) async {
+  Future<UpdateCheckBackgroundResult> _run(
+    bool Function() expired, {
+    required bool force,
+  }) async {
     const aborted = UpdateCheckBackgroundResult(
       UpdateCheckBackgroundOutcome.aborted,
     );
@@ -121,11 +133,13 @@ class UpdateCheckBackgroundRunner {
         UpdateCheckBackgroundOutcome.stateUnavailable,
       );
     }
-    final due = isUpdateCheckDue(
-      now: _clock(),
-      lastCheckAt: before.lastCheckAt,
-      checkedThisLaunch: true,
-    );
+    final due =
+        force ||
+        isUpdateCheckDue(
+          now: _clock(),
+          lastCheckAt: before.lastCheckAt,
+          checkedThisLaunch: true,
+        );
     final decision = due
         ? await _service.check()
         : await _service.decideFromStored();

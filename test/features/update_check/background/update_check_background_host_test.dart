@@ -127,6 +127,40 @@ void main() {
     expect(bootstrap.isCompleted, isFalse);
   });
 
+  test('a check-now push over the channel always checks (T4b G1)', () async {
+    final temp = await TempStateStore.create();
+    addTearDown(temp.dispose);
+    final envelope = signedEnvelope(payloadBytes(ios: section(110, 100)));
+    final fetcher = FakeVersionFileFetcher([envelope, envelope]);
+    UpdateCheckBackgroundHost(
+      updateSwitch: _switch(),
+      runnerFactory: (inCall) => UpdateCheckBackgroundRunner(
+        service: UpdateCheckService(
+          updateSwitch: _switch(),
+          verifier: testVerifier(),
+          fetcher: fetcher,
+          store: temp.store,
+          installedBuildNumber: () async => '110',
+          platform: UpdatePlatform.ios,
+        ),
+        store: temp.store,
+        poster: _NoPoster(),
+        isForeground: () async => false,
+        isInCall: () async => inCall,
+      ),
+    ).install();
+
+    Future<Object?> run(String reason) => callFromNative('run', {
+      'reason': reason,
+      'budgetMs': 5000,
+      'inCall': false,
+    });
+    expect((await run('ios_bg_app_refresh') as Map)['checked'], isTrue);
+    expect((await run('ios_push') as Map)['checked'], isTrue);
+    expect((await run('ios_bg_app_refresh') as Map)['checked'], isFalse);
+    expect(fetcher.calls, 2);
+  });
+
   test('openStore opens only the built-in App Store page (AC7)', () async {
     final opened = <Uri>[];
     UpdateCheckBackgroundHost(

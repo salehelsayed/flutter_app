@@ -168,6 +168,7 @@ class UpdateCheckBackgroundWorkTest {
         val enqueuer = RecordingEnqueuer()
         var slotFree = true
         val scheduler = UpdateCheckWorkScheduler(enqueuer, { }, { slotFree })
+        scheduler.apply(true)
         assertTrue(scheduler.enqueuePushTriggered())
         val (name, policy, work) = enqueuer.oneTime.single()
         assertEquals("mknoon-se41-update-check-push", name)
@@ -178,6 +179,33 @@ class UpdateCheckBackgroundWorkTest {
         slotFree = false
         assertFalse(scheduler.enqueuePushTriggered())
         assertEquals(1, enqueuer.oneTime.size)
+    }
+
+    @Test
+    fun `T4b G3 a push with the kill switch off takes no slot and starts nothing`() {
+        val enqueuer = RecordingEnqueuer()
+        var slotsTaken = 0
+        val switch = InMemoryUpdateCheckSwitchState()
+        val scheduler = UpdateCheckWorkScheduler(enqueuer, { }, { slotsTaken++; true }, switch)
+        assertFalse("never configured", scheduler.enqueuePushTriggered())
+        scheduler.apply(false)
+        assertFalse(scheduler.enqueuePushTriggered())
+        assertEquals(0, slotsTaken)
+        assertTrue(enqueuer.oneTime.isEmpty())
+        scheduler.apply(true)
+        assertTrue(scheduler.enqueuePushTriggered())
+        assertEquals(1, slotsTaken)
+        assertEquals(1, enqueuer.oneTime.size)
+    }
+
+    @Test
+    fun `T4b G3 the switch is stored in shared preferences`() {
+        val application: Application = RuntimeEnvironment.getApplication()
+        assertFalse(UpdateCheckBackgroundWork.isSwitchEnabled(application))
+        UpdateCheckBackgroundWork.storeSwitchEnabled(application, true)
+        assertTrue(UpdateCheckBackgroundWork.isSwitchEnabled(application))
+        UpdateCheckBackgroundWork.storeSwitchEnabled(application, false)
+        assertFalse(UpdateCheckBackgroundWork.isSwitchEnabled(application))
     }
 
     @Test

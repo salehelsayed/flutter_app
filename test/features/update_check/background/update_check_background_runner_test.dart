@@ -283,6 +283,59 @@ void main() {
     });
   });
 
+  group('check-now push (T4b G1)', () {
+    for (final reason in ['ios_push', 'android_push']) {
+      test('$reason checks 1 h after the last check and posts', () async {
+        fetcher.responses.addAll([file(1), file(2, latest: 130)]);
+        final first = await runner(
+          installed: '120',
+        ).run(reason: 'test', budget: const Duration(seconds: 5));
+        expect(first.outcome, UpdateCheckBackgroundOutcome.noUpdate);
+        expect(fetcher.calls, 1);
+
+        now = now.add(const Duration(hours: 1));
+        final pushed = await runner(
+          installed: '120',
+        ).run(reason: reason, budget: const Duration(seconds: 5));
+        expect(fetcher.calls, 2, reason: 'the 6 h gate is skipped');
+        expect(pushed.checked, isTrue);
+        expect(pushed.outcome, UpdateCheckBackgroundOutcome.notified);
+        expect(poster.posts.single.$1, UpdateNotifyKind.soft);
+      });
+    }
+
+    test('other reasons keep the 6 h gate', () async {
+      fetcher.responses.addAll([file(1), file(2, latest: 130)]);
+      await runner(
+        installed: '120',
+      ).run(reason: 'test', budget: const Duration(seconds: 5));
+      now = now.add(const Duration(hours: 1));
+      for (final reason in ['ios_bg_app_refresh', 'android_periodic']) {
+        final result = await runner(
+          installed: '120',
+        ).run(reason: reason, budget: const Duration(seconds: 5));
+        expect(result.checked, isFalse, reason: reason);
+        expect(result.outcome, UpdateCheckBackgroundOutcome.noUpdate);
+      }
+      expect(fetcher.calls, 1);
+      expect(poster.posts, isEmpty);
+    });
+
+    test('the push reasons match the native constants', () {
+      expect(updateCheckPushReasons, {'ios_push', 'android_push'});
+      expect(
+        File('ios/Runner/UpdateCheckBackgroundTask.swift').readAsStringSync(),
+        contains('runGated(reason: "ios_push"'),
+      );
+      expect(
+        File(
+          'android/app/src/main/kotlin/com/mknoon/app/UpdateCheckBackgroundWork.kt',
+        ).readAsStringSync(),
+        contains('const val REASON_PUSH = "android_push"'),
+      );
+    });
+  });
+
   group('kill switch (AC1)', () {
     for (final (name, updateSwitch) in [
       (
