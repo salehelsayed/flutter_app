@@ -433,8 +433,12 @@ final class UpdateCheckBackgroundCoordinator {
   /// Public os_log: a release build hides NSLog text on the device. The text
   /// carries no user data, only the step and the outcome.
   static func log(_ message: String) {
-    os_log("%{public}@", log: .default, type: .default, "[SE41_UPDATE_CHECK] \(message)")
+    os_log("%{public}@", log: updateCheckLog, type: .default, "[SE41_UPDATE_CHECK] \(message)")
   }
+
+  /// Own subsystem, like GoBridge's proof log, which shows its text in a
+  /// release build's device syslog.
+  private static let updateCheckLog = OSLog(subsystem: "com.mknoon.se41", category: "update-check")
 
   /// Never asks: only an existing grant counts.
   static func mayPost(_ status: UNAuthorizationStatus) -> Bool {
