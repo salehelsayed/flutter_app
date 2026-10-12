@@ -357,22 +357,25 @@ void main() {
     });
   });
 
-  test('built-in keys are placeholders until SE-41 O2 (AC10)', () {
-    expect(updateCheckK1PublicKeyBase64, isEmpty);
-    expect(updateCheckK2PublicKeyBase64, isEmpty);
-    expect(builtInVersionKeys(), isEmpty);
-    expect(Uri.parse(updateCheckVersionFileUrl).scheme, 'https');
-    expect(Uri.parse(updateCheckVersionFileUrl).host, endsWith('.invalid'));
-    // With placeholder keys nothing verifies, so nothing can block.
+  test('built-in keys and URL are the production values (SE-41 O1/O2)', () {
+    final keys = builtInVersionKeys();
+    expect(keys.map((k) => (k.keyId, k.rank)), [('k1', 1), ('k2', 2)]);
+    expect(updateCheckK1PublicKeyBase64, isNot(updateCheckK2PublicKeyBase64));
     expect(
-      VersionFileVerifier(builtInVersionKeys())
+      updateCheckVersionFileUrl,
+      'https://updates.mknoon.xyz/mknoon/version.json',
+    );
+    // A file signed with any other key (here the test-only k1) is not trusted
+    // by the shipped keys.
+    expect(
+      VersionFileVerifier(keys)
           .verify(
             signedEnvelope(payloadBytes()),
             highestAcceptedRank: 0,
             requiredPlatforms: {UpdatePlatform.ios},
           )
           .rejection,
-      VersionFileRejection.unknownKey,
+      VersionFileRejection.badSignature,
     );
   });
 }

@@ -3,17 +3,19 @@ library;
 
 import 'version_file_verifier.dart';
 
-// TODO(SE-41 O2): the owner generates k1 and backup k2 offline and pastes
-// ONLY the base64 public keys here. While a key is empty it is skipped, so no
-// file can verify and the decision stays `none`. Never put a private key in
-// the app or the repo.
-const String updateCheckK1PublicKeyBase64 = '';
-const String updateCheckK2PublicKeyBase64 = '';
+// SE-41 O2: the owner generated k1 and backup k2 offline (2026-10-11). Only
+// the base64 public keys live here; the private keys never enter the app or
+// the repo. k2 is for a k1 compromise or a planned rotation only: once a k2
+// file is accepted, k1 is never trusted again (see the runbook).
+const String updateCheckK1PublicKeyBase64 =
+    'iB9ZHd/taLzLSsxFbbC0mX/wzAmzps0b9uH0KVwI/sw=';
+const String updateCheckK2PublicKeyBase64 =
+    'tG2VAI6qIJtUTKe2T09c+K50Ks6pqjJDuVFkiDasXEg=';
 
-// TODO(SE-41 O1): the static host is not set up yet (T3). Placeholder only;
-// the `.invalid` TLD can never resolve.
+// SE-41 O1: the static host (Caddy on 51.20.131.205, no access log). Every
+// shipped build fetches this exact URL for good, so never change it casually.
 const String updateCheckVersionFileUrl =
-    'https://update-check.invalid/mknoon/version.json';
+    'https://updates.mknoon.xyz/mknoon/version.json';
 
 /// The ranked built-in keys: k1 rank 1, k2 rank 2. Empty placeholders are
 /// left out.
