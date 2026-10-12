@@ -208,7 +208,9 @@ void main() {
         expect(await withoutK1.check(), const UpdateDecisionNone());
         final state = await temp.load();
         expect(state.lastEnvelope, isNull);
-        expect(state.highestAcceptedRank, 0);
+        // T4a: only the envelope goes. The rank and sequence never go down.
+        expect(state.highestAcceptedRank, 1);
+        expect(state.sequence, 1);
       },
     );
 
@@ -221,7 +223,7 @@ void main() {
       expect((await temp.load()).sequence, 2);
     });
 
-    test('(f) corrupt or tampered stored state is discarded -> none', () async {
+    test('(f) a raised stored rank drops the envelope -> none', () async {
       fetcher.responses.add(k1(1, min: 200));
       await service().check();
 
@@ -232,8 +234,14 @@ void main() {
       await temp.file.writeAsString(jsonEncode(json));
       fetcher.responses.add(null);
       expect(await service().check(), const UpdateDecisionNone());
-      expect((await temp.load()).lastEnvelope, isNull);
+      final state = await temp.load();
+      expect(state.lastEnvelope, isNull);
+      // T4a never lowers a rank, so the raised rank stays. Writing the app's
+      // private files is outside the threat model.
+      expect(state.highestAcceptedRank, 2);
+    });
 
+    test('(f2) corrupt or tampered stored state is discarded -> none', () async {
       // Corrupt: not JSON at all.
       await temp.file.writeAsString('{{{ not json');
       fetcher.responses.add(null);
@@ -385,6 +393,9 @@ void main() {
           reason: entity.path,
         );
         expect(source, isNot(contains('FlutterSecureStorage(')));
+        // T4a: only background/ talks to native code (scheduling and
+        // notifications); the state code itself never does.
+        if (entity.path.contains('/background/')) continue;
         expect(source, isNot(contains('MethodChannel')), reason: entity.path);
       }
     });

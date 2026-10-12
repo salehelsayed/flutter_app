@@ -4,6 +4,7 @@ import 'package:flutter_app/app/bootstrap/production_app_diagnostics.dart';
 import 'package:flutter_app/app/bootstrap/production_application_bootstrap.dart';
 import 'package:flutter_app/app/bootstrap/production_headless_call_admission.dart';
 import 'package:flutter_app/app/bootstrap/production_headless_canonical_recovery.dart';
+import 'package:flutter_app/app/bootstrap/update_check_background_entrypoints.dart';
 import 'package:flutter_app/core/debug/android_canonical_runtime_h0_probe.dart';
 import 'package:flutter_app/core/debug/android_headless_recovery_374_fixture.dart';
 import 'package:flutter_app/core/notifications/headless_canonical_recovery_entrypoint.dart';
@@ -16,6 +17,10 @@ export 'package:flutter_app/app/bootstrap/production_application_bootstrap.dart'
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  // SE-41 T4a: answers the iOS BG task and the Android worker handoff, and
+  // schedules or cancels them. Before the bootstrap on purpose: a background
+  // run must not wait for the Go bridge or SQLCipher.
+  installUpdateCheckBackgroundHost();
   await runWithProductionAppDiagnostics(() async {
     await DebugE2ECompositionRoot.acknowledgeGroupReactionNotificationIosDartMainEntryIfConfigured();
     await runApplicationBootstrap(
@@ -52,3 +57,10 @@ Future<void> androidHeadlessCanonicalRecoveryMain(List<String> arguments) =>
 @pragma('vm:entry-point')
 Future<void> androidHeadlessCallAdmissionMain(List<String> arguments) =>
     runProductionAndroidHeadlessCallAdmission(arguments);
+
+/// SE-41 T4a minimal engine. The update-check worker starts it only when the
+/// canonical runtime lease is free and no main engine is registered. It never
+/// takes the lease and imports no Go bridge, SQLCipher, bootstrap or Firebase.
+@pragma('vm:entry-point')
+Future<void> androidUpdateCheckMinimalMain(List<String> arguments) =>
+    runUpdateCheckMinimalEngine(arguments);

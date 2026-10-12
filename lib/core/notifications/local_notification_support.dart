@@ -56,6 +56,20 @@ const mknoonMissedCallNotificationDetails = NotificationDetails(
   ),
 );
 
+// SE-41 T4a: update reminders from the background update check. Default
+// importance, so a reminder never pops over a chat. Native code posts on it
+// (UpdateCheckNotificationPoster.kt) and creates it with the same values.
+const mknoonAppUpdatesChannelId = 'mknoon_app_updates';
+const mknoonAppUpdatesChannelName = 'App updates';
+const mknoonAppUpdatesChannelDescription = 'Reminders to install a new version';
+
+const mknoonAppUpdatesChannel = AndroidNotificationChannel(
+  mknoonAppUpdatesChannelId,
+  mknoonAppUpdatesChannelName,
+  description: mknoonAppUpdatesChannelDescription,
+  importance: Importance.defaultImportance,
+);
+
 const mknoonMessagesChannel = AndroidNotificationChannel(
   mknoonMessagesChannelId,
   mknoonMessagesChannelName,
@@ -364,4 +378,5 @@ const mknoonNotificationChannels = <AndroidNotificationChannel>[
   mknoonMessagesChannel,
   mknoonMessagesSilentChannel,
   mknoonCallsChannel,
+  mknoonAppUpdatesChannel,
 ];

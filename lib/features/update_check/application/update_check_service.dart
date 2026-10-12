@@ -78,6 +78,24 @@ class UpdateCheckService {
     );
   }
 
+  /// The decision from the stored, re-verified file, with no download. The
+  /// background run uses it when the last check is less than
+  /// [updateCheckInterval] old, so the 6 h gate also holds there.
+  Future<UpdateDecision> decideFromStored() async {
+    final platform = _platform;
+    if (!isEnabled || platform == null) return const UpdateDecisionNone();
+    try {
+      final loaded = await _loadVerified(platform);
+      return decideUpdate(
+        installedBuildNumber: await _installedBuildNumber(),
+        policy: loaded.file?.payload.platforms[platform],
+        dismissedLatestBuild: loaded.state.dismissedLatestBuild,
+      );
+    } catch (_) {
+      return const UpdateDecisionNone();
+    }
+  }
+
   /// Hides the banner for this [latestBuild] only.
   Future<void> dismissSoft(int latestBuild) async {
     // Let a running check save first, so it cannot overwrite the dismissal.
@@ -123,7 +141,16 @@ class UpdateCheckService {
         }
       }
       // Every attempt counts for the schedule, failed downloads included.
-      await _saveQuietly(state.copyWith(lastCheckAt: _clock()));
+      final saved = await _saveQuietly(state.copyWith(lastCheckAt: _clock()));
+      if (saved != null) {
+        // Another writer may have stored a newer file meanwhile. The merged
+        // state is the truth; re-verify its envelope if it is not ours.
+        if (saved.highestAcceptedRank != state.highestAcceptedRank ||
+            saved.sequence != state.sequence) {
+          current = _verifyStored(saved, platform);
+        }
+        state = saved;
+      }
       _checkedThisLaunch = true;
 
       return decideUpdate(
@@ -138,43 +165,52 @@ class UpdateCheckService {
   }
 
   /// Re-verifies the stored envelope against the CURRENT built-in keys and the
-  /// rank rule. Anything that fails is discarded and saved, so it no longer
-  /// blocks.
+  /// rank rule. An envelope that fails is dropped and saved, so it no longer
+  /// blocks; its rank and sequence stay.
   Future<({UpdateCheckState state, VerifiedVersionFile? file})> _loadVerified(
     UpdatePlatform platform,
   ) async {
     final state = await _store.load();
-    final hasVerifiedState =
-        state.lastEnvelope != null ||
-        state.highestAcceptedRank != 0 ||
-        state.sequence != null;
-    if (!hasVerifiedState) return (state: state, file: null);
+    // Nothing stored, or dropped earlier: nothing to verify or save.
+    if (state.lastEnvelope == null) return (state: state, file: null);
+    final file = _verifyStored(state, platform);
+    if (file != null) return (state: state, file: file);
+    // Drop only the envelope. The rank and sequence never go down (T4a).
+    final cleared = state.withoutVerifiedFile();
+    final saved = await _saveQuietly(cleared);
+    // A concurrent writer may have stored a valid newer file meanwhile.
+    if (saved != null && saved.lastEnvelope != null) {
+      return (state: saved, file: _verifyStored(saved, platform));
+    }
+    return (state: saved ?? cleared, file: null);
+  }
 
+  /// The stored envelope, if it verifies against the CURRENT built-in keys
+  /// and matches the stored rank and sequence.
+  VerifiedVersionFile? _verifyStored(
+    UpdateCheckState state,
+    UpdatePlatform platform,
+  ) {
     final envelope = state.lastEnvelope;
-    final file = envelope == null
-        ? null
-        : _verifier
-              .verify(
-                envelope,
-                highestAcceptedRank: 0,
-                requiredPlatforms: {platform},
-              )
-              .file;
+    if (envelope == null) return null;
+    final file = _verifier
+        .verify(envelope, highestAcceptedRank: 0, requiredPlatforms: {platform})
+        .file;
     if (file != null &&
         file.rank == state.highestAcceptedRank &&
         file.payload.sequence == state.sequence) {
-      return (state: state, file: file);
+      return file;
     }
-    final cleared = state.withoutVerifiedFile();
-    await _saveQuietly(cleared);
-    return (state: cleared, file: null);
+    return null;
   }
 
-  Future<void> _saveQuietly(UpdateCheckState state) async {
+  /// Returns the merged state that was written, or null when the write failed.
+  Future<UpdateCheckState?> _saveQuietly(UpdateCheckState state) async {
     try {
-      await _store.save(state);
+      return await _store.save(state);
     } catch (_) {
       // A failed write only loses the cache; the next check rebuilds it.
+      return null;
     }
   }
 

@@ -2177,5 +2177,21 @@
   "update_available_dismiss": "Dismiss",
   "@update_available_dismiss": {
     "description": "TODO(SE-41 O3): placeholder copy; Rawi supplies the final EN text."
+  },
+  "update_notification_title_general": "Update Mknoon",
+  "@update_notification_title_general": {
+    "description": "TODO(SE-41 T4 copy): placeholder copy; Rawi supplies the final EN text."
+  },
+  "update_notification_body_general": "A new version of Mknoon is ready. Tap to update.",
+  "@update_notification_body_general": {
+    "description": "TODO(SE-41 T4 copy): placeholder copy; Rawi supplies the final EN text."
+  },
+  "update_notification_title_security": "Security update for Mknoon",
+  "@update_notification_title_security": {
+    "description": "TODO(SE-41 T4 copy): placeholder copy; Rawi supplies the final EN text."
+  },
+  "update_notification_body_security": "A security update is ready. Tap to update and keep your chats safe.",
+  "@update_notification_body_security": {
+    "description": "TODO(SE-41 T4 copy): placeholder copy; Rawi supplies the final EN text."
   }
 }

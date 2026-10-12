@@ -46,6 +46,9 @@ class FakeUpdateCheckService implements UpdateCheckService {
   }
 
   @override
+  Future<UpdateDecision> decideFromStored() async => _last;
+
+  @override
   Future<bool> isCheckDue(DateTime now) async {
     dueQueries += 1;
     return due;

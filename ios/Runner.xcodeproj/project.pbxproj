@@ -39,6 +39,8 @@
 		D23405010000000000000011 /* PrivateMediaProtectionCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = D23405010000000000000012 /* PrivateMediaProtectionCoordinator.swift */; };
 		D371A00173A7000000000001 /* IosAppVisibilitySnapshot.swift in Sources */ = {isa = PBXBuildFile; fileRef = D371B00173A7000000000001 /* IosAppVisibilitySnapshot.swift */; };
 		D371A00273A7000000000001 /* IosAppVisibilityCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = D371B00273A7000000000001 /* IosAppVisibilityCoordinator.swift */; };
+		5E41A0020000000000000001 /* UpdateCheckBackgroundTask.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5E41A0010000000000000001 /* UpdateCheckBackgroundTask.swift */; };
+		5E41A0040000000000000001 /* UpdateCheckBackgroundTaskTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5E41A0030000000000000001 /* UpdateCheckBackgroundTaskTests.swift */; };
 		D371A00373A7000000000001 /* IosAppVisibilitySnapshotTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D371B00373A7000000000001 /* IosAppVisibilitySnapshotTests.swift */; };
 		D371A00473A7000000000001 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = D371B00473A7000000000001 /* PrivacyInfo.xcprivacy */; };
 		D371A00573A7000000000001 /* app_visibility_snapshot_v1.json in Resources */ = {isa = PBXBuildFile; fileRef = D371B00573A7000000000001 /* app_visibility_snapshot_v1.json */; };
@@ -183,6 +185,8 @@
 		D23405010000000000000012 /* PrivateMediaProtectionCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PrivateMediaProtectionCoordinator.swift; sourceTree = "<group>"; };
 		D371B00173A7000000000001 /* IosAppVisibilitySnapshot.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = IosAppVisibilitySnapshot.swift; path = ../NotificationService/IosAppVisibilitySnapshot.swift; sourceTree = "<group>"; };
 		D371B00273A7000000000001 /* IosAppVisibilityCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IosAppVisibilityCoordinator.swift; sourceTree = "<group>"; };
+		5E41A0010000000000000001 /* UpdateCheckBackgroundTask.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UpdateCheckBackgroundTask.swift; sourceTree = "<group>"; };
+		5E41A0030000000000000001 /* UpdateCheckBackgroundTaskTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UpdateCheckBackgroundTaskTests.swift; sourceTree = "<group>"; };
 		D371B00373A7000000000001 /* IosAppVisibilitySnapshotTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IosAppVisibilitySnapshotTests.swift; sourceTree = "<group>"; };
 		D371B00473A7000000000001 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
 		D371B00573A7000000000001 /* app_visibility_snapshot_v1.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; name = app_visibility_snapshot_v1.json; path = ../../test/shared/fixtures/app_visibility_snapshot_v1.json; sourceTree = "<group>"; };
@@ -324,6 +328,7 @@
 				F260E2020000000000000001 /* MknoonAppDiagnosticSpoolTests.swift */,
 				F260D3020000000000000001 /* wire_fixtures_v1.json */,
 				F25020070000000000000007 /* IosCallConfigurationTests.swift */,
+				5E41A0030000000000000001 /* UpdateCheckBackgroundTaskTests.swift */,
 				D371B00573A7000000000001 /* app_visibility_snapshot_v1.json */,
 				E373100673A8000000000001 /* ios_nse_mailbox_v1.json */,
 				E373100773A8000000000001 /* local_notification_ledger_v1.json */,
@@ -429,6 +434,7 @@
 				F260E1020000000000000003 /* MknoonNseAppDiagnostics.swift */,
 				D371B00173A7000000000001 /* IosAppVisibilitySnapshot.swift */,
 				D371B00273A7000000000001 /* IosAppVisibilityCoordinator.swift */,
+				5E41A0010000000000000001 /* UpdateCheckBackgroundTask.swift */,
 				C333A00173A6000000000002 /* IosNotificationRecovery.swift */,
 				C333B00173A6000000000002 /* IosNotificationRecoveryCoordinator.swift */,
 				A258A00173A4000000000002 /* IosReceiverBootstrapHandoff.swift */,
@@ -827,6 +833,7 @@
 				F260D2010000000000000001 /* MknoonCallDiagnosticSpoolTests.swift in Sources */,
 				F260E2010000000000000001 /* MknoonAppDiagnosticSpoolTests.swift in Sources */,
 				F25021070000000000000007 /* IosCallConfigurationTests.swift in Sources */,
+				5E41A0040000000000000001 /* UpdateCheckBackgroundTaskTests.swift in Sources */,
 				D371A00373A7000000000001 /* IosAppVisibilitySnapshotTests.swift in Sources */,
 				E373000173A8000000000001 /* IosLocalNotificationFinalEffect.swift in Sources */,
 				E373000273A8000000000001 /* NseMailboxWakeCoordinator.swift in Sources */,
@@ -889,6 +896,7 @@
 				F260E1010000000000000003 /* MknoonNseAppDiagnostics.swift in Sources */,
 				D371A00173A7000000000001 /* IosAppVisibilitySnapshot.swift in Sources */,
 				D371A00273A7000000000001 /* IosAppVisibilityCoordinator.swift in Sources */,
+				5E41A0020000000000000001 /* UpdateCheckBackgroundTask.swift in Sources */,
 				C333A00173A6000000000001 /* IosNotificationRecovery.swift in Sources */,
 				C333B00173A6000000000001 /* IosNotificationRecoveryCoordinator.swift in Sources */,
 				A258A00173A4000000000001 /* IosReceiverBootstrapHandoff.swift in Sources */,

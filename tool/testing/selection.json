@@ -2150,7 +2150,7 @@
     "production-notification-sound": {
       "kind": "sims",
       "capability": "production.notification_sound",
-      "boundary": "Production S1–S16 sound request, real visibility, encrypted media projection and native OS disposition with S15 control",
+      "boundary": "Production S1\u2013S16 sound request, real visibility, encrypted media projection and native OS disposition with S15 control",
       "timeout_seconds": 7200,
       "estimated_seconds": null,
       "requirements": [
@@ -4680,14 +4680,16 @@
       "paths": [
         "test/features/update_check/"
       ],
-      "boundary": "SE-41 update check core: Ed25519 envelope verification (RFC 8032 vectors), payload rules, sequence and key-rank ratchet, decision, schedule, kill switch, atomic state file, HTTPS fetch limits against a local TLS server, and the signing CLI round trip",
-      "limitations": "Host only with test-only keys and a self-signed localhost certificate; no real version-file host, no production keys, no UI (T2) and no device or signed build",
+      "boundary": "SE-41 update check core: Ed25519 envelope verification (RFC 8032 vectors), payload rules, sequence and key-rank ratchet, decision, schedule, kill switch, atomic state file, HTTPS fetch limits against a local TLS server, and the signing CLI round trip; T4a background check: merge-on-write never-lower ratchet with an injected cross-isolate race, rank-floor marker, lock files, locked-state skip, notify rules with a fake clock, budget abort, minimal-engine import graph, channel, copy and RTL",
+      "limitations": "Host only with test-only keys and a self-signed localhost certificate; no real version-file host, no production keys, no device or signed build. Background scheduling itself (BGTaskScheduler, WorkManager) and the native posting are covered by the native checks, not here",
       "timeout_seconds": 900,
       "estimated_seconds": null,
       "requirements": [
         "flutter"
       ],
       "investigate": [
+        "lib/app/bootstrap/update_check_background_entrypoints.dart",
+        "lib/core/notifications/local_notification_support.dart",
         "lib/features/update_check/",
         "tool/sign_version_file.dart"
       ],
@@ -4711,6 +4713,30 @@
         "docker-ws/build_store_release.sh",
         "docker-ws/build_play_aab.sh"
       ],
+      "inspected": true
+    },
+    "update-check-android-native": {
+      "kind": "command",
+      "command": [
+        "bash",
+        "scripts/test/run_update_check_native_unit_tests.sh"
+      ],
+      "success_marker": "gradle exit: 0",
+      "timeout_seconds": 1800,
+      "requirements": [
+        "bash",
+        "java"
+      ],
+      "references": [
+        "scripts/test/run_update_check_native_unit_tests.sh",
+        "android/app/src/test/kotlin/com/mknoon/app/UpdateCheckBackgroundWorkTest.kt",
+        "android/app/src/test/kotlin/com/mknoon/app/UpdateCheckNotificationPosterTest.kt",
+        "android/app/src/test/kotlin/com/mknoon/app/MainActivityOnNewIntentTest.kt",
+        "android/app/src/test/kotlin/com/mknoon/app/MainActivityAppVisibilityTest.kt",
+        "android/app/src/test/kotlin/com/mknoon/app/CanonicalRuntimeLeaseTest.kt"
+      ],
+      "boundary": "SE-41 T4a Android background update check: lease routing (handoff, minimal engine, defer), unique periodic work with the kill switch, budget abort, the minimal engine's plugin set, the main-engine bridge, and the update notification (own channel, no prompt, fixed tag and id, direct Play intent)",
+      "limitations": "Robolectric/JVM tests do not run WorkManager on a device, Doze or OEM battery savers, or a real Flutter engine. Run with the repository Flutter/JDK toolchain on the Mac (host-run).",
       "inspected": true
     }
   },
@@ -6248,13 +6274,20 @@
         "scripts/test/check_update_check_release_defines_test.py",
         "scripts/build_ios_appstore_ipa.sh",
         "docker-ws/build_store_release.sh",
-        "docker-ws/build_play_aab.sh"
+        "docker-ws/build_play_aab.sh",
+        "lib/app/bootstrap/update_check_background_entrypoints.dart",
+        "android/app/src/main/kotlin/com/mknoon/app/UpdateCheck*",
+        "android/app/src/test/kotlin/com/mknoon/app/UpdateCheck*",
+        "scripts/test/run_update_check_native_unit_tests.sh",
+        "ios/Runner/UpdateCheckBackgroundTask.swift",
+        "ios/RunnerTests/UpdateCheckBackgroundTaskTests.swift"
       ],
       "checks": [
         "update-check",
-        "update-check-release-guard"
+        "update-check-release-guard",
+        "update-check-android-native"
       ],
-      "why": "SE-41 in-app update check: the verifier is shared by the app and the signing CLI, and the store build scripts must keep the kill switch on"
+      "why": "SE-41 in-app update check: the verifier is shared by the app and the signing CLI, and the store build scripts must keep the kill switch on; T4a adds the native background schedule and the update notification"
     }
   ],
   "documentation_only": [

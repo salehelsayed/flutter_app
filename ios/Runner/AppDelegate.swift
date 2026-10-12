@@ -856,6 +856,8 @@ final class IosSetupReadinessEntryCoordinator {
     }
   )
   private var iosCallNativeBridge: MknoonCallNativeBridge?
+  // SE-41 T4a: BG app refresh update check in the main engine.
+  private lazy var updateCheckBackground = UpdateCheckBackgroundCoordinator()
   private var iosVoipTokenBridge: MknoonVoipTokenBridge?
   private var iosCallDiagnosticBridge: MknoonCallDiagnosticBridge?
   private let iosCallWakeChannelName = "mknoon/ios_call_wake"
@@ -956,6 +958,8 @@ final class IosSetupReadinessEntryCoordinator {
     )
 #endif
     installNotificationCenterDelegate(context: "before_didFinishLaunching_super")
+    // BGTaskScheduler requires the handler before launch finishes.
+    updateCheckBackground.registerLaunchHandler()
     let didFinish = super.application(application, didFinishLaunchingWithOptions: launchOptions)
     configureIosNotificationOpenBridgeFromRootViewController()
     installNotificationCenterDelegate(context: "after_didFinishLaunching_super")
@@ -1128,7 +1132,11 @@ final class IosSetupReadinessEntryCoordinator {
       context: "didReceive",
       userInfo: userInfo
     )
-    forwardIosNotificationOpenIfNeeded(userInfo: userInfo)
+    // SE-41 T4a: an update reminder opens the built-in store page via Dart.
+    // It carries no route, so it skips the open bridge; super still runs.
+    if !updateCheckBackground.handleNotificationResponse(userInfo: userInfo) {
+      forwardIosNotificationOpenIfNeeded(userInfo: userInfo)
+    }
     super.userNotificationCenter(
       center,
       didReceive: response,
@@ -1162,6 +1170,7 @@ final class IosSetupReadinessEntryCoordinator {
     receivedMediaEgressCoordinator = ReceivedMediaEgressCoordinator(messenger: messenger)
     setupPrivateMediaProtectionBridge(messenger: messenger)
     setupIosCallLifecycleBridges(messenger: messenger)
+    updateCheckBackground.attach(messenger: messenger)
 
 #if canImport(GoMknoon)
     goBridge = GoBridge(messenger: messenger)

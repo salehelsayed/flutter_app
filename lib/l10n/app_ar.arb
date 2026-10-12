@@ -2028,5 +2028,21 @@
   "update_available_dismiss": "إغلاق",
   "@update_available_dismiss": {
     "description": "SE-41 final Arabic copy (O3)."
+  },
+  "update_notification_title_general": "حدّث مكنون",
+  "@update_notification_title_general": {
+    "description": "SE-41 T4 final Arabic copy (Claude Code)."
+  },
+  "update_notification_body_general": "يتوفر إصدار جديد من مكنون. اضغط للتحديث.",
+  "@update_notification_body_general": {
+    "description": "SE-41 T4 final Arabic copy (Claude Code)."
+  },
+  "update_notification_title_security": "تحديث أمني لمكنون",
+  "@update_notification_title_security": {
+    "description": "SE-41 T4 final Arabic copy (Claude Code)."
+  },
+  "update_notification_body_security": "يتوفر تحديث أمني. اضغط للتحديث لتبقى محادثاتك آمنة.",
+  "@update_notification_body_security": {
+    "description": "SE-41 T4 final Arabic copy (Claude Code)."
   }
 }

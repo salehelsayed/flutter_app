@@ -52,6 +52,7 @@ class MainActivity : FlutterActivity() {
     private var androidCallWakeBridge: AndroidCallWakeBridge? = null
     private var incomingCallPresentation: MknoonIncomingCallPresentation? = null
     private var canonicalRuntimeLeaseBridge: CanonicalRuntimeLeaseBridge? = null
+    private var updateCheckBackgroundBridge: UpdateCheckBackgroundBridge? = null
     private var canonicalRuntimeShutdownChannel: MethodChannel? = null
     private var pushNotificationSettingsChannel: MethodChannel? = null
     private var appVisibilityChannel: MethodChannel? = null
@@ -147,6 +148,13 @@ class MainActivity : FlutterActivity() {
             },
         )
         androidCallWakeBridge = AndroidCallWakeBridge(
+            messenger = flutterEngine.dartExecutor.binaryMessenger,
+            ownerId = "foreground-${System.identityHashCode(flutterEngine)}",
+        )
+        // SE-41 T4a: the update-check worker hands its run to this engine only
+        // while the lease names this same owner id.
+        updateCheckBackgroundBridge = UpdateCheckBackgroundBridge(
+            context = applicationContext,
             messenger = flutterEngine.dartExecutor.binaryMessenger,
             ownerId = "foreground-${System.identityHashCode(flutterEngine)}",
         )
@@ -361,6 +369,8 @@ class MainActivity : FlutterActivity() {
     override fun cleanUpFlutterEngine(flutterEngine: FlutterEngine) {
         androidCallWakeBridge?.dispose()
         androidCallWakeBridge = null
+        updateCheckBackgroundBridge?.dispose()
+        updateCheckBackgroundBridge = null
         Log.i(
             PICTURE_IN_PICTURE_LIFECYCLE_TAG,
             "[MKNOON_PIP] MainActivity.cleanUpFlutterEngine " +

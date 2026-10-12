@@ -133,8 +133,10 @@ void main() {
     await service.initialize();
 
     // 406: three channels now — messages, silent messages, and calls.
+    // SE-41 T4a: plus app updates.
     expect(log.map((call) => call.method).toList(), <String>[
       'initialize',
+      'createNotificationChannel',
       'createNotificationChannel',
       'createNotificationChannel',
       'createNotificationChannel',

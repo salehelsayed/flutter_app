@@ -4283,4 +4283,18 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get update_available_dismiss => 'Dismiss';
+
+  @override
+  String get update_notification_title_general => 'Update Mknoon';
+
+  @override
+  String get update_notification_body_general =>
+      'A new version of Mknoon is ready. Tap to update.';
+
+  @override
+  String get update_notification_title_security => 'Security update for Mknoon';
+
+  @override
+  String get update_notification_body_security =>
+      'A security update is ready. Tap to update and keep your chats safe.';
 }

@@ -23,6 +23,8 @@ const _headlessRecoveryPath =
 const _debugE2eCompositionRootPath =
     'lib/debug/debug_e2e_composition_root.dart';
 const _flutterWidgetsPath = 'package:flutter/widgets.dart';
+const _updateCheckBackgroundPath =
+    'lib/app/bootstrap/update_check_background_entrypoints.dart';
 
 String _libraryPath(UriBasedDirective directive) {
   final uri = directive.uri.stringValue;
@@ -63,21 +65,27 @@ void main() {
 
     // Framework initialization remains outside the observation boundary. The
     // one awaited wrapper contains only the original receipt preflight and
-    // production delegation, in that order.
+    // production delegation, in that order. SE-41 T4a adds exactly one
+    // synchronous statement before it: the background update-check host,
+    // which must not wait for the bootstrap.
     expect(
       block.statements,
-      hasLength(2),
+      hasLength(3),
       reason:
-          'main() must contain only framework initialization and the awaited '
-          'production diagnostics wrapper',
+          'main() must contain only framework initialization, the update-check '
+          'background host and the awaited production diagnostics wrapper',
     );
     expect(
       block.statements[0].toSource(),
       'WidgetsFlutterBinding.ensureInitialized();',
     );
-    expect(block.statements[1], isA<ExpressionStatement>());
+    expect(
+      block.statements[1].toSource(),
+      'installUpdateCheckBackgroundHost();',
+    );
+    expect(block.statements[2], isA<ExpressionStatement>());
     final wrapperExpression =
-        (block.statements[1] as ExpressionStatement).expression;
+        (block.statements[2] as ExpressionStatement).expression;
     expect(wrapperExpression, isA<AwaitExpression>());
     final wrapperCall = (wrapperExpression as AwaitExpression).expression;
     expect(wrapperCall, isA<MethodInvocation>());
@@ -151,9 +159,10 @@ void main() {
         'androidHeadlessRecovery374FixtureMain',
         'androidHeadlessCanonicalRecoveryMain',
         'androidHeadlessCallAdmissionMain',
+        'androidUpdateCheckMinimalMain',
       ]),
       reason:
-          'main.dart may expose only main plus the four native AOT entrypoints',
+          'main.dart may expose only main plus the five native AOT entrypoints',
     );
     for (final nativeEntrypoint in functions.where(
       (declaration) => declaration.name.lexeme != 'main',
@@ -188,6 +197,7 @@ void main() {
         _headlessRecoveryPath,
         _debugE2eCompositionRootPath,
         _flutterWidgetsPath,
+        _updateCheckBackgroundPath,
       }),
       reason:
           'main.dart imports only the stable app runner and exact entrypoint owners',

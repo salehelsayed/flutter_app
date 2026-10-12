@@ -4384,4 +4384,19 @@ class AppLocalizationsDe extends AppLocalizations {
 
   @override
   String get update_available_dismiss => 'Schließen';
+
+  @override
+  String get update_notification_title_general => 'Mknoon aktualisieren';
+
+  @override
+  String get update_notification_body_general =>
+      'Eine neue Version von Mknoon ist da. Tippe zum Aktualisieren.';
+
+  @override
+  String get update_notification_title_security =>
+      'Sicherheitsupdate für Mknoon';
+
+  @override
+  String get update_notification_body_security =>
+      'Ein Sicherheitsupdate ist da. Tippe zum Aktualisieren, um deine Chats zu schützen.';
 }

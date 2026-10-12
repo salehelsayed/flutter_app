@@ -7153,6 +7153,30 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Dismiss'**
   String get update_available_dismiss;
+
+  /// TODO(SE-41 T4 copy): placeholder copy; Rawi supplies the final EN text.
+  ///
+  /// In en, this message translates to:
+  /// **'Update Mknoon'**
+  String get update_notification_title_general;
+
+  /// TODO(SE-41 T4 copy): placeholder copy; Rawi supplies the final EN text.
+  ///
+  /// In en, this message translates to:
+  /// **'A new version of Mknoon is ready. Tap to update.'**
+  String get update_notification_body_general;
+
+  /// TODO(SE-41 T4 copy): placeholder copy; Rawi supplies the final EN text.
+  ///
+  /// In en, this message translates to:
+  /// **'Security update for Mknoon'**
+  String get update_notification_title_security;
+
+  /// TODO(SE-41 T4 copy): placeholder copy; Rawi supplies the final EN text.
+  ///
+  /// In en, this message translates to:
+  /// **'A security update is ready. Tap to update and keep your chats safe.'**
+  String get update_notification_body_security;
 }
 
 class _AppLocalizationsDelegate

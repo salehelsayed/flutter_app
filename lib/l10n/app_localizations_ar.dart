@@ -4349,4 +4349,18 @@ class AppLocalizationsAr extends AppLocalizations {
 
   @override
   String get update_available_dismiss => 'إغلاق';
+
+  @override
+  String get update_notification_title_general => 'حدّث مكنون';
+
+  @override
+  String get update_notification_body_general =>
+      'يتوفر إصدار جديد من مكنون. اضغط للتحديث.';
+
+  @override
+  String get update_notification_title_security => 'تحديث أمني لمكنون';
+
+  @override
+  String get update_notification_body_security =>
+      'يتوفر تحديث أمني. اضغط للتحديث لتبقى محادثاتك آمنة.';
 }
