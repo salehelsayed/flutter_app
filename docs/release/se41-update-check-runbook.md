@@ -196,8 +196,69 @@ Never turn on access logging on this host.
 
 ## 11. Check-now push (T4b)
 
-Placeholder. Fill this in when T4b is built.
+Asks every installed app to run its signed update check now. The push only
+says "check": the app still trusts nothing but the signed version file, and
+it never shows text from the relay.
 
-- Silent push by default.
-- `--ios-alert` only for security or hard releases, at most once per 24 hours,
-  and only after a silent push.
+### When
+
+- Send the silent push first, after publishing a new `version.json`
+  (section 2). Most phones check within minutes; iOS decides when.
+- Use `--ios-alert` only for a security or hard (`minBuild`) release, and
+  only after a silent push. It shows a fixed sentence that is built into the
+  app (EN, DE, AR): "Is Mknoon up to date? Older versions can lose their
+  connection. Tap to open Mknoon and check." Tapping only opens the app.
+
+### Command (on the relay host, over SSH)
+
+```
+sudo bash -c 'set -a; . /etc/mknoon/relay-server.env; set +a; \
+  /usr/local/bin/relay-server update-check-push'              # silent
+sudo bash -c 'set -a; . /etc/mknoon/relay-server.env; set +a; \
+  /usr/local/bin/relay-server update-check-push --ios-alert'  # alert
+```
+
+It needs `RELAY_BACKEND=redis`, `REDIS_URL` and `FIREBASE_SERVICE_ACCOUNT`
+from the service env. Success prints
+`update-check-push: sent topic=update_check mode=<silent|ios-alert> message=<id>`.
+Exit code 2 with a reason otherwise.
+
+### What it sends (one FCM topic send to `update_check`)
+
+- Data payload, exactly: `{"type":"update_check"}`. No notification block.
+- Android: high-priority data message.
+- iOS silent (default): `aps.content-available: 1`, headers
+  `apns-priority: 5`, `apns-push-type: background`.
+- iOS `--ios-alert`: also `aps.alert` with ONLY
+  `title-loc-key: UPDATE_CHECK_ALERT_TITLE` and
+  `loc-key: UPDATE_CHECK_ALERT_BODY` (no title or body text, no loc-args, no
+  URL), `content-available: 1`, `apns-push-type: alert`,
+  `apns-priority: 10`, no `mutable-content`. Never VoIP/PushKit.
+
+### Limits (Redis, kept across restarts)
+
+- One send per 6 h in any mode (`<prefix>se41:update_check_push:any`).
+- Alert mode at most once per 24 h (`<prefix>se41:update_check_push:alert`);
+  an alert also counts toward the 6 h limit.
+- A refused send prints `rate limited: limit_6h` or `limit_24h_alert`. A send
+  the provider rejects gives its slot back, so it can be retried at once.
+- The app also limits itself to one push-triggered check per hour.
+
+### Deploy (needs owner approval; not done yet)
+
+The subcommand ships in the relay binary. Deploying it follows the normal
+relay deploy: bump `const version` in `main.go` first, build on the container
+toolchain (`CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath`, check
+`go version <binary>`), upload, verify the sha on the box, `sudo install`,
+restart, check the journal and metrics, and update
+`docker-ws/group-reaction-staging-manifest-315.json`. Probe the deployed
+binary with `grep -a -c UPDATE_CHECK_ALERT_TITLE /usr/local/bin/relay-server`
+(1 or more). Try it on the Hetzner test relay first if possible. The running
+relay process does not change; only the CLI is new.
+
+### Accepted limitation
+
+Someone who takes over the relay host (or the Firebase/APNs credentials) can
+send the fixed sentence and ignore the limits. That is spam, not phishing:
+the text and the store link are built into the app. The fix is rotating the
+Firebase and APNs credentials.

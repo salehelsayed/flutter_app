@@ -34,6 +34,12 @@ func main() {
 		case "generate-key":
 			generateAndPrintKey()
 			return
+		case "update-check-push":
+			if err := runUpdateCheckPushCLI(os.Args[2:]); err != nil {
+				fmt.Fprintf(os.Stderr, "update-check-push: %v\n", err)
+				os.Exit(2)
+			}
+			return
 		case "push-token-vault":
 			if err := runPushTokenVaultCLI(os.Args[2:]); err != nil {
 				fmt.Fprintf(os.Stderr, "push-token-vault: %v\n", err)
