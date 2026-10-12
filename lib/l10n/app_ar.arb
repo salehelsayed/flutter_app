@@ -1965,27 +1965,27 @@
   "media_download": "تنزيل",
   "update_required_title": "يلزم تحديث مكنون",
   "@update_required_title": {
-    "description": "SE-41 final Arabic copy (O3)."
+    "description": "SE-41 final copy, owner-approved 2026-10-12 (Rawi)"
   },
-  "update_required_body_general": "لم يعد هذا الإصدار من مكنون مدعومًا. حدّث التطبيق لتواصل استخدامه.",
+  "update_required_body_general": "نأسف لإيقافك هنا. لم يعد هذا الإصدار من مكنون مدعومًا. حدّث التطبيق لتواصل استخدامه.",
   "@update_required_body_general": {
-    "description": "SE-41 final Arabic copy (O3)."
+    "description": "SE-41 final copy, owner-approved 2026-10-12 (Rawi)"
   },
-  "update_required_body_security": "في هذا الإصدار مشكلة أمنية. حدّث التطبيق لتبقى محادثاتك آمنة.",
+  "update_required_body_security": "نأسف لإيقافك هنا. في هذا الإصدار مشكلة أمنية. حدّث التطبيق لتواصل استخدام مكنون.",
   "@update_required_body_security": {
-    "description": "SE-41 final Arabic copy (O3)."
+    "description": "SE-41 final copy, owner-approved 2026-10-12 (Rawi)"
   },
-  "update_required_body_protocol_change": "يتصل مكنون الآن بجهات اتصالك بطريقة جديدة. حدّث التطبيق لتواصل إرسال الرسائل واستلامها.",
+  "update_required_body_protocol_change": "نأسف لإيقافك هنا. يتصل مكنون الآن بجهات اتصالك بطريقة جديدة. حدّث التطبيق لتواصل إرسال الرسائل واستلامها.",
   "@update_required_body_protocol_change": {
-    "description": "SE-41 final Arabic copy (O3)."
+    "description": "SE-41 final copy, owner-approved 2026-10-12 (Rawi)"
   },
-  "update_required_body_critical_fix": "في هذا الإصدار مشكلة مهمة أصلحناها في الإصدار الجديد. حدّث التطبيق لتواصل استخدام مكنون.",
+  "update_required_body_critical_fix": "نأسف لإيقافك هنا. في هذا الإصدار مشكلة مهمة أصلحناها في الإصدار الجديد. حدّث التطبيق لتواصل استخدام مكنون.",
   "@update_required_body_critical_fix": {
-    "description": "SE-41 final Arabic copy (O3)."
+    "description": "SE-41 final copy, owner-approved 2026-10-12 (Rawi)"
   },
   "update_required_installed_build": "إصدارك الحالي: {build}",
   "@update_required_installed_build": {
-    "description": "SE-41 final Arabic copy (O3).",
+    "description": "SE-41 final copy, owner-approved 2026-10-12 (Rawi)",
     "placeholders": {
       "build": {
         "type": "String"
@@ -1994,7 +1994,7 @@
   },
   "update_required_minimum_build": "الإصدار المطلوب: {build} أو أحدث",
   "@update_required_minimum_build": {
-    "description": "SE-41 final Arabic copy (O3).",
+    "description": "SE-41 final copy, owner-approved 2026-10-12 (Rawi)",
     "placeholders": {
       "build": {
         "type": "String"
@@ -2003,46 +2003,46 @@
   },
   "update_required_button": "حدّث الآن",
   "@update_required_button": {
-    "description": "SE-41 final Arabic copy (O3)."
+    "description": "SE-41 final copy, owner-approved 2026-10-12 (Rawi)"
   },
   "update_available_general": "يتوفر إصدار جديد من مكنون.",
   "@update_available_general": {
-    "description": "SE-41 final Arabic copy (O3)."
+    "description": "SE-41 final copy, owner-approved 2026-10-12 (Rawi)"
   },
   "update_available_security": "يتوفر تحديث أمني لمكنون.",
   "@update_available_security": {
-    "description": "SE-41 final Arabic copy (O3)."
+    "description": "SE-41 final copy, owner-approved 2026-10-12 (Rawi)"
   },
-  "update_available_protocol_change": "يتوفر إصدار جديد من مكنون يحسّن اتصاله بجهات اتصالك.",
+  "update_available_protocol_change": "غيّرنا طريقة اتصال مكنون بجهات اتصالك، ويتوفر إصدار جديد.",
   "@update_available_protocol_change": {
-    "description": "SE-41 final Arabic copy (O3)."
+    "description": "SE-41 final copy, owner-approved 2026-10-12 (Rawi)"
   },
   "update_available_critical_fix": "يتوفر إصدار جديد من مكنون يصلح مشكلة مهمة.",
   "@update_available_critical_fix": {
-    "description": "SE-41 final Arabic copy (O3)."
+    "description": "SE-41 final copy, owner-approved 2026-10-12 (Rawi)"
   },
   "update_available_action": "تحديث",
   "@update_available_action": {
-    "description": "SE-41 final Arabic copy (O3)."
+    "description": "SE-41 final copy, owner-approved 2026-10-12 (Rawi)"
   },
-  "update_available_dismiss": "إغلاق",
+  "update_available_dismiss": "ليس الآن",
   "@update_available_dismiss": {
-    "description": "SE-41 final Arabic copy (O3)."
+    "description": "SE-41 final copy, owner-approved 2026-10-12 (Rawi)"
   },
   "update_notification_title_general": "حدّث مكنون",
   "@update_notification_title_general": {
-    "description": "SE-41 T4 final Arabic copy (Claude Code)."
+    "description": "SE-41 final copy, owner-approved 2026-10-12 (Rawi)"
   },
   "update_notification_body_general": "يتوفر إصدار جديد من مكنون. اضغط للتحديث.",
   "@update_notification_body_general": {
-    "description": "SE-41 T4 final Arabic copy (Claude Code)."
+    "description": "SE-41 final copy, owner-approved 2026-10-12 (Rawi)"
   },
   "update_notification_title_security": "تحديث أمني لمكنون",
   "@update_notification_title_security": {
-    "description": "SE-41 T4 final Arabic copy (Claude Code)."
+    "description": "SE-41 final copy, owner-approved 2026-10-12 (Rawi)"
   },
-  "update_notification_body_security": "يتوفر تحديث أمني. اضغط للتحديث لتبقى محادثاتك آمنة.",
+  "update_notification_body_security": "يتوفر تحديث أمني. اضغط للتحديث.",
   "@update_notification_body_security": {
-    "description": "SE-41 T4 final Arabic copy (Claude Code)."
+    "description": "SE-41 final copy, owner-approved 2026-10-12 (Rawi)"
   }
 }

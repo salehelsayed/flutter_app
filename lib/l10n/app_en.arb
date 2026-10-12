@@ -2112,38 +2112,38 @@
   "media_document_only_pdf": "Only PDF files can be sent.",
   "media_document_open": "Open document",
   "media_download": "Download",
-  "update_required_title": "Update required",
+  "update_required_title": "Please update Mknoon",
   "@update_required_title": {
-    "description": "TODO(SE-41 O3): placeholder copy; Rawi supplies the final EN text."
+    "description": "SE-41 final copy, owner-approved 2026-10-12 (Rawi)"
   },
-  "update_required_body_general": "This version of Mknoon is no longer supported. Update the app to keep using it.",
+  "update_required_body_general": "Sorry to stop you here. This version is no longer supported and may stop sending and receiving messages reliably.",
   "@update_required_body_general": {
-    "description": "TODO(SE-41 O3): placeholder copy; Rawi supplies the final EN text."
+    "description": "SE-41 final copy, owner-approved 2026-10-12 (Rawi)"
   },
-  "update_required_body_security": "This version has a security problem. Update the app to keep your chats safe.",
+  "update_required_body_security": "Sorry to stop you here. We found a security problem in this version and fixed it in the new one.",
   "@update_required_body_security": {
-    "description": "TODO(SE-41 O3): placeholder copy; Rawi supplies the final EN text."
+    "description": "SE-41 final copy, owner-approved 2026-10-12 (Rawi)"
   },
-  "update_required_body_protocol_change": "Mknoon now connects to your contacts in a new way. Update the app to keep sending and receiving messages.",
+  "update_required_body_protocol_change": "Sorry to stop you here. We changed how the app connects to your contacts, so this version can no longer send or receive messages.",
   "@update_required_body_protocol_change": {
-    "description": "TODO(SE-41 O3): placeholder copy; Rawi supplies the final EN text."
+    "description": "SE-41 final copy, owner-approved 2026-10-12 (Rawi)"
   },
-  "update_required_body_critical_fix": "This version has a serious problem that the new version fixes. Update the app to keep using Mknoon.",
+  "update_required_body_critical_fix": "Sorry to stop you here. We found an important problem in this version and fixed it in the new one.",
   "@update_required_body_critical_fix": {
-    "description": "TODO(SE-41 O3): placeholder copy; Rawi supplies the final EN text."
+    "description": "SE-41 final copy, owner-approved 2026-10-12 (Rawi)"
   },
-  "update_required_installed_build": "Your version: build {build}",
+  "update_required_installed_build": "Your version: {build}",
   "@update_required_installed_build": {
-    "description": "TODO(SE-41 O3): placeholder copy; Rawi supplies the final EN text.",
+    "description": "SE-41 final copy, owner-approved 2026-10-12 (Rawi)",
     "placeholders": {
       "build": {
         "type": "String"
       }
     }
   },
-  "update_required_minimum_build": "Required: build {build} or newer",
+  "update_required_minimum_build": "Needed: {build} or newer",
   "@update_required_minimum_build": {
-    "description": "TODO(SE-41 O3): placeholder copy; Rawi supplies the final EN text.",
+    "description": "SE-41 final copy, owner-approved 2026-10-12 (Rawi)",
     "placeholders": {
       "build": {
         "type": "String"
@@ -2152,46 +2152,46 @@
   },
   "update_required_button": "Update now",
   "@update_required_button": {
-    "description": "TODO(SE-41 O3): placeholder copy; Rawi supplies the final EN text."
+    "description": "SE-41 final copy, owner-approved 2026-10-12 (Rawi)"
   },
-  "update_available_general": "A new version of Mknoon is available.",
+  "update_available_general": "A new version of Mknoon is ready.",
   "@update_available_general": {
-    "description": "TODO(SE-41 O3): placeholder copy; Rawi supplies the final EN text."
+    "description": "SE-41 final copy, owner-approved 2026-10-12 (Rawi)"
   },
-  "update_available_security": "A security update for Mknoon is available.",
+  "update_available_security": "A security update for Mknoon is ready.",
   "@update_available_security": {
-    "description": "TODO(SE-41 O3): placeholder copy; Rawi supplies the final EN text."
+    "description": "SE-41 final copy, owner-approved 2026-10-12 (Rawi)"
   },
-  "update_available_protocol_change": "A new version of Mknoon improves how it connects to your contacts.",
+  "update_available_protocol_change": "We changed how Mknoon connects to your contacts, and a new version is ready.",
   "@update_available_protocol_change": {
-    "description": "TODO(SE-41 O3): placeholder copy; Rawi supplies the final EN text."
+    "description": "SE-41 final copy, owner-approved 2026-10-12 (Rawi)"
   },
   "update_available_critical_fix": "A new version of Mknoon fixes an important problem.",
   "@update_available_critical_fix": {
-    "description": "TODO(SE-41 O3): placeholder copy; Rawi supplies the final EN text."
+    "description": "SE-41 final copy, owner-approved 2026-10-12 (Rawi)"
   },
   "update_available_action": "Update",
   "@update_available_action": {
-    "description": "TODO(SE-41 O3): placeholder copy; Rawi supplies the final EN text."
+    "description": "SE-41 final copy, owner-approved 2026-10-12 (Rawi)"
   },
-  "update_available_dismiss": "Dismiss",
+  "update_available_dismiss": "Not now",
   "@update_available_dismiss": {
-    "description": "TODO(SE-41 O3): placeholder copy; Rawi supplies the final EN text."
+    "description": "SE-41 final copy, owner-approved 2026-10-12 (Rawi)"
   },
-  "update_notification_title_general": "Update Mknoon",
+  "update_notification_title_general": "An update is ready",
   "@update_notification_title_general": {
-    "description": "TODO(SE-41 T4 copy): placeholder copy; Rawi supplies the final EN text."
+    "description": "SE-41 final copy, owner-approved 2026-10-12 (Rawi)"
   },
-  "update_notification_body_general": "A new version of Mknoon is ready. Tap to update.",
+  "update_notification_body_general": "Tap to install the new version of Mknoon.",
   "@update_notification_body_general": {
-    "description": "TODO(SE-41 T4 copy): placeholder copy; Rawi supplies the final EN text."
+    "description": "SE-41 final copy, owner-approved 2026-10-12 (Rawi)"
   },
   "update_notification_title_security": "Security update for Mknoon",
   "@update_notification_title_security": {
-    "description": "TODO(SE-41 T4 copy): placeholder copy; Rawi supplies the final EN text."
+    "description": "SE-41 final copy, owner-approved 2026-10-12 (Rawi)"
   },
-  "update_notification_body_security": "A security update is ready. Tap to update and keep your chats safe.",
+  "update_notification_body_security": "It fixes a security problem in your version. Tap to update.",
   "@update_notification_body_security": {
-    "description": "TODO(SE-41 T4 copy): placeholder copy; Rawi supplies the final EN text."
+    "description": "SE-41 final copy, owner-approved 2026-10-12 (Rawi)"
   }
 }

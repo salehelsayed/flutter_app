@@ -134,7 +134,7 @@ void main() {
   });
 
   group('copy (AC8)', () {
-    test('EN, DE and AR have the four keys; EN and DE are marked TODO', () {
+    test('EN, DE and AR have the four keys with the owner-approved copy', () {
       for (final locale in ['en', 'de', 'ar']) {
         final arb =
             jsonDecode(File('lib/l10n/app_$locale.arb').readAsStringSync())
@@ -145,10 +145,11 @@ void main() {
           final description =
               (arb['@$key']! as Map<String, Object?>)['description']! as String;
           expect(
-            description.contains('TODO(SE-41 T4 copy)'),
-            locale != 'ar',
+            description,
+            'SE-41 final copy, owner-approved 2026-10-12 (Rawi)',
             reason: '$locale $key',
           );
+          expect(description, isNot(contains('TODO')));
         }
       }
     });
@@ -159,7 +160,7 @@ void main() {
         locale: const Locale('ar'),
       );
       expect(ar.title, 'تحديث أمني لمكنون');
-      expect(ar.body, 'يتوفر تحديث أمني. اضغط للتحديث لتبقى محادثاتك آمنة.');
+      expect(ar.body, 'يتوفر تحديث أمني. اضغط للتحديث.');
       final fr = updateNotificationText(
         UpdateNotifyCopy.general,
         locale: const Locale('fr'),

@@ -93,7 +93,7 @@ void main() {
 
       await resume(tester);
       expect(find.byKey(_banner), findsOneWidget);
-      expect(find.text('A new version of Mknoon is available.'), findsOne);
+      expect(find.text('A new version of Mknoon is ready.'), findsOne);
       expect(
         find.byKey(const ValueKey('update-required-overlay')),
         findsNothing,
@@ -118,7 +118,7 @@ void main() {
       await tester.pump();
       expect(find.text('taps 1'), findsOneWidget);
 
-      await tester.tap(find.byTooltip('Dismiss'));
+      await tester.tap(find.byTooltip('Not now'));
       await tester.pumpAndSettle();
       expect(find.byKey(_banner), findsNothing);
       expect(service.dismissed, [120]);
@@ -131,7 +131,7 @@ void main() {
       await resume(tester);
       expect(service.checks, 3);
       expect(find.byKey(_banner), findsOneWidget);
-      expect(find.text('A security update for Mknoon is available.'), findsOne);
+      expect(find.text('A security update for Mknoon is ready.'), findsOne);
       expect(find.text('taps 1'), findsOneWidget);
     });
 
@@ -163,7 +163,7 @@ void main() {
       final text = find.text('يتوفر إصدار جديد من مكنون.');
       expect(text, findsOneWidget);
       expect(Directionality.of(tester.element(text)), TextDirection.rtl);
-      expect(find.byTooltip('إغلاق'), findsOneWidget);
+      expect(find.byTooltip('ليس الآن'), findsOneWidget);
       expect(find.text('تحديث'), findsOneWidget);
     });
 

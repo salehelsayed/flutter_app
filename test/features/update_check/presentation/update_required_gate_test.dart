@@ -143,9 +143,9 @@ void main() {
 
       expect(service.checks, 1);
       expect(find.byKey(_overlay), findsOneWidget);
-      expect(find.text('Update required'), findsOneWidget);
-      expect(find.text('Your version: build 118'), findsOneWidget);
-      expect(find.text('Required: build 120 or newer'), findsOneWidget);
+      expect(find.text('Please update Mknoon'), findsOneWidget);
+      expect(find.text('Your version: 118'), findsOneWidget);
+      expect(find.text('Needed: 120 or newer'), findsOneWidget);
       expect(find.byType(CloseButton), findsNothing);
       expect(find.byType(BackButton), findsNothing);
       expect(
@@ -261,7 +261,7 @@ void main() {
         .map((node) => node.label)
         .toList();
     expect(reachable.where((label) => label.contains(_homeLabel)), isEmpty);
-    expect(reachable, contains('Update required'));
+    expect(reachable, contains('Please update Mknoon'));
     expect(reachable, contains('Update now'));
     expect(homeFocus.hasFocus, isFalse);
 
@@ -374,7 +374,7 @@ void main() {
 
     testWidgets('German renders left to right', (tester) async {
       await pumpApp(tester, locale: const Locale('de'));
-      final title = find.text('Update erforderlich');
+      final title = find.text('Bitte aktualisiere Mknoon');
       expect(title, findsOneWidget);
       expect(Directionality.of(tester.element(title)), TextDirection.ltr);
     });
@@ -413,18 +413,20 @@ void main() {
       );
     });
 
-    test('EN and DE are marked as placeholders (AC16)', () {
-      for (final lang in ['en', 'de']) {
+    test('EN, DE and AR carry the owner-approved final copy (AC16)', () {
+      for (final lang in ['en', 'de', 'ar']) {
         final arb = File('lib/l10n/app_$lang.arb').readAsStringSync();
         for (final key in _se41Keys) {
           final at = arb.indexOf('"@$key"');
           expect(at, isNonNegative, reason: '$lang $key');
           final end = arb.indexOf('}', at);
+          final block = arb.substring(at, end);
           expect(
-            arb.substring(at, end),
-            contains('TODO(SE-41 O3)'),
+            block,
+            contains('SE-41 final copy, owner-approved 2026-10-12 (Rawi)'),
             reason: '$lang $key',
           );
+          expect(block, isNot(contains('TODO')), reason: '$lang $key');
         }
       }
     });

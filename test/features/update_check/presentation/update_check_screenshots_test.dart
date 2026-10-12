@@ -18,6 +18,7 @@ import '../support/fake_update_check_service.dart';
 /// `--dart-define=SE41_SCREENSHOT_DIR=<dir>` it also writes PNGs for review.
 void main() {
   setUpAll(_loadFonts);
+  _textScaleCases();
 
   for (final locale in const [Locale('en'), Locale('ar')]) {
     for (final hard in const [true, false]) {
@@ -78,6 +79,105 @@ void main() {
           ),
           findsOneWidget,
         );
+        expect(tester.takeException(), isNull);
+        await _capture(tester, name);
+      });
+    }
+  }
+}
+
+/// SE-41 copy review: the longest blocking bodies (protocol_change) in DE and
+/// AR at the largest system text size (textScaler 2.0), on a large and a small
+/// phone. The overlay must scroll or fit: no overflow, no clipped text, and
+/// the update button must be reachable.
+void _textScaleCases() {
+  for (final locale in const [Locale('de'), Locale('ar')]) {
+    for (final (device, size) in const [
+      ('390x844', Size(390, 844)),
+      ('320x568', Size(320, 568)),
+    ]) {
+      final name = 'overlay_${locale.languageCode}_textscale2_$device';
+      testWidgets(name, (tester) async {
+        tester.view.physicalSize = size * 3;
+        tester.view.devicePixelRatio = 3;
+        tester.view.padding = const FakeViewPadding(top: 47 * 3);
+        addTearDown(tester.view.reset);
+        final service = FakeUpdateCheckService(
+          decisions: [
+            const UpdateDecisionHard(
+              minBuild: 120,
+              reasonCode: UpdateReasonCode.protocolChange,
+            ),
+          ],
+        );
+        final controller = UpdateCheckController(service: service);
+        addTearDown(controller.dispose);
+        final textTheme = ThemeData.light().textTheme.apply(
+          fontFamily: 'Se41Roboto',
+          fontFamilyFallback: const ['Se41Arabic'],
+        );
+        var opened = 0;
+        await tester.pumpWidget(
+          RepaintBoundary(
+            key: const ValueKey('se41-screen'),
+            child: MaterialApp(
+              debugShowCheckedModeBanner: false,
+              locale: locale,
+              localizationsDelegates: AppLocalizations.localizationsDelegates,
+              supportedLocales: AppLocalizations.supportedLocales,
+              theme: ThemeData(useMaterial3: true, textTheme: textTheme),
+              builder: (context, child) => MediaQuery(
+                data: MediaQuery.of(
+                  context,
+                ).copyWith(textScaler: const TextScaler.linear(2)),
+                child: UpdateRequiredGate(
+                  controller: controller,
+                  callCapability: null,
+                  launchStore: (_) async {
+                    opened++;
+                    return true;
+                  },
+                  child: child!,
+                ),
+              ),
+              home: const Scaffold(body: SizedBox.shrink()),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+        // Any RenderFlex overflow would be reported here.
+        expect(tester.takeException(), isNull);
+        final overlay = find.byKey(const ValueKey('update-required-overlay'));
+        expect(overlay, findsOneWidget);
+
+        final l10n = lookupAppLocalizations(locale);
+        final body = find.text(l10n.update_required_body_protocol_change);
+        expect(body, findsOneWidget);
+        final paragraph = tester.renderObject<RenderParagraph>(body);
+        expect(paragraph.didExceedMaxLines, isFalse, reason: 'not clipped');
+        expect(paragraph.textDirection, locale.languageCode == 'ar'
+            ? TextDirection.rtl
+            : TextDirection.ltr);
+
+        // The button can be reached by scrolling and works.
+        final button = find.text(l10n.update_required_button);
+        await tester.ensureVisible(button);
+        await tester.pumpAndSettle();
+        final screen = tester.getRect(overlay);
+        expect(screen.contains(tester.getRect(button).center), isTrue);
+        // The label, even when it wraps, stays inside the button shape.
+        final shape = tester.getRect(
+          find.ancestor(
+            of: button,
+            matching: find.byWidgetPredicate((w) => w is ButtonStyleButton),
+          ),
+        );
+        final label = tester.getRect(button);
+        expect(shape.inflate(0.5).contains(label.topLeft), isTrue);
+        expect(shape.inflate(0.5).contains(label.bottomRight), isTrue);
+        await tester.tap(button);
+        await tester.pumpAndSettle();
+        expect(opened, 1);
         expect(tester.takeException(), isNull);
         await _capture(tester, name);
       });

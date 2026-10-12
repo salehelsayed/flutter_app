@@ -7070,112 +7070,112 @@ abstract class AppLocalizations {
   /// **'Download'**
   String get media_download;
 
-  /// TODO(SE-41 O3): placeholder copy; Rawi supplies the final EN text.
+  /// SE-41 final copy, owner-approved 2026-10-12 (Rawi)
   ///
   /// In en, this message translates to:
-  /// **'Update required'**
+  /// **'Please update Mknoon'**
   String get update_required_title;
 
-  /// TODO(SE-41 O3): placeholder copy; Rawi supplies the final EN text.
+  /// SE-41 final copy, owner-approved 2026-10-12 (Rawi)
   ///
   /// In en, this message translates to:
-  /// **'This version of Mknoon is no longer supported. Update the app to keep using it.'**
+  /// **'Sorry to stop you here. This version is no longer supported and may stop sending and receiving messages reliably.'**
   String get update_required_body_general;
 
-  /// TODO(SE-41 O3): placeholder copy; Rawi supplies the final EN text.
+  /// SE-41 final copy, owner-approved 2026-10-12 (Rawi)
   ///
   /// In en, this message translates to:
-  /// **'This version has a security problem. Update the app to keep your chats safe.'**
+  /// **'Sorry to stop you here. We found a security problem in this version and fixed it in the new one.'**
   String get update_required_body_security;
 
-  /// TODO(SE-41 O3): placeholder copy; Rawi supplies the final EN text.
+  /// SE-41 final copy, owner-approved 2026-10-12 (Rawi)
   ///
   /// In en, this message translates to:
-  /// **'Mknoon now connects to your contacts in a new way. Update the app to keep sending and receiving messages.'**
+  /// **'Sorry to stop you here. We changed how the app connects to your contacts, so this version can no longer send or receive messages.'**
   String get update_required_body_protocol_change;
 
-  /// TODO(SE-41 O3): placeholder copy; Rawi supplies the final EN text.
+  /// SE-41 final copy, owner-approved 2026-10-12 (Rawi)
   ///
   /// In en, this message translates to:
-  /// **'This version has a serious problem that the new version fixes. Update the app to keep using Mknoon.'**
+  /// **'Sorry to stop you here. We found an important problem in this version and fixed it in the new one.'**
   String get update_required_body_critical_fix;
 
-  /// TODO(SE-41 O3): placeholder copy; Rawi supplies the final EN text.
+  /// SE-41 final copy, owner-approved 2026-10-12 (Rawi)
   ///
   /// In en, this message translates to:
-  /// **'Your version: build {build}'**
+  /// **'Your version: {build}'**
   String update_required_installed_build(String build);
 
-  /// TODO(SE-41 O3): placeholder copy; Rawi supplies the final EN text.
+  /// SE-41 final copy, owner-approved 2026-10-12 (Rawi)
   ///
   /// In en, this message translates to:
-  /// **'Required: build {build} or newer'**
+  /// **'Needed: {build} or newer'**
   String update_required_minimum_build(String build);
 
-  /// TODO(SE-41 O3): placeholder copy; Rawi supplies the final EN text.
+  /// SE-41 final copy, owner-approved 2026-10-12 (Rawi)
   ///
   /// In en, this message translates to:
   /// **'Update now'**
   String get update_required_button;
 
-  /// TODO(SE-41 O3): placeholder copy; Rawi supplies the final EN text.
+  /// SE-41 final copy, owner-approved 2026-10-12 (Rawi)
   ///
   /// In en, this message translates to:
-  /// **'A new version of Mknoon is available.'**
+  /// **'A new version of Mknoon is ready.'**
   String get update_available_general;
 
-  /// TODO(SE-41 O3): placeholder copy; Rawi supplies the final EN text.
+  /// SE-41 final copy, owner-approved 2026-10-12 (Rawi)
   ///
   /// In en, this message translates to:
-  /// **'A security update for Mknoon is available.'**
+  /// **'A security update for Mknoon is ready.'**
   String get update_available_security;
 
-  /// TODO(SE-41 O3): placeholder copy; Rawi supplies the final EN text.
+  /// SE-41 final copy, owner-approved 2026-10-12 (Rawi)
   ///
   /// In en, this message translates to:
-  /// **'A new version of Mknoon improves how it connects to your contacts.'**
+  /// **'We changed how Mknoon connects to your contacts, and a new version is ready.'**
   String get update_available_protocol_change;
 
-  /// TODO(SE-41 O3): placeholder copy; Rawi supplies the final EN text.
+  /// SE-41 final copy, owner-approved 2026-10-12 (Rawi)
   ///
   /// In en, this message translates to:
   /// **'A new version of Mknoon fixes an important problem.'**
   String get update_available_critical_fix;
 
-  /// TODO(SE-41 O3): placeholder copy; Rawi supplies the final EN text.
+  /// SE-41 final copy, owner-approved 2026-10-12 (Rawi)
   ///
   /// In en, this message translates to:
   /// **'Update'**
   String get update_available_action;
 
-  /// TODO(SE-41 O3): placeholder copy; Rawi supplies the final EN text.
+  /// SE-41 final copy, owner-approved 2026-10-12 (Rawi)
   ///
   /// In en, this message translates to:
-  /// **'Dismiss'**
+  /// **'Not now'**
   String get update_available_dismiss;
 
-  /// TODO(SE-41 T4 copy): placeholder copy; Rawi supplies the final EN text.
+  /// SE-41 final copy, owner-approved 2026-10-12 (Rawi)
   ///
   /// In en, this message translates to:
-  /// **'Update Mknoon'**
+  /// **'An update is ready'**
   String get update_notification_title_general;
 
-  /// TODO(SE-41 T4 copy): placeholder copy; Rawi supplies the final EN text.
+  /// SE-41 final copy, owner-approved 2026-10-12 (Rawi)
   ///
   /// In en, this message translates to:
-  /// **'A new version of Mknoon is ready. Tap to update.'**
+  /// **'Tap to install the new version of Mknoon.'**
   String get update_notification_body_general;
 
-  /// TODO(SE-41 T4 copy): placeholder copy; Rawi supplies the final EN text.
+  /// SE-41 final copy, owner-approved 2026-10-12 (Rawi)
   ///
   /// In en, this message translates to:
   /// **'Security update for Mknoon'**
   String get update_notification_title_security;
 
-  /// TODO(SE-41 T4 copy): placeholder copy; Rawi supplies the final EN text.
+  /// SE-41 final copy, owner-approved 2026-10-12 (Rawi)
   ///
   /// In en, this message translates to:
-  /// **'A security update is ready. Tap to update and keep your chats safe.'**
+  /// **'It fixes a security problem in your version. Tap to update.'**
   String get update_notification_body_security;
 }
 

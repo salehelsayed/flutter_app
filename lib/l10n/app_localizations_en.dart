@@ -4231,48 +4231,47 @@ class AppLocalizationsEn extends AppLocalizations {
   String get media_download => 'Download';
 
   @override
-  String get update_required_title => 'Update required';
+  String get update_required_title => 'Please update Mknoon';
 
   @override
   String get update_required_body_general =>
-      'This version of Mknoon is no longer supported. Update the app to keep using it.';
+      'Sorry to stop you here. This version is no longer supported and may stop sending and receiving messages reliably.';
 
   @override
   String get update_required_body_security =>
-      'This version has a security problem. Update the app to keep your chats safe.';
+      'Sorry to stop you here. We found a security problem in this version and fixed it in the new one.';
 
   @override
   String get update_required_body_protocol_change =>
-      'Mknoon now connects to your contacts in a new way. Update the app to keep sending and receiving messages.';
+      'Sorry to stop you here. We changed how the app connects to your contacts, so this version can no longer send or receive messages.';
 
   @override
   String get update_required_body_critical_fix =>
-      'This version has a serious problem that the new version fixes. Update the app to keep using Mknoon.';
+      'Sorry to stop you here. We found an important problem in this version and fixed it in the new one.';
 
   @override
   String update_required_installed_build(String build) {
-    return 'Your version: build $build';
+    return 'Your version: $build';
   }
 
   @override
   String update_required_minimum_build(String build) {
-    return 'Required: build $build or newer';
+    return 'Needed: $build or newer';
   }
 
   @override
   String get update_required_button => 'Update now';
 
   @override
-  String get update_available_general =>
-      'A new version of Mknoon is available.';
+  String get update_available_general => 'A new version of Mknoon is ready.';
 
   @override
   String get update_available_security =>
-      'A security update for Mknoon is available.';
+      'A security update for Mknoon is ready.';
 
   @override
   String get update_available_protocol_change =>
-      'A new version of Mknoon improves how it connects to your contacts.';
+      'We changed how Mknoon connects to your contacts, and a new version is ready.';
 
   @override
   String get update_available_critical_fix =>
@@ -4282,19 +4281,19 @@ class AppLocalizationsEn extends AppLocalizations {
   String get update_available_action => 'Update';
 
   @override
-  String get update_available_dismiss => 'Dismiss';
+  String get update_available_dismiss => 'Not now';
 
   @override
-  String get update_notification_title_general => 'Update Mknoon';
+  String get update_notification_title_general => 'An update is ready';
 
   @override
   String get update_notification_body_general =>
-      'A new version of Mknoon is ready. Tap to update.';
+      'Tap to install the new version of Mknoon.';
 
   @override
   String get update_notification_title_security => 'Security update for Mknoon';
 
   @override
   String get update_notification_body_security =>
-      'A security update is ready. Tap to update and keep your chats safe.';
+      'It fixes a security problem in your version. Tap to update.';
 }

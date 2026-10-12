@@ -4303,19 +4303,19 @@ class AppLocalizationsAr extends AppLocalizations {
 
   @override
   String get update_required_body_general =>
-      'لم يعد هذا الإصدار من مكنون مدعومًا. حدّث التطبيق لتواصل استخدامه.';
+      'نأسف لإيقافك هنا. لم يعد هذا الإصدار من مكنون مدعومًا. حدّث التطبيق لتواصل استخدامه.';
 
   @override
   String get update_required_body_security =>
-      'في هذا الإصدار مشكلة أمنية. حدّث التطبيق لتبقى محادثاتك آمنة.';
+      'نأسف لإيقافك هنا. في هذا الإصدار مشكلة أمنية. حدّث التطبيق لتواصل استخدام مكنون.';
 
   @override
   String get update_required_body_protocol_change =>
-      'يتصل مكنون الآن بجهات اتصالك بطريقة جديدة. حدّث التطبيق لتواصل إرسال الرسائل واستلامها.';
+      'نأسف لإيقافك هنا. يتصل مكنون الآن بجهات اتصالك بطريقة جديدة. حدّث التطبيق لتواصل إرسال الرسائل واستلامها.';
 
   @override
   String get update_required_body_critical_fix =>
-      'في هذا الإصدار مشكلة مهمة أصلحناها في الإصدار الجديد. حدّث التطبيق لتواصل استخدام مكنون.';
+      'نأسف لإيقافك هنا. في هذا الإصدار مشكلة مهمة أصلحناها في الإصدار الجديد. حدّث التطبيق لتواصل استخدام مكنون.';
 
   @override
   String update_required_installed_build(String build) {
@@ -4338,7 +4338,7 @@ class AppLocalizationsAr extends AppLocalizations {
 
   @override
   String get update_available_protocol_change =>
-      'يتوفر إصدار جديد من مكنون يحسّن اتصاله بجهات اتصالك.';
+      'غيّرنا طريقة اتصال مكنون بجهات اتصالك، ويتوفر إصدار جديد.';
 
   @override
   String get update_available_critical_fix =>
@@ -4348,7 +4348,7 @@ class AppLocalizationsAr extends AppLocalizations {
   String get update_available_action => 'تحديث';
 
   @override
-  String get update_available_dismiss => 'إغلاق';
+  String get update_available_dismiss => 'ليس الآن';
 
   @override
   String get update_notification_title_general => 'حدّث مكنون';
@@ -4362,5 +4362,5 @@ class AppLocalizationsAr extends AppLocalizations {
 
   @override
   String get update_notification_body_security =>
-      'يتوفر تحديث أمني. اضغط للتحديث لتبقى محادثاتك آمنة.';
+      'يتوفر تحديث أمني. اضغط للتحديث.';
 }
