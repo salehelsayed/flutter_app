@@ -282,7 +282,18 @@ class UpdateRequiredScreen extends StatelessWidget {
                       // here; nothing behind it can take focus.
                       autofocus: true,
                       onPressed: onUpdate,
-                      child: Text(l10n.update_required_button),
+                      // Large text sizes wrap the label; keep it centred and
+                      // clear of the rounded ends.
+                      style: FilledButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 24,
+                          vertical: 12,
+                        ),
+                      ),
+                      child: Text(
+                        l10n.update_required_button,
+                        textAlign: TextAlign.center,
+                      ),
                     ),
                   ),
                 ],

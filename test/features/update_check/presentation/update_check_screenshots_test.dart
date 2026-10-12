@@ -175,6 +175,13 @@ void _textScaleCases() {
         final label = tester.getRect(button);
         expect(shape.inflate(0.5).contains(label.topLeft), isTrue);
         expect(shape.inflate(0.5).contains(label.bottomRight), isTrue);
+        // A wrapped label is centred and keeps its inset from the rounded
+        // ends (copy review: "Jetzt / aktualisieren" touched the left edge).
+        final labelParagraph = tester.renderObject<RenderParagraph>(button);
+        expect(labelParagraph.textAlign, TextAlign.center);
+        expect(label.left - shape.left, greaterThanOrEqualTo(24 - 0.5));
+        expect(shape.right - label.right, greaterThanOrEqualTo(24 - 0.5));
+        expect((label.center.dx - shape.center.dx).abs(), lessThan(1));
         await tester.tap(button);
         await tester.pumpAndSettle();
         expect(opened, 1);
