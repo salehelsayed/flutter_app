@@ -327,6 +327,7 @@ final class UpdateCheckBackgroundCoordinator {
   func configure(enabled: Bool) {
     defaults.set(enabled, forKey: Self.enabledDefaultsKey)
     setTopicSubscribed(enabled)
+    Self.log("configure enabled=\(enabled)")
     if enabled {
       // Every launch calls configure. Re-submitting would move the earliest
       // begin date 12 h ahead each time, so a daily user would never get a
