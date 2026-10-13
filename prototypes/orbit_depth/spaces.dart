@@ -1,11 +1,10 @@
 part of 'orbit_depth_prototype_screen.dart';
 
-// Spaces: the things people keep doing (books they read, a challenge they
-// are on, movies they watched), each a small world you can dive into from a
-// person, with the same tilted orbit, turning and front card as the main
-// Orbit. Fake data, like the rest of the prototype.
+// Spaces: the things people keep doing (books they read, movies they
+// watched, work they made), shown on their world as calm scrolling pages.
+// Fake data, like the rest of the prototype.
 
-enum _SpaceKind { thoughts, books, movies, challenge, add }
+enum _SpaceKind { books, movies, work, add }
 
 class _SpaceItem {
   final String title;
@@ -27,26 +26,15 @@ class _SpaceItem {
   });
 }
 
-enum _DayState { done, missed, today, upcoming }
-
-class _ChallengeDay {
-  final String label;
-  final _DayState state;
-  final String detail;
-  final int cheers;
-
-  const _ChallengeDay(this.label, this.state, this.detail, {this.cheers = 0});
-}
-
 class _Space {
   final String title;
   final _SpaceKind kind;
   final IconData icon;
   final Color hue;
   final List<_SpaceItem> items;
-  final String goal;
-  final List<_ChallengeDay> days;
-  final List<_PastThought> thoughts;
+
+  /// What a work Space counts: projects, runs, hikes.
+  final String unit;
 
   const _Space(
     this.title,
@@ -54,13 +42,8 @@ class _Space {
     this.icon,
     this.hue, {
     this.items = const [],
-    this.goal = '',
-    this.days = const [],
-    this.thoughts = const [],
+    this.unit = 'entries',
   });
-
-  int get today => days.indexWhere((d) => d.state == _DayState.today);
-  int get done => days.where((d) => d.state == _DayState.done).length;
 }
 
 const _laylaBooks = _Space(
@@ -180,23 +163,6 @@ const _laylaMovies = _Space(
   ],
 );
 
-const _omarPlank = _Space(
-  'Plank challenge',
-  _SpaceKind.challenge,
-  Icons.fitness_center,
-  Color(0xFF1DB954),
-  goal: 'Plank for 1 minute, every day for a week',
-  days: [
-    _ChallengeDay('Mon', _DayState.done, 'held 1:00', cheers: 3),
-    _ChallengeDay('Tue', _DayState.done, 'held 1:04', cheers: 5),
-    _ChallengeDay('Wed', _DayState.done, 'held 0:58 · so close', cheers: 2),
-    _ChallengeDay('Thu', _DayState.done, 'held 1:10 · new best', cheers: 7),
-    _ChallengeDay('Fri', _DayState.today, 'not yet today'),
-    _ChallengeDay('Sat', _DayState.upcoming, 'coming up'),
-    _ChallengeDay('Sun', _DayState.upcoming, 'coming up'),
-  ],
-);
-
 const _omarBooks = _Space(
   'Books',
   _SpaceKind.books,
@@ -296,16 +262,31 @@ const _yourBooks = _Space(
   ],
 );
 
-const _yourRun = _Space(
-  'Run 5k',
-  _SpaceKind.challenge,
+const _yourRuns = _Space(
+  'Runs',
+  _SpaceKind.work,
   Icons.directions_run,
   Color(0xFF1DB954),
-  goal: 'Run 5k three times this week',
-  days: [
-    _ChallengeDay('Mon', _DayState.done, '5.1 km · 29:40', cheers: 4),
-    _ChallengeDay('Wed', _DayState.done, '5.0 km · 28:55', cheers: 6),
-    _ChallengeDay('Fri', _DayState.today, 'planned for tonight'),
+  unit: 'runs',
+  items: [
+    _SpaceItem(
+      '5k along the corniche',
+      'Wednesday · 28:55',
+      Color(0xFF1F3B4D),
+      rating: 0,
+      status: 'New best',
+      note: 'slowly getting there',
+      comments: 6,
+    ),
+    _SpaceItem(
+      '5k, first try',
+      'Monday · 29:40',
+      Color(0xFF3F5B3A),
+      rating: 0,
+      status: 'Done',
+      note: 'walked twice. not again',
+      comments: 4,
+    ),
   ],
 );
 
@@ -318,9 +299,9 @@ const _newSpace = _Space(
 
 const _spacesByOwner = <String, List<_Space>>{
   'layla': [_laylaBooks, _laylaMovies],
-  'omar': [_omarPlank, _omarBooks],
+  'omar': [_omarBooks],
   'nour': [_nourMovies],
-  'you': [_yourBooks, _yourRun, _newSpace],
+  'you': [_yourBooks, _yourRuns, _newSpace],
 };
 
 /// A thought someone shared. The newest one is the one on the orbit right
@@ -352,12 +333,7 @@ class _PastThought {
 
 const _olderThoughts = <String, List<_PastThought>>{
   'omar': [
-    _PastThought(
-      'Thursday plank: 1:10, new best',
-      age: '1 d',
-      comments: 7,
-      space: 'Plank challenge',
-    ),
+    _PastThought('Thursday was a good day. new personal best', age: '1 d'),
     _PastThought(
       'the bus was 40 minutes late. again.',
       age: '3 d',
@@ -395,28 +371,15 @@ const _olderThoughts = <String, List<_PastThought>>{
       space: 'Movies',
     ),
   ],
-  'you': [
-    _PastThought(
-      'ran 5k in 28:55. slowly getting there',
-      age: '2 d',
-      comments: 6,
-      space: 'Run 5k',
-    ),
-    _PastThought(
-      'chapter 12 of Thinking, Fast and Slow. my brain hurts',
-      age: '4 d',
-      comments: 3,
-      space: 'Books',
-    ),
-  ],
 };
 
 /// Everything someone shared: the live thought first, then older ones.
 List<_PastThought> _thoughtsOf(String owner) {
+  if (owner == 'you') return _yourPastThoughts();
   final thoughts = <_PastThought>[];
-  for (final f in _friends) {
-    final thought = f.thought;
-    if (f.name != owner || thought == null) continue;
+  final f = _friendNamed(owner);
+  final thought = f?.thought;
+  if (f != null && thought != null) {
     final d = _detailFor(f);
     thoughts.add(
       _PastThought(
@@ -435,21 +398,10 @@ List<_PastThought> _thoughtsOf(String owner) {
   return thoughts;
 }
 
-/// A person's Spaces, with their Thoughts always first.
-List<_Space> _spacesFor(String owner) {
-  final thoughts = _thoughtsOf(owner);
-  return [
-    if (thoughts.isNotEmpty)
-      _Space(
-        'Thoughts',
-        _SpaceKind.thoughts,
-        Icons.chat_bubble_outline,
-        _accent,
-        thoughts: thoughts,
-      ),
-    ...?_spacesByOwner[owner],
-  ];
-}
+/// A person's Spaces: yours, a friend's, or the ones a friend of a friend
+/// opened to friends of friends.
+List<_Space> _spacesFor(String owner) =>
+    _spacesByOwner[owner] ?? _fofSpaces[owner] ?? const [];
 
 void _openSpace(BuildContext context, String owner, String title) {
   for (final space in _spacesFor(owner)) {
@@ -457,7 +409,7 @@ void _openSpace(BuildContext context, String owner, String title) {
       HapticFeedback.selectionClick();
       Navigator.of(
         context,
-      ).push(_diveRoute(_SpaceScreen(owner: owner, space: space)));
+      ).push(_diveRoute(_SpacePage(owner: owner, space: space)));
       return;
     }
   }
@@ -565,147 +517,6 @@ class _DiveHeader extends StatelessWidget {
   }
 }
 
-// ---------------------------------------------------------------------------
-// A person's world: their Spaces orbit them.
-// ---------------------------------------------------------------------------
-
-class _WorldScreen extends StatelessWidget {
-  final String owner;
-
-  const _WorldScreen({required this.owner});
-
-  void _dive(BuildContext context, _Space space) {
-    if (space.kind == _SpaceKind.add) {
-      _openNewSpaceSheet(context);
-      return;
-    }
-    HapticFeedback.selectionClick();
-    Navigator.of(
-      context,
-    ).push(_diveRoute(_SpaceScreen(owner: owner, space: space)));
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final spaces = _spacesFor(owner);
-    final title = owner == 'you' ? 'your world' : "$owner's world";
-    return Scaffold(
-      backgroundColor: Colors.transparent,
-      body: SafeArea(
-        child: Column(
-          children: [
-            _DiveHeader(trail: [title]),
-            Expanded(
-              child: spaces.isEmpty
-                  ? _EmptyWorld(owner: owner)
-                  : _DepthRing(
-                      count: spaces.length,
-                      itemBase: 58,
-                      centerBuilder: (context, size) =>
-                          _personPhoto(owner, size),
-                      centerColor: _accent,
-                      colorOf: (i) => spaces[i].hue,
-                      itemBuilder: (context, i, size, highlight) =>
-                          KeyedSubtree(
-                            key: ValueKey('space-${spaces[i].title}'),
-                            child: _SpaceTile(
-                              space: spaces[i],
-                              size: size,
-                              highlight: highlight,
-                            ),
-                          ),
-                      cardBuilder: (context, i, maxHeight) => _SpaceCard(
-                        owner: owner,
-                        space: spaces[i],
-                        onDive: () => _dive(context, spaces[i]),
-                      ),
-                      onDive: (i) => _dive(context, spaces[i]),
-                      onBack: () => Navigator.of(context).maybePop(),
-                    ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _EmptyWorld extends StatelessWidget {
-  final String owner;
-
-  const _EmptyWorld({required this.owner});
-
-  @override
-  Widget build(BuildContext context) {
-    return GestureDetector(
-      behavior: HitTestBehavior.opaque,
-      onVerticalDragEnd: (d) {
-        if ((d.primaryVelocity ?? 0) > 300) Navigator.of(context).maybePop();
-      },
-      child: Center(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            _personPhoto(owner, 96),
-            const SizedBox(height: 18),
-            Text(
-              '$owner has not made a space yet',
-              style: const TextStyle(color: _muted, fontSize: 14),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _SpaceTile extends StatelessWidget {
-  final _Space space;
-  final double size;
-  final double highlight;
-
-  const _SpaceTile({
-    required this.space,
-    required this.size,
-    required this.highlight,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final add = space.kind == _SpaceKind.add;
-    return Transform.scale(
-      scale: 1 + 0.08 * highlight,
-      alignment: Alignment.bottomCenter,
-      child: DecoratedBox(
-        decoration: BoxDecoration(
-          color: _chat.surfaceRaised,
-          borderRadius: BorderRadius.circular(size * 0.28),
-          border: Border.all(
-            color: space.hue.withValues(
-              alpha: add ? 0.35 : 0.3 + 0.4 * highlight,
-            ),
-          ),
-          boxShadow: [
-            const BoxShadow(
-              color: Color(0x73000000),
-              blurRadius: 10,
-              offset: Offset(0, 4),
-            ),
-            if (highlight > 0.01)
-              BoxShadow(
-                color: space.hue.withValues(alpha: 0.35 * highlight),
-                blurRadius: 22,
-              ),
-          ],
-        ),
-        child: Center(
-          child: Icon(space.icon, color: space.hue, size: size * 0.44),
-        ),
-      ),
-    );
-  }
-}
-
 class _SpaceCard extends StatelessWidget {
   final String owner;
   final _Space space;
@@ -718,12 +529,9 @@ class _SpaceCard extends StatelessWidget {
   });
 
   String get _subtitle => switch (space.kind) {
-    _SpaceKind.thoughts =>
-      'Thoughts · ${space.thoughts.length}, newest ${space.thoughts.first.age} ago',
     _SpaceKind.books => 'Reading list · ${space.items.length} books',
     _SpaceKind.movies => 'Watched · ${space.items.length} movies',
-    _SpaceKind.challenge =>
-      'Challenge · ${space.done} of ${space.days.length} done',
+    _SpaceKind.work => '${space.items.length} ${space.unit}',
     _SpaceKind.add => 'Start something your friends can follow',
   };
 
@@ -757,15 +565,10 @@ class _SpaceCard extends StatelessWidget {
           ..._preview(),
           const SizedBox(height: 14),
           Row(
+            mainAxisAlignment: MainAxisAlignment.end,
             children: [
-              const Expanded(
-                child: Text(
-                  'or swipe up',
-                  style: TextStyle(color: Color(0xFF66736C), fontSize: 12),
-                ),
-              ),
               _AccentButton(
-                label: space.kind == _SpaceKind.add ? 'Create' : 'Dive in',
+                label: space.kind == _SpaceKind.add ? 'Create' : 'Open',
                 onTap: onDive,
               ),
             ],
@@ -777,39 +580,9 @@ class _SpaceCard extends StatelessWidget {
 
   List<Widget> _preview() {
     switch (space.kind) {
-      case _SpaceKind.thoughts:
-        final latest = space.thoughts.first;
-        return [
-          Row(
-            children: [
-              Icon(
-                switch (latest.kind) {
-                  _ThoughtKind.voice => Icons.graphic_eq,
-                  _ThoughtKind.photo => Icons.image_outlined,
-                  _ThoughtKind.text => Icons.format_quote_rounded,
-                },
-                size: 18,
-                color: _accent,
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Text(
-                  latest.live ? 'On the orbit now' : '${latest.age} ago',
-                  style: const TextStyle(color: _muted, fontSize: 12.5),
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 8),
-          Text(
-            '“${latest.text}”',
-            maxLines: 2,
-            overflow: TextOverflow.ellipsis,
-            style: const TextStyle(color: _ink, fontSize: 15),
-          ),
-        ];
       case _SpaceKind.books:
       case _SpaceKind.movies:
+      case _SpaceKind.work:
         final latest = space.items.first;
         return [
           Row(
@@ -841,25 +614,11 @@ class _SpaceCard extends StatelessWidget {
             style: const TextStyle(color: _chatSecondary, fontSize: 13),
           ),
         ];
-      case _SpaceKind.challenge:
-        return [
-          Text(space.goal, style: const TextStyle(color: _ink, fontSize: 14)),
-          const SizedBox(height: 12),
-          Row(
-            children: [
-              for (final day in space.days)
-                Padding(
-                  padding: const EdgeInsets.only(right: 8),
-                  child: _DayDot(day: day, size: 22),
-                ),
-            ],
-          ),
-        ];
       case _SpaceKind.add:
         return const [
           Text(
-            'A reading list, a challenge, movies you watched, anything you '
-            'keep doing. Your friends dive in like this.',
+            'A reading list, movies you watched, anything you keep doing. '
+            'Your friends see it on your world.',
             style: TextStyle(color: _chatSecondary, fontSize: 13),
           ),
         ];
@@ -867,184 +626,6 @@ class _SpaceCard extends StatelessWidget {
   }
 }
 
-// ---------------------------------------------------------------------------
-// Inside a Space.
-// ---------------------------------------------------------------------------
-
-class _SpaceScreen extends StatelessWidget {
-  final String owner;
-  final _Space space;
-
-  const _SpaceScreen({required this.owner, required this.space});
-
-  @override
-  Widget build(BuildContext context) {
-    final world = owner == 'you' ? 'your world' : owner;
-    return Scaffold(
-      backgroundColor: Colors.transparent,
-      body: SafeArea(
-        child: Column(
-          children: [
-            _DiveHeader(trail: [world, space.title]),
-            Expanded(
-              child: switch (space.kind) {
-                _SpaceKind.challenge => _challengeRing(context),
-                _SpaceKind.thoughts => _thoughtsRing(context),
-                _ => _collectionRing(context),
-              },
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _collectionRing(BuildContext context) {
-    final items = space.items;
-    return _DepthRing(
-      count: items.length,
-      itemBase: 54,
-      centerBuilder: (context, size) =>
-          _SpaceTile(space: space, size: size * 0.8, highlight: 0),
-      centerColor: space.hue,
-      colorOf: (i) => items[i].color,
-      itemBuilder: (context, i, size, highlight) => Align(
-        alignment: Alignment.bottomCenter,
-        child: Transform.scale(
-          scale: 1 + 0.1 * highlight,
-          alignment: Alignment.bottomCenter,
-          child: _Cover(
-            item: items[i],
-            kind: space.kind,
-            width: size * 0.72,
-            height: size,
-          ),
-        ),
-      ),
-      cardBuilder: (context, i, maxHeight) => _ItemCard(
-        owner: owner,
-        item: items[i],
-        kind: space.kind,
-        onOpen: () => _openItemSheet(context, owner, items[i], space.kind),
-      ),
-      onDive: (i) => _openItemSheet(context, owner, items[i], space.kind),
-      onBack: () => Navigator.of(context).maybePop(),
-    );
-  }
-
-  Widget _thoughtsRing(BuildContext context) {
-    final thoughts = space.thoughts;
-    return _DepthRing(
-      count: thoughts.length,
-      itemBase: 50,
-      centerBuilder: (context, size) => _personPhoto(owner, size),
-      centerColor: _accent,
-      colorOf: (i) => thoughts[i].live ? _accent : const Color(0xFF6B7A72),
-      itemBuilder: (context, i, size, highlight) =>
-          _ThoughtTile(thought: thoughts[i], size: size, highlight: highlight),
-      cardBuilder: (context, i, maxHeight) {
-        final post = _pastPost(owner, thoughts[i], header: true);
-        final space = post.space;
-        return _PostCard(
-          post: post,
-          maxHeight: maxHeight,
-          expand: 1,
-          k: OrbitDepthTuning.cardScale,
-          alpha: 1,
-          front: false,
-          onOpen: () => _openThread(context, owner, target: i),
-          onSpace: space == null
-              ? null
-              : () => _openSpace(context, owner, space),
-        );
-      },
-      onDive: (i) => _openThread(context, owner, target: i),
-      onBack: () => Navigator.of(context).maybePop(),
-    );
-  }
-
-  Widget _challengeRing(BuildContext context) {
-    final days = space.days;
-    return _DepthRing(
-      count: days.length,
-      initialIndex: math.max(0, space.today),
-      itemBase: 46,
-      centerBuilder: (context, size) =>
-          _ChallengeProgress(space: space, size: size),
-      centerColor: _accent,
-      colorOf: (i) => switch (days[i].state) {
-        _DayState.done => _accent,
-        _DayState.today => const Color(0xFFE6B566),
-        _ => const Color(0xFF3A4741),
-      },
-      itemBuilder: (context, i, size, highlight) => Transform.scale(
-        scale: 1 + 0.08 * highlight,
-        alignment: Alignment.bottomCenter,
-        child: _DayDot(day: days[i], size: size),
-      ),
-      cardBuilder: (context, i, maxHeight) =>
-          _DayCard(owner: owner, space: space, day: days[i], index: i),
-      onBack: () => Navigator.of(context).maybePop(),
-    );
-  }
-}
-
-/// One thought on the Thoughts ring: its photo, or a mark for voice / text.
-class _ThoughtTile extends StatelessWidget {
-  final _PastThought thought;
-  final double size;
-  final double highlight;
-
-  const _ThoughtTile({
-    required this.thought,
-    required this.size,
-    required this.highlight,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final photo = thought.photo;
-    final color = thought.live ? _accent : const Color(0xFF6B7A72);
-    return Transform.scale(
-      scale: 1 + 0.08 * highlight,
-      alignment: Alignment.bottomCenter,
-      child: Container(
-        decoration: BoxDecoration(
-          color: _chat.surfaceRaised,
-          shape: BoxShape.circle,
-          border: Border.all(color: color.withValues(alpha: 0.5)),
-          boxShadow: [
-            const BoxShadow(
-              color: Color(0x73000000),
-              blurRadius: 10,
-              offset: Offset(0, 4),
-            ),
-            if (highlight > 0.01)
-              BoxShadow(
-                color: color.withValues(alpha: 0.35 * highlight),
-                blurRadius: 22,
-              ),
-          ],
-        ),
-        child: photo != null
-            ? ClipOval(
-                child: Image(
-                  image: _photo(photo),
-                  fit: BoxFit.cover,
-                  gaplessPlayback: true,
-                ),
-              )
-            : Icon(
-                thought.kind == _ThoughtKind.voice
-                    ? Icons.graphic_eq
-                    : Icons.format_quote_rounded,
-                color: color,
-                size: size * 0.42,
-              ),
-      ),
-    );
-  }
-}
 
 /// A book or movie cover, set in type like a real edition.
 class _Cover extends StatelessWidget {
@@ -1210,238 +791,6 @@ class _ItemCard extends StatelessWidget {
   }
 }
 
-class _ChallengeProgress extends StatelessWidget {
-  final _Space space;
-  final double size;
-
-  const _ChallengeProgress({required this.space, required this.size});
-
-  @override
-  Widget build(BuildContext context) {
-    final progress = space.done / space.days.length;
-    return SizedBox(
-      width: size,
-      height: size,
-      child: CustomPaint(
-        painter: _ProgressPainter(progress),
-        child: Center(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(space.icon, color: _accent, size: size * 0.24),
-              Text(
-                '${space.done}/${space.days.length}',
-                style: TextStyle(
-                  color: _ink,
-                  fontSize: size * 0.2,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _ProgressPainter extends CustomPainter {
-  final double progress;
-
-  _ProgressPainter(this.progress);
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final rect = (Offset.zero & size).deflate(size.width * 0.05);
-    canvas.drawOval(rect, Paint()..color = const Color(0xFF0E1311));
-    final track = Paint()
-      ..color = const Color(0xFF24302B)
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = size.width * 0.06;
-    canvas.drawArc(rect, 0, math.pi * 2, false, track);
-    canvas.drawArc(
-      rect,
-      -math.pi / 2,
-      math.pi * 2 * progress,
-      false,
-      track
-        ..color = _accent
-        ..strokeCap = StrokeCap.round,
-    );
-  }
-
-  @override
-  bool shouldRepaint(_ProgressPainter old) => old.progress != progress;
-}
-
-class _DayDot extends StatelessWidget {
-  final _ChallengeDay day;
-  final double size;
-
-  const _DayDot({required this.day, required this.size});
-
-  @override
-  Widget build(BuildContext context) {
-    final (fill, border, child) = switch (day.state) {
-      _DayState.done => (
-        _accent,
-        _accent,
-        Icon(Icons.check, size: size * 0.55, color: const Color(0xFF03140A)),
-      ),
-      _DayState.today => (
-        const Color(0xFF1C1A10),
-        const Color(0xFFE6B566),
-        _dayLabel(const Color(0xFFE6B566)),
-      ),
-      _DayState.missed => (
-        const Color(0xFF1A1414),
-        const Color(0xFF5A3A3A),
-        _dayLabel(const Color(0xFF9A7A7A)),
-      ),
-      _DayState.upcoming => (
-        const Color(0xFF101513),
-        const Color(0xFF2E3B35),
-        _dayLabel(const Color(0xFF66736C)),
-      ),
-    };
-    return Container(
-      width: size,
-      height: size,
-      decoration: BoxDecoration(
-        color: fill,
-        shape: BoxShape.circle,
-        border: Border.all(color: border, width: size > 30 ? 1.5 : 1),
-      ),
-      child: Center(child: child),
-    );
-  }
-
-  Widget _dayLabel(Color color) => Text(
-    size > 30 ? day.label : day.label.characters.first,
-    style: TextStyle(
-      color: color,
-      fontSize: size * (size > 30 ? 0.28 : 0.45),
-      fontWeight: FontWeight.w600,
-    ),
-  );
-}
-
-class _DayCard extends StatefulWidget {
-  final String owner;
-  final _Space space;
-  final _ChallengeDay day;
-  final int index;
-
-  const _DayCard({
-    required this.owner,
-    required this.space,
-    required this.day,
-    required this.index,
-  });
-
-  @override
-  State<_DayCard> createState() => _DayCardState();
-}
-
-class _DayCardState extends State<_DayCard> {
-  bool _cheered = false;
-
-  @override
-  void didUpdateWidget(_DayCard old) {
-    super.didUpdateWidget(old);
-    if (old.index != widget.index) _cheered = false;
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final day = widget.day;
-    final cheers = day.cheers + (_cheered ? 1 : 0);
-    final status = switch (day.state) {
-      _DayState.done => 'Done',
-      _DayState.today => 'Today',
-      _DayState.missed => 'Missed',
-      _DayState.upcoming => 'Coming up',
-    };
-    final canCheer =
-        day.state == _DayState.done || day.state == _DayState.today;
-    return _CardShell(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Text(
-            'Day ${widget.index + 1} · ${day.label}',
-            style: const TextStyle(
-              color: _ink,
-              fontSize: 17,
-              fontWeight: FontWeight.w700,
-            ),
-          ),
-          const SizedBox(height: 4),
-          Text(
-            '$status · ${day.detail}',
-            style: const TextStyle(color: _muted, fontSize: 13),
-          ),
-          const SizedBox(height: 14),
-          Text(
-            widget.space.goal,
-            style: const TextStyle(color: _chatSecondary, fontSize: 13),
-          ),
-          const SizedBox(height: 14),
-          Row(
-            children: [
-              if (cheers > 0) ...[
-                SizedBox(
-                  width: 26.0 + 16 * (math.min(cheers, 3) - 1),
-                  height: 26,
-                  child: Stack(
-                    children: [
-                      for (var i = 0; i < math.min(cheers, 3); i++)
-                        Positioned(
-                          left: i * 16.0,
-                          child: Container(
-                            decoration: BoxDecoration(
-                              shape: BoxShape.circle,
-                              border: Border.all(color: _ground, width: 2),
-                            ),
-                            child: _personPhoto(
-                              const ['sara', 'nour', 'tarek'][i],
-                              22,
-                            ),
-                          ),
-                        ),
-                    ],
-                  ),
-                ),
-                const SizedBox(width: 8),
-              ],
-              Expanded(
-                child: Text(
-                  cheers == 0
-                      ? 'No cheers yet'
-                      : cheers == 1
-                      ? '1 cheer'
-                      : '$cheers cheers',
-                  style: const TextStyle(color: _muted, fontSize: 12.5),
-                ),
-              ),
-              if (canCheer)
-                _AccentButton(
-                  label: _cheered ? 'Cheered' : 'Cheer',
-                  filled: !_cheered,
-                  onTap: () {
-                    HapticFeedback.lightImpact();
-                    setState(() => _cheered = !_cheered);
-                  },
-                ),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-}
-
 // ---------------------------------------------------------------------------
 // Small shared pieces.
 // ---------------------------------------------------------------------------
@@ -1472,13 +821,8 @@ class _CardShell extends StatelessWidget {
 class _AccentButton extends StatelessWidget {
   final String label;
   final VoidCallback onTap;
-  final bool filled;
 
-  const _AccentButton({
-    required this.label,
-    required this.onTap,
-    this.filled = true,
-  });
+  const _AccentButton({required this.label, required this.onTap});
 
   @override
   Widget build(BuildContext context) {
@@ -1489,14 +833,14 @@ class _AccentButton extends StatelessWidget {
         padding: const EdgeInsets.symmetric(horizontal: 16),
         alignment: Alignment.center,
         decoration: BoxDecoration(
-          color: filled ? _accent : Colors.transparent,
+          color: _accent,
           borderRadius: BorderRadius.circular(18),
           border: Border.all(color: _accent),
         ),
         child: Text(
           label,
           style: TextStyle(
-            color: filled ? const Color(0xFF03140A) : _accent,
+            color: const Color(0xFF03140A),
             fontSize: 13.5,
             fontWeight: FontWeight.w700,
           ),
@@ -1706,11 +1050,6 @@ void _openNewSpaceSheet(BuildContext context) {
       'Books, movies, places, recipes. Things you add over time.',
     ),
     (
-      Icons.flag_outlined,
-      'Challenge',
-      'A goal with a schedule. Friends see your progress and cheer.',
-    ),
-    (
       Icons.edit_note,
       'Journal',
       'Free-form entries for anything else you keep doing.',
@@ -1791,521 +1130,3 @@ void _openNewSpaceSheet(BuildContext context) {
 // The shared 3D ring: the same tilted orbit, turning, snapping, platforms and
 // front card as the main Orbit, for any set of things.
 // ---------------------------------------------------------------------------
-
-class _RingSeat {
-  final int index;
-  final Offset ringPoint;
-  final Offset center;
-  final double size;
-  final double depth;
-  final double opacity;
-  final Size platform;
-
-  const _RingSeat(
-    this.index,
-    this.ringPoint,
-    this.center,
-    this.size,
-    this.depth,
-    this.opacity,
-    this.platform,
-  );
-}
-
-class _DepthRing extends StatefulWidget {
-  final int count;
-  final int initialIndex;
-  final double itemBase;
-  final Widget Function(BuildContext context, double size) centerBuilder;
-  final Color centerColor;
-  final Widget Function(
-    BuildContext context,
-    int index,
-    double size,
-    double highlight,
-  )
-  itemBuilder;
-  final Widget Function(BuildContext context, int index, double maxHeight)
-  cardBuilder;
-  final Color Function(int index) colorOf;
-  final ValueChanged<int>? onDive;
-  final VoidCallback onBack;
-
-  const _DepthRing({
-    required this.count,
-    required this.itemBase,
-    required this.centerBuilder,
-    required this.centerColor,
-    required this.itemBuilder,
-    required this.cardBuilder,
-    required this.colorOf,
-    required this.onBack,
-    this.onDive,
-    this.initialIndex = 0,
-  });
-
-  @override
-  State<_DepthRing> createState() => _DepthRingState();
-}
-
-class _DepthRingState extends State<_DepthRing> with TickerProviderStateMixin {
-  static const _rotSpring = SpringDescription(
-    mass: 1,
-    stiffness: 90,
-    damping: 15,
-  );
-  static const _pullSpring = SpringDescription(
-    mass: 1,
-    stiffness: 260,
-    damping: 26,
-  );
-
-  late final AnimationController _rot = AnimationController.unbounded(
-    vsync: this,
-  );
-  late final AnimationController _duck = AnimationController(
-    vsync: this,
-    duration: const Duration(milliseconds: 160),
-    reverseDuration: const Duration(milliseconds: 260),
-  );
-
-  /// Vertical pull in pixels while dragging (up is positive): the ring leans
-  /// in as you pull up towards diving, and back as you pull down to leave.
-  late final AnimationController _pull = AnimationController.unbounded(
-    vsync: this,
-  );
-
-  bool _reduceMotion = false;
-  _Axis? _axis;
-  Offset _travel = Offset.zero;
-  double _rotAtStart = 0;
-  double _k = 1;
-
-  double get _step => 2 * math.pi / widget.count;
-  double _angle(int i) => -math.pi / 2 + i * _step;
-
-  @override
-  void initState() {
-    super.initState();
-    _rot.value = math.pi / 2 - _angle(widget.initialIndex);
-  }
-
-  @override
-  void didChangeDependencies() {
-    super.didChangeDependencies();
-    _reduceMotion = MediaQuery.disableAnimationsOf(context);
-  }
-
-  @override
-  void dispose() {
-    _rot.dispose();
-    _duck.dispose();
-    _pull.dispose();
-    super.dispose();
-  }
-
-  int get _front {
-    var best = 0;
-    var bestDepth = -2.0;
-    for (var i = 0; i < widget.count; i++) {
-      final d = math.sin(_angle(i) + _rot.value);
-      if (d > bestDepth) {
-        bestDepth = d;
-        best = i;
-      }
-    }
-    return best;
-  }
-
-  double _snap(double predicted) {
-    var best = predicted;
-    var gap = double.infinity;
-    for (var i = 0; i < widget.count; i++) {
-      final base = math.pi / 2 - _angle(i);
-      final turns = ((predicted - base) / (2 * math.pi)).round();
-      final candidate = base + turns * 2 * math.pi;
-      if ((candidate - predicted).abs() < gap) {
-        gap = (candidate - predicted).abs();
-        best = candidate;
-      }
-    }
-    return best;
-  }
-
-  void _setTurning(bool turning) {
-    if (_reduceMotion) {
-      _duck.value = turning ? 1 : 0;
-    } else if (turning) {
-      _duck.forward();
-    } else {
-      _duck.reverse();
-    }
-  }
-
-  void _springTo(
-    AnimationController c,
-    double target,
-    double velocity,
-    SpringDescription spring,
-  ) {
-    if (_reduceMotion) {
-      c.value = target;
-    } else {
-      c.animateWith(SpringSimulation(spring, c.value, target, velocity));
-    }
-  }
-
-  void _onPanStart(DragStartDetails details) {
-    _axis = null;
-    _travel = Offset.zero;
-    _rotAtStart = _rot.value;
-    _rot.stop();
-    _pull.stop();
-  }
-
-  void _onPanUpdate(DragUpdateDetails details) {
-    if (_axis == null) {
-      _travel += details.delta;
-      if (_travel.distance < 4) return;
-      _axis = _travel.dx.abs() > _travel.dy.abs()
-          ? _Axis.horizontal
-          : _Axis.vertical;
-    }
-    if (_axis == _Axis.horizontal) {
-      _setTurning(true);
-      _rot.value -= details.delta.dx / (128 * _k);
-    } else {
-      _pull.value = (_pull.value - details.delta.dy).clamp(-220.0, 220.0);
-    }
-  }
-
-  void _onPanEnd(DragEndDetails details) {
-    final velocity = details.velocity.pixelsPerSecond;
-    _axis ??= velocity.dx.abs() > velocity.dy.abs()
-        ? _Axis.horizontal
-        : _Axis.vertical;
-    if (_axis == _Axis.horizontal) {
-      _setTurning(false);
-      final spin = _reduceMotion ? 0.0 : -velocity.dx / (128 * _k);
-      var target = _snap(_rot.value + (spin * 0.25).clamp(-math.pi, math.pi));
-      final from = _snap(_rotAtStart);
-      final dragged = _rot.value - _rotAtStart;
-      if ((target - from).abs() < 1e-6 && dragged.abs() > _step * 0.2) {
-        target = _snap(from + dragged.sign * _step);
-      }
-      _springTo(_rot, target, spin, _rotSpring);
-      return;
-    }
-    final up = -velocity.dy;
-    final pull = _pull.value;
-    _springTo(_pull, 0, 0, _pullSpring);
-    final dive = widget.onDive;
-    if ((pull > 70 || up > 600) && dive != null) {
-      HapticFeedback.selectionClick();
-      dive(_front);
-    } else if (pull < -70 || up < -600) {
-      HapticFeedback.selectionClick();
-      widget.onBack();
-    }
-  }
-
-  void _onPanCancel() {
-    _setTurning(false);
-    _springTo(_pull, 0, 0, _pullSpring);
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return GestureDetector(
-      behavior: HitTestBehavior.opaque,
-      onPanStart: _onPanStart,
-      onPanUpdate: _onPanUpdate,
-      onPanEnd: _onPanEnd,
-      onPanCancel: _onPanCancel,
-      child: LayoutBuilder(
-        builder: (context, box) {
-          _k = math.min(box.maxWidth / 390, box.maxHeight / 640);
-          return AnimatedBuilder(
-            animation: Listenable.merge([_rot, _duck, _pull]),
-            builder: (context, _) => _stage(context, box.biggest),
-          );
-        },
-      ),
-    );
-  }
-
-  Widget _stage(BuildContext context, Size size) {
-    final k = _k;
-    final cx = size.width / 2;
-    final cy = size.height * 0.34;
-    const tilt = 52 * math.pi / 180;
-    final c = math.cos(tilt);
-    final s = math.sin(tilt);
-    final radius = 150 * k;
-    final pull = _pull.value;
-
-    final seats = <_RingSeat>[];
-    for (var i = 0; i < widget.count; i++) {
-      final theta = _angle(i) + _rot.value;
-      final d = math.sin(theta);
-      final ring = Offset(
-        cx + radius * math.cos(theta),
-        cy + radius * math.sin(theta) * c,
-      );
-      final itemSize = widget.itemBase * k * (1 + 0.3 * d * s);
-      final platformW = itemSize * 1.35;
-      seats.add(
-        _RingSeat(
-          i,
-          ring,
-          ring.translate(0, -(itemSize / 2 + 2 * k)),
-          itemSize,
-          d,
-          (1 - 0.45 * ((1 - d) / 2) * s).clamp(0.0, 1.0),
-          Size(platformW, math.max(4 * k, platformW * c * 0.42)),
-        ),
-      );
-    }
-    seats.sort((a, b) => a.ringPoint.dy.compareTo(b.ringPoint.dy));
-    final front = seats.reduce((a, b) => a.depth >= b.depth ? a : b);
-    final highlight = _smoothstep(0.88, 0.995, front.depth);
-    final focus =
-        highlight *
-        (1 - _duck.value) *
-        (1 - (pull.abs() / 120).clamp(0.0, 1.0));
-
-    final centerSize = 84 * k;
-    final centerRing = Offset(cx, cy);
-    final centerAt = centerRing.translate(0, -(centerSize / 2 + 4 * k));
-
-    Widget place(Offset center, double side, Widget child) => Positioned(
-      left: center.dx - side / 2,
-      top: center.dy - side / 2,
-      width: side,
-      height: side,
-      child: child,
-    );
-
-    final children = <Widget>[
-      Positioned.fill(
-        child: CustomPaint(
-          painter: _RingPainter(
-            k: k,
-            center: centerRing,
-            radius: radius,
-            squash: c,
-            seats: seats,
-            colorOf: widget.colorOf,
-            centerColor: widget.centerColor,
-            centerPlatform: Size(
-              centerSize * 1.5,
-              math.max(4 * k, centerSize * 1.5 * c * 0.42),
-            ),
-            front: front.index,
-            highlight: highlight,
-          ),
-        ),
-      ),
-    ];
-    var centerPlaced = false;
-    void placeCenter() {
-      children.add(
-        place(
-          centerAt,
-          centerSize,
-          IgnorePointer(child: widget.centerBuilder(context, centerSize)),
-        ),
-      );
-      centerPlaced = true;
-    }
-
-    for (final seat in seats) {
-      if (!centerPlaced && seat.ringPoint.dy > centerRing.dy) placeCenter();
-      final h = seat.index == front.index ? highlight : 0.0;
-      children.add(
-        place(
-          seat.center,
-          seat.size,
-          GestureDetector(
-            onTap: () {
-              if (seat.index == front.index) {
-                widget.onDive?.call(seat.index);
-              } else {
-                HapticFeedback.selectionClick();
-                final base = math.pi / 2 - _angle(seat.index);
-                final turns = ((_rot.value - base) / (2 * math.pi)).round();
-                _springTo(_rot, base + turns * 2 * math.pi, 0, _rotSpring);
-              }
-            },
-            child: Opacity(
-              opacity: seat.opacity,
-              child: widget.itemBuilder(context, seat.index, seat.size, h),
-            ),
-          ),
-        ),
-      );
-    }
-    if (!centerPlaced) placeCenter();
-
-    if (focus > 0.01) {
-      final top = front.ringPoint.dy + front.platform.height * 0.55 + 14 * k;
-      final maxHeight = math.max(0.0, size.height - top - 10 * k);
-      children.add(
-        Positioned(
-          left: 14 * k,
-          right: 14 * k,
-          top: top,
-          child: IgnorePointer(
-            ignoring: focus < 0.5,
-            child: Opacity(
-              opacity: focus,
-              child: Transform.translate(
-                offset: Offset(0, (1 - focus) * 18 * k),
-                child: ConstrainedBox(
-                  constraints: BoxConstraints(maxHeight: maxHeight),
-                  child: SingleChildScrollView(
-                    physics: const NeverScrollableScrollPhysics(),
-                    child: KeyedSubtree(
-                      key: ValueKey('ring-card-${front.index}'),
-                      child: widget.cardBuilder(
-                        context,
-                        front.index,
-                        maxHeight,
-                      ),
-                    ),
-                  ),
-                ),
-              ),
-            ),
-          ),
-        ),
-      );
-    }
-
-    // Pulling up leans in towards diving; pulling down leans back.
-    final zoom = (1 + pull * 0.0012).clamp(0.82, 1.25);
-    return Transform.scale(
-      scale: zoom,
-      alignment: Alignment(0, (cy / size.height) * 2 - 1),
-      child: Stack(clipBehavior: Clip.none, children: children),
-    );
-  }
-}
-
-class _RingPainter extends CustomPainter {
-  final double k;
-  final Offset center;
-  final double radius;
-  final double squash;
-  final List<_RingSeat> seats;
-  final Color Function(int index) colorOf;
-  final Color centerColor;
-  final Size centerPlatform;
-  final int front;
-  final double highlight;
-
-  _RingPainter({
-    required this.k,
-    required this.center,
-    required this.radius,
-    required this.squash,
-    required this.seats,
-    required this.colorOf,
-    required this.centerColor,
-    required this.centerPlatform,
-    required this.front,
-    required this.highlight,
-  });
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final starCenter = Offset(size.width / 2, size.height * 0.45);
-    final reach = size.longestSide * 0.75;
-    for (final star in _stars) {
-      final z = star.z == 0 ? 0.5 : star.z;
-      final distance = star.spread * reach * (0.3 / (z + 0.3));
-      final p =
-          starCenter +
-          Offset(math.cos(star.angle), math.sin(star.angle)) * distance;
-      canvas.drawCircle(
-        p,
-        (0.6 + (1 - z) * 1.2) * k,
-        Paint()
-          ..color = const Color(
-            0xFF9AA59F,
-          ).withValues(alpha: ((1 - z) * 0.5).clamp(0.0, 1.0)),
-      );
-    }
-
-    final rect = Rect.fromCenter(
-      center: center,
-      width: radius * 2,
-      height: radius * 2 * squash,
-    );
-    final dash = Paint()
-      ..color = const Color(0xFF2E3B35)
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 1;
-    for (final metric in (Path()..addOval(rect)).computeMetrics()) {
-      var d = 0.0;
-      while (d < metric.length) {
-        canvas.drawPath(metric.extractPath(d, d + 6 * k), dash);
-        d += 12 * k;
-      }
-    }
-
-    _platform(canvas, center, centerPlatform, centerColor, 1, 0.4);
-    for (final seat in seats) {
-      _platform(
-        canvas,
-        seat.ringPoint,
-        seat.platform,
-        colorOf(seat.index),
-        seat.opacity,
-        seat.index == front ? highlight : 0,
-      );
-    }
-  }
-
-  void _platform(
-    Canvas canvas,
-    Offset at,
-    Size platform,
-    Color color,
-    double strength,
-    double glow,
-  ) {
-    final rect = Rect.fromCenter(
-      center: at,
-      width: platform.width,
-      height: platform.height,
-    );
-    double a(double v) => (v * strength).clamp(0.0, 1.0);
-    canvas.drawOval(
-      rect.inflate(4 * k),
-      Paint()
-        ..color = color.withValues(alpha: a(0.14 + 0.18 * glow))
-        ..maskFilter = MaskFilter.blur(BlurStyle.normal, (10 + 6 * glow) * k),
-    );
-    canvas.drawOval(
-      rect,
-      Paint()
-        ..shader = RadialGradient(
-          colors: [
-            color.withValues(alpha: a(0.26 + 0.16 * glow)),
-            color.withValues(alpha: a(0.06)),
-          ],
-        ).createShader(rect),
-    );
-    canvas.drawOval(
-      rect,
-      Paint()
-        ..color = color.withValues(alpha: a(0.28 + 0.2 * glow))
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = 0.8,
-    );
-  }
-
-  @override
-  bool shouldRepaint(_RingPainter old) => true;
-}

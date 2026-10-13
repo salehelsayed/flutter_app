@@ -375,8 +375,8 @@ _Post _pastPost(String owner, _PastThought thought, {bool header = false}) {
     header: !header
         ? null
         : thought.live
-        ? '${thought.age} ago · on the orbit now'
-        : '${thought.age} ago',
+        ? '${_ago(thought.age)} · on the orbit now'
+        : _ago(thought.age),
   );
 }
 
@@ -386,6 +386,15 @@ const _postFill = Color(0xFF0B0D0E);
 /// already sit above it, so it carries only the words, what is attached to
 /// them, and one row of actions. Long text stops behind "Show more"; that, or
 /// a tap anywhere on the card, opens the post full screen.
+/// On the dial the thought is the focus: a short one reads large, a longer
+/// one steps down so it still fits.
+double _thoughtFont(String text) {
+  if (!OrbitDepthTuning.dial) return 16;
+  if (text.length <= 40) return 25;
+  if (text.length <= 90) return 21;
+  return 18;
+}
+
 class _PostCard extends StatelessWidget {
   static const int _collapsedLines = 8;
   static const int _minLines = 3;
@@ -542,10 +551,18 @@ class _PostCard extends StatelessWidget {
     double u,
   ) {
     final paragraphs = post.paragraphs;
-    final style = TextStyle(
+    // The opening line is the thought; on the dial it leads, large.
+    TextStyle styleFor(int i) => TextStyle(
       color: _chat.textPrimary,
-      fontSize: 16 * u,
-      height: 1.38,
+      fontSize:
+          (i == 0
+              ? _thoughtFont(paragraphs[0])
+              : (OrbitDepthTuning.dial ? 18 : 16)) *
+          u,
+      fontWeight: i == 0 && OrbitDepthTuning.dial
+          ? FontWeight.w500
+          : FontWeight.w400,
+      height: i == 0 && OrbitDepthTuning.dial ? 1.25 : 1.38,
       shadows: _shadows,
     );
     final moreStyle = TextStyle(
@@ -567,7 +584,10 @@ class _PostCard extends StatelessWidget {
       return result;
     }
 
-    final sizes = [for (final p in paragraphs) measure(p, style)];
+    final sizes = [
+      for (var i = 0; i < paragraphs.length; i++)
+        measure(paragraphs[i], styleFor(i)),
+    ];
     final totalLines = sizes.fold(0, (a, s) => a + s.$1);
     final fullHeight =
         sizes.fold(0.0, (a, s) => a + s.$2) + gap * (paragraphs.length - 1);
@@ -595,7 +615,7 @@ class _PostCard extends StatelessWidget {
           padding: EdgeInsets.only(top: top),
           child: Text(
             paragraphs[i],
-            style: style,
+            style: styleFor(i),
             maxLines: cut ? show : null,
             overflow: cut ? TextOverflow.ellipsis : null,
           ),
@@ -796,8 +816,9 @@ class _UniverseMediaCardState extends State<_UniverseMediaCard> {
     ].join('\n');
     final style = TextStyle(
       color: _chat.textPrimary,
-      fontSize: 16 * u,
-      height: 1.38,
+      fontSize: _thoughtFont(friend.thought ?? words) * u,
+      fontWeight: OrbitDepthTuning.dial ? FontWeight.w500 : FontWeight.w400,
+      height: OrbitDepthTuning.dial ? 1.25 : 1.38,
       shadows: _PostCard._lift,
     );
 
@@ -961,13 +982,18 @@ class _UniverseMediaCardState extends State<_UniverseMediaCard> {
                         color: widget.friend.hue.color,
                       ),
                       SizedBox(width: 6 * u),
-                      Text(
-                        slide.text ?? 'voice note',
-                        style: TextStyle(
-                          color: _chatSecondary,
-                          fontSize: 14 * u,
-                          fontWeight: FontWeight.w600,
-                          shadows: _PostCard._lift,
+                      Flexible(
+                        child: Text(
+                          slide.text ?? 'voice note',
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          textAlign: TextAlign.center,
+                          style: TextStyle(
+                            color: _chatSecondary,
+                            fontSize: 14 * u,
+                            fontWeight: FontWeight.w600,
+                            shadows: _PostCard._lift,
+                          ),
                         ),
                       ),
                     ],
@@ -1332,6 +1358,27 @@ class _DockTarget {
     (_sent['${friend.name}#$i'] ??= []).add(mark);
     _slideTick.value++;
   }
+
+  /// The post the dock answers: the one showing on the friend's card.
+  int get post => _postIndex[friend.name] ?? 0;
+
+  /// What you write goes to your 1:1 chat with the friend, quoting the post.
+  /// Answering a thought means you have seen it.
+  void say(String text) {
+    final posts = _threadOf(friend.name);
+    final i = post.clamp(0, posts.length - 1);
+    _sayDirect(
+      friend.name,
+      text,
+      about: _Quote(friend.name, i, _firstLine(posts[i])),
+    );
+  }
+
+  /// A reaction is quiet: to the author only, as a count, not a message.
+  void react(String emoji) {
+    _myReactions['${friend.name}#$post'] = emoji;
+    _chatTick.value++;
+  }
 }
 
 enum _DockMode { idle, react, voice, video, typing }
@@ -1407,7 +1454,9 @@ class _ReplyDockState extends State<_ReplyDock> with TickerProviderStateMixin {
   void _sent(String mark, String what) {
     HapticFeedback.mediumImpact();
     widget.target.record(mark);
-    _toastText = '$what sent to ${widget.target.label}';
+    _toastText = mark == '💬' || mark == '🎙' || mark == '🎥'
+        ? '$what · in your chat with ${widget.target.friend.name}'
+        : 'Reacted $what · only ${widget.target.friend.name} sees it';
     _toast.forward(from: 0);
   }
 
@@ -1417,13 +1466,16 @@ class _ReplyDockState extends State<_ReplyDock> with TickerProviderStateMixin {
       _flying = emoji;
     });
     _fly.forward(from: 0);
+    widget.target.react(emoji);
     _sent(emoji, emoji);
   }
 
   void _send() {
-    if (_text.text.trim().isEmpty) return;
+    final text = _text.text.trim();
+    if (text.isEmpty) return;
     _text.clear();
     _focus.unfocus();
+    widget.target.say(text);
     _sent('💬', 'Reply');
   }
 
@@ -1445,6 +1497,7 @@ class _ReplyDockState extends State<_ReplyDock> with TickerProviderStateMixin {
       _toastText = 'Voice note cancelled';
       _toast.forward(from: 0);
     } else if (seconds >= 0.6) {
+      widget.target.say('🎙 Voice note · 0:${seconds.round().toString().padLeft(2, '0')}');
       _sent('🎙', 'Voice note');
     } else {
       _toastText = 'Hold the mic to record';
@@ -1461,7 +1514,10 @@ class _ReplyDockState extends State<_ReplyDock> with TickerProviderStateMixin {
   void _endVideo({required bool send}) {
     _rec.stop();
     setState(() => _mode = _DockMode.idle);
-    if (send) _sent('🎥', 'Video');
+    if (send) {
+      widget.target.say('🎥 Video');
+      _sent('🎥', 'Video');
+    }
   }
 
   String get _clock {
@@ -1630,7 +1686,7 @@ class _ReplyDockState extends State<_ReplyDock> with TickerProviderStateMixin {
               decoration: InputDecoration(
                 isCollapsed: true,
                 border: InputBorder.none,
-                hintText: 'Reply to ${target.label}…',
+                hintText: 'Reply to ${target.friend.name}…',
                 hintStyle: TextStyle(color: _muted, fontSize: 14.5 * k),
               ),
             ),

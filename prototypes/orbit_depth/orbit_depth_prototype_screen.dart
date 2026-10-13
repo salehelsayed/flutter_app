@@ -1,8 +1,11 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:math' as math;
+import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/physics.dart';
+import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/core/utils/ring_avatar_generator.dart';
@@ -10,38 +13,109 @@ import 'package:flutter_app/features/home/presentation/widgets/ring_avatar.dart'
 import 'package:flutter_app/features/identity/presentation/widgets/cosmic_background_mirrored.dart';
 
 part 'carousel.dart';
+part 'chat.dart';
+part 'circles.dart';
+part 'friends_list.dart';
 part 'photos.dart';
 part 'post_photos.dart';
+part 'requests.dart';
 part 'spaces.dart';
-part 'private.dart';
 part 'thread.dart';
+part 'world.dart';
+part 'you.dart';
 
-/// Standalone visual prototype: the Orbit inner circle tilting from today's
-/// flat rings into a "depth" view where friends' thoughts appear, and a way
-/// through a large friend list.
+/// Standalone visual prototype of Mknoon v1: one home, the orbit, and no
+/// tabs.
 ///
 /// Pure UI with fake friends — no identity, contacts or P2P.
-/// - Swipe up on the flat orbit: it tilts away (rings become ovals, front
-///   avatars grow, back avatars shrink and dim, each avatar lifts off a
-///   platform that slides out from behind it, thoughts pop in).
-/// - In depth, swipe sideways: the orbit turns, with momentum, so friends
-///   travel round to the front.
-/// - In depth, swipe up again: you fly forward through your orbit into the
-///   next layer of friends (people you talk to less often). Swipe down to come
-///   back, and once more to flatten.
-/// - Tap a friend's photo (or your own) to dive into their world: their
-///   Spaces (books, movies, a challenge) orbit them, and you dive further into
-///   each one. Swipe down to back out a level.
+/// - The orbit opens flat: your photo in the middle, your Close friends
+///   round it with their thoughts in bubbles. Tap a face to chat with them.
+/// - Swipe up: the orbit tilts into depth on Close and turns to the first
+///   unseen thought, shown as a card with a reply dock under it. Swipe
+///   sideways to turn the ring; up once more for Friends; down to come back,
+///   and once more to flatten.
+/// - People (top corner) lists friends of friends who chose to be found,
+///   each in their own words: what they are open for, and which of your
+///   friends carry them. Knock, or ask that friend to introduce you.
+/// - Chats (other corner) holds requests, every conversation and knocks
+///   still waiting. Your photo opens You; its + shares a thought.
 class OrbitDepthPrototypeScreen extends StatelessWidget {
   const OrbitDepthPrototypeScreen({super.key});
 
   @override
   Widget build(BuildContext context) {
-    // Its own navigator, so each level can fly in over the last one.
-    return Navigator(
-      onGenerateRoute: (_) => _diveRoute(const _OrbitHome(), animateIn: false),
+    // Its own navigator, so each screen can fly in over the last one, and
+    // its own messenger for the short notes that something arrived.
+    // System back reaches it too, so the orbit can flatten before leaving.
+    return ScaffoldMessenger(
+      key: _messenger,
+      child: NavigatorPopHandler<Object?>(
+        onPopWithResult: (_) => _navigator.currentState?.maybePop(),
+        child: Navigator(
+          key: _navigator,
+          onGenerateRoute: (_) =>
+              _diveRoute(const _OrbitHome(), animateIn: false),
+        ),
+      ),
     );
   }
+}
+
+final GlobalKey<NavigatorState> _navigator = GlobalKey();
+
+/// Puts every sample back the way the prototype opens: chats, requests,
+/// rings, your thoughts and settings. Tests start each case from here.
+@visibleForTesting
+void resetOrbitPrototype() {
+  for (final t in _friendTimers) {
+    t.cancel();
+  }
+  _friendTimers.clear();
+  _seenThoughts.clear();
+  _closeNames
+    ..clear()
+    ..addAll(_seedClose);
+  _rings = _Rings.build();
+  _postIndex.clear();
+  _slideAt.clear();
+  _sent.clear();
+  _dms
+    ..clear()
+    ..addAll(_seedDms());
+  _myReactions
+    ..clear()
+    ..['layla#1'] = '😍';
+  _answering.clear();
+  _messenger.currentState?.clearSnackBars();
+  _reaches
+    ..clear()
+    ..addAll(_seedReaches());
+  _requests
+    ..clear()
+    ..addAll(_seedRequests());
+  _blocked.clear();
+  _pausedBridges.clear();
+  _yourThoughts
+    ..clear()
+    ..addAll(_seedThoughts());
+  _nextThoughtId = 100;
+  _reactionsTo
+    ..clear()
+    ..addAll(_seedReactions());
+  _lastAudience = _Audience.friends;
+  _picked.clear();
+  _findable = true;
+  _yourOpenTo
+    ..clear()
+    ..addAll(['books', 'running partners']);
+  _yourOpenNote = _seedOpenNote;
+  _spaceOpen
+    ..clear()
+    ..addAll({'Books': true, 'Runs': false});
+  _carryCards = true;
+  _carryForAll = true;
+  _passToCloseOnly = true;
+  _weeklyCount = false;
 }
 
 class _OrbitHome extends StatefulWidget {
@@ -70,12 +144,17 @@ const _grey = _Hue(Color(0xFF9AA59F), Color(0xFF14181A));
 
 class _ProtoFriend {
   final String name;
+
+  /// 0 is the Close ring, 1 the Friends ring.
   final int layer;
   final double angleDeg;
   final _Hue hue;
   final String? thought;
   final bool fresh;
-  final bool group;
+
+  /// The last slot on the Friends ring stands for everyone without a slot:
+  /// how many they are. 0 for a person.
+  final int more;
 
   const _ProtoFriend(
     this.name,
@@ -84,7 +163,7 @@ class _ProtoFriend {
     this.hue, {
     this.thought,
     this.fresh = false,
-    this.group = false,
+    this.more = 0,
   });
 }
 
@@ -101,32 +180,29 @@ const _sheet = Color(0xFF181A20);
 /// BackgroundReadableColors.dark.textSecondary, usable in const contexts.
 const _chatSecondary = Color(0xDDE5E7EB);
 
-/// One orbit per layer. Layer 0 is the people you talk to most; each deeper
-/// layer holds people you talked to less recently.
-const _layerNames = [
-  'Recent',
-  'This week',
-  'This month',
-  'Last few months',
-  'Earlier this year',
-  'A while ago',
-];
+/// The two rings, inside out. You choose who is Close; everyone else is a
+/// Friend. Thoughts are shared with the same two audiences.
+const _ringNames = ['Close', 'Friends'];
+const _layerCount = 2;
 
-/// Friends per orbit; set before the friends are first read (main.dart does).
-int get _perLayer => OrbitDepthTuning.friendsPerOrbit.clamp(3, 12);
+/// Faces on the Friends ring; one more slot, "+N", opens everyone.
+const _friendSlots = 12;
 
-/// Friends in orbit order; every [_perLayer] of them make one layer.
+/// Close holds at most this many.
+const _closeLimit = 15;
+
+/// Everyone you know, the people you talk to most first: name, colour, the
+/// thought they shared today, and whether you have not seen it yet.
 const _people = <(String, _Hue, String?, bool)>[
   ('omar', _blue, 'exam at 9. wish me luck', true),
   ('yousef', _yellow, null, false),
   ('tarek', _cyan, 'who has a drill I can borrow?', true),
   ('nour', _purple, 'airport at 6. taxi anyone?', true),
-  ('layla', _pink, 'weekend up north. still can\u2019t feel my legs', true),
+  ('layla', _pink, 'weekend up north. still can’t feel my legs', true),
   ('sara', _orange, 'we adopted her! meet luna', false),
   ('karim', _red, null, false),
   ('dina', _green, null, false),
   ('rami', _blue, null, false),
-  ('weekend trip', _grey, null, false),
   ('zein', _yellow, null, false),
   ('maya', _orange, 'new job starts monday', true),
   ('hana', _green, null, false),
@@ -161,29 +237,114 @@ const _people = <(String, _Hue, String?, bool)>[
   ('sahar', _blue, null, false),
 ];
 
-List<_ProtoFriend> _buildFriends() {
-  // Angles: -90 is the back of the orbit (top of the screen), 90 the front.
-  // Alternate layers start half a step apart so seats don't line up.
-  final friends = <_ProtoFriend>[];
-  for (var i = 0; i < _people.length; i++) {
-    final (name, hue, thought, fresh) = _people[i];
-    final layer = i ~/ _perLayer;
-    final seat = i % _perLayer;
-    final inLayer = math.min(_perLayer, _people.length - layer * _perLayer);
-    final offset = layer.isOdd ? 180 / inLayer : 0.0;
-    friends.add(
-      _ProtoFriend(
-        name,
-        layer,
-        -90 + offset + seat * 360 / inLayer,
-        hue,
-        thought: thought,
-        fresh: fresh,
-        group: name == 'weekend trip',
-      ),
-    );
+/// Your Close friends, the inner ring. You choose them (You › Close friends,
+/// or a long press on a face).
+final Set<String> _closeNames = {..._seedClose};
+
+const _seedClose = {'omar', 'tarek', 'nour', 'layla', 'sara', 'dina'};
+
+/// Who sits where. Slots are dealt once, when the app opens or Close
+/// changes, and never move while you look at them.
+class _Rings {
+  /// Every friend, whether or not they have a slot.
+  final List<_ProtoFriend> everyone;
+
+  /// The faces on the orbit: all of Close, then the first [_friendSlots] of
+  /// Friends and the "+N" slot.
+  final List<_ProtoFriend> seats;
+
+  const _Rings(this.everyone, this.seats);
+
+  factory _Rings.build() {
+    final close = [
+      for (final p in _people)
+        if (_closeNames.contains(p.$1)) p,
+    ];
+    // The Friends ring: unseen thoughts first, then the people you talk to
+    // most.
+    bool unseen((String, _Hue, String?, bool) p) =>
+        p.$3 != null && p.$4 && !_seenThoughts.contains(p.$1);
+    final others = [
+      for (final p in _people)
+        if (!_closeNames.contains(p.$1) && unseen(p)) p,
+      for (final p in _people)
+        if (!_closeNames.contains(p.$1) && !unseen(p)) p,
+    ];
+    final seated = others.take(_friendSlots).length;
+    final more = others.length - seated;
+
+    final everyone = <_ProtoFriend>[];
+    final seats = <_ProtoFriend>[];
+    // Angles: -90 is the back of the orbit (top of the screen), 90 the
+    // front. The Friends ring starts half a step round, so faces don't line
+    // up behind each other.
+    void deal(
+      List<(String, _Hue, String?, bool)> list,
+      int layer,
+      int n,
+      int slots,
+    ) {
+      final offset = layer.isOdd ? 180 / n : 0.0;
+      for (var i = 0; i < list.length; i++) {
+        final (name, hue, thought, fresh) = list[i];
+        final friend = _ProtoFriend(
+          name,
+          layer,
+          -90 + offset + i * 360 / n,
+          hue,
+          thought: thought,
+          fresh: fresh,
+        );
+        everyone.add(friend);
+        if (i < slots) seats.add(friend);
+      }
+    }
+
+    deal(close, 0, close.length, close.length);
+    final friendSeats = seated + (more > 0 ? 1 : 0);
+    deal(others, 1, friendSeats, seated);
+    if (more > 0) {
+      seats.add(
+        _ProtoFriend(
+          '+$more',
+          1,
+          -90 + 180 / friendSeats + seated * 360 / friendSeats,
+          _grey,
+          more: more,
+        ),
+      );
+    }
+    return _Rings(everyone, seats);
   }
-  return friends;
+}
+
+var _rings = _Rings.build();
+
+/// Ticks when someone moves between Close and Friends.
+final ValueNotifier<int> _ringTick = ValueNotifier(0);
+
+List<_ProtoFriend> get _friends => _rings.seats;
+List<_ProtoFriend> get _everyone => _rings.everyone;
+
+_ProtoFriend? _friendNamed(String name) {
+  for (final f in _everyone) {
+    if (f.name == name) return f;
+  }
+  return null;
+}
+
+bool _isFriend(String name) => _friendNamed(name) != null;
+
+/// Moves [name] between Close and Friends; the rings are dealt again.
+void _setClose(String name, bool close) {
+  if (close) {
+    if (_closeNames.length >= _closeLimit) return;
+    _closeNames.add(name);
+  } else {
+    _closeNames.remove(name);
+  }
+  _rings = _Rings.build();
+  _ringTick.value++;
 }
 
 enum _ThoughtKind { text, voice, photo }
@@ -270,33 +431,29 @@ final Map<String, MemoryImage> _photoCache = {};
 /// A friend's profile photo (by name), 'you', or a post photo.
 ImageProvider _photo(String key) => _photoCache.putIfAbsent(
   key,
-  () => MemoryImage(base64Decode(_photoData[key] ?? _postPhotoData[key]!)),
+  () => MemoryImage(
+    base64Decode(
+      _photoData[_photoAliases[key] ?? key] ?? _postPhotoData[key]!,
+    ),
+  ),
 );
 
 _ThoughtDetail _detailFor(_ProtoFriend friend) =>
     _details[friend.name] ?? const _ThoughtDetail();
-
-final List<_ProtoFriend> _friends = _buildFriends();
-
-/// Enough orbits to hold everyone at [_perLayer] friends each.
-final int _layerCount = (_people.length / _perLayer).ceil();
-
-String _layerName(int layer) =>
-    layer < _layerNames.length ? _layerNames[layer] : 'Orbit ${layer + 1}';
 
 /// The knobs that shape the depth view, gathered so variants can be compared.
 /// Defaults are the current look.
 class OrbitDepthTuning {
   OrbitDepthTuning._();
 
-  /// How far the orbit leans back when tilted.
+  /// How far the orbit leans back.
   static double tiltDegrees = 52;
 
-  /// Orbit radius and avatar size once tilted (points).
+  /// Orbit radius and avatar size (points).
   static double ringRadius = 150;
   static double avatarSize = 52;
 
-  /// Your own avatar in the centre once tilted (points).
+  /// Your own avatar in the centre (points).
   static double youSize = 76;
 
   /// Linear depth: front avatars grow and back ones shrink by this fraction.
@@ -314,9 +471,6 @@ class OrbitDepthTuning {
   /// size).
   static double bubbleDepth = 0;
 
-  /// How many friends sit on one orbit (read once, at startup).
-  static int friendsPerOrbit = 7;
-
   /// What to draw (the playground's "Show" switches).
   static bool showStars = true;
   static bool showRing = true;
@@ -325,11 +479,11 @@ class OrbitDepthTuning {
   static bool showCard = true;
   static bool showBubbles = true;
 
-  /// Where the tilted orbit's centre sits, as a share of the screen height.
+  /// Where the orbit's centre sits, as a share of the screen height.
   static double orbitHeight = 0.34;
 
-  /// The flat (2D) orbit before tilting: where its centre sits (share of the
-  /// screen height), its radius, and the friends' and your avatar sizes.
+  /// The flat orbit the app opens on (Close alone): where its centre sits,
+  /// its radius and the faces' size. Tilting blends from these to depth.
   static double flatOrbitHeight = 0.5;
   static double flatRingRadius = 140;
   static double flatAvatarSize = 52;
@@ -351,8 +505,8 @@ class OrbitDepthTuning {
   static double avatarHover = 2;
   static double youHover = -10;
 
-  /// The far orbit: its own tilt (null = same as [tiltDegrees]), size,
-  /// position from the top, and brightness.
+  /// The far ring (Friends, seen from Close): its own tilt (null = same as
+  /// [tiltDegrees]), size, position from the top, and brightness.
   static double? farOrbitTilt;
   static double farOrbitSize = 0.14;
   static double farOrbitY = 44;
@@ -368,7 +522,7 @@ class OrbitDepthTuning {
   static OrbitNeighbourBubbles frontNeighbourBubbles =
       OrbitNeighbourBubbles.auto;
 
-  /// Where thoughts show: bubbles over the flat orbit, and in depth either a
+  /// Where thoughts show: bubbles over a flat orbit, and in depth either a
   /// dot on the avatar (the front friend's thought opens as the card) or the
   /// bubbles as before.
   static bool bubblesWhenFlat = true;
@@ -388,25 +542,35 @@ class OrbitDepthTuning {
   /// How text posts sit on the stage: in a framed card, or straight on the
   /// night sky, as if from the universe.
   static OrbitPostCards postCards = OrbitPostCards.framed;
+
+  /// Dial: once tilted, the orbit sits small and low around you with the
+  /// front friend nearest, and their card takes the screen above it. The
+  /// next ring waits outside and closes in; the ring you leave draws in to
+  /// you and fades.
+  static bool dial = false;
+
+  /// Where the dial rests, as a share of the screen height: at the top with
+  /// the card below, or at the bottom with the card above. Dragging the
+  /// orbit moves it between the two; [dialOnTop] is where it starts.
+  static double dialTopHeight = 0.084;
+  static double dialBottomHeight = 0.8;
+  static bool dialOnTop = false;
 }
 
 /// Framed: a dark card with an outline. Universe: no card at all; the words
 /// float on the background.
 enum OrbitPostCards { framed, universe }
 
-/// Notes bubbles over the flat orbit: a little narrower than the classic
-/// box's width times this, and never more than [_notesLines] lines.
+/// Notes bubbles: a little narrower than the classic box's width times
+/// this, and never more than [_notesLines] lines.
 const double _notesWidth = 1.12;
 const int _notesLines = 2;
-
-/// The furthest a friend slides along the flat orbit to clear a bubble.
-const double _maxShift = 15 * math.pi / 180;
 
 /// Classic: a fixed-width box. Notes: hugs its text, soft fill, a thought tail
 /// of two little dots towards the friend (like Instagram Notes).
 enum OrbitBubbleStyle { classic, notes }
 
-/// How thoughts show once the orbit is tilted.
+/// How thoughts show on the orbit.
 enum OrbitDepthThoughts { dots, bubbles }
 
 /// What the bubbles of the friends either side of an open card do.
@@ -422,6 +586,38 @@ double _depthScale(double depth, double s) {
 
 double _lerp(double a, double b, double t) => a + (b - a) * t;
 
+/// The next ring out waits faintly around the dial (rel 1): only its far
+/// side, a little wider. How much of a face or a stretch of ring at depth
+/// [depth] (-1 back, 1 front) shows for a layer [rel] rings ahead.
+double _peekShow(double rel, double depth) => rel <= 0
+    ? 1
+    : _lerp(1, _smoothstep(0.15, -0.35, depth), rel.clamp(0.0, 1.0));
+
+/// How bright the waiting ring is.
+const double _peekAlpha = 0.4;
+
+/// A point on a dial ring seen through a camera [OrbitDepthTuning.cameraDistance]
+/// radii away: its offset from the ring's centre, and how much nearer than
+/// the centre it is (the size it grows by). [c] and [s] are the cosine and
+/// sine of the ring's tilt; [lean] rolls the whole orbit a little.
+(Offset, double) _dialProject(
+  double theta,
+  double radius,
+  double c,
+  double s,
+  double lean,
+) {
+  final cam = OrbitDepthTuning.cameraDistance;
+  final near = cam / (cam - math.sin(theta) * s);
+  final p = Offset(
+    radius * math.cos(theta) * near,
+    radius * math.sin(theta) * c * near,
+  );
+  if (lean == 0) return (p, near);
+  final cl = math.cos(lean), sl = math.sin(lean);
+  return (Offset(p.dx * cl - p.dy * sl, p.dx * sl + p.dy * cl), near);
+}
+
 double _interval(double t, double begin, double end) =>
     ((t - begin) / (end - begin)).clamp(0.0, 1.0);
 
@@ -430,10 +626,16 @@ double _smoothstep(double begin, double end, double t) {
   return x * x * (3 - 2 * x);
 }
 
+/// The furthest a friend slides along the flat orbit to clear a bubble.
+const double _maxShift = 15 * math.pi / 180;
+
 enum _Axis { horizontal, vertical }
 
+/// You shared a thought to this ring (0 Close, 1 Friends); it glows once.
+final ValueNotifier<(int, int)> _sharedTo = ValueNotifier((0, 0));
+
 class _OrbitHomeState extends State<_OrbitHome> with TickerProviderStateMixin {
-  /// Drag distance for flat → depth, and for each layer after that.
+  /// Drag distance for flat → depth, and from Close on to Friends.
   static const double _tiltSpan = 320;
   static const double _layerSpan = 260;
 
@@ -450,9 +652,10 @@ class _OrbitHomeState extends State<_OrbitHome> with TickerProviderStateMixin {
     damping: 15,
   );
 
-  /// One vertical position in drag pixels: 0..[_tiltSpan] tilts the orbit,
-  /// beyond that flies the camera through the layers. Unbounded so the
-  /// spring can overshoot, which is what makes the settle feel physical.
+  /// One vertical position in drag pixels: 0 is flat, 0..[_tiltSpan] tilts
+  /// the orbit onto Close, one [_layerSpan] further flies on to Friends.
+  /// Unbounded so the spring can overshoot, which is what makes the settle
+  /// feel physical.
   late final AnimationController _v = AnimationController.unbounded(
     vsync: this,
   );
@@ -462,7 +665,31 @@ class _OrbitHomeState extends State<_OrbitHome> with TickerProviderStateMixin {
     vsync: this,
   );
 
-  /// Slow idle float; also the per-frame clock for bubble fades.
+  /// On the dial, how far the orbit rolls with the finger turning it.
+  late final AnimationController _lean = AnimationController.unbounded(
+    vsync: this,
+  );
+
+  /// On the dial, where the orbit rests: 0 at the top, 1 at the bottom.
+  /// From the flat orbit, swiping up opens the dial with the orbit at the
+  /// top; swiping down, at the bottom.
+  late final AnimationController _dock = AnimationController.unbounded(
+    vsync: this,
+    value: OrbitDepthTuning.dialOnTop ? 0 : 1,
+  );
+
+  /// Which way is "on" (further out): up when the orbit went to the top,
+  /// down when it went to the bottom.
+  double get _outward =>
+      OrbitDepthTuning.dial && _dock.value > 0.5 ? -1.0 : 1.0;
+
+  /// Leaving the flat orbit: the direction of the swipe picks where the
+  /// orbit goes. [dy] is the swipe's vertical travel or speed.
+  void _pickDock(double dy) {
+    if (!OrbitDepthTuning.dial || _v.value > 1) return;
+    _dock.value = dy > 0 ? 1 : 0;
+  }
+
   /// 1 while a finger is turning the orbit: the open card folds back into
   /// its bubble so the thumb never sits on its text, and opens on release.
   late final AnimationController _duck = AnimationController(
@@ -471,9 +698,42 @@ class _OrbitHomeState extends State<_OrbitHome> with TickerProviderStateMixin {
     reverseDuration: const Duration(milliseconds: 260),
   );
 
+  /// 1 once fingers spread on the tilted orbit (see [_OrbitStage.overview]).
+  late final AnimationController _overview = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 320),
+  );
+
+  /// 1 once fingers spread on the flat orbit (see [_OrbitStage.flatZoom]).
+  late final AnimationController _flatZoom = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 320),
+  );
+
+  /// Fingers on the orbit, for the pinch, and their spread when the second
+  /// one landed.
+  final Map<int, Offset> _fingers = {};
+  double? _pinchFrom;
+
+  /// This pinch already zoomed in or out; one pinch decides once, so the
+  /// fingers lifting can't flip it back.
+  bool _pinchDecided = false;
+
+  /// A second finger landed during this drag: it was a pinch, so letting go
+  /// neither flicks the orbit round nor flies between rings.
+  bool _pinched = false;
+
+
+  /// Slow idle float; also the per-frame clock for bubble fades.
   late final AnimationController _float = AnimationController(
     vsync: this,
     duration: const Duration(seconds: 6),
+  );
+
+  /// The ring you just shared a thought to, glowing once.
+  late final AnimationController _glow = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 1600),
   );
 
   _Axis? _axis;
@@ -483,6 +743,10 @@ class _OrbitHomeState extends State<_OrbitHome> with TickerProviderStateMixin {
   bool _reduceMotion = false;
   bool _photosWarm = false;
 
+  /// The friend whose new thought is open at the front. Turning on to
+  /// someone else marks it seen.
+  String? _reading;
+
   double get _tilt => (_v.value / _tiltSpan).clamp(-0.08, 1.0);
   double get _camera => math.max(0, (_v.value - _tiltSpan) / _layerSpan);
   double get _maxV => _tiltSpan + (_layerCount - 1) * _layerSpan;
@@ -491,11 +755,16 @@ class _OrbitHomeState extends State<_OrbitHome> with TickerProviderStateMixin {
     for (var i = 0; i < _layerCount; i++) _tiltSpan + i * _layerSpan,
   ];
 
+  /// Where ring [layer] stands, in [_v].
+  double _ringAt(int layer) => _tiltSpan + layer * _layerSpan;
+
   @override
   void initState() {
     super.initState();
     _seenTick.addListener(_onSeen);
-    _rot.value = _snapRotation(0, 0);
+    _ringTick.addListener(_onRings);
+    _sharedTo.addListener(_onShared);
+    _rot.value = _restRotation(0);
   }
 
   @override
@@ -515,22 +784,44 @@ class _OrbitHomeState extends State<_OrbitHome> with TickerProviderStateMixin {
     }
   }
 
-  // A thread was read: its friend's new-thought dot goes.
   void _onSeen() {
     if (mounted) setState(() {});
   }
 
+  // Close changed: everyone has a new slot, so land a face at the front.
+  void _onRings() {
+    if (!mounted) return;
+    setState(() => _rot.value = _snapRotation(_layer, _rot.value));
+  }
+
+  void _onShared() {
+    if (!mounted) return;
+    _glowLayer = _sharedTo.value.$1;
+    if (_reduceMotion) return;
+    _glow.forward(from: 0);
+  }
+
+  int _glowLayer = 0;
+
   @override
   void dispose() {
     _seenTick.removeListener(_onSeen);
+    _ringTick.removeListener(_onRings);
+    _sharedTo.removeListener(_onShared);
     _v.dispose();
     _rot.dispose();
+    _lean.dispose();
+    _dock.dispose();
     _float.dispose();
     _duck.dispose();
+    _overview.dispose();
+    _flatZoom.dispose();
+    _glow.dispose();
     super.dispose();
   }
 
   void _onPanStart(DragStartDetails details) {
+    _pinched = _fingers.length > 1;
     _axis = null;
     _rotAtStart = _rot.value;
     _panTravel = Offset.zero;
@@ -538,7 +829,46 @@ class _OrbitHomeState extends State<_OrbitHome> with TickerProviderStateMixin {
     _rot.stop();
   }
 
+  void _onFinger(PointerEvent e) {
+    if (e is PointerDownEvent || e is PointerMoveEvent) {
+      _fingers[e.pointer] = e.localPosition;
+    } else {
+      _fingers.remove(e.pointer);
+    }
+    if (_fingers.length != 2) {
+      _pinchFrom = null;
+      _pinchDecided = false;
+      return;
+    }
+    _pinched = true;
+    final spread = (_fingers.values.first - _fingers.values.last).distance;
+    // iOS can report both touches at one spot as they lift; that is not a
+    // pinch.
+    if (spread < 24 || _pinchDecided) return;
+    final from = _pinchFrom ??= spread;
+    // Fingers apart open the bubbles; together close them.
+    final open = spread / from > 1.12;
+    final close = spread / from < 0.88;
+    if (!open && !close) return;
+    _pinchDecided = true;
+    // Flat, the pinch shows or hides the bubbles; tilted, it trades the card
+    // for a bubble over everyone.
+    final zoom = _tilt < 0.5 ? _flatZoom : _overview;
+    if (open == (zoom.value == 1)) return;
+    HapticFeedback.selectionClick();
+    if (_reduceMotion) {
+      zoom.value = open ? 1 : 0;
+    } else if (open) {
+      zoom.forward();
+    } else {
+      zoom.reverse();
+    }
+  }
+
   void _onPanUpdate(DragUpdateDetails details) {
+    // Two fingers pinch; they neither turn nor tilt the orbit, even after
+    // one lifts and the drag point jumps to the other.
+    if (_fingers.length > 1 || _pinched) return;
     // Lock the axis once the finger has really moved; the first update can
     // carry a zero delta.
     if (_axis == null) {
@@ -547,36 +877,58 @@ class _OrbitHomeState extends State<_OrbitHome> with TickerProviderStateMixin {
       _axis = _panTravel.dx.abs() > _panTravel.dy.abs()
           ? _Axis.horizontal
           : _Axis.vertical;
+      if (_axis == _Axis.vertical) _pickDock(_panTravel.dy);
     }
     if (_axis == _Axis.horizontal) {
+      // The flat orbit holds still; it turns once tilted.
       if (_tilt < 0.5) return;
       _setTurning(true);
-      _rot.value -= details.delta.dx / (128 * _k);
+      // Arabic mirrors the turn, like a pager.
+      final rtl = Directionality.of(context) == TextDirection.rtl;
+      _rot.value -= (rtl ? -1 : 1) * details.delta.dx / (128 * _k);
+      if (OrbitDepthTuning.dial && !_reduceMotion) {
+        final target = (details.delta.dx * 0.01).clamp(-0.06, 0.06);
+        _lean.value = _lerp(_lean.value, target, 0.25);
+      }
       return;
     }
-    var delta = -details.delta.dy;
+    var delta = -details.delta.dy * _outward;
     final next = _v.value + delta;
     if (next > _maxV || next < 0) delta *= 0.35;
     _v.value = (_v.value + delta).clamp(-60.0, _maxV + 90);
   }
 
   void _onPanEnd(DragEndDetails details) {
+    if (_pinched) {
+      _pinched = false;
+      _setTurning(false);
+      if (_tilt >= 0.5) _snapTo(_snapRotation(_layer, _rot.value), 0);
+      _settle(_pickSnap(0), 0);
+      return;
+    }
     if (_axis == null) {
       final v = details.velocity.pixelsPerSecond;
       _axis = v.dx.abs() > v.dy.abs() ? _Axis.horizontal : _Axis.vertical;
+      if (_axis == _Axis.vertical) _pickDock(v.dy);
     }
     if (_axis == _Axis.horizontal) {
       if (_tilt < 0.5) return;
-      _finishTurn(-details.velocity.pixelsPerSecond.dx / (128 * _k));
+      final rtl = Directionality.of(context) == TextDirection.rtl;
+      _finishTurn(
+        -(rtl ? -1 : 1) * details.velocity.pixelsPerSecond.dx / (128 * _k),
+      );
       return;
     }
-    final velocity = -details.velocity.pixelsPerSecond.dy;
+    final velocity = -details.velocity.pixelsPerSecond.dy * _outward;
     _settle(_pickSnap(velocity), velocity);
   }
 
   void _onPanCancel() => _setTurning(false);
 
   void _setTurning(bool turning) {
+    if (!turning && _lean.value != 0) {
+      _lean.animateWith(SpringSimulation(_spring, _lean.value, 0, 0));
+    }
     if (_reduceMotion) {
       _duck.value = turning ? 1 : 0;
     } else if (turning) {
@@ -629,9 +981,7 @@ class _OrbitHomeState extends State<_OrbitHome> with TickerProviderStateMixin {
     var bestGap = double.infinity;
     for (final f in _friends) {
       if (f.layer != layer) continue;
-      final base = math.pi / 2 - f.angleDeg * math.pi / 180;
-      final turns = ((predicted - base) / (2 * math.pi)).round();
-      final candidate = base + turns * 2 * math.pi;
+      final candidate = _rotationFor(f, predicted);
       final gap = (candidate - predicted).abs();
       if (gap < bestGap) {
         bestGap = gap;
@@ -641,17 +991,50 @@ class _OrbitHomeState extends State<_OrbitHome> with TickerProviderStateMixin {
     return best;
   }
 
+  /// The rotation nearest [from] that puts [f] at the front.
+  double _rotationFor(_ProtoFriend f, double from) {
+    final base = math.pi / 2 - f.angleDeg * math.pi / 180;
+    final turns = ((from - base) / (2 * math.pi)).round();
+    return base + turns * 2 * math.pi;
+  }
+
+  /// Where [layer] comes to rest: on its first unseen thought, else on the
+  /// nearest face.
+  double _restRotation(int layer) {
+    for (final f in _friends) {
+      if (f.layer == layer && _isNew(f)) return _rotationFor(f, _rot.value);
+    }
+    return _snapRotation(layer, _rot.value);
+  }
+
   void _snapTo(double target, double velocity) {
     if (_reduceMotion) {
       _rot.value = target;
+      _landed();
       return;
     }
-    _rot.animateWith(
-      SpringSimulation(_rotSpring, _rot.value, target, velocity),
-    );
+    _rot
+        .animateWith(SpringSimulation(_rotSpring, _rot.value, target, velocity))
+        .whenCompleteOrCancel(_landed);
   }
 
-  void _toggle() => _settle(_tilt >= 0.5 ? 0 : _tiltSpan, 0);
+  /// A face came to rest at the front. The new thought you were reading
+  /// before is seen now: its dot goes and its face steps back.
+  void _landed() {
+    if (!mounted) return;
+    final front = _frontFriend;
+    final reading = _reading;
+    if (reading != null && reading != front?.name) {
+      _seenThoughts.add(reading);
+      _seenTick.value++;
+    }
+    _reading = front != null && _isNew(front) ? front.name : null;
+  }
+
+  void _goToRing(int layer) {
+    if (layer == _layer && (_v.value - _ringAt(layer)).abs() < 1) return;
+    _settle(_ringAt(layer), 0);
+  }
 
   void _settle(double target, double velocity) {
     HapticFeedback.selectionClick();
@@ -660,14 +1043,20 @@ class _OrbitHomeState extends State<_OrbitHome> with TickerProviderStateMixin {
     } else {
       _v.animateWith(SpringSimulation(_spring, _v.value, target, velocity));
     }
-    // Arriving at a layer lands one of its friends at the front too.
+    // Arriving at a ring turns it to its first unseen thought.
     if (target >= _tiltSpan) {
       final layer = ((target - _tiltSpan) / _layerSpan).round();
-      _snapTo(_snapRotation(layer, _rot.value), 0);
+      _snapTo(_restRotation(layer), 0);
     }
   }
 
-  /// The friend at the front of the orbit you are on, once tilted.
+  /// One stop back towards flat: Friends to Close, Close to flat.
+  void _stepBack() {
+    final down = _snaps.lastWhere((s) => s < _v.value - 1, orElse: () => 0.0);
+    _settle(down, 0);
+  }
+
+  /// The friend at the front of the ring you are on.
   _ProtoFriend? get _frontFriend {
     if (_tilt < 0.5) return null;
     _ProtoFriend? best;
@@ -695,84 +1084,88 @@ class _OrbitHomeState extends State<_OrbitHome> with TickerProviderStateMixin {
     return _DockTarget(f, onLive ? (_slideAt[f.name] ?? 0) : null);
   }
 
-  void _openWorld(String owner) {
-    HapticFeedback.selectionClick();
-    Navigator.of(context).push(_diveRoute(_WorldScreen(owner: owner)));
-  }
-
-  void _openThought(_ProtoFriend friend) {
-    // A thought opens full screen; a friend without one gets a note saying
-    // so.
-    if (friend.thought != null) {
-      _openThread(context, friend.name);
+  /// A face: you open You; "+N" opens everyone. Flat, a friend opens your
+  /// chat with them, their new thought ready to quote. In depth, a friend
+  /// turns to the front, and the friend already there opens the chat.
+  void _onFace(_ProtoFriend? friend) {
+    if (friend == null) {
+      _openYou(context);
       return;
     }
-    showModalBottomSheet<void>(
-      context: context,
-      backgroundColor: _sheet,
-      showDragHandle: true,
-      isScrollControlled: true,
-      builder: (context) => Padding(
-        padding: EdgeInsets.only(
-          bottom: MediaQuery.viewInsetsOf(context).bottom,
-        ),
-        child: _ThoughtSheet(friend: friend),
-      ),
-    );
+    if (friend.more > 0) {
+      _openFriendsList(context);
+      return;
+    }
+    if (_tilt >= 0.5 && friend.name != _frontFriend?.name) {
+      HapticFeedback.selectionClick();
+      _snapTo(_rotationFor(friend, _rot.value), 0);
+      return;
+    }
+    // Flat, and at the front of the dial, the chat opens on their thought.
+    final quote = _tilt < 0.5 || OrbitDepthTuning.dial
+        ? _freshQuote(friend)
+        : null;
+    _openDm(context, friend.name, quote: quote);
   }
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
+    final header = Padding(
+      padding: const EdgeInsets.fromLTRB(8, 8, 8, 0),
+      child: AnimatedBuilder(
+        animation: Listenable.merge([_v, _seenTick, _chatTick]),
+        builder: (context, _) => SizedBox(
+          height: 48,
+          child: Stack(
+            alignment: Alignment.center,
+            children: [
+              // Which ring you stand on, once tilted. The dial names
+              // its rings on the orbit itself.
+              if (!OrbitDepthTuning.dial)
+                IgnorePointer(
+                ignoring: _tilt < 0.5,
+                child: Opacity(
+                  opacity: _interval(_tilt, 0.4, 0.9),
+                  child: _RingSwitch(active: _layer, onPick: _goToRing),
+                ),
+              ),
+              Align(
+                alignment: AlignmentDirectional.centerStart,
+                child: IconButton(
+                  key: const ValueKey('open-reach'),
+                  tooltip: 'People you can reach',
+                  onPressed: () => _openReach(context),
+                  icon: const Icon(Icons.people_outline, color: _ink),
+                ),
+              ),
+              const Align(
+                alignment: AlignmentDirectional.centerEnd,
+                child: _ChatsButton(),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+    final body = Scaffold(
       backgroundColor: Colors.transparent,
       // The dock rides the keyboard itself; the orbit stays put.
       resizeToAvoidBottomInset: false,
       body: SafeArea(
+        bottom: false,
         child: Column(
           children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(20, 8, 8, 0),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: AnimatedBuilder(
-                      animation: _v,
-                      builder: (context, _) => AnimatedSwitcher(
-                        duration: const Duration(milliseconds: 220),
-                        layoutBuilder: (current, previous) => Stack(
-                          alignment: Alignment.centerLeft,
-                          children: [...previous, ?current],
-                        ),
-                        child: _tilt < 0.5
-                            ? const Text(
-                                'Orbit depth prototype',
-                                key: ValueKey('title'),
-                                style: TextStyle(
-                                  color: _muted,
-                                  fontSize: 13,
-                                  fontWeight: FontWeight.w600,
-                                ),
-                              )
-                            : _LayerMeter(
-                                key: ValueKey('meter'),
-                                active: _layer,
-                              ),
-                      ),
-                    ),
-                  ),
-                  IconButton(
-                    tooltip: 'Toggle depth',
-                    onPressed: _toggle,
-                    icon: const Icon(Icons.layers_outlined, color: _ink),
-                  ),
-                ],
-              ),
-            ),
+            if (!OrbitDepthTuning.dial) header,
             Expanded(
               child: Stack(
                 children: [
                   Positioned.fill(
-                    child: GestureDetector(
+                    child: Listener(
+                      onPointerDown: _onFinger,
+                      onPointerMove: _onFinger,
+                      onPointerUp: _onFinger,
+                      onPointerCancel: _onFinger,
+                      child: GestureDetector(
                       behavior: HitTestBehavior.opaque,
                       onPanStart: _onPanStart,
                       onPanUpdate: _onPanUpdate,
@@ -788,8 +1181,15 @@ class _OrbitHomeState extends State<_OrbitHome> with TickerProviderStateMixin {
                             animation: Listenable.merge([
                               _v,
                               _rot,
+                              _lean,
+                              _dock,
                               _float,
                               _duck,
+                              _overview,
+                              _flatZoom,
+                              _glow,
+                              _chatTick,
+                              _seenTick,
                             ]),
                             builder: (context, _) => _OrbitStage(
                               t: _tilt,
@@ -799,13 +1199,94 @@ class _OrbitHomeState extends State<_OrbitHome> with TickerProviderStateMixin {
                                   ? 0
                                   : _float.value * 2 * math.pi,
                               duck: _duck.value,
+                              overview: Curves.easeOutCubic.transform(
+                                _overview.value,
+                              ),
+                              flatZoom: Curves.easeOutCubic.transform(
+                                _flatZoom.value,
+                              ),
+                              glow: _glow.isAnimating
+                                  ? math.sin(_glow.value * math.pi)
+                                  : 0,
+                              glowLayer: _glowLayer,
                               size: box.biggest,
-                              onFriendTap: _openThought,
-                              onDive: _openWorld,
+                              lean: _lean.value,
+                              onRing: _goToRing,
+                              dock: _dock.value,
+                              onCardTap: (f) =>
+                                  _openThought(context, f.name, 0),
+                              onFace: _onFace,
+                              onShare: () => _openComposer(context),
+                              onHold: (f) => _openFriendMenu(context, f),
                             ),
                           );
                         },
                       ),
+                    ),
+                    ),
+                  ),
+                  // Every thought in this ring seen.
+                  Positioned(
+                    top: 4,
+                    left: 0,
+                    right: 0,
+                    child: AnimatedBuilder(
+                      animation: Listenable.merge([_v, _seenTick]),
+                      builder: (context, _) {
+                        final layer = _layer;
+                        final caughtUp =
+                            _tilt > 0.6 &&
+                            (_v.value - _ringAt(layer)).abs() < 40 &&
+                            !_friends.any(
+                              (f) => f.layer == layer && _isNew(f),
+                            );
+                        return IgnorePointer(
+                          child: AnimatedOpacity(
+                            opacity: caughtUp ? 1 : 0,
+                            duration: const Duration(milliseconds: 300),
+                            child: Center(
+                              child: Text(
+                                caughtUp ? 'All caught up' : '',
+                                key: caughtUp
+                                    ? const ValueKey('all-caught-up')
+                                    : null,
+                                style: const TextStyle(
+                                  color: _muted,
+                                  fontSize: 12.5,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ),
+                          ),
+                        );
+                      },
+                    ),
+                  ),
+                  // Flat: how many new thoughts wait in depth.
+                  Positioned(
+                    left: 0,
+                    right: 0,
+                    bottom: MediaQuery.paddingOf(context).bottom + 20,
+                    child: AnimatedBuilder(
+                      animation: Listenable.merge([_v, _seenTick]),
+                      builder: (context, _) {
+                        final unseen = _friends.where(_isNew).length;
+                        final show = 1 - _interval(_tilt, 0.05, 0.4);
+                        if (OrbitDepthTuning.dial ||
+                            unseen == 0 ||
+                            show <= 0.01) {
+                          return const SizedBox.shrink();
+                        }
+                        return Opacity(
+                          opacity: show,
+                          child: Center(
+                            child: _TiltHint(
+                              unseen: unseen,
+                              onTap: () => _settle(_tiltSpan, 0),
+                            ),
+                          ),
+                        );
+                      },
                     ),
                   ),
                   // One reply dock for the whole screen, aimed at whatever
@@ -820,7 +1301,7 @@ class _OrbitHomeState extends State<_OrbitHome> with TickerProviderStateMixin {
                       ]),
                       builder: (context, _) {
                         final target = _dockTarget;
-                        final show = target == null
+                        final show = target == null || OrbitDepthTuning.dial
                             ? 0.0
                             : _interval(_tilt, 0.6, 1) *
                                   (1 - _duck.value * 0.5);
@@ -834,6 +1315,10 @@ class _OrbitHomeState extends State<_OrbitHome> with TickerProviderStateMixin {
                       },
                     ),
                   ),
+                  // On the dial the orbit runs up under the header; its
+                  // buttons float over the sky.
+                  if (OrbitDepthTuning.dial)
+                    Positioned(top: 0, left: 0, right: 0, child: header),
                 ],
               ),
             ),
@@ -841,45 +1326,155 @@ class _OrbitHomeState extends State<_OrbitHome> with TickerProviderStateMixin {
         ),
       ),
     );
+    // Back walks down the stops before it leaves: Friends, Close, flat.
+    return AnimatedBuilder(
+      animation: _v,
+      builder: (context, child) => PopScope(
+        canPop: _v.value < 1,
+        onPopInvokedWithResult: (didPop, _) {
+          if (!didPop) _stepBack();
+        },
+        child: child!,
+      ),
+      child: body,
+    );
   }
 }
 
-/// Which orbit you are on: one dot per orbit and its name, in the header.
-class _LayerMeter extends StatelessWidget {
-  final int active;
-
-  const _LayerMeter({super.key, required this.active});
+/// Chats, in the top corner: requests, every conversation and knocks that
+/// wait. Its badge counts unread chats and requests.
+class _ChatsButton extends StatelessWidget {
+  const _ChatsButton();
 
   @override
   Widget build(BuildContext context) {
-    final count = _friends.where((f) => f.layer == active).length;
-    return Row(
-      children: [
-        for (var i = 0; i < _layerCount; i++)
-          AnimatedContainer(
-            duration: const Duration(milliseconds: 200),
-            margin: const EdgeInsets.only(right: 6),
-            width: i == active ? 18 : 6,
-            height: 6,
-            decoration: BoxDecoration(
-              color: i == active ? _accent : const Color(0xFF2E3B35),
-              borderRadius: BorderRadius.circular(3),
+    final count = _unreadChats() + _requests.length;
+    return IconButton(
+      key: const ValueKey('open-chats'),
+      tooltip: 'Chats',
+      onPressed: () => _openChats(context),
+      icon: Badge(
+        key: const ValueKey('chats-badge'),
+        isLabelVisible: count > 0,
+        backgroundColor: _accent,
+        textColor: const Color(0xFF03140A),
+        label: Text('$count'),
+        child: const Icon(Icons.chat_bubble_outline, color: _ink),
+      ),
+    );
+  }
+}
+
+/// "3 new thoughts", under the flat orbit: tap (or swipe up) to tilt into
+/// them.
+class _TiltHint extends StatelessWidget {
+  final int unseen;
+  final VoidCallback onTap;
+
+  const _TiltHint({required this.unseen, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) => Semantics(
+    button: true,
+    label: '$unseen new ${unseen == 1 ? 'thought' : 'thoughts'}. Show them',
+    excludeSemantics: true,
+    child: GestureDetector(
+      key: const ValueKey('tilt-hint'),
+      behavior: HitTestBehavior.opaque,
+      onTap: onTap,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.keyboard_arrow_up_rounded, color: _accent),
+            Text(
+              unseen == 1 ? '1 new thought' : '$unseen new thoughts',
+              style: const TextStyle(
+                color: _ink,
+                fontSize: 13.5,
+                fontWeight: FontWeight.w600,
+              ),
             ),
-          ),
-        const SizedBox(width: 6),
-        Flexible(
-          child: Text(
-            '${_layerName(active)} · $count',
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: const TextStyle(
-              color: _muted,
-              fontSize: 12.5,
-              fontWeight: FontWeight.w600,
-            ),
-          ),
+          ],
         ),
-      ],
+      ),
+    ),
+  );
+}
+
+/// Close or Friends: which ring you stand on. A dot marks a ring with
+/// thoughts you have not seen.
+class _RingSwitch extends StatelessWidget {
+  final int active;
+  final ValueChanged<int> onPick;
+
+  const _RingSwitch({required this.active, required this.onPick});
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Container(
+        padding: const EdgeInsets.all(3),
+        decoration: BoxDecoration(
+          color: const Color(0xCC15171C),
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(color: _chat.border),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            for (var i = 0; i < _layerCount; i++)
+              Semantics(
+                button: true,
+                selected: i == active,
+                label: '${_ringNames[i]} ring',
+                excludeSemantics: true,
+                child: GestureDetector(
+                  key: ValueKey('ring-${_ringNames[i].toLowerCase()}'),
+                  behavior: HitTestBehavior.opaque,
+                  onTap: () => onPick(i),
+                  child: AnimatedContainer(
+                    duration: const Duration(milliseconds: 200),
+                    constraints: const BoxConstraints(minHeight: 34),
+                    padding: const EdgeInsets.symmetric(horizontal: 18),
+                    alignment: Alignment.center,
+                    decoration: BoxDecoration(
+                      color: i == active
+                          ? const Color(0x331DB954)
+                          : Colors.transparent,
+                      borderRadius: BorderRadius.circular(17),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          _ringNames[i],
+                          style: TextStyle(
+                            color: i == active ? _ink : _muted,
+                            fontSize: 14,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                        if (_friends.any((f) => f.layer == i && _isNew(f))) ...[
+                          const SizedBox(width: 6),
+                          Container(
+                            width: 6,
+                            height: 6,
+                            decoration: const BoxDecoration(
+                              color: _accent,
+                              shape: BoxShape.circle,
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+          ],
+        ),
+      ),
     );
   }
 }
@@ -945,11 +1540,40 @@ class _OrbitStage extends StatelessWidget {
 
   /// 1 while a finger is turning the orbit (see the screen's `_duck`).
   final double duck;
-  final Size size;
-  final ValueChanged<_ProtoFriend> onFriendTap;
 
-  /// Tapping a photo dives into that person's world ('you' for yourself).
-  final ValueChanged<String> onDive;
+  /// 1 when fingers spread to see everyone's thought at once: a bubble over
+  /// every friend, and no card.
+  final double overview;
+
+  /// The flat orbit opens with faces only; spreading two fingers on it
+  /// brings a bubble over every face (1).
+  final double flatZoom;
+
+  /// The ring you just shared a thought to glows once: how much, and which.
+  final double glow;
+  final int glowLayer;
+  final Size size;
+
+  /// On the dial, the orbit rolls a little with the finger turning it.
+  final double lean;
+
+  /// The waiting ring's label was tapped: go to that ring.
+  final ValueChanged<int>? onRing;
+
+  /// On the dial, where the orbit rests: 0 at the top, 1 at the bottom.
+  final double dock;
+
+  /// The front card was tapped: open the thought.
+  final ValueChanged<_ProtoFriend> onCardTap;
+
+  /// A face was tapped; null is you.
+  final ValueChanged<_ProtoFriend?> onFace;
+
+  /// The + on your photo: share a thought.
+  final VoidCallback onShare;
+
+  /// A face was held: what you can do with that friend.
+  final ValueChanged<_ProtoFriend> onHold;
 
   const _OrbitStage({
     required this.t,
@@ -957,9 +1581,18 @@ class _OrbitStage extends StatelessWidget {
     required this.rotation,
     required this.floatPhase,
     required this.duck,
+    required this.overview,
+    required this.flatZoom,
+    required this.glow,
+    required this.glowLayer,
     required this.size,
-    required this.onFriendTap,
-    required this.onDive,
+    this.lean = 0,
+    this.onRing,
+    this.dock = 0,
+    required this.onCardTap,
+    required this.onFace,
+    required this.onShare,
+    required this.onHold,
   });
 
   @override
@@ -970,13 +1603,22 @@ class _OrbitStage extends StatelessWidget {
     // Flat, the orbit sits in the middle of the screen. Tilting lifts it, so
     // the front friend's card gets the lower part of the screen, while the far
     // orbit stays visible just under the layer meter.
+    // Zoomed out there is no card, so the orbit drops into the space it
+    // used, leaving room for a bubble over every friend.
     final cy =
         size.height *
-        _lerp(
-          OrbitDepthTuning.flatOrbitHeight,
-          OrbitDepthTuning.orbitHeight,
-          tc,
-        );
+        (_lerp(
+              OrbitDepthTuning.flatOrbitHeight,
+              OrbitDepthTuning.dial
+                  ? _lerp(
+                      OrbitDepthTuning.dialTopHeight,
+                      OrbitDepthTuning.dialBottomHeight,
+                      dock,
+                    )
+                  : OrbitDepthTuning.orbitHeight,
+              tc,
+            ) +
+            (OrbitDepthTuning.dial ? 0 : 0.2 * overview * tc));
     final farCy = OrbitDepthTuning.farOrbitY * k;
     final tilt =
         t.clamp(-0.05, 1.0) * OrbitDepthTuning.tiltDegrees * math.pi / 180;
@@ -993,7 +1635,35 @@ class _OrbitStage extends StatelessWidget {
       if (rel < -0.75 || rel > 1.3) continue;
       // With the far orbit switched off, the next one appears only once you
       // start flying towards it.
-      if (!OrbitDepthTuning.showFarOrbit && rel > 0.3) continue;
+      if (!OrbitDepthTuning.dial &&
+          !OrbitDepthTuning.showFarOrbit &&
+          rel > 0.3) {
+        continue;
+      }
+      if (OrbitDepthTuning.dial) {
+        final away = Curves.easeInOut.transform(rel.abs().clamp(0.0, 1.0));
+        // The ring you left fades out; the next one out stays, faint.
+        var opacity = rel >= 0
+            ? _lerp(1, _peekAlpha, away) * (rel > 1 ? 0 : 1)
+            : 1 - rel.abs().clamp(0.0, 1.0);
+        if (opacity <= 0.01) continue;
+        final dialTilt = t.clamp(-0.05, 1.0) *
+            OrbitDepthTuning.tiltDegrees *
+            math.pi /
+            180;
+        layers[layer] = _LayerView(
+          layer,
+          rel,
+          // Friends sit on a slightly wider orbit than Close.
+          (layer > 0 ? 1.12 : 1) *
+              (rel >= 0 ? _lerp(1, 1.45, away) : _lerp(1, 0.35, away)),
+          cy,
+          opacity,
+          math.cos(dialTilt),
+          math.sin(dialTilt),
+        );
+        continue;
+      }
       final scale = rel >= 0
           ? math.pow(OrbitDepthTuning.farOrbitSize, rel).toDouble()
           : 1 + (-rel) * 1.8;
@@ -1006,6 +1676,7 @@ class _OrbitStage extends StatelessWidget {
                 ? 1 - (1 - bright) * rel
                 : math.max(0.0, bright * (1.3 - rel) / 0.3))
           : math.max(0.0, 1 + rel * 1.5);
+      // The flat orbit is Close alone; Friends shows once tilted.
       if (layer > 0) opacity *= tc;
       if (opacity <= 0.01) continue;
       // Each layer has its own tilt, blending from yours to the far one's as
@@ -1028,13 +1699,15 @@ class _OrbitStage extends StatelessWidget {
       );
     }
 
-    // Over the flat orbit, friends a bubble would cover slide a little along
-    // the ring until they are clear; the slide fades out as the orbit tilts.
+    // Over the flat orbit, Close friends a bubble would cover slide a little
+    // along the ring until they are clear; the slide fades out as the orbit
+    // tilts.
     final flatWeight = OrbitDepthTuning.bubblesWhenFlat
-        ? 1 - _interval(tc, 0.05, 0.45)
+        ? (1 - _interval(tc, 0.05, 0.45)) * flatZoom
         : 0.0;
-    final shifts = flatWeight > 0
-        ? _flatShifts(k, cx, cy, ringBase, c, tc)
+    final home = layers[0];
+    final shifts = flatWeight > 0 && home != null
+        ? _flatShifts(k, cx, home.cy, ringBase, c, tc)
         : const <int, double>{};
 
     final seats = <_Seat>[];
@@ -1042,6 +1715,9 @@ class _OrbitStage extends StatelessWidget {
       final f = _friends[i];
       final lv = layers[f.layer];
       if (lv == null) continue;
+      // Flat, the waiting ring is a line and a name: its faces come in only
+      // as the orbit tilts.
+      if (OrbitDepthTuning.dial && f.layer > 0 && tc <= 0.01) continue;
       final radius = ringBase * lv.scale;
       final base =
           _lerp(
@@ -1050,18 +1726,32 @@ class _OrbitStage extends StatelessWidget {
             tc,
           ) *
           k *
-          lv.scale;
+          lv.scale *
+          // Many more Friends than Close: smaller faces, so they fit.
+          (OrbitDepthTuning.dial && f.layer > 0 ? 0.68 : 1);
       final theta =
           f.angleDeg * math.pi / 180 + rotation + (shifts[i] ?? 0) * flatWeight;
       final d = math.sin(theta);
-      final ring = Offset(
-        cx + radius * math.cos(theta),
-        lv.cy + radius * math.sin(theta) * lv.c,
-      );
-      final avatarSize = base * _depthScale(d, lv.s);
+      // On the dial every face goes through one camera, so where it sits
+      // and how big it is agree.
+      final (projected, near) = OrbitDepthTuning.dial
+          ? _dialProject(theta, radius, lv.c, lv.s, lean)
+          : (
+              Offset(
+                radius * math.cos(theta),
+                radius * math.sin(theta) * lv.c,
+              ),
+              _depthScale(d, lv.s),
+            );
+      final ring = Offset(cx, lv.cy) + projected;
+      // Seen friends step back: a little smaller and dimmer.
+      final quiet = f.more == 0 && !_isNew(f);
+      final avatarSize = base * near * (quiet ? 0.84 : 1);
       final float = math.sin(floatPhase + i * 0.9) * 2.5 * k * tc * lv.scale;
-      final lift =
-          (avatarSize / 2 + OrbitDepthTuning.avatarHover * k * lv.scale) * tc;
+      final lift = OrbitDepthTuning.dial
+          ? 0.0
+          : (avatarSize / 2 + OrbitDepthTuning.avatarHover * k * lv.scale) *
+                tc;
       final platform = OrbitDepthTuning.platformSize;
       final pedW = _lerp(avatarSize * 0.9, avatarSize * platform, tc);
       final pedH = _lerp(
@@ -1087,7 +1777,11 @@ class _OrbitStage extends StatelessWidget {
                 0.0,
                 1.0,
               ) *
-              lv.opacity,
+              lv.opacity *
+              (quiet ? 0.72 : 1) *
+              (OrbitDepthTuning.dial
+                  ? _peekShow(lv.rel * tc, d) * (f.layer > 0 ? tc : 1)
+                  : 1),
           depth: d,
           pedestal: Size(pedW, pedH),
         ),
@@ -1115,16 +1809,20 @@ class _OrbitStage extends StatelessWidget {
               appear *
               (1 - spotlight.layer.rel.abs() * 3).clamp(0.0, 1.0);
 
-    final home = layers[0];
     final youSize =
         _lerp(OrbitDepthTuning.flatYouSize, OrbitDepthTuning.youSize, tc) *
         k *
-        (home?.scale ?? 1);
+        (OrbitDepthTuning.dial ? 1 : home?.scale ?? 1);
+    // On the dial you stay in the middle whichever ring you are on.
+    final youOnDial = OrbitDepthTuning.dial && home == null && tc > 0;
     final youRing = Offset(cx, home?.cy ?? cy);
-    final youCenter = youRing.translate(
-      0,
-      -(youSize / 2 + OrbitDepthTuning.youHover * k) * tc,
-    );
+    // On the dial you sit at the true centre of the orbit, in its plane.
+    final youCenter = OrbitDepthTuning.dial
+        ? youRing
+        : youRing.translate(
+            0,
+            -(youSize / 2 + OrbitDepthTuning.youHover * k) * tc,
+          );
     final youPedestal = Size(
       _lerp(youSize * 0.9, youSize * OrbitDepthTuning.youPlatformSize, tc),
       _lerp(
@@ -1141,12 +1839,128 @@ class _OrbitStage extends StatelessWidget {
 
     // The front friend's card (and the beam to it) when they shared a thought.
     final cardFocus = OrbitDepthTuning.showCard
-        ? (spotlight?.friend.thought == null ? 0.0 : highlight) * (1 - duck)
+        ? (spotlight?.friend.thought == null ? 0.0 : highlight) *
+              (OrbitDepthTuning.dial
+                  ? _smoothstep(0.3, 1, (2 * dock - 1).abs())
+                  : 1 - duck) *
+              (1 - overview)
         : 0.0;
+    // On the dial an open card is the focus: the orbit steps back, all but
+    // the friend whose card it is.
+    final dim = OrbitDepthTuning.dial ? 0.5 * cardFocus : 0.0;
     // Thought bubbles over the flat orbit tuck under the faces, so a face is
     // never covered; the card and the dots stay on top.
     final underFaces = <Widget>[];
-    final overFaces = _bubbles(seats, k, tc, spotlight, cardFocus, underFaces);
+    // On the dial, the next ring out names itself on its far edge, with a
+    // dot when someone out there has a new thought.
+    final waiting = OrbitDepthTuning.dial
+        ? layers.values.where((l) => l.rel > 0.01 && l.rel <= 1).firstOrNull
+        : null;
+    Widget? peekLabel;
+    double? peekTop;
+    if (waiting != null) {
+      final show = _interval(waiting.rel, 0.5, 1);
+      final radius = ringBase * waiting.scale;
+      final (back, near) = _dialProject(
+        -math.pi / 2,
+        radius,
+        waiting.c,
+        waiting.s,
+        lean,
+      );
+      final edge = Offset(cx, waiting.cy) + back;
+      // Never above the top of the screen: high up, the orbit runs into it.
+      final top = math.max(
+        2 * k,
+        edge.dy -
+            OrbitDepthTuning.avatarSize * k * waiting.scale * near * 0.68 / 2 -
+            26 * k,
+      );
+      peekTop = top;
+      final layer = waiting.layer;
+      final people = _friends
+          .where((f) => f.layer == layer)
+          .fold<int>(0, (n, f) => n + (f.more > 0 ? f.more : 1));
+      final fresh = _friends.any((f) => f.layer == layer && _isNew(f));
+      if (show > 0.01) {
+        peekLabel = Positioned(
+          left: 0,
+          right: 0,
+          top: top,
+          child: Center(
+            child: Opacity(
+              opacity: show,
+              child: Semantics(
+                button: true,
+                label: '${_ringNames[layer]}, $people people',
+                excludeSemantics: true,
+                child: GestureDetector(
+                  key: ValueKey('peek-ring-$layer'),
+                  behavior: HitTestBehavior.opaque,
+                  onTap: show > 0.6 ? () => onRing?.call(layer) : null,
+                  child: Padding(
+                    padding: EdgeInsets.symmetric(
+                      horizontal: 12 * k,
+                      vertical: 4 * k,
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          '${_ringNames[layer]} · $people',
+                          style: TextStyle(
+                            color: _muted,
+                            fontSize: 12 * k,
+                            fontWeight: FontWeight.w600,
+                            letterSpacing: 0.3,
+                          ),
+                        ),
+                        if (fresh) ...[
+                          SizedBox(width: 6 * k),
+                          Container(
+                            key: ValueKey('peek-new-$layer'),
+                            width: 7 * k,
+                            height: 7 * k,
+                            decoration: const BoxDecoration(
+                              color: _accent,
+                              shape: BoxShape.circle,
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        );
+      }
+    }
+    // On the dial the card ends above the orbit's back edge, and above the
+    // waiting ring's label.
+    final cardLimit = OrbitDepthTuning.dial
+        ? _lerp(
+            size.height - 40 * k,
+            math.min(
+              (home?.cy ?? cy) -
+                  ringBase * c -
+                  OrbitDepthTuning.avatarSize * k -
+                  20 * k,
+              (peekTop ?? double.infinity) - 6 * k,
+            ),
+            dock,
+          )
+        : null;
+    final overFaces = _bubbles(
+      seats,
+      k,
+      tc,
+      spotlight,
+      cardFocus,
+      underFaces,
+      cardLimit: cardLimit,
+    );
 
     final children = <Widget>[
       Positioned.fill(
@@ -1161,13 +1975,17 @@ class _OrbitStage extends StatelessWidget {
             ringBase: ringBase,
             squash: c,
             seats: seats,
-            youRing: home == null ? null : youRing,
+            youRing: home == null && !youOnDial ? null : youRing,
             youPedestal: youPedestal,
             youOpacity: home?.opacity ?? 0,
             youSize: youSize,
             spotlight: spotlight,
             highlight: highlight,
             floatPhase: floatPhase,
+            glow: glow,
+            glowLayer: glowLayer,
+            lean: lean,
+            dim: dim,
           ),
         ),
       ),
@@ -1175,19 +1993,57 @@ class _OrbitStage extends StatelessWidget {
 
     children.addAll(underFaces);
 
-    var youPlaced = home == null;
+    var youPlaced = home == null && !youOnDial;
+    final youOpacity = OrbitDepthTuning.dial ? 1.0 : home?.opacity ?? 0;
     void placeYou() {
       children.add(
         _positionedCircle(
           center: youCenter,
           size: youSize,
           child: IgnorePointer(
-            ignoring: home!.rel.abs() > 0.35,
-            child: GestureDetector(
-              onTap: () => onDive('you'),
-              child: Opacity(
-                opacity: home.opacity,
-                child: _YouAvatar(size: youSize, t: tc),
+            ignoring: !OrbitDepthTuning.dial && home!.rel.abs() > 0.35,
+            child: Opacity(
+              opacity: youOpacity * (1 - dim * 0.6),
+              child: Stack(
+                clipBehavior: Clip.none,
+                fit: StackFit.expand,
+                children: [
+                  Semantics(
+                    button: true,
+                    label: 'You',
+                    excludeSemantics: true,
+                    child: GestureDetector(
+                      key: const ValueKey('you-avatar'),
+                      onTap: () => onFace(null),
+                      // You lean with the orbit as it turns.
+                      child: Transform.rotate(
+                        angle: OrbitDepthTuning.dial ? lean : 0,
+                        child: _YouAvatar(size: youSize, t: tc),
+                      ),
+                    ),
+                  ),
+                  // You are where thoughts are shared from.
+                  Positioned(
+                    right: -youSize * 0.06,
+                    bottom: -youSize * 0.02,
+                    child: Semantics(
+                      button: true,
+                      label: 'Share a thought',
+                      excludeSemantics: true,
+                      child: GestureDetector(
+                        key: const ValueKey('share-thought'),
+                        behavior: HitTestBehavior.opaque,
+                        onTap: onShare,
+                        child: _PlusMark(
+                          size: math.max(
+                            20,
+                            youSize * (OrbitDepthTuning.dial ? 0.34 : 0.4),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
               ),
             ),
           ),
@@ -1198,7 +2054,7 @@ class _OrbitStage extends StatelessWidget {
 
     for (final seat in seats) {
       if (!youPlaced &&
-          seat.layer.layer == 0 &&
+          (seat.layer.layer == 0 || youOnDial) &&
           seat.ringPoint.dy > youRing.dy) {
         placeYou();
       }
@@ -1208,11 +2064,22 @@ class _OrbitStage extends StatelessWidget {
           size: seat.size,
           child: IgnorePointer(
             ignoring: !seat.interactive,
-            child: _FriendAvatar(
-              key: ValueKey('avatar-${seat.friend.name}'),
-              seat: seat,
-              highlight: identical(seat, spotlight) ? highlight : 0,
-              onTap: () => onDive(seat.friend.name),
+            child: Opacity(
+              opacity: identical(seat, spotlight) ? 1 : 1 - dim,
+              child: seat.friend.more > 0
+                ? _MoreAvatar(
+                    key: const ValueKey('avatar-more'),
+                    seat: seat,
+                    highlight: identical(seat, spotlight) ? highlight : 0,
+                    onTap: () => onFace(seat.friend),
+                  )
+                : _FriendAvatar(
+                    key: ValueKey('avatar-${seat.friend.name}'),
+                    seat: seat,
+                    highlight: identical(seat, spotlight) ? highlight : 0,
+                    onTap: () => onFace(seat.friend),
+                    onLongPress: () => onHold(seat.friend),
+                  ),
             ),
           ),
         ),
@@ -1221,7 +2088,7 @@ class _OrbitStage extends StatelessWidget {
     if (!youPlaced) placeYou();
 
     // The beam from the front friend to their card.
-    final beamSeat = spotlight;
+    final beamSeat = OrbitDepthTuning.dial ? null : spotlight;
     if (beamSeat != null && cardFocus > 0.01) {
       final card = _cardRect(beamSeat, cardFocus, k, tc);
       final platform = beamSeat.pedestal;
@@ -1250,7 +2117,7 @@ class _OrbitStage extends StatelessWidget {
       );
     }
 
-    final named = spotlight;
+    final named = OrbitDepthTuning.dial ? null : spotlight;
     if (named != null && highlight > 0.01) {
       final scale = named.layer.scale;
       children.add(
@@ -1262,7 +2129,7 @@ class _OrbitStage extends StatelessWidget {
             child: Opacity(
               opacity: highlight.clamp(0.0, 1.0),
               child: Text(
-                named.friend.name,
+                named.friend.more > 0 ? 'Everyone' : named.friend.name,
                 textAlign: TextAlign.center,
                 style: TextStyle(
                   color: _ink,
@@ -1277,6 +2144,7 @@ class _OrbitStage extends StatelessWidget {
       );
     }
 
+    if (peekLabel != null) children.add(peekLabel);
     children.addAll(overFaces);
 
     return Stack(clipBehavior: Clip.none, children: children);
@@ -1364,8 +2232,8 @@ class _OrbitStage extends StatelessWidget {
     return shift;
   }
 
-  /// Where a flat orbit's thought bubble lands for a face at [ring]: above
-  /// it, or below it for the friend at the very bottom (as [_bubbles] does).
+  /// Where a flat orbit's thought bubble lands for a face at [ring]: just
+  /// above it (as [_bubbles] does).
   Rect _flatBubbleRect(
     Offset ring,
     double avatar,
@@ -1380,20 +2248,12 @@ class _OrbitStage extends StatelessWidget {
     // Erring tall: anything beyond a short phrase is taken to fill both lines.
     final lines = text.length > 14 ? _notesLines : 1;
     final boxHeight = notes
-        ? lines * font * 1.25 + 16 * k + 22 * k
+        ? lines * font * 1.25 + 16 * k + 14 * k
         : (text.length > 16 ? 42 : 27) * k;
     final left = (ring.dx - boxWidth / 2)
         .clamp(6 * k, math.max(6 * k, size.width - boxWidth - 6 * k))
         .toDouble();
-    if (_smoothstep(0.75, 0.92, depth) > 0.5) {
-      return Rect.fromLTWH(
-        left,
-        ring.dy + avatar / 2 + 8 * k,
-        boxWidth,
-        boxHeight,
-      );
-    }
-    final bottom = ring.dy - avatar / 2 - (notes ? 2 : 6) * k;
+    final bottom = ring.dy - avatar / 2 - (notes ? 0 : 6) * k;
     return Rect.fromLTWH(left, bottom - boxHeight, boxWidth, boxHeight);
   }
 
@@ -1402,6 +2262,18 @@ class _OrbitStage extends StatelessWidget {
   /// Where the front friend's card sits: below their name, far enough down
   /// to leave room for the beam that joins them. Height is left at zero.
   Rect _cardRect(_Seat seat, double focus, double k, double tc) {
+    if (OrbitDepthTuning.dial) {
+      // Below the orbit at the top; under the header's buttons when the
+      // orbit is at the bottom.
+      final top = _lerp(
+        seat.avatarCenter.dy +
+            seat.size / 2 * (1 + OrbitDepthTuning.frontFriendLift) +
+            18 * k,
+        60 * k,
+        dock,
+      );
+      return Rect.fromLTWH(14 * k, top, size.width - 28 * k, 0);
+    }
     final scale = seat.layer.scale;
     final top =
         _nameTop(seat, k, tc) +
@@ -1440,8 +2312,9 @@ class _OrbitStage extends StatelessWidget {
     double tc,
     _Seat? spotlight,
     double cardFocus,
-    List<Widget> underFaces,
-  ) {
+    List<Widget> underFaces, {
+    double? cardLimit,
+  }) {
     final candidates =
         seats
             .where((s) => s.friend.thought != null && s.layer.rel.abs() < 0.5)
@@ -1462,12 +2335,16 @@ class _OrbitStage extends StatelessWidget {
     final depthBubbles =
         OrbitDepthTuning.thoughtsInDepth == OrbitDepthThoughts.bubbles;
     final flatBubbles = OrbitDepthTuning.bubblesWhenFlat
-        ? 1 - _interval(tc, 0.05, 0.45)
+        ? (1 - _interval(tc, 0.05, 0.45)) * flatZoom
         : 0.0;
     final bubbleAlpha = OrbitDepthTuning.showBubbles
-        ? math.min(1.0, flatBubbles + (depthBubbles ? appear : 0))
+        ? math.min(1.0, flatBubbles + (depthBubbles ? appear : appear * overview))
         : 0.0;
-    final dotAlpha = depthBubbles ? 0.0 : appear;
+    // Faces only on the flat orbit until pinched: a dot marks a new thought.
+    final flatDots = (1 - _interval(tc, 0.05, 0.45)) * (1 - flatZoom);
+    final dotAlpha = depthBubbles
+        ? 0.0
+        : math.max(appear * (1 - overview), flatDots);
     for (final seat in candidates) {
       final scale = seat.layer.scale;
       final isSpotlight = identical(seat, spotlight) && focus > 0.01;
@@ -1478,7 +2355,7 @@ class _OrbitStage extends StatelessWidget {
         // Leave the bottom of the screen to the reply dock.
         final maxHeight = math.max(
           0.0,
-          size.height - card.top - 8 * k - _dockInset * k,
+          (cardLimit ?? size.height - 8 * k - _dockInset * k) - card.top,
         );
         widgets.add(
           Positioned(
@@ -1496,8 +2373,8 @@ class _OrbitStage extends StatelessWidget {
                   expand: focus,
                   k: k * scale * OrbitDepthTuning.cardScale,
                   alpha: cardAlpha,
-                  onOpen: () => onFriendTap(seat.friend),
-                  onWorld: () => onDive(seat.friend.name),
+                  onOpen: () => onCardTap(seat.friend),
+                  onWorld: () => onFace(seat.friend),
                 ),
               ),
             ),
@@ -1506,8 +2383,9 @@ class _OrbitStage extends StatelessWidget {
         continue;
       }
 
-      // In depth, a dot on the avatar says this friend has a thought.
-      if (dotAlpha * near > 0.01) {
+      // A dot on the avatar says this friend has a thought you have not
+      // seen.
+      if (dotAlpha * near > 0.01 && _isNew(seat.friend)) {
         final dot = (seat.size * 0.22).clamp(6 * k, 12 * k);
         widgets.add(
           Positioned(
@@ -1533,15 +2411,19 @@ class _OrbitStage extends StatelessWidget {
           ),
         );
       }
-      var depthGrowth = math.min(
-        1 + OrbitDepthTuning.bubbleDepth * seat.depth * tiltSin,
-        OrbitDepthTuning.maxBubbleSize,
+      var depthGrowth = _lerp(
+        math.min(
+          1 + OrbitDepthTuning.bubbleDepth * seat.depth * tiltSin,
+          OrbitDepthTuning.maxBubbleSize,
+        ),
+        1,
+        overview,
       );
-      // Over the flat orbit a bubble sits above its friend, except the friend
-      // at the very bottom, whose bubble hangs below them (away from you).
+      // Over the flat orbit, and when zoomed out, every bubble sits just
+      // above its friend.
       var below = depthBubbles
-          ? _smoothstep(-0.05, 0.3, seat.depth)
-          : _smoothstep(0.75, 0.92, seat.depth);
+          ? _smoothstep(-0.05, 0.3, seat.depth) * (1 - overview)
+          : 0.0;
       var fade = bubbleAlpha * near;
       final avatarTop = seat.avatarCenter.dy - seat.size / 2;
 
@@ -1594,7 +2476,7 @@ class _OrbitStage extends StatelessWidget {
       // Notes bubbles are wider (so most thoughts fit on one or two lines) and
       // carry a tail of two dots; estimate their height for stacking.
       final boxWidth = notes ? width * _notesWidth : width;
-      final tail = notes ? 22 * k * bubbleScale : 0.0;
+      final tail = notes ? 14 * k * bubbleScale : 0.0;
       final lines = notes
           ? ((text.length * font * 0.55) / (boxWidth - 26 * k * bubbleScale))
                 .ceil()
@@ -1606,7 +2488,7 @@ class _OrbitStage extends StatelessWidget {
       final left = (seat.ringPoint.dx - boxWidth / 2)
           .clamp(6 * k, math.max(6 * k, size.width - boxWidth - 6 * k))
           .toDouble();
-      final aboveBottom = notes ? avatarTop - 2 * k : avatarTop - 6 * k * scale;
+      final aboveBottom = notes ? avatarTop : avatarTop - 6 * k * scale;
       final gap = 4 * k * bubbleScale;
 
       Rect nudge(Rect rect, List<Rect> taken, {required bool down}) {
@@ -1636,7 +2518,7 @@ class _OrbitStage extends StatelessWidget {
             k: k * bubbleScale,
             appear: alpha,
             growFromTop: growFromTop,
-            onTap: () => onFriendTap(seat.friend),
+            onTap: () => onCardTap(seat.friend),
           );
 
       if (1 - below > 0.01) {
@@ -1697,34 +2579,40 @@ class _FriendAvatar extends StatelessWidget {
   final _Seat seat;
   final double highlight;
   final VoidCallback onTap;
+  final VoidCallback onLongPress;
 
   const _FriendAvatar({
     super.key,
     required this.seat,
     required this.highlight,
     required this.onTap,
+    required this.onLongPress,
   });
+
+  String get _label {
+    final f = seat.friend;
+    return [f.name, if (f.thought != null) f.thought!].join(', ');
+  }
 
   @override
   Widget build(BuildContext context) {
     final f = seat.friend;
     final peerId = _ringAvatarPeers[f.name];
     if (peerId != null) return _ringAvatar(peerId);
-    final radius = f.group
-        ? BorderRadius.circular(seat.size * 0.3)
-        : BorderRadius.circular(seat.size / 2);
+    final radius = BorderRadius.circular(seat.size / 2);
     return Semantics(
       button: true,
-      label: f.thought == null ? f.name : '${f.name}: ${f.thought}',
+      label: _label,
+      excludeSemantics: true,
       child: GestureDetector(
         onTap: onTap,
+        onLongPress: onLongPress,
         child: Opacity(
           opacity: seat.opacity.clamp(0.0, 1.0),
           child: Transform.scale(
             scale: 1 + OrbitDepthTuning.frontFriendLift * highlight,
             alignment: Alignment.bottomCenter,
             child: _Sheen(
-              radius: f.group ? radius : null,
               child: DecoratedBox(
                 decoration: BoxDecoration(
                   borderRadius: radius,
@@ -1752,18 +2640,12 @@ class _FriendAvatar extends StatelessWidget {
                       ),
                   ],
                 ),
-                child: Padding(
-                  padding: EdgeInsets.zero,
-                  child: ClipRRect(
-                    borderRadius: f.group
-                        ? BorderRadius.circular(seat.size * 0.3)
-                        : BorderRadius.circular(seat.size / 2),
-                    child: Image(
-                      image: _photo(f.name),
-                      fit: BoxFit.cover,
-                      gaplessPlayback: true,
-                      filterQuality: FilterQuality.medium,
-                    ),
+                child: ClipOval(
+                  child: Image(
+                    image: _photo(f.name),
+                    fit: BoxFit.cover,
+                    gaplessPlayback: true,
+                    filterQuality: FilterQuality.medium,
                   ),
                 ),
               ),
@@ -1780,13 +2662,14 @@ extension on _FriendAvatar {
   /// contact without a photo: the generated rings plus a soft glow in the
   /// person's hue, no photo frame.
   Widget _ringAvatar(String peerId) {
-    final f = seat.friend;
     final glow = RingAvatarGenerator.glowColorForPeerId(peerId);
     return Semantics(
       button: true,
-      label: f.thought == null ? f.name : '${f.name}: ${f.thought}',
+      label: _label,
+      excludeSemantics: true,
       child: GestureDetector(
         onTap: onTap,
+        onLongPress: onLongPress,
         child: Opacity(
           opacity: seat.opacity.clamp(0.0, 1.0),
           child: Transform.scale(
@@ -1818,10 +2701,7 @@ extension on _FriendAvatar {
 class _Sheen extends StatelessWidget {
   final Widget child;
 
-  /// Corner radius for square avatars (groups); null means a circle.
-  final BorderRadius? radius;
-
-  const _Sheen({required this.child, this.radius});
+  const _Sheen({required this.child});
 
   @override
   Widget build(BuildContext context) {
@@ -1831,10 +2711,9 @@ class _Sheen extends StatelessWidget {
         child,
         IgnorePointer(
           child: DecoratedBox(
-            decoration: BoxDecoration(
-              shape: radius == null ? BoxShape.circle : BoxShape.rectangle,
-              borderRadius: radius,
-              gradient: const LinearGradient(
+            decoration: const BoxDecoration(
+              shape: BoxShape.circle,
+              gradient: LinearGradient(
                 begin: Alignment.topCenter,
                 end: Alignment.bottomCenter,
                 stops: [0.55, 1],
@@ -1845,10 +2724,9 @@ class _Sheen extends StatelessWidget {
         ),
         IgnorePointer(
           child: DecoratedBox(
-            decoration: BoxDecoration(
-              shape: radius == null ? BoxShape.circle : BoxShape.rectangle,
-              borderRadius: radius,
-              gradient: const RadialGradient(
+            decoration: const BoxDecoration(
+              shape: BoxShape.circle,
+              gradient: RadialGradient(
                 center: Alignment(-0.35, -0.55),
                 radius: 0.75,
                 colors: [Color(0x2EFFFFFF), Color(0x00FFFFFF)],
@@ -1875,10 +2753,13 @@ class _YouAvatar extends StatelessWidget {
           shape: BoxShape.circle,
           color: const Color(0xFF0F1F15),
           boxShadow: [
+            // On the dial a faint rim, not a halo: you are part of the scene.
             BoxShadow(
-              color: _accent.withValues(alpha: _lerp(0.12, 0.32, t)),
-              blurRadius: _lerp(12, 36, t),
-              spreadRadius: _lerp(1, 8, t),
+              color: _accent.withValues(
+                alpha: OrbitDepthTuning.dial ? 0.45 : _lerp(0.12, 0.32, t),
+              ),
+              blurRadius: OrbitDepthTuning.dial ? 5 : _lerp(12, 36, t),
+              spreadRadius: OrbitDepthTuning.dial ? 1 : _lerp(1, 8, t),
             ),
           ],
         ),
@@ -1899,6 +2780,77 @@ class _YouAvatar extends StatelessWidget {
       ),
     );
   }
+}
+
+/// The last slot on the Friends ring: everyone without a slot of their own.
+/// Opens them all as a list.
+class _MoreAvatar extends StatelessWidget {
+  final _Seat seat;
+  final double highlight;
+  final VoidCallback onTap;
+
+  const _MoreAvatar({
+    super.key,
+    required this.seat,
+    required this.highlight,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final size = seat.size;
+    return Semantics(
+      button: true,
+      label: '${seat.friend.more} more friends',
+      excludeSemantics: true,
+      child: GestureDetector(
+        onTap: onTap,
+        child: Opacity(
+          opacity: seat.opacity.clamp(0.0, 1.0),
+          child: Transform.scale(
+            scale: 1 + OrbitDepthTuning.frontFriendLift * highlight,
+            alignment: Alignment.bottomCenter,
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: const Color(0xFF15181B),
+                border: Border.all(color: const Color(0xFF3A4741)),
+              ),
+              child: Center(
+                child: Text(
+                  '+${seat.friend.more}',
+                  style: TextStyle(
+                    color: _ink,
+                    fontSize: size * 0.3,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// The small plus on your own photo: tap to share a thought.
+class _PlusMark extends StatelessWidget {
+  final double size;
+
+  const _PlusMark({required this.size});
+
+  @override
+  Widget build(BuildContext context) => Container(
+    width: size,
+    height: size,
+    decoration: BoxDecoration(
+      color: _accent,
+      shape: BoxShape.circle,
+      border: Border.all(color: _ground, width: size * 0.12),
+    ),
+    child: Icon(Icons.add, size: size * 0.66, color: const Color(0xFF03140A)),
+  );
 }
 
 class _ThoughtBubble extends StatelessWidget {
@@ -1999,7 +2951,7 @@ class _ThoughtBubble extends StatelessWidget {
           padding: EdgeInsets.symmetric(horizontal: 12 * k, vertical: 8 * k),
           decoration: BoxDecoration(
             color: fill,
-            borderRadius: BorderRadius.circular(18 * k),
+            borderRadius: BorderRadius.circular(16 * k),
             boxShadow: [shadow],
           ),
           child: Text(
@@ -2034,11 +2986,12 @@ class _ThoughtBubble extends StatelessWidget {
       ],
     );
     // The tail runs from the bubble down and to the left, like a thought.
+    // A short tail of two small dots, so the bubble sits just over the head.
     final tail = <Widget>[
-      SizedBox(height: 1.5 * k),
-      dot(13, -10),
-      SizedBox(height: 1.5 * k),
-      dot(7, -17),
+      SizedBox(height: 1 * k),
+      dot(7, 3),
+      SizedBox(height: 1 * k),
+      dot(4.5, 8),
     ];
     return Column(
       mainAxisSize: MainAxisSize.min,
@@ -2241,18 +3194,9 @@ class _ThoughtCardState extends State<_ThoughtCard> {
           padding: EdgeInsets.only(top: 10 * k),
           child: Row(
             children: [
-              Icon(Icons.chat_bubble_outline, size: 15 * k, color: _muted),
-              SizedBox(width: 5 * k),
-              Expanded(
-                child: Text(
-                  detail.comments == 1
-                      ? '1 comment'
-                      : '${detail.comments} comments',
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(color: _muted, fontSize: 12.5 * k),
-                ),
-              ),
+              // Someone else's thought shows no counts: only the way to
+              // their world and to your own reply.
+              const Spacer(),
               Flexible(
                 child: GestureDetector(
                   onTap: widget.onWorld,
@@ -2340,11 +3284,31 @@ class _PostStackState extends State<_PostStack>
   );
 
   bool get _canNext => _index < _posts.length - 1;
+
+  /// The line under the card: your own chat with the author, from your
+  /// first reply to this post on. Null until you replied or reacted.
+  bool get _hasLine => _replyLine(widget.friend.name, _index) != null;
+
+  /// Room for the cards, less the reply line under them.
+  double get _room =>
+      widget.maxHeight - (_hasLine ? _ReplyLine.height * widget.k : 0);
+
+  @override
+  void initState() {
+    super.initState();
+    _chatTick.addListener(_onChat);
+  }
+
+  void _onChat() {
+    if (mounted) setState(() {});
+  }
+
   bool get _canPrev => _index > 0;
   bool get _open => widget.expand > 0.9;
 
   @override
   void dispose() {
+    _chatTick.removeListener(_onChat);
     _drag.dispose();
     super.dispose();
   }
@@ -2408,11 +3372,11 @@ class _PostStackState extends State<_PostStack>
       return _PostCard(
         key: ValueKey(i == 0 ? 'text-post-$name' : 'post-$name-$i'),
         post: post,
-        maxHeight: widget.maxHeight - hint,
+        maxHeight: _room - hint,
         expand: expand,
         k: widget.k,
         alpha: widget.alpha,
-        onOpen: () => _openThread(context, name, target: i),
+        onOpen: () => _openThought(context, name, i),
         onSpace: space == null ? null : () => _openSpace(context, name, space),
       );
     }
@@ -2424,18 +3388,18 @@ class _PostStackState extends State<_PostStack>
       return _UniverseMediaCard(
         key: ValueKey('universe-media-card-$name'),
         friend: widget.friend,
-        maxHeight: widget.maxHeight - hint,
+        maxHeight: _room - hint,
         expand: expand,
         k: widget.k,
         alpha: widget.alpha,
-        onOpen: () => _openThread(context, name),
+        onOpen: () => _openThought(context, name, 0),
       );
     }
     if (i == 0 && expand >= 0.5) {
       return _CarouselCard(
         key: ValueKey('carousel-card-${widget.friend.name}'),
         friend: widget.friend,
-        maxHeight: widget.maxHeight - 48 * widget.k,
+        maxHeight: _room - 48 * widget.k,
         expand: expand,
         k: widget.k,
         alpha: widget.alpha,
@@ -2448,7 +3412,7 @@ class _PostStackState extends State<_PostStack>
     key: ValueKey('post-${widget.friend.name}-$i'),
     friend: widget.friend,
     post: i == 0 ? null : _posts[i],
-    maxHeight: widget.maxHeight - 48 * widget.k,
+    maxHeight: _room - 48 * widget.k,
     expand: expand,
     k: widget.k,
     alpha: widget.alpha,
@@ -2545,6 +3509,15 @@ class _PostStackState extends State<_PostStack>
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               Stack(clipBehavior: Clip.none, children: layers),
+              if (_hasLine && open > 0)
+                Opacity(
+                  opacity: open,
+                  child: _ReplyLine(
+                    owner: widget.friend.name,
+                    post: _index,
+                    k: k,
+                  ),
+                ),
               if (remaining > 0 &&
                   open > 0 &&
                   OrbitDepthTuning.postCards == OrbitPostCards.framed)
@@ -2817,6 +3790,13 @@ class _DepthPainter extends CustomPainter {
   final _Seat? spotlight;
   final double highlight;
   final double floatPhase;
+  final double glow;
+  final int glowLayer;
+  final double lean;
+
+  /// On the dial, how far the orbit steps back while a card is open (the
+  /// front friend stays bright).
+  final double dim;
 
   _DepthPainter({
     required this.t,
@@ -2835,6 +3815,10 @@ class _DepthPainter extends CustomPainter {
     required this.spotlight,
     required this.highlight,
     required this.floatPhase,
+    required this.glow,
+    required this.glowLayer,
+    this.lean = 0,
+    this.dim = 0,
   });
 
   @override
@@ -2843,19 +3827,39 @@ class _DepthPainter extends CustomPainter {
 
     for (final lv in layers) {
       if (!OrbitDepthTuning.showRing) continue;
-      _oval(
+      if (OrbitDepthTuning.dial) {
+        _dialRing(canvas, lv);
+      } else {
+        _oval(
         canvas,
         Offset(cx, lv.cy),
         ringBase * lv.scale,
         const Color(0xFF2E3B35).withValues(alpha: lv.opacity),
-        dashLength: 6 * k * lv.scale,
-        layerSquash: lv.c,
-      );
+          dashLength: 6 * k * lv.scale,
+          layerSquash: lv.c,
+        );
+      }
+      // The ring you just shared a thought to lights up once.
+      if (glow > 0.01 && lv.layer == glowLayer) {
+        final rect = Rect.fromCenter(
+          center: Offset(cx, lv.cy),
+          width: ringBase * lv.scale * 2,
+          height: ringBase * lv.scale * 2 * lv.c,
+        );
+        canvas.drawOval(
+          rect,
+          Paint()
+            ..color = _accent.withValues(alpha: 0.75 * glow * lv.opacity)
+            ..style = PaintingStyle.stroke
+            ..strokeWidth = 3 * k
+            ..maskFilter = MaskFilter.blur(BlurStyle.normal, 4 * k),
+        );
+      }
     }
 
     // Platforms: start as a circle hidden behind the avatar, then flatten
     // into a glowing disc as the avatar lifts off it.
-    final reveal = Curves.easeOut.transform(t);
+    final reveal = OrbitDepthTuning.dial ? 0.0 : Curves.easeOut.transform(t);
     final you = youRing;
     if (you != null) {
       _pedestal(
@@ -2867,6 +3871,38 @@ class _DepthPainter extends CustomPainter {
         reveal,
         avatarSize: youSize,
       );
+    }
+    if (OrbitDepthTuning.dial) {
+      final shadow = Paint();
+      if (you != null) {
+        shadow
+          ..color = Colors.black.withValues(alpha: 0.5)
+          ..maskFilter = MaskFilter.blur(BlurStyle.normal, 4 * k);
+        canvas.drawOval(
+          Rect.fromCenter(
+            center: you.translate(0, youSize * 0.56),
+            width: youSize * 0.8,
+            height: math.max(3 * k, youSize * 0.16),
+          ),
+          shadow,
+        );
+      }
+      for (final seat in seats) {
+        final a =
+            0.5 * seat.opacity * (identical(seat, spotlight) ? 1 : 1 - dim);
+        if (a <= 0.01) continue;
+        shadow
+          ..color = Colors.black.withValues(alpha: a)
+          ..maskFilter = MaskFilter.blur(BlurStyle.normal, 4 * k);
+        canvas.drawOval(
+          Rect.fromCenter(
+            center: seat.avatarCenter.translate(0, seat.size * 0.56),
+            width: seat.size * 0.8,
+            height: math.max(3 * k, seat.size * 0.16),
+          ),
+          shadow,
+        );
+      }
     }
     for (final seat in seats) {
       _pedestal(
@@ -2882,6 +3918,35 @@ class _DepthPainter extends CustomPainter {
     }
   }
 
+  /// A dial ring through the same camera as the faces on it: thin and faint
+  /// at the back, fuller at the front.
+  void _dialRing(Canvas canvas, _LayerView lv) {
+    const steps = 96;
+    final centre = Offset(cx, lv.cy);
+    final radius = ringBase * lv.scale;
+    final paint = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeCap = StrokeCap.round;
+    var (prev, _) = _dialProject(0, radius, lv.c, lv.s, lean);
+    for (var i = 1; i <= steps; i++) {
+      final theta = i / steps * 2 * math.pi;
+      final (next, _) = _dialProject(theta, radius, lv.c, lv.s, lean);
+      final depth = math.sin(theta - math.pi / steps);
+      final front = (depth + 1) / 2;
+      paint
+        ..color = _ink.withValues(
+          alpha:
+              _lerp(0.16, _lerp(0.05, 0.3, front), t) *
+              lv.opacity *
+              (1 - dim) *
+              _peekShow(lv.rel * t, depth),
+        )
+        ..strokeWidth = _lerp(1, _lerp(0.5, 1.6, front), t) * k;
+      canvas.drawLine(centre + prev, centre + next, paint);
+      prev = next;
+    }
+  }
+
   /// Stars stream outward as the camera flies forward and drift with the
   /// rotation, which is most of the "moving through space" feeling.
   void _paintStars(Canvas canvas, Size size) {
@@ -2892,7 +3957,10 @@ class _DepthPainter extends CustomPainter {
       var z = (star.z - camera * 0.45) % 1.0;
       if (z <= 0) z += 1;
       final distance = star.spread * reach * (0.3 / (z + 0.3));
-      final angle = star.angle + rotation * 0.12;
+      final angle =
+          star.angle +
+          rotation *
+              (OrbitDepthTuning.dial ? 0.03 + 0.3 * (1 - star.z) : 0.12);
       final position =
           center + Offset(math.cos(angle), math.sin(angle)) * distance;
       final fadeIn = (z < 0.12 ? z / 0.12 : 1.0);
@@ -3001,69 +4069,4 @@ class _DepthPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(_DepthPainter old) => true;
-}
-
-class _ThoughtSheet extends StatelessWidget {
-  final _ProtoFriend friend;
-
-  const _ThoughtSheet({required this.friend});
-
-  @override
-  Widget build(BuildContext context) {
-    final thought = friend.thought;
-    return SafeArea(
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(24, 0, 24, 24),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            if (thought != null)
-              Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 18,
-                  vertical: 12,
-                ),
-                decoration: BoxDecoration(
-                  color: _chat.surfaceRaised,
-                  borderRadius: BorderRadius.circular(22),
-                  border: Border.all(color: _chat.border),
-                ),
-                child: Text(
-                  thought,
-                  textAlign: TextAlign.center,
-                  style: const TextStyle(
-                    color: _ink,
-                    fontSize: 18,
-                    fontWeight: FontWeight.w500,
-                  ),
-                ),
-              ),
-            const SizedBox(height: 12),
-            Text(
-              thought == null
-                  ? '${friend.name} hasn’t shared a thought today'
-                  : '${friend.name} · ${_detailFor(friend).age} ago',
-              style: const TextStyle(color: _muted, fontSize: 13),
-            ),
-            if (thought != null) ...[
-              const SizedBox(height: 18),
-              TextField(
-                style: const TextStyle(color: _ink),
-                decoration: InputDecoration(
-                  hintText: 'Comment on ${friend.name}’s thought',
-                  hintStyle: const TextStyle(color: Color(0xFF78837C)),
-                  filled: true,
-                  fillColor: _chat.surfaceSubtle,
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(23),
-                    borderSide: const BorderSide(color: Color(0xFF1C2420)),
-                  ),
-                ),
-              ),
-            ],
-          ],
-        ),
-      ),
-    );
-  }
 }

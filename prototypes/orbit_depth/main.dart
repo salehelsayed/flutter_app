@@ -30,7 +30,7 @@ void applyPlaygroundSettings() {
   OrbitDepthTuning.platformFlatness = 0.3;
   OrbitDepthTuning.avatarHover = 7;
   OrbitDepthTuning.youHover = 2;
-  OrbitDepthTuning.bubbleWidth = 99;
+  OrbitDepthTuning.bubbleWidth = 97;
   OrbitDepthTuning.farOrbitSize = 0.14;
   OrbitDepthTuning.farOrbitY = 15;
   OrbitDepthTuning.farOrbitBrightness = 0.45;
@@ -50,8 +50,25 @@ void applyPlaygroundSettings() {
   OrbitDepthTuning.unreadDot = true;
   OrbitDepthTuning.bubblesWhenFlat = true;
   OrbitDepthTuning.thoughtsInDepth = OrbitDepthThoughts.dots;
-  OrbitDepthTuning.friendsPerOrbit = 7;
   OrbitDepthTuning.postCards = OrbitPostCards.universe;
+
+  // The dial (orbit-dial sketch, 2026-10-13): a small orbit low around you,
+  // the front friend nearest and largest, their card above.
+  OrbitDepthTuning.dial = true;
+  OrbitDepthTuning.tiltDegrees = 67;
+  OrbitDepthTuning.ringRadius = 146;
+  OrbitDepthTuning.avatarSize = 40;
+  // You sit at the orbit's centre, sized by the same camera as everyone.
+  OrbitDepthTuning.youSize = 52;
+  // Real perspective: faces, sizes and the ring all go through one camera.
+  OrbitDepthTuning.cameraDistance = 3;
+  OrbitDepthTuning.backDim = 0.6;
+  OrbitDepthTuning.orbitHeight = 0.8;
+  // Trying the dial at the top, the card below (2026-10-13).
+  OrbitDepthTuning.dialOnTop = true;
+  OrbitDepthTuning.dialTopHeight = 0.084;
+  OrbitDepthTuning.dialBottomHeight = 0.8;
+  OrbitDepthTuning.frontFriendLift = 0.15;
 }
 
 class OrbitDepthPrototypeApp extends StatelessWidget {
