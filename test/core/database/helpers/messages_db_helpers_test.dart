@@ -1157,6 +1157,57 @@ void main() {
     });
   });
 
+  group('dbInsertMessage keeps read state', () {
+    // A full-row save built from a snapshot loaded before the chat was read
+    // (for example an incoming caption edit in flight while the user opens
+    // the chat) carries read_at = null. Read state only moves forward.
+    test('a stale unread save does not make a read message unread', () async {
+      await dbInsertMessage(
+        db,
+        makeMessageRow(id: 'msg-in', isIncoming: 1, status: 'delivered'),
+      );
+      await dbMarkConversationAsRead(db, 'peer-a');
+      final readAt = (await dbLoadMessage(db, 'msg-in'))!['read_at'];
+      expect(readAt, isNotNull);
+
+      await dbInsertMessage(
+        db,
+        makeMessageRow(
+          id: 'msg-in',
+          isIncoming: 1,
+          status: 'delivered',
+          text: 'edited caption',
+          editedAt: '2026-01-01T00:05:00.000Z',
+        ),
+      );
+
+      final row = (await dbLoadMessage(db, 'msg-in'))!;
+      expect(row['text'], 'edited caption');
+      expect(row['read_at'], readAt);
+      expect(await dbCountUnreadForContact(db, 'peer-a'), 0);
+    });
+
+    test('a save may still set read_at on an unread message', () async {
+      await dbInsertMessage(
+        db,
+        makeMessageRow(id: 'msg-in', isIncoming: 1, status: 'delivered'),
+      );
+      const readAt = '2026-01-01T12:00:00.000Z';
+
+      await dbInsertMessage(
+        db,
+        makeMessageRow(
+          id: 'msg-in',
+          isIncoming: 1,
+          status: 'delivered',
+          readAt: readAt,
+        ),
+      );
+
+      expect((await dbLoadMessage(db, 'msg-in'))!['read_at'], readAt);
+    });
+  });
+
   group('dbMarkConversationAsRead', () {
     test('marks unread incoming messages as read', () async {
       await dbInsertMessage(

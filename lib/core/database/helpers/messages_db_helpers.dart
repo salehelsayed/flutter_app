@@ -609,6 +609,13 @@ Future<void> dbInsertMessage(Database db, Map<String, Object?> row) async {
         if (existing['quiet_recovery'] == 1) {
           merged['quiet_recovery'] = 1;
         }
+        // Read state only moves forward. A full-row save built from a
+        // snapshot loaded before the chat was read (an incoming media edit
+        // in flight while the user opens the chat) carries read_at = null and
+        // would otherwise make a read message unread again.
+        if (existing['read_at'] != null && merged['read_at'] == null) {
+          merged['read_at'] = existing['read_at'];
+        }
         final existingIsOutgoing =
             ((existing['is_incoming'] as num?)?.toInt() ?? 0) == 0;
         final existingUserTerminal =

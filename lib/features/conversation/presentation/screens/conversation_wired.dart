@@ -2586,14 +2586,25 @@ class _ConversationWiredState extends State<ConversationWired>
         messageRepo: widget.messageRepo,
         contactPeerId: _contact.peerId,
       );
-      // 410: one badge, one seam. Clearing messages but leaving missed calls
-      // unread would leave a row that says "waiting for you" after the user
-      // has plainly looked at it.
-      await widget.callTimelineSource?.markCallsRead(_contact.peerId);
     } catch (e) {
       emitFlowEvent(
         layer: 'FL',
         event: 'CONV_FL_MARK_READ_ERROR',
+        details: {'error': e.toString()},
+      );
+    }
+    // 410: one badge, one seam. Clearing messages but leaving missed calls
+    // unread would leave a row that says "waiting for you" after the user
+    // has plainly looked at it. Kept out of the message try: the message read
+    // can throw AFTER its SQL commit (a failed native notification cancel
+    // keeps its metadata file, so it throws on every open), and that must not
+    // pin this contact's missed calls unread forever.
+    try {
+      await widget.callTimelineSource?.markCallsRead(_contact.peerId);
+    } catch (e) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'CONV_FL_MARK_CALLS_READ_ERROR',
         details: {'error': e.toString()},
       );
     }

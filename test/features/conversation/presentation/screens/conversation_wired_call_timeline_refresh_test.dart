@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_app/core/notifications/active_conversation_tracker.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/conversation/application/chat_message_listener.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_timeline_entry.dart';
@@ -19,11 +20,24 @@ import '../../../identity/domain/repositories/fake_identity_repository.dart';
 
 const _contactPeerId = 'call-timeline-contact';
 
+/// The production message read can throw after its SQL commit (a failed
+/// native notification cancel), on every open of the same chat.
+class _ThrowingReadMessageRepository extends InMemoryMessageRepository {
+  int markReadAttempts = 0;
+
+  @override
+  Future<int> markConversationAsRead(String contactPeerId) async {
+    markReadAttempts++;
+    throw StateError('native notification cancel failed');
+  }
+}
+
 class _ControlledCallTimelineSource implements ConversationCallTimelineSource {
   final initialRead = Completer<List<ConversationCallTimelineEntry>>();
   final _changes = StreamController<void>.broadcast();
   List<ConversationCallTimelineEntry> calls = [];
   int reads = 0;
+  final markedRead = <String>[];
 
   @override
   Stream<void> get changes => _changes.stream;
@@ -38,7 +52,9 @@ class _ControlledCallTimelineSource implements ConversationCallTimelineSource {
   }
 
   @override
-  Future<void> markCallsRead(String contactPeerId) async {}
+  Future<void> markCallsRead(String contactPeerId) async {
+    markedRead.add(contactPeerId);
+  }
 
   void refreshWith(List<ConversationCallTimelineEntry> entries) {
     calls = entries;
@@ -83,9 +99,13 @@ void main() {
     await tester.pump(const Duration(milliseconds: 400));
   }
 
-  Future<void> openChat(WidgetTester tester) async {
+  Future<void> openChat(
+    WidgetTester tester, {
+    InMemoryMessageRepository? messageRepo,
+    ActiveConversationTracker? tracker,
+  }) async {
     source = _ControlledCallTimelineSource();
-    final messages = InMemoryMessageRepository();
+    final messages = messageRepo ?? InMemoryMessageRepository();
     listener = ChatMessageListener(
       chatMessageStream: const Stream.empty(),
       messageRepo: messages,
@@ -113,6 +133,7 @@ void main() {
           p2pService: p2p,
           micPermissionGateway: FakeMicPermissionGateway(),
           callTimelineSource: source,
+          conversationTracker: tracker,
         ),
       ),
     );
@@ -183,5 +204,24 @@ void main() {
     await tester.pump(const Duration(milliseconds: 400));
     expect(screen(tester).callEntries, isEmpty);
     expect(find.byType(CallTimelineRow), findsNothing);
+  });
+
+  testWidgets('a failing message read still marks missed calls read', (
+    tester,
+  ) async {
+    // Mark-read only runs while the app is in the foreground.
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    final messages = _ThrowingReadMessageRepository();
+    await openChat(
+      tester,
+      messageRepo: messages,
+      tracker: ActiveConversationTracker(),
+    );
+    source.initialRead.complete([_call()]);
+    await pumpRefresh(tester);
+
+    expect(messages.markReadAttempts, greaterThan(0));
+    expect(source.markedRead, isNotEmpty);
+    expect(source.markedRead.toSet(), {_contactPeerId});
   });
 }
