@@ -1,7 +1,9 @@
 #!/bin/bash
 # SE-41: run the update-check XCTests (RunnerTests/UpdateCheckBackgroundTaskTests)
-# on an iPhone simulator. Usage: host-run bash docker-ws/se41_xctest.sh
+# on an iPhone simulator. Usage: host-run bash docker-ws/se41_xctest.sh [only-testing target, default
+# RunnerTests/UpdateCheckBackgroundTaskTests; "RunnerTests" runs the whole bundle]
 set -uo pipefail
+ONLY="${1:-RunnerTests/UpdateCheckBackgroundTaskTests}"
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 export PATH="/opt/homebrew/bin:$PATH"
 OUT="$REPO/build/se41-xctest"
@@ -25,9 +27,9 @@ xcodebuild \
   -destination "platform=iOS Simulator,id=$sim" \
   -parallel-testing-enabled NO \
   -resultBundlePath "$OUT/result.xcresult" \
-  -only-testing:RunnerTests/UpdateCheckBackgroundTaskTests \
+  -only-testing:"$ONLY" \
   CODE_SIGNING_ALLOWED=NO CLANG_ENABLE_EXPLICIT_MODULES=NO \
   test > "$OUT/xcodebuild.log" 2>&1
 code=$?
-grep -E "error:|Test Case .*(passed|failed)|Executed|TEST (SUCCEEDED|FAILED)|BUILD FAILED" "$OUT/xcodebuild.log" | tail -60
+grep -E "error:|Test Case .*failed|Executed|TEST (SUCCEEDED|FAILED)|BUILD FAILED" "$OUT/xcodebuild.log" | tail -60
 echo "exit=$code"
