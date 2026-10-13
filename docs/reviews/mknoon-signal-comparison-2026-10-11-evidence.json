@@ -1,0 +1,266 @@
+{
+  "review_date": "2026-10-11",
+  "review_kind": "static_source_comparison",
+  "app_head": "b8f7736a81e4fa094c2e743b2cf464dec21032c6",
+  "app_declared_version": "1.0.1+123",
+  "baseline_existing_changes": [
+    " M docker-ws/build_play_aab.sh",
+    " M docker-ws/build_store_release.sh",
+    " M info.plist",
+    " M lib/core/database/helpers/messages_db_helpers.dart",
+    " M lib/features/conversation/presentation/screens/conversation_wired.dart",
+    " M pubspec.lock",
+    " M pubspec.yaml",
+    " M scripts/build_ios_appstore_ipa.sh",
+    " M test/core/database/helpers/messages_db_helpers_test.dart",
+    " M test/features/conversation/presentation/screens/conversation_wired_call_timeline_refresh_test.dart",
+    " M tool/testing/selection.json",
+    "?? docker-ws/beta/v3/dead10cc_verify/",
+    "?? lib/features/update_check/",
+    "?? scripts/check_update_check_release_defines.py",
+    "?? scripts/test/check_update_check_release_defines_test.py",
+    "?? test/features/update_check/",
+    "?? tool/sign_version_file.dart"
+  ],
+  "app_cited_files": [
+    {
+      "path": "UI-23-notification/Mknoon_Private_Reliable_Notifications_PRD_v1.2.md",
+      "sha256": "e74605c33be06eefee7ba0f7d373ff27bcdab38f367200ee176b1a9261a151c9"
+    },
+    {
+      "path": "android/app/src/main/kotlin/com/mknoon/app/DroppedPushRecoveryWorkScheduler.kt",
+      "sha256": "974760c5ab88e04334eca67530ca299cb2ac7fc793600c689bb42ae6ef915c87"
+    },
+    {
+      "path": "docs/testing/TESTING.md",
+      "sha256": "b693594dbd3e103f29433f573265d6e08dc5ba7e069ea3748f582d1f3d7a25de"
+    },
+    {
+      "path": "go-mknoon/Makefile",
+      "sha256": "f4696a628c78db43f91adc06e2f757762f9f14fd229bc83557ffed9a64f90261"
+    },
+    {
+      "path": "go-mknoon/crypto/decrypt.go",
+      "sha256": "327b7f95e56341d65eb22bf3fd2139625a499df91f2a14ce0ce5e56c63a45749"
+    },
+    {
+      "path": "go-mknoon/crypto/encrypt.go",
+      "sha256": "0213bab7d07d46b337cadde05d48c6483bad19cc518b1abf04e043049c17d03d"
+    },
+    {
+      "path": "go-mknoon/crypto/file_crypto.go",
+      "sha256": "e35a4448605ef6a8412182a0318c0a32b69f410fdff3756a462678a772f4eb86"
+    },
+    {
+      "path": "go-mknoon/crypto/group.go",
+      "sha256": "69062553643214ee35564a06c41254cb9f3a5fea1697f78773b26fd335c033b7"
+    },
+    {
+      "path": "go-mknoon/go.mod",
+      "sha256": "07f601aed20b63c2a24b1b4d4b703c8a253dcca16b881ec60a90bf384ed10fd2"
+    },
+    {
+      "path": "go-mknoon/identity/identity.go",
+      "sha256": "d7ac9790ec23c99571a8fbb9b4447bb5c120f3c1fa7d663422b68997a3fb56a0"
+    },
+    {
+      "path": "go-mknoon/node/group.go",
+      "sha256": "0476496906f16db56b370b3a8d659a81a5f219cbf3b5aa7206c2dcda095bc0d4"
+    },
+    {
+      "path": "go-mknoon/node/media.go",
+      "sha256": "c1587861eea40ebe02b3ec5c8438f9a9d96734d967582aa79dc289aecaf4912b"
+    },
+    {
+      "path": "go-mknoon/nsebridge/nse_inbox_lite.go",
+      "sha256": "ef5b7ec87e20393acdcacaa18eab533b735354e8f7c98fd7558c1a41befc2243"
+    },
+    {
+      "path": "go-relay-server/ack_custody.go",
+      "sha256": "92278c4259fbb3e8abb8618bd717901b1c10e82f757699afc3bfdfd2b75d3e2b"
+    },
+    {
+      "path": "go-relay-server/ack_custody_backend_test.go",
+      "sha256": "0e0cd2f0160e12432d54adddeca6e06aac7be87219f25be095dd8e4e0166ddec"
+    },
+    {
+      "path": "go-relay-server/backend_redis.go",
+      "sha256": "80eb3e5825afbc4aed53d4a00e8669b983ff675a7bcc54674dcffc0dd1191828"
+    },
+    {
+      "path": "go-relay-server/backend_redis_test.go",
+      "sha256": "e0b67e127358b7c687ded792e1dd100dc6dd584bb49932ac5d8ad384ee70ebbb"
+    },
+    {
+      "path": "go-relay-server/inbox.go",
+      "sha256": "967c80dc04f17acf34f022606e6ded581182bc69cdfc7da7a95396fe55507847"
+    },
+    {
+      "path": "go-relay-server/limits.go",
+      "sha256": "c494bc62e33d1c9d13a04cbb4848eb03bbe926fdf24c3c62046f910611968bfb"
+    },
+    {
+      "path": "go-relay-server/media.go",
+      "sha256": "59d472695bc14d5814014d54875880594f4ea87d120b0c0ea68be688555459c3"
+    },
+    {
+      "path": "go-relay-server/media_custody.go",
+      "sha256": "feada27268ea8a2ae459378b45e27db9055e1159106d8790b2ec3213c82d49ed"
+    },
+    {
+      "path": "go-relay-server/media_test.go",
+      "sha256": "d13dbda343d2dca92b08536b776a251249f63979368116033ef119aaaf21d055"
+    },
+    {
+      "path": "go-relay-server/server_bootstrap.go",
+      "sha256": "d1e8a26b2e9055c646a26d38fc0774a028bf71ca3c2534679eea7fa8a3f083e2"
+    },
+    {
+      "path": "ios/NotificationService/NotificationService.swift",
+      "sha256": "b86d5b5c7880ec63da29f4bf569cae6b94ba8249c350cff7d3364300cf08fc8c"
+    },
+    {
+      "path": "ios/NotificationService/NseMailboxWakeCoordinator.swift",
+      "sha256": "91ec290d1a0ddcd9401ed5be81e6c2fdb8a57a713db5e481afcf04085515a4d6"
+    },
+    {
+      "path": "lib/app/bootstrap/production_application_bootstrap.dart",
+      "sha256": "c6fe768d47791370711464c669e753f81843d9a9e5767a99856cf2e6f8e5a97e"
+    },
+    {
+      "path": "lib/core/bridge/go_bridge_client.dart",
+      "sha256": "0f5885ebdcbde2bde42d3a9020e260701272319f87684d28111c66c308e03a35"
+    },
+    {
+      "path": "lib/core/bridge/p2p_bridge_client.dart",
+      "sha256": "9580370daed1836b637506a378969ab937ac2e2c2ebf0f90c18e4d42cea80e77"
+    },
+    {
+      "path": "lib/core/config/direct_linked_devices_flag.dart",
+      "sha256": "f9e27dc9eb2fecbf7d772e1c12dbf311a9ce67dd6426ce1b945b363e7f6da47b"
+    },
+    {
+      "path": "lib/core/config/direct_linked_event_fanout_flag.dart",
+      "sha256": "e336d68fa8139184f7afd654a61864317d1c19edbf6b74b198b96061ca05b9a3"
+    },
+    {
+      "path": "lib/core/config/direct_linked_media_fanout_flag.dart",
+      "sha256": "573d6d5915717be6d74cb8baef726e6b78f3b64cc21a9a300a53d49061f83291"
+    },
+    {
+      "path": "lib/core/config/direct_media_blob_custody_client_flag.dart",
+      "sha256": "a4028bf8c31e562b78941123993cde6fccc1b9e52a07dc0cbb247e50ad02201e"
+    },
+    {
+      "path": "lib/core/database/encrypted_db_opener.dart",
+      "sha256": "6fa37a66bad1719bf8cb754cc303ea7d51d1cec4dc1bdb43cb6a2e1dab2ec9de"
+    },
+    {
+      "path": "lib/core/database/helpers/messages_db_helpers.dart",
+      "sha256": "12a61c886633db458b3385e1bb5c020c5d97782c7d26438e0db1ce0ceb5090c5"
+    },
+    {
+      "path": "lib/core/media/document_file_check.dart",
+      "sha256": "6f12e119de298d4e68b71f0a3d3b2ae953e9b057699f8895f78bb86d31110345"
+    },
+    {
+      "path": "lib/core/media/group_media_size_policy.dart",
+      "sha256": "1b038179c3381002a3a187f81636f8fb75509da55111f2f3626ad8f997a9a7aa"
+    },
+    {
+      "path": "lib/core/notifications/ios_nse_inbox_projection.dart",
+      "sha256": "73917e193d3c45dab1ffa30a9889c7490ef3707cfeae5fd3b4b01ddaca413b6e"
+    },
+    {
+      "path": "lib/core/secure_storage/ml_kem_secret_ring.dart",
+      "sha256": "54965dce26a1645f32d2d34e3e7f9616459af70cf4dabecf227f405e7eb15217"
+    },
+    {
+      "path": "lib/core/services/p2p_impl/p2p_inbox_coordinator.dart",
+      "sha256": "8625f2ee5553c6d42deccb0c9859c40f7fa05b1f91d3bc4c17ba550f047a3906"
+    },
+    {
+      "path": "lib/core/services/pending_message_retrier.dart",
+      "sha256": "e5e42be01adcc0dd99ecbf5d110c69b837e0cd687e7303e98aa6f22b57474121"
+    },
+    {
+      "path": "lib/features/contacts/application/direct_contact_device_trust.dart",
+      "sha256": "a6d9154b81ba94628d221d47a77ee505e0b0bb0ce2540be9abcea7473ec46f6e"
+    },
+    {
+      "path": "lib/features/conversation/application/direct_event_fanout_coordinator.dart",
+      "sha256": "9a14f57e45fc9fc621de4fbbe45c2186d347cbbf687d1ee8dc57ff5e02802f21"
+    },
+    {
+      "path": "lib/features/conversation/application/download_media_use_case.dart",
+      "sha256": "ed6555ecee90b0744dcb733b8daf373165475648cf4858842ebc731ba8397e48"
+    },
+    {
+      "path": "lib/features/conversation/application/handle_incoming_chat_message_use_case.dart",
+      "sha256": "dd831b8e17b95e6be50f05d8e6a39b0186069d94f8fe4c66a5d10f2a6dfe5b7d"
+    },
+    {
+      "path": "lib/features/conversation/application/send_chat_message_use_case.dart",
+      "sha256": "e3ce8fb95cf5653cd660d8857193d439d87f5e3a014975958e9e299208a1518b"
+    },
+    {
+      "path": "lib/features/conversation/application/strict_direct_media_blob_download_ack_owner.dart",
+      "sha256": "89e2f2cc9c1e8350a8f08a1b4fe5b5feb4c63e63286df86639f19196d6daef2a"
+    },
+    {
+      "path": "lib/features/conversation/application/upload_media_use_case.dart",
+      "sha256": "78a91cb02fcbf9a414827869c848e8d936c6b4639b0508d4a62a7b78458c413b"
+    },
+    {
+      "path": "lib/features/conversation/domain/models/message_payload.dart",
+      "sha256": "b830a644f6e4e7646d396c4356d0d4124715da7aa2959cb27b5094172bfc09f5"
+    },
+    {
+      "path": "lib/features/groups/domain/models/group_multi_device_policy.dart",
+      "sha256": "84818f16a7508d9ee7a625fdcd3e801dfc6760a1c95563b812429e1addbc3ed9"
+    },
+    {
+      "path": "lib/features/identity/application/linked_secondary_setup_use_case.dart",
+      "sha256": "54693a091e96388c8a66aed6e8691b79cb2d9f2d168773c72ccb20e18dd88d91"
+    },
+    {
+      "path": "lib/features/identity/application/restore_identity_use_case.dart",
+      "sha256": "5525d2c658fb2963762883a795beea7e5124bc27794b8183273e0c32bf0f8f65"
+    },
+    {
+      "path": "lib/features/push/application/background_message_handler.dart",
+      "sha256": "eba7bd7b48f038f53c4323fa7bda87ce77b8228ef57a04f637ebab6f375b2a31"
+    },
+    {
+      "path": "lib/features/qr_code/application/direct_linked_device_qr.dart",
+      "sha256": "90970fe56bc4d5b894536272d7c9800efd70b9cc4b51821cbf822701bcf19521"
+    },
+    {
+      "path": "pubspec.yaml",
+      "sha256": "ec2a650ff323f3f231835eefec838841b87785d04fb24da91c200b85d0e19f13"
+    },
+    {
+      "path": "test/features/conversation/application/send_chat_message_use_case_test.dart",
+      "sha256": "c6597102d251a6db9a256b250e088e6d6fd51cc50796f820d02b7dcc542c64d5"
+    },
+    {
+      "path": "tool/build/voice_call_release_defines.json",
+      "sha256": "4f5bdd6d573004fcbf68cdfc331c6ccafff1328453ba3616e42c7208288a500e"
+    }
+  ],
+  "signal_android": {
+    "tag": "v8.30.3",
+    "commit": "9a8f9ba79a3218ba2bddab1dabe7d23bae4cbc66",
+    "libsignal_version": "0.103.0",
+    "libsignal_commit": "ba133bd3457f556fbf56db0a5ab985de0af79da6"
+  },
+  "signal_ios": {
+    "tag": "8.32.0.1910",
+    "commit": "4046e74fe7b52f7790337ede04bde76fc173f23f",
+    "libsignal_version": "0.103.1",
+    "libsignal_commit": "e8cc2dddd578859b4a029c9c94670b24ce2b616a"
+  },
+  "runtime_tests_executed": false,
+  "security_review_performed": false,
+  "deployed_artifacts_verified": false
+}

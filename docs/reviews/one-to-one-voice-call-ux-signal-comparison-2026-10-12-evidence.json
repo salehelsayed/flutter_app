@@ -1,0 +1,162 @@
+{
+  "review_date": "2026-10-12",
+  "review_kind": "source-backed_user_experience_scenarios",
+  "app_head_at_report_creation": "6a5bcc50f272ea72c1001203be7c7ed9be709b69",
+  "app_version_declared": "1.0.1+123",
+  "app_cited_files": [
+    {
+      "path": "android/app/src/main/kotlin/com/mknoon/app/call/MknoonCallNotificationFactory.kt",
+      "sha256": "605984960a3843847b53fda0fa979caf245a085542f2714a158c6dd6084b5167"
+    },
+    {
+      "path": "android/app/src/main/kotlin/com/mknoon/app/call/MknoonLockedCallView.kt",
+      "sha256": "112c6fe488052b493210fe35e32bb2c29c99f57257e4c69e786fe9a240862f7f"
+    },
+    {
+      "path": "go-relay-server/call_control.go",
+      "sha256": "a7d001abcb693a39dee8cc9e7b6a026ad6a8c3e829b15f17ab1c06ae85426266"
+    },
+    {
+      "path": "go-relay-server/call_control_redis.go",
+      "sha256": "015fb1d0b8a5a9f68b64fe7525ea34f273b4d3de5a690ce4788bad62c41ffeb8"
+    },
+    {
+      "path": "ios/Runner/MknoonCallKitController.swift",
+      "sha256": "75685dfb368a5042ab41b1f5fc4bfdd6ab5d46a6fa550331aa8ca66cb92eb79a"
+    },
+    {
+      "path": "ios/Runner/MknoonVoipPushRegistry.swift",
+      "sha256": "dd3cf269ea4a1c8cc24bf570ac1a379dfd0909d791a9917e4e7bf73148b06ab5"
+    },
+    {
+      "path": "lib/app/bootstrap/production_application_bootstrap.dart",
+      "sha256": "c6fe768d47791370711464c669e753f81843d9a9e5767a99856cf2e6f8e5a97e"
+    },
+    {
+      "path": "lib/app/bootstrap/production_headless_call_admission.dart",
+      "sha256": "74d80439561db01cbe1f1165ad0443a389f97603996a4b462a0ceb7b8390a4a1"
+    },
+    {
+      "path": "lib/core/notifications/flutter_notification_service.dart",
+      "sha256": "1ff67d5ad58788a0c410e3b77658db8154cb9dca7171fb935efaa25d87a0e044"
+    },
+    {
+      "path": "lib/core/notifications/local_notification_support.dart",
+      "sha256": "40d4df90480761b1b64c8e6a6b89d86f473d8a2ddc5cc8357632e8073b12aaf8"
+    },
+    {
+      "path": "lib/features/call/application/call_audio_interruption_coordinator.dart",
+      "sha256": "73dc6ac380ef1a784b8d92e7a8351faca6ac83f6a1eca715adb78a0b6d841673"
+    },
+    {
+      "path": "lib/features/call/application/call_coordinator.dart",
+      "sha256": "aeadbf41d21a378fdc81760d36a93ae582d3befff8fc496e21f313e8d21e0650"
+    },
+    {
+      "path": "lib/features/call/application/call_endpoint_resolver.dart",
+      "sha256": "8b7b719157f177fcb9a43f8ea2755366f419f18314c71a1b727b0e176a217c9d"
+    },
+    {
+      "path": "lib/features/call/application/call_history_projector.dart",
+      "sha256": "f865e1c609b03b1d6ab96a61ae4d8a48c9121bc4d660f3ae5ffad7ef423ffb2e"
+    },
+    {
+      "path": "lib/features/call/application/call_ringback_coordinator.dart",
+      "sha256": "6fdca6cf12cfbc05fe925879aa84b81227396f92bca9fb914dc4fac6e195f320"
+    },
+    {
+      "path": "lib/features/call/application/call_signaling_service.dart",
+      "sha256": "2f3d5fc6f754b3a4fd5f3e7a6b33a684c2e1efa53c993311c07e94216a841788"
+    },
+    {
+      "path": "lib/features/call/application/headless_call_ringing_reply.dart",
+      "sha256": "9eeaf66f5cd9866253b4fbc12a259132b331a5c7b0016dd61f3f7fdfa56fa706"
+    },
+    {
+      "path": "lib/features/call/application/headless_terminal_call_record.dart",
+      "sha256": "8324b5268b26941f87d90ed6bf1dd3df3a1306261b75f670d36a4b5ecebf9ac4"
+    },
+    {
+      "path": "lib/features/call/application/missed_call_notifier.dart",
+      "sha256": "ace87e832588869307f457a7fba991712612f81e2d004e348a0c37a53d3033e6"
+    },
+    {
+      "path": "lib/features/call/data/call_history_orbit_activity_source.dart",
+      "sha256": "5afe193d0d59ca7570f301e7b62c6498d5eabb72955468da923cb5f8af110fd2"
+    },
+    {
+      "path": "lib/features/call/domain/call_state.dart",
+      "sha256": "577f157f1ddaa01bc05d0abec9b2a0a3188a4b41da95e28ce6c1ff7223065cbc"
+    },
+    {
+      "path": "lib/features/call/infrastructure/call_media_conflict_adapter.dart",
+      "sha256": "924c5fec7c4a780bcb6496addcf2170ad28b71a2b51dd4e07f78597f01ef1ec3"
+    },
+    {
+      "path": "lib/features/call/infrastructure/call_microphone_permission_adapter.dart",
+      "sha256": "64c5feec708b8cd6228aeda8251973c3dba14fb8d8a56c59834269dfc1b6db87"
+    },
+    {
+      "path": "lib/features/call/infrastructure/flutter_webrtc_call_engine.dart",
+      "sha256": "53e1c2cabf19cf4b1529bd71238c0e3ef82021e0eeffeccf2f6a9345cf680632"
+    },
+    {
+      "path": "lib/features/call/infrastructure/p2p_call_transport.dart",
+      "sha256": "fc39795b54cb16459dce097379e1ae6d1cc25342d0094eeba7d9e2b13c5abd57"
+    },
+    {
+      "path": "lib/features/call/infrastructure/secure_call_envelope_codec.dart",
+      "sha256": "c658bcbf0631f5db252e8c7c21751fd89507150b2858cd7f2a0e2e66abdd3a67"
+    },
+    {
+      "path": "lib/features/call/presentation/foreground_call_back_guard.dart",
+      "sha256": "a33158f5ac778f643dbe5cdafe2393f9a2c93f4028f77e7302e5717ab5d2f4ac"
+    },
+    {
+      "path": "lib/features/call/presentation/foreground_call_overlay.dart",
+      "sha256": "c9915bbc1a33bc97cb565b9d50c7a0177d18fe957c2f3d2868637817feb5cdbd"
+    },
+    {
+      "path": "lib/features/call/presentation/full_screen_call_access_surface.dart",
+      "sha256": "365ccf556ff58d2c896cebf80fa1c421160805aba74f6c9e166e99e98e28c314"
+    },
+    {
+      "path": "lib/features/call/presentation/screens/active_call_screen.dart",
+      "sha256": "fa915758e1013eff3ee394f2f66dd525e8670280cf18aff215ee4fe46ad36147"
+    },
+    {
+      "path": "lib/features/call/presentation/widgets/call_controls.dart",
+      "sha256": "3c63833974ffa9a13a622a732847e29b28ff9a57f49cfc87e5305b23ddc5a254"
+    },
+    {
+      "path": "lib/features/conversation/presentation/screens/conversation_screen.dart",
+      "sha256": "d6a9b4384195dced7194d72040614d1e9cc3df868b6a82aeb615dd8ee8964efd"
+    },
+    {
+      "path": "lib/features/conversation/presentation/widgets/call_timeline_row.dart",
+      "sha256": "db97a7df76366daa6255b3f89b0c4c606f983d59a3a251ecd1842b16a243a68e"
+    },
+    {
+      "path": "lib/features/settings/application/call_privacy_preference_use_cases.dart",
+      "sha256": "27b940fe3410fde1000e79eee16069f4580832050ad20704fbd69a6dbe5e4fc2"
+    },
+    {
+      "path": "lib/l10n/app_en.arb",
+      "sha256": "2e01b2456b63ebd9753253b26843cc0f0026fada238ec5c2b4aae8b3b225c908"
+    }
+  ],
+  "signal_android": {
+    "tag": "v8.30.3",
+    "commit": "9a8f9ba79a3218ba2bddab1dabe7d23bae4cbc66"
+  },
+  "signal_ios": {
+    "tag": "8.32.0.1910",
+    "commit": "4046e74fe7b52f7790337ede04bde76fc173f23f"
+  },
+  "runtime_tests_executed": false,
+  "scenario_counts": {
+    "gaps_and_differences": 13,
+    "already_present": 18,
+    "runtime_or_scope_questions": 8
+  }
+}
