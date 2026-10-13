@@ -24,6 +24,7 @@ class CallRedialController {
   Future<OutgoingCallStartResult> start(
     String peerId, {
     bool Function()? isCurrent,
+    Future<bool> Function()? isEligible,
   }) async {
     if (_busy) return OutgoingCallStartResult.canceled;
     _busy = true;
@@ -32,17 +33,26 @@ class CallRedialController {
           (this.isCurrent?.call() ?? true) && (isCurrent?.call() ?? true),
     );
     try {
-      return await _start(peerId, request).timeout(
+      return await _start(peerId, request, isEligible).timeout(
         timeout,
         onTimeout: () {
           if (request.isAdmitted) return OutgoingCallStartResult.started;
+          final canceled = request.isCanceled;
           request.cancel();
-          return OutgoingCallStartResult.failed;
+          return canceled
+              ? OutgoingCallStartResult.canceled
+              : OutgoingCallStartResult.failed;
         },
       );
-    } catch (_) {
+    } on OutgoingCallStartCanceled {
       request.cancel();
-      return OutgoingCallStartResult.failed;
+      return OutgoingCallStartResult.canceled;
+    } catch (_) {
+      final canceled = request.isCanceled;
+      request.cancel();
+      return canceled
+          ? OutgoingCallStartResult.canceled
+          : OutgoingCallStartResult.failed;
     } finally {
       _busy = false;
     }
@@ -51,23 +61,37 @@ class CallRedialController {
   Future<OutgoingCallStartResult> _start(
     String peerId,
     OutgoingCallStartRequest request,
+    Future<bool> Function()? isEligible,
   ) async {
+    request.checkPending();
     final owner = capability();
-    if (owner == null || !await contactAllowed(peerId)) {
+    if (owner == null) {
       return OutgoingCallStartResult.unavailable;
     }
+    final allowed = await contactAllowed(peerId);
     request.checkPending();
+    if (!allowed) return OutgoingCallStartResult.unavailable;
     if (!owner.isOutgoingCallAvailable &&
         owner is OutgoingCallReadinessRecovery) {
       await (owner as OutgoingCallReadinessRecovery)
           .recoverOutgoingCallReadiness();
     }
     request.checkPending();
-    if (!owner.isOutgoingCallAvailable ||
-        !await owner.isOutgoingCallAvailableFor(peerId)) {
+    if (!owner.isOutgoingCallAvailable) {
       return OutgoingCallStartResult.unavailable;
     }
+    final contactAvailable = await owner.isOutgoingCallAvailableFor(peerId);
     request.checkPending();
+    if (!contactAvailable) return OutgoingCallStartResult.unavailable;
+    if (!identical(owner, capability())) {
+      return OutgoingCallStartResult.unavailable;
+    }
+    // Notification eligibility is local history, not payload authority. Recheck
+    // after contact/endpoint awaits; the synchronous request fence then follows
+    // the existing outgoing owner through its preflight to canonical admission.
+    final eligible = await isEligible?.call() ?? true;
+    request.checkPending();
+    if (!eligible) return OutgoingCallStartResult.unavailable;
     if (!identical(owner, capability())) {
       return OutgoingCallStartResult.unavailable;
     }
@@ -90,10 +114,13 @@ class CallBackActionHandler {
   final void Function(OutgoingCallStartResult result) onResult;
   final LinkedHashSet<CallId> _consumed = LinkedHashSet();
   CallId? _pending;
+  Object _generation = Object();
   Future<void>? _drain;
 
   Future<void> submit(CallId id) {
     if (_consumed.contains(id)) return Future<void>.value();
+    if (_pending == id) return retryPending();
+    _generation = Object();
     _pending = id;
     return retryPending();
   }
@@ -104,9 +131,14 @@ class CallBackActionHandler {
   Future<void> _drainOnce() async {
     while (_pending != null) {
       final id = _pending!;
+      final generation = _generation;
+      bool isCurrent() => identical(generation, _generation);
       try {
-        if (!await ready()) return;
+        final isReady = await ready();
+        if (!isCurrent()) continue;
+        if (!isReady) return;
       } catch (_) {
+        if (!isCurrent()) continue;
         return;
       }
       if (_pending != id) continue;
@@ -116,6 +148,7 @@ class CallBackActionHandler {
       try {
         final source = history();
         final entry = await source?.findCall(id);
+        if (!isCurrent()) continue;
         if (entry == null ||
             entry.direction != CallDirection.incoming ||
             !const {
@@ -129,13 +162,31 @@ class CallBackActionHandler {
         final latest = await source!.recentCallsForContact(
           entry.contactAccountPeerId,
         );
-        if (latest.isEmpty || latest.first.callId != id || !await ready()) {
+        if (!isCurrent()) continue;
+        if (latest.isEmpty || latest.first.callId != id) {
           onResult(OutgoingCallStartResult.unavailable);
           continue;
         }
-        onResult(await redial.start(entry.contactAccountPeerId));
+        final isReady = await ready();
+        if (!isCurrent()) continue;
+        if (!isReady) {
+          onResult(OutgoingCallStartResult.unavailable);
+          continue;
+        }
+        onResult(
+          await redial.start(
+            entry.contactAccountPeerId,
+            isCurrent: isCurrent,
+            isEligible: () async {
+              final current = await source.recentCallsForContact(
+                entry.contactAccountPeerId,
+              );
+              return current.isNotEmpty && current.first.callId == id;
+            },
+          ),
+        );
       } catch (_) {
-        onResult(OutgoingCallStartResult.failed);
+        if (isCurrent()) onResult(OutgoingCallStartResult.failed);
       }
     }
   }

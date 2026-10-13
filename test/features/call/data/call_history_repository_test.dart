@@ -4,6 +4,10 @@ import 'package:flutter_app/core/database/app_database_version.dart';
 import 'package:flutter_app/core/database/migrations/117_call_history.dart';
 import 'package:flutter_app/core/database/production_migration_registry.dart';
 import 'package:flutter_app/features/call/application/call_history_projector.dart';
+import 'package:flutter_app/features/call/application/call_redial_controller.dart';
+import 'package:flutter_app/features/call/application/outgoing_call_capability.dart';
+import 'package:flutter_app/features/call/data/call_history_conversation_timeline_source.dart';
+import 'package:flutter_app/features/call/data/call_history_orbit_activity_source.dart';
 import 'package:flutter_app/features/call/data/call_history_repository.dart';
 import 'package:flutter_app/features/call/data/call_history_repository_impl.dart';
 import 'package:flutter_app/features/call/domain/call_end_reason.dart';
@@ -13,6 +17,25 @@ import 'package:flutter_app/features/call/domain/call_state.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
+
+class _CallbackCapability implements OutgoingCallCapability {
+  final starts = <String>[];
+  @override
+  bool get isOutgoingCallAvailable => true;
+  @override
+  Stream<bool> get outgoingCallAvailabilityChanges => const Stream.empty();
+  @override
+  Future<bool> isOutgoingCallAvailableFor(String peerId) async => true;
+  @override
+  Future<OutgoingCallStartResult> startOutgoingCall(
+    String peerId, {
+    OutgoingCallStartRequest? request,
+  }) async {
+    request?.admit();
+    starts.add(peerId);
+    return OutgoingCallStartResult.started;
+  }
+}
 
 void main() {
   sqfliteFfiInit();
@@ -45,10 +68,11 @@ void main() {
     required DateTime startedAt,
     CallHistoryStatus status = CallHistoryStatus.completed,
     CallEndReason reason = CallEndReason.localHangup,
+    CallDirection direction = CallDirection.outgoing,
   }) => CallHistoryEntry(
     callId: CallId.parse(id),
     contactAccountPeerId: contact,
-    direction: CallDirection.outgoing,
+    direction: direction,
     terminalReason: reason,
     status: status,
     startedAt: startedAt,
@@ -253,6 +277,169 @@ void main() {
       );
     },
   );
+
+  test(
+    'all history consumers agree on mixed precision, ties and contact grouping without writes',
+    () async {
+      final stamp = DateTime.utc(2026, 10, 13);
+      final entries = <CallHistoryEntry>[];
+      var serial = 0;
+      for (final contact in ['contact-a', 'contact-b']) {
+        for (final micros in [0, 1, 500, 999, 1000, 1000]) {
+          entries.add(
+            row(
+              id: 'aaaaaaaa-aaaa-4aaa-8aaa-${(++serial).toString().padLeft(12, '0')}',
+              contact: contact,
+              startedAt: stamp.add(Duration(microseconds: micros)),
+              direction: CallDirection.incoming,
+              status: CallHistoryStatus.missed,
+              reason: CallEndReason.noAnswer,
+            ),
+          );
+        }
+      }
+      // Deliberately insert in reverse order; SQL must own ordering.
+      for (final entry in entries.reversed) {
+        await repository.upsertTerminal(entry);
+      }
+      final repo = repository as CallHistoryRepositoryImpl;
+      await repo.markCallsRead(
+        'contact-b',
+        stamp.add(const Duration(minutes: 1)),
+      );
+      final stored = await db.query(kCallHistoryTable, orderBy: 'call_id');
+      final unread = await repo.unreadCallCountsForContacts([
+        'contact-a',
+        'contact-b',
+      ]);
+      final expected = [...entries]
+        ..sort((a, b) {
+          final time = b.startedAt.compareTo(a.startedAt);
+          return time != 0 ? time : a.callId.value.compareTo(b.callId.value);
+        });
+      final observed = <CallId>[];
+      CallHistoryCursor? cursor;
+      do {
+        final page = await repo.browse(pageSize: 2, cursor: cursor);
+        expect(page.total, 12);
+        expect(page.missed, 12);
+        observed.addAll(page.rows.map((r) => r.entry.callId));
+        cursor = page.next;
+      } while (cursor != null);
+      expect(observed, expected.map((e) => e.callId));
+      expect(observed.toSet(), hasLength(12));
+      final timeline = CallHistoryConversationTimelineSource(repo);
+      final batched = await repo.latestForContacts(['contact-b', 'contact-a']);
+      expect(batched.map((e) => e.callId), [
+        for (final contact in ['contact-a', 'contact-b'])
+          ...expected
+              .where((e) => e.contactAccountPeerId == contact)
+              .map((e) => e.callId),
+      ]);
+      final orbit = CallHistoryOrbitActivitySource(
+        repo.latestForContacts,
+        repo.unreadCallCountsForContacts,
+      );
+      final latest = await orbit.latestCallsForContacts([
+        'contact-b',
+        'contact-a',
+      ]);
+      for (final contact in ['contact-a', 'contact-b']) {
+        final ids = expected
+            .where((e) => e.contactAccountPeerId == contact)
+            .map((e) => e.callId)
+            .toList();
+        expect((await repo.listForContact(contact)).map((e) => e.callId), ids);
+        expect(
+          (await timeline.recentCallsForContact(contact)).map((e) => e.callId),
+          ids,
+        );
+        expect(latest[contact]?.callId, ids.first.value);
+      }
+      expect(
+        await repo.unreadCallCountsForContacts(['contact-a', 'contact-b']),
+        unread,
+      );
+      expect(unread, {'contact-a': 6});
+      expect(
+        await db.query(kCallHistoryTable, orderBy: 'call_id'),
+        stored,
+        reason:
+            'ordering must not rewrite any timestamp, classification or read_at',
+      );
+      expect(
+        stored.map((r) => r['started_at']),
+        containsAll([
+          '2026-10-13T00:00:00.000Z',
+          '2026-10-13T00:00:00.000001Z',
+          '2026-10-13T00:00:00.000999Z',
+          '2026-10-13T00:00:00.001Z',
+        ]),
+      );
+    },
+  );
+
+  for (final status in [
+    CallHistoryStatus.missed,
+    CallHistoryStatus.cancelled,
+    CallHistoryStatus.busy,
+  ]) {
+    test(
+      'real history admits newest microsecond $status callback and refuses older card',
+      () async {
+        final stamp = DateTime.utc(2026, 10, 13);
+        final reason = switch (status) {
+          CallHistoryStatus.cancelled => CallEndReason.callerCancelled,
+          CallHistoryStatus.busy => CallEndReason.busy,
+          _ => CallEndReason.noAnswer,
+        };
+        final older = row(
+          id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+          startedAt: stamp,
+          direction: CallDirection.incoming,
+          status: status,
+          reason: reason,
+        );
+        final newest = row(
+          id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+          startedAt: stamp.add(const Duration(microseconds: 1)),
+          direction: CallDirection.incoming,
+          status: status,
+          reason: reason,
+        );
+        await repository.upsertTerminal(older);
+        await repository.upsertTerminal(newest);
+        final before = await db.query(kCallHistoryTable, orderBy: 'call_id');
+        final owner = _CallbackCapability();
+        final results = <OutgoingCallStartResult>[];
+        final actions = CallBackActionHandler(
+          history: () => CallHistoryConversationTimelineSource(repository),
+          ready: () async => true,
+          redial: CallRedialController(
+            capability: () => owner,
+            contactAllowed: (_) async => true,
+          ),
+          onResult: results.add,
+        );
+        await actions.submit(older.callId);
+        expect(owner.starts, isEmpty);
+        expect(results, [OutgoingCallStartResult.unavailable]);
+        await actions.submit(newest.callId);
+        expect(owner.starts, ['contact-a']);
+        expect(results.last, OutgoingCallStartResult.started);
+        expect(
+          (await repository.getByCallId(newest.callId))?.direction,
+          CallDirection.incoming,
+        );
+        expect((await repository.getByCallId(newest.callId))?.status, status);
+        expect(
+          (await repository.getByCallId(newest.callId))?.terminalReason,
+          reason,
+        );
+        expect(await db.query(kCallHistoryTable, orderBy: 'call_id'), before);
+      },
+    );
+  }
 
   test(
     'Missed filter uses incoming missed/cancelled/busy and leaves unread counts intact',

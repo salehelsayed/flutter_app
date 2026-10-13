@@ -6694,6 +6694,25 @@ visible and cannot become an ordinary first-attempt PASS.
   notification/conversation suites; new selectors are additive in `1to1` and
   `call-signaling`. The retained initial overlap patch and preservation receipt
   are in `.codex-test-logs/se42-client-20261013/`.
+  **SE-42 v2 history/callback validation:** all three query paths (global pages,
+  per-contact history and batched latest-for-Orbit) must compare normalized UTC
+  fractional precision, with descending time and ascending call-ID ties. A raw
+  ISO string comparison puts an exact millisecond ahead of a later microsecond
+  in that millisecond. The real SQLite regression compares every consumer,
+  pagination, classification and complete persisted rows/read state.
+  Callback generation stays current through history, readiness and outgoing
+  preflight; a duplicate pending ID retains its generation. Recheck latest local
+  history after contact/endpoint availability awaits, before outgoing delegation.
+  The existing request's synchronous currentness fence reaches canonical
+  admission; after admission it cannot cancel the coordinator-owned call.
+  A superseded preflight's late exception or timeout reports cancellation;
+  a current request still reports failure, and an admitted timeout still reports
+  admission without canceling the call. Cancellation remains sticky across a
+  later lifecycle/readiness change.
+  Deterministic completers/fake time cover supersession, timeout and busy, with
+  an additional production composition/graph admission preservation case.
+  New evidence is kept separately under `.codex-test-logs/se42-v2-validation-20261013/`;
+  v1 receipts remain historical and do not certify a later source/build.
   The protected notification-open harness hash was reviewed and re-pinned for
   its optional `callId` fake signature only; existing layout, target roles,
   launch commands, assertions and disposal requirements are retained.

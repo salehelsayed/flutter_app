@@ -33,6 +33,8 @@ import 'package:flutter_app/features/call/application/call_wake_authorization_co
 import 'package:flutter_app/features/call/application/foreground_call_capability.dart';
 import 'package:flutter_app/features/call/application/handle_incoming_call_signal.dart';
 import 'package:flutter_app/features/call/application/outgoing_call_capability.dart';
+import 'package:flutter_app/features/call/application/call_redial_controller.dart';
+import 'package:flutter_app/features/call/data/call_history_conversation_timeline_source.dart';
 import 'package:flutter_app/features/call/application/voice_call_feature_flags.dart';
 import 'package:flutter_app/features/call/data/call_history_repository.dart';
 import 'package:flutter_app/features/call/domain/call_engine.dart';
@@ -4793,6 +4795,101 @@ void main() {
     );
   }
 
+  test(
+    'local callback generation reaches production graph admission and preserves admitted busy call',
+    () async {
+      const contact = 'remote-account';
+      final issued = _GatedIssuedWakeStore(_newCallWakeStores().issued);
+      late final _ProductionIosFixture fixture;
+      fixture = await _createProductionIosFixture(
+        outgoingContactAccountPeerId: contact,
+        issuedStore: issued,
+        privacyFlags: {'voice_call_ios_native_enabled': false},
+        microphonePermission: const _GrantedCallMicrophonePermission(),
+        ensureOutgoingCallWakeAuthority: (peer) async {
+          final record = await issued.readForContact(peer);
+          if (record == null) return false;
+          return fixture.graphs.single.markCallWakeHandleDistributed(
+            peer,
+            record.grant,
+          );
+        },
+      );
+      await fixture.composition.start();
+      await _configureCancellationEndpoint(fixture, contact);
+      final graph = fixture.graphs.single;
+      final repository = graph.coordinator.historyProjector.repository;
+      final history = CallHistoryConversationTimelineSource(repository);
+      final stamp = graph.coordinator.clock().subtract(
+        const Duration(minutes: 1),
+      );
+      CallHistoryEntry missed(CallId id, int micros) => CallHistoryEntry(
+        callId: id,
+        contactAccountPeerId: contact,
+        direction: CallDirection.incoming,
+        status: CallHistoryStatus.missed,
+        terminalReason: CallEndReason.noAnswer,
+        startedAt: stamp.add(Duration(microseconds: micros)),
+        connectedAt: null,
+        endedAt: stamp.add(const Duration(seconds: 30)),
+        transportRoute: null,
+        createdAt: stamp.add(const Duration(seconds: 30)),
+        updatedAt: stamp.add(const Duration(seconds: 30)),
+      );
+      await repository.upsertTerminal(missed(_callA, 0));
+      final results = <OutgoingCallStartResult>[];
+      final handler = CallBackActionHandler(
+        history: () => history,
+        ready: () async => true,
+        redial: CallRedialController(
+          capability: () => fixture.composition,
+          contactAllowed: (_) async => true,
+        ),
+        onResult: results.add,
+      );
+      final entered = Completer<void>();
+      final release = Completer<void>();
+      addTearDown(() {
+        if (!release.isCompleted) release.complete();
+      });
+      issued.holdNextRead = () async {
+        entered.complete();
+        await release.future;
+      };
+      final a = handler.submit(_callA);
+      await entered.future.timeout(const Duration(seconds: 2));
+      expect(graph.coordinator.activeSession, isNull);
+      await repository.upsertTerminal(missed(_callB, 1));
+      final b = handler.submit(_callB);
+      release.complete();
+      await Future.wait([a, b]);
+      expect(results, [
+        OutgoingCallStartResult.canceled,
+        OutgoingCallStartResult.started,
+      ]);
+      final admitted = graph.coordinator.activeSession!;
+      expect(admitted.callId, isNot(anyOf(_callA, _callB)));
+      expect(admitted.state, CallState.inviting);
+      expect(
+        fixture.bridge.requests.where((r) => r['cmd'] == 'call_store_v1'),
+        hasLength(1),
+      );
+      final third = CallId.parse('dddddddd-dddd-4ddd-8ddd-dddddddddddd');
+      await repository.upsertTerminal(missed(third, 2));
+      await handler.submit(third);
+      expect(results.last, OutgoingCallStartResult.unavailable);
+      expect(graph.coordinator.activeSession?.callId, admitted.callId);
+      expect(graph.coordinator.activeSession?.isTerminal, isFalse);
+      expect(
+        fixture.bridge.requests.where((r) => r['cmd'] == 'call_store_v1'),
+        hasLength(1),
+      );
+      await handler.submit(_callA);
+      await handler.submit(_callB);
+      expect(graph.coordinator.activeSession?.callId, admitted.callId);
+    },
+  );
+
   for (final boundary in <String>[
     'native reconciliation',
     'final wake authority',
@@ -5817,6 +5914,7 @@ Future<_ProductionIosFixture> _createProductionIosFixture({
   CallNetworkEffectsAllowed? networkEffectsAllowed,
   String? outgoingContactAccountPeerId,
   CallMicrophonePermission? microphonePermission,
+  EnsureOutgoingCallWakeAuthority? ensureOutgoingCallWakeAuthority,
   String? nativeHandleOverride,
   Future<Object?> Function(String, Map<String, Object?>)? lifecycleOverride,
 }) async {
@@ -5891,6 +5989,7 @@ Future<_ProductionIosFixture> _createProductionIosFixture({
     networkEffectsAllowed: networkEffectsAllowed ?? () => true,
     isVoiceNoteRecording: () => false,
     microphonePermission: microphonePermission,
+    ensureOutgoingCallWakeAuthority: ensureOutgoingCallWakeAuthority,
     issuedCallWakeHandleStore: issuedStore ?? callWakeStores.issued,
     receivedCallWakeHandleStore: callWakeStores.received,
     androidCallLifecycleAdapterFactory:

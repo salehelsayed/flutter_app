@@ -3,6 +3,13 @@ import 'package:sqflite_sqlcipher/sqflite.dart';
 import '../migrations/117_call_history.dart';
 import '../db_write_transaction.dart';
 
+// UTC DateTime serialization uses three fractional digits for exact
+// milliseconds and six otherwise. Normalize comparisons, never stored rows.
+String _chronologicalTimestamp(String column) =>
+    "CASE WHEN substr($column, -5, 1) = '.' "
+    "THEN substr($column, 1, length($column) - 1) || '000Z' "
+    'ELSE $column END';
+
 Future<void> insertCallHistoryTerminal(
   Database database,
   Map<String, Object?> row,
@@ -34,7 +41,7 @@ Future<List<Map<String, Object?>>> loadCallHistoryForContact(
   kCallHistoryTable,
   where: 'contact_account_peer_id = ?',
   whereArgs: <Object?>[contactAccountPeerId],
-  orderBy: 'started_at DESC, call_id ASC',
+  orderBy: '(${_chronologicalTimestamp('started_at')}) DESC, call_id ASC',
 )).map(Map<String, Object?>.of).toList(growable: false);
 
 /// Bounded global page over the same terminal table. Counts and rows share a
@@ -53,12 +60,7 @@ loadCallHistoryPage(
       "h.direction = 'incoming' AND h.status IN ('missed', 'cancelled', 'busy')";
   const from =
       '$kCallHistoryTable h LEFT JOIN contacts c ON c.peer_id = h.contact_account_peer_id';
-  // DateTime emits three fractional digits for exact milliseconds and six
-  // otherwise. Normalize only comparisons; persisted history stays unchanged.
-  const timestamp =
-      "CASE WHEN substr(h.started_at, -5, 1) = '.' "
-      "THEN substr(h.started_at, 1, length(h.started_at) - 1) || '000Z' "
-      "ELSE h.started_at END";
+  final timestamp = _chronologicalTimestamp('h.started_at');
   final cursorTimestamp = cursorStartedAt?.replaceFirstMapped(
     RegExp(r'\.(\d{3})Z$'),
     (match) => '.${match[1]}000Z',
@@ -106,9 +108,9 @@ loadCallHistoryPage(
 /// 409: the newest terminal call for each of [contactAccountPeerIds].
 ///
 /// One query for the whole Orbit roster rather than one per contact. The rows
-/// come back newest-first on the existing
-/// `(contact_account_peer_id, started_at DESC, call_id ASC)` index, so the
-/// caller keeps the FIRST row it sees per contact.
+/// are grouped by contact and explicitly ordered chronologically, with call ID
+/// ties. The existing contact index still scopes lookup; the caller keeps the
+/// FIRST row it sees per contact.
 Future<List<Map<String, Object?>>> loadLatestCallHistoryForContacts(
   Database database,
   List<String> contactAccountPeerIds,
@@ -124,7 +126,9 @@ Future<List<Map<String, Object?>>> loadLatestCallHistoryForContacts(
     kCallHistoryTable,
     where: 'contact_account_peer_id IN ($placeholders)',
     whereArgs: contactAccountPeerIds,
-    orderBy: 'contact_account_peer_id ASC, started_at DESC, call_id ASC',
+    orderBy:
+        'contact_account_peer_id ASC, '
+        '(${_chronologicalTimestamp('started_at')}) DESC, call_id ASC',
   )).map(Map<String, Object?>.of).toList(growable: false);
 }
 
