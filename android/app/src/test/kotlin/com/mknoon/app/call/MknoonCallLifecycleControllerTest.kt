@@ -13,6 +13,50 @@ import org.junit.Test
 
 class MknoonCallLifecycleControllerTest {
     @Test
+    fun `output confirmation cannot succeed after terminal cleanup during the request`() {
+        val rig = LifecycleRig()
+        val id = rig.payload.nativeCallId
+        rig.platform.outputs = listOf(MknoonCallAudioOutput("synthetic-b", "Synthetic B", "bluetooth", false))
+        assertEquals(MknoonCallPresentationResult.PRESENTED, rig.controller.registerOutgoing(rig.payload))
+        rig.controller.attach()
+        assertTrue(rig.controller.markAdopted(id))
+        assertTrue(rig.controller.acknowledge(id, requireNotNull(rig.controller.snapshot()).highestSequence, PendingNativeCallAcknowledgement.ADOPTED))
+        assertTrue(rig.controller.activateAudio(id))
+        rig.platform.onAudioOutputRequest = { assertTrue(rig.controller.endFromDart(id)) }
+        assertFalse(rig.controller.requestAudioOutput(id, "synthetic-b"))
+        assertEquals(1, rig.platform.stopEndpointUpdatesCalls)
+        assertFalse(rig.controller.audioState().active)
+    }
+
+    @Test
+    fun `named output commands require exact active adopted owner and clear on cleanup`() {
+        val rig = LifecycleRig()
+        val id = rig.payload.nativeCallId
+        rig.platform.outputs = listOf(
+            MknoonCallAudioOutput("synthetic-a", "Synthetic A", "bluetooth", true),
+            MknoonCallAudioOutput("synthetic-b", "Synthetic B", "bluetooth", false),
+        )
+        assertTrue(rig.controller.audioOutputs(id).isEmpty())
+        assertFalse(rig.controller.requestAudioOutput(id, "synthetic-b"))
+        assertEquals(MknoonCallPresentationResult.PRESENTED, rig.controller.registerOutgoing(rig.payload))
+        rig.controller.attach()
+        assertTrue(rig.controller.markAdopted(id))
+        assertTrue(rig.controller.acknowledge(id, requireNotNull(rig.controller.snapshot()).highestSequence, PendingNativeCallAcknowledgement.ADOPTED))
+        assertTrue(rig.controller.audioOutputs(id).isEmpty())
+        assertTrue(rig.controller.activateAudio(id))
+        assertEquals(2, rig.controller.audioOutputs(id).size)
+        assertTrue(rig.controller.requestAudioOutput(id, "synthetic-b"))
+        assertEquals(listOf("synthetic-b"), rig.platform.requestedOutputs)
+        assertTrue(rig.controller.audioOutputs(UUID.randomUUID()).isEmpty())
+        rig.platform.outputs = rig.platform.outputs.filter { it.id != "synthetic-a" }
+        assertFalse(rig.controller.requestAudioOutput(id, "synthetic-a"))
+        assertTrue(rig.controller.endFromDart(id))
+        assertTrue(rig.controller.audioOutputs(id).isEmpty())
+        assertFalse(rig.controller.requestAudioOutput(id, "synthetic-b"))
+        assertEquals(1, rig.platform.stopEndpointUpdatesCalls)
+    }
+
+    @Test
     fun `PCM observer sees only current adopted active audio owner and authoritative mute`() {
         val rig = LifecycleRig()
         val id = rig.payload.nativeCallId
@@ -2352,6 +2396,17 @@ internal data class LifecycleAcknowledgementCall(
 internal class LifecycleFakePlatform(
     private val operations: MutableList<String> = mutableListOf(),
 ) : MknoonCallPlatform {
+    var outputs: List<MknoonCallAudioOutput> = emptyList()
+    val requestedOutputs = mutableListOf<String>()
+    var onAudioOutputRequest: (() -> Unit)? = null
+    override fun audioOutputs(nativeCallId: UUID) = outputs
+    override fun requestAudioOutput(nativeCallId: UUID, identifier: String): Boolean {
+        if (outputs.none { it.id == identifier }) return false
+        requestedOutputs += identifier
+        onAudioOutputRequest?.invoke()
+        return true
+    }
+
     var registrationSucceeds = true
     var registerCalls = 0
     var registerOutgoingCalls = 0

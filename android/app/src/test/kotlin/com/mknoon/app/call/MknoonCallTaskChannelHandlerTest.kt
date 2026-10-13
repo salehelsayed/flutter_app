@@ -12,6 +12,24 @@ import org.junit.Test
  * background (like other calling apps) instead of closing the task.
  */
 class MknoonCallTaskChannelHandlerTest {
+    @Test fun `device unlock probe reflects locked unlocked and unavailable without moving the task`() {
+        for (unlocked in listOf(false, true)) {
+            val result = TaskResult()
+            MknoonCallTaskChannelHandler(isDeviceUnlocked = { unlocked }, moveTaskToBack = { error("must not move") })
+                .onMethodCall(MethodCall("isDeviceUnlocked", null), result)
+            assertEquals(unlocked, result.value)
+        }
+        val unavailable = TaskResult()
+        MknoonCallTaskChannelHandler(isDeviceUnlocked = { error("unavailable") }, moveTaskToBack = { true })
+            .onMethodCall(MethodCall("isDeviceUnlocked", null), unavailable)
+        assertEquals(false, unavailable.value)
+    }
+    @Test fun `device unlock probe fails closed when no activity probe exists`() {
+        val result = TaskResult()
+        MknoonCallTaskChannelHandler { true }
+            .onMethodCall(MethodCall("isDeviceUnlocked", null), result)
+        assertEquals(false, result.value)
+    }
     @Test fun `moveToBackground moves the whole task to the back`() {
         var moves = 0
         val handler = MknoonCallTaskChannelHandler { moves += 1; true }

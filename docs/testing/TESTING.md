@@ -6675,6 +6675,57 @@ visible and cannot become an ordinary first-attempt PASS.
   for unrelated changes and device/release obligations. The original red probe
   and first cleanup-ordering regression remain preserved. These are host
   queue/custody proofs, not audible-media or signed-device certification.
+  **SE-42 client controls and local history:** active-call minimization retains
+  the canonical call/media owners and restores retained navigation, composer
+  focus and accessibility. Expanded Android Back backgrounds the task;
+  minimized Back pops ordinary routes and backgrounds at the navigator root.
+  The return bar needs its own semantics tap action when child semantics are
+  excluded. Remote end clears a minimized bar without opening a terminal modal.
+  Local Call back actions are untrusted routing hints: resolve the received
+  terminal row, reject superseded/duplicate actions, wait for canonical runtime
+  and foreground/unlock, then use current contact/authenticated outgoing
+  preflight. They never answer the historical call. The Calls page queries the
+  existing terminal table with stable timestamp/ID keyset paging and a current
+  local-contact join. Millisecond/microsecond ISO timestamp comparisons are
+  normalized without rewriting persisted rows, and the read transaction uses
+  the existing bridge-call zone guard. Counts retain the incoming missed/cancelled/busy rule and
+  browsing does not mark calls read. The synthetic real-SQLite repository and
+  widget/state/action tests live under `test/features/call/` and the existing
+  notification/conversation suites; new selectors are additive in `1to1` and
+  `call-signaling`. The retained initial overlap patch and preservation receipt
+  are in `.codex-test-logs/se42-client-20261013/`.
+  The protected notification-open harness hash was reviewed and re-pinned for
+  its optional `callId` fake signature only; existing layout, target roles,
+  launch commands, assertions and disposal requirements are retained.
+  **Transient audio inventory:** named output choices use the existing Telecom
+  and CallKit owners, not another audio session. Keep distinct endpoint IDs
+  even for two Bluetooth devices of the same class; keep names/IDs out of
+  journals, snapshots, persistence and diagnostics. Stable private row keys
+  cancel a tap when its endpoint disappears; a replacement row cannot inherit
+  the gesture. Confirmation observes the existing native endpoint collector
+  without holding its controller lock or adding another flow consumer. A native accepted preference
+  is not actual routing: selection succeeds only when the exact endpoint is
+  observed selected, with active-owner/generation/end fences and bounded waits.
+  iOS exposes eligible AVAudioSession inputs and built-in routes; do not invent
+  selectable outputs the OS does not expose. The Android call-package native
+  selection passes 538 JVM cases, and existing RunnerTests pass 379 cases on the
+  pinned available iPhone 17 simulator (iOS 26.5), with no failures or skips.
+  Native receipts are `android-call-native-final-v2.log`, its retained
+  JUnit XML, and `runner-tests-green.xcresult` beneath that same ignored root.
+  These host/native results do not prove actual accessory routing, acoustic
+  two-way audio, physical PushKit/FCM receipt, DND policy or proximity. Use
+  `docs/testing/se42-owner-device-checklists.md` for those owner observations.
+  **Expired offline calls:** the client signal lifetime is currently 40 seconds
+  under the 45-second ceiling; each later terminal envelope has its own expiry.
+  Relay routing retention is separate from payload delivery eligibility, and
+  terminalization/replay tombstones do not create a deliverable missed outcome.
+  Codec expiry rejection and headless terminal history require a received
+  authenticated signal. “History only” is not durable catch-up for a recipient
+  that received nothing. SE-43 is a causal finding with device reproduction
+  pending; no relay/TTL/catch-up repair is included. Low-data mode and new
+  automatic one-way detection are owner-deferred. Local RTP progress cannot
+  corroborate the peer's sender activity or distinguish mute/silence/DTX alone.
+  Existing bounded reconnect/silence-safe tests are a separate preservation leg.
   **CallKit/WebRTC external audio ownership:** the native controller forwards
   every CallKit activation/deactivation callback to `RTCAudioSession`, before
   descriptor guards. This keeps WebRTC's external activation balanced when the

@@ -4399,4 +4399,49 @@ class AppLocalizationsDe extends AppLocalizations {
   @override
   String get update_notification_body_security =>
       'Es behebt ein Sicherheitsproblem in deiner Version. Tippe zum Aktualisieren.';
+
+  @override
+  String get call_minimize => 'Anruf minimieren';
+
+  @override
+  String get call_return => 'Zurück zum Anruf';
+
+  @override
+  String get call_muted => 'Mikrofon stummgeschaltet';
+
+  @override
+  String get call_back => 'Zurückrufen';
+
+  @override
+  String get calls_title => 'Anrufe';
+
+  @override
+  String get calls_all => 'Alle';
+
+  @override
+  String get calls_missed => 'Verpasst';
+
+  @override
+  String get calls_search => 'Kontakte suchen';
+
+  @override
+  String get calls_clear_search => 'Suche löschen';
+
+  @override
+  String get calls_refresh => 'Anrufe aktualisieren';
+
+  @override
+  String get calls_empty => 'Keine Anrufe gefunden';
+
+  @override
+  String get calls_load_error => 'Anrufe konnten nicht geladen werden';
+
+  @override
+  String get calls_more => 'Mehr anzeigen';
+
+  @override
+  String get call_audio_choose_output => 'Audioausgabe wählen';
+
+  @override
+  String get call_audio_refresh_outputs => 'Audioausgänge aktualisieren';
 }

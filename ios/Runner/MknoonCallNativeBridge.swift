@@ -139,6 +139,10 @@ internal final class MknoonCallNativeBridge: NSObject, FlutterStreamHandler {
       project(call.arguments, result)
     case "readAudioState":
       readAudioState(call.arguments, result)
+    case "readAudioOutputs":
+      readAudioOutputs(call.arguments, result)
+    case "requestAudioOutput":
+      requestAudioOutput(call.arguments, result)
     case "startRingback":
       ringback(call.arguments, result, controller.startRingback)
     case "stopRingback":
@@ -259,6 +263,22 @@ internal final class MknoonCallNativeBridge: NSObject, FlutterStreamHandler {
           let state = map["state"] as? String
     else { badArguments(result); return }
     result(controller.project(callId, state: state))
+  }
+
+  private func readAudioOutputs(_ arguments: Any?, _ result: @escaping FlutterResult) {
+    guard let map = identityMap(arguments), let callId = resolve(map["callHandle"])
+    else { badArguments(result); return }
+    result(["version": Self.protocolVersion, "outputs": controller.audioOutputs(callId).map {
+      ["id": $0.id, "name": $0.name, "route": $0.route, "selected": $0.selected] as [String: Any]
+    }])
+  }
+
+  private func requestAudioOutput(_ arguments: Any?, _ result: @escaping FlutterResult) {
+    guard let map = exactMap(arguments, keys: ["version", "callHandle", "deviceId"]),
+          validVersion(map["version"]), let callId = resolve(map["callHandle"]),
+          let id = map["deviceId"] as? String, !id.isEmpty, id.utf8.count <= 1024
+    else { badArguments(result); return }
+    result(controller.requestAudioOutput(callId, identifier: id))
   }
 
   private func readAudioState(_ arguments: Any?, _ result: @escaping FlutterResult) {

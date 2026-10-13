@@ -800,6 +800,7 @@ final class _GenerationNotificationService
     required String contactAccountPeerId,
     required String title,
     required String body,
+    String? callId,
   }) async {}
 
   @override

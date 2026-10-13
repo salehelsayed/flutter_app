@@ -4,10 +4,65 @@ import 'package:sqflite_sqlcipher/sqflite.dart';
 import '../domain/call_id.dart';
 import 'call_history_repository.dart';
 
-final class CallHistoryRepositoryImpl implements CallHistoryRepository {
+final class CallHistoryRepositoryImpl
+    implements CallHistoryRepository, CallHistoryBrowser {
   const CallHistoryRepositoryImpl(this.database);
 
   final Database database;
+
+  @override
+  Future<CallHistoryPage> browse({
+    bool missedOnly = false,
+    String search = '',
+    CallHistoryCursor? cursor,
+    int pageSize = 50,
+  }) {
+    if (pageSize < 1 || pageSize > 100) {
+      throw ArgumentError.value(pageSize, 'pageSize');
+    }
+    return _browse(
+      missedOnly: missedOnly,
+      search: search,
+      cursor: cursor,
+      pageSize: pageSize,
+    );
+  }
+
+  Future<CallHistoryPage> _browse({
+    required bool missedOnly,
+    required String search,
+    required CallHistoryCursor? cursor,
+    required int pageSize,
+  }) async {
+    final page = await loadCallHistoryPage(
+      database,
+      missedOnly: missedOnly,
+      search: search,
+      limit: pageSize + 1,
+      cursorStartedAt: cursor?.startedAt.toUtc().toIso8601String(),
+      cursorCallId: cursor?.callId.value,
+    );
+    final rows = page.rows
+        .take(pageSize)
+        .map(
+          (map) => CallHistoryListRow(
+            CallHistoryEntry.fromMap(map),
+            map['local_contact_name'] as String?,
+          ),
+        )
+        .toList(growable: false);
+    return CallHistoryPage(
+      rows: List.unmodifiable(rows),
+      total: page.total,
+      missed: page.missed,
+      next: page.rows.length <= pageSize || rows.isEmpty
+          ? null
+          : CallHistoryCursor(
+              rows.last.entry.startedAt,
+              rows.last.entry.callId,
+            ),
+    );
+  }
 
   @override
   Future<void> upsertTerminal(CallHistoryEntry entry) =>

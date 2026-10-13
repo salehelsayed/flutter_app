@@ -1,4 +1,7 @@
 import 'dart:async';
+import 'package:flutter_app/features/call/application/call_history_access.dart';
+import 'package:flutter_app/features/call/application/call_redial_controller.dart';
+import 'package:flutter_app/features/call/presentation/screens/calls_page.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
@@ -2638,6 +2641,31 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
     }
   }
 
+  void _onOpenCalls() {
+    final source = widget.directRouteAuthority.resolvedCallTimelineSource;
+    if (source is! CallHistoryBrowsingSource) return;
+    final browser = (source as CallHistoryBrowsingSource).callHistoryBrowser;
+    if (browser == null || source == null) return;
+    unawaited(
+      Navigator.of(context).push<void>(
+        MaterialPageRoute(
+          builder: (_) => CallsPage(
+            browser: browser,
+            changes: source.changes,
+            redial: CallRedialController(
+              capability: () =>
+                  widget.directRouteAuthority.resolvedOutgoingCallCapability,
+              contactAllowed: (peerId) async {
+                final contact = await widget.contactRepo.getContact(peerId);
+                return contact != null && !contact.isBlocked;
+              },
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
   // 193: flip the Orbit view surface. Leaving the all-chats view force-closes
   // search so its dock/trigger don't dangle over the Inner-Circle surface.
   void _onToggleView() {
@@ -3134,6 +3162,10 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
     final showPersistentNav =
         widget.appShellController != null &&
         widget.feedUnreadCountListenable != null;
+    final callSource = widget.directRouteAuthority.resolvedCallTimelineSource;
+    final historyBrowser = callSource is CallHistoryBrowsingSource
+        ? (callSource as CallHistoryBrowsingSource).callHistoryBrowser
+        : null;
     return OrbitScreen(
       headerProjectionListenable: _headerProjectionNotifier,
       listProjectionListenable: _listProjectionNotifier,
@@ -3187,6 +3219,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
       onInnerCircleEditSessionChanged: widget.onEditSessionActiveChanged,
       innerCircleResetListenable: _innerCircleResetTick,
       onOpenSettings: _onOpenSettings,
+      onOpenCalls: historyBrowser == null ? null : _onOpenCalls,
       p2pService: widget.p2pService,
     );
   }

@@ -875,6 +875,12 @@ final class AndroidProductionHeadlessCallAdmissionBackend
     final callHistory = CallHistoryProjector(callHistoryRepository);
     final headlessCard = HeadlessMissedCallNotification();
     final missedCallNotifier = MissedCallNotifier(
+      postWithAction: (entry, title, body) => headlessCard.show(
+        contactAccountPeerId: entry.contactAccountPeerId,
+        callId: entry.callId.value,
+        title: title,
+        body: body,
+      ),
       post:
           ({
             required String contactAccountPeerId,

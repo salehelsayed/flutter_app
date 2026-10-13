@@ -35,9 +35,16 @@ final class MissedCallNotifier {
     required this.isSuppressed,
     required this.missedBody,
     required this.unknownCallerTitle,
+    this.postWithAction,
   });
 
   final PostMissedCallNotification post;
+  final Future<void> Function(
+    CallHistoryEntry entry,
+    String title,
+    String body,
+  )?
+  postWithAction;
   final ResolveMissedCallContactName resolveContactName;
   final MissedCallNotificationSuppressed isSuppressed;
 
@@ -90,11 +97,15 @@ final class MissedCallNotifier {
         : name.trim();
 
     try {
-      await post(
-        contactAccountPeerId: contactAccountPeerId,
-        title: title,
-        body: missedBody,
-      );
+      if (postWithAction != null) {
+        await postWithAction!(entry, title, missedBody);
+      } else {
+        await post(
+          contactAccountPeerId: contactAccountPeerId,
+          title: title,
+          body: missedBody,
+        );
+      }
     } catch (error) {
       emitFlowEvent(
         layer: 'FL',

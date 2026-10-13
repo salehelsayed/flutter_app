@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import '../domain/call_id.dart';
+import '../domain/call_audio_output_device.dart';
 import '../domain/call_session_snapshot.dart';
 import 'call_audio_controller.dart';
 
@@ -64,5 +65,14 @@ abstract interface class ForegroundCallCapability {
   Future<ForegroundCallActionResult> setSpeakerEnabled(
     CallId callId,
     bool enabled,
+  );
+}
+
+/// Optional transient inventory; the canonical call/audio owners do the work.
+abstract interface class ForegroundCallAudioPickerCapability {
+  Future<List<CallAudioOutputDevice>> outputDevices(CallId callId);
+  Future<ForegroundCallActionResult> selectOutputDevice(
+    CallId callId,
+    String id,
   );
 }

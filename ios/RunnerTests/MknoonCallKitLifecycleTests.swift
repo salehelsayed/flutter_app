@@ -12,6 +12,32 @@ final class MknoonCallKitLifecycleTests: XCTestCase {
   private let callB = UUID(uuidString: "323e4567-e89b-42d3-a456-426614174002")!
   private let contact = "223e4567-e89b-42d3-a456-426614174001"
 
+  func testDistinctAudioOutputsRequireAdoptedActiveOwnerAndClearAtEnd() {
+    let rig = makeRig()
+    rig.audio.outputs = [
+      MknoonCallAudioOutput(id: "synthetic-a", name: "Synthetic headset A", route: "bluetooth", selected: true),
+      MknoonCallAudioOutput(id: "synthetic-b", name: "Synthetic headset B", route: "bluetooth", selected: false),
+    ]
+    XCTAssertTrue(rig.controller.audioOutputs(callA).isEmpty)
+    XCTAssertFalse(rig.controller.requestAudioOutput(callA, identifier: "synthetic-b"))
+    XCTAssertEqual(present(rig, payload(callA)), .presented)
+    XCTAssertTrue(rig.controller.handleAnswer(callA))
+    XCTAssertTrue(rig.controller.acknowledge(callA, through: 1, disposition: .adopted))
+    XCTAssertTrue(rig.controller.recordAudioActivatedForTests(callA))
+    XCTAssertTrue(rig.controller.activateAudio(callA))
+    XCTAssertEqual(rig.controller.audioOutputs(callA).map(\.id), ["synthetic-a", "synthetic-b"])
+    XCTAssertTrue(rig.controller.requestAudioOutput(callA, identifier: "synthetic-b"))
+    XCTAssertEqual(rig.audio.requestedDevices, ["synthetic-b"])
+    XCTAssertTrue(rig.controller.audioOutputs(callB).isEmpty)
+    XCTAssertFalse(rig.controller.requestAudioOutput(callB, identifier: "synthetic-a"))
+    rig.audio.outputs.removeAll { $0.id == "synthetic-a" }
+    XCTAssertFalse(rig.controller.requestAudioOutput(callA, identifier: "synthetic-a"))
+    XCTAssertTrue(rig.controller.endFromDart(callA))
+    XCTAssertTrue(rig.controller.audioOutputs(callA).isEmpty)
+    XCTAssertFalse(rig.controller.requestAudioOutput(callA, identifier: "synthetic-b"))
+    XCTAssertFalse(String(describing: rig.audio.outputs).contains("Synthetic"))
+  }
+
   func testIncomingProviderErrorScopeIsBoundedAndCannotLeakIntoAnotherCallback() {
     let cases = (0...7).map { (CXErrorDomainIncomingCall, $0, Optional($0)) }
       + [(CXErrorDomainIncomingCall, 8, nil), (CXErrorDomainIncomingCall, -1, nil), ("private-domain", 3, nil)]
@@ -1739,6 +1765,14 @@ final class FakeCallAudio: MknoonCallAudioManaging {
   var prepareError: Error?
   var releaseCount = 0
   var requestedRoutes: [String] = []
+  var outputs: [MknoonCallAudioOutput] = []
+  var requestedDevices: [String] = []
+  func outputDevices() -> [MknoonCallAudioOutput] { outputs }
+  func requestOutputDevice(_ id: String) -> Bool {
+    guard outputs.contains(where: { $0.id == id }) else { return false }
+    requestedDevices.append(id)
+    return true
+  }
   var state = (
     route: "earpiece",
     available: ["system_default", "earpiece", "speaker", "wired_headset", "bluetooth"]

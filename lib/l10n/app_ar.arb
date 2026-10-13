@@ -2044,5 +2044,20 @@
   "update_notification_body_security": "يتوفر تحديث أمني. اضغط للتحديث.",
   "@update_notification_body_security": {
     "description": "SE-41 final copy, owner-approved 2026-10-12 (Rawi)"
-  }
+  },
+  "call_minimize": "تصغير المكالمة",
+  "call_return": "العودة إلى المكالمة",
+  "call_muted": "الميكروفون مكتوم",
+  "call_back": "معاودة الاتصال",
+  "calls_title": "المكالمات",
+  "calls_all": "الكل",
+  "calls_missed": "الفائتة",
+  "calls_search": "البحث في جهات الاتصال",
+  "calls_clear_search": "مسح البحث",
+  "calls_refresh": "تحديث المكالمات",
+  "calls_empty": "لم يتم العثور على مكالمات",
+  "calls_load_error": "تعذر تحميل المكالمات",
+  "calls_more": "عرض المزيد",
+  "call_audio_choose_output": "اختيار مخرج الصوت",
+  "call_audio_refresh_outputs": "تحديث مخارج الصوت"
 }

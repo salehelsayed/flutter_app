@@ -151,6 +151,157 @@ void main() {
     },
   );
 
+  test(
+    'global history pages have one row per call, stable equal-time order, local search and current names',
+    () async {
+      final browser = repository as CallHistoryBrowser;
+      final stamp = DateTime.utc(2026, 10, 13);
+      await db.insert('contacts', {
+        'peer_id': 'contact-a',
+        'username': 'Alice',
+        'public_key': 'synthetic',
+        'rendezvous': 'synthetic',
+        'signature': 'synthetic',
+        'scanned_at': stamp.toIso8601String(),
+      });
+      for (final id in [
+        '66666666-6666-4666-8666-666666666666',
+        '77777777-7777-4777-8777-777777777777',
+      ]) {
+        await repository.upsertTerminal(row(id: id, startedAt: stamp));
+      }
+      await repository.upsertTerminal(
+        row(
+          id: '88888888-8888-4888-8888-888888888888',
+          contact: 'removed-contact',
+          startedAt: stamp.subtract(const Duration(seconds: 1)),
+        ),
+      );
+      final first = await browser.browse(pageSize: 1);
+      final second = await browser.browse(cursor: first.next, pageSize: 1);
+      final third = await browser.browse(cursor: second.next, pageSize: 1);
+      expect(
+        [
+          first.rows.single.entry.callId.value,
+          second.rows.single.entry.callId.value,
+          third.rows.single.entry.callId.value,
+        ],
+        [
+          '66666666-6666-4666-8666-666666666666',
+          '77777777-7777-4777-8777-777777777777',
+          '88888888-8888-4888-8888-888888888888',
+        ],
+      );
+      expect(first.total, 3);
+      expect(third.next, isNull);
+      expect(third.rows.single.contactName, isNull);
+      expect((await browser.browse(search: 'ALICE')).rows, hasLength(2));
+      await db.update(
+        'contacts',
+        {'username': 'Renamed'},
+        where: 'peer_id = ?',
+        whereArgs: ['contact-a'],
+      );
+      expect((await browser.browse(search: 'alice')).rows, isEmpty);
+      expect((await browser.browse(search: 'renamed')).total, 2);
+      await db.delete(
+        'contacts',
+        where: 'peer_id = ?',
+        whereArgs: ['contact-a'],
+      );
+      final removed = await browser.browse();
+      expect(removed.rows, hasLength(3));
+      expect(removed.rows.map((r) => r.contactName), everyElement(isNull));
+    },
+  );
+
+  test(
+    'global paging orders mixed millisecond and microsecond timestamps chronologically',
+    () async {
+      final stamp = DateTime.utc(2026, 10, 13);
+      final entries = [
+        row(id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', startedAt: stamp),
+        row(
+          id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+          startedAt: stamp.add(const Duration(microseconds: 1)),
+        ),
+        row(
+          id: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc',
+          startedAt: stamp.add(const Duration(microseconds: 999)),
+        ),
+        row(
+          id: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd',
+          startedAt: stamp.add(const Duration(milliseconds: 1)),
+        ),
+      ];
+      for (final entry in entries) {
+        await repository.upsertTerminal(entry);
+      }
+      final repo = repository as CallHistoryBrowser;
+      final observed = <CallId>[];
+      CallHistoryCursor? cursor;
+      do {
+        final page = await repo.browse(pageSize: 1, cursor: cursor);
+        observed.addAll(page.rows.map((r) => r.entry.callId));
+        cursor = page.next;
+      } while (cursor != null);
+      expect(observed, entries.reversed.map((entry) => entry.callId));
+      expect(
+        await db.query(kCallHistoryTable),
+        hasLength(4),
+        reason: 'browsing does not rewrite stored timestamps',
+      );
+    },
+  );
+
+  test(
+    'Missed filter uses incoming missed/cancelled/busy and leaves unread counts intact',
+    () async {
+      final stamp = DateTime.utc(2026, 10, 13);
+      var i = 0;
+      for (final direction in CallDirection.values) {
+        for (final status in CallHistoryStatus.values) {
+          final id =
+              'aaaaaaaa-aaaa-4aaa-8aaa-${(++i).toString().padLeft(12, '0')}';
+          await repository.upsertTerminal(
+            CallHistoryEntry(
+              callId: CallId.parse(id),
+              contactAccountPeerId: 'contact-a',
+              direction: direction,
+              terminalReason: CallEndReason.noAnswer,
+              status: status,
+              startedAt: stamp,
+              connectedAt: null,
+              endedAt: stamp.add(const Duration(seconds: 30)),
+              transportRoute: null,
+              createdAt: stamp,
+              updatedAt: stamp,
+            ),
+          );
+        }
+      }
+      final repo = repository as CallHistoryRepositoryImpl;
+      final before = await repo.unreadCallCountsForContacts(['contact-a']);
+      final page = await repo.browse(missedOnly: true, pageSize: 2);
+      final next = await repo.browse(
+        missedOnly: true,
+        cursor: page.next,
+        pageSize: 2,
+      );
+      expect(page.total, 12);
+      expect(page.missed, 3);
+      expect(page.rows, hasLength(2));
+      expect(next.rows, hasLength(1));
+      expect(
+        [...page.rows, ...next.rows].map((r) => r.entry.direction),
+        everyElement(CallDirection.incoming),
+      );
+      expect(await repo.unreadCallCountsForContacts(['contact-a']), before);
+      expect(before, {'contact-a': 3});
+      expect(() => repo.browse(pageSize: 0), throwsArgumentError);
+    },
+  );
+
   test('contact history is scoped and newest first', () async {
     await repository.upsertTerminal(
       row(

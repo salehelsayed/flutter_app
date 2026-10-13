@@ -8,12 +8,17 @@ cd "$ROOT_DIR"
 evidence_dir="${1:-build/android-renderer-manifest-contract}"
 mkdir -p "$evidence_dir"
 
+# Cached dependency resolution for host checks; assertions and variants stay the same.
+gradle_resolution_args=(--console=plain)
+if [[ "${MKNOON_GRADLE_OFFLINE:-0}" == "1" ]]; then
+  gradle_resolution_args+=(--offline)
+fi
+
 ORG_GRADLE_PROJECT_enablePictureInPictureEngineDetachProof=false \
 ORG_GRADLE_PROJECT_enablePictureInPictureInterruptionProof=false \
-  ./android/gradlew -p android \
+  ./android/gradlew -p android "${gradle_resolution_args[@]}" \
     :app:processProfileMainManifest \
     :app:processReleaseMainManifest \
-    --console=plain \
     >"$evidence_dir/gradle.log" 2>&1
 
 profile_manifest="build/app/intermediates/merged_manifest/profile/processProfileMainManifest/AndroidManifest.xml"

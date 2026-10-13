@@ -21,6 +21,7 @@ class CallControls extends StatelessWidget {
     required this.onMute,
     required this.onSpeaker,
     required this.onEnd,
+    this.onChooseAudioOutput,
   });
 
   final bool isMuted;
@@ -34,6 +35,7 @@ class CallControls extends StatelessWidget {
   final VoidCallback onMute;
   final VoidCallback onSpeaker;
   final VoidCallback onEnd;
+  final VoidCallback? onChooseAudioOutput;
 
   @override
   Widget build(BuildContext context) {
@@ -138,6 +140,13 @@ class CallControls extends StatelessWidget {
               ),
             ],
           ),
+          if (onChooseAudioOutput != null)
+            TextButton.icon(
+              key: const ValueKey('call-audio-output'),
+              onPressed: onChooseAudioOutput,
+              icon: const Icon(Icons.headset),
+              label: Text(l10n.call_audio_choose_output),
+            ),
         ],
       ),
     );

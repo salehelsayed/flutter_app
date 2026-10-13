@@ -8,9 +8,14 @@ cd "$ROOT_DIR"
 evidence_dir="${1:-build/dropped-push-recovery-manifest-contract}"
 mkdir -p "$evidence_dir"
 
-./android/gradlew -p android \
+# Cached dependency resolution for host checks; assertions and variants stay the same.
+gradle_resolution_args=(--console=plain)
+if [[ "${MKNOON_GRADLE_OFFLINE:-0}" == "1" ]]; then
+  gradle_resolution_args+=(--offline)
+fi
+
+./android/gradlew -p android "${gradle_resolution_args[@]}" \
   :app:processDebugMainManifest \
-  --console=plain \
   >"$evidence_dir/gradle.log" 2>&1
 
 merged_manifest="build/app/intermediates/merged_manifest/debug/processDebugMainManifest/AndroidManifest.xml"

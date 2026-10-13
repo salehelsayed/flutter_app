@@ -312,6 +312,7 @@ class OrbitScreen extends StatefulWidget {
   /// Non-null when the host wires the bottom-left settings button. Null ⇒ no
   /// button (bare-`OrbitScreen` pumps stay unaffected).
   final VoidCallback? onOpenSettings;
+  final VoidCallback? onOpenCalls;
 
   /// 211 — non-null when the host wires the connection-status pill (migrated
   /// from the Feed header) into the top-right chrome next to the "+". Null ⇒
@@ -383,6 +384,7 @@ class OrbitScreen extends StatefulWidget {
     this.innerCircleResetListenable,
     this.onSelfAvatarTap,
     this.onOpenSettings,
+    this.onOpenCalls,
     this.p2pService,
     this.hideShellNav = false,
     this.visualTreatment = OrbitVisualTreatment.current,
@@ -488,6 +490,7 @@ class _OrbitScreenState extends State<OrbitScreen> {
     innerCircleResetListenable: widget.innerCircleResetListenable,
     onSelfAvatarTap: widget.onSelfAvatarTap,
     onOpenSettings: widget.onOpenSettings,
+    onOpenCalls: widget.onOpenCalls,
     p2pService: widget.p2pService,
     visualTreatment: widget.visualTreatment,
     orbitalQuietLightOverride: widget.orbitalQuietLightOverride,
@@ -555,6 +558,7 @@ class _OrbitScreenView extends StatelessWidget {
   final Listenable? innerCircleResetListenable;
   final VoidCallback? onSelfAvatarTap;
   final VoidCallback? onOpenSettings;
+  final VoidCallback? onOpenCalls;
 
   /// 211 — connection-status pill source (see [OrbitScreen.p2pService]).
   final P2PService? p2pService;
@@ -635,6 +639,7 @@ class _OrbitScreenView extends StatelessWidget {
     required this.innerCircleResetListenable,
     this.onSelfAvatarTap,
     this.onOpenSettings,
+    this.onOpenCalls,
     this.p2pService,
     required this.visualTreatment,
     required this.orbitalQuietLightOverride,
@@ -796,6 +801,18 @@ class _OrbitScreenView extends StatelessWidget {
           // mode seats it on the nav line (nav band below).
           if (!_showsPersistentNav && onOpenSettings != null && !innerEditing)
             Positioned(bottom: 36, left: 16, child: _buildSettingsButton()),
+
+          if (onOpenCalls != null && !innerEditing)
+            Positioned(
+              top: MediaQuery.paddingOf(context).top + 8,
+              right: 16,
+              child: IconButton(
+                key: const ValueKey('orbit-calls'),
+                tooltip: AppLocalizations.of(context)!.calls_title,
+                onPressed: onOpenCalls,
+                icon: const Icon(Icons.phone_in_talk_outlined),
+              ),
+            ),
 
           // Layer 3: Search trigger — standalone mode floats above the close
           // button. In persistent mode the trigger rides the nav line

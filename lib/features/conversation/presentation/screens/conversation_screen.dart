@@ -1073,7 +1073,11 @@ class _ConversationScreenState extends State<ConversationScreen>
             return Padding(
               key: ValueKey('call-${call.callId}'),
               padding: const EdgeInsets.only(bottom: 16),
-              child: CallTimelineRow(entry: call),
+              child: CallTimelineRow(
+                entry: call,
+                onCall: widget.onCallRetry ?? widget.onCall,
+                callEnabled: !widget.callActionInFlight,
+              ),
             );
           case _ItemType.loadingIndicator:
             return const Padding(

@@ -73,6 +73,7 @@ final class ForegroundCallBackGuard with WidgetsBindingObserver {
   set surfaceOwnsBack(bool owns) {
     if (_surfaceOwnsBack == owns) return;
     _surfaceOwnsBack = owns;
+    if (!owns) _gestureClaimed = false;
     _run(() => _publishCallOwnsBack(owns));
   }
 

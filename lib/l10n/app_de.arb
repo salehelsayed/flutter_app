@@ -2044,5 +2044,20 @@
   "update_notification_body_security": "Es behebt ein Sicherheitsproblem in deiner Version. Tippe zum Aktualisieren.",
   "@update_notification_body_security": {
     "description": "SE-41 final copy, owner-approved 2026-10-12 (Rawi)"
-  }
+  },
+  "call_minimize": "Anruf minimieren",
+  "call_return": "Zurück zum Anruf",
+  "call_muted": "Mikrofon stummgeschaltet",
+  "call_back": "Zurückrufen",
+  "calls_title": "Anrufe",
+  "calls_all": "Alle",
+  "calls_missed": "Verpasst",
+  "calls_search": "Kontakte suchen",
+  "calls_clear_search": "Suche löschen",
+  "calls_refresh": "Anrufe aktualisieren",
+  "calls_empty": "Keine Anrufe gefunden",
+  "calls_load_error": "Anrufe konnten nicht geladen werden",
+  "calls_more": "Mehr anzeigen",
+  "call_audio_choose_output": "Audioausgabe wählen",
+  "call_audio_refresh_outputs": "Audioausgänge aktualisieren"
 }

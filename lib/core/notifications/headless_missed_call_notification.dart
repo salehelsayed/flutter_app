@@ -2,6 +2,7 @@ import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 
 import 'deterministic_notification_id.dart';
 import 'local_notification_support.dart';
+import 'missed_call_action_payload.dart';
 import '../utils/flow_event_emitter.dart';
 
 /// 408: posts the missed-call card from the killed-app isolate.
@@ -33,6 +34,7 @@ final class HeadlessMissedCallNotification {
     required String contactAccountPeerId,
     required String title,
     required String body,
+    String? callId,
   }) async {
     try {
       await _ensureInitialized();
@@ -44,8 +46,12 @@ final class HeadlessMissedCallNotification {
         ),
         title,
         body,
-        mknoonMissedCallNotificationDetails,
-        payload: contactAccountPeerId,
+        callId == null
+            ? mknoonMissedCallNotificationDetails
+            : missedCallDetailsWithAction(),
+        payload: callId == null
+            ? contactAccountPeerId
+            : MissedCallActionPayload(contactAccountPeerId, callId).encode(),
       );
       emitFlowEvent(
         layer: 'FL',
@@ -64,9 +70,10 @@ final class HeadlessMissedCallNotification {
 
   Future<void> _ensureInitialized() async {
     if (_initialized) return;
-    const settings = InitializationSettings(
+    final settings = InitializationSettings(
       android: AndroidInitializationSettings('@mipmap/ic_launcher'),
       iOS: DarwinInitializationSettings(
+        notificationCategories: missedCallActionCategories(),
         requestSoundPermission: false,
         requestBadgePermission: false,
         requestAlertPermission: false,

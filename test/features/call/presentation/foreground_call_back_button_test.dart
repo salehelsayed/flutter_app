@@ -249,6 +249,48 @@ void main() {
     },
   );
 
+  testWidgets(
+    'minimized Back pops chat and root Back backgrounds without ending the session',
+    (tester) async {
+      final fixture = await pumpApp(tester);
+      await pushConversation(tester, fixture);
+      fixture.capability.emit(_projection(state: CallState.connected));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('call-minimize')));
+      await tester.pumpAndSettle();
+      expect(nativeBackOwner.last, isFalse);
+      expect(await pressBack(tester), isTrue);
+      expect(fixture.navigatorKey.currentState!.canPop(), isFalse);
+      expect(taskCalls, isEmpty);
+      expect(find.byKey(const ValueKey('call-return-bar')), findsOneWidget);
+      expect(await pressBack(tester), isTrue);
+      expect(taskCalls, ['moveToBackground']);
+      expect(platformCalls, isNot(contains('SystemNavigator.pop')));
+      expect(fixture.capability.actions, isEmpty);
+    },
+  );
+
+  testWidgets('a minimized predictive swipe belongs to the navigator', (
+    tester,
+  ) async {
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    final fixture = await pumpApp(tester);
+    await pushConversation(tester, fixture);
+    fixture.capability.emit(_projection(state: CallState.connected));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('call-minimize')));
+    await tester.pumpAndSettle();
+    await backGesture('startBackGesture', <String, Object?>{
+      'touchOffset': <double>[5, 300],
+      'progress': 0.0,
+      'swipeEdge': 0,
+    });
+    await backGesture('commitBackGesture');
+    await tester.pumpAndSettle();
+    expect(taskCalls, isEmpty);
+    expect(fixture.capability.actions, isEmpty);
+  });
+
   testWidgets('Back works normally once the call surface is gone', (
     tester,
   ) async {

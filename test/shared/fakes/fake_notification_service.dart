@@ -79,6 +79,7 @@ class FakeNotificationService implements NotificationService {
     required String contactAccountPeerId,
     required String title,
     required String body,
+    String? callId,
   }) async {
     missedCallNotifications.add((
       contactAccountPeerId: contactAccountPeerId,

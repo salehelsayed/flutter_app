@@ -7177,6 +7177,96 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'It fixes a security problem in your version. Tap to update.'**
   String get update_notification_body_security;
+
+  /// No description provided for @call_minimize.
+  ///
+  /// In en, this message translates to:
+  /// **'Minimize call'**
+  String get call_minimize;
+
+  /// No description provided for @call_return.
+  ///
+  /// In en, this message translates to:
+  /// **'Return to call'**
+  String get call_return;
+
+  /// No description provided for @call_muted.
+  ///
+  /// In en, this message translates to:
+  /// **'Microphone muted'**
+  String get call_muted;
+
+  /// No description provided for @call_back.
+  ///
+  /// In en, this message translates to:
+  /// **'Call back'**
+  String get call_back;
+
+  /// No description provided for @calls_title.
+  ///
+  /// In en, this message translates to:
+  /// **'Calls'**
+  String get calls_title;
+
+  /// No description provided for @calls_all.
+  ///
+  /// In en, this message translates to:
+  /// **'All'**
+  String get calls_all;
+
+  /// No description provided for @calls_missed.
+  ///
+  /// In en, this message translates to:
+  /// **'Missed'**
+  String get calls_missed;
+
+  /// No description provided for @calls_search.
+  ///
+  /// In en, this message translates to:
+  /// **'Search contacts'**
+  String get calls_search;
+
+  /// No description provided for @calls_clear_search.
+  ///
+  /// In en, this message translates to:
+  /// **'Clear search'**
+  String get calls_clear_search;
+
+  /// No description provided for @calls_refresh.
+  ///
+  /// In en, this message translates to:
+  /// **'Refresh calls'**
+  String get calls_refresh;
+
+  /// No description provided for @calls_empty.
+  ///
+  /// In en, this message translates to:
+  /// **'No calls found'**
+  String get calls_empty;
+
+  /// No description provided for @calls_load_error.
+  ///
+  /// In en, this message translates to:
+  /// **'Calls could not be loaded'**
+  String get calls_load_error;
+
+  /// No description provided for @calls_more.
+  ///
+  /// In en, this message translates to:
+  /// **'Show more'**
+  String get calls_more;
+
+  /// No description provided for @call_audio_choose_output.
+  ///
+  /// In en, this message translates to:
+  /// **'Choose audio output'**
+  String get call_audio_choose_output;
+
+  /// No description provided for @call_audio_refresh_outputs.
+  ///
+  /// In en, this message translates to:
+  /// **'Refresh audio outputs'**
+  String get call_audio_refresh_outputs;
 }
 
 class _AppLocalizationsDelegate

@@ -1,6 +1,7 @@
 import 'package:sqflite_sqlcipher/sqflite.dart';
 
 import '../migrations/117_call_history.dart';
+import '../db_write_transaction.dart';
 
 Future<void> insertCallHistoryTerminal(
   Database database,
@@ -35,6 +36,72 @@ Future<List<Map<String, Object?>>> loadCallHistoryForContact(
   whereArgs: <Object?>[contactAccountPeerId],
   orderBy: 'started_at DESC, call_id ASC',
 )).map(Map<String, Object?>.of).toList(growable: false);
+
+/// Bounded global page over the same terminal table. Counts and rows share a
+/// read transaction, and local contact names are resolved at query time.
+Future<({List<Map<String, Object?>> rows, int total, int missed})>
+loadCallHistoryPage(
+  Database database, {
+  required bool missedOnly,
+  required String search,
+  required int limit,
+  String? cursorStartedAt,
+  String? cursorCallId,
+}) {
+  if (limit < 1 || limit > 101) throw ArgumentError.value(limit, 'limit');
+  const missed =
+      "h.direction = 'incoming' AND h.status IN ('missed', 'cancelled', 'busy')";
+  const from =
+      '$kCallHistoryTable h LEFT JOIN contacts c ON c.peer_id = h.contact_account_peer_id';
+  // DateTime emits three fractional digits for exact milliseconds and six
+  // otherwise. Normalize only comparisons; persisted history stays unchanged.
+  const timestamp =
+      "CASE WHEN substr(h.started_at, -5, 1) = '.' "
+      "THEN substr(h.started_at, 1, length(h.started_at) - 1) || '000Z' "
+      "ELSE h.started_at END";
+  final cursorTimestamp = cursorStartedAt?.replaceFirstMapped(
+    RegExp(r'\.(\d{3})Z$'),
+    (match) => '.${match[1]}000Z',
+  );
+  final query = search.trim();
+  final searchWhere = query.isEmpty
+      ? '1 = 1'
+      : "instr(lower(COALESCE(c.username, '')), lower(?)) > 0";
+  final searchArgs = <Object?>[if (query.isNotEmpty) query];
+  return dbWriteTransaction(database, (tx) async {
+    final counts = (await tx.rawQuery(
+      'SELECT COUNT(*) AS total, '
+      'COALESCE(SUM(CASE WHEN $missed THEN 1 ELSE 0 END), 0) AS missed '
+      'FROM $from WHERE $searchWhere',
+      searchArgs,
+    )).single;
+    final where = <String>[
+      searchWhere,
+      if (missedOnly) '($missed)',
+      if (cursorStartedAt != null && cursorCallId != null)
+        '(($timestamp) < ? OR (($timestamp) = ? AND h.call_id > ?))',
+    ];
+    final rows = await tx.rawQuery(
+      'SELECT h.*, c.username AS local_contact_name '
+      'FROM $from WHERE ${where.join(' AND ')} '
+      'ORDER BY ($timestamp) DESC, h.call_id ASC LIMIT ?',
+      [
+        ...searchArgs,
+        if (cursorStartedAt != null && cursorCallId != null) ...[
+          cursorTimestamp,
+          cursorTimestamp,
+          cursorCallId,
+        ],
+        limit,
+      ],
+    );
+    return (
+      rows: rows.map(Map<String, Object?>.of).toList(growable: false),
+      total: counts['total'] as int,
+      missed: counts['missed'] as int,
+    );
+  });
+}
 
 /// 409: the newest terminal call for each of [contactAccountPeerIds].
 ///

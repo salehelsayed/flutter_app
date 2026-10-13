@@ -8,6 +8,7 @@ import '../application/call_audio_controller.dart';
 import '../application/call_coordinator.dart';
 import '../application/handle_incoming_call_signal.dart';
 import '../domain/call_engine.dart';
+import '../domain/call_audio_output_device.dart';
 import '../domain/call_end_reason.dart';
 import '../domain/call_event.dart';
 import '../domain/call_id.dart';
@@ -184,7 +185,8 @@ final class AndroidCallLifecycleAdapter
         AndroidCallAdmissionSettlementPort,
         IncomingCallPresenter,
         CallForegroundAudioSession,
-        CallAudioRoutePort {
+        CallAudioRoutePort,
+        CallAudioDevicePort {
   AndroidCallLifecycleAdapter({
     required AndroidCallMethodInvoker invokeMethod,
     required Stream<Object?> nativeEvents,
@@ -1298,6 +1300,135 @@ final class AndroidCallLifecycleAdapter
   @override
   Future<void> selectOutputRoute(CallAudioOutputRoute route) =>
       requestRoute(route);
+
+  // Picker operations share the existing exact-handle audio lane. Device
+  // identifiers never enter the journal, call snapshot, or coarse diagnostics.
+  Future<T> _scheduleAudioPicker<T>(
+    Future<T> Function(String handle, void Function() fence) operation,
+  ) {
+    final handle = _requireBoundHandle();
+    final generation = _bindingGeneration;
+    final completer = Completer<T>();
+    _audioCommandTail = _audioCommandTail.then<void>((_) async {
+      void fence() {
+        _throwIfAudioCommandFenced(
+          handle: handle,
+          bindingGeneration: generation,
+        );
+        if (!_ownsSession ||
+            _endedHandles.contains(handle) ||
+            _coordinator.activeSession?.isTerminal == true) {
+          throw const AndroidCallLifecycleException(
+            AndroidCallLifecycleErrorCode.unavailable,
+          );
+        }
+      }
+
+      try {
+        fence();
+        final result = await operation(handle, fence);
+        fence();
+        completer.complete(result);
+      } on AndroidCallLifecycleException catch (error, stack) {
+        completer.completeError(error, stack);
+      } catch (_, stack) {
+        completer.completeError(
+          const AndroidCallLifecycleException(
+            AndroidCallLifecycleErrorCode.nativeFailure,
+          ),
+          stack,
+        );
+      }
+    });
+    return completer.future;
+  }
+
+  Future<List<CallAudioOutputDevice>> _readAudioOutputs(String handle) async {
+    final value = await _invokeMethod(
+      'readAudioOutputs',
+      _handleArguments(handle),
+    ).timeout(const Duration(seconds: 2));
+    final map = _exactMap(value, const {'version', 'outputs'});
+    if (map['version'] != protocolVersion || map['outputs'] is! List<Object?>) {
+      throw const AndroidCallLifecycleException(
+        AndroidCallLifecycleErrorCode.malformedResponse,
+      );
+    }
+    try {
+      final raw = map['outputs']! as List<Object?>;
+      if (raw.length > 32) throw const FormatException();
+      final ids = <String>{};
+      var selectedCount = 0;
+      final outputs = raw
+          .map((value) {
+            final item = _exactMap(value, const {
+              'id',
+              'name',
+              'route',
+              'selected',
+            });
+            final id = item['id'];
+            final name = item['name'];
+            if (id is! String ||
+                id.isEmpty ||
+                id.length > 1024 ||
+                !ids.add(id) ||
+                name is! String ||
+                name.length > 256 ||
+                item['route'] is! String ||
+                item['selected'] is! bool) {
+              throw const FormatException();
+            }
+            final selected = item['selected']! as bool;
+            if (selected && ++selectedCount > 1) throw const FormatException();
+            return CallAudioOutputDevice(
+              id: id,
+              name: name,
+              route: _parseRoute(item['route']! as String),
+              selected: selected,
+            );
+          })
+          .toList(growable: false);
+      return outputs;
+    } catch (_) {
+      throw const AndroidCallLifecycleException(
+        AndroidCallLifecycleErrorCode.malformedResponse,
+      );
+    }
+  }
+
+  @override
+  Future<List<CallAudioOutputDevice>> outputDevices() =>
+      _scheduleAudioPicker((handle, fence) => _readAudioOutputs(handle));
+
+  @override
+  Future<bool> selectOutputDevice(String id) =>
+      _scheduleAudioPicker((handle, fence) async {
+        final outputs = await _readAudioOutputs(handle);
+        fence();
+        if (!outputs.any((output) => output.id == id)) return false;
+        final accepted = await _invokeMethod(
+          'requestAudioOutput',
+          <String, Object?>{..._handleArguments(handle), 'deviceId': id},
+        ).timeout(const Duration(seconds: 6));
+        fence();
+        if (accepted != true) return false;
+        final watch = Stopwatch()..start();
+        do {
+          final observed = await _readAudioOutputs(handle);
+          fence();
+          if (!observed.any((output) => output.id == id)) return false;
+          if (observed.any((output) => output.id == id && output.selected)) {
+            final state = await _fetchAudioStateNow(handle);
+            fence();
+            _acceptAudioState(state);
+            return state.active;
+          }
+          await Future<void>.delayed(const Duration(milliseconds: 100));
+          fence();
+        } while (watch.elapsed < const Duration(seconds: 2));
+        return false;
+      });
 
   void _onNativeValue(Object? value) {
     if (_closed) return;

@@ -17,6 +17,8 @@ import 'screens/active_call_screen.dart';
 import 'screens/incoming_call_screen.dart';
 import 'screens/outgoing_call_screen.dart';
 import 'widgets/call_controls.dart';
+import 'widgets/call_audio_output_picker.dart';
+import 'widgets/call_return_bar.dart';
 
 typedef ContactDisplayNameLoader =
     Future<String?> Function(String contactPeerId);
@@ -72,6 +74,8 @@ class _ForegroundCallOverlayState extends State<ForegroundCallOverlay> {
   bool _terminalNoticeVisible = false;
   bool _navigatorCanHandlePop = false;
   bool? _publishedOwnsBack;
+  CallId? _minimizedCallId;
+  CallId? _pickerCallId;
   final _lockedProjection = LockedCallProjection();
   bool _lockedLight = false;
   AppLocalizations? _lockedL10n;
@@ -188,6 +192,17 @@ class _ForegroundCallOverlayState extends State<ForegroundCallOverlay> {
       _projection = projection;
       final session = projection?.session;
       final surfaceKind = _surfaceKind(session);
+      final wasMinimized =
+          _minimizedCallId != null && _minimizedCallId == session?.callId;
+      if (surfaceKind != _ForegroundCallSurface.active ||
+          _minimizedCallId != session?.callId) {
+        _minimizedCallId = null;
+      }
+      if (surfaceKind != _ForegroundCallSurface.active ||
+          _pickerCallId != session?.callId ||
+          projection?.audio.active != true) {
+        _pickerCallId = null;
+      }
       final terminalCallId = surfaceKind == _ForegroundCallSurface.terminal
           ? session?.callId
           : null;
@@ -195,7 +210,7 @@ class _ForegroundCallOverlayState extends State<ForegroundCallOverlay> {
         _terminalNoticeTimer?.cancel();
         _terminalNoticeTimer = null;
         _terminalNoticeCallId = terminalCallId;
-        _terminalNoticeVisible = terminalCallId != null;
+        _terminalNoticeVisible = terminalCallId != null && !wasMinimized;
         terminalNoticeToSchedule = terminalCallId;
       }
 
@@ -281,6 +296,10 @@ class _ForegroundCallOverlayState extends State<ForegroundCallOverlay> {
     final surfaceKind = _surfaceKind(session);
     final callId = session?.callId;
     final peerId = session?.contactPeerId;
+    final minimized =
+        surfaceKind == _ForegroundCallSurface.active &&
+        callId != null &&
+        _minimizedCallId == callId;
 
     Widget? surface;
     if (projection != null &&
@@ -329,13 +348,14 @@ class _ForegroundCallOverlayState extends State<ForegroundCallOverlay> {
       };
     }
 
-    // A live call surface owns Back. The terminal notice is informational
-    // only and leaves Back to the navigator.
+    final modal = surface != null && !minimized;
+    // Minimized calls let the navigator pop normally. At its root, background
+    // the task instead of destroying the activity and its live call runtime.
     final backGuard = widget.backGuard;
     final ownsBack =
         backGuard != null &&
-        surface != null &&
-        surfaceKind != _ForegroundCallSurface.terminal;
+        ((modal && surfaceKind != _ForegroundCallSurface.terminal) ||
+            (minimized && !_navigatorCanHandlePop));
     backGuard?.surfaceOwnsBack = ownsBack;
     _publishFrameworkHandlesBack(ownsBack);
 
@@ -352,9 +372,9 @@ class _ForegroundCallOverlayState extends State<ForegroundCallOverlay> {
           // The retained route can contain continuously animated ambient
           // backgrounds. A call owns the screen; freeze those animations until
           // it hides, while preserving navigation and non-animation state.
-          enabled: surface == null,
+          enabled: !modal,
           child: ExcludeFocus(
-            excluding: surface != null,
+            excluding: modal,
             child: NotificationListener<NavigationNotification>(
               // While a call owns Back, the hidden navigator's answer must not
               // reach the engine. At its root route it reports that it cannot
@@ -364,14 +384,45 @@ class _ForegroundCallOverlayState extends State<ForegroundCallOverlay> {
               // framework handles Back instead. The navigator's last value is
               // replayed when the call surface hides.
               onNotification: (notification) {
+                final changed =
+                    _navigatorCanHandlePop != notification.canHandlePop;
                 _navigatorCanHandlePop = notification.canHandlePop;
+                if (changed && _minimizedCallId != null) {
+                  WidgetsBinding.instance.addPostFrameCallback((_) {
+                    if (mounted) setState(() {});
+                  });
+                }
                 return _publishedOwnsBack == true;
               },
-              child: widget.child,
+              child: Padding(
+                padding: EdgeInsets.only(
+                  top: minimized ? MediaQuery.paddingOf(context).top + 56 : 0,
+                ),
+                child: widget.child,
+              ),
             ),
           ),
         ),
-        if (surface != null)
+        if (minimized && session != null)
+          Positioned(
+            top: 0,
+            left: 0,
+            right: 0,
+            child: SafeArea(
+              bottom: false,
+              child: CallReturnBar(
+                name: _contactDisplayName == _unknownContactName
+                    ? AppLocalizations.of(context)!.call_unknown_contact
+                    : _contactDisplayName,
+                state: session.state,
+                connectedAt: session.connectedAt,
+                muted: projection!.audio.muted,
+                now: widget.now ?? DateTime.now,
+                onReturn: () => setState(() => _minimizedCallId = null),
+              ),
+            ),
+          ),
+        if (modal)
           Positioned.fill(
             key: ValueKey<CallId?>(callId),
             child: BlockSemantics(
@@ -383,7 +434,45 @@ class _ForegroundCallOverlayState extends State<ForegroundCallOverlay> {
                 child: Overlay.wrap(
                   child: Material(
                     type: MaterialType.transparency,
-                    child: surface,
+                    child: Stack(
+                      fit: StackFit.expand,
+                      children: [
+                        ExcludeFocus(
+                          excluding: _pickerCallId != null,
+                          child: surface,
+                        ),
+                        if (surfaceKind == _ForegroundCallSurface.active &&
+                            _pickerCallId == null)
+                          Positioned(
+                            top: MediaQuery.paddingOf(context).top,
+                            right: 8,
+                            child: IconButton(
+                              key: const ValueKey('call-minimize'),
+                              tooltip: AppLocalizations.of(
+                                context,
+                              )!.call_minimize,
+                              onPressed: () => setState(() {
+                                _pickerCallId = null;
+                                _minimizedCallId = callId;
+                              }),
+                              icon: const Icon(Icons.keyboard_arrow_down),
+                            ),
+                          ),
+                        if (_pickerCallId == callId &&
+                            widget.capability
+                                is ForegroundCallAudioPickerCapability)
+                          CallAudioOutputPicker(
+                            key: ValueKey(
+                              'call-output-picker-${callId!.value}',
+                            ),
+                            callId: callId,
+                            capability:
+                                widget.capability
+                                    as ForegroundCallAudioPickerCapability,
+                            onClose: () => setState(() => _pickerCallId = null),
+                          ),
+                      ],
+                    ),
                   ),
                 ),
               ),
@@ -437,6 +526,11 @@ class _ForegroundCallOverlayState extends State<ForegroundCallOverlay> {
         unavailableMessage: l10n.call_audio_output_unavailable,
         failedMessage: l10n.call_audio_output_failed,
       ),
+      onChooseAudioOutput:
+          audio.active &&
+              widget.capability is ForegroundCallAudioPickerCapability
+          ? () => setState(() => _pickerCallId = callId)
+          : null,
       onEnd: () => _runAction(() => widget.capability?.end(callId)),
     );
   }

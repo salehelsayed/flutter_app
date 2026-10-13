@@ -169,6 +169,10 @@ class MainActivity : FlutterActivity() {
         // F4 (beta 2026-09-25): Back during a call sends the app to the
         // background and the call keeps running.
         val taskHandler = MknoonCallTaskChannelHandler(
+            isDeviceUnlocked = {
+                val keyguard = getSystemService(android.app.KeyguardManager::class.java)
+                keyguard != null && !keyguard.isDeviceLocked && !keyguard.isKeyguardLocked
+            },
             moveTaskToBack = { moveTaskToBack(true) },
             registerBack = MknoonCallTaskChannelHandler.overlayBackRegistrar(this),
         )

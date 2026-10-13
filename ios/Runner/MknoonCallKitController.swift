@@ -3,6 +3,7 @@ import CallKit
 import Foundation
 import os.log
 import WebRTC
+import UIKit
 
 /// CallKit diagnostics carry only fixed wire names and outcomes (never a
 /// handle, token or contact), so they are logged public: NSLog lines from a
@@ -57,11 +58,27 @@ internal protocol MknoonCallTransactionRequesting: AnyObject {
 
 extension CXCallController: MknoonCallTransactionRequesting {}
 
+// Transient inventory: no device identifiers or names enter native storage or diagnostics.
+internal struct MknoonCallAudioOutput: CustomStringConvertible {
+  let id: String
+  let name: String
+  let route: String
+  let selected: Bool
+  var description: String { "MknoonCallAudioOutput(route: \(route), selected: \(selected))" }
+}
+
 internal protocol MknoonCallAudioManaging: AnyObject {
   func prepareForCallKitActivation() throws
   func releaseAfterCallKitDeactivation()
   func routeState() -> (route: String, available: [String])
   func requestRoute(_ route: String) -> Bool
+  func outputDevices() -> [MknoonCallAudioOutput]
+  func requestOutputDevice(_ id: String) -> Bool
+}
+
+extension MknoonCallAudioManaging {
+  func outputDevices() -> [MknoonCallAudioOutput] { [] }
+  func requestOutputDevice(_ id: String) -> Bool { false }
 }
 
 internal protocol MknoonWebRTCAudioSessionNotifying: AnyObject {
@@ -198,6 +215,49 @@ internal final class MknoonSystemCallAudioManager: MknoonCallAudioManaging {
     let ordered = ["system_default", "earpiece", "speaker", "wired_headset", "bluetooth"]
       .filter(available.contains)
     return (current, ordered)
+  }
+
+  func outputDevices() -> [MknoonCallAudioOutput] {
+    let current = routeName(for: session.currentRoute.outputs.first?.portType)
+    let inputs = session.availableInputs ?? []
+    var result: [MknoonCallAudioOutput] = []
+    if inputs.contains(where: { $0.portType == .builtInMic }) {
+      if UIDevice.current.userInterfaceIdiom == .phone {
+        result.append(MknoonCallAudioOutput(id: "builtin:earpiece", name: "", route: "earpiece", selected: current == "earpiece"))
+      }
+      result.append(MknoonCallAudioOutput(id: "builtin:speaker", name: "", route: "speaker", selected: current == "speaker"))
+    }
+    var seen = Set<String>()
+    for input in inputs {
+      let route = routeName(for: input.portType)
+      guard route == "bluetooth" || route == "wired_headset", seen.insert(input.uid).inserted else { continue }
+      let selected = current == route && session.currentRoute.inputs.contains(where: { $0.uid == input.uid })
+      result.append(MknoonCallAudioOutput(id: "input:" + input.uid, name: String(input.portName.prefix(256)), route: route, selected: selected))
+    }
+    return Array(result.prefix(32))
+  }
+
+  func requestOutputDevice(_ id: String) -> Bool {
+    guard outputDevices().contains(where: { $0.id == id }) else { return false }
+    do {
+      switch id {
+      case "builtin:speaker":
+        try session.setPreferredInput(nil)
+        try session.overrideOutputAudioPort(.speaker)
+      case "builtin:earpiece":
+        guard let microphone = session.availableInputs?.first(where: { $0.portType == .builtInMic }) else { return false }
+        try session.overrideOutputAudioPort(.none)
+        try session.setPreferredInput(microphone)
+      default:
+        guard id.hasPrefix("input:"),
+              let input = session.availableInputs?.first(where: { "input:" + $0.uid == id }) else { return false }
+        try session.overrideOutputAudioPort(.none)
+        try session.setPreferredInput(input)
+      }
+      // AVAudioSession may accept a preference before changing the route.
+      // Dart checks the subsequent actual selected inventory, with a deadline.
+      return true
+    } catch { return false }
   }
 
   func requestRoute(_ route: String) -> Bool {
@@ -1027,6 +1087,34 @@ internal final class MknoonCallKitController: NSObject, CXProviderDelegate {
         route: route.route,
         availableRoutes: route.available
       )
+    }
+  }
+
+  private func ownsPickerAudio(_ nativeCallId: UUID) -> Bool {
+    guard callsEnabled, let descriptor = store.snapshot(),
+          descriptor.nativeCallId == nativeCallId, descriptor.terminalEvent == nil,
+          descriptor.handoffAcknowledgement == .adopted,
+          audioActivatedCallIds.contains(nativeCallId) else { return false }
+    return true
+  }
+
+  func audioOutputs(_ nativeCallId: UUID) -> [MknoonCallAudioOutput] {
+    synchronized {
+      guard ownsPickerAudio(nativeCallId) else { return [] }
+      return Array(audio.outputDevices().prefix(32))
+    }
+  }
+
+  func requestAudioOutput(_ nativeCallId: UUID, identifier: String) -> Bool {
+    synchronized {
+      guard ownsPickerAudio(nativeCallId), !identifier.isEmpty, identifier.utf8.count <= 1024,
+            audio.outputDevices().contains(where: { $0.id == identifier }),
+            audio.requestOutputDevice(identifier) else { return false }
+      guard record(nativeCallId, .routeChanged) else {
+        failClosedAfterPersistenceFailure(nativeCallId)
+        return false
+      }
+      return true
     }
   }
 

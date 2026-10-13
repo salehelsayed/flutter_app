@@ -2,6 +2,7 @@ import 'dart:async';
 
 import '../../../core/permissions/mic_permission_gateway.dart';
 import '../domain/call_engine.dart';
+import '../domain/call_audio_output_device.dart';
 
 /// App-owned microphone permission seam. Plugin types stay behind adapters.
 abstract interface class CallMicrophonePermission {
@@ -440,6 +441,41 @@ final class CallAudioController {
           return _recoverControlState(CallAudioFailure.controlFailed);
         }
       });
+
+  Future<List<CallAudioOutputDevice>> outputDevices() =>
+      _enqueueCommand(() async {
+        if (!_canControl || !_state.active || _engine is! CallAudioDevicePort) {
+          return const <CallAudioOutputDevice>[];
+        }
+        final revision = _interruptionRevision;
+        final outputs = await (_engine as CallAudioDevicePort).outputDevices();
+        return _canControl && _state.active && revision == _interruptionRevision
+            ? outputs
+            : const <CallAudioOutputDevice>[];
+      });
+
+  Future<bool> selectOutputDevice(String id) => _enqueueCommand(() async {
+    if (!_canControl || !_state.active || _engine is! CallAudioDevicePort) {
+      return false;
+    }
+    final revision = _interruptionRevision;
+    try {
+      final selected = await (_engine as CallAudioDevicePort)
+          .selectOutputDevice(id);
+      if (!_canControl || !_state.active || revision != _interruptionRevision) {
+        return false;
+      }
+      await _refreshState(
+        failure: selected
+            ? CallAudioFailure.none
+            : CallAudioFailure.controlFailed,
+      );
+      return selected && _canControl;
+    } catch (_) {
+      await _recoverControlState(CallAudioFailure.controlFailed);
+      return false;
+    }
+  });
 
   Future<CallAudioControlState> selectOutputRoute(CallAudioOutputRoute route) =>
       _enqueueCommand(() async {

@@ -40,6 +40,7 @@ import '../../features/call/application/outgoing_call_capability.dart';
 import '../../features/call/data/call_history_repository_impl.dart';
 import '../../features/call/domain/call_authority_lifetime.dart';
 import '../../features/call/domain/call_engine.dart';
+import '../../features/call/domain/call_audio_output_device.dart';
 import '../../features/call/domain/call_end_reason.dart';
 import '../../features/call/domain/call_event.dart';
 import '../../features/call/domain/call_id.dart';
@@ -116,6 +117,7 @@ final class ProductionCallSignalingGraph
     implements
         CallSignalingGraphLifecycle,
         ForegroundCallCapability,
+        ForegroundCallAudioPickerCapability,
         LockedCallPresentationPort,
         ForegroundCallBackgroundLifecycle,
         CallSignalingCallabilityInvalidations,
@@ -641,6 +643,36 @@ final class ProductionCallSignalingGraph
       }
       return state.failure == CallAudioFailure.none &&
               state.selectedRoute == target
+          ? ForegroundCallActionResult.applied
+          : ForegroundCallActionResult.failed;
+    } catch (_) {
+      return ForegroundCallActionResult.failed;
+    }
+  }
+
+  @override
+  Future<List<CallAudioOutputDevice>> outputDevices(CallId callId) async {
+    final controller = _currentAudioController(callId);
+    if (controller == null) return const [];
+    final outputs = await controller.outputDevices();
+    return identical(controller, _currentAudioController(callId))
+        ? outputs
+        : const [];
+  }
+
+  @override
+  Future<ForegroundCallActionResult> selectOutputDevice(
+    CallId callId,
+    String id,
+  ) async {
+    final controller = _currentAudioController(callId);
+    if (controller == null) return ForegroundCallActionResult.unavailable;
+    try {
+      final selected = await controller.selectOutputDevice(id);
+      if (!identical(controller, _currentAudioController(callId))) {
+        return ForegroundCallActionResult.unavailable;
+      }
+      return selected
           ? ForegroundCallActionResult.applied
           : ForegroundCallActionResult.failed;
     } catch (_) {

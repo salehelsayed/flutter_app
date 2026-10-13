@@ -2,6 +2,7 @@ import 'package:flutter_app/core/notifications/deterministic_notification_id.dar
 import 'dart:async';
 
 import 'notification_request_observation.dart';
+import 'missed_call_action_payload.dart';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
@@ -93,8 +94,20 @@ class FlutterNotificationService
            notificationIdRegistryResolver ??
            DurableConversationNotificationIdRegistry.openMobileDefault;
 
+  void Function(String payload)? _onNotificationTap;
+  String? _pendingCallBackPayload;
+  String? _initialActionId;
   @override
-  void Function(String payload)? onNotificationTap;
+  void Function(String payload)? get onNotificationTap => _onNotificationTap;
+  @override
+  set onNotificationTap(void Function(String payload)? callback) {
+    _onNotificationTap = callback;
+    final pending = _pendingCallBackPayload;
+    if (callback != null && pending != null) {
+      _pendingCallBackPayload = null;
+      scheduleMicrotask(() => callback(pending));
+    }
+  }
 
   @override
   Future<void> initialize() async {
@@ -103,6 +116,7 @@ class FlutterNotificationService
     );
 
     final iosSettings = DarwinInitializationSettings(
+      notificationCategories: missedCallActionCategories(),
       requestSoundPermission: _requestApplePermissions,
       requestBadgePermission: _requestApplePermissions,
       requestAlertPermission: _requestApplePermissions,
@@ -121,6 +135,7 @@ class FlutterNotificationService
     final launchDetails = await _plugin.getNotificationAppLaunchDetails();
     _initialPayload = launchDetails?.notificationResponse?.payload;
     _initialNotificationId = launchDetails?.notificationResponse?.id;
+    _initialActionId = launchDetails?.notificationResponse?.actionId;
 
     emitFlowEvent(
       layer: 'FL',
@@ -132,6 +147,21 @@ class FlutterNotificationService
   void _onNotificationResponse(NotificationResponse response) {
     final notificationId = response.id;
     final rawPayload = response.payload;
+    if (response.actionId == missedCallBackActionId ||
+        rawPayload?.startsWith(missedCallPayloadPrefix) == true) {
+      final missed = MissedCallActionPayload.parse(rawPayload);
+      if (missed == null) return;
+      final callbackPayload = response.actionId == missedCallBackActionId
+          ? missed.callBackPayload
+          : missed.contactPeerId;
+      final callback = onNotificationTap;
+      if (callback == null && response.actionId == missedCallBackActionId) {
+        _pendingCallBackPayload = callbackPayload;
+      } else {
+        callback?.call(callbackPayload);
+      }
+      return;
+    }
     final envelope = decodeConversationNotificationPayload(rawPayload);
     if (envelope == null &&
         rawPayload?.trim().startsWith(
@@ -185,6 +215,13 @@ class FlutterNotificationService
     final notificationId = _initialNotificationId;
     _initialNotificationId = null;
     final rawPayload = _initialPayload;
+    if (_initialActionId == missedCallBackActionId ||
+        rawPayload?.startsWith(missedCallPayloadPrefix) == true) {
+      final missed = MissedCallActionPayload.parse(rawPayload);
+      return _initialActionId == missedCallBackActionId
+          ? missed?.callBackPayload
+          : missed?.contactPeerId;
+    }
     final envelope = decodeConversationNotificationPayload(rawPayload);
     if (envelope == null &&
         rawPayload?.trim().startsWith(
@@ -601,6 +638,7 @@ class FlutterNotificationService
     required String contactAccountPeerId,
     required String title,
     required String body,
+    String? callId,
   }) async {
     // 406: a call-scoped id namespace so a missed call never replaces (or is
     // replaced by) the message card for the same contact.
@@ -612,8 +650,12 @@ class FlutterNotificationService
         notificationId,
         title,
         body,
-        mknoonMissedCallNotificationDetails,
-        payload: contactAccountPeerId,
+        callId == null
+            ? mknoonMissedCallNotificationDetails
+            : missedCallDetailsWithAction(),
+        payload: callId == null
+            ? contactAccountPeerId
+            : MissedCallActionPayload(contactAccountPeerId, callId).encode(),
       );
       emitFlowEvent(
         layer: 'FL',

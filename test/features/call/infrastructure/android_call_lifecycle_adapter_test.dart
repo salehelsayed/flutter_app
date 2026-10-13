@@ -28,6 +28,129 @@ final _secondCallId = CallId.parse('55555555-5555-4555-8555-555555555555');
 final _now = DateTime.fromMillisecondsSinceEpoch(_nowMs, isUtc: true);
 
 void main() {
+  Map<String, Object?> pickerInventory({
+    bool selectedB = false,
+    bool unplugA = false,
+  }) => {
+    'version': 1,
+    'outputs': [
+      if (!unplugA)
+        {
+          'id': 'synthetic-a',
+          'name': 'Synthetic headset A',
+          'route': 'bluetooth',
+          'selected': !selectedB,
+        },
+      {
+        'id': 'synthetic-b',
+        'name': 'Synthetic headset B',
+        'route': 'bluetooth',
+        'selected': selectedB,
+      },
+    ],
+  };
+
+  test(
+    'picker waits for exact native selection and keeps distinct same-class outputs',
+    () async {
+      final native = _NativeHarness()
+        ..attachResult = _emptyBatch()
+        ..audioState = {
+          'version': 1,
+          'active': true,
+          'muted': true,
+          'route': 'bluetooth',
+          'availableRoutes': ['bluetooth', 'speaker'],
+        };
+      final coordinator = _coordinator();
+      final adapter = _adapter(native, coordinator, {_callId: _callHandle});
+      addTearDown(() async {
+        await adapter.close();
+        await coordinator.dispose();
+        await native.events.close();
+      });
+      await adapter.start();
+      await adapter.present(_presentation());
+      await adapter.readAudioState();
+      native.results['readAudioOutputs'] = pickerInventory();
+      final devices = await adapter.outputDevices();
+      expect(devices.map((d) => d.id), ['synthetic-a', 'synthetic-b']);
+      expect(devices.toString(), isNot(contains('Synthetic')));
+      native.results['requestAudioOutput'] = true;
+      native.queuedResults['readAudioOutputs'] = [
+        pickerInventory(),
+        pickerInventory(),
+        pickerInventory(selectedB: true),
+      ];
+      expect(await adapter.selectOutputDevice('synthetic-b'), isTrue);
+      expect(native.callsOf('requestAudioOutput').single.arguments, {
+        'version': 1,
+        'callHandle': _callHandle,
+        'deviceId': 'synthetic-b',
+      });
+      expect((await adapter.readAudioState()).muted, isTrue);
+      native.results['readAudioOutputs'] = pickerInventory(
+        selectedB: true,
+        unplugA: true,
+      );
+      expect(await adapter.selectOutputDevice('synthetic-a'), isFalse);
+      expect(native.callsOf('requestAudioOutput'), hasLength(1));
+      await adapter.deactivateAudio();
+      await expectLater(
+        adapter.outputDevices(),
+        throwsA(isA<AndroidCallLifecycleException>()),
+      );
+    },
+  );
+
+  test(
+    'picker refuses native rejection, malformed duplicate inventory and hot-unplug during selection',
+    () async {
+      final native = _NativeHarness()
+        ..attachResult = _emptyBatch()
+        ..audioState = {
+          'version': 1,
+          'active': true,
+          'muted': false,
+          'route': 'bluetooth',
+          'availableRoutes': ['bluetooth', 'speaker'],
+        };
+      final coordinator = _coordinator();
+      final adapter = _adapter(native, coordinator, {_callId: _callHandle});
+      addTearDown(() async {
+        await adapter.close();
+        await coordinator.dispose();
+        await native.events.close();
+      });
+      await adapter.start();
+      await adapter.present(_presentation());
+      await adapter.readAudioState();
+      native.results['readAudioOutputs'] = pickerInventory();
+      native.results['requestAudioOutput'] = false;
+      expect(await adapter.selectOutputDevice('synthetic-b'), isFalse);
+      native.results['requestAudioOutput'] = true;
+      native.queuedResults['readAudioOutputs'] = [
+        pickerInventory(),
+        {'version': 1, 'outputs': []},
+      ];
+      expect(await adapter.selectOutputDevice('synthetic-b'), isFalse);
+      final item = {
+        'id': 'synthetic-a',
+        'name': 'Synthetic',
+        'route': 'bluetooth',
+        'selected': false,
+      };
+      native.results['readAudioOutputs'] = {
+        'version': 1,
+        'outputs': [item, item],
+      };
+      await expectLater(
+        adapter.outputDevices(),
+        throwsA(isA<AndroidCallLifecycleException>()),
+      );
+    },
+  );
+
   test(
     'admission settlement carries exact captured token without canonical acceptance',
     () async {

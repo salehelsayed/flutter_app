@@ -76,6 +76,11 @@ readonly ONE_TO_ONE_HOST_TESTS=(
   "test/features/call/infrastructure/production_call_signaling_adapters_test.dart"
   "test/features/call/presentation/call_screens_test.dart"
   "test/features/call/presentation/foreground_call_overlay_test.dart"
+  # SE-45/46/47/48: current-call navigation, fresh redial, local history and transient route selection.
+  "test/features/call/application/call_redial_controller_test.dart"
+  "test/features/call/presentation/calls_page_test.dart"
+  "test/features/call/presentation/call_audio_output_picker_test.dart"
+  "test/features/call/presentation/foreground_call_back_button_test.dart"
   "test/integration/android_foreground_webrtc_audio_campaign_test.dart"
   # Plan 399: production-main Android call observer, campaign, local fixture,
   # directional RTP booleans, and privacy-bounded evidence contract.

@@ -50,6 +50,7 @@ void main() {
   );
 
   Widget buildTestWidget({
+    VoidCallback? onCall,
     List<ConversationMessage> messages = const <ConversationMessage>[],
     List<ConversationCallTimelineEntry> callEntries =
         const <ConversationCallTimelineEntry>[],
@@ -65,6 +66,9 @@ void main() {
         ownPeerId: '12D3KooWMyPeerId1234567890',
         messages: messages,
         callEntries: callEntries,
+        onCall: onCall,
+        showCallAction: onCall != null,
+        callActionEnabled: onCall != null,
         onSend: (_) {},
         onBack: () {},
         initialLoadDone: true,
@@ -77,6 +81,21 @@ void main() {
       await tester.pump(const Duration(milliseconds: 16));
     }
   }
+
+  testWidgets('history Call back reuses the current conversation call action', (
+    tester,
+  ) async {
+    var starts = 0;
+    await tester.pumpWidget(
+      buildTestWidget(
+        onCall: () => starts++,
+        callEntries: [makeCall(startedAt: DateTime.utc(2026, 2, 9, 15, 30))],
+      ),
+    );
+    await pumpFrames(tester);
+    await tester.tap(find.byTooltip('Call back'));
+    expect(starts, 1);
+  });
 
   testWidgets('TC-405-20 no call source leaves the chat exactly as it was', (
     tester,

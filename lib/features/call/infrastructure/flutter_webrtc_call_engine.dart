@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter_webrtc/flutter_webrtc.dart' as webrtc;
 
 import '../domain/call_engine.dart';
+import '../domain/call_audio_output_device.dart';
 import 'call_audio_route_adapter.dart';
 import 'call_stats_sampler.dart';
 import 'webrtc_types.dart';
@@ -996,7 +997,10 @@ final class FlutterWebRtcPeerConnectionAdapter
 }
 
 final class FlutterWebRtcCallEngine
-    implements CallEngine, CallAudioOutputRouteChangeSource {
+    implements
+        CallEngine,
+        CallAudioOutputRouteChangeSource,
+        CallAudioDevicePort {
   FlutterWebRtcCallEngine({
     required WebRtcPeerConnectionAdapter adapter,
     CallAudioRoutePort? audioRoutePort,
@@ -1394,6 +1398,23 @@ final class FlutterWebRtcCallEngine
     _ensureOpen();
     return _audioRoutePort?.supportedOutputRoutes() ??
         const <CallAudioOutputRoute>[CallAudioOutputRoute.systemDefault];
+  }
+
+  @override
+  Future<List<CallAudioOutputDevice>> outputDevices() async {
+    _requireConnectionCreated();
+    final port = _audioRoutePort;
+    return port is CallAudioDevicePort
+        ? (port as CallAudioDevicePort).outputDevices()
+        : const [];
+  }
+
+  @override
+  Future<bool> selectOutputDevice(String id) async {
+    _requireConnectionCreated();
+    final port = _audioRoutePort;
+    return port is CallAudioDevicePort &&
+        await (port as CallAudioDevicePort).selectOutputDevice(id);
   }
 
   @override

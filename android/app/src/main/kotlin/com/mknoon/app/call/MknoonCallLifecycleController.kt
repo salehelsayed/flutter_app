@@ -81,6 +81,10 @@ internal interface MknoonCallPlatform {
 
     fun requestRoute(nativeCallId: UUID, route: String): Boolean = false
 
+    fun audioOutputs(nativeCallId: UUID): List<MknoonCallAudioOutput> = emptyList()
+
+    fun requestAudioOutput(nativeCallId: UUID, identifier: String): Boolean = false
+
     fun project(nativeCallId: UUID, state: String): Boolean = false
 }
 
@@ -126,6 +130,13 @@ internal data class MknoonCallAudioState(
     val route: String,
     val availableRoutes: List<String>,
 )
+
+/** Only returned to the open picker; never journaled or diagnosed. */
+internal data class MknoonCallAudioOutput(
+    val id: String, val name: String, val route: String, val selected: Boolean,
+) {
+    override fun toString(): String = "MknoonCallAudioOutput(route=$route, selected=$selected)"
+}
 
 internal data class MknoonCallJournalObservation(
     val descriptor: PendingNativeCallDescriptor?,
@@ -1016,6 +1027,20 @@ internal class MknoonCallLifecycleController(
         }
         synchronized(lock) { clearAudioTransition(transition) }
         return true
+    }
+
+    fun audioOutputs(nativeCallId: UUID): List<MknoonCallAudioOutput> =
+        withActiveAudioOwner(nativeCallId, emptyList()) {
+            runCatching { platform.audioOutputs(nativeCallId) }.getOrDefault(emptyList())
+        }
+
+    fun requestAudioOutput(nativeCallId: UUID, identifier: String): Boolean {
+        if (identifier.isBlank() || identifier.length > 1024 ||
+            !withActiveAudioOwner(nativeCallId, false) { true }) return false
+        // Endpoint callbacks need the controller lock. Keep it free while the
+        // platform waits for actual confirmation, then recheck terminal ownership.
+        val selected = runCatching { platform.requestAudioOutput(nativeCallId, identifier) }.getOrDefault(false)
+        return selected && withActiveAudioOwner(nativeCallId, false) { true }
     }
 
     fun requestRoute(nativeCallId: UUID, route: String): Boolean = synchronized(lock) {

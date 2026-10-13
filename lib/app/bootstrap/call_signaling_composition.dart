@@ -11,6 +11,7 @@ import '../../features/call/infrastructure/call_authority_client.dart';
 import '../../features/call/application/outgoing_call_capability.dart';
 import '../../features/call/domain/call_wake_handle_grant.dart';
 import '../../features/call/domain/call_id.dart';
+import '../../features/call/domain/call_audio_output_device.dart';
 import '../../features/call/domain/call_session_snapshot.dart';
 import '../../features/call/domain/call_state.dart';
 
@@ -137,6 +138,7 @@ final class CallSignalingComposition
         OutgoingCallReadinessRecovery,
         OutgoingCallStartDiagnostics,
         ForegroundCallCapability,
+        ForegroundCallAudioPickerCapability,
         LockedCallPresentationPort,
         IncomingCallPresenter {
   CallSignalingComposition({
@@ -1246,6 +1248,39 @@ final class CallSignalingComposition
       return ForegroundCallActionResult.failed;
     }
   }
+
+  @override
+  Future<List<CallAudioOutputDevice>> outputDevices(CallId callId) async {
+    final graph = _foregroundGraph;
+    final generation = _foregroundGeneration;
+    if (!isStarted ||
+        _foregroundCurrent?.session.callId != callId ||
+        graph is! ForegroundCallAudioPickerCapability) {
+      return const [];
+    }
+    final outputs = await (graph as ForegroundCallAudioPickerCapability)
+        .outputDevices(callId);
+    return isStarted &&
+            generation == _foregroundGeneration &&
+            identical(graph, _foregroundGraph) &&
+            _foregroundCurrent?.session.callId == callId
+        ? outputs
+        : const [];
+  }
+
+  @override
+  Future<ForegroundCallActionResult> selectOutputDevice(
+    CallId callId,
+    String id,
+  ) => _runForegroundAction(
+    callId,
+    (graph) => graph is ForegroundCallAudioPickerCapability
+        ? (graph as ForegroundCallAudioPickerCapability).selectOutputDevice(
+            callId,
+            id,
+          )
+        : Future.value(ForegroundCallActionResult.unavailable),
+  );
 
   static bool _defaultForegroundState() => false;
 

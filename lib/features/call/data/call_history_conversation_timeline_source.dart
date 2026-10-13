@@ -2,6 +2,8 @@ import 'package:flutter_app/features/conversation/domain/models/conversation_tim
 import 'package:flutter_app/features/conversation/domain/repositories/conversation_call_timeline_source.dart';
 
 import '../domain/call_session_snapshot.dart';
+import '../domain/call_id.dart';
+import '../application/call_history_access.dart';
 import 'call_history_repository.dart';
 
 /// Adapts local terminal call history to the typed conversation timeline.
@@ -9,7 +11,10 @@ import 'call_history_repository.dart';
 /// The adapter intentionally omits transport route and every signaling,
 /// mailbox, wake, and cryptographic field.
 final class CallHistoryConversationTimelineSource
-    implements ConversationCallTimelineSource {
+    implements
+        ConversationCallTimelineSource,
+        CallHistoryAccess,
+        CallHistoryBrowsingSource {
   const CallHistoryConversationTimelineSource(
     this.repository, {
     Stream<void>? changes,
@@ -18,8 +23,20 @@ final class CallHistoryConversationTimelineSource
        _markRead = markRead;
 
   final CallHistoryRepository repository;
+
+  @override
+  CallHistoryBrowser? get callHistoryBrowser => repository is CallHistoryBrowser
+      ? repository as CallHistoryBrowser
+      : null;
   final Stream<void>? _changes;
   final Future<int> Function(String contactPeerId, DateTime readAt)? _markRead;
+
+  @override
+  Future<CallHistoryEntry?> findCall(CallId id) => repository.getByCallId(id);
+
+  @override
+  Future<List<CallHistoryEntry>> recentCallsForContact(String peerId) =>
+      repository.listForContact(peerId);
 
   @override
   Future<void> markCallsRead(String contactPeerId) async {
@@ -42,27 +59,28 @@ final class CallHistoryConversationTimelineSource
     return List<ConversationCallTimelineEntry>.unmodifiable(
       rows
           .where((row) => row.contactAccountPeerId == contactPeerId)
-          .map(
-            (row) => ConversationCallTimelineEntry(
-              callId: row.callId.value,
-              contactPeerId: row.contactAccountPeerId,
-              direction: switch (row.direction) {
-                CallDirection.incoming => ConversationCallDirection.incoming,
-                CallDirection.outgoing => ConversationCallDirection.outgoing,
-              },
-              status: switch (row.status) {
-                CallHistoryStatus.completed => ConversationCallStatus.completed,
-                CallHistoryStatus.missed => ConversationCallStatus.missed,
-                CallHistoryStatus.declined => ConversationCallStatus.declined,
-                CallHistoryStatus.busy => ConversationCallStatus.busy,
-                CallHistoryStatus.cancelled => ConversationCallStatus.cancelled,
-                CallHistoryStatus.failed => ConversationCallStatus.failed,
-              },
-              startedAt: row.startedAt,
-              endedAt: row.endedAt,
-              duration: row.duration,
-            ),
-          ),
+          .map(projectCallTimelineEntry),
     );
   }
 }
+
+ConversationCallTimelineEntry projectCallTimelineEntry(CallHistoryEntry row) =>
+    ConversationCallTimelineEntry(
+      callId: row.callId.value,
+      contactPeerId: row.contactAccountPeerId,
+      direction: switch (row.direction) {
+        CallDirection.incoming => ConversationCallDirection.incoming,
+        CallDirection.outgoing => ConversationCallDirection.outgoing,
+      },
+      status: switch (row.status) {
+        CallHistoryStatus.completed => ConversationCallStatus.completed,
+        CallHistoryStatus.missed => ConversationCallStatus.missed,
+        CallHistoryStatus.declined => ConversationCallStatus.declined,
+        CallHistoryStatus.busy => ConversationCallStatus.busy,
+        CallHistoryStatus.cancelled => ConversationCallStatus.cancelled,
+        CallHistoryStatus.failed => ConversationCallStatus.failed,
+      },
+      startedAt: row.startedAt,
+      endedAt: row.endedAt,
+      duration: row.duration,
+    );

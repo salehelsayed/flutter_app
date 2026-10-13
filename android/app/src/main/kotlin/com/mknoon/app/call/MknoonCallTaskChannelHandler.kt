@@ -19,6 +19,7 @@ import io.flutter.plugin.common.MethodChannel
  */
 internal class MknoonCallTaskChannelHandler(
     private val registerBack: ((() -> Unit) -> (() -> Unit))? = null,
+    private val isDeviceUnlocked: () -> Boolean = { false },
     private val moveTaskToBack: () -> Boolean,
 ) : MethodChannel.MethodCallHandler {
     private var callOwnsBack = false
@@ -26,6 +27,13 @@ internal class MknoonCallTaskChannelHandler(
 
     override fun onMethodCall(call: MethodCall, result: MethodChannel.Result) {
         when (call.method) {
+            "isDeviceUnlocked" -> {
+                if (call.arguments != null) {
+                    result.error("bad_args", "isDeviceUnlocked takes no arguments", null)
+                    return
+                }
+                result.success(runCatching { isDeviceUnlocked() }.getOrDefault(false))
+            }
             MOVE_TO_BACKGROUND -> {
                 if (call.arguments != null) {
                     result.error("bad_args", "moveToBackground takes no arguments", null)

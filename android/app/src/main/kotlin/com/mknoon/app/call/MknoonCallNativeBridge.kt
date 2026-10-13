@@ -250,6 +250,8 @@ internal class MknoonCallNativeBridge(
             "end" -> withEitherCallIdentity(call.arguments, result, controller::endFromDart)
             "requestRoute" -> requestRoute(call.arguments, result)
             "readAudioState" -> readAudioState(call.arguments, result)
+            "readAudioOutputs" -> readAudioOutputs(call.arguments, result)
+            "requestAudioOutput" -> requestAudioOutput(call.arguments, result)
             "project" -> project(call.arguments, result)
             "updatePresentation" -> updatePresentation(call.arguments, result)
             "updateAuthenticatedContactName" -> updateAuthenticatedContactName(call.arguments, result)
@@ -452,6 +454,22 @@ internal class MknoonCallNativeBridge(
             ?: return badArguments(result)
         val route = map["route"] as? String ?: return badArguments(result)
         runForCall(nativeCallId, result, awaitTelecom = true) { controller.requestRoute(it, route) }
+    }
+
+    private fun readAudioOutputs(arguments: Any?, result: MethodChannel.Result) {
+        val map = dartIdentityMap(arguments) ?: return badArguments(result)
+        val nativeCallId = resolveCallHandle(map["callHandle"]) ?: return badArguments(result)
+        result.success(mapOf("version" to VERSION, "outputs" to controller.audioOutputs(nativeCallId).map {
+            mapOf("id" to it.id, "name" to it.name, "route" to it.route, "selected" to it.selected)
+        }))
+    }
+
+    private fun requestAudioOutput(arguments: Any?, result: MethodChannel.Result) {
+        val map = dartIdentityMap(arguments, setOf("deviceId")) ?: return badArguments(result)
+        val nativeCallId = resolveCallHandle(map["callHandle"]) ?: return badArguments(result)
+        val identifier = map["deviceId"] as? String ?: return badArguments(result)
+        if (identifier.isBlank() || identifier.length > 1024) return badArguments(result)
+        runForCall(nativeCallId, result, awaitTelecom = true) { controller.requestAudioOutput(it, identifier) }
     }
 
     private fun readAudioState(arguments: Any?, result: MethodChannel.Result) {

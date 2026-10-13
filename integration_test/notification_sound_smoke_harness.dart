@@ -367,10 +367,12 @@ class _RecordingNotificationService implements NotificationService {
   @override
   Future<void> showMissedCallNotification({
     required String contactAccountPeerId,
+    String? callId,
     required String title,
     required String body,
   }) => _inner.showMissedCallNotification(
     contactAccountPeerId: contactAccountPeerId,
+    callId: callId,
     title: title,
     body: body,
   );

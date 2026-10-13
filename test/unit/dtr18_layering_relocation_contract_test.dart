@@ -215,8 +215,11 @@ const _privacySha256 =
 // inside ForegroundCallOverlay; MyApp gains an optional updateCheckController
 // and attaches an UpdateRequiredBackGuard after the call guard. Resume dispatch
 // to _onResumed is unchanged; the gate observes resume itself.
+// SE-46: reviewed local Call back routing waits for canonical foreground/unlock
+// and uses current outgoing preflight; resume dispatch and existing owners stay
+// in place. The source guard includes only that approved app-root addition.
 const _applicationRootNormalizedSha256 =
-    '0618108eae41fc82a31ba6480eefab932990bd818bfc247cb52c79ae2336a15a';
+    'be4f4bc31cea78c9088e054ae7594a302f46867e8cea503dc1d19107d111744b';
 // Plan 358 forwards the strict local-path commit's `nowMs` sample through the
 // same already-wired delegate and relocates nothing. Plan 360 additionally
 // constructs the role-aware deferred-runtime-start owner over the SAME
@@ -266,6 +269,8 @@ const _applicationRootNormalizedSha256 =
 // moved.
 // Account erasure closes/deletes this root's existing database before key
 // cleanup; the canonical lease remains owned here until normal teardown.
+// SE-46 additionally posts the durable terminal call ID through the existing
+// local missed-call notifier. No provider payload or ownership boundary moves.
 const _productionBootstrapNormalizedSha256 =
     // Plan 365 wires the existing strict group-media lifecycle owner into the
     // local cold-start cleanup sequence; no bootstrap responsibility moves.
@@ -352,7 +357,7 @@ const _productionBootstrapNormalizedSha256 =
     // inbox-staging maintenance query (retry, give up, delete stuck rows) to
     // the existing inbox coordinator at this composition. No owner, lifecycle
     // or relocation URI changes.
-    '0c6830109c1b3999d2cb84ee5238056548d040d73d511bcf6aaad41550d83678';
+    '6a968d1531991e6b6ade23cbecf10b59ddf86401f8043cc996879735fca658b2';
 
 // The P269 strict-custody proof forwards two optional debug download hooks
 // at the existing media owner; no application or notification owner moves.
@@ -360,7 +365,7 @@ const _productionBootstrapNormalizedSha256 =
 // Re-pinned 2026-10-06 (user approved) for the same caff0f087 inbox-staging
 // maintenance callback.
 const _productionBootstrapWithoutHistoricalNotificationSha256 =
-    '24bef7cf65d1c3fc637afbc0981231a6594e7b022e35d720b63571158bb26fc9';
+    '97c700c044f868e9d63d55aa2d54188f49fc40d4de27d49f48107e99aab8ad3a';
 
 const _reviewedResumeExceptionTargets = <String>{
   'lib/features/account_migration/application/'

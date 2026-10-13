@@ -4363,4 +4363,49 @@ class AppLocalizationsAr extends AppLocalizations {
   @override
   String get update_notification_body_security =>
       'يتوفر تحديث أمني. اضغط للتحديث.';
+
+  @override
+  String get call_minimize => 'تصغير المكالمة';
+
+  @override
+  String get call_return => 'العودة إلى المكالمة';
+
+  @override
+  String get call_muted => 'الميكروفون مكتوم';
+
+  @override
+  String get call_back => 'معاودة الاتصال';
+
+  @override
+  String get calls_title => 'المكالمات';
+
+  @override
+  String get calls_all => 'الكل';
+
+  @override
+  String get calls_missed => 'الفائتة';
+
+  @override
+  String get calls_search => 'البحث في جهات الاتصال';
+
+  @override
+  String get calls_clear_search => 'مسح البحث';
+
+  @override
+  String get calls_refresh => 'تحديث المكالمات';
+
+  @override
+  String get calls_empty => 'لم يتم العثور على مكالمات';
+
+  @override
+  String get calls_load_error => 'تعذر تحميل المكالمات';
+
+  @override
+  String get calls_more => 'عرض المزيد';
+
+  @override
+  String get call_audio_choose_output => 'اختيار مخرج الصوت';
+
+  @override
+  String get call_audio_refresh_outputs => 'تحديث مخارج الصوت';
 }

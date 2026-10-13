@@ -49,6 +49,31 @@ internal val CANONICAL_NATIVE_CALL_ROUTES = setOf(
     "bluetooth",
 )
 
+internal fun callAudioOutputInventory(
+    endpoints: List<CallEndpointCompat>, selectedId: String?,
+): List<MknoonCallAudioOutput> = endpoints.distinctBy { it.identifier }.take(32).map {
+    MknoonCallAudioOutput(it.identifier.toString(), it.name.toString().take(256),
+        canonicalCallRoute(it.type), it.identifier.toString() == selectedId)
+}
+
+internal fun selectCallEndpointByIdentifier(
+    endpoints: List<CallEndpointCompat>, identifier: String,
+): CallEndpointCompat? = endpoints.firstOrNull { it.identifier.toString() == identifier }
+
+/** Observe the existing endpoint collector; never consume its flow a second time. */
+internal suspend fun awaitCallAudioOutputConfirmation(
+    identifier: String,
+    selected: () -> String?,
+    owned: () -> Boolean,
+    available: () -> Boolean,
+): Boolean {
+    while (selected() != identifier) {
+        if (!owned() || !available()) return false
+        delay(25)
+    }
+    return owned() && available()
+}
+
 internal const val MKNOON_CALL_LIFECYCLE_DIAGNOSTIC_TAG = "MknoonCallLifecycle"
 internal const val MKNOON_CALL_LIFECYCLE_DIAGNOSTIC_PREFIX = "CALL_ANDROID_LIFECYCLE"
 internal const val MKNOON_TELECOM_DISCONNECT_DIAGNOSTIC_TAG = "MknoonCallDisconnect"
@@ -828,6 +853,7 @@ private class AndroidMknoonCallPlatform(
     private val sessions = ConcurrentHashMap<UUID, CallControlScope>()
     private val endpointJobs = ConcurrentHashMap<UUID, Job>()
     private val availableEndpoints = ConcurrentHashMap<UUID, List<CallEndpointCompat>>()
+    private val selectedEndpointIds = ConcurrentHashMap<UUID, String>()
     private val locallyDisconnecting = ConcurrentHashMap<UUID, CallControlScope>()
     private val callbackReleases = MknoonTelecomCallbackRelease(
         scope = scope,
@@ -1093,6 +1119,7 @@ private class AndroidMknoonCallPlatform(
                     }
                     launch {
                         session.currentCallEndpoint.collectLatest { endpoint ->
+                            selectedEndpointIds[nativeCallId] = endpoint.identifier.toString()
                             controller().onRouteChanged(nativeCallId, endpoint.routeName())
                         }
                     }
@@ -1113,6 +1140,7 @@ private class AndroidMknoonCallPlatform(
     override fun stopEndpointUpdates(nativeCallId: UUID) {
         endpointJobs.remove(nativeCallId)?.cancel()
         availableEndpoints.remove(nativeCallId)
+        selectedEndpointIds.remove(nativeCallId)
     }
 
     override fun startMicrophoneService(nativeCallId: UUID) {
@@ -1130,6 +1158,28 @@ private class AndroidMknoonCallPlatform(
                 serviceIntent(MknoonCallForegroundService.ACTION_START_INACTIVE, nativeCallId),
             ),
         )
+    }
+
+    override fun audioOutputs(nativeCallId: UUID): List<MknoonCallAudioOutput> =
+        callAudioOutputInventory(availableEndpoints[nativeCallId].orEmpty(), selectedEndpointIds[nativeCallId])
+
+    override fun requestAudioOutput(nativeCallId: UUID, identifier: String): Boolean {
+        val session = sessions[nativeCallId] ?: return false
+        val endpoint = selectCallEndpointByIdentifier(availableEndpoints[nativeCallId].orEmpty(), identifier)
+            ?: return false
+        return try {
+            runBlocking {
+                withTimeout(CONTROL_TIMEOUT_MS) {
+                    if (session.requestEndpointChange(endpoint) !is CallControlResult.Success) return@withTimeout false
+                    awaitCallAudioOutputConfirmation(
+                        identifier,
+                        selected = { selectedEndpointIds[nativeCallId] },
+                        owned = { sessions[nativeCallId] === session },
+                        available = { availableEndpoints[nativeCallId].orEmpty().any { it.identifier == endpoint.identifier } },
+                    )
+                }
+            }
+        } catch (_: Exception) { false }
     }
 
     override fun requestRoute(nativeCallId: UUID, route: String): Boolean {

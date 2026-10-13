@@ -6238,6 +6238,13 @@ final class ProductionApplicationBootstrap
     // it, on its own channel, from the one place that knows a terminal row
     // just became durable.
     final missedCallNotifier = MissedCallNotifier(
+      postWithAction: (entry, title, body) =>
+          notificationService.showMissedCallNotification(
+            contactAccountPeerId: entry.contactAccountPeerId,
+            callId: entry.callId.value,
+            title: title,
+            body: body,
+          ),
       post:
           ({
             required String contactAccountPeerId,

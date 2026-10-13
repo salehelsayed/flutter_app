@@ -310,6 +310,7 @@ abstract class NotificationService {
     required String contactAccountPeerId,
     required String title,
     required String body,
+    String? callId,
   });
 
   /// Callback invoked when the user taps a notification.

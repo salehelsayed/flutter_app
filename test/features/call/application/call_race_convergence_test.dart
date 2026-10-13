@@ -39,6 +39,33 @@ final class _Effects implements CallEffectExecutor {
   }
 }
 
+final class _PairedEffects implements CallEffectExecutor {
+  final presented = <CallId>[];
+  @override
+  Future<CallEvent?> execute(
+    CallEffect effect,
+    CallSessionSnapshot snapshot,
+  ) async {
+    final type = switch (effect.type) {
+      CallEffectType.prepareOutgoingInvite => CallEventType.outgoingInviteReady,
+      CallEffectType.validateIncomingInvite => CallEventType.incomingValidated,
+      CallEffectType.presentIncomingCall => CallEventType.systemUiPresented,
+      _ => null,
+    };
+    if (effect.type == CallEffectType.presentIncomingCall) {
+      presented.add(snapshot.callId!);
+    }
+    return type == null
+        ? null
+        : CallEvent(
+            type: type,
+            eventId: '${type.name}-${snapshot.callId!.value}',
+            occurredAt: DateTime.utc(2026, 8, 30, 12),
+            callId: snapshot.callId,
+          );
+  }
+}
+
 CallEvent _place(CallId id, {required String localAccount}) => CallEvent(
   type: CallEventType.place,
   eventId: 'place-${id.value}',
@@ -77,6 +104,107 @@ CallCoordinator _build(_History history, _Effects effects) => CallCoordinator(
 );
 
 void main() {
+  for (final lowerSide in ['a', 'b']) {
+    for (final reverse in [false, true]) {
+      test(
+        'paired glare converges with lower caller $lowerSide and reversed delivery $reverse, terminal replay cleans once',
+        () async {
+          final now = DateTime.utc(2026, 8, 30, 12);
+          final lower = CallId.parse('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa');
+          final higher = CallId.parse('bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb');
+          final ids = {
+            'a': lowerSide == 'a' ? lower : higher,
+            'b': lowerSide == 'b' ? lower : higher,
+          };
+          final histories = {'a': _History(), 'b': _History()};
+          final effects = {'a': _PairedEffects(), 'b': _PairedEffects()};
+          final cleanup = <String, Map<CallId, int>>{'a': {}, 'b': {}};
+          final peers = <String, CallCoordinator>{};
+          for (final side in ['a', 'b']) {
+            peers[side] = CallCoordinator(
+              reducer: const CallReducer(),
+              cleanupCoordinator: CallCleanupCoordinator([
+                CallCleanupStep('media', (s) async {
+                  cleanup[side]!.update(
+                    s.callId!,
+                    (n) => n + 1,
+                    ifAbsent: () => 1,
+                  );
+                }),
+              ]),
+              historyProjector: CallHistoryProjector(histories[side]!),
+              effectExecutor: effects[side]!,
+              clock: () => now,
+              idSource: () => ids[side]!,
+            );
+            addTearDown(peers[side]!.dispose);
+            final other = side == 'a' ? 'b' : 'a';
+            await peers[side]!.dispatch(
+              CallEvent(
+                type: CallEventType.place,
+                eventId: '$side-place',
+                occurredAt: now,
+                callId: ids[side],
+                contactPeerId: other,
+                localAccountPeerId: side,
+                localDeviceId: '$side-device',
+                remoteAccountPeerId: other,
+                remoteDeviceId: '$other-device',
+              ),
+            );
+          }
+          for (final side in reverse ? ['b', 'a'] : ['a', 'b']) {
+            final other = side == 'a' ? 'b' : 'a';
+            final invite = CallEvent(
+              type: CallEventType.remoteInvite,
+              eventId: '$side-invite',
+              occurredAt: now,
+              callId: ids[other],
+              contactPeerId: other,
+              localAccountPeerId: side,
+              localDeviceId: '$side-device',
+              remoteAccountPeerId: other,
+              remoteDeviceId: '$other-device',
+              expiresAt: now.add(const Duration(seconds: 40)),
+            );
+            await peers[side]!.dispatch(invite);
+            await peers[side]!.dispatch(invite);
+          }
+          expect(
+            peers.values.map((p) => p.activeSession?.callId),
+            everyElement(lower),
+          );
+          expect(effects.values.expand((e) => e.presented), [lower]);
+          for (final side in ['a', 'b']) {
+            await peers[side]!.dispatch(
+              CallEvent(
+                type: CallEventType.remoteTerminate,
+                eventId: '$side-loser-terminal',
+                occurredAt: now,
+                callId: higher,
+              ),
+            );
+            expect(peers[side]!.activeSession?.callId, lower);
+            final terminal = CallEvent(
+              type: CallEventType.remoteTerminate,
+              eventId: '$side-winner-terminal',
+              occurredAt: now,
+              callId: lower,
+            );
+            await peers[side]!.dispatch(terminal);
+            await peers[side]!.dispatch(terminal);
+            expect(peers[side]!.activeSession, isNull);
+            expect(cleanup[side]![lower], 1);
+            expect(cleanup[side]!.values, everyElement(1));
+            expect(
+              histories[side]!.rows,
+              hasLength(ids[side] == lower ? 1 : 2),
+            );
+          }
+        },
+      );
+    }
+  }
   test(
     'same-contact glare replaces the lexicographically losing leg',
     () async {

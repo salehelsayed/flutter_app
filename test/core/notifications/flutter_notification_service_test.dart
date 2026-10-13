@@ -17,6 +17,7 @@ import 'package:flutter_app/core/notifications/local_notification_ledger.dart';
 import 'package:flutter_app/core/notifications/local_notification_ledger_store.dart';
 import 'package:flutter_app/core/notifications/local_notification_support.dart';
 import 'package:flutter_app/core/notifications/notification_service.dart';
+import 'package:flutter_app/core/notifications/missed_call_action_payload.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 
 void main() {
@@ -27,6 +28,7 @@ void main() {
   late Directory notificationIdDirectory;
   late String? launchPayload;
   late int launchNotificationId;
+  String? launchActionId;
   // Platform reply for `getNotificationChannels`. Null (the default) is the
   // plugin's "no channel information" answer, which the publication path
   // treats as fail-open — so every pre-existing test keeps its behaviour.
@@ -83,6 +85,7 @@ void main() {
     log.clear();
     launchPayload = 'peer-123';
     launchNotificationId = 7;
+    launchActionId = null;
     notificationChannelsReply = null;
     activeNotificationsReply = null;
     notificationIdDirectory = Directory.systemTemp.createTempSync(
@@ -104,10 +107,14 @@ void main() {
                 'notificationLaunchedApp': true,
                 'notificationResponse': <String, Object?>{
                   'notificationId': launchNotificationId,
-                  'actionId': null,
+                  'actionId': launchActionId,
                   'input': null,
                   'notificationResponseType':
-                      NotificationResponseType.selectedNotification.index,
+                      (launchActionId == null
+                              ? NotificationResponseType.selectedNotification
+                              : NotificationResponseType
+                                    .selectedNotificationAction)
+                          .index,
                   'payload': launchPayload,
                 },
               };
@@ -126,6 +133,87 @@ void main() {
       notificationIdDirectory.deleteSync(recursive: true);
     }
   });
+
+  test(
+    'missed Call back foreground action is distinct from an ordinary card tap and waits for handler binding',
+    () async {
+      final service = buildService();
+      const missed = MissedCallActionPayload(
+        'synthetic-contact',
+        'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+      );
+      await service.initialize();
+      await _sendNotificationResponse(
+        payload: missed.encode(),
+        actionId: missedCallBackActionId,
+      );
+      final tapped = <String>[];
+      service.onNotificationTap = tapped.add;
+      await Future<void>.delayed(Duration.zero);
+      expect(tapped, [missed.callBackPayload]);
+      await _sendNotificationResponse(payload: missed.encode());
+      expect(tapped.last, 'synthetic-contact');
+      await _sendNotificationResponse(
+        payload: 'peer-456',
+        actionId: missedCallBackActionId,
+      );
+      expect(tapped, hasLength(2));
+      log.clear();
+      await service.showMissedCallNotification(
+        contactAccountPeerId: 'synthetic-contact',
+        callId: missed.callId,
+        title: 'Synthetic caller',
+        body: 'Missed call',
+      );
+      final show =
+          log.firstWhere((call) => call.method == 'show').arguments as Map;
+      final details = show['platformSpecifics'] as Map;
+      expect((details['actions'] as List).single['id'], missedCallBackActionId);
+      expect((details['actions'] as List).single['showsUserInterface'], isTrue);
+      expect(
+        MissedCallActionPayload.parse(show['payload'] as String)?.callId,
+        missed.callId,
+      );
+    },
+  );
+
+  test(
+    'cold local Call back is consumed once as an action rather than an old-call answer',
+    () async {
+      const missed = MissedCallActionPayload(
+        'synthetic-contact',
+        'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+      );
+      launchPayload = missed.encode();
+      launchActionId = missedCallBackActionId;
+      final service = buildService();
+      await service.initialize();
+      expect(await service.consumeInitialPayload(), missed.callBackPayload);
+      expect(await service.consumeInitialPayload(), isNull);
+      expect(log.where((call) => call.method == 'cancelAll'), isEmpty);
+    },
+  );
+
+  test(
+    'iOS local Call back requires foreground authentication and keeps a local category',
+    () {
+      final category = missedCallActionCategories().single;
+      expect(category.identifier, missedCallActionCategoryId);
+      final action = category.actions.single;
+      expect(action.identifier, missedCallBackActionId);
+      expect(
+        action.options,
+        containsAll([
+          DarwinNotificationActionOption.foreground,
+          DarwinNotificationActionOption.authenticationRequired,
+        ]),
+      );
+      expect(
+        missedCallDetailsWithAction().iOS!.categoryIdentifier,
+        missedCallActionCategoryId,
+      );
+    },
+  );
 
   test('initialize wires the plugin, channel, and launch payload', () async {
     final service = buildService();
@@ -1808,6 +1896,7 @@ final class _BackgroundVisibility extends AppVisibilitySuppressionReader {
 Future<void> _sendNotificationResponse({
   required String? payload,
   int notificationId = 99,
+  String? actionId,
 }) async {
   await TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
       .handlePlatformMessage(
@@ -1815,7 +1904,7 @@ Future<void> _sendNotificationResponse({
         const StandardMethodCodec().encodeMethodCall(
           MethodCall('didReceiveNotificationResponse', <String, Object?>{
             'notificationId': notificationId,
-            'actionId': null,
+            'actionId': actionId,
             'input': null,
             'notificationResponseType':
                 NotificationResponseType.selectedNotification.index,

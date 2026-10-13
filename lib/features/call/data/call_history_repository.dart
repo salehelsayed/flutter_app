@@ -131,3 +131,37 @@ abstract interface class CallHistoryRepository {
   /// Returns contact-scoped entries in newest-first storage order.
   Future<List<CallHistoryEntry>> listForContact(String contactAccountPeerId);
 }
+
+final class CallHistoryCursor {
+  const CallHistoryCursor(this.startedAt, this.callId);
+  final DateTime startedAt;
+  final CallId callId;
+}
+
+final class CallHistoryListRow {
+  const CallHistoryListRow(this.entry, this.contactName);
+  final CallHistoryEntry entry;
+  final String? contactName;
+}
+
+final class CallHistoryPage {
+  const CallHistoryPage({
+    required this.rows,
+    required this.total,
+    required this.missed,
+    this.next,
+  });
+  final List<CallHistoryListRow> rows;
+  final int total;
+  final int missed;
+  final CallHistoryCursor? next;
+}
+
+abstract interface class CallHistoryBrowser {
+  Future<CallHistoryPage> browse({
+    bool missedOnly = false,
+    String search = '',
+    CallHistoryCursor? cursor,
+    int pageSize = 50,
+  });
+}

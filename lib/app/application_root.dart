@@ -1,3 +1,8 @@
+import 'package:flutter_app/core/notifications/missed_call_action_payload.dart';
+import 'package:flutter_app/features/call/application/call_history_access.dart';
+import 'package:flutter_app/features/call/application/call_redial_controller.dart';
+import 'package:flutter_app/features/call/domain/call_id.dart';
+
 import 'package:flutter_app/debug/production_journeys/foreground_group_push_control.dart';
 import 'dart:async';
 import 'package:flutter_app/app/bootstrap/call_signaling_composition.dart';
@@ -1618,6 +1623,10 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
         consumeInitialPayload: () async {
           consumedPayload = await widget.notificationService
               .consumeInitialPayload();
+          if (consumedPayload?.startsWith(callBackPayloadPrefix) == true) {
+            await _handleCallBackPayload(consumedPayload!);
+            return null;
+          }
           return consumedPayload;
         },
         // A terminated local-notification open does not pass through the warm
@@ -1652,7 +1661,71 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
     }
   }
 
+  CallBackActionHandler? _callBackActionHandler;
+
+  Future<bool> _callBackReady() async {
+    await _ensureRuntimeServicesReady();
+    if (!mounted ||
+        WidgetsBinding.instance.lifecycleState != AppLifecycleState.resumed) {
+      return false;
+    }
+    if (!Platform.isAndroid) return true;
+    try {
+      return await foregroundCallTaskChannel.invokeMethod<bool>(
+            'isDeviceUnlocked',
+          ) ==
+          true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  Future<void> _handleCallBackPayload(String payload) async {
+    final value = MissedCallActionPayload.parseCallBack(payload);
+    if (value == null) return;
+    final handler = _callBackActionHandler ??= CallBackActionHandler(
+      history: () => widget.callTimelineSource is CallHistoryAccess
+          ? widget.callTimelineSource as CallHistoryAccess
+          : null,
+      ready: _callBackReady,
+      redial: CallRedialController(
+        capability: () => mounted ? widget.outgoingCallCapability : null,
+        isCurrent: () =>
+            mounted &&
+            WidgetsBinding.instance.lifecycleState == AppLifecycleState.resumed,
+        contactAllowed: (peerId) async {
+          final contact = await widget.contactRepository.getContact(peerId);
+          return mounted && contact != null && !contact.isBlocked;
+        },
+      ),
+      onResult: (result) {
+        if (!mounted ||
+            result == OutgoingCallStartResult.started ||
+            result == OutgoingCallStartResult.canceled) {
+          return;
+        }
+        final l10n = AppLocalizations.of(context);
+        if (l10n == null) return;
+        final message = result == OutgoingCallStartResult.microphoneDenied
+            ? l10n.call_end_permission
+            : l10n.call_end_unavailable;
+        MyApp.scaffoldMessengerKey.currentState?.showSnackBar(
+          SnackBar(content: Text(message)),
+        );
+      },
+    );
+    try {
+      await handler.submit(CallId.parse(value));
+    } catch (_) {
+      /* A routing hint has no authority. */
+    }
+  }
+
   Future<void> _onNotificationTap(String payload) async {
+    if (payload.startsWith(callBackPayloadPrefix)) {
+      await _handleCallBackPayload(payload);
+      return;
+    }
     NotificationOpenRouteContext? preparedContext;
     try {
       await routeAppRootLocalNotificationTap(
@@ -2526,6 +2599,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
   }
 
   Future<void> _onResumed() async {
+    unawaited(_callBackActionHandler?.retryPending());
     await _synchronizeAppVisibility();
     final resumeCallSignaling = widget.resumeCallSignaling;
     if (resumeCallSignaling != null) {

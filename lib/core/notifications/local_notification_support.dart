@@ -1,3 +1,7 @@
+import 'dart:ui' show Locale, PlatformDispatcher;
+import 'package:flutter_app/l10n/app_localizations.dart';
+import 'missed_call_action_payload.dart';
+
 import 'package:flutter/foundation.dart'
     show TargetPlatform, defaultTargetPlatform, kIsWeb;
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
@@ -53,6 +57,55 @@ const mknoonMissedCallNotificationDetails = NotificationDetails(
     presentAlert: true,
     presentBadge: true,
     presentSound: true,
+  ),
+);
+
+String localizedCallBackLabel() {
+  final locale = PlatformDispatcher.instance.locale;
+  return lookupAppLocalizations(
+    AppLocalizations.delegate.isSupported(locale) ? locale : const Locale('en'),
+  ).call_back;
+}
+
+List<DarwinNotificationCategory> missedCallActionCategories() => [
+  DarwinNotificationCategory(
+    missedCallActionCategoryId,
+    actions: [
+      DarwinNotificationAction.plain(
+        missedCallBackActionId,
+        localizedCallBackLabel(),
+        options: {
+          DarwinNotificationActionOption.foreground,
+          DarwinNotificationActionOption.authenticationRequired,
+        },
+      ),
+    ],
+  ),
+];
+
+NotificationDetails missedCallDetailsWithAction() => NotificationDetails(
+  android: AndroidNotificationDetails(
+    mknoonCallsChannelId,
+    mknoonCallsChannelName,
+    channelDescription: mknoonCallsChannelDescription,
+    importance: Importance.high,
+    priority: Priority.high,
+    category: AndroidNotificationCategory.missedCall,
+    audioAttributesUsage: mknoonMessageAudioAttributesUsage,
+    actions: [
+      AndroidNotificationAction(
+        missedCallBackActionId,
+        localizedCallBackLabel(),
+        showsUserInterface: true,
+        cancelNotification: true,
+      ),
+    ],
+  ),
+  iOS: const DarwinNotificationDetails(
+    presentAlert: true,
+    presentBadge: true,
+    presentSound: true,
+    categoryIdentifier: missedCallActionCategoryId,
   ),
 );
 

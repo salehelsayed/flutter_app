@@ -74,9 +74,16 @@ IconData _callTimelineIcon(ConversationCallTimelineEntry entry) {
 }
 
 class CallTimelineRow extends StatelessWidget {
-  const CallTimelineRow({super.key, required this.entry});
+  const CallTimelineRow({
+    super.key,
+    required this.entry,
+    this.onCall,
+    this.callEnabled = true,
+  });
 
   final ConversationCallTimelineEntry entry;
+  final VoidCallback? onCall;
+  final bool callEnabled;
 
   @override
   Widget build(BuildContext context) {
@@ -116,6 +123,12 @@ class CallTimelineRow extends StatelessWidget {
                   textAlign: TextAlign.center,
                 ),
               ),
+              if (onCall != null)
+                IconButton(
+                  tooltip: l10n.call_back,
+                  onPressed: callEnabled ? onCall : null,
+                  icon: const Icon(Icons.call_outlined, size: 20),
+                ),
             ],
           ),
         ),

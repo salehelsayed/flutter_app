@@ -4296,4 +4296,49 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String get update_notification_body_security =>
       'It fixes a security problem in your version. Tap to update.';
+
+  @override
+  String get call_minimize => 'Minimize call';
+
+  @override
+  String get call_return => 'Return to call';
+
+  @override
+  String get call_muted => 'Microphone muted';
+
+  @override
+  String get call_back => 'Call back';
+
+  @override
+  String get calls_title => 'Calls';
+
+  @override
+  String get calls_all => 'All';
+
+  @override
+  String get calls_missed => 'Missed';
+
+  @override
+  String get calls_search => 'Search contacts';
+
+  @override
+  String get calls_clear_search => 'Clear search';
+
+  @override
+  String get calls_refresh => 'Refresh calls';
+
+  @override
+  String get calls_empty => 'No calls found';
+
+  @override
+  String get calls_load_error => 'Calls could not be loaded';
+
+  @override
+  String get calls_more => 'Show more';
+
+  @override
+  String get call_audio_choose_output => 'Choose audio output';
+
+  @override
+  String get call_audio_refresh_outputs => 'Refresh audio outputs';
 }

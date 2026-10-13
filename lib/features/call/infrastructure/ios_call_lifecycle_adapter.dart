@@ -6,6 +6,7 @@ import '../application/call_coordinator.dart';
 import '../application/handle_incoming_call_signal.dart';
 import '../domain/call_end_reason.dart';
 import '../domain/call_engine.dart';
+import '../domain/call_audio_output_device.dart';
 import '../domain/call_id.dart';
 import '../domain/call_session_snapshot.dart';
 import '../domain/call_state.dart';
@@ -93,7 +94,8 @@ final class IosCallLifecycleAdapter
         NativeCallLifecycleInvalidations,
         NativeCallLifecycleAdapter,
         CallAudioOutputRouteChangeSource,
-        ProvisionalNativeIncomingCallLifecycle {
+        ProvisionalNativeIncomingCallLifecycle,
+        CallAudioDevicePort {
   IosCallLifecycleAdapter({
     required IosCallMethodInvoker invokeMethod,
     required Stream<Object?> nativeEvents,
@@ -325,6 +327,14 @@ final class IosCallLifecycleAdapter
   @override
   Future<void> selectOutputRoute(CallAudioOutputRoute route) =>
       requestRoute(route);
+
+  @override
+  Future<List<CallAudioOutputDevice>> outputDevices() =>
+      _translate(_delegate.outputDevices());
+
+  @override
+  Future<bool> selectOutputDevice(String id) =>
+      _translate(_delegate.selectOutputDevice(id));
 
   @override
   Future<void> close() => _translate(_delegate.close());

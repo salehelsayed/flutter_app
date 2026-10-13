@@ -8,6 +8,7 @@ import 'package:flutter_app/features/call/application/foreground_call_capability
 import 'package:flutter_app/features/call/application/locked_call_presentation.dart';
 import 'package:flutter_app/features/call/domain/call_end_reason.dart';
 import 'package:flutter_app/features/call/domain/call_engine.dart';
+import 'package:flutter_app/features/call/domain/call_audio_output_device.dart';
 import 'package:flutter_app/features/call/domain/call_id.dart';
 import 'package:flutter_app/features/call/domain/call_session_snapshot.dart';
 import 'package:flutter_app/features/call/domain/call_state.dart';
@@ -1168,6 +1169,95 @@ void main() {
     },
   );
 
+  testWidgets(
+    'minimize permits text and restores modal focus on return; reconnect and end keep canonical state',
+    (tester) async {
+      final capability = _FakeForegroundCallCapability();
+      addTearDown(capability.dispose);
+      final focus = FocusNode();
+      addTearDown(focus.dispose);
+      final semantics = tester.ensureSemantics();
+      await tester.pumpWidget(
+        harness(
+          capability: capability,
+          child: Scaffold(
+            body: TextField(
+              focusNode: focus,
+              decoration: const InputDecoration(labelText: 'Chat text'),
+            ),
+          ),
+        ),
+      );
+      void emit(CallState state) => capability.emit(
+        _projection(
+          now: now,
+          callId: _outgoingId,
+          peerId: 'outgoing-peer',
+          direction: CallDirection.outgoing,
+          state: state,
+          audio: _audio(muted: true),
+        ),
+      );
+      emit(CallState.connected);
+      await tester.pumpAndSettle();
+      expect(find.semantics.byLabel('Chat text'), findsNothing);
+      await tester.tap(find.byKey(const ValueKey('call-minimize')));
+      await tester.pumpAndSettle();
+      expect(find.byType(ActiveCallScreen), findsNothing);
+      expect(find.byKey(const ValueKey('call-return-bar')), findsOneWidget);
+      expect(find.semantics.byLabel('Chat text'), findsOneWidget);
+      await tester.tap(find.byType(TextField));
+      await tester.enterText(find.byType(TextField), 'Synthetic address');
+      expect(focus.hasFocus, isTrue);
+      expect(tester.testTextInput.isVisible, isTrue);
+      emit(CallState.reconnecting);
+      await tester.pump();
+      expect(find.byKey(const ValueKey('call-return-bar')), findsOneWidget);
+      expect(find.textContaining('00:30'), findsOneWidget);
+      tester.semantics.tap(find.semantics.byLabel(RegExp('^Return to call,')));
+      await tester.pumpAndSettle();
+      expect(find.byType(ActiveCallScreen), findsOneWidget);
+      expect(find.text('Synthetic address'), findsOneWidget);
+      expect(focus.hasFocus, isFalse);
+      expect(tester.testTextInput.isVisible, isFalse);
+      expect(find.byTooltip('Unmute'), findsOneWidget);
+      expect(capability.actions, isEmpty);
+      await tester.tap(find.byKey(const ValueKey('call-minimize')));
+      emit(CallState.ended);
+      await tester.pump();
+      expect(find.byKey(const ValueKey('call-return-bar')), findsNothing);
+      semantics.dispose();
+    },
+  );
+
+  testWidgets(
+    'active output picker shows distinct same-class devices through the canonical capability',
+    (tester) async {
+      final capability = _PickerCapability();
+      addTearDown(capability.dispose);
+      await tester.pumpWidget(harness(capability: capability));
+      capability.emit(
+        _projection(
+          now: now,
+          callId: _outgoingId,
+          peerId: 'outgoing-peer',
+          direction: CallDirection.outgoing,
+          state: CallState.connected,
+          audio: _audio(),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('call-audio-output')));
+      await tester.pumpAndSettle();
+      expect(find.text('Synthetic headset A'), findsOneWidget);
+      expect(find.text('Synthetic headset B'), findsOneWidget);
+      await tester.tap(find.text('Synthetic headset B'));
+      await tester.pumpAndSettle();
+      expect(capability.selectedIds, ['synthetic-b']);
+      expect(capability.actions, isEmpty);
+    },
+  );
+
   testWidgets('call controls stay above the keyboard inset', (tester) async {
     final capability = _FakeForegroundCallCapability();
     addTearDown(capability.dispose);
@@ -1408,4 +1498,32 @@ final class _RecordedAction {
 
   @override
   String toString() => '_RecordedAction($name, $callId, $value)';
+}
+
+class _PickerCapability extends _FakeForegroundCallCapability
+    implements ForegroundCallAudioPickerCapability {
+  final selectedIds = <String>[];
+  @override
+  Future<List<CallAudioOutputDevice>> outputDevices(CallId callId) async => [
+    const CallAudioOutputDevice(
+      id: 'synthetic-a',
+      name: 'Synthetic headset A',
+      route: CallAudioOutputRoute.bluetooth,
+      selected: true,
+    ),
+    const CallAudioOutputDevice(
+      id: 'synthetic-b',
+      name: 'Synthetic headset B',
+      route: CallAudioOutputRoute.bluetooth,
+      selected: false,
+    ),
+  ];
+  @override
+  Future<ForegroundCallActionResult> selectOutputDevice(
+    CallId callId,
+    String id,
+  ) async {
+    selectedIds.add(id);
+    return ForegroundCallActionResult.applied;
+  }
 }
