@@ -12,8 +12,8 @@ host that serves it.
 | Signing CLI | `tool/sign_version_file.dart` |
 | Server | EC2 `i-05a8b6160bf5a6495`, t3.micro, eu-north-1, security group `launch-wizard-5` |
 | OS | Amazon Linux 2023. `dnf-automatic` installs security updates. |
-| Public IP | `51.20.131.205` (Elastic IP) |
-| DNS | GoDaddy, A record `updates` → `51.20.131.205` |
+| Public IP | `13.63.204.240` (Elastic IP, attached 2026-10-12; the instance's first IP `51.20.131.205` is gone) |
+| DNS | GoDaddy, A record `updates` → `13.63.204.240` |
 | SSH | user `ec2-user` (not `ubuntu`), key `se.pem` (RSA; with paramiko, load it with `RSAKey`) |
 | Web server | Caddy 2.11.7 at `/usr/local/bin/caddy`, systemd unit `caddy`, config `/etc/caddy/Caddyfile` |
 | File on disk | `/srv/updates/mknoon/version.json` (`/srv/updates` is owned by `ec2-user`) |
@@ -30,6 +30,18 @@ TLS uses a Let's Encrypt certificate. Caddy gets and renews it over port 443
 
 The private keys (`signing_key.b64` for k1 and k2) never go into the repo, onto
 the server, or into any agent session. Sign on the owner's Mac only.
+
+Where the keys live:
+
+- **k1** (routine signing): on the owner's Mac, in encrypted storage (an
+  encrypted disk image or a password manager), outside every repo and every
+  folder mounted into an agent container.
+- **k2** (backup, emergencies only): offline and kept apart from k1, for
+  example an encrypted USB stick plus a paper copy in another place. It is
+  needed only for [section 7](#7-key-compromise-or-planned-rotation). Check
+  once a year that it can still be read.
+- Only the public keys are in the app (`update_check_keys.dart`). They are not
+  secret.
 
 1. Write `payload.json`. All fields are required. Both platform sections are
    required.
@@ -74,18 +86,21 @@ the server, or into any agent session. Sign on the owner's Mac only.
 
 ## 2. Publishing
 
+The commands use the host name, not the IP, so they keep working if the IP
+ever changes.
+
 1. Upload to a temporary name next to the live file:
 
    ```sh
    scp -i se.pem version.json \
-     ec2-user@51.20.131.205:/srv/updates/mknoon/version.json.tmp
+     ec2-user@updates.mknoon.xyz:/srv/updates/mknoon/version.json.tmp
    ```
 
 2. Move it into place. `mv` within one directory is atomic, so a phone never
    reads a half-written file:
 
    ```sh
-   ssh -i se.pem ec2-user@51.20.131.205 \
+   ssh -i se.pem ec2-user@updates.mknoon.xyz \
      'mv /srv/updates/mknoon/version.json.tmp /srv/updates/mknoon/version.json'
    ```
 
@@ -299,3 +314,106 @@ Someone who takes over the relay host (or the Firebase/APNs credentials) can
 send the fixed sentence and ignore the limits. That is spam, not phishing:
 the text and the store link are built into the app. The fix is rotating the
 Firebase and APNs credentials.
+
+## 12. Rebuilding the server
+
+If the instance is lost, a new one can be set up in about 15 minutes. Phones
+keep their last verified file while the host is down, so an outage blocks no
+one; it only delays new files.
+
+1. Launch an Amazon Linux 2023 instance (t3.micro is enough) with the `se.pem`
+   key pair. Allow inbound TCP 22 and 443 only. Move the Elastic IP
+   `13.63.204.240` to it, so DNS needs no change. If a new IP is used instead,
+   update the GoDaddy A record `updates`.
+2. Install Caddy from the official release, checking the published SHA-512:
+
+   ```sh
+   V=2.11.7
+   base=https://github.com/caddyserver/caddy/releases/download/v$V
+   curl -fsSLO "$base/caddy_${V}_linux_amd64.tar.gz"
+   curl -fsSLO "$base/caddy_${V}_checksums.txt"
+   grep " caddy_${V}_linux_amd64.tar.gz\$" caddy_${V}_checksums.txt | sha512sum -c -
+   tar xzf caddy_${V}_linux_amd64.tar.gz caddy
+   sudo install -m0755 caddy /usr/local/bin/caddy
+   ```
+
+3. Create the service user and folders:
+
+   ```sh
+   sudo groupadd --system caddy
+   sudo useradd --system --gid caddy --create-home --home-dir /var/lib/caddy \
+     --shell /usr/sbin/nologin caddy
+   sudo mkdir -p /etc/caddy /srv/updates/mknoon
+   sudo chown -R ec2-user:ec2-user /srv/updates
+   ```
+
+4. Write `/etc/caddy/Caddyfile` exactly as below. Do not add a `log`
+   directive (see [Privacy](#9-privacy)).
+
+   ```caddyfile
+   updates.mknoon.xyz {
+   	header {
+   		-Server
+   		X-Content-Type-Options nosniff
+   		Strict-Transport-Security "max-age=31536000"
+   	}
+
+   	@versionFile {
+   		method GET HEAD
+   		path /mknoon/version.json
+   	}
+   	handle @versionFile {
+   		root * /srv/updates
+   		header Content-Type "application/json"
+   		header Cache-Control "public, max-age=300"
+   		file_server
+   	}
+
+   	handle {
+   		respond 404
+   	}
+   }
+   ```
+
+5. Write `/etc/systemd/system/caddy.service` (the official Caddy unit, with
+   the binary in `/usr/local/bin`):
+
+   ```ini
+   [Unit]
+   Description=Caddy
+   Documentation=https://caddyserver.com/docs/
+   After=network.target network-online.target
+   Requires=network-online.target
+
+   [Service]
+   Type=notify
+   User=caddy
+   Group=caddy
+   ExecStart=/usr/local/bin/caddy run --environ --config /etc/caddy/Caddyfile
+   ExecReload=/usr/local/bin/caddy reload --config /etc/caddy/Caddyfile --force
+   TimeoutStopSec=5s
+   LimitNOFILE=1048576
+   PrivateTmp=true
+   ProtectSystem=full
+   AmbientCapabilities=CAP_NET_ADMIN CAP_NET_BIND_SERVICE
+
+   [Install]
+   WantedBy=multi-user.target
+   ```
+
+6. Start it, turn on security updates, and republish the current file:
+
+   ```sh
+   sudo /usr/local/bin/caddy validate --config /etc/caddy/Caddyfile
+   sudo systemctl daemon-reload && sudo systemctl enable --now caddy
+   sudo dnf install -y dnf-automatic
+   sudo sed -i -e 's/^upgrade_type *=.*/upgrade_type = security/' \
+     -e 's/^apply_updates *=.*/apply_updates = yes/' /etc/dnf/automatic.conf
+   sudo systemctl enable --now dnf-automatic.timer
+   ```
+
+   Caddy gets a new certificate within a minute
+   (`journalctl -u caddy | grep "certificate obtained"`). Then publish the
+   LAST signed `version.json` again (section 2). Keep a copy of every
+   published file on the owner's Mac for this. Finish with the checks in
+   section 10.
