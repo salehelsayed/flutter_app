@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_app/core/theme/app_colors.dart';
 import 'package:flutter_app/features/call/application/foreground_call_capability.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 
@@ -283,8 +284,11 @@ class UpdateRequiredScreen extends StatelessWidget {
                       autofocus: true,
                       onPressed: onUpdate,
                       // Large text sizes wrap the label; keep it centred and
-                      // clear of the rounded ends.
+                      // clear of the rounded ends. Black on the green passes
+                      // WCAG AA; white on it would not.
                       style: FilledButton.styleFrom(
+                        backgroundColor: AppColors.primaryAccent,
+                        foregroundColor: AppColors.background,
                         padding: const EdgeInsets.symmetric(
                           horizontal: 24,
                           vertical: 12,

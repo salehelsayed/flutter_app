@@ -22,6 +22,7 @@ import 'package:flutter_app/features/update_check/presentation/update_required_g
 import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import '../../../shared/helpers/readability_test_helpers.dart';
 import '../support/fake_update_check_service.dart';
 
 const _hard = UpdateDecisionHard(
@@ -357,6 +358,18 @@ void main() {
     expect(find.text('home'), findsOneWidget);
     // Back reaches the navigator again.
     expect(await tester.binding.handlePopRoute(), isFalse);
+  });
+
+  testWidgets('the Update now label passes WCAG AA on the button', (
+    tester,
+  ) async {
+    await pumpApp(tester);
+    final button = tester.widget<FilledButton>(
+      find.byKey(const ValueKey('update-required-button')),
+    );
+    final background = button.style!.backgroundColor!.resolve({})!;
+    final label = button.style!.foregroundColor!.resolve({})!;
+    expectTextContrast(label, background);
   });
 
   group('AC14 EN, DE and AR', () {
