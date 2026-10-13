@@ -1,6 +1,8 @@
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_app/core/theme/app_colors.dart';
+import 'package:flutter_app/features/home/presentation/screens/first_time_experience_screen.dart';
 import 'package:flutter_app/features/update_check/application/update_check_controller.dart';
 import 'package:flutter_app/features/update_check/domain/update_check_models.dart';
 import 'package:flutter_app/features/update_check/domain/update_store_urls.dart';
@@ -9,6 +11,7 @@ import 'package:flutter_app/features/update_check/presentation/update_required_g
 import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import '../../../shared/helpers/readability_test_helpers.dart';
 import '../support/fake_update_check_service.dart';
 
 const _banner = ValueKey('update-available-banner');
@@ -34,31 +37,45 @@ void main() {
 
   setUp(() => launches = <Uri>[]);
 
-  Widget app({Locale locale = const Locale('en')}) => MaterialApp(
+  Widget app({
+    Locale locale = const Locale('en'),
+    Widget? home,
+    double textScale = 1,
+  }) => MaterialApp(
     locale: locale,
     localizationsDelegates: AppLocalizations.localizationsDelegates,
     supportedLocales: AppLocalizations.supportedLocales,
-    builder: (context, child) => UpdateRequiredGate(
-      controller: controller,
-      callCapability: null,
-      launchStore: (url) async {
-        launches.add(url);
-        return true;
-      },
-      child: child!,
-    ),
-    home: Scaffold(
-      body: UpdateAvailableBannerHost(
+    builder: (context, child) => MediaQuery(
+      data: MediaQuery.of(
+        context,
+      ).copyWith(textScaler: TextScaler.linear(textScale)),
+      child: UpdateRequiredGate(
+        controller: controller,
+        callCapability: null,
         launchStore: (url) async {
           launches.add(url);
           return true;
         },
-        child: const _OrbitStandIn(),
+        child: child!,
       ),
     ),
+    home:
+        home ??
+        Scaffold(
+          body: UpdateAvailableBannerHost(
+            launchStore: (url) async {
+              launches.add(url);
+              return true;
+            },
+            child: const _OrbitStandIn(),
+          ),
+        ),
   );
 
-  Future<void> resume(WidgetTester tester) async {
+  Future<void> resume(
+    WidgetTester tester, {
+    Future<void> Function(WidgetTester)? settleWith,
+  }) async {
     for (final state in const [
       AppLifecycleState.inactive,
       AppLifecycleState.hidden,
@@ -69,7 +86,11 @@ void main() {
     ]) {
       tester.binding.handleAppLifecycleStateChanged(state);
     }
-    await tester.pumpAndSettle();
+    if (settleWith != null) {
+      await settleWith(tester);
+    } else {
+      await tester.pumpAndSettle();
+    }
   }
 
   group('AC15', () {
@@ -177,6 +198,130 @@ void main() {
       );
       expect(find.byKey(_banner), findsNothing);
       expect(find.byKey(const ValueKey('orbit-stand-in')), findsOneWidget);
+    });
+  });
+
+  group('banner v2 (owner preview 2026-10-13)', () {
+    testWidgets('a floating card whose text and button pass WCAG AA', (
+      tester,
+    ) async {
+      useDecisions([_soft120]);
+      await tester.pumpWidget(app());
+      await tester.pumpAndSettle();
+
+      final card = tester.widget<DecoratedBox>(
+        find.byKey(const ValueKey('update-available-banner-card')),
+      );
+      final decoration = card.decoration as BoxDecoration;
+      expect(decoration.borderRadius, BorderRadius.circular(20));
+      expect(decoration.border, isNotNull);
+      // The card floats: it is inset from the screen edges.
+      final cardRect = tester.getRect(
+        find.byKey(const ValueKey('update-available-banner-card')),
+      );
+      expect(cardRect.left, greaterThan(0));
+      expect(
+        cardRect.right,
+        lessThan(tester.view.physicalSize.width / tester.view.devicePixelRatio),
+      );
+
+      // The surface is translucent, so check it over the darkest and the
+      // lightest background it can sit on.
+      final message = tester.widget<Text>(
+        find.text('A new version of Mknoon is ready.'),
+      );
+      for (final behind in const [Color(0xFF000000), Color(0xFFFFFFFF)]) {
+        final surface = Color.alphaBlend(decoration.color!, behind);
+        expectTextContrast(message.style!.color!, surface, reason: '$behind');
+        expectComponentContrast(AppColors.textMuted, surface);
+      }
+
+      final button = tester.widget<FilledButton>(
+        find.byKey(const ValueKey('update-available-banner-update')),
+      );
+      final background = button.style!.backgroundColor!.resolve({})!;
+      final label = button.style!.foregroundColor!.resolve({})!;
+      expectTextContrast(label, background);
+    });
+
+    for (final locale in const [Locale('en'), Locale('de'), Locale('ar')]) {
+      testWidgets('large text fits without overflow in $locale', (
+        tester,
+      ) async {
+        useDecisions([_soft120]);
+        await tester.pumpWidget(app(locale: locale, textScale: 2));
+        await tester.pumpAndSettle();
+        expect(tester.takeException(), isNull);
+        expect(find.byKey(_banner), findsOneWidget);
+        final update = tester.getRect(
+          find.byKey(const ValueKey('update-available-banner-update')),
+        );
+        final card = tester.getRect(
+          find.byKey(const ValueKey('update-available-banner-card')),
+        );
+        expect(card.contains(update.center), isTrue);
+      });
+    }
+
+    testWidgets('Arabic card puts the message at the start (right) and the '
+        'close button at the end (left)', (tester) async {
+      useDecisions([_soft120]);
+      await tester.pumpWidget(app(locale: const Locale('ar')));
+      await tester.pumpAndSettle();
+      final message = tester.getRect(find.text('يتوفر إصدار جديد من مكنون.'));
+      final close = tester.getRect(find.byTooltip('ليس الآن'));
+      expect(close.right, lessThan(message.left));
+    });
+  });
+
+  group('empty circle (first-time screen)', () {
+    // The empty circle animates forever, so pumpAndSettle never returns.
+    Future<void> settle(WidgetTester tester) async {
+      for (var i = 0; i < 10; i++) {
+        await tester.pump(const Duration(milliseconds: 100));
+      }
+    }
+
+    Widget firstTime() => const FirstTimeExperienceScreen(
+      username: 'Alice',
+      peerId: '12D3KooWTestPeer',
+    );
+
+    testWidgets('shows the banner without covering the scan card, and a '
+        'dismissal holds', (tester) async {
+      useDecisions([_soft120, _soft120]);
+      await tester.pumpWidget(app(home: firstTime()));
+      await settle(tester);
+
+      expect(find.byKey(_banner), findsOneWidget);
+      final card = tester.getRect(
+        find.byKey(const ValueKey('update-available-banner-card')),
+      );
+      final scan = tester.getRect(find.text("Scan a friend's code"));
+      expect(card.overlaps(scan), isFalse);
+      expect(find.text('Your circle is waiting to be filled'), findsOneWidget);
+
+      await tester.tap(find.byTooltip('Not now'));
+      await settle(tester);
+      expect(find.byKey(_banner), findsNothing);
+      expect(service.dismissed, [120]);
+
+      await resume(tester, settleWith: settle);
+      expect(service.checks, 2);
+      expect(find.byKey(_banner), findsNothing);
+    });
+
+    testWidgets('Arabic banner on the first-time screen reads right to left', (
+      tester,
+    ) async {
+      useDecisions([_soft120]);
+      await tester.pumpWidget(
+        app(locale: const Locale('ar'), home: firstTime()),
+      );
+      await settle(tester);
+      final text = find.text('يتوفر إصدار جديد من مكنون.');
+      expect(text, findsOneWidget);
+      expect(Directionality.of(tester.element(text)), TextDirection.rtl);
     });
   });
 

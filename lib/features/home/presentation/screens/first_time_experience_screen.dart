@@ -6,6 +6,7 @@ import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/features/identity/presentation/widgets/ambient_background.dart';
 import 'package:flutter_app/features/p2p/presentation/widgets/connection_status_indicator.dart';
 import 'package:flutter_app/features/settings/domain/models/background_preference.dart';
+import 'package:flutter_app/features/update_check/presentation/update_available_banner.dart';
 import '../widgets/profile_avatar_widget.dart';
 import '../widgets/editable_username_widget.dart';
 import '../widgets/qr_code_section.dart';
@@ -128,91 +129,97 @@ class _FirstTimeExperienceScreenState extends State<FirstTimeExperienceScreen>
 
     return AmbientBackground(
       preference: widget.backgroundPreference,
-      child: SafeArea(
-        child: Padding(
-          padding: EdgeInsets.symmetric(horizontal: horizontalPadding),
-          child: LayoutBuilder(
-            builder: (context, constraints) {
-              return SingleChildScrollView(
-                child: ConstrainedBox(
-                  constraints: BoxConstraints(minHeight: constraints.maxHeight),
-                  child: Column(
-                    children: [
-                      SizedBox(height: topGap),
-                      // Connection status indicator at the top
-                      if (widget.p2pService != null)
-                        Align(
-                          alignment: Alignment.topRight,
-                          child: ConnectionStatusIndicator(
-                            p2pService: widget.p2pService!,
+      // SE-41: an empty circle still gets the soft update banner. The content
+      // scrolls, so the banner pushes it down without covering the scan card.
+      child: UpdateAvailableBannerHost(
+        child: SafeArea(
+          child: Padding(
+            padding: EdgeInsets.symmetric(horizontal: horizontalPadding),
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                return SingleChildScrollView(
+                  child: ConstrainedBox(
+                    constraints: BoxConstraints(
+                      minHeight: constraints.maxHeight,
+                    ),
+                    child: Column(
+                      children: [
+                        SizedBox(height: topGap),
+                        // Connection status indicator at the top
+                        if (widget.p2pService != null)
+                          Align(
+                            alignment: Alignment.topRight,
+                            child: ConnectionStatusIndicator(
+                              p2pService: widget.p2pService!,
+                            ),
+                          ),
+                        SizedBox(height: topGap),
+                        // Header section (avatar + username)
+                        AnimatedBuilder(
+                          animation: _controller,
+                          builder: (context, child) {
+                            return Opacity(
+                              opacity: _headerOpacity.value,
+                              child: SlideTransition(
+                                position: _headerSlide,
+                                child: child,
+                              ),
+                            );
+                          },
+                          child: _buildHeader(scaleFactor: t),
+                        ),
+                        SizedBox(height: sectionGap),
+                        // QR code section
+                        AnimatedBuilder(
+                          animation: _controller,
+                          builder: (context, child) {
+                            return Opacity(
+                              opacity: _qrOpacity.value,
+                              child: SlideTransition(
+                                position: _qrSlide,
+                                child: child,
+                              ),
+                            );
+                          },
+                          child: RepaintBoundary(
+                            child: QRCodeSection(
+                              qrData: widget.qrData,
+                              scaleFactor: t,
+                            ),
                           ),
                         ),
-                      SizedBox(height: topGap),
-                      // Header section (avatar + username)
-                      AnimatedBuilder(
-                        animation: _controller,
-                        builder: (context, child) {
-                          return Opacity(
-                            opacity: _headerOpacity.value,
-                            child: SlideTransition(
-                              position: _headerSlide,
-                              child: child,
-                            ),
-                          );
-                        },
-                        child: _buildHeader(scaleFactor: t),
-                      ),
-                      SizedBox(height: sectionGap),
-                      // QR code section
-                      AnimatedBuilder(
-                        animation: _controller,
-                        builder: (context, child) {
-                          return Opacity(
-                            opacity: _qrOpacity.value,
-                            child: SlideTransition(
-                              position: _qrSlide,
-                              child: child,
-                            ),
-                          );
-                        },
-                        child: RepaintBoundary(
-                          child: QRCodeSection(
-                            qrData: widget.qrData,
-                            scaleFactor: t,
+                        SizedBox(height: sectionGap),
+                        // Scan friend card
+                        AnimatedBuilder(
+                          animation: _controller,
+                          builder: (context, child) {
+                            return Opacity(
+                              opacity: _scanOpacity.value,
+                              child: SlideTransition(
+                                position: _scanSlide,
+                                child: child,
+                              ),
+                            );
+                          },
+                          child: RepaintBoundary(
+                            child: ScanFriendCard(onTap: widget.onScanPressed),
                           ),
                         ),
-                      ),
-                      SizedBox(height: sectionGap),
-                      // Scan friend card
-                      AnimatedBuilder(
-                        animation: _controller,
-                        builder: (context, child) {
-                          return Opacity(
-                            opacity: _scanOpacity.value,
-                            child: SlideTransition(
-                              position: _scanSlide,
-                              child: child,
-                            ),
-                          );
-                        },
-                        child: RepaintBoundary(
-                          child: ScanFriendCard(onTap: widget.onScanPressed),
+                        SizedBox(height: lowerGap),
+                        // Empty circle state (visible immediately)
+                        const RepaintBoundary(
+                          child: TickerMode(
+                            enabled: true,
+                            child: EmptyCircleState(),
+                          ),
                         ),
-                      ),
-                      SizedBox(height: lowerGap),
-                      // Empty circle state (visible immediately)
-                      const RepaintBoundary(
-                        child: TickerMode(
-                          enabled: true,
-                          child: EmptyCircleState(),
-                        ),
-                      ),
-                      SizedBox(height: bottomGap),
-                    ],
+                        SizedBox(height: bottomGap),
+                      ],
+                    ),
                   ),
-                ),
-              );
-            },
+                );
+              },
+            ),
           ),
         ),
       ),
