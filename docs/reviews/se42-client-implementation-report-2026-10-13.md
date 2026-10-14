@@ -274,3 +274,39 @@ SE-49 and NEW automatic one-way detection/recovery remain explicitly deferred; a
 6. Cleanup and limits
 All calls ended; final Android native journals empty, liveOwnerPresent=false, cleanupPending=false, audio mode 0 and own RECORD_AUDIO not running. Completed PCM observers removed processors. Owned QR clipboards cleared and all three owned Appium sessions deleted; foreign targets/sessions were not controlled. Pixel Wi-Fi on/mobile data off/DND off and emulator initial network/DND states retained; iPhone OS policy not changed. Existing identities, user work and successful call/messaging source retained.
 No unsupported physical iOS audio, speaker/accessory quality, p95, cellular recovery, download quality, savings, durable catch-up or full signaling-IP privacy claim. This addendum records incomplete evidence and findings, not release/signed-candidate certification.
+
+Device-finding fixes and retest addendum — 2026-10-14 (afternoon)
+
+This follows the production device addendum above. It fixes three of its four findings and retests them on the same devices. It does not replace the earlier records. Scenario numbers refer to docs/testing/se42-owner-device-checklists.md.
+
+1. What changed
+Fix commit: 756fc5d63 (merged to main; version bump deae3c6d3 is separate).
+- 3.3 finding (screen stays on at the ear): nothing in the app turned the screen off near the ear. Android now holds a PROXIMITY_SCREEN_OFF wake lock while call audio uses the earpiece. It is released on another route, on audio deactivation and on call cleanup (MknoonCallLifecycleController.kt, MknoonCallAndroidRuntime.kt).
+- 2.6 finding (Calls covers Create Group): Calls moved left of the Create Group button and the connection pill moved further left (orbit_screen.dart).
+- 2.2 finding (return-bar bounds): the bar was not its own accessibility node. Above the navigator its label merged into the root node, so Android reported full-screen bounds. The bar is now a semantics container (call_return_bar.dart).
+- iPhone incoming presentation: not reproduced, so no behavior change. Every Dart remoteCancel now prints `[MKNOON_CALL_DIAG] remote_cancel reason=<closed code>` in all build modes, so a release iPhone shows which refusal ended a call.
+Host evidence: new tests fail on the old code and pass on the new code (overlap, return-bar bounds). Android call JVM suite: 539 tests, 0 failures, including the new proximity test. Affected Dart call/orbit tests: 858 passed. Scoped flutter analyze: no issues.
+
+2. Builds and devices
+Android: debug APK with native calls on and the release voice-call defines, installed over existing identities on Pixel 6 21071FDF600CSC and emulator-5554. iPhone 13 00008110-00184D622289801E: profile build with the release voice-call defines, first with FDC_FLOW_LOG=1, then without it to prove the new log line in a normal build. Production relay, no server change. The owner held the Pixel and answered on the iPhone.
+
+3. Results by scenario
+2.1 PASS. Pixel: minimized a live call, the bar showed, tapping it returned to the call. The call stayed connected and the timer kept running.
+2.2 PASS for the return-bar finding. Before: bounds [0,0][1080,2400] and a centre tap missed. After: bounds [0,128][1080,275] and a centre tap returned to the call. Real TalkBack activation: NOT RUN.
+2.5 PASS for busy refusal. While the Pixel was in a call with the emulator, an iPhone call to the Pixel showed "The contact is on another call". The Pixel call continued.
+2.6 PASS for the Calls overlap finding. On Pixel, emulator and iPhone, Calls and Create Group no longer overlap. A centre tap on Calls opens the Calls page, not the create menu. Paging, rename, removal and error cases: NOT RUN.
+3.1 PARTIAL. Pixel: Speaker and Earpiece toggles changed the visible route. Nobody listened on the speaker. Wired and Bluetooth: N/A, no accessories.
+3.3 PASS on Pixel 6 (was FAIL). The owner held the phone at the ear on Earpiece: the screen went dark, and came back when moved away. The proximity lock was held on Earpiece, released on Speaker, re-taken on Earpiece and released at call end. Touch suppression and iPhone proximity: NOT RUN.
+3.4 PASS on Android. After each call: no proximity lock and audio mode normal on both phones.
+4.1 PARTIAL on iPhone background ringing. 10 of 11 calls to the backgrounded iPhone were presented, including after an iPhone outgoing call, after the busy case and after 30 minutes idle. The owner answered one and both sides heard each other. One miss at 13:52Z: the caller stayed on Connecting and the iPhone logged no wake at all (no PushKit delivery, no VoIP process assertion) while the capture was live. Separately, right after the 13:02Z reinstall, three calls (about 13:03Z to 13:05Z) never woke the iPhone until the app was opened. The relay's APNs VoIP counters showed every attempt since its start as sent (44), with no invalid-token or error outcomes, and the caller logged each wake as dispatched. So the misses happened after Apple accepted the push. This build is development-signed, so its pushes may use Apple's sandbox push service. Repeat with a TestFlight build before treating it as a production defect.
+4.3 PASS on iPhone for process death. After the app process was killed (system-style SIGKILL, not a user force-quit), the next call relaunched it through PushKit and the call was presented.
+iPhone outgoing call (closest to 1.1): PASS. The iPhone called the emulator, the emulator answered, both showed Connected, and ending from the iPhone closed it cleanly.
+Original iPhone finding (presentation=callKitFailure after remote_cancelled): not reproduced. When the app received the push, it presented the call every time (9 of 9 observed with logs). Every caller cancel logged `remote_cancel reason=signal_terminate` before the native `result=remote_cancelled`, in both the flow-log and the normal profile build.
+
+4. Still open
+- iPhone missed wakes after Apple accepted the push (4.1). Next step: the same background test on a TestFlight build.
+- If the original callKitFailure returns, read the `[MKNOON_CALL_DIAG] remote_cancel reason=` line just before it.
+- Speaker listening, touch suppression at the ear, iPhone proximity, TalkBack, and the other NOT RUN cases listed in the addendum above.
+
+5. Cleanup
+All calls ended. The Pixel and the emulator had no proximity lock and normal audio mode at the end. Log captures and the private Appium server were stopped and the Appium session closed. No server, relay or account change.
