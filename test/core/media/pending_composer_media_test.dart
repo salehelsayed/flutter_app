@@ -5,11 +5,12 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:flutter_app/core/media/image_processor.dart';
 import 'package:flutter_app/core/media/pending_composer_media.dart';
+import 'package:flutter_app/core/media/video_process_result.dart';
 import 'package:flutter_app/features/settings/domain/models/image_quality_preference.dart';
 
 void main() {
   group('preparePendingComposerMedia', () {
-    test('uses raw bytes for original-quality images', () async {
+    test('uses processed bytes for original-quality images', () async {
       final tempDir = Directory.systemTemp.createTempSync(
         'pending_composer_media_original_',
       );
@@ -45,7 +46,7 @@ void main() {
       );
 
       expect(prepared.file.path, processedFile.path);
-      expect(prepared.budgetBytes, 10);
+      expect(prepared.budgetBytes, 2);
     });
 
     test('uses processed bytes for compressed-quality images', () async {
@@ -86,5 +87,42 @@ void main() {
       expect(prepared.file.path, processedFile.path);
       expect(prepared.budgetBytes, 4);
     });
+
+    for (final quality in ImageQualityPreference.values) {
+      test('uses processed bytes for ${quality.name}-quality videos', () async {
+        final tempDir = Directory.systemTemp.createTempSync(
+          'pending_composer_media_video_',
+        );
+        addTearDown(() => tempDir.deleteSync(recursive: true));
+        final sourceFile = File('${tempDir.path}/source.mov')
+          ..writeAsStringSync('1234567890');
+        final processedFile = File('${tempDir.path}/processed.mp4')
+          ..writeAsStringSync('1234');
+        final processor = ImageProcessor(
+          compressVideo:
+              ({required path, required compress, onProgress}) async {
+                expect(path, sourceFile.path);
+                expect(compress, quality == ImageQualityPreference.compressed);
+                return VideoProcessResult(
+                  path: processedFile.path,
+                  width: 320,
+                  height: 240,
+                  durationMs: 1000,
+                );
+              },
+        );
+        final prepared = await preparePendingComposerMedia(
+          inputPath: sourceFile.path,
+          imageProcessor: processor,
+          imageQualityPreference: ImageQualityPreference.compressed,
+          videoQualityPreference: quality,
+        );
+        expect(prepared.file.path, processedFile.path);
+        expect(prepared.budgetBytes, 4);
+        expect(prepared.width, 320);
+        expect(prepared.height, 240);
+        expect(prepared.durationMs, 1000);
+      });
+    }
   });
 }

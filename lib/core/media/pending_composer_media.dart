@@ -42,6 +42,9 @@ Future<PendingComposerMedia> preparePendingComposerMedia({
     return PendingComposerMedia(file: sourceFile, budgetBytes: rawBudgetBytes);
   }
 
+  // Metadata stripping can change the file size even at Original quality.
+  // The budget also becomes the authored attachment size, so it must describe
+  // the processed file that encryption and upload actually read.
   if (imageProcessor.isProcessableVideo(inputPath)) {
     final result = await imageProcessor.processVideo(
       inputPath: inputPath,
@@ -49,13 +52,10 @@ Future<PendingComposerMedia> preparePendingComposerMedia({
       onProgress: onVideoProgress,
     );
     final processedFile = File(result.path);
-    final budgetBytes =
-        videoQualityPreference == ImageQualityPreference.original
-        ? rawBudgetBytes
-        : _resolvedBudgetBytesForFile(
-            processedFile,
-            fallbackBytes: rawBudgetBytes,
-          );
+    final budgetBytes = _resolvedBudgetBytesForFile(
+      processedFile,
+      fallbackBytes: rawBudgetBytes,
+    );
     return PendingComposerMedia(
       file: processedFile,
       budgetBytes: budgetBytes,
@@ -71,13 +71,10 @@ Future<PendingComposerMedia> preparePendingComposerMedia({
       quality: imageQualityPreference,
     );
     final processedFile = File(processedPath);
-    final budgetBytes =
-        imageQualityPreference == ImageQualityPreference.original
-        ? rawBudgetBytes
-        : _resolvedBudgetBytesForFile(
-            processedFile,
-            fallbackBytes: rawBudgetBytes,
-          );
+    final budgetBytes = _resolvedBudgetBytesForFile(
+      processedFile,
+      fallbackBytes: rawBudgetBytes,
+    );
     return PendingComposerMedia(file: processedFile, budgetBytes: budgetBytes);
   }
 

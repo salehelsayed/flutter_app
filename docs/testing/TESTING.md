@@ -3194,6 +3194,22 @@ do not count `test(...)` strings as executions. Runner listings took about
   relay addresses retain permanent peerstore custody; the Go address-expiry test
   covers expiry of transient connected-address TTLs. This does not establish
   that every internal Go relay task is suspended.
+- Original-quality images and videos still undergo metadata stripping, which
+  can change their byte length. Composer budgets also become authored attachment
+  sizes and must use the processed file's length. Using the raw input length
+  reproduced `ordinary media upload changed authored identity` after a successful
+  upload and prevented the in-app picker from reaching message dispatch.
+  `pending_composer_media_test.dart` covers both quality settings;
+  `conversation_wired_sender_finalize_canonical_path_test.dart` drives the
+  in-app picker, real upload use case and real SQLite custody stage with smaller
+  and larger processed photos in both quality settings. Compressed already used
+  the processed length: both Compressed cases pass against the pre-fix code,
+  while both Original cases reproduce the authored-identity failure. It checks
+  exact bytes, stored sizes, cleared preparation authority and pending-file
+  cleanup. These host fixtures substitute the native encoder and relay; they do not certify an
+  installed iOS artifact. Red and green evidence is retained in
+  `.codex-test-logs/image-original-debug-20261014/` and
+  `.codex-test-logs/image-original-regression-confirm-20261014/`.
 - Video preparation has a native `video_compress` call and a composer lifecycle.
   A Dart deadline must request native cancellation, stop its progress listener,
   release the composer, and keep completed siblings. The direct and group wired

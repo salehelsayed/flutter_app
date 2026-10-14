@@ -5,11 +5,13 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_image_compress/flutter_image_compress.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/database/outgoing_transport_mutation.dart';
 import 'package:flutter_app/core/debug/transport_metrics.dart';
 import 'package:flutter_app/core/device/upload_wake_lock.dart';
 import 'package:flutter_app/core/media/direct_private_media_transfer_registry.dart';
+import 'package:flutter_app/core/media/image_processor.dart';
 import 'package:flutter_app/core/media/media_attachment_lifecycle_lock.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/core/media/media_file_path_convention.dart';
@@ -34,12 +36,14 @@ import 'package:flutter_app/features/conversation/domain/repositories/media_atta
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
 import 'package:flutter_app/features/conversation/presentation/screens/conversation_screen.dart';
 import 'package:flutter_app/features/conversation/presentation/screens/conversation_wired.dart';
+import 'package:flutter_app/features/settings/domain/models/image_quality_preference.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import '../../../../core/bridge/fake_bridge.dart';
 import '../../../../core/services/fake_p2p_service.dart';
 import '../../../../shared/fakes/fake_mic_permission_gateway.dart';
+import '../../../../shared/fakes/fake_media_picker.dart';
 import '../../../../shared/fakes/fake_upload_wake_lock_driver.dart';
 import '../../../../shared/fixtures/media_repository_real_db_fixture.dart';
 import '../../../contacts/domain/repositories/fake_contact_repository.dart';
@@ -50,6 +54,20 @@ const _contentHash =
     'cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc';
 const _encryptionKey = 'cHJpdmF0ZS1rZXk=';
 const _encryptionNonce = 'bm9uY2U=';
+
+class _RecordingMediaUploadBridge extends FakeBridge {
+  final uploadedBodies = <List<int>>[];
+
+  @override
+  Future<String> send(String message) async {
+    final request = jsonDecode(message) as Map<String, dynamic>;
+    if (request['cmd'] == 'media:upload') {
+      final payload = request['payload'] as Map<String, dynamic>;
+      uploadedBodies.add(File(payload['filePath'] as String).readAsBytesSync());
+    }
+    return super.send(message);
+  }
+}
 
 class _OwnedConversationMediaFileManager extends MediaFileManager {
   _OwnedConversationMediaFileManager(
@@ -178,6 +196,270 @@ void main() {
     UploadWakeLockController.debugReset(driver: FakeUploadWakeLockDriver());
     MediaFileManager.debugResetDocumentsDirCache();
   });
+
+  for (final testCase in [
+    (
+      name: 'original smaller',
+      quality: ImageQualityPreference.original,
+      padding: 0,
+    ),
+    (
+      name: 'original larger',
+      quality: ImageQualityPreference.original,
+      padding: 32,
+    ),
+    (
+      name: 'compressed smaller',
+      quality: ImageQualityPreference.compressed,
+      padding: 0,
+    ),
+    (
+      name: 'compressed larger',
+      quality: ImageQualityPreference.compressed,
+      padding: 32,
+    ),
+  ]) {
+    testWidgets(
+      'in-app gallery ${testCase.name} photo sends the processed byte size after a successful upload',
+      (tester) async {
+        final root = Directory.systemTemp.createTempSync('gallery_size_send_');
+        addTearDown(() => root.deleteSync(recursive: true));
+        MediaFileManager.cacheDocumentsDir(root.path);
+        final fixture = (await tester.runAsync(
+          MediaRepositoryRealDbFixture.create,
+        ))!;
+        addTearDown(fixture.dispose);
+        await tester.runAsync(() => _seedPersistedIncumbentContact(fixture));
+        final imageBytes = base64Decode(
+          'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9Z4RYAAAAASUVORK5CYII=',
+        );
+        final source = File('${root.path}/picker-source.png')
+          ..writeAsBytesSync([...imageBytes, ...List.filled(16, 0)]);
+        final processedBytes = [
+          ...imageBytes,
+          ...List.filled(testCase.padding, 0),
+        ];
+        final processed = File('${root.path}/processed.png')
+          ..writeAsBytesSync(processedBytes);
+        final processor = ImageProcessor(
+          compressFile:
+              ({
+                required path,
+                required quality,
+                required keepExif,
+                minWidth = 1920,
+                minHeight = 1080,
+              }) async {
+                expectSync(path, source.path);
+                expectSync(
+                  quality,
+                  testCase.quality == ImageQualityPreference.original
+                      ? 100
+                      : 85,
+                );
+                expectSync(keepExif, isFalse);
+                return XFile(processed.path);
+              },
+        );
+        final picker = FakeMediaPicker()
+          ..multipleMediaResult = [XFile(source.path)];
+        final contact = ContactModel(
+          peerId: _contactPeerId,
+          publicKey: 'contact-public-key',
+          rendezvous: '/dns4/relay/tcp/443/p2p/relay',
+          username: 'Alice',
+          signature: 'signature',
+          scannedAt: '2026-07-20T09:00:00.000Z',
+        );
+        final contactRepo = FakeContactRepository()..seed([contact]);
+        final identityRepo = FakeIdentityRepository()
+          ..seed(FakeIdentityRepository.makeIdentity(peerId: 'self-peer'));
+        final listener = ChatMessageListener(
+          chatMessageStream: const Stream.empty(),
+          messageRepo: fixture.messageRepo,
+          contactRepo: contactRepo,
+        );
+        final bridge = _RecordingMediaUploadBridge();
+        final manager = _OwnedConversationMediaFileManager(root);
+        final events = <Map<String, dynamic>>[];
+        final eventLease = installScopedE2EFlowEventSink(events.add);
+        addTearDown(eventLease.release);
+        final messenger =
+            TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+        messenger.setMockMessageHandler(
+          kPrivateMediaProtectionEventChannel,
+          (_) async => const StandardMethodCodec().encodeSuccessEnvelope(null),
+        );
+        addTearDown(
+          () => messenger.setMockMessageHandler(
+            kPrivateMediaProtectionEventChannel,
+            null,
+          ),
+        );
+        String? sentMessageId;
+        MediaAttachment? sentAttachment;
+        final sendCompleted = Completer<void>();
+
+        await tester.pumpWidget(
+          MaterialApp(
+            locale: const Locale('en'),
+            localizationsDelegates: AppLocalizations.localizationsDelegates,
+            supportedLocales: AppLocalizations.supportedLocales,
+            home: ConversationWired(
+              contact: contact,
+              identityRepo: identityRepo,
+              messageRepo: fixture.messageRepo,
+              chatMessageListener: listener,
+              p2pService: FakeP2PService(),
+              bridge: bridge,
+              contactRepo: contactRepo,
+              mediaAttachmentRepo: fixture.repo,
+              mediaFileManager: manager,
+              micPermissionGateway: FakeMicPermissionGateway(),
+              mediaPicker: picker,
+              imageProcessor: processor,
+              qualityPreference: testCase.quality,
+              directMediaBlobCustodyClientEnabled: false,
+              sendChatMessageFn:
+                  ({
+                    required p2pService,
+                    required messageRepo,
+                    required targetPeerId,
+                    required text,
+                    required senderPeerId,
+                    required senderUsername,
+                    messageId,
+                    required preassignedMessageIdIsFresh,
+                    timestamp,
+                    bridge,
+                    recipientMlKemPublicKey,
+                    quotedMessageId,
+                    mediaAttachments,
+                    privateMediaPolicy,
+                    mediaAttachmentRepo,
+                    transportMetrics,
+                    directEventFanout,
+                  }) async {
+                    sentMessageId = messageId;
+                    sentAttachment = mediaAttachments!.single;
+                    final expected = (await messageRepo.getMessage(
+                      messageId!,
+                    ))!;
+                    final envelope = jsonEncode({
+                      'type': 'chat_message',
+                      'version': '2',
+                      'id': messageId,
+                      'senderPeerId': senderPeerId,
+                      'encrypted': {
+                        'kem': 'fixture-kem',
+                        'ciphertext': 'fixture-ciphertext',
+                        'nonce': 'fixture-nonce',
+                      },
+                    });
+                    final staging =
+                        mediaAttachmentRepo
+                            as OutgoingDirectMediaInboxCustodyStagingRepository;
+                    final staged = await staging
+                        .stageOutgoingDirectMediaInboxCustody(
+                          expected: expected,
+                          staged: expected.copyWith(
+                            wireEnvelope: envelope,
+                            directMediaCustodyIntentId: null,
+                            media: mediaAttachments,
+                          ),
+                          attachments: mediaAttachments,
+                          kind: OutgoingOrdinaryAttemptKind.existing,
+                          recipientPeerId: targetPeerId,
+                          wireEnvelope: envelope,
+                        );
+                    expectSync(staged.authorizesTransport, isTrue);
+                    final delivered = staged.message!.copyWith(
+                      status: 'delivered',
+                    );
+                    await messageRepo.saveMessage(delivered);
+                    sendCompleted.complete();
+                    return (SendChatMessageResult.success, delivered);
+                  },
+            ),
+          ),
+        );
+        await _pumpUntil(
+          tester,
+          () => find.byType(ConversationScreen).evaluate().isNotEmpty,
+        );
+        await tester.tap(find.byIcon(Icons.add_rounded));
+        await tester.pump(const Duration(milliseconds: 500));
+        tester
+            .widget<ListTile>(find.widgetWithText(ListTile, 'Media Library'))
+            .onTap!();
+        await _pumpUntil(
+          tester,
+          () =>
+              tester
+                  .widget<ConversationScreen>(find.byType(ConversationScreen))
+                  .composerStateListenable!
+                  .value
+                  .pendingAttachments
+                  .length ==
+              1,
+        );
+        expect(picker.pickMultipleMediaCalls, 1);
+        tester
+            .widget<ConversationScreen>(find.byType(ConversationScreen))
+            .onSend('');
+        await _pumpUntil(
+          tester,
+          () =>
+              sendCompleted.isCompleted ||
+              events.any(
+                (event) =>
+                    event['event'] == 'CONV_FL_SEND_ERROR' ||
+                    event['event'] == 'MEDIA_UPLOAD_ERROR',
+              ),
+        );
+
+        expect(bridge.uploadedBodies.single, processedBytes);
+        expect(
+          events.any((event) => event['event'] == 'MEDIA_UPLOAD_SUCCESS'),
+          isTrue,
+        );
+        expect(
+          sendCompleted.isCompleted,
+          isTrue,
+          reason: jsonEncode(
+            events
+                .where((event) => event['event'].toString().endsWith('_ERROR'))
+                .toList(),
+          ),
+        );
+        expect(sentAttachment!.size, processedBytes.length);
+        final parent = await tester.runAsync(
+          () => fixture.messageRepo.getMessage(sentMessageId!),
+        );
+        expect(parent!.directMediaCustodyIntentId, isNull);
+        final stored = (await tester.runAsync(
+          () => fixture.repo.getAttachmentsForMessage(
+            sentMessageId!,
+            owner: MediaOwnerLane.direct,
+          ),
+        ))!;
+        expect(stored.single.size, processedBytes.length);
+        expect(stored.single.downloadStatus, 'done');
+        expect(
+          File('${root.path}/${stored.single.localPath}').readAsBytesSync(),
+          processedBytes,
+        );
+        await _pumpUntil(
+          tester,
+          () => !Directory(
+            '${root.path}/pending_uploads/$sentMessageId',
+          ).existsSync(),
+        );
+        await tester.pumpWidget(const SizedBox.shrink());
+        await tester.pump(const Duration(milliseconds: 1));
+      },
+    );
+  }
 
   for (final testCase
       in <
