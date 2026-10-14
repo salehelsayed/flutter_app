@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/call/application/call_cleanup_coordinator.dart';
 import 'package:flutter_app/features/call/application/call_coordinator.dart';
@@ -702,6 +703,7 @@ void main() {
       iceGeneration: 0,
       payload: const <String, Object?>{'reason': 'remote_hangup'},
     );
+    final printed = _capturePublicDiagnostics();
     final provisional = _ProvisionalLifecycle();
     final built = await _build(
       coordinator,
@@ -726,6 +728,10 @@ void main() {
     expect(store.entryCountFor(_callId), 0);
     expect(store.callCount, 0);
     expect(provisional.calls, <String>['remoteCancel:$_callHandle']);
+    expect(
+      printed,
+      contains('[MKNOON_CALL_DIAG] remote_cancel reason=signal_terminate'),
+    );
   });
 
   test(
@@ -1134,6 +1140,7 @@ void main() {
     final effects = _Effects();
     final coordinator = _coordinator(effects);
     addTearDown(coordinator.dispose);
+    final printed = _capturePublicDiagnostics();
     final resultGate = Completer<bool>();
     final presenter = _Presenter(resultGate: resultGate);
     final provisional = _ProvisionalLifecycle();
@@ -1167,6 +1174,9 @@ void main() {
     expect(coordinator.activeSession, isNull);
     expect(coordinator.lastSnapshot?.endReason, CallEndReason.declined);
     expect(provisional.calls, <String>['remoteCancel:$_callHandle']);
+    expect(printed, <String>[
+      '[MKNOON_CALL_DIAG] remote_cancel reason=session_changed',
+    ]);
     expect(effects.effects, isNot(contains(CallEffectType.sendTerminate)));
     expect(effects.effects, isNot(contains(CallEffectType.sendRinging)));
   });
@@ -2193,4 +2203,17 @@ List<Map<String, Object?>> _captureNotAccepted() {
   });
   addTearDown(() => debugSetFlowEventSink(null));
   return events;
+}
+
+/// Records the closed-code diagnostics that print in every build mode.
+List<String> _capturePublicDiagnostics() {
+  final printed = <String>[];
+  final previous = debugPrint;
+  debugPrint = (String? message, {int? wrapWidth}) {
+    if (message != null && message.startsWith('[MKNOON_CALL_DIAG]')) {
+      printed.add(message);
+    }
+  };
+  addTearDown(() => debugPrint = previous);
+  return printed;
 }

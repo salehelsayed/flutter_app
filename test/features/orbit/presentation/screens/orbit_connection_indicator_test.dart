@@ -605,4 +605,42 @@ void main() {
     );
     expect(tester.takeException(), isNull);
   });
+
+  // SE-42 device finding (2026-10-14): Calls was stacked on the top-right
+  // create-group FAB, so a centre tap opened the create menu instead.
+  testWidgets('Calls, create-group and the status pill never overlap', (
+    tester,
+  ) async {
+    setPhoneSurface(tester);
+    suppressChromeErrors();
+    var callsOpened = 0;
+    await tester.pumpWidget(
+      buildOrbitScreenHarness(
+        viewMode: OrbitViewMode.allChats,
+        header: const OrbitHeaderProjection(userPeerId: 'me'),
+        p2pService: FakeP2PService(
+          initialState: stateFor(BadgeReadinessState.onlineDirect),
+        ),
+        onToggleView: () {},
+        onOpenCalls: () => callsOpened++,
+      ),
+    );
+    await settle(tester);
+
+    final calls = tester.getRect(find.byKey(const ValueKey('orbit-calls')));
+    final fab = tester.getRect(
+      find.byKey(const ValueKey('expandable-fab-toggle')),
+    );
+    final pill = tester.getRect(
+      find.byKey(const ValueKey('orbit-connection-indicator')),
+    );
+    expect(calls.overlaps(fab), isFalse, reason: '$calls vs FAB $fab');
+    expect(calls.overlaps(pill), isFalse, reason: '$calls vs pill $pill');
+    expect(calls.width, greaterThanOrEqualTo(40));
+
+    await tester.tap(find.byKey(const ValueKey('orbit-calls')));
+    await settle(tester);
+    expect(callsOpened, 1);
+    expect(tester.takeException(), isNull);
+  });
 }

@@ -1206,6 +1206,15 @@ void main() {
       expect(find.byType(ActiveCallScreen), findsNothing);
       expect(find.byKey(const ValueKey('call-return-bar')), findsOneWidget);
       expect(find.semantics.byLabel('Chat text'), findsOneWidget);
+      // Accessibility tools tap the centre of the node bounds. The node must
+      // be the bar itself, not the whole screen.
+      final barRect = tester.getRect(
+        find.byKey(const ValueKey('call-return-bar')),
+      );
+      final barNode = tester.getSemantics(
+        find.bySemanticsLabel(RegExp('^Return to call,')),
+      );
+      expect(_globalSemanticsRect(tester, barNode), barRect);
       await tester.tap(find.byType(TextField));
       await tester.enterText(find.byType(TextField), 'Synthetic address');
       expect(focus.hasFocus, isTrue);
@@ -1526,4 +1535,19 @@ class _PickerCapability extends _FakeForegroundCallCapability
     selectedIds.add(id);
     return ForegroundCallActionResult.applied;
   }
+}
+
+Rect _globalSemanticsRect(WidgetTester tester, SemanticsNode node) {
+  var rect = node.rect;
+  for (SemanticsNode? n = node; n != null; n = n.parent) {
+    final transform = n.transform;
+    if (transform != null) rect = MatrixUtils.transformRect(transform, rect);
+  }
+  final ratio = tester.view.devicePixelRatio;
+  return Rect.fromLTRB(
+    rect.left / ratio,
+    rect.top / ratio,
+    rect.right / ratio,
+    rect.bottom / ratio,
+  );
 }

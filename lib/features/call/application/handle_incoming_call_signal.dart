@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'package:flutter/foundation.dart';
 
 import '../../../core/utils/flow_event_emitter.dart';
 import '../diagnostics/call_diagnostics.dart';
@@ -509,7 +510,10 @@ final class HandleIncomingCallSignal {
         // CallKit's snapshot subscriber projects terminal coordinator state as
         // a generic end. Retire the authenticated native presentation first so
         // the OS records the authoritative remote-cancel reason instead.
-        await _remoteCancelSafely(admitted.callHandle);
+        await _remoteCancelSafely(
+          admitted.callHandle,
+          'signal_${signal.event.wireName}',
+        );
       }
       // Media preparation can wait for permission or TURN. Once admitted,
       // release the inbound lane so a subsequent remote hang-up can interrupt
@@ -567,7 +571,10 @@ final class HandleIncomingCallSignal {
           !(initialOutcome == IncomingCallSignalOutcome.duplicate &&
               resumableInvite)) {
         if (initialOutcome == IncomingCallSignalOutcome.rejected) {
-          await _remoteCancelSafely(admitted.callHandle);
+          await _remoteCancelSafely(
+            admitted.callHandle,
+            'coordinator_${reduction.reason.name}',
+          );
         }
         admitted.commitReplay();
         return settle(
@@ -591,7 +598,10 @@ final class HandleIncomingCallSignal {
             active?.incomingValidated != true ||
             _outcome(validated) != IncomingCallSignalOutcome.duplicate) {
           admitted.commitReplay();
-          await _remoteCancelSafely(admitted.callHandle);
+          await _remoteCancelSafely(
+            admitted.callHandle,
+            'validation_${validated.reason.name}',
+          );
           return settle(
             _outcome(validated),
             IncomingCallSignalRefusal.validation(validated.decision),
@@ -674,7 +684,7 @@ final class HandleIncomingCallSignal {
         if (expiredAfterPresentation) {
           await _expireSafely(admitted.callHandle);
         } else {
-          await _remoteCancelSafely(admitted.callHandle);
+          await _remoteCancelSafely(admitted.callHandle, 'session_changed');
         }
         if (expiredAfterPresentation &&
             activeAfterPresentation?.callId == signal.callId &&
@@ -755,7 +765,10 @@ final class HandleIncomingCallSignal {
       );
       if (shown.decision != CallEventDecision.applied) {
         await _dismissSafely(presentation);
-        await _remoteCancelSafely(admitted.callHandle);
+        await _remoteCancelSafely(
+          admitted.callHandle,
+          'system_ui_${shown.reason.name}',
+        );
         admitted.commitReplay();
         return settle(
           IncomingCallSignalOutcome.rejected,
@@ -844,7 +857,11 @@ final class HandleIncomingCallSignal {
     }
   }
 
-  Future<void> _remoteCancelSafely(String callHandle) async {
+  /// [reason] is a closed code. It is printed in every build mode, because
+  /// release iPhones log no flow events and a native `remote_cancelled` result
+  /// alone cannot say which refusal retired the call (SE-42, 2026-10-14).
+  Future<void> _remoteCancelSafely(String callHandle, String reason) async {
+    debugPrint('[MKNOON_CALL_DIAG] remote_cancel reason=$reason');
     try {
       final lifecycle = _provisionalNativeLifecycle;
       if (lifecycle == null) return;

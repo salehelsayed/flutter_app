@@ -29,6 +29,7 @@ Widget buildOrbitScreenHarness({
       const AlwaysStoppedAnimation<double>(0),
   P2PService? p2pService,
   bool hideShellNav = false,
+  VoidCallback? onOpenCalls,
 }) {
   final headerVN = ValueNotifier<OrbitHeaderProjection>(header);
   final listVN = ValueNotifier<OrbitViewProjection>(list);
@@ -73,6 +74,7 @@ Widget buildOrbitScreenHarness({
       onInnerCircleEditSessionChanged: onInnerEdit,
       p2pService: p2pService,
       hideShellNav: hideShellNav,
+      onOpenCalls: onOpenCalls,
     ),
   );
 }

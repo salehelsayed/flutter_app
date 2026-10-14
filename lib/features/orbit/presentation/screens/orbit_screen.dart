@@ -802,13 +802,18 @@ class _OrbitScreenView extends StatelessWidget {
           if (!_showsPersistentNav && onOpenSettings != null && !innerEditing)
             Positioned(bottom: 36, left: 16, child: _buildSettingsButton()),
 
+          // Calls sits left of the top-right create-group FAB
+          // (16 inset + 40 FAB + 8 gap), never on top of it.
           if (onOpenCalls != null && !innerEditing)
             Positioned(
               top: MediaQuery.paddingOf(context).top + 8,
-              right: 16,
+              right: 64,
+              width: 40,
+              height: 40,
               child: IconButton(
                 key: const ValueKey('orbit-calls'),
                 tooltip: AppLocalizations.of(context)!.calls_title,
+                padding: EdgeInsets.zero,
                 onPressed: onOpenCalls,
                 icon: const Icon(Icons.phone_in_talk_outlined),
               ),
@@ -1003,7 +1008,8 @@ class _OrbitScreenView extends StatelessWidget {
 
           // Layer 4b: connection-status pill (211) — migrated from the Feed
           // header. Physical right (RTL-safe, same rationale as the toggle);
-          // right = 16 (FAB inset) + 40 (FAB) + 8 gap. height:40 + Center
+          // right = 16 (FAB inset) + 40 (FAB) + 8 gap, plus 48 more when the
+          // Calls button sits in that slot. height:40 + Center
           // keeps the pill vertically aligned with the FAB at any text
           // scale. Hidden during sculpt-edit because the edit banner spans
           // the full top width. Mounted BEFORE the FAB so the open-menu
@@ -1015,7 +1021,7 @@ class _OrbitScreenView extends StatelessWidget {
             Positioned(
               key: const ValueKey('orbit-connection-indicator'),
               top: MediaQuery.of(context).padding.top + 8,
-              right: 64,
+              right: onOpenCalls != null ? 112 : 64,
               height: 40,
               child: Center(
                 child:

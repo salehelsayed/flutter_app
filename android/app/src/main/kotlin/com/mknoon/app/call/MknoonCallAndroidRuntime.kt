@@ -10,6 +10,7 @@ import android.content.pm.ServiceInfo
 import android.net.Uri
 import android.os.Build
 import android.os.Looper
+import android.os.PowerManager
 import android.os.Handler
 import android.telecom.DisconnectCause
 import androidx.core.content.ContextCompat
@@ -854,6 +855,8 @@ private class AndroidMknoonCallPlatform(
     private val endpointJobs = ConcurrentHashMap<UUID, Job>()
     private val availableEndpoints = ConcurrentHashMap<UUID, List<CallEndpointCompat>>()
     private val selectedEndpointIds = ConcurrentHashMap<UUID, String>()
+    private val powerManager = applicationContext.getSystemService(PowerManager::class.java)
+    private val proximityLocks = ConcurrentHashMap<UUID, PowerManager.WakeLock>()
     private val locallyDisconnecting = ConcurrentHashMap<UUID, CallControlScope>()
     private val callbackReleases = MknoonTelecomCallbackRelease(
         scope = scope,
@@ -1137,6 +1140,24 @@ private class AndroidMknoonCallPlatform(
         }
     }
 
+    override fun setProximityScreenOff(nativeCallId: UUID, enabled: Boolean) {
+        if (!enabled) {
+            val held = proximityLocks.remove(nativeCallId) ?: return
+            // Keep the screen off until the phone leaves the ear.
+            if (held.isHeld) held.release(PowerManager.RELEASE_FLAG_WAIT_FOR_NO_PROXIMITY)
+            return
+        }
+        val manager = powerManager ?: return
+        if (!manager.isWakeLockLevelSupported(PowerManager.PROXIMITY_SCREEN_OFF_WAKE_LOCK)) return
+        val wakeLock = proximityLocks.computeIfAbsent(nativeCallId) {
+            manager.newWakeLock(
+                PowerManager.PROXIMITY_SCREEN_OFF_WAKE_LOCK,
+                "mknoon:call-proximity",
+            ).apply { setReferenceCounted(false) }
+        }
+        if (!wakeLock.isHeld) wakeLock.acquire(PROXIMITY_MAX_HOLD_MS)
+    }
+
     override fun stopEndpointUpdates(nativeCallId: UUID) {
         endpointJobs.remove(nativeCallId)?.cancel()
         availableEndpoints.remove(nativeCallId)
@@ -1235,6 +1256,9 @@ private class AndroidMknoonCallPlatform(
 
     private companion object {
         const val CONTROL_TIMEOUT_MS = 4_000L
+
+        /** Call cleanup releases the lock; this only bounds a missed release. */
+        const val PROXIMITY_MAX_HOLD_MS = 6 * 60 * 60 * 1_000L
     }
 
 }

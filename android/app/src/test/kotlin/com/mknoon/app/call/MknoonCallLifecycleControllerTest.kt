@@ -57,6 +57,33 @@ class MknoonCallLifecycleControllerTest {
     }
 
     @Test
+    fun `earpiece route turns the screen off near the ear until another route or cleanup`() {
+        val rig = LifecycleRig()
+        val id = rig.payload.nativeCallId
+        assertEquals(MknoonCallPresentationResult.PRESENTED, rig.controller.registerOutgoing(rig.payload))
+        rig.controller.attach()
+        assertTrue(rig.controller.markAdopted(id))
+        assertTrue(rig.controller.acknowledge(id, requireNotNull(rig.controller.snapshot()).highestSequence, PendingNativeCallAcknowledgement.ADOPTED))
+        assertTrue(rig.controller.activateAudio(id))
+
+        assertTrue(rig.controller.onRouteChanged(id, "earpiece"))
+        assertEquals(listOf(true), rig.platform.proximityCalls)
+        assertTrue(rig.controller.onRouteChanged(id, "speaker"))
+        assertEquals(listOf(true, false), rig.platform.proximityCalls)
+        assertTrue(rig.controller.onRouteChanged(id, "earpiece"))
+        // Audio reactivation reports the unchanged route again; it must re-apply.
+        assertFalse(rig.controller.onRouteChanged(id, "earpiece"))
+        assertEquals(listOf(true, false, true, true), rig.platform.proximityCalls)
+        assertFalse(rig.controller.onRouteChanged(UUID.randomUUID(), "earpiece"))
+        assertEquals(4, rig.platform.proximityCalls.size)
+
+        assertTrue(rig.controller.endFromDart(id))
+        assertEquals(false, rig.platform.proximityCalls.last())
+        assertFalse(rig.controller.onRouteChanged(id, "earpiece"))
+        assertEquals(false, rig.platform.proximityCalls.last())
+    }
+
+    @Test
     fun `PCM observer sees only current adopted active audio owner and authoritative mute`() {
         val rig = LifecycleRig()
         val id = rig.payload.nativeCallId
@@ -2421,6 +2448,10 @@ internal class LifecycleFakePlatform(
     var abandonAudioFocusCalls = 0
     var startEndpointUpdatesCalls = 0
     var stopEndpointUpdatesCalls = 0
+    val proximityCalls = mutableListOf<Boolean>()
+    override fun setProximityScreenOff(nativeCallId: UUID, enabled: Boolean) {
+        proximityCalls += enabled
+    }
     var startMicrophoneCalls = 0
     var stopIncomingRingerCalls = 0
     override fun project(nativeCallId: UUID, state: String): Boolean {

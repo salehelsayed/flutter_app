@@ -70,6 +70,9 @@ class _CallReturnBarState extends State<CallReturnBar> {
     return Material(
       color: Theme.of(context).colorScheme.primaryContainer,
       child: Semantics(
+        // Its own node: otherwise the label merges into the nearest ancestor
+        // node, which reports full-screen bounds to accessibility services.
+        container: true,
         button: true,
         label: label,
         onTap: widget.onReturn,

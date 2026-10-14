@@ -75,6 +75,9 @@ internal interface MknoonCallPlatform {
 
     fun stopEndpointUpdates(nativeCallId: UUID)
 
+    /** Turns the screen off near the ear while audio plays from the earpiece. */
+    fun setProximityScreenOff(nativeCallId: UUID, enabled: Boolean) = Unit
+
     fun startMicrophoneService(nativeCallId: UUID)
 
     fun stopMicrophoneService(nativeCallId: UUID) = Unit
@@ -1013,6 +1016,7 @@ internal class MknoonCallLifecycleController(
         try {
             platform.stopMicrophoneService(nativeCallId)
             if (requestTelecomTransition) platform.abandonAudioFocus(nativeCallId)
+            runCatching { platform.setProximityScreenOff(nativeCallId, false) }
             platform.stopEndpointUpdates(nativeCallId)
         } catch (_: Exception) {
             synchronized(lock) {
@@ -1077,7 +1081,10 @@ internal class MknoonCallLifecycleController(
 
     fun onRouteChanged(nativeCallId: UUID, route: String): Boolean = synchronized(lock) {
         if (cleanupState != null || !hasActiveLifecycle(nativeCallId)) return@synchronized false
-        if (route !in ROUTES || lastRoute == route) return@synchronized false
+        if (route !in ROUTES) return@synchronized false
+        // Applied before the dedupe: audio reactivation reports the same route.
+        runCatching { platform.setProximityScreenOff(nativeCallId, route == "earpiece") }
+        if (lastRoute == route) return@synchronized false
         val event = append(nativeCallId, PendingNativeCallEventType.ROUTE_CHANGED)
             ?: return@synchronized false
         lastRoute = route
@@ -1502,6 +1509,7 @@ internal class MknoonCallLifecycleController(
     private fun performCleanup(cleanup: NativeCleanupState) {
         val nativeCallId = cleanup.nativeCallId
         if (!cleanup.endpointsComplete) {
+            runCatching { platform.setProximityScreenOff(nativeCallId, false) }
             cleanup.endpointsComplete = runCatching {
                 platform.stopEndpointUpdates(nativeCallId)
             }.isSuccess
