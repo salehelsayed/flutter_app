@@ -6713,6 +6713,35 @@ visible and cannot become an ordinary first-attempt PASS.
   an additional production composition/graph admission preservation case.
   New evidence is kept separately under `.codex-test-logs/se42-v2-validation-20261013/`;
   v1 receipts remain historical and do not certify a later source/build.
+  **SE-42 production device checks (2026-10-14):** the Android production-call
+  Dart defines alone do not enable native Telecom. The existing separate
+  `--android-project-arg=enableAndroidNativeCalls=true` build argument is also
+  required; verify generated `ENABLE_ANDROID_NATIVE_CALLS = true` and a fresh
+  APK rather than accepting an interrupted Flutter process's exit code.
+  A physical iOS debug build cannot be cold-launched normally without its
+  debugger; the profile build permitted the existing installed identity to be
+  retained and normal launches to be exercised. These are setup findings,
+  distinct from client regressions. All paired calls used the production relay
+  defaults; the existing audio campaign's local-relay setup was not run.
+  Owner observations confirmed Android two-way speech before and during
+  minimized synthetic chat; the earpiece proximity screen stayed on twice.
+  Android local notification callbacks reached fresh calls from background and
+  an absent app process. Existing native signal observers proved the bounded
+  capture-to-remote-render processing path, without proving physical transducers.
+  A real FCM receiver process start and physical metadata-required PushKit
+  delegate receipt were observed separately from injected wakes. iPhone
+  incoming presentation was inconsistent; retain its first CallKit failure and
+  later native-control observation rather than claiming reliable delivery or
+  answered incoming audio. Syslog host-receive times were batched and cannot
+  establish PushKit delivery latency. The numbered current dispositions and
+  remaining NOT RUN cases are in `se42-owner-device-checklists.md`; redacted
+  receipts remain in `.codex-test-logs/se42-device-20261014/`.
+  Calls-page widget tests do not establish Orbit discoverability: the current
+  Calls control and later Create Group FAB overlap at the top right, and the
+  normal Calls center tap opened Create Group in the live composition. The
+  return-bar Appium element also reported screen-sized bounds; a visible-bar
+  tap worked, but element-center and actual screen-reader activation are
+  distinct assertions. These are retained findings, not source fixes.
   The protected notification-open harness hash was reviewed and re-pinned for
   its optional `callId` fake signature only; existing layout, target roles,
   launch commands, assertions and disposal requirements are retained.
