@@ -305,3 +305,6 @@ graphify-arch/graphify-out/.graphify_analysis.json
 /docker-ws/tmp/
 /.audit/
 /android/build/
+
+# Physical device IDs read by docker-ws scripts
+docker-ws/local_devices.env

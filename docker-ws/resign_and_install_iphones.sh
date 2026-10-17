@@ -14,7 +14,9 @@ cd "$(dirname "$0")/.."
 BUNDLE_ID=com.mknoon.app
 APP=build/ios/iphoneos/Runner.app
 SIGN_ID="Apple Development: Saleh Elsayed (QGRWQ86DP5)"
-IPHONE_UDIDS="00008030-001A6D2801BB802E 00008110-00184D622289801E"
+[ -f docker-ws/local_devices.env ] && . docker-ws/local_devices.env
+IPHONE_UDIDS="${IPHONE_UDIDS:-${IPHONE11_UDID:-} ${IPHONE13_UDID:-}}"
+[ -n "${IPHONE_UDIDS// /}" ] || { echo "no iPhone UDIDs: set IPHONE_UDIDS or docker-ws/local_devices.env"; exit 2; }
 RESULT_FILE="docker-ws/resign_and_install_iphones_result.txt"
 : > "$RESULT_FILE"
 note() { echo "$*" | tee -a "$RESULT_FILE"; }
