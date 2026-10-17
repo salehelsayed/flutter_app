@@ -6752,6 +6752,13 @@ visible and cannot become an ordinary first-attempt PASS.
   an additional production composition/graph admission preservation case.
   New evidence is kept separately under `.codex-test-logs/se42-v2-validation-20261013/`;
   v1 receipts remain historical and do not certify a later source/build.
+  The D12 mixed-precision device entrypoint is a `support` fixture, not an
+  automatically selected reliability test. Its owner is
+  `docker-ws/d12_device_helper.sh`: seed/snapshot require an explicit disposable
+  emulator, mode and existing onboarded identity. Static classification must
+  work without Dart or device execution; the workflow classification contract
+  pins this support role. Legacy selection contracts preserve their audited
+  leaves and require exact owner hashes after reviewed gate/tooling changes.
   **SE-42 v3 proximity and diagnostic correctness (F3–F5):** proximity ENABLE
   requires the exact adopted active audio owner, rather than a nonterminal
   descriptor. Apply the ownership check before route deduplication so genuine

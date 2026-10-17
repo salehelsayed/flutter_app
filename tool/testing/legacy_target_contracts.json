@@ -73,7 +73,7 @@
       "environment": {},
       "config": [],
       "sources": {
-        "scripts/run_test_gates.sh": "af06d76de576141942b5f7b0d5a0593f644684f004a0a6c70725fed42f0067c8"
+        "scripts/run_test_gates.sh": "d04baecb316d6d9d433ee9955d08fc9892dbdc3bfc4af9386e9b024ae94e73ee"
       },
       "audit": "Static path classification; no target execution.",
       "owns": [
@@ -131,8 +131,8 @@
         "relay_addresses"
       ],
       "sources": {
-        "scripts/run_test_gates.sh": "af06d76de576141942b5f7b0d5a0593f644684f004a0a6c70725fed42f0067c8",
-        "scripts/test/go_binding_staleness_contract_test.sh": "c3ad58ce2f006ed1bdebb931dcffed3eaea38af3f6f874b992ac74db1e29ee5b",
+        "scripts/run_test_gates.sh": "d04baecb316d6d9d433ee9955d08fc9892dbdc3bfc4af9386e9b024ae94e73ee",
+        "scripts/test/go_binding_staleness_contract_test.sh": "bf48e6eb7dade44ce6043c81140e0cb11dd8371ec09ddb8d75e26cd520da68f1",
         "scripts/test/relay_ack_custody_rollout_contract_test.sh": "6b1bac5bc535253d3737d43eb09a66087e7cdeb11729e9b58949d43142f275e1",
         "scripts/test/relay_go_toolchain_contract_test.sh": "95244e9b918b0b94eb3bb6692f941065714073449a6888e3082d85d1fcc0d927",
         "scripts/test/relay_media_custody_contract_test.sh": "96476128fbce1731c40d7dd349670d2d086b291b6bbe5df2197807d516921361"

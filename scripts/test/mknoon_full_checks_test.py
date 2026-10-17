@@ -260,6 +260,7 @@ class ClassificationListingTest(RepositoryFixture):
         self.assertEqual(result.returncode,0,result.stderr)
         self.assertIn('integration_test/scripts/run_group_multi_party_device_real.dart',result.stdout)
         self.assertNotIn('unexpected scenario execution',result.stderr)
+        self.assertIn('support\tsupport\tintegration_test/se42_d12_mixed_precision_seed_test.dart\t',result.stdout)
 
 
 class FailurePreservationTest(RepositoryFixture):

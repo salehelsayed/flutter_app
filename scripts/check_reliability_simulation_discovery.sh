@@ -981,6 +981,10 @@ classify_path() {
       record "1to1" "$path" "test" "1:1 transport/conversation simulator test"
       return
       ;;
+    integration_test/se42_d12_mixed_precision_seed_test.dart)
+      record "support" "$path" "support" "SE-42 D12 disposable-emulator database seed/snapshot helper; explicit mode and onboarded identity required"
+      return
+      ;;
     integration_test/audio_peer_connection_proof_test.dart)
       record "1to1" "$path" "test" "VC2-01 audio-only peer-connection adapter device proof"
       return
