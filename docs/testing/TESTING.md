@@ -67,6 +67,15 @@ configuration and signed artifact, not just the Dart revision or version label.
   Codex document recall for focused prior decisions and targeted source searches
   for code impact in Codex. Claude's separate navigation configuration is unchanged.
 
+`docker-ws/run_sims_safe.py` lists the major inventory without device, relay or
+provider configuration. Execution is a filtered diagnostic: credential and
+physical-phone routes remain BLOCKED rather than becoming a passing full major
+run. It accepts explicit disposable pins and an ignored test-relay file, reuses
+the existing device leases/setup checks, and serializes the native scheduler.
+Host-only launcher contracts are registered in workflow/full-workflow; they do
+not certify a device scenario. Its current, previous and first-failure stdout
+logs are each capped at 8 MiB; native campaign output/build retention is separate.
+
 Codex's Graphify integration was removed on 2026-09-11. Document-memory
 advisories use source searches for code questions, checkpoints accept absent
 legacy graph metadata, and every document-memory experiment profile keeps the

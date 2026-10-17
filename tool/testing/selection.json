@@ -638,7 +638,8 @@
         "scripts/test/mknoon_full_composition_test.py",
         "scripts/test/mknoon_full_legacy_binding_test.py",
         "scripts/test/mknoon_full_benchmark_boundary_test.py",
-        "scripts/test/sims_native_xctest_receipts_test.py"
+        "scripts/test/sims_native_xctest_receipts_test.py",
+        "scripts/test/safe_sims_launcher_test.py"
       ],
       "boundary": "Selector, inventory, runner safety and candidate-bound CI acceptance contracts",
       "timeout_seconds": 360,
@@ -6297,6 +6298,17 @@
         "update-check-android-native"
       ],
       "why": "SE-41 in-app update check: the verifier is shared by the app and the signing CLI, and the store build scripts must keep the kill switch on; T4a adds the native background schedule and the update notification"
+    },
+    {
+      "id": "sims-safe-launcher",
+      "patterns": [
+        "docker-ws/run_sims_safe.py",
+        "scripts/test/safe_sims_launcher_test.py"
+      ],
+      "checks": [
+        "workflow"
+      ],
+      "why": "Standalone host launcher: explicit disposable pins, credential/phone policy, native command delegation, private bounded output and setup checks; no app/native implementation changes."
     }
   ],
   "documentation_only": [
@@ -6642,7 +6654,8 @@
         "scripts/test/mknoon_full_composition_test.py",
         "scripts/test/mknoon_full_legacy_binding_test.py",
         "scripts/test/mknoon_full_benchmark_boundary_test.py",
-        "scripts/test/sims_native_xctest_receipts_test.py"
+        "scripts/test/sims_native_xctest_receipts_test.py",
+        "scripts/test/safe_sims_launcher_test.py"
       ],
       "boundary": "Selector, inventory, runner safety and candidate-bound CI acceptance contracts",
       "timeout_seconds": 360,
@@ -6672,7 +6685,8 @@
         "scripts/test/mknoon_full_composition_test.py",
         "scripts/test/mknoon_full_legacy_binding_test.py",
         "scripts/test/mknoon_full_benchmark_boundary_test.py",
-        "scripts/test/sims_native_xctest_receipts_test.py"
+        "scripts/test/sims_native_xctest_receipts_test.py",
+        "scripts/test/safe_sims_launcher_test.py"
       ],
       "resources": [
         "isolated:full-workflow"
