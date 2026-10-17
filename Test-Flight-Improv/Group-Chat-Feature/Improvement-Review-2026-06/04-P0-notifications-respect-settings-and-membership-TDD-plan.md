@@ -188,7 +188,7 @@ Land **after** Slice 1 is device-verified. Each item needs a native rebuild and/
 - Session 4: `resolve_group_notification_route_target_use_case_test.dart` + `chat_and_group_push_open_flow_test.dart` (missing-no-invite outcome) + new widget test for the SnackBar + home route.
 - **Regression sweeps:** groups suite + `test/features/push/` + `test/core/notifications/` green; `flutter analyze` 0 new issues. Per project history these push/notification suites can flake under parallel test due to a shared-global-gate-file race — run `-j 1` if the parallel run is noisy (the SI-4 gate relocation should *reduce* this since prod no longer uses `systemTemp`, but verify).
 
-**Slice 2 — device matrix (deferred, per item):** iOS NSE suppression of muted + removed-member banners (TestFlight); Android `sender: text` previews + mute/membership suppression on the Pixel6 (`21071FDF600CSC`); one-per-message under throttling for SI-5. Update `Test-Flight-Improv/52-notification-journey-test-matrix.md` so SM-004/GMN-102/GMN-103/RG-006 cite the new push/NSE coverage rather than only the live-listener test.
+**Slice 2 — device matrix (deferred, per item):** iOS NSE suppression of muted + removed-member banners (TestFlight); Android `sender: text` previews + mute/membership suppression on the Pixel6 (`<pixel-6-serial>`); one-per-message under throttling for SI-5. Update `Test-Flight-Improv/52-notification-journey-test-matrix.md` so SM-004/GMN-102/GMN-103/RG-006 cite the new push/NSE coverage rather than only the live-listener test.
 
 ---
 

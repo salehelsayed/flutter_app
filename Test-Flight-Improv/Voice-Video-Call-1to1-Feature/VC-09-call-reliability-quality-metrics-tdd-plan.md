@@ -392,7 +392,7 @@ No empty cells (n/a entries are justified in-cell).
 ## Execution Environment  (rule 1 — concrete commands for the implementing agent)
 
 ```bash
-# 0. Rig discovery (canonical pair: USB Pixel 6 21071FDF600CSC + emulator-5554 / AVD mknoon_play_35)
+# 0. Rig discovery (canonical pair: USB Pixel 6 <pixel-6-serial> + emulator-5554 / AVD mknoon_play_35)
 adb devices -l
 flutter devices --machine
 flutter emulators
@@ -403,24 +403,24 @@ flutter test test/features/call/application/call_reconnect_controller_test.dart
 flutter test test/features/call/application/call_quality_sampler_test.dart
 
 # 2. Single-device integration run (per-file, serial explicit)
-flutter test integration_test/call_reliability_proof_test.dart -d 21071FDF600CSC \
+flutter test integration_test/call_reliability_proof_test.dart -d <pixel-6-serial> \
   --dart-define=FDC_FLOW_LOG=1 --dart-define=MKNOON_RELAY_ADDRESSES=<default pair, see run_test_gates.sh:567>
 
 # 3. Two-party orchestrator (comma-joined -d, conventions of run_1to1_device_real.dart:22,114,142)
 dart integration_test/scripts/run_call_device_real.dart --list-scenarios       # discovery contract: bare ids
-dart integration_test/scripts/run_call_device_real.dart --scenario vc09-network-switch -d 21071FDF600CSC,emulator-5554
-dart integration_test/scripts/run_call_device_real.dart --scenario vc09-forced-relay  -d 21071FDF600CSC,emulator-5554
+dart integration_test/scripts/run_call_device_real.dart --scenario vc09-network-switch -d <pixel-6-serial>,emulator-5554
+dart integration_test/scripts/run_call_device_real.dart --scenario vc09-forced-relay  -d <pixel-6-serial>,emulator-5554
 
 # 4. Leg assignment (fixed): CALLER = USB device (its WiFi gets toggled; it has the cellular SIM),
 #    CALLEE = emulator (host WiFi NAT; its network never changes). The orchestrator itself issues:
-adb -s 21071FDF600CSC shell svc wifi disable      # mid-call, after >=10s connected
+adb -s <pixel-6-serial> shell svc wifi disable      # mid-call, after >=10s connected
 # recovery variant when no SIM data available:
-sleep 5 && adb -s 21071FDF600CSC shell svc wifi enable
+sleep 5 && adb -s <pixel-6-serial> shell svc wifi enable
 # ALWAYS restore at teardown (even on failure):
-adb -s 21071FDF600CSC shell svc wifi enable
+adb -s <pixel-6-serial> shell svc wifi enable
 
 # 5. Capture (two terminals, started BEFORE the call — runsheet convention of plan 179)
-adb -s 21071FDF600CSC logcat -v time | grep -E 'FLOW.*(CALL_RECONNECT|CALL_QUALITY|CALL_DEGRADE)' | tee vc09-device.log
+adb -s <pixel-6-serial> logcat -v time | grep -E 'FLOW.*(CALL_RECONNECT|CALL_QUALITY|CALL_DEGRADE)' | tee vc09-device.log
 adb -s emulator-5554  logcat -v time | grep -E 'FLOW.*(CALL_RECONNECT|CALL_QUALITY|CALL_DEGRADE)' | tee vc09-emulator.log
 ```
 
@@ -558,8 +558,8 @@ flutter test test/core/debug/transport_metrics_privacy_test.dart
 
 # Device proofs (rule 1)
 adb devices -l
-dart integration_test/scripts/run_call_device_real.dart --scenario vc09-network-switch -d 21071FDF600CSC,emulator-5554
-dart integration_test/scripts/run_call_device_real.dart --scenario vc09-forced-relay  -d 21071FDF600CSC,emulator-5554
+dart integration_test/scripts/run_call_device_real.dart --scenario vc09-network-switch -d <pixel-6-serial>,emulator-5554
+dart integration_test/scripts/run_call_device_real.dart --scenario vc09-forced-relay  -d <pixel-6-serial>,emulator-5554
 
 # EC2 live verification (rule 2) — section above; PASS = relay_call_reports_total visible on :2112 after one reported call
 

@@ -259,7 +259,7 @@ Overengineering would be introducing a global event sequencer, broad transaction
 
 Live planning refresh, 2026-05-11 CEST:
 
-- `flutter devices --machine` reported usable targets including `Pixel 6` (`21071FDF600CSC`), Android emulator `emulator-5554`, connected iPhone `00008030-001A6D2801BB802E`, booted iOS simulators `560D3E2D-78F8-4D28-A010-16B399581C99`, `511B36DA-7113-41A7-A718-4450C87C0E62`, `DE36DBBE-64FC-4652-AAD9-17329A1BA245`, `A369E083-CFED-40F7-8925-72A088575E38`, and additional iOS 26.1 booted simulators.
+- `flutter devices --machine` reported usable targets including `Pixel 6` (`<pixel-6-serial>`), Android emulator `emulator-5554`, connected iPhone `<iphone-11-udid>`, booted iOS simulators `560D3E2D-78F8-4D28-A010-16B399581C99`, `511B36DA-7113-41A7-A718-4450C87C0E62`, `DE36DBBE-64FC-4652-AAD9-17329A1BA245`, `A369E083-CFED-40F7-8925-72A088575E38`, and additional iOS 26.1 booted simulators.
 - `xcrun simctl list devices available` confirmed booted iOS simulators: `38FECA55-03C1-4907-BD9D-8E64BF8E3469`, `347FB118-10D0-40C8-A05B-B0C3BD6B8CCD`, `5BA69F1C-B112-47BE-B1FF-8C1003728C8F`, `1B098DFF-6294-407A-A209-BBF360893485`, `560D3E2D-78F8-4D28-A010-16B399581C99`, `511B36DA-7113-41A7-A718-4450C87C0E62`, `DE36DBBE-64FC-4652-AAD9-17329A1BA245`, `A369E083-CFED-40F7-8925-72A088575E38`.
 - Process check for active `run_group_multi_party_device_real` or `flutter drive` jobs returned no matches. No current process contention was observed; future contention from matching active jobs should be treated as external unless the GM-034 executor started it.
 - `MKNOON_RELAY_ADDRESSES` is currently unset. The exact app relay profile required by `group_multi_party_device_criteria.dart` must be supplied before real device proof can run.

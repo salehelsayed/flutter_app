@@ -174,7 +174,7 @@ flutter test test/performance/benchmark_time_to_online_test.dart             # e
 ./scripts/run_test_gates.sh 1to1                                             # expect: NNNN/NNNN pass (fill count from a clean run)
 
 # Device closure (TC-07, PROD-CRITICAL) — manual, both platforms
-#   adb -s 21071FDF600CSC logcat -c && <cold start> && adb -s 21071FDF600CSC logcat -v time | grep -E "Reservation opened|Retrieved pending"
+#   adb -s <pixel-6-serial> logcat -c && <cold start> && adb -s <pixel-6-serial> logcat -v time | grep -E "Reservation opened|Retrieved pending"
 #   expect: gap ≤ ~3s (was ~30s)
 
 # Hygiene

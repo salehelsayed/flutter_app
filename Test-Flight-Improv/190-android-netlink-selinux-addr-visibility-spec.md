@@ -127,8 +127,8 @@ Reproduction: install on any Android 11+ device, run the app, `adb logcat | grep
 - **TC-190-33** — `filterAddresses` still drops loopback/link-local/unspecified from the announced set (no over-broadening: restoring LAN addrs must not leak `127.0.0.1`/`fe80::`/`0.0.0.0` into adverts or identify).
 
 ### Group E — device proof (closure)
-- **TC-190-40** — Pixel 6 (`21071FDF600CSC`, Android 16, build under test): `adb logcat` over 10 min foreground shows (a) NO recurring `netlinkrib: permission denied` ERROR cadence, (b) `Announcing N addresses` with N ≥ 1 including the device's WiFi IP when on WiFi, (c) `node:status.addresses` non-empty in FLOW logs.
-- **TC-190-41** — two-phone same-WiFi (Pixel + iPhone 11 `00008030-001A6D2801BB802E`): with the bonsoir advert lane artificially disabled on the Pixel (or TXT ports stripped), the iPhone can still establish a LAN-direct connection to the Pixel via addresses learned from identify/peer records. Falsifier: relay-only when mDNS is unavailable (today).
+- **TC-190-40** — Pixel 6 (`<pixel-6-serial>`, Android 16, build under test): `adb logcat` over 10 min foreground shows (a) NO recurring `netlinkrib: permission denied` ERROR cadence, (b) `Announcing N addresses` with N ≥ 1 including the device's WiFi IP when on WiFi, (c) `node:status.addresses` non-empty in FLOW logs.
+- **TC-190-41** — two-phone same-WiFi (Pixel + iPhone 11 `<iphone-11-udid>`): with the bonsoir advert lane artificially disabled on the Pixel (or TXT ports stripped), the iPhone can still establish a LAN-direct connection to the Pixel via addresses learned from identify/peer records. Falsifier: relay-only when mDNS is unavailable (today).
 - **TC-190-42** — cellular Pixel: no announced-address regression (cellular IP handling per `filterAddresses` policy unchanged), no error spam, node behavior otherwise identical.
 
 ---

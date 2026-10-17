@@ -46,7 +46,7 @@ Source: `Network-Arch/Transport-Reliability/01-lan-wifi-reliability.md` (Test Pl
 1. **Two real physical devices on the SAME WiFi.** iOS↔iOS is the canonical pair (the
    doc/cap targets iOS Local Network). iOS↔Android is acceptable if both run debug builds
    with discovery on. Known device IDs (project memory): iPhone13 `00008110-...`,
-   Pixel6 `21071FDF600CSC`. (Note the iPhone13 iOS-signing blocker — resolve signing or
+   Pixel6 `<pixel-6-serial>`. (Note the iPhone13 iOS-signing blocker — resolve signing or
    use a second provisioned iOS device.)
 2. **Debug build** (`kDebugMode == true`) so the Transport Diagnostics card is visible.
 3. **Local discovery ENABLED** — do **NOT** pass `DISABLE_LOCAL_DISCOVERY=true`. Verify
@@ -167,7 +167,7 @@ Notes / anomalies: __________________________________________________
 
 ## 8b. Recorded run — 2026-05-31 (executor; verdict deferred to monitor)
 
-Real devices: **iPhone 13** (`00008110`, iOS 26.4.2) + **Pixel 6** (`21071FDF600CSC`,
+Real devices: **iPhone 13** (`00008110`, iOS 26.4.2) + **Pixel 6** (`<pixel-6-serial>`,
 Android 16), **same WiFi** (192.168.0.x), **debug** builds (commit `fb1bcca2` — adds the
 greppable `MSG_RECEIVED_TRANSPORT` log), **discovery ON**, iOS **Local Network permission
 ALLOWED**. Read via the **Pixel** (`adb logcat`); the iPhone was launched by tap (logs not

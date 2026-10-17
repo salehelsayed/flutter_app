@@ -327,7 +327,7 @@
         "observed": true,
         "state": {
           "platform": "android",
-          "target": "21071FDF600CSC",
+          "target": "<pixel-6-serial>",
           "labConversationVisible": true,
           "labPeerNameVisible": true,
           "callHeaderEnabled": true,
@@ -354,7 +354,7 @@
         "observed": true,
         "state": {
           "platform": "ios",
-          "target": "00008030-001A6D2801BB802E",
+          "target": "<iphone-11-udid>",
           "labConversationVisible": true,
           "labPeerNameVisible": true,
           "callHeaderEnabled": true,
@@ -378,7 +378,7 @@
       "ok": true,
       "result": {
         "platform": "android",
-        "target": "21071FDF600CSC",
+        "target": "<pixel-6-serial>",
         "labConversationVisible": false,
         "labPeerNameVisible": false,
         "callHeaderEnabled": null,

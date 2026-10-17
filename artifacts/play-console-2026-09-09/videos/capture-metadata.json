@@ -2,7 +2,7 @@
   "status": "published_and_declaration_saved",
   "devices": {
     "phone": {
-      "serial": "21071FDF600CSC",
+      "serial": "<pixel-6-serial>",
       "model": "Pixel 6",
       "android": "17 (API 37)",
       "installedVersionCode": 111,

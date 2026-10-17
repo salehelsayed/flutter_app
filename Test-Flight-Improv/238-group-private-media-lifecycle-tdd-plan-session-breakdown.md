@@ -15,7 +15,7 @@ Status: execution-ready
 - Source doc: `Test-Flight-Improv/238-group-private-media-lifecycle-tdd-plan.md`
 - Intended breakdown: `Test-Flight-Improv/238-group-private-media-lifecycle-tdd-plan-session-breakdown.md`
 - Current role: Arbiter complete; reusable downstream breakdown
-- Device policy: generic two-peer proof uses physical Android `21071FDF600CSC` plus Android emulator `emulator-5554`; unavailable targets are `N/A (target unavailable by project policy)`.
+- Device policy: generic two-peer proof uses physical Android `<pixel-6-serial>` plus Android emulator `emulator-5554`; unavailable targets are `N/A (target unavailable by project policy)`.
 - Production-code status: untouched by this decomposition.
 
 ## Evidence Digest
@@ -259,7 +259,7 @@ Create **4** doc-scoped session plans.
 - Classification: `acceptance-only`, initially `prerequisite-blocked` until 238-03 is accepted.
 - Intended plan file: `Test-Flight-Improv/238-group-private-media-lifecycle-tdd-plan-session-238-04-plan.md`.
 - Exact scope:
-  - Resolve the live device matrix first and pin every command. Required known generic pair is USB Android `21071FDF600CSC` plus emulator `emulator-5554` if both remain available; re-resolve rather than assume. Use available Android and iOS target(s) separately for native protection/PiP-denial parity. Unavailable targets are N/A, never a blocker.
+  - Resolve the live device matrix first and pin every command. Required known generic pair is USB Android `<pixel-6-serial>` plus emulator `emulator-5554` if both remain available; re-resolve rather than assume. Use available Android and iOS target(s) separately for native protection/PiP-denial parity. Unavailable targets are N/A, never a blocker.
   - Run production-SQLCipher v100→v101 and fresh-chain close/reopen/run-twice proof on an available concrete target.
   - Run real Go bridge encrypted-extra proof and assert outer events/logs contain no policy/caption/media secret and Go node production remains unchanged.
   - Run fully automated physical-Android+emulator lifecycle proof: private send, generic notification, no auto-download, each device's independent one-time view, consume-before-frame evidence, same-device restart/replay non-resurrection, disappearing expiry, and no unintended cross-device consume event. This proves the accepted device-local wording, not global once.

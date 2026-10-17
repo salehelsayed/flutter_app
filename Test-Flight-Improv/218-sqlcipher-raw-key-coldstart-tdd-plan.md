@@ -162,7 +162,7 @@ Tests: `integration_test/migration_database_sqlcipher_capability_test.dart` (dev
 - **Marker/decision-table consistency (re-review):** marker domain is `{absent(=bare legacy), raw}` only — there is **no `pass:` value**; `(pass,*)` states do not exist (SC-6).
 
 ## Device/Relay Proof Profile
-**Requires device — cipher is device-only.** Closure = the `db_raw_key_migration_proof_test.dart` suite + SC-5 speed device-proof on **Pixel 6 (`21071FDF600CSC`) AND an iPhone** (`00008030-001A6D2801BB802E`; iOS build needs `flutter clean` per `feedback_ios_build_clean`). PROD-CRITICAL = SC-5 + SC-2. No relay/network.
+**Requires device — cipher is device-only.** Closure = the `db_raw_key_migration_proof_test.dart` suite + SC-5 speed device-proof on **Pixel 6 (`<pixel-6-serial>`) AND an iPhone** (`<iphone-11-udid>`; iOS build needs `flutter clean` per `feedback_ios_build_clean`). PROD-CRITICAL = SC-5 + SC-2. No relay/network.
 
 ## Acceptance Gates (literal)
 ```bash
@@ -170,21 +170,21 @@ Tests: `integration_test/migration_database_sqlcipher_capability_test.dart` (dev
 flutter build apk --release --dart-define=FDC_FLOW_LOG=1   # instrumented pre-fix build; extract details.elapsedMs via jq from ENCRYPTED_DB_OPEN_SUCCESS lines (NOT a single-regex grep — tokens are non-adjacent JSON); discard launches with DB_REKEY_TO_RAW_KEY
 
 # SC-8 feasibility GATE — FIRST, both platforms, before any prod edit
-flutter test integration_test/db_raw_key_migration_proof_test.dart -d 21071FDF600CSC --plain-name 'SC-8'
-flutter clean && flutter test integration_test/db_raw_key_migration_proof_test.dart -d 00008030-001A6D2801BB802E --plain-name 'SC-8'   # iOS build needs flutter clean (feedback_ios_build_clean)
+flutter test integration_test/db_raw_key_migration_proof_test.dart -d <pixel-6-serial> --plain-name 'SC-8'
+flutter clean && flutter test integration_test/db_raw_key_migration_proof_test.dart -d <iphone-11-udid> --plain-name 'SC-8'   # iOS build needs flutter clean (feedback_ios_build_clean)
 
 # RED (before edits) — device suite + host SC-6 must FAIL for documented reasons
-flutter test integration_test/db_raw_key_migration_proof_test.dart -d 21071FDF600CSC
+flutter test integration_test/db_raw_key_migration_proof_test.dart -d <pixel-6-serial>
 flutter test test/core/database/encrypted_db_opener_mode_selection_test.dart
 
 # Direct GREEN (after fix) — device + host
-flutter test integration_test/db_raw_key_migration_proof_test.dart -d 21071FDF600CSC
-flutter clean && flutter test integration_test/db_raw_key_migration_proof_test.dart -d 00008030-001A6D2801BB802E   # iOS: runs SC-8/SC-2/SC-3/F1 on iPhone; flutter clean prereq
+flutter test integration_test/db_raw_key_migration_proof_test.dart -d <pixel-6-serial>
+flutter clean && flutter test integration_test/db_raw_key_migration_proof_test.dart -d <iphone-11-udid>   # iOS: runs SC-8/SC-2/SC-3/F1 on iPhone; flutter clean prereq
 flutter test test/core/database/encrypted_db_opener_mode_selection_test.dart
 
 # Preservation sentinels
-flutter test integration_test/migration_database_sqlcipher_capability_test.dart -d 21071FDF600CSC
-flutter test integration_test/account_migration_scale_benchmark_test.dart -d 21071FDF600CSC   # SC-7 Move sentinel
+flutter test integration_test/migration_database_sqlcipher_capability_test.dart -d <pixel-6-serial>
+flutter test integration_test/account_migration_scale_benchmark_test.dart -d <pixel-6-serial>   # SC-7 Move sentinel
 ./scripts/run_host_test_gates.sh core-host-all      # schema migrations + SC-6
 
 # INV-5 scope gate (comment-marker convention — FAILS on any UNMARKED password: open; glob quoted so zsh does not pre-glob)

@@ -211,7 +211,7 @@ This is the structural fix for divergence. Two complementary pieces:
 - New simulator proof for the **TTL/prune race**: offline recipient + TTL/cap → with member-aware retention the blob survives and downloads; without it, the client lands on the honest "expired on server" terminal state (not a spinner).
 
 ### Device matrix & gates
-- Real-device runs via `group_multi_device_real_harness.dart` / `group_multi_party_device_real_harness.dart` (iPhone13 `00008110-…`, Pixel6 `21071FDF600CSC`) to confirm the size gate fires before upload and terminal labels render on both platforms.
+- Real-device runs via `group_multi_device_real_harness.dart` / `group_multi_party_device_real_harness.dart` (iPhone13 `00008110-…`, Pixel6 `<pixel-6-serial>`) to confirm the size gate fires before upload and terminal labels render on both platforms.
 - Wire into the existing **Test-Flight-Improv** matrices: `89-group-new-member-send-receive-media-voice-coverage.md`, `90-group-media-all-recipient-coverage.md`, `24-cancel-media-upload.md`, and `102-group-image-retry-duplicate-delivery-notifications-media-ux.md` (the terminal-state work directly complements the GIRD dedup/false-error workstream). Update `02-integration-test-coverage.md` and `test-gate-definitions.md` with the new gates.
 
 ---

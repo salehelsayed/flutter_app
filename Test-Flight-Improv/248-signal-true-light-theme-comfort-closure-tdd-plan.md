@@ -176,8 +176,8 @@ Dependencies:
 | TC-248-23 | Signal’s en/de/ar description truthfully names the warm violet/sage treatment. | test/core/l10n/app_localizations_signal_test.dart::en de ar Signal description is the exact warm mineral copy | Host unit / generated localizations | HEAD says cool porcelain/electric-violet star -> GREEN exact three strings after flutter gen-l10n. | Leave any locale stale or alter generated output without ARB source -> TC-248-23 red. | flutter test test/core/l10n/app_localizations_signal_test.dart; AUTO test/core l10n classification; core-host-all. |
 | TC-248-24 | Scanner stays explicitly dark and usable under a Signal light root. | test/features/qr_code/presentation/screens/qr_scanner_wired_test.dart::Signal root keeps scanner black with white camera chrome | GREEN sentinel / existing scanner fakes under AppTheme.lightTheme | After TC-248-01 scaffold this is GREEN on HEAD scanner implementation -> remains black/white with QR-only detection and close/flash affordances. | Replace scanner black/white with ambient light surface roles -> sentinel red. | flutter test test/features/qr_code/presentation/screens/qr_scanner_wired_test.dart --plain-name 'Signal root keeps scanner black with white camera chrome'; AUTO; feature-host-all. |
 | TC-248-25 | All dark presets and touched release widgets remain literal-preserved. | test/features/theme/dark_preset_preservation_test.dart::dark background presets resolve to dark readable/feed tokens and dark touched widgets render the transcribed literals | GREEN sentinel / existing dark fixtures extended for new surfaceBorder and overlays | GREEN on HEAD -> remains GREEN for Default/Cosmic/Aurora, root ThemeMode.dark, tokens, bubbles, popup/sheets, and no Signal blooms. | Change a dark token, mount light overlay branch on dark, or map a dark preset to light -> sentinel red. | flutter test test/features/theme/dark_preset_preservation_test.dart; AUTO; feature-host-all. |
-| TC-248-26 | Every safe audited Signal state feels warm/dimensional and has no light/dark island at font scale 1.0. | artifacts/signal-theme-ui-acceptance-YYYY-MM-DD/README.md::TC-248-26 Pixel 6 font-scale-1.0 checklist plus numbered screenshots | Manual device acceptance / Pixel 6 21071FDF600CSC, Android 16, 1080x2400, existing local data | Current 2026-07-09 captures visibly fail the stated criteria -> GREEN reviewer records PASS for all named states, no pure-white canvas, clear surface hierarchy, coherent routes/sheets, readable controls, scanner dark. | N/A — aesthetic manual proof; automated TC-248-01..25 plus TC-248-28/29 own causal mutation coverage, and a non-permitted capture omission/failure blocks acceptance. | flutter devices --machine then flutter screenshot -d 21071FDF600CSC -o artifacts/signal-theme-ui-acceptance-YYYY-MM-DD/NN-state-scale-1.0.png per checklist; manual artifact registration. |
-| TC-248-27 | The same audited state set remains readable, unclipped, and calm at font scale 1.3, then device scale is restored. | artifacts/signal-theme-ui-acceptance-YYYY-MM-DD/README.md::TC-248-27 Pixel 6 font-scale-1.3 checklist plus numbered screenshots | Manual device acceptance / same physical Pixel with system font_scale 1.3 | HEAD visual set was not captured at 1.3 and cannot establish acceptance -> GREEN every safe state has no clipping/overlap/hidden action or contrast regression, followed by restored font_scale 1.0. | N/A — manual large-text proof; omit a state, accept clipping, or fail to restore 1.0 and TC-248-27 fails. | adb -s 21071FDF600CSC shell settings put system font_scale 1.3; capture each state; adb -s 21071FDF600CSC shell settings put system font_scale 1.0; manual artifact registration. |
+| TC-248-26 | Every safe audited Signal state feels warm/dimensional and has no light/dark island at font scale 1.0. | artifacts/signal-theme-ui-acceptance-YYYY-MM-DD/README.md::TC-248-26 Pixel 6 font-scale-1.0 checklist plus numbered screenshots | Manual device acceptance / Pixel 6 <pixel-6-serial>, Android 16, 1080x2400, existing local data | Current 2026-07-09 captures visibly fail the stated criteria -> GREEN reviewer records PASS for all named states, no pure-white canvas, clear surface hierarchy, coherent routes/sheets, readable controls, scanner dark. | N/A — aesthetic manual proof; automated TC-248-01..25 plus TC-248-28/29 own causal mutation coverage, and a non-permitted capture omission/failure blocks acceptance. | flutter devices --machine then flutter screenshot -d <pixel-6-serial> -o artifacts/signal-theme-ui-acceptance-YYYY-MM-DD/NN-state-scale-1.0.png per checklist; manual artifact registration. |
+| TC-248-27 | The same audited state set remains readable, unclipped, and calm at font scale 1.3, then device scale is restored. | artifacts/signal-theme-ui-acceptance-YYYY-MM-DD/README.md::TC-248-27 Pixel 6 font-scale-1.3 checklist plus numbered screenshots | Manual device acceptance / same physical Pixel with system font_scale 1.3 | HEAD visual set was not captured at 1.3 and cannot establish acceptance -> GREEN every safe state has no clipping/overlap/hidden action or contrast regression, followed by restored font_scale 1.0. | N/A — manual large-text proof; omit a state, accept clipping, or fail to restore 1.0 and TC-248-27 fails. | adb -s <pixel-6-serial> shell settings put system font_scale 1.3; capture each state; adb -s <pixel-6-serial> shell settings put system font_scale 1.0; manual artifact registration. |
 
 ### Test Notes
 
@@ -245,13 +245,13 @@ Dependencies:
 
 - Profile: single-device manual visual acceptance.
 - Boundary being proven: real Android rendering, system font scaling, Material route/sheet composition, and the qualitative warm/dimensional result that token tests cannot fully prove.
-- Live availability check: flutter devices --machine plus adb devices -l on 2026-07-09 observed supported physical Pixel 6 21071FDF600CSC, Android 16/API 36, USB attached; wm size 1080x2400 and font_scale 1.0. Recheck at execution.
-- Required setup: Pixel 6 with current local identity/test data; exact commands flutter build apk --debug, adb -s 21071FDF600CSC install -r build/app/outputs/flutter-apk/app-debug.apk, and adb launcher start below; com.mknoon.app must be verified by dumpsys; Signal selected through Settings; no data clear/uninstall; contact and QR identifiers redacted.
+- Live availability check: flutter devices --machine plus adb devices -l on 2026-07-09 observed supported physical Pixel 6 <pixel-6-serial>, Android 16/API 36, USB attached; wm size 1080x2400 and font_scale 1.0. Recheck at execution.
+- Required setup: Pixel 6 with current local identity/test data; exact commands flutter build apk --debug, adb -s <pixel-6-serial> install -r build/app/outputs/flutter-apk/app-debug.apk, and adb launcher start below; com.mknoon.app must be verified by dumpsys; Signal selected through Settings; no data clear/uninstall; contact and QR identifiers redacted.
 - Closure role: required UX acceptance evidence after host causal gates; never a substitute for failed automated contrast, lifecycle, or widget tests.
-- FLUTTER_DEVICE_ID: 21071FDF600CSC is sufficient for this single-device visual profile.
+- FLUTTER_DEVICE_ID: <pixel-6-serial> is sufficient for this single-device visual profile.
 - Registration: manual checklist and numbered images in artifacts/signal-theme-ui-acceptance-YYYY-MM-DD/README.md; every required state is PASS. Only the OS-owned camera prompt may be N/A, and only with a recorded CAMERA granted=true dumpsys line. No classify_path or integration_test claim.
-- Discovery command: flutter devices --machine -> Pixel 6 21071FDF600CSC must be listed supported and attached.
-- Closure command pattern: use the exact build/install/start/cold-restart block and flutter screenshot -d 21071FDF600CSC -o artifacts/signal-theme-ui-acceptance-YYYY-MM-DD/NN-state-scale-X.png after manually navigating each checklist state; every required row must be PASS and the shell trap must restore original font_scale 1.0.
+- Discovery command: flutter devices --machine -> Pixel 6 <pixel-6-serial> must be listed supported and attached.
+- Closure command pattern: use the exact build/install/start/cold-restart block and flutter screenshot -d <pixel-6-serial> -o artifacts/signal-theme-ui-acceptance-YYYY-MM-DD/NN-state-scale-X.png after manually navigating each checklist state; every required row must be PASS and the shell trap must restore original font_scale 1.0.
 - Deferred device work: none for this plan. A second platform is optional follow-up, not claimed closure.
 
 ## Acceptance Gates
@@ -341,41 +341,41 @@ git diff --check
 # pidof to return a running process. Never uninstall or clear package data.
 flutter devices --machine
 flutter build apk --debug
-adb -s 21071FDF600CSC install -r build/app/outputs/flutter-apk/app-debug.apk
-adb -s 21071FDF600CSC shell dumpsys package com.mknoon.app \
+adb -s <pixel-6-serial> install -r build/app/outputs/flutter-apk/app-debug.apk
+adb -s <pixel-6-serial> shell dumpsys package com.mknoon.app \
   | rg 'versionCode=|versionName=|lastUpdateTime='
-adb -s 21071FDF600CSC shell monkey \
+adb -s <pixel-6-serial> shell monkey \
   -p com.mknoon.app -c android.intent.category.LAUNCHER 1
-adb -s 21071FDF600CSC shell pidof com.mknoon.app
+adb -s <pixel-6-serial> shell pidof com.mknoon.app
 
 # Record the OS-owned permission state. If granted=true, mark only the camera
 # permission-prompt row N/A and do not revoke it. If false, opening Scanner must
 # display the prompt and that state is a required PASS capture.
-adb -s 21071FDF600CSC shell dumpsys package com.mknoon.app \
+adb -s <pixel-6-serial> shell dumpsys package com.mknoon.app \
   | rg 'android.permission.CAMERA: granted='
 
 # Select Signal manually through Settings, then prove stored cold-restart
 # restoration without clearing data.
-adb -s 21071FDF600CSC shell am force-stop com.mknoon.app
-adb -s 21071FDF600CSC shell monkey \
+adb -s <pixel-6-serial> shell am force-stop com.mknoon.app
+adb -s <pixel-6-serial> shell monkey \
   -p com.mknoon.app -c android.intent.category.LAUNCHER 1
-adb -s 21071FDF600CSC shell pidof com.mknoon.app
+adb -s <pixel-6-serial> shell pidof com.mknoon.app
 
 # Capture all required states at 1.0 and 1.3. The trap plus explicit final
 # restore protect device state even if a later capture command fails.
 ACCEPT_DIR="artifacts/signal-theme-ui-acceptance-$(date +%F)"
 mkdir -p "$ACCEPT_DIR"
-original_font_scale=$(adb -s 21071FDF600CSC shell settings get system font_scale)
+original_font_scale=$(adb -s <pixel-6-serial> shell settings get system font_scale)
 test "$original_font_scale" = "1.0"
-trap 'adb -s 21071FDF600CSC shell settings put system font_scale "$original_font_scale" >/dev/null' EXIT
-adb -s 21071FDF600CSC shell settings put system font_scale 1.0
-flutter screenshot -d 21071FDF600CSC \
+trap 'adb -s <pixel-6-serial> shell settings put system font_scale "$original_font_scale" >/dev/null' EXIT
+adb -s <pixel-6-serial> shell settings put system font_scale 1.0
+flutter screenshot -d <pixel-6-serial> \
   -o "$ACCEPT_DIR/NN-state-scale-1.0.png"
-adb -s 21071FDF600CSC shell settings put system font_scale 1.3
-flutter screenshot -d 21071FDF600CSC \
+adb -s <pixel-6-serial> shell settings put system font_scale 1.3
+flutter screenshot -d <pixel-6-serial> \
   -o "$ACCEPT_DIR/NN-state-scale-1.3.png"
-adb -s 21071FDF600CSC shell settings put system font_scale "$original_font_scale"
-test "$(adb -s 21071FDF600CSC shell settings get system font_scale)" = "$original_font_scale"
+adb -s <pixel-6-serial> shell settings put system font_scale "$original_font_scale"
+test "$(adb -s <pixel-6-serial> shell settings get system font_scale)" = "$original_font_scale"
 trap - EXIT
 ~~~
 
@@ -384,7 +384,7 @@ trap - EXIT
 - Expected RED: TC-248-03 and TC-248-28 observe Brightness.dark after live/stored daylightLagoon updates with the inert binding; TC-248-08/10 observe the old paper palette, transparent blooms, and running ticker; TC-248-29 measures the 70%-alpha 11px count below AA.
 - Green sentinel: TC-248-07 preserves daylight_lagoon persistence; TC-248-24 preserves the dark scanner; TC-248-25 preserves all dark preset/touched-widget literals.
 - Pre-existing dirty tree / known failure: the planning snapshot already contains many unrelated modified/untracked files, including overlapping lib/main.dart, inner_circle_interactive_surface.dart, conversation_wired_test.dart, startup_router.dart, and scripts/run_test_gates.sh. Execution records the exact snapshot and classifies failures as expected RED, baseline dirt, environment, or scope drift before editing them.
-- Environment blocker: none at planning time; Pixel 6 21071FDF600CSC is attached. A later disconnect blocks only TC-248-26/27 and therefore blocks final visual acceptance, not host diagnosis.
+- Environment blocker: none at planning time; Pixel 6 <pixel-6-serial> is attached. A later disconnect blocks only TC-248-26/27 and therefore blocks final visual acceptance, not host diagnosis.
 - Scope drift: any new preference/storage key, DB version, chooser workflow, layout/density/navigation change, scanner-light change, network/repository/Go edit, or loss of unrelated dirty work blocks completion.
 
 - [ ] All 29 behavior rows have the named automated or manual evidence.
@@ -416,4 +416,4 @@ trap - EXIT
 | - | not started | - | - | - | awaiting accepted/reviewed plan | contract extraction |
 | 2026-07-10 | ALL host phases DONE | app_theme.dart, app_shell_theme_binding.dart (new), main.dart, background_readable_colors.dart, feed_tokens.dart, daylight_lagoon_background.dart, friend_row/group_row/letter_card, conversation_wired.dart, inner_circle_interactive_surface.dart, connection_status_indicator.dart, both diagnostic cards, en/de/ar ARB + gen-l10n, + all named tests | core-host-all exit 0; feature-host-all 168 pass + 1 sqlite3-github env flake (passes on retry, 112 tests isolated); feed/1to1/groups all "All tests passed"; completeness-check 1076/1076; touched-file `flutter analyze` clean; `git diff --check` clean | All 27 AUTOMATED rows (TC-01..25, 28, 29) GREEN. Each seam's mutation-sensitivity verified (binding-inert→dark RED, palette/ticker RED, 0.7-alpha→2.9:1 RED). No straggler old-literal tests; no external surfaceBorder constructors. | Device TC-26/27 (Pixel 6 23-state visual, scale 1.0/1.3) HANDED OFF — manual aesthetic sign-off + a concurrent session was live-editing android/ios on the shared tree, so a clean device build was deferred. Runbook + checklist at artifacts/signal-theme-ui-acceptance-2026-07-10/README.md. |
 | 2026-07-11 | closure status correction | implementation commit `c6d0058a1`; acceptance artifact audit | implementation is committed and host-complete; stale Signal copy assertions were aligned in `f029d131f` | the artifact contains three exploratory captures but all 23 formal checklist rows remain unchecked and its prior provenance claims conflict | keep Plan 248 implemented/device-pending; do not mark accepted until TC-248-26/27 are reproducibly completed at both scales |
-| 2026-07-11 | read-only device acceptance re-audit | physical Pixel 6 `21071FDF600CSC`; installed package/task/APK provenance; 23-row artifact checklist | Pixel is attached at font scale 1.0 and camera permission is granted, but the installed APK differs from the local artifact and the task was entered through `ACTION_SEND_MULTIPLE`; existing images prove 0/23 formal rows, including two mislabeled captures and one unredacted QR | TC-248-26/27 still require a fresh data-preserving production build/install, Settings selection plus cold restore, 46 redacted captures, font-scale restoration, and human visual sign-off at both scales | remain implemented/device-acceptance-pending; do not self-certify qualitative product review |
+| 2026-07-11 | read-only device acceptance re-audit | physical Pixel 6 `<pixel-6-serial>`; installed package/task/APK provenance; 23-row artifact checklist | Pixel is attached at font scale 1.0 and camera permission is granted, but the installed APK differs from the local artifact and the task was entered through `ACTION_SEND_MULTIPLE`; existing images prove 0/23 formal rows, including two mislabeled captures and one unredacted QR | TC-248-26/27 still require a fresh data-preserving production build/install, Settings selection plus cold restore, 46 redacted captures, font-scale restoration, and human visual sign-off at both scales | remain implemented/device-acceptance-pending; do not self-certify qualitative product review |

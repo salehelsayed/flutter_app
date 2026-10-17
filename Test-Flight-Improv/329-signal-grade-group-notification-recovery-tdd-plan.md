@@ -340,7 +340,7 @@ and completeness-check rather than assumed from host glob discovery.
 Live matrix on 2026-08-02:
 
 - sender: Android emulator `emulator-5554`, API 37;
-- receiver: USB Pixel 6 `21071FDF600CSC`, API 36;
+- receiver: USB Pixel 6 `<pixel-6-serial>`, API 36;
 - iPhone: manual-only, unused and non-gating.
 
 First re-run discovery immediately before proof:
@@ -356,7 +356,7 @@ Real relay/FCM preservation for group text + reactions:
 
 ```bash
 MKNOON_RELAY_ADDRESSES='/dns/mknoun.xyz/tcp/4001/wss/p2p/12D3KooWGMYMmN1RGUYjWaSV6P3XtnBjwnosnJGNMnttfVCRnd6g,/dns/mknoun.xyz/udp/4002/quic-v1/p2p/12D3KooWGMYMmN1RGUYjWaSV6P3XtnBjwnosnJGNMnttfVCRnd6g' \
-SIMS_ANDROID_PHYSICAL_DEVICE_ID=21071FDF600CSC \
+SIMS_ANDROID_PHYSICAL_DEVICE_ID=<pixel-6-serial> \
 SIMS_ANDROID_EMULATOR_DEVICE_ID=emulator-5554 \
 SIMS_PROVIDER_FCM_CREDENTIAL_PATH="$PWD/mknoon-c6e62-firebase-adminsdk-fbsvc-70e1a8d4fb.json" \
 MKNOON_257_RELAY_TARGET=ubuntu@mknoun.xyz \
@@ -369,7 +369,7 @@ Android OS group copy for text/photo/video/voice, fully automated:
 
 ```bash
 dart run integration_test/scripts/run_notification_sound_smoke.dart \
-  -d emulator-5554,21071FDF600CSC \
+  -d emulator-5554,<pixel-6-serial> \
   --rows S2,S8,S9,S10 \
   --non-interactive \
   --artifact-dir build/sims/proofs/plan-329-group-media-current-final
@@ -622,5 +622,5 @@ complete with current Graphify freshness and the checkpoint-debt audit above.
 | 2026-08-02 | curated 1:1 audit | exact current-source `./scripts/run_test_gates.sh 1to1` | 2,550 passed / 4 checkpoint-existing schema-104 failures / 0 Plan-329 failures; fail-fast stopped the redundant Go tail, already green in `groups` |
 | 2026-08-02 | static/registration hygiene | `flutter analyze`; completeness; shell syntax; diff hygiene | analyzer clean; 1,371/1,371 test files classified; shell syntax and `git diff --check` green |
 | 2026-08-02 | architecture closure | production incremental refresh, then one final harness-only incremental refresh and anchored review query | `freshness=current`; closure fingerprint `46ce822a5402a539` |
-| 2026-08-02 | real-FCM Android pair | USB Pixel 6 `21071FDF600CSC` + emulator `emulator-5554`; attested current APK | five scenarios passed; aggregate `groups.reaction_notification_campaign-1785703174982368-89327.json`; APK SHA `bd3ef2e1cfc97ba592d81195801e10a74cc6393f5770d07f8dcd59b6a2ae5ba2`; zero child builds |
-| 2026-08-02 | Android media-copy invocation | runner command pinned `emulator-5554,21071FDF600CSC` and `--non-interactive`; summary does not independently attest targets/build | all four S2/S8/S9/S10 OS-card rows passed; notification ID `1259908906` stable across 4/4 observations; zero duplicates; summary `plan-329-group-media-current-final/notification_sound_smoke_summary.json` |
+| 2026-08-02 | real-FCM Android pair | USB Pixel 6 `<pixel-6-serial>` + emulator `emulator-5554`; attested current APK | five scenarios passed; aggregate `groups.reaction_notification_campaign-1785703174982368-89327.json`; APK SHA `bd3ef2e1cfc97ba592d81195801e10a74cc6393f5770d07f8dcd59b6a2ae5ba2`; zero child builds |
+| 2026-08-02 | Android media-copy invocation | runner command pinned `emulator-5554,<pixel-6-serial>` and `--non-interactive`; summary does not independently attest targets/build | all four S2/S8/S9/S10 OS-card rows passed; notification ID `1259908906` stable across 4/4 observations; zero duplicates; summary `plan-329-group-media-current-final/notification_sound_smoke_summary.json` |

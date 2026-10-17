@@ -325,7 +325,7 @@ No empty cells.
 2. **Envelope/domain:** add `CallMedia` (`audio|video`) to the call offer/answer models + JSON round-trip; default `audio` when absent (old-peer envelopes parse unchanged). Greens parts of 01/02.
 3. **Permission seam:** create `camera_permission_gateway.dart` + `camera_permission_prompt.dart` (clone mic pair); add `'PERMISSION_CAMERA=1'` to `ios/Podfile` (:105-108 block); write nothing else platform-side. Greens 09/15.
 4. **Session controller — video-from-start:** `startCall(video:)` behind `CallVideoFlags` (dart-define `CALL_VIDEO_ENABLED`); camera acquisition via gateway→seam with 640×480@30 constraints; sender caps via `setParameters`; speaker-ON routing; topology guard extended to video m-lines and enforced on both descriptions. Greens 01/07/08/10, parts of 14.
-4b. **Early payoff device gate — TC-08-17, PROD-CRITICAL (STOP/GO):** the video-from-start device leg depends only on steps 0–4 (no upgrade machinery, no stats/UI polish), so it runs NOW, not at the end. Finish the TC-08-17 proof body, add the `--scenario video_call_e2e` case to `run_call_device_real.dart` (remaining registration hygiene stays at step 8), then run `dart integration_test/scripts/run_call_device_real.dart --scenario video_call_e2e -d 21071FDF600CSC,emulator-5554` (single-leg pre-smoke if useful: `flutter test integration_test/call_video_device_proof_test.dart -d emulator-5554`). **GO** = frame floor met both sides (framesDecoded delta ≥ 25 per ≥5 s window). **STOP** = counters frozen or below floor (the plan's own top risk: emulator virtual camera / software-encode can't sustain real-time VGA) → replan caps/encoder approach and keep the kill-switch default OFF before building steps 5–7 on top. Record the run + deltas in Execution Progress either way.
+4b. **Early payoff device gate — TC-08-17, PROD-CRITICAL (STOP/GO):** the video-from-start device leg depends only on steps 0–4 (no upgrade machinery, no stats/UI polish), so it runs NOW, not at the end. Finish the TC-08-17 proof body, add the `--scenario video_call_e2e` case to `run_call_device_real.dart` (remaining registration hygiene stays at step 8), then run `dart integration_test/scripts/run_call_device_real.dart --scenario video_call_e2e -d <pixel-6-serial>,emulator-5554` (single-leg pre-smoke if useful: `flutter test integration_test/call_video_device_proof_test.dart -d emulator-5554`). **GO** = frame floor met both sides (framesDecoded delta ≥ 25 per ≥5 s window). **STOP** = counters frozen or below floor (the plan's own top risk: emulator virtual camera / software-encode can't sustain real-time VGA) → replan caps/encoder approach and keep the kill-switch default OFF before building steps 5–7 on top. Record the run + deltas in Execution Progress either way.
 5. **Upgrade state machine:** `requestVideoUpgrade()` → re-offer (same callId, seq+1, media video, VC-04 TTL) via the VC-04 signaling sender (already move-gated — rule 4: no new network primitive); incoming re-offer branch (active callId: consent prompt, never ring); accept/decline answers; answer-timeout rollback restoring full audio state. Greens 02/03/04/05/06.
 6. **Teardown + camera switch + stats:** extend VC-05's teardown seam (do NOT fork a parallel cleanup path) for video tracks/renderers/sampler; `switchCamera` via seam; `CALL_VIDEO_STATS` sampler on the flow-event bus. Greens 11/13/16.
 7. **UI:** call screen video mode (local mirrored preview, remote view, switch + upgrade affordances, consent dialog, orientation-safe renderer lifecycle). Greens 12, rest of 14.
@@ -355,7 +355,7 @@ The implementing agent runs the full loop end-to-end on a **USB-connected Androi
 
 ```bash
 # Discovery / preflight (canonical pair per 256-plan convention)
-adb devices -l            # expect USB device (e.g. 21071FDF600CSC) + emulator (e.g. emulator-5554, AVD mknoon_play_35)
+adb devices -l            # expect USB device (e.g. <pixel-6-serial>) + emulator (e.g. emulator-5554, AVD mknoon_play_35)
 flutter devices --machine
 # Emulator must expose the virtual camera (renders a test pattern):
 #   emulator -avd mknoon_play_35 -camera-back emulated -camera-front emulated
@@ -367,13 +367,13 @@ flutter test test/features/call/ test/core/permissions/camera_permission_gateway
 
 # Single-leg device sanity (per-device suite form)
 flutter test integration_test/call_video_device_proof_test.dart -d emulator-5554        # callee-side smoke
-flutter test integration_test/call_video_device_proof_test.dart -d 21071FDF600CSC      # caller-side smoke
+flutter test integration_test/call_video_device_proof_test.dart -d <pixel-6-serial>      # caller-side smoke
 
 # Two-party legs (orchestrator conventions: comma list to -d; Android roles run
 # `flutter test --no-pub <harness> -d <serial>` under the hood)
-dart integration_test/scripts/run_call_device_real.dart --scenario video_call_e2e     -d 21071FDF600CSC,emulator-5554
-dart integration_test/scripts/run_call_device_real.dart --scenario video_camera_switch -d 21071FDF600CSC,emulator-5554
-dart integration_test/scripts/run_call_device_real.dart --scenario video_upgrade      -d 21071FDF600CSC,emulator-5554
+dart integration_test/scripts/run_call_device_real.dart --scenario video_call_e2e     -d <pixel-6-serial>,emulator-5554
+dart integration_test/scripts/run_call_device_real.dart --scenario video_camera_switch -d <pixel-6-serial>,emulator-5554
+dart integration_test/scripts/run_call_device_real.dart --scenario video_upgrade      -d <pixel-6-serial>,emulator-5554
 # Leg assignment: USB device = caller/real camera + camera-switch actor; emulator = callee/virtual camera.
 # TURN-relayed evidence (GATE-BLOCKING, run once): re-run video_call_e2e in the cross-network
 # setup (device on cellular hotspot, emulator on host WiFi NAT) OR with forced-relay ICE config;
@@ -454,9 +454,9 @@ flutter test test/features/call/ test/core/permissions/camera_permission_gateway
 # 5) Device closure (rule 1) — see Execution Environment for env/serials.
 #    NOTE: video_call_e2e FIRST runs at Step 4b as the early payoff STOP/GO gate; this is the close re-run.
 #    All legs enforce the frame floor: framesDecoded delta >= 25 per >=5 s window, each side.
-dart integration_test/scripts/run_call_device_real.dart --scenario video_call_e2e      -d 21071FDF600CSC,emulator-5554
-dart integration_test/scripts/run_call_device_real.dart --scenario video_camera_switch -d 21071FDF600CSC,emulator-5554
-dart integration_test/scripts/run_call_device_real.dart --scenario video_upgrade       -d 21071FDF600CSC,emulator-5554
+dart integration_test/scripts/run_call_device_real.dart --scenario video_call_e2e      -d <pixel-6-serial>,emulator-5554
+dart integration_test/scripts/run_call_device_real.dart --scenario video_camera_switch -d <pixel-6-serial>,emulator-5554
+dart integration_test/scripts/run_call_device_real.dart --scenario video_upgrade       -d <pixel-6-serial>,emulator-5554
 # TURN-relayed evidence (gate-blocking, once): cross-network or forced-relay video_call_e2e run;
 # record getStats selected-candidate-pair candidateType==relay + frame deltas >= floor.
 # Rig cannot force relay -> justified N/A recorded + 'TURN-video unproven' handed to VC-09 by name.

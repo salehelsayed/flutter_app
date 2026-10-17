@@ -6,7 +6,7 @@ The primary ordinary-text cases match the clarified external Android symptom cat
 
 ## Targets, setup and timing
 
-Sender: emulator-5554, existing TC256-B account. Receiver: USB Pixel21071FDF600CSC, existing picel account. Both retain installed Android114, version1.0.0-807874437-notification260907-r4; no builds, reinstalls or resets during this latency matrix. Accepted groupf4d26c1d remained unmuted; receiver Group Info Switch checked=false and TC256-B Joined were captured in wifi-group-mute-state.xml. iPhone membership was Invite unknown at that moment; root's later iPhone UI work is separate.
+Sender: emulator-5554, existing TC256-B account. Receiver: USB Pixel<pixel-6-serial>, existing picel account. Both retain installed Android114, version1.0.0-807874437-notification260907-r4; no builds, reinstalls or resets during this latency matrix. Accepted groupf4d26c1d remained unmuted; receiver Group Info Switch checked=false and TC256-B Joined were captured in wifi-group-mute-state.xml. iPhone membership was Invite unknown at that moment; root's later iPhone UI work is separate.
 
 Every case used ordinary Home then `am stop-app com.mknoon.app`, confirmed empty `pidof com.mknoon.app`, and sent from emulator. This is process-absent FCM delivery, not Android force-stop (which intentionally suppresses delivery). Opening/reading the receiver between completed cases was permitted only after OS proof, to clear unread baseline and prepare the next lane. For the final repeated generic-body reaction, the prior group notification was explicitly absent before send, avoiding a stale-card false pass.
 

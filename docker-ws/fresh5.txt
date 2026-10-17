@@ -1,4 +1,4 @@
-[connected:00008030-001A6D2801BB802E]
+[connected:<iphone-11-udid>]
 Aug 21 18:22:40.950133 Runner(UIKitCore)[5155] <Notice>: Will add backgroundTask with taskName: <private>, expirationHandler: <__NSMallocBlock__: 0x157568040>
 Aug 21 18:22:40.950308 Runner(UIKitCore)[5155] <Notice>: Creating new assertion because there is no existing background assertion.
 Aug 21 18:22:40.950339 Runner(UIKitCore)[5155] <Notice>: Creating new background assertion
@@ -108,4 +108,4 @@ Aug 21 18:23:11.263533 Runner(UIKitCore)[5155] <Notice>: Will invalidate asserti
 Aug 21 18:23:25.016487 Runner(libxpc.dylib)[5155] <Notice>: [0x156eb0640] Re-initialization successful; calling out to event handler with XPC_ERROR_CONNECTION_INTERRUPTED
 
 Exiting...
-[disconnected:00008030-001A6D2801BB802E]
+[disconnected:<iphone-11-udid>]

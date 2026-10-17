@@ -8,8 +8,8 @@ ios build exit=0
 runner count(wakeReceipt)=1  count(callStoreV1)=1
 --- install iPhones
 ARTIFACT 1.0.0870783.8.260905185610 bundleVersion=260905185610
-00008030-001A6D2801BB802E OK 1.0.0870783.8.260905185610 bundleVersion=260905185610 (verified)
-00008110-00184D622289801E OK 1.0.0870783.8.260905185610 bundleVersion=260905185610 (verified)
+<iphone-11-udid> OK 1.0.0870783.8.260905185610 bundleVersion=260905185610 (verified)
+<iphone-13-udid> OK 1.0.0870783.8.260905185610 bundleVersion=260905185610 (verified)
 --- captures
 CAPTURE_DIR=docker-ws/deploy-captures/fresh-260905185924
 --- capture status

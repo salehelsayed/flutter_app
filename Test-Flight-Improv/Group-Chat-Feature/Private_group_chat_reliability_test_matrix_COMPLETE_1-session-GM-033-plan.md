@@ -155,7 +155,7 @@ Current harness gap: `integration_test/scripts/run_group_multi_party_device_real
 
 Live availability checks recorded during planning on 2026-05-11 21:24 CEST:
 
-- `flutter devices --machine` shows supported targets including Pixel 6 `21071FDF600CSC`, Android emulator `emulator-5554`, Saleh's iPhone `00008030-001A6D2801BB802E`, iOS 26.2 simulators `560D3E2D-78F8-4D28-A010-16B399581C99`, `511B36DA-7113-41A7-A718-4450C87C0E62`, `DE36DBBE-64FC-4652-AAD9-17329A1BA245`, `A369E083-CFED-40F7-8925-72A088575E38`, iOS 26.1 simulators `38FECA55-03C1-4907-BD9D-8E64BF8E3469`, `347FB118-10D0-40C8-A05B-B0C3BD6B8CCD`, `5BA69F1C-B112-47BE-B1FF-8C1003728C8F`, `1B098DFF-6294-407A-A209-BBF360893485`, plus macOS and Chrome.
+- `flutter devices --machine` shows supported targets including Pixel 6 `<pixel-6-serial>`, Android emulator `emulator-5554`, Saleh's iPhone `<iphone-11-udid>`, iOS 26.2 simulators `560D3E2D-78F8-4D28-A010-16B399581C99`, `511B36DA-7113-41A7-A718-4450C87C0E62`, `DE36DBBE-64FC-4652-AAD9-17329A1BA245`, `A369E083-CFED-40F7-8925-72A088575E38`, iOS 26.1 simulators `38FECA55-03C1-4907-BD9D-8E64BF8E3469`, `347FB118-10D0-40C8-A05B-B0C3BD6B8CCD`, `5BA69F1C-B112-47BE-B1FF-8C1003728C8F`, `1B098DFF-6294-407A-A209-BBF360893485`, plus macOS and Chrome.
 - `xcrun simctl list devices available` shows four booted iOS 26.1 simulators and four booted iOS 26.2 simulators, plus additional shutdown simulators.
 
 The executor must re-run availability checks immediately before device proof:

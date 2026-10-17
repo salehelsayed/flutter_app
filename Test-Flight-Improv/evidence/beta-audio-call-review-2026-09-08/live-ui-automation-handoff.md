@@ -4,7 +4,7 @@ Prepared without placing calls, sending messages, changing settings, uninstallin
 
 ## iPhone 11
 
-- Explicit target: `00008030-001A6D2801BB802E`, iOS 26.5.
+- Explicit target: `<iphone-11-udid>`, iOS 26.5.
 - Existing WebDriverAgent was stale. Restarted only its old iPhone-11 xcodebuild process; the other iPhone's WDA process was preserved.
 - WDA is healthy through existing USB forwarding at `http://127.0.0.1:18100`.
 - MCP embedded XCUITest session: `b51bc841-baa2-4564-92f9-c9ae539c2f94`.
@@ -15,7 +15,7 @@ Prepared without placing calls, sending messages, changing settings, uninstallin
 
 ## Pixel
 
-- Explicit target: `21071FDF600CSC`.
+- Explicit target: `<pixel-6-serial>`.
 - ADB activation and fresh UI hierarchy capture work; app data is preserved.
 - Existing QA landing page exposes exact descriptions `Open chat with iphone-11`, `Open settings`, and `Show all chats`.
 - Local helper `/tmp/beta-call-review-20260908/pixel_ui_control.py` pins the target, refuses stale hierarchy coordinates, and requires exactly one enabled current node for a tap. It keeps raw UI XML local and emits only bounded operation/status metadata.

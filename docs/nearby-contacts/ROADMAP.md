@@ -205,10 +205,10 @@ Discovery used `flutter devices --machine`, `adb devices -l`, `xcrun simctl list
 
 | Role | Explicit target ID | Observed platform | Intended proof |
 | --- | --- | --- | --- |
-| Android physical | `21071FDF600CSC` | Pixel 6, Android 17 / API 37, USB | Android native/radio and default automated peer A |
+| Android physical | `<pixel-6-serial>` | Pixel 6, Android 17 / API 37, USB | Android native/radio and default automated peer A |
 | Android emulator | `emulator-5554` | Android 15 / API 35 | Default automated peer B; controlled integration and virtual BLE where demonstrated |
-| iPhone A | `00008110-00184D622289801E` | iOS 26.5, USB | Separate Android/iOS parity and iOS radio/lifecycle proof |
-| iPhone B | `00008030-001A6D2801BB802E` | iOS 26.5, USB | Separate iPhone/iPhone radio proof |
+| iPhone A | `<iphone-13-udid>` | iOS 26.5, USB | Separate Android/iOS parity and iOS radio/lifecycle proof |
+| iPhone B | `<iphone-11-udid>` | iOS 26.5, USB | Separate iPhone/iPhone radio proof |
 | Selected iOS simulator | `674DFFF6-5F38-4235-93F6-AF7FBF86AE65` | iPhone 17 Pro, iOS 26.5, available/shutdown | UI, lifecycle injection, and adapter contract tests; not assumed to expose a physical BLE radio |
 
 The Android physical device and emulator both report `android.hardware.bluetooth_le`; this does not establish peripheral advertising or a shared physical-radio path. Current [Android emulator documentation](https://developer.android.com/studio/run/emulator-networking) lists virtual Bluetooth capabilities. R0 must probe this particular installed environment and record what it can actually demonstrate.

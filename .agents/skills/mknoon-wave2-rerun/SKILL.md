@@ -34,7 +34,7 @@ repeat campaigns solely to try to hear S16.
    testing; do not silently use the default.
 3. Discover live IDs with `flutter devices --machine`, `adb devices`, and
    `xcrun simctl list devices available`. Pin every command. Prefer the
-   historical USB Pixel `21071FDF600CSC` plus `emulator-5554` only if both are
+   historical USB Pixel `<pixel-6-serial>` plus `emulator-5554` only if both are
    available and unowned. The recorded ignored device config is
    `.codex-test-logs/production-bootstrap-migration-20260928/wave2-continuation-001/provider-device-config-emulator-5554.json`
    (recorded SHA-256

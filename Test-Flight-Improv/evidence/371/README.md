@@ -154,7 +154,7 @@ committed.
 | Curated `1to1` | 3,302 Flutter PASS; 10 declared skips; all relay/toolchain/ACK/media tails PASS | `8e514312e8ae15b3ccf498969163c3b784034b26d415f04dbbe8d5aea9d8dfd5` |
 | Curated `groups` | 4,303 Flutter PASS; bridge/node/relay tails PASS | `151d355d37c9760bbf082db5873a20b34c5acde5fa1d34369bf96bd2d13bc200` |
 | Android build-once artifact | disposable app/test APK pair validated for exact package/runner/one-process manifest | build log `6078da555639299d5e2241b1d76cc7c3c9ae0da14d70bc7d1d498cd698a3ab1a`; app APK `903899b0c30da85b20db9c1f69d20c89fc3b9452bdde97f4a7aa30a33426394e`; test APK `977279d2d302b48e8b8afc85973217bd53b1bbadc36b6fc880d248fedeb78495` |
-| Android TC-371-08 | Pixel 6 `21071FDF600CSC` and emulator `emulator-5554` independently passed phase A, exact host force-stop, disk reopen, and phase B with zero skips | physical `7f8bca1ac67f8c41b8d810372c0556bafb0a6bf030b9c2249db8f28d69d2ef30`; emulator `bb59d43a0be1a08c368a22e57c49337fa66545c4a395c750951fe936d69c3d1f` |
+| Android TC-371-08 | Pixel 6 `<pixel-6-serial>` and emulator `emulator-5554` independently passed phase A, exact host force-stop, disk reopen, and phase B with zero skips | physical `7f8bca1ac67f8c41b8d810372c0556bafb0a6bf030b9c2249db8f28d69d2ef30`; emulator `bb59d43a0be1a08c368a22e57c49337fa66545c4a395c750951fe936d69c3d1f` |
 | Registration/discovery | shared/group/native owners occur exactly once; host dry-runs and both reliability categories PASS | terminal attestation |
 | Full analyzer | no issues in 93.9 s | `1f3ac44fc9d15d44512bf4b91eb916b2e3b63e3ba4c43686bff48113ccbfd204` |
 | Format/diff/shell/plist/Swift hygiene | all changed Dart canonical; `git diff --check`, five shell parses, two privacy plists, and Swift parse PASS | terminal attestation |

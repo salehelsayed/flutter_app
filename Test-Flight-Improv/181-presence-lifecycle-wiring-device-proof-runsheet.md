@@ -10,8 +10,8 @@ The host wiring locks (TC-181-W1–W6) are source-assertion; the producer→rela
 
 ## Rig
 
-- **Pixel 6** `adb -s 21071FDF600CSC` — the **181 build** (this session): `flutter build apk --profile --dart-define=FDC_FLOW_LOG=1`, `app-profile.apk`, `adb install -r` (data/identity preserved). Plays the **target** (announces `background`/`foreground`).
-- **iPhone 11** `idevicesyslog -u 00008030-001A6D2801BB802E` — its existing 180-era build (commit `53b8d6fc`), which already carries the committed consumer short-circuit (`a32454c2`, an ancestor of the 180 build) and `FDC_FLOW_LOG`. Plays the **sender**.
+- **Pixel 6** `adb -s <pixel-6-serial>` — the **181 build** (this session): `flutter build apk --profile --dart-define=FDC_FLOW_LOG=1`, `app-profile.apk`, `adb install -r` (data/identity preserved). Plays the **target** (announces `background`/`foreground`).
+- **iPhone 11** `idevicesyslog -u <iphone-11-udid>` — its existing 180-era build (commit `53b8d6fc`), which already carries the committed consumer short-circuit (`a32454c2`, an ancestor of the 180 build) and `FDC_FLOW_LOG`. Plays the **sender**.
 - Why this role split: 181 is the **producer** wiring, so the phone that must run the new build is the one that *announces* (the Pixel). The sender only needs the pre-committed consumer, so no iOS rebuild was required.
 - iPhone 13 (`00008110-*`, Keychain-brick risk) was attached but **not flashed**.
 

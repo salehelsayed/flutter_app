@@ -13,7 +13,7 @@ Baseline: `1c7540b17954a423264e23ecf3528d3c01beeb0a`
 |---|---|---|---|---|
 | 2026-08-03 22:10 CEST | Evidence Collector | incident timeline; `background_message_handler.dart`; `encrypted_db_opener.dart`; sqflite_common 2.5.6; sqflite_sqlcipher 3.4.0 Android source; FlutterFire Messaging 15.2.10 Android source | Relay and FCM delivery were prompt; the delayed work is inside the Pixel app. Source permits a same-process SQLCipher queue inversion, but the rolled incident log does not retain the original lock owner. | Build a deterministic real-Android reproduction before production edits. |
 | 2026-08-03 22:25 CEST | Evidence Collector | `group_message_listener.dart`; group notification outbox helper; notification tone/id registries; pending overlay; current H0 probe | A global listener `asyncMap` explains second-image head-of-line delay but not the first stall. Two synchronous blocking `flock` calls are independent callback-liveness hazards. Existing H0 does not hold `BEGIN EXCLUSIVE` around a background read. | Include exact queue-inversion and held-flock REDs. |
-| 2026-08-03 22:35 CEST | Planner | Plan 331/331A artifacts; gate scripts; live device discovery | Reuse the disposable no-Activity H0 fixture. Run independently on Pixel `21071FDF600CSC` API36 and emulator `emulator-5554` API37; no peer, relay, FCM credential, or user tap is needed. | Save and index this evidence-gated plan, then run `$tdd-review`. |
+| 2026-08-03 22:35 CEST | Planner | Plan 331/331A artifacts; gate scripts; live device discovery | Reuse the disposable no-Activity H0 fixture. Run independently on Pixel `<pixel-6-serial>` API36 and emulator `emulator-5554` API37; no peer, relay, FCM credential, or user tap is needed. | Save and index this evidence-gated plan, then run `$tdd-review`. |
 | 2026-08-03 23:20 CEST | Reviewer | full Plan 334; current H0 runner/receiver; sqflite/sqflite_sqlcipher lifecycle; handler second-read/direct-post-show paths; Android/iOS lock callers | `$tdd-review` verdict `plan-fixes-required`. Core mechanism remains credible, but v1 overclaimed a real FlutterFire-service fixture, left native ownership/FAIL-artifact semantics unsafe, omitted repeated/direct reads and cumulative budget, and would have changed iOS lock behavior. | Apply verified v2 deltas, rerun all lenses, then execute the causal RED. |
 | 2026-08-03 23:35 CEST | Arbiter | reviewer findings plus current plugin/H0 sequencing | Replace the broad per-connection fork with the smallest incident-causal boundary: every Flutter plugin instance owns one FIFO and all of its maps/locks/handles. Keep actual FlutterFire HOL proof in a serial host contract; use the device fixture only for real two-engine SQLCipher inversion. | Vendor pristine 3.4.0 for the RED, preserve evidence on expected failure, then patch only after reproduction. |
 | 2026-08-04 01:35 CEST | Implementation audit | current notification ownership protocol; registry/native boundary; crash residues; Android/non-Android ordering | The first GREEN closed the original reclaim races but still released owners after an ambiguous platform error and allowed an aged audible crash residue to sound again. The plan is updated to a one-way Android `pending -> publishing -> committed/unknown-terminal` protocol and repair-time silent tone window. | Rerun focused tests, native/device proof, affected gates, and closure audit. |
@@ -375,7 +375,7 @@ Dependencies:
   terminalization boundary and repair-time 30-second tone window; H0 neither
   exercises nor records those 60/30-second recovery intervals.
 - Current-source queue GREEN artifacts are
-  `build/h0-probe/21071FDF600CSC/queue-inversion-9e6e6771a00041f6a89bd2a8ac19f9e9.json`
+  `build/h0-probe/<pixel-6-serial>/queue-inversion-9e6e6771a00041f6a89bd2a8ac19f9e9.json`
   and
   `build/h0-probe/emulator-5554/queue-inversion-f5077200df9c431e831c4344a353f994.json`;
   both attest source digest
@@ -511,7 +511,7 @@ flutter test test/core/database/sqflite_sqlcipher_fork_contract_test.dart
 # when a durable expected-RED artifact has the exact prefix/no-COMMIT shape and
 # cleanup succeeded.
 ./scripts/run_android_canonical_runtime_h0_probe.sh \
-  21071FDF600CSC --sqlcipher-queue-inversion --expect-red
+  <pixel-6-serial> --sqlcipher-queue-inversion --expect-red
 
 # Host RED/GREEN slices.
 flutter test test/features/push/application/background_storage_deadline_test.dart
@@ -536,16 +536,16 @@ flutter test test/core/notifications/flutter_notification_service_test.dart
 
 # Real Android GREEN and non-orphaned native sentinels.
 ./scripts/run_android_canonical_runtime_h0_probe.sh \
-  21071FDF600CSC --sqlcipher-queue-inversion
+  <pixel-6-serial> --sqlcipher-queue-inversion
 ./scripts/run_android_canonical_runtime_h0_probe.sh \
   emulator-5554 --sqlcipher-queue-inversion
 
 # Existing ownership and key-mode preservation.
 ./scripts/run_android_canonical_runtime_h0_probe.sh \
-  21071FDF600CSC --handoff --process-death
+  <pixel-6-serial> --handoff --process-death
 ./scripts/run_android_canonical_runtime_h0_probe.sh \
   emulator-5554 --handoff --process-death
-flutter test -d 21071FDF600CSC \
+flutter test -d <pixel-6-serial> \
   integration_test/db_raw_key_migration_proof_test.dart
 flutter test test/features/groups/application/group_message_listener_test.dart \
   --plain-name 'ST-008 queued listener events persist after DB write contention releases'
@@ -572,7 +572,7 @@ fork before the remaining gates:
 flutter pub get
 flutter test test/core/database/sqflite_sqlcipher_fork_contract_test.dart \
   --dart-define=EXPECT_HOSTED_SQLCIPHER=true
-flutter test -d 21071FDF600CSC \
+flutter test -d <pixel-6-serial> \
   integration_test/db_raw_key_migration_proof_test.dart
 # Restore the path override with apply_patch, then `flutter pub get` and rerun
 # the normal fork contract. Hosted rollback must resolve version 3.4.0 and the
@@ -590,7 +590,7 @@ flutter test test/core/database/sqflite_sqlcipher_fork_contract_test.dart
   FlutterFire-style serialized callback progress is a separate host/source
   contract; the device fixture does not claim actual FCM service delivery.
 - Live availability check: `flutter devices --machine; adb devices -l` on
-  2026-08-04 -> USB Pixel 6 `21071FDF600CSC` Android 16/API36 and Android
+  2026-08-04 -> USB Pixel 6 `<pixel-6-serial>` Android 16/API36 and Android
   emulator `emulator-5554` Android 17/API37 are online.
 - Required setup: one target at a time, disposable `com.mknoon.app.h0probe`,
   source-built debug APK, existing H0 broadcast receiver, two Flutter engines,
@@ -602,13 +602,13 @@ flutter test test/core/database/sqflite_sqlcipher_fork_contract_test.dart
 - Closure role: causal RED passed on the Pixel before native scheduler edits;
   current-source GREEN passed on the Pixel and emulator.
 - Queue-inversion GREEN artifacts:
-  `build/h0-probe/21071FDF600CSC/queue-inversion-9e6e6771a00041f6a89bd2a8ac19f9e9.json`
+  `build/h0-probe/<pixel-6-serial>/queue-inversion-9e6e6771a00041f6a89bd2a8ac19f9e9.json`
   and
   `build/h0-probe/emulator-5554/queue-inversion-f5077200df9c431e831c4344a353f994.json`,
   source digest
   `23435fd8bffcfbe96e185fb32926ca83c5bd67a1b29979f13947920a164b41ad`.
 - Handoff/process-death preservation artifacts:
-  `build/h0-probe/21071FDF600CSC/6e12ed46f4a74ca6c3ba21185d1916d04c5f2fc6b1ce1510c81c75d308276eca.json`
+  `build/h0-probe/<pixel-6-serial>/6e12ed46f4a74ca6c3ba21185d1916d04c5f2fc6b1ce1510c81c75d308276eca.json`
   and
   `build/h0-probe/emulator-5554/174eef0520f381baf422a57bfadab29f11c9a7e7887d95f96c7f58c9a0ceb3e6.json`,
   source digest
@@ -675,9 +675,9 @@ flutter test test/core/database/sqflite_sqlcipher_fork_contract_test.dart
 ## Handoff
 
 - Historical causal RED command/artifact:
-  `./scripts/run_android_canonical_runtime_h0_probe.sh 21071FDF600CSC --sqlcipher-queue-inversion --expect-red`
+  `./scripts/run_android_canonical_runtime_h0_probe.sh <pixel-6-serial> --sqlcipher-queue-inversion --expect-red`
   produced
-  `build/h0-probe/21071FDF600CSC/queue-inversion-b197a89d074548c7ad04d9410246172e.json`.
+  `build/h0-probe/<pixel-6-serial>/queue-inversion-b197a89d074548c7ad04d9410246172e.json`.
 - Preservation command:
   `flutter test test/features/groups/application/group_message_listener_test.dart --plain-name 'ST-008 queued listener events persist after DB write contention releases'`.
 - Registration verified: `background_storage_deadline_test.dart`,
@@ -711,7 +711,7 @@ flutter test test/core/database/sqflite_sqlcipher_fork_contract_test.dart
 | 2026-08-03 23:20 CEST | review v1 | plan, native plugin, H0, handler, lock callers | `$tdd-review`: `plan-fixes-required`; core bet source-confirmed but device service claim, per-connection lifecycle, FAIL evidence, repeated/direct reads, cumulative budget, acquired-owner, and iOS boundaries were unsafe | no production execution on v1 | v1 blocked | apply verified v2 deltas |
 | 2026-08-03 23:35 CEST | reviewed v2 | Plan 334 | five lenses rerun: L1 clear with attribution gate; L2/L3/L4/L5 clear after named deltas; evergreen B-1/B-5/B-7/B-8/B-9/B-10 have explicit rollback/concurrency/boundary/preservation rows | verdict `ready` for causal RED; production scheduler remains conditional on RED | no blocker to the causal RED; production fork remains evidence-gated | vendor pristine 3.4.0, run Pixel expected RED |
 | 2026-08-03 23:42 CEST | execution snapshot | 187-path dirty tree; Plan 334 overlaps listed in Execution Interpretation | `git status --short` captured to `/tmp/plan334-pre-execution-status.txt`; existing modified/untracked Plan 331/H0/handler/opener/gate files confirmed | preserve all existing work; no reset/checkout | dirty tree expected and not a blocker | prepare pristine vendor, H0 fixture, and host REDs only |
-| 2026-08-03 23:52 CEST | causal RED | Pixel 6 `21071FDF600CSC`; pristine vendored scheduler SHA `92f89e…8014`; nonce `b197a89d074548c7ad04d9410246172e` | expected-RED H0 command passed and retained `build/h0-probe/21071FDF600CSC/queue-inversion-b197a89d074548c7ad04d9410246172e.json` | real SQLCipher reached the exact five-phase prefix, then the 4 s watchdog fired at 7384 ms with no writer COMMIT/reader result; Activity count stayed zero and PID/package cleanup completed | causal device RED satisfied; native scheduler production edits authorized by reviewed v2 | implement and prove engine-owned scheduler GREEN |
+| 2026-08-03 23:52 CEST | causal RED | Pixel 6 `<pixel-6-serial>`; pristine vendored scheduler SHA `92f89e…8014`; nonce `b197a89d074548c7ad04d9410246172e` | expected-RED H0 command passed and retained `build/h0-probe/<pixel-6-serial>/queue-inversion-b197a89d074548c7ad04d9410246172e.json` | real SQLCipher reached the exact five-phase prefix, then the 4 s watchdog fired at 7384 ms with no writer COMMIT/reader result; Activity count stayed zero and PID/package cleanup completed | causal device RED satisfied; native scheduler production edits authorized by reviewed v2 | implement and prove engine-owned scheduler GREEN |
 | 2026-08-03 23:53 CEST | handler RED | six-case `background_storage_deadline_test.dart`; pinned FlutterFire source contract | missing deadline hook gave the compile RED; a temporary no-op hook (removed) produced six semantic failures; FlutterFire source sentinel passed | late direct staging, held first/repeated reads, held direct/group post-show, and serialized second-event starvation reproduced | handler causal RED satisfied | implement one cumulative deadline with read-only phase bounds and stage direct custody first |
 | 2026-08-04 | focused + adversarial GREEN | background deadline/handler/show plus event/tone/registry/native-boundary protocol | closure-audited focused set 335/335; adversarial `bounded_posix_flock_test.dart` 41/41 | one-way event publication, same-owner replay denial, strict state shapes, silent pre-native tone fallback, bounded atomic event finalization, atomic/max-preserving tone repair, and iOS/macOS preservation are green; each added closure defect was observed RED before its production fix | focused/adversarial blocker none | run native/unit, current-source device, and affected-gate closure |
 | 2026-08-04 | native + queue device GREEN | vendored plugin; H0 source contract; Pixel/emulator queue mode | `EngineWorkerIsolationTest` PASS; `CanonicalRuntimeH0ProbeSourceTest` PASS; Pixel `queue-inversion-9e6e6771a00041f6a89bd2a8ac19f9e9.json` PASS; emulator `queue-inversion-f5077200df9c431e831c4344a353f994.json` PASS | both current artifacts attest source digest `23435fd8bffcfbe96e185fb32926ca83c5bd67a1b29979f13947920a164b41ad`; historical causal RED `queue-inversion-b197a89d074548c7ad04d9410246172e.json` retained | native/device queue boundary closed | run handoff, key-mode, and rollback preservation |

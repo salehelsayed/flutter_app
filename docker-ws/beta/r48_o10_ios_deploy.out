@@ -153,7 +153,7 @@ Xcode build done.                                           607.5s
 ✓ Built build/ios/iphoneos/Runner.app (99.1MB)
 IOS BUILT 1.0.0-0045db3b3.d77.flowlog.t261004164053 bundleVersion=261004164053
 ARTIFACT 1.0.0004533.77.261004164053 bundleVersion=261004164053
-== iPhone 00008110-00184D622289801E: install (keep identity)
+== iPhone <iphone-13-udid>: install (keep identity)
 App installed:
 • bundleID: com.mknoon.app
 • installationURL: file:///private/var/containers/Bundle/Application/47C1E2CD-95CC-4388-BCD7-CC47F41D9A92/Runner.app/
@@ -161,10 +161,10 @@ App installed:
 • databaseUUID: 23ADD87C-B3BB-43DF-8FB0-6655B5B776EB
 • databaseSequenceNumber: 6176
 • options: 
-== iPhone 00008110-00184D622289801E: launch
+== iPhone <iphone-13-udid>: launch
 Launched application with com.mknoon.app bundle identifier.
-00008110-00184D622289801E OK 1.0.0004533.77.261004164053 bundleVersion=261004164053 (verified)
+<iphone-13-udid> OK 1.0.0004533.77.261004164053 bundleVersion=261004164053 (verified)
 ---
 ARTIFACT 1.0.0004533.77.261004164053 bundleVersion=261004164053
-00008110-00184D622289801E OK 1.0.0004533.77.261004164053 bundleVersion=261004164053 (verified)
+<iphone-13-udid> OK 1.0.0004533.77.261004164053 bundleVersion=261004164053 (verified)
 R48 EXIT 0

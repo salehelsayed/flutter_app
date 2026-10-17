@@ -58,7 +58,7 @@ Status: execution-ready
 - `handleIncomingGroupMessage` does message-id dedupe before group/member lookup when event-log tamper gating is not installed, repeats message-id dedupe after event-log append when it is installed, and preserves the first trusted row while optionally enriching quoted/media fields.
 - Existing Dart proofs include conflicting duplicate content/timestamp replay, PubSub plus inbox replay dedupe, local notification dedupe, and fake-network duplicate delivery idempotency. They do not prove live GossipSub message hash/sequence collision behavior or a first-class group receipt matrix.
 - `group-real-network-nightly` requires `FLUTTER_DEVICE_ID` and passes `MKNOON_REQUIRE_MULTI_RELAY=true` to `integration_test/multi_relay_failover_test.dart`; that test fails deliberately without at least two comma-separated `MKNOON_RELAY_ADDRESSES`.
-- Availability checks during planning: `flutter devices --machine` found `emulator-5554`, physical iPhone `00008030-001A6D2801BB802E`, iOS simulators `38FECA55-03C1-4907-BD9D-8E64BF8E3469`, `347FB118-10D0-40C8-A05B-B0C3BD6B8CCD`, `5BA69F1C-B112-47BE-B1FF-8C1003728C8F`, `1B098DFF-6294-407A-A209-BBF360893485`, plus `macos` and `chrome`; `xcrun simctl list devices available` confirmed the booted iOS simulators; `adb devices` failed because `adb` is not installed; `FLUTTER_DEVICE_ID`, `MKNOON_RELAY_ADDRESSES`, `MKNOON_CLI_PEER_COMMAND`, and `MKNOON_CLI_PEER_ARGS` were unset.
+- Availability checks during planning: `flutter devices --machine` found `emulator-5554`, physical iPhone `<iphone-11-udid>`, iOS simulators `38FECA55-03C1-4907-BD9D-8E64BF8E3469`, `347FB118-10D0-40C8-A05B-B0C3BD6B8CCD`, `5BA69F1C-B112-47BE-B1FF-8C1003728C8F`, `1B098DFF-6294-407A-A209-BBF360893485`, plus `macos` and `chrome`; `xcrun simctl list devices available` confirmed the booted iOS simulators; `adb devices` failed because `adb` is not installed; `FLUTTER_DEVICE_ID`, `MKNOON_RELAY_ADDRESSES`, `MKNOON_CLI_PEER_COMMAND`, and `MKNOON_CLI_PEER_ARGS` were unset.
 
 ## real scope
 
@@ -257,7 +257,7 @@ Supporting profile: `single-device multi-relay` through `group-real-network-nigh
 
 Current availability:
 
-- `flutter devices --machine` available IDs: `emulator-5554`, `00008030-001A6D2801BB802E`, `38FECA55-03C1-4907-BD9D-8E64BF8E3469`, `347FB118-10D0-40C8-A05B-B0C3BD6B8CCD`, `5BA69F1C-B112-47BE-B1FF-8C1003728C8F`, `1B098DFF-6294-407A-A209-BBF360893485`, `macos`, `chrome`.
+- `flutter devices --machine` available IDs: `emulator-5554`, `<iphone-11-udid>`, `38FECA55-03C1-4907-BD9D-8E64BF8E3469`, `347FB118-10D0-40C8-A05B-B0C3BD6B8CCD`, `5BA69F1C-B112-47BE-B1FF-8C1003728C8F`, `1B098DFF-6294-407A-A209-BBF360893485`, `macos`, `chrome`.
 - Booted iOS simulator candidates confirmed by `xcrun simctl list devices available`: `38FECA55-03C1-4907-BD9D-8E64BF8E3469`, `347FB118-10D0-40C8-A05B-B0C3BD6B8CCD`, `5BA69F1C-B112-47BE-B1FF-8C1003728C8F`, `1B098DFF-6294-407A-A209-BBF360893485`.
 - Android paired-device tooling is incomplete locally: `adb devices` returned `command not found`, although Flutter sees Android emulator `emulator-5554`.
 - `FLUTTER_DEVICE_ID` is unset.

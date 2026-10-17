@@ -181,8 +181,8 @@ This row requires an explicit single Flutter target for closure because the name
 Live checks used on 2026-05-07:
 
 - `flutter devices --machine`
-  - Android physical: `Pixel 6`, id `21071FDF600CSC`, platform `android-arm64`, Android 16 API 36.
-  - iOS physical: `Saleh's iPhone`, id `00008030-001A6D2801BB802E`, platform `ios`, iOS 26.4.2.
+  - Android physical: `Pixel 6`, id `<pixel-6-serial>`, platform `android-arm64`, Android 16 API 36.
+  - iOS physical: `Saleh's iPhone`, id `<iphone-11-udid>`, platform `ios`, iOS 26.4.2.
   - iOS simulator: `iPhone 17 Pro`, id `38FECA55-03C1-4907-BD9D-8E64BF8E3469`, runtime `com.apple.CoreSimulator.SimRuntime.iOS-26-1`.
   - iOS simulator: `iPhone Air`, id `347FB118-10D0-40C8-A05B-B0C3BD6B8CCD`, runtime `com.apple.CoreSimulator.SimRuntime.iOS-26-1`.
   - iOS simulator: `iPhone 17`, id `5BA69F1C-B112-47BE-B1FF-8C1003728C8F`, runtime `com.apple.CoreSimulator.SimRuntime.iOS-26-1`.
@@ -195,7 +195,7 @@ Live checks used on 2026-05-07:
 - `adb devices`
   - Plain command is not available on `PATH` in this shell: `zsh:1: command not found: adb`.
 - `/Users/I560101/Library/Android/sdk/platform-tools/adb devices`
-  - Confirmed Android device id `21071FDF600CSC` is attached with state `device`.
+  - Confirmed Android device id `<pixel-6-serial>` is attached with state `device`.
 
 Required closure evidence:
 
@@ -205,7 +205,7 @@ Required closure evidence:
 FLUTTER_DEVICE_ID=5BA69F1C-B112-47BE-B1FF-8C1003728C8F ./scripts/run_test_gates.sh transport
 ```
 
-- If that simulator is unavailable at execution time, rerun `flutter devices --machine` and choose another current single Flutter target. Current supporting alternates are `347FB118-10D0-40C8-A05B-B0C3BD6B8CCD`, `38FECA55-03C1-4907-BD9D-8E64BF8E3469`, `1B098DFF-6294-407A-A209-BBF360893485`, `00008030-001A6D2801BB802E`, or `21071FDF600CSC`.
+- If that simulator is unavailable at execution time, rerun `flutter devices --machine` and choose another current single Flutter target. Current supporting alternates are `347FB118-10D0-40C8-A05B-B0C3BD6B8CCD`, `38FECA55-03C1-4907-BD9D-8E64BF8E3469`, `1B098DFF-6294-407A-A209-BBF360893485`, `<iphone-11-udid>`, or `<pixel-6-serial>`.
 - Because multiple Flutter targets are attached, make host-capable named gates deterministic by pinning the intended host target when using the historical host shape:
 
 ```sh
@@ -216,8 +216,8 @@ FLUTTER_DEVICE_ID=macos ./scripts/run_test_gates.sh groups
 
 Supporting evidence only:
 
-- The Android physical target `21071FDF600CSC` and iOS physical target `00008030-001A6D2801BB802E` are live inventory evidence, not required closure evidence for this session unless the Executor intentionally chooses one as the single `FLUTTER_DEVICE_ID`.
-- No relay address env vars, `MKNOON_REQUIRE_MULTI_RELAY=true`, paired simulator IDs, `IOS_SECONDARY_SIMULATOR_DEVICE`, or `ANDROID_SERIAL` are required for closure. `ANDROID_SERIAL=21071FDF600CSC` is only relevant if a future Android-specific manual script is deliberately added outside this plan.
+- The Android physical target `<pixel-6-serial>` and iOS physical target `<iphone-11-udid>` are live inventory evidence, not required closure evidence for this session unless the Executor intentionally chooses one as the single `FLUTTER_DEVICE_ID`.
+- No relay address env vars, `MKNOON_REQUIRE_MULTI_RELAY=true`, paired simulator IDs, `IOS_SECONDARY_SIMULATOR_DEVICE`, or `ANDROID_SERIAL` are required for closure. `ANDROID_SERIAL=<pixel-6-serial>` is only relevant if a future Android-specific manual script is deliberately added outside this plan.
 
 ## Exact Tests And Gates To Run
 
@@ -309,7 +309,7 @@ This plan is safe to implement before any protocol work because it only records 
 - 2026-05-07 17:46:11 CEST | transport gate finished | preferred device-backed command `FLUTTER_DEVICE_ID=5BA69F1C-B112-47BE-B1FF-8C1003728C8F ./scripts/run_test_gates.sh transport` passed on the booted iPhone 17 simulator; observed expected gate shape: `integration_test/background_reconnect_test.dart` skipped by its guard, WiFi/relay E2E smoke reported no CLI peer fixture and passed self-contained scenarios, transport E2E passed self-contained inbox/empty-message scenarios, and media stable-ID simulator smoke passed; next action: run `./scripts/run_test_gates.sh completeness-check` and `git diff --check`.
 - 2026-05-07 17:41:31 CEST | groups gate fix pass finished | patched only `test/features/groups/integration/invite_round_trip_test.dart`: inbox-fallback re-invite now expects `SendGroupInviteResult.queued`, and IJ003 revocation replay uses a deterministic listener clock inside the revocation TTL; direct command `flutter test test/features/groups/integration/invite_round_trip_test.dart` passed; named gate `FLUTTER_DEVICE_ID=macos ./scripts/run_test_gates.sh groups` passed; next action: run preferred device-backed `FLUTTER_DEVICE_ID=5BA69F1C-B112-47BE-B1FF-8C1003728C8F ./scripts/run_test_gates.sh transport`.
 - 2026-05-07 17:40:01 CEST | groups gate fix pass started | `FLUTTER_DEVICE_ID=macos ./scripts/run_test_gates.sh baseline` passed; `FLUTTER_DEVICE_ID=macos ./scripts/run_test_gates.sh groups` failed in `test/features/groups/integration/invite_round_trip_test.dart` only; inspected failing owner surfaces and found one stale expectation now requiring `SendGroupInviteResult.queued` for direct-fail/inbox-fallback invites, plus one date-sensitive revocation replay assertion where listener `now()` can outlive the pending-invite revocation TTL; next action: patch the integration test expectation/time source, rerun the direct integration test, then rerun the `groups` gate.
-- 2026-05-07 17:34:15 CEST | device profile refreshed before gates | live commands completed: `flutter devices --machine` confirmed preferred iPhone 17 simulator `5BA69F1C-B112-47BE-B1FF-8C1003728C8F` is present, supported, and booted; `xcrun simctl list devices available` confirmed the same simulator is available and booted; `adb devices` remains unavailable on `PATH`; `/Users/I560101/Library/Android/sdk/platform-tools/adb devices` confirmed `21071FDF600CSC	device`; next action: run `FLUTTER_DEVICE_ID=macos ./scripts/run_test_gates.sh baseline`, `FLUTTER_DEVICE_ID=macos ./scripts/run_test_gates.sh groups`, preferred `FLUTTER_DEVICE_ID=5BA69F1C-B112-47BE-B1FF-8C1003728C8F ./scripts/run_test_gates.sh transport`, `./scripts/run_test_gates.sh completeness-check`, and `git diff --check`.
+- 2026-05-07 17:34:15 CEST | device profile refreshed before gates | live commands completed: `flutter devices --machine` confirmed preferred iPhone 17 simulator `5BA69F1C-B112-47BE-B1FF-8C1003728C8F` is present, supported, and booted; `xcrun simctl list devices available` confirmed the same simulator is available and booted; `adb devices` remains unavailable on `PATH`; `/Users/I560101/Library/Android/sdk/platform-tools/adb devices` confirmed `<pixel-6-serial>	device`; next action: run `FLUTTER_DEVICE_ID=macos ./scripts/run_test_gates.sh baseline`, `FLUTTER_DEVICE_ID=macos ./scripts/run_test_gates.sh groups`, preferred `FLUTTER_DEVICE_ID=5BA69F1C-B112-47BE-B1FF-8C1003728C8F ./scripts/run_test_gates.sh transport`, `./scripts/run_test_gates.sh completeness-check`, and `git diff --check`.
 - 2026-05-07 17:33:33 CEST | focused regressions finished | commands passed: `flutter test test/features/groups/application test/features/groups/presentation` and `flutter test test/features/contact_request/integration/contact_request_flow_test.dart`; known unrelated log noise observed in contact request avatar download binding initialization path but test result stayed green; next action: refresh live device availability with the proof-profile commands and run named gates.
 - 2026-05-07 17:32:36 CEST | direct application/presentation tests finished | commands passed after targeted test fixes: `flutter test test/features/groups/application/send_group_invite_use_case_test.dart` (initial stale assertion expected inbox fallback `success`; classified session-caused test expectation, fixed to expect `queued`), `flutter test test/features/groups/application/create_group_with_members_use_case_test.dart`, `flutter test test/features/groups/application/group_message_listener_test.dart`, `flutter test test/features/groups/application/resend_group_invite_use_case_test.dart`, `flutter test test/features/groups/presentation/contact_picker_wired_test.dart`, `flutter test test/features/groups/presentation/create_group_picker_wired_test.dart`, `flutter test test/features/groups/presentation/group_info_screen_test.dart` (initial destructive-action finders needed scroll after status rows increased member-list height; fixed test interaction only), and `flutter test test/features/groups/presentation/group_info_wired_test.dart`; no production fix pass was needed for these failures; next action: run focused regression commands, then refresh device inventory and named gates.
 - 2026-05-07 17:29:39 CEST | direct persistence tests finished | commands passed: `flutter test test/core/database/migrations/067_group_invite_delivery_attempts_test.dart`, `flutter test test/core/database/helpers/group_invite_delivery_attempts_db_helpers_test.dart`, `flutter test test/core/database/integration/full_migration_chain_test.dart`, and `flutter test test/features/groups/domain/repositories/group_invite_delivery_attempt_repository_impl_test.dart`; touched owner files verified by compile include migration 067, DB helpers, main migration chain, and repository row mapping; next action: run direct application and presentation tests sequentially.

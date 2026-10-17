@@ -35,7 +35,7 @@ disposition and preservation record is
   `core-host-all` `310/310` files and `2485` tests with `0` skipped; the
   recorded external `feature-host-all` run was all green; the shared nine-file
   focused aggregate passed `30/30` with causal mutations restored.
-- Physical Android Pixel `21071FDF600CSC`: Plan 238's `GPL-01D` SQLCipher,
+- Physical Android Pixel `<pixel-6-serial>`: Plan 238's `GPL-01D` SQLCipher,
   `GPL-11` protected viewer, and `GPL-12` real-Go bridge proofs each passed
   `1/1`, exit 0. Plan 242's availability-bounded `GPL-01D`, `APL-03D`,
   inherited `GPL-11`, and actual wired-route `APL-08` proofs each passed `1/1`,

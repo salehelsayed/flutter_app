@@ -23,10 +23,10 @@ runner count(wakeReceipt)=1  count(callStoreV1)=1
 --- iPhones + Pixel in parallel
 ios install exit=0
 ARTIFACT 1.0.036780.4.260905190931 bundleVersion=260905190931
-00008030-001A6D2801BB802E OK 1.0.036780.4.260905190931 bundleVersion=260905190931 (verified)
-00008110-00184D622289801E OK 1.0.036780.4.260905190931 bundleVersion=260905190931 (verified)
+<iphone-11-udid> OK 1.0.036780.4.260905190931 bundleVersion=260905190931 (verified)
+<iphone-13-udid> OK 1.0.036780.4.260905190931 bundleVersion=260905190931 (verified)
 pixel deploy exit=0
-PIXEL 21071FDF600CSC OK 1.0.0-d3ca67f80.d8.t260905191154 (verified)
+PIXEL <pixel-6-serial> OK 1.0.0-d3ca67f80.d8.t260905191154 (verified)
 PIXEL PASS
 --- captures
 CAPTURE_DIR=docker-ws/deploy-captures/fresh-260905191258

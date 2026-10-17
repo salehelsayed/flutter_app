@@ -345,7 +345,7 @@ platform-behavior claim. No broader relocation or new test tier was added.
   Run that lane with `FLUTTER_DEVICE_ID=emulator-5554`; this pins a target
   available in the execution-time matrix and avoids an interactive selector.
   Plan 297 makes no Android-, native-, relay-, or OS-boundary behavior claim.
-- Live discovery found physical Android `21071FDF600CSC` plus Android emulators
+- Live discovery found physical Android `<pixel-6-serial>` plus Android emulators
   `emulator-5554` and `emulator-5556`. Only `emulator-5554` is required for the
   existing curated-lane replay; unavailable device/version bands cannot block
   this plan.

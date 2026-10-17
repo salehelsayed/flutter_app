@@ -110,7 +110,7 @@ Already in curated arrays: `p2p_service_impl_test.dart` in `ONE_TO_ONE_TESTS` (r
 | TC-189-15 | collateral bound | Go integration | no_circuit_recovery_test::TestNoCircuitCyclesDoNotChurn… | restart+group-latch per cycle (relay_session.go:390-393) | revert | Go integration cmd above | manual Go gate |
 | TC-189-20 | cross-defect E2E | Go integration + device | TC-189-10+14 jointly (Go); closure = runsheet | both defects live | either revert | Go cmd + runsheet | Go gate + runsheet |
 | TC-189-21 | sender invariants | preservation | existing 1to1 suites (no new test) | n/a (sentinel) | n/a | `./scripts/run_test_gates.sh 1to1` — all pass (baseline 2026-07-02: 1454/1454) | already registered |
-| TC-189-30/31 | device measurement | device-proof (manual runsheet) | Test-Flight-Improv/189-degraded-relay-drain-device-runsheet.md (write at execution; clone 183 runsheet shape; Pixel `21071FDF600CSC`, iPhone 11 `00008030-001A6D2801BB802E`) | field repro (store→ack 86–368s+) | any revert | manual runsheet PASS log | runsheet (manual; no classify_path needed — no new integration_test file) |
+| TC-189-30/31 | device measurement | device-proof (manual runsheet) | Test-Flight-Improv/189-degraded-relay-drain-device-runsheet.md (write at execution; clone 183 runsheet shape; Pixel `<pixel-6-serial>`, iPhone 11 `<iphone-11-udid>`) | field repro (store→ack 86–368s+) | any revert | manual runsheet PASS log | runsheet (manual; no classify_path needed — no new integration_test file) |
 | TC-189-40 | trigger preservation | preservation | existing lifecycle/keepalive/182 suites | n/a (sentinel) | n/a | `./scripts/run_host_test_gates.sh core-host-all` + `1to1` gate | already registered |
 | TC-189-41 | reachability guard | Go unit + integration | no_circuit_recovery_test::TestDefaultFlagsKeepPrivateReachability | n/a (guard, GREEN on HEAD) | flip default to Public | Go cmds above (unit half: `(cd go-mknoon && GOTOOLCHAIN=go1.25.0 go test -run DefaultFlagsKeepPrivate ./node/...)`) | manual Go gate |
 | TC-189-42 | dead scaffolding | unit host | TC-189-12's test makes `refreshFailureThreshold` load-bearing | never compared on HEAD | remove backoff gate | `flutter test …health_drain_test.dart` | AUTO + array |
@@ -149,7 +149,7 @@ Already in curated arrays: `p2p_service_impl_test.dart` in `ONE_TO_ONE_TESTS` (r
 - `-race` flake `pubsub_delivery_test.go:966` is pre-existing (memory: run clean-HEAD control before attributing).
 
 ## Device/Relay Proof Profile
-Host-green is NOT closure. Closure = device runsheet TC-189-30/31 on Pixel 6 (`21071FDF600CSC`, cellular) + iPhone 11 (`00008030-001A6D2801BB802E`, WiFi): Pixel→iPhone store→ack p95 ≤35 s, no 30 s relay flap over 10 min, `watchdogRestartCount` Δ≤2/30 min, reverse direction still 0–2 s. Plus TC-189-50 autorelay-debug capture (Group-F diagnostic).
+Host-green is NOT closure. Closure = device runsheet TC-189-30/31 on Pixel 6 (`<pixel-6-serial>`, cellular) + iPhone 11 (`<iphone-11-udid>`, WiFi): Pixel→iPhone store→ack p95 ≤35 s, no 30 s relay flap over 10 min, `watchdogRestartCount` Δ≤2/30 min, reverse direction still 0–2 s. Plus TC-189-50 autorelay-debug capture (Group-F diagnostic).
 Relay defaults: `/dns/mknoun.xyz/tcp/4001/wss/p2p/12D3KooWGMYMmN1RGUYj…` (live prod — observe read-only via `ssh -i se.pem ubuntu@13.60.15.36`, journal recipe in memory).
 
 ## Acceptance Gates  (literal — copy/paste)

@@ -252,7 +252,7 @@ Live availability checked on 2026-04-30:
 
 - `flutter devices --machine` reported:
   - Android emulator: `emulator-5554`, `sdk gphone16k arm64`, Android 17 API 37.
-  - Physical iOS: `00008030-001A6D2801BB802E`, `Saleh's iPhone`, iOS 26.3.1.
+  - Physical iOS: `<iphone-11-udid>`, `Saleh's iPhone`, iOS 26.3.1.
   - iOS simulator: `38FECA55-03C1-4907-BD9D-8E64BF8E3469`, iPhone 17 Pro, iOS 26.1, booted.
   - iOS simulator: `347FB118-10D0-40C8-A05B-B0C3BD6B8CCD`, iPhone Air, iOS 26.1, booted.
   - iOS simulator: `5BA69F1C-B112-47BE-B1FF-8C1003728C8F`, iPhone 17, iOS 26.1, booted.

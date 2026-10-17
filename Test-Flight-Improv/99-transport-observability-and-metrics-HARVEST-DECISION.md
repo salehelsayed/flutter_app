@@ -99,7 +99,7 @@ census + the pre-existing relay Prometheus suite.
 
 ## 5. Real Physical-Device Evidence
 
-### iPhone13 (iOS 26.4.2, id `00008110-00184D622289801E`) — BUILT, PARTIAL (re-run 2026-05-29 23:15)
+### iPhone13 (iOS 26.4.2, id `<iphone-13-udid>`) — BUILT, PARTIAL (re-run 2026-05-29 23:15)
 
 - Initial harvest run was BLOCKED at iOS code-signing (Xcode "No Accounts" for team `397R9Q4WMX`; device not in
   the `com.mknoon.app` / `.ShareExtension` / `.NotificationService` provisioning profiles). **RESOLVED** by adding
@@ -122,7 +122,7 @@ census + the pre-existing relay Prometheus suite.
 - **Transports observed: `inbox` (real end-to-end) + genuine non-relay `local`/`wifi` WS mechanism.** Two-phone
   wifi-beats-relay still NOT proven (self-contained, no paired peer).
 
-### Pixel6 (Android 16 / API 36, id `21071FDF600CSC`) — BUILT, PARTIAL
+### Pixel6 (Android 16 / API 36, id `<pixel-6-serial>`) — BUILT, PARTIAL
 
 - `buildInstalled: true`.
 - `wifi_transport_test.dart`: **12/12 PASSED. Genuine LAN/WiFi WS mechanism on real hardware** —
@@ -250,8 +250,8 @@ because no headless harness exists (see missingHarness, §8).
 1. Build/install a DISCOVERY-ENABLED app build on both phones. The default simulator/CI flow sets
    `DISABLE_LOCAL_DISCOVERY=true` (reset_simulators.sh) and the 06 doc 5b confirms simulators share the host mDNS
    stack and structurally cannot produce a local/wifi transport. So you MUST install a build WITHOUT that
-   dart-define (local discovery / Bonsoir active). Install on iPhone13 (`00008110-00184D622289801E`) and
-   Pixel6 (`21071FDF600CSC`) via: `flutter run -d <DEVICE_ID>` (no DISABLE_LOCAL_DISCOVERY define), or a
+   dart-define (local discovery / Bonsoir active). Install on iPhone13 (`<iphone-13-udid>`) and
+   Pixel6 (`<pixel-6-serial>`) via: `flutter run -d <DEVICE_ID>` (no DISABLE_LOCAL_DISCOVERY define), or a
    release/profile install of the same.
 2. Join BOTH phones to the exact same WiFi network/SSID (same subnet, AP client-isolation OFF so peers can reach
    each other on the LAN).

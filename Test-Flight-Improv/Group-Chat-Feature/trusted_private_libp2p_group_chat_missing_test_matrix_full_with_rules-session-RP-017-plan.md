@@ -31,7 +31,7 @@ RP-017 can close only when:
 
 - Profile for this session: `host-only` closure with supporting real-network/nightly evidence unconfigured.
 - Live availability check run: `flutter devices --machine` at `2026-05-01T06:33:55+02:00`.
-- Available device ids observed: `emulator-5554`, `00008030-001A6D2801BB802E`, `38FECA55-03C1-4907-BD9D-8E64BF8E3469`, `347FB118-10D0-40C8-A05B-B0C3BD6B8CCD`, `5BA69F1C-B112-47BE-B1FF-8C1003728C8F`, `1B098DFF-6294-407A-A209-BBF360893485`, `macos`, `chrome`.
+- Available device ids observed: `emulator-5554`, `<iphone-11-udid>`, `38FECA55-03C1-4907-BD9D-8E64BF8E3469`, `347FB118-10D0-40C8-A05B-B0C3BD6B8CCD`, `5BA69F1C-B112-47BE-B1FF-8C1003728C8F`, `1B098DFF-6294-407A-A209-BBF360893485`, `macos`, `chrome`.
 - Closure evidence required for RP-017: host-side Go/libp2p raw PubSub and discovery/dial tests plus host Flutter group application/integration gates. A single `FLUTTER_DEVICE_ID` is not sufficient to prove a three-party physical network capture, but the RP-017 matrix row can close on repo-local host proof because the expected policy explicitly allows peers to ignore C.
 - Supporting unrun gate: `FLUTTER_DEVICE_ID=347FB118-10D0-40C8-A05B-B0C3BD6B8CCD MKNOON_RELAY_ADDRESSES=/dns/mknoun.xyz/tcp/4001/wss/p2p/12D3KooWGMYMmN1RGUYjWaSV6P3XtnBjwnosnJGNMnttfVCRnd6g,/dns/mknoun.xyz/udp/4002/quic-v1/p2p/12D3KooWGMYMmN1RGUYjWaSV6P3XtnBjwnosnJGNMnttfVCRnd6g ./scripts/run_test_gates.sh group-real-network-nightly`.
 

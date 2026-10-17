@@ -14,15 +14,15 @@ build carrying Fix N1 (+ D1/D2) and records the **After**.
 > --debug`.
 
 ## Devices / relay
-- iPhone 11 (receiver): UDID `00008030-001A6D2801BB802E`.
-- Pixel 6 (Android control receiver): `21071FDF600CSC`.
+- iPhone 11 (receiver): UDID `<iphone-11-udid>`.
+- Pixel 6 (Android control receiver): `<pixel-6-serial>`.
 - A second paired contact (any device) as the **sender** identity that the
   testpeer injects on behalf of — or inject directly to the receiver peer id.
 - Sender injector: `testpeer` (`cd go-mknoon && GOTOOLCHAIN=go1.25.0 make testpeer`).
 - Prod relay: `/dns/mknoun.xyz/tcp/4001/wss/p2p/12D3KooWGMYMmN1RGUYjWaSV6P3XtnBjwnosnJGNMnttfVCRnd6g`
   (+ `/udp/4002/quic-v1/...`). Read-only journal: `ssh -i se.pem ubuntu@13.60.15.36`
   then `sudo journalctl -u mknoon-relay -f` (watch `[PUSH]` + reservation lines).
-- FLOW capture: `idevicesyslog -u 00008030-001A6D2801BB802E | grep -E "PUSH_DIAG|PUSH_FOREGROUND|PUSH_LISTENERS_ARMED|willPresent_|fcm_plugin_ref"`.
+- FLOW capture: `idevicesyslog -u <iphone-11-udid> | grep -E "PUSH_DIAG|PUSH_FOREGROUND|PUSH_LISTENERS_ARMED|willPresent_|fcm_plugin_ref"`.
 
 ## Testpeer injection pipeline (literal)
 ```bash

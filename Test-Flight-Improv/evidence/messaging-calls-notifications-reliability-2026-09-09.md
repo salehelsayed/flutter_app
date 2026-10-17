@@ -33,7 +33,7 @@ Limits remain: a fresh diagnostic sink taking longer than the existing two-secon
 - Branch `feat/ipv6-happy-eyeballs`, starting HEAD `d8b919c5b`. Approximately 415 existing dirty/untracked paths were preserved. Starting binary patch, status and hashes are under `/tmp/mknoon-reliability-starting*`; task-only patches are `/tmp/mknoon-{root,calls,messaging}-task.patch`.
 - Current production composition is Flutter/Dart → `GoBridgeClient` → native MethodChannel → Go node/relay code. There is no active JavaScript core or bundled JS asset in the current pubspec. Both gomobile binding fingerprint checks match the current source.
 - macOS arm64, Xcode 26.6 (17F113), Flutter 3.47.2/Dart 3.13.2 from `.fvm/flutter_sdk`; PATH Flutter 3.41.4 failed the SDK constraint before tests. Go is explicitly pinned to 1.25.0 for native checks. Android JVM tests use Temurin 17.0.18/Robolectric.
-- Live pair: USB Pixel 6 `21071FDF600CSC` (Android 17/API 37), available `Codex_API35` emulator `emulator-5556`. The initially available emulator-5554 stopped responding; no AVD data was wiped. All installed test apps use `com.mknoon.sims.reliability`; personal app packages/identities were not used.
+- Live pair: USB Pixel 6 `<pixel-6-serial>` (Android 17/API 37), available `Codex_API35` emulator `emulator-5556`. The initially available emulator-5554 stopped responding; no AVD data was wiped. All installed test apps use `com.mknoon.sims.reliability`; personal app packages/identities were not used.
 - iOS: disposable iPhone 17 Pro simulator `3DD58077-0559-445D-8D35-AE43DF61C43F`, installed iOS 26.5 runtime. Before the user’s later authorization, existing simulator app containers were preserved. The user then explicitly authorized use/reset of available simulators and requested no clones: existing iPhone 17 Pro `674DFFF6-5F38-4235-93F6-AF7FBF86AE65` and iPhone 16e `DBE8C32E-9F19-4593-860A-B41113791D79` were reset for remaining gates. No new simulator was created after that instruction; the earlier task-owned disposable simulator was deleted after its tests. No physical iOS/APNs/audio claim.
 - No commit, push, deployment, production service/configuration mutation, encryption/authentication relaxation, public API/schema replacement, new dependency or architecture redesign. Test messaging used generated identities through existing relay configuration; no real-user messages/calls/pushes. The narrow old-envelope repair is the only wire-persistence compatibility exception.
 
@@ -148,10 +148,10 @@ Device commands set both package variables because `ANDROID_APP_PACKAGE` takes p
 ```sh
 export ANDROID_APP_PACKAGE=com.mknoon.sims.reliability
 export SIMS_APP_ID=com.mknoon.sims.reliability
-SIMS_ARTIFACT_PROFILE_ID=android.e2e.main .fvm/flutter_sdk/bin/dart run integration_test/scripts/run_1to1_device_real.dart --scenario android.keepalive_drop_skip_direct --device 21071FDF600CSC,emulator-5556 --artifact /tmp/mknoon-reliability-main.apk
-SIMS_ARTIFACT_PROFILE_ID=android.e2e.main .fvm/flutter_sdk/bin/dart run integration_test/scripts/run_1to1_device_real.dart --scenario android.voice_message_e2e --device 21071FDF600CSC,emulator-5556 --artifact /tmp/mknoon-reliability-main.apk
-SIMS_ARTIFACT_PROFILE_ID=android.e2e.standard .fvm/flutter_sdk/bin/dart run integration_test/scripts/run_1to1_device_real.dart --scenario android.foreground_webrtc_audio --device 21071FDF600CSC,emulator-5556 --artifact /tmp/mknoon-reliability-probe-final.apk
-SIMS_FOREGROUND_WEBRTC_RELAY_PROBE=turnTcp SIMS_ARTIFACT_PROFILE_ID=android.e2e.standard .fvm/flutter_sdk/bin/dart run integration_test/scripts/run_1to1_device_real.dart --scenario android.foreground_webrtc_audio --device 21071FDF600CSC,emulator-5556 --artifact /tmp/mknoon-reliability-probe-final.apk
+SIMS_ARTIFACT_PROFILE_ID=android.e2e.main .fvm/flutter_sdk/bin/dart run integration_test/scripts/run_1to1_device_real.dart --scenario android.keepalive_drop_skip_direct --device <pixel-6-serial>,emulator-5556 --artifact /tmp/mknoon-reliability-main.apk
+SIMS_ARTIFACT_PROFILE_ID=android.e2e.main .fvm/flutter_sdk/bin/dart run integration_test/scripts/run_1to1_device_real.dart --scenario android.voice_message_e2e --device <pixel-6-serial>,emulator-5556 --artifact /tmp/mknoon-reliability-main.apk
+SIMS_ARTIFACT_PROFILE_ID=android.e2e.standard .fvm/flutter_sdk/bin/dart run integration_test/scripts/run_1to1_device_real.dart --scenario android.foreground_webrtc_audio --device <pixel-6-serial>,emulator-5556 --artifact /tmp/mknoon-reliability-probe-final.apk
+SIMS_FOREGROUND_WEBRTC_RELAY_PROBE=turnTcp SIMS_ARTIFACT_PROFILE_ID=android.e2e.standard .fvm/flutter_sdk/bin/dart run integration_test/scripts/run_1to1_device_real.dart --scenario android.foreground_webrtc_audio --device <pixel-6-serial>,emulator-5556 --artifact /tmp/mknoon-reliability-probe-final.apk
 ```
 
 Complete voice-message artifact: `/private/tmp/mknoon-voice-message-proof-run4/android.voice_message_e2e-1788958184043455-22302.json`, SHA256 `f044d1fedba1c33ae6d7e83b42740b230d9b081516fe73cf5236ed68fdc24a1c`. Its final command used `SIMS_PROOF_DIRECTORY=/tmp/mknoon-voice-message-proof-run4`, the voice scenario above, and `--artifact /tmp/mknoon-reliability-main-final.apk`. The existing AVD required a cold restart after an offline/package-manager failure; its userdata was preserved, no replacement AVD was created, and both isolated packages were absent after cleanup.
@@ -213,7 +213,7 @@ Live push command template — **not run**, prerequisites above are missing:
 ANDROID_APP_PACKAGE='<isolated-package>' SIMS_APP_ID='<same-isolated-package>' \
 SIMS_PROVIDER_FCM_CREDENTIAL_PATH='<credential-file>' MKNOON_RELAY_ADDRESSES='<staging-multiaddrs>' \
 .fvm/flutter_sdk/bin/dart run integration_test/scripts/run_notification_tap_device_real.dart \
-  --scenario android_payload_campaign --physical 21071FDF600CSC --emulator emulator-5556 \
+  --scenario android_payload_campaign --physical <pixel-6-serial> --emulator emulator-5556 \
   --prebuilt-apk '<production-fcm-apk>' --relay-target '<staging-ssh-target>' \
   --relay-key '<key-file>' --artifact-dir '<proof-directory>'
 ```

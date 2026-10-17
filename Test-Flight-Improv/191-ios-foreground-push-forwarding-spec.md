@@ -140,7 +140,7 @@ Covered: Dart routing use case (`test/features/push/application/handle_foregroun
 - **TC-191-34** — APNs-token half unchanged: token forwarding (`AppDelegate.swift:61`) and FCM token minting still work after any delegate/forwarding changes (fresh-install token registration observed at the relay).
 
 ### Group E — closure runsheet (device, 183/187 format)
-- **TC-191-40** — iPhone 11 (`00008030-001A6D2801BB802E`, profile build — NEVER debug, see dev_keychain_wipe hazard) + Pixel 6 control: run the full injection protocol ×3 iOS + ×1 Android with relay-journal timestamps and FLOW captures; PASS = all iOS acks ≤5 s post-push and off-grid, Android unchanged, no banner shown, one displayed message each, tap-routing spot-check green.
+- **TC-191-40** — iPhone 11 (`<iphone-11-udid>`, profile build — NEVER debug, see dev_keychain_wipe hazard) + Pixel 6 control: run the full injection protocol ×3 iOS + ×1 Android with relay-journal timestamps and FLOW captures; PASS = all iOS acks ≤5 s post-push and off-grid, Android unchanged, no banner shown, one displayed message each, tap-routing spot-check green.
 
 ---
 

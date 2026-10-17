@@ -3,12 +3,12 @@ drwx------@ 5 I560101  staff  160 Aug  1 01:06 /var/folders/nd/_55d26s936d0fb_5l
 drwx------@ 5 I560101  staff  160 Aug  1 10:27 /var/folders/nd/_55d26s936d0fb_5l9s00t980000gn/T/mknoon-group-reaction-notification-state-4CATff
 drwx------@ 5 I560101  staff  160 Aug  1 10:05 /var/folders/nd/_55d26s936d0fb_5l9s00t980000gn/T/mknoon-group-reaction-notification-state-bMQB3u
 drwx------@ 5 I560101  staff  160 Aug  1 09:37 /var/folders/nd/_55d26s936d0fb_5l9s00t980000gn/T/mknoon-group-reaction-notification-state-CZjnKQ
--rw-r--r--@ 1 I560101  staff  115867136 Aug  1 09:20 /var/folders/nd/_55d26s936d0fb_5l9s00t980000gn/T/mknoon-group-reaction-notification-state-CZjnKQ/21071FDF600CSC/private-data.tar
+-rw-r--r--@ 1 I560101  staff  115867136 Aug  1 09:20 /var/folders/nd/_55d26s936d0fb_5l9s00t980000gn/T/mknoon-group-reaction-notification-state-CZjnKQ/<pixel-6-serial>/private-data.tar
 -rw-r--r--@ 1 I560101  wheel  115867136 Aug  1 09:46 /tmp/device_verify.tar
--rw-r--r--@ 1 I560101  staff  115867136 Aug  1 10:08 /var/folders/nd/_55d26s936d0fb_5l9s00t980000gn/T/mknoon-group-reaction-notification-state-4CATff/21071FDF600CSC/private-data.tar
-A=CZjnKQ-backup: 137 real members path=/var/folders/nd/_55d26s936d0fb_5l9s00t980000gn/T/mknoon-group-reaction-notification-state-CZjnKQ/21071FDF600CSC/private-data.tar
+-rw-r--r--@ 1 I560101  staff  115867136 Aug  1 10:08 /var/folders/nd/_55d26s936d0fb_5l9s00t980000gn/T/mknoon-group-reaction-notification-state-4CATff/<pixel-6-serial>/private-data.tar
+A=CZjnKQ-backup: 137 real members path=/var/folders/nd/_55d26s936d0fb_5l9s00t980000gn/T/mknoon-group-reaction-notification-state-CZjnKQ/<pixel-6-serial>/private-data.tar
 B=device-recut-0746Z: 137 real members path=/tmp/device_verify.tar
-C=newest-backup: 137 real members path=/var/folders/nd/_55d26s936d0fb_5l9s00t980000gn/T/mknoon-group-reaction-notification-state-4CATff/21071FDF600CSC/private-data.tar
+C=newest-backup: 137 real members path=/var/folders/nd/_55d26s936d0fb_5l9s00t980000gn/T/mknoon-group-reaction-notification-state-4CATff/<pixel-6-serial>/private-data.tar
 --- A=CZjnKQ-backup vs B=device-recut-0746Z ---
   name SEQUENCE identical: False
   name MULTISET identical: True

@@ -11,7 +11,7 @@
 | Created | 2026-09-02 |
 | Product scope | UI-24 1:1 foreground audio calls on Android |
 | Required device topology | One USB-connected physical Android plus one Android emulator |
-| Current pinned tuple | Callee: Pixel 6, 21071FDF600CSC, Android 16/API 36; caller: emulator-5554, Android 17/API 37 |
+| Current pinned tuple | Callee: Pixel 6, <pixel-6-serial>, Android 16/API 36; caller: emulator-5554, Android 17/API 37 |
 | Required relay topology | Local production libp2p signaling relay plus local coturn; no EC2 relay fallback |
 | Required Go toolchain | GOTOOLCHAIN=go1.25.0 for every Go command and child process |
 | Dependencies | VC2-01 through VC2-04 production call stack; existing Sims build cache and Android device runners |
@@ -250,7 +250,7 @@ TC-399-14:
 
 TC-399-15:
 
-    RELIABILITY_MULTI_DEVICE_IDS=21071FDF600CSC,emulator-5554 GOTOOLCHAIN=go1.25.0 dart run integration_test/scripts/run_production_audio_call_sims.dart --mode major --scenario android.production_1to1_audio_call
+    RELIABILITY_MULTI_DEVICE_IDS=<pixel-6-serial>,emulator-5554 GOTOOLCHAIN=go1.25.0 dart run integration_test/scripts/run_production_audio_call_sims.dart --mode major --scenario android.production_1to1_audio_call
 
 TC-399-16:
 
@@ -518,7 +518,7 @@ Current discovery on 2026-09-02:
 
 | Role | Kind | ID | OS |
 |---|---|---|---|
-| Callee | USB physical Pixel 6 | 21071FDF600CSC | Android 16, API 36 |
+| Callee | USB physical Pixel 6 | <pixel-6-serial> | Android 16, API 36 |
 | Caller | Android Emulator | emulator-5554 | Android 17, API 37 |
 
 Preflight commands:
@@ -528,7 +528,7 @@ Preflight commands:
     GOTOOLCHAIN=go1.25.0 go version
     docker version
 
-The runner must verify that 21071FDF600CSC is not QEMU and emulator-5554 is QEMU. It must reject duplicate, implicit, offline, unauthorized, or wrong-kind targets.
+The runner must verify that <pixel-6-serial> is not QEMU and emulator-5554 is QEMU. It must reject duplicate, implicit, offline, unauthorized, or wrong-kind targets.
 
 If the current tuple is unavailable, the execution owner may substitute only another currently available explicit physical-Android/emulator pair and must record both exact IDs. An unavailable iPhone is irrelevant to this closure.
 
@@ -668,7 +668,7 @@ Full host-all is intentionally not a per-plan gate. It remains required once aft
 
 Run exactly:
 
-    RELIABILITY_MULTI_DEVICE_IDS=21071FDF600CSC,emulator-5554 PLAN399_FIXTURE_HOST_IP=192.168.0.60 GOTOOLCHAIN=go1.25.0 dart run integration_test/scripts/run_production_audio_call_sims.dart --mode major --scenario android.production_1to1_audio_call
+    RELIABILITY_MULTI_DEVICE_IDS=<pixel-6-serial>,emulator-5554 PLAN399_FIXTURE_HOST_IP=192.168.0.60 GOTOOLCHAIN=go1.25.0 dart run integration_test/scripts/run_production_audio_call_sims.dart --mode major --scenario android.production_1to1_audio_call
 
 Pass requires:
 
@@ -731,7 +731,7 @@ Forbidden closure wording includes claims that every phone/OS works, that EC2 wa
 | PH-399-03 local relay/coturn fixture | Complete | One disposable miniredis plus production libp2p relay and pinned coturn `4.17.2-r0` fixture issues fresh REST credentials, forces local TURN, binds evidence to the dynamic authority and actual per-run container identity, and tears down cleanly under Go 1.25.0. |
 | PH-399-04 Pion oracle | Complete | Test-only Pion `v4.2.19` forwards the pinned license-free Opus fixture as exactly 33 ordered RTP payloads in each direction through the same `turn_udp` authority/instance and verifies codec, count, order, and payload hash. |
 | PH-399-05 read-only app observer | Complete | Default-off app-owned observation has no call-control authority, binds readiness to the exact local recipient device/key epoch, and sticky-retains inbound/outbound RTP observations independently on each endpoint. |
-| PH-399-06 production device campaign | Complete | Pixel 6 `21071FDF600CSC` as physical callee and `emulator-5554` as emulator caller passed the zero-touch production call/native-Answer/connected-RTP/control/cleanup campaign on the exact local `turn_udp` fixture. |
+| PH-399-06 production device campaign | Complete | Pixel 6 `<pixel-6-serial>` as physical callee and `emulator-5554` as emulator caller passed the zero-touch production call/native-Answer/connected-RTP/control/cleanup campaign on the exact local `turn_udp` fixture. |
 | PH-399-07 registration | Complete | Scenario, cached build profile, validators, dispatcher, and host tests are registered. |
 | PH-399-08 gates/device closure | Complete | Post-instance-binding focused Flutter owners: 56 passed and 1 intentional live-fixture skip; exact tagged combined fixture, oracle race/vet/module, full relay Go suite, and full `go-mknoon` suite passed with Go 1.25.0. Final `1to1`: 188 paths, 3,180 passed, 4 skipped. Final `core-host-all`: 441 Flutter paths/3,682 passed plus 2 manifest contracts. Final `feature-host-all`: 897 paths/10,004 passed/11 skipped. Device campaign: 27/27 assertions; combined relay/coturn/Pion fixture PASS in 346.91 s. Scoped analysis, format, affected analysis, and diff hygiene passed. |
 
@@ -747,11 +747,11 @@ Historical non-closing structural device evidence (2026-09-02T22:16:11Z):
 
 Final bounded device-closure evidence (reported 2026-09-02T23:51:51.236452Z / executed 2026-09-03 local time):
 
-- Command: `RELIABILITY_MULTI_DEVICE_IDS=21071FDF600CSC,emulator-5554 PLAN399_FIXTURE_HOST_IP=192.168.0.60 GOTOOLCHAIN=go1.25.0 dart run integration_test/scripts/run_production_audio_call_sims.dart --mode major --scenario android.production_1to1_audio_call`; exit 0.
+- Command: `RELIABILITY_MULTI_DEVICE_IDS=<pixel-6-serial>,emulator-5554 PLAN399_FIXTURE_HOST_IP=192.168.0.60 GOTOOLCHAIN=go1.25.0 dart run integration_test/scripts/run_production_audio_call_sims.dart --mode major --scenario android.production_1to1_audio_call`; exit 0.
 - Artifact: `build/sims/proofs/android.production_1to1_audio_call/android.production_1to1_audio_call-1788393111156113-3954.json`
 - Artifact SHA-256: `1620d26f44c7e571bef09ef58a98ddc52dc663aff4ab9a7a799548378e481822`
 - APK SHA-256: `2e55709b22e274fedd88cf541f4d3b2fd744bd4a123a3f327f3748b91a097884`; profile SHA-256: `9ca41d52815afb36657ad02551b493c9c46c986b0f8641d477d7e99da4bfa2dc`; `sameApkBothTargets=true`. The combined run built once with no cache hit, then the device phase reused that exact artifact.
-- Devices: emulator caller `emulator-5554`, Android 17/API 37; physical callee Pixel 6 `21071FDF600CSC`, Android 16/API 36.
+- Devices: emulator caller `emulator-5554`, Android 17/API 37; physical callee Pixel 6 `<pixel-6-serial>`, Android 16/API 36.
 - Safe fixture bindings: local relay identity `25d04ab4911f2bbb4f99a86c64b13e8e65b746088f7f4cf0d09c09c9dd11a733`; dynamic TURN authority `24a31b9c304e6eb4bbda5df2b539afa0c10551aac146e2f40d6e86086d9ce75e`; coturn-instance identity `134dc8f8fc0b2556c8c2df494ad5aa7253dcb41db8648ca53d63a2fb70cdfd9b`.
 - Both production endpoints reported `inboundAudioRtpObserved=true`, `outboundAudioRtpObserved=true`, relay-only selection, and exact `turn_udp`. Caller states were outgoing/ringing/accepted/connected/terminal; callee states were ringing/accepted/connected/terminal.
 - Native Answer, active-call surfaces, structural media readiness, Mute, Speaker, Hangup, terminal convergence, active-surface dismissal, native-call release, app restoration, and fixture cleanup all passed.

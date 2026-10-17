@@ -255,7 +255,7 @@ The implementing agent runs the full loop end-to-end on a **USB-connected Androi
 
 ```bash
 # 0) Rig discovery
-adb devices -l                 # e.g. USB device serial 21071FDF600CSC + emulator-5554
+adb devices -l                 # e.g. USB device serial <pixel-6-serial> + emulator-5554
 flutter devices
 
 # 1) Host gates (dev rig has Go; the GOTOOLCHAIN pin is mandatory — Go 1.26.x quic-go panic)

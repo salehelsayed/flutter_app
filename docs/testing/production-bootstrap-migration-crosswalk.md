@@ -1049,7 +1049,7 @@ With the repository Flutter SDK and installed Maestro 2.10.0 on `PATH`, all
 four Wave 2 campaigns are blocked only by the absent isolated
 device/account/service configuration. The current live matrix recorded in
 `device-preflight-001/devices.json` contains the USB Pixel 6
-`21071FDF600CSC` and Android emulator `emulator-5556`, both Android 17/API 37.
+`<pixel-6-serial>` and Android emulator `emulator-5556`, both Android 17/API 37.
 `tool/testing/config.local.json` is absent, and no campaign was launched or
 device state changed. Prior failed attempts and their cleanup evidence remain
 unchanged; candidate successes have not been promoted to integrated-main proof.
@@ -1062,7 +1062,7 @@ existing ignored configuration was accepted in
 with no reported Wave 2 campaign setup reason. That preview did not execute a
 scenario or establish provider delivery. The continuation uses a separately
 verified, ignored configuration pinned to the currently available USB Android
-`21071FDF600CSC` and emulator `emulator-5554`. Its exact path and campaign
+`<pixel-6-serial>` and emulator `emulator-5554`. Its exact path and campaign
 receipts are recorded in the continuation section below.
 
 ## Wave 2 continuation — verified device evidence
@@ -1073,7 +1073,7 @@ The continuation used detached candidate
 --local`. Its ignored device configuration is
 `.codex-test-logs/production-bootstrap-migration-20260928/wave2-continuation-001/provider-device-config-emulator-5554.json`
 (SHA-256 `38a3095fa6210407423372aaacfe9eaa66a81d3d05cce8e8cf551c3404cfb5c2`).
-The verified pair is USB Android `21071FDF600CSC` and available Android
+The verified pair is USB Android `<pixel-6-serial>` and available Android
 emulator `emulator-5554`. The sender profile is `android.e2e.main` with package
 `com.mknoon.sims.connectivity`; notification receivers use additive
 `android.production_fcm.journey` with package `com.mknoon.app`. The private
@@ -1154,7 +1154,7 @@ the additive `android.production_fcm.journey` receiver artifact SHA-256 is
 The two original cold builds are retained under `wave2-frozen-022/`; these
 final-source runs demonstrate unchanged compatible artifact reuse. Each
 final proof has `cleanup.json` with `exactRestorationVerified: true` for
-`21071FDF600CSC` and `emulator-5554`.
+`<pixel-6-serial>` and `emulator-5554`.
 
 These `--only` wrapper invocations intentionally leave other selected checks
 `NOT RUN`; their overall `BLOCKED` status is not a failing campaign oracle.
@@ -1229,7 +1229,7 @@ preserved; no notification-open assertion ran in that attempt.
 
 ## 2026-09-29 integrated-main device continuation
 
-The user authorized taking over USB Pixel `21071FDF600CSC`. The active Appium
+The user authorized taking over USB Pixel `<pixel-6-serial>`. The active Appium
 instrumentation on that phone was released; other Appium services and devices
 were left alone. All subsequent Wave 2 campaigns targeted only that Pixel
 and `emulator-5554` through the ignored pinned device configuration. On source
@@ -1344,7 +1344,7 @@ The bounded system-audio positive control in
 Settings notification previews; its two signal windows matched the device's
 SoundPicker MediaPlayer starts after the measured capture latency. This proved
 the global recorder could see those previews, not that it captured S16. One
-fresh full sound attempt used the same pinned USB Pixel `21071FDF600CSC` and
+fresh full sound attempt used the same pinned USB Pixel `<pixel-6-serial>` and
 `emulator-5554` and the ignored provider device configuration. Its two APK
 digests remained `3b2729fd2b9d9d0330aa827daf8d836687848b460218a37371c56b92d99d5a1e`
 and `51e19f1740ac2054c0c257e3acb310184d601b54ba7fc58d007cca8c4bc83211`;
@@ -1432,7 +1432,7 @@ The run used `docker-ws/run_wave1_foreground_group_push.sh` on the Mac:
 `mknoon_checks.py run --mode change --base 06d5ab5704cf0106e730f0dab17b0abfd645fe7c --local --only production-foreground-group-push`
 with the Wave 2 device configuration
 `wave2-continuation-001/provider-device-config-emulator-5554.json`. Targets were
-USB Pixel 6 `21071FDF600CSC` (`android_physical`) and `emulator-5554` (AVD
+USB Pixel 6 `<pixel-6-serial>` (`android_physical`) and `emulator-5554` (AVD
 `Pixel_7`, `android_emulator`).
 
 The first attempt, `production-bootstrap-migration-20260930/wave1-rerun-20260930T141159Z/`,
@@ -1477,7 +1477,7 @@ The five implemented Wave 3 campaigns then ran through
 `mknoon_checks.py run --mode change --base 06d5ab5704cf0106e730f0dab17b0abfd645fe7c --local --only production-group-invites,production-group-create,production-group-reaction,production-group-reaction-toggle,production-group-removed-reaction`
 with the ignored three-Android configuration
 `production-bootstrap-migration-20260930/wave3-device-config.json`: USB Pixel 6
-`21071FDF600CSC` (`android_physical`), `emulator-5554` AVD `Pixel_7`
+`<pixel-6-serial>` (`android_physical`), `emulator-5554` AVD `Pixel_7`
 (`android_emulator`) and `emulator-5556` AVD `Pixel_6a`
 (`android_emulator_second`). A first attempt, `wave3-run-20260930T150250Z/`,
 stopped before any device step with `Unknown/unselected --only check` because
@@ -1489,7 +1489,7 @@ Receipts are under `production-bootstrap-migration-20260930/wave3-run-20260930T1
 
 | Check | Original catalog obligations | Proof | Result |
 |---|---|---|---|
-| `production-group-invites` | F decline acknowledgement, C exact invite revocation, D metadata convergence | `build/sims/proofs/production.group_invite_reliability/attempt-NWQVTX/` | PASS, 3 assertions, 232.6 s; cleanup exact on `21071FDF600CSC` + `emulator-5554`. |
+| `production-group-invites` | F decline acknowledgement, C exact invite revocation, D metadata convergence | `build/sims/proofs/production.group_invite_reliability/attempt-NWQVTX/` | PASS, 3 assertions, 232.6 s; cleanup exact on `<pixel-6-serial>` + `emulator-5554`. |
 | `production-group-create` | ML-001 create/two pending invites/accept/readable joins/exact message; KE-001 initial epoch | `.../production.group_catalog.private_abc_create/attempt-6YZpQ2/` | PASS, 4 assertions, 313.6 s; cleanup exact on all three devices. |
 | `production-group-reaction` | PL-009 target send, reaction send outcome, two receiver streams, exact persisted reactions | `.../production.group_catalog.private_reaction_roundtrip/attempt-Sj0QVE/` | PASS, 5 assertions, 318.7 s; cleanup exact on all three. |
 | `production-group-reaction-toggle` | RT-001 target send, add/remove/re-add returns, two 500 ms intervals, two receiver removal streams, exact final SQL | `.../production.group_catalog.private_reaction_toggle_convergence/attempt-9eIMQq/` | PASS, 5 assertions, 297.7 s; cleanup exact on all three. |
@@ -1540,7 +1540,7 @@ Host: analysis clean; 92 focused tests passed; curated `workflow`,
 `group-media-schema-contract`, `notification-payload-harness-contract` and
 `notifications` passed (`production-bootstrap-migration-20260930/matrix-host-20260930T155149Z/`).
 
-Device (USB Pixel 6 `21071FDF600CSC` creator, `emulator-5554` Pixel_7 member):
+Device (USB Pixel 6 `<pixel-6-serial>` creator, `emulator-5554` Pixel_7 member):
 `wave3-run-20260930T155613Z/` PASS, two cases, oracle `failures: []`, one
 build, 232.8 s; proof `build/sims/proofs/production.group_invite_status_matrix/attempt-PCoVbr/`;
 both Maestro flows `SUCCESS`; `cleanup.json` exact on both devices.
@@ -2612,9 +2612,9 @@ visible; the startup/resume result still needs final-candidate reconciliation.
 
 ## 2026-10-05 Wave 4 device results
 
-Devices: physical Pixel 6 `21071FDF600CSC` (alice) and `emulator-5554`
+Devices: physical Pixel 6 `<pixel-6-serial>` (alice) and `emulator-5554`
 Pixel_7 (bob), each measured run alone on the Mac with the emulator window
-visible; iPhone 11 `00008030-001A6D2801BB802E` for the shared-XCTest caller
+visible; iPhone 11 `<iphone-11-udid>` for the shared-XCTest caller
 (user approved; Appium's WebDriverAgent on that phone was stopped first, at
 the user's choice). Quiet wait between runs: 1 minute (user, 2026-10-05).
 

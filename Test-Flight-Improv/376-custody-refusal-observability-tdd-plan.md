@@ -212,8 +212,8 @@ git diff --check
 
 - **Profile:** paired-device + controlled-relay.
 - **Boundary being proven:** a recipient in real Doze loses its relay connection, and the sender's behavior against a *refusing* relay cannot be reproduced at any host tier — the live failure only appeared once the recipient's dial failed with `no good addresses` while rendezvous still advertised it as present.
-- **Live availability check:** `flutter devices --machine`, `adb devices` → observed 2026-08-16: physical Pixel 6 `21071FDF600CSC` and emulator `emulator-5554`.
-- **Pinned targets:** physical Android `21071FDF600CSC` (recipient — real Doze, the stated physical-topology reason an emulator cannot reproduce) + Android emulator `emulator-5554` (sender). This is the two-peer default; no iOS leg is required because nothing here is iOS-specific.
+- **Live availability check:** `flutter devices --machine`, `adb devices` → observed 2026-08-16: physical Pixel 6 `<pixel-6-serial>` and emulator `emulator-5554`.
+- **Pinned targets:** physical Android `<pixel-6-serial>` (recipient — real Doze, the stated physical-topology reason an emulator cannot reproduce) + Android emulator `emulator-5554` (sender). This is the two-peer default; no iOS leg is required because nothing here is iOS-specific.
 - **Automation:** every step harness-driven — install, Doze forcing (`dumpsys deviceidle force-idle`), send, assertion. No user taps.
 - **Closure role:** required closure evidence for U2; supporting evidence for U1.
 - **`FLUTTER_DEVICE_ID`:** host selector only — set it to the emulator, but the physical serial must still be pinned explicitly (and per prior experience, set it whenever several devices are attached or the lane picks the wrong target).

@@ -94,7 +94,7 @@ Deferred / accepted difference:
 Dependencies:
 - Plan 392 is complete and provides state-safe S4/S15/S16 plus recurring typed-reaction proof.
 - Plans 374/375 provide fixed ingress, silent generic fallback, WorkManager, canonical presentation and generic-retirement owners; Plan 384 provides strict-message relay behavior; Plan 389 provides current ordinary group/reaction evidence.
-- Device execution resolved to USB Android `21071FDF600CSC` plus Android emulator `emulator-5554`, real FCM credentials, and zero manual taps. Missing version-specific hardware remained policy-N/A only for that hardware-specific row.
+- Device execution resolved to USB Android `<pixel-6-serial>` plus Android emulator `emulator-5554`, real FCM credentials, and zero manual taps. Missing version-specific hardware remained policy-N/A only for that hardware-specific row.
 - The strict/projection rows used the tested relay-server v1.9.0 boundary. Recovery used a disposable instance of the production relay code with encrypted route state and the wake-outcome ledger in ephemeral Redis. No production deployment or migration was part of this plan.
 
 Stop-if conditions:
@@ -434,7 +434,7 @@ git diff --check
 
 - Profile: availability-bounded paired Android + OS notifications + real FCM. Strict/projection used the tested relay v1.9.0 boundary; recovery used a disposable production-code relay with ephemeral Redis. No staging or production deployment was performed for recovery.
 - Boundary being proven: measured profile-AOT first wake, exact lifecycle suppression/activation, strict direct-inbox message/reaction wakes, killed group photo, attributable live fixed opaque route selection, native silent generic card, WorkManager continuation, separate canonical presentation, exact generic retirement and no-duplicate/tone behavior.
-- Live availability: `flutter devices --machine` / `adb devices` resolved physical `21071FDF600CSC` and emulator `emulator-5554`; every device command was pinned to those IDs.
+- Live availability: `flutter devices --machine` / `adb devices` resolved physical `<pixel-6-serial>` and emulator `emulator-5554`; every device command was pinned to those IDs.
 - Required setup used: unlocked targets, working `adb`, zero active `com.mknoon.app` cards, FCM service account, tested relay binaries/fixtures, isolated writable evidence/report paths, and sufficient backup/build space. Setup/navigation/actions/assertions were harness-driven with no user taps.
 - Two-peer default: USB physical Android sender + Android emulator receiver. TC-393-09 intentionally reverses those two roles because the existing media fixture needs emulator author -> killed physical recipient; it adds no target or second campaign. iPhone is excluded.
 - Closure role: required device evidence. Host/fake tests cannot substitute for relay audience, OS card, profile-AOT or process-death claims.
@@ -471,7 +471,7 @@ git diff --check
 - Causal REDs, preservation sentinels, and every `TC-393-` row were implemented before their production slice and are retained under the exact owners named above.
 - Registration is complete: one strict capability, literal `android.production_fcm.fixed_wake` / `build.android.production_fcm.fixed_wake`, narrowed active recovery ownership, extended projection ownership, and exact support/runtime/proof-binding roots.
 - Migration: none; DB remains v116.
-- Boundary closure: physical `21071FDF600CSC` + emulator `emulator-5554`, real FCM, two distinct profile-AOT artifacts, distinct G30 diagnostic/acceptance reports, and strict/projection/recovery Sims reports. Recovery used an isolated disposable production-code relay with ephemeral Redis rather than a staging/production deployment.
+- Boundary closure: physical `<pixel-6-serial>` + emulator `emulator-5554`, real FCM, two distinct profile-AOT artifacts, distinct G30 diagnostic/acceptance reports, and strict/projection/recovery Sims reports. Recovery used an isolated disposable production-code relay with ephemeral Redis rather than a staging/production deployment.
 - Required Android unresolved evidence: none. Remaining Apple/release/OEM/optional boundaries are recorded in both UI-23 documents and do not reopen this plan.
 
 ## Independent Review Findings

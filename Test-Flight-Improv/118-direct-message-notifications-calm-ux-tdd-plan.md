@@ -283,7 +283,7 @@ Phase 3  (silent variant + channel)           ← independent; can land in paral
 
 ## Device / manual evidence checklist (iPhone13 / Pixel6)
 
-Per project memory: iPhone13 `00008110-…` (use `--profile`/AOT — debug JIT crashes on iOS 26.5), Pixel6 `21071FDF600CSC`.
+Per project memory: iPhone13 `00008110-…` (use `--profile`/AOT — debug JIT crashes on iOS 26.5), Pixel6 `<pixel-6-serial>`.
 
 1. **Live direct notify, resumed-not-viewing** — A on another screen (feed/orbit), B sends a 1:1 message over relay/direct (NOT LAN). A gets ONE notification with sound. Verify on both Pixel6 and iPhone13.
 2. **Burst debounce** — B sends 3 messages within 30s while A is on another screen. A sees ONE updating notification card and hears AT MOST ONE tone (silent updates after). Verify the count/preview reflects the latest message.

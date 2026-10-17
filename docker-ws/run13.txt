@@ -1,4 +1,4 @@
-[connected:00008110-00184D622289801E]
+[connected:<iphone-13-udid>]
 Aug 21 18:36:33.414881 Runner(RunningBoardServices)[3327] <Debug>: PERF: [app<com.mknoon.app(FEEDEEEE-DDDD-CCCC-BBBB-0000000001F5)>:3327] Received message from runningboardd: async_didChangeInheritances:completion:
 Aug 21 18:36:33.415115 Runner(RunningBoardServices)[3327] <Info>: didChangeInheritances
 Aug 21 18:36:33.416457 Runner(RunningBoardServices)[3327] <Debug>: didChangeInheritances: <RBSInheritanceChangeSet| gained:(null) lost:{(
@@ -3182,4 +3182,4 @@ Aug 21 18:50:33.218259 Runner(UIKitCore)[3327] <Notice>: Decrementing reference 
 Aug 21 18:50:33.218366 Runner(UIKitCore)[3327] <Notice>: Will invalidate assertion: <BKSProcessAssertion: 0x109a00e10> for task identifier: 118
 
 Exiting...
-[disconnected:00008110-00184D622289801E]
+[disconnected:<iphone-13-udid>]

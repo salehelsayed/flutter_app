@@ -190,7 +190,7 @@ requires manual two-phone device for closure (the native Kotlin multicast leg is
 **PROD-CRITICAL leg:** TC-180-07 (manual two-phone Pixel→iPhone, native resolver build) is the ONLY path that proves the native
 multicast resolve + the Android Go libp2p `/ip4` dial end-to-end. Host coverage proves the Dart wiring only — do NOT treat host GREEN
 as closure.
-Closure scenario: reuse `179-…-device-proof-runsheet.md` rig (Pixel 6 `adb -s 21071FDF600CSC` + iPhone 11 `00008030-001A6D2801BB802E`,
+Closure scenario: reuse `179-…-device-proof-runsheet.md` rig (Pixel 6 `adb -s <pixel-6-serial>` + iPhone 11 `<iphone-11-udid>`,
 Vodafone-CA38, both apps foreground). Capture on the Pixel: `LOCAL_MDNS_PEER_FOUND{host=<numeric>}` (NOT `serviceBecomesComplete:FALSE`-only),
 `P2P_LAN_PEER_FOUND_REQUEST`, `P2P_LAN_MEDIA_SEND_RESPONSE{ok:true}`. Flag stays dart-define only (do not flip defaults).
 Deferred device work → none beyond TC-180-07/08.

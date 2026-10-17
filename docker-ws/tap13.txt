@@ -1,4 +1,4 @@
-[connected:00008110-00184D622289801E]
+[connected:<iphone-13-udid>]
 Aug 21 18:30:39.636144 Runner(UIKitCore)[3321] <Notice>: Will add backgroundTask with taskName: <private>, expirationHandler: <__NSMallocBlock__: 0x12b6bcf40>
 Aug 21 18:30:39.636355 Runner(UIKitCore)[3321] <Notice>: Creating new assertion because there is no existing background assertion.
 Aug 21 18:30:39.636405 Runner(UIKitCore)[3321] <Notice>: Creating new background assertion
@@ -11853,4 +11853,4 @@ Aug 21 18:35:41.204842 Runner(Network)[3321] <Debug>: nw_channel_remove_input_ha
 Aug 21 18:35:41.205072 Runner(Network)[3321] <Info>: nw_channel_create_block_invoke Channel destroyed with key: 7103C09A-1627-472F-A047-2271E4C1EF77-11 and fd: 17
 
 Exiting...
-[disconnected:00008110-00184D622289801E]
+[disconnected:<iphone-13-udid>]

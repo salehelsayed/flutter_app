@@ -77,7 +77,7 @@ Out of scope:
   engine in the same app process; the existing source comment claiming a
   separate Android process is incorrect.
 - The available proof pair on 2026-08-03 is USB Pixel
-  `21071FDF600CSC` API36 and emulator `emulator-5554` API37.
+  `<pixel-6-serial>` API36 and emulator `emulator-5554` API37.
 
 ## Test Contract
 
@@ -113,9 +113,9 @@ flutter test test/core/notifications/canonical_runtime_lease_test.dart
 GOTOOLCHAIN=go1.25.0 go -C go-mknoon test ./bridge -run 'TestBB001InitializeUpdatesExistingCallbackForFutureGroupEvents|Test.*CallbackAdapter' -count=1
 flutter devices --machine
 adb devices -l
-./scripts/run_android_canonical_runtime_h0_probe.sh 21071FDF600CSC
+./scripts/run_android_canonical_runtime_h0_probe.sh <pixel-6-serial>
 ./scripts/run_android_canonical_runtime_h0_probe.sh emulator-5554
-./scripts/run_android_canonical_runtime_h0_probe.sh 21071FDF600CSC --handoff --process-death
+./scripts/run_android_canonical_runtime_h0_probe.sh <pixel-6-serial> --handoff --process-death
 ./scripts/run_android_canonical_runtime_h0_probe.sh emulator-5554 --handoff --process-death
 ./scripts/run_test_gates.sh runtime-roots
 flutter analyze
@@ -147,7 +147,7 @@ before destroy, and a final released lease. No relay/FCM credential is needed.
 | 2026-08-03 RED | missing seams | Dart lacked `canonical_runtime_lease.dart`; Kotlin lacked broker rebind/work-state seams; debug source checks lacked the receiver, entrypoint, and probe script | implement only the prerequisite broker and no-UI proof surface |
 | 2026-08-03 GREEN | host contracts | exact Dart ownership/migration/identity/background slice: 96 tests passed; exact Kotlin broker/lease/probe/shutdown source slice and Go callback/`StopNode_NotStarted` tests passed | proceed to real-boundary H0 |
 | 2026-08-03 GREEN | build boundary | disposable `com.mknoon.app.h0probe` APK assembled with the full Flutter build and Google services disabled; targeted Dart analyze, probe script syntax, and `git diff --check` passed | run against each explicit live Android ID |
-| 2026-08-03 final GREEN | Pixel 6 API36 | recovery-only artifact [`b392c0d8...217ef`](../build/h0-probe/21071FDF600CSC/b392c0d846a65cdc3ae8716e5ead6db8f5ff66efb3c82dab9c3cdf46998217ef.json); handoff/process-death artifact [`98582c60...bbff5`](../build/h0-probe/21071FDF600CSC/98582c602c0da09fecfd0c9ce5603e8f29ed9b87cd09ef0c128befe5ab9bbff5.json), PIDs `23594 -> 23734` | PASS with zero Activity records, generations `[1,2]`, one writer, one read-only peer, final `RELEASED` |
+| 2026-08-03 final GREEN | Pixel 6 API36 | recovery-only artifact [`b392c0d8...217ef`](../build/h0-probe/<pixel-6-serial>/b392c0d846a65cdc3ae8716e5ead6db8f5ff66efb3c82dab9c3cdf46998217ef.json); handoff/process-death artifact [`98582c60...bbff5`](../build/h0-probe/<pixel-6-serial>/98582c602c0da09fecfd0c9ce5603e8f29ed9b87cd09ef0c128befe5ab9bbff5.json), PIDs `23594 -> 23734` | PASS with zero Activity records, generations `[1,2]`, one writer, one read-only peer, final `RELEASED` |
 | 2026-08-03 final GREEN | emulator API37 | recovery-only artifact [`35b2dd0f...357a3`](../build/h0-probe/emulator-5554/35b2dd0fdb024a606b510369f3374f64e0c589163fb8cf9553006dc0e34357a3.json); handoff/process-death artifact [`42a2bb94...61c7`](../build/h0-probe/emulator-5554/42a2bb9452295a32aa63defdc0f8875508db32e3c4685b79087980e5439661c7.json), PIDs `28860 -> 28967` | same exact invariants PASS |
 | 2026-08-03 mutation re-red | visible stale-card ownership sentinel | removing the committed-rotation `retiredRecovery` cancellation made `DroppedPushRecoveryBridgeTest.binding rotation retires marker and cancels its visible card exactly once` fail at its cancellation assertion; restoring it returned GREEN | representative mutation detected; unchanged binding remains a zero-cancel sentinel |
 | 2026-08-03 closure | cleanup | final source digest `9c956aa48a8e6af6d21bbec65dc5ad5458426d1d0c9dcea9bd7c52e99ded8a7d`; APK digest `26323df552b696de1492818c8e75b6cffe02902676880679d8761aa292ef4d36`; disposable package absent on both targets; recovery work remained unactivated in every artifact | H0 passed; unblock only Plan 331's ownership foundation, not production draining/acknowledgement |

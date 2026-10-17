@@ -343,9 +343,9 @@ Status: accepted
   named gates start. Files inspected or touched since last update: this
   GFR-004 plan and `flutter devices --machine` output. Current command
   completed: `flutter devices --machine` passed and listed supported targets:
-  physical `Pixel 6` (`21071FDF600CSC`, Android 16), physical
-  `Saleh’s iPhone` (`00008030-001A6D2801BB802E`, iOS 26.5), physical
-  `iPhone` (`00008110-00184D622289801E`, iOS 26.5), bootable iOS simulators
+  physical `Pixel 6` (`<pixel-6-serial>`, Android 16), physical
+  `Saleh’s iPhone` (`<iphone-11-udid>`, iOS 26.5), physical
+  `iPhone` (`<iphone-13-udid>`, iOS 26.5), bootable iOS simulators
   `UP004 Alice iPhone 17 Pro iOS 26.2`
   (`5A9A8286-001B-4BF1-8F40-5A3AB8BF8FE3`),
   `UP004 Bob iPhone Air iOS 26.2`

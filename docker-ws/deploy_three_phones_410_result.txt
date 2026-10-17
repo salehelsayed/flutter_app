@@ -1,9 +1,9 @@
 === plan 409 deploy (calls in the Orbit rows) ===
 finished 2026-09-05T22:43:07Z at fa12993bd
 
-PIXEL   21071FDF600CSC              1.0.0-fa12993bd.d32.t260906004021 (verified)
-IPHONE  00008030-001A6D2801BB802E   bundleVersion=260906004021 (verified)
-IPHONE  00008110-00184D622289801E   bundleVersion=260906004021 (verified)
+PIXEL   <pixel-6-serial>              1.0.0-fa12993bd.d32.t260906004021 (verified)
+IPHONE  <iphone-11-udid>   bundleVersion=260906004021 (verified)
+IPHONE  <iphone-13-udid>   bundleVersion=260906004021 (verified)
 
 Identities kept. The Pixel app is relaunched by the deploy (it was dead from
 the previous killed-app test).

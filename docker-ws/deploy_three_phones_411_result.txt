@@ -1,9 +1,9 @@
 === plan 410 deploy (unread badge for missed calls) ===
 finished 2026-09-05T23:20:06Z at d5bff5b28
 
-PIXEL   21071FDF600CSC              1.0.0-d5bff5b28.d32.t260906011739 (verified)
-IPHONE  00008030-001A6D2801BB802E   bundleVersion=260906011739 (verified)
-IPHONE  00008110-00184D622289801E   bundleVersion=260906011739 (verified)
+PIXEL   <pixel-6-serial>              1.0.0-d5bff5b28.d32.t260906011739 (verified)
+IPHONE  <iphone-11-udid>   bundleVersion=260906011739 (verified)
+IPHONE  <iphone-13-udid>   bundleVersion=260906011739 (verified)
 
 Identities kept; all three launched and verified on the first pass.
 CAPTURE_DIR=docker-ws/deploy-captures/fresh-260906012002

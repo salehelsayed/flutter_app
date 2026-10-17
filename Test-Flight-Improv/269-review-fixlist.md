@@ -317,7 +317,7 @@ D4 define-good 68 · D5 tests-verify-the-goal 68.
   The only *captured, confirmed* incident is the sender counter/completion failure, yet its
   device payoff is not observable until step 12 / TC-269-19 — gated behind receiver recovery,
   iOS work and the full two-role harness, none of which the sender fix depends on. Insert step
-  **4b**: a scripted sender-only run on Pixel `21071FDF600CSC` against the real relay (send
+  **4b**: a scripted sender-only run on Pixel `<pixel-6-serial>` against the real relay (send
   JPEG + MP4; assert one publication each, rows `done` with both counters 0, and **zero**
   uploads on the next periodic pass — the exact captured-failure discriminator), marked GO/STOP
   before receiver work starts.

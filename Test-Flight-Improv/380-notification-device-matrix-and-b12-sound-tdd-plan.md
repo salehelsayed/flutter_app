@@ -206,8 +206,8 @@ git diff --check
 ## Device/Relay Proof Profile
 - Profile: paired-device (os-notification device lab), emulator receiver for all four G7 legs (keyguard-free UI automation); Pixel 6 as the second peer.
 - Boundary being proven: OS-level channel/sound truth on the suspended/terminated FCM path; OS permission/channel/idle interaction; live mid-session FCM token rotation.
-- Live availability check: `adb devices -l` (this session): `21071FDF600CSC` (Pixel 6, SDK 36) + `emulator-5554` (SDK 36).
-- Pinned targets: receiver `emulator-5554`, peer `21071FDF600CSC`. Real-radio Doze on the Pixel = optional follow-up (stated physical-topology reason).
+- Live availability check: `adb devices -l` (this session): `<pixel-6-serial>` (Pixel 6, SDK 36) + `emulator-5554` (SDK 36).
+- Pinned targets: receiver `emulator-5554`, peer `<pixel-6-serial>`. Real-radio Doze on the Pixel = optional follow-up (stated physical-topology reason).
 - Automation: fully harness-driven (adb + uiautomator bounded taps; no user interaction).
 - Closure role: required closure evidence for G12 + G7(closable); OEM = typed N/A.
 - `FLUTTER_DEVICE_ID`: host selector only; both ids pinned in campaign argv.
@@ -224,7 +224,7 @@ git diff --check
 ## Live-environment corrections (2026-08-18)
 - **The emulator is Android 17 / SDK 37, not SDK 36.** The plan's Device/Relay Proof Profile
   records both targets as SDK 36; measured today, `emulator-5554` is `ro.build.version.sdk=37`
-  (release 17) and only the Pixel 6 sender `21071FDF600CSC` is SDK 36 (release 16). Every W3
+  (release 17) and only the Pixel 6 sender `<pixel-6-serial>` is SDK 36 (release 16). Every W3
   measurement below was therefore taken on SDK 37 — which is the platform the legs will actually
   run on, so the policy holds, but do not re-derive it against SDK 36.
 - **The Pixel 6 sender is behind a secure keyguard** (`showing=true secure=true`). The campaign

@@ -204,12 +204,12 @@ sim: the known **E8 media-metadata** orchestrator residual) — the **Flutter te
 in both** (Pixel 4/4 self-contained; sim 37/37). Build under test: `e7f9d1b5`.
 
 **FIDELITY SPLIT (do not overclaim):**
-- **E2-A correlation + E2-B latency = REAL DEVICE** (Pixel `21071FDF600CSC`, real relay `mknoun.xyz`).
+- **E2-A correlation + E2-B latency = REAL DEVICE** (Pixel `<pixel-6-serial>`, real relay `mknoun.xyz`).
 - **NC-1 / NC-2 / E2-A live-wins = SIMULATOR** (iPhone 17 Pro) — logic controls only.
 - The sim E2-B latency is **not** a fidelity number; the offline-tail size is the Pixel's.
 
 ```
-REAL DEVICE — Pixel 21071FDF600CSC, relay mknoun.xyz:
+REAL DEVICE — Pixel <pixel-6-serial>, relay mknoun.xyz:
   E2-A: inboxSaves = 30/30 correlated  [BEGIN(id)+CUSTODY(id), via==inbox, path-pinned]   PASS
         liveWins  = 0/0  (CLI peer absent on device — file handshake is sim-only)
   E2-B: send->custody  median = 176 ms , p95 = 845 ms , delivered = 30/30                 PASS

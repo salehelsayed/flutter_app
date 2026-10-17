@@ -25,11 +25,11 @@ Grounding revision: HEAD `ad073dd394849363261fd47104a658108262d868`
 
 | Time | Phase | Files touched | Command/evidence | Decision/blocker | Next |
 |---|---|---|---|---|---|
-| 2026-07-20 21:56 CEST | contract extraction (`git status --short`) | This execution log only | HEAD `19dc1ca3a79277baa7079772352d77190d7c870b`; baseline dirty tree contains only untracked `docker-ws/iphone13_syslog.txt`; `flutter devices --machine` and `adb devices` discovered Android `21071FDF600CSC`, `emulator-5554`, and `emulator-5556` | Preserve the unrelated syslog. Touched-file allow-list is the production, test, l10n, and harness paths enumerated under **Files To Inspect Next**, plus this execution log; any expansion requires a recorded reason | RED tests |
+| 2026-07-20 21:56 CEST | contract extraction (`git status --short`) | This execution log only | HEAD `19dc1ca3a79277baa7079772352d77190d7c870b`; baseline dirty tree contains only untracked `docker-ws/iphone13_syslog.txt`; `flutter devices --machine` and `adb devices` discovered Android `<pixel-6-serial>`, `emulator-5554`, and `emulator-5556` | Preserve the unrelated syslog. Touched-file allow-list is the production, test, l10n, and harness paths enumerated under **Files To Inspect Next**, plus this execution log; any expansion requires a recorded reason | RED tests |
 | 2026-07-20 to 2026-07-21 | RED/implementation slices | v102 migration/schema helpers; protected group persistence and accepted-reentry phases; B3 terminalization; parent/write/lifecycle/send/retry CAS guards; local-only shell cleanup and four UI routes; projection backfills; l10n; focused tests | Each causal TC was introduced before its production slice and observed failing on the missing API, state transition, or assertion. Named mutation probes restored the old writer/routing/terminalization behavior and re-established the corresponding failure before the implementation was restored. Early captured examples include `/tmp/plan263_listener.log` and `/tmp/plan263_media_retry.log`. | The writer census required shared retry/projection helpers, the conversation media repository, parent guards, lifecycle runners, and their fixtures. No wire, bridge, native-handler, relay, or Go production scope was added. | Direct GREEN |
 | 2026-07-21 00:31 CEST | direct GREEN | Focused production and test scope above | Focused migration, helper, model, repository, listener, invite/accept/join, cleanup, lifecycle, projection, UI, and localization suites passed. Additional preservation batches passed: conversation 213 tests, membership smoke 91, resume recovery 92, and projection lifecycle 17. | All causal contracts green, including queue-owned notification/authored-target backfills and the non-rearmable no-evidence retry control. | Preservation |
 | 2026-07-21 00:58 CEST | preservation GREEN | Tests and fixtures only | Voluntary leave, dissolve, accepted re-invite, pending-role, last-admin/sole-admin, stale-completion, and ordinary active-member/excluded-row controls passed in focused suites and the canonical `groups` lane. | Existing membership and exit behavior preserved. | Named gates |
-| 2026-07-21 01:42 CEST | named gates | `scripts/run_test_gates.sh`, Android integration proof, and registered tests | `./scripts/run_test_gates.sh groups`: 2607 Flutter tests plus bridge/relay checks passed; `./scripts/run_host_test_gates.sh core-host-all --batch-flutter --concurrency 4 --reporter failures-only`: 2703 tests across 341 paths plus Android renderer contracts passed; Pixel 6 `21071FDF600CSC`: SQLCipher proof 1/1; `flutter analyze`: no issues; completeness: 1328/1328 classified; discovery listed the Plan-263 device row; tracked/new-file whitespace checks were clean. | Required per-plan gates are green; full `host-all` correctly remains a wave/release gate. | Independent QA |
+| 2026-07-21 01:42 CEST | named gates | `scripts/run_test_gates.sh`, Android integration proof, and registered tests | `./scripts/run_test_gates.sh groups`: 2607 Flutter tests plus bridge/relay checks passed; `./scripts/run_host_test_gates.sh core-host-all --batch-flutter --concurrency 4 --reporter failures-only`: 2703 tests across 341 paths plus Android renderer contracts passed; Pixel 6 `<pixel-6-serial>`: SQLCipher proof 1/1; `flutter analyze`: no issues; completeness: 1328/1328 classified; discovery listed the Plan-263 device row; tracked/new-file whitespace checks were clean. | Required per-plan gates are green; full `host-all` correctly remains a wave/release gate. | Independent QA |
 | 2026-07-21 02:03 CEST | QA (independent) | Production/test/gate registration scope and this execution record | Independent implementation audit passed after the queue-owned projection fix. Closure audit found five missing suite registrations and an excluded-row gap in device proof; both were corrected and re-run. Listener-flake audit confirmed the bounded test poll matched the fire-and-forget production contract. `./graphify-arch/refresh_arch_graph.sh --incremental` completed once: 58,824 nodes, 90,415 edges, and a refreshed 1,429-file TDD overlay; the affected query completed for the changed app-owned surfaces. | No blocking findings or required follow-ups remain. Unrelated dirty files were preserved. | Accepted |
 
 ## Source Of Truth
@@ -357,11 +357,11 @@ The product behavior is Flutter/application-local and needs no two-peer journey.
 
 Live discovery on 2026-07-20 found:
 
-- Physical Android Pixel 6: `21071FDF600CSC` (Android 16 / API 36)
+- Physical Android Pixel 6: `<pixel-6-serial>` (Android 16 / API 36)
 - Android emulators: `emulator-5554` (API 35), `emulator-5556` (API 37)
 - Available iOS devices/simulator also exist but are not relevant to this non-iOS-specific DB boundary.
 
-PROD-CRITICAL closure leg: `flutter test -d 21071FDF600CSC integration_test/group_self_removed_marker_sqlcipher_proof_test.dart`.
+PROD-CRITICAL closure leg: `flutter test -d <pixel-6-serial> integration_test/group_self_removed_marker_sqlcipher_proof_test.dart`.
 
 At execution, re-run `flutter devices --machine`, `adb devices`, and (only if an iOS-specific question appears) `xcrun simctl list devices available`; pin every command to a discovered ID. If the named Pixel is no longer present, use another currently discovered Android target and record the exact ID. An unavailable OS/API band is `N/A (target unavailable by project policy)`, not a reason to wait for specific hardware.
 
@@ -389,7 +389,7 @@ adb devices
 flutter test test/core/database/migrations/102_groups_self_removed_at_test.dart
 # TC-02 RED: use this ID if still discovered; otherwise substitute another
 # explicitly discovered Android ID. Record N/A only when no Android exists.
-flutter test -d 21071FDF600CSC integration_test/group_self_removed_marker_sqlcipher_proof_test.dart
+flutter test -d <pixel-6-serial> integration_test/group_self_removed_marker_sqlcipher_proof_test.dart
 flutter test test/features/groups/domain/models/group_model_test.dart --plain-name 'self_removed_at round-trips a non-null authority marker'
 flutter test test/features/groups/domain/models/group_model_test.dart --plain-name 'copyWith can explicitly clear self_removed_at'
 flutter test test/core/database/helpers/groups_db_helpers_test.dart --plain-name 'ordinary full-row update preserves removal authority and membership watermark while accepted replacement clears and advances'
@@ -462,7 +462,7 @@ flutter test test/features/groups/presentation/group_list_wired_test.dart --plai
 # PROD-CRITICAL: use this ID if still discovered, otherwise substitute another
 # explicitly discovered Android ID; expect 1/1. If none exists, record N/A
 # (target unavailable by project policy); do not wait or substitute iOS.
-flutter test -d 21071FDF600CSC integration_test/group_self_removed_marker_sqlcipher_proof_test.dart
+flutter test -d <pixel-6-serial> integration_test/group_self_removed_marker_sqlcipher_proof_test.dart
 
 # Generated-copy idempotence and hygiene; expect no generated diff drift and
 # zero new analyze issues.

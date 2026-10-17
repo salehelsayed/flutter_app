@@ -30,7 +30,7 @@ Migration owner: none; Plan 234 retains landed DB v100 exclusively and Plan 238 
   against the current additive shared-viewer action contract rather than the
   pre-Plan-247 viewer snapshot.
 - Planning-time availability on 2026-07-12 included physical Android
-  `21071FDF600CSC`, Android emulator `emulator-5554`, and available iOS
+  `<pixel-6-serial>`, Android emulator `emulator-5554`, and available iOS
   simulators. These are observations, not immutable gate inputs. Execution
   must discover and pin the then-live IDs.
 
@@ -936,7 +936,7 @@ Review all accept with no unresolved Plan-234-owned item.
   compose/ingress/notification/encryption `327/327`,
   lifecycle/cleanup/restart/storage/delete `72/72`, and the mandatory complete
   download suite `68/68`.
-- The first automated Android pair used physical sender `21071FDF600CSC` and
+- The first automated Android pair used physical sender `<pixel-6-serial>` and
   emulator recipient `emulator-5554` and emitted artifact SHA-256
   `334dcc440d7448294c4812648cc50905cbe7d53205ebd74914068a98b809fe5d`.
   Independent plan review rejected that proof as theatrical: its two role
@@ -1003,7 +1003,7 @@ Review all accept with no unresolved Plan-234-owned item.
   `07244188185e60b69a376dfbdc7bc7a5d427d50d479fb6907898c4dabe6188d8`,
   and iOS-availability SHA-256
   `171b25d560b811df5150740118c5165277626b40b7291123be2853a5884f0cef`.
-  The selected targets remained USB physical Android `21071FDF600CSC` and
+  The selected targets remained USB physical Android `<pixel-6-serial>` and
   Android emulator `emulator-5554` before and after the final run.
 - The first pass-2 pair attempt correctly failed closed with no artifact when
   the recipient exited 1. Bounded direct triage localized the failure to the
@@ -1033,7 +1033,7 @@ Review all accept with no unresolved Plan-234-owned item.
 - Native and device evidence passed: Android protection `5/5` plus
   `compileDebugKotlin`; full iOS `NotificationPreviewResolverTests` `30/30`,
   coordinator `4/4`, and project checks; Android SQLCipher `1/1` and platform
-  protection `1/1` on physical target `21071FDF600CSC`; iOS SQLCipher `1/1`
+  protection `1/1` on physical target `<pixel-6-serial>`; iOS SQLCipher `1/1`
   and platform protection `1/1` on simulator
   `674DFFF6-5F38-4235-93F6-AF7FBF86AE65`.
 - The final registration and hygiene pass found current 1:1 inventory `90`,

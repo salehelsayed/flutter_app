@@ -1,8 +1,8 @@
 # Plan 414 device E2E (2026-10-10)
 
 Builds (worktree commit 44d01720b, data and identity kept, user approved):
-- Pixel 6 `21071FDF600CSC`: `1.0.0-44d01720b.d11.pdf414.t261010154455` (debug APK, `MKNOON_ENABLE_DOCUMENT_ATTACHMENTS=true`), verified.
-- iPhone 13 `00008110-00184D622289801E`: `1.0.04401720.13.414.261010154746`, bundleVersion 261010154746 (release flowlog, same define), verified. This build compiles the new Swift Quick Look code.
+- Pixel 6 `<pixel-6-serial>`: `1.0.0-44d01720b.d11.pdf414.t261010154455` (debug APK, `MKNOON_ENABLE_DOCUMENT_ATTACHMENTS=true`), verified.
+- iPhone 13 `<iphone-13-udid>`: `1.0.04401720.13.414.261010154746`, bundleVersion 261010154746 (release flowlog, same define), verified. This build compiles the new Swift Quick Look code.
 
 | # | Case | Result | Evidence |
 |---|---|---|---|

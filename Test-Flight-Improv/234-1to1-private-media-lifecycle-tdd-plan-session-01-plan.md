@@ -110,7 +110,7 @@ Representative mutations that must fail: missing policy defaults to protected; u
   - `adb devices`
   - `xcrun simctl list devices available`
 - Expected bounded targets for this run:
-  - Android physical: `21071FDF600CSC`
+  - Android physical: `<pixel-6-serial>`
   - Android emulator supporting automation/secondary confidence: `emulator-5554`
   - iOS simulator: `674DFFF6-5F38-4235-93F6-AF7FBF86AE65`
 - Required closure proof: run `integration_test/direct_private_media_lifecycle_sqlcipher_proof_test.dart` with `flutter test -d <explicit-id>` once on the available Android physical target and once on the available iOS simulator. The Android emulator is supporting unless the physical target is unavailable.
@@ -133,7 +133,7 @@ flutter test test/core/database/integration/full_migration_chain_test.dart
 flutter devices --machine
 adb devices
 xcrun simctl list devices available
-flutter test integration_test/direct_private_media_lifecycle_sqlcipher_proof_test.dart -d 21071FDF600CSC
+flutter test integration_test/direct_private_media_lifecycle_sqlcipher_proof_test.dart -d <pixel-6-serial>
 flutter test integration_test/direct_private_media_lifecycle_sqlcipher_proof_test.dart -d 674DFFF6-5F38-4235-93F6-AF7FBF86AE65
 
 flutter test test/features/conversation/integration/one_to_one_media_encryption_round_trip_test.dart
@@ -150,7 +150,7 @@ No `core-host-all`, `feature-host-all`, or full `host-all` is a Session-01 gate.
 ## Validated Execution Contract
 
 - Source of truth: this execution-safe Session 01 plan plus accepted decisions D-234-01..08 in `234-1to1-private-media-lifecycle-tdd-plan.md`; higher-precedence `AGENTS.md` availability and gate-cadence rules apply.
-- Closure bar: every Done Criterion below, every exact direct command and named gate above, Android `21071FDF600CSC` plus iOS simulator `674DFFF6-5F38-4235-93F6-AF7FBF86AE65` SQLCipher proof, and an independent QA pass with no blocking finding.
+- Closure bar: every Done Criterion below, every exact direct command and named gate above, Android `<pixel-6-serial>` plus iOS simulator `674DFFF6-5F38-4235-93F6-AF7FBF86AE65` SQLCipher proof, and an independent QA pass with no blocking finding.
 - Production owner files: new `private_media_policy.dart` and migration 100; `message_payload.dart`; `conversation_message.dart`; `messages_db_helpers.dart`; `app_database_version.dart`; `production_migration_registry.dart`. Current source verifies `message_repository_impl.dart` already delegates through complete `toMap`/`fromMap`, and `main.dart` already delegates to the shared version/registry, so neither requires an edit unless a causal RED disproves that seam.
 - RED-first regressions: the six named host files in Acceptance Gates plus the new Android/iOS SQLCipher proof; ordinary encrypted-media round-trip is the exact preservation sentinel. No regression is `none`.
 - Gate/registration owner files: both 1:1 arrays in `scripts/run_test_gates.sh` and `scripts/run_host_test_gates.sh`, plus the exact SQLCipher device record in `Test-Flight-Improv/test-gate-definitions.md`.
@@ -179,7 +179,7 @@ No `core-host-all`, `feature-host-all`, or full `host-all` is a Session-01 gate.
 | Full migration chain | `flutter test test/core/database/integration/full_migration_chain_test.dart` | passed (15 tests) | live command output |
 | Ordinary preservation | `flutter test test/features/conversation/integration/one_to_one_media_encryption_round_trip_test.dart` | passed | live command output |
 | Availability | `flutter devices --machine`; `adb devices`; `xcrun simctl list devices available` | passed; all required explicit IDs available | live command output |
-| Android SQLCipher | `flutter test integration_test/direct_private_media_lifecycle_sqlcipher_proof_test.dart -d 21071FDF600CSC` | passed | live device output |
+| Android SQLCipher | `flutter test integration_test/direct_private_media_lifecycle_sqlcipher_proof_test.dart -d <pixel-6-serial>` | passed | live device output |
 | iOS SQLCipher | `flutter test integration_test/direct_private_media_lifecycle_sqlcipher_proof_test.dart -d 674DFFF6-5F38-4235-93F6-AF7FBF86AE65` | passed | live simulator output |
 | Curated 1:1 | `./scripts/run_test_gates.sh 1to1` | passed (1793 tests) | live command output |
 | Host inventory | `./scripts/run_host_test_gates.sh 1to1 --list` | passed; 72 commands and all dedicated files listed | live command output |
@@ -243,8 +243,8 @@ Session 01 is complete with no blocking or non-blocking QA finding. Two bounded 
 | v100 migration | `flutter test test/core/database/migrations/100_direct_private_media_lifecycle_test.dart` | exit 0; 3 tests | `passed` | live output; no separate log |
 | Full migration chain | `flutter test test/core/database/integration/full_migration_chain_test.dart` | exit 0; 15 tests | `passed` | live output; no separate log |
 | Ordinary preservation sentinel | `flutter test test/features/conversation/integration/one_to_one_media_encryption_round_trip_test.dart` | exit 0 | `passed` | live output; no separate log |
-| Live availability | `flutter devices --machine`; `adb devices`; `xcrun simctl list devices available` | exit 0; Android `21071FDF600CSC`, emulator `emulator-5554`, iOS simulator `674DFFF6-5F38-4235-93F6-AF7FBF86AE65` available | `passed` | live output; no separate log |
-| Android SQLCipher | `flutter test integration_test/direct_private_media_lifecycle_sqlcipher_proof_test.dart -d 21071FDF600CSC` | exit 0 | `passed` | live physical-device output; no separate log |
+| Live availability | `flutter devices --machine`; `adb devices`; `xcrun simctl list devices available` | exit 0; Android `<pixel-6-serial>`, emulator `emulator-5554`, iOS simulator `674DFFF6-5F38-4235-93F6-AF7FBF86AE65` available | `passed` | live output; no separate log |
+| Android SQLCipher | `flutter test integration_test/direct_private_media_lifecycle_sqlcipher_proof_test.dart -d <pixel-6-serial>` | exit 0 | `passed` | live physical-device output; no separate log |
 | iOS SQLCipher | `flutter test integration_test/direct_private_media_lifecycle_sqlcipher_proof_test.dart -d 674DFFF6-5F38-4235-93F6-AF7FBF86AE65` | exit 0 | `passed` | live simulator output; no separate log |
 | Curated 1:1 | `./scripts/run_test_gates.sh 1to1` | exit 0; 1793 tests | `passed` | live output; no separate log |
 | Host inventory | `./scripts/run_host_test_gates.sh 1to1 --list` | exit 0; 72 commands and all dedicated files listed | `passed` | live output; no separate log |

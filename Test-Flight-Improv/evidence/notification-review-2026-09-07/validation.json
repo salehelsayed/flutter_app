@@ -220,7 +220,7 @@
         "buildNumber": 114,
         "apkSha256": "f80e83093fb5e711a48fd919834b903162a366def4fbe0f786c7f5f9aceebcec",
         "targets": [
-          "21071FDF600CSC",
+          "<pixel-6-serial>",
           "emulator-5554"
         ],
         "group": {
@@ -322,10 +322,10 @@
   },
   "devices": {
     "androidPair": [
-      "21071FDF600CSC",
+      "<pixel-6-serial>",
       "emulator-5554"
     ],
-    "iosTestPhone": "00008030-001A6D2801BB802E",
+    "iosTestPhone": "<iphone-11-udid>",
     "privatePhoneUsed": false,
     "finalAndroidTextReaction": "Android111 background text/reaction passed; Android114 initial and settled expanded direct/group reaction cards passed before receiver reopening",
     "finalIosReaction": {
@@ -346,7 +346,7 @@
       "buildNumber": 114,
       "apkSha256": "f80e83093fb5e711a48fd919834b903162a366def4fbe0f786c7f5f9aceebcec",
       "targets": [
-        "21071FDF600CSC",
+        "<pixel-6-serial>",
         "emulator-5554"
       ],
       "group": {
@@ -469,7 +469,7 @@
       "buildNumber": 114,
       "apkSha256": "f80e83093fb5e711a48fd919834b903162a366def4fbe0f786c7f5f9aceebcec",
       "targets": [
-        "21071FDF600CSC",
+        "<pixel-6-serial>",
         "emulator-5554"
       ],
       "group": {
@@ -604,7 +604,7 @@
       "buildNumber": 114,
       "apkSha256": "f80e83093fb5e711a48fd919834b903162a366def4fbe0f786c7f5f9aceebcec",
       "targets": [
-        "21071FDF600CSC",
+        "<pixel-6-serial>",
         "emulator-5554"
       ],
       "group": {

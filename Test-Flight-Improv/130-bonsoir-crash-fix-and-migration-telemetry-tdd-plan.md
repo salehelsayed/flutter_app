@@ -55,8 +55,8 @@ account bundle" investigation:
 
 ## Background — what the investigation established (evidence, not speculation)
 
-Source: live device debug on the reporter's two phones (iPhone 11 `00008030-001A6D2801BB802E`,
-iPhone 17 Pro Max `00008150-001C3C6A3684401C`), read-only via `libimobiledevice`. Artifacts saved
+Source: live device debug on the reporter's two phones (iPhone 11 `<iphone-11-udid>`,
+iPhone 17 Pro Max `<iphone-17-pro-max-udid>`), read-only via `libimobiledevice`. Artifacts saved
 under `/tmp/mknoon_migration_debug/` (crash reports + syslogs of the failing 12:07 run and the
 successful run). Full write-up in auto-memory `project_account_migration_assemble_failure_debug`.
 

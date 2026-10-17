@@ -231,7 +231,7 @@ Spawned-agent isolation:
 
 Device/relay profile:
 
-- `flutter devices --machine` was run before coding. Available targets included Android emulator `emulator-5554`, iOS device `00008030-001A6D2801BB802E`, iOS simulators including `347FB118-10D0-40C8-A05B-B0C3BD6B8CCD`, `macos`, and `chrome`.
+- `flutter devices --machine` was run before coding. Available targets included Android emulator `emulator-5554`, iOS device `<iphone-11-udid>`, iOS simulators including `347FB118-10D0-40C8-A05B-B0C3BD6B8CCD`, `macos`, and `chrome`.
 - GL-008 required closure evidence remains host-only. No paired device or relay fixture is required for this execution proof.
 - `FLUTTER_DEVICE_ID` and `MKNOON_RELAY_ADDRESSES` were not set in the execution environment, and optional `group-real-network-nightly` was not run because it is supporting-only and fixtures were not verified as required or cheap/safe.
 

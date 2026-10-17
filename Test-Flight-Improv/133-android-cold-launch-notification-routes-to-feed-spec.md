@@ -14,7 +14,7 @@ Status: **FIXED + ANDROID DEVICE-VERIFIED (2026-06-19).** iOS cold-tap regressio
 > `_notificationTappedAt` on the initial-launch path so the stronger notif_tap recovery also runs on
 > cold launch.
 Discovered during the on-device verification of findings 131/132 (iPhone 00008110 ↔ Pixel 6
-`21071FDF600CSC`, prod relay). Distinct from 131 (which assumes the tap *does* open the conversation,
+`<pixel-6-serial>`, prod relay). Distinct from 131 (which assumes the tap *does* open the conversation,
 just stale) and unrelated to the 131/132 code changes (notification routing was never touched).
 
 ## ROOT CAUSE (confirmed by a graph-first source trace — supersedes the hypotheses below)

@@ -1064,7 +1064,7 @@ through explicit `--device-config` and reported no Wave 2 campaign setup reason
 in `.codex-test-logs/production-bootstrap-migration-20260928/wave2-review-001/preview/plan.json`.
 That was a configuration preview, not provider or scenario proof. The active
 continuation rechecked the live pair and uses its own ignored device configuration
-for USB Android `21071FDF600CSC` and available emulator `emulator-5554`; retain
+for USB Android `<pixel-6-serial>` and available emulator `emulator-5554`; retain
 each actual campaign result and cleanup separately in the crosswalk.
 
 For the Wave 2 sound journey, S5–S13 send encrypted media *descriptors* with
@@ -1126,7 +1126,7 @@ passed all 17 sound observations (S1–S16 plus S15's post-clear control),
 including S14's before-update first card and S16's connected direct transport,
 provider ingress and duplicate suppression. The preserved S16 native verifier
 returned `audibleStrict` pass; the scenario oracle had no failures, and exact
-cleanup passed on `21071FDF600CSC` and `emulator-5554`. It used source
+cleanup passed on `<pixel-6-serial>` and `emulator-5554`. It used source
 `83a9a919bb042b1cfb77a49d9b96d7133f24d45e4f9be4ec3884e9d876fb6081`
 and built two previously unattested profile artifacts. S12 succeeded on its
 first send in this run, so the conditional recovery retry remains unexercised.
@@ -1329,7 +1329,7 @@ automation session is a device-ownership prerequisite, not a product failure.
 On 2026-09-29 the user authorized taking over the USB Pixel. Its active Appium
 instrumentation was released without stopping the unrelated Appium server or
 other devices. The available and selected Wave 2 pair remained USB Pixel
-`21071FDF600CSC` and `emulator-5554`; `emulator-5556` was never a campaign
+`<pixel-6-serial>` and `emulator-5554`; `emulator-5556` was never a campaign
 target. The current-main notification-open first run at
 `wave2-continuation-003/main-open-run-002/` reached its provider send and
 failed before a case assertion because the adapter read only stdout while the
@@ -5614,7 +5614,7 @@ visible and cannot become an ordinary first-attempt PASS.
   `.codex-test-logs/failure-fixes-20260920/appium_*` and the original timestamped
   failure captures in `build/sims/proofs/android.production_1to1_audio_call/`.
   The September 21 fresh run passed all 27 unchanged assertions on USB Pixel
-  `21071FDF600CSC` plus the available, responsive `emulator-5556`; the original
+  `<pixel-6-serial>` plus the available, responsive `emulator-5556`; the original
   `emulator-5554` stalled Android services during Appium setup. The source/debug
   APK was freshly prepared, then consumed through its attested cache identity.
   The wrapper verified the scenario report; native calls were released on both
@@ -6092,7 +6092,7 @@ visible and cannot become an ordinary first-attempt PASS.
   `f903db1ba37d38159ca2dfc22531e6e534c4fb4bf15c467896ede092e134e0a2`,
   used Flutter 3.47.2, Android arm64 debug, release voice-call defines,
   production FCM, E2E mode, and native Android calls. On USB Pixel 6
-  `21071FDF600CSC` and emulator `emulator-5556`, Appium MCP proved foreground,
+  `<pixel-6-serial>` and emulator `emulator-5556`, Appium MCP proved foreground,
   warm-background (over 30 seconds), repeated same-process background, and
   killed-process (`stopped=false`) calls connected after Android notification
   answer. The killed-process caller recorded `wake=dispatched`. A first

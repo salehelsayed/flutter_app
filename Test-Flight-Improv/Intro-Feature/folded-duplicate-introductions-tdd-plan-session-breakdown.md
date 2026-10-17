@@ -73,7 +73,7 @@
   `5BA69F1C-B112-47BE-B1FF-8C1003728C8F`, and
   `1B098DFF-6294-407A-A209-BBF360893485`, plus booted simulator
   `38FECA55-03C1-4907-BD9D-8E64BF8E3469` and physical iPhone
-  `00008030-001A6D2801BB802E`. No reusable `DIF-006` plan exists yet. Next
+  `<iphone-11-udid>`. No reusable `DIF-006` plan exists yet. Next
   action: create the `DIF-006` device/relay proof plan through a fresh planning
   child.
 - `2026-05-06 22:39 CEST` - Closure audit after blocked `DIF-006` execution:

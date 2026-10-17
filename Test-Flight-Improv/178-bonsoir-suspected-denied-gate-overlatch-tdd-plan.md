@@ -116,7 +116,7 @@ Dependency-only: `third_party/bonsoir_darwin/PATCH.md` (175 rationale — do NOT
 - **Residual:** if the Pixel's NsdManager genuinely cannot resolve the iPhone's advert even with the browse always running, that is a deeper Android-mDNS issue beyond this gate (would surface as TC-78-05 still failing despite the host fix) — flagged, not assumed.
 
 ## Device/Relay Proof Profile
-Host RED→GREEN is the gating deliverable. **Device closure:** Pixel 6 (`21071FDF600CSC`) + iPhone 11 (`00008030-001A6D2801BB802E`), same flat WiFi, profile build `--dart-define=FDC_FLOW_LOG=1` (LAN-dial default-on). Bring up both apps (tap-launch iPhone to avoid the GPU black screen); confirm the **Pixel** logs `P2P_LAN_PEER_FOUND_REQUEST{lanPrivateIp:true}` + `node:lan_dial_ready` (it now discovers the iPhone) and **no** `LOCAL_MDNS_SUSPECTED_DENIED_GATE_LATCHED`; iPhone shows zero `0x8BADF00D`. This also unblocks CV-34 Pixel→iPhone LAN-media + the FDC-S6 i→A soak direction.
+Host RED→GREEN is the gating deliverable. **Device closure:** Pixel 6 (`<pixel-6-serial>`) + iPhone 11 (`<iphone-11-udid>`), same flat WiFi, profile build `--dart-define=FDC_FLOW_LOG=1` (LAN-dial default-on). Bring up both apps (tap-launch iPhone to avoid the GPU black screen); confirm the **Pixel** logs `P2P_LAN_PEER_FOUND_REQUEST{lanPrivateIp:true}` + `node:lan_dial_ready` (it now discovers the iPhone) and **no** `LOCAL_MDNS_SUSPECTED_DENIED_GATE_LATCHED`; iPhone shows zero `0x8BADF00D`. This also unblocks CV-34 Pixel→iPhone LAN-media + the FDC-S6 i→A soak direction.
 
 ## Acceptance Gates  (literal)
 ```bash

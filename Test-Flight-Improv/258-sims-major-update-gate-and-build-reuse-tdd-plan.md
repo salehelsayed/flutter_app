@@ -28,7 +28,7 @@ Last updated: 2026-07-15
 | 2026-07-15 | proof/discovery dedup | discovery script; proof files; notification aggregate manifest row | discovery/proof-registry/notification adapter contracts | artifact files are support bound to capture owners; A6/B11/B12 share one campaign row; legacy executable discovery reduced from 69 to 58 | do not run support files as device tests |
 | 2026-07-15 | focused GREEN | `tool/sims`; adapter/discovery/build/process contracts | `dart analyze tool/sims`; final aggregate: 121 tool tests, 31 dynamically discovered shell contracts, and 70 mutation-host checks passed | orchestrator contracts green; this is not a live major verdict | run wave/final gates after harness closure |
 | 2026-07-15 | required device automation | manifest campaign rows | focused app/host/adapter contracts | all 11 active device/campaign rows have automated drivers; four inert proof tests were deleted after their requirements moved to the non-executable registry | keep live prerequisites typed BLOCKED/N/A |
-| 2026-07-15 | live Android recorder + cache reuse | Pixel 6 `21071FDF600CSC`; Android standard cache; durable proof report | first stabilized run PASS: 1 build, 82.90s; identical second run PASS: 0 builds/1 hit, 55.21s; both reports independently verified | runtime proof carries a durable SHA-256 file bound to `validateVoiceRecorderArtifact`; generated localization/local-SDK outputs no longer churn the cache key | retain as live reuse sentinel |
+| 2026-07-15 | live Android recorder + cache reuse | Pixel 6 `<pixel-6-serial>`; Android standard cache; durable proof report | first stabilized run PASS: 1 build, 82.90s; identical second run PASS: 0 builds/1 hit, 55.21s; both reports independently verified | runtime proof carries a durable SHA-256 file bound to `validateVoiceRecorderArtifact`; generated localization/local-SDK outputs no longer churn the cache key | retain as live reuse sentinel |
 | 2026-07-15 | intro + critical-performance adapters | intro Sims runner; universal Android dispatcher; `run_1to1_device_real.dart`; performance evidence/budget contracts | focused adapter, dispatcher, and artifact contracts; no clean full major run claimed | `intro.accept_notification_campaign` and `performance.device.critical` are `automationReady:true`; performance consumes the central `android.e2e.standard` APK and preserves four strict runtime budgets | live-prove ready campaigns during the availability-bounded major run |
 | 2026-07-15 | adversarial orchestration audit + repair | scheduler; checkpoint; executor/verdict; device resolver/binding; build fingerprints | focused RED/GREEN tests; final 121 Sims tool tests; dynamic 31-contract inventory | policy N/A no longer fail-fasts; retry/resume requires exact evidence and preserves unrelated evidence; authorized iOS IDs drive selection; topology precedes credentials; contradictory sentinels fail as harness errors; signed/profile-specific cache inputs close stale and cross-platform rebuild gaps | rerun authoritative major on audited core |
 | 2026-07-15 | infrastructure-wave GREEN | registered Dart host inventory | `host-all`: 1,187 paths, 11,874 PASS, one intentional SQLCipher host skip | wave-level host suite passed in about 587.75s | repeat once in the authoritative final major |
@@ -429,7 +429,7 @@ digest. The historical connectivity run and its backup predated this manifest
 and failed before exact permission/process restoration; its old state was never
 proven reconstructible. The backup itself was subsequently deleted at the
 user's artifact-cleanup request. That cleanup does not establish restoration:
-physical Android `21071FDF600CSC` and Android emulator `emulator-5554` remain
+physical Android `<pixel-6-serial>` and Android emulator `emulator-5554` remain
 quarantined until reprovisioned or explicitly approved as a new baseline.
 
 ### Verdict and fix-as-you-go state machine
@@ -744,7 +744,7 @@ Stop-if conditions:
 boundaries.** The final read-only inventory after the user-requested cleanup
 contained:
 
-- physical Android Pixel 6 `21071FDF600CSC` (API 36), quarantined;
+- physical Android Pixel 6 `<pixel-6-serial>` (API 36), quarantined;
 - Android emulator `emulator-5554` (API 37), quarantined, and available Android
   emulator `emulator-5556` (API 35), which was discovered but was not used as
   Plan-258 proof;
@@ -912,7 +912,7 @@ git diff --check
   link.
 - **Device-state blocker:** the connectivity diagnostic predated the recovery
   manifest and failed before exact permission/process restoration. The prior
-  state of `21071FDF600CSC` and `emulator-5554` was not proven restored, so both
+  state of `<pixel-6-serial>` and `emulator-5554` was not proven restored, so both
   targets are quarantined for proof reruns. The old recovery backup was deleted
   at the user's artifact-cleanup request and cannot clear that quarantine.
   Reprovision them or explicitly approve a new clean baseline; do not guess
@@ -945,7 +945,7 @@ git diff --check
 - [x] `--simultaneous` is contract-proven serial-equivalent, overlaps only compatible ready rows, never overlaps shared target/build/relay/performance locks, and records dependency/lock timing evidence.
 - [x] Artifact validators are capture-owned support and absent from the default device plan; runtime PASS evidence is durable, content-hashed, and bound to the exact registered validator IDs.
 - [x] Critical-device-performance automation is implemented against the central standard APK, with all four runtime budgets and durable validator binding preserved.
-- [x] Critical performance, connectivity, keepalive, wake, full voice, Android notification, iOS notification, intro, group-reaction, recorder, and group multi-party rows have real automated drivers. The four inert executable placeholders were deleted only after their requirements moved to the manual/future registry. The recorder replacement is live-proven on Pixel 6 `21071FDF600CSC`; unavailable two-Android topology and missing provider/relay configuration remain runtime N/A/BLOCKED outcomes rather than fabricated PASS results.
+- [x] Critical performance, connectivity, keepalive, wake, full voice, Android notification, iOS notification, intro, group-reaction, recorder, and group multi-party rows have real automated drivers. The four inert executable placeholders were deleted only after their requirements moved to the manual/future registry. The recorder replacement is live-proven on Pixel 6 `<pixel-6-serial>`; unavailable two-Android topology and missing provider/relay configuration remain runtime N/A/BLOCKED outcomes rather than fabricated PASS results.
 - [x] VC-02 DCUtR capabilities remain activation-gated; no future requirement is silently discarded.
 - [x] Fix-as-you-go checkpoint/only/resume and current-digest rebasing are contract-proven: canonical-major/filter restrictions, exact failed-ID PASS before resume, full mixed-plan device digest, exact dependency evidence, unrelated verdict/build-digest preservation, transitive invalidation on re-failure, and actual causal-failure selection all fail closed.
 - [ ] A separate final clean `$sims major` report is green. The historical 12 PASS / 6 FAIL / 8 BLOCKED diagnostic is not closure evidence.
@@ -1038,7 +1038,7 @@ Historical major diagnostic summary: 26 selected = attempted = terminal,
 12 PASS / 6 FAIL / 8 BLOCKED; diagnostic/non-clean and not release evidence;
 historical reports/logs were deleted at user request |
 Blocking:
-quarantined `21071FDF600CSC`/`emulator-5554` after the pre-manifest recovery
+quarantined `<pixel-6-serial>`/`emulator-5554` after the pre-manifest recovery
 failure, with the obsolete backup deleted at the user's cleanup request;
 missing FCM/relay/APNs/signing/staging/disposable-iOS authorization; one clean
 post-repair major and independent QA verdict remain pending; no unrun or blocked

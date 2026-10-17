@@ -4,7 +4,7 @@
 total 16
 drwxr-xr-x@  5 I560101  staff   160 Aug  1 01:08 .
 drwxr-xr-x  74 I560101  staff  2368 Aug  1 01:08 ..
-drwxr-xr-x@  4 I560101  staff   128 Aug  1 01:08 21071FDF600CSC
+drwxr-xr-x@  4 I560101  staff   128 Aug  1 01:08 <pixel-6-serial>
 -rw-r--r--@  1 I560101  staff   992 Aug  1 01:08 recovery-manifest.json
 -rw-r--r--@  1 I560101  staff    65 Aug  1 01:08 recovery-manifest.sha256
 --- installed app ---

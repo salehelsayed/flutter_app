@@ -618,7 +618,7 @@ Stop-if conditions:
   and force-stop/reopen. Host/Robolectric tests cannot alone prove these APIs.
 - Live availability check:
   `flutter devices --machine; adb devices -l; xcrun simctl list devices available`.
-  Planning observed USB Pixel 6 `21071FDF600CSC` (API 36), Android emulator
+  Planning observed USB Pixel 6 `<pixel-6-serial>` (API 36), Android emulator
   `emulator-5554` (API 37), and available iPhone simulators. Re-resolve at
   execution; do not pin an unavailable version/model.
 - Required setup: build/install one disposable

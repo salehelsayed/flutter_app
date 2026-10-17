@@ -1,6 +1,6 @@
 Plan 384 (G19) device closure — groups.muted_notification_campaign
 Run: 2026-08-19, capture-1787125915764845-93175
-Pair: recipient 21071FDF600CSC (Pixel 6) / sender emulator-5554
+Pair: recipient <pixel-6-serial> (Pixel 6) / sender emulator-5554
 APK: prepared android.production_fcm sha256 cb7819306dc0e51e55e0b9374fd703428720f669a45db14b2e0b2eb2573189a3, childBuildCount=0
 Runner verdict: PASS  groups.muted_notification_campaign  assertions=6  (3 validated artifacts)
 

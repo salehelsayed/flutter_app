@@ -5,7 +5,7 @@ after:
   (no logcat)
 runner_mtime_before=1788643915
 --- iOS build + Pixel deploy in parallel
-PIXEL 21071FDF600CSC OK 1.0.0-725621495.d30.t260905235617 (verified)
+PIXEL <pixel-6-serial> OK 1.0.0-725621495.d30.t260905235617 (verified)
 PIXEL PASS
 pixel deploy exit=0
 --- wait for the iOS artifact by probing the Mac
@@ -25,11 +25,11 @@ now: 23:58:12
 1.0
 --- iPhones install (keep identity)
 ARTIFACT 1.0.0725621495.30.260905235617 bundleVersion=260905235617
-00008030-001A6D2801BB802E OK 1.0.0725621495.30.260905235617 bundleVersion=260905235617 (verified)
-00008110-00184D622289801E FAILED(launch — unlocked?)
+<iphone-11-udid> OK 1.0.0725621495.30.260905235617 bundleVersion=260905235617 (verified)
+<iphone-13-udid> FAILED(launch — unlocked?)
 ARTIFACT 1.0.0725621495.30.260905235617 bundleVersion=260905235617
-00008030-001A6D2801BB802E OK 1.0.0725621495.30.260905235617 bundleVersion=260905235617 (verified)
-00008110-00184D622289801E FAILED(launch — unlocked?)
+<iphone-11-udid> OK 1.0.0725621495.30.260905235617 bundleVersion=260905235617 (verified)
+<iphone-13-udid> FAILED(launch — unlocked?)
 --- captures
 CAP_DIR=docker-ws/deploy-captures/fresh-260905235835
 === done 20260905T215840Z ===

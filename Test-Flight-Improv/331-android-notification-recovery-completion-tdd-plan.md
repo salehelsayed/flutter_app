@@ -37,7 +37,7 @@ Baseline: clean Plan-330 checkpoint `1c7540b17954a423264e23ecf3528d3c01beeb0a`
 | 2026-08-03 evidence pass | Evidence Collector | native recovery service/resources and Robolectric tests | Recovery channel/title/body are hard-coded English and the Android module has no default/de/ar string resources | Add native Android resources and locale/channel-refresh proof |
 | 2026-08-03 online research | Evidence Collector | current Signal Android notification v2 source; Firebase and Android WorkManager documentation | Signal rebuilds cards from canonical unread state, carries per-conversation history/count, cleans orphaned cards, and separately uses OEM badge code; Firebase says `onDeletedMessages` should start a full sync; WorkManager persists across app/process restarts but has a bounded worker lifetime | Adopt canonical rebuild/history/count and persistent unique work; explicitly exclude OEM badge guarantees and user force-stop |
 | 2026-08-03 graph pass | Planner | Graphify architecture graph plus targeted current source | Compact graph was current and anchored at `DroppedPushRecoveryCoordinator`; source search resolved native/headless and UI gaps the app-owned graph does not model | Freeze the six-slice contract and submit this artifact to `$tdd-review` after the daemon restart |
-| 2026-08-03 13:13 CEST | Planner | `flutter devices --machine`, `adb devices -l`, current index/worktree | Allowed live pair is USB Pixel 6 `21071FDF600CSC` API36 plus Android emulator `emulator-5554` API37; the code baseline is the Plan-330 checkpoint, while the user-owned modified Index and untracked Plan-331 draft are preserved | Pin all device commands to those IDs; use no iOS command or target |
+| 2026-08-03 13:13 CEST | Planner | `flutter devices --machine`, `adb devices -l`, current index/worktree | Allowed live pair is USB Pixel 6 `<pixel-6-serial>` API36 plus Android emulator `emulator-5554` API37; the code baseline is the Plan-330 checkpoint, while the user-owned modified Index and untracked Plan-331 draft are preserved | Pin all device commands to those IDs; use no iOS command or target |
 | 2026-08-03 13:30 CEST | Planner | `$tdd-plan` sufficiency checklist, 24-row Test Contract, literal gates, DB/device/relay registration | Pre-review assessment: structure was complete but H0 and producer identity remained evidence gates; the later critical pass superseded this assessment | Submit to the requested `$tdd-review` |
 | 2026-08-03 critical review | `$tdd-review` factual/core | Index Reports 41/44/48, relay producers, live reaction/read/history/health composition | Added missing `baseline`/pinned `transport`/`feed` obligations; found unit-only proofs that could pass while production callers bypass the new seam; refuted missing outer ID as an ordinary current-producer defect | Tighten caller-level tests and recast inner-ID work as a test-only transport-mutation robustness slice |
 | 2026-08-03 critical review | `$tdd-review` native/boundary | Go singleton/dispatcher/node lifecycle, SQLCipher plugin lifecycle, worker/marker/device/Sims boundaries, v106 reaction schema | Admission-only ownership is unsafe; foreground bypasses the proposed DB lease; fake tests cannot close H0; the marker is account-ambiguous; `KEEP` can strand a newer generation; shared reactions cannot satisfy the claimed collision proof | Split Plan 331A, choose generation-resnapshot semantics, add account binding, make v107 one-way, narrow TC-13, and mark real-relay credentials unresolved |
@@ -804,8 +804,8 @@ GOTOOLCHAIN=go1.25.0 go -C go-relay-server test ./... -run '^TestRelayNotificati
 ./scripts/run_test_gates.sh groups
 ./scripts/run_test_gates.sh feed
 ./scripts/run_test_gates.sh runtime-roots
-FLUTTER_DEVICE_ID=21071FDF600CSC ./scripts/run_test_gates.sh baseline
-FLUTTER_DEVICE_ID=21071FDF600CSC ./scripts/run_test_gates.sh transport
+FLUTTER_DEVICE_ID=<pixel-6-serial> ./scripts/run_test_gates.sh baseline
+FLUTTER_DEVICE_ID=<pixel-6-serial> ./scripts/run_test_gates.sh transport
 ./scripts/run_test_gates.sh core-host-all --dart-only --batch-flutter --concurrency 4 --reporter failures-only
 ./scripts/run_test_gates.sh feature-host-all --dart-only --batch-flutter --concurrency 4 --reporter failures-only
 ./scripts/check_dropped_push_recovery_manifest_contract.sh
@@ -821,7 +821,7 @@ flutter devices --machine
 adb devices -l
 
 # Plan 331A real no-Activity/two-engine boundary on both targets.
-./scripts/run_android_canonical_runtime_h0_probe.sh 21071FDF600CSC --handoff --process-death
+./scripts/run_android_canonical_runtime_h0_probe.sh <pixel-6-serial> --handoff --process-death
 ./scripts/run_android_canonical_runtime_h0_probe.sh emulator-5554 --handoff --process-death
 
 # FUTURE ACTIVATION GATE (unimplemented; not execution evidence): periodic-work
@@ -831,17 +831,17 @@ adb devices -l
 
 # Real SQLCipher v106 -> v107 proof on each allowed Android target. Each test
 # asserts PRAGMA before/after, sentinel preservation, reopen, and run-twice.
-flutter test --no-pub -d 21071FDF600CSC integration_test/direct_notification_durability_sqlcipher_proof_test.dart
+flutter test --no-pub -d <pixel-6-serial> integration_test/direct_notification_durability_sqlcipher_proof_test.dart
 flutter test --no-pub -d emulator-5554 integration_test/direct_notification_durability_sqlcipher_proof_test.dart
 # FUTURE ACTIVATION GATE (unimplemented; not execution evidence): the full
 # production headless graph must gain this real SQLCipher proof on both targets.
-# flutter test --no-pub -d 21071FDF600CSC integration_test/headless_canonical_recovery_sqlcipher_proof_test.dart
+# flutter test --no-pub -d <pixel-6-serial> integration_test/headless_canonical_recovery_sqlcipher_proof_test.dart
 # flutter test --no-pub -d emulator-5554 integration_test/headless_canonical_recovery_sqlcipher_proof_test.dart
 
 # One central production-FCM APK; fully automated physical+emulator campaign.
 # This command is N/A until the strict Sims credential/relay preflight is
 # provisioned; absence keeps TC-331-23/open overall closure, not host work.
-SIMS_ANDROID_PHYSICAL_DEVICE_ID=21071FDF600CSC \
+SIMS_ANDROID_PHYSICAL_DEVICE_ID=<pixel-6-serial> \
 SIMS_ANDROID_EMULATOR_DEVICE_ID=emulator-5554 \
 dart tool/sims/sims.dart major --only notifications.android_recovery_completion
 ```
@@ -856,7 +856,7 @@ dart tool/sims/sims.dart major --only notifications.android_recovery_completion
   stable card carries bounded history/full count; registration warning retries
   and clears; native recovery copy follows en/de/ar.
 - Live availability check: `flutter devices --machine && adb devices -l` on
-  2026-08-03 -> USB Pixel 6 `21071FDF600CSC` Android 16/API36 and emulator
+  2026-08-03 -> USB Pixel 6 `<pixel-6-serial>` Android 16/API36 and emulator
   `emulator-5554` Android 17/API37. iOS devices were listed by Flutter but are
   deliberately not selected or used.
 - Required setup: one centrally prepared `android.production_fcm` APK; explicit
@@ -867,7 +867,7 @@ dart tool/sims/sims.dart major --only notifications.android_recovery_completion
   targets are available, but relay address/key and FCM sender credentials are
   not provisioned in the current shell; strict preflight must fail closed
   without printing values.
-- Two-peer default: USB physical Android `21071FDF600CSC` plus Android emulator
+- Two-peer default: USB physical Android `<pixel-6-serial>` plus Android emulator
   `emulator-5554`; reverse receiver role where the scenario remains stable.
 - Closure role: required closure evidence for runtime/plugin/SQLCipher/OS-card/
   real-relay behavior. Host tests remain causal authority for every injected
@@ -885,7 +885,7 @@ dart tool/sims/sims.dart major --only notifications.android_recovery_completion
 - Discovery command: `flutter devices --machine && adb devices -l` -> both
   exact Android IDs must report `device` before execution.
 - Closure command:
-  `SIMS_ANDROID_PHYSICAL_DEVICE_ID=21071FDF600CSC SIMS_ANDROID_EMULATOR_DEVICE_ID=emulator-5554 dart tool/sims/sims.dart major --only notifications.android_recovery_completion`
+  `SIMS_ANDROID_PHYSICAL_DEVICE_ID=<pixel-6-serial> SIMS_ANDROID_EMULATOR_DEVICE_ID=emulator-5554 dart tool/sims/sims.dart major --only notifications.android_recovery_completion`
   -> all semantic assertions pass, `manualTaps=0`,
   `notificationCardTaps=0`, `childBuildCount=0`, zero duplicates, and a valid
   artifact digest.
@@ -954,7 +954,7 @@ dart tool/sims/sims.dart major --only notifications.android_recovery_completion
 - [x] Preservation, Report-41/48 sentinels, `1to1`, `groups`, `feed`, pinned
       `baseline`/`transport`, justified core/feature families, native, l10n,
       Sims registration, analyzer, and diff gates pass semantically.
-- [x] Real SQLCipher passes on physical `21071FDF600CSC` and emulator
+- [x] Real SQLCipher passes on physical `<pixel-6-serial>` and emulator
       `emulator-5554`.
 - [ ] The registered real-relay campaign passes with one APK, exact Android
       targets, zero child builds, zero manual/card taps, zero duplicates, and

@@ -15,7 +15,7 @@ Closure tier: device (Wave 1, G19) / host (Wave 2, G26 — no device leg exists)
 
 ## Problem And Evidence
 
-- Behavior to improve: a group TEXT (or media) push arriving at a **killed** Android app on the default send lane dies at `PUSH_ANDROID_DATA_DECRYPT_FAIL{kind: group, reason: group_parity_mismatch}` → `PUSH_BACKGROUND_NOTIFICATION_ERROR OrdinaryMessageNotificationIntegrityException(group_plaintext_parity_mismatch)` and posts **no OS card**, breaking §1.3's `Suspended/killed → FCM wake → Card` promise. Observed 3/3 deterministically (Plan 379 runs 13/14/15 warm-up pushes; recipient `21071FDF600CSC`, real FCM, relay v1.8.0, APK `0a8c93f6`). The matching host row passes because it stubs the entire resolver.
+- Behavior to improve: a group TEXT (or media) push arriving at a **killed** Android app on the default send lane dies at `PUSH_ANDROID_DATA_DECRYPT_FAIL{kind: group, reason: group_parity_mismatch}` → `PUSH_BACKGROUND_NOTIFICATION_ERROR OrdinaryMessageNotificationIntegrityException(group_plaintext_parity_mismatch)` and posts **no OS card**, breaking §1.3's `Suspended/killed → FCM wake → Card` promise. Observed 3/3 deterministically (Plan 379 runs 13/14/15 warm-up pushes; recipient `<pixel-6-serial>`, real FCM, relay v1.8.0, APK `0a8c93f6`). The matching host row passes because it stubs the entire resolver.
 - Impact: every killed-app group text/media notification on the default (non-strict) lane is silently lost — the highest-volume killed-app typed event. Live since the parity check landed (`491ad6d91`, 2026-07-13; predicate shape since `f1b568bca`, 2026-08-04). Group *reactions* card fine on the same path (different resolver), which is why this went unnoticed until 379's warm-up text.
 - **Confirmed root cause (two composing halves, both source-verified; survived a 5-angle adversarial refute):**
   1. **Producer reality:** the default group send does NOT push the Dart replay envelope. `sendGroupMessage` → `callGroupSendReliable` (`send_group_message_use_case.dart:3079`) → Go `SendGroupMessageReliable` stores a **live Go envelope** (version "3", `type: group_message`, no `kind` field — `go-mknoon/node/pubsub.go:424-441,:497-539`; `go-mknoon/internal/group_envelope.go:25-37`) whose encrypted plaintext is `GroupMessagePayload{text, timestamp, username, extra}` with **no `senderId`/`senderPeerId`/`sender_id` and no `groupId` key anywhere**; `extra` = every bridge opt except `timestamp`, plus `messageId` (overwritten) and `publishedAtNano` — on a default text send roughly 10 keys (`senderDeviceId`, `senderTransportPeerId`, `senderDevicePublicKey`, `senderKeyPackageId`, `logicalDeliveryId`, `groupName`, `recipientPeerIds`, `preserveRecipientPeerIds`, …; `pubsub.go:1860-1876,:496`, opts source `bridge.go:2698-2741`) — and **none of them matches the parity reader's sender keys** (review-corrected: the plan's earlier "only 3 keys" description was wrong; the conclusion is unchanged). The relay forwards it verbatim (`inbox.go:854-899,:1221-1256`) — producing exactly the 9 FCM dataKeys observed on the failing push (no `kind`, no outer sender-ACCOUNT key; `sender_transport_peer_id` IS present and is exactly what resolves the context that arms clause 6).
@@ -79,7 +79,7 @@ Deferred / accepted difference:
 
 Dependencies:
 - **Plan 383's working-tree fix must be present (commit it first).** The device leg's card renders through G17's non-durable fall-through; on a tree without it, a passing parity still exits silently at the durable-effect block. (The map §4.3 already demands the commit; this plan's device run hard-depends on it.)
-- Muted-campaign environment: pinned pair (`emulator-5554` sender, `21071FDF600CSC` recipient), relay v1.8.0, FCM, prebuilt `android.production_fcm` APK, run via the repo-resident host wrapper (`docker-ws/run_muted_campaign_383.sh:27` precedent — host bridge drops container env).
+- Muted-campaign environment: pinned pair (`emulator-5554` sender, `<pixel-6-serial>` recipient), relay v1.8.0, FCM, prebuilt `android.production_fcm` APK, run via the repo-resident host wrapper (`docker-ws/run_muted_campaign_383.sh:27` precedent — host bridge drops container env).
 
 ## Test Contract
 
@@ -198,8 +198,8 @@ git diff --check
 ## Device/Relay Proof Profile
 - Profile: paired-device (os-notification device lab) — the muted-campaign lane.
 - Boundary being proven: OS-level card presence for a killed-process FCM group text — the exact boundary where host stubs lied (G19's lesson: the stubbed host row passed while the device posted nothing).
-- Live availability check: `adb devices -l` → `21071FDF600CSC` (Pixel 6, SDK 36) + `emulator-5554` (SDK 36) (verified this session by Plan 379/380 work).
-- Pinned targets: sender `emulator-5554`, recipient `21071FDF600CSC` (same roles as the shipped muted scenarios — the physical recipient is the measured G19 device).
+- Live availability check: `adb devices -l` → `<pixel-6-serial>` (Pixel 6, SDK 36) + `emulator-5554` (SDK 36) (verified this session by Plan 379/380 work).
+- Pinned targets: sender `emulator-5554`, recipient `<pixel-6-serial>` (same roles as the shipped muted scenarios — the physical recipient is the measured G19 device).
 - Automation: fully harness-driven (adb + uiautomator real-composer send; no user taps). Pixel keyguard must be unlocked (session landmine).
 - Closure role: required closure evidence for G19.
 - `FLUTTER_DEVICE_ID`: host selector only; both ids pinned in campaign argv.

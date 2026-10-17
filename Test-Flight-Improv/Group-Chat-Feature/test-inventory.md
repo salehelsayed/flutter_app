@@ -40,7 +40,7 @@ Slice 1 of the [03-P0-removal-rotation-fails-closed TDD plan](./Improvement-Revi
 
 Gate: `./scripts/run_test_gates.sh groups` / `flutter test test/features/groups/` green
 (`2070`), `flutter analyze` no new issues. **Device proof PASSED 2026-06-16** on iPhone 17 Pro
-simulator (`38FECA55-03C1-4907-BD9D-8E64BF8E3469`) and Pixel 6 (`21071FDF600CSC`) via
+simulator (`38FECA55-03C1-4907-BD9D-8E64BF8E3469`) and Pixel 6 (`<pixel-6-serial>`) via
 `flutter test integration_test/group_removal_rotation_keyless_proof_test.dart -d <device>`
 (`All tests passed!` against the real Go bridge on both platforms).
 

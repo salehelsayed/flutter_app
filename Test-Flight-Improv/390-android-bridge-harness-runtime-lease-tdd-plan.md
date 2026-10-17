@@ -279,7 +279,7 @@ git diff --check
 
 - **Profile:** single-device.
 - **Boundary being proven:** that the canonical-runtime lease causes the native `GoBridge` to construct and `com.mknoon/go_bridge` to register, so a harness can call it. Unreachable at host tier — there is no native side there.
-- **Live availability check:** `adb devices -l` on 2026-08-19 → `21071FDF600CSC` (Pixel 6) and `emulator-5554`, both `device`.
+- **Live availability check:** `adb devices -l` on 2026-08-19 → `<pixel-6-serial>` (Pixel 6) and `emulator-5554`, both `device`.
 - **Pinned target:** Android emulator **`emulator-5554`**. Deliberately not the Pixel: `flutter test -d` there destroys the stamped release install and the state guard fails closed. Single-device is sufficient — this is a process-local native registration, not a two-peer behaviour.
 - **Automation:** harness-driven, no user taps.
 - **Closure role:** **required closure evidence** — the census is a tripwire and cannot prove the mechanism.

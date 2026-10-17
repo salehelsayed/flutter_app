@@ -8,8 +8,8 @@ pins WHICH advertiser-side branch produced the portless iPhone TXT. Build from H
 > the only way to reproduce the asymmetry. mDNS dies in the background, so KEEP BOTH APPS FOREGROUND.
 
 ## 0. Rig
-- **Pixel 6** (discoverer for the failing direction): `adb -s 21071FDF600CSC`
-- **iPhone 11** (advertiser for the failing direction): `idevicesyslog -u 00008030-001A6D2801BB802E`
+- **Pixel 6** (discoverer for the failing direction): `adb -s <pixel-6-serial>`
+- **iPhone 11** (advertiser for the failing direction): `idevicesyslog -u <iphone-11-udid>`
   (devicectl id `5763A494-757C-5B37-AC70-3AA2775FBEFF`). **Avoid iPhone 13** (Keychain-migration brick risk).
 - Same WiFi **Vodafone-CA38** (`192.168.0.x`; iPhone ≈.211, Pixel ≈.240, Mac ≈.60).
 - Dart-only change ⇒ gomobile `.aar`/`.xcframework` are cached ⇒ fast build (no `make all` needed).
@@ -34,9 +34,9 @@ flutter build ios --profile \
 ## 2. Install + launch
 ```bash
 # Pixel: install + re-grant the LAN/location perms (mDNS needs them on Android 13+)
-adb -s 21071FDF600CSC install -r build/app/outputs/flutter-apk/app-profile.apk
+adb -s <pixel-6-serial> install -r build/app/outputs/flutter-apk/app-profile.apk
 for p in ACCESS_FINE_LOCATION ACCESS_COARSE_LOCATION NEARBY_WIFI_DEVICES; do
-  adb -s 21071FDF600CSC shell pm grant <APP_ID> android.permission.$p
+  adb -s <pixel-6-serial> shell pm grant <APP_ID> android.permission.$p
 done
 ```
 - **iPhone: TAP-LAUNCH the app on the phone.** Do NOT `devicectl ... process launch --terminate-existing`
@@ -51,12 +51,12 @@ dns-sd -B _mknoon._tcp local.    # both phones must appear as mknoon-<peerId…>
 ## 4. Capture (two terminals, started BEFORE sending)
 ```bash
 # Terminal A — Pixel (discoverer). Scratchpad: …/scratchpad/cv34/
-adb -s 21071FDF600CSC logcat -v time | grep -E \
+adb -s <pixel-6-serial> logcat -v time | grep -E \
  'FLOW.*(LOCAL_MDNS_DISCOVERY_START|LOCAL_MDNS_PEER_FOUND|LOCAL_MDNS_PEER_SKIPPED_NO_LIBP2P_ADDR|LOCAL_MDNS_PEER_LOST_RETAINED|P2P_LAN_PEER_FOUND_REQUEST|P2P_LAN_PEER_FOUND_RESPONSE|node:lan_dial_ready|LOCAL_MEDIA_SEND_START|LIBP2P_LAN_MEDIA_SEND|P2P_LAN_MEDIA_SEND_REQUEST|P2P_LAN_MEDIA_SEND_RESPONSE)' \
  | tee pixel_179.log
 
 # Terminal B — iPhone (advertiser)
-idevicesyslog -u 00008030-001A6D2801BB802E | grep -E \
+idevicesyslog -u <iphone-11-udid> | grep -E \
  '(LOCAL_MDNS_ADVERTISE_START|LOCAL_MDNS_ADVERTISE_SKIPPED_SUSPECTED_DENIED|LOCAL_MDNS_SUSPECTED_DENIED_GATE_LATCHED|FDC_LAN_ADVERT_PORTS|FDC_LAN_ADVERT_PORTS_DEFERRED|FDC_LAN_ADVERT_PORTS_DEFERRED_GATED|addresses:updated)' \
  | tee iphone_179.log
 ```

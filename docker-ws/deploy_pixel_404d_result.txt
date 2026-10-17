@@ -1,6 +1,6 @@
 === plan 404 (c2) pixel redeploy started 20260905T185750Z at 9577caeca ===
 pixel deploy exit=0
-PIXEL 21071FDF600CSC OK 1.0.0-9577caeca.d20.t260905205811 (verified)
+PIXEL <pixel-6-serial> OK 1.0.0-9577caeca.d20.t260905205811 (verified)
 PIXEL PASS
 --- kill the Pixel app (HOME intent off the top task, then am kill)
 pid_after_kill=

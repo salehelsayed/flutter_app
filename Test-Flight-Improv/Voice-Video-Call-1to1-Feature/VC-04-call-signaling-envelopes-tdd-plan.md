@@ -379,7 +379,7 @@ No empty cells.
 **Rig:** one USB-connected physical Android device + one Android emulator, both adb-addressable. No iOS legs in this story (no iOS boundary touched; the deferred-not-waived pattern is therefore not needed here — it applies to VC-07).
 
 ```bash
-# 1. Discover serials (USB device e.g. 21071FDF600CSC; emulator e.g. emulator-5554)
+# 1. Discover serials (USB device e.g. <pixel-6-serial>; emulator e.g. emulator-5554)
 adb devices -l
 
 # 2. Host tiers (no device needed)
@@ -391,7 +391,7 @@ flutter test integration_test/call_signaling_roundtrip_proof_test.dart \
   -d emulator-5554 --dart-define=VC04_ROLE=callee --dart-define=FDC_FLOW_LOG=1
 #   → scrape the printed VC04_PEER_ID=<peerId> marker, then:
 flutter test integration_test/call_signaling_roundtrip_proof_test.dart \
-  -d 21071FDF600CSC --dart-define=VC04_ROLE=caller \
+  -d <pixel-6-serial> --dart-define=VC04_ROLE=caller \
   --dart-define=VC04_REMOTE_PEER_ID=<calleePeerId> --dart-define=FDC_FLOW_LOG=1
 
 # 4. Two-party orchestrator (the closure command) — -d <serialA>,<serialB>,
@@ -399,7 +399,7 @@ flutter test integration_test/call_signaling_roundtrip_proof_test.dart \
 #    (convention mirrors integration_test/scripts/run_1to1_device_real.dart -d parsing
 #     and the plan-234 automated device+emulator runner)
 dart run integration_test/scripts/run_call_device_real.dart \
-  --scenario vc04_offer_answer_end -d 21071FDF600CSC,emulator-5554 \
+  --scenario vc04_offer_answer_end -d <pixel-6-serial>,emulator-5554 \
   --artifact-dir /tmp/vc04-artifacts
 
 # 5. Different-network variant (VC-00 rule 1: where the scenario demands):

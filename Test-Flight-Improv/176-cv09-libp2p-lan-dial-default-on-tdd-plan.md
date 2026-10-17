@@ -139,7 +139,7 @@ Not a bug — a deliberate flag graduation. The **mechanism that decides runtime
 
 ## Device/Relay Proof Profile
 **Requires two-phone device for closure** (host RED→GREEN is the gating deliverable).
-Closure scenario: Pixel 6 (`21071FDF600CSC`) + iPhone 11 (`00008030-001A6D2801BB802E`), flat single-AP WiFi, `flutter build --profile` with `--dart-define=FDC_FLOW_LOG=1` and **NO** `--dart-define=MKNOON_ENABLE_LIBP2P_LAN_DIAL` (the new default must carry it). Install iOS **in-place** (no uninstall — Keychain migration-authority brick risk). Confirm `node:lan_peer_found` + `lan_dial_ready` fire and `MSG_RECEIVED_TRANSPORT:"direct"` both directions — proving the default-on path works without the override.
+Closure scenario: Pixel 6 (`<pixel-6-serial>`) + iPhone 11 (`<iphone-11-udid>`), flat single-AP WiFi, `flutter build --profile` with `--dart-define=FDC_FLOW_LOG=1` and **NO** `--dart-define=MKNOON_ENABLE_LIBP2P_LAN_DIAL` (the new default must carry it). Install iOS **in-place** (no uninstall — Keychain migration-authority brick risk). Confirm `node:lan_peer_found` + `lan_dial_ready` fire and `MSG_RECEIVED_TRANSPORT:"direct"` both directions — proving the default-on path works without the override.
 Differs from CV-08: CV-08 forced the flag via dart-define; CV-09 proves the **default** carries it. Reuses the `fdc11_lan_direct_d1` KEYSTONE scenario, override omitted.
 Relay defaults if needed: `/dns/mknoun.xyz/tcp/4001/wss/p2p/12D3KooWGMYMmN1RGUYjWaSV6P3XtnBjwnosnJGNMnttfVCRnd6g` (see `p2p_bridge_client.dart:9`).
 

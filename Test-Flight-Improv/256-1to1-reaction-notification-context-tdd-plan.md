@@ -419,7 +419,7 @@ Dependencies:
 | TC-13 | With Android B killed but not force-stopped, A reacts through UI to B's authored message; B's real headless FCM engine shows one trusted-actor + emoji card, replaces it after a restart-separated second event, and an automated tap opens A's conversation with zero reaction-created unread state. | `integration_test/one_to_one_reaction_notification_proof_test.dart::android_physical_recipient` via runner plus artifact validator | Paired-device / emulator sender + physical Android recipient, real relay/FCM/SQLCipher/background plugin/Go ML-KEM | HEAD has no typed push/headless channel -> exact copy, decrypt-success marker, deterministic card id across restart, correct tap/application, no duplicate/unread. A paired negative reacts to A's own message: B persists it but receives no push/card. | Register plugin only in Activity, ignore author policy, restore generic fallback/hashCode, create unread row, force-stop, or accept manual tap -> TC-13 red. | Device proof AUTO plus manual discovery; runner must invoke the proof/validator and collect app/SQLCipher/provider artifacts. |
 | TC-14 | A physical iOS NSE rewrites the fixed silent provider fallback using projected local actor + decrypted emoji, preserves thread/tap/collapse identity, and creates no message unread state; both live-first and remote-first orders yield one audible alert. | `integration_test/one_to_one_reaction_notification_proof_test.dart::ios_physical_recipient` plus exact `NotificationTapUITests` selector/artifact validation | iOS-specific / Android sender + physical iPhone recipient, real relay/APNs/NSE/Go ML-KEM | HEAD has no reaction APNs/NSE branch -> valid card has exact copy and zero forbidden fields/unread; NSE timeout remains `New reaction`, never `New Message`; an OS-retained duplicate must be passive in the same thread. | Make fallback generic/audible, use sender name, claim before validation, omit collapse/thread, or count a passive duplicate as a second alert -> TC-14 red. | Proof runner registered under 1:1 and explicit physical `xcodebuild` UI-test command below. |
 | TC-15 | The avatar orbit remains a message-only projection: zero unread messages renders no indicator, an ordinary foreground incoming message lights it, a second message adds a second satellite without remounting, and accessibility announces only the real unread-message count. | Existing `test/features/orbit/presentation/screens/orbit_unread_indicator_wired_test.dart::TC-194-10: incoming message lights the node live`; `::TC-194-11: second message increments satellites without node re-entrance`; `test/features/orbit/presentation/widgets/orbital_visualization_test.dart::TC-194-27: lit node semantics announces unread; unlit label unchanged` | Host wired/widget GREEN sentinels / `InMemoryMessageRepository`, fake incoming listener, real Orbit widgets and semantics tree | GREEN on HEAD -> remain GREEN with 0/1/2 message counts and labels; no reaction language enters this visual. | Disconnect `incomingMessageStream`, derive satellites from generic notification/activity count, or relabel reaction activity as an unread message -> TC-15 red. | Copy-pasteable exact commands; wired file is already pinned in the curated groups inventory and AUTO feature-host, visualization file AUTO feature-host. Run exact cases plus the justified feature family, not the full groups gate. |
-| TC-16 | On a real phone while B is already on Orbit, A's first ordinary message lights one satellite and posts the normal OS card; dismissing that card leaves the message unread; A's second message produces two satellites/a replacement card; tapping that card opens A's conversation, commits both reads, and returning to Orbit shows no indicator. | `integration_test/one_to_one_reaction_notification_proof_test.dart::android_message_unread_lifecycle` via `run_1to1_reaction_notification_device.dart --scenario android_message_unread_lifecycle` | Paired-device GREEN preservation proof / `emulator-5554` sender + `21071FDF600CSC` active physical Android recipient, real relay/FCM/local notification/SQLCipher/UIAutomator | Expected GREEN on HEAD: persisted unread count `0 -> 1 -> 1 after dismiss -> 2 -> 0 after successful notification route/read`, matching `0 -> 1 -> 1 -> 2 -> 0` Orbit satellites; execution must first classify any failure before changing production. | Clear on notification delivery/dismiss, drop Orbit incoming refresh, route without real `ConversationWired`, skip `_markAsRead`, suppress the repository read event, or merely hide the widget in the harness -> TC-16 red. | Same `_proof_test.dart` AUTO device classification; manually register the new scenario under `1to1`. This Android pair closes the app/UI lifecycle because it is not iOS-specific; unavailable named targets are N/A under project policy. |
+| TC-16 | On a real phone while B is already on Orbit, A's first ordinary message lights one satellite and posts the normal OS card; dismissing that card leaves the message unread; A's second message produces two satellites/a replacement card; tapping that card opens A's conversation, commits both reads, and returning to Orbit shows no indicator. | `integration_test/one_to_one_reaction_notification_proof_test.dart::android_message_unread_lifecycle` via `run_1to1_reaction_notification_device.dart --scenario android_message_unread_lifecycle` | Paired-device GREEN preservation proof / `emulator-5554` sender + `<pixel-6-serial>` active physical Android recipient, real relay/FCM/local notification/SQLCipher/UIAutomator | Expected GREEN on HEAD: persisted unread count `0 -> 1 -> 1 after dismiss -> 2 -> 0 after successful notification route/read`, matching `0 -> 1 -> 1 -> 2 -> 0` Orbit satellites; execution must first classify any failure before changing production. | Clear on notification delivery/dismiss, drop Orbit incoming refresh, route without real `ConversationWired`, skip `_markAsRead`, suppress the repository read event, or merely hide the widget in the harness -> TC-16 red. | Same `_proof_test.dart` AUTO device classification; manually register the new scenario under `1to1`. This Android pair closes the app/UI lifecycle because it is not iOS-specific; unavailable named targets are N/A under project policy. |
 | TC-17 | Reaction activity does not create or increment message unread state. With zero genuine unreads it leaves zero/no orbit; with two genuine unread messages plus an outgoing target, a fresh reaction stores/notifies but leaves two satellites and the "2 unread messages" semantics unchanged. A reaction-notification tap may clear those two only by routing to a real conversation and completing the normal read commit. | `test/features/conversation/integration/reaction_notification_pipeline_test.dart::reaction activity never increments unread-message orbit state` | Host integration GREEN sentinel / real `handleIncomingReaction`, app-root local-tap router, mounted `OrbitWired` and `ConversationWired`, in-memory message/reaction repositories, method-channel notification fake | GREEN on HEAD's live path -> zero stays zero; two stays two through reaction receipt/display/dismissal; successful tap/render/read then becomes zero. Remote/staged paths added by this plan must satisfy the same assertion. | Insert a synthetic message for a reaction, increment a generic activity count, change satellite/semantics count, clear on display/dismiss, or replace the real routed conversation with a test callback that directly marks read -> TC-17 red. | Exact command; consolidated pipeline file is pinned in `ONE_TO_ONE_TESTS` and `ONE_TO_ONE_HOST_TESTS` and AUTO feature-host. TC-13/14 repeat the zero-unread invariant at the OS boundary. |
 | TC-18 | Reaction persistence is independent from notification eligibility: an ADD to a locally authored target notifies; an ADD to an incoming target persists/emits UI change but stays silent; missing local identity fails closed. | `test/features/conversation/application/handle_incoming_reaction_use_case_test.dart::only target author is notified while both target directions persist` | Host application / outgoing and incoming target fixtures, notification fake | HEAD notifies both target directions -> GREEN has equal reaction convergence but only outgoing/local-authored target notification. | Gate persistence instead of notification, infer authorship from reactor, or fail open when identity/target direction is missing -> TC-18 red. | Existing curated 1:1 file + AUTO feature-host; exact command below. |
 | TC-19 | A forced live-direct staging failure cannot bypass the notification policy: the raw fallback reaches the shared notify-capable replay seam once, with author/dedupe/active-view gates intact. | `test/core/services/p2p_service_impl_test.dart::reaction stage failure uses shared notify-capable fallback exactly once`; main wiring contract test | Host core/lifecycle / throwing staging repository and real listener/replay wiring | HEAD emits to `ReactionListener` without deps -> valid authored-target ADD becomes silent. GREEN persists/notifies once or returns explicit retry without duplicate emission. | Restore raw emit, inject deps only in a unit fixture, or call both listener and replay -> TC-19 red. | Exact core tests; `core-host-all` and existing main wiring inventory. |
@@ -620,7 +620,7 @@ flutter test packages/background_push_crypto/test/background_push_crypto_test.da
   --tests 'com.mknoon.background_push_crypto.BackgroundPushCryptoPluginTest')
 dart run integration_test/scripts/run_1to1_reaction_notification_device.dart \
   --scenario android_background_crypto_preflight \
-  --recipient 21071FDF600CSC \
+  --recipient <pixel-6-serial> \
   --artifact-dir build/reaction_notification_proof/android_background_crypto_preflight
 
 # Relay REDs; HEAD emits no typed/capability-gated reaction push.
@@ -737,7 +737,7 @@ dart run integration_test/scripts/run_1to1_reaction_notification_device.dart \
 xcodebuild test \
   -workspace ios/Runner.xcworkspace \
   -scheme Runner \
-  -destination 'platform=iOS,id=00008150-001C3C6A3684401C' \
+  -destination 'platform=iOS,id=<iphone-17-pro-max-udid>' \
   -only-testing:RunnerUITests/NotificationTapUITests/testReactionNotificationTap
 
 # Per-plan named/family gates; exit 0 and zero failed tests.
@@ -765,10 +765,10 @@ git diff --check
 - Live availability check (2026-07-11 22:10 CEST):
   `flutter devices --machine`, `adb devices -l`, `flutter emulators`, and
   `xcrun simctl list devices available` found USB Pixel 6
-  `21071FDF600CSC`, Android AVD `mknoon_play_35` (runtime serial
+  `<pixel-6-serial>`, Android AVD `mknoon_play_35` (runtime serial
   `emulator-5554` when booted), physical iPhones
-  `00008150-001C3C6A3684401C`, `00008110-00184D622289801E`, and
-  `00008030-001A6D2801BB802E`, plus booted iPhone 16e simulator
+  `<iphone-17-pro-max-udid>`, `<iphone-13-udid>`, and
+  `<iphone-11-udid>`, plus booted iPhone 16e simulator
   `DBE8C32E-9F19-4593-860A-B41113791D79`. Re-run discovery immediately before
   proof; unavailable targets are `N/A (target unavailable by project policy)`.
 - Required setup: clean candidate builds, notification permission granted by
@@ -780,15 +780,15 @@ git diff --check
   redacted app/relay/provider logs, an Orbit-readable UI automation/accessibility
   tree, and no concurrent use of either selected target.
 - Two-peer default: TC-13 and TC-16 pin sender A=`emulator-5554` and recipient
-  B=`21071FDF600CSC`. TC-16 keeps B active on Orbit and drives two ordinary
+  B=`<pixel-6-serial>`. TC-16 keeps B active on Orbit and drives two ordinary
   messages, notification dismissal, replacement-card tap, conversation render,
   read commit, and return-to-Orbit assertions. TC-13 then drives message
   creation, app backgrounding, `am kill`, UI long-press, emoji selection, shade
   inspection, process restart, two distinct reactions, a reaction-to-A's-own-
   message negative, bounded node tap, and reaction assertions. Both are fully
   automated with no user taps.
-- iOS-specific topology: TC-14 pins Android sender A=`21071FDF600CSC` and
-  physical iPhone recipient B=`00008150-001C3C6A3684401C`. A physical iPhone is
+- iOS-specific topology: TC-14 pins Android sender A=`<pixel-6-serial>` and
+  physical iPhone recipient B=`<iphone-17-pro-max-udid>`. A physical iPhone is
   required specifically for real APNs/NSE proof; the XCUITest harness performs
   permission handling, termination, card inspection, and tap automatically.
 - Closure role: TC-13, TC-14, and TC-16 are required closure evidence while
@@ -809,18 +809,18 @@ git diff --check
   `dart run integration_test/scripts/run_1to1_reaction_notification_device.dart --list-scenarios && flutter devices --machine && adb devices -l && flutter emulators && xcrun simctl list devices available`
   -> all five scenarios and every selected id must be present.
 - Clean-HEAD provenance command (must run before production edits):
-  `dart run integration_test/scripts/run_1to1_reaction_notification_device.dart --scenario head_provenance --sender emulator-5554 --recipient 21071FDF600CSC --artifact-dir build/reaction_notification_proof/head_provenance`
+  `dart run integration_test/scripts/run_1to1_reaction_notification_device.dart --scenario head_provenance --sender emulator-5554 --recipient <pixel-6-serial> --artifact-dir build/reaction_notification_proof/head_provenance`
   -> exit 0 only after recording app/relay revisions, the reaction event id,
   remote type, actual producer, lifecycle, title/body, and tap route; no-card is
   an allowed HEAD observation but a card unrelated to the exact reaction id is
   rejected.
 - Android headless-plugin preflight command (before typed wire enablement):
-  `dart run integration_test/scripts/run_1to1_reaction_notification_device.dart --scenario android_background_crypto_preflight --recipient 21071FDF600CSC --artifact-dir build/reaction_notification_proof/android_background_crypto_preflight`
+  `dart run integration_test/scripts/run_1to1_reaction_notification_device.dart --scenario android_background_crypto_preflight --recipient <pixel-6-serial> --artifact-dir build/reaction_notification_proof/android_background_crypto_preflight`
   -> recipient Activity is absent, a real FCM callback records plugin
   registration/decrypt success, and foregrounding later proves the main Go
   event callback was not replaced. Failure triggers the TC-07 stop condition.
 - Android ordinary-message unread lifecycle closure command:
-  `dart run integration_test/scripts/run_1to1_reaction_notification_device.dart --scenario android_message_unread_lifecycle --sender emulator-5554 --recipient 21071FDF600CSC --artifact-dir build/reaction_notification_proof/android_message_unread_lifecycle`
+  `dart run integration_test/scripts/run_1to1_reaction_notification_device.dart --scenario android_message_unread_lifecycle --sender emulator-5554 --recipient <pixel-6-serial> --artifact-dir build/reaction_notification_proof/android_message_unread_lifecycle`
   -> exit 0 with B already on Orbit; SQLCipher/UI unread counts and visible
   satellites `0 -> 1 -> 1 after card dismissal -> 2 -> 0 after tap/read`;
   ordinary sender/body card copy; a real conversation route/render/read marker;
@@ -828,7 +828,7 @@ git diff --check
   Orbit. The validator rejects a hidden-widget-only result or any clear before
   the read commit.
 - Android closure command:
-  `dart run integration_test/scripts/run_1to1_reaction_notification_device.dart --scenario android_physical_recipient --sender emulator-5554 --recipient 21071FDF600CSC --artifact-dir build/reaction_notification_proof/android_physical_recipient`
+  `dart run integration_test/scripts/run_1to1_reaction_notification_device.dart --scenario android_physical_recipient --sender emulator-5554 --recipient <pixel-6-serial> --artifact-dir build/reaction_notification_proof/android_physical_recipient`
   -> exit 0 with one matching reaction id, `Alice` /
   `Reacted 👍 to your message`, Android message category, a real
   decrypt-success marker, no `New Message`, empty recipient `pidof` before
@@ -838,7 +838,7 @@ git diff --check
   duplicate/navigation errors. The paired own-target reaction must persist on B
   without any B push/card.
 - iOS closure command:
-  `dart run integration_test/scripts/run_1to1_reaction_notification_device.dart --scenario ios_physical_recipient --sender 21071FDF600CSC --recipient 00008150-001C3C6A3684401C --artifact-dir build/reaction_notification_proof/ios_physical_recipient`
+  `dart run integration_test/scripts/run_1to1_reaction_notification_device.dart --scenario ios_physical_recipient --sender <pixel-6-serial> --recipient <iphone-17-pro-max-udid> --artifact-dir build/reaction_notification_proof/ios_physical_recipient`
   -> exit 0 with NSE decrypt success, `Alice` / `Reacted 👍 to your message`,
   peer thread, no forbidden push fields, typed silent timeout fallback, correct
   cold tap, stored emoji, and no reaction-created message/unread rows. Both
@@ -1015,8 +1015,8 @@ git diff --check
   require current-source verification. After a scoped diff, use one
   `affected ... --budget 600` query, then exactly one final incremental refresh
   only after acceptance.
-- **Live availability snapshot:** physical Android `21071FDF600CSC`, physical
-  iPhone `00008150-001C3C6A3684401C`, and simulator
+- **Live availability snapshot:** physical Android `<pixel-6-serial>`, physical
+  iPhone `<iphone-17-pro-max-udid>`, and simulator
   `DBE8C32E-9F19-4593-860A-B41113791D79` are currently discovered; AVD
   `mknoon_play_35` is available but not booted. Re-resolve before device proof.
 - **Fresh-retry role milestones:** the initial Executor's first bounded
@@ -1265,7 +1265,7 @@ git diff --check
   green. Ordinary wait extensions are exhausted; no TC-00 result has yet been
   claimed.
 - **Next observable checkpoint:** explicit sender `emulator-5554` and recipient
-  `21071FDF600CSC` availability are recorded, and the exact TC-00 command has a
+  `<pixel-6-serial>` availability are recorded, and the exact TC-00 command has a
   PID/session/log while active or a persisted artifact/environment-blocker
   result after exit.
 
@@ -1295,7 +1295,7 @@ git diff --check
   excluding progress-only plan edits.
 - **Last completed command/result:** focused emulator triage found both explicit
   Android targets live in `adb devices -l`: physical Pixel
-  `21071FDF600CSC` and AVD runtime `emulator-5554`; the QEMU process is alive.
+  `<pixel-6-serial>` and AVD runtime `emulator-5554`; the QEMU process is alive.
   The launcher exit is classified `tooling-related/misleading` because the AVD
   successfully booted despite Flutter reporting exit 1.
 - **Current command status:** none. The exact TC-00 command completed with exit
@@ -1426,8 +1426,8 @@ git diff --check
   | `./scripts/check_reliability_simulation_discovery.sh --checks-tsv` | exit 0 after explicit proof classification; Plan-256 proof plus five runner rows listed | `passed` | console |
   | `python3 graphify-arch/tdd_context.py affected integration_test/scripts/run_1to1_reaction_notification_device.dart integration_test/one_to_one_reaction_notification_proof_test.dart scripts/check_reliability_simulation_discovery.sh --budget 600` | exit 0; no reverse dependencies surfaced, so direct checks remain authoritative | `passed` | console |
   | `git diff --check -- integration_test/scripts/run_1to1_reaction_notification_device.dart integration_test/one_to_one_reaction_notification_proof_test.dart scripts/check_reliability_simulation_discovery.sh Test-Flight-Improv/256-1to1-reaction-notification-context-tdd-plan.md` | exit 0 | `passed` | console |
-  | `flutter emulators --launch mknoon_play_35` | launcher exit 1, but focused triage found live QEMU and `emulator-5554` in `adb devices -l` beside physical `21071FDF600CSC` | `passed` for target availability after focused triage; wrapper exit was misleading | console |
-  | `dart run integration_test/scripts/run_1to1_reaction_notification_device.dart --scenario head_provenance --sender emulator-5554 --recipient 21071FDF600CSC --artifact-dir build/reaction_notification_proof/head_provenance` | exit 78; required `head_provenance.json` and configured Plan-256 staging relay/provider capture driver absent | `environment_blocked` | no artifact |
+  | `flutter emulators --launch mknoon_play_35` | launcher exit 1, but focused triage found live QEMU and `emulator-5554` in `adb devices -l` beside physical `<pixel-6-serial>` | `passed` for target availability after focused triage; wrapper exit was misleading | console |
+  | `dart run integration_test/scripts/run_1to1_reaction_notification_device.dart --scenario head_provenance --sender emulator-5554 --recipient <pixel-6-serial> --artifact-dir build/reaction_notification_proof/head_provenance` | exit 78; required `head_provenance.json` and configured Plan-256 staging relay/provider capture driver absent | `environment_blocked` | no artifact |
   | Every command after TC-00 in `Acceptance Gates`, including TC-07, causal RED/GREEN, direct Go/Swift/Kotlin tests, family gates, and TC-13/14/16 | not eligible under the plan's mandatory TC-00 stop condition | `environment_blocked` | none |
 
 - **Failure triage:** discovery's initial failure was session-caused and fixed by
@@ -1474,7 +1474,7 @@ git diff --check
   clean HEAD/deployed relay stored the reaction but emitted no provider push or
   generic card, confirming the missing typed remote path rather than an
   ordinary-message detour.
-- **TC-07:** passed on physical Pixel `21071FDF600CSC` at
+- **TC-07:** passed on physical Pixel `<pixel-6-serial>` at
   `build/reaction_notification_proof/android_background_crypto_preflight/android_background_crypto_preflight.json`.
   It proves killed-process FCM receipt, generated plugin registration, native
   `decryptMessage` only, trusted `TC256 Alice` / `Reacted 👍 to your message`
@@ -1517,7 +1517,7 @@ git diff --check
 
 - **Requested Android verdict:** `passed`. One uninterrupted automated campaign
   used Android emulator `emulator-5554` as reaction sender and USB Pixel 6
-  `21071FDF600CSC` as notification recipient. User A received a real message,
+  `<pixel-6-serial>` as notification recipient. User A received a real message,
   long-pressed it, selected `👍`, and user B received exactly one relay/FCM card
   with title `TC256-A` and body `Reacted 👍 to your message`. The generic
   `New Message` fallback was rejected before an automated notification tap
@@ -1632,8 +1632,8 @@ git diff --check
   | `python3 graphify-arch/tdd_context.py affected ...runner... ...proof... ...discovery... --budget 600` | exit 0; no reverse dependencies surfaced | `passed` | console |
   | final scoped `git diff --check -- ...` | exit 0 | `passed` | console |
   | `flutter devices --machine`; `adb devices -l`; `xcrun simctl list devices available`; `flutter emulators` | exit 0; physical Android/iPhones and iOS simulator resolved; AVD available | `passed` | console |
-  | `flutter emulators --launch mknoon_play_35` plus focused QEMU/ADB triage | wrapper exit 1, but QEMU remained alive and `emulator-5554` became a live ADB target beside `21071FDF600CSC` | `passed` for required target availability | console |
-  | exact TC-00 `dart run ... --scenario head_provenance --sender emulator-5554 --recipient 21071FDF600CSC --artifact-dir build/reaction_notification_proof/head_provenance` | exit 78; no configured Plan-256 staging relay/provider capture driver or `head_provenance.json` | `environment_blocked` | no artifact |
+  | `flutter emulators --launch mknoon_play_35` plus focused QEMU/ADB triage | wrapper exit 1, but QEMU remained alive and `emulator-5554` became a live ADB target beside `<pixel-6-serial>` | `passed` for required target availability | console |
+  | exact TC-00 `dart run ... --scenario head_provenance --sender emulator-5554 --recipient <pixel-6-serial> --artifact-dir build/reaction_notification_proof/head_provenance` | exit 78; no configured Plan-256 staging relay/provider capture driver or `head_provenance.json` | `environment_blocked` | no artifact |
   | TC-07 and every later direct/Go/Swift/Kotlin/family/device command in `Acceptance Gates` and `Device/Relay Proof Profile` | not eligible after the mandatory TC-00 stop condition | `environment_blocked` | none |
   | first QA role; replacement QA role | first produced grounding only; replacement produced no artifact; both stopped after bounded no-progress/settle protocol | `blocking_failure` | no QA review section |
 
@@ -1674,7 +1674,7 @@ git diff --check
   environment-blocked.
 - **Recommended next retry focus:** first provision the clean Plan-256 staging
   relay/provider capture rig and TC-00 artifact path. Rerun the exact TC-00
-  command against `emulator-5554` and `21071FDF600CSC`; only on pass continue
+  command against `emulator-5554` and `<pixel-6-serial>`; only on pass continue
   with TC-07 and the plan's production/test sequence, then obtain a fresh
   independent QA verdict.
 - **Completion safety:** the retained partial scaffold is fail-closed and
@@ -1925,8 +1925,8 @@ git diff --check
   | `dart run integration_test/scripts/run_1to1_reaction_notification_device.dart --list-scenarios` | exit 255; runner file absent | `blocking_failure` | console |
   | `./scripts/run_test_gates.sh completeness-check` | exit 0; `1178/1178` files classified | `passed` | console |
   | `./scripts/check_reliability_simulation_discovery.sh` | exit 1; in-scope Plan-256 proof plus two pre-existing private-media proofs are unclassified | `blocking_failure` | console; full discovery report |
-  | `dart run integration_test/scripts/run_1to1_reaction_notification_device.dart --scenario head_provenance --sender emulator-5554 --recipient 21071FDF600CSC --artifact-dir build/reaction_notification_proof/head_provenance` | not run because the required runner did not materialize | `blocking_failure` | no TC-00 artifact |
-  | `dart run integration_test/scripts/run_1to1_reaction_notification_device.dart --scenario android_background_crypto_preflight --recipient 21071FDF600CSC --artifact-dir build/reaction_notification_proof/android_background_crypto_preflight` | not eligible after unresolved TC-00 | `blocking_failure` | none |
+  | `dart run integration_test/scripts/run_1to1_reaction_notification_device.dart --scenario head_provenance --sender emulator-5554 --recipient <pixel-6-serial> --artifact-dir build/reaction_notification_proof/head_provenance` | not run because the required runner did not materialize | `blocking_failure` | no TC-00 artifact |
+  | `dart run integration_test/scripts/run_1to1_reaction_notification_device.dart --scenario android_background_crypto_preflight --recipient <pixel-6-serial> --artifact-dir build/reaction_notification_proof/android_background_crypto_preflight` | not eligible after unresolved TC-00 | `blocking_failure` | none |
   | Every remaining literal command in `Acceptance Gates`, from the first causal reaction-preview RED through the focused Dart/Go/Swift/Kotlin proofs, preservation sentinels, runner/artifact validation, `1to1`, `feature-host-all`, `core-host-all`, analyzer baseline, and final `git diff --check` | not eligible after the mandatory TC-00 stop/go boundary failed; none is claimed as run | `blocking_failure` | exact commands remain verbatim in the governing block |
   | TC-13/14/16 device commands in `Device/Relay Proof Profile` | not eligible; live targets were available, so these are not policy-defined N/A | `blocking_failure` | none |
 
@@ -2051,7 +2051,7 @@ git diff --check
   | `git status --short` | exit 0; extensive pre-existing dirty tree captured | `passed` | preflight overlap hashes/diff counts in this plan |
   | `python3 graphify-arch/tdd_context.py query "Plan 256 execution ownership: ReactionPayload HandleIncomingReactionUseCase extractChatPushMetadata background_message_handler NotificationPreviewResolver ONE_TO_ONE_TESTS ONE_TO_ONE_HOST_TESTS" --profile general --budget 600` | exit 0; anchored, stale only at unrelated `lib/main.dart` | `passed` | console; fingerprint `bf874be415eaf2e3` |
   | `flutter devices --machine` | exit 0; physical Android/iPhones and iOS simulator resolved | `passed` | console |
-  | `adb devices -l` | exit 0; `21071FDF600CSC` resolved | `passed` | console |
+  | `adb devices -l` | exit 0; `<pixel-6-serial>` resolved | `passed` | console |
   | `xcrun simctl list devices available` | exit 0; `DBE8C32E-9F19-4593-860A-B41113791D79` booted | `passed` | console |
   | `flutter emulators` | exit 0; Android AVD `mknoon_play_35` available but not booted | `passed` | console |
   | `dart format --output=none --set-exit-if-changed integration_test/one_to_one_reaction_notification_proof_test.dart` | exit 0; 0 files changed | `passed` | console |
@@ -2059,12 +2059,12 @@ git diff --check
   | `python3 graphify-arch/tdd_context.py affected integration_test/one_to_one_reaction_notification_proof_test.dart --budget 600` | exit 0; no reverse dependencies resolved, so direct runner/discovery proof remains required | `passed` | console |
   | `git diff --check -- integration_test/one_to_one_reaction_notification_proof_test.dart Test-Flight-Improv/256-1to1-reaction-notification-context-tdd-plan.md` | exit 0 | `passed` | console |
   | `dart run integration_test/scripts/run_1to1_reaction_notification_device.dart --list-scenarios` | not run: required runner did not materialize | `blocking_failure` | none |
-  | `dart run integration_test/scripts/run_1to1_reaction_notification_device.dart --scenario head_provenance --sender emulator-5554 --recipient 21071FDF600CSC --artifact-dir build/reaction_notification_proof/head_provenance` | not run: required runner did not materialize | `blocking_failure` | no TC-00 artifact |
-  | `dart run integration_test/scripts/run_1to1_reaction_notification_device.dart --scenario android_background_crypto_preflight --recipient 21071FDF600CSC --artifact-dir build/reaction_notification_proof/android_background_crypto_preflight` | not eligible: TC-00 and runner unresolved | `blocking_failure` | none |
+  | `dart run integration_test/scripts/run_1to1_reaction_notification_device.dart --scenario head_provenance --sender emulator-5554 --recipient <pixel-6-serial> --artifact-dir build/reaction_notification_proof/head_provenance` | not run: required runner did not materialize | `blocking_failure` | no TC-00 artifact |
+  | `dart run integration_test/scripts/run_1to1_reaction_notification_device.dart --scenario android_background_crypto_preflight --recipient <pixel-6-serial> --artifact-dir build/reaction_notification_proof/android_background_crypto_preflight` | not eligible: TC-00 and runner unresolved | `blocking_failure` | none |
   | Every remaining literal command in the existing `Acceptance Gates` block, from the first causal `flutter test ... --plain-name 'reaction preview uses validated actor and semantic body'` through `git diff --check` | not eligible after the mandatory TC-00 stop/go boundary failed to materialize; none is claimed as run | `blocking_failure` | none; exact commands remain verbatim in the governing block above |
-  | `dart run integration_test/scripts/run_1to1_reaction_notification_device.dart --scenario android_message_unread_lifecycle --sender emulator-5554 --recipient 21071FDF600CSC --artifact-dir build/reaction_notification_proof/android_message_unread_lifecycle` | not eligible | `blocking_failure` | none |
-  | `dart run integration_test/scripts/run_1to1_reaction_notification_device.dart --scenario android_physical_recipient --sender emulator-5554 --recipient 21071FDF600CSC --artifact-dir build/reaction_notification_proof/android_physical_recipient` | not eligible | `blocking_failure` | none |
-  | `dart run integration_test/scripts/run_1to1_reaction_notification_device.dart --scenario ios_physical_recipient --sender 21071FDF600CSC --recipient 00008150-001C3C6A3684401C --artifact-dir build/reaction_notification_proof/ios_physical_recipient` | not eligible | `blocking_failure` | none |
+  | `dart run integration_test/scripts/run_1to1_reaction_notification_device.dart --scenario android_message_unread_lifecycle --sender emulator-5554 --recipient <pixel-6-serial> --artifact-dir build/reaction_notification_proof/android_message_unread_lifecycle` | not eligible | `blocking_failure` | none |
+  | `dart run integration_test/scripts/run_1to1_reaction_notification_device.dart --scenario android_physical_recipient --sender emulator-5554 --recipient <pixel-6-serial> --artifact-dir build/reaction_notification_proof/android_physical_recipient` | not eligible | `blocking_failure` | none |
+  | `dart run integration_test/scripts/run_1to1_reaction_notification_device.dart --scenario ios_physical_recipient --sender <pixel-6-serial> --recipient <iphone-17-pro-max-udid> --artifact-dir build/reaction_notification_proof/ios_physical_recipient` | not eligible | `blocking_failure` | none |
 
 - **QA findings and dispositions:** no independent QA findings materialized, so
   the following stable IDs are controller-recorded blockers and are not

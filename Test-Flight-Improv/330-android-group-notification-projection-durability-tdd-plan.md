@@ -14,12 +14,12 @@ Baseline: clean checkpoint `aba8cbb1d6bb57c524c6539e4e96b09167340e9d` (`signal-g
 | 2026-08-02 22:25 CEST | Evidence Collector | Plan 329 ledger; Android dropped-push service/store; FlutterFire service; direct/group drains | Full recovery without the main runtime needs separate headless Go/SQLCipher composition | Keep it prerequisite-blocked; do not fake closure with WorkManager |
 | 2026-08-02 22:45 CEST | Evidence Collector | group message/reaction listeners; show use case; background handler; staged ingestion | Message/reaction persistence can outrun OS-card success and duplicate replay then skips presentation | Specify durable canonical display custody |
 | 2026-08-02 23:00 CEST | Evidence Collector | foreground/background policies; iOS projection; ID registry; registration bootstrap | Policy divergence and missing read-zero cancellation confirmed; unstable IDs and broad registration-ordering gap refuted | Specify policy matrix and exact cancellation |
-| 2026-08-02 23:11 CEST | Planner | DB v105 registry; repository composition; live devices; curated gates | Reserve DB v106 for encrypted identifier-only outbox; pin Pixel `21071FDF600CSC` + emulator `emulator-5554` | Submit v1 to `$tdd-review` |
+| 2026-08-02 23:11 CEST | Planner | DB v105 registry; repository composition; live devices; curated gates | Reserve DB v106 for encrypted identifier-only outbox; pin Pixel `<pixel-6-serial>` + emulator `emulator-5554` | Submit v1 to `$tdd-review` |
 | 2026-08-02 23:45 CEST | Critical Review | mutation ordering; migration chain; read/display race; device harness; policy surface census | v1 was `plan-fixes-required`: stage-before-show left a pre-stage crash gap, a count recheck did not close cancel-vs-show, host FFI was not real SQLCipher, and the device row was not executable | Revise marker ordering, keyed serialization, real-device SQLCipher proof, exact device scenario, privacy boundary, cleanup and rollback contracts |
 | 2026-08-03 00:10 CEST | Arbiter | revised TC-330-01..19 and closure commands | Core bet confirmed after repairs; prerequisite-blocked headless runtime and named residuals are not represented as closed | Mark revised plan execution-ready and begin causal RED |
 | 2026-08-03 00:47 CEST | Final Counterexample Audit | implemented outbox/retry/listener/push/lifecycle surfaces and focused tests | Reopened implementation: future-backoff rows could strand after restart; ordinary logical-delivery duplicates could leave `not_ready` custody; reaction ADD remained non-atomic; legacy transition identity admitted ABA completion; foreground/background policy/copy and keyed-lane wiring were incomplete; account-import/dissolve closure and several promised tests were absent | Add causal counterexamples, repair production paths, then repeat every host/device gate before closure |
 | 2026-08-03 03:40 CEST | Implementation Re-audit | durable retry deadlines; logical aliases; atomic reaction mutation; transition authority; foreground/background lane; migration receiver | Every reopened counterexample received a causal test and production repair; focused, migration, curated, family, localization, runtime-root, Sims registry, and Go evidence is green | Run the registered paired-Android capability and preserve harness failures as evidence |
-| 2026-08-03 04:40 CEST | Android Closure | final content-addressed artifact on Pixel `21071FDF600CSC` + emulator `emulator-5554` | Primary `groups.notification_projection_durability` capability passed with one central APK, zero child builds, automated A/B exact read cancellation, and localized photo/video/voice reaction projection | Mark the primary capability Android-closed; keep the existing reaction campaign and S2/S8/S9/S10 reruns explicitly pending |
+| 2026-08-03 04:40 CEST | Android Closure | final content-addressed artifact on Pixel `<pixel-6-serial>` + emulator `emulator-5554` | Primary `groups.notification_projection_durability` capability passed with one central APK, zero child builds, automated A/B exact read cancellation, and localized photo/video/voice reaction projection | Mark the primary capability Android-closed; keep the existing reaction campaign and S2/S8/S9/S10 reruns explicitly pending |
 | 2026-08-03 final gap plan | Planner | current visible-card invalidation paths, SQL triggers, listener lifecycle, registry generation CAS, and Firebase background presenter | Durable display custody did not yet rebuild an already-visible shared group card after policy/read/delete/REMOVE transitions; the headless show path also lacked a canonical post-show fence | Prioritize a durable coalesced reconciliation journal, canonical cross-kind rebuild, then generation-fenced background validation |
 | 2026-08-03 final critical review | Critical Reviewer | migration v106 triggers; canonical reconciler/DB loaders; listener stop; generic reaction fallback; show/claim ordering | Review reopened five P1 counterexamples: absent rows were treated as deletion, replacement considered messages only, failed native replacement could be falsely completed, authorized generic reactions could bypass the fence, and show ownership was committed after the SQL read window; teardown also failed to await active reconciliation | Add tri-state decisions, message/reaction newest-attention selection, retryable silent re-publication, signed provisional comparands, immediate post-show owner commit, and quiescent stop tests |
 | 2026-08-03 final implementation | Implementer | v106 reconciliation outbox/triggers, process signal, canonical loaders/reconciler, listener/bootstrap, background preview/handler/fence, focused suites | Durable policy/read/delete/REMOVE invalidations now wake canonical generation-CAS rebuild; post-show checks retire only exact invalid generations and preserve newer publishers; unknown materialization stays retryable | Repeat focused, curated family, real SQLCipher, and paired Android-only device gates before restoring CLOSED status |
@@ -585,13 +585,13 @@ git diff --check
 ./graphify-arch/refresh_arch_graph.sh --incremental
 
 # Real SQLCipher v105 -> v106 proof, pinned to the allowed Android targets.
-flutter test --no-pub -d 21071FDF600CSC integration_test/group_notification_display_outbox_sqlcipher_proof_test.dart
+flutter test --no-pub -d <pixel-6-serial> integration_test/group_notification_display_outbox_sqlcipher_proof_test.dart
 flutter test --no-pub -d emulator-5554 integration_test/group_notification_display_outbox_sqlcipher_proof_test.dart
-flutter test --no-pub -d 21071FDF600CSC integration_test/group_exit_intents_sqlcipher_proof_test.dart
+flutter test --no-pub -d <pixel-6-serial> integration_test/group_exit_intents_sqlcipher_proof_test.dart
 flutter test --no-pub -d emulator-5554 integration_test/group_exit_intents_sqlcipher_proof_test.dart
-flutter test --no-pub -d 21071FDF600CSC integration_test/group_self_removed_marker_sqlcipher_proof_test.dart
+flutter test --no-pub -d <pixel-6-serial> integration_test/group_self_removed_marker_sqlcipher_proof_test.dart
 flutter test --no-pub -d emulator-5554 integration_test/group_self_removed_marker_sqlcipher_proof_test.dart
-ANDROID_SERIAL=21071FDF600CSC ./android/gradlew -p android :app:connectedReleaseAndroidTest --no-parallel -PenableGroupExitReleaseDiagnosticsProof=true -PdisableGoogleServicesForDisposableProof=true -PandroidApplicationId=com.mknoon.app.pb266proof -Ptarget="$PWD/integration_test/group_exit_release_diagnostics_sqlcipher_proof_test.dart" -Ptarget-platform=android-arm64
+ANDROID_SERIAL=<pixel-6-serial> ./android/gradlew -p android :app:connectedReleaseAndroidTest --no-parallel -PenableGroupExitReleaseDiagnosticsProof=true -PdisableGoogleServicesForDisposableProof=true -PandroidApplicationId=com.mknoon.app.pb266proof -Ptarget="$PWD/integration_test/group_exit_release_diagnostics_sqlcipher_proof_test.dart" -Ptarget-platform=android-arm64
 ANDROID_SERIAL=emulator-5554 ./android/gradlew -p android :app:connectedReleaseAndroidTest --no-parallel -PenableGroupExitReleaseDiagnosticsProof=true -PdisableGoogleServicesForDisposableProof=true -PandroidApplicationId=com.mknoon.app.pb266proof -Ptarget="$PWD/integration_test/group_exit_release_diagnostics_sqlcipher_proof_test.dart" -Ptarget-platform=android-arm64
 ```
 
@@ -603,12 +603,12 @@ ANDROID_SERIAL=emulator-5554 ./android/gradlew -p android :app:connectedReleaseA
   read cancellation, and zero duplicates. Incoming photo/video/voice cards are
   the separate S2/S8/S9/S10 preservation leg.
 - Live availability: `flutter devices --machine && adb devices -l` -> USB
-  Pixel 6 `21071FDF600CSC` API36 + emulator `emulator-5554` API37. iOS targets
+  Pixel 6 `<pixel-6-serial>` API36 + emulator `emulator-5554` API37. iOS targets
   are deliberately unused.
 - Required setup: one final-source APK; explicit roles on both Android IDs;
   automated permissions/setup/navigation/actions/shade assertions/cleanup; no
   user taps.
-- Two-peer default: USB `21071FDF600CSC` + emulator `emulator-5554`.
+- Two-peer default: USB `<pixel-6-serial>` + emulator `emulator-5554`.
 - Closure role: required OS-card/cancel evidence. Injected display failure and
   SQL outbox crash semantics close at causal host/SQLCipher tier.
 - Registration: add exact `groups.notification_projection_durability` in
@@ -637,7 +637,7 @@ ANDROID_SERIAL=emulator-5554 ./android/gradlew -p android :app:connectedReleaseA
   `7b11316958654ea29e1029de957afcd2534274993367b1b9bc55649db8985c7f`,
   package `com.mknoon.app`, and `childBuildCount=0`.
 - Historical topology and fixture: physical recipient Pixel
-  `21071FDF600CSC`, emulator sender `emulator-5554`, actor `Alice`, locale `en`;
+  `<pixel-6-serial>`, emulator sender `emulator-5554`, actor `Alice`, locale `en`;
   group A `Plan330A-fixture10bd41b7c` / ID SHA-256
   `4561a4d6df7e49bd92b73a10ed2b3b2f1355261024c78229563b1d5804edb31a`;
   group B `Plan330B-a426e0c92f84baab` / ID SHA-256
@@ -653,16 +653,16 @@ ANDROID_SERIAL=emulator-5554 ./android/gradlew -p android :app:connectedReleaseA
 - Closure commands (with the same relay/FCM environment used by Plan 329):
 
   ```bash
-  SIMS_ANDROID_PHYSICAL_DEVICE_ID=21071FDF600CSC \
+  SIMS_ANDROID_PHYSICAL_DEVICE_ID=<pixel-6-serial> \
   SIMS_ANDROID_EMULATOR_DEVICE_ID=emulator-5554 \
   dart tool/sims/sims.dart major --only groups.notification_projection_durability
 
-  SIMS_ANDROID_PHYSICAL_DEVICE_ID=21071FDF600CSC \
+  SIMS_ANDROID_PHYSICAL_DEVICE_ID=<pixel-6-serial> \
   SIMS_ANDROID_EMULATOR_DEVICE_ID=emulator-5554 \
   dart tool/sims/sims.dart major --only groups.reaction_notification_campaign
 
   dart run integration_test/scripts/run_notification_sound_smoke.dart \
-    -d emulator-5554,21071FDF600CSC \
+    -d emulator-5554,<pixel-6-serial> \
     --rows S2,S8,S9,S10 \
     --non-interactive \
     --artifact-dir build/sims/proofs/plan-330-group-media-preservation
@@ -882,7 +882,7 @@ ordered committed read, in-lane unread zero, exact notification ID, and JSON
   the read/show lane must span a background isolate, or the Android scenario
   needs manual taps.
 - Device disposition: automated closure is only USB Android
-  `21071FDF600CSC` plus Android emulator `emulator-5554`; iPhone remains manual.
+  `<pixel-6-serial>` plus Android emulator `emulator-5554`; iPhone remains manual.
 
 ## Execution Progress
 
@@ -893,7 +893,7 @@ ordered committed read, in-lane unread zero, exact notification ID, and JSON
 | 2026-08-03 | focused implementation | outbox, listener, reaction ingress, push, read projector, lifecycle | focused combined 952 pass | Reopened deadline, alias, atomicity, ABA, policy/copy/lane, dissolve, and account-transfer counterexamples are covered | No Plan-330 failure | Run migration and curated gates |
 | 2026-08-03 | migration / causal families | DB v106, incoming handlers, wiring, cursor transfer | outbox/migration 13/13; wiring/incoming 91/91; related combined 141/141; full migration chain 17/17; TC-330-17 4/4 | v105 -> v106, terminal markers, exact cleanup, aliases, custody transfer, and receiver ordering are green | Historical v104 ripple resolved | Run registered/family gates |
 | 2026-08-03 | final current-source host closure | focused counterexamples, completeness, groups, runtime roots, core, feature, Sims, discovery, analyzer | affected 788/788; completeness 1389/1389; canonical `groups` retry 3903/3903 plus all Go/relay legs; runtime-roots 20/20; `core-host-all` 3000/3000 across 379 paths; `feature-host-all` exit 0 across 825/825 paths with the one known SQLCipher-capability skip; Sims manifest/binding 22/22; discovery PASS; analyzer and diff clean | One unrelated P269 timing failure on the first groups run passed immediately in isolation and on the complete retry; the required failures-only feature reporter emitted no case aggregate, so none is fabricated | No current-source host blocker; full per-plan `host-all` deliberately not run by project cadence | Re-run only affected proof-harness tests/groups after any later harness delta |
-| 2026-08-03 | final real SQLCipher | Pixel `21071FDF600CSC` API36 + emulator `emulator-5554` API37 | Per target: display-outbox 1/1, exit-intents 1/1, self-removed marker 1/1, connected release diagnostics 1/1; all 8 legs PASS | Real `sqflite_sqlcipher` v106 migration/reopen/repair behavior and release diagnostics pass on both allowed Android targets; expected downgrade-refusal log is handled | No SQLCipher/device blocker | Run paired OS-card campaigns |
+| 2026-08-03 | final real SQLCipher | Pixel `<pixel-6-serial>` API36 + emulator `emulator-5554` API37 | Per target: display-outbox 1/1, exit-intents 1/1, self-removed marker 1/1, connected release diagnostics 1/1; all 8 legs PASS | Real `sqflite_sqlcipher` v106 migration/reopen/repair behavior and release diagnostics pass on both allowed Android targets; expected downgrade-refusal log is handled | No SQLCipher/device blocker | Run paired OS-card campaigns |
 | 2026-08-03 | Android harness counterexamples | paired proof driver/support | `capture-1785718039015470-89483`: Orbit-node timeout; `capture-1785719273485497-94662`: exact-two-card timeout; `capture-1785720215260343-98679`: three parsed cards; `capture-1785721174038533-4265`: transient creator readiness timeout | Repaired Intros -> Inner Circle navigation, spinner-as-accepted race, and id-0 Android auto-group-summary parsing. The last capture was external relay dial/backoff, not a product assertion. | Harness defects repaired; transient external failure superseded | Repeat unchanged primary capability |
 | 2026-08-03 04:40 CEST | historical pre-final paired Android proof | content-addressed artifact | `groups.notification_projection_durability` PASS; artifact SHA `c3efd8e0bee4b7dfe4e605a5ba828b6661799ca084953884d1f5c1069a35a0b6`; evidence SHA `b61cdfbfc98705b1f013823fdc7123d8fd26e84824d9413a582e36a0363bf475` | Pixel/emulator, one central APK SHA `7b11316958654ea29e1029de957afcd2534274993367b1b9bc55649db8985c7f`, zero child builds, A exact-cancel/B preserved, three localized reaction target kinds, zero duplicates/manual/card taps | Preservation evidence only because canonical reconciliation and post-show fence changed afterward | Repeat projection, reaction campaign, and S2/S8/S9/S10 on final source |
 | 2026-08-03 final exact-event audit | import, DB/read, listener, foreground/background FCM, DTR sentinels | causal REDs for missing exact APIs, prior-A/newer-B, pending ack, terminal-null replay, policy/reaction lane ordering, long ID, and whitespace ID; GREEN batches include 125/125, 55/55, 295/295, 79/79, 143/143, 97/97, 91/91 and clean targeted analyzers | Exact pending/canonical acknowledgement and final eligibility now precede claim/tone/show inside the shared key; final reviewer found no remaining P0/P1 | Earlier receipts invalidated; final host/SQLCipher/Android receipts all postdate the repair | Closed by current-source evidence below |

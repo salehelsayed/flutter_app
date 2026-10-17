@@ -23,7 +23,7 @@ Closure tier: host causal tests plus availability-bounded single-Android device 
 | RED | complete | TC-01 through TC-06 failed for the documented mode/picker/minimal-presentation/viewer-chrome mechanisms. TC-07 additionally exposed that the shared AppBar used bare `Navigator.pop`, bypassing the direct owner's `PopScope`. Preservation rows stayed green. |
 | GREEN | complete | The exact 13-file focused/preservation command passed 247 tests. TC-07 now proves one consume, one cleanup, zero rollback, cleanup-before-route-removal, and route-removal-before-native-release. |
 | Refactor | complete | No storage, lifecycle, controller, capture-protection, group, terminal, schema, migration, wire, secure-storage, or l10n production file changed. The shared viewer gained one optional Back coordinator whose null/default behavior is preserved. |
-| Closure | complete | `completeness-check` passed 1366/1366, `1to1` passed 2516 Flutter tests plus the relay Go gate, affected shared/ordinary/group sentinels passed, hygiene passed, and both unchanged device sentinels passed on USB Pixel 6 `21071FDF600CSC`. |
+| Closure | complete | `completeness-check` passed 1366/1366, `1to1` passed 2516 Flutter tests plus the relay Go gate, affected shared/ordinary/group sentinels passed, hygiene passed, and both unchanged device sentinels passed on USB Pixel 6 `<pixel-6-serial>`. |
 
 ## Problem And Evidence
 
@@ -214,9 +214,9 @@ Semantic outcomes:
 - Shared-viewer affected sentinels: PASS, 24 tests across `full_screen_typed_media_viewer_test.dart`, `media_viewer_boundary_test.dart`, `conversation_shared_media_viewer_test.dart`, and `group_private_media_viewer_test.dart`.
 - Registration: PASS, `completeness-check` reports 1366/1366 tests registered.
 - Curated lane: PASS, `./scripts/run_test_gates.sh 1to1` reports 2516 Flutter tests passed; relay Go toolchain contract and relay Go tests passed.
-- Device matrix rediscovery: USB Pixel 6 `21071FDF600CSC`, Android 16/API 36, was available and pinned. No iPhone was used.
-- Unchanged native protection proof: PASS on `21071FDF600CSC`.
-- Unchanged recipient SQLCipher journey: PASS on `21071FDF600CSC`; its emitted artifact reports view-once cleanup complete, attachment absent after cleanup, and unavailable after reopen.
+- Device matrix rediscovery: USB Pixel 6 `<pixel-6-serial>`, Android 16/API 36, was available and pinned. No iPhone was used.
+- Unchanged native protection proof: PASS on `<pixel-6-serial>`.
+- Unchanged recipient SQLCipher journey: PASS on `<pixel-6-serial>`; its emitted artifact reports view-once cleanup complete, attachment absent after cleanup, and unavailable after reopen.
 - Hygiene: PASS, Flutter 3.41.4 / Dart 3.11.1, `flutter analyze` reports no issues, and `git diff --check` is clean.
 - Graphify: incremental architecture refresh completed; refreshed affected analysis included all six production files, including the execution-discovered shared AppBar seam.
 - Scope audit: no prohibited lifecycle/controller/database/schema/migration/wire/secure-storage/l10n/group/capture/device-harness file changed.
@@ -241,7 +241,7 @@ Semantic outcomes:
 ## Device/Relay Proof Profile
 
 - Profile: single Android target, availability-bounded; these seams do not need two peers.
-- Planning-time matrix (2026-07-30): USB Pixel 6 `21071FDF600CSC` is attached and Android AVD `Pixel_7` is available but not running. This is a snapshot only; rediscover and pin at execution. Do not substitute an iPhone.
+- Planning-time matrix (2026-07-30): USB Pixel 6 `<pixel-6-serial>` is attached and Android AVD `Pixel_7` is available but not running. This is a snapshot only; rediscover and pin at execution. Do not substitute an iPhone.
 - Automation: run the unchanged platform-protection proof and only the recipient role of the existing device-local journey; no user taps and no full paired-runner claim.
 - Boundary split:
   - platform proof: actual viewer Back plus one consume while native screenshot protection remains unchanged;

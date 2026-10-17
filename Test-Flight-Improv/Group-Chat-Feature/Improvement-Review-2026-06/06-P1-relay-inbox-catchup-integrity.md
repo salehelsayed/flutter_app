@@ -188,7 +188,7 @@ The byte-for-byte range-hash fix (improvement 3) is a small, high-leverage chang
   - **Gap-repair round-trip:** induce a real cursor-outran-backlog gap and assert the relay-sourced repair range now passes `range_hash` validation end-to-end (the bug improvement 3 fixes).
 
 ### Device matrix & gates
-- Run on the established device pair (iPhone13 `00008110-...`, Pixel6 `21071FDF600CSC`) per `memory/project_physical_device_testing.md`.
+- Run on the established device pair (iPhone13 `00008110-...`, Pixel6 `<pixel-6-serial>`) per `memory/project_physical_device_testing.md`.
 - Update `Test-Flight-Improv/Group-Chat-Feature/test-inventory.md` and `Test-Flight-Improv/test-gate-definitions.md` with new gates: "relay-restart catch-up completeness," "cap-eviction truncation notice," and "cross-language range-hash parity." Tie the range-hash golden vector to a blocking gate since it guards the entire repair safety net.
 
 ---

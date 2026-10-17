@@ -533,7 +533,7 @@ re-REDs unless additional mutations are genuinely executed.
 - Boundary: Android-specific native process ownership and real SQLCipher/plugin
   composition; one automated Android device leg is required.
 - Live planning matrix on 2026-08-16: USB Pixel 6
-  `21071FDF600CSC` (API 36) and emulator `emulator-5554` (API 37). Execution
+  `<pixel-6-serial>` (API 36) and emulator `emulator-5554` (API 37). Execution
   rediscovers rather than hard-codes either ID.
 - Required target: one available Android target, emulator preferred for
   deterministic process-death orchestration and USB physical otherwise.

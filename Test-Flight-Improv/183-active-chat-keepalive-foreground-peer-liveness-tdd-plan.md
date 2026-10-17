@@ -181,7 +181,7 @@ While a 1:1 conversation is open, the connection to that peer is kept warm only 
 
 ## Device/Relay Proof Profile
 **requires device for closure** — the proactive `ping.Ping` + real drop-detection are PROD-CRITICAL and only provable on hardware. Create `Test-Flight-Improv/183-keepalive-device-proof-runsheet.md`.
-- Rig: Pixel 6 `adb -s 21071FDF600CSC`; iPhone 11 `idevicesyslog -u 00008030-001A6D2801BB802E`. Build needs the new gomobile symbols: `cd go-mknoon && PATH="$PATH:$(go env GOPATH)/bin" make all && cd ../ios && pod install`; then `flutter build apk --profile --dart-define=FDC_FLOW_LOG=1 --dart-define=MKNOON_ENABLE_NATIVE_MDNS=true`.
+- Rig: Pixel 6 `adb -s <pixel-6-serial>`; iPhone 11 `idevicesyslog -u <iphone-11-udid>`. Build needs the new gomobile symbols: `cd go-mknoon && PATH="$PATH:$(go env GOPATH)/bin" make all && cd ../ios && pod install`; then `flutter build apk --profile --dart-define=FDC_FLOW_LOG=1 --dart-define=MKNOON_ENABLE_NATIVE_MDNS=true`.
 - **TC-183-50 (PROD-CRITICAL):** both phones foreground in the SAME 1:1 chat (warm). Force the PEER's connection to drop WITHOUT touching the sender's network (peer backgrounds, or peer WiFi off). Expect on the sender within ~N s: `KEEPALIVE_PEER_DROP` → a `warmPeer` re-dial (+ `P2P_SERVICE_NETWORK_CHANGE_DRAIN_BEGIN`-equivalent drain) → the **next send stays on the warm/live path** (not the ~30 s-lagged cold-dial). Contrast a same-build run with the keepalive disabled (env/flag) showing the ~30 s lag.
 - **TC-183-51:** over a multi-minute open chat, ping cadence is bounded (count ≈ elapsed/N); background the app → **zero** `peer:ping` while suspended; foreground → resumes. Do NOT flip any feature-flag default ON.
 

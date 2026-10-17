@@ -38,7 +38,7 @@
     "buildNumber": 114,
     "apkSha256": "f80e83093fb5e711a48fd919834b903162a366def4fbe0f786c7f5f9aceebcec",
     "targets": [
-      "21071FDF600CSC",
+      "<pixel-6-serial>",
       "emulator-5554"
     ],
     "group": {

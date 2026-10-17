@@ -376,15 +376,15 @@ xcrun devicectl list devices
 
 ### Flutter/ADB targets
 
-- Pixel 6, 21071FDF600CSC, physical USB, Android 16/API 36.
+- Pixel 6, <pixel-6-serial>, physical USB, Android 16/API 36.
 - sdk gphone16k arm64, emulator-5554, emulator, Android 17/API 37.
-- iPhone 13, 00008110-00184D622289801E, physical wired, iOS 26.5
+- iPhone 13, <iphone-13-udid>, physical wired, iOS 26.5
   build 23F77; paired, developer mode enabled, DDI services available,
   unlocked, display active. This was the iOS proof target.
-- iPhone 11, 00008030-001A6D2801BB802E, physical wired, iOS 26.5
+- iPhone 11, <iphone-11-udid>, physical wired, iOS 26.5
   build 23F77; paired, developer mode enabled, DDI services available,
   unlocked.
-- iPhone 17 Pro Max, 00008150-001C3C6A3684401C, physical paired network,
+- iPhone 17 Pro Max, <iphone-17-pro-max-udid>, physical paired network,
   iOS 26.5.1 build 23F81; developer mode enabled, but DDI unavailable in the
   resolved run.
 - macOS 26.5.2 and Chrome 149 were visible to Flutter but are not PiP proof
@@ -475,14 +475,14 @@ Representative commands:
 cd /tmp/mknoon_pip_probe
 flutter analyze
 flutter build apk --debug
-./run_android_probe.sh 21071FDF600CSC system_expand
-./run_android_probe.sh 21071FDF600CSC system_close
+./run_android_probe.sh <pixel-6-serial> system_expand
+./run_android_probe.sh <pixel-6-serial> system_close
 
-adb -s 21071FDF600CSC shell dumpsys activity activities
-adb -s 21071FDF600CSC shell dumpsys window windows
-adb -s 21071FDF600CSC shell dumpsys SurfaceFlinger --list
-adb -s 21071FDF600CSC shell dumpsys audio
-adb -s 21071FDF600CSC shell am force-stop \
+adb -s <pixel-6-serial> shell dumpsys activity activities
+adb -s <pixel-6-serial> shell dumpsys window windows
+adb -s <pixel-6-serial> shell dumpsys SurfaceFlinger --list
+adb -s <pixel-6-serial> shell dumpsys audio
+adb -s <pixel-6-serial> shell am force-stop \
   com.mknoon.probe.mknoon_pip_probe
 ~~~
 
@@ -547,13 +547,13 @@ Corrective commands:
 cd /tmp/mknoon_pip_probe
 flutter build ios --profile --dart-define=PROBE_MODE=completion
 xcrun devicectl device install app \
-  --device 00008110-00184D622289801E \
+  --device <iphone-13-udid> \
   build/ios/iphoneos/Runner.app
 xcrun devicectl device process launch \
-  --device 00008110-00184D622289801E \
+  --device <iphone-13-udid> \
   --terminate-existing --activate --console com.mknoon.app
 xcrun devicectl device copy from \
-  --device 00008110-00184D622289801E \
+  --device <iphone-13-udid> \
   --domain-type appDataContainer \
   --domain-identifier com.mknoon.app \
   --source Library/Caches/pip_native_probe.log \
@@ -628,7 +628,7 @@ the disposable phase marker.
 ### Controlling physical-iPhone SystemUI closure disposition
 
 The final authorized run used the wired iPhone 11
-`00008030-001A6D2801BB802E`, iOS 26.5 (`23F77`), a Release-only build, and a
+`<iphone-11-udid>`, iOS 26.5 (`23F77`), a Release-only build, and a
 non-looping 72,000 ms fixture. The fixture is 2,463,571 bytes, H.264 High
 320x180 at 30 fps with AAC LC 48 kHz mono, and has SHA-256
 `d10a67eb9b3d2f707018524da5d4f0473ee665af22ea9675ab6629e201fcacf5`.
@@ -1091,7 +1091,7 @@ disposition, not a product return/close result.
 #### Earlier clean iPhone 11 target and exact probe sequence
 
 The second target was the wired physical iPhone 11 at UDID
-`00008030-001A6D2801BB802E` and CoreDevice ID
+`<iphone-11-udid>` and CoreDevice ID
 `5763A494-757C-5B37-AC70-3AA2775FBEFF`: model `iPhone12,1`, iOS 26.5
 (`23F77`). It was booted, paired, tunnel-connected, Developer Mode enabled,
 unlocked since boot with `passcodeRequired=false`, display active, and had a
@@ -1105,7 +1105,7 @@ The already-existing embedded development profile was inspected before use:
 - UUID `4e7c6235-6461-4278-912c-ba0154d14a98`;
 - application ID `397R9Q4WMX.com.mknoon.app`;
 - `ProvisionedDevices` exactly
-  `[00008110-00184D622289801E, 00008030-001A6D2801BB802E]`.
+  `[<iphone-13-udid>, <iphone-11-udid>]`.
 
 Deep and strict code-sign verification passed for identifier
 `com.mknoon.app` and team `397R9Q4WMX`. `Flutter.framework` reported
@@ -1331,7 +1331,7 @@ Evidence root:
 `build/received-video-pip-proof/final-coherent-20260714T072110Z`.
 
 The explicitly pinned target was physical Pixel 6/oriole
-`21071FDF600CSC`, Android SDK 36, with
+`<pixel-6-serial>`, Android SDK 36, with
 `FEATURE_PICTURE_IN_PICTURE=true`. Every scenario used the reviewed 72-second,
 2,463,571-byte fixture with SHA-256
 `d10a67eb9b3d2f707018524da5d4f0473ee665af22ea9675ab6629e201fcacf5`.
@@ -1979,7 +1979,7 @@ adb devices -l
 Then use only IDs present in that live matrix:
 
 ~~~bash
-ANDROID_DEVICE_ID=21071FDF600CSC
+ANDROID_DEVICE_ID=<pixel-6-serial>
 
 flutter test integration_test/received_video_picture_in_picture_proof_test.dart \
   -d "$ANDROID_DEVICE_ID" \

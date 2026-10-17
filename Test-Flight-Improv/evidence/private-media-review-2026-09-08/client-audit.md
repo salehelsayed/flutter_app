@@ -60,8 +60,8 @@ The smallest useful receiver evidence is policy version/mode/lifecycle state, at
 
 | Target | Observed readiness |
 |---|---|
-| USB iPhone11 `00008030-001A6D2801BB802E` | Existing USB-pinned WDA on port18100 was ready with an active session. Phone was already unlocked; `com.mknoon.app` was foreground, version1.0.1/build111. |
-| USB iPhone13 `00008110-00184D622289801E` | Physical target connected; WDA installed and an existing runner process present. Installed Mknoon was version1.0.1/build260907203036. A dedicated USB-pinned port18101 forwarding process was authorized and created, but GET status/lock-state requests immediately reset because the device WDA endpoint was unavailable. |
+| USB iPhone11 `<iphone-11-udid>` | Existing USB-pinned WDA on port18100 was ready with an active session. Phone was already unlocked; `com.mknoon.app` was foreground, version1.0.1/build111. |
+| USB iPhone13 `<iphone-13-udid>` | Physical target connected; WDA installed and an existing runner process present. Installed Mknoon was version1.0.1/build260907203036. A dedicated USB-pinned port18101 forwarding process was authorized and created, but GET status/lock-state requests immediately reset because the device WDA endpoint was unavailable. |
 
 The existing `/tmp/beta-call-review-20260908/dual_phone_call_ui.py` helper is restricted to the Pixel/iPhone11 lab pair. No exact account/identity evidence established that the two iPhones were paired lab accounts; contact display names were not treated as proof.
 

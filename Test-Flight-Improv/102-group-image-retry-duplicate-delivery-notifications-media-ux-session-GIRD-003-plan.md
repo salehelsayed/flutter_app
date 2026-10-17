@@ -202,7 +202,7 @@ Reason: this session owns deterministic Flutter recipient row/attachment idempot
 
 Live availability checks run during planning:
 
-- `flutter devices --machine`: available devices include physical Android `21071FDF600CSC`, physical iOS `00008030-001A6D2801BB802E` and `00008110-00184D622289801E`, booted iOS simulators `38FECA55-03C1-4907-BD9D-8E64BF8E3469`, `347FB118-10D0-40C8-A05B-B0C3BD6B8CCD`, `5BA69F1C-B112-47BE-B1FF-8C1003728C8F`, `1B098DFF-6294-407A-A209-BBF360893485`, plus `macos` and `chrome`.
+- `flutter devices --machine`: available devices include physical Android `<pixel-6-serial>`, physical iOS `<iphone-11-udid>` and `<iphone-13-udid>`, booted iOS simulators `38FECA55-03C1-4907-BD9D-8E64BF8E3469`, `347FB118-10D0-40C8-A05B-B0C3BD6B8CCD`, `5BA69F1C-B112-47BE-B1FF-8C1003728C8F`, `1B098DFF-6294-407A-A209-BBF360893485`, plus `macos` and `chrome`.
 - `xcrun simctl list devices available`: the same four iOS 26.1 simulators are booted; iOS 26.2 named gap-closure simulators are present but shutdown.
 - Reliability dry-run: `"${CODEX_HOME:-$HOME/.codex}/skills/run-flutter-reliability-sims/scripts/run_with_devices.sh" group --list` resolved one-device `38FECA55-03C1-4907-BD9D-8E64BF8E3469`, two-device `38FECA55-03C1-4907-BD9D-8E64BF8E3469,5BA69F1C-B112-47BE-B1FF-8C1003728C8F`, and four-device group `347FB118-10D0-40C8-A05B-B0C3BD6B8CCD,5BA69F1C-B112-47BE-B1FF-8C1003728C8F,1B098DFF-6294-407A-A209-BBF360893485,38FECA55-03C1-4907-BD9D-8E64BF8E3469`.
 

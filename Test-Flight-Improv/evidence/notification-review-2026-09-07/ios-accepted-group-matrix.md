@@ -1,6 +1,6 @@
 # Accepted iPhone group notifications on shared Wi-Fi
 
-2026-09-07; Pixel6 `21071FDF600CSC` sender (Android114), USB test iPhone11 `00008030-001A6D2801BB802E` receiver (app260907113535). Existing group `f4d26c1d-a7ae-40c3-9c37-5577b0f6c31f`. Accounts retained.
+2026-09-07; Pixel6 `<pixel-6-serial>` sender (Android114), USB test iPhone11 `<iphone-11-udid>` receiver (app260907113535). Existing group `f4d26c1d-a7ae-40c3-9c37-5577b0f6c31f`. Accounts retained.
 
 Root reused signed installed WDA through Appium MCP with corrected readiness timeout; no Xcode build. iPhone accepted group11:50:44UTC and UI confirmed joined/history. Root backgrounded11:51:41, verified suspended11:51:55. Group notification tap later routed to this exact group and fresh text correctly. Root owns corresponding Appium page sources/screenshots under `build/notification-latency-20260907/`.
 

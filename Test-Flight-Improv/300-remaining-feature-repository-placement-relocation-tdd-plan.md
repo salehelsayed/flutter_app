@@ -113,7 +113,7 @@ contracts to 7/7.
 - [x] Affected curated lanes are green: `1to1` passes 2,464 Flutter tests plus
       relay Go; Groups passes 3,265 Flutter tests plus Go tails; Introduction
       passes 300 tests; Posts passes seven host tests and two device assertions
-      on physical Pixel `21071FDF600CSC`.
+      on physical Pixel `<pixel-6-serial>`.
 - [x] Integrated `feature-host-all` passes 8,441 tests with one declared skip
       across 811 paths; `core-host-all` passes 2,847 tests across 367 paths
       plus the Android renderer contract.

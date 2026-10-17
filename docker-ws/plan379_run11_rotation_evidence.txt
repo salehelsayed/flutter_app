@@ -1,5 +1,5 @@
 # Plan 379 run 11 (2026-08-18) — why the LIVE muted lane timed out, and why it was never a mute defect.
-# Recipient 21071FDF600CSC, sender emulator-5554, APK 0a8c93f6 (plan 383 fixed build).
+# Recipient <pixel-6-serial>, sender emulator-5554, APK 0a8c93f6 (plan 383 fixed build).
 # Harness verdict: timed_out_waiting_for_muted group message stored by the recipient (180s).
 
 ## 1. The sender published all three messages; msg2 = 6e4e1d63, inboxStored + full live fanout.

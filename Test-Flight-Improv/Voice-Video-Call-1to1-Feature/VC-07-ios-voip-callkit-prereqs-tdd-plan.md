@@ -117,7 +117,7 @@ The implementing agent runs the full loop end-to-end on a **USB-connected Androi
 # Device discovery (run first; record output in Execution Progress)
 adb devices -l
 flutter devices --machine
-# Canonical pair (plan-256 convention): emulator-5554 (AVD mknoon_play_35) + USB Pixel 6 21071FDF600CSC
+# Canonical pair (plan-256 convention): emulator-5554 (AVD mknoon_play_35) + USB Pixel 6 <pixel-6-serial>
 
 # VC-07 closure legs and where they run:
 #  - ALL Dart RED/GREEN tests: HOST (no device) — flutter test <file>

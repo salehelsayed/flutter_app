@@ -50,7 +50,7 @@ Reproduce and report only. Both change membership or key rules.
 ## Devices
 
 Three devices, one per role (alice, bob, charlie):
-- USB Pixel 6 `21071FDF600CSC`
+- USB Pixel 6 `<pixel-6-serial>`
 - `emulator-5554` (Pixel_7)
 - `emulator-5556` (Pixel_6a)
 

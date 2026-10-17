@@ -33,8 +33,8 @@ flutter build ios --profile --dart-define=FDC_FLOW_LOG=1 --dart-define=MKNOON_EN
 
 ## Rig
 
-- Pixel 6 (Alice, cellular): `adb -s 21071FDF600CSC logcat | grep -E 'FLOW|RELAY_|HEALTH|DRAIN|RECOVERY'`
-- iPhone 11 (Bob, WiFi): `idevicesyslog -u 00008030-001A6D2801BB802E | grep -E 'FLOW|RELAY_|HEALTH|DRAIN|RECOVERY'`
+- Pixel 6 (Alice, cellular): `adb -s <pixel-6-serial> logcat | grep -E 'FLOW|RELAY_|HEALTH|DRAIN|RECOVERY'`
+- iPhone 11 (Bob, WiFi): `idevicesyslog -u <iphone-11-udid> | grep -E 'FLOW|RELAY_|HEALTH|DRAIN|RECOVERY'`
 - Prod relay journal (read-only): `ssh -i se.pem ubuntu@13.60.15.36` → follow the
   relay service journal; watch `Peer connected/disconnected` cadence and
   `retrieve_pending`/ack lines for both peer IDs (recipe in project memory).

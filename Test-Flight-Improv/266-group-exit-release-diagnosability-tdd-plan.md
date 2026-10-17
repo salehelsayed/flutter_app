@@ -82,7 +82,7 @@ bridge wire-format, relay, or peer-topology change
   `alreadyAbsent`, a state-race `refusedStateChanged`, and the dissolve/admin action
   itself are not failures owned by 266.
 - Current live target discovery on 2026-07-21 found USB Android
-  `21071FDF600CSC` (Pixel 6, API 36), Android emulators `emulator-5554` and
+  `<pixel-6-serial>` (Pixel 6, API 36), Android emulators `emulator-5554` and
   `emulator-5556`, and available iOS targets. This plan needs one Android release
   proof, not two peers or iOS. Execution must rediscover and pin a currently available
   target; an unavailable target/version is `N/A (target unavailable by project
@@ -624,7 +624,7 @@ release tested variant, includes/registers `integration_test` only in a disposab
 proof package, and leaves ordinary application variants unchanged:
 
 ```bash
-ANDROID_SERIAL=21071FDF600CSC ./android/gradlew -p android \
+ANDROID_SERIAL=<pixel-6-serial> ./android/gradlew -p android \
   :app:connectedReleaseAndroidTest --no-parallel \
   -PenableGroupExitReleaseDiagnosticsProof=true \
   -PdisableGoogleServicesForDisposableProof=true \
@@ -644,9 +644,9 @@ migration proofs on the same explicit target after updating only their terminal-
 assumptions:
 
 ```bash
-flutter test -d 21071FDF600CSC \
+flutter test -d <pixel-6-serial> \
   integration_test/group_self_removed_marker_sqlcipher_proof_test.dart
-flutter test -d 21071FDF600CSC \
+flutter test -d <pixel-6-serial> \
   integration_test/group_exit_intents_sqlcipher_proof_test.dart
 ```
 
@@ -654,7 +654,7 @@ Extend the existing real Move Account SQLCipher capability fixture with an allow
 v104 diagnostic row and run its exact export -> transferred-key staged-open selector:
 
 ```bash
-flutter test -d 21071FDF600CSC \
+flutter test -d <pixel-6-serial> \
   integration_test/migration_database_sqlcipher_capability_test.dart \
   --plain-name 'PB266-05 real SQLCipher move export and staged open retain diagnostic row'
 ```
@@ -678,7 +678,7 @@ Do not refresh merely for this plan edit or while Plan 264 owns the moving graph
   reachability, and a real encrypted Move Account export/staged-open companion.
 - Topology: one available Android target; no peer, account exchange, discovery, relay,
   or network transport is needed.
-- Default current target: USB Pixel 6 `21071FDF600CSC`; execution rediscovery is
+- Default current target: USB Pixel 6 `<pixel-6-serial>`; execution rediscovery is
   authoritative. An available emulator may be used if no physical Android is present
   because the claim is database/release UI rather than hardware-specific behavior.
 - Automation: pinned `connectedReleaseAndroidTest` with an AOT ARM64 release APK and
@@ -797,11 +797,11 @@ Do not refresh merely for this plan edit or while Plan 264 owns the moving graph
 
 | Time | Phase | Files | Last command / result | Current evidence | Decision / blocker | Next |
 |---|---|---|---|---|---|---|
-| 2026-07-21 | Immutable preflight | Plan 264/265 handoffs, migration registry, live devices, Graphify architecture graph | `HEAD=f9c2c597edb99d84972d8777844165520ade9cf9`; compact Graphify queries; `flutter devices --machine`; `adb devices`; `xcrun simctl list devices available` | Plan 264 and 265 accepted; v104 free; Pixel 6 `21071FDF600CSC`, Android emulators `emulator-5554`/`5556`, and iOS targets available | Entry guards satisfied; no concurrent owner | Capture literal RED |
+| 2026-07-21 | Immutable preflight | Plan 264/265 handoffs, migration registry, live devices, Graphify architecture graph | `HEAD=f9c2c597edb99d84972d8777844165520ade9cf9`; compact Graphify queries; `flutter devices --machine`; `adb devices`; `xcrun simctl list devices available` | Plan 264 and 265 accepted; v104 free; Pixel 6 `<pixel-6-serial>`, Android emulators `emulator-5554`/`5556`, and iOS targets available | Entry guards satisfied; no concurrent owner | Capture literal RED |
 | 2026-07-21 | Literal RED | `group_exit_release_diagnostics_test.dart` | PB266-01 exact command failed because the release diagnostic vocabulary/classifier file and symbols did not exist | Causal compile RED recorded before production implementation | Accepted RED | Implement typed boundary |
 | 2026-07-21 | Typed application + persistence GREEN | Classifier/observer/decorators, v104 migration/helper/model/repository, production composition, terminal actions | Focused acceptance batch `+34`; full-chain PB266-05 `+1`; Move importer PB266-05 `+1`; historical v102/v103 host batch `+3` | Exact mapping, immutable/deduplicated batches, real keyed-tail/error replay, 20-row cap, clear linearization, cleanup survival, exact-intent scoping, and terminal diagnostics pass | GREEN | Prove presentation/preservation |
 | 2026-07-21 | Presentation, Settings, l10n, privacy | Info/List/Orbit/recovery/conversation/Settings plus en/ar/de | Six-file presentation batch `+484`; l10n/privacy/Settings batch `+30`; seven exact PB264 selectors pass; PB264 application preservation `41/41`; PB265 preservation `40/40` | Existing navigation/container semantics preserved; EX01-EX10/EX99 visible; hostile details excluded; Settings production graph shares one repository | GREEN | Run family gates |
 | 2026-07-21 | Registration + hygiene | Test gate registry, discovery registry, Dart sources | `flutter gen-l10n`; exact-once registration loop; discovery record; PB266-01..15 census; exact-file format check; `flutter analyze --no-pub`; `git diff --check` | Registration/discovery complete; formatter clean; analyzer initially zero issues | GREEN | Run curated/family gates |
 | 2026-07-21 | Curated/family gates | Groups, core, feature | `groups`: 2,808 Flutter tests plus Go bridge/relay gates pass; `core-host-all`: initial legacy bridge telemetry assertion failed, exact assertion updated, rerun 2,728/2,728 across 345 paths plus renderer contract; `feature-host-all`: 8,478 pass, one declared skip, 820 paths | Only causal gate finding was stale expectation for the intentionally privacy-safe leave payload; production privacy sentinel remained green | GREEN after causal preservation fix; no per-plan `host-all` run | Run device proof |
-| 2026-07-21 | Availability-bounded device proof | Release diagnostic integration target; v102/v103 SQLCipher proofs; Move Account SQLCipher fixture | Physical Pixel 6 `21071FDF600CSC`: `connectedReleaseAndroidTest` PB266-15 1/1; v102 1/1; v103 1/1; PB266-05 Move Account 1/1 | True signed ARM64 AOT release APK, real SQLCipher upgrade/reopen/wrong-key/downgrade, Settings remount, hostile-sentinel exclusion, historical boundary preservation, and transferred v104 row all pass | GREEN; `flutter drive --release` incompatibility replaced by supported release instrumentation | Final graph refresh and closure hygiene |
+| 2026-07-21 | Availability-bounded device proof | Release diagnostic integration target; v102/v103 SQLCipher proofs; Move Account SQLCipher fixture | Physical Pixel 6 `<pixel-6-serial>`: `connectedReleaseAndroidTest` PB266-15 1/1; v102 1/1; v103 1/1; PB266-05 Move Account 1/1 | True signed ARM64 AOT release APK, real SQLCipher upgrade/reopen/wrong-key/downgrade, Settings remount, hostile-sentinel exclusion, historical boundary preservation, and transferred v104 row all pass | GREEN; `flutter drive --release` incompatibility replaced by supported release instrumentation | Final graph refresh and closure hygiene |
 | 2026-07-21 | Closure | Final Dart/native hygiene and architecture graph | Four MainActivity/native source-contract files `+21`; renderer profile/release contract pass; PiP disposable test-APK contract pass; ordinary release excludes `integration_test`; final analyzer zero issues; `git diff --check`; `./graphify-arch/refresh_arch_graph.sh --incremental` | Graph refresh processed 28 changed code files and wrote 60,100 nodes / 91,625 edges; TDD overlay has 14,027 named tests and 1,076 production targets | All scoped acceptance evidence complete | Closed |

@@ -56,7 +56,7 @@ The exact preview invocation and result are retained in:
 - `.codex-test-logs/production-bootstrap-migration-20260928/wave2-review-001/preview-invocation.json`
 - `.codex-test-logs/production-bootstrap-migration-20260928/wave2-review-001/preview/plan.json`
 
-Inspect the configuration, fixture reference, cleanup history and declared isolation. Rediscover available devices and verify current ownership before using it. The previously recorded pair was USB Android `21071FDF600CSC` and `emulator-5556`; these are historical observations, not current reservations.
+Inspect the configuration, fixture reference, cleanup history and declared isolation. Rediscover available devices and verify current ownership before using it. The previously recorded pair was USB Android `<pixel-6-serial>` and `emulator-5556`; these are historical observations, not current reservations.
 
 Reuse that configuration if it remains valid. If adjustment is needed, create a fresh ignored configuration with only verified target/fixture changes and retain the old file. Do not manufacture an isolation attestation or blindly reuse stale devices or accounts.
 

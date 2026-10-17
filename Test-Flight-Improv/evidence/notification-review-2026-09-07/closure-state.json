@@ -1,7 +1,7 @@
 {
   "checkedUTC": "2026-09-07T12:39:58.011956+00:00",
   "devices": {
-    "21071FDF600CSC": {
+    "<pixel-6-serial>": {
       "adbState": "device",
       "version": [
         "versionCode=114 minSdk=24 targetSdk=36",
@@ -24,7 +24,7 @@
     }
   },
   "iPhone": {
-    "device": "00008030-001A6D2801BB802E",
+    "device": "<iphone-11-udid>",
     "version": "260907113535",
     "originalWifiRestoredByRootUTC": "2026-09-07T12:31:09Z",
     "ownedAppiumSessionDeletedByRootUTC": "2026-09-07T12:39:09Z",
@@ -34,7 +34,7 @@
   "ownedCaptures": [
     {
       "pid": 77752,
-      "command": "adb -s 21071FDF600CSC logcat -v threadtime -T 1",
+      "command": "adb -s <pixel-6-serial> logcat -v threadtime -T 1",
       "stillRunning": false
     },
     {
@@ -44,7 +44,7 @@
     },
     {
       "pid": 77754,
-      "command": "idevicesyslog -u 00008030-001A6D2801BB802E --no-colors",
+      "command": "idevicesyslog -u <iphone-11-udid> --no-colors",
       "stillRunning": false
     }
   ],
@@ -59,7 +59,7 @@
     },
     "iphone11-syslog-unfiltered.log": {
       "bytes": 1989921481,
-      "lastLine": "[disconnected:00008030-001A6D2801BB802E]"
+      "lastLine": "[disconnected:<iphone-11-udid>]"
     }
   }
 }

@@ -263,7 +263,7 @@ Do not add broad new tests first. Start from the known required-command failures
 
 - Selected GMAR simulator: `iPhone Air`, id `347FB118-10D0-40C8-A05B-B0C3BD6B8CCD`, `ios`, emulator `true`, sdk `com.apple.CoreSimulator.SimRuntime.iOS-26-1`.
 - Additional iOS simulators: `iPhone 17 Pro` `38FECA55-03C1-4907-BD9D-8E64BF8E3469`; `iPhone 17` `5BA69F1C-B112-47BE-B1FF-8C1003728C8F`; `iPhone 16e` `1B098DFF-6294-407A-A209-BBF360893485`.
-- Physical iOS: `Saleh's iPhone`, id `00008030-001A6D2801BB802E`, sdk `iOS 26.3.1 23D771330a`.
+- Physical iOS: `Saleh's iPhone`, id `<iphone-11-udid>`, sdk `iOS 26.3.1 23D771330a`.
 - Android emulator: `sdk gphone16k arm64`, id `emulator-5554`, sdk `Android 17 (API 37)`.
 - Desktop/web: `macOS` id `macos`; `Chrome` id `chrome`.
 

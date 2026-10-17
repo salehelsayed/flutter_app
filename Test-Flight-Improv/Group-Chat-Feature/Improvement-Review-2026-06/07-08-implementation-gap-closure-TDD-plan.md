@@ -180,7 +180,7 @@ Low value (dissolve is terminal, never tie-breaks by eventId) — add only if ch
 ## 5. DEVICE-GATED — leave (cannot run on host)
 
 - **D1 [07-S3] two-admin concurrent role toggle with deliberate clock skew** (iPhone13 `00008110-…`,
-  Pixel6 `21071FDF600CSC`). Simulator clocks are too synced; host coverage substitutes by injecting
+  Pixel6 `<pixel-6-serial>`). Simulator clocks are too synced; host coverage substitutes by injecting
   `eventAt`/`sourceEventId` directly (proves the comparator). The real cross-device-skew run stays device-gated — matches
   the known remaining item for 07.
 

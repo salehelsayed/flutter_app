@@ -28,7 +28,7 @@ iOS initiated the observed TLS/TCP closes **after** its watchdog fired. The late
 
 ## Android: both text lanes delivered before opening on both networks
 
-Sender: existing emulator `emulator-5554` (Android 15). Receiver: USB Pixel 6 `21071FDF600CSC` (Android 16). Both used Android build 114, with accounts preserved. Each case confirmed the receiver process absent using `am stop-app`, with the package not force-stopped. A fresh marker was verified in the actual notification shade and OS notification records before opening the receiver. Group membership was accepted and the group unmuted.
+Sender: existing emulator `emulator-5554` (Android 15). Receiver: USB Pixel 6 `<pixel-6-serial>` (Android 16). Both used Android build 114, with accounts preserved. Each case confirmed the receiver process absent using `am stop-app`, with the package not force-stopped. A fresh marker was verified in the actual notification shade and OS notification records before opening the receiver. Group membership was accepted and the group unmuted.
 
 | Receiver network | Message lane | Send to observed OS card | Result |
 |---|---|---:|---|

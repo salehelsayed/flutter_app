@@ -18,7 +18,7 @@ The user explicitly supplied the physical Android test PIN for this work and ask
 
 `/Volumes/CrucialX9/flutter_app/.codex-test-logs/android-audio-beta/device-credentials.local.json`
 
-That file is Git-ignored and has mode 0600. Read the PIN from its `pin` field only inside the local automation. The credential is bound to physical serial `21071FDF600CSC`. It is deliberately not repeated in this handover, tracked files or reports. A copy of this handover on another machine will not contain the credential.
+That file is Git-ignored and has mode 0600. Read the PIN from its `pin` field only inside the local automation. The credential is bound to physical serial `<pixel-6-serial>`. It is deliberately not repeated in this handover, tracked files or reports. A copy of this handover on another machine will not contain the credential.
 
 **Normal PIN entry is authorized; a lock bypass is not needed.** Do not ask the absent user to unlock this test phone as the default workflow. Before the main campaign, prove the full automated sequence on the discovered physical target: wake → display the ordinary PIN entry UI → enter the configured PIN → verify keyguard is unlocked → open Mknoon → lock again → repeat successfully. PIN automation has NOT yet been verified on this phone. Earlier statements that the assistant could not unlock it referred to having no authorized credential; do not perpetuate that as a categorical tool limitation.
 
@@ -42,7 +42,7 @@ Rediscover the live matrix using the pinned Flutter executable's `devices --mach
 
 | Role | Target ID | Last observed state |
 | --- | --- | --- |
-| Physical Pixel 6 | `21071FDF600CSC` | Android17/API37; app account `pixel`; secure PIN lock |
+| Physical Pixel 6 | `<pixel-6-serial>` | Android17/API37; app account `pixel`; secure PIN lock |
 | Android emulator | `emulator-5554` | API37; app account `Username` |
 
 Use this Android pair in both caller/receiver directions. Do not substitute an iPhone or ask the user to operate another device. The emulator has an old stale contact also named `pixel`: the current paired conversation header is `pixel / Connected Sep 16, 2026`. Select and verify the current pairing instead of blindly tapping the first matching label. Preserve app data and pairings.

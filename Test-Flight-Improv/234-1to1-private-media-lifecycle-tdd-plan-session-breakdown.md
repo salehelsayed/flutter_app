@@ -140,9 +140,9 @@ These decisions replace the source draft's D-234-01..08 execution block. The fir
 ## Device And Relay Proof Profile
 
 - Re-resolve `flutter devices --machine`, `adb devices`, and `xcrun simctl list devices available` at execution. Never let Flutter select implicitly.
-- Current bounded Android pair: physical `21071FDF600CSC` plus emulator `emulator-5554`. Use this pair for the fully automated non-platform-specific private send/receive/retry/restart lifecycle journey. It proves device-local behavior, not account-wide consumption.
+- Current bounded Android pair: physical `<pixel-6-serial>` plus emulator `emulator-5554`. Use this pair for the fully automated non-platform-specific private send/receive/retry/restart lifecycle journey. It proves device-local behavior, not account-wide consumption.
 - Current reproducible iOS target: booted simulator `674DFFF6-5F38-4235-93F6-AF7FBF86AE65`. Use it for iOS SQLCipher and route/capture/background integration proof; an available physical iPhone may add confidence but is not mandatory when the simulator proves the selected iOS boundary.
-- Android v100 SQLCipher and secure-window proof uses explicit `21071FDF600CSC`; a second exact run may use `emulator-5554` when the session plan needs emulator automation.
+- Android v100 SQLCipher and secure-window proof uses explicit `<pixel-6-serial>`; a second exact run may use `emulator-5554` when the session plan needs emulator automation.
 - iOS screenshot prevention is not a selected claim. XCTest/native seams and simulator lifecycle/capture injection prove detection, cover, restoration, and copy; unavailable capture hardware/version legs are `N/A (target unavailable by project policy)`.
 - Relay-authoritative consume/revocation is N/A by accepted product policy. No Go or relay server edits/tests are required beyond a status/diff scope guard proving none landed.
 
@@ -363,7 +363,7 @@ Graphify refresh remain final included-Wave-1 work after Plan 238. Plans 242,
   - ordinary encrypted media, retry, eviction, egress, Forward, Shared Media, viewer, notification, and delete sentinels;
   - `integration_test/direct_private_media_lifecycle_sqlcipher_proof_test.dart` on explicit Android/iOS targets;
   - `integration_test/direct_private_media_platform_protection_proof_test.dart` on explicit Android/iOS targets;
-  - a fully automated two-Android lifecycle runner using `21071FDF600CSC` + `emulator-5554` after live re-resolution.
+  - a fully automated two-Android lifecycle runner using `<pixel-6-serial>` + `emulator-5554` after live re-resolution.
 - Likely gates:
   - `./scripts/run_test_gates.sh 1to1`;
   - `./scripts/run_host_test_gates.sh 1to1 --list` and registration comparison;

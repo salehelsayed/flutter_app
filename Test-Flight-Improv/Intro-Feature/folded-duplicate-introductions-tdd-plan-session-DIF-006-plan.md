@@ -181,8 +181,8 @@ Live availability checks were run during planning on 2026-05-06 21:03-21:05 CEST
 
 Available supported devices from `flutter devices --machine`:
 
-- Android physical: `21071FDF600CSC` Pixel 6
-- iOS physical: `00008030-001A6D2801BB802E` Saleh's iPhone
+- Android physical: `<pixel-6-serial>` Pixel 6
+- iOS physical: `<iphone-11-udid>` Saleh's iPhone
 - iOS simulator booted: `38FECA55-03C1-4907-BD9D-8E64BF8E3469` iPhone 17 Pro
 - iOS simulator booted: `347FB118-10D0-40C8-A05B-B0C3BD6B8CCD` iPhone Air
 - iOS simulator booted: `5BA69F1C-B112-47BE-B1FF-8C1003728C8F` iPhone 17

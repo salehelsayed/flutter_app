@@ -32,8 +32,8 @@ flutter build ios --profile --dart-define=FDC_FLOW_LOG=1 --dart-define=MKNOON_EN
 
 ## Rig
 
-- Pixel 6 (Alice): `adb -s 21071FDF600CSC logcat | grep -E 'FLOW|PEER_PING|KEEPALIVE|WARM_PEER|INBOX_DRAIN'`
-- iPhone 11 (Bob): `idevicesyslog -u 00008030-001A6D2801BB802E | grep -E 'FLOW|PEER_PING|KEEPALIVE|WARM_PEER|INBOX_DRAIN'`
+- Pixel 6 (Alice): `adb -s <pixel-6-serial> logcat | grep -E 'FLOW|PEER_PING|KEEPALIVE|WARM_PEER|INBOX_DRAIN'`
+- iPhone 11 (Bob): `idevicesyslog -u <iphone-11-udid> | grep -E 'FLOW|PEER_PING|KEEPALIVE|WARM_PEER|INBOX_DRAIN'`
 - Both signed into accounts that are mutual 1:1 contacts; same warmed conversation.
 - Actual per-tick events on the SENDER (grep anchors, verified in code):
   `P2P_SERVICE_PEER_PING_BEGIN` → `P2P_SERVICE_PEER_PING_SUCCESS` (reachable) /

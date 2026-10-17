@@ -214,9 +214,9 @@ Recorded: 2026-05-30 CEST.
 
 RSD-001 reran the NET-REL-03 evidence gate against the current repo docs,
 baseline decision gate, harvest runbook, and live device inventory. Physical
-devices are available to Flutter (`Pixel 6` `21071FDF600CSC`,
-`Saleh's iPhone` `00008030-001A6D2801BB802E`, and `iPhone`
-`00008110-00184D622289801E`), but the repo still does not contain a copied
+devices are available to Flutter (`Pixel 6` `<pixel-6-serial>`,
+`Saleh's iPhone` `<iphone-11-udid>`, and `iPhone`
+`<iphone-13-udid>`), but the repo still does not contain a copied
 real-device, discovery-enabled, debug-mode, 1:1-focused `baselineReport()` or
 decision-gate artifact with direct/relay/wifi/inbox/unknown counts,
 hole-punch attempt/success/failure counts, relay-to-direct upgrade count, and

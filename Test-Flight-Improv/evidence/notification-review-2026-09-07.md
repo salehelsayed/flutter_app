@@ -47,7 +47,7 @@ Current durable artifacts: `build/notification-review-20260907/`.
 
 ## Device results
 
-Targets: USB Pixel 6 (`21071FDF600CSC`, Android 16), preserved emulator `emulator-5554` (Android 15), and USB test iPhone 11 (`00008030-001A6D2801BB802E`, iOS 26.5). The user's private iPhone was not used.
+Targets: USB Pixel 6 (`<pixel-6-serial>`, Android 16), preserved emulator `emulator-5554` (Android 15), and USB test iPhone 11 (`<iphone-11-udid>`, iOS 26.5). The user's private iPhone was not used.
 
 | Check | Observed result |
 |---|---|

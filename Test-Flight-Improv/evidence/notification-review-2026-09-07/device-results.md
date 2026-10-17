@@ -4,9 +4,9 @@ The final source builds are installed on the test devices, with accounts and cha
 
 | Target | Final installed build | Evidence |
 | --- | --- | --- |
-| USB Pixel 6 `21071FDF600CSC`, Android16/API36 | `com.mknoon.app`, versionCode111, versionName`1.0.0-807874437-notification260907-final` | `android-final-package-pixel.txt` |
+| USB Pixel 6 `<pixel-6-serial>`, Android16/API36 | `com.mknoon.app`, versionCode111, versionName`1.0.0-807874437-notification260907-final` | `android-final-package-pixel.txt` |
 | Emulator `emulator-5554`, existing `Codex_API35`, Android15/API35 | Same APK/build111 | `android-final-package-emulator.txt` |
-| USB iPhone11 `00008030-001A6D2801BB802E`, iOS26.5 | `com.mknoon.app`, version`1.0.0807874437`, build`260907113535` | `ios-cleanup-installed-app.json` |
+| USB iPhone11 `<iphone-11-udid>`, iOS26.5 | `com.mknoon.app`, version`1.0.0807874437`, build`260907113535` | `ios-cleanup-installed-app.json` |
 
 APK SHA256: `3f8ec7e119c46a69f5c71fbe0a18b1d89c1c6e430a15e2ba3009e8c5d4e35e21`. Root provenance: `../android-final-provenance.json` and `../ios-cleanup-provenance.json`; both record no pending source changes at build. iPhone uses development APNs signing.
 

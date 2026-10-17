@@ -6,9 +6,9 @@ PROVENANCE sha=b055738c7 dirty_files=32
    run timestamp is the provenance anchor, not the sha — see
    build-current-working-tree-not-commits)
 
-PIXEL   21071FDF600CSC              OK 1.0.0-b055738c7.d32.t260905214521 (verified)
-IPHONE  00008030-001A6D2801BB802E   OK bundleVersion=260905214521 (verified)
-IPHONE  00008110-00184D622289801E   OK bundleVersion=260905214521 (verified)
+PIXEL   <pixel-6-serial>              OK 1.0.0-b055738c7.d32.t260905214521 (verified)
+IPHONE  <iphone-11-udid>   OK bundleVersion=260905214521 (verified)
+IPHONE  <iphone-13-udid>   OK bundleVersion=260905214521 (verified)
   iOS CFBundleShortVersionString reads 1.0.00557387.32.260905214521 — Xcode
   strips non-digits, same shape as every previous deploy; bundleVersion is the
   anchor the install script verifies.

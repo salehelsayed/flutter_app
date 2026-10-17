@@ -37,7 +37,7 @@ Status: **Track-3 / Wave-3 accepted and closed under explicit segmented host-res
 | Wave-3 aggregate `host-all` | User-directed segmented resume: preserved items 1–416 plus exact resumed items 417–1,173; suffix PASS with 8,291 Flutter tests across 749 paths and 8/8 Go legs | `build/Plan243/final-host-gates/wave-host-all-composite/acceptance-record.md`; SHA-256 `3140017c5cca80b8712c9d5c480908b64bc7652e5825391f6925723123851198` |
 | Final rollout `host-all` | User-directed segmented resume: preserved items 1–1,114 plus exact resumed items 1,115–1,173 at concurrency 1; suffix PASS with 1,063 Flutter tests across 51 paths and 8/8 Go legs; full indexed coverage 1,165 Flutter paths plus 8 Go legs | `build/Plan243/final-host-gates/final-release-host-all-composite/composite-acceptance.md`; SHA-256 `6df609df4f270c345c059bb53e9a9ee9ecab94f67ec6aaddd80dc8cf7fbfd6b1` |
 | P1 media regression seal | Consolidated lock/repository/caller/direct/group **446/446 PASS**; final `core-host-all` **2,561/2,561 PASS**; preserved feature run **8,024 PASS / 1 skip / 20 failed**, followed by exact failure-only resumes **20/20 PASS**, for **8,044 unique PASS / 1 registered skip / 0 unresolved failures**. The full feature gate was not restarted. | [Final media validation summary](../build/media-p1-aggregate-resume-20260714/VALIDATION_SUMMARY.md) |
-| Final three-device deployment | Profile build `1.0.0+107` installed by replacement/in-place semantics and launched on Pixel 6 `21071FDF600CSC`, iPhone 11 `00008030-001A6D2801BB802E`, and iPhone 13 `00008110-00184D622289801E`; identities, databases, contacts, chats, and group state retained; no deployment blocker. | [Final settled-tree deployment record](../build/media-final-deployment-20260714-215249/README.md) |
+| Final three-device deployment | Profile build `1.0.0+107` installed by replacement/in-place semantics and launched on Pixel 6 `<pixel-6-serial>`, iPhone 11 `<iphone-11-udid>`, and iPhone 13 `<iphone-13-udid>`; identities, databases, contacts, chats, and group state retained; no deployment blocker. | [Final settled-tree deployment record](../build/media-final-deployment-20260714-215249/README.md) |
 
 These composites satisfy the user's explicit resume authority only. Their
 concurrent Flutter aggregates overlap the resumed suffix and must not be added
@@ -172,7 +172,7 @@ refuse the production application ID.
 Evidence root:
 `build/received-video-pip-proof/final-coherent-20260714T072110Z`.
 
-- Target: physical Pixel 6/oriole `21071FDF600CSC`, Android SDK 36,
+- Target: physical Pixel 6/oriole `<pixel-6-serial>`, Android SDK 36,
   PiP feature present.
 - Fixture: 72 seconds, 2,463,571 bytes, SHA-256
   `d10a67eb9b3d2f707018524da5d4f0473ee665af22ea9675ab6629e201fcacf5`.

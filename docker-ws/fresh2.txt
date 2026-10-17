@@ -1,4 +1,4 @@
-[connected:00008030-001A6D2801BB802E]
+[connected:<iphone-11-udid>]
 
 Exiting...
-[disconnected:00008030-001A6D2801BB802E]
+[disconnected:<iphone-11-udid>]

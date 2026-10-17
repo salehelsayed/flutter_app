@@ -647,7 +647,7 @@ RED run for every phrase.
   and Plan-372/374 effect settlement. Run the same automated proof on each
   available USB-Android and emulator class from one immutable APK; an absent
   class records policy N/A.
-- Planning-time matrix: USB Pixel 6 `21071FDF600CSC` (API 36) and emulator
+- Planning-time matrix: USB Pixel 6 `<pixel-6-serial>` (API 36) and emulator
   `emulator-5554` (API 37). Execution must rediscover and pin each available
   USB/emulator class; each absent class records policy N/A. Both classes reuse
   the same immutable APK and isolated per-target evidence directory.
@@ -1235,6 +1235,6 @@ synthetic event identity or broadened rollout plan.
 | 2026-08-16 | TC-375-06/07/07b pure | — | Live paired-epoch resolver, linked pair-only route and coordinator-owned retries GREEN (pure fence exit 0); Go pair-withdrawal subtest PASS | TC-370-05/07, TC-295-02/08, TC-296-07, DTR-16/18 pins extended, never weakened | transcripted `FENCE3_EXIT=0`, `build/plan375-evidence/gate4-go.log` |
 | 2026-08-16 | Mutations 6/6 | Each family red on its exact owner | Byte-identical restore verified by SHA-256; owners re-GREEN | `build/plan375-evidence/mutations/mutation-report.json` SHA-256 `4528fd59c0c525fb560f1e85713416d28095156669d38e4afed557ecc2315363` | `build/plan375-evidence/mutations/` |
 | 2026-08-16 | Preservation + curated | — | Gate-5 12-label bundle exit 0; completeness 1465/1465; baseline +197/+6/+1; 1to1 3,345/~10; groups 4,350/0 | Final-tree reruns after formatting and the receiver-validator re-grounding | `build/plan375-evidence/gate6-curated.log` |
-| 2026-08-16 | TC-375-08 device | First pass failed only its own group-string validator (Android 16 forced autogroup strips sparse app groups) | PASS on `emulator-5554` (API 37) and USB Pixel 6 `21071FDF600CSC` (API 36) from one immutable APK `045855c4…`; distinct-process death/resume; silent fixed card; exact retirement; 0 Activity/taps/skips | Validators re-grounded to requested-silence facts; Robolectric owns the pre-post group key | `build/plan375.iRYdNC/` + receipt table |
+| 2026-08-16 | TC-375-08 device | First pass failed only its own group-string validator (Android 16 forced autogroup strips sparse app groups) | PASS on `emulator-5554` (API 37) and USB Pixel 6 `<pixel-6-serial>` (API 36) from one immutable APK `045855c4…`; distinct-process death/resume; silent fixed card; exact retirement; 0 Activity/taps/skips | Validators re-grounded to requested-silence facts; Robolectric owns the pre-post group key | `build/plan375.iRYdNC/` + receipt table |
 | 2026-08-16 | N07+N08 wave | First wave pass exposed 10 latent 373/374 pins and second-order manifest pins | `host-all` exit 0: 1,383 rows, Flutter batch 14,344/~11/0, both native adapter rows rediscovered once and PASS | Ten re-pins/extensions enumerated in the receipt; 13 pre-existing performance reds worktree-verified at base `HEAD` | `build/plan375-evidence/gate8-wave.log` |
 | 2026-08-16 | Hygiene/graph + closure | — | Analyzer clean; formats/gofmt/diff/bash -n clean; Graphify refresh 38/3,239/0, fingerprint `b5f0b986c86ff8e5`; frozen tested tree `5235d49aba3b2f940650464d72f3ec8353d57f69`; four checksum-bound artifacts committed | Closure docs postdate the freeze; one Plan-375 commit | `Test-Flight-Improv/evidence/375/README.md` |

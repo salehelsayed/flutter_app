@@ -315,7 +315,7 @@ git diff --check
 
 - Profile: `available-target-closed`. Production SQLCipher, real-Go-bridge, and protected-viewer boundaries passed on the available selected Android/iOS targets. The accepted device-local/no-remote-revocation contract makes convergence TC-238-13 and relay-revocation TC-238-14 explicitly N/A.
 - Boundary being proven: freshly allocated group-private migration/full-chain/default/mapping/idempotence/reopen on password-protected `sqflite_sqlcipher`; optional policy encryption through the real bridge; consume/expire and capture behavior matching user wording; any account-wide convergence or remote blob revocation at the actual device/relay boundary.
-- Live availability check: `flutter devices --machine`, `adb devices`, and `xcrun simctl list devices available`. Closure used physical Android `21071FDF600CSC` and iOS simulator `DBE8C32E-9F19-4593-860A-B41113791D79`; no unavailable version-specific target was required.
+- Live availability check: `flutter devices --machine`, `adb devices`, and `xcrun simctl list devices available`. Closure used physical Android `<pixel-6-serial>` and iOS simulator `DBE8C32E-9F19-4593-860A-B41113791D79`; no unavailable version-specific target was required.
 - Required setup: production `sqflite_sqlcipher` plugin for self-contained GPL-01D DB files and existing real-Go group crypto fixture for GPL-12. GPL-11 uses applicable platform target(s), a private image/video fixture, actual native protection ownership/state, and route plus injected-event cleanup. Android proves route-scoped `FLAG_SECURE`; iOS remains best-effort detection/obscuring. The automated proof does not observe or prove physical screenshot or screen-record prevention. If selected, GPL-13 pins a USB physical Android plus Android emulator and automates all peer actions; GPL-14 setup remains decision-dependent.
 - Closure role: GPL-01D, GPL-12, and GPL-11 are closed on production boundaries. Host tests remain supporting causal evidence only.
 - `FLUTTER_DEVICE_ID`: sufficient only for GPL-12 and one platform capture run. It is insufficient for a two-device convergence promise or both-platform capture promise.
@@ -382,7 +382,7 @@ git diff --check
   - `./scripts/run_test_gates.sh groups` -> `2108/2108` Flutter tests passed, then both Go bridge/node legs passed;
   - `(cd go-mknoon && GOTOOLCHAIN=go1.25.0 go test ./bridge ./node -run 'GPL12|GK030' -count=1)` -> both packages passed.
 - Exact device results:
-  - Android `21071FDF600CSC`: GPL-01D SQLCipher, GPL-11 protection, and GPL-12 real bridge each `1/1` passed;
+  - Android `<pixel-6-serial>`: GPL-01D SQLCipher, GPL-11 protection, and GPL-12 real bridge each `1/1` passed;
   - iOS simulator `DBE8C32E-9F19-4593-860A-B41113791D79`: GPL-11 protection `1/1` passed;
   - reliability discovery and exact group list passed. TC-238-13 cross-device convergence and TC-238-14 relay revocation are N/A by the accepted device-local/no-remote-revocation contract.
 - Static/hygiene results: scoped 36-file `flutter analyze --no-pub --no-fatal-infos` exited 0 with 13 infos and no warning/error; repo-wide `flutter analyze --no-pub` reported 1616 pre-existing issues (116 warnings, no errors), with no warning on a Plan-238 changed path; formatter check, `git diff --check`, discovery scripts, Go production baseline status/binary diff, Graphify affected query, and incremental architecture refresh all passed.

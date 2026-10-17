@@ -6,9 +6,9 @@ Installed `feat/ipv6-happy-eyeballs` commit `d8b919c5b34575d570a78eb5fbbc4203f56
 
 | Physical USB phone | Explicit target ID | Verified installed version |
 | --- | --- | --- |
-| iPhone 11, iOS 26.5 | `00008030-001A6D2801BB802E` | `1.0.1`, build `260907203036` |
-| iPhone 13, iOS 26.5 | `00008110-00184D622289801E` | `1.0.1`, build `260907203036` |
-| Pixel 6, Android 16/API 36 | `21071FDF600CSC` | `1.0.1-d8b919c5b.d2.t260907203036`, versionCode `111` |
+| iPhone 11, iOS 26.5 | `<iphone-11-udid>` | `1.0.1`, build `260907203036` |
+| iPhone 13, iOS 26.5 | `<iphone-13-udid>` | `1.0.1`, build `260907203036` |
+| Pixel 6, Android 16/API 36 | `<pixel-6-serial>` | `1.0.1-d8b919c5b.d2.t260907203036`, versionCode `111` |
 
 All three installations were launched and their installed versions verified. Artifact hashes, signing details, command results and install times are in the ignored `build/ipv6-device-qa-20260907/deploy/` directory, especially `deployment-result.json` and `build-identity.json`.
 

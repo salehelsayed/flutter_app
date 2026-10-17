@@ -93,9 +93,9 @@ xcrun simctl list devices available
 
 Recorded current availability:
 
-- `flutter devices --machine` listed physical Pixel 6 `21071FDF600CSC`, iPhone 17 Pro simulator `38FECA55-03C1-4907-BD9D-8E64BF8E3469`, iPhone Air simulator `347FB118-10D0-40C8-A05B-B0C3BD6B8CCD`, iPhone 17 simulator `5BA69F1C-B112-47BE-B1FF-8C1003728C8F`, iPhone 16e simulator `1B098DFF-6294-407A-A209-BBF360893485`, `macos`, and `chrome`.
+- `flutter devices --machine` listed physical Pixel 6 `<pixel-6-serial>`, iPhone 17 Pro simulator `38FECA55-03C1-4907-BD9D-8E64BF8E3469`, iPhone Air simulator `347FB118-10D0-40C8-A05B-B0C3BD6B8CCD`, iPhone 17 simulator `5BA69F1C-B112-47BE-B1FF-8C1003728C8F`, iPhone 16e simulator `1B098DFF-6294-407A-A209-BBF360893485`, `macos`, and `chrome`.
 - `xcrun simctl list devices available` showed the same four iOS 26.1 simulators booted: iPhone 17 Pro `38FECA55-03C1-4907-BD9D-8E64BF8E3469`, iPhone Air `347FB118-10D0-40C8-A05B-B0C3BD6B8CCD`, iPhone 17 `5BA69F1C-B112-47BE-B1FF-8C1003728C8F`, and iPhone 16e `1B098DFF-6294-407A-A209-BBF360893485`.
-- The physical iPhone `00008030-001A6D2801BB802E` was noted as visible earlier by the task context, but it was not present in the current `flutter devices --machine` output. Do not rely on it for GM-002 unless a fresh execution snapshot shows it.
+- The physical iPhone `<iphone-11-udid>` was noted as visible earlier by the task context, but it was not present in the current `flutter devices --machine` output. Do not rely on it for GM-002 unless a fresh execution snapshot shows it.
 
 Use this exact relay profile:
 

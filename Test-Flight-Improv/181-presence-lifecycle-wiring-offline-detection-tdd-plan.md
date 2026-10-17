@@ -226,7 +226,7 @@ The app ships a complete, host-tested presence self-publish stack (FDC-08 read s
 
 ## Device/Relay Proof Profile
 **requires device for behavioral closure** (the host wiring locks are source-assertion; the end-to-end producer→relay→consumer loop is **PROD-CRITICAL** and proven only on real devices). Create `Test-Flight-Improv/181-presence-lifecycle-wiring-device-proof-runsheet.md`.
-- Rig: Pixel 6 `adb -s 21071FDF600CSC`; iPhone 11 `idevicesyslog -u 00008030-001A6D2801BB802E` / `devicectl --device 5763A494-757C-5B37-AC70-3AA2775FBEFF`. TAP-launch the iPhone app. Keep collision iPhones (13/17) off WiFi.
+- Rig: Pixel 6 `adb -s <pixel-6-serial>`; iPhone 11 `idevicesyslog -u <iphone-11-udid>` / `devicectl --device 5763A494-757C-5B37-AC70-3AA2775FBEFF`. TAP-launch the iPhone app. Keep collision iPhones (13/17) off WiFi.
 - Build: `flutter build apk --profile --dart-define=FDC_FLOW_LOG=1` (Dart-only ⇒ gomobile cached ⇒ fast). For the device binary to carry presence symbols, ensure the installed build post-dates the committed `GoBridge.*` presence cases (already committed; a routine `make all && pod install` for iOS guarantees it).
 
 > **⚠️ LOAD-BEARING PRECONDITIONS (resolve BEFORE picking up the phones).** Because the host wiring locks are source-assertions, this device-proof is the **only** behavioral verification in the plan — and it silently *cannot observe its signals* unless both setup conditions hold. The same `unknownPresence==false` trap that put the original observation out of scope will make TC-181-33 look "broken" when it is actually "set up wrong."

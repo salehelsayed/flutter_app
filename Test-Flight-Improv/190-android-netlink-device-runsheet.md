@@ -1,6 +1,6 @@
 # 190 — Android netlink SELinux addr-visibility: device runsheet
 
-Status: **DEVICE-PROVEN 2026-07-02** on Pixel 6 (`21071FDF600CSC`, Android 16,
+Status: **DEVICE-PROVEN 2026-07-02** on Pixel 6 (`<pixel-6-serial>`, Android 16,
 build 1.0.0+106 profile with the anet fix) + a fresh libp2p peer on the same WiFi.
 TC-190-40 ✓, TC-190-41 wire leg ✓ (direct LAN dial via identify-learned addr,
 no mDNS), TC-190-42 core ✓ (cellular clean + real cellular/GUA addrs announced).
@@ -104,8 +104,8 @@ flutter build ios    --profile --dart-define=FDC_FLOW_LOG=1 --dart-define=MKNOON
 
 ## Rig
 
-- Pixel 6 (Android 16): `adb -s 21071FDF600CSC logcat -v time`
-- iPhone 11 (WiFi peer): `idevicesyslog -u 00008030-001A6D2801BB802E`
+- Pixel 6 (Android 16): `adb -s <pixel-6-serial> logcat -v time`
+- iPhone 11 (WiFi peer): `idevicesyslog -u <iphone-11-udid>`
 - Prod relay journal (read-only observation): EC2 recipe in project memory.
 - Flow/Go anchors to watch (grep-verified in code):
   - Go announce log `node.go:431`: `[NODE] Announcing N addresses (loopback/link-local filtered out)`
@@ -121,7 +121,7 @@ flutter build ios    --profile --dart-define=FDC_FLOW_LOG=1 --dart-define=MKNOON
 Pixel on WiFi, app foreground, 10-minute capture:
 
 ```bash
-adb -s 21071FDF600CSC logcat -v time \
+adb -s <pixel-6-serial> logcat -v time \
   | grep --line-buffered -E 'netlinkrib|avc.*netlink_route_socket|Announcing|failed to resolve local interface'
 ```
 
@@ -179,7 +179,7 @@ Revert control: remove the Pixel `replace` → relay-only returns.
 Pixel on cellular, 10-minute capture, plus one live WiFi↔cellular switch:
 
 ```bash
-adb -s 21071FDF600CSC logcat -v time \
+adb -s <pixel-6-serial> logcat -v time \
   | grep --line-buffered -E 'netlinkrib|Announcing|holepunch|FLOW|addresses'
 ```
 

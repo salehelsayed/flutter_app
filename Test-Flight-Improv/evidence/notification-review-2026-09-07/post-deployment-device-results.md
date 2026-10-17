@@ -4,9 +4,9 @@ The deployed relay was reported healthy by the root agent at 10:12:25 UTC, with 
 
 ## Targets and installed builds
 
-- Pixel 6 `21071FDF600CSC`, Android 16/API 36, account `picel`: versionCode111, `1.0.0-807874437-notification260907-final`.
+- Pixel 6 `<pixel-6-serial>`, Android 16/API 36, account `picel`: versionCode111, `1.0.0-807874437-notification260907-final`.
 - `emulator-5554`, existing Codex_API35 AVD, Android 15/API35, account `TC256-B`: same Android build111.
-- USB iPhone11 `00008030-001A6D2801BB802E`, iOS26.5, account `iphone-11`: release `1.0.0807874437`, bundle260907113535. Prior verified install/provenance is unchanged: `../devices/ios-cleanup-installed-app.json` and `../ios-cleanup-provenance.json`.
+- USB iPhone11 `<iphone-11-udid>`, iOS26.5, account `iphone-11`: release `1.0.0807874437`, bundle260907113535. Prior verified install/provenance is unchanged: `../devices/ios-cleanup-installed-app.json` and `../ios-cleanup-provenance.json`.
 
 ## Registration before sends
 

@@ -6,7 +6,7 @@ Date: 2026-09-03 (Europe/Berlin)
 
 PASS for two-way 1:1 call signaling, answer/end UI lifecycle, connected WebRTC media, and relay-only RTP between:
 
-- Physical Pixel 6: `21071FDF600CSC` (Android API 36)
+- Physical Pixel 6: `<pixel-6-serial>` (Android API 36)
 - iOS Simulator iPhone 17 Pro: `674DFFF6-5F38-4235-93F6-AF7FBF86AE65` (iOS 26.5)
 
 Both directions were exercised:

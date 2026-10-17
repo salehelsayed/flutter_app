@@ -153,7 +153,7 @@ Missing coverage gaps: no test asserts the offline send lands `sent` (not `faile
 - **Wire-envelope loss on the status write** — if setting `'sent'` via the UI path nulls the envelope, the lane can't pick it up. Pinned by TC-185-01 (assert envelope present) + TC-185-03 (lane picks it up).
 
 ## Device/Relay Proof Profile
-Requires the two-phone rig for closure (TC-185-04, TC-185-22) — the real relay-outage → recover flow is device-only. Runsheet: `185-offline-send-truthfulness-device-proof-runsheet.md` (to author). Rig: Pixel 6 `21071FDF600CSC` (offline via WiFi-off with bad/absent mobile) + iPhone 11 `00008030`, `FDC_FLOW_LOG=1` builds; grep `CHAT_MSG_SEND_TIMING`, `DELIVERY_RECEIPT_APPLIED` / `DELIVERY_RECEIPT_NO_TRANSITION`, `INBOX_STORE`. PASS = offline send shows single tick (no Retry) + honest snackbar; on reconnect the row converges to `delivered` with `DELIVERY_RECEIPT_APPLIED` and no lingering `NO_TRANSITION status:"failed"`. No feature flag, no DB migration.
+Requires the two-phone rig for closure (TC-185-04, TC-185-22) — the real relay-outage → recover flow is device-only. Runsheet: `185-offline-send-truthfulness-device-proof-runsheet.md` (to author). Rig: Pixel 6 `<pixel-6-serial>` (offline via WiFi-off with bad/absent mobile) + iPhone 11 `00008030`, `FDC_FLOW_LOG=1` builds; grep `CHAT_MSG_SEND_TIMING`, `DELIVERY_RECEIPT_APPLIED` / `DELIVERY_RECEIPT_NO_TRANSITION`, `INBOX_STORE`. PASS = offline send shows single tick (no Retry) + honest snackbar; on reconnect the row converges to `delivered` with `DELIVERY_RECEIPT_APPLIED` and no lingering `NO_TRANSITION status:"failed"`. No feature flag, no DB migration.
 
 ## Acceptance Gates  (literal)
 ```bash

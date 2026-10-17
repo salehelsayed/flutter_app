@@ -84,7 +84,7 @@ Dependencies:
 | TC-335-06 | Missing outer ID uses authenticated inner ID instead of identity-free branch | `background_push_notification_fallback_test.dart::authenticated inner group id anchors rich foreground recovery copy` | application host / trusted inner identity | HEAD follows unanchored generic path -> anchored trusted copy and exact payload | ignore resolved inner identity -> red | exact fallback suite; existing `GROUP_TESTS` |
 | TC-335-07 | Composition root supplies the named trusted resolver with identity, group repository, locale, and a decrypt closure that passes the resolver-selected key/ciphertext/nonce to `callGroupDecrypt` | `background_push_notification_fallback_test.dart::application root wires trusted foreground group message resolver` | host source-wiring contract plus TC-03 captured arguments | HEAD lacks wiring -> exact named delegation/callback present | closure always null, remove repository/identity/locale, or substitute decrypt arguments -> red | exact fallback suite; existing `GROUP_TESTS` |
 | TC-335-08 | Private media traversing the new resolver remains generic/redacted, and truly identity-free wakes remain generic/silent | `foreground_group_message_notification_resolver_test.dart::private media remains generic through foreground resolver`; existing unanchored fallback sentinel | application host + GREEN sentinel | compile-RED/new privacy assertion -> no plaintext/local group/sender names for private media; unanchored remains green | bypass formatter/privacy or contextualize identity-free route -> red | exact resolver/fallback tests; `GROUP_TESTS` |
-| TC-335-09 | Already-correct canonical group presentation still projects group title and `sender: text` through the Android plugin/OS | notification-sound runner row `S2` | paired Android / real bridge + live group listener + plugin/OS inspection | GREEN preservation proof -> programmatic and OS predicates remain green, one observed card | regress canonical copy/plugin projection -> S2 fails | `dart run integration_test/scripts/run_notification_sound_smoke.dart -d emulator-5554,21071FDF600CSC --rows S2 --non-interactive --artifact-dir build/sims/proofs/plan-335-group-preview`; already registered group runner |
+| TC-335-09 | Already-correct canonical group presentation still projects group title and `sender: text` through the Android plugin/OS | notification-sound runner row `S2` | paired Android / real bridge + live group listener + plugin/OS inspection | GREEN preservation proof -> programmatic and OS predicates remain green, one observed card | regress canonical copy/plugin projection -> S2 fails | `dart run integration_test/scripts/run_notification_sound_smoke.dart -d emulator-5554,<pixel-6-serial> --rows S2 --non-interactive --artifact-dir build/sims/proofs/plan-335-group-preview`; already registered group runner |
 | TC-335-10 | Legacy payload-only anchored group route remains generic for a current member | existing `background_push_notification_fallback_test.dart::foreground fallback preserves payload-only group route for current members` | GREEN sentinel / application host | green -> remains shown with legacy route | apply typed-envelope suppression to every group route -> red | exact fallback suite; existing `GROUP_TESTS` |
 | TC-335-11 | Queued group presentation resolves only after entering the keyed lane and rechecking current policy | `background_push_notification_fallback_test.dart::queued group fallback rechecks policy before trusted preview resolution` | application host / blocked first keyed operation then membership revocation | compile-RED/new callback ordering assertion -> second request suppressed, resolver/show count zero | resolve before coordinator/final policy -> red | exact fallback suite; existing `GROUP_TESTS` |
 
@@ -155,7 +155,7 @@ adb devices -l
 
 # Automated Android OS boundary, no taps
 dart run integration_test/scripts/run_notification_sound_smoke.dart \
-  -d emulator-5554,21071FDF600CSC \
+  -d emulator-5554,<pixel-6-serial> \
   --rows S2 \
   --non-interactive \
   --artifact-dir build/sims/proofs/plan-335-group-preview
@@ -169,7 +169,7 @@ git diff --check
 
 - Profile: paired-device.
 - Boundary: actual Android notification-service/OS projection preserves the already-correct canonical group title and sender body after host seam changes.
-- Live check: `flutter devices --machine` plus `adb devices -l` observed USB Pixel 6 `21071FDF600CSC` (Android 16/API 36) and emulator `emulator-5554` (Android 17/API 37), both `device`. iOS targets are excluded.
+- Live check: `flutter devices --machine` plus `adb devices -l` observed USB Pixel 6 `<pixel-6-serial>` (Android 16/API 36) and emulator `emulator-5554` (Android 17/API 37), both `device`. iOS targets are excluded.
 - Setup: emulator is Alice/sender; USB Pixel is Bob/receiver; existing relay config; runner grants notification permission; `--non-interactive` means no user taps.
 - Two-peer default: one pinned USB physical Android plus one pinned Android emulator with automated setup, join, send, observation, and assertions.
 - Closure role: required preservation evidence only; it does not trigger the changed drain-error seam. Host TC-335-01..08/10/11 are causal closure.
@@ -201,7 +201,7 @@ git diff --check
 - Preservation: `flutter test test/features/push/application/push_decrypt_preview_test.dart --plain-name 'group private policy at decrypted top level emits only generic localized copy'`.
 - Manual registration: add new resolver test once to `GROUP_TESTS`; device runner already registered.
 - Migration: none.
-- Boundary: host causal seam plus automated canonical-preservation OS projection from emulator `emulator-5554` to USB Pixel `21071FDF600CSC` S2.
+- Boundary: host causal seam plus automated canonical-preservation OS projection from emulator `emulator-5554` to USB Pixel `<pixel-6-serial>` S2.
 - Unresolved: literal iOS placeholder deployment origin only, outside Android execution.
 
 ## Execution Progress
@@ -212,7 +212,7 @@ git diff --check
 | 2026-08-04 10:51 CEST | causal RED | fallback and new resolver tests | exact fallback test failed because the callback did not exist; resolver suite failed because the file/function did not exist | both intended seams were red before production edits | none | implement the smallest trusted resolver and presenter wiring |
 | 2026-08-04 11:01 CEST | host GREEN and mutation | resolver, fallback, composition root, gate registration | focused suites 117/117; generic-title mutation made TC-335-01 red and restoration returned green | trusted copy, fail-closed boundaries, inner identity, privacy, race, and preservation sentinels green | none | run curated groups lane and Android preservation proof |
 | 2026-08-04 11:04 CEST | curated lane | group host/native/relay gates | `./scripts/run_test_gates.sh groups` exited 0: 4024 Flutter tests plus group bridge/node and relay Go tails passed | new resolver test selected exactly once; discovery listed group runner S2 | none | run the pinned Android pair |
-| 2026-08-04 11:13 CEST | Android preservation | emulator `emulator-5554` -> USB Pixel `21071FDF600CSC` | focused S2 exited 0 with every harness/OS predicate true | one `mknoon_messages` card: `Notif Sound Discussion / AliceNotif: S2: notification sound discussion`; title/body visible in shade; stable group card ID | initial harness launch exposed pre-existing missing canonical-runtime attachment; a temporary test-only lease hookup enabled the proof and was then reverted | run final analyzer, hygiene, and graph refresh |
+| 2026-08-04 11:13 CEST | Android preservation | emulator `emulator-5554` -> USB Pixel `<pixel-6-serial>` | focused S2 exited 0 with every harness/OS predicate true | one `mknoon_messages` card: `Notif Sound Discussion / AliceNotif: S2: notification sound discussion`; title/body visible in shade; stable group card ID | initial harness launch exposed pre-existing missing canonical-runtime attachment; a temporary test-only lease hookup enabled the proof and was then reverted | run final analyzer, hygiene, and graph refresh |
 | 2026-08-04 11:17 CEST | closure | full affected tree and Graphify | `flutter analyze` clean; focused suites 117/117; `git diff --check` clean; incremental graph refresh succeeded | current graph fingerprint `f2c73d7ccf0c33f3`; all done criteria satisfied | none | complete |
 
 ## Closure Evidence
@@ -222,7 +222,7 @@ git diff --check
 - Mutation: temporarily restoring the hardcoded `Mknoon` title made the exact anchored-copy test fail (`expected Team Chat`, `actual Mknoon`); restoration returned it to green.
 - Curated lane: `./scripts/run_test_gates.sh groups` passed 4024 Flutter tests and its group bridge/node and relay Go proof tails. Full `host-all` was intentionally not run under the project cadence.
 - Registration/discovery: the new resolver test occurs once in `GROUP_TESTS`; S2 remains discoverable as the group notification-sound runner row.
-- Android-only proof: the only targets used were emulator `emulator-5554` (Alice) and USB Pixel 6 `21071FDF600CSC` (Bob). `build/sims/proofs/plan-335-group-preview-final/notification_sound_smoke_summary.json` records S2 programmatic/OS PASS, exactly one notification, matching channel/category/title/body/payload, visible shade copy, screenshot capture, and stable conversation-card identity.
+- Android-only proof: the only targets used were emulator `emulator-5554` (Alice) and USB Pixel 6 `<pixel-6-serial>` (Bob). `build/sims/proofs/plan-335-group-preview-final/notification_sound_smoke_summary.json` records S2 programmatic/OS PASS, exactly one notification, matching channel/category/title/body/payload, visible shade copy, screenshot capture, and stable conversation-card identity.
 - Harness note: the first device attempts stopped before S2 because the older integration harness had not attached Android's canonical runtime and native identity/ML-KEM calls returned `MISSING_PLUGIN`. A temporary test-only lease hookup, equivalent to production bootstrap ordering, was used only to unblock the proof and was reverted afterward; no harness or platform source is part of this change.
 - Final hygiene: full `flutter analyze` reports no issues, `git diff --check` is clean, and Graphify incremental refresh/query reports current fingerprint `f2c73d7ccf0c33f3`.
 

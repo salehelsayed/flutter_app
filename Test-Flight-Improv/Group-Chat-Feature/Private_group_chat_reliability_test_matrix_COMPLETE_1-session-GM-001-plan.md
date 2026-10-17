@@ -88,7 +88,7 @@ On disagreement, current code/tests and accepted harness criteria beat stale pro
 
 Live availability was checked during planning:
 
-- `flutter devices --machine` reported physical Pixel 6 `21071FDF600CSC`, physical iPhone `00008030-001A6D2801BB802E`, booted iOS simulators `38FECA55-03C1-4907-BD9D-8E64BF8E3469`, `347FB118-10D0-40C8-A05B-B0C3BD6B8CCD`, `5BA69F1C-B112-47BE-B1FF-8C1003728C8F`, `1B098DFF-6294-407A-A209-BBF360893485`, plus `macos` and `chrome`.
+- `flutter devices --machine` reported physical Pixel 6 `<pixel-6-serial>`, physical iPhone `<iphone-11-udid>`, booted iOS simulators `38FECA55-03C1-4907-BD9D-8E64BF8E3469`, `347FB118-10D0-40C8-A05B-B0C3BD6B8CCD`, `5BA69F1C-B112-47BE-B1FF-8C1003728C8F`, `1B098DFF-6294-407A-A209-BBF360893485`, plus `macos` and `chrome`.
 - `xcrun simctl list devices available` reported four booted iOS 26.1 simulators:
   - `38FECA55-03C1-4907-BD9D-8E64BF8E3469` - iPhone 17 Pro
   - `347FB118-10D0-40C8-A05B-B0C3BD6B8CCD` - iPhone Air

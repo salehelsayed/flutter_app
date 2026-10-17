@@ -46,8 +46,8 @@ and `xcrun simctl list devices available` on 2026-08-06.
 
 | Direction | Resolved targets | Disposition |
 |---|---|---|
-| A→A | USB Pixel 6 `21071FDF600CSC` (Android 16/API 36, Wi-Fi `192.168.0.240/24`) + `emulator-5554` (Android 17/API 37, NAT `10.0.2.15/24`, `wlan0` down) | **N/A (target topology unavailable by project policy).** The required default Android pair cannot share an L2/mDNS LAN; no send count is admitted. |
-| i→i | USB iPhone 11 `00008030-001A6D2801BB802E` + USB iPhone 13 `00008110-00184D622289801E` (both iOS 26.5) | **Not admitted.** Host UI automation is disabled and the disposable profile file-channel did not reach identity export. Those are harness-boundary observations, not transport results; the attempt was stopped rather than repaired recursively. |
+| A→A | USB Pixel 6 `<pixel-6-serial>` (Android 16/API 36, Wi-Fi `192.168.0.240/24`) + `emulator-5554` (Android 17/API 37, NAT `10.0.2.15/24`, `wlan0` down) | **N/A (target topology unavailable by project policy).** The required default Android pair cannot share an L2/mDNS LAN; no send count is admitted. |
+| i→i | USB iPhone 11 `<iphone-11-udid>` + USB iPhone 13 `<iphone-13-udid>` (both iOS 26.5) | **Not admitted.** Host UI automation is disabled and the disposable profile file-channel did not reach identity export. Those are harness-boundary observations, not transport results; the attempt was stopped rather than repaired recursively. |
 | A↔i | Historical Pixel/iPhone pilots already in `fdc-s6-measurement/logs/pilot*` | **Admitted only as legacy pilot evidence.** No new iPhone run was added. |
 
 The iOS setup attempts and the zero-line Android topology probe are excluded

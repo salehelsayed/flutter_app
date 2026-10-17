@@ -6,8 +6,8 @@ Date: 2026-07-02 (evening session). Executed autonomously via adb (Pixel UI + ne
 ## Rig
 | | |
 |---|---|
-| Pixel 6 | `21071FDF600CSC`, **debug** build of `54fd09e5` tree (landmine deleted), identity `…BKdtDqzv`, WiFi "Vodafone-CA38" 192.168.0.240 / cellular available |
-| iPhone 11 | `00008030-001A6D2801BB802E`, **debug** build (same tree), identity `…KzReAAQd`, WiFi (192.168.0.x, same LAN), attached `flutter run` console streaming FLOW |
+| Pixel 6 | `<pixel-6-serial>`, **debug** build of `54fd09e5` tree (landmine deleted), identity `…BKdtDqzv`, WiFi "Vodafone-CA38" 192.168.0.240 / cellular available |
+| iPhone 11 | `<iphone-11-udid>`, **debug** build (same tree), identity `…KzReAAQd`, WiFi (192.168.0.x, same LAN), attached `flutter run` console streaming FLOW |
 | Relay | prod `mknoun.xyz` (13.60.15.36), freshly redeployed `54fd09e5` (evict-oldest fix live), journal streamed via SSH for the whole campaign |
 
 Evidence channels per send: (1) Pixel logcat FLOW (send path, transport, snackbars), (2) iPhone Dart console FLOW (receive path, timestamps), (3) relay journal (stores/pushes/acks — or significant SILENCE when a direct/LAN transport bypasses the relay).

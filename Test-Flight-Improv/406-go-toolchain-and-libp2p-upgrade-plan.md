@@ -140,7 +140,7 @@ The script exits non-zero on any failure and prints the pair and row.
 
 ## 6. Device proof
 
-Phones: Pixel 6 (`21071FDF600CSC`), iPhone 11, iPhone 13, emulators. One side runs the store build 1.0.1+122 (OLD), the other the new build.
+Phones: Pixel 6 (`<pixel-6-serial>`), iPhone 11, iPhone 13, emulators. One side runs the store build 1.0.1+122 (OLD), the other the new build.
 
 For Android↔iOS and Android↔Android, both directions:
 

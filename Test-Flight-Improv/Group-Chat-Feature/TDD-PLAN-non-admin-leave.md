@@ -230,7 +230,7 @@ dart run integration_test/scripts/run_group_multi_party_device_real.dart \
 **Option B — real Pixel→iPhone (field proof)**
 - Device blockers (project memory): iPhone13 has an iOS signing blocker AND an iOS 26.5 debug-JIT crash
   (EXC_BAD_ACCESS) — debug `flutter run` is unstable on it; use **`--profile`/AOT** for the iPhone role and
-  prefer Pixel6 (`21071FDF600CSC`) for any debug role. With only two physical devices, run charlie on a sim.
+  prefer Pixel6 (`<pixel-6-serial>`) for any debug role. With only two physical devices, run charlie on a sim.
 - Same command, real ids: `-d <pixel-or-iphone>,<device2>,<device3>` (order = alice,bob,charlie).
 
 **GREEN bar (proves the fix on real transport)**

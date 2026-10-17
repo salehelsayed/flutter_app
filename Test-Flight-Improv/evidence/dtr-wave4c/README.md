@@ -65,7 +65,7 @@ The accepted focused and preservation receipts were:
 | `1to1` | 2,464 Flutter tests plus relay Go tail passed |
 | `groups` | 3,265 Flutter tests plus all Go/relay tails passed |
 | `intro` | 300 passed |
-| `posts` | 7 host tests and 2 device tests passed on USB Pixel 6 target `21071FDF600CSC` |
+| `posts` | 7 host tests and 2 device tests passed on USB Pixel 6 target `<pixel-6-serial>` |
 | `feature-host-all` | 8,441 passed, 1 declared skip across 811 paths |
 | `core-host-all` | 2,847 passed across 367 Flutter paths; Android renderer contract passed |
 

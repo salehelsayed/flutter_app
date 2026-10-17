@@ -196,7 +196,7 @@ Review **Imp 4 Part 2** (Part 1 already shipped in S1's `nextMembershipEventAt`,
 - **RED-lock watch:** `dissolve_group_use_case_test` exact-value `lastMembershipEventAt` asserts (:88/:95, :384/:393), listener role-rollback `:10480-:10534` and `:9968`, and rotate `NW-013` `:704` (reused `eventAt` across retry) all pin `eventAt` values — verify monotonicity adoption at mints doesn't perturb them (most pass an explicit future timestamp with no prior watermark, so they stay green; any that prime a prior watermark go RED and must expect `max(now, last+1µs)`).
 
 ### 5.4 Gates
-`flutter analyze` 0 new · watermark + listener suites green · `082` + chain tests green · device: two-admin **concurrent role toggle with deliberate clock skew** on `group_multi_party_device_real_harness.dart` (iPhone13 `00008110-…`, Pixel6 `21071FDF600CSC`) — simulator clocks are too synced; inject `eventAt` or set a real offset (per `test-gate-definitions.md`).
+`flutter analyze` 0 new · watermark + listener suites green · `082` + chain tests green · device: two-admin **concurrent role toggle with deliberate clock skew** on `group_multi_party_device_real_harness.dart` (iPhone13 `00008110-…`, Pixel6 `<pixel-6-serial>`) — simulator clocks are too synced; inject `eventAt` or set a real offset (per `test-gate-definitions.md`).
 
 ---
 
@@ -226,7 +226,7 @@ Review **Imp 4 Part 2** (Part 1 already shipped in S1's `nextMembershipEventAt`,
 
 **Integration (`integration_test/`)** — `group_admin_metadata_convergence_simulator_test.dart`: extend with the "name flips back and forth" scenario (Admin A renames; Admin B pre-rename toggles a role) → converge on A's name **and** B's role (note: the 74e8436c guard already neutralizes this; the scenario proves convergence, not the send-trim). `group_recovery_e2e_test.dart`: S2 relay-outage revert/pending + reconnect delivery.
 
-**Device matrix** (iPhone13 `00008110-…`, Pixel6 `21071FDF600CSC`) — the **two-admin concurrent role/metadata** path (S3) needs **cross-device clock skew**; simulator clocks are too synced. Set a deliberate offset or inject `eventAt` to force the equal/inverted-timestamp path. Record per `Test-Flight-Improv/test-gate-definitions.md`. Adjacent matrices to extend: `56-deterministic-remove-vs-send-boundary.md` (role-vs-role, role-vs-metadata), `65-same-user-multi-device-group-convergence.md` (single-actor rapid toggles), `59`/`60` (rollback regression rows).
+**Device matrix** (iPhone13 `00008110-…`, Pixel6 `<pixel-6-serial>`) — the **two-admin concurrent role/metadata** path (S3) needs **cross-device clock skew**; simulator clocks are too synced. Set a deliberate offset or inject `eventAt` to force the equal/inverted-timestamp path. Record per `Test-Flight-Improv/test-gate-definitions.md`. Adjacent matrices to extend: `56-deterministic-remove-vs-send-boundary.md` (role-vs-role, role-vs-metadata), `65-same-user-multi-device-group-convergence.md` (single-actor rapid toggles), `59`/`60` (rollback regression rows).
 
 ---
 

@@ -296,7 +296,7 @@ No empty cells.
 ## Execution Environment  (VC-00 rule 1 — the implementing agent runs this loop itself)
 
 ```bash
-# 1. Discover the rig (canonical pair per repo policy: USB Pixel 6 21071FDF600CSC + AVD mknoon_play_35 at emulator-5554;
+# 1. Discover the rig (canonical pair per repo policy: USB Pixel 6 <pixel-6-serial> + AVD mknoon_play_35 at emulator-5554;
 #    if unavailable, substitute the serials adb reports — record the substitution)
 flutter devices --machine
 adb devices -l          # expect: one USB serial (device), one emulator-5554 (emulator)
@@ -306,7 +306,7 @@ flutter emulators       # boot if needed: flutter emulators --launch mknoon_play
 flutter test test/features/call/
 
 # 3. Single-leg device run (debugging a role in isolation)
-flutter test --no-pub integration_test/call_audio_e2e_proof_test.dart -d 21071FDF600CSC \
+flutter test --no-pub integration_test/call_audio_e2e_proof_test.dart -d <pixel-6-serial> \
   --dart-define=CALL_E2E_ROLE=caller --dart-define=MKNOON_RELAY_ADDRESSES="/dns/mknoun.xyz/tcp/4001/wss/p2p/12D3KooWGMYMmN1RGUYjWaSV6P3XtnBjwnosnJGNMnttfVCRnd6g"
 
 # 4. Two-party orchestrated proof (comma-separated -d, first id = caller leg on the USB device, second = callee on the emulator)
@@ -316,9 +316,9 @@ flutter test --no-pub integration_test/call_audio_e2e_proof_test.dart -d 21071FD
 #    covers the relay pair type deterministically either way.
 dart run integration_test/scripts/run_call_device_real.dart --list-scenarios
 dart run integration_test/scripts/run_call_device_real.dart \
-  --scenario vc05_foreground_audio_call -d 21071FDF600CSC,emulator-5554
+  --scenario vc05_foreground_audio_call -d <pixel-6-serial>,emulator-5554
 dart run integration_test/scripts/run_call_device_real.dart \
-  --scenario vc05_forced_turn_relay_audio_call -d 21071FDF600CSC,emulator-5554
+  --scenario vc05_forced_turn_relay_audio_call -d <pixel-6-serial>,emulator-5554
 
 # 5. /sims slots (runner, never a registrar)
 ./scripts/run_test_gates.sh reliability-sim 1to1 --list   # note the new --only N slots
@@ -399,8 +399,8 @@ flutter test test/features/call/                     # expect: all TC-VC05 host 
 # 5. Device proof (rule 1) — closure gate, PROD-CRITICAL
 adb devices -l
 dart run integration_test/scripts/run_call_device_real.dart --list-scenarios   # prints 2 bare ids
-dart run integration_test/scripts/run_call_device_real.dart --scenario vc05_foreground_audio_call -d 21071FDF600CSC,emulator-5554
-dart run integration_test/scripts/run_call_device_real.dart --scenario vc05_forced_turn_relay_audio_call -d 21071FDF600CSC,emulator-5554
+dart run integration_test/scripts/run_call_device_real.dart --scenario vc05_foreground_audio_call -d <pixel-6-serial>,emulator-5554
+dart run integration_test/scripts/run_call_device_real.dart --scenario vc05_forced_turn_relay_audio_call -d <pixel-6-serial>,emulator-5554
 #   expect (pinned protocol): ICE connected/completed within 90s of invite-send or the scenario FAILS
 #   (setupMs recorded-only — VC-09 owns latency thresholds); 1s getStats polls; audio bytesSent/bytesReceived
 #   increasing across >=3 consecutive samples spanning >=5s BOTH directions on BOTH parties; callee inbound

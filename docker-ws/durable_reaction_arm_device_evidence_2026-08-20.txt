@@ -1,6 +1,6 @@
 # G29/G30 device evidence — alive-connected 1:1 reaction, 2026-08-20
 # scenario: android_durable_reaction_background_connected (TC-DURABLE-DIRECT-REACTION)
-# sender 21071FDF600CSC -> recipient emulator-5554 (alive + backgrounded, measured)
+# sender <pixel-6-serial> -> recipient emulator-5554 (alive + backgrounded, measured)
 # runner exit 1, capture failed at reaction_capture:
 #   The durable direct-reaction arm did not execute: durableShown=false
 #   disposition=none fallbackShown=true deferrals=[exact_sql_authority_unavailable]

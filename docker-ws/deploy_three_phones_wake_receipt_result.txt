@@ -8,10 +8,10 @@ ios build exit=0
 --- iPhones (keep identity) and Pixel (in place) in parallel
 ios install exit=0
 ARTIFACT 1.0.038465215.5.260905184357 bundleVersion=260905184357
-00008030-001A6D2801BB802E OK 1.0.038465215.5.260905184357 bundleVersion=260905184357 (verified)
-00008110-00184D622289801E OK 1.0.038465215.5.260905184357 bundleVersion=260905184357 (verified)
+<iphone-11-udid> OK 1.0.038465215.5.260905184357 bundleVersion=260905184357 (verified)
+<iphone-13-udid> OK 1.0.038465215.5.260905184357 bundleVersion=260905184357 (verified)
 pixel deploy exit=0
-PIXEL 21071FDF600CSC OK 1.0.0-e431cd73b.d6.t260905184719 (verified)
+PIXEL <pixel-6-serial> OK 1.0.0-e431cd73b.d6.t260905184719 (verified)
 PIXEL PASS
 --- captures
 CAPTURE_DIR=docker-ws/deploy-captures/fresh-260905184832

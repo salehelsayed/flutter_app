@@ -24,7 +24,7 @@ Framework • revision d3b14c8769 (6 weeks ago) • 2026-08-26 16:07:51 -0700
 [
   {
     "name": "Pixel 6",
-    "id": "21071FDF600CSC",
+    "id": "<pixel-6-serial>",
     "isSupported": true,
     "targetPlatform": "android-arm64",
     "emulator": false,

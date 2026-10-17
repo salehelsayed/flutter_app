@@ -457,7 +457,7 @@ exposed real gaps in the tests, both closed before the mutation was re-run:
   in `finally`, alongside deleting the two linked keys, so the proof leaves the
   device exactly as it found it.
 - **Device acceptance PASSED on the fourth attempt**, on a real Pixel 6
-  (`21071FDF600CSC`, linked-secondary/primary role) plus `emulator-5554`
+  (`<pixel-6-serial>`, linked-secondary/primary role) plus `emulator-5554`
   (account B/sibling role): `primaryExit=0 siblingExit=0`, "invite-reliability
   two-device proof completed successfully". The three preceding failures were
   ALL defects in this plan's own device harness, never in production and never

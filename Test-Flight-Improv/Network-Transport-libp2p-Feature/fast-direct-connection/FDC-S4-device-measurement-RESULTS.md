@@ -32,7 +32,7 @@ Build under test: `flutter run --profile --dart-define=FDC_PAUSE_FLUSH=1
 
 | Class | Device | OS | Role |
 |---|---|---|---|
-| iOS (real) | **iPhone 13** (`00008110-00184D622289801E`, USB) | **iOS 26.5** | grant + flush measurement |
+| iOS (real) | **iPhone 13** (`<iphone-13-udid>`, USB) | **iOS 26.5** | grant + flush measurement |
 | iOS (sim) | iPhone 17 Pro | iOS 26.1 | plumbing validation (can't suspend → `DBL_MAX` only) |
 
 Capture: `idevicesyslog` (device) / `simctl log` (sim). **Crucial:** the app must run

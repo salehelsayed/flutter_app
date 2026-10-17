@@ -197,7 +197,7 @@ Classification: three-party/device-lab required for closure; currently external-
 
 Live checks run on 2026-05-11:
 
-- `flutter devices --machine`: available app targets include physical Android `21071FDF600CSC`, Android emulator `emulator-5554`, physical iPhone `00008030-001A6D2801BB802E`, iOS simulators `38FECA55-03C1-4907-BD9D-8E64BF8E3469`, `18AAA598-8F10-419A-9F8D-E062C9F3F77F`, `347FB118-10D0-40C8-A05B-B0C3BD6B8CCD`, `5BA69F1C-B112-47BE-B1FF-8C1003728C8F`, `1B098DFF-6294-407A-A209-BBF360893485`, plus `macos` and `chrome`.
+- `flutter devices --machine`: available app targets include physical Android `<pixel-6-serial>`, Android emulator `emulator-5554`, physical iPhone `<iphone-11-udid>`, iOS simulators `38FECA55-03C1-4907-BD9D-8E64BF8E3469`, `18AAA598-8F10-419A-9F8D-E062C9F3F77F`, `347FB118-10D0-40C8-A05B-B0C3BD6B8CCD`, `5BA69F1C-B112-47BE-B1FF-8C1003728C8F`, `1B098DFF-6294-407A-A209-BBF360893485`, plus `macos` and `chrome`.
 - `xcrun simctl list devices available`: iOS 26.1 booted simulators are `iPhone 17 Pro (38FECA55-03C1-4907-BD9D-8E64BF8E3469)`, `iPhone 17 Pro Max (18AAA598-8F10-419A-9F8D-E062C9F3F77F)`, `iPhone Air (347FB118-10D0-40C8-A05B-B0C3BD6B8CCD)`, `iPhone 17 (5BA69F1C-B112-47BE-B1FF-8C1003728C8F)`, and `iPhone 16e (1B098DFF-6294-407A-A209-BBF360893485)`.
 
 Preferred exact simulator assignment after `gm025` support exists:

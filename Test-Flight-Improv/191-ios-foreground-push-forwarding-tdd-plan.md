@@ -139,7 +139,7 @@ Shared-tree note: `lib/main.dart` currently has ZERO dirty hunks (172 landed as 
    Stop-if: `valuePublished(byPlugin:)` returns nil at runtime on device (registrant key drift) → diag log proves it; fall back to plan-B seam (import the pod header, `FLTFirebaseMessagingPlugin` direct cast) before considering Option A; do not hack delegate ownership.
 6. Rebuild + run direct GREEN (Dart cmds; xcodebuild for XCTest), preservation sentinels, named gates.
 7. Register: append the two new unit test paths + the wiring-lock file (already in arrays? verify) to `ONE_TO_ONE_TESTS` / `ONE_TO_ONE_HOST_TESTS` with the house comment; verify via gate output grep.
-8. Write `191-ios-foreground-push-device-runsheet.md` (183/189/190 shape; profile builds ONLY — dev_keychain_wipe hazard; UDIDs Pixel `21071FDF600CSC`, iPhone 11 `00008030-001A6D2801BB802E`); execute §A-D; log PASS + metrics. Testpeer pipeline (literal):
+8. Write `191-ios-foreground-push-device-runsheet.md` (183/189/190 shape; profile builds ONLY — dev_keychain_wipe hazard; UDIDs Pixel `<pixel-6-serial>`, iPhone 11 `<iphone-11-udid>`); execute §A-D; log PASS + metrics. Testpeer pipeline (literal):
 ```bash
 cd go-mknoon && GOTOOLCHAIN=go1.25.0 make testpeer
 { printf '{"cmd":"generate_identity"}\n'; sleep 1; printf '{"cmd":"start"}\n'; sleep 3; \

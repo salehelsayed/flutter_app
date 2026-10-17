@@ -70,13 +70,13 @@ The repo can prove local transport mechanics with fake discovery and loopback We
 
 Required primary physical device pair:
 
-- Device A: iOS physical device `00008030-001A6D2801BB802E` (`Saleh's iPhone` from controller inventory).
-- Device B: iOS physical device `00008110-00184D622289801E` (`iOS iPhone` from controller inventory).
+- Device A: iOS physical device `<iphone-11-udid>` (`Saleh's iPhone` from controller inventory).
+- Device B: iOS physical device `<iphone-13-udid>` (`iOS iPhone` from controller inventory).
 
 Allowed alternate pair only after documenting why the primary iOS pair cannot be used:
 
-- Device A: iOS physical device `00008110-00184D622289801E`.
-- Device B: Android Pixel 6 `21071FDF600CSC`.
+- Device A: iOS physical device `<iphone-13-udid>`.
+- Device B: Android Pixel 6 `<pixel-6-serial>`.
 - Android alternate requires resolving the shell-level `adb` gap first, or proving Flutter can install/run and artifacts can still be collected without direct `adb`.
 
 Required app/build mode:
@@ -96,7 +96,7 @@ mkdir -p "$LAN002_EVIDENCE_DIR"
 Required install/run commands for the primary pair, in two terminals:
 
 ```bash
-flutter run -d 00008030-001A6D2801BB802E \
+flutter run -d <iphone-11-udid> \
   --debug \
   --dart-define=DISABLE_LOCAL_DISCOVERY=false \
   --dart-define=MKNOON_RELAY_ADDRESSES="$MKNOON_RELAY_ADDRESSES" \
@@ -104,7 +104,7 @@ flutter run -d 00008030-001A6D2801BB802E \
 ```
 
 ```bash
-flutter run -d 00008110-00184D622289801E \
+flutter run -d <iphone-13-udid> \
   --debug \
   --dart-define=DISABLE_LOCAL_DISCOVERY=false \
   --dart-define=MKNOON_RELAY_ADDRESSES="$MKNOON_RELAY_ADDRESSES" \
@@ -139,7 +139,7 @@ Missing non-interactive proof command:
 
 ```bash
 dart run integration_test/scripts/run_lan_wifi_local_acceptance.dart \
-  --devices 00008030-001A6D2801BB802E,00008110-00184D622289801E \
+  --devices <iphone-11-udid>,<iphone-13-udid> \
   --artifacts "$LAN002_EVIDENCE_DIR" \
   --require-local \
   --require-negative-control
@@ -150,7 +150,7 @@ This command is intentionally listed as missing, not runnable. A future executor
 Companion commands that are not mDNS proof:
 
 ```bash
-FLUTTER_DEVICE_ID=00008110-00184D622289801E ./scripts/run_test_gates.sh transport
+FLUTTER_DEVICE_ID=<iphone-13-udid> ./scripts/run_test_gates.sh transport
 ```
 
 ```bash
@@ -224,7 +224,7 @@ If manual proof is accepted, no new test is required before execution; the manua
 ## step-by-step implementation plan
 
 1. Stop immediately if the executor cannot use either the manual two-phone procedure or a newly approved non-interactive harness. Record `prerequisite-blocked`.
-2. Bind the physical pair. Prefer `00008030-001A6D2801BB802E` plus `00008110-00184D622289801E`; use Pixel 6 only after the Android artifact path is resolved.
+2. Bind the physical pair. Prefer `<iphone-11-udid>` plus `<iphone-13-udid>`; use Pixel 6 only after the Android artifact path is resolved.
 3. Create `$LAN002_EVIDENCE_DIR` and write `device-inventory.txt` and `fixture-profile.md`.
 4. Install/run debug builds on both devices with `DISABLE_LOCAL_DISCOVERY=false` and relay addresses configured.
 5. Accept iOS Local Network permission, pair the two app identities as contacts, keep both foregrounded, and wait for diagnostics to show discovery active and peer count `>= 1` on at least one device.
@@ -258,14 +258,14 @@ mkdir -p "$LAN002_EVIDENCE_DIR"
 ```
 
 ```bash
-flutter run -d 00008030-001A6D2801BB802E --debug \
+flutter run -d <iphone-11-udid> --debug \
   --dart-define=DISABLE_LOCAL_DISCOVERY=false \
   --dart-define=MKNOON_RELAY_ADDRESSES="$MKNOON_RELAY_ADDRESSES" \
   2>&1 | tee "$LAN002_EVIDENCE_DIR/device-a-flutter-run.log"
 ```
 
 ```bash
-flutter run -d 00008110-00184D622289801E --debug \
+flutter run -d <iphone-13-udid> --debug \
   --dart-define=DISABLE_LOCAL_DISCOVERY=false \
   --dart-define=MKNOON_RELAY_ADDRESSES="$MKNOON_RELAY_ADDRESSES" \
   2>&1 | tee "$LAN002_EVIDENCE_DIR/device-b-flutter-run.log"
@@ -281,7 +281,7 @@ Required manual actions inside those sessions:
 Required companion regression commands, not accepted as mDNS proof:
 
 ```bash
-FLUTTER_DEVICE_ID=00008110-00184D622289801E ./scripts/run_test_gates.sh transport
+FLUTTER_DEVICE_ID=<iphone-13-udid> ./scripts/run_test_gates.sh transport
 ```
 
 ```bash
@@ -296,7 +296,7 @@ If a new acceptance harness is added, run its exact command after implementation
 
 ```bash
 dart run integration_test/scripts/run_lan_wifi_local_acceptance.dart \
-  --devices 00008030-001A6D2801BB802E,00008110-00184D622289801E \
+  --devices <iphone-11-udid>,<iphone-13-udid> \
   --artifacts "$LAN002_EVIDENCE_DIR" \
   --require-local \
   --require-negative-control
@@ -387,7 +387,7 @@ Stop rule: stop now. The plan was patched once for sender-side proof strictness;
 
 Final verdict: `prerequisite-blocked`.
 
-Final plan: use this plan as the LAN-002 contract only after either the manual two-phone fixture is ready or a test-only two-physical-device LAN acceptance harness exists. The exact proof profile requires iOS physical devices `00008030-001A6D2801BB802E` and `00008110-00184D622289801E`, debug builds with `DISABLE_LOCAL_DISCOVERY=false`, relay addresses configured, same-WiFi/AP-isolation confirmation, accepted Local Network permission, paired contacts, sender-side stored `local` proof, receiver-side WiFi/local proof, and a negative control.
+Final plan: use this plan as the LAN-002 contract only after either the manual two-phone fixture is ready or a test-only two-physical-device LAN acceptance harness exists. The exact proof profile requires iOS physical devices `<iphone-11-udid>` and `<iphone-13-udid>`, debug builds with `DISABLE_LOCAL_DISCOVERY=false`, relay addresses configured, same-WiFi/AP-isolation confirmation, accepted Local Network permission, paired contacts, sender-side stored `local` proof, receiver-side WiFi/local proof, and a negative control.
 
 Structural blockers remaining: none in the plan. The remaining blocker is an execution prerequisite: no current non-interactive same-WiFi mDNS harness or completed manual fixture/artifact package.
 

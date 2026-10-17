@@ -646,7 +646,7 @@ dart run integration_test/scripts/run_group_reaction_notification_device.dart \
 xcodebuild test \
   -workspace ios/Runner.xcworkspace \
   -scheme Runner \
-  -destination 'platform=iOS,id=00008150-001C3C6A3684401C' \
+  -destination 'platform=iOS,id=<iphone-17-pro-max-udid>' \
   -only-testing:RunnerUITests/NotificationTapUITests/testAnnouncementReactionNotificationTap
 
 # Per-plan curated/family gates; exit 0 and zero failures.
@@ -671,10 +671,10 @@ git diff --check
 - Live availability check (2026-07-11 22:59 CEST):
   `flutter devices --machine`, `adb devices -l`, `flutter emulators`, and
   `xcrun simctl list devices available` found physical Pixel 6
-  `21071FDF600CSC`, Android AVD `mknoon_play_35` (runtime
+  `<pixel-6-serial>`, Android AVD `mknoon_play_35` (runtime
   `emulator-5554` when booted), physical iPhones
-  `00008150-001C3C6A3684401C`, `00008110-00184D622289801E`, and
-  `00008030-001A6D2801BB802E`, plus booted iPhone 16e simulator
+  `<iphone-17-pro-max-udid>`, `<iphone-13-udid>`, and
+  `<iphone-11-udid>`, plus booted iPhone 16e simulator
   `DBE8C32E-9F19-4593-860A-B41113791D79`. Re-resolve immediately before proof;
   unavailable targets are N/A under project policy.
 - Required setup: clean candidate builds, automated permission grants, unique
@@ -685,13 +685,13 @@ git diff --check
   frameworks/plugins, redacted timestamped app/relay/provider logs, and no
   concurrent use of selected targets.
 - Two-peer default: all non-iOS scenarios use reactor/sender A =
-  `emulator-5554` and target-author/recipient B = `21071FDF600CSC`. The harness
+  `emulator-5554` and target-author/recipient B = `<pixel-6-serial>`. The harness
   creates the correct group type and roles, authors the target on B, reacts on
   A, controls lifecycle/shade/tap/navigation, and asserts artifacts with no
   user taps.
 - iOS-specific topology: TC-16 uses Android member/reactor A =
-  `21071FDF600CSC` and physical iPhone admin/author B =
-  `00008150-001C3C6A3684401C`. A physical iPhone is required only for genuine
+  `<pixel-6-serial>` and physical iPhone admin/author B =
+  `<iphone-17-pro-max-udid>`. A physical iPhone is required only for genuine
   APNs/NSE proof; XCUITest drives permissions, termination, card inspection,
   tap, and return.
 - Closure role: TC-13..16 are required while their targets are available.
@@ -711,7 +711,7 @@ git diff --check
   `dart run integration_test/scripts/run_group_reaction_notification_device.dart --list-scenarios && flutter devices --machine && adb devices -l && flutter emulators && xcrun simctl list devices available`
   -> all five scenarios and selected target ids listed.
 - Android chat unread closure:
-  `dart run integration_test/scripts/run_group_reaction_notification_device.dart --scenario android_group_message_unread_lifecycle --sender emulator-5554 --recipient 21071FDF600CSC --artifact-dir build/group_reaction_notification_proof/android_group_message_unread_lifecycle`
+  `dart run integration_test/scripts/run_group_reaction_notification_device.dart --scenario android_group_message_unread_lifecycle --sender emulator-5554 --recipient <pixel-6-serial> --artifact-dir build/group_reaction_notification_proof/android_group_message_unread_lifecycle`
   -> SQLCipher/UI unread and satellites `0 -> 1 -> 1 after dismiss -> 2 -> 0
   after tap/read`, real route/read marker, both messages visible, unlit on
   return.
@@ -728,7 +728,7 @@ git diff --check
   and empty recipient `pidof` before delivery/tap. No `am force-stop`; TC-04,
   not this two-peer leg, proves zero bystander push.
 - iOS closure:
-  `dart run integration_test/scripts/run_group_reaction_notification_device.dart --scenario ios_announcement_reaction_recipient --sender 21071FDF600CSC --recipient 00008150-001C3C6A3684401C --artifact-dir build/group_reaction_notification_proof/ios_announcement_reaction_recipient`
+  `dart run integration_test/scripts/run_group_reaction_notification_device.dart --scenario ios_announcement_reaction_recipient --sender <pixel-6-serial> --recipient <iphone-17-pro-max-udid> --artifact-dir build/group_reaction_notification_proof/ios_announcement_reaction_recipient`
   -> NSE decrypt success, exact announcement/actor/emoji copy, group thread,
   target route, transition dedupe, typed silent timeout fallback, zero forbidden
   fields/unread mutation, and one audible alert. Any retained second item is
@@ -831,9 +831,9 @@ git diff --check
 | 2026-07-12 | RED/GREEN implementation | Group listener/send/remove/envelope, notification projection/routing, Orbit/read event, relay/node, Android plugin, iOS NSE | Plan-required causal REDs were made GREEN; representative eligibility, identity, retry, and compatibility mutations re-red before restoration | Author-only chat/announcement copy, foreground and killed-process routing, distinct transition/state/target ids, REMOVE silence, unread preservation, and notification-routed Orbit refresh are implemented | Production and deterministic boundary work complete | Finish proportional acceptance gates |
 | 2026-07-12 | Focused host/native verification | 25 focused Dart files; `go-relay-server`; `go-mknoon/node`; Android `background_push_crypto`; Swift resolver | Consolidated Dart bundle: 753 tests passed; Go relay/node focused gates passed; Android plugin tests passed; Swift resolver: 39 tests passed | TC-00..12 and TC-17..20 deterministic contracts are green, including frozen pre-extension v1-reader compatibility | No deterministic blocker recorded | Complete curated lane reruns |
 | 2026-07-12 | Device harness/validator | Plan-257 capture/runner/criteria, SQLCipher probe, `NotificationTapUITests.swift` | Criteria: 22/22 passed; post-hardening shell contract passed; scoped analyze clean; iOS XCUITest `build-for-testing` succeeded | Five scenarios are registered; Android raw capture and physical-iOS identity/membership/target/card/tap seams are implemented and reject marker-only, stale, unlaunched-retry, or transition-mismatched evidence | No accepted device artifact without staging authority | Supply a valid redacted manifest and relay/provider credentials, then run TC-13..16 |
-| 2026-07-12 15:34 CEST | Availability-bounded device attempt | explicit Android sender `emulator-5554`, recipient `21071FDF600CSC`; physical iOS remains available for its separate row | Runner exited 78 and persisted `status=configuration_blocked`, `stage=configuration`, `detail=staging_manifest_required` before capture | Honest non-success verdict; host/native evidence was not promoted to device proof | Configuration-blocked, not N/A and not a missing automation seam | Rerun only when staging/provider configuration is available |
+| 2026-07-12 15:34 CEST | Availability-bounded device attempt | explicit Android sender `emulator-5554`, recipient `<pixel-6-serial>`; physical iOS remains available for its separate row | Runner exited 78 and persisted `status=configuration_blocked`, `stage=configuration`, `detail=staging_manifest_required` before capture | Honest non-success verdict; host/native evidence was not promoted to device proof | Configuration-blocked, not N/A and not a missing automation seam | Rerun only when staging/provider configuration is available |
 | 2026-07-12 | Final curated lanes | groups, `feature-host-all`, `core-host-all`, analyzer/diff, Graphify | groups: 2,031 Flutter tests plus Go bridge/node passed; `feature-host-all`: 757/757 commands passed; `core-host-all`: 306/306 commands passed; settled Plan-257 scoped analysis found no issues; tracked and untracked whitespace checks passed; incremental architecture graph refreshed | All required deterministic and proportional Plan-257 lanes are green | Repo-wide analyzer comparison exits nonzero with zero errors, 337 unrelated new warning/info classifications, and 374 removed entries | Reconcile the unrelated analyzer baseline in its owning work; do not broaden this plan |
 | 2026-07-12 18:19 CEST | Relay payload-size RED/GREEN and deployment | `go-relay-server/reaction_push.go`, `inbox.go`, `group_reaction_push_test.go`; EC2 `relay-server` | `TestGroupReactionPushProjectsOnlyTheRecipientPlatformPayload` red before platform projection and green after it; full relay suite passed; Go 1.25 build deployed and service restarted | Android sends exclude APNs custom data and iOS sends exclude Android/top-level data, keeping typed reaction FCM payloads below the provider limit | Live service active with both reaction flags enabled; SHA-256 `e278de338500cd3089255943a43bfcdc51c7f6b2de954bd71517402d29da1f80` | Preserve the pinned Go 1.25 build until the separate Go 1.26/quic-go compatibility issue is resolved |
-| 2026-07-12 19:36 CEST | Paired Android ordinary-message preservation | `android_group_message_unread_lifecycle`, `android_announcement_message_unread_lifecycle`; emulator sender + USB Pixel `21071FDF600CSC` | Both raw runners passed and both persisted artifacts revalidated as `VALID` under TC-13/TC-14 | Discussion and announcement unread state followed `0 -> 1 -> 1 after dismiss -> 2 -> 0 after notification tap/read`; return to Orbit was unlit and SQLCipher state agreed | Accepted artifacts: `build/group_reaction_notification_proof/android_group_message_unread_lifecycle/` and `android_announcement_message_unread_lifecycle/` | None for Android ordinary-message preservation |
-| 2026-07-12 19:36 CEST | Paired Android reaction proof | `android_group_reaction_recipient`, `android_announcement_reaction_recipient`; sender `emulator-5556`, recipient `21071FDF600CSC` | Discussion capture completed, then its initial same-run validation exposed the stale command-journal probe contract; after the state-preserving probe/validator fix its persisted artifact revalidated as `VALID`. The announcement full runner passed, and its artifact also revalidated as `VALID`; provider logs show two attempt-1 sends per ADD/REMOVE/ADD scenario | Exact `Alice reacted 👍 to your message` context, stable group-card replacement, cold-tap target routing, zero reaction unread/synthetic message rows, REMOVE silence, distinct transitions, exact-byte retry, and real headless SQLCipher/native decrypt are accepted for discussion and announcement | Accepted artifacts: `build/group_reaction_notification_proof/android_group_reaction_recipient/` and `android_announcement_reaction_recipient/`; shared-journal payload-size errors outside these capture windows belong to concurrent direct-media traffic | Physical-iOS TC-16 remains separate and open |
+| 2026-07-12 19:36 CEST | Paired Android ordinary-message preservation | `android_group_message_unread_lifecycle`, `android_announcement_message_unread_lifecycle`; emulator sender + USB Pixel `<pixel-6-serial>` | Both raw runners passed and both persisted artifacts revalidated as `VALID` under TC-13/TC-14 | Discussion and announcement unread state followed `0 -> 1 -> 1 after dismiss -> 2 -> 0 after notification tap/read`; return to Orbit was unlit and SQLCipher state agreed | Accepted artifacts: `build/group_reaction_notification_proof/android_group_message_unread_lifecycle/` and `android_announcement_message_unread_lifecycle/` | None for Android ordinary-message preservation |
+| 2026-07-12 19:36 CEST | Paired Android reaction proof | `android_group_reaction_recipient`, `android_announcement_reaction_recipient`; sender `emulator-5556`, recipient `<pixel-6-serial>` | Discussion capture completed, then its initial same-run validation exposed the stale command-journal probe contract; after the state-preserving probe/validator fix its persisted artifact revalidated as `VALID`. The announcement full runner passed, and its artifact also revalidated as `VALID`; provider logs show two attempt-1 sends per ADD/REMOVE/ADD scenario | Exact `Alice reacted 👍 to your message` context, stable group-card replacement, cold-tap target routing, zero reaction unread/synthetic message rows, REMOVE silence, distinct transitions, exact-byte retry, and real headless SQLCipher/native decrypt are accepted for discussion and announcement | Accepted artifacts: `build/group_reaction_notification_proof/android_group_reaction_recipient/` and `android_announcement_reaction_recipient/`; shared-journal payload-size errors outside these capture windows belong to concurrent direct-media traffic | Physical-iOS TC-16 remains separate and open |
 | 2026-07-12 19:52 CEST | Regression sufficiency and final focused verification | background group-key hydration, notification-open drain isolation, state-preserving exact-redrive probe, production marker/validator contracts, relay platform projection | Focused 12-file Flutter bundle: 208 tests passed; graph-affected route/staging/dedupe bundle: 61 tests passed; exact Plan-257 analysis: no issues; relay `go test -count=1 ./...` passed; `go-mknoon/node` passed in 449.006s; Android group-decrypt fixture test `BUILD SUCCESSFUL`; four artifact validators passed | Regressions now fail on raw secure-key references, cold-tap drain exceptions, app-erasing retry probes, stale proof markers, cross-platform payload duplication, notification copy/identity/unread drift, adjacent route/dedupe drift, or invalid artifact provenance | Sufficient layered coverage for the Android bug and relay boundary; broad `scripts/run_test_gates.sh` intentionally not rerun per user instruction | Run physical-iOS TC-16 only if cross-platform closure is requested |

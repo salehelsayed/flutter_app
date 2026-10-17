@@ -1,4 +1,4 @@
-# Plan 383 (G17) TC-383-10 — device evidence, recipient 21071FDF600CSC (Pixel 6), killed app, real FCM
+# Plan 383 (G17) TC-383-10 — device evidence, recipient <pixel-6-serial> (Pixel 6), killed app, real FCM
 # Campaign run 2026-08-18T10:03-10:04Z, fresh android.production_fcm build (sims cacheHits=0, built 1m02s)
 # Push 1 = MUTED group reaction; Push 2 = UNMUTED pipeline-health control reaction
 

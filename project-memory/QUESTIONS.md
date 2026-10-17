@@ -99,7 +99,7 @@ being re-derived as a "fix" or "bug".
     substitute? — the production resolver composition (bootstrap closure
     ~:8327) is unexported; only the device build exercises it. [TFI/377]
 23. What is the pinned device pair for group/Android device proofs? —
-    physical Pixel 6 `21071FDF600CSC` + emulator `emulator-5554`. [TFI/377]
+    physical Pixel 6 `<pixel-6-serial>` + emulator `emulator-5554`. [TFI/377]
 24. What must never be run against a stamped release install on a phone? —
     `flutter test -d <phone>`: the debug install uninstalls the stamped
     build, the state guard fail-closes and discards evidence. [memory]

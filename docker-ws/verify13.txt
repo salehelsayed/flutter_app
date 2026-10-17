@@ -1,4 +1,4 @@
-[connected:00008110-00184D622289801E]
+[connected:<iphone-13-udid>]
 Aug 21 18:53:26.355208 Runner(libboringssl.dylib)[3334] <Notice>: nw_protocol_boringssl_signal_connected(895) [C4.1.1.1:2][0x1186516e0] TLS connected [server(0) version(0x0304) ciphersuite(TLS_AES_256_GCM_SHA384) group(0x11ec) signature_alg(0x0403) alpn(h2) resumed(0) offered_ticket(0) in_early_data(0) early_data_accepted(0) false_started(0) ocsp_received(0) sct_received(0) connect_time(39ms) flight_time(32ms) rtt(32ms) write_stalls(0) read_stalls(8) pake(0x0000)]
 Aug 21 18:53:26.355450 Runner(libboringssl.dylib)[3334] <Debug>: nw_protocol_boringssl_waiting_for_output(2361) [C4.1.1.1:2][0x1186516e0] Waiting for output: false
 Aug 21 18:53:26.355522 Runner(libboringssl.dylib)[3334] <Debug>: nw_protocol_boringssl_waiting_for_output(2361) [C4.1.1.1:2][0x1186516e0] Waiting for output: false
@@ -3687,4 +3687,4 @@ Aug 21 18:55:31.567491 Runner(Flutter)[3334] <Notice>: flutter: [FLOW] {"ts":"20
 Aug 21 18:55:31.567585 Runner(Flutter)[3334] <Notice>: flutter: [FLOW] {"ts":"2026-08-21T16:55:31.567336Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"FDC_LAN_ADVERT_PORTS","details":{"quicPort":56615,"tcpPort":57570,"source":"peer_resolved"}}
 
 Exiting...
-[disconnected:00008110-00184D622289801E]
+[disconnected:<iphone-13-udid>]

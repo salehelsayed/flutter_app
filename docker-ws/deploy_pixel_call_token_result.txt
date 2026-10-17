@@ -3,7 +3,7 @@ Running Gradle task 'assembleDebug'...                             38.0s
 ✓ Built build/app/outputs/flutter-apk/app-debug.apk
 Performing Streamed Install
 Success
-PIXEL 21071FDF600CSC OK 1.0.0-450825ed6.d10.t260905174555 (verified)
+PIXEL <pixel-6-serial> OK 1.0.0-450825ed6.d10.t260905174555 (verified)
 PIXEL PASS
 pixel deploy exit=0
 === done 20260905T154644Z ===

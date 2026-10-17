@@ -171,7 +171,7 @@ flutter build ios --profile --dart-define=FDC_FLOW_LOG=1 --dart-define=MKNOON_EN
 # Device-proof (CLOSURE, manual two-phone) — capture both devices' [FLOW]
 #   PASS: continuous iPhone [FLOW] through cold-start + >=2 re-advertises, no >2s silence,
 #         idevicecrashreport shows NO new 0x8BADF00D, MSG_RECEIVED_TRANSPORT:"direct" BOTH directions.
-idevicecrashreport -u 00008030-001A6D2801BB802E -k /tmp/cv08/crash2   # expect: no new Runner 0x8BADF00D
+idevicecrashreport -u <iphone-11-udid> -k /tmp/cv08/crash2   # expect: no new Runner 0x8BADF00D
 
 # Hygiene
 flutter analyze                                         # 0 new issues

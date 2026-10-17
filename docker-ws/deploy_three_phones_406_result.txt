@@ -1,9 +1,9 @@
 === plan 406 deploy (missed-call notification + killed-app history row) ===
 started 2026-09-05T21:05:43Z at bcb472b82, finished 2026-09-05T21:19:30Z
 
-PIXEL   21071FDF600CSC              OK 1.0.0-bcb472b82.d30.t260905230619 (verified)
-IPHONE  00008030-001A6D2801BB802E   OK bundleVersion=260905230619 (verified)
-IPHONE  00008110-00184D622289801E   OK bundleVersion=260905230619 (verified)
+PIXEL   <pixel-6-serial>              OK 1.0.0-bcb472b82.d30.t260905230619 (verified)
+IPHONE  <iphone-11-udid>   OK bundleVersion=260905230619 (verified)
+IPHONE  <iphone-13-udid>   OK bundleVersion=260905230619 (verified)
 
 Identities kept on all three. The Pixel app is left RUNNING so the alive-app
 missed-call notification can be tested before the killed-app row.

@@ -296,7 +296,7 @@ No empty cells.
 **Rig:** one USB-connected Android device + one Android emulator, both with the app built from this tree. Cross-network setup for the proof leg: USB device on **cellular/hotspot**, emulator on **host WiFi NAT** (different networks ⇒ relay is the only path — exactly the held-circuit scenario).
 
 ```bash
-# 1. Discover serials (USB device = e.g. 21071FDF600CSC; emulator = e.g. emulator-5554)
+# 1. Discover serials (USB device = e.g. <pixel-6-serial>; emulator = e.g. emulator-5554)
 adb devices
 
 # 2. Launch/verify an emulator if none listed

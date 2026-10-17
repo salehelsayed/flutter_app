@@ -657,11 +657,11 @@ forward-fix obligation.
   an unreachable private symbol.
 - Live availability check:
   `flutter devices --machine; adb devices; xcrun simctl list devices available`
-  -> captured 2026-07-26: physical Pixel 6 Android `21071FDF600CSC` (API 36)
+  -> captured 2026-07-26: physical Pixel 6 Android `<pixel-6-serial>` (API 36)
   and Android emulators `emulator-5554` / `emulator-5556` were available. The
   physical Android appeared as ADB-ready and Flutter-supported and was selected.
 - Executed setup/result:
-  `FLUTTER_DEVICE_ID=21071FDF600CSC ./scripts/run_test_gates.sh transport`
+  `FLUTTER_DEVICE_ID=<pixel-6-serial> ./scripts/run_test_gates.sh transport`
   exited 0; every host and physical-device transport suite passed.
 - Two-peer default for any future scope expansion: one rediscovered USB
   physical Android plus one Android emulator with fully automated interaction
@@ -1171,7 +1171,7 @@ git status --short
 - [x] TC-02 through TC-08, `1to1`, strict analysis, four exact Go selectors,
       discovery, and the 821-path `feature-host-all` sweep passed.
 - [x] The pinned physical Pixel 6
-      `FLUTTER_DEVICE_ID=21071FDF600CSC` transport gate exited 0; the
+      `FLUTTER_DEVICE_ID=<pixel-6-serial>` transport gate exited 0; the
       target-unavailable N/A branch was not used.
 - [x] Graphify was refreshed once incrementally; current fingerprint
       `a79b2f04386f2be9` has no chat helper node and exactly one live
@@ -1277,5 +1277,5 @@ No production source changed between the two Wave 1 attempts.
 |---|---|---|---|---|---|---|
 | 2026-07-26 | prerequisite landing | Roadmap registry/proof floors/decision ledger/compatibility row; index; Plan 276; completed DTR-01 through DTR-04 tree | Commit `ec86247eb`; clean Gate 0 exited 0 | `DTR05-AUTH-01` recorded; exact census was 3 tokens = 1 declaration + 2 comments, with no part/VM entrypoint; four-occurrence ratchet baseline green | No decision blocker | Add E4/E5 tests and establish the causal RED |
 | 2026-07-26 | causal implementation and mutation verification | Chat send source; suppression inventory; ratchet, chat-send, and P2P fault-injection tests | TC-01 emitted `DTR05-RED inventory-count-3` then GREEN; M-1 through M-4 re-red; TC-03 observed one probe; TC-04 observed two stores | Helper/suppression/handwritten identity removed atomically; all six mutation recipes discriminated the intended fault and were immediately reversed | No causal-evidence blocker | Run preservation, family, device, and graph closure |
-| 2026-07-26 | preservation and closure | Eight Test Contract rows; `1to1`; analyzer; Go; discovery; Pixel transport; feature family; Graphify; protected scope | TC-02 through TC-08 GREEN; `1to1` 2,441; strict 3/0; Go 4/4; Pixel `21071FDF600CSC` transport exit 0; `feature-host-all` `+8550 ~1` across 821 paths; Graph fingerprint `a79b2f04386f2be9` | Exact chat node absent, introduction node present once; live shared protocol and protected files unchanged; final ten-path allowlist clean | `Plan-green`; no DTR-05 blocker | await the cadence-owned Wave 1 aggregate gate |
+| 2026-07-26 | preservation and closure | Eight Test Contract rows; `1to1`; analyzer; Go; discovery; Pixel transport; feature family; Graphify; protected scope | TC-02 through TC-08 GREEN; `1to1` 2,441; strict 3/0; Go 4/4; Pixel `<pixel-6-serial>` transport exit 0; `feature-host-all` `+8550 ~1` across 821 paths; Graph fingerprint `a79b2f04386f2be9` | Exact chat node absent, introduction node present once; live shared protocol and protected files unchanged; final ten-path allowlist clean | `Plan-green`; no DTR-05 blocker | await the cadence-owned Wave 1 aggregate gate |
 | 2026-07-26 | Wave 1 acceptance | DTR-03, DTR-04, DTR-05 integrated tree | accepted full `host-all`: Flutter `+12863 ~1`; Go 8/8 PASS; exit 0 | complete attempt history and stable log archives recorded in the master roadmap | DTR-05 promoted to `Wave-accepted`; no remaining wave blocker | final-rollout `host-all` remains a separate later gate |

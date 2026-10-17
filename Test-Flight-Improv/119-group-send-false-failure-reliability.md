@@ -340,7 +340,7 @@ Phase 0  (characterization matrix)              ← baseline; no production chan
 
 ## Device / manual evidence checklist (iPhone13 / Pixel6)
 
-Per project memory: iPhone13 `00008110-…` (use `--profile`/AOT — debug JIT crashes on iOS 26.5), Pixel6 `21071FDF600CSC`.
+Per project memory: iPhone13 `00008110-…` (use `--profile`/AOT — debug JIT crashes on iOS 26.5), Pixel6 `<pixel-6-serial>`.
 
 1. **Reproduce the screenshot first (pre-fix, log capture).** Add Ibra to a group, have Ibra send IMMEDIATELY after "joined". On Ibra's device, capture FLOW: which `GROUP_SEND_*` outcome fired, `topicPeers`/`connectedTopicPeerCount`/`inboxStored`/`publishSucceeded`/`deliveryMode`, and whether Go emitted `group:publish_debug`. Confirm Saleh received it live. This settles OQ-1/OQ-2.
 2. **Post-fix just-joined send is a clock, not red.** Same scenario → Ibra's row shows a pending clock (never the red error icon); Saleh receives exactly one copy live.

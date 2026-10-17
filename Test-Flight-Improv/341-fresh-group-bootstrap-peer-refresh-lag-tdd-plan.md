@@ -93,7 +93,7 @@ Dependencies:
 | TC-341-06 | The invite remains the authoritative fresh-join roster/key carrier. | `test/features/groups/application/send_group_invite_use_case_test.dart::invite payload includes full groupConfig with members array`; `test/features/groups/application/handle_incoming_group_invite_use_case_test.dart::persists all members from groupConfig, not just sender`; `test/features/groups/integration/invite_round_trip_test.dart::BB-007 accepted pending invite joins with exact full config and replays accepted epoch` | Host / real payload construction with in-memory repositories and fake bridge | GREEN sentinel: sender embeds all configured members; receiver persists all members/key and joins with exact config/epoch. | Truncate `effectiveGroupConfig`, persist only sender/self, or rebuild join config -> a TC-341-06 sentinel red. | `flutter test test/features/groups/application/send_group_invite_use_case_test.dart --plain-name 'invite payload includes full groupConfig with members array' && flutter test test/features/groups/application/handle_incoming_group_invite_use_case_test.dart --plain-name 'persists all members from groupConfig, not just sender' && flutter test test/features/groups/integration/invite_round_trip_test.dart --plain-name 'BB-007 accepted pending invite joins with exact full config and replays accepted epoch'`; all three are existing `GROUP_TESTS`/AUTO `feature-host-all`. |
 | TC-341-07 | Established members still apply `members_added` to durable roster, Go config, timeline, and retry path. | `test/features/groups/application/group_message_listener_test.dart::members_added saves all members and calls updateConfig`; `test/features/groups/presentation/contact_picker_wired_test.dart::G3: members_added soft publish failure durably enqueues the broadcast and keeps the members + advances the watermark` | Host / listener stream plus widget/in-memory repositories | GREEN sentinel: all members save, native config updates, timeline/watermark advances, and soft-failed broadcasts remain queued. | Skip a member save/native update or remove the signed durable enqueue -> a TC-341-07 sentinel red. | `flutter test test/features/groups/application/group_message_listener_test.dart --plain-name 'members_added saves all members and calls updateConfig' && flutter test test/features/groups/presentation/contact_picker_wired_test.dart --plain-name 'G3: members_added soft publish failure durably enqueues the broadcast and keeps the members + advances the watermark'`; existing `GROUP_TESTS` at `:619/:633`, AUTO `feature-host-all`. |
 | TC-341-08 | Baseline remains evidence-only; latency closure is executable and cannot pass with a slow, wrong-cell, or delivery-ambiguous result. | `test/integration/invite_reliability_runner_contract_test.dart::TC-341-08 closure mode is executable and rejects any slow or ambiguous result`; `scripts/test/reliability_simulation_discovery_contract_test.sh` | Host / synthetic 30-sample artifacts plus runner/harness source and shell discovery | Runtime RED: three source guards reject closure, disposition is globally selected/always false, and discovery prints baseline; GREEN: baseline derivation remains unchanged and false, while closure pins `create|online-cold`, reads `phaseMedianMs.pre_fanout` and `callerMedianMs`, authorizes only when both accepted bounds plus all existing exact-event/zero-unknown rules pass, and rejects a false disposition. Independent over-`950 ms` phase and over-`1300 ms` caller artifacts make validation non-OK; the registered mode is `closure`. | Re-add a closure guard, select the global largest cell, accept `productionAuthorized: false`, relax either timing/event rule, or leave registration at baseline -> host or shell test red. | `flutter test test/integration/invite_reliability_runner_contract_test.dart --plain-name 'TC-341-08 closure mode is executable and rejects any slow or ambiguous result' && bash scripts/test/reliability_simulation_discovery_contract_test.sh`; runner contract remains in `GROUP_TESTS`; the shell test is AUTO-discovered by `./scripts/run_test_gates.sh sims-contracts`. |
-| TC-341-09 | A current pre-edit reference and post-change closure prove the real Create tap is faster without losing pending-invite receipt across the Flutter-to-Go/relay boundary. | `invite_send_latency --mode baseline` followed by `--mode closure` / two validated host summaries for USB Pixel 6 `21071FDF600CSC` + Android emulator `emulator-5554` | Paired device / real Flutter UI, Go Android binding, crypto, relay, target-local artifact custody; fully automated | Before edits: one 30-sample baseline validates but cannot authorize production. Device-only closure HEAD failure: runner exits 64 because closure is reserved. GREEN: both closure roles exit 0, 30/30 samples validate, the fixed-cell `phaseMedianMs.pre_fanout <= 950 ms` and `callerMedianMs <= 1300 ms`, both same-pair before/after deltas are recorded, every sample has exactly one correlated pending-invite event, and no outcome is unknown. | Re-enable bootstrap refresh, skip invite send, duplicate/drop correlation, validate a false disposition, or compare against only the historical Plan 267 run -> device run/validator/evidence review red. | Pre-edit direct runner in `baseline`, then `RELIABILITY_MULTI_DEVICE_IDS=21071FDF600CSC,emulator-5554 ./scripts/run_test_gates.sh reliability-sim group --only integration_test/scripts/run_invite_reliability_multi_device.dart:invite_send_latency` after switching the one existing row to `closure`; no manual taps and no iOS. |
+| TC-341-09 | A current pre-edit reference and post-change closure prove the real Create tap is faster without losing pending-invite receipt across the Flutter-to-Go/relay boundary. | `invite_send_latency --mode baseline` followed by `--mode closure` / two validated host summaries for USB Pixel 6 `<pixel-6-serial>` + Android emulator `emulator-5554` | Paired device / real Flutter UI, Go Android binding, crypto, relay, target-local artifact custody; fully automated | Before edits: one 30-sample baseline validates but cannot authorize production. Device-only closure HEAD failure: runner exits 64 because closure is reserved. GREEN: both closure roles exit 0, 30/30 samples validate, the fixed-cell `phaseMedianMs.pre_fanout <= 950 ms` and `callerMedianMs <= 1300 ms`, both same-pair before/after deltas are recorded, every sample has exactly one correlated pending-invite event, and no outcome is unknown. | Re-enable bootstrap refresh, skip invite send, duplicate/drop correlation, validate a false disposition, or compare against only the historical Plan 267 run -> device run/validator/evidence review red. | Pre-edit direct runner in `baseline`, then `RELIABILITY_MULTI_DEVICE_IDS=<pixel-6-serial>,emulator-5554 ./scripts/run_test_gates.sh reliability-sim group --only integration_test/scripts/run_invite_reliability_multi_device.dart:invite_send_latency` after switching the one existing row to `closure`; no manual taps and no iOS. |
 
 ### Test Notes
 
@@ -147,7 +147,7 @@ flutter devices --machine
 adb devices -l
 dart run integration_test/scripts/run_invite_reliability_multi_device.dart \
   --scenario invite_send_latency --mode baseline \
-  -d 21071FDF600CSC,emulator-5554
+  -d <pixel-6-serial>,emulator-5554
 
 # First causal RED; expect non-zero because the fresh publish lacks the opt-in.
 flutter test test/features/groups/application/create_group_with_members_use_case_test.dart \
@@ -189,7 +189,7 @@ flutter test test/core/bridge/bridge_group_helpers_test.dart
 flutter test test/integration/invite_reliability_runner_contract_test.dart \
   --plain-name 'TC-341-08 closure mode is executable and rejects any slow or ambiguous result'
 bash scripts/test/reliability_simulation_discovery_contract_test.sh
-RELIABILITY_MULTI_DEVICE_IDS=21071FDF600CSC,emulator-5554 \
+RELIABILITY_MULTI_DEVICE_IDS=<pixel-6-serial>,emulator-5554 \
   ./scripts/run_test_gates.sh reliability-sim group --list \
   --only integration_test/scripts/run_invite_reliability_multi_device.dart:invite_send_latency
 
@@ -203,7 +203,7 @@ RELIABILITY_MULTI_DEVICE_IDS=21071FDF600CSC,emulator-5554 \
 # preserved current-source baseline. Both exact IDs must be listed. Do not substitute iOS.
 flutter devices --machine
 adb devices -l
-RELIABILITY_MULTI_DEVICE_IDS=21071FDF600CSC,emulator-5554 \
+RELIABILITY_MULTI_DEVICE_IDS=<pixel-6-serial>,emulator-5554 \
   ./scripts/run_test_gates.sh reliability-sim group \
   --only integration_test/scripts/run_invite_reliability_multi_device.dart:invite_send_latency
 
@@ -216,16 +216,16 @@ git diff --check
 
 - Profile: paired-device.
 - Boundary being proven: the real Create UI -> Dart use case -> Android Go bridge -> native topic/relay state -> invite receiver path, including user-visible pre-fanout/caller timing and exact recipient-event correlation.
-- Live availability check: `flutter devices --machine` plus `adb devices -l` -> USB Pixel 6 `21071FDF600CSC` (Android 16/API 36) and Android emulator `emulator-5554` (Android 17/API 37) were both live on 2026-08-06.
-- Required setup: verified Android Go binding, real configured relay, primary `21071FDF600CSC`, sibling `emulator-5554`, scenario `invite_send_latency`, mode `closure`, target-local Android cache exchange through the existing host broker, and no manual interaction.
+- Live availability check: `flutter devices --machine` plus `adb devices -l` -> USB Pixel 6 `<pixel-6-serial>` (Android 16/API 36) and Android emulator `emulator-5554` (Android 17/API 37) were both live on 2026-08-06.
+- Required setup: verified Android Go binding, real configured relay, primary `<pixel-6-serial>`, sibling `emulator-5554`, scenario `invite_send_latency`, mode `closure`, target-local Android cache exchange through the existing host broker, and no manual interaction.
 - Comparison setup: before edits, run the same scenario/matrix on the same two targets in `baseline` mode and preserve its validated artifacts and app/native/relay provenance. After edits, rebuild the binding and run exactly one `closure`; Plan 267's API-35 artifact is not the comparison leg.
 - Two-peer default: one pinned USB physical Android plus one pinned Android emulator with fully automated setup/actions/assertions. iOS is explicitly excluded by the user and is not needed for this non-iOS-specific boundary.
 - Closure role: required closure evidence after owner threshold acceptance while both Android targets remain available; if a pinned target is unavailable at execution, record `N/A (target unavailable by project policy)` and do not replace it with iOS.
 - `FLUTTER_DEVICE_ID`: host selector only; both explicit IDs remain required through `RELIABILITY_MULTI_DEVICE_IDS`.
 - Registration: existing group reliability orchestrator scenario `integration_test/scripts/run_invite_reliability_multi_device.dart:invite_send_latency`, changed from `baseline` to `closure` after TC-341-08.
-- Baseline command: `dart run integration_test/scripts/run_invite_reliability_multi_device.dart --scenario invite_send_latency --mode baseline -d 21071FDF600CSC,emulator-5554` before any edit; require both roles and host validation to exit 0, then preserve the fixed-cell fields and provenance.
-- Discovery command: `RELIABILITY_MULTI_DEVICE_IDS=21071FDF600CSC,emulator-5554 ./scripts/run_test_gates.sh reliability-sim group --list --only integration_test/scripts/run_invite_reliability_multi_device.dart:invite_send_latency` -> exactly one command with `--mode 'closure' -d '21071FDF600CSC,emulator-5554'`.
-- Closure command: `RELIABILITY_MULTI_DEVICE_IDS=21071FDF600CSC,emulator-5554 ./scripts/run_test_gates.sh reliability-sim group --only integration_test/scripts/run_invite_reliability_multi_device.dart:invite_send_latency` -> both roles exit 0; host validator accepts immutable role artifacts/capture receipt/summary, `productionAuthorized == true`, and the fixed timing/delivery contract. A slow but internally consistent non-authorizing summary must exit non-zero.
+- Baseline command: `dart run integration_test/scripts/run_invite_reliability_multi_device.dart --scenario invite_send_latency --mode baseline -d <pixel-6-serial>,emulator-5554` before any edit; require both roles and host validation to exit 0, then preserve the fixed-cell fields and provenance.
+- Discovery command: `RELIABILITY_MULTI_DEVICE_IDS=<pixel-6-serial>,emulator-5554 ./scripts/run_test_gates.sh reliability-sim group --list --only integration_test/scripts/run_invite_reliability_multi_device.dart:invite_send_latency` -> exactly one command with `--mode 'closure' -d '<pixel-6-serial>,emulator-5554'`.
+- Closure command: `RELIABILITY_MULTI_DEVICE_IDS=<pixel-6-serial>,emulator-5554 ./scripts/run_test_gates.sh reliability-sim group --only integration_test/scripts/run_invite_reliability_multi_device.dart:invite_send_latency` -> both roles exit 0; host validator accepts immutable role artifacts/capture receipt/summary, `productionAuthorized == true`, and the fixed timing/delivery contract. A slow but internally consistent non-authorizing summary must exit non-zero.
 - Artifacts: separate baseline and closure runner-logged host directories, each containing `primary.log`, `sibling.log`, both `md004_<runId>_invite_send_latency_<role>.json` files, the host-capture receipt, and the validated host summary with stable app/native/relay provenance and SHA-256 digests; the closure record includes the literal before/after fixed-cell medians and deltas.
 - Deferred device work: none. A separate invite-accept UI journey is not added because TC-341-06 proves exact accepted roster/key material at the narrower deterministic boundary.
 
@@ -249,13 +249,13 @@ git diff --check
 ## Handoff
 
 - Authorization: approved on 2026-08-06 for `phaseMedianMs.pre_fanout <= 950 ms` and `callerMedianMs <= 1300 ms` exactly.
-- First evidence command: verify the current Android binding and capture the one pre-edit `baseline` run on `21071FDF600CSC,emulator-5554`; preserve both artifacts, receipt, host summary, provenance, hashes, and fixed-cell medians.
+- First evidence command: verify the current Android binding and capture the one pre-edit `baseline` run on `<pixel-6-serial>,emulator-5554`; preserve both artifacts, receipt, host summary, provenance, hashes, and fixed-cell medians.
 - First causal RED command: `flutter test test/features/groups/application/create_group_with_members_use_case_test.dart --plain-name 'TC-341-01 fresh-group bootstrap members_added skips pre-publish peer refresh without changing the signed transition'`.
 - Preservation command: `(cd go-mknoon && GOTOOLCHAIN=go1.25.0 go test ./node -run '^(TestGP006PublishWithPartialPeersRefreshesKnownMembersBeforeSend|TestGP007ZeroPeerPublishUsesBoundedSettleWait|TestGP002PublishBlocksUnauthorizedWriterBeforeEncryptSignAndPublish|TestGK030PublishGroupMessagePreservesExtraFieldsInReceivedEvent)$' -count=1)`.
 - Manual registration: add TC-341-03/04 to one curated groups Go leg and reuse the two existing host-all Go patterns; switch the existing invite-latency reliability row/discovery expectation from `baseline` to `closure`.
 - Migration: none; no DB, signed/encrypted wire, config, or application schema change.
 - Rollback: remove the single fresh-create `skipPeerRefresh: true` call-site value (or force the outer field false); the default wrapper restores the old synchronous refresh with no stored-state cleanup.
-- Boundary closure: one fully automated USB Android + Android emulator run, pinned to `21071FDF600CSC,emulator-5554`; no iOS.
+- Boundary closure: one fully automated USB Android + Android emulator run, pinned to `<pixel-6-serial>,emulator-5554`; no iOS.
 - Unresolved planning evidence: none. The current-source baseline and same-pair closure artifacts are recorded below.
 
 ## Reviewer Findings
@@ -297,7 +297,7 @@ Five-lens result after owner resolution: L1 evidence/classification, L2 causalit
 
 ### Comparable baseline and closure
 
-Both runs used physical Pixel 6 `21071FDF600CSC` (API 36), Android emulator `emulator-5554` (API 37), the same two production relay addresses, the unchanged 30-sample create/add x warm/cold/offline matrix, and fully automated target-local custody.
+Both runs used physical Pixel 6 `<pixel-6-serial>` (API 36), Android emulator `emulator-5554` (API 37), the same two production relay addresses, the unchanged 30-sample create/add x warm/cold/offline matrix, and fully automated target-local custody.
 
 | Fixed `create|online-cold` metric | Baseline `1786018690022` | Closure `1786020246939` | Delta | Result |
 |---|---:|---:|---:|---|
@@ -331,7 +331,7 @@ Closure artifacts under `/var/folders/nd/_55d26s936d0fb_5l9s00t980000gn/T/invite
 
 - TC-341-01/02/03/04/08 and all exact TC-341-05/06/07 preservation sentinels passed. The complete bridge-helper suite passed 80 tests; the full invite reliability contract passed 14 tests.
 - Representative mutation: forcing the fresh-create call-site opt-in false made TC-341-01 red with `Expected: true, Actual: <null>`; restoring the opt-in returned it green.
-- `bash scripts/test/reliability_simulation_discovery_contract_test.sh` passed and the filtered reliability list printed exactly one `--mode 'closure' -d '21071FDF600CSC,emulator-5554'` command.
+- `bash scripts/test/reliability_simulation_discovery_contract_test.sh` passed and the filtered reliability list printed exactly one `--mode 'closure' -d '<pixel-6-serial>,emulator-5554'` command.
 - `./scripts/run_test_gates.sh groups` passed: 4,054 Flutter tests, four successful Go invocations across bridge/node/relay, and the relay Go toolchain contract.
 - Android binding input digest `ea7dd54d66f78fa4162ec4100ac1dae157d5913b9e9a057e5b3e31d7613437a0` rebuilt to `GoMknoon.aar` SHA-256 `fe15b060d610b01a7bc9d0b12fd5f074558aa12e767e762df764a3fd89104087`.
 - Full `flutter analyze` / `flutter analyze --no-pub` reported no issues; final `git diff --check` passed. Per the project cadence, full `host-all` was not run for this individual plan; the new native tests are registered in its existing node/bridge patterns for the next dependency-wave run.

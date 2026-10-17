@@ -11,7 +11,7 @@ the missing device states.
 
 ## Captured results (this run)
 
-Physical Pixel 6 `21071FDF600CSC` (`com.mknoon.egressproof` exploratory build):
+Physical Pixel 6 `<pixel-6-serial>` (`com.mknoon.egressproof` exploratory build):
 - `P10-signal-orbit-1.0.png` — exploratory Signal Orbit capture only. It also
   contains an unredacted QR identifier, so it is not admissible formal evidence.
 - `P11-signal-orbit-1.3.png` — despite the filename, this is a scanner
@@ -34,7 +34,7 @@ font_scale restored to 1.0 on both devices.
 
 ## Device / build
 
-- Device: Pixel 6 `21071FDF600CSC`, Android 16 / API 36, 1080x2400.
+- Device: Pixel 6 `<pixel-6-serial>`, Android 16 / API 36, 1080x2400.
 - App/build provenance: the captured Pixel state came from the
   `com.mknoon.egressproof` exploratory variant described above; a clean
   production `com.mknoon.app` selection/restore run is not yet recorded.
@@ -89,7 +89,7 @@ must show + capture the prompt as PASS.
 
 ## Font-scale restore
 
-`adb -s 21071FDF600CSC shell settings put system font_scale 1.0` must be the final
+`adb -s <pixel-6-serial> shell settings put system font_scale 1.0` must be the final
 state (verified via `settings get system font_scale`), protected by a shell
 `trap ... EXIT`.
 

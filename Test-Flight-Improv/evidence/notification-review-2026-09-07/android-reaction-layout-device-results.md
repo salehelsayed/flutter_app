@@ -4,7 +4,7 @@
 
 ## Installed targets and preservation
 
-Pixel21071FDF600CSC and emulator-5554 both received install-r, retained accounts picel / TC256-B and their existing unread histories, and verified versionCode114 / versionName1.0.0-807874437-notification260907-r4. APK SHA256f80e83093fb5e711a48fd919834b903162a366def4fbe0f786c7f5f9aceebcec. Source provenance: `android-reaction-layout-final-provenance.json` alongside this report. Raw logs, OS dumps, actions and screenshots are in `build/notification-review-20260907/android-layout-114/`. Startup and wake registration events are preserved in *-proof.log. No iPhone action, relay mutation, account reset, or app source edit was performed in this leg. All times below UTC; raw device logs display UTC+02.
+Pixel<pixel-6-serial> and emulator-5554 both received install-r, retained accounts picel / TC256-B and their existing unread histories, and verified versionCode114 / versionName1.0.0-807874437-notification260907-r4. APK SHA256f80e83093fb5e711a48fd919834b903162a366def4fbe0f786c7f5f9aceebcec. Source provenance: `android-reaction-layout-final-provenance.json` alongside this report. Raw logs, OS dumps, actions and screenshots are in `build/notification-review-20260907/android-layout-114/`. Startup and wake registration events are preserved in *-proof.log. No iPhone action, relay mutation, account reset, or app source edit was performed in this leg. All times below UTC; raw device logs display UTC+02.
 
 ## Group: initial and settled PASS
 

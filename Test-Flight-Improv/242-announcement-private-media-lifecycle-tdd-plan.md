@@ -43,7 +43,7 @@ its upstream lifecycle contract as unresolved or evidence-gated.
   including partial, malformed, and future policy input.
 - A dedicated three-party device runner is intentionally N/A: the accepted
   behavior is per-install and changes no broadcast transport. Device closure
-  passed on physical Android `21071FDF600CSC` through v101 SQLCipher, the real
+  passed on physical Android `<pixel-6-serial>` through v101 SQLCipher, the real
   Go announcement payload, inherited native protection, and the actual
   announcement wired route; the iOS NSE regression passed on available
   simulator `DBE8C32E-9F19-4593-860A-B41113791D79`.
@@ -131,7 +131,7 @@ thin wired-route device proof around the shared viewer/native mechanism.
 | Announcement notification privacy | foreground/background/lock-screen title/body/caption/thumbnail matrix for each policy | accepted 2026-07-12 — app title plus localized generic private-media body; explicit malformed/partial/future policy fails closed | APL-07 covers Dart paths and `NotificationPreviewResolverTests` covers the iOS NSE |
 | Reporting disposition | whether any downstream reporting consumer exists and what metadata remains without retaining or exporting prohibited media bytes | accepted 2026-07-13 — no reporting consumer; identity/policy/terminal/integrity metadata remains only for truthful local history and lifecycle proof | Plan 246 closes Report as an intentional non-goal with no lifecycle authority or byte access |
 | Platform promise | Android/iOS best-effort capture behavior and exact user copy inherited/extended from GPL-11 | accepted 2026-07-12 — exact Plan-238 viewer/platform promise, no extension | no second native implementation |
-| Device proof topology | roles/accounts/devices, offline interval, relay fixture, process restart, accepted semantic oracle, and exact scenario/platform discovery rules | accepted 2026-07-12 — availability-bounded GPL-01D/GPL-11 plus announcement-specific APL-03D/APL-08 on Android `21071FDF600CSC`; iOS NSE regression on the available simulator | no three-party scenario or unavailable target gate |
+| Device proof topology | roles/accounts/devices, offline interval, relay fixture, process restart, accepted semantic oracle, and exact scenario/platform discovery rules | accepted 2026-07-12 — availability-bounded GPL-01D/GPL-11 plus announcement-specific APL-03D/APL-08 on Android `<pixel-6-serial>`; iOS NSE regression on the available simulator | no three-party scenario or unavailable target gate |
 
 ## Scope Contract And Guard
 
@@ -186,7 +186,7 @@ Dependencies:
 | TC-242-05 | View-once consumes once at the accepted decoder boundary, commits Plan-238 local state before cleanup, and cannot reopen | `test/features/groups/integration/announcement_private_media_lifecycle_test.dart::APL-05` plus Plan-238 GPL-05/06/08 | host integration / production repository over host SQLite and exact app-owned file | durable consume precedes cleanup; placeholder remains and later open is denied | consume at tap, clean before commit, or reopen terminal media -> TC-242-05 red | focused APL aggregate; `GROUP_TESTS`; inherits Plan-238 crash/replay matrix |
 | TC-242-06 | Disappearing media expires under the accepted high-water clock and cannot reopen/redownload | `test/features/groups/integration/announcement_private_media_lifecycle_test.dart::APL-06` plus Plan-238 GPL-07/08 | host integration / production repository over host SQLite, exact deadline and file | exact boundary terminalizes, cleans, retains placeholder, and denies open | use a competing clock, reset duration, or accept terminal replay -> TC-242-06 red | focused APL aggregate; `GROUP_TESTS` |
 | TC-242-07 | Private announcement notifications and thumbnails follow the generic foreground/background/lock-screen matrix without media hydration | `announcement_private_media_notification_test.dart`, `push_decrypt_preview_test.dart`, and `ios/RunnerTests/NotificationPreviewResolverTests.swift::testGroupPrivateMediaPreviewIsGenericForAnnouncementsAndMalformedPolicy` | host Dart + iOS NSE native suite / trusted and malformed policy fixtures | localized app title/generic body, no group/sender/caption/subtype, zero plaintext media fetch; malformed/partial/future policy fails closed | reuse ordinary preview or trust incomplete policy -> TC-242-07 red | `GROUP_TESTS` plus focused `xcodebuild test` on an available iOS simulator |
-| TC-242-08 | Protected announcement viewer applies the accepted best-effort capture behavior and truthful copy, including background and route exit | `integration_test/announcement_private_media_platform_proof_test.dart::APL-08` plus inherited GPL-11 | actual wired-route device proof / explicit physical Android target | reader taps the production announcement route into the shared viewer; `FLAG_SECURE` acquires/releases on normal exit and injected background | omit protection, keep flag after exit, bypass the shared viewer, or fork a second mechanism -> TC-242-08 red | explicit Android `21071FDF600CSC` APL-08; `ignored/ignored` discovery record |
+| TC-242-08 | Protected announcement viewer applies the accepted best-effort capture behavior and truthful copy, including background and route exit | `integration_test/announcement_private_media_platform_proof_test.dart::APL-08` plus inherited GPL-11 | actual wired-route device proof / explicit physical Android target | reader taps the production announcement route into the shared viewer; `FLAG_SECURE` acquires/releases on normal exit and injected background | omit protection, keep flag after exit, bypass the shared viewer, or fork a second mechanism -> TC-242-08 red | explicit Android `<pixel-6-serial>` APL-08; `ignored/ignored` discovery record |
 | TC-242-09 | Admin override/revoke and retained lifecycle metadata after consume/expiry follow the accepted terminal-state matrix without restoring/exporting media | `test/features/groups/application/announcement_private_media_moderation_test.dart::admin lifecycle and retained safety metadata match approved audit matrix without media resurrection` | application host / admin transitions, repository snapshot and egress spies | Historical HEAD contracts absent -> exact allowed/denied transitions and required placeholder/lifecycle metadata survive while every media egress call stays zero | let a later admin reset consume/expiry, discard required lifecycle identity, or retain/export prohibited bytes -> TC-242-09 red | `flutter test test/features/groups/application/announcement_private_media_moderation_test.dart`; AUTO plus `GROUP_TESTS`; decision closed |
 | TC-242-10 | Ordinary/legacy announcement image/video delivery, viewing and reactions remain unchanged when policy is absent/standard | `test/features/groups/integration/announcement_happy_path_test.dart::announcement happy path: create, admin send, reader read-only receive, member react` plus `test/features/groups/presentation/group_conversation_wired_test.dart::announcement readers stay read-only for compose but still keep reaction entry` | GREEN sentinel / existing host integration/widget fixtures | GREEN on HEAD -> remains GREEN after lifecycle adapter | default absence to private/expired or gate reaction on private capability -> sentinel red | `flutter test test/features/groups/integration/announcement_happy_path_test.dart --plain-name 'announcement happy path: create, admin send, reader read-only receive, member react' && flutter test test/features/groups/presentation/group_conversation_wired_test.dart --plain-name 'announcement readers stay read-only for compose but still keep reaction entry'`; existing `GROUP_TESTS` |
 | TC-242-11 | Reader cannot publish lifecycle-tagged or ordinary media and optional policy plumbing changes no Go node authorization/topic/recipient/retry behavior | `test/features/groups/integration/announcement_new_reader_onboarding_test.dart::new reader receives only post-join admin media with descriptors` plus `go-mknoon/node/pubsub_test.go::TestGroupTopicValidator_AnnouncementNonAdminRejected` plus plan-238 GPL-16 | GREEN sentinel / Flutter integration, Go validator, source boundary | GREEN on HEAD -> remains GREEN; no Go node production diff and all reader bridge send counts remain zero | trust lifecycle flag as permission or weaken validator -> sentinel red | `flutter test test/features/groups/integration/announcement_new_reader_onboarding_test.dart --plain-name 'new reader receives only post-join admin media with descriptors' && (cd go-mknoon && GOTOOLCHAIN=go1.25.0 go test ./node -run TestGroupTopicValidator_AnnouncementNonAdminRejected -count=1) && git diff --exit-code -- go-mknoon/node`; existing `GROUP_TESTS` / Go preservation |
@@ -278,10 +278,10 @@ flutter test test/features/groups/integration/announcement_happy_path_test.dart 
 # and therefore no three-peer run; APL-08 wraps the shared native mechanism.
 flutter devices --machine
 ./scripts/check_reliability_simulation_discovery.sh
-flutter test --no-pub -d 21071FDF600CSC integration_test/group_private_media_lifecycle_db_proof_test.dart --plain-name 'GPL-01D real SQLCipher allocated vNEXT preserves legacy private state reopen and full chain'
-flutter test --no-pub -d 21071FDF600CSC integration_test/group_real_crypto_onboarding_test.dart --plain-name 'APL-03D private announcement policy survives the real Go bridge encrypted payload'
-flutter test --no-pub -d 21071FDF600CSC integration_test/group_private_media_platform_proof_test.dart --plain-name 'GPL-11 protected viewer applies truthful platform capture safeguards'
-flutter test --no-pub -d 21071FDF600CSC integration_test/announcement_private_media_platform_proof_test.dart
+flutter test --no-pub -d <pixel-6-serial> integration_test/group_private_media_lifecycle_db_proof_test.dart --plain-name 'GPL-01D real SQLCipher allocated vNEXT preserves legacy private state reopen and full chain'
+flutter test --no-pub -d <pixel-6-serial> integration_test/group_real_crypto_onboarding_test.dart --plain-name 'APL-03D private announcement policy survives the real Go bridge encrypted payload'
+flutter test --no-pub -d <pixel-6-serial> integration_test/group_private_media_platform_proof_test.dart --plain-name 'GPL-11 protected viewer applies truthful platform capture safeguards'
+flutter test --no-pub -d <pixel-6-serial> integration_test/announcement_private_media_platform_proof_test.dart
 xcodebuild test -quiet -workspace ios/Runner.xcworkspace -scheme Runner \
   -destination 'platform=iOS Simulator,id=DBE8C32E-9F19-4593-860A-B41113791D79' \
   CODE_SIGNING_ALLOWED=NO -parallel-testing-enabled NO \
@@ -295,14 +295,14 @@ git diff --check
 ## Device/Relay Proof Profile
 
 - Profile: `available-target inherited-plus-wired-boundary`. The live matrix on 2026-07-12
-  contains USB Android `21071FDF600CSC` and no attached Android emulator.
+  contains USB Android `<pixel-6-serial>` and no attached Android emulator.
 - Boundary being proven: production SQLCipher v101 state, real-Go encrypted
   announcement extras, actual announcement wired-route entry, and shared
   protected-viewer native ownership/restoration. Host APL-02 plus receive and
   Go authorization sentinels prove announcement-admin/read-only policy;
   APL-03/05/06 prove the adapter and per-install lifecycle.
 - Required setup: run GPL-01D, APL-03D, inherited GPL-11, and APL-08 on explicit
-  Android `21071FDF600CSC`. No relay authority, account-wide convergence, or
+  Android `<pixel-6-serial>`. No relay authority, account-wide convergence, or
   three-peer runner is selected because none is part of the accepted promise.
 - Native proof limit: GPL-11/APL-08 observe Android `FLAG_SECURE` ownership and
   wired-route/event cleanup; their debug-injected events do not observe or prove
@@ -314,7 +314,7 @@ git diff --check
 - Registration: APL-08 is an explicit `ignored/ignored` manual Android proof in
   reliability discovery; the eight host suites are registered in `GROUP_TESTS`.
 - Result on 2026-07-12: GPL-01D, APL-03D, GPL-11, and APL-08 each passed `1/1`
-  with exit 0 on physical Android `21071FDF600CSC`; the iOS resolver class
+  with exit 0 on physical Android `<pixel-6-serial>`; the iOS resolver class
   passed with exit 0. The harness required no manual taps or prompts.
 - Deferred device work: none.
 
@@ -352,7 +352,7 @@ git diff --check
   explicitly classified as a manual Android proof and discovery passes.
 - Migration: none; reuse accepted DB v101 and its structural plus real-SQLCipher proof.
 - Boundary closure: GPL-01D/APL-03D/GPL-11/APL-08 passed on Android
-  `21071FDF600CSC`; the iOS NSE resolver class passed on the available simulator.
+  `<pixel-6-serial>`; the iOS NSE resolver class passed on the available simulator.
 - Unresolved evidence: none. Plan 242 is accepted.
 
 ## Execution Progress
@@ -360,5 +360,5 @@ git diff --check
 | Time | Phase | Files | Last command/result | Current evidence | Decision/blocker | Next |
 |---|---|---|---|---|---|---|
 | 2026-07-12 | Host implementation and preservation | availability/send/receive/retry/composer adapters; eight dedicated host files; Dart/iOS notification adapters | dedicated aggregate `19/19`; Plan-238 preservation `63/63`; ordinary/new-reader `3/3`; receive/offline sentinels green; Go auth passed; iOS resolver class passed | v101 reuse, final current-admin send/receive authority, live/offline/retry, terminal lifecycle, capability, notification, and metadata contracts are closed | none | accepted |
-| 2026-07-12 | Availability-bounded device closure | inherited SQLCipher/native harnesses plus announcement real-Go and actual wired-route proofs | `GPL-01D`, `APL-03D`, `GPL-11`, and `APL-08` each `1/1`, exit 0 on physical Android `21071FDF600CSC` | v101 reopen/full-chain, exact encrypted-inner announcement policy, and actual shared-viewer `FLAG_SECURE` acquire/release/background cleanup pass without manual interaction | unavailable emulator legs N/A; no multi-party/convergence/relay promise | accepted |
+| 2026-07-12 | Availability-bounded device closure | inherited SQLCipher/native harnesses plus announcement real-Go and actual wired-route proofs | `GPL-01D`, `APL-03D`, `GPL-11`, and `APL-08` each `1/1`, exit 0 on physical Android `<pixel-6-serial>` | v101 reopen/full-chain, exact encrypted-inner announcement policy, and actual shared-viewer `FLAG_SECURE` acquire/release/background cleanup pass without manual interaction | unavailable emulator legs N/A; no multi-party/convergence/relay promise | accepted |
 | 2026-07-12 | Integrated closure | eight host registrations, APL-08 discovery classification, corrected iOS smoke scenario expansion, forwarding preservation reconciliation | `GROUP_TESTS` `2139/2139` plus bridge/node Go legs passed; completeness `1226/1226`; reliability discovery PASS; scoped analyzers/diff hygiene clean | Plan 242 and the integrated Track-2 group/forwarding surfaces are mutually coherent | none | accepted |

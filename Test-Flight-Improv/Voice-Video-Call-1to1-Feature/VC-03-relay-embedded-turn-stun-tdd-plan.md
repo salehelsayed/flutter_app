@@ -355,7 +355,7 @@ The implementing AI agent runs the full loop end-to-end on a **USB-connected And
 
 ```bash
 # 1. Discover devices (USB device serial + emulator id)
-adb devices                      # e.g. 21071FDF600CSC (USB), emulator-5554
+adb devices                      # e.g. <pixel-6-serial> (USB), emulator-5554
 
 # 2. Host tiers (no device needed) — Go + Dart RED/GREEN loops
 (cd go-relay-server && GOTOOLCHAIN=go1.25.0 go test ./... -run '^TestTurn' -count=1)
@@ -368,14 +368,14 @@ flutter test test/core/bridge/go_bridge_client_test.dart test/core/bridge/p2p_br
 
 # 4. Device legs (single-party — VC-03 needs no two-party orchestrator; run the
 #    SAME proof on both rig members, POST-DEPLOY only):
-flutter test integration_test/turn_credentials_live_proof_test.dart -d 21071FDF600CSC
+flutter test integration_test/turn_credentials_live_proof_test.dart -d <pixel-6-serial>
 flutter test integration_test/turn_credentials_live_proof_test.dart -d emulator-5554
 # USB device on cellular/hotspot is optional here (cred fetch is network-agnostic);
 # the different-networks requirement bites in VC-05's ICE proof, not VC-03.
 
 # 5. Two-party convention (NOT used by VC-03; recorded for uniformity, VC-00 rule 1):
 #    orchestrators take -d <serialA>,<serialB>, e.g.
-#    dart integration_test/scripts/run_1to1_device_real.dart --scenario <id> -d 21071FDF600CSC,emulator-5554
+#    dart integration_test/scripts/run_1to1_device_real.dart --scenario <id> -d <pixel-6-serial>,emulator-5554
 
 # 6. iOS boundary: deferred-not-waived — GoBridge.swift case lands code-only; the proof
 #    test prints the iOS run recipe and Android evidence closes this story (VC-07 owns iOS device proof).

@@ -100,7 +100,7 @@ Status: accepted
 
 Live check already refreshed at `2026-05-01T13:05:34+02:00`:
 
-- `flutter devices --machine`: single iOS default `347FB118-10D0-40C8-A05B-B0C3BD6B8CCD` booted; paired iOS `347FB118-10D0-40C8-A05B-B0C3BD6B8CCD` and `5BA69F1C-B112-47BE-B1FF-8C1003728C8F` booted; spare iOS `1B098DFF-6294-407A-A209-BBF360893485` booted; physical iOS `00008030-001A6D2801BB802E`; Android `emulator-5554`; macOS; Chrome.
+- `flutter devices --machine`: single iOS default `347FB118-10D0-40C8-A05B-B0C3BD6B8CCD` booted; paired iOS `347FB118-10D0-40C8-A05B-B0C3BD6B8CCD` and `5BA69F1C-B112-47BE-B1FF-8C1003728C8F` booted; spare iOS `1B098DFF-6294-407A-A209-BBF360893485` booted; physical iOS `<iphone-11-udid>`; Android `emulator-5554`; macOS; Chrome.
 - `xcrun simctl list devices available`: confirms the iOS simulators above.
 - `adb devices`: failed because `adb` is not installed; Android paired target `emulator-5556` is missing.
 - Current row starts with host/fake-network proof. Paired iOS may be supporting if a real-device proof is needed after the host matrix is green.

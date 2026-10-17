@@ -43,7 +43,7 @@ inert in a normal build. Native libs rebuilt with `GOTOOLCHAIN=go1.25.0`
 
 | Class | Device | OS | Status |
 |---|---|---|---|
-| Android flagship | **Pixel 6** (21071FDF600CSC) | Android 16 / API 36 | ✅ (a)(b) n=12, (c) n=6+8, resume n=5 |
+| Android flagship | **Pixel 6** (<pixel-6-serial>) | Android 16 / API 36 | ✅ (a)(b) n=12, (c) n=6+8, resume n=5 |
 | Android low-end | — | — | not available (only Pixel 6 on hand) |
 | iOS | **iPhone 13** (00008110…) | iOS 26.5 | ✅ (a)(b) n=12; advertiser for (c); (d) wired |
 | iOS older | iPhone 11 (wireless) | — | not run |

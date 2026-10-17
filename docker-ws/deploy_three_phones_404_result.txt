@@ -7,17 +7,17 @@ after:
 PROVENANCE sha=d5c404b87 dirty=8 build_name=1.0.0-d5c404b87.d8.flowlog.t260905201506 bundle_version=260905201506
 IOS BUILT 1.0.0-d5c404b87.d8.flowlog.t260905201506 bundleVersion=260905201506
 ios build exit=0
-PIXEL 21071FDF600CSC OK 1.0.0-d5c404b87.d8.t260905201506 (verified)
+PIXEL <pixel-6-serial> OK 1.0.0-d5c404b87.d8.t260905201506 (verified)
 PIXEL PASS
 pixel deploy exit=0
 --- iPhones install (keep identity)
 ios install exit=0
 ARTIFACT 1.0.0540487.8.260905201506 bundleVersion=260905201506
-00008030-001A6D2801BB802E OK 1.0.0540487.8.260905201506 bundleVersion=260905201506 (verified)
-00008110-00184D622289801E OK 1.0.0540487.8.260905201506 bundleVersion=260905201506 (verified)
+<iphone-11-udid> OK 1.0.0540487.8.260905201506 bundleVersion=260905201506 (verified)
+<iphone-13-udid> OK 1.0.0540487.8.260905201506 bundleVersion=260905201506 (verified)
 ARTIFACT 1.0.0540487.8.260905201506 bundleVersion=260905201506
-00008030-001A6D2801BB802E OK 1.0.0540487.8.260905201506 bundleVersion=260905201506 (verified)
-00008110-00184D622289801E OK 1.0.0540487.8.260905201506 bundleVersion=260905201506 (verified)
+<iphone-11-udid> OK 1.0.0540487.8.260905201506 bundleVersion=260905201506 (verified)
+<iphone-13-udid> OK 1.0.0540487.8.260905201506 bundleVersion=260905201506 (verified)
 --- captures
 CAPTURE_DIR=docker-ws/deploy-captures/fresh-260905201908
 --- kill the Pixel app (HOME, wait, am kill)

@@ -14,7 +14,7 @@ Closure tier: host implementation + N01 wave; optional existing Android pair acc
 | 2026-08-14 | Planner | This plan and `Test-Flight-Improv/00-INDEX.md` | Keep one final plan organized around one invariant: an initialized linked authority either gets exact per-device custody before egress, or the unsupported action refuses before effects. | Run `$tdd-review`; apply only verified contract corrections. |
 | 2026-08-14 | Reviewer | Current Plan-366 draft; Dart/Go group-media scheme; four direct share entries; private v114/v108 Barrier B; mutation DB/retry; group caller/refusal seams; history listener/fallback/unread; all commands and registrations | Verdict was `plan-fixes-required`: one Plan-365 interop false green, one omitted direct-library producer, underspecified private/mutation/history boundaries, three group-forward refusals, and invalid proof paths/names. | Apply every verified correction; add no schema, protocol version, owner, or product surface. |
 | 2026-08-14 | Arbiter | Revised canonical contract and reviewer evidence | `ready`: the corrected plan covers every current reachable producer or explicit non-adopter, and the new Go work is one literal validator alignment rather than a new relay design. | Execute from TC-366-00a/01a RED; stop on any hard scope guard. |
-| 2026-08-14 | Plans 364/365 closure audit | Their final receipts; B1b runner/dispatcher/contracts; relay rollout contract; live device discovery; WP-01/WP-07 boundary | Plan 364 has no missing product code; Plan 365 has no remaining schema/device-code defect beyond TC-366-00a. Their one cumulative B1b is S2-blocked, and Plan 365's documented command falsely omits the media/voice opt-in. Current valid pair is USB Pixel 6 `21071FDF600CSC` first plus Android emulator `emulator-5554` second. | Consume the existing runner once with the media/voice opt-in after an authorized corrected reader-first relay deployment; restore both admissions off, then record one wave/audit receipt. Add no new harness or extra plan. |
+| 2026-08-14 | Plans 364/365 closure audit | Their final receipts; B1b runner/dispatcher/contracts; relay rollout contract; live device discovery; WP-01/WP-07 boundary | Plan 364 has no missing product code; Plan 365 has no remaining schema/device-code defect beyond TC-366-00a. Their one cumulative B1b is S2-blocked, and Plan 365's documented command falsely omits the media/voice opt-in. Current valid pair is USB Pixel 6 `<pixel-6-serial>` first plus Android emulator `emulator-5554` second. | Consume the existing runner once with the media/voice opt-in after an authorized corrected reader-first relay deployment; restore both admissions off, then record one wave/audit receipt. Add no new harness or extra plan. |
 
 ## Problem And Evidence
 
@@ -658,7 +658,7 @@ or silently call a base-only B1b pass sufficient.
 # 2026-08-14 is USB Pixel 6 first and Android emulator second.
 flutter devices --machine
 adb devices -l
-plan366_physical_android_id='21071FDF600CSC'
+plan366_physical_android_id='<pixel-6-serial>'
 plan366_emulator_android_id='emulator-5554'
 test "$(adb -s "$plan366_physical_android_id" get-state)" = 'device'
 test "$(adb -s "$plan366_emulator_android_id" get-state)" = 'device'

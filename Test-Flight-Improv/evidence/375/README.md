@@ -198,7 +198,7 @@ recorded. No iPhone/iOS target is justified for this boundary.
 
 | Fact | emulator class | USB class |
 |---|---|---|
-| Target | `emulator-5554` (`sdk_gphone16k_arm64`, API 37) | `21071FDF600CSC` (Pixel 6, API 36) |
+| Target | `emulator-5554` (`sdk_gphone16k_arm64`, API 37) | `<pixel-6-serial>` (Pixel 6, API 36) |
 | Run nonce | `ff738466592a42708493bb566c7d0c34` | `f8c4490de93d422287b6955112f7be0f` |
 | Result JSON SHA-256 | `9b4a17ac7e8098f0f5ccfa1cb4a346aa746bfb9a1b48420619fca6b17bdf83fe` | `9aa43d32204ad18b48dd0735aff513e1c53b0fac75bebe7a7811400818687cbc` |
 | Process death | pid 7584 killed at the armed barrier -> distinct pid 7682 completed SUCCESS | pid 19087 -> distinct pid 19332 SUCCESS |

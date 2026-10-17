@@ -5,7 +5,7 @@ after:
   (no logcat)
 runner_mtime_before=1788637746
 --- iOS build + Pixel deploy in parallel
-PIXEL 21071FDF600CSC OK 1.0.0-1576451b6.d30.t260905223024 (verified)
+PIXEL <pixel-6-serial> OK 1.0.0-1576451b6.d30.t260905223024 (verified)
 PIXEL PASS
 pixel deploy exit=0
 --- wait for the iOS artifact by probing the Mac
@@ -25,20 +25,20 @@ now: 22:34:49
 1.0
 --- iPhones install (keep identity)
 ARTIFACT 1.0.015764516.30.260905223024 bundleVersion=260905223024
-00008030-001A6D2801BB802E OK 1.0.015764516.30.260905223024 bundleVersion=260905223024 (verified)
-00008110-00184D622289801E OK 1.0.015764516.30.260905223024 bundleVersion=260905223024 (verified)
+<iphone-11-udid> OK 1.0.015764516.30.260905223024 bundleVersion=260905223024 (verified)
+<iphone-13-udid> OK 1.0.015764516.30.260905223024 bundleVersion=260905223024 (verified)
 ARTIFACT 1.0.015764516.30.260905223024 bundleVersion=260905223024
-00008030-001A6D2801BB802E OK 1.0.015764516.30.260905223024 bundleVersion=260905223024 (verified)
-00008110-00184D622289801E OK 1.0.015764516.30.260905223024 bundleVersion=260905223024 (verified)
+<iphone-11-udid> OK 1.0.015764516.30.260905223024 bundleVersion=260905223024 (verified)
+<iphone-13-udid> OK 1.0.015764516.30.260905223024 bundleVersion=260905223024 (verified)
 --- captures
 CAP_DIR=docker-ws/deploy-captures/fresh-260905223504
 === done 20260905T203508Z ===
 
 === summary ===
 All three phones on 1576451b6 (live call-row refresh), identities kept.
-Pixel   21071FDF600CSC            1.0.0-1576451b6.d30.t260905223024 (verified)
-iPhone  00008030-001A6D2801BB802E bundleVersion=260905223024 (verified)
-iPhone  00008110-00184D622289801E bundleVersion=260905223024 (verified)
+Pixel   <pixel-6-serial>            1.0.0-1576451b6.d30.t260905223024 (verified)
+iPhone  <iphone-11-udid> bundleVersion=260905223024 (verified)
+iPhone  <iphone-13-udid> bundleVersion=260905223024 (verified)
 CAPTURE_DIR=docker-ws/deploy-captures/fresh-260905223504
 
 The iOS leg was waited on by probing the Mac (build processes + Runner mtime)

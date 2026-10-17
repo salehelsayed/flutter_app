@@ -71,8 +71,8 @@ that e2e file's migration list changes, mirror it in the harness's
 
 | Role label | Device  | Device ID |
 |------------|---------|-----------|
-| iPhone13   | iOS     | `00008110-00184D622289801E` |
-| Pixel6     | Android | `21071FDF600CSC` |
+| iPhone13   | iOS     | `<iphone-13-udid>` |
+| Pixel6     | Android | `<pixel-6-serial>` |
 
 The launcher auto-detects platform **per device** from each device ID: a
 CoreDevice UUID (`8hex-16hex`) or classic UDID → **iOS**
@@ -102,8 +102,8 @@ cd /Users/I560101/Project-Sat/mknoon-2/flutter_app
 export MKNOON_RELAY_ADDRESSES='<your-relay-csv>'   # optional
 scripts/run_transport_census.sh \
   --condition A_cold --n 50 --cold true \
-  --sender-device 00008110-00184D622289801E \
-  --receiver-device 21071FDF600CSC
+  --sender-device <iphone-13-udid> \
+  --receiver-device <pixel-6-serial>
 ```
 
 The orchestrator launches the receiver first (background), waits for its
@@ -136,8 +136,8 @@ cd /Users/I560101/Project-Sat/mknoon-2/flutter_app
 export MKNOON_RELAY_ADDRESSES='<your-relay-csv>'   # optional
 scripts/run_transport_census.sh \
   --condition B_cross --n 50 --cold true \
-  --sender-device 00008110-00184D622289801E \
-  --receiver-device 21071FDF600CSC
+  --sender-device <iphone-13-udid> \
+  --receiver-device <pixel-6-serial>
 ```
 
 (Cold vs warm is independent of the network condition; keep `--cold true` for an

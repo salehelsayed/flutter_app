@@ -33,7 +33,7 @@ C2 and C6 survived as stated, C1's field conclusion REFUTED, C3/C4/C5 corrected 
 | 2026-07-20 | registration + curated gates | both gate scripts and discovery docs | Exact-line registrations/selectors and `check_reliability_simulation_discovery.sh` PASS. `run_test_gates.sh 1to1`: `+2406 -1`; `run_host_test_gates.sh 1to1`: items 1-48 PASS, then the same item-49 baseline stopped fail-fast. | No p262 failure. Both curated commands remain nonzero solely on the pre-existing shared-viewer `MethodChannel(` boundary violation. | Family sweeps. |
 | 2026-07-20 | concurrent feature family | feature inventory | `run_host_test_gates.sh feature-host-all --batch-flutter --concurrency 4 --reporter failures-only`: one Flutter invocation, 810 exact files, `+8281 ~1 -2` (`/tmp/p262-feature-host-all-rerun.log`). | One known shared-viewer baseline; one unrelated group-voice 10-second batch timeout passed exact isolation `+1`. The earlier 24 ordinary-media regressions were fixed and did not recur. | Core family. |
 | 2026-07-20 | concurrent core family | core inventory + Android manifest tail | Same four-worker batch form: `+2683 -1` (`/tmp/p262-core-host-all-final.log`). Exact isolated failure reproduced against clean unchanged `pending_group_broadcasts_db_helpers.dart`. Separate `./scripts/check_android_renderer_manifest_contract.sh` PASS sentinel retained at `/tmp/p262-android-renderer-manifest-contract.log`. | No p262 failure. Family remains nonzero on the pre-existing raw-transaction census baseline. | Device/hygiene. |
-| 2026-07-20 | TC-262-14 device proof | Android harness/evaluator/artifact v3 | Physical sender `21071FDF600CSC` + recipient `emulator-5554`; artifact `/tmp/p262-direct-private-media.5abqjE/plan234-direct-private-media-device-local-journey.json`, SHA-256 `c3772ee7f6989a64631a5266a1cbe3a5e194861c5358c5228bd40f6d11ea0`. | PASS: production route mounted; sender SQL sequence `available -> opening -> viewing -> consumed`; pending source cleanup and recipient proof present. | Final QA. |
+| 2026-07-20 | TC-262-14 device proof | Android harness/evaluator/artifact v3 | Physical sender `<pixel-6-serial>` + recipient `emulator-5554`; artifact `/tmp/p262-direct-private-media.5abqjE/plan234-direct-private-media-device-local-journey.json`, SHA-256 `c3772ee7f6989a64631a5266a1cbe3a5e194861c5358c5228bd40f6d11ea0`. | PASS: production route mounted; sender SQL sequence `available -> opening -> viewing -> consumed`; pending source cleanup and recipient proof present. | Final QA. |
 | 2026-07-20 | QA + architecture | harness, docs, Graphify outputs | `flutter analyze`: no issues; post-lint harness criteria rerun: `+95`, all passed; `git diff --check`: clean; incremental Graphify refresh: 57,854 nodes / 89,324 edges; affected query matched intended conversation/database/retry/receipt surface. Independent scope audit found no forbidden lane or platform drift. | p262 implementation verified; only unrelated repository baselines remain. | Close. |
 | 2026-07-20 | durable test-concurrency memory | `test-gate-definitions.md` | Recorded that curated `run_test_gates.sh 1to1` already uses one multi-path Flutter invocation; host `1to1` is intentionally sequential; broad feature/core use one `--batch-flutter --concurrency 4` invocation; independent Flutter processes must not overlap. | Guidance is durable for future runs. | Closed. |
 
@@ -798,7 +798,7 @@ sender-device end-to-end affordance→grant→view→settle chain; do NOT treat 
 sufficient on its own).
 Closure scenario: extend the registered `direct_private_media_device_local_journey`, keep all
 setup/navigation/tap/assertions automated, and run one pinned USB physical Android sender plus one
-Android emulator recipient. Live 2026-07-20 matrix: `21071FDF600CSC` + default `emulator-5554`
+Android emulator recipient. Live 2026-07-20 matrix: `<pixel-6-serial>` + default `emulator-5554`
 (`emulator-5556` also available). Rediscover at execution and substitute the exact available IDs.
 No iPhone/manual-tap leg is required. If no policy-eligible pair exists at execution, record
 `N/A (target unavailable by project policy)`—never `environment_blocker`, `evidence_gap`, or a
@@ -857,7 +857,7 @@ adb devices -l
 flutter test test/integration/direct_private_media_device_local_journey_criteria_test.dart
 p262_artifact_dir="$(mktemp -d /tmp/p262-direct-private-media.XXXXXX)"
 dart run integration_test/scripts/run_direct_private_media_device_local_journey.dart \
-  --sender 21071FDF600CSC \
+  --sender <pixel-6-serial> \
   --recipient emulator-5554 \
   --artifact-dir "$p262_artifact_dir"
 test -s "$p262_artifact_dir/plan234-direct-private-media-device-local-journey.json"
@@ -880,7 +880,7 @@ rollout/release closure.
   test + memory/docs edits) — snapshot first; never revert unrelated files.
 - Toolchain: `/claude-host-bin/flutter` is absent on 2026-07-20. PATH resolves to
   `/Users/I560101/development/flutter/bin/flutter` 3.41.4; literal commands use plain `flutter`.
-- Device availability: the current eligible pair is physical `21071FDF600CSC` + emulator
+- Device availability: the current eligible pair is physical `<pixel-6-serial>` + emulator
   `emulator-5554` (5556 also available). Rediscover at execution. If an eligible pair is absent,
   record `N/A (target unavailable by project policy)` rather than an environment blocker/gap.
 - Scope drift (BLOCKING): any group/announcement-lane, relay/bridge, or incoming-contract diff.

@@ -62,7 +62,7 @@ Profile: `host-only` for required closure, with supporting `single-device`/real-
 
 Live availability checks for this run:
 
-- `flutter devices --machine` shows `emulator-5554`, physical iPhone `00008030-001A6D2801BB802E`, and booted iOS simulators `38FECA55-03C1-4907-BD9D-8E64BF8E3469`, `347FB118-10D0-40C8-A05B-B0C3BD6B8CCD`, `5BA69F1C-B112-47BE-B1FF-8C1003728C8F`, and `1B098DFF-6294-407A-A209-BBF360893485`.
+- `flutter devices --machine` shows `emulator-5554`, physical iPhone `<iphone-11-udid>`, and booted iOS simulators `38FECA55-03C1-4907-BD9D-8E64BF8E3469`, `347FB118-10D0-40C8-A05B-B0C3BD6B8CCD`, `5BA69F1C-B112-47BE-B1FF-8C1003728C8F`, and `1B098DFF-6294-407A-A209-BBF360893485`.
 - `xcrun simctl list devices available` confirms the same booted default iOS simulator set.
 - `adb devices` is unavailable in this shell (`adb: command not found`), though Flutter lists `emulator-5554`.
 

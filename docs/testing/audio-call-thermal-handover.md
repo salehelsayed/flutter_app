@@ -115,7 +115,7 @@ checkout, record that limitation and use the same-workstation retained copy.
   It is a retained validation identity, not an installed-APK identity or a thermal
   result. Recheck the candidate's source, build mode, configuration, package,
   version, APK digest and installed artifact before measuring.
-- Last observed targets: physical `21071FDF600CSC` (Pixel 6, Android 17/API 37)
+- Last observed targets: physical `<pixel-6-serial>` (Pixel 6, Android 17/API 37)
   and `emulator-5554` (Android 17/API 37). Resolve current availability with
   `flutter devices --machine` and `adb devices -l`, then pin explicit IDs.
   The physical phone supplies thermal evidence; emulator thermals do not stand

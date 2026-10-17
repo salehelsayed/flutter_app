@@ -240,7 +240,7 @@ No SQLCipher schema migration is required for any item.
 
 ### Device matrix
 - **iOS NSE:** TestFlight/device proof that muted and removed-member group pushes are suppressed at the banner, and Android-parity previews show. RG-007 (`push_preview_degrade_rate_gate`) production telemetry remains the residual gate.
-- **Android background:** physical Pixel6 (`21071FDF600CSC`, per project memory) to confirm `sender: text` previews and mute/membership suppression in the background isolate.
+- **Android background:** physical Pixel6 (`<pixel-6-serial>`, per project memory) to confirm `sender: text` previews and mute/membership suppression in the background isolate.
 - **One-per-message:** 2-party (DM) and 3-party (GMN) device runs under throttling/low-power to confirm SI-5 holds when iOS skips the Dart isolate.
 
 Update the matrix at `Test-Flight-Improv/52-notification-journey-test-matrix.md` so SM-004/GMN-102/GMN-103/RG-006 cite the new **push/NSE** coverage rather than only the live-listener test.

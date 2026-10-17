@@ -420,7 +420,7 @@ xcrun simctl list devices available
 
 The Android targets used were:
 
-- physical Pixel 6, `21071FDF600CSC`, Android 16 / API 36;
+- physical Pixel 6, `<pixel-6-serial>`, Android 16 / API 36;
 - Android emulator, `emulator-5554`, Android 17 / API 37.
 
 Available iOS devices and simulators were not used because no iOS-specific
@@ -498,7 +498,7 @@ The physical command used the pinned API 36 target:
 
 ```sh
 scripts/run_vc204_android_call_lifecycle_e2e.sh \
-  --device-id 21071FDF600CSC \
+  --device-id <pixel-6-serial> \
   --artifact-dir /tmp/vc204-proof.DTD3Ve \
   --result-dir /tmp/vc204-proof.DTD3Ve/results23-physical \
   --scenario vc204_android_call_lifecycle

@@ -1,4 +1,4 @@
-TC-400-30 — refresh-epoch advance on CALL_STALE_EPOCH, iPhone 11 (00008030-001A6D2801BB802E) vs production relay mknoun.xyz
+TC-400-30 — refresh-epoch advance on CALL_STALE_EPOCH, iPhone 11 (<iphone-11-udid>) vs production relay mknoun.xyz
 Build: 1.0.0-fb4732738.d10.flowlog.t260905014902 (bundleVersion 260905014902), installed keep-identity on iPhone 11 + 13 (both verified).
 Artifact gates: grep -a -c embedded.mobileprovision Runner = 1; advanceRefreshEpoch = 2; BridgeGenerateIdentity = 1.
 

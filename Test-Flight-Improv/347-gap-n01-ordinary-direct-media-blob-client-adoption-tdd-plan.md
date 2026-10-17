@@ -276,7 +276,7 @@ bash scripts/test/go_binding_staleness_contract_test.sh
 # currently available physical Android and Android emulator IDs.
 flutter devices --machine
 adb devices -l
-PLAN347_ANDROID_ID='21071FDF600CSC'
+PLAN347_ANDROID_ID='<pixel-6-serial>'
 PLAN347_ANDROID_PEER_ID='emulator-5554'
 
 # DB v111 proof plus every existing literal-current-version SQLCipher sentinel.
@@ -319,7 +319,7 @@ The literal focused selectors added during implementation must also be run indiv
 
 ## Device / Relay Proof Profile
 
-- Planning snapshot on 2026-08-08 found physical Pixel 6 `21071FDF600CSC` and Android emulator `emulator-5554`; these are examples, not hard-coded closure prerequisites. Rediscover immediately before execution and pin exact live IDs.
+- Planning snapshot on 2026-08-08 found physical Pixel 6 `<pixel-6-serial>` and Android emulator `emulator-5554`; these are examples, not hard-coded closure prerequisites. Rediscover immediately before execution and pin exact live IDs.
 - Default TC-347-09 topology is one USB-connected physical Android sender plus one available Android emulator receiver. The existing Sims dispatcher and small scenario module own app setup, permissions, identities, navigation, send, sender process kill/restart, receive, file/hash/reopen assertion, ACK, and relay post-ACK assertion. No manual taps count.
 - The test-only adapter starts a reachable tagged Go fixture before build preparation. The fixture uses actual libp2p handlers, production Redis/media backend code, ephemeral Redis-compatible state and media roots, `DIRECT_INBOX_ACK_CUSTODY_ADMISSION_ENABLED=true`, `DIRECT_MEDIA_BLOB_CUSTODY_ADMISSION_ENABLED=true`, and a unique relay identity/address; it never contacts or mutates an external relay. The adapter proves both devices can reach the announced host address, injects it as `MKNOON_RELAY_ADDRESSES`, and tears down process/state in `finally`.
 - Both devices install the same centrally attested `android.e2e.direct_media_custody` APK. Only that profile enables the client selector; unrelated `android.e2e.main` campaigns remain unchanged.
@@ -394,7 +394,7 @@ The reviewed plan has one explicit causal RED, observable boundary outcomes, cra
 - Implemented the bounded default-off composer/voice and retry adoption, DB v111 plus v108 binding, exact ciphertext custody, strict receive/download/ACK convergence, expiry coupling, lifecycle/bootstrap/account-transfer ownership, relay/native plumbing, and the automated Android-pair campaign. This is code closure only; it is not production activation or standalone release eligibility.
 - Focused selector-true coverage passed across 27 files with 972 tests; the exact selector-false legacy preservation sentinel passed, and gate completeness was `1436/1436`. Focused Go relay/native, shell-contract, Android binding, migration, repository, and protocol families are green.
 - The affected curated `1to1` lane passed with 2,992 tests and 6 skips. `core-host-all` passed 3,201 tests across 404 paths; serial `feature-host-all` passed 8,973 tests with 7 skips across 840 paths. Per project cadence, no per-plan full `host-all` ran.
-- The six focused current-schema Android SQLCipher proofs passed on physical Android `21071FDF600CSC`; the connected release Android SQLCipher leg also passed one test with a successful release build, completing all seven device schema proofs.
-- Exact Sims scenario `android.direct_media_blob_custody` passed all 4 assertions on physical Android `21071FDF600CSC` plus emulator `emulator-5554`, emitted its required artifact, and confirmed disposable fixture teardown. It used no external relay, no manual taps, and no iOS command.
+- The six focused current-schema Android SQLCipher proofs passed on physical Android `<pixel-6-serial>`; the connected release Android SQLCipher leg also passed one test with a successful release build, completing all seven device schema proofs.
+- Exact Sims scenario `android.direct_media_blob_custody` passed all 4 assertions on physical Android `<pixel-6-serial>` plus emulator `emulator-5554`, emitted its required artifact, and confirmed disposable fixture teardown. It used no external relay, no manual taps, and no iOS command.
 - Final `flutter analyze` passed with no issues; the changed-Dart format check covered 88 files with 0 changes; `git diff --check` passed; and the single incremental Graphify refresh completed with 70,093 nodes, 103,263 edges, and the refreshed deterministic TDD overlay.
 - `MKNOON_DIRECT_MEDIA_BLOB_CUSTODY_CLIENT_ENABLED`, `DIRECT_INBOX_ACK_CUSTODY_ADMISSION_ENABLED`, and `DIRECT_MEDIA_BLOB_CUSTODY_ADMISSION_ENABLED` all remain production-default false. External share, private/group/historical media, fanout, the remaining GAP-N01 lanes, WP-07 activation, wave-level full `host-all`, operations evidence, and consolidated iOS proof remain explicitly open.

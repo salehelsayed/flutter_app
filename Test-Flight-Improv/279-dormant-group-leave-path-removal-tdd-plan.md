@@ -459,11 +459,11 @@ xcrun simctl list devices available
 MKNOON_RELAY_ADDRESSES='/dns/mknoun.xyz/tcp/4001/wss/p2p/12D3KooWGMYMmN1RGUYjWaSV6P3XtnBjwnosnJGNMnttfVCRnd6g,/dns/mknoun.xyz/udp/4002/quic-v1/p2p/12D3KooWGMYMmN1RGUYjWaSV6P3XtnBjwnosnJGNMnttfVCRnd6g' \
   dart run integration_test/scripts/run_group_multi_party_device_real.dart \
   --scenario private_voluntary_leave_convergence \
-  -d 21071FDF600CSC,emulator-5554,emulator-5556
+  -d <pixel-6-serial>,emulator-5554,emulator-5556
 MKNOON_RELAY_ADDRESSES='/dns/mknoun.xyz/tcp/4001/wss/p2p/12D3KooWGMYMmN1RGUYjWaSV6P3XtnBjwnosnJGNMnttfVCRnd6g,/dns/mknoun.xyz/udp/4002/quic-v1/p2p/12D3KooWGMYMmN1RGUYjWaSV6P3XtnBjwnosnJGNMnttfVCRnd6g' \
   dart run integration_test/scripts/run_group_multi_party_device_real.dart \
   --scenario gm015 \
-  -d 21071FDF600CSC,emulator-5554,emulator-5556
+  -d <pixel-6-serial>,emulator-5554,emulator-5556
 
 # Hygiene.
 ./scripts/check_flutter_analyze_strict.sh
@@ -478,10 +478,10 @@ git diff --check
   and sole-admin refusal/continued usability cannot be closed by host fakes.
 - Live availability check:
   `flutter devices --machine; adb devices; xcrun simctl list devices available`
-  -> physical Android Pixel 6 `21071FDF600CSC` (API 36), Android emulators
+  -> physical Android Pixel 6 `<pixel-6-serial>` (API 36), Android emulators
   `emulator-5554` (API 35) and `emulator-5556` (API 37), plus iOS targets.
 - Required setup: pin
-  `21071FDF600CSC,emulator-5554,emulator-5556`; use the existing automated
+  `<pixel-6-serial>,emulator-5554,emulator-5556`; use the existing automated
   multi-party runner, exact required `MKNOON_RELAY_ADDRESSES` value in the
   closure commands, isolated app/db state, and machine-read verdict files; no
   user taps.

@@ -235,7 +235,7 @@ requires manual two-phone device for closure (host suite proves the discoverer s
 disambiguation and CV-34-both-ways are device-only).
 **PROD-CRITICAL leg:** TC-179-D1 (manual two-phone Pixel→iPhone media over the libp2p LAN stream) is the ONLY path that proves the wire/transport leg
 end-to-end. Host unit coverage proves the routing/self-heal logic but does NOT prove the leg — do not treat host GREEN as closure.
-Closure scenario (the CV-34-both-ways + FDC-S6 i→A gate): Pixel 6 (`adb -s 21071FDF600CSC`) + iPhone 11 (`00008030-001A6D2801BB802E`), same WiFi, both
+Closure scenario (the CV-34-both-ways + FDC-S6 i→A gate): Pixel 6 (`adb -s <pixel-6-serial>`) + iPhone 11 (`<iphone-11-udid>`), same WiFi, both
 apps foreground, post-178 build with `--dart-define=FDC_FLOW_LOG=1 --dart-define=MKNOON_ENABLE_LIBP2P_LAN_MEDIA=true`. Send Pixel→iPhone media; capture:
 - `LOCAL_MDNS_PEER_SKIPPED_NO_LIBP2P_ADDR` on the Pixel ⇒ confirms the empty-address path is the live failure (vs never-resolved).
 - iPhone advertiser branch: `FDC_LAN_ADVERT_PORTS` (published) vs `FDC_LAN_ADVERT_PORTS_DEFERRED` (sub-cause A) vs `LOCAL_MDNS_ADVERTISE_SKIPPED_SUSPECTED_DENIED` (sub-cause B) ⇒ selects the WHY-empty branch.

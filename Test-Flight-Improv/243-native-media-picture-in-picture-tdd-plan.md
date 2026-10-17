@@ -212,7 +212,7 @@ contract. The current implementation state is:
 - [x] Every post-decision behavior has a named causal test/proof and representative mutation.
 - [x] Exactly one playback owner, stable attachment identity, video-only writes, known/unknown/later-clamped positions, completion reset, and protected-media suppression pass.
 - [x] Typed direct/group repository revocation streams, fail-closed stream errors, priority stop fencing, paged-library requalification/eviction, and localized start-failure UX pass.
-- [x] Android proof is explicitly classified and all six scenarios pass on physical Pixel 6 `21071FDF600CSC`, API 36; iOS proof remains absent/N/A.
+- [x] Android proof is explicitly classified and all six scenarios pass on physical Pixel 6 `<pixel-6-serial>`, API 36; iOS proof remains absent/N/A.
 - [x] Existing native lifecycle/channel and shared viewer sentinels pass.
 - [x] Canonical full `flutter analyze` exits 1 and is non-green; it is accepted
   only as the repository baseline of 1,610 issues (0 errors, 115 warnings,

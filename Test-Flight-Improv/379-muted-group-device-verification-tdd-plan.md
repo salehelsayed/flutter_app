@@ -94,7 +94,7 @@ Dependencies:
 - Evidence grammar: recipient-boundary only — persisted rows + cursor-scoped client flow events (`PUSH_BACKGROUND_MESSAGE_RECEIVED` carries `messageId`, `bmh:611-620`) + dumps + probe (`canonicalBadgeState`, `groupIsMuted`). Relay journal evidence optional/additive.
 - Probe requests from BOTH muted stages use the reaction shape: `targetMarker` = the message-under-test marker, first/second empty (probe gate `:98-111`).
 - `groupReactionNotificationScenario()` has **6 call sites** today (runner `:329`, validate `:74`, criteria `:739`, projection runner `:78,:447`, capture `:324`) — re-derive the census at execution; all must tolerate out-of-catalog ids (they do today via the 330 precedent).
-- Recipient = physical Pixel 6 (`21071FDF600CSC`), sender = `emulator-5554`. Check `adb shell dumpsys window policy | grep secure` FIRST; secure-locked keyguard → typed blocker, fail fast.
+- Recipient = physical Pixel 6 (`<pixel-6-serial>`), sender = `emulator-5554`. Check `adb shell dumpsys window policy | grep secure` FIRST; secure-locked keyguard → typed blocker, fail fast.
 - Reuse `validateGroupReactionNotificationStagingManifest` for the muted ids (varies only on `recipientPlatform`).
 - New ids are non-nesting and carry neither suffix.
 
@@ -200,8 +200,8 @@ git diff --check
 ## Device/Relay Proof Profile
 - Profile: paired-device (os-notification device lab).
 - Boundary being proven: OS-level absence of the muted card/sound across live and FCM paths, real SQLCipher, real relay custody, real FCM wake — with in-window lane-liveness and pipeline-health controls.
-- Live availability check: `adb devices -l` (this session): `21071FDF600CSC` (Pixel 6, SDK 36) + `emulator-5554` (SDK 36).
-- Pinned targets: sender `emulator-5554`, recipient `21071FDF600CSC` (keyguard check first).
+- Live availability check: `adb devices -l` (this session): `<pixel-6-serial>` (Pixel 6, SDK 36) + `emulator-5554` (SDK 36).
+- Pinned targets: sender `emulator-5554`, recipient `<pixel-6-serial>` (keyguard check first).
 - Automation: fully harness-driven (uiautomator bounds-tap for the mute switch; no user taps).
 - Closure role: required closure evidence.
 - `FLUTTER_DEVICE_ID`: host selector only; both ids pinned in runner argv.
@@ -227,7 +227,7 @@ git diff --check
 | 2026-08-17 | TC-379-09 registration | sims manifest, runtime_roots ×3, discovery ×3, registry pins, discovery contract pins | runtime-roots **PASS**, discovery **exit 0**, completeness **PASS**, meta-gates **151/151** | capability index 40 (last); `tooling.group-muted-notification-android` validated=true | — | capture stages |
 | 2026-08-17 | TC-379-05/06 capture stages | `capture_group_reaction_notification_device.dart` (2 stages, 4 run()-level dispatch sites, muted writer), runner, proof test | `flutter analyze lib integration_test test tool` → **0 issues**; host suite green | code authored + compile-clean; **device run not executed** | **BLOCKED (environment)**: no FCM service account, relay key, or prepared `android.production_fcm` APK in this session | device closure when lab creds are present |
 | 2026-08-17 | Mutations | production seams | M1 (drop `isMuted` early return) → policy host locks RED; M2 (drop `AND g.is_muted = 0`) → badge observation RED; M3/M4/M6 RED | all five reverted; tree clean | — | — |
-| 2026-08-17 | Mute-targeting device smoke (user-selected, low-cost) | Pixel `21071FDF600CSC` | installed the existing `app-debug.apk`, launched, 3× `uiautomator dump` over ~4 min | app never leaves the splash: engine up, `flutter :` prints stop after the VM-service line, semantics tree empty (1509-byte bare `FrameLayout`) | **Smoke inconclusive** — a plain debug install cannot reach Orbit/Group Info without the harness's identity seeding (`intro_e2e_config.json`) that the capture driver performs | retry inside a real capture run, or seed identity first |
+| 2026-08-17 | Mute-targeting device smoke (user-selected, low-cost) | Pixel `<pixel-6-serial>` | installed the existing `app-debug.apk`, launched, 3× `uiautomator dump` over ~4 min | app never leaves the splash: engine up, `flutter :` prints stop after the VM-service line, semantics tree empty (1509-byte bare `FrameLayout`) | **Smoke inconclusive** — a plain debug install cannot reach Orbit/Group Info without the harness's identity seeding (`intro_e2e_config.json`) that the capture driver performs | retry inside a real capture run, or seed identity first |
 
 | 2026-08-17 | Device closure attempt | `run_with_devices.sh major --only groups.muted_notification_campaign` | run 1 BLOCKED (`relay_configuration`, my launcher had `mknoon.xyz` for `mknoun.xyz`); run 2 FAIL at `provider_registration` | `completedStages` = device_inventory, relay_configuration, android_role_install, android_identity_setup, **group_fixture_setup**, provider_registration | **BLOCKED by a pre-existing out-of-scope defect (G16-wider, below)** | relay-grammar repair plan |
 | 2026-08-17 | Attribution parity test | `run_with_devices.sh major --only groups.reaction_notification_campaign` (untouched catalog lane) | FAIL: `android_group_message_unread_lifecycle capture/validation exited 1: timed_out_waiting_for_capability-bearing recipient android token registration` | **identical stage and message on a scenario this plan never touched** | attribution proven: not this plan's regression | — |

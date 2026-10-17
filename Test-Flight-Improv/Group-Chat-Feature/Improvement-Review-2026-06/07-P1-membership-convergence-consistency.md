@@ -273,7 +273,7 @@ On `_syncGroupConfig` (`group_message_listener.dart:4942`–`5001`) returning `f
 
 ### Device matrix
 
-Use the documented devices (iPhone13 `00008110-…`, Pixel6 `21071FDF600CSC`). The two-admin concurrent role/metadata scenarios specifically need cross-device clock skew, which only the real-device matrix exercises faithfully.
+Use the documented devices (iPhone13 `00008110-…`, Pixel6 `<pixel-6-serial>`). The two-admin concurrent role/metadata scenarios specifically need cross-device clock skew, which only the real-device matrix exercises faithfully.
 
 ---
 

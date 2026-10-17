@@ -135,6 +135,6 @@ Supporting: the **requester** never sends an unsigned request — `buildSignedGr
 
 Per the Slice-2 plan §"Device matrix", **none of the following has device evidence yet** — all UDM-E/G logic above is host-`go test` / Dart-host gated only, and a `make all` + `pod install` Go rebuild is mandatory before any device proof:
 
-- **UDM-E:** real-ML-KEM 2-device matrix (iPhone17Pro-sim + Pixel6 `21071FDF600CSC`): rotate K times; assert a message under an epoch N-rotations-ago (within K=5) **still decrypts** on a peer that held it, and a message under an **evicted (>K)** epoch **fails closed**.
+- **UDM-E:** real-ML-KEM 2-device matrix (iPhone17Pro-sim + Pixel6 `<pixel-6-serial>`): rotate K times; assert a message under an epoch N-rotations-ago (within K=5) **still decrypts** on a peer that held it, and a message under an **evicted (>K)** epoch **fails closed**.
 - **UDM-G:** a behind-epoch member pulls the **exact** epoch → placeholder repairs on-device; confirm the responder serves only its own ML-KEM devices, never mints (`group:updateKey` absent in logs), and the per-`(requester,groupId,epoch)` cap holds across a real send/retry burst. Mirror the Finding-03 / Slice-1 proof pattern (`integration_test/group_removal_rotation_*_proof_test.dart`, `group_undecryptable_selfheal_converge_proof_test.dart`).
 - **UDM-F:** **N/A until landed** — if UDM-F ships, additionally prove background >10 min → foreground recovers a future-epoch message with no permanent placeholder/duplicate, and verify the gossipsub mesh-scoring impact of Ignore-vs-Reject.

@@ -34,13 +34,13 @@ Out of scope:
 - Initial `group --list` reliability discovery resolved:
   - one-device simulator: `38FECA55-03C1-4907-BD9D-8E64BF8E3469`
   - two-device simulator pair: `38FECA55-03C1-4907-BD9D-8E64BF8E3469,347FB118-10D0-40C8-A05B-B0C3BD6B8CCD`
-  - Android serial exported by the resolver: `21071FDF600CSC`
+  - Android serial exported by the resolver: `<pixel-6-serial>`
   - relay addresses exported by the resolver from the skill defaults
 - Final resumed group reliability device set resolved:
   - one-device simulator: `5A9A8286-001B-4BF1-8F40-5A3AB8BF8FE3`
   - two-device simulator pair: `5A9A8286-001B-4BF1-8F40-5A3AB8BF8FE3,279B82AE-2BB9-4924-9AAE-581870ED3FA9`
   - role devices: Alice `5A9A8286-001B-4BF1-8F40-5A3AB8BF8FE3`, Bob `279B82AE-2BB9-4924-9AAE-581870ED3FA9`, Charlie `116B4AF6-C1A9-4F36-B929-0A7130B5E83C`, Dana `CD5929A6-EA0A-421D-A6D3-55BD707E0F76`
-- Real iOS hardware is visible to Flutter (`00008030-001A6D2801BB802E`, `00008110-00184D622289801E`), but repo evidence found no local non-interactive script that can send a production APNs background/terminated push through the provider path to those devices. The simulator APNs tap and push-decrypt smokes remain repo/simulator evidence only.
+- Real iOS hardware is visible to Flutter (`<iphone-11-udid>`, `<iphone-13-udid>`), but repo evidence found no local non-interactive script that can send a production APNs background/terminated push through the provider path to those devices. The simulator APNs tap and push-decrypt smokes remain repo/simulator evidence only.
 
 ## TDD / Acceptance Plan
 

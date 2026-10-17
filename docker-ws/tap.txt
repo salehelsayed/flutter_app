@@ -1,4 +1,4 @@
-[connected:00008030-001A6D2801BB802E]
+[connected:<iphone-11-udid>]
 Aug 21 18:24:40.501410 Runner(Network)[5160] <Debug>: endpoint <private> has nothing to cleanup, no protocol instance registrars
 Aug 21 18:24:40.501918 Runner(Network)[5160] <Debug>: endpoint <private> has associations
 Aug 21 18:24:40.502034 Runner(Network)[5160] <Debug>: endpoint <private> has nothing to cleanup, no protocol instance registrars
@@ -338,4 +338,4 @@ Aug 21 18:26:06.636151 Runner(Network)[5160] <Debug>: -[NWConcrete_nw_path_evalu
 Aug 21 18:26:06.636170 Runner(Network)[5160] <Debug>: nw_association_schedule_deactivation_block_invoke <nw_association IPv6#f5630973.443> becoming dormant
 
 Exiting...
-[disconnected:00008030-001A6D2801BB802E]
+[disconnected:<iphone-11-udid>]

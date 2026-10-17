@@ -195,7 +195,7 @@ xcodebuild test \
 # One registered physical campaign only. Re-resolve the live matrix and pin a
 # currently available dedicated iPhone whose provisioning/staging attestation
 # contains the UDID. Planning-time selection: Saleh's iPhone, iOS 26.6.
-SIMS_IOS_PHYSICAL_DEVICE_ID=00008150-001C3C6A3684401C \
+SIMS_IOS_PHYSICAL_DEVICE_ID=<iphone-17-pro-max-udid> \
   dart tool/sims/sims.dart major --only notifications.ios_payload_fast_path \
   --prepare-builds
 ~~~
@@ -227,7 +227,7 @@ xcodebuild test \
 
 ./scripts/run_test_gates.sh 1to1
 
-SIMS_IOS_PHYSICAL_DEVICE_ID=00008150-001C3C6A3684401C \
+SIMS_IOS_PHYSICAL_DEVICE_ID=<iphone-17-pro-max-udid> \
   dart tool/sims/sims.dart major --only notifications.ios_payload_fast_path \
   --prepare-builds
 ~~~
@@ -288,9 +288,9 @@ The conditional block is skipped on a no-local-duplicate result because that cap
 
 ## Device And Relay Proof Profile
 
-- Planning-time physical target: `00008150-001C3C6A3684401C` (`Saleh's iPhone`, iOS 26.6 / 23G71). Execution must rediscover the live matrix and pass one explicit current UDID; no “first iPhone” selection.
+- Planning-time physical target: `<iphone-17-pro-max-udid>` (`Saleh's iPhone`, iOS 26.6 / 23G71). Execution must rediscover the live matrix and pass one explicit current UDID; no “first iPhone” selection.
 - Planning-time native-test simulator: `674DFFF6-5F38-4235-93F6-AF7FBF86AE65` (iPhone 17 Pro, iOS 26.5). Re-resolve and pin if unavailable.
-- Android `21071FDF600CSC` and `emulator-5554` are available but deliberately unused. This is an iOS OS-boundary proof and needs no second peer.
+- Android `<pixel-6-serial>` and `emulator-5554` are available but deliberately unused. This is an iOS OS-boundary proof and needs no second peer.
 - Build: one centrally prepared, signed `ios.device.production` app/XCTest bundle; child build count remains zero inside all three serial device legs.
 - Provider: direct Apple development APNs submission with the real NSE, the existing disposable production-code relay/state fixture for setup and sender projection, dedicated receiver authorization, and automatic cleanup. The device leg does not claim relay-to-FCM emission; the Go projection and device mechanism form the composed proof. No production deployment or TestFlight.
 - Destructive behavior: fresh install/reset, permission grant, notification clear, state clear, candidate app uninstall, and fixture cleanup are authorized because the user confirmed these are test phones. Arbitrary prior app data is not recoverable and is not claimed restored.

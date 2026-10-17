@@ -3,7 +3,7 @@
   "scenario": "payload_fast_path_android_receiver",
   "status": "passed",
   "capturedAt": "2026-07-09T19:42:35Z",
-  "devices": ["21071FDF600CSC (Pixel 6, Android 16, receiver)", "iPhone 11 (12D3KooWPzDTjARPoFbnbr2VGVMNsAhA, sender)"],
+  "devices": ["<pixel-6-serial> (Pixel 6, Android 16, receiver)", "iPhone 11 (12D3KooWPzDTjARPoFbnbr2VGVMNsAhA, sender)"],
   "checks": {
     "androidReceiver": true,
     "fcmDelivered": true,
