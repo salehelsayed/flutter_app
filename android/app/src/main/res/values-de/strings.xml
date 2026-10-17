@@ -6,6 +6,7 @@
     <string name="dropped_push_recovery_notification_body">Möglicherweise warten Nachrichten</string>
     <string name="dropped_push_recovery_worker_body">Nachrichten werden wiederhergestellt</string>
     <string name="call_notification_channel_name">Anrufe</string>
+    <string name="call_ongoing_channel_name">Laufende Anrufe</string>
     <string name="call_notification_channel_description">Eingehende und laufende MKnoon-Anrufe</string>
     <string name="call_notification_title">MKnoon-Anruf</string>
     <string name="call_notification_person">MKnoon-Anrufer</string>

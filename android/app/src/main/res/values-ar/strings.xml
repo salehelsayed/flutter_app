@@ -6,6 +6,7 @@
     <string name="dropped_push_recovery_notification_body">قد تكون هناك رسائل بانتظار الاسترداد</string>
     <string name="dropped_push_recovery_worker_body">جارٍ استرداد الرسائل</string>
     <string name="call_notification_channel_name">المكالمات</string>
+    <string name="call_ongoing_channel_name">المكالمات الجارية</string>
     <string name="call_notification_channel_description">مكالمات مكنون الواردة والجارية</string>
     <string name="call_notification_title">مكالمة مكنون</string>
     <string name="call_notification_person">متصل مكنون</string>

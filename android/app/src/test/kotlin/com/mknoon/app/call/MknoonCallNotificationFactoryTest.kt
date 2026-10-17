@@ -244,6 +244,31 @@ class MknoonCallNotificationFactoryTest {
     }
 
     @Test
+    fun `ongoing call is posted on a quiet channel so it never pops up over the app`() {
+        val callId = UUID.fromString(CALL_ID)
+        factory.createIncoming(callId, fullScreenAllowed = false)
+
+        val ongoing = factory.createOngoing(callId)
+
+        val manager = context.getSystemService(NotificationManager::class.java)
+        assertEquals(MknoonCallNotificationFactory.ONGOING_CHANNEL_ID, ongoing.channelId)
+        val ongoingChannel = requireNotNull(
+            manager.getNotificationChannel(MknoonCallNotificationFactory.ONGOING_CHANNEL_ID),
+        )
+        assertEquals(NotificationManager.IMPORTANCE_LOW, ongoingChannel.importance)
+        assertNull(ongoingChannel.sound)
+        assertFalse(ongoingChannel.shouldVibrate())
+        val ringingChannel = requireNotNull(
+            manager.getNotificationChannel(MknoonCallNotificationFactory.CHANNEL_ID),
+        )
+        assertEquals(NotificationManager.IMPORTANCE_HIGH, ringingChannel.importance)
+        assertEquals(
+            MknoonCallNotificationFactory.CHANNEL_ID,
+            factory.createIncoming(callId, fullScreenAllowed = false).channelId,
+        )
+    }
+
+    @Test
     fun `ongoing CallStyle exposes one end action and remains non-dismissible`() {
         val callId = UUID.fromString(CALL_ID)
 

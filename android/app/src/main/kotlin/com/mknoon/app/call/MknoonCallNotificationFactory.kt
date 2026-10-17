@@ -95,7 +95,11 @@ internal class MknoonCallNotificationFactory(
         // Versioned because notification-channel sound is immutable after creation.
         const val CHANNEL_ID = "mknoon_calls_ringtone_v2"
         const val ADMISSION_CHANNEL_ID = "mknoon_calls_admission_v1"
+        // Quiet channel for the answered call. A high-importance ongoing
+        // notification keeps the ring's heads-up on screen over the app.
+        const val ONGOING_CHANNEL_ID = "mknoon_calls_ongoing_v1"
         const val NOTIFICATION_ID = 504
+        const val ONGOING_NOTIFICATION_ID = 505
     }
 
     private val applicationContext = context.applicationContext
@@ -172,10 +176,10 @@ internal class MknoonCallNotificationFactory(
                 .canUseFullScreenIntent()
 
     fun createOngoing(nativeCallId: UUID): Notification {
-        ensureChannel()
+        ensureOngoingChannel()
         val callerName = callerName(nativeCallId)
         val end = pendingIntents.action(nativeCallId, MknoonCallActionReceiver.ACTION_END)
-        val builder = builder()
+        val builder = builder(ONGOING_CHANNEL_ID)
             .setSmallIcon(R.mipmap.ic_launcher)
             .setContentTitle(callerName)
             .setContentText(applicationContext.getString(R.string.call_notification_ongoing))
@@ -202,9 +206,9 @@ internal class MknoonCallNotificationFactory(
         return builder.build()
     }
 
-    private fun builder(): Notification.Builder =
+    private fun builder(channelId: String = CHANNEL_ID): Notification.Builder =
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            Notification.Builder(applicationContext, CHANNEL_ID)
+            Notification.Builder(applicationContext, channelId)
         } else {
             @Suppress("DEPRECATION")
             Notification.Builder(applicationContext)
@@ -238,6 +242,22 @@ internal class MknoonCallNotificationFactory(
                 NotificationChannel(
                     ADMISSION_CHANNEL_ID,
                     applicationContext.getString(R.string.call_admission_channel_name),
+                    NotificationManager.IMPORTANCE_LOW,
+                ).apply {
+                    lockscreenVisibility = Notification.VISIBILITY_PRIVATE
+                    setSound(null, null)
+                    enableVibration(false)
+                },
+            )
+    }
+
+    private fun ensureOngoingChannel() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
+        applicationContext.getSystemService(NotificationManager::class.java)
+            .createNotificationChannel(
+                NotificationChannel(
+                    ONGOING_CHANNEL_ID,
+                    applicationContext.getString(R.string.call_ongoing_channel_name),
                     NotificationManager.IMPORTANCE_LOW,
                 ).apply {
                     lockscreenVisibility = Notification.VISIBILITY_PRIVATE
