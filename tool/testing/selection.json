@@ -1762,7 +1762,8 @@
     "android-state-guard-contract": {
       "kind": "flutter",
       "paths": [
-        "test/integration/android_app_state_guard_test.dart"
+        "test/integration/android_app_state_guard_test.dart",
+        "test/integration/android_install_over_guard_test.dart"
       ],
       "boundary": "Android app capture and restoration fail closed on unavailable or inconsistent package evidence and bind foreground activity to the exact application package",
       "limitations": "Host regressions preserve backup and recovery admission; live campaign restoration remains independently required.",
@@ -5955,7 +5956,9 @@
       "id": "android-state-guard",
       "patterns": [
         "integration_test/support/android_app_state_guard.dart",
-        "test/integration/android_app_state_guard_test.dart"
+        "integration_test/support/android_install_over_guard.dart",
+        "test/integration/android_app_state_guard_test.dart",
+        "test/integration/android_install_over_guard_test.dart"
       ],
       "checks": [
         "android-state-guard-contract",

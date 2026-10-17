@@ -12,9 +12,17 @@ final class _IdleDevices implements AndroidHostProcessRunner {
   Future<ProcessResult> run(String executable, List<String> arguments) async {
     expect(executable, 'adb');
     expect(arguments.first, '-s');
-    expect(arguments[1], anyOf('21071FDF600CSC', 'emulator-5556'));
+    expect(
+      arguments[1],
+      anyOf('emulator-4004', '21071FDF600CSC', 'emulator-5556'),
+    );
     expect(arguments, isNot(contains('start')));
-    return ProcessResult(0, 0, arguments.contains('get-state') ? 'device\n' : '', '');
+    return ProcessResult(
+      0,
+      0,
+      arguments.contains('get-state') ? 'device\n' : '',
+      '',
+    );
   }
 }
 
@@ -94,6 +102,71 @@ void main() {
       'SIMS_ANDROID_EMULATOR_DEVICE_ID': emulator,
     };
   }
+
+  test(
+    'disposable journeys bind two explicit emulators without a phone alias',
+    () {
+      final values = environment()
+        ..remove('SIMS_ANDROID_PHYSICAL_DEVICE_ID')
+        ..['SIMS_DISPOSABLE_ANDROID_JOURNEYS'] = '1'
+        ..['SIMS_ANDROID_EMULATOR_FOURTH_DEVICE_ID'] = 'emulator-4004';
+      final journey = ProductionAndroidJourney.fromEnvironment(
+        'production.routing_smoke',
+        temporary,
+        environment: values,
+      );
+      expect(journey.alice.device, 'emulator-4004');
+      expect(journey.bob.device, emulator);
+      expect(journey.actors, hasLength(2));
+      values['SIMS_ANDROID_EMULATOR_FOURTH_DEVICE_ID'] = emulator;
+      expect(
+        () => ProductionAndroidJourney.fromEnvironment(
+          'production.routing_smoke',
+          temporary,
+          environment: values,
+        ),
+        throwsStateError,
+      );
+      values['SIMS_ANDROID_EMULATOR_FOURTH_DEVICE_ID'] = physical;
+      expect(
+        () => ProductionAndroidJourney.fromEnvironment(
+          'production.routing_smoke',
+          temporary,
+          environment: values,
+        ),
+        throwsStateError,
+      );
+    },
+  );
+
+  test(
+    'disposable mode rejects a physical transport before guard capture',
+    () async {
+      final values = environment()
+        ..['SIMS_DISPOSABLE_ANDROID_JOURNEYS'] = '1'
+        ..['SIMS_ANDROID_EMULATOR_FOURTH_DEVICE_ID'] = 'emulator-4004';
+      var captured = false;
+      final journey = ProductionAndroidJourney.fromEnvironment(
+        'production.routing_smoke',
+        temporary,
+        environment: values,
+        runner: _IdleDevices(),
+        captureGuard:
+            ({
+              required devices,
+              required packageName,
+              required backupLabel,
+              required preparedArtifact,
+              required expectedArtifactSha256,
+            }) async {
+              captured = true;
+              throw StateError('must not capture');
+            },
+      );
+      await expectLater(journey.prepare(), throwsStateError);
+      expect(captured, isFalse);
+    },
+  );
 
   test(
     'both packages are captured before either peer install mutates state',

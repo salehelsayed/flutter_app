@@ -3055,7 +3055,8 @@
       ],
       "targetCapabilities": [
         "android.physical",
-        "android.emulator"
+        "android.emulator",
+        "android.emulator.rebindable"
       ],
       "allowedNaReason": "target_unavailable_by_project_policy",
       "artifactRequired": true,
@@ -3112,7 +3113,8 @@
       ],
       "targetCapabilities": [
         "android.physical",
-        "android.emulator"
+        "android.emulator",
+        "android.emulator.rebindable"
       ],
       "allowedNaReason": "target_unavailable_by_project_policy",
       "artifactRequired": true,
@@ -3168,7 +3170,8 @@
       ],
       "targetCapabilities": [
         "android.physical",
-        "android.emulator"
+        "android.emulator",
+        "android.emulator.rebindable"
       ],
       "allowedNaReason": "target_unavailable_by_project_policy",
       "artifactRequired": true,
@@ -3332,7 +3335,8 @@
       ],
       "targetCapabilities": [
         "android.physical",
-        "android.emulator.count2"
+        "android.emulator.count2",
+        "android.emulator.rebindable"
       ],
       "allowedNaReason": "target_unavailable_by_project_policy",
       "artifactRequired": true,
@@ -3393,7 +3397,8 @@
       ],
       "targetCapabilities": [
         "android.physical",
-        "android.emulator.count2"
+        "android.emulator.count2",
+        "android.emulator.rebindable"
       ],
       "allowedNaReason": "target_unavailable_by_project_policy",
       "artifactRequired": true,
@@ -3455,7 +3460,8 @@
       ],
       "targetCapabilities": [
         "android.physical",
-        "android.emulator.count2"
+        "android.emulator.count2",
+        "android.emulator.rebindable"
       ],
       "allowedNaReason": "target_unavailable_by_project_policy",
       "artifactRequired": true,
@@ -3517,7 +3523,8 @@
       ],
       "targetCapabilities": [
         "android.physical",
-        "android.emulator.count2"
+        "android.emulator.count2",
+        "android.emulator.rebindable"
       ],
       "allowedNaReason": "target_unavailable_by_project_policy",
       "artifactRequired": true,
@@ -3611,7 +3618,8 @@
       ],
       "targetCapabilities": [
         "android.physical",
-        "android.emulator"
+        "android.emulator",
+        "android.emulator.rebindable"
       ],
       "allowedNaReason": "target_unavailable_by_project_policy",
       "artifactRequired": true,
@@ -3673,7 +3681,8 @@
       ],
       "targetCapabilities": [
         "android.physical",
-        "android.emulator.count2"
+        "android.emulator.count2",
+        "android.emulator.rebindable"
       ],
       "allowedNaReason": "target_unavailable_by_project_policy",
       "artifactRequired": true,
@@ -3731,7 +3740,8 @@
       ],
       "targetCapabilities": [
         "android.physical",
-        "android.emulator"
+        "android.emulator",
+        "android.emulator.rebindable"
       ],
       "allowedNaReason": "target_unavailable_by_project_policy",
       "artifactRequired": true,
@@ -3788,7 +3798,8 @@
       ],
       "targetCapabilities": [
         "android.physical",
-        "android.emulator"
+        "android.emulator",
+        "android.emulator.rebindable"
       ],
       "allowedNaReason": "target_unavailable_by_project_policy",
       "artifactRequired": true,
@@ -3850,7 +3861,8 @@
       ],
       "targetCapabilities": [
         "android.physical",
-        "android.emulator.count2"
+        "android.emulator.count2",
+        "android.emulator.rebindable"
       ],
       "allowedNaReason": "target_unavailable_by_project_policy",
       "artifactRequired": true,
@@ -3911,7 +3923,8 @@
       ],
       "targetCapabilities": [
         "android.physical",
-        "android.emulator.count2"
+        "android.emulator.count2",
+        "android.emulator.rebindable"
       ],
       "allowedNaReason": "target_unavailable_by_project_policy",
       "artifactRequired": true,
@@ -3973,7 +3986,8 @@
       ],
       "targetCapabilities": [
         "android.physical",
-        "android.emulator.count2"
+        "android.emulator.count2",
+        "android.emulator.rebindable"
       ],
       "allowedNaReason": "target_unavailable_by_project_policy",
       "artifactRequired": true,
@@ -4034,7 +4048,8 @@
       ],
       "targetCapabilities": [
         "android.physical",
-        "android.emulator.count2"
+        "android.emulator.count2",
+        "android.emulator.rebindable"
       ],
       "allowedNaReason": "target_unavailable_by_project_policy",
       "artifactRequired": true,
@@ -4095,7 +4110,8 @@
       ],
       "targetCapabilities": [
         "android.physical",
-        "android.emulator.count2"
+        "android.emulator.count2",
+        "android.emulator.rebindable"
       ],
       "allowedNaReason": "target_unavailable_by_project_policy",
       "artifactRequired": true,
@@ -4156,7 +4172,8 @@
       ],
       "targetCapabilities": [
         "android.physical",
-        "android.emulator.count2"
+        "android.emulator.count2",
+        "android.emulator.rebindable"
       ],
       "allowedNaReason": "target_unavailable_by_project_policy",
       "artifactRequired": true,
@@ -4217,7 +4234,8 @@
       ],
       "targetCapabilities": [
         "android.physical",
-        "android.emulator.count2"
+        "android.emulator.count2",
+        "android.emulator.rebindable"
       ],
       "allowedNaReason": "target_unavailable_by_project_policy",
       "artifactRequired": true,
@@ -4278,7 +4296,8 @@
       ],
       "targetCapabilities": [
         "android.physical",
-        "android.emulator.count2"
+        "android.emulator.count2",
+        "android.emulator.rebindable"
       ],
       "allowedNaReason": "target_unavailable_by_project_policy",
       "artifactRequired": true,
@@ -4337,7 +4356,8 @@
       ],
       "targetCapabilities": [
         "android.physical",
-        "android.emulator.count2"
+        "android.emulator.count2",
+        "android.emulator.rebindable"
       ],
       "allowedNaReason": "target_unavailable_by_project_policy",
       "artifactRequired": true,
@@ -4396,7 +4416,8 @@
       ],
       "targetCapabilities": [
         "android.physical",
-        "android.emulator.count2"
+        "android.emulator.count2",
+        "android.emulator.rebindable"
       ],
       "allowedNaReason": "target_unavailable_by_project_policy",
       "artifactRequired": true,
@@ -4455,7 +4476,8 @@
       ],
       "targetCapabilities": [
         "android.physical",
-        "android.emulator.count2"
+        "android.emulator.count2",
+        "android.emulator.rebindable"
       ],
       "allowedNaReason": "target_unavailable_by_project_policy",
       "artifactRequired": true,
@@ -4516,7 +4538,8 @@
       ],
       "targetCapabilities": [
         "android.physical",
-        "android.emulator.count2"
+        "android.emulator.count2",
+        "android.emulator.rebindable"
       ],
       "allowedNaReason": "target_unavailable_by_project_policy",
       "artifactRequired": true,
@@ -4577,7 +4600,8 @@
       ],
       "targetCapabilities": [
         "android.physical",
-        "android.emulator.count2"
+        "android.emulator.count2",
+        "android.emulator.rebindable"
       ],
       "allowedNaReason": "target_unavailable_by_project_policy",
       "artifactRequired": true,
@@ -4638,7 +4662,8 @@
       ],
       "targetCapabilities": [
         "android.physical",
-        "android.emulator.count2"
+        "android.emulator.count2",
+        "android.emulator.rebindable"
       ],
       "allowedNaReason": "target_unavailable_by_project_policy",
       "artifactRequired": true,
@@ -4699,7 +4724,8 @@
       ],
       "targetCapabilities": [
         "android.physical",
-        "android.emulator.count2"
+        "android.emulator.count2",
+        "android.emulator.rebindable"
       ],
       "allowedNaReason": "target_unavailable_by_project_policy",
       "artifactRequired": true,
@@ -4760,7 +4786,8 @@
       ],
       "targetCapabilities": [
         "android.physical",
-        "android.emulator.count2"
+        "android.emulator.count2",
+        "android.emulator.rebindable"
       ],
       "allowedNaReason": "target_unavailable_by_project_policy",
       "artifactRequired": true,
@@ -4820,7 +4847,8 @@
       ],
       "targetCapabilities": [
         "android.physical",
-        "android.emulator.count2"
+        "android.emulator.count2",
+        "android.emulator.rebindable"
       ],
       "allowedNaReason": "target_unavailable_by_project_policy",
       "artifactRequired": true,
@@ -4880,7 +4908,8 @@
       ],
       "targetCapabilities": [
         "android.physical",
-        "android.emulator.count2"
+        "android.emulator.count2",
+        "android.emulator.rebindable"
       ],
       "allowedNaReason": "target_unavailable_by_project_policy",
       "artifactRequired": true,
@@ -4940,7 +4969,8 @@
       ],
       "targetCapabilities": [
         "android.physical",
-        "android.emulator.count2"
+        "android.emulator.count2",
+        "android.emulator.rebindable"
       ],
       "allowedNaReason": "target_unavailable_by_project_policy",
       "artifactRequired": true,
@@ -5000,7 +5030,8 @@
       ],
       "targetCapabilities": [
         "android.physical",
-        "android.emulator.count2"
+        "android.emulator.count2",
+        "android.emulator.rebindable"
       ],
       "allowedNaReason": "target_unavailable_by_project_policy",
       "artifactRequired": true,
@@ -5060,7 +5091,8 @@
       ],
       "targetCapabilities": [
         "android.physical",
-        "android.emulator.count2"
+        "android.emulator.count2",
+        "android.emulator.rebindable"
       ],
       "allowedNaReason": "target_unavailable_by_project_policy",
       "artifactRequired": true,
@@ -5120,7 +5152,8 @@
       ],
       "targetCapabilities": [
         "android.physical",
-        "android.emulator.count2"
+        "android.emulator.count2",
+        "android.emulator.rebindable"
       ],
       "allowedNaReason": "target_unavailable_by_project_policy",
       "artifactRequired": true,
@@ -5180,7 +5213,8 @@
       ],
       "targetCapabilities": [
         "android.physical",
-        "android.emulator.count2"
+        "android.emulator.count2",
+        "android.emulator.rebindable"
       ],
       "allowedNaReason": "target_unavailable_by_project_policy",
       "artifactRequired": true,
@@ -5240,7 +5274,8 @@
       ],
       "targetCapabilities": [
         "android.physical",
-        "android.emulator.count2"
+        "android.emulator.count2",
+        "android.emulator.rebindable"
       ],
       "allowedNaReason": "target_unavailable_by_project_policy",
       "artifactRequired": true,
@@ -5300,7 +5335,8 @@
       ],
       "targetCapabilities": [
         "android.physical",
-        "android.emulator.count2"
+        "android.emulator.count2",
+        "android.emulator.rebindable"
       ],
       "allowedNaReason": "target_unavailable_by_project_policy",
       "artifactRequired": true,
@@ -5360,7 +5396,8 @@
       ],
       "targetCapabilities": [
         "android.physical",
-        "android.emulator.count2"
+        "android.emulator.count2",
+        "android.emulator.rebindable"
       ],
       "allowedNaReason": "target_unavailable_by_project_policy",
       "artifactRequired": true,
@@ -5420,7 +5457,8 @@
       ],
       "targetCapabilities": [
         "android.physical",
-        "android.emulator.count2"
+        "android.emulator.count2",
+        "android.emulator.rebindable"
       ],
       "allowedNaReason": "target_unavailable_by_project_policy",
       "artifactRequired": true,
@@ -5480,7 +5518,8 @@
       ],
       "targetCapabilities": [
         "android.physical",
-        "android.emulator.count2"
+        "android.emulator.count2",
+        "android.emulator.rebindable"
       ],
       "allowedNaReason": "target_unavailable_by_project_policy",
       "artifactRequired": true,
@@ -5540,7 +5579,8 @@
       ],
       "targetCapabilities": [
         "android.physical",
-        "android.emulator.count2"
+        "android.emulator.count2",
+        "android.emulator.rebindable"
       ],
       "allowedNaReason": "target_unavailable_by_project_policy",
       "artifactRequired": true,
@@ -5600,7 +5640,8 @@
       ],
       "targetCapabilities": [
         "android.physical",
-        "android.emulator.count2"
+        "android.emulator.count2",
+        "android.emulator.rebindable"
       ],
       "allowedNaReason": "target_unavailable_by_project_policy",
       "artifactRequired": true,
@@ -5660,7 +5701,8 @@
       ],
       "targetCapabilities": [
         "android.physical",
-        "android.emulator.count2"
+        "android.emulator.count2",
+        "android.emulator.rebindable"
       ],
       "allowedNaReason": "target_unavailable_by_project_policy",
       "artifactRequired": true,
@@ -5720,7 +5762,8 @@
       ],
       "targetCapabilities": [
         "android.physical",
-        "android.emulator.count2"
+        "android.emulator.count2",
+        "android.emulator.rebindable"
       ],
       "allowedNaReason": "target_unavailable_by_project_policy",
       "artifactRequired": true,
@@ -5780,7 +5823,8 @@
       ],
       "targetCapabilities": [
         "android.physical",
-        "android.emulator.count2"
+        "android.emulator.count2",
+        "android.emulator.rebindable"
       ],
       "allowedNaReason": "target_unavailable_by_project_policy",
       "artifactRequired": true,
@@ -5840,7 +5884,8 @@
       ],
       "targetCapabilities": [
         "android.physical",
-        "android.emulator.count2"
+        "android.emulator.count2",
+        "android.emulator.rebindable"
       ],
       "allowedNaReason": "target_unavailable_by_project_policy",
       "artifactRequired": true,
@@ -5900,7 +5945,8 @@
       ],
       "targetCapabilities": [
         "android.physical",
-        "android.emulator.count2"
+        "android.emulator.count2",
+        "android.emulator.rebindable"
       ],
       "allowedNaReason": "target_unavailable_by_project_policy",
       "artifactRequired": true,
@@ -5960,7 +6006,8 @@
       ],
       "targetCapabilities": [
         "android.physical",
-        "android.emulator.count2"
+        "android.emulator.count2",
+        "android.emulator.rebindable"
       ],
       "allowedNaReason": "target_unavailable_by_project_policy",
       "artifactRequired": true,
@@ -6020,7 +6067,8 @@
       ],
       "targetCapabilities": [
         "android.physical",
-        "android.emulator.count2"
+        "android.emulator.count2",
+        "android.emulator.rebindable"
       ],
       "allowedNaReason": "target_unavailable_by_project_policy",
       "artifactRequired": true,
@@ -6081,7 +6129,8 @@
       ],
       "targetCapabilities": [
         "android.physical",
-        "android.emulator.count2"
+        "android.emulator.count2",
+        "android.emulator.rebindable"
       ],
       "allowedNaReason": "target_unavailable_by_project_policy",
       "artifactRequired": true,
@@ -6144,7 +6193,8 @@
       ],
       "targetCapabilities": [
         "android.physical",
-        "android.emulator.count3"
+        "android.emulator.count3",
+        "android.emulator.rebindable"
       ],
       "allowedNaReason": "target_unavailable_by_project_policy",
       "artifactRequired": true,
@@ -6208,7 +6258,8 @@
       ],
       "targetCapabilities": [
         "android.physical",
-        "android.emulator.count3"
+        "android.emulator.count3",
+        "android.emulator.rebindable"
       ],
       "allowedNaReason": "target_unavailable_by_project_policy",
       "artifactRequired": true,
@@ -6271,7 +6322,8 @@
       ],
       "targetCapabilities": [
         "android.physical",
-        "android.emulator.count3"
+        "android.emulator.count3",
+        "android.emulator.rebindable"
       ],
       "allowedNaReason": "target_unavailable_by_project_policy",
       "artifactRequired": true,
@@ -6335,7 +6387,8 @@
       ],
       "targetCapabilities": [
         "android.physical",
-        "android.emulator.count3"
+        "android.emulator.count3",
+        "android.emulator.rebindable"
       ],
       "allowedNaReason": "target_unavailable_by_project_policy",
       "artifactRequired": true,
@@ -6668,7 +6721,8 @@
       ],
       "targetCapabilities": [
         "android.physical",
-        "android.emulator.count2"
+        "android.emulator.count2",
+        "android.emulator.rebindable"
       ],
       "allowedNaReason": "target_unavailable_by_project_policy",
       "artifactRequired": true,
@@ -6725,7 +6779,8 @@
       ],
       "targetCapabilities": [
         "android.physical",
-        "android.emulator"
+        "android.emulator",
+        "android.emulator.rebindable"
       ],
       "allowedNaReason": "target_unavailable_by_project_policy",
       "artifactRequired": true,
@@ -6837,7 +6892,8 @@
       ],
       "targetCapabilities": [
         "android.physical",
-        "android.emulator"
+        "android.emulator",
+        "android.emulator.rebindable"
       ],
       "allowedNaReason": "target_unavailable_by_project_policy",
       "artifactRequired": true,

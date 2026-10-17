@@ -72,8 +72,16 @@ provider configuration. Execution is a filtered diagnostic: credential and
 physical-phone routes remain BLOCKED rather than becoming a passing full major
 run. It accepts explicit disposable pins and an ignored test-relay file, reuses
 the existing device leases/setup checks, and serializes the native scheduler.
-Host-only launcher contracts are registered in workflow/full-workflow; they do
-not certify a device scenario. Its current, previous and first-failure stdout
+The launcher rebinds 56 explicitly marked production protocol/data journeys to
+emulators in an ignored manifest, preserving their build profiles and oracles.
+Alice uses the fourth emulator role; a two-peer journey needs only primary and
+fourth pins. No VM is automatically started, and no physical timing/audio claim
+is converted. The native resolver verifies leases and target classes before builds.
+`AndroidInstallOverGuard` admits an existing single APK at the same version code,
+backs it up and uses only `adb install -r` for install/restoration. It does not
+reset app data or create fresh fixtures; current fresh-reset phone campaigns stay
+blocked. Host-only launcher contracts are registered in workflow/full-workflow;
+resolver, journey and install-over contracts are host proof, not device results. Its current, previous and first-failure stdout
 logs are each capped at 8 MiB; native campaign output/build retention is separate.
 
 Codex's Graphify integration was removed on 2026-09-11. Document-memory

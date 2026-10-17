@@ -394,6 +394,7 @@ final class AndroidAppStateGuard {
     String backupLabel = 'campaign',
     File? preparedArtifact,
     String? expectedArtifactSha256,
+    bool preservePhysicalAppData = false,
     AndroidHostProcessRunner runner = const SystemAndroidHostProcessRunner(),
     AndroidPrivateArchiveCapturer? privateArchiveCapturer,
     AndroidPrivateArchiveProcessStarter? privateArchiveProcessStarter,
@@ -401,6 +402,16 @@ final class AndroidAppStateGuard {
     Duration privateArchiveTimeout = _defaultLargeBackupOperationTimeout,
     Duration processTerminationGrace = _defaultProcessTerminationGrace,
   }) async {
+    if ((preservePhysicalAppData ||
+            Platform.environment['MKNOON_PRESERVE_PHYSICAL_APP_DATA'] == '1') &&
+        devices.any(
+          (device) => !RegExp(r'^emulator-[0-9]+$').hasMatch(device),
+        )) {
+      throw const AndroidAppStateBlocked(
+        'Fresh fixture resets are forbidden on physical phones; use the '
+        'install-over guard with an existing-state fixture.',
+      );
+    }
     final safeDevice = RegExp(r'^[A-Za-z0-9._:-]{1,160}$');
     final safePackage = RegExp(r'^[A-Za-z][A-Za-z0-9_.]{2,199}$');
     if (devices.isEmpty ||

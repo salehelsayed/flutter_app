@@ -75,6 +75,34 @@ print('private-child-marker')
     def native(self):
         return json.loads((self.repo / "build/kayan-safe/native-report.json").read_text())
 
+    def test_rebinding_changes_only_explicit_audited_device_metadata(self):
+        rebound = launcher.disposable_manifest(self.manifest)
+        original = {r["id"]: r for r in self.manifest["capabilities"]}
+        changed = []
+        for row in rebound["capabilities"]:
+            before = original[row["id"]]
+            if row != before:
+                changed.append(row["id"])
+                self.assertIn("android.emulator.rebindable", before["targetCapabilities"])
+                self.assertNotIn("android.physical", row["targetCapabilities"])
+                self.assertTrue(any(r["name"] == "device:android-emulator-fourth"
+                                    for r in row["resources"]))
+                for field in set(before) - {"resources", "targetCapabilities"}:
+                    self.assertEqual(row[field], before[field], (row["id"], field))
+        self.assertEqual(len(changed), 56)
+        self.assertEqual(rebound["buildProfiles"], self.manifest["buildProfiles"])
+        self.assertEqual(launcher.disposable_manifest(rebound), rebound)
+
+    def test_generated_manifest_and_rebinding_flag_replace_ambient_inputs(self):
+        os.environ["SIMS_MANIFEST"] = "forbidden-ambient-manifest"
+        self.invoke("major")
+        generated = self.repo / "build/kayan-safe/manifest.json"
+        rows = {r["id"]: r for r in json.loads(generated.read_text())["capabilities"]}
+        self.assertNotIn("android.physical", rows["production.routing_smoke"]["targetCapabilities"])
+        self.assertIn("android.physical", rows["android.production_1to1_audio_call"]["targetCapabilities"])
+        self.assertEqual(generated.stat().st_mode & 0o777, 0o600)
+        self.assertIn("SIMS_DISPOSABLE_ANDROID_JOURNEYS", self.native()["environment_names"])
+
     def test_list_needs_no_targets_relay_credentials_or_dart(self):
         (self.repo / "docker-ws/local_devices.env").write_text("SIMS_IOS_SIMULATOR_ID='unterminated\n")
         with mock.patch.dict(os.environ, {}, clear=True), mock.patch.object(
@@ -139,7 +167,7 @@ print('private-child-marker')
     def test_no_credentials_phone_defaults_or_child_output_leak(self):
         forbidden = ("FIREBASE_SERVICE_ACCOUNT", "SSH_AUTH_SOCK",
                      "SIMS_IOS_APNS_AUTH_KEY_PATH", "SIMS_ANDROID_PHYSICAL_DEVICE_ID",
-                     "SIMS_MANIFEST", "SIMS_ARTIFACT_ANDROID_E2E_MAIN")
+                     "SIMS_ARTIFACT_ANDROID_E2E_MAIN")
         os.environ.update({key: "private-input-marker" for key in forbidden})
         code, output = self.invoke("major")
         data = self.native()
@@ -158,7 +186,7 @@ print('private-child-marker')
         args = self.native()["argv"]
         excluded = {args[i + 1] for i, a in enumerate(args) if a == "--exclude"}
         self.assertIn("android.production_1to1_audio_call", excluded)
-        self.assertIn("production.routing_smoke", excluded)
+        self.assertNotIn("production.routing_smoke", excluded)
         self.assertIn("build.android.production_fcm", excluded)
         self.assertNotIn("production.group_catalog.private_partition_readd_heal", excluded)
 

@@ -10,6 +10,22 @@ import '../../integration_test/scripts/run_intro_accept_notification_android.dar
 import '../../integration_test/support/android_app_state_guard.dart';
 
 void main() {
+  test(
+    'physical preservation rejects fresh reset before any host command',
+    () async {
+      final adb = _FakeAdbState.absent();
+      await expectLater(
+        AndroidAppStateGuard.capture(
+          devices: ['physical-1'],
+          packageName: _packageName,
+          runner: adb,
+          preservePhysicalAppData: true,
+        ),
+        throwsA(isA<AndroidAppStateBlocked>()),
+      );
+      expect(adb.commands, isEmpty);
+    },
+  );
   for (final failure in ['timeout', 'nonzero', 'empty', 'malformed']) {
     test(
       'package lookup $failure cannot become an absent-app snapshot',

@@ -255,12 +255,20 @@ final class ProductionAndroidJourney implements ProductionJourney {
             primary: false,
           );
     }
-    physical = required('SIMS_ANDROID_PHYSICAL_DEVICE_ID');
+    disposableAndroidJourneys =
+        values['SIMS_DISPOSABLE_ANDROID_JOURNEYS'] == '1';
+    physical = required(
+      disposableAndroidJourneys
+          ? 'SIMS_ANDROID_EMULATOR_FOURTH_DEVICE_ID'
+          : 'SIMS_ANDROID_PHYSICAL_DEVICE_ID',
+    );
     emulator = scenario == 'production.startup_resume_performance'
         ? null
         : required('SIMS_ANDROID_EMULATOR_DEVICE_ID');
     if (!RegExp(r'^[A-Za-z0-9._:-]+$').hasMatch(physical) ||
-        physical.startsWith('emulator-') ||
+        (disposableAndroidJourneys
+            ? !RegExp(r'^emulator-[0-9]+$').hasMatch(physical)
+            : physical.startsWith('emulator-')) ||
         (emulator != null &&
             !RegExp(r'^emulator-[0-9]+$').hasMatch(emulator!))) {
       throw StateError('physical Android and emulator must be pinned');
@@ -335,8 +343,12 @@ final class ProductionAndroidJourney implements ProductionJourney {
         additionalPeers['dana'] = peer(fourth, 'dana');
       }
     }
+    if (actors.map((p) => p.device).toSet().length != actors.length) {
+      throw StateError('journey peers must use distinct explicit targets');
+    }
   }
 
+  late final bool disposableAndroidJourneys;
   @override
   final String scenario;
   final Directory output;
@@ -408,6 +420,20 @@ final class ProductionAndroidJourney implements ProductionJourney {
       final state = await runner.run('adb', ['-s', target, 'get-state']);
       if (state.exitCode != 0 || '${state.stdout}'.trim() != 'device') {
         throw StateError('pinned target unavailable');
+      }
+      if (disposableAndroidJourneys) {
+        final kind = await runner.run('adb', [
+          '-s',
+          target,
+          'shell',
+          'getprop',
+          'ro.kernel.qemu',
+        ]);
+        if (kind.exitCode != 0 || '${kind.stdout}'.trim() != '1') {
+          throw StateError(
+            'disposable journey requires verified emulator targets',
+          );
+        }
       }
     }
     // Capture every package before mutating either fixture. The provider client

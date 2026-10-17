@@ -5,7 +5,7 @@ Run with major, device-audio, device-media, or notification-recovery.
 Targets come from SIMS_* environment values or ignored local_devices.env.
 The local file accepts literal shell-style assignments, without evaluation.
 KAYAN_TEST_RELAY_FILE must name an ignored file of test multiaddresses.
-Physical routes stay blocked: existing campaign cleanup is not install-over-only.
+Audited protocol journeys use disposable emulators; hardware routes stay blocked.
 This is a filtered diagnostic run, never an unfiltered major acceptance result.
 """
 import argparse
@@ -32,6 +32,7 @@ TARGETS = {
     "android-emulator": "SIMS_ANDROID_EMULATOR_DEVICE_ID",
     "android-emulator-second": "SIMS_ANDROID_EMULATOR_SECOND_DEVICE_ID",
     "android-emulator-third": "SIMS_ANDROID_EMULATOR_THIRD_DEVICE_ID",
+    "android-emulator-fourth": "SIMS_ANDROID_EMULATOR_FOURTH_DEVICE_ID",
     **{f"ios-simulator-{letter.lower()}": f"SIMS_IOS_SIMULATOR_{letter}_DEVICE_ID"
        for letter in "ABCD"},
 }
@@ -88,6 +89,28 @@ def pins(values):
         raise ValueError("target roles must be distinct")
     if not result:
         raise ValueError("an explicit disposable target is required")
+    return result
+
+
+def disposable_manifest(manifest):
+    """Rebind only audited protocol journeys; native resolver still owns targets.
+
+    Alice uses the explicit fourth role, preserving Bob/Charlie/Dana's existing
+    roles. Two-peer runs therefore need just primary+fourth pins, not four VMs.
+    No binary profile, command, assertion, dependency or timeout is rewritten.
+    """
+    result = json.loads(json.dumps(manifest))
+    for row in result["capabilities"]:
+        if "android.emulator.rebindable" not in row.get("targetCapabilities", []):
+            continue
+        row["targetCapabilities"] = [c for c in row["targetCapabilities"]
+                                     if c != "android.physical"]
+        if "android.emulator" not in row["targetCapabilities"]:
+            row["targetCapabilities"].append("android.emulator")
+        for lock in row.get("resources", []):
+            kind, _, role = lock["name"].partition(":")
+            if role == "android-physical":
+                lock["name"] = kind + ":android-emulator-fourth"
     return result
 
 
@@ -237,7 +260,8 @@ def main(arguments=None):
     parser.add_argument("--list", action="store_true")
     parser.add_argument("--output", default="build/kayan-safe")
     options = parser.parse_args(arguments)
-    manifest = json.loads((REPO / "tool/sims/critical_features.json").read_text())
+    manifest = disposable_manifest(json.loads(
+        (REPO / "tool/sims/critical_features.json").read_text()))
     rows, blocked = policy(manifest, options.mode)
     summary = {
         "scope": "filtered diagnostic; physical and credential routes are blocked",
@@ -265,9 +289,10 @@ def main(arguments=None):
         raise ValueError("output must remain under the launcher's own directory")
     directory.mkdir(parents=True, exist_ok=True)
     directory.chmod(0o700)
-    for name in ("native-report.json", "checkpoint.json"):
+    for name in ("native-report.json", "checkpoint.json", "manifest.json"):
         owned_file(directory / name)
     write_json(directory / "policy.json", summary)
+    write_json(directory / "manifest.json", manifest)
     write_json(directory / "device-config.json", {
         "isolated_test_environment": True, "fixture_reference": "explicit-disposable-test-relay",
         "devices": {("ios_simulator" if role == "ios-simulator-a" else role.replace("-", "_")): value
@@ -306,6 +331,9 @@ def main(arguments=None):
     environment["PATH"] = str(deny_remote) + os.pathsep + tool_path + environment.get("PATH", os.defpath)
     environment.update({
         "MKNOON_RELAY_ADDRESSES": ",".join(addresses),
+        "SIMS_MANIFEST": str(directory / "manifest.json"),
+        "SIMS_DISPOSABLE_ANDROID_JOURNEYS": "1",
+        "MKNOON_PRESERVE_PHYSICAL_APP_DATA": "1",
         "SIMS_PROTECTED_DEVICE_ASSIGNMENTS_JSON": json.dumps(selected),
         "SIMS_IOS_DISPOSABLE_SIMULATOR_IDS": ",".join(
             value for role, value in selected.items() if role.startswith("ios-")),

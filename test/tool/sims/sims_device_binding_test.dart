@@ -11,6 +11,52 @@ import '../../../tool/sims/planner.dart';
 import '../../../tool/sims/verdict.dart';
 
 void main() {
+  test('fourth emulator role resolves an exact leased pin without a phone', () {
+    final row = _consumer().copyWith(
+      targetCapabilities: ['android.emulator'],
+      resources: const [
+        ResourceLock(
+          name: 'device:android-emulator',
+          access: ResourceAccess.exclusive,
+        ),
+        ResourceLock(
+          name: 'device:android-emulator-fourth',
+          access: ResourceAccess.exclusive,
+        ),
+      ],
+    );
+    final inventory = _inventory([
+      _androidTarget('emulator-4001', SimsLiveDeviceKind.emulator),
+      _androidTarget('emulator-4004', SimsLiveDeviceKind.emulator),
+      _androidTarget('usb', SimsLiveDeviceKind.physical),
+    ]);
+    final binding = SimsDevicePlanBinding.bind(
+      _plan([row]),
+      inventory,
+      processEnvironment: {
+        'SIMS_ANDROID_EMULATOR_DEVICE_ID': 'emulator-4001',
+        'SIMS_ANDROID_EMULATOR_FOURTH_DEVICE_ID': 'emulator-4004',
+        'SIMS_PROTECTED_DEVICE_ASSIGNMENTS_JSON': jsonEncode({
+          'android-emulator': 'emulator-4001',
+          'android-emulator-fourth': 'emulator-4004',
+        }),
+      },
+    );
+    expect(binding.preflightVerdicts, isEmpty);
+    expect(binding.assignments.values.toSet(), {
+      'emulator-4001',
+      'emulator-4004',
+    });
+    expect(
+      binding.environment['SIMS_ANDROID_EMULATOR_FOURTH_DEVICE_ID'],
+      'emulator-4004',
+    );
+    expect(
+      binding.environment.containsKey('SIMS_ANDROID_PHYSICAL_DEVICE_ID'),
+      isFalse,
+    );
+  });
+
   group('explicit device reservations', () {
     final pins = <String, String>{
       'android-physical': 'usb',
