@@ -84,6 +84,23 @@ class UpdateCheckNotificationPosterTest {
     }
 
     @Test
+    fun `a hard reminder replaces the existing soft reminder and preserves other notifications`() {
+        grant()
+        assertTrue(UpdateCheckNotificationPoster.post(application, "soft", "An update is ready", "Tap to update."))
+        val unrelated = android.app.Notification.Builder(application, UpdateCheckNotificationPoster.CHANNEL_ID)
+            .setSmallIcon(R.mipmap.ic_launcher)
+            .setContentTitle("Unrelated reminder")
+            .build()
+        manager.notify("unrelated", UpdateCheckNotificationPoster.SOFT_ID, unrelated)
+
+        assertTrue(UpdateCheckNotificationPoster.post(application, "hard", "An update is ready", "Tap to update."))
+
+        val updates = manager.activeNotifications.filter { it.tag == UpdateCheckNotificationPoster.TAG }
+        assertEquals(listOf(UpdateCheckNotificationPoster.HARD_ID), updates.map { it.id })
+        assertTrue(manager.activeNotifications.any { it.tag == "unrelated" })
+    }
+
+    @Test
     fun `not granted skips silently and never prompts`() {
         // POST_NOTIFICATIONS not granted on API 33.
         assertFalse(UpdateCheckNotificationPoster.post(application, "hard", "t", "b"))

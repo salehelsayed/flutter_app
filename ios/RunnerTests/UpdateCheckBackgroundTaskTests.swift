@@ -242,6 +242,50 @@ final class UpdateCheckBackgroundTaskTests: XCTestCase {
     XCTAssertTrue(UpdateCheckBackgroundCoordinator.mayPost(.authorized))
   }
 
+  func testHardReminderReplacesSoftPendingAndDeliveredNotifications() {
+    var pending: Set<String> = ["unrelated"]
+    var delivered: Set<String> = ["unrelated"]
+    var results: [Bool] = []
+    for kind in ["soft", "hard"] {
+      let request = UNNotificationRequest(
+        identifier: UpdateCheckBackgroundCoordinator.notificationIdentifier(kind: kind)!,
+        content: UNMutableNotificationContent(), trigger: nil
+      )
+      UpdateCheckBackgroundCoordinator.postReminder(
+        request,
+        add: { request, done in
+          pending.insert(request.identifier)
+          delivered.insert(request.identifier)
+          done(nil)
+        },
+        removePending: { pending.subtract($0) },
+        removeDelivered: { delivered.subtract($0) },
+        completion: { results.append($0) }
+      )
+    }
+    XCTAssertEqual(results, [true, true])
+    XCTAssertEqual(pending, ["unrelated", "mknoon.update_check.hard"])
+    XCTAssertEqual(delivered, ["unrelated", "mknoon.update_check.hard"])
+  }
+
+  func testFailedHardReminderKeepsTheExistingSoftReminder() {
+    var removed: [String] = []
+    var result: Bool?
+    let request = UNNotificationRequest(
+      identifier: UpdateCheckBackgroundCoordinator.notificationIdentifier(kind: "hard")!,
+      content: UNMutableNotificationContent(), trigger: nil
+    )
+    UpdateCheckBackgroundCoordinator.postReminder(
+      request,
+      add: { _, done in done(NSError(domain: "test", code: 1)) },
+      removePending: { removed.append(contentsOf: $0) },
+      removeDelivered: { removed.append(contentsOf: $0) },
+      completion: { result = $0 }
+    )
+    XCTAssertEqual(result, false)
+    XCTAssertTrue(removed.isEmpty)
+  }
+
   // MARK: SE-41 T4b check-now push
 
   private func pushUserInfo(_ extra: [AnyHashable: Any] = [:]) -> [AnyHashable: Any] {

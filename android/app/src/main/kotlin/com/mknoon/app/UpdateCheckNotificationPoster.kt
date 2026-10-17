@@ -93,9 +93,10 @@ internal object UpdateCheckNotificationPoster {
                 .setContentIntent(storeIntent(context, id))
                 .setVisibility(Notification.VISIBILITY_PRIVATE)
                 .build()
-            context.getSystemService(NotificationManager::class.java)
-                ?.notify(TAG, id, notification)
+            val manager = context.getSystemService(NotificationManager::class.java)
                 ?: return@runCatching false
+            manager.notify(TAG, id, notification)
+            if (kind == "hard") manager.cancel(TAG, SOFT_ID)
             true
         }.getOrDefault(false)
     }

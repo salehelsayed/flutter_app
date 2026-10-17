@@ -427,7 +427,31 @@ final class UpdateCheckBackgroundCoordinator {
       content.userInfo = [Self.notificationKindKey: kind]
       // Same identifier per kind: a reminder replaces the previous one.
       let request = UNNotificationRequest(identifier: identifier, content: content, trigger: nil)
-      center.add(request) { error in completion(error == nil) }
+      Self.postReminder(
+        request,
+        add: { center.add($0, withCompletionHandler: $1) },
+        removePending: { center.removePendingNotificationRequests(withIdentifiers: $0) },
+        removeDelivered: { center.removeDeliveredNotifications(withIdentifiers: $0) },
+        completion: completion
+      )
+    }
+  }
+
+  static func postReminder(
+    _ request: UNNotificationRequest,
+    add: (UNNotificationRequest, @escaping (Error?) -> Void) -> Void,
+    removePending: @escaping ([String]) -> Void,
+    removeDelivered: @escaping ([String]) -> Void,
+    completion: @escaping (Bool) -> Void
+  ) {
+    add(request) { error in
+      if error == nil,
+        request.identifier == notificationIdentifier(kind: "hard"),
+        let soft = notificationIdentifier(kind: "soft") {
+        removePending([soft])
+        removeDelivered([soft])
+      }
+      completion(error == nil)
     }
   }
 
