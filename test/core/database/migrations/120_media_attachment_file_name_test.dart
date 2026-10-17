@@ -73,16 +73,18 @@ void main() {
     expect(MediaAttachment.fromMap(row).fileName, 'Invoice.pdf');
   });
 
-  test('v120 is the last entry of both production registries', () {
-    expect(currentIdentityDatabaseVersion, 120);
+  test('v120 appears once in both production registries, followed by v121', () {
+    expect(currentIdentityDatabaseVersion, 121);
     for (final registry in [
       productionCreateMigrations,
       productionUpgradeMigrations,
     ]) {
       expect(registry.where((e) => e.version == 120), hasLength(1));
-      expect(registry.last.version, 120);
-      expect(registry.last.name, '120_media_attachment_file_name');
-      expect(registry.last.run, same(runMediaAttachmentFileNameMigration));
+      final entry = registry[registry.length - 2];
+      expect(entry.version, 120);
+      expect(entry.name, '120_media_attachment_file_name');
+      expect(entry.run, same(runMediaAttachmentFileNameMigration));
+      expect(registry.last.version, 121);
     }
   });
 }

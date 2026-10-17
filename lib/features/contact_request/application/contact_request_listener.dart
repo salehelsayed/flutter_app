@@ -10,6 +10,7 @@ import 'package:flutter_app/features/call/domain/received_call_wake_handle_store
 import 'package:flutter_app/features/contact_request/application/contact_auto_add_rate_limiter.dart';
 import 'package:flutter_app/features/contact_request/application/handle_incoming_message_use_case.dart';
 import 'package:flutter_app/features/contact_request/application/recover_intro_contact_request_use_case.dart';
+import 'package:flutter_app/features/contact_request/domain/repositories/contact_repair_repository.dart';
 import 'package:flutter_app/features/contact_request/domain/models/contact_request_model.dart';
 import 'package:flutter_app/features/contact_request/domain/repositories/contact_request_repository.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
@@ -60,6 +61,15 @@ class ReplayCache {
   }
 }
 
+/// Thrown when a verified request needs a repair reply but the bounded queue
+/// is full. Retryable: the inbound ACK is withheld and nothing was reserved.
+final class ContactRepairDeferredException implements Exception {
+  const ContactRepairDeferredException();
+
+  @override
+  String toString() => 'ContactRepairDeferredException';
+}
+
 /// Listener service that monitors P2P messages for contact requests.
 ///
 /// Subscribes to a typed contact request stream (from IncomingMessageRouter)
@@ -89,13 +99,32 @@ class ContactRequestListener {
   /// durably accepted as strictly newer.
   final Future<void> Function()? onCallWakeHandleStored;
 
-  /// Best-effort response to a verified existing contact's explicit
-  /// key-exchange retry. The listener invokes this only after the sender's
+  /// Legacy (unmarked) explicit key-exchange retry: after the sender's exact
   /// signed call-wake grant is durably current and its direct ACK has been
-  /// released. The callback sends this device's grant in a fresh encrypted
-  /// request; grants never ride the ACK itself.
+  /// released, send this device's grant back in a fresh, unmarked encrypted
+  /// request. Grants never ride the ACK itself. Marked traffic never uses it.
   final Future<void> Function(String contactPeerId)?
   requestReciprocalCallWakeRecovery;
+
+  /// Task 12b: durable relationship memory and the reply-once reservation.
+  /// A fresh signed `new_request` from an existing, unblocked contact reserves
+  /// exactly one reply here before the inbound ACK; nothing else (unsigned
+  /// intent, a reply, legacy traffic) can schedule a reciprocal send.
+  final ContactRepairRepository? repairRepository;
+
+  /// Our account Ed25519 public key, bound into each reservation.
+  final Future<String?> Function()? getOwnPublicKey;
+
+  /// Our account peer ID, the recipient a signed marker must name. Defaults to
+  /// [getOwnPeerId] (the transport ID, equal to it on a primary install).
+  final Future<String?> Function()? getOwnAccountPeerId;
+
+  /// Asks the one owned outbox worker to drain after a reservation. A
+  /// callback is a wake-up only; the SQL reservation is the duplicate guard.
+  final void Function()? onRepairReplyQueued;
+
+  /// Wall clock for repair reservations; injectable for tests.
+  final int Function()? repairNowMs;
 
   /// 171: when wired (non-null), a v2 [HandleMessageResult.contactAutoAdded]
   /// result is added tap-free by invoking this — it adds the scanner as a
@@ -130,6 +159,11 @@ class ContactRequestListener {
     this.receivedCallWakeHandleStore,
     this.onCallWakeHandleStored,
     this.requestReciprocalCallWakeRecovery,
+    this.repairRepository,
+    this.getOwnPublicKey,
+    this.getOwnAccountPeerId,
+    this.onRepairReplyQueued,
+    this.repairNowMs,
     this.autoAcceptAndReciprocate,
     ContactAutoAddRateLimiter? autoAddRateLimiter,
   }) : downloadProfilePictureFn =
@@ -260,6 +294,7 @@ class ContactRequestListener {
       IntroContactRequestRecoveryResult? recoveryResult;
       var callWakeReceiptRequired = false;
       String? callWakeReceipt;
+      ContactRequestReceiveFacts? facts;
 
       final (result, request, verifiedPeerId) = await handleIncomingMessage(
         message: message,
@@ -276,6 +311,13 @@ class ContactRequestListener {
           callWakeReceiptRequired = true;
           if (exactCurrent) callWakeReceipt = challenge;
         },
+        repairRepository: repairRepository,
+        ownAccountPublicKey: repairRepository == null
+            ? null
+            : await getOwnPublicKey?.call(),
+        ownAccountPeerId: await getOwnAccountPeerId?.call(),
+        onReceiveFacts: (received) => facts = received,
+        nowMs: repairNowMs,
         attemptSilentIntroRecovery: attemptSilentIntroRecovery == null
             ? null
             : (verifiedRequest) async {
@@ -286,6 +328,19 @@ class ContactRequestListener {
                 return result;
               },
       );
+
+      // A full repair queue is retryable: nothing was reserved, so withhold
+      // the ACK (the catch below sends ok=false) and let the sender's inbox
+      // copy or the replay retry deliver it again. The msgId stays out of the
+      // replay cache so that retry is not mistaken for a replay.
+      if (facts?.repairClaim?.status == ContactRepairClaimStatus.overflow) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'CONTACT_REPAIR_REPLY_DEFERRED',
+          details: {'reason': 'capacity'},
+        );
+        throw const ContactRepairDeferredException();
+      }
 
       // For successful v2 handling, add msgId to replay cache. INCLUDES the
       // 171 contactAutoAdded result — INV-6: without it a redelivered msgId
@@ -349,8 +404,14 @@ class ContactRequestListener {
       // the happy path never 2s-times-out. A thrown error below sends ok=false
       // instead (Go withholds the ack -> sender inboxes -> retried). A null
       // confirmNonce (e.g. an inbox-replayed entry) is a no-op.
+      // Owner decision A: the legacy reciprocal grant reply, only for an
+      // authenticated, genuinely unmarked (no `cr`) explicit key-exchange
+      // retry whose exact grant is durably current. Marked traffic never
+      // reaches it; a malformed marker was already rejected as invalid.
       String? reciprocalCallWakeRecoveryPeerId;
       if (requestReciprocalCallWakeRecovery != null &&
+          facts != null &&
+          facts!.control == null &&
           _hasKeyExchangeRetryIntent(message) &&
           message.confirmNonce?.isNotEmpty == true &&
           callWakeReceipt != null &&
@@ -358,7 +419,9 @@ class ContactRequestListener {
           (result == HandleMessageResult.alreadyContact ||
               result == HandleMessageResult.contactKeyUpdated)) {
         final existingContact = await contactRepo.getContact(verifiedPeerId);
-        if (existingContact != null && !existingContact.isBlocked) {
+        if (existingContact != null &&
+            !existingContact.isBlocked &&
+            existingContact.publicKey == facts!.authenticatedPublicKey) {
           reciprocalCallWakeRecoveryPeerId = verifiedPeerId;
         }
       }
@@ -369,6 +432,9 @@ class ContactRequestListener {
         callWakeReceipt: callWakeReceipt,
       );
 
+      if (facts?.repairClaim?.status == ContactRepairClaimStatus.reserved) {
+        onRepairReplyQueued?.call();
+      }
       if (reciprocalCallWakeRecoveryPeerId != null) {
         try {
           emitFlowEvent(

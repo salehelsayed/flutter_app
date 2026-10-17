@@ -274,3 +274,216 @@ SE-49 and NEW automatic one-way detection/recovery remain explicitly deferred; a
 6. Cleanup and limits
 All calls ended; final Android native journals empty, liveOwnerPresent=false, cleanupPending=false, audio mode 0 and own RECORD_AUDIO not running. Completed PCM observers removed processors. Owned QR clipboards cleared and all three owned Appium sessions deleted; foreign targets/sessions were not controlled. Pixel Wi-Fi on/mobile data off/DND off and emulator initial network/DND states retained; iPhone OS policy not changed. Existing identities, user work and successful call/messaging source retained.
 No unsupported physical iOS audio, speaker/accessory quality, p95, cellular recovery, download quality, savings, durable catch-up or full signaling-IP privacy claim. This addendum records incomplete evidence and findings, not release/signed-candidate certification.
+
+Device-finding fixes and retest addendum — 2026-10-14 (afternoon)
+
+This follows the production device addendum above. It fixes three of its four findings and retests them on the same devices. It does not replace the earlier records. Scenario numbers refer to docs/testing/se42-owner-device-checklists.md.
+
+1. What changed
+Fix commit: 756fc5d63 (merged to main; version bump deae3c6d3 is separate).
+- 3.3 finding (screen stays on at the ear): nothing in the app turned the screen off near the ear. Android now holds a PROXIMITY_SCREEN_OFF wake lock while call audio uses the earpiece. It is released on another route, on audio deactivation and on call cleanup (MknoonCallLifecycleController.kt, MknoonCallAndroidRuntime.kt).
+- 2.6 finding (Calls covers Create Group): Calls moved left of the Create Group button and the connection pill moved further left (orbit_screen.dart).
+- 2.2 finding (return-bar bounds): the bar was not its own accessibility node. Above the navigator its label merged into the root node, so Android reported full-screen bounds. The bar is now a semantics container (call_return_bar.dart).
+- iPhone incoming presentation: not reproduced, so no behavior change. Every Dart remoteCancel now prints `[MKNOON_CALL_DIAG] remote_cancel reason=<closed code>` in all build modes, so a release iPhone shows which refusal ended a call.
+Host evidence: new tests fail on the old code and pass on the new code (overlap, return-bar bounds). Android call JVM suite: 539 tests, 0 failures, including the new proximity test. Affected Dart call/orbit tests: 858 passed. Scoped flutter analyze: no issues.
+
+2. Builds and devices
+Android: debug APK with native calls on and the release voice-call defines, installed over existing identities on Pixel 6 21071FDF600CSC and emulator-5554. iPhone 13 00008110-00184D622289801E: profile build with the release voice-call defines, first with FDC_FLOW_LOG=1, then without it to prove the new log line in a normal build. Production relay, no server change. The owner held the Pixel and answered on the iPhone.
+
+3. Results by scenario
+2.1 PASS. Pixel: minimized a live call, the bar showed, tapping it returned to the call. The call stayed connected and the timer kept running.
+2.2 PASS for the return-bar finding. Before: bounds [0,0][1080,2400] and a centre tap missed. After: bounds [0,128][1080,275] and a centre tap returned to the call. Real TalkBack activation: NOT RUN.
+2.5 PASS for busy refusal. While the Pixel was in a call with the emulator, an iPhone call to the Pixel showed "The contact is on another call". The Pixel call continued.
+2.6 PASS for the Calls overlap finding. On Pixel, emulator and iPhone, Calls and Create Group no longer overlap. A centre tap on Calls opens the Calls page, not the create menu. Paging, rename, removal and error cases: NOT RUN.
+3.1 PARTIAL. Pixel: Speaker and Earpiece toggles changed the visible route. Nobody listened on the speaker. Wired and Bluetooth: N/A, no accessories.
+3.3 PASS on Pixel 6 (was FAIL). The owner held the phone at the ear on Earpiece: the screen went dark, and came back when moved away. The proximity lock was held on Earpiece, released on Speaker, re-taken on Earpiece and released at call end. Touch suppression and iPhone proximity: NOT RUN.
+3.4 PASS on Android. After each call: no proximity lock and audio mode normal on both phones.
+4.1 PARTIAL on iPhone background ringing. 10 of 11 calls to the backgrounded iPhone were presented, including after an iPhone outgoing call, after the busy case and after 30 minutes idle. The owner answered one and both sides heard each other. One miss at 13:52Z: the caller stayed on Connecting and the iPhone logged no wake at all (no PushKit delivery, no VoIP process assertion) while the capture was live. Separately, right after the 13:02Z reinstall, three calls (about 13:03Z to 13:05Z) never woke the iPhone until the app was opened. The relay's APNs VoIP counters showed every attempt since its start as sent (44), with no invalid-token or error outcomes, and the caller logged each wake as dispatched. So the misses happened after Apple accepted the push. This build is development-signed, so its pushes may use Apple's sandbox push service. Repeat with a TestFlight build before treating it as a production defect.
+4.3 PASS on iPhone for process death. After the app process was killed (system-style SIGKILL, not a user force-quit), the next call relaunched it through PushKit and the call was presented.
+iPhone outgoing call (closest to 1.1): PASS. The iPhone called the emulator, the emulator answered, both showed Connected, and ending from the iPhone closed it cleanly.
+Original iPhone finding (presentation=callKitFailure after remote_cancelled): not reproduced. When the app received the push, it presented the call every time (9 of 9 observed with logs). Every caller cancel logged `remote_cancel reason=signal_terminate` before the native `result=remote_cancelled`, in both the flow-log and the normal profile build.
+
+4. Still open
+- iPhone missed wakes after Apple accepted the push (4.1). Next step: the same background test on a TestFlight build.
+- If the original callKitFailure returns, read the `[MKNOON_CALL_DIAG] remote_cancel reason=` line just before it.
+- Speaker listening, touch suppression at the ear, iPhone proximity, TalkBack, and the other NOT RUN cases listed in the addendum above.
+
+5. Cleanup
+All calls ended. The Pixel and the emulator had no proximity lock and normal audio mode at the end. Log captures and the private Appium server were stopped and the Appium session closed. No server, relay or account change.
+
+
+V3 correctness addendum — 2026-10-14 (F3–F5 only)
+
+1. Result and scope
+F3 DONE—code / DONE—automated tests: proximity ENABLE uses the existing exact adopted active-audio ownership fence before route deduplication. Inactive, unadopted, wrong, terminal and stale-owner callbacks cannot acquire it. Genuine deactivate/reactivate with unchanged earpiece remains valid for incoming and outgoing owners; non-earpiece release and active route projection remain intact. The existing cleanup fence is installed before platform cleanup, including a failed durable terminal append, so a delayed collector cannot reacquire during cleanup.
+F4 DONE—code / DONE—automated tests: the actual runtime release helper retains the existing exact lock-map entry when release fails while held and removes it only after observed unheld state. Proximity completion is independent of collector-stop completion. Terminal ACK/success and successor admission remain fenced while cleanup is pending. Deactivation release failure returns false and follows the existing native-failure terminal/retry path. Retries remain under existing authority (eight attempts, 250 ms spacing); no second owner, persistent schema or new manager. The existing acquisition timeout and RELEASE_FLAG_WAIT_FOR_NO_PROXIMITY policy remain unchanged; elapsed time alone is not cleanup proof. The small generic helper seam exercises the production map operation because a controller fake cannot prove retention. Android release/held-state behavior was inspected in the primary [AOSP PowerManager source](https://github.com/aosp-mirror/platform_frameworks_base/blob/master/core/java/android/os/PowerManager.java); no library API was invented.
+F5 DONE—code / DONE—automated tests: public debugPrint failure is caught independently before native remoteCancel, preserving native cancellation and canonical authenticated terminate/reject outcomes. A throwing print also preserves busy refusal and its current call owner. Finite public busy/validation/post-presentation reason codes and privacy are asserted with flow logging disabled; callbacks are restored in teardown. Normal remote hangup remains accepted terminal handling, not a refusal. Logging isolation is not physical iOS incoming presentation proof or a presentation fix.
+
+All physical acceptance for this candidate is NOT RUN. The morning device record belongs to 30491a5811b812b1c6eb1165f427d6509eb13e00. The afternoon addendum contains owner-recorded observations with source-to-artifact binding not independently verified. Neither certifies F3–F5. Earlier PASS/FAIL/PARTIAL/N/A records and original identities remain intact. No automatic closure or board writes.
+
+2. Source, preservation and changed files
+Initial and final branch: wave3-baseline-20260930. Initial and final full HEAD: 11711629181fe2a7ffc3c173ec675d3f4816cacc. Initial worktree verified clean before editing; AGENTS.md read. No checkout, reset, history rewrite or commit. These corrections are uncommitted.
+Tested working-source identity: acfc8ec5583b30fdb93f61b177670a67d13a943ece587419e1c4057813545385 (SHA-256 of sorted compact JSON mapping six changed production/test paths to their file SHA-256 values). Manifest: .codex-test-logs/se42-v3-20261014/tested-code-identity.json. Frozen wrapper identity: 5ed2ffc2760388256445ccc75831aab3c8225b0c7be570ae00f659093718a3c8, 6,816 inputs. This report addendum is appended after the frozen code checks; documentation-inclusive final identity is recorded separately in final-identity.json. The final code manifest remains unchanged.
+Version 1.0.1+125, pubspec.yaml/pubspec.lock and the committed docker-ws/build_store_release_result.txt are byte-preserved. Release contents were not opened. Media commit 651b4916 remains an ancestor. Calls/return-bar implementation, relay/media policy, canonical coordinator/session/PeerConnection, native ownership, microphone gate, mute/duration, recording exclusivity and history/unread remain under preservation checks. No excluded issue/server/protocol/provider/config/dependency/permission/schema/version/signing change or launch; no device builds/installs/control, publication/spending/external contact, push or board writes. No skills or sub-agents invoked.
+Mobile artifact SHA-256/build time/device class: not applicable—no mobile artifact built or device used. Host native compilation is separate. No signed-candidate certification.
+Toolchain: macOS ARM64, Flutter 3.47.2/Dart 3.13.2, Temurin JDK 17.0.18, Python 3.14.7, Node 26.8.1. Shared build resources serialized. Existing runners/assertions and protected hashes retained. Existing selectors already cover these test files/native package; mappings reviewed without narrowing coverage.
+
+Changed files (only these nine):
+- android/app/src/main/kotlin/com/mknoon/app/call/MknoonCallLifecycleController.kt
+- android/app/src/main/kotlin/com/mknoon/app/call/MknoonCallAndroidRuntime.kt
+- android/app/src/test/kotlin/com/mknoon/app/call/MknoonCallLifecycleControllerTest.kt
+- android/app/src/test/kotlin/com/mknoon/app/call/MknoonCallAndroidRuntimeTest.kt
+- lib/features/call/application/handle_incoming_call_signal.dart
+- test/features/call/application/handle_incoming_call_signal_test.dart
+- docs/testing/TESTING.md
+- docs/testing/se42-owner-device-checklists.md
+- docs/reviews/se42-client-implementation-report-2026-10-13.md
+
+3. First RED/GREEN and actual validation
+Raw logs stay local and git-ignored under .codex-test-logs/se42-v3-20261014/; no raw logs are committed or shared. Commands, exits, UTC times and per-command source hashes are in LABEL-command.json / LABEL-result.json; raw receipt is LABEL.log. Original first attempts are retained.
+F3–F4 first native selection: f3-f4-red exit 1, one pass/five genuine causal failures (two ownership cases, two cleanup/deactivation cases, actual runtime map retention). Identical command/selection f3-f4-green exit 0, six passes. The successor case also asserts a genuinely active successor owner. Review then found the terminal-persistence window: f3-terminal-fence-red exit 1, one causal reacquisition failure; identical f3-terminal-fence-green exit 0, one pass. Final native suite covers all seven cases.
+F5 first receipt f5-red exit 1: three throwing-print causal failures and three fixture expectation failures. Busy initially exercised same-contact glare; validation correctly retained a canonical duplicate/terminalDominates outcome; post-presentation reason was terminalDominates. These fixture expectations were corrected independently. f5-fixture-corrected-red exit 1, three passed/three causal failures; identical f5-green selection exit 0, six passed. f5-green-delivery repeated the same six after a test-style correction, exit 0.
+Current Android registered native runner PASS: 546 tests across 34 classes, zero failures/errors/skips (native-delivery-xml/ and native-delivery-summary.json). Wrapper android-call-native reports one success marker, not 546 assertions; do not add those counts. Release Kotlin compilation on final native code PASS (native-release-compile-delivery, exit 0).
+Focused Dart preservation PASS: 405 (focused-preservation), including F1/F2 history/redial and production composition, SE-45 minimize/return/Back, SE-46 callbacks/notifications, SE-47 history/Calls/unread, and SE-48 picker/Android adapter. Original Calls/Create Group overlap sentinel PASS: one (overlap-preservation). Curated 1to1 PASS: 4,373 and one existing opt-in real Opus/relay fixture skipped; its flag was not enabled and no real fixture relay/coturn was launched. Counts overlap and are not summed.
+Scoped analyzer first exit 1, one introduced test-style info; corrected scoped-analyze-delivery exit 0, no issues. First full-analyze exit 1, eight errors/64 infos; full-analyze-delivery rechecked after correction: exit 1, eight errors/63 infos, all seven diagnostic files byte-equal to HEAD (analyzer-baseline-source-proof.json). This is an actual current result, not reuse of historical counts. Formatting verification exit 0, two Dart files unchanged.
+Inventory validate PASS and exact-scope preview PASS with explicit verified --base 11711629181fe2a7ffc3c173ec675d3f4816cacc --local, zero unmapped changes, 36 selected operations. All 27 authorized host operations executed: 25 PASS, workflow FAIL, affected-storage BLOCKED. Wrapper exit 1; overall and automated status FAIL. Diagnostic --only subset leaves nine required selected operations NOT RUN; it is not complete change/release certification.
+Workflow: 242 passed, one failure and one error, exit 1; the existing protected full/reliability catalog obligations mismatch unchanged scripts/run_test_gates.sh. Guarded runner/catalog/adapter/guard test equal HEAD (workflow-baseline-source-proof.json); no re-pin or repair.
+Storage: 1,406 passed, zero failed, one skipped plugin-registered SQLCipher snapshot capability case, exit 0 but BLOCKED/incomplete. Existing separate device integration proof NOT RUN; no waiver. Per-selection table below preserves actual results without summing overlapping counts.
+
+| Selected operation | Result | Passed / failures+errors / skipped | Exit |
+|---|---|---|---|
+| workflow | FAIL | 242 / 2 / 0 | 1 |
+| affected-calls | PASS | 1220 / 0 / 0 | 0 |
+| affected-conversation | PASS | 2661 / 0 / 0 | 0 |
+| affected-feed | PASS | 393 / 0 / 0 | 0 |
+| affected-groups | PASS | 3289 / 0 / 0 | 0 |
+| affected-identity | PASS | 591 / 0 / 0 | 0 |
+| affected-media | PASS | 619 / 0 / 0 | 0 |
+| affected-push | PASS | 1232 / 0 / 0 | 0 |
+| affected-storage | BLOCKED | 1406 / 0 / 1 | 0 |
+| affected-surfaces | PASS | 1924 / 0 / 0 | 0 |
+| affected-transport | PASS | 1301 / 0 / 0 | 0 |
+| android-call-native | PASS | 1 / 0 / 0 | 0 |
+| bootstrap | PASS | 22 / 0 / 0 | 0 |
+| bridge | PASS | 127 / 0 / 0 | 0 |
+| call-signaling | PASS | 698 / 0 / 0 | 0 |
+| changed.19bc6454fce2 | PASS | 47 / 0 / 0 | 0 |
+| contacts | PASS | 1 / 0 / 0 | 0 |
+| diagnostics | PASS | 191 / 0 / 0 | 0 |
+| direct-chat | PASS | 15 / 0 / 0 | 0 |
+| go-core | NOT RUN | unrun | not launched |
+| go-relay | NOT RUN | unrun | not launched |
+| media-bytes | PASS | 4 / 0 / 0 | 0 |
+| media-viewer | PASS | 19 / 0 / 0 | 0 |
+| migration | PASS | 17 / 0 / 0 | 0 |
+| notifications | PASS | 88 / 0 / 0 | 0 |
+| offline-recovery | PASS | 12 / 0 / 0 | 0 |
+| provider-schema | PASS | 5 / 0 / 0 | 0 |
+| small-group | PASS | 4 / 0 / 0 | 0 |
+| startup | PASS | 46 / 0 / 0 | 0 |
+| device-audio | NOT RUN | unrun | not launched |
+| device-group-media | NOT RUN | unrun | not launched |
+| device-group-mute | NOT RUN | unrun | not launched |
+| device-media | NOT RUN | unrun | not launched |
+| device-notifications-android | NOT RUN | unrun | not launched |
+| device-notifications-ios | NOT RUN | unrun | not launched |
+| device-reconnect | NOT RUN | unrun | not launched |
+
+Device-audio, group-media, group-mute, media, notifications Android/iOS and reconnect campaigns are NOT RUN: device execution not authorized. Go-core/go-relay selections are NOT RUN: server/protocol work outside corrective scope. iOS RunnerTests/simulators/physical campaigns are NOT RUN; no iOS native source changed. Full host-all, wave/batch closure and release/signed-candidate/manual obligations remain unrun for their later authorized scope. No unavailable optional hardware is promoted to a failed closure gate; historical absent-accessory N/A remains preserved.
+
+Exact test/build/lint/selection commands (cwd /Volumes/CrucialX9/flutter_app; receipts named above). Existing wrapper nested commands are recorded verbatim in change-check-delivery/results.json; native raw output was directed by CALL_NATIVE_UNIT_LOG_DIR into the ignored native-wrapper/ directory. The local run.py collector only captures existing commands and source identity; it replaces no runner or assertions.
+
+f3-f4-red — exit 1
+`./android/gradlew -p android --offline --console=plain :app:testDebugUnitTest --tests 'com.mknoon.app.call.MknoonCallLifecycleControllerTest.*F3*' --tests 'com.mknoon.app.call.MknoonCallLifecycleControllerTest.*F4*' --tests 'com.mknoon.app.call.MknoonCallAndroidRuntimeTest.*F4*'`
+
+f3-f4-green — exit 0
+`./android/gradlew -p android --offline --console=plain :app:testDebugUnitTest --tests 'com.mknoon.app.call.MknoonCallLifecycleControllerTest.*F3*' --tests 'com.mknoon.app.call.MknoonCallLifecycleControllerTest.*F4*' --tests 'com.mknoon.app.call.MknoonCallAndroidRuntimeTest.*F4*'`
+
+f3-terminal-fence-red — exit 1
+`./android/gradlew -p android --offline --console=plain :app:testDebugUnitTest --tests 'com.mknoon.app.call.MknoonCallLifecycleControllerTest.*F3 terminal persistence*'`
+
+f3-terminal-fence-green — exit 0
+`./android/gradlew -p android --offline --console=plain :app:testDebugUnitTest --tests 'com.mknoon.app.call.MknoonCallLifecycleControllerTest.*F3 terminal persistence*'`
+
+f5-red — exit 1
+`flutter test --no-pub --reporter expanded test/features/call/application/handle_incoming_call_signal_test.dart --plain-name 'F5 public diagnostics'`
+
+f5-fixture-corrected-red — exit 1
+`flutter test --no-pub --reporter expanded test/features/call/application/handle_incoming_call_signal_test.dart --plain-name 'F5 public diagnostics'`
+
+f5-green — exit 0
+`flutter test --no-pub --reporter expanded test/features/call/application/handle_incoming_call_signal_test.dart --plain-name 'F5 public diagnostics'`
+
+f5-green-delivery — exit 0
+`flutter test --no-pub --reporter expanded test/features/call/application/handle_incoming_call_signal_test.dart --plain-name 'F5 public diagnostics'`
+
+focused-preservation — exit 0
+`flutter test --no-pub --reporter expanded test/features/call/application/handle_incoming_call_signal_test.dart test/features/call/presentation/foreground_call_overlay_test.dart test/features/call/presentation/foreground_call_back_button_test.dart test/features/call/application/call_redial_controller_test.dart test/features/call/presentation/calls_page_test.dart test/features/call/data/call_history_repository_test.dart test/features/call/data/call_history_conversation_timeline_source_test.dart test/features/conversation/presentation/screens/conversation_call_timeline_rows_test.dart test/features/conversation/presentation/screens/conversation_wired_call_timeline_refresh_test.dart test/core/notifications/flutter_notification_service_test.dart test/core/notifications/headless_missed_call_notification_test.dart test/features/call/presentation/call_audio_output_picker_test.dart test/features/call/infrastructure/android_call_lifecycle_adapter_test.dart test/core/bootstrap/call_signaling_composition_test.dart test/core/database/helpers/call_history_unread_test.dart test/features/orbit/presentation/widgets/orbit_call_unread_ring_test.dart test/features/orbit/presentation/widgets/orbit_call_preview_test.dart`
+
+overlap-preservation — exit 0
+`flutter test --no-pub --reporter expanded test/features/orbit/presentation/screens/orbit_connection_indicator_test.dart --plain-name 'Calls, create-group and the status pill never overlap'`
+
+curated-1to1 — exit 0
+`bash scripts/run_host_test_gates.sh 1to1 --batch-flutter --concurrency 4 --reporter compact`
+
+scoped-analyze — exit 1
+`flutter analyze --no-pub lib/features/call/application/handle_incoming_call_signal.dart test/features/call/application/handle_incoming_call_signal_test.dart`
+
+scoped-analyze-delivery — exit 0
+`flutter analyze --no-pub lib/features/call/application/handle_incoming_call_signal.dart test/features/call/application/handle_incoming_call_signal_test.dart`
+
+full-analyze — exit 1
+`flutter analyze --no-pub`
+
+full-analyze-delivery — exit 1
+`flutter analyze --no-pub`
+
+format-delivery — exit 0
+`dart format --output=none --set-exit-if-changed lib/features/call/application/handle_incoming_call_signal.dart test/features/call/application/handle_incoming_call_signal_test.dart`
+
+native-release-compile-delivery — exit 0
+`./android/gradlew -p android --offline --console=plain :app:compileReleaseKotlin`
+
+validate-delivery — exit 0
+`python3 scripts/mknoon_checks.py validate`
+
+preview-host-candidate — exit 0
+`python3 scripts/mknoon_checks.py plan --mode change --base 11711629181fe2a7ffc3c173ec675d3f4816cacc --local --output .codex-test-logs/se42-v3-20261014/plan-host-candidate`
+
+change-check-delivery — exit 1
+`python3 scripts/mknoon_checks.py run --mode change --base 11711629181fe2a7ffc3c173ec675d3f4816cacc --local --only affected-calls,affected-conversation,affected-feed,affected-groups,affected-identity,affected-media,affected-push,affected-storage,affected-surfaces,affected-transport,android-call-native,bootstrap,bridge,call-signaling,changed.19bc6454fce2,contacts,diagnostics,direct-chat,media-bytes,media-viewer,migration,notifications,offline-recovery,provider-schema,small-group,startup,workflow --jobs 1 --flutter-workers 4 --output .codex-test-logs/se42-v3-20261014/change-check-delivery`
+
+4. Remaining physical acceptance and per-issue recommendations
+The dated V3 checklist records 1.1–6.5 individually NOT RUN with commit plus uncommitted working-source identity, no device/artifact fields, and observation provenance. Remaining owner proof includes valid earpiece ownership through real audio deactivation/reactivation, screen/touch recovery and final cleanup/next call; physical speaker/accessory routing and voice note; TalkBack/minimize continuity; real notification callbacks, cold/locked/unlock and policy cases. Use only available targets; absent optional accessories/OS remain N/A with their reason. No device operation was performed merely to populate identity fields.
+Original physical iOS incoming presentation remains unresolved. A separately authorized artifact-bound run must correlate finite incoming wake/receipt, native presentation, Answer, canonical outcome, native cancellation and actual two-way observations independently. Retain the first miss/failure; normal signal_terminate cleanup is not refusal or presentation proof. No provider or OS cause is inferred. Morning/afternoon owner observations remain historical/not independently verified for this candidate.
+
+| Issue | DONE | IN PROGRESS | MISSING—code | MISSING—automated tests | MISSING—device-owner tests | STATUS RECOMMENDATION |
+|---|---|---|---|---|---|---|
+| SE-42 | F3–F5 scoped source corrections and causal regressions | Overall acceptance | None for these three established defects | No focused gap; broader workflow FAIL/SQLCipher BLOCKED and wave/release obligations remain | All V3 cases | Remain IN PROGRESS; no closure |
+| SE-45 | Existing minimize/return-bar/Back preserved | Physical acceptance | None identified in this slice | Focused preservation DONE | Continuous audio, TalkBack/Back, voice note | Remain IN PROGRESS |
+| SE-46 | F1/F2 redial/callback and notification preservation | Platform actions/races | None identified in this slice | Host production-backed preservation DONE | Cold/locked/unlock, duplicate/stale/policy and admission boundaries | Remain IN PROGRESS |
+| SE-47 | F1 history and Calls overlap/browsing preservation | Device browsing | None identified in this slice | Repository/widget/unread preservation DONE | Paging/name/error/unread reconciliation | Remain IN PROGRESS |
+| SE-48 | Existing output ownership and F3/F4 Android corrections | Acoustic/route acceptance | None identified in this slice | Native/picker/adapter preservation DONE | Actual output/fallback/acoustics and cleanup | Remain IN PROGRESS |
+| SE-53 | Scoped Android proximity ownership/retry correction | Physical Bluetooth/proximity | No additional feature expansion authorized | F3/F4 native regressions DONE | Screen/touch/recovery, iOS proximity; accessories availability-bounded | Remain IN PROGRESS |
+| merged SE-14 | Android native lifecycle/cleanup preserved in this slice | OS boundary acceptance | None identified in this slice | Android JVM preservation DONE | DND/silent/locked/process-death/interruption/kill boundaries | Slice only; remain IN PROGRESS |
+| merged SE-15 | F5 native-cancel/canonical-outcome isolation | Original iOS incoming diagnosis | Original physical cause unclassified; no presentation repair claimed | Dart provisional-lifecycle preservation DONE; no new iOS native/device run | Artifact-bound physical incoming presentation/Answer/cleanup/OS boundaries | Slice only; remain IN PROGRESS |
+
+No merged-issue claim extends beyond this slice. No board transitions.
+
+5. Sanitized Multica summary for Hermes (do not post automatically)
+SE-42 F3–F5 source corrections are implemented with retained causal RED/GREEN evidence. Proximity enablement now follows active adopted audio ownership, failed release retains retry ownership and truthful cleanup, and public logging failure cannot suppress native/canonical terminal handling. Focused native/Dart and preservation checks pass. The broader change selection remains FAIL for unchanged workflow hash guards and BLOCKED SQLCipher capability evidence. All V3 device cases are NOT RUN; original physical iOS incoming presentation is unresolved. No closure or board change is recommended.
+
+6. Questions / authorization needed
+No implementation parameter remains open for F3–F5. Owner decisions for separate work: authorize an artifact-bound device/owner acceptance run (including the original iOS incoming diagnosis), and separately scope the unchanged workflow guard obligations and SQLCipher integration proof. No builds/devices, excluded repairs, commits, pushes, deployments or board writes are authorized by this report. Final document whitespace/selector/identity receipts are retained under the same ignored root after report generation; tested code remains frozen.
+
+7. V3.2 tests/docs-only correction — 2026-10-14
+Only MknoonCallLifecycleControllerTest.kt and this current V3 section changed relative to the nine-path dirty V3.1 preflight. The existing F4 held-release test now attempts both incoming presentation and outgoing registration for the same distinct successor before and after an unsuccessful cleanup retry (test :116–149). Each returns BUSY with unchanged store/Telecom registration, presentation callbacks, audio state and proximity calls. The original terminal descriptor, held proximity and exact-call pending cleanup remain owned by the original call; collectors stop only once. Existing blocked terminal ACK, truthful failed cleanup, successful release/retry, duplicate cleanup idempotence and successor admission after cleanup/ACK remain asserted. This is GREEN-only coverage addition against accepted production bytes. It proves refusal during the failed-proximity interval; it does not isolate one admission guard or claim that removing only the cleanup guard would yield RED. The runtime map helper and rig were not edited or newly certified by these controller tests.
+
+Branch/full HEAD remain wave3-baseline-20260930 / 11711629181fe2a7ffc3c173ec675d3f4816cacc, uncommitted. New six-code-file candidate SHA-256: 8e9dd07c7ab46e2a574b6e2a3e2e53545debf7e069e73c2be9dc7620819c38da, using the original sorted compact JSON path→file-SHA256 method; changed test SHA-256: 9506107027a699a56433cd0d6f850117170d0cac7c436b39fe69c700ef7b43d2. The earlier acfc8ec5583b30fdb93f61b177670a67d13a943ece587419e1c4057813545385 identity and all associated suites/checklist observations remain historical, not fresh certification of these new test bytes. Production, the other seven dirty paths, version 1.0.1+125, release file, dependencies, selectors/runners/protected evidence remain byte-preserved; release contents were not opened. Automation attribution: Codex Android JVM host execution; no owner/device observations. Mobile build time/artifact SHA-256/device class: N/A (no mobile artifact or device authorized).
+
+Fresh focused evidence (UTC; cwd /Volumes/CrucialX9/flutter_app): f4-green-only ran 20:13:17.804360–20:16:29.091773, exit 0, XML one passed / zero failures / zero errors / zero skips. controller-preservation ran 20:16:45.865482–20:17:00.029373, exit 0, XML 70 passed / zero failures / zero errors / zero skips, including that F4 case; counts overlap and are not summed. Exact commands:
+`./android/gradlew -p android --offline --console=plain :app:testDebugUnitTest --tests 'com.mknoon.app.call.MknoonCallLifecycleControllerTest.*F4 held proximity failure remains pending after collectors stop until release succeeds*'`
+`./android/gradlew -p android --offline --console=plain :app:testDebugUnitTest --tests 'com.mknoon.app.call.MknoonCallLifecycleControllerTest'`
+Inventory validate and change-selection preview with --base 11711629181fe2a7ffc3c173ec675d3f4816cacc --local both exit 0; 36 selected operations, zero unmapped changes. Preview source SHA-256: 58b778045fa78c26d969e5853ae3c7df6ced0c9bf778818e0605aded5d8a58a9 (6,816 inputs). No broad/native-package/Dart/analyzer/workflow/storage/server/device/wave/release rerun. Local ignored receipts, exact argv/UTC/source hashes and copied native XML: .codex-test-logs/se42-v32-20261014/; no raw logs shared.
+
+The current V3 table header now explicitly aggregates failures+errors, preserving every value and exit. Workflow's 242 passes / one failure / one error / zero skips is 242 / 2 / 0 under that header. Workflow FAIL, storage BLOCKED, analyzer evidence and every NOT RUN disposition are retained from the earlier candidate; none was rerun or repaired here. Standing per-issue recommendations remain IN PROGRESS with all device-owner gaps unchanged. Only the missing direct F4 pending-successor admission assertion is closed by this correction; no physical scenario or issue becomes PASS/closed.

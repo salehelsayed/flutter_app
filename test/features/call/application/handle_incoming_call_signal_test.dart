@@ -7,6 +7,7 @@ import 'package:flutter_app/features/call/application/call_cleanup_coordinator.d
 import 'package:flutter_app/features/call/application/call_coordinator.dart';
 import 'package:flutter_app/features/call/application/call_endpoint_resolver.dart';
 import 'package:flutter_app/features/call/application/call_history_projector.dart';
+import 'package:flutter_app/features/call/application/call_negotiation_effect_executor.dart';
 import 'package:flutter_app/features/call/application/call_negotiation_material_store.dart';
 import 'package:flutter_app/features/call/application/call_network_gate.dart';
 import 'package:flutter_app/features/call/application/call_signaling_context_store.dart';
@@ -105,6 +106,23 @@ final class _ThrowingRoster implements CallTrustedRosterProvider {
 }
 
 final class _History implements CallHistoryRepository {
+  final Map<CallId, CallHistoryEntry> entries = <CallId, CallHistoryEntry>{};
+
+  @override
+  Future<CallHistoryEntry?> getByCallId(CallId callId) async => entries[callId];
+
+  @override
+  Future<List<CallHistoryEntry>> listForContact(String peerId) async =>
+      const [];
+
+  @override
+  Future<void> upsertTerminal(CallHistoryEntry entry) async {
+    entries.putIfAbsent(entry.callId, () => entry);
+  }
+}
+
+/// The terminal row never lands: the projector's upsert hangs forever.
+final class _HungHistory implements CallHistoryRepository {
   @override
   Future<CallHistoryEntry?> getByCallId(CallId callId) async => null;
 
@@ -113,14 +131,17 @@ final class _History implements CallHistoryRepository {
       const [];
 
   @override
-  Future<void> upsertTerminal(CallHistoryEntry entry) async {}
+  Future<void> upsertTerminal(CallHistoryEntry entry) =>
+      Completer<void>().future;
 }
 
 final class _Effects implements CallEffectExecutor {
-  _Effects({int throwCount = 0, this.onExecute})
-    : _throwsRemaining = throwCount;
+  _Effects({int throwCount = 0, this.onExecute, Object? throwError})
+    : _throwsRemaining = throwCount,
+      _throwError = throwError ?? StateError('temporary effect failure');
 
   int _throwsRemaining;
+  final Object _throwError;
   final FutureOr<CallEvent?> Function(
     CallEffect effect,
     CallSessionSnapshot snapshot,
@@ -136,7 +157,7 @@ final class _Effects implements CallEffectExecutor {
     effects.add(effect.type);
     if (_throwsRemaining > 0) {
       _throwsRemaining--;
-      throw StateError('temporary effect failure');
+      throw _throwError;
     }
     return onExecute == null ? null : await onExecute!(effect, snapshot);
   }
@@ -230,26 +251,30 @@ final class _ProvisionalLifecycle
   }
 }
 
-CallCoordinator _coordinator(_Effects effects, {int Function()? nowMs}) =>
-    CallCoordinator(
-      reducer: const CallReducer(),
-      cleanupCoordinator: CallCleanupCoordinator(const <CallCleanupStep>[]),
-      historyProjector: CallHistoryProjector(_History()),
-      effectExecutor: effects,
-      clock: () => DateTime.fromMillisecondsSinceEpoch(
-        nowMs?.call() ?? _nowMs,
-        isUtc: true,
-      ),
-      idSource: () => _callId,
-    );
+CallCoordinator _coordinator(
+  _Effects effects, {
+  int Function()? nowMs,
+  CallHistoryRepository? history,
+  Duration terminalHistoryTimeout = const Duration(seconds: 5),
+}) => CallCoordinator(
+  reducer: const CallReducer(),
+  cleanupCoordinator: CallCleanupCoordinator(const <CallCleanupStep>[]),
+  historyProjector: CallHistoryProjector(history ?? _History()),
+  effectExecutor: effects,
+  clock: () =>
+      DateTime.fromMillisecondsSinceEpoch(nowMs?.call() ?? _nowMs, isUtc: true),
+  idSource: () => _callId,
+  terminalHistoryTimeout: terminalHistoryTimeout,
+);
 
 CallSignal _invite({
+  CallId? callId,
   int createdAtMs = _nowMs,
   int expiresAtMs = _nowMs + 45_000,
   int senderSequence = 1,
   Map<String, Object?> payload = const <String, Object?>{},
 }) => CallSignal.create(
-  callId: _callId,
+  callId: callId ?? _callId,
   messageId: '11111111-1111-4111-8111-111111111111',
   event: CallSignalType.invite,
   senderAccountPeerId: 'sender-account',
@@ -287,6 +312,7 @@ CallSignal _negotiationSignal({
 Future<void> _prepareOutgoing(
   CallCoordinator coordinator, {
   required bool accepted,
+  String contactPeerId = 'sender-account',
 }) async {
   await coordinator.dispatch(
     CallEvent(
@@ -294,7 +320,7 @@ Future<void> _prepareOutgoing(
       eventId: 'local-place',
       occurredAt: DateTime.fromMillisecondsSinceEpoch(_nowMs, isUtc: true),
       callId: _callId,
-      contactPeerId: 'sender-account',
+      contactPeerId: contactPeerId,
       localAccountPeerId: 'recipient-account',
       localDeviceId: 'recipient-device',
       remoteAccountPeerId: 'sender-account',
@@ -307,7 +333,7 @@ Future<void> _prepareOutgoing(
       eventId: 'outgoing-invite-ready',
       occurredAt: DateTime.fromMillisecondsSinceEpoch(_nowMs, isUtc: true),
       callId: _callId,
-      contactPeerId: 'sender-account',
+      contactPeerId: contactPeerId,
     ),
   );
   if (!accepted) return;
@@ -317,7 +343,7 @@ Future<void> _prepareOutgoing(
       eventId: 'remote-accept',
       occurredAt: DateTime.fromMillisecondsSinceEpoch(_nowMs, isUtc: true),
       callId: _callId,
-      contactPeerId: 'sender-account',
+      contactPeerId: contactPeerId,
       remoteAccountPeerId: 'sender-account',
       remoteDeviceId: 'sender-device',
     ),
@@ -387,6 +413,228 @@ _build(
 }
 
 void main() {
+  group('F5 public diagnostics', () {
+    setUp(() {
+      final previous = flowEventLoggingEnabled;
+      flowEventLoggingEnabled = false;
+      addTearDown(() => flowEventLoggingEnabled = previous);
+    });
+
+    void throwPublicDiagnostics() {
+      final previous = debugPrint;
+      debugPrint = (String? message, {int? wrapWidth}) {
+        if (message?.startsWith('[MKNOON_CALL_DIAG]') == true) {
+          throw StateError('injected public diagnostic failure');
+        }
+        previous(message, wrapWidth: wrapWidth);
+      };
+      addTearDown(() => debugPrint = previous);
+    }
+
+    for (final event in <CallSignalType>[
+      CallSignalType.terminate,
+      CallSignalType.reject,
+    ]) {
+      test(
+        'throwing debugPrint preserves authenticated ${event.name} cancellation and terminal outcome',
+        () async {
+          final coordinator = _coordinator(_Effects());
+          addTearDown(coordinator.dispose);
+          await _prepareOutgoing(
+            coordinator,
+            accepted: event == CallSignalType.terminate,
+          );
+          final lifecycle = _ProvisionalLifecycle();
+          final built = await _build(
+            coordinator,
+            _Presenter(),
+            signal: _negotiationSignal(
+              event: event,
+              messageId: '77777777-7777-4777-8777-777777777777',
+              senderSequence: 2,
+              iceGeneration: 0,
+              payload: <String, Object?>{
+                'reason': event == CallSignalType.terminate
+                    ? 'remote_hangup'
+                    : 'declined',
+              },
+            ),
+            provisionalNativeLifecycle: lifecycle,
+          );
+          throwPublicDiagnostics();
+          expect(
+            await built.handler.handle(
+              IncomingCallSignalFrame(
+                envelopeJson: built.envelope,
+                authenticatedTransportPeerId: 'sender-device',
+                route: CallRouteClass.direct,
+              ),
+            ),
+            IncomingCallSignalOutcome.accepted,
+          );
+          expect(lifecycle.calls, <String>['remoteCancel:$_callHandle']);
+          expect(coordinator.activeSession, isNull);
+          expect(coordinator.lastSnapshot?.isTerminal, isTrue);
+          expect(
+            coordinator.lastSnapshot?.endReason,
+            event == CallSignalType.terminate
+                ? CallEndReason.remoteHangup
+                : CallEndReason.declined,
+          );
+        },
+      );
+    }
+
+    test(
+      'throwing debugPrint preserves busy refusal and the current canonical owner',
+      () async {
+        final coordinator = _coordinator(_Effects());
+        addTearDown(coordinator.dispose);
+        await _prepareOutgoing(
+          coordinator,
+          accepted: true,
+          contactPeerId: 'other-synthetic-account',
+        );
+        final before = coordinator.activeSession;
+        final lifecycle = _ProvisionalLifecycle();
+        final presenter = _Presenter();
+        final built = await _build(
+          coordinator,
+          presenter,
+          signal: _invite(
+            callId: CallId.parse('99999999-9999-4999-8999-999999999999'),
+          ),
+          provisionalNativeLifecycle: lifecycle,
+        );
+        throwPublicDiagnostics();
+        expect(
+          await built.handler.handle(
+            IncomingCallSignalFrame(
+              envelopeJson: built.envelope,
+              authenticatedTransportPeerId: 'sender-device',
+              route: CallRouteClass.direct,
+            ),
+          ),
+          IncomingCallSignalOutcome.rejected,
+        );
+        expect(lifecycle.calls, <String>['remoteCancel:$_callHandle']);
+        expect(coordinator.activeSession, before);
+        expect(presenter.calls, 0);
+      },
+    );
+
+    for (final mode in <String>['busy', 'validation', 'post_presentation']) {
+      test(
+        '$mode prints only its finite public reason with flow events disabled',
+        () async {
+          final printed = _capturePublicDiagnostics();
+          final coordinator = _coordinator(
+            _Effects(
+              onExecute: (effect, snapshot) =>
+                  mode == 'validation' &&
+                      effect.type == CallEffectType.validateIncomingInvite
+                  ? CallEvent(
+                      type: CallEventType.remoteTerminate,
+                      eventId: 'validation-terminal',
+                      occurredAt: DateTime.fromMillisecondsSinceEpoch(
+                        _nowMs,
+                        isUtc: true,
+                      ),
+                      callId: _callId,
+                      contactPeerId: 'sender-account',
+                    )
+                  : null,
+            ),
+          );
+          addTearDown(coordinator.dispose);
+          if (mode == 'busy') {
+            await _prepareOutgoing(
+              coordinator,
+              accepted: true,
+              contactPeerId: 'other-synthetic-account',
+            );
+          }
+          final presenter = _Presenter();
+          final lifecycle = _ProvisionalLifecycle(
+            contactUpdateAccepted: () => presenter.calls > 0,
+            onCall: (call) {
+              if (mode == 'post_presentation' &&
+                  call ==
+                      'updateAuthenticatedContact:$_callHandle:PrivateContactFixture') {
+                unawaited(
+                  coordinator.dispatch(
+                    CallEvent(
+                      type: CallEventType.remoteTerminate,
+                      eventId: 'presentation-terminal',
+                      occurredAt: DateTime.fromMillisecondsSinceEpoch(
+                        _nowMs,
+                        isUtc: true,
+                      ),
+                      callId: _callId,
+                      contactPeerId: 'sender-account',
+                    ),
+                  ),
+                );
+              }
+            },
+          );
+          final built = await _build(
+            coordinator,
+            presenter,
+            signal: mode == 'busy'
+                ? _invite(
+                    callId: CallId.parse(
+                      '99999999-9999-4999-8999-999999999999',
+                    ),
+                  )
+                : null,
+            provisionalNativeLifecycle: lifecycle,
+            authenticatedDisplayNameResolver: (_) async =>
+                'PrivateContactFixture',
+          );
+          expect(
+            await built.handler.handle(
+              IncomingCallSignalFrame(
+                envelopeJson: built.envelope,
+                authenticatedTransportPeerId: 'sender-device',
+                route: CallRouteClass.direct,
+              ),
+            ),
+            mode == 'validation'
+                ? IncomingCallSignalOutcome.duplicate
+                : IncomingCallSignalOutcome.rejected,
+          );
+          expect(lifecycle.calls, contains('remoteCancel:$_callHandle'));
+          final reason = switch (mode) {
+            'busy' => 'coordinator_busy',
+            'validation' => 'validation_terminalDominates',
+            _ => 'system_ui_terminalDominates',
+          };
+          expect(printed, <String>[
+            '[MKNOON_CALL_DIAG] remote_cancel reason=$reason',
+          ]);
+          for (final sensitive in <String>[
+            _callHandle,
+            _callId.value,
+            'sender-account',
+            'sender-device',
+            'recipient-account',
+            'recipient-device',
+            'PrivateContactFixture',
+            'sender-signing-key',
+            'recipient-mlkem-secret-key',
+            'inviteToken',
+            'candidate',
+            'sdp',
+            '192.0.2.1',
+          ]) {
+            expect(printed.join(), isNot(contains(sensitive)));
+          }
+          expect(flowEventLoggingEnabled, isFalse);
+        },
+      );
+    }
+  });
   test(
     'signaling context is captured only after authentication and purged on rejection',
     () async {
@@ -1034,61 +1282,76 @@ void main() {
     },
   );
 
-  test('platform presentation failure terminates without ringing', () async {
-    final diagnostics = await CallDiagnostics.installForTesting();
-    addTearDown(() async {
-      await diagnostics.setEnabled(false);
-      await diagnostics.dispose();
-    });
-    final effects = _Effects();
-    final coordinator = _coordinator(effects);
-    addTearDown(coordinator.dispose);
-    final presenter = _Presenter(succeeds: false);
-    final provisional = _ProvisionalLifecycle();
-    final built = await _build(
-      coordinator,
-      presenter,
-      provisionalNativeLifecycle: provisional,
-    );
+  test(
+    'platform presentation failure ends as no answer without ringing',
+    () async {
+      final diagnostics = await CallDiagnostics.installForTesting();
+      addTearDown(() async {
+        await diagnostics.setEnabled(false);
+        await diagnostics.dispose();
+      });
+      final effects = _Effects();
+      final history = _History();
+      final coordinator = _coordinator(effects, history: history);
+      addTearDown(coordinator.dispose);
+      final presenter = _Presenter(succeeds: false);
+      final provisional = _ProvisionalLifecycle();
+      final built = await _build(
+        coordinator,
+        presenter,
+        provisionalNativeLifecycle: provisional,
+      );
 
-    expect(
-      await built.handler.handle(
-        IncomingCallSignalFrame(
-          envelopeJson: built.envelope,
-          authenticatedTransportPeerId: 'sender-device',
-          route: CallRouteClass.direct,
+      expect(
+        await built.handler.handle(
+          IncomingCallSignalFrame(
+            envelopeJson: built.envelope,
+            authenticatedTransportPeerId: 'sender-device',
+            route: CallRouteClass.direct,
+          ),
         ),
-      ),
-      IncomingCallSignalOutcome.rejected,
-    );
-    expect(coordinator.activeSession, isNull);
-    expect(coordinator.lastSnapshot?.state, CallState.ended);
-    expect(coordinator.lastSnapshot?.endReason, CallEndReason.signalingFailed);
-    expect(effects.effects, contains(CallEffectType.sendTerminate));
-    expect(effects.effects, isNot(contains(CallEffectType.sendRinging)));
-    expect(
-      effects.effects,
-      isNot(contains(CallEffectType.prepareAcceptedMedia)),
-    );
-    expect(provisional.calls, <String>['authenticationFailed:$_callHandle']);
-    final records = (await diagnostics.eventsForTesting())
-        .where(
-          (event) =>
-              event['stage'] == 'presentation' && event['action'] == 'present',
-        )
-        .toList();
-    final trace = diagnostics.traceForCall(callId: _callId.value);
-    expect(trace, isNotNull);
-    expect(records.map((event) => event['outcome']), ['started', 'failed']);
-    expect(records.last['reason'], 'native_lifecycle_failed');
-    expect(records, everyElement(containsPair('traceId', trace)));
-    expect(jsonEncode(records), isNot(contains(_callHandle)));
-    expect(records.any((event) => event['reason'] == 'no_answer'), isFalse);
-  });
+        IncomingCallSignalOutcome.rejected,
+      );
+      expect(coordinator.activeSession, isNull);
+      expect(coordinator.lastSnapshot?.state, CallState.ended);
+      // Never silent, never a lie: no other call of ours is live here, so the
+      // caller's terminate carries no answer (not busy, not a bare signaling
+      // failure) and the callee keeps a missed (notifiable) call row.
+      expect(coordinator.lastSnapshot?.endReason, CallEndReason.noAnswer);
+      expect(history.entries[_callId]?.status, CallHistoryStatus.missed);
+      expect(effects.effects, contains(CallEffectType.sendTerminate));
+      expect(effects.effects, isNot(contains(CallEffectType.sendRinging)));
+      expect(
+        effects.effects,
+        isNot(contains(CallEffectType.prepareAcceptedMedia)),
+      );
+      expect(provisional.calls, <String>['authenticationFailed:$_callHandle']);
+      final records = (await diagnostics.eventsForTesting())
+          .where(
+            (event) =>
+                event['stage'] == 'presentation' &&
+                event['action'] == 'present',
+          )
+          .toList();
+      final trace = diagnostics.traceForCall(callId: _callId.value);
+      expect(trace, isNotNull);
+      expect(records.map((event) => event['outcome']), ['started', 'failed']);
+      expect(records.last['reason'], 'native_lifecycle_failed');
+      expect(records, everyElement(containsPair('traceId', trace)));
+      expect(jsonEncode(records), isNot(contains(_callHandle)));
+      expect(
+        records.any((event) => event['reason'] == 'no_answer'),
+        isFalse,
+        reason:
+            'diagnostics still tell a native refusal from an unavailable UI',
+      );
+    },
+  );
 
-  test('platform presentation exception is a signaling failure', () async {
+  test('platform presentation exception also ends as no answer', () async {
     final effects = _Effects();
-    final coordinator = _coordinator(effects);
+    final history = _History();
+    final coordinator = _coordinator(effects, history: history);
     addTearDown(coordinator.dispose);
     final presenter = _Presenter(throwOnPresent: true);
     final built = await _build(coordinator, presenter);
@@ -1104,7 +1367,8 @@ void main() {
       IncomingCallSignalOutcome.rejected,
     );
     expect(coordinator.activeSession, isNull);
-    expect(coordinator.lastSnapshot?.endReason, CallEndReason.signalingFailed);
+    expect(coordinator.lastSnapshot?.endReason, CallEndReason.noAnswer);
+    expect(history.entries[_callId]?.status, CallHistoryStatus.missed);
     expect(effects.effects, contains(CallEffectType.sendTerminate));
     expect(effects.effects, isNot(contains(CallEffectType.sendRinging)));
     expect(
@@ -1117,7 +1381,8 @@ void main() {
   // the invite as unanswered; the caller saw "Call could not connect".
   test('foreground-only background presentation ends as no answer', () async {
     final effects = _Effects();
-    final coordinator = _coordinator(effects);
+    final history = _History();
+    final coordinator = _coordinator(effects, history: history);
     addTearDown(coordinator.dispose);
     final built = await _build(coordinator, _Presenter(unavailable: true));
     expect(
@@ -1132,6 +1397,7 @@ void main() {
     );
     expect(coordinator.activeSession, isNull);
     expect(coordinator.lastSnapshot?.endReason, CallEndReason.noAnswer);
+    expect(history.entries[_callId]?.status, CallHistoryStatus.missed);
     expect(effects.effects, contains(CallEffectType.sendTerminate));
     expect(effects.effects, isNot(contains(CallEffectType.sendRinging)));
   });
@@ -1592,12 +1858,16 @@ void main() {
       required String reason,
       String signal = 'unknown',
       String? reduction,
+      String? errorType,
+      String? errorCode,
     }) => <String, Object?>{
       'route': route,
       'signal': signal,
       'outcome': outcome,
       'reason': reason,
       'reduction': ?reduction,
+      'errorType': ?errorType,
+      'errorCode': ?errorCode,
     };
 
     test('network gate refusals are recorded', () async {
@@ -2146,8 +2416,84 @@ void main() {
           signal: 'invite',
           outcome: 'deferred',
           reason: 'handler_exception',
+          errorType: 'StateError',
         ),
       ]);
+    });
+
+    test(
+      'a typed call failure records its code with the handler exception',
+      () async {
+        final events = _captureNotAccepted();
+        final coordinator = _coordinator(
+          _Effects(
+            throwCount: 1,
+            throwError: const CallNegotiationPortException(
+              CallNegotiationPortErrorCode.mediaUnavailable,
+            ),
+          ),
+        );
+        addTearDown(coordinator.dispose);
+        final built = await _build(coordinator, _Presenter());
+
+        expect(
+          await built.handler.handle(mailbox(built.envelope)),
+          IncomingCallSignalOutcome.deferred,
+        );
+        expect(events, <Map<String, Object?>>[
+          record(
+            route: 'mailbox',
+            signal: 'invite',
+            outcome: 'deferred',
+            reason: 'handler_exception',
+            errorType: 'CallNegotiationPortException',
+            errorCode: 'mediaUnavailable',
+          ),
+        ]);
+      },
+    );
+
+    // B4 (device 2026-10-15): the caller's no-answer terminate ended the
+    // ringing call, then the same signal was recorded deferred with
+    // handler_exception 258 ms later because the terminal history row
+    // outran the coordinator's 250 ms history budget. History is
+    // presentation only and cannot fail the dispatch that ended the call.
+    test('a direct terminate stays accepted when the terminal history row '
+        'outruns the history budget', () async {
+      final events = _captureNotAccepted();
+      final coordinator = _coordinator(
+        _Effects(),
+        history: _HungHistory(),
+        terminalHistoryTimeout: const Duration(milliseconds: 20),
+      );
+      addTearDown(coordinator.dispose);
+      final built = await _build(coordinator, _Presenter());
+      expect(
+        await built.handler.handle(direct(built.envelope)),
+        IncomingCallSignalOutcome.accepted,
+      );
+      expect(coordinator.activeSession?.state, CallState.ringing);
+
+      final terminalEnvelope = await built.codec.encode(
+        signal: _negotiationSignal(
+          event: CallSignalType.terminate,
+          messageId: '77777777-7777-4777-8777-777777777777',
+          senderSequence: 2,
+          iceGeneration: 0,
+          payload: <String, Object?>{'reason': CallEndReason.noAnswer.wireName},
+        ),
+        callHandle: _callHandle,
+        recipientMlKemPublicKey: 'recipient-mlkem-key',
+        senderSigningPrivateKey: 'sender-signing-key',
+      );
+      expect(
+        await built.handler.handle(direct(terminalEnvelope)),
+        IncomingCallSignalOutcome.accepted,
+      );
+      expect(coordinator.activeSession, isNull);
+      expect(coordinator.lastSnapshot?.state, CallState.ended);
+      expect(coordinator.lastSnapshot?.endReason, CallEndReason.noAnswer);
+      expect(events, isEmpty);
     });
 
     test(

@@ -79,4 +79,9 @@
 // default to normal notification policy.
 // 414: DB v120 adds nullable `media_attachments.file_name`, the display name
 // of a document (PDF) attachment. No default and no backfill.
-const int currentIdentityDatabaseVersion = 120;
+// Task 12b: DB v121 adds the reply-once existing-contact repair state: the
+// revisioned relationship consent record (deletion/decline memory, kept by
+// triggers on contacts/contact_requests; existing contacts backfilled active),
+// the per-request reply reservation/outbox, per-peer pacing and the persisted
+// effective clock. Historical deletions are not reconstructed.
+const int currentIdentityDatabaseVersion = 121;

@@ -16,6 +16,10 @@ typedef _PushRegistrationHealthAuthority = ({
 
 class PushRegistrationCoordinator {
   final Future<bool> Function() requestPermission;
+
+  /// Reads the current permission without asking. Null keeps resume on
+  /// [requestPermission].
+  final Future<bool> Function()? readPermission;
   final Future<RegisterPushTokenResult> Function() registerPushToken;
   final Stream<String> tokenRefreshStream;
 
@@ -48,6 +52,7 @@ class PushRegistrationCoordinator {
 
   PushRegistrationCoordinator({
     required this.requestPermission,
+    this.readPermission,
     required this.registerPushToken,
     required this.tokenRefreshStream,
     this.ensureReady,
@@ -88,6 +93,26 @@ class PushRegistrationCoordinator {
         _attemptRegistration(checkPermission: false, trigger: 'token_refresh'),
       );
     });
+  }
+
+  /// Resume must see settings changed outside the app without asking again:
+  /// closing the system permission dialog itself resumes the app. Once the
+  /// app has an answer, resume only reads the current permission. Before the
+  /// first answer it asks, as startup does.
+  Future<void> refreshOnResume() async {
+    final read = readPermission;
+    if (read == null ||
+        !_started ||
+        _permissionState == _PushPermissionState.unknown) {
+      return retryNow();
+    }
+    if (_disposed || !isEnabled()) return;
+    _permissionCheckGeneration++;
+    await _attemptRegistration(
+      checkPermission: true,
+      readOnly: true,
+      trigger: 'resume',
+    );
   }
 
   Future<void> retryNow() async {
@@ -139,6 +164,7 @@ class PushRegistrationCoordinator {
 
   Future<void> _attemptRegistration({
     required bool checkPermission,
+    bool readOnly = false,
     required String trigger,
   }) async {
     _retryTimer?.cancel();
@@ -157,6 +183,7 @@ class PushRegistrationCoordinator {
         trigger: 'binding_unavailable',
         authority: resolutionAuthority,
         checkPermission: checkPermission,
+        readOnly: readOnly,
       );
       return;
     }
@@ -185,6 +212,7 @@ class PushRegistrationCoordinator {
       // triggers join one follow-up without concurrent registration writes.
       await _attemptRegistration(
         checkPermission: checkPermission,
+        readOnly: readOnly,
         trigger: trigger,
       );
       return;
@@ -192,6 +220,7 @@ class PushRegistrationCoordinator {
 
     final attempt = _runAttempt(
       checkPermission: checkPermission,
+      readOnly: readOnly,
       trigger: trigger,
       authority: authority,
     );
@@ -215,6 +244,7 @@ class PushRegistrationCoordinator {
 
   Future<void> _runAttempt({
     required bool checkPermission,
+    bool readOnly = false,
     required String trigger,
     required _PushRegistrationHealthAuthority authority,
   }) async {
@@ -257,7 +287,13 @@ class PushRegistrationCoordinator {
       // can access FirebaseMessaging.instance.
       _ensureTokenRefreshSubscription();
       if (checkPermission || _permissionState == _PushPermissionState.unknown) {
-        final granted = await requestPermission();
+        final read = readPermission;
+        final granted =
+            readOnly &&
+                read != null &&
+                _permissionState != _PushPermissionState.unknown
+            ? await read()
+            : await requestPermission();
         if (!_isCurrentHealthAuthority(authority)) return;
         _permissionState = granted
             ? _PushPermissionState.granted
@@ -547,6 +583,7 @@ class PushRegistrationCoordinator {
     Object? error,
     required _PushRegistrationHealthAuthority authority,
     bool checkPermission = false,
+    bool readOnly = false,
   }) {
     if (!_isCurrentHealthAuthority(authority) || !isEnabled()) {
       return;
@@ -581,6 +618,7 @@ class PushRegistrationCoordinator {
       unawaited(
         _attemptRegistration(
           checkPermission: checkPermission,
+          readOnly: readOnly,
           trigger: 'scheduled_retry',
         ),
       );

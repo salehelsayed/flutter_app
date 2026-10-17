@@ -4341,4 +4341,33 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get call_audio_refresh_outputs => 'Refresh audio outputs';
+
+  @override
+  String get call_back_superseded =>
+      'A newer call with this contact exists. Call back from the latest one.';
+
+  @override
+  String get onboarding_mic_title => 'Calls and voice notes';
+
+  @override
+  String get onboarding_mic_body =>
+      'MKnoon uses your microphone for calls and voice notes.';
+
+  @override
+  String get onboarding_mic_settings_hint =>
+      'You can change this anytime in Settings.';
+
+  @override
+  String get onboarding_mic_allow => 'Allow microphone';
+
+  @override
+  String get onboarding_mic_allow_desc => 'So calls work right away';
+
+  @override
+  String get onboarding_mic_not_now_desc =>
+      'We will ask when you first call or record';
+
+  @override
+  String get call_end_permission_settings =>
+      'Microphone access is off for MKnoon. Turn it on in Settings to make and answer calls.';
 }

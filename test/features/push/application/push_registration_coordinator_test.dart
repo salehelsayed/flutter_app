@@ -15,6 +15,170 @@ void main() {
   });
 
   group('PushRegistrationCoordinator', () {
+    group('resume after the app has asked', () {
+      ({
+        PushRegistrationCoordinator coordinator,
+        PushRegistrationHealthNotifier notifier,
+        List<String> calls,
+      })
+      build({
+        required bool Function() requested,
+        required bool Function() read,
+      }) {
+        final calls = <String>[];
+        final notifier = PushRegistrationHealthNotifier();
+        final coordinator = PushRegistrationCoordinator(
+          requestPermission: () async {
+            calls.add('request');
+            return requested();
+          },
+          readPermission: () async {
+            calls.add('read');
+            return read();
+          },
+          registerPushToken: () async {
+            calls.add('register');
+            return RegisterPushTokenResult.success;
+          },
+          tokenRefreshStream: const Stream<String>.empty(),
+          healthStore: _MemoryHealthStore(),
+          healthNotifier: notifier,
+        );
+        return (coordinator: coordinator, notifier: notifier, calls: calls);
+      }
+
+      test(
+        'a resume right after a denied prompt reads and does not ask again',
+        () {
+          fakeAsync((async) {
+            final h = build(requested: () => false, read: () => false);
+            h.coordinator.ensureStarted();
+            async.flushMicrotasks();
+            // The system dialog closing resumes the app.
+            h.coordinator.refreshOnResume();
+            async.flushMicrotasks();
+            expect(h.calls, <String>['request', 'read']);
+            expect(
+              h.notifier.value.phase,
+              PushRegistrationHealthPhase.permissionDenied,
+            );
+            expect(async.pendingTimers, isEmpty);
+            h.coordinator.dispose();
+            h.notifier.dispose();
+          });
+        },
+      );
+
+      test('a resume picks up notifications turned on in Settings', () {
+        fakeAsync((async) {
+          var enabled = false;
+          final h = build(requested: () => false, read: () => enabled);
+          h.coordinator.ensureStarted();
+          async.flushMicrotasks();
+          enabled = true;
+          h.coordinator.refreshOnResume();
+          async.flushMicrotasks();
+          expect(h.calls, <String>['request', 'read', 'register']);
+          expect(h.notifier.value.phase, PushRegistrationHealthPhase.healthy);
+          h.coordinator.dispose();
+          h.notifier.dispose();
+        });
+      });
+
+      test('a resume picks up notifications turned off in Settings', () {
+        fakeAsync((async) {
+          var enabled = true;
+          final h = build(requested: () => true, read: () => enabled);
+          h.coordinator.ensureStarted();
+          async.flushMicrotasks();
+          enabled = false;
+          h.coordinator.refreshOnResume();
+          async.flushMicrotasks();
+          expect(h.calls, <String>['request', 'register', 'read']);
+          expect(
+            h.notifier.value.phase,
+            PushRegistrationHealthPhase.permissionDenied,
+          );
+          h.coordinator.dispose();
+          h.notifier.dispose();
+        });
+      });
+
+      test('a resume before the first answer asks as startup does', () {
+        fakeAsync((async) {
+          final h = build(requested: () => true, read: () => true);
+          h.coordinator.refreshOnResume();
+          async.flushMicrotasks();
+          expect(h.calls, <String>['request', 'register']);
+          h.coordinator.dispose();
+          h.notifier.dispose();
+        });
+      });
+
+      for (final resume in [true, false]) {
+        test('binding recovery keeps the '
+            '${resume ? 'resume read' : 'explicit Retry ask'}', () {
+          fakeAsync((async) {
+            final store = _ScopedMemoryHealthStore((
+              accountPeerId: 'account-a',
+              installationId: 'installation-1',
+            ));
+            final calls = <String>[];
+            final coordinator = PushRegistrationCoordinator(
+              requestPermission: () async {
+                calls.add('request');
+                return false;
+              },
+              readPermission: () async {
+                calls.add('read');
+                return false;
+              },
+              registerPushToken: () async => RegisterPushTokenResult.success,
+              tokenRefreshStream: const Stream<String>.empty(),
+              retryDelay: const Duration(seconds: 10),
+              healthStore: store,
+            );
+            coordinator.ensureStarted();
+            async.flushMicrotasks();
+            expect(calls, <String>['request']);
+            store.throwOnResolve = true;
+            if (resume) {
+              coordinator.refreshOnResume();
+            } else {
+              coordinator.retryNow();
+            }
+            async.flushMicrotasks();
+            expect(calls, <String>['request']);
+            expect(async.pendingTimers, hasLength(1));
+            store.throwOnResolve = false;
+            async.elapse(const Duration(seconds: 10));
+            async.flushMicrotasks();
+            coordinator.dispose();
+            expect(
+              calls,
+              resume
+                  ? <String>['request', 'read']
+                  : <String>['request', 'request'],
+            );
+            expect(async.pendingTimers, isEmpty);
+          });
+        });
+      }
+
+      test('the explicit Retry button still asks after a denial', () {
+        fakeAsync((async) {
+          final h = build(requested: () => false, read: () => false);
+          h.coordinator.ensureStarted();
+          async.flushMicrotasks();
+          h.coordinator.retryNow();
+          async.flushMicrotasks();
+          expect(h.calls, <String>['request', 'request']);
+          h.coordinator.dispose();
+          h.notifier.dispose();
+        });
+      });
+    });
+
     test(
       'explicit retry refreshes revoked permission and later restoration',
       () {

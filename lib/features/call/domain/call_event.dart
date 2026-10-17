@@ -38,6 +38,13 @@ enum CallEventType {
   audioInterrupted,
   mediaRecovered,
   glareLost,
+  networkPathChanged,
+  networkPathReady,
+  networkPathFailed,
+
+  /// Android tore down the previous default network (its linger ended)
+  /// while this epoch is the current one; carries [CallEvent.pathEpoch].
+  networkPreviousPathLost,
 }
 
 enum IncomingCallAdmission {
@@ -75,6 +82,7 @@ final class CallEvent {
     this.candidateId,
     this.transportRoute,
     this.reconnectGeneration,
+    this.pathEpoch,
   }) : occurredAt = occurredAt.toUtc(),
        expiresAt = expiresAt?.toUtc() {
     if (eventId.trim().isEmpty || eventId.length > 128) {
@@ -106,6 +114,10 @@ final class CallEvent {
   /// Optional local media/timer fence, never an authenticated wire value.
   /// The reducer checks this after queued work reaches its serial lane.
   final int? reconnectGeneration;
+
+  /// The Go node's default-network path epoch carried by the three
+  /// `networkPath*` events. Opaque to the call; equality is all that matters.
+  final int? pathEpoch;
 
   Map<String, Object?> toDiagnosticMap() => <String, Object?>{
     'type': type.name,

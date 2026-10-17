@@ -23,6 +23,9 @@ abstract class MicPermissionGateway {
   /// [MicPermissionStatus].
   Future<MicPermissionStatus> request();
 
+  /// Reads the current state without showing the OS prompt.
+  Future<MicPermissionStatus> status();
+
   /// Deep-links to the app's system settings page so the user can flip the
   /// microphone toggle when in-app re-prompting is no longer possible.
   Future<bool> openAppSettings();
@@ -36,9 +39,29 @@ abstract class MicPermissionGateway {
 class PermissionHandlerMicGateway implements MicPermissionGateway {
   const PermissionHandlerMicGateway();
 
+  /// Android reports "don't ask again" only from a request, while its plain
+  /// status still says denied. The last request result in this process keeps
+  /// that answer until the next request; a granted status always wins.
+  static MicPermissionStatus? _lastRequestResult;
+
   @override
   Future<MicPermissionStatus> request() async {
-    final status = await ph.Permission.microphone.request();
+    final result = _map(await ph.Permission.microphone.request());
+    _lastRequestResult = result;
+    return result;
+  }
+
+  @override
+  Future<MicPermissionStatus> status() async {
+    final current = _map(await ph.Permission.microphone.status);
+    if (current == MicPermissionStatus.denied &&
+        _lastRequestResult == MicPermissionStatus.permanentlyDenied) {
+      return MicPermissionStatus.permanentlyDenied;
+    }
+    return current;
+  }
+
+  static MicPermissionStatus _map(ph.PermissionStatus status) {
     if (status.isGranted || status.isLimited) {
       return MicPermissionStatus.granted;
     }

@@ -3,7 +3,10 @@ import 'package:flutter/foundation.dart';
 
 import '../../../core/utils/flow_event_emitter.dart';
 import '../diagnostics/call_diagnostics.dart';
+import 'call_negotiation_effect_executor.dart'
+    show CallNegotiationPortException;
 import '../domain/call_end_reason.dart';
+import '../domain/call_engine.dart';
 import '../domain/call_event.dart';
 import '../domain/call_id.dart';
 import '../domain/call_session_snapshot.dart';
@@ -73,6 +76,7 @@ void emitIncomingCallSignalNotAccepted({
   required String reason,
   CallSignalType? signal,
   CallReductionReason? reduction,
+  Object? error,
 }) {
   try {
     emitFlowEvent(
@@ -88,12 +92,21 @@ void emitIncomingCallSignalNotAccepted({
         'outcome': outcome.name,
         'reason': reason,
         if (reduction != null) 'reduction': reduction.name,
+        // Type and closed code only: an error message can carry ids.
+        if (error != null) 'errorType': error.runtimeType.toString(),
+        'errorCode': ?_errorCode(error),
       },
     );
   } catch (_) {
     // Diagnostics never change call handling.
   }
 }
+
+String? _errorCode(Object? error) => switch (error) {
+  CallNegotiationPortException(:final code) => code.name,
+  CallEngineException(:final code) => code.name,
+  _ => null,
+};
 
 /// Proof produced only after the ordinary authenticated terminal handling
 /// path commits replay custody. It never authorizes presentation or media.
@@ -338,6 +351,7 @@ final class HandleIncomingCallSignal {
       String reason, {
       CallSignalType? signal,
       CallReductionReason? reduction,
+      Object? error,
     }) {
       emitIncomingCallSignalNotAccepted(
         route: frame.route,
@@ -345,6 +359,7 @@ final class HandleIncomingCallSignal {
         reason: reason,
         signal: signal,
         reduction: reduction,
+        error: error,
       );
       return outcome;
     }
@@ -385,6 +400,7 @@ final class HandleIncomingCallSignal {
       IncomingCallSignalOutcome outcome,
       String reason, {
       CallReductionReason? reduction,
+      Object? error,
     }) {
       final signal = capturedSignal;
       if (signal != null && _shouldPurgeSignalingContext(signal, outcome)) {
@@ -396,6 +412,7 @@ final class HandleIncomingCallSignal {
         reason,
         signal: authenticatedEvent,
         reduction: reduction,
+        error: error,
       );
     }
 
@@ -721,13 +738,12 @@ final class HandleIncomingCallSignal {
             contactPeerId: signal.senderAccountPeerId,
             remoteAccountPeerId: signal.senderAccountPeerId,
             remoteDeviceId: signal.senderDevicePeerId,
-            // A refused or failed native surface does not establish that
-            // microphone permission was denied. An app that cannot ring right
-            // now (O1: backgrounded, no native call UI) is a missed call for
-            // both sides, not a failure.
-            endReason: presentationUnavailable
-                ? CallEndReason.noAnswer
-                : CallEndReason.signalingFailed,
+            // The active session is this invite (checked above), so no other
+            // call of ours is live and busy would be a lie: whatever stopped
+            // the surface from ringing (no native call UI, a native refusal,
+            // an exception) is no answer. The caller sees "No answer"; the
+            // callee keeps a missed-call row and one missed notification.
+            endReason: CallEndReason.noAnswer,
           ),
         );
         admitted.commitReplay();
@@ -798,12 +814,13 @@ final class HandleIncomingCallSignal {
         await _authenticationFailedSafely(frame.expectedCallHandle!);
       }
       return settle(outcome, error.reasonCode);
-    } catch (_) {
+    } catch (error) {
       _settleNegotiationMaterialAfterFailure(stagedMaterial);
       admitted?.rollbackReplay();
       return settle(
         IncomingCallSignalOutcome.deferred,
         IncomingCallSignalRefusal.handlerException,
+        error: error,
       );
     }
   }
@@ -861,7 +878,11 @@ final class HandleIncomingCallSignal {
   /// release iPhones log no flow events and a native `remote_cancelled` result
   /// alone cannot say which refusal retired the call (SE-42, 2026-10-14).
   Future<void> _remoteCancelSafely(String callHandle, String reason) async {
-    debugPrint('[MKNOON_CALL_DIAG] remote_cancel reason=$reason');
+    try {
+      debugPrint('[MKNOON_CALL_DIAG] remote_cancel reason=$reason');
+    } catch (_) {
+      // Diagnostics cannot suppress native cancellation or canonical dispatch.
+    }
     try {
       final lifecycle = _provisionalNativeLifecycle;
       if (lifecycle == null) return;

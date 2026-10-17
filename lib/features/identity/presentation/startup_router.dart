@@ -1,5 +1,7 @@
 import 'package:flutter_app/features/orbit/domain/repositories/orbit_call_activity_source.dart';
 import 'dart:async';
+import 'package:flutter_app/core/permissions/mic_permission_gateway.dart';
+import 'package:flutter_app/features/identity/presentation/screens/onboarding_mic_permission_step.dart';
 import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
@@ -276,6 +278,9 @@ class StartupRouter extends StatefulWidget {
   /// The audio recorder service for voice messages.
   final AudioRecorderService? audioRecorderService;
 
+  /// Asked once for the microphone right after a new identity is created.
+  final MicPermissionGateway onboardingMicPermission;
+
   /// The reaction repository for emoji reactions.
   final ReactionRepository? reactionRepository;
 
@@ -479,6 +484,7 @@ class StartupRouter extends StatefulWidget {
     required this.imageProcessor,
     this.conversationTracker,
     this.audioRecorderService,
+    this.onboardingMicPermission = const PermissionHandlerMicGateway(),
     this.reactionRepository,
     this.reactionListener,
     this.groupRepository,
@@ -940,6 +946,14 @@ class _StartupRouterState extends State<StartupRouter> {
                               widget.appShellController.backgroundPreference,
                         ),
                     onNavigateToMain: (progressContext) async {
+                      await runOnboardingMicPermissionStep(
+                        progressContext,
+                        widget.onboardingMicPermission,
+                      );
+                      if (!progressContext.mounted) {
+                        _startP2PInBackground();
+                        return;
+                      }
                       Navigator.of(progressContext).pushAndRemoveUntil(
                         buildStartupReplacementRoute<void>(
                           builder: (_) => FirstTimeExperienceWired(

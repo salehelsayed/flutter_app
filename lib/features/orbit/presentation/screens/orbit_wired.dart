@@ -2652,6 +2652,9 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
           builder: (_) => CallsPage(
             browser: browser,
             changes: source.changes,
+            history: source is CallHistoryAccess
+                ? source as CallHistoryAccess
+                : null,
             redial: CallRedialController(
               capability: () =>
                   widget.directRouteAuthority.resolvedOutgoingCallCapability,

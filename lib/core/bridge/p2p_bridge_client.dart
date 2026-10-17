@@ -187,6 +187,37 @@ Future<Map<String, dynamic>> callP2PRelayReconnect(Bridge bridge) async {
   return response;
 }
 
+/// What one `relay:reconnect` answer means for the caller's failure policy.
+enum RelayReconnectOutcome {
+  /// The node reports a usable relay session again.
+  recovered,
+
+  /// In-place work stopped and the node kept its host on purpose: a newer
+  /// network path owns recovery, or a live call owns native media. Not a
+  /// failure of this path, so no failure accounting; the next tick retries.
+  heldInPlace,
+
+  /// Recovery failed and counts toward the failure backoff.
+  failed,
+}
+
+/// Codes Go answers when it skipped the full-restart fallback on purpose
+/// (SE-42 D27: `beginFullRestart` in relay_session.go).
+const Set<String> relayReconnectHeldInPlaceCodes = <String>{
+  'CALL_MEDIA_PROTECTED',
+  'RECOVERY_SUPERSEDED',
+};
+
+/// 189 Fix B2: `ok` only says the bridge call returned; the Go verdict rides
+/// `success`. An absent `success` (older bridge) still counts as recovered.
+RelayReconnectOutcome classifyRelayReconnect(Map<String, dynamic> response) {
+  if (response['ok'] != true) return RelayReconnectOutcome.failed;
+  if (response['success'] != false) return RelayReconnectOutcome.recovered;
+  return relayReconnectHeldInPlaceCodes.contains(response['errorCode'])
+      ? RelayReconnectOutcome.heldInPlace
+      : RelayReconnectOutcome.failed;
+}
+
 /// Fetches one authenticated short-lived TURN bundle through the additive,
 /// no-payload `turn_credentials_v1` action. The native/Go boundary already
 /// validates the relay response; this second strict decode prevents malformed

@@ -24,11 +24,22 @@ import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 
 import '../../../core/bridge/fake_bridge.dart';
 import '../../../features/identity/domain/repositories/fake_identity_repository.dart';
+import '../../../shared/fakes/ed25519_contact_request_crypto.dart';
 import '../../../shared/fakes/fake_p2p_network.dart';
 import '../../../shared/fakes/fake_p2p_service_integration.dart';
 import '../../../shared/fakes/in_memory_contact_repository.dart';
 import '../../../shared/fakes/in_memory_contact_request_repository.dart';
 import '../../../shared/fakes/in_memory_message_repository.dart';
+
+// Task 12b: every peer is a real Ed25519 identity, so its peer ID is the
+// libp2p ID of its key (the receiver now checks that binding).
+final _fixtures = <String, TestEd25519Identity>{};
+TestEd25519Identity _fixture(String label) => _fixtures.putIfAbsent(
+  label,
+  () => TestEd25519Identity.fromSeedByte(0xA0 + _fixtures.length),
+);
+String _pkFor(String peerId) =>
+    _fixtures.values.firstWhere((id) => id.peerId == peerId).publicKey;
 
 /// Constructs a valid contact_request envelope JSON string.
 String buildContactRequestEnvelope({
@@ -37,7 +48,7 @@ String buildContactRequestEnvelope({
   String? username,
   String? mlKem,
 }) {
-  final pk = publicKey ?? 'pk-$peerId';
+  final pk = publicKey ?? _pkFor(peerId);
   final un = username ?? 'User-$peerId';
 
   // Build unsigned payload (sorted keys for deterministic signature)
@@ -78,8 +89,8 @@ ChatMessage buildContactRequestMessage({
 }
 
 void main() {
-  const ownPeerId = '12D3KooWOwnPeerIdxxx00000000000';
-  const bobPeerId = '12D3KooWBobPeerIdxxx00000000001';
+  final ownPeerId = _fixture('own').peerId;
+  final bobPeerId = _fixture('bob').peerId;
 
   late FakeBridge bridge;
   late InMemoryContactRequestRepository requestRepo;
@@ -107,7 +118,7 @@ void main() {
       ..seed(
         IdentityModel(
           peerId: ownPeerId,
-          publicKey: 'ownPubKey',
+          publicKey: _pkFor(ownPeerId),
           privateKey: 'ownPrivKey',
           mnemonic12:
               'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about',
@@ -243,7 +254,7 @@ void main() {
       contactRepo.addTestContact(
         ContactModel(
           peerId: bobPeerId,
-          publicKey: 'pk-bob',
+          publicKey: _pkFor(bobPeerId),
           rendezvous: '/rv/bob',
           username: 'Bob',
           signature: 'sig-bob',
@@ -338,7 +349,7 @@ void main() {
         contactRepo.addTestContact(
           ContactModel(
             peerId: bobPeerId,
-            publicKey: 'pk-bob',
+            publicKey: _pkFor(bobPeerId),
             rendezvous: '/dns4/relay/tcp/443/p2p/relay',
             username: 'Bob',
             signature: 'sig-bob',
@@ -372,7 +383,7 @@ void main() {
 
         // Other fields preserved.
         expect(updatedContact.username, 'Bob');
-        expect(updatedContact.publicKey, 'pk-bob');
+        expect(updatedContact.publicKey, _pkFor(bobPeerId));
 
         // No contact request was stored (it's an existing contact).
         expect(requestRepo.count, 0);
@@ -388,7 +399,7 @@ void main() {
       contactRepo.addTestContact(
         ContactModel(
           peerId: bobPeerId,
-          publicKey: 'pk-bob',
+          publicKey: _pkFor(bobPeerId),
           rendezvous: '/dns4/relay/tcp/443/p2p/relay',
           username: 'Bob',
           signature: 'sig-bob',
@@ -527,8 +538,8 @@ void main() {
     test(
       '2l. mutual scan race leaves both sides with one accepted contact',
       () async {
-        const alicePeerId = ownPeerId;
-        const carolPeerId = '12D3KooWCarolPeerIdxx00000000002';
+        final alicePeerId = ownPeerId;
+        final carolPeerId = _fixture('carol').peerId;
 
         final sharedNetwork = FakeP2PNetwork();
         final aliceBridge = FakeBridge(
@@ -561,7 +572,7 @@ void main() {
           ..seed(
             IdentityModel(
               peerId: alicePeerId,
-              publicKey: 'pk-$alicePeerId',
+              publicKey: _pkFor(alicePeerId),
               privateKey: 'sk-$alicePeerId',
               mnemonic12:
                   'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about',
@@ -581,7 +592,7 @@ void main() {
           ..seed(
             IdentityModel(
               peerId: carolPeerId,
-              publicKey: 'pk-$carolPeerId',
+              publicKey: _pkFor(carolPeerId),
               privateKey: 'sk-$carolPeerId',
               mnemonic12:
                   'legal winner thank year wave sausage worth useful legal winner thank yellow',
@@ -674,7 +685,7 @@ void main() {
     test(
       '2m. offline bootstrap send replays from inbox into one pending request',
       () async {
-        const carolPeerId = '12D3KooWCarolPeerIdxx00000000002';
+        final carolPeerId = _fixture('carol').peerId;
 
         final aliceNetwork = FakeP2PNetwork();
         final aliceP2p = FakeP2PService(
@@ -693,7 +704,7 @@ void main() {
           ..seed(
             IdentityModel(
               peerId: carolPeerId,
-              publicKey: 'pk-$carolPeerId',
+              publicKey: _pkFor(carolPeerId),
               privateKey: 'sk-$carolPeerId',
               mnemonic12:
                   'legal winner thank year wave sausage worth useful legal winner thank yellow',
@@ -790,7 +801,7 @@ void main() {
     test(
       '2n. accepting a pending request while a chat waits offline replays exactly one delivered message',
       () async {
-        const carolPeerId = '12D3KooWCarolPeerIdxx00000000002';
+        final carolPeerId = _fixture('carol').peerId;
 
         final sharedNetwork = FakeP2PNetwork();
         final aliceP2p = FakeP2PService(
@@ -809,7 +820,7 @@ void main() {
           ..seed(
             IdentityModel(
               peerId: carolPeerId,
-              publicKey: 'pk-$carolPeerId',
+              publicKey: _pkFor(carolPeerId),
               privateKey: 'sk-$carolPeerId',
               mnemonic12:
                   'legal winner thank year wave sausage worth useful legal winner thank yellow',

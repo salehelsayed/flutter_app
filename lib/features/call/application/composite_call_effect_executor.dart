@@ -44,6 +44,7 @@ final class CompositeCallEffectExecutor implements CallEffectExecutor {
     CallEffectType.queueIceCandidate,
     CallEffectType.restartIce,
     CallEffectType.requestIceRestart,
+    CallEffectType.resumeRecoverySignals,
     CallEffectType.startNegotiation,
   };
 }

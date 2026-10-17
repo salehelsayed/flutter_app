@@ -1,5 +1,7 @@
 ## Skill invocation policy
 
+The user-authorized Codex edition of pstack has one scoped exception: an affirmative request naming `poteto-mode` (including `pstack:poteto-mode`) authorizes that mode to select and apply its bundled pstack helper/principle skills for that task. It does not authorize any external plugin skill, project TDD/release skill, publication, or unrelated task. Installing, auditing, editing, or asking about pstack is not invocation. All other skill selection follows the default rules below.
+
 - No skill may be selected implicitly in this project.
 - Invoke every skill only when the user's current message affirmatively asks to use that skill by name (for example, `use $tdd-exec`). A negative mention, question, or request to audit a skill is not an invocation.
 - A matching task, a plan path, “implement/execute/continue/finish this plan,” skill names inside a plan or repo document, an existing `*-session-breakdown.md`, or a prior assistant recommendation is not permission to invoke a skill.

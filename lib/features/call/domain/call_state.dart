@@ -36,6 +36,7 @@ enum CallEffectType {
   queueIceCandidate,
   restartIce,
   requestIceRestart,
+  resumeRecoverySignals,
   prepareAcceptedMedia,
   startNegotiation,
   cleanup,
@@ -330,7 +331,135 @@ final class CallReducer {
     if (_isTransportReceipt(event.type)) {
       return _apply(snapshot, event);
     }
+    if (_isNetworkPathEvent(event.type)) {
+      return _reduceNetworkPath(snapshot, event);
+    }
     return _reduceState(snapshot, event);
+  }
+
+  /// Default-network path epochs reported by the Go node. A change records
+  /// the epoch this call waits on; only the matching ready outcome acts, and
+  /// only a still connected call opens a reconnect episode from it. Nothing
+  /// here schedules or cancels a reconnect timer: an episode that media loss
+  /// or a remote restart already opened keeps its original deadline and only
+  /// resumes its sealed signals once the new path is ready.
+  CallReduction _reduceNetworkPath(
+    CallSessionSnapshot snapshot,
+    CallEvent event,
+  ) {
+    final epoch = event.pathEpoch;
+    if (epoch == null) {
+      return _unchanged(
+        snapshot,
+        CallEventDecision.rejected,
+        CallReductionReason.malformedEvent,
+      );
+    }
+    if (event.type == CallEventType.networkPreviousPathLost) {
+      return _reducePreviousPathLost(snapshot, event, epoch);
+    }
+    final pending = snapshot.pendingPathEpoch;
+    if (event.type == CallEventType.networkPathChanged) {
+      if (pending == epoch) {
+        return _unchanged(
+          snapshot,
+          CallEventDecision.ignored,
+          CallReductionReason.duplicateEvent,
+        );
+      }
+      return _apply(snapshot.copyWith(pendingPathEpoch: epoch), event);
+    }
+    if (pending != epoch) {
+      return _unchanged(
+        snapshot,
+        CallEventDecision.ignored,
+        CallReductionReason.stateMismatch,
+      );
+    }
+    if (event.type == CallEventType.networkPathFailed) {
+      return _apply(snapshot.copyWith(pendingPathEpoch: null), event);
+    }
+    final settled = snapshot.copyWith(
+      pendingPathEpoch: null,
+      readyPathEpoch: epoch,
+    );
+    switch (snapshot.state) {
+      case CallState.connected:
+        return _openPathReconnectEpisode(settled, event);
+      case CallState.reconnecting:
+        return _apply(
+          settled,
+          event,
+          effects: snapshot.transportRecoveryRequired
+              ? const <CallEffect>[
+                  CallEffect(CallEffectType.resumeRecoverySignals),
+                ]
+              : const <CallEffect>[],
+        );
+      default:
+        return _apply(settled, event);
+    }
+  }
+
+  /// The caller owns ICE restarts; the callee asks the caller. The episode
+  /// is the ordinary one media loss opens, with the same deadline.
+  CallReduction _openPathReconnectEpisode(
+    CallSessionSnapshot snapshot,
+    CallEvent event,
+  ) => _transition(
+    snapshot,
+    event,
+    CallState.reconnecting,
+    effects: <CallEffect>[
+      CallEffect(
+        CallEffectType.scheduleReconnectTimeout,
+        delay: policy.reconnectTimeout,
+      ),
+      CallEffect(
+        snapshot.direction == CallDirection.incoming
+            ? CallEffectType.requestIceRestart
+            : CallEffectType.restartIce,
+      ),
+    ],
+  );
+
+  /// Android tore down the previous default network after its linger. A
+  /// connected call may still have its media pair there, so it restarts now
+  /// instead of waiting for WebRTC to report the loss. It acts once, only
+  /// for the ready epoch this call already restarted on, and never while a
+  /// newer path is pending. During a transport reconnect it coalesces: pairs
+  /// on the torn-down network fail and the restart in flight settles on the
+  /// live one, so no second ICE generation and no new deadline.
+  CallReduction _reducePreviousPathLost(
+    CallSessionSnapshot snapshot,
+    CallEvent event,
+    int epoch,
+  ) {
+    if (snapshot.readyPathEpoch != epoch || snapshot.pendingPathEpoch != null) {
+      return _unchanged(
+        snapshot,
+        CallEventDecision.ignored,
+        CallReductionReason.stateMismatch,
+      );
+    }
+    final consumed = snapshot.copyWith(readyPathEpoch: null);
+    return switch (snapshot.state) {
+      CallState.connected => _openPathReconnectEpisode(consumed, event),
+      // An audio-only episode has no ICE restart in flight: start transport
+      // recovery inside it, as media loss does, keeping its deadline.
+      CallState.reconnecting when !snapshot.transportRecoveryRequired => _apply(
+        consumed.copyWith(transportRecoveryRequired: true),
+        event,
+        effects: <CallEffect>[
+          CallEffect(
+            snapshot.direction == CallDirection.incoming
+                ? CallEffectType.requestIceRestart
+                : CallEffectType.restartIce,
+          ),
+        ],
+      ),
+      _ => _apply(consumed, event),
+    };
   }
 
   CallReduction _reduceIdle(CallSessionSnapshot idle, CallEvent event) {
@@ -939,6 +1068,12 @@ final class CallReducer {
           : (event.remoteAccountPeerId?.trim().isNotEmpty ?? false) &&
                 (event.remoteDeviceId?.trim().isNotEmpty ?? false));
 
+  static bool _isNetworkPathEvent(CallEventType type) =>
+      type == CallEventType.networkPathChanged ||
+      type == CallEventType.networkPathReady ||
+      type == CallEventType.networkPathFailed ||
+      type == CallEventType.networkPreviousPathLost;
+
   static bool _isTransportReceipt(CallEventType type) => switch (type) {
     CallEventType.directAccepted ||
     CallEventType.mailboxStored ||
@@ -972,6 +1107,10 @@ final class CallReducer {
   static CallEndReason _receivedTerminateReason(CallEndReason? wireReason) =>
       switch (wireReason) {
         null || CallEndReason.localHangup => CallEndReason.remoteHangup,
+        // The peer could not use its microphone. For this side the contact
+        // did not take the call: not busy (they are on no other call) and not
+        // a local permission problem.
+        CallEndReason.permissionDenied => CallEndReason.noAnswer,
         final CallEndReason reason => reason,
       };
 

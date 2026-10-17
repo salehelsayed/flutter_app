@@ -16,6 +16,7 @@ import 'package:flutter_app/features/call/domain/received_call_wake_handle_store
 import 'package:flutter_app/features/call/infrastructure/received_call_wake_handle_store_impl.dart';
 
 import '../../../core/secure_storage/fake_secure_key_store.dart';
+import '../../../shared/fakes/ed25519_contact_request_crypto.dart';
 
 /// Minimal in-memory [ReceivedWakeTokenStore] for the A03/A04 receive tests.
 class _FakeReceivedWakeTokenStore implements ReceivedWakeTokenStore {
@@ -208,10 +209,14 @@ class _FakeContactRepo implements ContactRepository {
 // ---------------------------------------------------------------------------
 
 const _ownPeerId = '12D3KooWOwnPeerIdForTesting';
-const _senderPeerId = '12D3KooWSenderPeerIdForTest';
+// Task 12b: the sender is a real Ed25519 identity, so its peer ID is the
+// libp2p ID of its key (the receiver now checks that binding).
+final _sender = TestEd25519Identity.fromSeedByte(0x81);
+final _senderPeerId = _sender.peerId;
+final _senderPublicKey = _sender.publicKey;
 
 Map<String, dynamic> _validPayload() => {
-  'pk': 'senderPublicKey',
+  'pk': _senderPublicKey,
   'ns': _senderPeerId,
   'rv': '/dns4/mknoun.xyz/tcp/4001/wss/p2p/relay',
   'ts': DateTime.now().toUtc().toIso8601String(),
@@ -411,7 +416,7 @@ void main() {
   test('alreadyContact: sender is already a contact', () async {
     contactRepo._contacts[_senderPeerId] = ContactModel(
       peerId: _senderPeerId,
-      publicKey: 'senderPublicKey',
+      publicKey: _senderPublicKey,
       rendezvous: '/dns4/mknoun.xyz/tcp/4001/wss/p2p/relay',
       username: 'Alice',
       signature: 'sig',
@@ -466,7 +471,7 @@ void main() {
     () async {
       contactRepo._contacts[_senderPeerId] = ContactModel(
         peerId: _senderPeerId,
-        publicKey: 'senderPublicKey',
+        publicKey: _senderPublicKey,
         rendezvous: '/dns4/mknoun.xyz/tcp/4001/wss/p2p/relay',
         username: 'Alice',
         signature: 'sig',
@@ -618,7 +623,7 @@ void main() {
       expect(request, isNull);
       expect(peerId, isNull);
       expect(capturedRequest?.peerId, _senderPeerId);
-      expect(capturedRequest?.publicKey, 'senderPublicKey');
+      expect(capturedRequest?.publicKey, _senderPublicKey);
     },
   );
 
@@ -645,7 +650,7 @@ void main() {
   test('contactKeyUpdated: contact has no key but payload has one', () async {
     contactRepo._contacts[_senderPeerId] = ContactModel(
       peerId: _senderPeerId,
-      publicKey: 'senderPublicKey',
+      publicKey: _senderPublicKey,
       rendezvous: '/dns4/mknoun.xyz/tcp/4001/wss/p2p/relay',
       username: 'Alice',
       signature: 'sig',
@@ -679,7 +684,7 @@ void main() {
     // contact_request envelope; the receiver must rotate, not ignore.
     contactRepo._contacts[_senderPeerId] = ContactModel(
       peerId: _senderPeerId,
-      publicKey: 'senderPublicKey',
+      publicKey: _senderPublicKey,
       rendezvous: '/dns4/mknoun.xyz/tcp/4001/wss/p2p/relay',
       username: 'Alice',
       signature: 'sig',
@@ -715,7 +720,7 @@ void main() {
       // the contact back to a stale key.
       contactRepo._contacts[_senderPeerId] = ContactModel(
         peerId: _senderPeerId,
-        publicKey: 'senderPublicKey',
+        publicKey: _senderPublicKey,
         rendezvous: '/dns4/mknoun.xyz/tcp/4001/wss/p2p/relay',
         username: 'Alice',
         signature: 'sig',
@@ -747,7 +752,7 @@ void main() {
   test('keeps existing key when payload key is identical', () async {
     contactRepo._contacts[_senderPeerId] = ContactModel(
       peerId: _senderPeerId,
-      publicKey: 'senderPublicKey',
+      publicKey: _senderPublicKey,
       rendezvous: '/dns4/mknoun.xyz/tcp/4001/wss/p2p/relay',
       username: 'Alice',
       signature: 'sig',
@@ -777,7 +782,7 @@ void main() {
   test('alreadyContact: payload has no mlkem field, no update', () async {
     contactRepo._contacts[_senderPeerId] = ContactModel(
       peerId: _senderPeerId,
-      publicKey: 'senderPublicKey',
+      publicKey: _senderPublicKey,
       rendezvous: '/dns4/mknoun.xyz/tcp/4001/wss/p2p/relay',
       username: 'Alice',
       signature: 'sig',
@@ -807,7 +812,7 @@ void main() {
   test('contactKeyUpdated: returned ContactRequestModel is null', () async {
     contactRepo._contacts[_senderPeerId] = ContactModel(
       peerId: _senderPeerId,
-      publicKey: 'senderPublicKey',
+      publicKey: _senderPublicKey,
       rendezvous: '/dns4/mknoun.xyz/tcp/4001/wss/p2p/relay',
       username: 'Alice',
       signature: 'sig',
@@ -834,7 +839,7 @@ void main() {
   test('contactKeyUpdated: returns peerId from decrypted payload', () async {
     contactRepo._contacts[_senderPeerId] = ContactModel(
       peerId: _senderPeerId,
-      publicKey: 'senderPublicKey',
+      publicKey: _senderPublicKey,
       rendezvous: '/dns4/mknoun.xyz/tcp/4001/wss/p2p/relay',
       username: 'Alice',
       signature: 'sig',
@@ -1279,7 +1284,7 @@ void main() {
       await contactRepo.addContact(
         ContactModel(
           peerId: _senderPeerId,
-          publicKey: 'senderPublicKey',
+          publicKey: _senderPublicKey,
           rendezvous: '/dns4/mknoun.xyz/tcp/4001/wss/p2p/relay',
           username: 'Alice',
           signature: 'sig',
@@ -1373,7 +1378,7 @@ void main() {
         // (b) Already-contact (key-rotation branch) → still stored.
         contactRepo._contacts[_senderPeerId] = ContactModel(
           peerId: _senderPeerId,
-          publicKey: 'senderPublicKey',
+          publicKey: _senderPublicKey,
           rendezvous: '/dns4/mknoun.xyz/tcp/4001/wss/p2p/relay',
           username: 'Alice',
           signature: 'sig',

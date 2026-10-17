@@ -70,6 +70,96 @@ final class CallScopedMediaBundle {
   }
 }
 
+/// The holder identity Go hands out with a grant. Go clears its holder only
+/// for exactly this pair, so handing one back can never clear a later grant,
+/// not even one with the same generation after a node restart.
+final class CallMediaProtectionGrant {
+  const CallMediaProtectionGrant({
+    required this.generation,
+    required this.incarnation,
+  });
+
+  final int generation;
+  final int incarnation;
+
+  @override
+  bool operator ==(Object other) =>
+      other is CallMediaProtectionGrant &&
+      other.generation == generation &&
+      other.incarnation == incarnation;
+
+  @override
+  int get hashCode => Object.hash(generation, incarnation);
+
+  @override
+  String toString() => 'CallMediaProtectionGrant($generation, $incarnation)';
+}
+
+/// Go's answer to one [CallMediaProtectionLease.acquire].
+sealed class CallMediaProtectionAdmission {
+  const CallMediaProtectionAdmission();
+}
+
+/// Go holds [grant] for this owner. Native media may open.
+final class CallMediaProtectionGranted extends CallMediaProtectionAdmission {
+  const CallMediaProtectionGranted(this.grant);
+
+  final CallMediaProtectionGrant grant;
+}
+
+/// Go answered without granting. [reason] is Go's fixed word
+/// (`restart_in_progress`, `not_started`, `superseded`), the bridge's error
+/// code, or `timeout`. The owner asks again while the call still wants media.
+final class CallMediaProtectionRefused extends CallMediaProtectionAdmission {
+  const CallMediaProtectionRefused(this.reason);
+
+  final String reason;
+}
+
+/// No protection exists to obtain: the native binary has no
+/// `callMediaProtection` method. The only case in which media opens without
+/// a grant. It is safe to open because Dart and the Go binary ship in one app
+/// build: the method can be missing only in a mismatched build (an iOS
+/// xcframework or an AAR older than this Dart), where no broker exists to
+/// wait for. A broker that exists and refuses is never this case.
+final class CallMediaProtectionUnavailable
+    extends CallMediaProtectionAdmission {
+  const CallMediaProtectionUnavailable();
+}
+
+/// Protection for a live call's native media against a full node restart.
+///
+/// While a grant is held, the Go relay recovery broker keeps its host and does
+/// only in-place work. Implementations never throw and answer within a
+/// bounded time. A grant that arrives after the caller stopped waiting is the
+/// implementation's to hand back.
+abstract interface class CallMediaProtectionLease {
+  Future<CallMediaProtectionAdmission> acquire();
+
+  Future<void> release(CallMediaProtectionGrant grant);
+}
+
+/// Owners without a recovery broker (tests, a platform without the binding).
+final class NoCallMediaProtection implements CallMediaProtectionLease {
+  const NoCallMediaProtection();
+
+  @override
+  Future<CallMediaProtectionAdmission> acquire() async =>
+      const CallMediaProtectionUnavailable();
+
+  @override
+  Future<void> release(CallMediaProtectionGrant grant) async {}
+}
+
+/// A bundle whose cleanup failed, together with the grant that still
+/// protects its media until a retry confirms the cleanup.
+final class _UnconfirmedCleanup {
+  const _UnconfirmedCleanup(this.bundle, this.grant);
+
+  final CallScopedMediaBundle bundle;
+  final CallMediaProtectionGrant? grant;
+}
+
 /// Owns at most one lazy media bundle while the process coordinator stays
 /// stable across sequential calls.
 ///
@@ -78,6 +168,8 @@ final class CallScopedMediaBundle {
 final class CallScopedMediaBundleOwner implements CallEffectExecutor {
   CallScopedMediaBundleOwner({
     required CallScopedMediaBundleFactory createBundle,
+    this.protection = const NoCallMediaProtection(),
+    this.protectionRetryInterval = const Duration(milliseconds: 250),
     this.retiredCallCapacity = 128,
   }) : _createBundle = createBundle {
     if (retiredCallCapacity <= 0) {
@@ -86,11 +178,25 @@ final class CallScopedMediaBundleOwner implements CallEffectExecutor {
   }
 
   final CallScopedMediaBundleFactory _createBundle;
+
+  /// Held from before a bundle's media exists until its cleanup is confirmed.
+  final CallMediaProtectionLease protection;
+
+  /// Pause between two refused admissions. The whole wait is bounded by the
+  /// coordinator's media-preparation budget: when that expires the call ends
+  /// and its cleanup retires the pending call here, which stops the asking.
+  final Duration protectionRetryInterval;
   final int retiredCallCapacity;
   final Set<CallId> _retiredCallIds = <CallId>{};
   final Set<CallId> _failedCloseCallIds = <CallId>{};
-  final Map<CallId, CallScopedMediaBundle> _failedCloseBundles =
-      <CallId, CallScopedMediaBundle>{};
+
+  /// Calls whose media close is running and still holds a grant. Each entry
+  /// leaves only when its own close settles, so a later call's cleanup cannot
+  /// drop an earlier call's protection.
+  final Set<CallId> _protectedCloses = <CallId>{};
+  final Map<CallId, Future<void>> _closingFutures = <CallId, Future<void>>{};
+  final Map<CallId, _UnconfirmedCleanup> _unconfirmedCleanups =
+      <CallId, _UnconfirmedCleanup>{};
   final Map<CallId, Future<void>> _failedCloseRetries =
       <CallId, Future<void>>{};
   final ListQueue<CallId> _retiredCallOrder = ListQueue<CallId>();
@@ -99,9 +205,10 @@ final class CallScopedMediaBundleOwner implements CallEffectExecutor {
 
   CallId? _ownedCallId;
   CallScopedMediaBundle? _currentBundle;
+
+  /// The grant the installed bundle holds, if any.
+  CallMediaProtectionGrant? _heldProtection;
   Future<CallScopedMediaBundle>? _creationFuture;
-  CallId? _closingCallId;
-  Future<void>? _closingFuture;
   Future<void>? _closeFuture;
   bool _closeRequested = false;
 
@@ -186,32 +293,37 @@ final class CallScopedMediaBundleOwner implements CallEffectExecutor {
   }
 
   Future<CallScopedMediaBundle> _createAndInstall(CallId callId) async {
+    CallMediaProtectionGrant? grant;
+    // A bundle the call no longer owns is closed here; its grant moves with
+    // it, so the catch below must not release it a second time.
+    Future<Never> retireLate(
+      CallScopedMediaBundle bundle,
+      CallScopedMediaBundleOwnerException failure,
+    ) async {
+      final protectedBy = grant;
+      grant = null;
+      await _closeRetiredBundle(callId, bundle, protectedBy);
+      throw failure;
+    }
+
     try {
+      grant = await _admit(callId);
       final bundle = await Future<CallScopedMediaBundle>.sync(
         () => _createBundle(callId),
       );
       if (bundle.callId != callId) {
         _retire(callId);
-        await _closeRetiredBundle(callId, bundle);
-        throw const CallScopedMediaBundleOwnerException(
-          CallScopedMediaBundleOwnerErrorCode.invalidBundle,
+        await retireLate(
+          bundle,
+          const CallScopedMediaBundleOwnerException(
+            CallScopedMediaBundleOwnerErrorCode.invalidBundle,
+          ),
         );
       }
-      if (_closeRequested || _retiredCallIds.contains(callId)) {
-        await _closeRetiredBundle(callId, bundle);
-        throw CallScopedMediaBundleOwnerException(
-          _closeRequested
-              ? CallScopedMediaBundleOwnerErrorCode.ownerClosed
-              : CallScopedMediaBundleOwnerErrorCode.retiredCall,
-        );
-      }
-      if (_ownedCallId != callId) {
-        await _closeRetiredBundle(callId, bundle);
-        throw const CallScopedMediaBundleOwnerException(
-          CallScopedMediaBundleOwnerErrorCode.activeCallMismatch,
-        );
-      }
+      final departure = _departureOf(callId);
+      if (departure != null) await retireLate(bundle, departure);
       _currentBundle = bundle;
+      _heldProtection = grant;
       if (!_bundleChanges.isClosed) _bundleChanges.add(bundle);
       return bundle;
     } catch (_) {
@@ -219,8 +331,82 @@ final class CallScopedMediaBundleOwner implements CallEffectExecutor {
       if (_ownedCallId == callId && _currentBundle == null) {
         _ownedCallId = null;
       }
+      _releaseProtection(grant);
       rethrow;
     }
+  }
+
+  /// The pending state before media exists: asks Go until it grants, says no
+  /// protection exists, or the call leaves this owner. A refusal
+  /// (`restart_in_progress` and the like) is asked again after
+  /// [protectionRetryInterval]; the media factory never runs on one.
+  Future<CallMediaProtectionGrant?> _admit(CallId callId) async {
+    while (true) {
+      if (_olderMediaStillProtected(callId)) {
+        // An earlier call's media close is pending or unconfirmed and still
+        // holds the one broker lease. A new grant would replace it, so wait
+        // like a refusal until that cleanup is confirmed.
+        await Future<void>.delayed(protectionRetryInterval);
+        final waiting = _departureOf(callId);
+        if (waiting != null) throw waiting;
+        continue;
+      }
+      final admission = await protection.acquire();
+      final departure = _departureOf(callId);
+      switch (admission) {
+        case CallMediaProtectionGranted(:final grant):
+          if (departure == null) return grant;
+          // The call stopped waiting first. The exact pair goes back and
+          // cannot touch whatever a successor holds.
+          _releaseProtection(grant);
+          throw departure;
+        case CallMediaProtectionUnavailable():
+          // The one fail-open case: no native method, so no broker exists to
+          // wait for (a mismatched build; see CallMediaProtectionUnavailable).
+          if (departure != null) throw departure;
+          return null;
+        case CallMediaProtectionRefused():
+          if (departure != null) throw departure;
+      }
+      await Future<void>.delayed(protectionRetryInterval);
+      final late = _departureOf(callId);
+      if (late != null) throw late;
+    }
+  }
+
+  /// True while another call's media close is still running, or failed and
+  /// keeps its grant for a retry.
+  bool _olderMediaStillProtected(CallId callId) {
+    if (_protectedCloses.any((closing) => closing != callId)) return true;
+    return _unconfirmedCleanups.entries.any(
+      (entry) => entry.key != callId && entry.value.grant != null,
+    );
+  }
+
+  /// Why [callId] may no longer open or keep media, or null while it may.
+  CallScopedMediaBundleOwnerException? _departureOf(CallId callId) {
+    if (_closeRequested) {
+      return const CallScopedMediaBundleOwnerException(
+        CallScopedMediaBundleOwnerErrorCode.ownerClosed,
+      );
+    }
+    if (_retiredCallIds.contains(callId)) {
+      return const CallScopedMediaBundleOwnerException(
+        CallScopedMediaBundleOwnerErrorCode.retiredCall,
+      );
+    }
+    if (_ownedCallId != callId) {
+      return const CallScopedMediaBundleOwnerException(
+        CallScopedMediaBundleOwnerErrorCode.activeCallMismatch,
+      );
+    }
+    return null;
+  }
+
+  /// Not awaited by callers: the broker's answer must not delay cleanup, and
+  /// Go ignores a release for a holder it no longer has.
+  void _releaseProtection(CallMediaProtectionGrant? grant) {
+    if (grant != null) unawaited(protection.release(grant));
   }
 
   /// Retires [callId] before cleanup, fencing every late effect immediately.
@@ -228,10 +414,10 @@ final class CallScopedMediaBundleOwner implements CallEffectExecutor {
     final retrying = _failedCloseRetries[callId];
     if (retrying != null) return retrying;
 
-    final failedBundle = _failedCloseBundles[callId];
-    if (_retiredCallIds.contains(callId) && failedBundle != null) {
+    final unconfirmed = _unconfirmedCleanups[callId];
+    if (_retiredCallIds.contains(callId) && unconfirmed != null) {
       late final Future<void> next;
-      next = _retryFailedClose(callId, failedBundle).whenComplete(() {
+      next = _retryFailedClose(callId, unconfirmed).whenComplete(() {
         if (identical(_failedCloseRetries[callId], next)) {
           _failedCloseRetries.remove(callId);
         }
@@ -240,8 +426,8 @@ final class CallScopedMediaBundleOwner implements CallEffectExecutor {
       return next;
     }
 
-    final closing = _closingFuture;
-    if (_closingCallId == callId && closing != null) return closing;
+    final closing = _closingFutures[callId];
+    if (closing != null) return closing;
 
     final ownedCallId = _ownedCallId;
     if (ownedCallId != null && ownedCallId != callId) {
@@ -261,27 +447,41 @@ final class CallScopedMediaBundleOwner implements CallEffectExecutor {
     _retire(callId);
     if (ownedCallId == null) return;
 
-    _closingCallId = callId;
-    final next = _closeOwnedCall(callId);
-    _closingFuture = next;
+    late final Future<void> next;
+    next = _closeOwnedCall(callId).whenComplete(() {
+      if (identical(_closingFutures[callId], next)) {
+        _closingFutures.remove(callId);
+      }
+    });
+    _closingFutures[callId] = next;
     return next;
   }
 
   Future<void> _closeOwnedCall(CallId callId) async {
     final bundle = _currentBundle;
     final creation = _creationFuture;
+    final grant = _heldProtection;
+    if (bundle != null && grant != null) _protectedCloses.add(callId);
     _currentBundle = null;
     _ownedCallId = null;
     _creationFuture = null;
+    _heldProtection = null;
     if (!_bundleChanges.isClosed) _bundleChanges.add(null);
     try {
       if (bundle != null) {
-        await bundle.close();
+        try {
+          await bundle.close();
+        } catch (_) {
+          _rememberFailedClose(callId, bundle, grant);
+          rethrow;
+        }
+        _releaseProtection(grant);
       } else if (creation != null) {
         try {
           await creation;
         } on CallScopedMediaBundleOwnerException catch (error) {
           if (error.code == CallScopedMediaBundleOwnerErrorCode.cleanupFailed) {
+            _failedCloseCallIds.add(callId);
             rethrow;
           }
           // Retired creation closes any late-returned bundle itself.
@@ -289,35 +489,26 @@ final class CallScopedMediaBundleOwner implements CallEffectExecutor {
           // A factory failure created no owned media to release.
         }
       }
-    } catch (_) {
-      if (bundle != null) {
-        _rememberFailedClose(callId, bundle);
-      } else {
-        _failedCloseCallIds.add(callId);
-      }
-      rethrow;
     } finally {
-      if (_closingCallId == callId) {
-        _closingCallId = null;
-        _closingFuture = null;
-      }
+      _protectedCloses.remove(callId);
     }
   }
 
   Future<void> _retryFailedClose(
     CallId callId,
-    CallScopedMediaBundle bundle,
+    _UnconfirmedCleanup cleanup,
   ) async {
     try {
-      await bundle.close();
+      await cleanup.bundle.close();
     } catch (_) {
-      _rememberFailedClose(callId, bundle);
+      _rememberFailedClose(callId, cleanup.bundle, cleanup.grant);
       rethrow;
     }
-    if (identical(_failedCloseBundles[callId], bundle)) {
-      _failedCloseBundles.remove(callId);
+    if (identical(_unconfirmedCleanups[callId], cleanup)) {
+      _unconfirmedCleanups.remove(callId);
       _failedCloseCallIds.remove(callId);
     }
+    _releaseProtection(cleanup.grant);
   }
 
   /// Permanently closes this process owner and its current call, if any.
@@ -339,37 +530,63 @@ final class CallScopedMediaBundleOwner implements CallEffectExecutor {
     }
   }
 
+  /// Closes a bundle its call no longer owns. A confirmed close hands the
+  /// grant back; a failed close keeps it with the bundle for the retry.
   Future<void> _closeRetiredBundle(
     CallId callId,
     CallScopedMediaBundle bundle,
+    CallMediaProtectionGrant? grant,
   ) async {
+    if (grant != null) _protectedCloses.add(callId);
     try {
       await bundle.close();
     } catch (_) {
-      _rememberFailedClose(callId, bundle);
+      _rememberFailedClose(callId, bundle, grant);
       throw const CallScopedMediaBundleOwnerException(
         CallScopedMediaBundleOwnerErrorCode.cleanupFailed,
       );
+    } finally {
+      _protectedCloses.remove(callId);
     }
+    _releaseProtection(grant);
   }
 
-  void _rememberFailedClose(CallId callId, CallScopedMediaBundle bundle) {
-    if (!_retiredCallIds.contains(callId)) return;
+  void _rememberFailedClose(
+    CallId callId,
+    CallScopedMediaBundle bundle,
+    CallMediaProtectionGrant? grant,
+  ) {
+    if (!_retiredCallIds.contains(callId)) {
+      // Nothing will retry this cleanup, so nothing else would ever hand the
+      // grant back.
+      _releaseProtection(grant);
+      return;
+    }
     _failedCloseCallIds.add(callId);
-    _failedCloseBundles[callId] = bundle;
+    _unconfirmedCleanups[callId] = _UnconfirmedCleanup(bundle, grant);
   }
 
   void _retire(CallId callId) {
     if (!_retiredCallIds.add(callId)) return;
     _retiredCallOrder.addLast(callId);
-    while (_retiredCallOrder.length > retiredCallCapacity) {
-      final evicted = _retiredCallOrder.removeFirst();
+    var excess = _retiredCallOrder.length - retiredCallCapacity;
+    for (final evicted in _retiredCallOrder.toList()) {
+      if (excess <= 0) break;
+      // Media whose close is pending or unconfirmed keeps its tombstone and
+      // its grant: running out of tombstones is not native teardown.
+      if (_holdsProtectedMedia(evicted)) continue;
+      _retiredCallOrder.remove(evicted);
       _retiredCallIds.remove(evicted);
       _failedCloseCallIds.remove(evicted);
-      _failedCloseBundles.remove(evicted);
+      _unconfirmedCleanups.remove(evicted);
       _failedCloseRetries.remove(evicted);
+      excess--;
     }
   }
+
+  bool _holdsProtectedMedia(CallId callId) =>
+      _protectedCloses.contains(callId) ||
+      _unconfirmedCleanups[callId]?.grant != null;
 
   static bool _isNegotiationEffect(CallEffectType type) => switch (type) {
     CallEffectType.startNegotiation ||
@@ -378,7 +595,8 @@ final class CallScopedMediaBundleOwner implements CallEffectExecutor {
     CallEffectType.deliverAnswer ||
     CallEffectType.queueIceCandidate ||
     CallEffectType.restartIce ||
-    CallEffectType.requestIceRestart => true,
+    CallEffectType.requestIceRestart ||
+    CallEffectType.resumeRecoverySignals => true,
     _ => false,
   };
 }

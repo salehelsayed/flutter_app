@@ -2208,5 +2208,20 @@
   "calls_load_error": "Calls could not be loaded",
   "calls_more": "Show more",
   "call_audio_choose_output": "Choose audio output",
-  "call_audio_refresh_outputs": "Refresh audio outputs"
+  "call_audio_refresh_outputs": "Refresh audio outputs",
+  "call_back_superseded": "A newer call with this contact exists. Call back from the latest one.",
+  "onboarding_mic_title": "Calls and voice notes",
+  "@onboarding_mic_title": {"description": "Title of the optional onboarding step that asks for the microphone."},
+  "onboarding_mic_body": "MKnoon uses your microphone for calls and voice notes.",
+  "@onboarding_mic_body": {"description": "Why the app asks for the microphone during onboarding."},
+  "onboarding_mic_settings_hint": "You can change this anytime in Settings.",
+  "@onboarding_mic_settings_hint": {"description": "Reassurance that the choice can be changed later."},
+  "onboarding_mic_allow": "Allow microphone",
+  "@onboarding_mic_allow": {"description": "Card title that shows the system microphone prompt."},
+  "onboarding_mic_allow_desc": "So calls work right away",
+  "@onboarding_mic_allow_desc": {"description": "Card description under Allow microphone."},
+  "onboarding_mic_not_now_desc": "We will ask when you first call or record",
+  "@onboarding_mic_not_now_desc": {"description": "Card description under Not now; the app asks again at the first call or recording."},
+  "call_end_permission_settings": "Microphone access is off for MKnoon. Turn it on in Settings to make and answer calls.",
+  "@call_end_permission_settings": {"description": "Call ended because the microphone is blocked and the system will not ask again; shown with an Open Settings button."}
 }

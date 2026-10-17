@@ -3051,6 +3051,95 @@ void main() {
       expect(harness.signaling.candidateBatches, isEmpty);
     },
   );
+
+  test(
+    'relay readiness resumes a sealed restart signal without recreating it',
+    () async {
+      final timers = _ReadinessTimerScheduler();
+      final retry = _FakeSignalRetry();
+      final harness = _Harness(
+        snapshot: _snapshot(CallState.reconnecting),
+        mediaReadinessTimerScheduler: timers,
+      );
+      addTearDown(harness.executor.close);
+      harness.signaling.restartError = CallNegotiationPortException(
+        CallNegotiationPortErrorCode.transportUnavailable,
+        retry: retry,
+      );
+      await harness.executor.execute(
+        const CallEffect(CallEffectType.restartIce),
+        harness.snapshot,
+      );
+      expect(harness.engine.restartCalls, 1);
+      expect(harness.signaling.restartGenerations, hasLength(1));
+      expect(retry.attempts, 0);
+      expect(timers.active, hasLength(1));
+
+      await harness.executor.execute(
+        const CallEffect(CallEffectType.resumeRecoverySignals),
+        harness.snapshot,
+      );
+      await _flushAsync();
+
+      expect(retry.attempts, 1);
+      expect(timers.active, isEmpty);
+      expect(harness.engine.restartCalls, 1);
+      expect(harness.signaling.restartGenerations, hasLength(1));
+      expect(harness.engine.createOfferCalls, 1);
+      expect(harness.signaling.descriptions, hasLength(1));
+      expect(harness.dispatched, isEmpty);
+    },
+  );
+
+  test('relay readiness leaves an in-flight sealed retry alone', () async {
+    final timers = _ReadinessTimerScheduler();
+    final gate = Completer<void>();
+    final retry = _FakeSignalRetry()..gate = gate;
+    final harness = _Harness(
+      snapshot: _snapshot(CallState.reconnecting),
+      mediaReadinessTimerScheduler: timers,
+    );
+    addTearDown(harness.executor.close);
+    harness.signaling.restartError = CallNegotiationPortException(
+      CallNegotiationPortErrorCode.transportUnavailable,
+      retry: retry,
+    );
+    await harness.executor.execute(
+      const CallEffect(CallEffectType.restartIce),
+      harness.snapshot,
+    );
+    final pending = timers.fireNext();
+    await _flushAsync();
+    expect(retry.attempts, 1);
+
+    await harness.executor.execute(
+      const CallEffect(CallEffectType.resumeRecoverySignals),
+      harness.snapshot,
+    );
+    await _flushAsync();
+    expect(retry.attempts, 1);
+
+    gate.complete();
+    await pending;
+    await _flushAsync();
+    expect(retry.attempts, 1);
+    expect(harness.signaling.descriptions, hasLength(1));
+    expect(timers.active, isEmpty);
+  });
+
+  test('relay readiness without sealed work changes nothing', () async {
+    final harness = _Harness(snapshot: _snapshot(CallState.reconnecting));
+    addTearDown(harness.executor.close);
+    expect(
+      await harness.executor.execute(
+        const CallEffect(CallEffectType.resumeRecoverySignals),
+        harness.snapshot,
+      ),
+      isNull,
+    );
+    expect(harness.calls, isEmpty);
+    expect(harness.dispatched, isEmpty);
+  });
 }
 
 CallConnectionSnapshot _connectionSnapshot({

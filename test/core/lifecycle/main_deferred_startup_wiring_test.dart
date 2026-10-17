@@ -135,6 +135,8 @@ void main() {
       const syncSteps = <String, String>{
         'message_router_start': 'messageRouter.start',
         'contact_request_listener_start': 'contactRequestListener.start',
+        // Task 12b: the durable repair-reply outbox owner.
+        'contact_repair_outbox_start': 'contactRepairOutboxWorker.start()',
         'chat_message_listener_start': 'chatMessageListener.start',
         'post_listener_start': 'postListener.start',
         'post_comment_listener_start': 'postCommentListener.start',

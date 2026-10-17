@@ -646,6 +646,7 @@ internal class MknoonCallLifecycleController(
             foregroundComplete = true,
             audioFocusComplete = true,
             endpointsComplete = true,
+            proximityComplete = true,
             startupFenceOnly = true,
         )
         false
@@ -1016,7 +1017,7 @@ internal class MknoonCallLifecycleController(
         try {
             platform.stopMicrophoneService(nativeCallId)
             if (requestTelecomTransition) platform.abandonAudioFocus(nativeCallId)
-            runCatching { platform.setProximityScreenOff(nativeCallId, false) }
+            platform.setProximityScreenOff(nativeCallId, false)
             platform.stopEndpointUpdates(nativeCallId)
         } catch (_: Exception) {
             synchronized(lock) {
@@ -1082,8 +1083,13 @@ internal class MknoonCallLifecycleController(
     fun onRouteChanged(nativeCallId: UUID, route: String): Boolean = synchronized(lock) {
         if (cleanupState != null || !hasActiveLifecycle(nativeCallId)) return@synchronized false
         if (route !in ROUTES) return@synchronized false
-        // Applied before the dedupe: audio reactivation reports the same route.
-        runCatching { platform.setProximityScreenOff(nativeCallId, route == "earpiece") }
+        // ENABLE needs the exact adopted active audio owner, not merely a
+        // nonterminal descriptor. Late collector callbacks can outlive stop.
+        // Keep this before dedupe so an unchanged earpiece route reapplies on
+        // legitimate audio reactivation.
+        if (route != "earpiece" || withActiveAudioOwner(nativeCallId, false) { true }) {
+            runCatching { platform.setProximityScreenOff(nativeCallId, route == "earpiece") }
+        }
         if (lastRoute == route) return@synchronized false
         val event = append(nativeCallId, PendingNativeCallEventType.ROUTE_CHANGED)
             ?: return@synchronized false
@@ -1477,6 +1483,9 @@ internal class MknoonCallLifecycleController(
             // keeps the foreground service until its run is finished.
             cleanup.foregroundComplete = true
         }
+        // Fence collector callbacks before any platform cleanup, including
+        // when the durable terminal append failed and must be retried.
+        cleanupState = cleanup
         performCleanup(cleanup)
         if (event != null) emitIfAttached(event)
 
@@ -1508,8 +1517,12 @@ internal class MknoonCallLifecycleController(
 
     private fun performCleanup(cleanup: NativeCleanupState) {
         val nativeCallId = cleanup.nativeCallId
+        if (!cleanup.proximityComplete) {
+            cleanup.proximityComplete = runCatching {
+                platform.setProximityScreenOff(nativeCallId, false)
+            }.isSuccess
+        }
         if (!cleanup.endpointsComplete) {
-            runCatching { platform.setProximityScreenOff(nativeCallId, false) }
             cleanup.endpointsComplete = runCatching {
                 platform.stopEndpointUpdates(nativeCallId)
             }.isSuccess
@@ -1698,6 +1711,7 @@ internal class MknoonCallLifecycleController(
         var foregroundComplete: Boolean = false,
         var audioFocusComplete: Boolean = false,
         var endpointsComplete: Boolean = false,
+        var proximityComplete: Boolean = false,
         var ringtoneStopAttempted: Boolean = false,
         val startupFenceOnly: Boolean = false,
     ) {
@@ -1707,7 +1721,8 @@ internal class MknoonCallLifecycleController(
                 notificationComplete &&
                 foregroundComplete &&
                 audioFocusComplete &&
-                endpointsComplete
+                endpointsComplete &&
+                proximityComplete
     }
 
     private data class AudioTransition(

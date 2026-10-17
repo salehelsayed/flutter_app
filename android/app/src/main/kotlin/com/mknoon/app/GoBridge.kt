@@ -50,10 +50,115 @@ class GoBridge internal constructor(
         eventReceiver = ::acceptEvent,
     )
 
+    // SE-42 D27: a default-network change (Wi-Fi to LTE with no "none" between)
+    // reaches the owned node as one epoch, so it replaces a stalled relay
+    // connection instead of waiting for QUIC idle expiry. Same owner fence as
+    // every other Go call; disposed before the owner token is released.
+    // SE-42 D27 (a): when Android finally tears down the previous default
+    // network (its linger ended), the call restarts at once instead of
+    // waiting for WebRTC to notice the dead pair. Delivered to Dart like a
+    // Go push event, under the same owner fence.
+    private val previousNetworkLossWatcher = PreviousNetworkLossWatcher(
+        connectivity = context.applicationContext
+            .getSystemService(android.net.ConnectivityManager::class.java),
+        sink = PreviousNetworkLossWatcher.Sink { epoch -> emitPreviousPathLost(epoch) },
+    )
+
+    private val networkPathMonitor = DefaultNetworkPathMonitor(
+        connectivity = context.applicationContext
+            .getSystemService(android.net.ConnectivityManager::class.java),
+        sender = DefaultNetworkPathMonitor.Sender { epoch, usable, stillCurrent, onAnswer ->
+            sendNetworkPathChanged(epoch, usable, stillCurrent, onAnswer)
+        },
+        pathObserver = previousNetworkLossWatcher,
+    )
+
     init {
         methodChannel.setMethodCallHandler(this)
         eventChannel.setStreamHandler(this)
         appDiagnostics.record("startup", "bridge", "ok", "bootstrap", mapOf("phase" to "bridge_initialized"))
+        previousNetworkLossWatcher.start()
+        val monitoring = networkPathMonitor.start()
+        appDiagnostics.record(
+            "network",
+            "path_monitor",
+            if (monitoring) "ok" else "unavailable",
+            "bootstrap",
+        )
+    }
+
+    /** Delivers one default-network epoch to Go under the owner fence, off the main thread. */
+    private fun sendNetworkPathChanged(
+        epoch: Long,
+        usable: Boolean,
+        stillCurrent: () -> Boolean,
+        onAnswer: (reason: String) -> Unit,
+    ): Boolean {
+        if (disposed.get()) return false
+        val params = org.json.JSONObject()
+            .put("ownerGeneration", ownerToken.generation)
+            .put("epoch", epoch)
+            .put("usable", usable)
+            .toString()
+        val values = mapOf("epoch" to epoch, "usable" to usable)
+        return runtimeHost.execute(
+            ownerToken,
+            // The path may have changed again while this epoch waited for the
+            // executor; a stale epoch never reaches Go.
+            work = { if (stillCurrent()) GoMknoon.networkPathChanged(params) else null },
+            onSuccess = { result ->
+                if (result == null) {
+                    appDiagnostics.record("network", "path_changed", "stale", "handoff", values)
+                } else {
+                    val answer = networkPathAnswer(result)
+                    appDiagnostics.record(
+                        "network",
+                        "path_changed",
+                        if (answer["accepted"] == true) "ok" else "rejected",
+                        "handoff",
+                        values + answer,
+                    )
+                    onAnswer(answer["reason"] as? String ?: "none")
+                }
+            },
+            onError = { appDiagnostics.record("network", "path_changed", "failed", "handoff", values) },
+        )
+    }
+
+    /**
+     * A path epoch that reached a stopped node was refused as `not_started`;
+     * the monitor owes it to the node once this owner starts one. Only a
+     * successful Start counts, and connectivity never starts a node.
+     */
+    private fun startNodeThenNotifyPathMonitor(params: String): String {
+        val answer = GoMknoon.startNode(params)
+        if (nodeStartSucceeded(answer)) networkPathMonitor.nodeStarted()
+        return answer
+    }
+
+    private fun nodeStartSucceeded(answer: String): Boolean = try {
+        org.json.JSONObject(answer).optBoolean("ok", false)
+    } catch (_: org.json.JSONException) {
+        false
+    }
+
+    /**
+     * Go answers a dropped epoch as data (`accepted:false` with a reason, or an
+     * error code), never as a throw. Only those fixed words reach diagnostics.
+     */
+    private fun networkPathAnswer(result: Any?): Map<String, Any?> {
+        val text = result as? String ?: return emptyMap()
+        val json = try {
+            org.json.JSONObject(text)
+        } catch (_: org.json.JSONException) {
+            return emptyMap()
+        }
+        val reason = json.optString("reason").ifEmpty { json.optString("errorCode") }.ifEmpty { "none" }
+        return mapOf(
+            "accepted" to json.optBoolean("accepted", false),
+            "coalesced" to json.optBoolean("coalesced", false),
+            "reason" to reason,
+        )
     }
 
     private fun runOnBackground(work: () -> Any?, result: MethodChannel.Result, method: String = "") {
@@ -89,6 +194,19 @@ class GoBridge internal constructor(
     /// FDC-S5 (M1): surface the bridge dispatch queue-wait on the same EventChannel
     /// Go push events use, so the Dart client (bridge:dispatch_timing raw passthrough)
     /// folds it into FLOW logs alongside BRIDGE_CALL_TIMING {bridgeMs}.
+    private fun emitPreviousPathLost(epoch: Long) {
+        val json = org.json.JSONObject()
+            .put("event", PreviousNetworkLossWatcher.EVENT)
+            .put(
+                "data",
+                org.json.JSONObject()
+                    .put("epoch", epoch)
+                    .put("ownerGeneration", ownerToken.generation),
+            )
+            .toString()
+        runtimeHost.emitOwnerEvent(ownerToken, json)
+    }
+
     private fun emitDispatchTiming(method: String, queueWaitMs: Double) {
         val json = org.json.JSONObject()
             .put("event", "bridge:dispatch_timing")
@@ -130,7 +248,7 @@ class GoBridge internal constructor(
             "migrationChunkDecrypt" -> runOnBackground({ GoMknoon.migrationChunkDecrypt(args ?: "") }, result)
 
             // Node lifecycle
-            "startNode" -> runOnBackground({ GoMknoon.startNode(args ?: "") }, result)
+            "startNode" -> runOnBackground({ startNodeThenNotifyPathMonitor(args ?: "") }, result)
             "stopNode" -> runOnBackground({ GoMknoon.stopNode() }, result)
             "nodeStatus" -> runOnBackground({ GoMknoon.nodeStatus() }, result, "nodeStatus")
 
@@ -142,6 +260,8 @@ class GoBridge internal constructor(
             // Relay
             "relayReconnect" -> runOnBackground({ GoMknoon.relayReconnect() }, result)
             "relayProbe" -> runOnBackground({ GoMknoon.relayProbe(args ?: "") }, result, "relayProbe")
+            // SE-42 D27: call-media protection lease on the relay recovery broker.
+            "callMediaProtection" -> runOnBackground({ GoMknoon.callMediaProtection(args ?: "") }, result)
             "relayTurnCredentialsV1" -> runOnBackground({ GoMknoon.turnCredentialsV1() }, result)
             "turnCredentialsWithDiagnosticsV1", "relayTurnCredentialsWithDiagnosticsV1" -> runOnBackground({ GoMknoon.turnCredentialsWithDiagnosticsV1(args ?: "") }, result)
             "callDiagnosticsV1" -> runOnBackground({ GoMknoon.callDiagnosticsV1(args ?: "") }, result)
@@ -328,6 +448,8 @@ class GoBridge internal constructor(
         synchronized(pendingEventsLock) {
             pendingEvents.clear()
         }
+        networkPathMonitor.close()
+        previousNetworkLossWatcher.close()
         runtimeHost.unregister(ownerToken)
         return true
     }

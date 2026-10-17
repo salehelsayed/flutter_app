@@ -200,13 +200,16 @@ final class AndroidCallLifecycleAdapter
     this.failStartOnAttachError = false,
     this.recoverRetiredUnboundIncoming = false,
     NativeOutgoingRegistrationResultObserver? onOutgoingRegistrationResult,
+    this.retainedTerminalReleaseWindow = defaultRetainedTerminalReleaseWindow,
+    void Function()? onRetainedTerminalForceReleased,
   }) : _invokeMethod = invokeMethod,
        _nativeEvents = nativeEvents,
        _coordinator = coordinator,
        _resolveAuthenticatedHandle = resolveAuthenticatedHandle,
        _clock = clock ?? _systemClock,
        _projectState = projectState ?? _defaultProjectedState,
-       _onOutgoingRegistrationResult = onOutgoingRegistrationResult {
+       _onOutgoingRegistrationResult = onOutgoingRegistrationResult,
+       _onRetainedTerminalForceReleased = onRetainedTerminalForceReleased {
     if (maxEventsPerBatch <= 0 || maxEventsPerBatch > 256) {
       throw ArgumentError.value(
         maxEventsPerBatch,
@@ -239,6 +242,14 @@ final class AndroidCallLifecycleAdapter
   /// iOS can sweep an unadopted terminal into a durable acknowledgement
   /// receipt while Dart is suspended. Android keeps its existing fence.
   final bool recoverRetiredUnboundIncoming;
+
+  /// How long an ended call whose cleanup is still blocked may hold the
+  /// native call surface. Normal cleanup needs one 2 s media step plus one 2 s
+  /// retry, so 10 s leaves room for a slow teardown while a call-back placed a
+  /// little later still rings.
+  static const defaultRetainedTerminalReleaseWindow = Duration(seconds: 10);
+  final Duration retainedTerminalReleaseWindow;
+  final void Function()? _onRetainedTerminalForceReleased;
   final NativeOutgoingRegistrationResultObserver? _onOutgoingRegistrationResult;
 
   final StreamController<CallAudioSessionInterruption> _interruptions =
@@ -483,7 +494,25 @@ final class AndroidCallLifecycleAdapter
         cleanupReady = false;
       }
     }
+    // close() may have run during that wait; a closed or invalid adapter
+    // acknowledges nothing after shutdown.
+    if (_closed) {
+      return _outgoingRegistrationRejected(
+        NativeOutgoingRegistrationStage.terminalReplay,
+        NativeOutgoingRegistrationReason.closed,
+      );
+    }
+    if (_invalid) {
+      return _outgoingRegistrationRejected(
+        NativeOutgoingRegistrationStage.terminalReplay,
+        NativeOutgoingRegistrationReason.invalidLatched,
+      );
+    }
     if (!cleanupReady) {
+      if (_retainedTerminalReleaseDue(priorCallId, terminal) &&
+          await _forceReleaseRetainedTerminal(priorCallId, terminal)) {
+        return true;
+      }
       return _outgoingRegistrationRejected(
         NativeOutgoingRegistrationStage.terminalReplay,
         NativeOutgoingRegistrationReason.terminalCleanupPending,
@@ -875,8 +904,23 @@ final class AndroidCallLifecycleAdapter
     if (priorCallId == null) {
       return _retireUnboundIncomingTerminal(successorHandle: successorHandle);
     }
-    if (!_coordinator.terminalCleanupAckReady(priorCallId)) {
-      return false;
+    // Same single bounded retry as the outgoing path: a cleanup that was
+    // blocked when it last ran (for example while the microphone prompt held
+    // call media) must not refuse every later incoming call.
+    var cleanupReady = _coordinator.terminalCleanupAckReady(priorCallId);
+    if (!cleanupReady) {
+      try {
+        cleanupReady = await _coordinator.retryTerminalCleanup(priorCallId);
+      } catch (_) {
+        cleanupReady = false;
+      }
+    }
+    // close() may have run during that wait; a closed or invalid adapter
+    // acknowledges nothing after shutdown.
+    if (_closed || _invalid) return false;
+    if (!cleanupReady) {
+      return _retainedTerminalReleaseDue(priorCallId, terminal) &&
+          await _forceReleaseRetainedTerminal(priorCallId, terminal);
     }
     if (_boundCallId != priorCallId || !identical(_pendingTerminal, terminal)) {
       return false;
@@ -885,6 +929,48 @@ final class AndroidCallLifecycleAdapter
       _highestObservedSequence,
       _AcknowledgementDisposition.terminal,
     );
+  }
+
+  /// Releases the retained terminal of [callId] once its cleanup is ready, for
+  /// example as soon as its media close finally completes. A no-op when that
+  /// call no longer holds the native surface.
+  Future<bool> releaseCleanupReadyTerminal(CallId callId) async {
+    await start();
+    return _schedule<bool>(() async {
+      if (_closed || _invalid) return false;
+      final terminal = _pendingTerminal;
+      if (terminal == null || _boundCallId != callId) {
+        return _boundCallId != callId && terminal == null;
+      }
+      if (!_coordinator.terminalCleanupAckReady(callId)) return false;
+      return _acknowledge(
+        _highestObservedSequence,
+        _AcknowledgementDisposition.terminal,
+      );
+    });
+  }
+
+  /// An ended call whose cleanup stays blocked past the window must not keep
+  /// refusing every later call. A live call never qualifies.
+  bool _retainedTerminalReleaseDue(CallId priorCallId, _NativeEvent terminal) =>
+      _coordinator.isTerminalCall(priorCallId) &&
+      !_clock().isBefore(
+        terminal.occurredAt.add(retainedTerminalReleaseWindow),
+      );
+
+  Future<bool> _forceReleaseRetainedTerminal(
+    CallId priorCallId,
+    _NativeEvent terminal,
+  ) async {
+    if (_boundCallId != priorCallId || !identical(_pendingTerminal, terminal)) {
+      return false;
+    }
+    final released = await _acknowledge(
+      _highestObservedSequence,
+      _AcknowledgementDisposition.terminal,
+    );
+    if (released) _onRetainedTerminalForceReleased?.call();
+    return released;
   }
 
   void _clearProvisionalOutgoingBinding() {
@@ -930,6 +1016,13 @@ final class AndroidCallLifecycleAdapter
         descriptor.callHandle != handle &&
         _pendingTerminal != null) {
       if (!await _ackCleanupReadyRetainedTerminal(handle!)) return false;
+      // The successor must still be eligible after that wait.
+      if (_closed ||
+          _invalid ||
+          !_clock().isBefore(presentation.expiresAt) ||
+          _resolveAuthenticatedHandle(presentation.callId) != handle) {
+        return false;
+      }
       descriptor = _descriptor;
     }
     if (descriptor != null) {

@@ -2059,5 +2059,13 @@
   "calls_load_error": "تعذر تحميل المكالمات",
   "calls_more": "عرض المزيد",
   "call_audio_choose_output": "اختيار مخرج الصوت",
-  "call_audio_refresh_outputs": "تحديث مخارج الصوت"
+  "call_audio_refresh_outputs": "تحديث مخارج الصوت",
+  "call_back_superseded": "توجد مكالمة أحدث مع جهة الاتصال هذه. عاود الاتصال من أحدث مكالمة.",
+  "onboarding_mic_title": "المكالمات والرسائل الصوتية",
+  "onboarding_mic_body": "يستخدم MKnoon الميكروفون للمكالمات والرسائل الصوتية.",
+  "onboarding_mic_settings_hint": "يمكنك تغيير ذلك في أي وقت من الإعدادات.",
+  "onboarding_mic_allow": "السماح بالميكروفون",
+  "onboarding_mic_allow_desc": "لتعمل المكالمات فورًا",
+  "onboarding_mic_not_now_desc": "سنسألك عند أول مكالمة أو أول تسجيل",
+  "call_end_permission_settings": "الوصول إلى الميكروفون متوقف لـ MKnoon. فعّله من الإعدادات لإجراء المكالمات والرد عليها."
 }

@@ -180,6 +180,7 @@ void main() {
       'rendezvous:unregister': 'rendezvousUnregister',
       'rendezvous:discover': 'rendezvousDiscover',
       'relay:probe': 'relayProbe',
+      'call_media:protection': 'callMediaProtection',
       'call_diagnostics_v1': 'callDiagnosticsV1',
       'turn_credentials_with_diagnostics_v1':
           'turnCredentialsWithDiagnosticsV1',
@@ -1938,6 +1939,96 @@ PrivateKeyMaterialShouldNeverAppearInDiagnostics
       expect(received!['needsGroupRecovery'], isTrue);
     });
 
+    test('network path push events reach the typed stream without the '
+        'relay id', () {
+      final seen = <Map<String, dynamic>>[];
+      final subscription = networkPathEventStream.listen(seen.add);
+      addTearDown(subscription.cancel);
+
+      for (final payload in <Map<String, dynamic>>[
+        {
+          'event': 'network:path_changing',
+          'data': {'epoch': 4, 'ownerGeneration': 2, 'previousReadyEpoch': 3},
+        },
+        {
+          'event': 'network:relay_ready',
+          'data': {
+            'epoch': 4,
+            'ownerGeneration': 2,
+            'stage': 'probe',
+            'totalMs': 812,
+            'relayId': '12D3KooWrelay',
+            'family': 'ip4',
+            'transport': 'quic',
+            'socketFresh': true,
+          },
+        },
+        {
+          'event': 'network:relay_failed',
+          'data': {
+            'epoch': 5,
+            'ownerGeneration': 2,
+            'stage': 'dial',
+            'errorCode': 'dial_timeout',
+            'totalMs': 8000,
+          },
+        },
+      ]) {
+        client.debugHandleEventForTest(jsonEncode(payload));
+      }
+
+      expect(client.debugUnknownPushEventCountForTest, 0);
+      expect(seen, <Map<String, dynamic>>[
+        {
+          'event': 'network:path_changing',
+          'epoch': 4,
+          'ownerGeneration': 2,
+          'previousReadyEpoch': 3,
+        },
+        {
+          'event': 'network:relay_ready',
+          'epoch': 4,
+          'ownerGeneration': 2,
+          'stage': 'probe',
+          'totalMs': 812,
+          'family': 'ip4',
+          'transport': 'quic',
+          'socketFresh': true,
+        },
+        {
+          'event': 'network:relay_failed',
+          'epoch': 5,
+          'ownerGeneration': 2,
+          'stage': 'dial',
+          'errorCode': 'dial_timeout',
+          'totalMs': 8000,
+        },
+      ]);
+    });
+
+    test('a previous-network loss from the native watcher reaches the typed '
+        'stream', () {
+      final seen = <Map<String, dynamic>>[];
+      final subscription = networkPathEventStream.listen(seen.add);
+      addTearDown(subscription.cancel);
+
+      client.debugHandleEventForTest(
+        jsonEncode({
+          'event': 'network:previous_path_lost',
+          'data': {'epoch': 6, 'ownerGeneration': 2},
+        }),
+      );
+
+      expect(client.debugUnknownPushEventCountForTest, 0);
+      expect(seen, <Map<String, dynamic>>[
+        {
+          'event': 'network:previous_path_lost',
+          'epoch': 6,
+          'ownerGeneration': 2,
+        },
+      ]);
+    });
+
     test(
       'TC-295-02 callbacks survive bridge reinitialize and delegate once',
       () async {
@@ -3469,7 +3560,7 @@ PrivateKeyMaterialShouldNeverAppearInDiagnostics
   // ---------------------------------------------------------------------------
   // Total command coverage sanity check
   // ---------------------------------------------------------------------------
-  test('all 68 commands are covered', () async {
+  test('all 69 commands are covered', () async {
     // Exhaustive list of every command in _cmdMap.
     final allCmds = [
       // Identity
@@ -3502,6 +3593,7 @@ PrivateKeyMaterialShouldNeverAppearInDiagnostics
       // Relay
       'relay:reconnect',
       'relay:probe',
+      'call_media:protection',
       'relay:presence_get',
       'relay:presence_set',
       // Peer
@@ -3555,8 +3647,8 @@ PrivateKeyMaterialShouldNeverAppearInDiagnostics
       'bg:timeRemaining',
     ];
 
-    expect(allCmds, hasLength(68));
-    expect(allCmds.toSet(), hasLength(68));
+    expect(allCmds, hasLength(69));
+    expect(allCmds.toSet(), hasLength(69));
 
     for (final cmd in allCmds) {
       final request = jsonEncode({

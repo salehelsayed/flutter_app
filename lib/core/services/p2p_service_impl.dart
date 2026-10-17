@@ -2132,8 +2132,8 @@ class P2PServiceImpl
       // an ABSENT field (older bridge), but never report success:false as
       // recovered: that lie reset the failure accounting and kept the 30s
       // restart loop invisible (spec 189 Defect B bookkeeping).
-      if (reconnectResponse['ok'] == true &&
-          reconnectResponse['success'] != false) {
+      final outcome = classifyRelayReconnect(reconnectResponse);
+      if (outcome == RelayReconnectOutcome.recovered) {
         final recoveryMode = reconnectResponse['recoveryMode'] as String?;
         final reusedHost =
             reconnectResponse['reusedHost'] as bool? ??
@@ -2189,6 +2189,28 @@ class P2PServiceImpl
         );
         _outageDetectedAt = null;
         _consecutiveRefreshFailures = 0;
+        return;
+      }
+
+      if (outcome == RelayReconnectOutcome.heldInPlace) {
+        // SE-42 D27: Go kept its host on purpose (a newer network path owns
+        // recovery, or a live call owns native media). Not a failure of this
+        // path: no failure accounting, no backoff; the next tick retries.
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'P2P_HEALTH_CHECK_RECOVERY_HELD',
+          details: {
+            'errorCode': reconnectResponse['errorCode'],
+            'recoveryMode': reconnectResponse['recoveryMode'],
+            'consecutiveRefreshFailures': _consecutiveRefreshFailures,
+          },
+        );
+        if (kDebugMode) {
+          debugPrint(
+            '[HEALTH] relay:reconnect HELD (${reconnectResponse['errorCode']}, '
+            'host kept, took ${reconnectMs}ms)',
+          );
+        }
         return;
       }
 

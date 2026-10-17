@@ -145,6 +145,9 @@ import 'package:flutter_app/features/contacts/data/repositories/contact_reposito
 import 'package:flutter_app/features/contact_request/data/repositories/contact_request_repository_impl.dart';
 import 'package:flutter_app/features/contact_request/application/contact_request_presentation_gate.dart';
 import 'package:flutter_app/features/contact_request/application/contact_request_listener.dart';
+import 'package:flutter_app/features/contact_request/application/contact_repair_outbox_worker.dart';
+import 'package:flutter_app/features/contact_request/application/contact_repair_rollout.dart';
+import 'package:flutter_app/features/contact_request/data/repositories/sql_contact_repair_repository.dart';
 import 'package:flutter_app/features/contact_request/application/send_contact_request_use_case.dart';
 import 'package:flutter_app/features/contact_request/application/recover_intro_contact_request_use_case.dart';
 import 'package:flutter_app/features/account_migration/application/account_migration_authority_repository_impl.dart';
@@ -291,6 +294,7 @@ import 'package:flutter_app/features/settings/application/media_auto_download_de
 import 'package:flutter_app/features/settings/application/media_download_policy.dart';
 import 'package:flutter_app/features/settings/application/profile_update_listener.dart';
 import 'package:flutter_app/core/services/connectivity_signal.dart';
+import 'package:flutter_app/core/services/network_path_source.dart';
 import 'package:flutter_app/core/services/incoming_message_router.dart';
 import 'package:flutter_app/core/services/pending_message_retrier.dart';
 import 'package:flutter_app/features/posts/application/pending_post_delivery_retrier.dart';
@@ -6282,6 +6286,12 @@ final class ProductionApplicationBootstrap
     final callHistoryProjected = StreamController<void>.broadcast();
     final callHistoryRepository = CallHistoryRepositoryImpl(db);
     DebugCallEvidenceObserver? debugCallEvidenceObserver;
+    // Task 12b: durable reply-once repair state and the verified-rollout
+    // eligibility for the signed marker.
+    final contactRepairRepository = SqlContactRepairRepository(db);
+    final contactRepairEligible = contactRepairEligibility(
+      repository: contactRepairRepository,
+    );
     final receivedCallWakeHandleRecovery =
         ReceivedCallWakeHandleRecoveryCoordinator(
           receivedCallWakeHandleStore: receivedCallWakeHandleStore,
@@ -6302,6 +6312,9 @@ final class ProductionApplicationBootstrap
                   callSignalingComposition.resolveCallWakeHandle,
               onCallWakeHandleDistributed:
                   callSignalingComposition.onCallWakeHandleDistributed,
+              markAsNewRequest: await contactRepairEligible(
+                contactAccountPeerId,
+              ),
             );
             if (result != SendContactRequestResult.success) {
               throw StateError('call wake recovery request unavailable');
@@ -6319,7 +6332,11 @@ final class ProductionApplicationBootstrap
             rotateOnFirstRead: pushRelayRegistrationProof == null,
           )
         : null;
+    // SE-42 D27: the node's default-network handoff outcomes, typed once for
+    // the process. The call graph of each start subscribes and unsubscribes.
+    final networkPathSource = NetworkPathSource(events: networkPathEventStream);
     callSignalingComposition = createProductionCallSignalingComposition(
+      networkPathOutcomes: networkPathSource.outcomes,
       secureKeyStore: secureKeyStore,
       iceServers: productionVoiceCallStunServers(),
       onCallHistoryProjected: (entry, inserted) {
@@ -6372,6 +6389,9 @@ final class ProductionApplicationBootstrap
                     onCallWakeHandleDistributed:
                         callSignalingComposition.onCallWakeHandleDistributed,
                     requireExactCallWakeReceipt: true,
+                    markAsNewRequest: await contactRepairEligible(
+                      contactAccountPeerId,
+                    ),
                   );
                   return result == SendContactRequestResult.success ? 1 : 0;
                 },
@@ -6459,6 +6479,16 @@ final class ProductionApplicationBootstrap
     // Create contact request listener
     // The getOwnPeerId function gets the peerId from the P2P service's current state.
     // This is populated when the node starts, so it will be empty before that.
+    final contactRepairOutboxWorker = ContactRepairOutboxWorker(
+      repository: contactRepairRepository,
+      p2pService: p2pService,
+      identityRepo: repository,
+      bridge: bridge,
+      contactRepo: contactRepository,
+      resolveCallWakeHandle: callSignalingComposition.resolveCallWakeHandle,
+      onCallWakeHandleDistributed:
+          callSignalingComposition.onCallWakeHandleDistributed,
+    );
     contactRequestListener = ContactRequestListener(
       contactRequestStream: messageRouter.contactRequestStream,
       requestRepo: contactRequestRepository,
@@ -6483,6 +6513,11 @@ final class ProductionApplicationBootstrap
       receivedCallWakeHandleStore: receivedCallWakeHandleStore,
       onCallWakeHandleStored:
           callSignalingComposition.refreshOutgoingCallAvailability,
+      // Task 12b: a fresh signed request from an existing contact reserves
+      // one durable reply here; the owned worker below sends it. The old
+      // unsigned-intent reciprocal path is gone.
+      // Owner decision A: legacy unmarked key-exchange retries keep their
+      // reciprocal grant reply; it is never marked.
       requestReciprocalCallWakeRecovery: (contactAccountPeerId) async {
         final contact = await contactRepository.getContact(
           contactAccountPeerId,
@@ -6499,11 +6534,17 @@ final class ProductionApplicationBootstrap
           onCallWakeHandleDistributed:
               callSignalingComposition.onCallWakeHandleDistributed,
           requireExactCallWakeReceipt: true,
+          markAsNewRequest: false,
         );
         if (result != SendContactRequestResult.success) {
           throw StateError('reciprocal call wake recovery unavailable');
         }
       },
+      repairRepository: contactRepairRepository,
+      getOwnPublicKey: () async => (await repository.loadIdentity())?.publicKey,
+      getOwnAccountPeerId: () async =>
+          (await repository.loadIdentity())?.peerId,
+      onRepairReplyQueued: () => unawaited(contactRepairOutboxWorker.drain()),
       shouldSuppressPresentationForPeerId:
           contactRequestPresentationGate.shouldSuppress,
       // 171 follow-up (user decision): the scanned user is notified via the
@@ -6558,6 +6599,7 @@ final class ProductionApplicationBootstrap
               return firebaseReadiness.isReady;
             },
             requestPermission: requestPushPermission,
+            readPermission: readPushPermission,
             registerPushToken: () async {
               // The headless Android FCM engine has no live P2P state. Persist the
               // exact transport whose token is being registered so a later wake
@@ -9314,6 +9356,7 @@ final class ProductionApplicationBootstrap
       // The existing contact-update retry also drains durable wake-token
       // backfill for contacts whose ML-KEM exchange already completed.
       resolveWakeToken: wakeTokenResolver,
+      shouldMarkAsNewRequest: contactRepairEligible,
       beforeRetry: () async {
         final contacts = await contactRepository.getActiveContacts();
         await issueWakeTokensForContacts(
@@ -9463,6 +9506,10 @@ final class ProductionApplicationBootstrap
       liveServiceStartupSteps.runSync(
         'contact_request_listener_start',
         contactRequestListener.start,
+      );
+      liveServiceStartupSteps.runSync(
+        'contact_repair_outbox_start',
+        () => unawaited(contactRepairOutboxWorker.start()),
       );
       liveServiceStartupSteps.runSync(
         'chat_message_listener_start',

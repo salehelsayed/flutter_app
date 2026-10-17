@@ -70,7 +70,7 @@ void main() {
         if (upgraded.isOpen) await upgraded.close();
       });
 
-      expect(currentIdentityDatabaseVersion, 120);
+      expect(currentIdentityDatabaseVersion, 121);
       expect(await _userVersion(upgraded), currentIdentityDatabaseVersion);
       expect(await upgraded.query('messages'), hasLength(1));
       expect(
@@ -232,10 +232,11 @@ void main() {
         // 369: DB v116 appended another entry, shifting it to `length - 10`.
         // VC2-02: DB v117 appends another entry, shifting it to `length - 11`.
         // DB v118 and quiet recovery v119 shift it to `length - 13`.
+        // Task 12b: DB v121 appends another entry, shifting it to `length - 15`.
         // The assertion itself is unchanged; only its position moved.
         classified(
           'test/core/database/migrations/104_group_exit_diagnostics_test.dart',
-          'expect(registry[registry.length - 14].version, $historicalVersion);',
+          'expect(registry[registry.length - 15].version, $historicalVersion);',
         ): 1,
         classified(
           'test/core/database/migrations/106_group_notification_display_outbox_test.dart',

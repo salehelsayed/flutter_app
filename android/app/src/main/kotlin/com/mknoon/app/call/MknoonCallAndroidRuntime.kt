@@ -1142,9 +1142,12 @@ private class AndroidMknoonCallPlatform(
 
     override fun setProximityScreenOff(nativeCallId: UUID, enabled: Boolean) {
         if (!enabled) {
-            val held = proximityLocks.remove(nativeCallId) ?: return
-            // Keep the screen off until the phone leaves the ear.
-            if (held.isHeld) held.release(PowerManager.RELEASE_FLAG_WAIT_FOR_NO_PROXIMITY)
+            releaseCallProximityLock(
+                nativeCallId, proximityLocks,
+                isHeld = { it.isHeld },
+                // Keep the screen off until the phone leaves the ear.
+                release = { it.release(PowerManager.RELEASE_FLAG_WAIT_FOR_NO_PROXIMITY) },
+            )
             return
         }
         val manager = powerManager ?: return
@@ -1472,4 +1475,17 @@ private fun observeDebugLifecycle(handle: String, kind: String, outcome: String)
             .getMethod("record", String::class.java, String::class.java, String::class.java)
             .invoke(null, handle, kind, outcome)
     }
+}
+
+/** Test seam for the platform's existing lock map; no independent resource owner. */
+internal fun <T> releaseCallProximityLock(
+    nativeCallId: UUID,
+    locks: ConcurrentHashMap<UUID, T>,
+    isHeld: (T) -> Boolean,
+    release: (T) -> Unit,
+) {
+    val held = locks[nativeCallId] ?: return
+    if (isHeld(held)) release(held)
+    check(!isHeld(held)) { "proximity release incomplete" }
+    locks.remove(nativeCallId, held)
 }

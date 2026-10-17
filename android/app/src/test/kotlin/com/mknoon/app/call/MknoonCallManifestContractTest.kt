@@ -37,6 +37,11 @@ class MknoonCallManifestContractTest {
             "$variant application must use its default process",
             application.hasAndroidAttribute("process"),
         )
+        assertEquals(
+            "$variant application must start the process-wide call audio ownership policy",
+            com.mknoon.app.MknoonApplication::class.java.name,
+            application.androidAttribute("name"),
+        )
 
         val service = manifest.uniqueComponent(
             tagName = "service",
@@ -215,6 +220,7 @@ class MknoonCallManifestContractTest {
             "android.permission.FOREGROUND_SERVICE_MICROPHONE",
             "android.permission.BLUETOOTH_CONNECT",
             "android.permission.WAKE_LOCK",
+            "android.permission.VIBRATE",
         )
     }
 }

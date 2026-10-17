@@ -12,6 +12,7 @@ import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import '../../shared/fakes/in_memory_contact_repository.dart';
 import '../../shared/fakes/in_memory_contact_request_repository.dart';
 import '../../shared/fakes/in_memory_inbox_staging_repository.dart';
+import '../../shared/fakes/ed25519_contact_request_crypto.dart';
 
 // ---------------------------------------------------------------------------
 // 171: cold-receiver relay-inbox replay of a contact_request must reach the
@@ -21,7 +22,10 @@ import '../../shared/fakes/in_memory_inbox_staging_repository.dart';
 // ---------------------------------------------------------------------------
 
 const _ownPeerId = '12D3KooWSelfBReceiverPeerId00';
-const _aPeerId = '12D3KooWScannerAPeerId1234567';
+// Task 12b: the scanner is a real Ed25519 identity, so its peer ID is the
+// libp2p ID of its key (the receiver now checks that binding).
+final _a = TestEd25519Identity.fromSeedByte(0xA7);
+final _aPeerId = _a.peerId;
 
 /// Self-contained bridge: handles node lifecycle + an inbox drain that finds
 /// nothing on the relay, and the contact-request decrypt/verify the listener
@@ -113,7 +117,7 @@ class _DeleteSpyStagingRepo extends InMemoryInboxStagingRepository {
 
 Map<String, dynamic> _payloadFor(String peerId) => {
   'ns': peerId,
-  'pk': 'pk-$peerId',
+  'pk': peerId == _aPeerId ? _a.publicKey : 'pk-$peerId',
   'rv': '/dns4/relay.example/tcp/4001/p2p/$peerId',
   'ts': DateTime.now().toUtc().toIso8601String(),
   'sig': 'sig-$peerId',
@@ -125,11 +129,7 @@ String _v2Envelope(String peerId, {String? msgId}) => jsonEncode({
   'version': '2',
   'msgId': msgId ?? 'cr-$peerId',
   'ts': DateTime.now().toUtc().toIso8601String(),
-  'encrypted': {
-    'ephemeralPublicKey': 'e',
-    'ciphertext': 'c',
-    'nonce': 'n',
-  },
+  'encrypted': {'ephemeralPublicKey': 'e', 'ciphertext': 'c', 'nonce': 'n'},
 });
 
 InboxStagingEntry _contactRequestEntry(
@@ -174,10 +174,7 @@ void main() {
         if (req != null) {
           // mimic acceptAndReciprocate's local add + status flip
           await contactRepo.addContact(req.toContactModel());
-          await requestRepo.updateStatus(
-            peerId,
-            ContactRequestStatus.accepted,
-          );
+          await requestRepo.updateStatus(peerId, ContactRequestStatus.accepted);
         }
         return AcceptContactRequestResult.success;
       },
@@ -238,35 +235,50 @@ void main() {
 
     final addRequestIdx = firstIndexWithPrefix('addRequest:');
     final deleteIdx = firstIndexWithPrefix('deleteEntry:');
-    expect(addRequestIdx, greaterThanOrEqualTo(0),
-        reason: 'a durable request write must occur');
-    expect(deleteIdx, greaterThanOrEqualTo(0),
-        reason: 'the staged entry must be deleted on commit');
-    expect(addRequestIdx, lessThan(deleteIdx),
-        reason: 'persist BEFORE delete (INV-1)');
+    expect(
+      addRequestIdx,
+      greaterThanOrEqualTo(0),
+      reason: 'a durable request write must occur',
+    );
+    expect(
+      deleteIdx,
+      greaterThanOrEqualTo(0),
+      reason: 'the staged entry must be deleted on commit',
+    );
+    expect(
+      addRequestIdx,
+      lessThan(deleteIdx),
+      reason: 'persist BEFORE delete (INV-1)',
+    );
   });
 
   // TC-14: the cold-B inbox path runs the FULL processing — a durable A-contact
   // row is written AND the reciprocal fires — BOTH before deleteEntry. This is
   // the only host test proving the cold-B (dominant-bug) recovery is mutual.
-  test('cold-B inbox path auto-adds + reciprocates before deleteEntry', () async {
-    await startNode();
-    staging.seed(_contactRequestEntry(_aPeerId));
+  test(
+    'cold-B inbox path auto-adds + reciprocates before deleteEntry',
+    () async {
+      await startNode();
+      staging.seed(_contactRequestEntry(_aPeerId));
 
-    await service.drainOfflineInbox();
+      await service.drainOfflineInbox();
 
-    // Mutual: A is now a durable contact AND the reciprocal (B->A) fired.
-    expect(await contactRepo.contactExists(_aPeerId), isTrue);
-    expect(reciprocals, equals([_aPeerId]));
+      // Mutual: A is now a durable contact AND the reciprocal (B->A) fired.
+      expect(await contactRepo.contactExists(_aPeerId), isTrue);
+      expect(reciprocals, equals([_aPeerId]));
 
-    final addContactIdx = firstIndexWithPrefix('addContact:');
-    final reciprocalIdxOk = reciprocals.isNotEmpty;
-    final deleteIdx = firstIndexWithPrefix('deleteEntry:');
-    expect(addContactIdx, greaterThanOrEqualTo(0));
-    expect(reciprocalIdxOk, isTrue);
-    expect(addContactIdx, lessThan(deleteIdx),
-        reason: 'the contact row must be written before the entry is deleted');
-  });
+      final addContactIdx = firstIndexWithPrefix('addContact:');
+      final reciprocalIdxOk = reciprocals.isNotEmpty;
+      final deleteIdx = firstIndexWithPrefix('deleteEntry:');
+      expect(addContactIdx, greaterThanOrEqualTo(0));
+      expect(reciprocalIdxOk, isTrue);
+      expect(
+        addContactIdx,
+        lessThan(deleteIdx),
+        reason: 'the contact row must be written before the entry is deleted',
+      );
+    },
+  );
 
   // TC-15: after a restart (FRESH listener with an empty in-memory replay
   // cache), a redelivered v2 request for an ALREADY-durable contact must NOT
@@ -277,7 +289,7 @@ void main() {
     contactRepo.addTestContact(
       ContactModel(
         peerId: _aPeerId,
-        publicKey: 'pk-$_aPeerId',
+        publicKey: _a.publicKey,
         rendezvous: '/dns4/relay.example/tcp/4001/p2p/$_aPeerId',
         username: 'User-$_aPeerId',
         signature: 'sig-$_aPeerId',
@@ -302,7 +314,11 @@ void main() {
   test('re-sent request lands on a cold B and auto-adds', () async {
     await startNode();
     staging.seed(
-      _contactRequestEntry(_aPeerId, entryId: 'relay:cr-resend', msgId: 'resend-1'),
+      _contactRequestEntry(
+        _aPeerId,
+        entryId: 'relay:cr-resend',
+        msgId: 'resend-1',
+      ),
     );
 
     await service.drainOfflineInbox();

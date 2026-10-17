@@ -18,6 +18,8 @@ CallEvent _event(
   CallNativeAction? nativeAction,
   CallEndReason? endReason,
   String? candidateId,
+  int? pathEpoch,
+  int? reconnectGeneration,
 }) => CallEvent(
   type: type,
   eventId: eventId ?? '${type.name}-event',
@@ -34,6 +36,8 @@ CallEvent _event(
   nativeAction: nativeAction,
   endReason: endReason,
   candidateId: candidateId,
+  pathEpoch: pathEpoch,
+  reconnectGeneration: reconnectGeneration,
 );
 
 CallSessionSnapshot _reduce(List<CallEvent> events) {
@@ -1408,6 +1412,331 @@ void main() {
         'app_shutdown',
         'policy_rejected',
       ]);
+    });
+  });
+
+  group('network path readiness', () {
+    const reducer = CallReducer();
+    CallSessionSnapshot connected(CallDirection direction) =>
+        CallSessionSnapshot.active(
+          callId: _callA,
+          contactPeerId: 'contact-account-a',
+          direction: direction,
+          state: CallState.connected,
+          callerAccountPeerId: 'local-account',
+          callerDeviceId: 'local-device',
+          startedAt: _t0,
+          acceptedAt: _t0,
+          connectedAt: _t0,
+        );
+    CallEvent changed(int epoch, {String? id}) => _event(
+      CallEventType.networkPathChanged,
+      eventId: id ?? 'path-changed-$epoch',
+      pathEpoch: epoch,
+    );
+    CallEvent ready(int epoch) => _event(
+      CallEventType.networkPathReady,
+      eventId: 'path-ready-$epoch',
+      pathEpoch: epoch,
+    );
+    CallEvent failed(int epoch) => _event(
+      CallEventType.networkPathFailed,
+      eventId: 'path-failed-$epoch',
+      pathEpoch: epoch,
+    );
+    CallEvent previousLost(int epoch, {String? id}) => _event(
+      CallEventType.networkPreviousPathLost,
+      eventId: id ?? 'path-previous-lost-$epoch',
+      pathEpoch: epoch,
+    );
+    // A call that switched to epoch [epoch], restarted on relay readiness
+    // and recovered media: the linger-end situation.
+    CallSessionSnapshot recoveredOn(CallDirection direction, int epoch) {
+      final waiting = reducer.reduce(connected(direction), changed(epoch));
+      final restarted = reducer.reduce(waiting.snapshot, ready(epoch));
+      final recovered = reducer.reduce(
+        restarted.snapshot,
+        _event(CallEventType.mediaRecovered, eventId: 'recovered-$epoch'),
+      );
+      expect(recovered.snapshot.state, CallState.connected);
+      return recovered.snapshot;
+    }
+
+    List<CallEffectType> types(CallReduction reduction) =>
+        reduction.effects.map((effect) => effect.type).toList();
+
+    for (final direction in CallDirection.values) {
+      test('relay readiness after a path change starts one proactive reconnect '
+          'for ${direction.name}', () {
+        final waiting = reducer.reduce(connected(direction), changed(7));
+        expect(waiting.decision, CallEventDecision.applied);
+        expect(waiting.snapshot.state, CallState.connected);
+        expect(waiting.snapshot.pendingPathEpoch, 7);
+        expect(waiting.effects, isEmpty);
+
+        final restarted = reducer.reduce(waiting.snapshot, ready(7));
+        expect(restarted.decision, CallEventDecision.applied);
+        expect(restarted.snapshot.state, CallState.reconnecting);
+        expect(restarted.snapshot.reconnectGeneration, 1);
+        expect(restarted.snapshot.transportRecoveryRequired, isTrue);
+        expect(restarted.snapshot.pendingPathEpoch, isNull);
+        expect(types(restarted), <CallEffectType>[
+          CallEffectType.scheduleReconnectTimeout,
+          direction == CallDirection.incoming
+              ? CallEffectType.requestIceRestart
+              : CallEffectType.restartIce,
+        ]);
+        expect(restarted.effects.first.delay, const Duration(seconds: 15));
+      });
+    }
+
+    test('relay failure launches no restart and discards its epoch', () {
+      final waiting = reducer
+          .reduce(connected(CallDirection.outgoing), changed(7))
+          .snapshot;
+      final failedOutcome = reducer.reduce(waiting, failed(7));
+      expect(failedOutcome.decision, CallEventDecision.applied);
+      expect(failedOutcome.snapshot.state, CallState.connected);
+      expect(failedOutcome.snapshot.pendingPathEpoch, isNull);
+      expect(failedOutcome.effects, isEmpty);
+
+      final late = reducer.reduce(failedOutcome.snapshot, ready(7));
+      expect(late.decision, CallEventDecision.ignored);
+      expect(late.snapshot.state, CallState.connected);
+      expect(late.effects, isEmpty);
+    });
+
+    test('readiness for an unknown or superseded epoch is ignored', () {
+      final idleReady = reducer.reduce(
+        connected(CallDirection.outgoing),
+        ready(7),
+      );
+      expect(idleReady.decision, CallEventDecision.ignored);
+      expect(idleReady.snapshot.state, CallState.connected);
+
+      var snapshot = reducer
+          .reduce(connected(CallDirection.outgoing), changed(7))
+          .snapshot;
+      snapshot = reducer.reduce(snapshot, changed(8)).snapshot;
+      expect(snapshot.pendingPathEpoch, 8);
+      final stale = reducer.reduce(snapshot, ready(7));
+      expect(stale.decision, CallEventDecision.ignored);
+      expect(stale.snapshot.state, CallState.connected);
+      expect(stale.effects, isEmpty);
+
+      final current = reducer.reduce(snapshot, ready(8));
+      expect(current.snapshot.state, CallState.reconnecting);
+      expect(current.snapshot.reconnectGeneration, 1);
+    });
+
+    test('a repeated change for the same epoch is a duplicate', () {
+      final first = reducer.reduce(
+        connected(CallDirection.outgoing),
+        changed(7),
+      );
+      final again = reducer.reduce(
+        first.snapshot,
+        changed(7, id: 'path-changed-7-again'),
+      );
+      expect(again.decision, CallEventDecision.ignored);
+      expect(again.snapshot.pendingPathEpoch, 7);
+      expect(again.effects, isEmpty);
+    });
+
+    test('media loss during the path wait keeps its deadline and resumes '
+        'sealed signals on readiness', () {
+      final waiting = reducer
+          .reduce(connected(CallDirection.outgoing), changed(7))
+          .snapshot;
+      final lost = reducer.reduce(waiting, _event(CallEventType.mediaLost));
+      expect(lost.snapshot.state, CallState.reconnecting);
+      expect(lost.snapshot.reconnectGeneration, 1);
+      expect(lost.snapshot.pendingPathEpoch, 7);
+      expect(types(lost), <CallEffectType>[
+        CallEffectType.scheduleReconnectTimeout,
+        CallEffectType.restartIce,
+      ]);
+
+      final resumed = reducer.reduce(lost.snapshot, ready(7));
+      expect(resumed.decision, CallEventDecision.applied);
+      expect(resumed.snapshot.state, CallState.reconnecting);
+      expect(resumed.snapshot.reconnectGeneration, 1);
+      expect(resumed.snapshot.pendingPathEpoch, isNull);
+      expect(types(resumed), <CallEffectType>[
+        CallEffectType.resumeRecoverySignals,
+      ]);
+    });
+
+    test('path flaps during a reconnect episode never touch the deadline', () {
+      final lost = reducer
+          .reduce(
+            connected(CallDirection.incoming),
+            _event(CallEventType.mediaLost),
+          )
+          .snapshot;
+      expect(lost.reconnectGeneration, 1);
+
+      final flap1 = reducer.reduce(lost, changed(8));
+      expect(flap1.effects, isEmpty);
+      expect(flap1.snapshot.reconnectGeneration, 1);
+      final flap2 = reducer.reduce(flap1.snapshot, changed(9));
+      expect(flap2.effects, isEmpty);
+      expect(flap2.snapshot.pendingPathEpoch, 9);
+
+      final staleReady = reducer.reduce(flap2.snapshot, ready(8));
+      expect(staleReady.decision, CallEventDecision.ignored);
+      expect(staleReady.effects, isEmpty);
+
+      final currentReady = reducer.reduce(flap2.snapshot, ready(9));
+      expect(currentReady.snapshot.state, CallState.reconnecting);
+      expect(currentReady.snapshot.reconnectGeneration, 1);
+      expect(types(currentReady), <CallEffectType>[
+        CallEffectType.resumeRecoverySignals,
+      ]);
+    });
+
+    test('readiness cannot revive a call that ended during the wait', () {
+      final waiting = reducer
+          .reduce(connected(CallDirection.outgoing), changed(7))
+          .snapshot;
+      final hungUp = reducer.reduce(waiting, _event(CallEventType.end));
+      expect(hungUp.snapshot.state, CallState.ended);
+      final late = reducer.reduce(hungUp.snapshot, ready(7));
+      expect(late.decision, CallEventDecision.ignored);
+      expect(late.reason, CallReductionReason.terminalDominates);
+      expect(late.snapshot.state, CallState.ended);
+      expect(late.effects, isEmpty);
+
+      final lost = reducer
+          .reduce(waiting, _event(CallEventType.mediaLost))
+          .snapshot;
+      final expired = reducer.reduce(
+        lost,
+        _event(
+          CallEventType.timeout,
+          timeoutKind: CallTimeoutKind.reconnect,
+          reconnectGeneration: lost.reconnectGeneration,
+        ),
+      );
+      expect(expired.snapshot.state, CallState.ended);
+      expect(expired.snapshot.endReason, CallEndReason.reconnectFailed);
+      final afterExpiry = reducer.reduce(expired.snapshot, ready(7));
+      expect(afterExpiry.decision, CallEventDecision.ignored);
+      expect(afterExpiry.snapshot.state, CallState.ended);
+      expect(afterExpiry.effects, isEmpty);
+    });
+
+    test('an idle session performs no ICE action for path events', () {
+      final idle = CallSessionSnapshot.idle(now: _t0);
+      for (final event in <CallEvent>[changed(7), ready(7), failed(7)]) {
+        final reduction = reducer.reduce(idle, event);
+        expect(reduction.decision, isNot(CallEventDecision.applied));
+        expect(reduction.snapshot.state, CallState.idle);
+        expect(reduction.effects, isEmpty);
+      }
+    });
+
+    test('readiness while negotiating issues no second initial offer', () {
+      final negotiating = CallSessionSnapshot.active(
+        callId: _callA,
+        contactPeerId: 'contact-account-a',
+        direction: CallDirection.outgoing,
+        state: CallState.negotiating,
+        callerAccountPeerId: 'local-account',
+        callerDeviceId: 'local-device',
+        startedAt: _t0,
+        acceptedAt: _t0,
+      );
+      final waiting = reducer.reduce(negotiating, changed(7));
+      expect(waiting.decision, CallEventDecision.applied);
+      expect(waiting.effects, isEmpty);
+      final readyAgain = reducer.reduce(waiting.snapshot, ready(7));
+      expect(readyAgain.decision, CallEventDecision.applied);
+      expect(readyAgain.snapshot.state, CallState.negotiating);
+      expect(readyAgain.snapshot.pendingPathEpoch, isNull);
+      expect(readyAgain.effects, isEmpty);
+    });
+
+    for (final direction in CallDirection.values) {
+      test('losing the previous network after recovery restarts at once '
+          'for ${direction.name}', () {
+        final recovered = recoveredOn(direction, 7);
+
+        final lost = reducer.reduce(recovered, previousLost(7));
+
+        expect(lost.decision, CallEventDecision.applied);
+        expect(lost.snapshot.state, CallState.reconnecting);
+        expect(lost.snapshot.reconnectGeneration, 2);
+        expect(types(lost), <CallEffectType>[
+          CallEffectType.scheduleReconnectTimeout,
+          direction == CallDirection.incoming
+              ? CallEffectType.requestIceRestart
+              : CallEffectType.restartIce,
+        ]);
+        expect(lost.effects.first.delay, const Duration(seconds: 15));
+      });
+    }
+
+    test('a previous-network loss during a reconnect episode coalesces', () {
+      final waiting = reducer.reduce(
+        connected(CallDirection.outgoing),
+        changed(7),
+      );
+      final restarting = reducer.reduce(waiting.snapshot, ready(7)).snapshot;
+      expect(restarting.state, CallState.reconnecting);
+
+      final lost = reducer.reduce(restarting, previousLost(7));
+
+      expect(lost.snapshot.state, CallState.reconnecting);
+      expect(lost.snapshot.reconnectGeneration, restarting.reconnectGeneration);
+      expect(lost.effects, isEmpty);
+    });
+
+    test('a previous-network loss is acted on once per epoch', () {
+      final recovered = recoveredOn(CallDirection.outgoing, 7);
+      final first = reducer.reduce(recovered, previousLost(7));
+      final back = reducer.reduce(
+        first.snapshot,
+        _event(CallEventType.mediaRecovered, eventId: 'recovered-again'),
+      );
+      expect(back.snapshot.state, CallState.connected);
+
+      final again = reducer.reduce(
+        back.snapshot,
+        previousLost(7, id: 'path-previous-lost-7-again'),
+      );
+
+      expect(again.decision, CallEventDecision.ignored);
+      expect(again.snapshot.state, CallState.connected);
+      expect(again.effects, isEmpty);
+    });
+
+    test(
+      'a loss for a stale epoch, or with a newer path pending, does nothing',
+      () {
+        final recovered = recoveredOn(CallDirection.outgoing, 7);
+
+        final stale = reducer.reduce(recovered, previousLost(6));
+        expect(stale.decision, CallEventDecision.ignored);
+        expect(stale.effects, isEmpty);
+
+        final pending = reducer.reduce(recovered, changed(8)).snapshot;
+        final whilePending = reducer.reduce(pending, previousLost(7));
+        expect(whilePending.decision, CallEventDecision.ignored);
+        expect(whilePending.snapshot.state, CallState.connected);
+        expect(whilePending.snapshot.pendingPathEpoch, 8);
+        expect(whilePending.effects, isEmpty);
+      },
+    );
+
+    test('a loss before any ready epoch does nothing', () {
+      final lost = reducer.reduce(
+        connected(CallDirection.outgoing),
+        previousLost(7),
+      );
+      expect(lost.decision, CallEventDecision.ignored);
+      expect(lost.snapshot.state, CallState.connected);
+      expect(lost.effects, isEmpty);
     });
   });
 }

@@ -19,6 +19,7 @@ import 'package:flutter_app/core/permissions/mic_permission_gateway.dart';
 import 'package:flutter_app/features/call/diagnostics/call_diagnostics.dart';
 import 'package:flutter_app/features/call/infrastructure/call_stats_sampler.dart';
 import 'package:flutter_app/core/services/incoming_message_router.dart';
+import 'package:flutter_app/core/services/network_path_source.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/call/application/call_cleanup_coordinator.dart';
@@ -326,9 +327,25 @@ final class _Bridge implements Bridge {
         'expiresAtMs': 1,
         'hasMore': false,
       },
+      // SE-42 D27: this build's Go broker grants call-media protection, so
+      // the media owner opens media. A bare refusal here would keep every
+      // call in its pending state until the media-preparation budget ends.
+      'call_media:protection' => _protectionAnswer(
+        request['payload']! as Map<String, dynamic>,
+      ),
       _ => const <String, Object?>{'ok': false},
     });
   }
+
+  static Map<String, Object?> _protectionAnswer(Map<String, dynamic> payload) =>
+      payload['held'] == true
+      ? <String, Object?>{
+          'ok': true,
+          'held': true,
+          'generation': payload['generation'],
+          'incarnation': 1,
+        }
+      : const <String, Object?>{'ok': true, 'held': false, 'released': true};
 
   @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
@@ -423,6 +440,33 @@ ForegroundCallProjection _projection({
 );
 
 void main() {
+  test('production graph feeds path epochs to the active call and lets the '
+      'source go on shutdown', () async {
+    final outcomes = StreamController<NetworkPathOutcome>.broadcast(sync: true);
+    addTearDown(outcomes.close);
+    final fixture = await _createProductionSpeakerRouteFixture(
+      networkPathOutcomes: outcomes.stream,
+    );
+    final graph = fixture.graph;
+    expect(outcomes.hasListener, isTrue);
+    expect(graph.coordinator.activeSession?.pendingPathEpoch, isNull);
+
+    outcomes.add(
+      const NetworkPathOutcome(
+        generation: 2,
+        epoch: 7,
+        stage: NetworkPathStage.changing,
+      ),
+    );
+    for (var turn = 0; turn < 8; turn++) {
+      await Future<void>.delayed(Duration.zero);
+    }
+    expect(graph.coordinator.activeSession?.pendingPathEpoch, 7);
+
+    await graph.shutdown();
+    expect(outcomes.hasListener, isFalse);
+  });
+
   test(
     'production graph emits no-answer separately from presentation refusal',
     () async {
@@ -705,10 +749,15 @@ void main() {
             acceptedAt: graph.coordinator.clock(),
           ),
         );
-        // Startup cleanup emits the engine's closed event before preparation
-        // settles. That canonical failure retires the effect; it must not
-        // return a second failure after its call is already terminal.
-        expect(failure, isNull);
+        // Startup cleanup closes the engine before preparation settles. The
+        // preparer's typed result owns the outcome, so the engine's closed
+        // event must not pre-empt it with an untyped failure (a blocked
+        // microphone has to end as permissionDenied, not mediaFailed). This
+        // direct execute only observes the result; the coordinator dispatches.
+        expect(failure?.type, CallEventType.negotiationFailed);
+        expect(failure?.endReason, isNull);
+        expect(terminals, isEmpty);
+        await graph.coordinator.dispatch(failure!);
         expect(terminals, hasLength(1));
         expect(terminals.single.callId, _callA);
         expect(terminals.single.endReason, CallEndReason.mediaFailed);
@@ -6146,6 +6195,7 @@ Future<_ProductionSpeakerRouteFixture> _createProductionSpeakerRouteFixture({
   CallAudioOutputRoute initialRoute = CallAudioOutputRoute.speaker,
   NativeCallLifecycleAdapter Function(CallCoordinator)? nativeLifecycleFactory,
   MicrophoneCaptureLeaseCoordinator? microphoneCaptureLeases,
+  Stream<NetworkPathOutcome>? networkPathOutcomes,
 }) async {
   const nowMs = 2_000_000;
   final now = DateTime.fromMillisecondsSinceEpoch(nowMs, isUtc: true);
@@ -6255,6 +6305,7 @@ Future<_ProductionSpeakerRouteFixture> _createProductionSpeakerRouteFixture({
         : null,
     mediaOwner: mediaOwner,
     microphoneCaptureLeases: microphoneCaptureLeases,
+    networkPathOutcomes: networkPathOutcomes,
     networkEffectsAllowed: () => true,
     nowMs: () => nowMs,
   );

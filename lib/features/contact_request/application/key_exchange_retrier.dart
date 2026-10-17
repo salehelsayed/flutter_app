@@ -44,6 +44,7 @@ class KeyExchangeRetrier {
     LoadPendingCallWakeHandleContactIds? loadPendingCallWakeHandleContactIds,
     ResolveCallWakeHandle? resolveCallWakeHandle,
     OnCallWakeHandleDistributed? onCallWakeHandleDistributed,
+    Future<bool> Function(String peerId)? shouldMarkAsNewRequest,
   }) : _coordinator =
            coordinator ??
            KeyExchangeRetryCoordinator(
@@ -60,6 +61,7 @@ class KeyExchangeRetrier {
                      loadPendingCallWakeHandleContactIds,
                  resolveCallWakeHandle: resolveCallWakeHandle,
                  onCallWakeHandleDistributed: onCallWakeHandleDistributed,
+                 shouldMarkAsNewRequest: shouldMarkAsNewRequest,
                );
              },
            );

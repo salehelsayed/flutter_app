@@ -78,6 +78,27 @@ type Node struct {
 	relaySessionMgr *RelaySessionManager
 	eventDispatcher *EventDispatcher
 
+	// hostGeneration counts committed Starts. A network handoff captures it so
+	// a result computed against an earlier host can never mark a later host
+	// ready.
+	hostGeneration uint64
+	// networkPath owns the default-network handoff state machine (SE-42 D27).
+	networkPath *networkPathHandoff
+	// freshRelayDial arms configured relay peers for brand-new-socket QUIC
+	// dials while a handoff attempt runs.
+	freshRelayDial *freshQUICDialPolicy
+	// addrOverlay keeps the advertised addresses in step with the interfaces
+	// right after a network path change (libp2p caches them for a minute).
+	addrOverlay *advertisedAddrOverlay
+	// beforePublishNetworkHandoffHook runs between an attempt's completion and
+	// the publication of its outcome. Test seam for the late-completion race;
+	// nil in production.
+	beforePublishNetworkHandoffHook func(epoch uint64)
+	// transportOptionsForTests replaces nodeTransportOptions for fixtures that
+	// need a differently configured transport (for example a WebSocket client
+	// trusting a test certificate). nil in production.
+	transportOptionsForTests func(*freshQUICDialPolicy) []libp2p.Option
+
 	// PubSub / Group messaging
 	pubsub               *pubsub.PubSub
 	groupTopics          map[string]*pubsub.Topic
@@ -256,6 +277,9 @@ func NewNode() *Node {
 		pubsubRejectDiagLast:  make(map[string]time.Time),
 		pendingDirectConfirms: make(map[string]chan directConfirmResult),
 		newHost:               defaultNewHost,
+		networkPath:           newNetworkPathHandoff(),
+		freshRelayDial:        newFreshQUICDialPolicy(),
+		addrOverlay:           newAdvertisedAddrOverlay(),
 	}
 }
 
@@ -272,6 +296,9 @@ func New(cb EventCallback) *Node {
 		pubsubRejectDiagLast:  make(map[string]time.Time),
 		pendingDirectConfirms: make(map[string]chan directConfirmResult),
 		newHost:               defaultNewHost,
+		networkPath:           newNetworkPathHandoff(),
+		freshRelayDial:        newFreshQUICDialPolicy(),
+		addrOverlay:           newAdvertisedAddrOverlay(),
 	}
 }
 
@@ -294,6 +321,7 @@ func (n *Node) Start(cfg NodeConfig) (state *NodeState, err error) {
 	}
 	n.startInProgress = true
 	hostFactory := n.newHost
+	transportOptions := n.transportOptionsForTests
 	holePunchTracer := n.holePunchTracerForTests
 	forcePublicReachability := n.forcePublicReachabilityForTests
 	hermeticLocalNetwork := n.hermeticLocalNetworkForTests
@@ -445,13 +473,17 @@ func (n *Node) Start(cfg NodeConfig) (state *NodeState, err error) {
 		libp2p.EnableRelay(),
 		libp2p.EnableHolePunching(holeOpts...),
 	}
+	if transportOptions == nil {
+		transportOptions = nodeTransportOptions
+	}
+	hostOpts = append(hostOpts, transportOptions(n.freshRelayDial)...)
 	if !hermeticLocalNetwork {
 		hostOpts = append(hostOpts, libp2p.NATPortMap())
 	}
 	hostOpts = append(
 		hostOpts,
 		reachabilityOpt,
-		libp2p.AddrsFactory(advertisedAddrsFactory),
+		libp2p.AddrsFactory(n.addrOverlay.wrap(advertisedAddrsFactory)),
 	)
 	if len(relayInfos) > 0 {
 		hostOpts = append(hostOpts,
@@ -536,8 +568,12 @@ func (n *Node) Start(cfg NodeConfig) (state *NodeState, err error) {
 		for _, relayPeerID := range relayPeerOrder {
 			n.relaySessionMgr.InitRelayPeer(relayPeerID)
 		}
+		n.relaySessionMgr.hostStarted()
 	}
 	n.host = h
+	n.hostGeneration++
+	replayNetworkPath := n.networkPath.hostStarted(n.hostGeneration)
+	n.addrOverlay.startHost(h.Network().ListenAddresses)
 	n.peerId = h.ID().String()
 	n.lanDialHandler = lanDialHandler
 	n.peerSession = peerSession
@@ -564,6 +600,12 @@ func (n *Node) Start(cfg NodeConfig) (state *NodeState, err error) {
 	n.mu.Unlock()
 	startCommitted = true
 	lockHeld += time.Since(commitLockAt)
+	if replayNetworkPath {
+		// The owner's latest usable path arrived while the node was stopped or
+		// starting (an internal watchdog restart emits no native start reply
+		// that would make the platform resend it). Serve it on this host.
+		go n.runNetworkHandoffs()
+	}
 
 	localHost = nil
 	localCancel = nil
@@ -684,6 +726,9 @@ func (n *Node) Stop() error {
 	n.connections = make(map[string]connectionInfo)
 	n.relayPeerOrder = nil
 	n.host = nil
+	n.freshRelayDial.disarmAll()
+	n.networkPath.hostStopped()
+	n.addrOverlay.reset()
 	n.peerSession = nil
 	n.eventSub = nil
 	// FDC-11: tear down the LAN-dial handler so a Stop/Start cycle re-wires
@@ -762,8 +807,22 @@ func (n *Node) Status() map[string]interface{} {
 			result[k] = v
 		}
 	}
+	result["networkPath"] = n.NetworkPathStatus()
 
 	return result
+}
+
+// AcquireCallMediaProtection takes the call-media protection lease on the
+// shared recovery broker for one call generation (SE-42 D27 lease contract).
+// Acquire before taking native media ownership. The answer is immediate.
+func (n *Node) AcquireCallMediaProtection(generation int64) CallMediaProtectionReply {
+	return n.relaySessionMgr.AcquireCallMediaProtection(generation)
+}
+
+// ReleaseCallMediaProtection releases exactly the lease (generation,
+// incarnation) that a grant returned, after that generation's media cleanup.
+func (n *Node) ReleaseCallMediaProtection(generation int64, incarnation uint64) CallMediaProtectionReply {
+	return n.relaySessionMgr.ReleaseCallMediaProtection(generation, incarnation)
 }
 
 // State returns the current node state as a typed NodeState.
@@ -806,10 +865,10 @@ func (n *Node) WaitForRelayConnection(timeout time.Duration) error {
 // warming the connection lets AutoRelay's identify complete instantly when it
 // runs tryNode(), avoiding a 20s identify timeout + 30s retry wait.
 func (n *Node) warmRelayConnection(info peer.AddrInfo) error {
-	return n.warmRelayConnectionWithTimeout(info, DialTimeout)
+	return n.warmRelayConnectionWithTimeout(n.ctx, info, DialTimeout)
 }
 
-func (n *Node) warmRelayConnectionWithTimeout(info peer.AddrInfo, timeout time.Duration) error {
+func (n *Node) warmRelayConnectionWithTimeout(ctx context.Context, info peer.AddrInfo, timeout time.Duration) error {
 	if n.warmRelayConnectionWithTimeoutHook != nil {
 		return n.warmRelayConnectionWithTimeoutHook(info, timeout)
 	}
@@ -822,7 +881,10 @@ func (n *Node) warmRelayConnectionWithTimeout(info peer.AddrInfo, timeout time.D
 	// ranker resolves DNS and races IPv6/IPv4 and QUIC/TCP (including WSS).
 	// A separate Connect per address would serialize fallback and multiply
 	// the caller's budget by the number of addresses.
-	ctx, cancel := context.WithTimeout(n.ctx, timeout)
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	ctx = network.WithDialPeerTimeout(ctx, timeout)
 	err := n.connectRelay(ctx, info)
@@ -881,10 +943,25 @@ func (n *Node) RefreshRelaySession() *RecoveryResult {
 	recovery, isNew := mgr.BeginRecovery()
 	if isNew {
 		go n.runRelayRecovery(mgr, recovery, func() (*RecoveryResult, error) {
-			return n.refreshRelaySessionOwned(), nil
+			return n.refreshRelaySessionOwned(n.recoveryWorkContext(recovery)), nil
 		})
 	}
 	return waitForSharedRecoveryResult(recovery)
+}
+
+// recoveryWorkContext is the context an owned recovery runs under: the node's
+// lifetime, plus early cancellation when a newer network path supersedes the
+// recovery. CompleteRecovery always cancels the promise, which releases it.
+func (n *Node) recoveryWorkContext(recovery *recoveryPromise) context.Context {
+	n.mu.RLock()
+	base := n.ctx
+	n.mu.RUnlock()
+	if base == nil {
+		base = context.Background()
+	}
+	ctx, cancel := context.WithCancel(base)
+	context.AfterFunc(recovery.Context(), cancel)
+	return ctx
 }
 
 // runRelayRecovery runs one owned recovery, then reports the settled relay
@@ -952,7 +1029,7 @@ func waitForSharedRecoveryOutcome(recovery *recoveryPromise) (*RecoveryResult, e
 	}, nil
 }
 
-func (n *Node) refreshRelaySessionOwned() *RecoveryResult {
+func (n *Node) refreshRelaySessionOwned(ctx context.Context) *RecoveryResult {
 	refreshStart := time.Now()
 	n.mu.RLock()
 	h := n.host
@@ -992,14 +1069,14 @@ func (n *Node) refreshRelaySessionOwned() *RecoveryResult {
 
 		warmInfos, relayInfoMap := relayWarmPlan(relayAddrs, relayPeerOrder)
 		warmSucceeded, lastWarmErr, successfulWarmInfos, relayWarmParallelism, relayWarmMs :=
-			n.warmRelayInfos(warmInfos, relayInfoMap)
+			n.warmRelayInfos(ctx, warmInfos, relayInfoMap)
 		reserveSucceeded, lastReserveErr, reserveRpcMs, reservationPath, reservationWinnerPeer :=
-			n.reserveWarmedRelays(h, mgr, successfulWarmInfos, reservationPath, reservationWinnerPeer)
+			n.reserveWarmedRelays(ctx, h, mgr, successfulWarmInfos, reservationPath, reservationWinnerPeer)
 
 		// Give the faster foreground path a short chance to win first, then keep
 		// the existing long wait budget as fallback safety behavior.
 		waitStart := time.Now()
-		if ok := n.waitForCircuitAddressOnHost(h, ForegroundCircuitAddressWaitTimeout); ok {
+		if ok := n.waitForCircuitAddressOnHost(ctx, h, ForegroundCircuitAddressWaitTimeout); ok {
 			log.Printf("[NODE] RefreshRelaySession: circuit addresses obtained ✓")
 			foregroundRecoveryPath = "foreground_success"
 			refreshErr = nil
@@ -1008,7 +1085,7 @@ func (n *Node) refreshRelaySessionOwned() *RecoveryResult {
 			if remainingWait < 0 {
 				remainingWait = 0
 			}
-			if remainingWait > 0 && n.waitForCircuitAddressOnHost(h, remainingWait) {
+			if remainingWait > 0 && n.waitForCircuitAddressOnHost(ctx, h, remainingWait) {
 				log.Printf("[NODE] RefreshRelaySession: circuit addresses obtained via fallback ✓")
 				refreshErr = nil
 			} else if reserveSucceeded {
@@ -1060,6 +1137,9 @@ func (n *Node) refreshRelaySessionOwned() *RecoveryResult {
 		}
 		if refreshErr != nil {
 			result.ErrorCode = "REFRESH_FAILED"
+			if ctx.Err() != nil {
+				result.ErrorCode = "RECOVERY_SUPERSEDED"
+			}
 			result.Reason = refreshErr.Error()
 		}
 	}
@@ -1120,6 +1200,7 @@ type relayWarmAttempt struct {
 }
 
 func (n *Node) warmRelayInfos(
+	ctx context.Context,
 	warmInfos []peer.AddrInfo,
 	relayInfoMap map[peer.ID]*peer.AddrInfo,
 ) (bool, error, []peer.AddrInfo, int, int64) {
@@ -1134,7 +1215,7 @@ func (n *Node) warmRelayInfos(
 			defer warmWG.Done()
 			attempts <- relayWarmAttempt{
 				peerID: info.ID,
-				err:    n.warmRelayConnectionWithTimeout(info, ForegroundRelayDialTimeout),
+				err:    n.warmRelayConnectionWithTimeout(ctx, info, ForegroundRelayDialTimeout),
 			}
 		}()
 	}
@@ -1167,6 +1248,7 @@ type reserveAttempt struct {
 }
 
 func (n *Node) reserveWarmedRelays(
+	ctx context.Context,
 	h host.Host,
 	mgr *RelaySessionManager,
 	successfulWarmInfos []peer.AddrInfo,
@@ -1184,7 +1266,7 @@ func (n *Node) reserveWarmedRelays(
 		reserveWG.Add(1)
 		go func() {
 			defer reserveWG.Done()
-			reserveCtx, cancel := context.WithTimeout(n.ctx, ForegroundRelayReserveTimeout)
+			reserveCtx, cancel := context.WithTimeout(ctx, ForegroundRelayReserveTimeout)
 			defer cancel()
 			res, err := n.reserveRelaySlot(reserveCtx, h, info)
 			reserveAttempts <- reserveAttempt{peerID: info.ID, err: err, reservation: res}
@@ -1271,12 +1353,14 @@ func (n *Node) ReconnectRelays() (*RecoveryResult, error) {
 
 	recovery, isNew := mgr.BeginRecovery()
 	if isNew {
-		go n.runRelayRecovery(mgr, recovery, n.reconnectRelaysOwned)
+		go n.runRelayRecovery(mgr, recovery, func() (*RecoveryResult, error) {
+			return n.reconnectRelaysOwned(n.recoveryWorkContext(recovery), mgr, recovery)
+		})
 	}
 	return waitForSharedRecoveryOutcome(recovery)
 }
 
-func (n *Node) reconnectRelaysOwned() (*RecoveryResult, error) {
+func (n *Node) reconnectRelaysOwned(ctx context.Context, mgr *RelaySessionManager, recovery *recoveryPromise) (*RecoveryResult, error) {
 	restartStart := time.Now()
 	n.mu.RLock()
 	started := n.isStarted
@@ -1293,7 +1377,7 @@ func (n *Node) reconnectRelaysOwned() (*RecoveryResult, error) {
 	flags := cfg.EffectiveFlags()
 
 	if flags.EnableInPlaceRelayRecovery {
-		result := n.refreshRelaySessionOwned()
+		result := n.refreshRelaySessionOwned(ctx)
 		if result.Success {
 			log.Printf("[NODE] ReconnectRelays: in-place recovery succeeded")
 			return result, nil
@@ -1305,14 +1389,22 @@ func (n *Node) reconnectRelaysOwned() (*RecoveryResult, error) {
 		log.Printf("[NODE] ReconnectRelays: in-place recovery disabled by feature flag, performing full restart")
 	}
 
-	if err := n.Stop(); err != nil {
-		log.Printf("[NODE] ReconnectRelays: Stop() error (continuing): %v", err)
+	// The restart decision, the lease admission and the Stop/Start commit are
+	// one fenced unit: no lease can be granted between the decision and the
+	// new host (Task 15 finding 1).
+	if blocked := mgr.beginFullRestart(ctx, recovery); blocked != nil {
+		log.Printf("[NODE] ReconnectRelays: %s", blocked.Reason)
+		return blocked, nil
 	}
-
-	restartCfg := *cfg
-	restartCfg.AutoRegister = false
-
-	state, err := n.Start(restartCfg)
+	state, err := func() (*NodeState, error) {
+		defer mgr.endFullRestart()
+		if err := n.Stop(); err != nil {
+			log.Printf("[NODE] ReconnectRelays: Stop() error (continuing): %v", err)
+		}
+		restartCfg := *cfg
+		restartCfg.AutoRegister = false
+		return n.Start(restartCfg)
+	}()
 	if err != nil {
 		return &RecoveryResult{
 			RecoveryMode: "watchdog_restart",
@@ -1336,7 +1428,7 @@ func (n *Node) reconnectRelaysOwned() (*RecoveryResult, error) {
 	circuitAddressWaitMs := time.Since(waitStart).Milliseconds()
 
 	n.mu.RLock()
-	mgr := n.relaySessionMgr
+	mgr = n.relaySessionMgr
 	n.mu.RUnlock()
 
 	if !circuitOk && mgr.HasReservation() {
@@ -2321,15 +2413,19 @@ func (n *Node) waitForCircuitAddress(timeout time.Duration) bool {
 
 	n.mu.RLock()
 	h := n.host
+	ctx := n.ctx
 	n.mu.RUnlock()
-	return n.waitForCircuitAddressOnHost(h, timeout)
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return n.waitForCircuitAddressOnHost(ctx, h, timeout)
 }
 
 // waitForCircuitAddressOnHost keeps an in-place recovery's bounded wait
 // independent from later writers of Node.mu. The recovery owner already
 // captured the host under the mutex; reacquiring the node-wide lock on every
 // poll can otherwise turn a finite circuit-address wait into an unbounded one.
-func (n *Node) waitForCircuitAddressOnHost(h host.Host, timeout time.Duration) bool {
+func (n *Node) waitForCircuitAddressOnHost(ctx context.Context, h host.Host, timeout time.Duration) bool {
 	if n.waitForCircuitAddressHook != nil {
 		return n.waitForCircuitAddressHook(timeout)
 	}
@@ -2337,7 +2433,7 @@ func (n *Node) waitForCircuitAddressOnHost(h host.Host, timeout time.Duration) b
 	start := time.Now()
 	pollCount := 0
 	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
+	for time.Now().Before(deadline) && ctx.Err() == nil {
 		pollCount++
 		if h == nil {
 			return false

@@ -21,5 +21,8 @@ type EventCallback interface {
 	//   "holepunch:failure"       — { step, error, elapsedMs?, remotePeerShort }
 	//   "transport:upgraded"      — { fromTransport, toTransport, elapsedMs, rttMs?, remotePeerShort }
 	//   "transport:downgraded"    — { fromTransport, toTransport, remotePeerShort }  (FDC-12: direct leg died, fell back to relay)
+	//   "network:path_changing"   — { epoch, ownerGeneration, previousReadyEpoch }  (SE-42 D27: handoff attempt started)
+	//   "network:relay_ready"     — { epoch, ownerGeneration, stage:"probe_ok", relayId, transport, family, socketFresh, dialMs, reserveMs, probeMs, totalMs, reservationTtlS }
+	//   "network:relay_failed"    — { epoch, ownerGeneration, stage, errorCode, totalMs }  (one terminal event per attempted epoch)
 	OnEvent(jsonString string)
 }

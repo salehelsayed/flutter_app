@@ -4,7 +4,6 @@ import 'dart:convert';
 import 'package:flutter_app/app/bootstrap/call_wake_contact_key_backfill.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/features/call/domain/call_wake_handle_grant.dart';
-import 'package:flutter_app/features/call/domain/received_call_wake_handle_store.dart';
 import 'package:flutter_app/features/contact_request/application/accept_contact_request_use_case.dart';
 import 'package:flutter_app/features/contact_request/application/contact_request_listener.dart';
 import 'package:flutter_app/features/contact_request/application/retry_incomplete_key_exchanges_use_case.dart';
@@ -17,15 +16,21 @@ import 'package:flutter_app/features/identity/domain/repositories/identity_repos
 import 'package:flutter_app/features/p2p/domain/models/send_message_result.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import '../../../shared/fakes/deterministic_contact_request_crypto.dart';
 import '../../../shared/fakes/fake_p2p_network.dart';
 import '../../../shared/fakes/fake_p2p_service_integration.dart';
 import '../../../shared/fakes/in_memory_contact_repository.dart';
 import '../../../shared/fakes/in_memory_contact_request_repository.dart';
+import '../../../shared/fakes/ed25519_contact_request_crypto.dart';
 
-const _scannerPeerId = '12D3KooWScannerAccount0001';
-const _scannedPeerId = '12D3KooWScannedAccount0002';
-const _scannerPublicKey = 'scanner-public-key';
-const _scannedPublicKey = 'scanned-public-key';
+// Task 12b: real Ed25519 identities, so each peer ID is the libp2p ID of its
+// key (the receiver now checks that binding).
+final _scanner = TestEd25519Identity.fromSeedByte(0xC0);
+final _scanned = TestEd25519Identity.fromSeedByte(0xC1);
+final _scannerPeerId = _scanner.peerId;
+final _scannedPeerId = _scanned.peerId;
+final _scannerPublicKey = _scanner.publicKey;
+final _scannedPublicKey = _scanned.publicKey;
 const _scannerPrivateKey = 'scanner-private-key';
 const _scannedPrivateKey = 'scanned-private-key';
 const _scannerMlKemKey = 'scanner-mlkem-public-key';
@@ -43,130 +48,6 @@ final class _IdentityRepo implements IdentityRepository {
   Future<void> saveIdentity(IdentityModel identity) async {
     this.identity = identity;
   }
-}
-
-/// Shared deterministic crypto boundary for the two listener graphs.
-///
-/// The production send/receive code still assembles, canonicalizes, encrypts,
-/// decrypts, reconstructs, and verifies every payload. This fake only supplies
-/// deterministic native bridge results and rejects signatures whose verified
-/// data differs from the exact data originally signed.
-final class _CryptoBus {
-  final Map<String, String> privateKeyByPublicKey = <String, String>{};
-  final Map<String, String> plaintextByCiphertext = <String, String>{};
-  var _nextCiphertext = 0;
-
-  String signatureFor(String privateKey, String data) =>
-      base64UrlEncode(utf8.encode('$privateKey\u0000$data'));
-
-  String encrypt(String plaintext) {
-    final ciphertext = 'ciphertext-${++_nextCiphertext}';
-    plaintextByCiphertext[ciphertext] = plaintext;
-    return ciphertext;
-  }
-}
-
-final class _DeterministicBridge extends Bridge {
-  _DeterministicBridge(this.bus);
-
-  final _CryptoBus bus;
-  final List<Map<String, dynamic>> encryptedPlaintexts =
-      <Map<String, dynamic>>[];
-  var verifiedPayloadCount = 0;
-
-  @override
-  bool get isInitialized => true;
-
-  @override
-  Future<void> initialize() async {}
-
-  @override
-  Future<bool> checkHealth() async => true;
-
-  @override
-  Future<void> reinitialize() async {}
-
-  @override
-  void dispose() {}
-
-  @override
-  Future<String> send(String message) async {
-    final request = jsonDecode(message) as Map<String, dynamic>;
-    final payload =
-        request['payload'] as Map<String, dynamic>? ??
-        const <String, dynamic>{};
-
-    switch (request['cmd']) {
-      case 'payload.sign':
-        final data = payload['data'] as String;
-        final privateKey = payload['privateKey'] as String;
-        return jsonEncode(<String, Object>{
-          'ok': true,
-          'signature': bus.signatureFor(privateKey, data),
-        });
-      case 'payload.verify':
-        final publicKey = payload['publicKey'] as String;
-        final data = payload['data'] as String;
-        final signature = payload['signature'] as String;
-        final privateKey = bus.privateKeyByPublicKey[publicKey];
-        final valid =
-            privateKey != null &&
-            signature == bus.signatureFor(privateKey, data);
-        if (valid) verifiedPayloadCount += 1;
-        return jsonEncode(<String, Object>{'ok': true, 'valid': valid});
-      case 'contactrequest.encrypt':
-        final plaintext = payload['plaintext'] as String;
-        encryptedPlaintexts.add(jsonDecode(plaintext) as Map<String, dynamic>);
-        final ciphertext = bus.encrypt(plaintext);
-        return jsonEncode(<String, Object>{
-          'ok': true,
-          'ephemeralPublicKey': 'ephemeral-$ciphertext',
-          'ciphertext': ciphertext,
-          'nonce': 'nonce-$ciphertext',
-        });
-      case 'contactrequest.decrypt':
-        final ciphertext = payload['ciphertext'] as String;
-        final plaintext = bus.plaintextByCiphertext[ciphertext];
-        return jsonEncode(<String, Object?>{
-          'ok': plaintext != null,
-          'plaintext': ?plaintext,
-        });
-      default:
-        return jsonEncode(<String, Object>{'ok': true});
-    }
-  }
-}
-
-final class _InMemoryReceivedCallWakeHandleStore
-    implements ReceivedCallWakeHandleStore {
-  final Map<String, CallWakeHandleGrant> _grants =
-      <String, CallWakeHandleGrant>{};
-
-  @override
-  Future<CallWakeHandleGrant?> readForIssuer(
-    String issuerAccountPeerId,
-  ) async => _grants[issuerAccountPeerId];
-
-  @override
-  Future<bool> storeIfStrictlyNewer({
-    required String issuerAccountPeerId,
-    required CallWakeHandleGrant grant,
-    required int nowMs,
-  }) async {
-    if (!grant.isValidAt(nowMs)) return false;
-    final prior = _grants[issuerAccountPeerId];
-    if (prior != null && !grant.isStrictlyNewerThan(prior)) return false;
-    _grants[issuerAccountPeerId] = grant;
-    return true;
-  }
-
-  @override
-  Future<void> removeForIssuer(String issuerAccountPeerId) async {
-    _grants.remove(issuerAccountPeerId);
-  }
-
-  @override
-  Future<void> clear() async => _grants.clear();
 }
 
 IdentityModel _identity({
@@ -213,13 +94,13 @@ void main() {
       addTearDown(scannerP2p.dispose);
       addTearDown(scannedP2p.dispose);
 
-      final bus = _CryptoBus()
+      final bus = ContactRequestCryptoBus()
         ..privateKeyByPublicKey.addAll(<String, String>{
           _scannerPublicKey: _scannerPrivateKey,
           _scannedPublicKey: _scannedPrivateKey,
         });
-      final scannerBridge = _DeterministicBridge(bus);
-      final scannedBridge = _DeterministicBridge(bus);
+      final scannerBridge = DeterministicContactRequestBridge(bus);
+      final scannedBridge = DeterministicContactRequestBridge(bus);
       scannerP2p.directReplyBuilder = (targetPeerId, message, delivered) {
         final signedPlaintext = scannerBridge.encryptedPlaintexts.last;
         final challenge = signedPlaintext['cwr'];
@@ -254,12 +135,12 @@ void main() {
       final scannerRequests = InMemoryContactRequestRepository();
       final scannedContacts = InMemoryContactRepository();
       final scannedRequests = InMemoryContactRequestRepository();
-      final receivedCallWakeHandles = _InMemoryReceivedCallWakeHandleStore();
+      final receivedCallWakeHandles = InMemoryReceivedCallWakeHandleStore();
 
       // A compact QR installs only the scanned account's ordinary public key.
       // The reciprocal contact request must supply its ML-KEM key later.
       scannerContacts.addTestContact(
-        const ContactModel(
+        ContactModel(
           peerId: _scannedPeerId,
           publicKey: _scannedPublicKey,
           rendezvous: '/dns4/relay.example/tcp/4001/p2p/$_scannedPeerId',

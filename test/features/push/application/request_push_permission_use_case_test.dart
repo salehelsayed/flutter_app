@@ -193,4 +193,55 @@ void main() {
       },
     );
   });
+
+  group('readPushPermission', () {
+    test('reads granted settings and confirms them with the OS', () async {
+      var osChecks = 0;
+      final result = await readPushPermission(
+        readSettingsFn: () async =>
+            _makeSettings(AuthorizationStatus.authorized),
+        osNotificationsEnabledFn: () async {
+          osChecks++;
+          return true;
+        },
+      );
+      expect(result, isTrue);
+      expect(osChecks, 1);
+      expect(detailsOf(eventsNamed('PUSH_PERMISSION_READ_RESULT').single), {
+        'status': 'authorized',
+        'granted': true,
+        'osEnabled': true,
+      });
+      expect(eventsNamed('PUSH_PERMISSION_REQUEST_BEGIN'), isEmpty);
+    });
+
+    test(
+      'narrows a granted reading when the OS has notifications off',
+      () async {
+        final result = await readPushPermission(
+          readSettingsFn: () async =>
+              _makeSettings(AuthorizationStatus.authorized),
+          osNotificationsEnabledFn: () async => false,
+        );
+        expect(result, isFalse);
+      },
+    );
+
+    test('returns a denied reading without consulting the OS', () async {
+      var osChecks = 0;
+      final result = await readPushPermission(
+        readSettingsFn: () async => _makeSettings(AuthorizationStatus.denied),
+        osNotificationsEnabledFn: () async {
+          osChecks++;
+          return true;
+        },
+      );
+      expect(result, isFalse);
+      expect(osChecks, 0);
+      expect(detailsOf(eventsNamed('PUSH_PERMISSION_READ_RESULT').single), {
+        'status': 'denied',
+        'granted': false,
+      });
+    });
+  });
 }

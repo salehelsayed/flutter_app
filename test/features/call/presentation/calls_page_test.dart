@@ -2,6 +2,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
+import 'package:flutter_app/features/call/application/call_history_access.dart';
 import 'package:flutter_app/features/call/application/call_redial_controller.dart';
 import 'package:flutter_app/features/call/application/outgoing_call_capability.dart';
 import 'package:flutter_app/features/call/data/call_history_repository.dart';
@@ -12,13 +13,18 @@ import 'package:flutter_app/features/call/presentation/screens/calls_page.dart';
 
 final _id = CallId.parse('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa');
 final _other = CallId.parse('bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb');
-CallHistoryListRow row(CallId id, String? name) => CallHistoryListRow(
+CallHistoryListRow row(
+  CallId id,
+  String? name, {
+  CallDirection direction = CallDirection.incoming,
+  CallHistoryStatus status = CallHistoryStatus.missed,
+}) => CallHistoryListRow(
   CallHistoryEntry(
     callId: id,
     contactAccountPeerId: 'synthetic-contact',
-    direction: CallDirection.incoming,
+    direction: direction,
     terminalReason: CallEndReason.noAnswer,
-    status: CallHistoryStatus.missed,
+    status: status,
     startedAt: DateTime.utc(2026, 10, 13),
     connectedAt: null,
     endedAt: DateTime.utc(2026, 10, 13, 0, 0, 30),
@@ -54,6 +60,18 @@ class _Browser implements CallHistoryBrowser {
   }
 }
 
+class _History implements CallHistoryAccess {
+  List<CallHistoryEntry> recent = [];
+  @override
+  Future<CallHistoryEntry?> findCall(CallId id) async =>
+      recent.where((e) => e.callId == id).firstOrNull;
+  @override
+  Future<List<CallHistoryEntry>> recentCallsForContact(String peerId) async => [
+    for (final e in recent)
+      if (e.contactAccountPeerId == peerId) e,
+  ];
+}
+
 class _Capability implements OutgoingCallCapability {
   final starts = <String>[];
   @override
@@ -76,23 +94,26 @@ void main() {
   late _Browser browser;
   late StreamController<void> changes;
   late _Capability owner;
+  late _History history;
   bool allowed = true;
   setUp(() {
     browser = _Browser();
     changes = StreamController.broadcast(sync: true);
     owner = _Capability();
+    history = _History()..recent = [row(_id, 'Alice').entry];
     allowed = true;
   });
   tearDown(() async {
     await changes.close();
   });
-  Widget app() => MaterialApp(
+  Widget app({bool withHistory = true}) => MaterialApp(
     locale: const Locale('en'),
     localizationsDelegates: AppLocalizations.localizationsDelegates,
     supportedLocales: AppLocalizations.supportedLocales,
     home: CallsPage(
       browser: browser,
       changes: changes.stream,
+      history: withHistory ? history : null,
       redial: CallRedialController(
         capability: () => owner,
         contactAllowed: (_) async => allowed,
@@ -191,6 +212,61 @@ void main() {
         ),
         findsOneWidget,
       );
+    },
+  );
+  const superseded =
+      'A newer call with this contact exists. Call back from the latest one.';
+  Finder callBack(CallId id) => find.descendant(
+    of: find.byKey(ValueKey('history-${id.value}')),
+    matching: find.byTooltip('Call back'),
+  );
+  Future<void> pumpRows(WidgetTester tester, List<CallHistoryListRow> rows) {
+    browser.page = CallHistoryPage(rows: rows, total: 2, missed: 2);
+    history.recent = [for (final r in rows) r.entry];
+    return tester.pumpWidget(app()).then((_) => tester.pumpAndSettle());
+  }
+
+  testWidgets(
+    'older incoming missed row refuses and points at the newer call',
+    (tester) async {
+      await pumpRows(tester, [row(_other, 'Alice'), row(_id, 'Alice')]);
+      await tester.tap(callBack(_id));
+      await tester.pumpAndSettle();
+      expect(owner.starts, isEmpty);
+      expect(find.text(superseded), findsOneWidget);
+    },
+  );
+  testWidgets('newest incoming missed row starts a fresh call', (tester) async {
+    await pumpRows(tester, [row(_other, 'Alice'), row(_id, 'Alice')]);
+    await tester.tap(callBack(_other));
+    await tester.pumpAndSettle();
+    expect(owner.starts, ['synthetic-contact']);
+    expect(find.text(superseded), findsNothing);
+  });
+  testWidgets('older outgoing row still redials', (tester) async {
+    await pumpRows(tester, [
+      row(_other, 'Alice'),
+      row(
+        _id,
+        'Alice',
+        direction: CallDirection.outgoing,
+        status: CallHistoryStatus.completed,
+      ),
+    ]);
+    await tester.tap(callBack(_id));
+    await tester.pumpAndSettle();
+    expect(owner.starts, ['synthetic-contact']);
+    expect(find.text(superseded), findsNothing);
+  });
+  testWidgets(
+    'incoming missed row refuses when no history can prove it is newest',
+    (tester) async {
+      await tester.pumpWidget(app(withHistory: false));
+      await tester.pumpAndSettle();
+      await tester.tap(callBack(_id));
+      await tester.pumpAndSettle();
+      expect(owner.starts, isEmpty);
+      expect(find.text(superseded), findsOneWidget);
     },
   );
 }

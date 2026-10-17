@@ -4408,4 +4408,33 @@ class AppLocalizationsAr extends AppLocalizations {
 
   @override
   String get call_audio_refresh_outputs => 'تحديث مخارج الصوت';
+
+  @override
+  String get call_back_superseded =>
+      'توجد مكالمة أحدث مع جهة الاتصال هذه. عاود الاتصال من أحدث مكالمة.';
+
+  @override
+  String get onboarding_mic_title => 'المكالمات والرسائل الصوتية';
+
+  @override
+  String get onboarding_mic_body =>
+      'يستخدم MKnoon الميكروفون للمكالمات والرسائل الصوتية.';
+
+  @override
+  String get onboarding_mic_settings_hint =>
+      'يمكنك تغيير ذلك في أي وقت من الإعدادات.';
+
+  @override
+  String get onboarding_mic_allow => 'السماح بالميكروفون';
+
+  @override
+  String get onboarding_mic_allow_desc => 'لتعمل المكالمات فورًا';
+
+  @override
+  String get onboarding_mic_not_now_desc =>
+      'سنسألك عند أول مكالمة أو أول تسجيل';
+
+  @override
+  String get call_end_permission_settings =>
+      'الوصول إلى الميكروفون متوقف لـ MKnoon. فعّله من الإعدادات لإجراء المكالمات والرد عليها.';
 }

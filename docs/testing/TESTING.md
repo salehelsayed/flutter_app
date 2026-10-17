@@ -6729,6 +6729,40 @@ visible and cannot become an ordinary first-attempt PASS.
   an additional production composition/graph admission preservation case.
   New evidence is kept separately under `.codex-test-logs/se42-v2-validation-20261013/`;
   v1 receipts remain historical and do not certify a later source/build.
+  **SE-42 v3 proximity and diagnostic correctness (F3–F5):** proximity ENABLE
+  requires the exact adopted active audio owner, rather than a nonterminal
+  descriptor. Apply the ownership check before route deduplication so genuine
+  deactivate/reactivate with unchanged earpiece still reapplies proximity.
+  Install the existing cleanup fence before platform cleanup even when terminal
+  persistence fails; a late collector must not reacquire a settled resource.
+  Runtime release retains the existing exact wake-lock map entry on failure and
+  removes it only after observing unheld state. Keep
+  `RELEASE_FLAG_WAIT_FOR_NO_PROXIMITY` and the existing acquisition timeout;
+  elapsed time alone is not cleanup proof. Proximity and endpoint-stop completion
+  are separate obligations, so successful collector stop cannot hide failed
+  release. Deactivation release failure uses existing native-failure terminal
+  cleanup and bounded retry authority; it does not report success or allow
+  successor admission while cleanup remains pending.
+  The actual runtime release helper has a small generic test seam over the
+  production map; a controller fake alone cannot establish retention.
+  `MknoonCallLifecycleControllerTest` covers late inactive callbacks, real
+  same-earpiece reactivation for incoming/outgoing calls, stale/terminal owners,
+  terminal persistence failure, release retry and no successor leak.
+  `MknoonCallAndroidRuntimeTest` proves exact retained map ownership and idempotent
+  release. Public remote-cancel diagnostic exceptions are isolated before native
+  cancellation, independently of its existing timeout/catch. Authenticated
+  terminate/reject retain canonical outcomes; normal hangup is not a refusal.
+  `handle_incoming_call_signal_test.dart` restores logging callbacks and proves
+  throwing-print isolation, finite busy/validation/post-presentation reason codes
+  and public privacy with flow logging disabled. Genuine RED assertions and
+  identical GREEN selections remain local under
+  `.codex-test-logs/se42-v3-20261014/`; fixture expectations are recorded separately.
+  Selectors already include these existing test files/package; mappings were
+  reviewed without narrowing coverage or changing protected hashes.
+  These are host proofs. The new numbered checklist remains NOT RUN; historical
+  owner observations are not candidate-bound certification, and F5 does not fix
+  the unresolved physical iOS incoming presentation. Broader workflow/hash,
+  SQLCipher capability and analyzer obligations retain their actual results.
   **SE-42 production device checks (2026-10-14):** the Android production-call
   Dart defines alone do not enable native Telecom. The existing separate
   `--android-project-arg=enableAndroidNativeCalls=true` build argument is also

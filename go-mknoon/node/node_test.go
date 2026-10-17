@@ -663,7 +663,7 @@ func TestWaitForCircuitAddressOnHostDoesNotReacquireNodeMutex(t *testing.T) {
 	n.mu.Lock()
 	result := make(chan bool, 1)
 	go func() {
-		result <- n.waitForCircuitAddressOnHost(h, 20*time.Millisecond)
+		result <- n.waitForCircuitAddressOnHost(context.Background(), h, 20*time.Millisecond)
 	}()
 
 	select {
@@ -791,7 +791,7 @@ func TestWarmRelayConnectionWithTimeout_FallsBackAcrossSamePeerAddresses(t *test
 		}
 		return nil
 	}
-	if err := n.warmRelayConnectionWithTimeout(peer.AddrInfo{ID: pid, Addrs: addrs}, time.Second); err != nil {
+	if err := n.warmRelayConnectionWithTimeout(context.Background(), peer.AddrInfo{ID: pid, Addrs: addrs}, time.Second); err != nil {
 		t.Fatalf("warmRelayConnectionWithTimeout: %v", err)
 	}
 	if calls != 1 {

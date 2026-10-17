@@ -1,3 +1,4 @@
+import java.util.Base64
 import java.util.Properties
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
@@ -100,6 +101,31 @@ val enableAndroidNativeCalls =
             "enableAndroidNativeCalls must be exactly true or false."
         )
     }
+// The Dart define decides whether the app drives calls through Telecom; this
+// flag decides whether the Telecom lane and its audio policy are compiled in.
+// A Flutter build (it always passes a target) must set both the same way.
+// Plain Gradle runs such as JVM unit tests carry no target or defines.
+val flutterDartDefines: Map<String, String> =
+    providers.gradleProperty("dart-defines").orNull
+        ?.split(',')
+        ?.filter { it.isNotEmpty() }
+        ?.map { String(Base64.getDecoder().decode(it), Charsets.UTF_8) }
+        ?.associate { it.substringBefore('=') to it.substringAfter('=', "") }
+        .orEmpty()
+val isFlutterBuild =
+    providers.gradleProperty("target").isPresent ||
+        providers.gradleProperty("dart-defines").isPresent
+val dartAndroidNativeCallsEnabled =
+    flutterDartDefines["VOICE_CALL_ANDROID_NATIVE_ENABLED"] == "true"
+if (isFlutterBuild && dartAndroidNativeCallsEnabled != enableAndroidNativeCalls) {
+    throw GradleException(
+        "Android native calls and the Dart VOICE_CALL_ANDROID_NATIVE_ENABLED " +
+            "define disagree: Gradle enableAndroidNativeCalls=" +
+            "$enableAndroidNativeCalls, Dart define=" +
+            "${flutterDartDefines["VOICE_CALL_ANDROID_NATIVE_ENABLED"] ?: "unset"}. " +
+            "Set both to true or both to false."
+    )
+}
 val enableVc204AndroidProof =
     when (
         val raw = providers.gradleProperty(

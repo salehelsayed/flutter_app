@@ -14,11 +14,14 @@ import '../../features/settings/application/call_privacy_preference_use_cases.da
 import '../../core/database/helpers/direct_contact_device_bindings_db_helpers.dart';
 import '../../core/media/audio_recorder_service.dart';
 import '../../core/services/incoming_message_router.dart';
+import '../../core/services/network_path_source.dart';
 import '../../core/services/p2p_service.dart';
+import '../../features/call/application/call_network_path_binding.dart';
 import '../../features/p2p/domain/models/node_state.dart';
 import '../../core/utils/flow_event_emitter.dart';
 import '../../features/call/diagnostics/call_diagnostics.dart';
 import '../../features/call/infrastructure/call_stats_sampler.dart';
+import '../../features/call/application/blocked_call_media_release.dart';
 import '../../features/call/application/call_cleanup_coordinator.dart';
 import '../../features/call/application/call_audio_controller.dart';
 import '../../features/call/application/call_audio_interruption_coordinator.dart';
@@ -50,6 +53,7 @@ import '../../features/call/domain/call_wake_handle_grant.dart';
 import '../../features/call/domain/issued_call_wake_handle_store.dart';
 import '../../features/call/domain/received_call_wake_handle_store.dart';
 import '../../features/call/infrastructure/bridge_call_ice_server_provider.dart';
+import '../../features/call/infrastructure/bridge_call_media_protection_lease.dart';
 import '../../features/call/infrastructure/android_call_lifecycle_adapter.dart';
 import '../../features/call/infrastructure/call_audio_route_adapter.dart';
 import '../../features/call/infrastructure/call_authority_client.dart';
@@ -147,6 +151,7 @@ final class ProductionCallSignalingGraph
     this.iosVoipTokenCoordinator,
     this.androidCallTokenCoordinator,
     this.ringback,
+    Stream<NetworkPathOutcome>? networkPathOutcomes,
     required CallNetworkEffectsAllowed networkEffectsAllowed,
     required int Function() nowMs,
   }) : assert(
@@ -154,6 +159,14 @@ final class ProductionCallSignalingGraph
        ),
        _networkEffectsAllowed = networkEffectsAllowed,
        _nowMs = nowMs {
+    _networkPathBinding = networkPathOutcomes == null
+        ? null
+        : CallNetworkPathBinding(
+            outcomes: networkPathOutcomes,
+            coordinator: coordinator,
+            clock: () =>
+                DateTime.fromMillisecondsSinceEpoch(nowMs(), isUtc: true),
+          );
     final ringbackPort = ringback;
     _ringback = ringbackPort == null
         ? null
@@ -212,6 +225,11 @@ final class ProductionCallSignalingGraph
   /// tone player; the call is unaffected either way.
   final CallRingbackPort? ringback;
   late final CallRingbackCoordinator? _ringback;
+
+  /// SE-42 D27: default-network path epochs for the active call. Absent on
+  /// hosts without the typed source; the call then recovers on media loss
+  /// alone, as before.
+  late final CallNetworkPathBinding? _networkPathBinding;
   final CallNetworkEffectsAllowed _networkEffectsAllowed;
   final int Function() _nowMs;
 
@@ -1264,6 +1282,10 @@ final class ProductionCallSignalingGraph
 
     await attempt(runtime.shutdown);
     signalingService.close();
+    final networkPathBinding = _networkPathBinding;
+    if (networkPathBinding != null) {
+      await attempt(networkPathBinding.dispose);
+    }
     await attempt(_sessionSubscription.cancel);
     final ringbackCoordinator = _ringback;
     if (ringbackCoordinator != null) {
@@ -1541,6 +1563,7 @@ CallSignalingComposition createProductionCallSignalingComposition({
   ProductionCallSignalingGraphObserver? onGraphBuilt,
   bool Function()? isForeground,
   int Function()? nowMs,
+  Stream<NetworkPathOutcome>? networkPathOutcomes,
 }) {
   final clock = nowMs ?? () => DateTime.now().toUtc().millisecondsSinceEpoch;
   final resolvedMicrophonePermission =
@@ -1664,12 +1687,25 @@ CallSignalingComposition createProductionCallSignalingComposition({
       CallId? policyCallId;
       Future<CallTransportPolicy>? pendingTransportPolicy;
       late final CallCoordinator coordinator;
+      AndroidCallLifecycleAdapter? retainedTerminalOwner;
+      // A media close that finishes after its cleanup was reported blocked
+      // (the microphone prompt resolved) frees the ended call at once.
+      final blockedMediaRelease = BlockedCallMediaRelease(
+        onReleased: (callId) async {
+          if (!await coordinator.retryTerminalCleanup(callId)) return;
+          await retainedTerminalOwner?.releaseCleanupReadyTerminal(callId);
+        },
+      );
       coordinator = CallCoordinator(
         reducer: const CallReducer(),
         cleanupCoordinator: CallCleanupCoordinator(
           <CallCleanupStep>[
             CallCleanupStep('call_media', (snapshot) async {
-              await mediaOwner.closeCall(snapshot.callId!);
+              final callId = snapshot.callId!;
+              await blockedMediaRelease.track(
+                callId,
+                mediaOwner.closeCall(callId),
+              );
             }, requiredForTerminalAck: true),
             CallCleanupStep('call_signaling_context', (snapshot) async {
               await controlExecutor.retireOutgoingPreconnectInvite(snapshot);
@@ -1680,7 +1716,10 @@ CallSignalingComposition createProductionCallSignalingComposition({
             }),
           ],
           stepTimeout: const Duration(seconds: 2),
-          onReport: _emitTerminalCleanupResult,
+          onReport: (report) {
+            blockedMediaRelease.observe(report);
+            _emitTerminalCleanupResult(report);
+          },
         ),
         historyProjector: CallHistoryProjector(
           CallHistoryRepositoryImpl(database),
@@ -1734,6 +1773,7 @@ CallSignalingComposition createProductionCallSignalingComposition({
                   clock: callClock,
                 )
           : null;
+      retainedTerminalOwner = androidLifecycleAdapter;
       final useIosNativeLifecycle =
           incomingCallPresenter == null &&
           endpointPlatform == CallEndpointPlatform.ios &&
@@ -2030,6 +2070,7 @@ CallSignalingComposition createProductionCallSignalingComposition({
             },
           );
         },
+        protection: BridgeCallMediaProtectionLease(bridge: bridge),
       );
       nativeLifecycleAdapter?.bindNativeMuteApplier((callId, muted) async {
         final audioController = mediaOwner.currentAudioController(callId);
@@ -2163,6 +2204,7 @@ CallSignalingComposition createProductionCallSignalingComposition({
                     signalingContextStore.read(callId)?.callHandle,
               )
             : null,
+        networkPathOutcomes: networkPathOutcomes,
         networkEffectsAllowed: networkEffectsAllowed,
         nowMs: clock,
       );
@@ -2204,7 +2246,26 @@ AndroidCallLifecycleAdapter _createMethodChannelAndroidCallLifecycleAdapter({
     resolveAuthenticatedHandle: resolveAuthenticatedHandle,
     clock: clock,
     onOutgoingRegistrationResult: _emitNativeOutgoingRegistrationResult,
+    onRetainedTerminalForceReleased: _emitRetainedTerminalForceReleased,
   );
+}
+
+void _emitRetainedTerminalForceReleased() {
+  CallDiagnostics.instance.record(
+    stage: 'cleanup',
+    action: 'force_release',
+    outcome: 'ok',
+    reason: 'cleanup_blocked',
+  );
+  try {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'CALL_RETAINED_TERMINAL_FORCE_RELEASED',
+      details: const <String, Object?>{'reason': 'cleanup_blocked'},
+    );
+  } catch (_) {
+    // Fixed-shape diagnostics cannot change call-surface authority.
+  }
 }
 
 IosCallLifecycleAdapter _createMethodChannelIosCallLifecycleAdapter({

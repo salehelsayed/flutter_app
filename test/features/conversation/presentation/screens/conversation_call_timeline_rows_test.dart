@@ -51,6 +51,7 @@ void main() {
 
   Widget buildTestWidget({
     VoidCallback? onCall,
+    void Function(ConversationCallTimelineEntry entry)? onCallBack,
     List<ConversationMessage> messages = const <ConversationMessage>[],
     List<ConversationCallTimelineEntry> callEntries =
         const <ConversationCallTimelineEntry>[],
@@ -67,6 +68,7 @@ void main() {
         messages: messages,
         callEntries: callEntries,
         onCall: onCall,
+        onCallBack: onCallBack,
         showCallAction: onCall != null,
         callActionEnabled: onCall != null,
         onSend: (_) {},
@@ -82,19 +84,34 @@ void main() {
     }
   }
 
-  testWidgets('history Call back reuses the current conversation call action', (
-    tester,
-  ) async {
-    var starts = 0;
+  testWidgets('history Call back hands the tapped row to the row action, '
+      'not the header call', (tester) async {
+    final callBacks = <String>[];
+    var headerStarts = 0;
     await tester.pumpWidget(
       buildTestWidget(
-        onCall: () => starts++,
+        onCall: () => headerStarts++,
+        onCallBack: (entry) => callBacks.add(entry.callId),
         callEntries: [makeCall(startedAt: DateTime.utc(2026, 2, 9, 15, 30))],
       ),
     );
     await pumpFrames(tester);
     await tester.tap(find.byTooltip('Call back'));
-    expect(starts, 1);
+    expect(callBacks, ['a2f0a1d6-0000-4000-8000-000000000001']);
+    expect(headerStarts, 0);
+  });
+
+  testWidgets('a chat without a row action keeps the header call but shows '
+      'no Call back on the row', (tester) async {
+    await tester.pumpWidget(
+      buildTestWidget(
+        onCall: () {},
+        callEntries: [makeCall(startedAt: DateTime.utc(2026, 2, 9, 15, 30))],
+      ),
+    );
+    await pumpFrames(tester);
+    expect(find.byTooltip('Start voice call'), findsOneWidget);
+    expect(find.byTooltip('Call back'), findsNothing);
   });
 
   testWidgets('TC-405-20 no call source leaves the chat exactly as it was', (

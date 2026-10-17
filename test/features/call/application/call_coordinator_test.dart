@@ -53,6 +53,15 @@ final class _MemoryHistoryRepository implements CallHistoryRepository {
   }
 }
 
+/// A repository whose own I/O times out at once, long before the coordinator's budget.
+final class _TimeoutThrowingHistoryRepository
+    extends _ThrowingHistoryRepository {
+  @override
+  Future<void> upsertTerminal(CallHistoryEntry entry) async {
+    throw TimeoutException('repository lock wait');
+  }
+}
+
 final class _ThrowingHistoryRepository implements CallHistoryRepository {
   @override
   Future<CallHistoryEntry?> getByCallId(CallId callId) async => null;
@@ -66,6 +75,20 @@ final class _ThrowingHistoryRepository implements CallHistoryRepository {
   Future<void> upsertTerminal(CallHistoryEntry entry) async {
     throw StateError('history unavailable');
   }
+}
+
+final class _NeverCompletingHistoryRepository implements CallHistoryRepository {
+  @override
+  Future<CallHistoryEntry?> getByCallId(CallId callId) async => null;
+
+  @override
+  Future<List<CallHistoryEntry>> listForContact(
+    String contactAccountPeerId,
+  ) async => const <CallHistoryEntry>[];
+
+  @override
+  Future<void> upsertTerminal(CallHistoryEntry entry) =>
+      Completer<void>().future;
 }
 
 final class _RecordingExecutor implements CallEffectExecutor {
@@ -121,6 +144,21 @@ final class _FailingPreparationExecutor implements CallEffectExecutor {
       throw StateError('preparation failed while hang-up was admitted');
     }
     return Future<CallEvent?>.value();
+  }
+}
+
+/// The peer-facing terminal send fails. Shutdown must still surface that
+/// error after cleanup and history ran.
+final class _ThrowingTerminalSendExecutor implements CallEffectExecutor {
+  @override
+  Future<CallEvent?> execute(
+    CallEffect effect,
+    CallSessionSnapshot snapshot,
+  ) async {
+    if (effect.type == CallEffectType.sendTerminate) {
+      throw StateError('terminal send failed during shutdown');
+    }
+    return null;
   }
 }
 
@@ -734,9 +772,118 @@ void main() {
     expect(coordinator.lastSnapshot?.state, CallState.ended);
     expect(coordinator.internalFailureCount, 1);
     expect(failures, <CallCoordinatorInternalFailure>[
-      CallCoordinatorInternalFailure.timerDispatchFailed,
+      CallCoordinatorInternalFailure.terminalHistoryProjectionFailed,
     ]);
   });
+
+  test(
+    'isTerminalCall is false for a live call and true once it ended',
+    () async {
+      final coordinator = _coordinator(history: _MemoryHistoryRepository());
+      addTearDown(coordinator.dispose);
+
+      expect(coordinator.isTerminalCall(_callId), isFalse);
+      await coordinator.dispatch(_event(CallEventType.place));
+      await coordinator.dispatch(_event(CallEventType.outgoingInviteReady));
+      expect(coordinator.isTerminalCall(_callId), isFalse);
+
+      await coordinator.dispatch(_event(CallEventType.remoteTerminate));
+      expect(coordinator.isTerminalCall(_callId), isTrue);
+    },
+  );
+
+  test('terminal dispatch completes when history projection throws', () async {
+    final failures = <CallCoordinatorInternalFailure>[];
+    final coordinator = CallCoordinator(
+      reducer: const CallReducer(),
+      cleanupCoordinator: CallCleanupCoordinator(const <CallCleanupStep>[]),
+      historyProjector: CallHistoryProjector(_ThrowingHistoryRepository()),
+      effectExecutor: _RecordingExecutor(),
+      clock: () => _now,
+      idSource: () => _callId,
+      onInternalFailure: failures.add,
+    );
+    addTearDown(coordinator.dispose);
+    await coordinator.dispatch(_event(CallEventType.place));
+    await coordinator.dispatch(_event(CallEventType.outgoingInviteReady));
+
+    final reduction = await coordinator.dispatch(
+      _event(CallEventType.remoteTerminate),
+    );
+
+    expect(reduction.decision, CallEventDecision.applied);
+    expect(reduction.snapshot.state, CallState.ended);
+    expect(coordinator.activeSession, isNull);
+    expect(coordinator.lastSnapshot?.endReason, CallEndReason.remoteHangup);
+    expect(coordinator.internalFailureCount, 1);
+    expect(failures, <CallCoordinatorInternalFailure>[
+      CallCoordinatorInternalFailure.terminalHistoryProjectionFailed,
+    ]);
+  });
+
+  test(
+    'terminal dispatch reports a history timeout as its own class',
+    () async {
+      final failures = <CallCoordinatorInternalFailure>[];
+      final coordinator = CallCoordinator(
+        reducer: const CallReducer(),
+        cleanupCoordinator: CallCleanupCoordinator(const <CallCleanupStep>[]),
+        historyProjector: CallHistoryProjector(
+          _NeverCompletingHistoryRepository(),
+        ),
+        effectExecutor: _RecordingExecutor(),
+        clock: () => _now,
+        idSource: () => _callId,
+        terminalHistoryTimeout: const Duration(milliseconds: 10),
+        onInternalFailure: failures.add,
+      );
+      addTearDown(coordinator.dispose);
+      await coordinator.dispatch(_event(CallEventType.place));
+      await coordinator.dispatch(_event(CallEventType.outgoingInviteReady));
+
+      final reduction = await coordinator.dispatch(
+        _event(CallEventType.remoteTerminate),
+      );
+
+      expect(reduction.snapshot.state, CallState.ended);
+      expect(coordinator.activeSession, isNull);
+      expect(coordinator.internalFailureCount, 1);
+      expect(failures, <CallCoordinatorInternalFailure>[
+        CallCoordinatorInternalFailure.terminalHistoryProjectionTimedOut,
+      ]);
+    },
+  );
+
+  test(
+    'a repository TimeoutException before the budget is a failure, not a timeout',
+    () async {
+      final failures = <CallCoordinatorInternalFailure>[];
+      final coordinator = CallCoordinator(
+        reducer: const CallReducer(),
+        cleanupCoordinator: CallCleanupCoordinator(const <CallCleanupStep>[]),
+        historyProjector: CallHistoryProjector(
+          _TimeoutThrowingHistoryRepository(),
+        ),
+        effectExecutor: _RecordingExecutor(),
+        clock: () => _now,
+        idSource: () => _callId,
+        terminalHistoryTimeout: const Duration(hours: 1),
+        onInternalFailure: failures.add,
+      );
+      addTearDown(coordinator.dispose);
+      await coordinator.dispatch(_event(CallEventType.place));
+      await coordinator.dispatch(_event(CallEventType.outgoingInviteReady));
+
+      final reduction = await coordinator.dispatch(
+        _event(CallEventType.remoteTerminate),
+      );
+
+      expect(reduction.snapshot.state, CallState.ended);
+      expect(failures, <CallCoordinatorInternalFailure>[
+        CallCoordinatorInternalFailure.terminalHistoryProjectionFailed,
+      ]);
+    },
+  );
 
   test(
     'synchronous accept follow-up cannot leave preconnect timers armed',
@@ -1116,8 +1263,8 @@ void main() {
       final coordinator = CallCoordinator(
         reducer: const CallReducer(),
         cleanupCoordinator: CallCleanupCoordinator(const <CallCleanupStep>[]),
-        historyProjector: CallHistoryProjector(_ThrowingHistoryRepository()),
-        effectExecutor: _RecordingExecutor(),
+        historyProjector: CallHistoryProjector(_MemoryHistoryRepository()),
+        effectExecutor: _ThrowingTerminalSendExecutor(),
         clock: () => _now,
         idSource: () => _callId,
         timerScheduler: timers,

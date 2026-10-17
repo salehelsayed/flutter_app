@@ -218,8 +218,16 @@ const _privacySha256 =
 // SE-46: reviewed local Call back routing waits for canonical foreground/unlock
 // and uses current outgoing preflight; resume dispatch and existing owners stay
 // in place. The source guard includes only that approved app-root addition.
+// SE-42 D27 fix round (2026-10-16): MyApp passes
+// `micPermission: const PermissionHandlerMicGateway()` into the foreground
+// call presentation and imports that gateway; no owner or resume dispatch
+// moves.
+// SE-42 Task 19 (2026-10-16): the resume callback handed to the existing
+// resume handler is the push coordinator's read-only refreshOnResume instead
+// of retryNow, so closing the system permission dialog cannot ask again. No
+// owner or resume dispatch moves.
 const _applicationRootNormalizedSha256 =
-    'be4f4bc31cea78c9088e054ae7594a302f46867e8cea503dc1d19107d111744b';
+    '554610c85de1b49e50019aeecca44a8113f248233f4212275d4312ddde270c51';
 // Plan 358 forwards the strict local-path commit's `nowMs` sample through the
 // same already-wired delegate and relocates nothing. Plan 360 additionally
 // constructs the role-aware deferred-runtime-start owner over the SAME
@@ -357,15 +365,40 @@ const _productionBootstrapNormalizedSha256 =
     // inbox-staging maintenance query (retry, give up, delete stuck rows) to
     // the existing inbox coordinator at this composition. No owner, lifecycle
     // or relocation URI changes.
-    '6a968d1531991e6b6ade23cbecf10b59ddf86401f8043cc996879735fca658b2';
+    // SE-42 D27 fix round (2026-10-16): the bootstrap builds one process-wide
+    // NetworkPathSource over the node's default-network handoff events and
+    // passes its `outcomes` into createProductionCallSignalingComposition.
+    // The same two-line addition moves the historical-notification digest
+    // above; no owner, lifecycle or relocation URI changes.
+    // SE-42 Task 19 and Task 12b (2026-10-16): the push coordinator gets
+    // readPermission: readPushPermission. The reply-once repair builds one
+    // SqlContactRepairRepository and rollout eligibility over the same
+    // database, passes the eligibility to the existing contact request
+    // senders and retrier, builds one ContactRepairOutboxWorker from the
+    // existing send dependencies, replaces the listener's unsigned
+    // requestReciprocalCallWakeRecovery closure with the repair repository and
+    // own-identity readers, and starts the worker as one sync live-service
+    // step. No owner, lifecycle or relocation URI moves.
+    // SE-42 Task 20 owner decision A (2026-10-16): the listener's
+    // requestReciprocalCallWakeRecovery closure is restored beside the repair
+    // wiring, with markAsNewRequest: false, for unmarked legacy retries only.
+    '0962a5d84e3d58eb30f0740ce51474c295aeea766bb8318fe31944e9efe8db9c';
 
 // The P269 strict-custody proof forwards two optional debug download hooks
 // at the existing media owner; no application or notification owner moves.
 // Re-pinned 2026-10-01 for the same c4b38285f bootstrap additions.
 // Re-pinned 2026-10-06 (user approved) for the same caff0f087 inbox-staging
 // maintenance callback.
+// SE-42 D27 fix round (2026-10-16): the bootstrap builds one process-wide
+// NetworkPathSource over the node's default-network handoff events and passes
+// its `outcomes` into createProductionCallSignalingComposition; the database
+// proof callback and every existing owner stay where they were.
+// SE-42 Task 19 and Task 12b (2026-10-16): the same readPermission line and
+// reply-once repair wiring described at the bootstrap digest above move this
+// digest; the database proof callback is unchanged. Task 20 owner decision A
+// restores the legacy reciprocal closure described above.
 const _productionBootstrapWithoutHistoricalNotificationSha256 =
-    '97c700c044f868e9d63d55aa2d54188f49fc40d4de27d49f48107e99aab8ad3a';
+    '8d1d35c1bbe4e0fe05acff57fb1d16fa96ca46adfe6a6f3dfcc4234817c1a0c5';
 
 const _reviewedResumeExceptionTargets = <String>{
   'lib/features/account_migration/application/'

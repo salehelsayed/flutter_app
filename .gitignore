@@ -300,3 +300,8 @@ graphify-arch/graphify-out/.graphify_analysis.json
 
 # Wave 4 private run inputs (signing attestation hashes, device-bound)
 /docker-ws/beta/wave4/private/
+
+# Local device scratch (QR payloads, peer IDs, chat rows), session notes, Android build reports
+/docker-ws/tmp/
+/.audit/
+/android/build/

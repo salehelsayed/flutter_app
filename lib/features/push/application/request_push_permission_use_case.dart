@@ -43,6 +43,63 @@ Future<bool> requestPushPermission({
 
   final settings = await effectiveRequestPermission();
 
+  final (:granted, :osEnabled) = await _confirmWithOs(
+    settings,
+    osNotificationsEnabledFn,
+  );
+
+  final resultDetails = <String, dynamic>{
+    'status': settings.authorizationStatus.name,
+    'granted': granted,
+    // Null-aware element: the key is present only when the check answered.
+    'osEnabled': ?osEnabled,
+  };
+
+  logPushDiagnostic('permission_request_result', details: resultDetails);
+
+  emitFlowEvent(
+    layer: 'FL',
+    event: 'PUSH_PERMISSION_REQUEST_RESULT',
+    details: resultDetails,
+  );
+
+  return granted;
+}
+
+/// Reads push permission without asking, confirmed against the OS the same
+/// way as [requestPushPermission]. Used on resume, where asking again would
+/// re-show the system dialog that just closed.
+Future<bool> readPushPermission({
+  Future<NotificationSettings> Function()? readSettingsFn,
+  Future<bool> Function()? osNotificationsEnabledFn,
+}) async {
+  final settings =
+      await (readSettingsFn ??
+          () => FirebaseMessaging.instance.getNotificationSettings())();
+  final (:granted, :osEnabled) = await _confirmWithOs(
+    settings,
+    osNotificationsEnabledFn,
+  );
+  final resultDetails = <String, dynamic>{
+    'status': settings.authorizationStatus.name,
+    'granted': granted,
+    'osEnabled': ?osEnabled,
+  };
+  logPushDiagnostic('permission_read_result', details: resultDetails);
+  emitFlowEvent(
+    layer: 'FL',
+    event: 'PUSH_PERMISSION_READ_RESULT',
+    details: resultDetails,
+  );
+  return granted;
+}
+
+/// A granted-looking reading is believed only after the OS confirms it. A
+/// denied reading is returned untouched and never consults the OS.
+Future<({bool granted, bool? osEnabled})> _confirmWithOs(
+  NotificationSettings settings,
+  Future<bool> Function()? osNotificationsEnabledFn,
+) async {
   final requestGranted =
       settings.authorizationStatus == AuthorizationStatus.authorized ||
       settings.authorizationStatus == AuthorizationStatus.provisional;
@@ -99,22 +156,7 @@ Future<bool> requestPushPermission({
     }
   }
 
-  final resultDetails = <String, dynamic>{
-    'status': settings.authorizationStatus.name,
-    'granted': granted,
-    // Null-aware element: the key is present only when the check answered.
-    'osEnabled': ?osEnabled,
-  };
-
-  logPushDiagnostic('permission_request_result', details: resultDetails);
-
-  emitFlowEvent(
-    layer: 'FL',
-    event: 'PUSH_PERMISSION_REQUEST_RESULT',
-    details: resultDetails,
-  );
-
-  return granted;
+  return (granted: granted, osEnabled: osEnabled);
 }
 
 /// Reads the OS's real notification state.

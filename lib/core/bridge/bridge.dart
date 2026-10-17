@@ -97,8 +97,29 @@ final StreamController<Map<String, dynamic>> _groupDiagnosticEventController =
 final StreamController<Map<String, dynamic>>
 _transportDiagnosticEventController =
     StreamController<Map<String, dynamic>>.broadcast(sync: true);
+final StreamController<Map<String, dynamic>> _networkPathEventController =
+    StreamController<Map<String, dynamic>>.broadcast(sync: true);
 
 const groupPushLossDetectedEvent = 'group:push_loss_detected';
+
+/// Payload keys of the `network:*` default-network handoff events that may
+/// leave the bridge: counters, stages, families and timings only. The relay
+/// peer id the node also reports stays out.
+const networkPathEventPayloadKeys = <String>{
+  'epoch',
+  'ownerGeneration',
+  'previousReadyEpoch',
+  'stage',
+  'errorCode',
+  'totalMs',
+  'dialMs',
+  'reserveMs',
+  'probeMs',
+  'reservationTtlS',
+  'family',
+  'transport',
+  'socketFresh',
+};
 const _transportDiagnosticPayloadKeys = <String, Set<String>>{
   'holepunch:attempt': {'step', 'attempt', 'rttMs', 'remotePeerShort'},
   'holepunch:success': {
@@ -141,6 +162,12 @@ Stream<Map<String, dynamic>> get groupDiagnosticEventStream =>
 Stream<Map<String, dynamic>> get transportDiagnosticEventStream =>
     _transportDiagnosticEventController.stream;
 
+/// Broadcast stream of the node's default-network handoff events
+/// (`network:path_changing`, `network:relay_ready`, `network:relay_failed`),
+/// each as `{'event': name, 'epoch': N, 'ownerGeneration': N, ...}`.
+Stream<Map<String, dynamic>> get networkPathEventStream =>
+    _networkPathEventController.stream;
+
 /// Publishes a media-upload progress event to Flutter listeners.
 void emitMediaUploadProgressEvent(Map<String, dynamic> data) {
   _mediaUploadProgressController.add(Map<String, dynamic>.from(data));
@@ -163,6 +190,23 @@ void emitTransportDiagnosticEvent(String eventName, Map<String, dynamic> data) {
   final safeData = sanitizeTransportDiagnosticEventData(eventName, data);
   _transportDiagnosticEventController.add({'event': eventName, ...safeData});
 }
+
+/// Publishes one default-network handoff event to Flutter listeners with only
+/// the [networkPathEventPayloadKeys] of its payload.
+void emitNetworkPathEvent(String eventName, Map<String, dynamic> data) {
+  _networkPathEventController.add(
+    sanitizeNetworkPathEventData(eventName, data),
+  );
+}
+
+Map<String, dynamic> sanitizeNetworkPathEventData(
+  String eventName,
+  Map<String, dynamic> data,
+) => <String, dynamic>{
+  'event': eventName,
+  for (final key in networkPathEventPayloadKeys)
+    if (data.containsKey(key)) key: data[key],
+};
 
 Map<String, dynamic> sanitizeTransportDiagnosticEventData(
   String eventName,
