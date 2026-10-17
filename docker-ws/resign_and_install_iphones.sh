@@ -6,18 +6,20 @@
 # .../Frameworks/Flutter.framework"). It is NOT a credential problem.
 # Re-signs the framework, then the app (that order — re-signing the framework
 # invalidates the outer bundle), verifies, then installs + launches on the
-# active iOS fleet. NO rebuild: uses the already-built Runner.app as is.
-# Results land in docker-ws/resign_and_install_iphones_result.txt.
+# explicitly selected iPhones. NO rebuild: uses the built Runner.app as is.
+# Results land in build/device-install/resign_and_install_iphones_result.txt.
 set -uo pipefail
 cd "$(dirname "$0")/.."
 
 BUNDLE_ID=com.mknoon.app
 APP=build/ios/iphoneos/Runner.app
 SIGN_ID="Apple Development: Saleh Elsayed (QGRWQ86DP5)"
-[ -f docker-ws/local_devices.env ] && . docker-ws/local_devices.env
-IPHONE_UDIDS="${IPHONE_UDIDS:-${IPHONE11_UDID:-} ${IPHONE13_UDID:-}}"
-[ -n "${IPHONE_UDIDS// /}" ] || { echo "no iPhone UDIDs: set IPHONE_UDIDS or docker-ws/local_devices.env"; exit 2; }
-RESULT_FILE="docker-ws/resign_and_install_iphones_result.txt"
+. docker-ws/_device_targets.sh
+mknoon_load_iphone_targets "$PWD" || exit 2
+RESULT_FILE="build/device-install/resign_and_install_iphones_result.txt"
+. docker-ws/_host_paths.sh
+mknoon_require_output "$PWD" "$RESULT_FILE" || exit 2
+mkdir -p "$(dirname "$RESULT_FILE")" || exit 2
 : > "$RESULT_FILE"
 note() { echo "$*" | tee -a "$RESULT_FILE"; }
 FAILED=0

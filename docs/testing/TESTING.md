@@ -51,6 +51,17 @@ configuration and signed artifact, not just the Dart revision or version label.
   use that ignored directory for raw runs; arbitrary `artifacts/` paths are not automatically ignored. Legacy
   full runs retain `.full_regression_logs/`. Keep tokens, keys, personal data, and private
   message content out of shared reports. Use synthetic fixture content.
+- The device-touching `docker-ws` host helpers require an explicit
+  `IPHONE_UDIDS` selection from the caller or ignored `local_devices.env`.
+  Caller selection wins, including explicit empty (which refuses); simulator
+  actions require one simulator target. Installer retries retain that selection
+  and never uninstall. Helper output guards resolve symlinks and permit only
+  external or gitignored paths; installer results use `build/device-install/`.
+  Local-server cleanup checks the exact PID, UID, interpreter and full command.
+  Synthetic target/stub probes establish these host boundaries; they do not
+  certify a real device installation or app signature. Fresh-worktree workflow
+  checks also need the pinned Flutter package configuration for standalone Dart
+  contracts; resolve it with offline, lockfile-enforced `flutter pub get`.
 - `docs/**/*.md` is already indexed by `codex-memory/config.json`. No new memory
   database or service is required. Read this file before selecting tests; use
   Codex document recall for focused prior decisions and targeted source searches

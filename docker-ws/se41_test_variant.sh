@@ -8,13 +8,32 @@ set -uo pipefail
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 ROOT=/Volumes/CrucialX9/se41_test
 KEYS="$ROOT/keys"; COPY="$ROOT/app"; SRV="$ROOT/server"; LOG="$ROOT/variant.log"
-mkdir -p "$ROOT"
+. "$REPO/docker-ws/_host_paths.sh"
+mknoon_require_output "$REPO" "$ROOT" outside || exit 2
+mknoon_require_output "$REPO" "$COPY" outside || exit 2
+mkdir -p "$ROOT" || exit 2
 . "$REPO/docker-ws/_flutter_sdk_env.sh"
 cmd="${1:?command}"; shift
+stop_owned_server() {
+  local pid="$1" owner program command name expected matched=0
+  [[ "$pid" =~ ^[0-9]+$ ]] && [ "$pid" -gt 1 ] || { echo 'invalid server PID'; return 2; }
+  owner=$(ps -ww -p "$pid" -o uid= 2>/dev/null) || return 2
+  owner="${owner//[[:space:]]/}"
+  [ "$owner" = "$(id -u)" ] || { echo 'refused server owner'; return 2; }
+  program=$(ps -ww -p "$pid" -o comm= 2>/dev/null) || return 2
+  name="${program##*/}"
+  [[ "$name" = Python || "$name" =~ ^python3([.][0-9]+)?$ ]] || { echo 'refused server program'; return 2; }
+  command=$(ps -ww -p "$pid" -o command= 2>/dev/null) || return 2
+  for expected in "$(command -v python3)" "$program" "$name"; do
+    [ "$command" = "$expected $ROOT/serve.py $SRV $ROOT/cert.pem $ROOT/key.pem" ] && matched=1
+  done
+  [ "$matched" = 1 ] || { echo 'refused server command'; return 2; }
+  kill -TERM "$pid"
+}
 case "$cmd" in
   keys)
     if [ -f "$KEYS/public_key.b64" ]; then echo "test key already present"; else
-      (cd "$REPO" && dart run tool/sign_version_file.dart keygen --out "$KEYS") | grep -v '^private key' ; fi
+      (cd "$REPO" && dart run tool/sign_version_file.dart keygen --out "$KEYS") | grep -v '^private key' || exit $?; fi
     ls "$KEYS" ;;
   copy)
     rsync -a --delete \
@@ -22,6 +41,7 @@ case "$cmd" in
       --exclude '*.noindex' --exclude 'ModuleCache.noindex' --exclude 'SourcePackages' --exclude 'ios/Pods/' \
       --exclude '.claude/worktrees/' --exclude 'graphify-out/' --exclude 'graphify-arch/' \
       "$REPO/" "$COPY/" > "$LOG" 2>&1
+    rc=$?; [ "$rc" -eq 0 ] || { echo "copy exit=$rc"; exit "$rc"; }
     echo "copy exit=$? files=$(find "$COPY" -type f | wc -l | tr -d ' ') head=$(git -C "$REPO" rev-parse --short HEAD) dirty=$(git -C "$REPO" status --porcelain | wc -l | tr -d ' ')" | tee "$COPY/.se41-test-provenance.txt" ;;
   patch)
     PUB=$(tr -d '\n ' < "$KEYS/public_key.b64")
@@ -43,6 +63,7 @@ s += "\n// SE-41 TEST VARIANT ONLY (never committed): trust the local test serve
 open(f, 'w').write(s)
 print('patched keys/url/fetcher; k1 is the TEST key, k2 empty')
 PY
+    rc=$?; [ "$rc" -eq 0 ] || exit "$rc"
     grep -c "10.0.2.2" "$COPY/lib/features/update_check/domain/update_check_keys.dart" ;;
   fast-gate)
     # TEST VARIANT ONLY: 1 minute check gate and a 15 minute WorkManager period,
@@ -78,35 +99,49 @@ PY
     ;;
   build-ios-sim)
     BN="${1:?build number}"
-    (cd "$COPY" && bash scripts/ensure_go_ios_bindings.sh > "$ROOT/ios-bindings.log" 2>&1; \
+    (cd "$COPY" && bash scripts/ensure_go_ios_bindings.sh > "$ROOT/ios-bindings.log" 2>&1 && \
       flutter build ios --simulator --debug --no-pub --build-number="$BN" --dart-define-from-file=tool/build/voice_call_release_defines.json \
         --dart-define=MKNOON_UPDATE_CHECK=on > "$ROOT/build-ios-$BN.log" 2>&1)
     rc=$?; echo "ios sim build $BN exit=$rc"; ls -d "$COPY/build/ios/iphonesimulator/Runner.app" 2>/dev/null; exit $rc ;;
   sim)
-    # TEST VARIANT ONLY: drive the booted iPhone simulator. Subcommands:
+    # TEST VARIANT ONLY: drive one explicitly selected iPhone simulator. Subcommands:
     #   sim install | sim launch [lang] | sim shot <name> | sim terminate
     SUB="${1:?sim subcommand}"; shift
-    UDID=$(xcrun simctl list devices booted -j | python3 -c 'import json,sys; d=json.load(sys.stdin)["devices"]; b=[v["udid"] for vs in d.values() for v in vs if v.get("state")=="Booted" and v["name"].startswith("iPhone")]; print(b[0] if b else "")')
-    [ -n "$UDID" ] || { echo "no booted iPhone simulator"; exit 2; }
+    . "$REPO/docker-ws/_device_targets.sh"
+    mknoon_load_iphone_targets "$REPO" sim || exit 2
+    UDID="$IPHONE_UDIDS"
     case "$SUB" in
-      install) xcrun simctl install "$UDID" "$COPY/build/ios/iphonesimulator/Runner.app"; echo "install exit=$?" ;;
-      launch) L="${1:-}"; if [ -n "$L" ]; then xcrun simctl launch --terminate-running-process "$UDID" com.mknoon.app -AppleLanguages "($L)" -AppleLocale "$L"; else xcrun simctl launch --terminate-running-process "$UDID" com.mknoon.app; fi; echo "launch exit=$?" ;;
-      terminate) xcrun simctl terminate "$UDID" com.mknoon.app; echo "terminate exit=$?" ;;
-      shot) N="${1:?name}"; mkdir -p "$REPO/build/se41_sim"; xcrun simctl io "$UDID" screenshot "/tmp/se41_$N.png" >/dev/null 2>&1; rc=$?; cp "/tmp/se41_$N.png" "$REPO/build/se41_sim/$N.png" 2>/dev/null; rm -f "/tmp/se41_$N.png"; echo "shot exit=$rc build/se41_sim/$N.png" ;;
+      install) xcrun simctl install "$UDID" "$COPY/build/ios/iphonesimulator/Runner.app"; rc=$?; echo "install exit=$rc"; exit "$rc" ;;
+      launch) L="${1:-}"; if [ -n "$L" ]; then xcrun simctl launch --terminate-running-process "$UDID" com.mknoon.app -AppleLanguages "($L)" -AppleLocale "$L"; else xcrun simctl launch --terminate-running-process "$UDID" com.mknoon.app; fi; rc=$?; echo "launch exit=$rc"; exit "$rc" ;;
+      terminate) xcrun simctl terminate "$UDID" com.mknoon.app; rc=$?; echo "terminate exit=$rc"; exit "$rc" ;;
+      shot)
+        N="${1:?name}"
+        case "$N" in .|*/*|..*) echo 'refused screenshot name'; exit 2 ;; esac
+        DEST="$REPO/build/se41_sim/$N.png"
+        mknoon_require_output "$REPO" "$DEST" || exit 2
+        mkdir -p "$(dirname "$DEST")" || exit 2
+        SHOT_DIR=$(mktemp -d) || exit 2
+        trap 'rm -f "$SHOT_DIR/shot.png"; rmdir "$SHOT_DIR"' EXIT
+        xcrun simctl io "$UDID" screenshot "$SHOT_DIR/shot.png" >/dev/null 2>&1
+        rc=$?; [ "$rc" -eq 0 ] || exit "$rc"
+        cp "$SHOT_DIR/shot.png" "$DEST"; rc=$?
+        echo "shot exit=$rc build/se41_sim/$N.png"; exit "$rc" ;;
       *) echo "unknown sim subcommand"; exit 2 ;;
     esac ;;
   build)
     BN="${1:?build number}"; OUT="${2:?out apk}"
-    (cd "$COPY" && flutter pub get --offline > "$ROOT/pubget.log" 2>&1; \
+    mknoon_require_output "$REPO" "$OUT" || exit 2
+    (cd "$COPY" && flutter pub get --offline > "$ROOT/pubget.log" 2>&1 && \
       flutter build apk --debug --build-number="$BN" --dart-define-from-file=tool/build/voice_call_release_defines.json \
         --dart-define=CONTACT_REPAIR_ROLLOUT=true --dart-define=MKNOON_UPDATE_CHECK=on \
         --android-project-arg=enableAndroidNativeCalls=true > "$ROOT/build-$BN.log" 2>&1)
-    rc=$?; echo "build $BN exit=$rc"; [ $rc -eq 0 ] && cp "$COPY/build/app/outputs/flutter-apk/app-debug.apk" "$OUT" && shasum -a 256 "$OUT"
-    exit $rc ;;
+    rc=$?; echo "build $BN exit=$rc"; [ "$rc" -eq 0 ] || exit "$rc"
+    cp "$COPY/build/app/outputs/flutter-apk/app-debug.apk" "$OUT" && shasum -a 256 "$OUT"; exit $? ;;
   sign)
     IN="${1:?payload}"; OUT="${2:?out}"
+    mknoon_require_output "$REPO" "$OUT" || exit 2
     PRIV="$KEYS/signing_key.b64"
-    (cd "$REPO" && dart run tool/sign_version_file.dart sign --key "$PRIV" --key-id k1 --in "$IN" --out "$OUT") ; echo "sign exit=$?" ;;
+    (cd "$REPO" && dart run tool/sign_version_file.dart sign --key "$PRIV" --key-id k1 --in "$IN" --out "$OUT") ; rc=$?; echo "sign exit=$rc"; exit "$rc" ;;
   serve-start)
     mkdir -p "$SRV/mknoon"
     if [ ! -f "$ROOT/cert.pem" ]; then
@@ -129,14 +164,14 @@ PY
     nohup python3 "$ROOT/serve.py" "$SRV" "$ROOT/cert.pem" "$ROOT/key.pem" > "$ROOT/serve.log" 2>&1 < /dev/null &
     echo $! > "$ROOT/serve.pid"; sleep 1; echo "server pid $(cat "$ROOT/serve.pid")" ;;
   serve-stop)
-    P=$(cat "$ROOT/serve.pid" 2>/dev/null); if [ -n "$P" ] && ps -p "$P" -o command= | grep -q serve.py; then kill "$P"; echo "stopped $P"; else echo "no server"; fi ;;
+    P=$(cat "$ROOT/serve.pid" 2>/dev/null || true)
+    if [ -n "$P" ]; then stop_owned_server "$P"; else echo 'no server'; fi ;;
   serve-status)
     echo "pid file: $(cat "$ROOT/serve.pid" 2>/dev/null || echo none)"
     /usr/sbin/lsof -nP -iTCP:8443 -sTCP:LISTEN 2>/dev/null | awk 'NR>1 {print "listener pid " $2 " " $1}' ;;
   serve-kill)
-    P="${1:?pid}"; C=$(ps -p "$P" -o command= 2>/dev/null)
-    case "$C" in *serve.py*) kill "$P" && echo "stopped $P" ;; *) echo "pid $P is not serve.py: $C"; exit 1 ;; esac ;;
+    stop_owned_server "${1:?pid}" ;;
   publish)
-    SRC="${1:?envelope}"; cp "$SRC" "$SRV/mknoon/version.json.tmp" && mv "$SRV/mknoon/version.json.tmp" "$SRV/mknoon/version.json"; echo "published $(shasum -a 256 "$SRV/mknoon/version.json" | cut -c1-16)" ;;
+    SRC="${1:?envelope}"; cp "$SRC" "$SRV/mknoon/version.json.tmp" && mv "$SRV/mknoon/version.json.tmp" "$SRV/mknoon/version.json" || exit $?; echo "published $(shasum -a 256 "$SRV/mknoon/version.json" | cut -c1-16)" ;;
   *) echo "unknown command"; exit 2 ;;
 esac

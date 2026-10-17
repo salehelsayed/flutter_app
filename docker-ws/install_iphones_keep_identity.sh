@@ -1,15 +1,19 @@
 #!/bin/bash
-# Install the already-built build/ios/iphoneos/Runner.app on iPhone 11 + 13
+# Install the already-built build/ios/iphoneos/Runner.app on selected iPhones
 # WITHOUT uninstalling first (identity, contacts and call state are kept), then
 # launch and verify bundleVersion. Falls back to resign_and_install_iphones.sh
 # on the recurring Flutter.framework code-seal break (that script also keeps
-# identity: it never uninstalls). Results: docker-ws/install_iphones_keep_identity_result.txt
+# identity: it never uninstalls). Results: build/device-install/install_iphones_keep_identity_result.txt
 set -uo pipefail
 cd "$(dirname "$0")/.."
 BUNDLE_ID=com.mknoon.app
 APP=build/ios/iphoneos/Runner.app
-IPHONE_UDIDS="${IPHONE_UDIDS:-00008030-001A6D2801BB802E 00008110-00184D622289801E}"
-RESULT_FILE="docker-ws/install_iphones_keep_identity_result.txt"
+. docker-ws/_device_targets.sh
+mknoon_load_iphone_targets "$PWD" || exit 2
+RESULT_FILE="build/device-install/install_iphones_keep_identity_result.txt"
+. docker-ws/_host_paths.sh
+mknoon_require_output "$PWD" "$RESULT_FILE" || exit 2
+mkdir -p "$(dirname "$RESULT_FILE")" || exit 2
 : > "$RESULT_FILE"
 note() { echo "$*" | tee -a "$RESULT_FILE"; }
 FAILED=0
@@ -47,8 +51,8 @@ PY
 done
 if [ "$NEED_RESIGN" = 1 ]; then
   echo "== install failed on an iPhone: re-signing and retrying via resign_and_install_iphones.sh"
-  docker-ws/resign_and_install_iphones.sh; RC=$?
-  cat docker-ws/resign_and_install_iphones_result.txt >> "$RESULT_FILE"
+  IPHONE_UDIDS="$IPHONE_UDIDS" bash docker-ws/resign_and_install_iphones.sh; RC=$?
+  cat build/device-install/resign_and_install_iphones_result.txt >> "$RESULT_FILE"
   [ "$RC" -eq 0 ] || FAILED=1
 fi
 echo "---"; cat "$RESULT_FILE"; exit $FAILED
