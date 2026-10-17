@@ -161,7 +161,7 @@ void main() {
     expect(fetcher.calls, 2);
   });
 
-  test('openStore opens only the built-in App Store page (AC7)', () async {
+  test('openStore opens only the built-in TestFlight link (AC7)', () async {
     final opened = <Uri>[];
     UpdateCheckBackgroundHost(
       updateSwitch: _switch(),
@@ -173,6 +173,6 @@ void main() {
     ).install();
 
     expect(await callFromNative('openStore', {'url': 'https://evil.example'}), true);
-    expect(opened, [Uri.parse('https://apps.apple.com/app/id6760883540')]);
+    expect(opened, [Uri.parse('https://testflight.apple.com/join/nUVjrEYS')]);
   });
 }

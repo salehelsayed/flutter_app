@@ -15,7 +15,6 @@ import 'package:flutter_app/features/call/presentation/screens/active_call_scree
 import 'package:flutter_app/features/call/presentation/screens/incoming_call_screen.dart';
 import 'package:flutter_app/features/update_check/application/update_check_controller.dart';
 import 'package:flutter_app/features/update_check/domain/update_check_models.dart';
-import 'package:flutter_app/features/update_check/domain/update_store_urls.dart';
 import 'package:flutter_app/features/update_check/presentation/update_copy.dart';
 import 'package:flutter_app/features/update_check/presentation/update_required_back_guard.dart';
 import 'package:flutter_app/features/update_check/presentation/update_required_gate.dart';
@@ -173,7 +172,9 @@ void main() {
 
       await tester.tap(find.text('Update now'));
       await tester.pump();
-      expect(launches, [Uri.parse(updateStoreUrlIos)]);
+      expect(launches, [
+        Uri.parse('https://testflight.apple.com/join/nUVjrEYS'),
+      ]);
       expect(find.byKey(_overlay), findsOneWidget);
     });
 

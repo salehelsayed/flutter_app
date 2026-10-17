@@ -5,7 +5,6 @@ import 'package:flutter_app/core/theme/app_colors.dart';
 import 'package:flutter_app/features/home/presentation/screens/first_time_experience_screen.dart';
 import 'package:flutter_app/features/update_check/application/update_check_controller.dart';
 import 'package:flutter_app/features/update_check/domain/update_check_models.dart';
-import 'package:flutter_app/features/update_check/domain/update_store_urls.dart';
 import 'package:flutter_app/features/update_check/presentation/update_available_banner.dart';
 import 'package:flutter_app/features/update_check/presentation/update_required_gate.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
@@ -124,7 +123,9 @@ void main() {
         find.byKey(const ValueKey('update-available-banner-update')),
       );
       await tester.pump();
-      expect(launches, [Uri.parse(updateStoreUrlIos)]);
+      expect(launches, [
+        Uri.parse('https://testflight.apple.com/join/nUVjrEYS'),
+      ]);
     });
 
     testWidgets('a dismissal holds for the same latestBuild and the banner '

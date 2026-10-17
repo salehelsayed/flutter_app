@@ -4,8 +4,9 @@ library;
 
 import 'update_check_models.dart';
 
-/// App Store page for Apple ID 6760883540 (SE-41 O5).
-const String updateStoreUrlIos = 'https://apps.apple.com/app/id6760883540';
+/// Public TestFlight invitation while iOS distribution is beta-only.
+/// HTTPS also offers installation instructions when TestFlight is absent.
+const String updateStoreUrlIos = 'https://testflight.apple.com/join/nUVjrEYS';
 
 /// Google Play page for the production application id.
 const String updateStoreUrlAndroid =
