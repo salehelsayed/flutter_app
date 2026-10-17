@@ -358,6 +358,10 @@ final class MailboxProductionHeadlessCallAdmissionSession
         if (resolve != null && inviteSignal != null) {
           try {
             _display = await resolve(inviteSignal).timeout(_displayTimeout);
+            final name = _display?.displayName.trim();
+            if (name == '' || name == inviteSignal.senderAccountPeerId) {
+              _display = null;
+            }
           } catch (_) {
             _display = null;
           }

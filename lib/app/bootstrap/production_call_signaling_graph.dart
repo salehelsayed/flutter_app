@@ -551,6 +551,10 @@ final class ProductionCallSignalingGraph
       callId,
       presentation,
     );
+    await iosCallLifecycleAdapter?.updateLockedPresentation(
+      callId,
+      presentation,
+    );
   }
 
   @override
@@ -2489,10 +2493,13 @@ Future<List<CallWakeEligibleContact>> _loadProductionCallWakeEligibleContacts({
       continue;
     }
     try {
+      final displayName = username.trim();
       contacts.add(
         CallWakeEligibleContact(
           contactAccountPeerId: peerId,
-          displayName: username.trim(),
+          displayName: displayName.isEmpty || displayName == peerId
+              ? 'Mknoon call'
+              : displayName,
           authorizedSenderDevicePeerIds: roster.devices.map(
             (device) => device.devicePeerId,
           ),

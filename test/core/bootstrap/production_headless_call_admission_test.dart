@@ -26,6 +26,29 @@ void main() {
     light: true,
   );
 
+  for (final emptyName in [true, false]) {
+    test('headless ${emptyName ? 'empty' : 'peer-ID'} display '
+        'keeps native fallback without affecting admission', () async {
+      final session = MailboxProductionHeadlessCallAdmissionSession(
+        mailboxClient: _Mailbox([_event()]),
+        authenticateEvent: _signalAuthenticator(),
+        resolveDisplay: (invite) async => HeadlessIncomingCallDisplay(
+          displayName: emptyName ? ' ' : invite.senderAccountPeerId,
+          avatarPng: null,
+          light: true,
+        ),
+        closeResources: () async => _Session.safeCleanup,
+      );
+      final report = await ProductionHeadlessCallAdmissionRunner(
+        backend: _Backend(session),
+        nowMs: () => 1_800_000_000_000,
+      ).run(invocation: invocation, isStopRequested: () => false);
+      expect(report.disposition, HeadlessCallAdmissionDisposition.admitted);
+      expect(report.display, isNull);
+      expect(report.databaseClosed && report.leaseReleased, isTrue);
+    });
+  }
+
   test(
     'authenticated invite display crosses only after replay rollback and cleanup',
     () async {

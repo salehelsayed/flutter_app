@@ -6051,6 +6051,18 @@ visible and cannot become an ordinary first-attempt PASS.
   CallKit retains verified opaque-contact name resolution and later updates.
   The iOS regression supplies a named presentation and asserts every request
   key. The corrected affected-calls selection passes 1,139 tests.
+  SE-55's `foreground_call_overlay_test.dart` regressions cover empty names
+  and usernames equal to the contact's peer ID in both directions, through
+  ringing/inviting, connected, and minimized surfaces. These use the readable
+  fallback and publish neither peer IDs nor placeholders as authenticated native
+  names. `call_signaling_composition_test.dart` covers incoming/outgoing iOS
+  name updates through the production graph, replay after native binding, the
+  name-only CallKit method schema, and stale/terminal call rejection. These are
+  complemented by incoming-handler and headless-admission tests rejecting
+  peer IDs as names, and a real-database wake-contact fixture retaining call
+  eligibility with a readable name when the stored username is empty or an ID.
+  These are host boundary proofs; CallKit UI and the historical owner observation still
+  need separate device evidence.
   Background incoming delivery remains unverified because the known relay
   wake-up failure can prevent the call reaching Android.
 

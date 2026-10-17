@@ -176,11 +176,13 @@ final class _Presenter implements IncomingCallPresenter {
   final bool throwOnPresent;
   final bool unavailable;
   int calls = 0;
+  IncomingCallPresentation? lastPresentation;
   int dismissCalls = 0;
   final Completer<void> started = Completer<void>();
 
   @override
   Future<bool> present(IncomingCallPresentation presentation) async {
+    lastPresentation = presentation;
     calls++;
     if (!started.isCompleted) started.complete();
     if (unavailable) throw const IncomingCallPresentationUnavailable();
@@ -1065,6 +1067,43 @@ void main() {
       expect(coordinator.lastSnapshot?.endReason, CallEndReason.remoteHangup);
     },
   );
+
+  for (final emptyName in [true, false]) {
+    test('incoming ${emptyName ? 'empty' : 'peer-ID'} contact name '
+        'never reaches authenticated native caller metadata', () async {
+      final coordinator = _coordinator(_Effects());
+      addTearDown(coordinator.dispose);
+      final presenter = _Presenter();
+      final provisional = _ProvisionalLifecycle();
+      final androidNames = <String>[];
+      final built = await _build(
+        coordinator,
+        presenter,
+        provisionalNativeLifecycle: provisional,
+        authenticatedDisplayNameResolver: (peerId) async =>
+            emptyName ? ' ' : peerId,
+        androidAuthenticatedContactPresenter: (_, name) async {
+          androidNames.add(name);
+          return true;
+        },
+      );
+      expect(
+        await built.handler.handle(
+          IncomingCallSignalFrame(
+            envelopeJson: built.envelope,
+            authenticatedTransportPeerId: 'sender-device',
+            route: CallRouteClass.direct,
+          ),
+        ),
+        IncomingCallSignalOutcome.accepted,
+      );
+      expect(presenter.calls, 1);
+      expect(presenter.lastPresentation?.displayName, isNull);
+      expect(provisional.calls, isEmpty);
+      expect(androidNames, isEmpty);
+      expect(coordinator.activeSession?.state, CallState.ringing);
+    });
+  }
 
   test(
     'validated invite rings only after platform presentation succeeds',

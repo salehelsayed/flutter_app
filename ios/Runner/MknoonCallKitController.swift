@@ -841,6 +841,7 @@ internal final class MknoonCallKitController: NSObject, CXProviderDelegate {
             return false
           }
           guard self.record(callId, .presented) else { return false }
+          self.provider.reportCall(with: callId, updated: self.incomingUpdate(for: payload))
           self.provider.reportOutgoingCall(with: callId, startedConnectingAt: Date())
           self.scheduleExpiry(payload)
           return true

@@ -632,7 +632,10 @@ final class HandleIncomingCallSignal {
         final name = (await _authenticatedDisplayNameResolver?.call(
           signal.senderAccountPeerId,
         ))?.trim();
-        if (name != null && name.isNotEmpty && name.length <= 128) {
+        if (name != null &&
+            name.isNotEmpty &&
+            name != signal.senderAccountPeerId &&
+            name.length <= 128) {
           initialDisplayName = name;
         }
       } catch (_) {}
@@ -916,6 +919,7 @@ final class HandleIncomingCallSignal {
       final displayName = (await resolver(contactAccountPeerId))?.trim();
       if (displayName == null ||
           displayName.isEmpty ||
+          displayName == contactAccountPeerId ||
           displayName.length > 128) {
         return false;
       }
@@ -941,6 +945,7 @@ final class HandleIncomingCallSignal {
       final displayName = (await resolver(contactAccountPeerId))?.trim();
       if (displayName == null ||
           displayName.isEmpty ||
+          displayName == contactAccountPeerId ||
           displayName.length > 128) {
         return;
       }

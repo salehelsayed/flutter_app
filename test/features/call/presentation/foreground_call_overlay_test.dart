@@ -107,6 +107,59 @@ void main() {
   );
 
   group('ForegroundCallOverlay projection', () {
+    for (final direction in CallDirection.values) {
+      for (final emptyName in [true, false]) {
+        testWidgets('${direction.name} ${emptyName ? 'empty' : 'peer-ID'} '
+            'username uses readable labels and never publishes ID metadata', (
+          tester,
+        ) async {
+          final capability = _FakeLockedForegroundCallCapability();
+          addTearDown(capability.dispose);
+          const peerId = 'synthetic-contact-account';
+          await tester.pumpWidget(
+            harness(
+              capability: capability,
+              loadContactDisplayName: (_) async => emptyName ? '  ' : peerId,
+            ),
+          );
+          void emit(CallState state) => capability.emit(
+            _projection(
+              now: now,
+              callId: _activeId,
+              peerId: peerId,
+              direction: direction,
+              state: state,
+              incomingValidated: true,
+            ),
+          );
+          emit(
+            direction == CallDirection.incoming
+                ? CallState.ringing
+                : CallState.inviting,
+          );
+          await tester.pump();
+          await tester.pump();
+          expect(find.text(fallbackName), findsOneWidget);
+          expect(find.text(peerId), findsNothing);
+          expect(capability.locked, isEmpty);
+
+          emit(CallState.connected);
+          await tester.pumpAndSettle();
+          expect(find.byType(ActiveCallScreen), findsOneWidget);
+          expect(find.text(fallbackName), findsOneWidget);
+          expect(find.text(peerId), findsNothing);
+          await tester.tap(find.byKey(const ValueKey('call-minimize')));
+          await tester.pumpAndSettle();
+          expect(find.byKey(const ValueKey('call-return-bar')), findsOneWidget);
+          expect(find.textContaining(fallbackName), findsOneWidget);
+          expect(find.textContaining(peerId), findsNothing);
+          // CallKit keeps its readable native default. A placeholder or peer
+          // identifier must never become authenticated caller metadata.
+          expect(capability.locked, isEmpty);
+        });
+      }
+    }
+
     testWidgets('unresolved UI fallback never becomes native caller metadata', (
       tester,
     ) async {

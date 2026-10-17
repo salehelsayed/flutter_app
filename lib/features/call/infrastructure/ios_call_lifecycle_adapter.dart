@@ -4,6 +4,7 @@ import 'dart:async';
 import '../application/call_audio_controller.dart';
 import '../application/call_coordinator.dart';
 import '../application/handle_incoming_call_signal.dart';
+import '../application/locked_call_presentation.dart';
 import '../domain/call_end_reason.dart';
 import '../domain/call_engine.dart';
 import '../domain/call_audio_output_device.dart';
@@ -111,7 +112,15 @@ final class IosCallLifecycleAdapter
        _audioActivationDelay =
            audioActivationDelay ?? _defaultAudioActivationDelay,
        _delegate = AndroidCallLifecycleAdapter(
-         invokeMethod: invokeMethod,
+         // Reuse exact-call binding and early-presentation replay, while
+         // preserving CallKit's name-only authenticated contact contract.
+         invokeMethod: (method, arguments) => method == 'updatePresentation'
+             ? invokeMethod('updateAuthenticatedContact', <String, Object?>{
+                 'version': arguments['version'],
+                 'callHandle': arguments['callHandle'],
+                 'displayName': arguments['displayName'],
+               })
+             : invokeMethod(method, arguments),
          nativeEvents: nativeEvents,
          coordinator: coordinator,
          resolveAuthenticatedHandle: resolveAuthenticatedHandle,
@@ -200,6 +209,11 @@ final class IosCallLifecycleAdapter
   @override
   Future<bool> registerOutgoing(CallId callId, {required DateTime expiresAt}) =>
       _translate(_delegate.registerOutgoing(callId, expiresAt: expiresAt));
+
+  Future<void> updateLockedPresentation(
+    CallId callId,
+    LockedCallPresentation presentation,
+  ) => _translate(_delegate.updateLockedPresentation(callId, presentation));
 
   Future<IosCallAudioState> readAudioState() async {
     final state = await _translate(_delegate.readAudioState());

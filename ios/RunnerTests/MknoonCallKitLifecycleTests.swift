@@ -719,6 +719,27 @@ final class MknoonCallKitLifecycleTests: XCTestCase {
     }
   }
 
+  func testOutgoingCallStartsWithReadableNameAndKeepsResolvedNameWhenConnected() {
+    let rig = makeRig()
+    var registered: Bool?
+    rig.controller.registerOutgoingAuthenticated(
+      callHandle: callA.uuidString.lowercased(),
+      expiresAtMs: now + 30_000
+    ) { registered = $0 }
+
+    XCTAssertEqual(registered, true)
+    XCTAssertEqual(rig.provider.updates.last?.1.localizedCallerName, "Mknoon call")
+    XCTAssertNotEqual(rig.provider.updates.last?.1.localizedCallerName,
+      callA.uuidString.lowercased())
+    XCTAssertTrue(rig.controller.updateAuthenticatedContact(
+      callHandle: callA.uuidString.lowercased(),
+      verifiedDisplayName: "Local contact"
+    ))
+    XCTAssertEqual(rig.provider.updates.last?.1.localizedCallerName, "Local contact")
+    XCTAssertTrue(rig.controller.project(callA, state: "connected"))
+    XCTAssertEqual(rig.provider.updates.last?.1.localizedCallerName, "Local contact")
+  }
+
   func testOutgoingPresentedAdoptedCallKitActivationAllowsMediaClaimWithoutAnswer() {
     let rig = makeRig()
     var registered: Bool?

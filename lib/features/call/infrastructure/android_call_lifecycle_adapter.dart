@@ -847,7 +847,10 @@ final class AndroidCallLifecycleAdapter
       );
       return false;
     }
-    if (registered == true) return true;
+    if (registered == true) {
+      await _flushLockedPresentation(callId);
+      return true;
+    }
     _adoptionAcknowledgementPending = false;
     _clearProvisionalOutgoingBinding();
     return _outgoingRegistrationRejected(

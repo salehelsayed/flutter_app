@@ -297,10 +297,11 @@ class _ForegroundCallOverlayState extends State<ForegroundCallOverlay> {
 
     final normalizedName = loadedName?.trim();
     setState(() {
-      _nameLoaded = normalizedName != null && normalizedName.isNotEmpty;
-      _contactDisplayName = normalizedName == null || normalizedName.isEmpty
-          ? _unknownContactName
-          : normalizedName;
+      _nameLoaded =
+          normalizedName != null &&
+          normalizedName.isNotEmpty &&
+          normalizedName != peerId;
+      _contactDisplayName = _nameLoaded ? normalizedName! : _unknownContactName;
     });
     _publishLockedProjection();
   }

@@ -32,6 +32,7 @@ import 'package:flutter_app/features/call/application/call_scoped_media_bundle_o
 import 'package:flutter_app/features/call/application/call_signaling_service.dart';
 import 'package:flutter_app/features/call/application/call_wake_authorization_coordinator.dart';
 import 'package:flutter_app/features/call/application/foreground_call_capability.dart';
+import 'package:flutter_app/features/call/application/locked_call_presentation.dart';
 import 'package:flutter_app/features/call/application/handle_incoming_call_signal.dart';
 import 'package:flutter_app/features/call/application/outgoing_call_capability.dart';
 import 'package:flutter_app/features/call/application/call_redial_controller.dart';
@@ -1504,6 +1505,154 @@ void main() {
       await graph.shutdown();
     },
   );
+
+  for (final outgoing in [false, true]) {
+    test(
+      'production iOS ${outgoing ? 'outgoing' : 'incoming'} name projection '
+      'reaches CallKit after native binding and rejects stale calls',
+      () async {
+        const handle = '33333333-3333-4333-8333-333333333333';
+        final updates = <Map<String, Object?>>[];
+        var registered = false;
+        final fixture = await _createProductionSpeakerRouteFixture(
+          outgoing: outgoing,
+          nativeLifecycleFactory: (coordinator) => IosCallLifecycleAdapter(
+            invokeMethod: (method, arguments) async {
+              if (method == 'attach') {
+                return <String, Object?>{
+                  'version': 1,
+                  'descriptor': registered
+                      ? {
+                          'callHandle': handle,
+                          'expiresAtMs': 2_045_000,
+                          'presented': true,
+                          'phase': 'journal',
+                          'direction': 'outgoing',
+                        }
+                      : null,
+                  'events': <Object?>[
+                    if (registered)
+                      {
+                        'callHandle': handle,
+                        'sequence': 1,
+                        'eventId': '55555555-5555-4555-8555-555555555555',
+                        'type': 'presented',
+                        'occurredAtMs': 2_000_000,
+                      },
+                  ],
+                  'nativeCallId': registered ? handle : null,
+                  'highestSequence': registered ? 1 : 0,
+                };
+              }
+              if (method == 'registerOutgoingAuthenticated') registered = true;
+              if (method == 'updateAuthenticatedContact') {
+                updates.add(Map.of(arguments));
+              }
+              return true;
+            },
+            nativeEvents: const Stream<Object?>.empty(),
+            coordinator: coordinator,
+            resolveAuthenticatedHandle: (callId) =>
+                callId == _callA ? handle : null,
+            clock: coordinator.clock,
+          ),
+        );
+        final graph = fixture.graph;
+        addTearDown(() async {
+          await graph.shutdown();
+          await graph.coordinator.dispose();
+        });
+        LockedCallPresentation presentation(String name) =>
+            LockedCallPresentation(
+              displayName: name,
+              avatarPng: null,
+              state: 'connected',
+              connectedAtMs: 2_000_000,
+              light: false,
+              muted: false,
+              muteAvailable: true,
+              speakerOn: false,
+              speakerAvailable: true,
+              routeLabel: 'Speaker',
+            );
+        await graph.updateLockedPresentation(
+          _callA,
+          presentation('Local contact'),
+        );
+        expect(updates, isEmpty);
+        final native = graph.iosCallLifecycleAdapter!;
+        expect(
+          graph.coordinator.activeSession?.direction,
+          outgoing ? CallDirection.outgoing : CallDirection.incoming,
+        );
+        expect(graph.coordinator.activeSession?.isTerminal, isFalse);
+        await native.start();
+        if (outgoing) {
+          expect(
+            await native.registerOutgoing(
+              _callA,
+              expiresAt: graph.coordinator.clock().add(
+                const Duration(seconds: 45),
+              ),
+            ),
+            isTrue,
+          );
+        } else {
+          await graph.coordinator.dispatch(
+            CallEvent(
+              type: CallEventType.incomingValidated,
+              eventId: 'name-validated',
+              occurredAt: graph.coordinator.clock(),
+              callId: _callA,
+            ),
+          );
+          expect(
+            await native.present(
+              IncomingCallPresentation(
+                callId: _callA,
+                callerAccountPeerId: 'remote-account',
+                expiresAt: graph.coordinator.clock().add(
+                  const Duration(seconds: 45),
+                ),
+              ),
+            ),
+            isTrue,
+          );
+        }
+        expect(updates, [
+          {'version': 1, 'callHandle': handle, 'displayName': 'Local contact'},
+        ]);
+        await graph.updateLockedPresentation(
+          _callA,
+          presentation('Renamed contact'),
+        );
+        expect(updates.last, {
+          'version': 1,
+          'callHandle': handle,
+          'displayName': 'Renamed contact',
+        });
+        expect(updates, hasLength(2));
+        await graph.updateLockedPresentation(
+          _callB,
+          presentation('Stale contact'),
+        );
+        expect(updates, hasLength(2));
+        await graph.coordinator.dispatch(
+          CallEvent(
+            type: CallEventType.appShutdown,
+            eventId: 'name-ended',
+            occurredAt: graph.coordinator.clock(),
+            callId: _callA,
+          ),
+        );
+        await graph.updateLockedPresentation(
+          _callA,
+          presentation('Ended contact'),
+        );
+        expect(updates, hasLength(2));
+      },
+    );
+  }
 
   for (final ios in <bool>[false, true]) {
     for (final nativeResult in <String>['accepted', 'refused', 'exception']) {
@@ -4262,6 +4411,7 @@ void main() {
         updatedAt: '2026-08-30T00:00:00.000Z',
       );
       final lifecycleMethods = <String>[];
+      final publishedNames = <String>[];
       final tokenMethods = <String>[];
       final tokenEvents = StreamController<Object?>.broadcast(sync: true);
       addTearDown(tokenEvents.close);
@@ -4293,6 +4443,9 @@ void main() {
             }) => IosCallLifecycleAdapter(
               invokeMethod: (method, arguments) async {
                 lifecycleMethods.add(method);
+                if (method == 'publishOpaqueContact') {
+                  publishedNames.add(arguments['displayName']! as String);
+                }
                 if (method == 'attach') {
                   return const <String, Object?>{
                     'version': 1,
@@ -4417,6 +4570,29 @@ void main() {
         ),
       );
       expect(graph.coordinator.activeSession, isNull);
+
+      expect(publishedNames, isNotEmpty);
+      expect(publishedNames, everyElement('Alice'));
+      for (final invalidName in [' ', 'remote-account']) {
+        await database.update(
+          'contacts',
+          {'username': invalidName},
+          where: 'peer_id = ?',
+          whereArgs: ['remote-account'],
+        );
+        final eligible = await graph.loadWakeEligibleContacts();
+        expect(eligible, hasLength(1));
+        expect(eligible.single.displayName, 'Mknoon call');
+        expect(
+          await graph.wakeAuthorizationCoordinator.reconcile(
+            eligibleContacts: eligible,
+            localRecipientDevicePeerId: graph.localIdentity.peerId,
+            localDeviceKeyEpoch: graph.localDeviceKeyEpoch,
+          ),
+          isTrue,
+        );
+        expect(publishedNames.last, 'Mknoon call');
+      }
 
       await composition.shutdown();
       expect(
@@ -6188,6 +6364,7 @@ final class _ProductionSpeakerRouteFixture {
 }
 
 Future<_ProductionSpeakerRouteFixture> _createProductionSpeakerRouteFixture({
+  bool outgoing = false,
   List<CallAudioOutputRoute> supportedRoutes = const <CallAudioOutputRoute>[
     CallAudioOutputRoute.earpiece,
     CallAudioOutputRoute.speaker,
@@ -6311,7 +6488,7 @@ Future<_ProductionSpeakerRouteFixture> _createProductionSpeakerRouteFixture({
   );
   await coordinator.dispatch(
     CallEvent(
-      type: CallEventType.remoteInvite,
+      type: outgoing ? CallEventType.place : CallEventType.remoteInvite,
       eventId: 'speaker-route-remote-invite',
       occurredAt: now,
       callId: _callA,
