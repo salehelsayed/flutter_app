@@ -7719,8 +7719,9 @@ class _ConversationWiredState extends State<ConversationWired>
     final confirmed = await showConfirmationDialog(
       context: context,
       title: AppLocalizations.of(context)!.conversation_delete_chat,
-      description:
-          'This will permanently remove ${_contact.username} and all messages. This cannot be undone.',
+      description: AppLocalizations.of(
+        context,
+      )!.delete_contact_body(_contact.username),
       confirmLabel: 'Delete',
     );
     if (!confirmed || !mounted) return;

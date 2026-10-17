@@ -711,6 +711,11 @@ class AppLocalizationsDe extends AppLocalizations {
   String get conversation_delete_chat => 'Chat löschen?';
 
   @override
+  String delete_contact_body(String username) {
+    return 'Dadurch werden $username, deine Nachrichten und dein Anrufverlauf mit dieser Person dauerhaft entfernt. Dies kann nicht rückgängig gemacht werden.';
+  }
+
+  @override
   String get conversation_reply => 'Antworten...';
 
   @override

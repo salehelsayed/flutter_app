@@ -2766,8 +2766,9 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
     final confirmed = await showConfirmationDialog(
       context: context,
       title: AppLocalizations.of(context)!.orbit_delete_chat,
-      description:
-          'This will permanently remove ${friend.username} and all messages. This cannot be undone.',
+      description: AppLocalizations.of(
+        context,
+      )!.delete_contact_body(friend.username),
       confirmLabel: 'Delete',
     );
     if (!confirmed || !mounted) return;

@@ -2,6 +2,7 @@ import 'package:sqflite_sqlcipher/sqflite.dart';
 
 import '../../utils/flow_event_emitter.dart';
 import '../db_write_transaction.dart';
+import '../migrations/117_call_history.dart';
 import 'direct_contact_device_bindings_db_helpers.dart';
 
 /// Loads all contacts from the database.
@@ -148,11 +149,19 @@ Future<void> dbDeleteContact(Database db, String peerId) async {
 /// reactions, messages, roster and contact in ONE transaction; factoring the
 /// roster+contact body out lets that owner serialize everything without
 /// nesting a second transaction.
+///
+/// SE-47: the contact's 1:1 call history goes with the contact, so the Calls
+/// page never lists calls with someone the user deleted.
 Future<void> dbDeleteContactWithinTransaction(
   DatabaseExecutor txn,
   String peerId,
 ) async {
   await dbDeleteDirectContactDeviceRoster(txn, peerId);
+  await txn.delete(
+    kCallHistoryTable,
+    where: 'contact_account_peer_id = ?',
+    whereArgs: [peerId],
+  );
   await txn.delete('contacts', where: 'peer_id = ?', whereArgs: [peerId]);
 }
 

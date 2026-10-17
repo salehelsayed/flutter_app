@@ -10,6 +10,7 @@ import 'package:flutter_app/core/database/migrations/007_archive_columns.dart';
 import 'package:flutter_app/core/database/migrations/008_block_columns.dart';
 import 'package:flutter_app/core/database/migrations/011_avatar_version.dart';
 import 'package:flutter_app/core/database/migrations/112_direct_linked_device_addressing.dart';
+import 'package:flutter_app/core/database/migrations/117_call_history.dart';
 import 'package:flutter_app/core/database/direct_media_blob_custody.dart';
 import 'package:flutter_app/core/database/helpers/contacts_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/direct_contact_device_bindings_db_helpers.dart';
@@ -37,6 +38,8 @@ void main() {
     // clears that contact's linked-device roster in the same transaction, so
     // this fixture must carry the v112 tables the production schema has.
     await runDirectLinkedDeviceAddressingMigration(db);
+    // SE-47: contact deletion also clears that contact's call history.
+    await runCallHistoryMigration(db);
   });
 
   tearDown(() async {

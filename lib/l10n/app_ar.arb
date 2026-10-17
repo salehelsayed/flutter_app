@@ -305,6 +305,14 @@
     }
   },
   "conversation_delete_chat": "حذف المحادثة؟",
+  "delete_contact_body": "سيؤدي هذا إلى إزالة {username} والرسائل وسجل المكالمات بينكما نهائيًا. لا يمكن التراجع عن ذلك.",
+  "@delete_contact_body": {
+    "placeholders": {
+      "username": {
+        "type": "String"
+      }
+    }
+  },
   "conversation_reply": "رد...",
   "conversation_context_reply": "رد",
   "announcement_private_reply_action": "مراسلة المرسل",

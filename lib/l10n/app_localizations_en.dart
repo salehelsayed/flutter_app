@@ -699,6 +699,11 @@ class AppLocalizationsEn extends AppLocalizations {
   String get conversation_delete_chat => 'Delete chat?';
 
   @override
+  String delete_contact_body(String username) {
+    return 'This will permanently remove $username, your messages and your call history with them. This cannot be undone.';
+  }
+
+  @override
   String get conversation_reply => 'Reply...';
 
   @override

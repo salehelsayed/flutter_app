@@ -1222,6 +1222,12 @@ abstract class AppLocalizations {
   /// **'Delete chat?'**
   String get conversation_delete_chat;
 
+  /// No description provided for @delete_contact_body.
+  ///
+  /// In en, this message translates to:
+  /// **'This will permanently remove {username}, your messages and your call history with them. This cannot be undone.'**
+  String delete_contact_body(String username);
+
   /// No description provided for @conversation_reply.
   ///
   /// In en, this message translates to:

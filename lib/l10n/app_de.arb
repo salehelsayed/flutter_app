@@ -305,6 +305,14 @@
     }
   },
   "conversation_delete_chat": "Chat löschen?",
+  "delete_contact_body": "Dadurch werden {username}, deine Nachrichten und dein Anrufverlauf mit dieser Person dauerhaft entfernt. Dies kann nicht rückgängig gemacht werden.",
+  "@delete_contact_body": {
+    "placeholders": {
+      "username": {
+        "type": "String"
+      }
+    }
+  },
   "conversation_reply": "Antworten...",
   "conversation_context_reply": "Antworten",
   "announcement_private_reply_action": "Absender anschreiben",

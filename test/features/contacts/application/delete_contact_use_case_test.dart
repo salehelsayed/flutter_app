@@ -6,6 +6,9 @@ import 'package:sqflite_common_ffi/sqflite_ffi.dart' show Database;
 import 'package:flutter_app/core/database/direct_media_blob_custody.dart';
 import 'package:flutter_app/core/database/helpers/contacts_db_helpers.dart'
     show dbPurgeDirectContactConversationAndContact;
+import 'package:flutter_app/core/database/helpers/call_history_db_helpers.dart';
+import 'package:flutter_app/core/database/helpers/contacts_db_helpers.dart'
+    as contacts_db;
 import 'package:flutter_app/core/database/helpers/direct_media_blob_custody_db_helpers.dart'
     show kDirectMediaBlobCustodyTable;
 import 'package:flutter_app/core/media/media_file_manager.dart';
@@ -26,6 +29,7 @@ import 'package:flutter_app/features/conversation/domain/repositories/media_atta
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/reaction_repository.dart';
 import 'package:flutter_app/features/contacts/application/delete_contact_use_case.dart';
+import 'package:flutter_app/features/contacts/data/repositories/contact_repository_impl.dart';
 import 'package:flutter_app/features/introduction/domain/models/introduction_model.dart';
 import 'package:flutter_app/features/introduction/domain/models/introduction_outbox_delivery.dart';
 import 'package:flutter_app/features/introduction/domain/models/pending_introduction_response.dart';
@@ -584,6 +588,175 @@ class FakeMediaFileManager extends MediaFileManager {
 }
 
 void main() {
+  group('SE-47 contact deletion removes that contact\'s call history', () {
+    const deletedPeer = 'peer-se47-deleted-contact';
+    const otherPeer = 'peer-se47-other-contact';
+    const t0 = '2026-10-17T09:00:00.000Z';
+
+    ContactRepositoryImpl realContactRepository(
+      Database db, {
+      required bool withFinalPurge,
+    }) => ContactRepositoryImpl(
+      dbLoadAllContacts: () => contacts_db.dbLoadAllContacts(db),
+      dbLoadContact: (peerId) => contacts_db.dbLoadContact(db, peerId),
+      dbUpsertContact: (row) => contacts_db.dbUpsertContact(db, row),
+      dbDeleteContact: (peerId) => contacts_db.dbDeleteContact(db, peerId),
+      dbGetContactCount: () => contacts_db.dbGetContactCount(db),
+      dbContactExists: (peerId) => contacts_db.dbContactExists(db, peerId),
+      dbArchiveContact: (peerId) => contacts_db.dbArchiveContact(db, peerId),
+      dbUnarchiveContact: (peerId) =>
+          contacts_db.dbUnarchiveContact(db, peerId),
+      dbLoadActiveContacts: () => contacts_db.dbLoadActiveContacts(db),
+      dbLoadArchivedContacts: () => contacts_db.dbLoadArchivedContacts(db),
+      dbBlockContact: (peerId) => contacts_db.dbBlockContact(db, peerId),
+      dbUnblockContact: (peerId) => contacts_db.dbUnblockContact(db, peerId),
+      dbDismissIntroBanner: (peerId) =>
+          contacts_db.dbDismissIntroBanner(db, peerId),
+      dbSetIntrosSentAt: (peerId, timestamp) =>
+          contacts_db.dbSetIntrosSentAt(db, peerId, timestamp),
+      dbPurgeDirectContactConversationAndContact: withFinalPurge
+          ? (peerId) async {
+              final result = await dbPurgeDirectContactConversationAndContact(
+                db,
+                peerId,
+              );
+              return DirectContactConversationPurgeSummary(
+                deletedTextCustodyRows: result.deletedTextCustodyRows,
+                deletedEventCustodyRows: result.deletedEventCustodyRows,
+                deletedReactions: result.deletedReactions,
+                deletedMessages: result.deletedMessages,
+                deletedContact: result.deletedContact,
+              );
+            }
+          : null,
+    );
+
+    Future<void> seedContact(Database db, String peerId, String name) =>
+        db.insert('contacts', <String, Object?>{
+          'peer_id': peerId,
+          'public_key': 'pk-$peerId',
+          'rendezvous': '/dns4/relay.example.com/tcp/443/wss/p2p/relay-id',
+          'username': name,
+          'signature': 'sig-$peerId',
+          'scanned_at': t0,
+        });
+
+    Future<void> seedCall(
+      Database db, {
+      required String callId,
+      required String peerId,
+      required String direction,
+      required String status,
+      required String terminalReason,
+      required String startedAt,
+    }) => insertCallHistoryTerminal(db, <String, Object?>{
+      'call_id': callId,
+      'contact_account_peer_id': peerId,
+      'direction': direction,
+      'terminal_reason': terminalReason,
+      'status': status,
+      'started_at': startedAt,
+      'ended_at': startedAt,
+      'created_at': startedAt,
+      'updated_at': startedAt,
+    });
+
+    for (final withFinalPurge in <bool>[true, false]) {
+      final path = withFinalPurge ? 'final purge' : 'split delete fallback';
+      test('Calls page total, missed count and rows agree after deleting a '
+          'contact ($path)', () async {
+        final fixture = await MediaRepositoryRealDbFixture.create();
+        addTearDown(fixture.dispose);
+        final db = fixture.db;
+        await seedContact(db, deletedPeer, 'Dana');
+        await seedContact(db, otherPeer, 'Omar');
+        await seedCall(
+          db,
+          callId: '11111111-1111-4111-8111-111111111111',
+          peerId: deletedPeer,
+          direction: 'incoming',
+          status: 'missed',
+          terminalReason: 'no_answer',
+          startedAt: '2026-10-17T10:00:00.000Z',
+        );
+        await seedCall(
+          db,
+          callId: '22222222-2222-4222-8222-222222222222',
+          peerId: deletedPeer,
+          direction: 'outgoing',
+          status: 'completed',
+          terminalReason: 'local_hangup',
+          startedAt: '2026-10-17T10:05:00.000Z',
+        );
+        await seedCall(
+          db,
+          callId: '33333333-3333-4333-8333-333333333333',
+          peerId: otherPeer,
+          direction: 'incoming',
+          status: 'missed',
+          terminalReason: 'no_answer',
+          startedAt: '2026-10-17T10:10:00.000Z',
+        );
+        final before = await loadCallHistoryPage(
+          db,
+          missedOnly: false,
+          search: '',
+          limit: 50,
+        );
+        expect((before.total, before.missed, before.rows.length), (3, 2, 3));
+
+        await deleteContactAndMessages(
+          contactRepo: realContactRepository(
+            db,
+            withFinalPurge: withFinalPurge,
+          ),
+          messageRepo: fixture.messageRepo,
+          peerId: deletedPeer,
+          mediaAttachmentRepo: fixture.repo,
+        );
+
+        final all = await loadCallHistoryPage(
+          db,
+          missedOnly: false,
+          search: '',
+          limit: 50,
+        );
+        final missedOnly = await loadCallHistoryPage(
+          db,
+          missedOnly: true,
+          search: '',
+          limit: 50,
+        );
+        expect(all.total, 1);
+        expect(all.missed, 1);
+        expect(
+          all.rows
+              .map(
+                (row) => (
+                  row['call_id'],
+                  row['contact_account_peer_id'],
+                  row['local_contact_name'],
+                ),
+              )
+              .toList(),
+          [('33333333-3333-4333-8333-333333333333', otherPeer, 'Omar')],
+        );
+        expect((missedOnly.total, missedOnly.missed), (1, 1));
+        expect(missedOnly.rows.map((row) => row['call_id']).toList(), [
+          '33333333-3333-4333-8333-333333333333',
+        ]);
+        expect(
+          await db.query(
+            'contacts',
+            where: 'peer_id = ?',
+            whereArgs: const <Object?>[deletedPeer],
+          ),
+          isEmpty,
+        );
+      });
+    }
+  });
+
   group('deleteContactAndMessages use case', () {
     test('deletes messages then contact', () async {
       final contactRepo = FakeContactRepository();

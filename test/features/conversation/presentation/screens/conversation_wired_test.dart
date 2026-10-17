@@ -16152,6 +16152,53 @@ void main() {
       },
     );
 
+    testWidgets('SE-47 delete chat dialog says call history is deleted too', (
+      tester,
+    ) async {
+      final identityRepo = FakeIdentityRepository(makeIdentity());
+      final messageRepo = FakeMessageRepository();
+      final chatListener = ChatMessageListener(
+        chatMessageStream: const Stream.empty(),
+        messageRepo: messageRepo,
+        contactRepo: FakeContactRepository(),
+      );
+      final priorOnError = FlutterError.onError;
+      FlutterError.onError = (details) {
+        if (details.exceptionAsString().contains('overflowed')) return;
+        priorOnError?.call(details);
+      };
+      addTearDown(() => FlutterError.onError = priorOnError);
+
+      await pumpScreen(
+        tester,
+        identityRepo: identityRepo,
+        messageRepo: messageRepo,
+        chatListener: chatListener,
+        sendFn: _instantSuccessSendFn,
+        contactRepo: _OverflowContactRepo(),
+      );
+      await tester.pump(const Duration(milliseconds: 400));
+
+      await tester.tap(find.byIcon(Icons.more_vert));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+      await tester.tap(find.text('Delete chat'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+
+      expect(
+        find.text(
+          'This will permanently remove Alice, your messages and your '
+          'call history with them. This cannot be undone.',
+        ),
+        findsOneWidget,
+      );
+
+      await tester.tap(find.text('Cancel'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+    });
+
     testWidgets(
       'Signal delete sheet uses warm roles and cancel leaves message unchanged',
       (tester) async {

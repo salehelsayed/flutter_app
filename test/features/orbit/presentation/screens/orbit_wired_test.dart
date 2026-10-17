@@ -69,6 +69,7 @@ import 'package:flutter_app/features/orbit/presentation/widgets/friend_row.dart'
 import 'package:flutter_app/features/orbit/presentation/widgets/group_row.dart';
 import 'package:flutter_app/features/orbit/presentation/widgets/orbit_close_button.dart';
 import 'package:flutter_app/features/orbit/presentation/widgets/orbit_search_trigger.dart';
+import 'package:flutter_app/features/orbit/presentation/widgets/swipe_action_buttons.dart';
 import 'package:flutter_app/features/groups/presentation/widgets/pending_group_invite_card.dart';
 import 'package:flutter_app/features/orbit/presentation/widgets/friends_filter_toggle.dart';
 import 'package:flutter_app/features/orbit/presentation/widgets/orbital_visualization.dart';
@@ -817,6 +818,36 @@ void main() {
 
       // FriendRow renders the current display name
       expect(find.text('Bob'), findsWidgets);
+    });
+
+    testWidgets('SE-47 delete chat dialog says call history is deleted too', (
+      tester,
+    ) async {
+      setLargeTestSurface(tester);
+      suppressOverflowErrors();
+      identityRepo.seed(testIdentity);
+      contactRepo.seed([testContact]);
+
+      await tester.pumpWidget(buildOrbitWired());
+      await pumpOrbitFrames(tester);
+      await switchToAllChats(tester);
+
+      await tester.flingFrom(
+        tester.getCenter(find.text('Bob').first),
+        const Offset(-350, 0),
+        1000,
+      );
+      await pumpOrbitFrames(tester, count: 6);
+      await tester.tap(find.byType(DeleteActionButton));
+      await pumpOrbitFrames(tester, count: 6);
+
+      expect(
+        find.text(
+          'This will permanently remove Bob, your messages and your '
+          'call history with them. This cannot be undone.',
+        ),
+        findsOneWidget,
+      );
     });
 
     testWidgets('cold load batches friend thread summaries', (tester) async {

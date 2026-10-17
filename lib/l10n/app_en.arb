@@ -354,6 +354,14 @@
     }
   },
   "conversation_delete_chat": "Delete chat?",
+  "delete_contact_body": "This will permanently remove {username}, your messages and your call history with them. This cannot be undone.",
+  "@delete_contact_body": {
+    "placeholders": {
+      "username": {
+        "type": "String"
+      }
+    }
+  },
   "conversation_reply": "Reply...",
   "conversation_context_reply": "Reply",
   "announcement_private_reply_action": "Message sender",
